@@ -51,6 +51,9 @@ SERVER_DENSE_ATTENTION_BACKEND = os.getenv(
 SERVER_MEMORY_PROFILE = os.getenv("SERVER_MEMORY_PROFILE", "unknown").lower()
 ALLOW_UNSAFE_H3_COMPILE = os.getenv("ALLOW_UNSAFE_H3_COMPILE", "0") == "1"
 AUTO_SOL_TOKEN_THRESHOLD = 8_192
+MAX_REFERENCE_IMAGES = 9
+MAX_REFERENCE_VIDEOS = 3
+MAX_REFERENCE_AUDIOS = 3
 DEFAULT_FBCACHE_PRESET = "Fast"
 DEFAULT_FBCACHE_THRESHOLD = 0.10
 DEFAULT_FBCACHE_START = 0.10
@@ -873,18 +876,18 @@ def build_ref2va_graph(
         "ref_image_size": ref_image_size,
     }
 
-    for index, path in enumerate(reference_images[:9]):
+    for index, path in enumerate(reference_images[:MAX_REFERENCE_IMAGES]):
         loaded = graph.add("LoadImage", image=stage_file(path, "reference_images"))
         inputs[f"ref_images.ref_image_{index}"] = Graph.out(loaded)
 
-    for index, path in enumerate(reference_videos[:3]):
+    for index, path in enumerate(reference_videos[:MAX_REFERENCE_VIDEOS]):
         staged = stage_file(path, "reference_videos", transcode_video=True)
         loaded = graph.add("LoadVideo", file=staged)
         components = graph.add("GetVideoComponents", video=Graph.out(loaded))
         inputs[f"ref_videos.ref_video_{index}"] = Graph.out(components, 0)
         inputs[f"ref_video_audios.ref_video_audio_{index}"] = Graph.out(components, 1)
 
-    for index, path in enumerate(reference_audios[:3]):
+    for index, path in enumerate(reference_audios[:MAX_REFERENCE_AUDIOS]):
         loaded = graph.add("LoadAudio", audio=stage_file(path, "reference_audios"))
         inputs[f"ref_audios.ref_audio_{index}"] = Graph.out(loaded)
 
@@ -1082,10 +1085,15 @@ def generate(
     ref_image_4: Any,
     ref_image_5: Any,
     ref_image_6: Any,
+    ref_image_7: Any,
+    ref_image_8: Any,
+    ref_image_9: Any,
     ref_video_1: Any,
     ref_video_2: Any,
+    ref_video_3: Any,
     ref_audio_1: Any,
     ref_audio_2: Any,
+    ref_audio_3: Any,
     duration: float,
     width: int,
     height: int,
@@ -1191,9 +1199,10 @@ def generate(
         refs_i = collect_reference_slots(
             ref_image_1, ref_image_2, ref_image_3,
             ref_image_4, ref_image_5, ref_image_6,
+            ref_image_7, ref_image_8, ref_image_9,
         )
-        refs_v = collect_reference_slots(ref_video_1, ref_video_2)
-        refs_a = collect_reference_slots(ref_audio_1, ref_audio_2)
+        refs_v = collect_reference_slots(ref_video_1, ref_video_2, ref_video_3)
+        refs_a = collect_reference_slots(ref_audio_1, ref_audio_2, ref_audio_3)
 
         if mode == "Text to video":
             first_image = None
@@ -1323,11 +1332,52 @@ def preset_values(name: str):
     return SAMPLING_PRESETS.get(str(name), SAMPLING_PRESETS["Balanced"])
 
 
+def compact_settings_summary(
+    mode: str,
+    model_profile: str,
+    generation_mode: str,
+    duration: float,
+    width: int,
+    height: int,
+    steps: int,
+    scheduler: str,
+    attention_mode: str,
+    cache_mode: str,
+    postprocess: str,
+) -> str:
+    try:
+        seconds = f"{float(duration):g}s"
+    except (TypeError, ValueError):
+        seconds = "—s"
+    try:
+        resolution = f"{int(width)}×{int(height)}"
+    except (TypeError, ValueError):
+        resolution = "—×—"
+    try:
+        step_count = f"{int(steps)} steps"
+    except (TypeError, ValueError):
+        step_count = "— steps"
+    return (
+        "**Current setup**  \n"
+        f"{mode} · {model_profile} / {generation_mode} · {seconds} · {resolution} · "
+        f"{step_count} / {scheduler} · Attention: {attention_mode} · "
+        f"Cache: {cache_mode} · Post: {postprocess}"
+    )
+
+
+def reference_prompt_help() -> str:
+    return (
+        f"Use `<Picture 1>` through `<Picture {MAX_REFERENCE_IMAGES}>`, "
+        f"`<Video 1>` through `<Video {MAX_REFERENCE_VIDEOS}>`, and "
+        f"`<Audio 1>` through `<Audio {MAX_REFERENCE_AUDIOS}>` in the prompt."
+    )
+
+
 def mode_help(mode: str) -> str:
     if mode == "Reference media":
         return (
             "Reference tags are ordered as images, then videos, then standalone audio. "
-            "Use placeholders like `<Picture 1>`, `<Picture 2>`, `<Video 1>`, and `<Audio 1>` in the prompt."
+            + reference_prompt_help()
         )
     if mode == "First / last frame":
         return "Upload a first frame, a last frame, or both. This uses the FL2VA model."
@@ -1377,10 +1427,7 @@ def build_ui() -> gr.Blocks:
                         last = gr.Image(type="filepath", label="Last frame")
                 with gr.Group(visible=False) as reference_group:
                     gr.Markdown("### Reference media")
-                    gr.Markdown(
-                        "Use `<Picture 1>`–`<Picture 6>`, `<Video 1>`–`<Video 2>`, "
-                        "and `<Audio 1>`–`<Audio 2>` in the prompt."
-                    )
+                    gr.Markdown(reference_prompt_help())
                     with gr.Row():
                         ref_image_1 = gr.Image(type="filepath", label="Picture 1")
                         ref_image_2 = gr.Image(type="filepath", label="Picture 2")
@@ -1390,15 +1437,32 @@ def build_ui() -> gr.Blocks:
                         ref_image_5 = gr.Image(type="filepath", label="Picture 5")
                         ref_image_6 = gr.Image(type="filepath", label="Picture 6")
                     with gr.Row():
+                        ref_image_7 = gr.Image(type="filepath", label="Picture 7")
+                        ref_image_8 = gr.Image(type="filepath", label="Picture 8")
+                        ref_image_9 = gr.Image(type="filepath", label="Picture 9")
+                    with gr.Row():
                         ref_video_1 = gr.Video(label="Video 1")
                         ref_video_2 = gr.Video(label="Video 2")
+                        ref_video_3 = gr.Video(label="Video 3")
                     with gr.Row():
                         ref_audio_1 = gr.Audio(type="filepath", label="Audio 1")
                         ref_audio_2 = gr.Audio(type="filepath", label="Audio 2")
+                        ref_audio_3 = gr.Audio(type="filepath", label="Audio 3")
                     ref_size = gr.Radio(["match", "max"], value="match", label="Reference image size")
             with gr.Column(scale=2):
+                settings_overview = gr.Markdown(
+                    compact_settings_summary(
+                        "Text to video", "Quality", "Turbo", 5,
+                        864, 480, 4, "simple", "Auto", "Off", "None",
+                    )
+                )
                 output = gr.Video(label="Generated video")
+                with gr.Row():
+                    run = gr.Button("Generate", variant="primary", scale=2)
+                    stop = gr.Button("Interrupt", scale=1)
+                    refresh = gr.Button("Refresh status", scale=1)
                 status = gr.Textbox(label="Status", lines=5)
+                gr.Markdown("### Generation settings")
                 preset = gr.Radio(
                     ["Quality", "Balanced", "Fast"],
                     value="Balanced",
@@ -1466,7 +1530,7 @@ def build_ui() -> gr.Blocks:
                         label="Sol threshold",
                         info="diag is faster; exact calculates a more precise routing threshold.",
                     )
-                with gr.Accordion("Zero-copy Sol-Attn quality controls", open=True):
+                with gr.Accordion("Zero-copy Sol-Attn quality controls", open=False):
                     sol_exact_mode = gr.Radio(
                         ["off", "exact_kv", "exact_kv_and_rows"],
                         value="exact_kv",
@@ -1488,7 +1552,7 @@ def build_ui() -> gr.Blocks:
                         )
                     sol_step_off = gr.State(0.0)
                     sol_sink_tokens = gr.State(0)
-                with gr.Accordion("Cache acceleration", open=True):
+                with gr.Accordion("Cache acceleration", open=False):
                     cache_mode = gr.Radio(
                         ["FirstBlockCache", "EasyCache", "Off"],
                         value="Off",
@@ -1589,10 +1653,17 @@ def build_ui() -> gr.Blocks:
                     ["None", "2× Lanczos", "48 fps interpolation", "2× Lanczos + 48 fps"],
                     value="None", label="Post-processing",
                 )
-                with gr.Row():
-                    run = gr.Button("Generate", variant="primary")
-                    stop = gr.Button("Interrupt")
-                    refresh = gr.Button("Refresh status")
+
+        settings_inputs = [
+            mode, model_profile, generation_mode, duration, width, height,
+            steps, scheduler, attention_mode, cache_mode, postprocess,
+        ]
+        for settings_control in settings_inputs:
+            settings_control.change(
+                compact_settings_summary,
+                inputs=settings_inputs,
+                outputs=settings_overview,
+            )
 
         mode.change(
             mode_layout_updates,
@@ -1647,7 +1718,9 @@ def build_ui() -> gr.Blocks:
             inputs=[
                 mode, model_profile, generation_mode, prompt, first, last,
                 ref_image_1, ref_image_2, ref_image_3, ref_image_4, ref_image_5, ref_image_6,
-                ref_video_1, ref_video_2, ref_audio_1, ref_audio_2,
+                ref_image_7, ref_image_8, ref_image_9,
+                ref_video_1, ref_video_2, ref_video_3,
+                ref_audio_1, ref_audio_2, ref_audio_3,
                 duration, width, height, steps, scheduler, seed, attention_mode, sol_tau,
                 sol_thresh_type, sol_exact_mode, sol_dense_steps,
                 sol_step_off, sol_sink_tokens,
