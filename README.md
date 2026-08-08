@@ -7,6 +7,7 @@ models, Sol-Attn, SageAttention, and a bundled FirstBlockCache node.
 ## What is included
 
 - Text/image-to-video and reference-media-to-video workflows
+- Live queue position, workflow stage, node count, and sampler-step progress
 - Speed and quality NVFP4 model profiles
 - Optional LightX2V Turbo LoRA
 - H3-native zero-copy Sol sparse attention with SageAttention fallback

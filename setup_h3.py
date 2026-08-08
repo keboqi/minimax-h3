@@ -300,6 +300,7 @@ def install_environment(comfy: Path) -> None:
         "gradio>=5,<7",
         "huggingface_hub>=0.34",
         "requests>=2.32",
+        "websocket-client>=1.8",
         "Pillow>=10",
     )
     install_pinned_numpy_stack()

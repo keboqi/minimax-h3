@@ -69,6 +69,15 @@ else
   "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py"     --install-dir "$INSTALL_DIR"     --skip-env
 fi
 
+if ! "$PYTHON_BIN" -c 'import websocket' >/dev/null 2>&1; then
+  log "Installing live generation progress client"
+  if command -v uv >/dev/null 2>&1; then
+    uv pip install --python "$PYTHON_BIN" --upgrade "websocket-client>=1.8"
+  else
+    "$PYTHON_BIN" -m pip install --upgrade "websocket-client>=1.8"
+  fi
+fi
+
 [[ -f "$COMFY_DIR/main.py" ]] || die "ComfyUI installation failed"
 [[ -f "$MODELS_CONFIG" ]] || die "Model setup failed"
 [[ -f "$SCRIPT_DIR/h3_attention.py" ]] || die "Missing h3_attention.py"

@@ -12,9 +12,11 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import gradio as gr
 import requests
+import websocket
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -940,12 +942,197 @@ def required_nodes_for(
     return common
 
 
-def submit_prompt(graph: dict[str, Any]) -> str:
-    response = api_post("/prompt", json={"prompt": graph, "client_id": str(uuid.uuid4())})
+def submit_prompt(graph: dict[str, Any], client_id: str) -> str:
+    response = api_post("/prompt", json={"prompt": graph, "client_id": client_id})
     payload = response.json()
     if "prompt_id" not in payload:
         raise H3Error(json.dumps(payload, indent=2))
     return str(payload["prompt_id"])
+
+
+def websocket_url(client_id: str) -> str:
+    parsed = urlsplit(COMFY_URL)
+    scheme = "wss" if parsed.scheme == "https" else "ws"
+    path = f"{parsed.path.rstrip('/')}/ws"
+    return urlunsplit((scheme, parsed.netloc, path, f"clientId={quote(client_id)}", ""))
+
+
+def node_stage(class_type: str) -> str:
+    """Turn ComfyUI implementation node names into useful user-facing stages."""
+    name = str(class_type)
+    if name in {"UNETLoader", "CLIPLoader", "VAELoader", "LoraLoaderModelOnly"}:
+        return "Loading models"
+    if name.startswith("Load") or name == "GetVideoComponents":
+        return "Preparing reference media"
+    if "ImageToVideo" in name or "ReferenceToVideo" in name:
+        return "Encoding prompt and conditioning"
+    if name in {
+        "TorchCompileModel", "MiniMaxH3MemoryEfficientSolAttentionPatch",
+        "MiniMaxH3ChunkFeedForward", "H3FirstBlockCache", "EasyCache",
+    }:
+        return "Configuring generation model"
+    if name in {
+        "RandomNoise", "BasicGuider", "KSamplerSelect", "BasicScheduler",
+    }:
+        return "Preparing sampler"
+    if name == "SamplerCustomAdvanced" or "Sampler" in name:
+        return "Generating video and audio"
+    if name in {"VAEDecode", "VAEDecodeAudio"}:
+        return "Decoding output"
+    if name == "CreateVideo":
+        return "Assembling video"
+    if name.startswith("Save"):
+        return "Saving video"
+    return name
+
+
+def queue_position(prompt_id: str) -> tuple[str, int | None]:
+    """Return ComfyUI's actual queue state and one-based waiting position."""
+    try:
+        payload = api_get("/queue").json()
+        for item in payload.get("queue_running", []):
+            if len(item) > 1 and str(item[1]) == prompt_id:
+                return "running", None
+        for position, item in enumerate(payload.get("queue_pending", []), start=1):
+            if len(item) > 1 and str(item[1]) == prompt_id:
+                return "queued", position
+    except Exception:
+        pass
+    return "unknown", None
+
+
+def progress_status(
+    stage: str,
+    *,
+    started: float,
+    completed_nodes: int = 0,
+    total_nodes: int = 0,
+    step: int | None = None,
+    step_total: int | None = None,
+    detail: str | None = None,
+) -> str:
+    elapsed = time.monotonic() - started
+    lines = [f"{stage} · elapsed {elapsed:.1f}s"]
+    if step is not None and step_total:
+        lines.append(f"Sampler step {step}/{step_total} ({100 * step / step_total:.0f}%)")
+    if total_nodes:
+        lines.append(f"Workflow nodes {completed_nodes}/{total_nodes}")
+    if detail:
+        lines.append(detail)
+    return "\n".join(lines)
+
+
+def stream_comfy_progress(
+    ws: websocket.WebSocket,
+    prompt_id: str,
+    graph: dict[str, Any],
+    started: float,
+) -> Iterable[tuple[str, int, int, int | None, int | None]]:
+    """Yield live node and sampler progress from ComfyUI's websocket."""
+    total_nodes = len(graph)
+    completed: set[str] = set()
+    current_node: str | None = None
+    deadline = time.monotonic() + GENERATION_TIMEOUT
+    ws.settimeout(max(0.25, min(POLL_SECONDS, 1.0)))
+
+    while time.monotonic() < deadline:
+        try:
+            raw = ws.recv()
+        except websocket.WebSocketTimeoutException:
+            history = api_get(f"/history/{prompt_id}").json().get(prompt_id)
+            if history:
+                status = history.get("status", {})
+                if status.get("status_str") == "error":
+                    raise H3Error(f"ComfyUI execution failed: {status.get('messages', [])}")
+                if status.get("completed") or history.get("outputs"):
+                    return
+            state, position = queue_position(prompt_id)
+            if state == "queued":
+                yield f"Waiting in queue (position {position})", len(completed), total_nodes, None, None
+            elif state == "running" and current_node is None:
+                yield "Starting workflow", len(completed), total_nodes, None, None
+            continue
+        except websocket.WebSocketException:
+            yield from poll_comfy_progress(prompt_id, graph)
+            return
+
+        # Binary messages are latent previews; progress metadata arrives as JSON.
+        if not isinstance(raw, str):
+            continue
+        if not raw:
+            yield from poll_comfy_progress(prompt_id, graph)
+            return
+        try:
+            message = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        event_type = str(message.get("type", ""))
+        data = message.get("data", {})
+        event_prompt_id = data.get("prompt_id")
+        if event_prompt_id is not None and str(event_prompt_id) != prompt_id:
+            continue
+
+        if event_type == "execution_error":
+            node = str(data.get("node_type") or data.get("node_id") or "workflow")
+            error = data.get("exception_message") or data.get("exception_type") or "unknown error"
+            raise H3Error(f"ComfyUI failed in {node}: {error}")
+        if event_type == "execution_interrupted":
+            raise H3Error("Generation interrupted.")
+        if event_type in {"execution_success", "execution_complete"}:
+            return
+        if event_type == "execution_cached":
+            completed.update(str(node) for node in data.get("nodes", []))
+            yield "Restoring cached workflow results", len(completed), total_nodes, None, None
+            continue
+        if event_type == "executed":
+            node_id = str(data.get("node", ""))
+            if node_id:
+                completed.add(node_id)
+            continue
+        if event_type == "executing":
+            node = data.get("node")
+            if node is None:
+                return
+            if current_node and current_node != str(node):
+                completed.add(current_node)
+            current_node = str(node)
+            class_type = graph.get(current_node, {}).get("class_type", "Processing")
+            yield node_stage(class_type), len(completed), total_nodes, None, None
+            continue
+        if event_type == "progress":
+            node_id = str(data.get("node") or current_node or "")
+            class_type = graph.get(node_id, {}).get("class_type", "Processing")
+            value = int(data.get("value", 0))
+            maximum = int(data.get("max", 0))
+            yield node_stage(class_type), len(completed), total_nodes, value, maximum
+    raise H3Error(f"Generation timed out after {GENERATION_TIMEOUT:.0f} seconds")
+
+
+def poll_comfy_progress(
+    prompt_id: str,
+    graph: dict[str, Any],
+) -> Iterable[tuple[str, int, int, int | None, int | None]]:
+    """Compatibility fallback for ComfyUI deployments without `/ws`."""
+    deadline = time.monotonic() + GENERATION_TIMEOUT
+    while time.monotonic() < deadline:
+        payload = api_get(f"/history/{prompt_id}").json()
+        item = payload.get(prompt_id)
+        if item:
+            status = item.get("status", {})
+            if status.get("status_str") == "error":
+                raise H3Error(f"ComfyUI execution failed: {status.get('messages', [])}")
+            if status.get("completed") or item.get("outputs"):
+                return
+        state, position = queue_position(prompt_id)
+        if state == "queued":
+            stage = f"Waiting in queue (position {position})"
+        elif state == "running":
+            stage = "Running workflow (live step events unavailable)"
+        else:
+            stage = "Waiting for ComfyUI"
+        yield stage, 0, len(graph), None, None
+        time.sleep(POLL_SECONDS)
+    raise H3Error(f"Generation timed out after {GENERATION_TIMEOUT:.0f} seconds")
 
 
 def wait_for_history(prompt_id: str) -> dict[str, Any]:
@@ -1121,10 +1308,14 @@ def generate(
     compile_model: bool,
     ref_image_size: str,
     postprocess: str,
+    progress=gr.Progress(track_tqdm=False),
 ):
     started = time.monotonic()
     queued_at = time.time()
+    ws: websocket.WebSocket | None = None
     try:
+        progress(0, desc="Validating request")
+        yield None, progress_status("Validating request", started=started)
         if not prompt.strip():
             raise H3Error("Prompt is required.")
         if not 2 <= float(duration) <= 15:
@@ -1214,6 +1405,10 @@ def generate(
             if not (refs_i or refs_v or refs_a):
                 raise H3Error("Reference mode requires at least one image, video, or audio file.")
 
+        progress(0, desc="Building ComfyUI workflow")
+        yield None, progress_status(
+            "Preparing inputs and building workflow", started=started
+        )
         if mode == "Reference media":
             graph = build_ref2va_graph(
                 prompt=prompt,
@@ -1271,7 +1466,19 @@ def generate(
                 models=models, available_nodes=available,
             )
 
-        prompt_id = submit_prompt(graph)
+        client_id = str(uuid.uuid4())
+        websocket_note = None
+        try:
+            ws = websocket.create_connection(
+                websocket_url(client_id),
+                timeout=max(1.0, min(REQUEST_TIMEOUT, 10.0)),
+            )
+        except Exception as exc:
+            websocket_note = (
+                "Live node/step events unavailable; using queue polling "
+                f"({type(exc).__name__})."
+            )
+        prompt_id = submit_prompt(graph, client_id)
         sol_status = (
             f"zero-copy on ({sol_thresh_type}, τ={float(sol_tau):.1f}, "
             f"{sol_exact_mode}, dense-tail-blocks={int(sol_dense_steps)})"
@@ -1307,17 +1514,60 @@ def generate(
             queued_status += f"\n\nAcceleration notice: {cache_note}"
         if generation_note:
             queued_status += f"\n\nGeneration notice: {generation_note}"
+        if websocket_note:
+            queued_status += f"\n\nProgress notice: {websocket_note}"
+        progress(0, desc="Queued in ComfyUI")
         yield None, queued_status
+
+        updates = (
+            stream_comfy_progress(ws, prompt_id, graph, started)
+            if ws is not None
+            else poll_comfy_progress(prompt_id, graph)
+        )
+        for stage, completed_nodes, total_nodes, step, step_total in updates:
+            if step is not None and step_total:
+                progress((step, step_total), desc=stage)
+            elif total_nodes:
+                progress((completed_nodes, total_nodes), desc=stage)
+            yield None, progress_status(
+                stage,
+                started=started,
+                completed_nodes=completed_nodes,
+                total_nodes=total_nodes,
+                step=step,
+                step_total=step_total,
+                detail=f"Job `{prompt_id}`",
+            )
+
+        progress(1, desc="Resolving generated output")
+        yield None, progress_status(
+            "Generation complete; locating output",
+            started=started,
+            completed_nodes=len(graph),
+            total_nodes=len(graph),
+        )
         history = wait_for_history(prompt_id)
         source = resolve_output(history, queued_at)
+        if postprocess != "None":
+            progress(0, desc="Post-processing video")
+            yield None, progress_status(
+                f"Post-processing: {postprocess}", started=started
+            )
         result = postprocess_video(source, postprocess)
         elapsed = time.monotonic() - started
+        progress(1, desc="Complete")
         yield str(result), (
             f"Completed in {elapsed:.1f}s · output {result.name} · seed {actual_seed} · "
             f"{elapsed / float(duration):.1f}s compute per output second"
         )
     except Exception as exc:
         yield None, f"Error: {exc}"
+    finally:
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
 
 
 def interrupt() -> str:
@@ -1730,6 +1980,7 @@ def build_ui() -> gr.Blocks:
                 compile_model, ref_size, postprocess,
             ],
             outputs=[output, status],
+            show_progress="minimal",
         )
         stop.click(interrupt, outputs=status, cancels=[event])
         refresh.click(backend_status, outputs=health)
@@ -1854,6 +2105,51 @@ def selftest() -> None:
     assert validate_resolution(865, 481) == (864, 480)
     assert frame_length(5) == 124
     assert frame_length(15) == 362
+    assert websocket_url("client id").startswith("ws://")
+    assert "clientId=client%20id" in websocket_url("client id")
+    assert node_stage("SamplerCustomAdvanced") == "Generating video and audio"
+    assert node_stage("VAEDecode") == "Decoding output"
+    rendered_progress = progress_status(
+        "Generating video and audio", started=time.monotonic(),
+        completed_nodes=7, total_nodes=12, step=2, step_total=4,
+    )
+    assert "Sampler step 2/4 (50%)" in rendered_progress
+    assert "Workflow nodes 7/12" in rendered_progress
+
+    class FakeProgressSocket:
+        def __init__(self) -> None:
+            self.messages = iter([
+                json.dumps({
+                    "type": "executing",
+                    "data": {"prompt_id": "test-job", "node": "1"},
+                }),
+                json.dumps({
+                    "type": "progress",
+                    "data": {
+                        "prompt_id": "test-job", "node": "1",
+                        "value": 3, "max": 4,
+                    },
+                }),
+                json.dumps({
+                    "type": "executing",
+                    "data": {"prompt_id": "test-job", "node": None},
+                }),
+            ])
+
+        def settimeout(self, _timeout: float) -> None:
+            pass
+
+        def recv(self) -> str:
+            return next(self.messages)
+
+    live_updates = list(stream_comfy_progress(
+        FakeProgressSocket(),  # type: ignore[arg-type]
+        "test-job",
+        {"1": {"class_type": "SamplerCustomAdvanced", "inputs": {}}},
+        time.monotonic(),
+    ))
+    assert live_updates[0][0] == "Generating video and audio"
+    assert live_updates[1][3:] == (3, 4)
     turbo_defaults = generation_mode_defaults("Turbo")
     assert turbo_defaults[1:] == (4, "simple", "Off", "Dense")
     normal_defaults = generation_mode_defaults("Normal")
