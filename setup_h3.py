@@ -301,6 +301,9 @@ def install_environment(comfy: Path) -> None:
         "huggingface_hub>=0.34",
         "requests>=2.32",
         "websocket-client>=1.8",
+        "aiohttp>=3.11,<4",
+        "httpx>=0.27",
+        "uvicorn>=0.30",
         "Pillow>=10",
     )
     install_pinned_numpy_stack()

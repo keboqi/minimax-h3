@@ -79,6 +79,10 @@ Useful environment variables include `H3_MODAL_APP_NAME`,
 `H3_MODAL_SCALEDOWN_WINDOW`, and `H3_MODAL_PROXY_AUTH`. Set
 `H3_MODAL_PROXY_AUTH=1` for Modal proxy authentication.
 
+The Gradio service also exposes the full ComfyUI interface at `/comfyui/`
+on the same public URL. HTTP, uploads, and live WebSocket progress are proxied
+to the private ComfyUI backend on port 8188.
+
 ## Validation
 
 The fast checks do not download models or require a GPU:
