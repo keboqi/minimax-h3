@@ -14,7 +14,8 @@ PYTHON_BIN="python3"
 COMFY_HOST="127.0.0.1"
 COMFY_PORT="8188"
 COMFY_URL="http://127.0.0.1:8188"
-COMFYUI_MEMORY_MODE="gpu-only"
+COMFYUI_MEMORY_MODE="dynamic"
+COMFY_MEMORY_ARGS=()
 
 GRADIO_SERVER_NAME="0.0.0.0"
 GRADIO_SERVER_PORT="7860"
@@ -84,12 +85,20 @@ else
 fi
 
 log "Starting ComfyUI at $COMFY_URL"
+if command -v nvidia-smi >/dev/null 2>&1; then
+  GPU_MEMORY_MIB="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '[:space:]')"
+  if [[ "$GPU_MEMORY_MIB" =~ ^[0-9]+$ ]] && (( GPU_MEMORY_MIB >= 65536 )); then
+    COMFYUI_MEMORY_MODE="gpu-only"
+    COMFY_MEMORY_ARGS=(--gpu-only)
+  fi
+fi
+log "Memory profile: $COMFYUI_MEMORY_MODE"
 (
   cd "$COMFY_DIR"
   exec "$PYTHON_BIN" -u main.py \
     --listen "$COMFY_HOST" \
     --port "$COMFY_PORT" \
-    --gpu-only \
+    "${COMFY_MEMORY_ARGS[@]}" \
     "${COMFY_ATTENTION_ARGS[@]}" \
     --enable-cors-header "*"
 ) &
@@ -132,6 +141,7 @@ export MODELS_CONFIG="$MODELS_CONFIG"
 export GRADIO_OUTPUT_DIR="$GRADIO_OUTPUT_DIR"
 export SERVER_ATTENTION_BACKEND="$SERVER_ATTENTION_BACKEND"
 export SERVER_DENSE_ATTENTION_BACKEND="$SERVER_DENSE_ATTENTION_BACKEND"
+export SERVER_MEMORY_PROFILE="$COMFYUI_MEMORY_MODE"
 export GRADIO_SERVER_NAME="$GRADIO_SERVER_NAME"
 export GRADIO_SERVER_PORT="$GRADIO_SERVER_PORT"
 export AUTO_START_COMFYUI="0"

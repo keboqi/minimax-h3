@@ -23,7 +23,8 @@ from h3_requirements import (
 
 
 COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
-SOL_REPO = "https://github.com/KingGore/ComfyUI_sol-attn_Blackwell.git"
+SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
+SOL_REF = "90467f1c633ce53af7d77e4a1cc243b5001d89b0"
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -107,6 +108,7 @@ def sync_git_repo(
 
     fetch_ref = ref or "HEAD"
     if (dest / ".git").is_dir():
+        run("git", "-C", dest, "remote", "set-url", "origin", url)
         run(
             "git", "-C", dest, "fetch", "--depth", "1",
             "origin", fetch_ref,
@@ -309,7 +311,7 @@ def sync_external_nodes(
     install_requirements: bool,
 ) -> None:
     sol = comfy / "custom_nodes" / "ComfyUI_sol-attn_Blackwell"
-    sync_git_repo(SOL_REPO, sol)
+    sync_git_repo(SOL_REPO, sol, ref=SOL_REF)
     if install_requirements and (sol / "requirements.txt").is_file():
         uv_pip("-r", str(sol / "requirements.txt"), no_deps=True)
 

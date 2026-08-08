@@ -24,6 +24,42 @@ left structurally intact because they encode runtime-sensitive ComfyUI ordering
 and node contracts. Their existing self-tests remain the safer regression
 boundary.
 
+## Community optimization review — 2026-08-08
+
+The latest H3 and ComfyUI work was compared against this deployment:
+
+1. **Adopted: H3-native zero-copy Sol-Attn.** The earlier Blackwell plugin used
+   a generic FlexAttention path. The deployment now pins Saganaki22's
+   Apache-2.0 `ComfyUI-sol-attn` commit
+   `90467f1c633ce53af7d77e4a1cc243b5001d89b0` and builds the
+   `MiniMaxH3MemoryEfficientSolAttentionPatch` node. Its strided fused-QKV path
+   avoids three long-sequence contiguous copies. Conditioning KV remains exact,
+   INT8 QK/PV stays disabled, and one tail transformer block remains dense by
+   default.
+2. **Adopted: ConvRot feed-forward chunking.** Quality checkpoints now receive
+   `MiniMaxH3ChunkFeedForward` with two chunks above 8K tokens. Upstream reports
+   bit-identical output for its tested INT8 ConvRot block and a 37% reduction in
+   MLP peak activation memory.
+3. **Adopted: hardware-aware memory mode.** Current ComfyUI enables its new
+   dynamic residency, pinned-memory, and prefetch system by default, but its
+   community thread also contains high-memory slowdown reports. Local launch
+   now uses Dynamic VRAM below 64 GiB and `--gpu-only` at 64 GiB+, while the
+   known 96 GiB Modal target stays GPU-only.
+4. **Deferred: AdaptiveCache.** It has promising early RTX 5090 results and a
+   more sophisticated partial-tail cache, but is new, lossy, GPL-licensed, and
+   not yet validated against this repository's FL2VA/Ref2VA audio safeguards.
+5. **Deferred: Spectrum forecasting.** It has strong community interest, but its
+   own documentation reports trajectory changes and localized degradation in
+   fast motion. It should remain opt-in until fixed-seed video and audio A/B
+   coverage exists here.
+
+Primary sources:
+
+- https://github.com/Saganaki22/ComfyUI-sol-attn
+- https://github.com/Comfy-Org/ComfyUI/discussions/12699
+- https://github.com/FFFFFFpy/ComfyUI-MiniMaxH3-AdaptiveCache
+- https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3
+
 ## Earlier v37 → v38 review
 
 ## Findings addressed
