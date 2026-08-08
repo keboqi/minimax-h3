@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.partial
+
+# Local runtime, downloaded models, caches, and generated media
+h3/
+ComfyUI/
+gradio_outputs/
+.cache/
+
+# Local secrets and editor state
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
