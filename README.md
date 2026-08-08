@@ -9,7 +9,9 @@ models, Sol-Attn, SageAttention, and a bundled FirstBlockCache node.
 - Text/image-to-video and reference-media-to-video workflows
 - Speed and quality NVFP4 model profiles
 - Optional LightX2V Turbo LoRA
-- Sol sparse attention with SageAttention dense/fallback execution
+- H3-native zero-copy Sol sparse attention with SageAttention fallback
+- Two-way feed-forward chunking for ConvRot quality checkpoints
+- Hardware-aware ComfyUI memory mode selection
 - FirstBlockCache and native ComfyUI EasyCache support
 - Matching local and Modal deployment paths
 - Version-aware, resumable Hugging Face model provisioning
@@ -26,6 +28,12 @@ The installer pins the ABI-sensitive stack to Torch 2.11.0 + CUDA 13.0,
 NumPy 1.26.4, and SciPy 1.15.3. SageAttention is installed from a prebuilt
 CPython 3.12 Linux wheel; source compilation is intentionally disabled.
 
+The Sol-Attn integration is pinned to a reviewed Apache-2.0 upstream commit so
+its ComfyUI node contract remains reproducible. Sol uses the zero-copy H3 path,
+keeps conditioning KV exact by default, and leaves its optional INT8 attention
+approximations disabled. Quality ConvRot models additionally use bit-preserving
+two-way feed-forward chunking above 8K packed tokens.
+
 ## Run locally
 
 ```bash
@@ -36,7 +44,11 @@ bash run_h3.sh
 
 The first run creates `h3/`, installs ComfyUI and dependencies, and downloads
 the models. Later runs check remote model metadata and refresh only stale files.
-The UI listens on `http://127.0.0.1:7860` by default.
+The UI listens on `http://127.0.0.1:7860` by default. Local launch uses ComfyUI
+Dynamic VRAM on GPUs below 64 GiB, allowing current releases to manage model
+residency, prefetching, and host-memory pressure. It selects `--gpu-only` on
+64 GiB+ GPUs, where keeping the full stack resident avoids unnecessary loading.
+The 96 GiB Modal target likewise remains GPU-only.
 
 `run_h3.sh` binds Gradio to `0.0.0.0`, so use host firewall rules or a trusted
 network when the machine is reachable by other devices.

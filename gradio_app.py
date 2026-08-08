@@ -50,7 +50,7 @@ SERVER_DENSE_ATTENTION_BACKEND = os.getenv(
 ).lower()
 SERVER_MEMORY_PROFILE = os.getenv("SERVER_MEMORY_PROFILE", "unknown").lower()
 ALLOW_UNSAFE_H3_COMPILE = os.getenv("ALLOW_UNSAFE_H3_COMPILE", "0") == "1"
-AUTO_SOL_TOKEN_THRESHOLD = 24_576
+AUTO_SOL_TOKEN_THRESHOLD = 8_192
 DEFAULT_FBCACHE_PRESET = "Fast"
 DEFAULT_FBCACHE_THRESHOLD = 0.10
 DEFAULT_FBCACHE_START = 0.10
@@ -532,12 +532,8 @@ def add_model_stack(
         )
         model_ref = Graph.out(turbo)
 
-    # IMPORTANT: FirstBlockCache must be patched before Sol-Attn.
-    # ComfyUI executes DIFFUSION_MODEL wrappers in insertion order, while the
-    # current Sol H3 wrapper intentionally calls executor.original(). If Sol is
-    # inserted first it bypasses the cache's diffusion wrapper and block 0 sees
-    # no active cache context. FBCache -> Sol keeps the protected-window context
-    # active while Sol still owns the H3 attention override.
+    # Keep FirstBlockCache ahead of attention/object patches so its sampling and
+    # diffusion wrappers own the outer execution context.
     cache_mode_normalized = str(cache_mode).strip().lower()
     if cache_mode_normalized == "firstblockcache":
         if "H3FirstBlockCache" not in available_nodes:
@@ -559,9 +555,9 @@ def add_model_stack(
 
 
     if use_sol:
-        if "SolAttnMiniMaxH3Patcher" not in available_nodes:
+        if "MiniMaxH3MemoryEfficientSolAttentionPatch" not in available_nodes:
             raise H3Error(
-                "Sol-Attn was requested, but SolAttnMiniMaxH3Patcher is not loaded. "
+                "Sol-Attn was requested, but the H3 zero-copy Sol node is not loaded. "
                 "Run deploy_h3.sh install and inspect the ComfyUI startup log."
             )
         exact_mode = (
@@ -569,29 +565,47 @@ def add_model_stack(
             if sol_exact_mode in {"off", "exact_kv", "exact_kv_and_rows"}
             else "off"
         )
-        dense_steps = max(0, int(sol_dense_steps))
-        step_off = float(sol_step_off)
-        sink_tokens = max(0, int(sol_sink_tokens))
-        if not 0.0 <= step_off <= 1.0:
-            raise H3Error("Sol-Attn step_off must be between 0 and 1.")
+        dense_block_count = max(0, min(int(sol_dense_steps), 8))
+        dense_blocks = ",".join(
+            f"-{index}" for index in range(1, dense_block_count + 1)
+        )
 
-        # Sol-Attn v2 requires all seven inputs. The quality-preserving options
-        # keep H3 conditioning/audio prefix rows exact and optionally run the
-        # final denoising step(s) with dense attention.
+        # The H3-native path consumes strided q/k/v views directly, avoiding
+        # the large contiguous copies required by generic attention hooks.
         sol = graph.add(
-            "SolAttnMiniMaxH3Patcher",
+            "MiniMaxH3MemoryEfficientSolAttentionPatch",
             model=model_ref,
             enabled=True,
             tau=float(sol_tau),
+            min_tokens=AUTO_SOL_TOKEN_THRESHOLD,
+            strict=False,
             thresh_type=(
                 sol_thresh_type if sol_thresh_type in {"diag", "exact"} else "diag"
             ),
-            exact_mode=exact_mode,
-            dense_steps=dense_steps,
-            step_off=step_off,
-            sink_tokens=sink_tokens,
+            int8_qk=False,
+            int8_pv=False,
+            sink_conditioning=exact_mode,
+            dense_blocks=dense_blocks,
         )
         model_ref = Graph.out(sol)
+
+    # The ConvRot quality checkpoints have the largest feed-forward activation
+    # peak. Two-way token chunking preserves their row-wise quantization math
+    # while substantially reducing peak VRAM.
+    if "convrot" in model_name.lower():
+        if "MiniMaxH3ChunkFeedForward" not in available_nodes:
+            raise H3Error(
+                "The quality model requires MiniMaxH3ChunkFeedForward, but the "
+                "updated Sol-Attn plugin is not loaded. Re-run setup_h3.py."
+            )
+        chunked = graph.add(
+            "MiniMaxH3ChunkFeedForward",
+            model=model_ref,
+            enabled=True,
+            chunks=2,
+            min_tokens=AUTO_SOL_TOKEN_THRESHOLD,
+        )
+        model_ref = Graph.out(chunked)
 
     if cache_mode_normalized == "easycache":
         if "EasyCache" not in available_nodes:
@@ -896,6 +910,7 @@ def required_nodes_for(
     cache_mode: str,
     compile_model: bool,
     use_turbo: bool = False,
+    model_filename: str = "",
 ) -> set[str]:
     common = {
         "UNETLoader", "CLIPLoader", "VAELoader", "RandomNoise",
@@ -910,7 +925,9 @@ def required_nodes_for(
     if use_turbo:
         common.add("LoraLoaderModelOnly")
     if use_sol:
-        common.add("SolAttnMiniMaxH3Patcher")
+        common.add("MiniMaxH3MemoryEfficientSolAttentionPatch")
+    if "convrot" in model_filename.lower():
+        common.add("MiniMaxH3ChunkFeedForward")
     if str(cache_mode).strip().lower() == "firstblockcache":
         common.add("H3FirstBlockCache")
     elif str(cache_mode).strip().lower() == "easycache":
@@ -1161,7 +1178,12 @@ def generate(
             effective_cache_mode = "Off"
             cache_note = "FirstBlock/EasyCache disabled automatically in Turbo mode pending validation."
         missing = required_nodes_for(
-            mode, effective_sol, effective_cache_mode, effective_compile, use_turbo=use_turbo
+            mode,
+            effective_sol,
+            effective_cache_mode,
+            effective_compile,
+            use_turbo=use_turbo,
+            model_filename=selected_model,
         ) - available
         if missing:
             raise H3Error("Missing ComfyUI nodes: " + ", ".join(sorted(missing)))
@@ -1242,9 +1264,8 @@ def generate(
 
         prompt_id = submit_prompt(graph)
         sol_status = (
-            f"on ({sol_thresh_type}, τ={float(sol_tau):.1f}, "
-            f"{sol_exact_mode}, dense-last={int(sol_dense_steps)}, "
-            f"step_off={float(sol_step_off):.2f})"
+            f"zero-copy on ({sol_thresh_type}, τ={float(sol_tau):.1f}, "
+            f"{sol_exact_mode}, dense-tail-blocks={int(sol_dense_steps)})"
             if effective_sol else "off"
         )
         if effective_cache_mode.lower() == "firstblockcache":
@@ -1425,7 +1446,7 @@ def build_ui() -> gr.Blocks:
                     seed = gr.Number(value=-1, precision=0, label="Seed (-1 random)")
                 attention_mode = gr.Radio(
                     ["Auto", "Sol-Attn", "Dense"],
-                    value="Dense",
+                    value="Auto",
                     label="Attention",
                     interactive=SERVER_ATTENTION_BACKEND == "sol",
                     info=(
@@ -1445,7 +1466,7 @@ def build_ui() -> gr.Blocks:
                         label="Sol threshold",
                         info="diag is faster; exact calculates a more precise routing threshold.",
                     )
-                with gr.Accordion("Sol-Attn v2 quality controls", open=True):
+                with gr.Accordion("Zero-copy Sol-Attn quality controls", open=True):
                     sol_exact_mode = gr.Radio(
                         ["off", "exact_kv", "exact_kv_and_rows"],
                         value="exact_kv",
@@ -1459,26 +1480,14 @@ def build_ui() -> gr.Blocks:
                     with gr.Row():
                         sol_dense_steps = gr.Slider(
                             0, 4, value=1, step=1,
-                            label="Dense final steps",
-                            info="Run the final N denoising steps with full attention.",
-                        )
-                        sol_step_off = gr.Slider(
-                            0.0, 1.0, value=0.0, step=0.05,
-                            label="Dense trailing fraction",
+                            label="Dense final transformer blocks",
                             info=(
-                                "Alternative schedule-based dense tail. Leave 0 "
-                                "when using Dense final steps."
+                                "Keep the final N H3 transformer blocks dense. "
+                                "The final block is the most approximation-sensitive."
                             ),
                         )
-                    sol_sink_tokens = gr.Number(
-                        value=0,
-                        precision=0,
-                        label="Exact prefix tokens (0 = auto)",
-                        info=(
-                            "Automatically derived from the H3 packed layout. "
-                            "Only override for debugging."
-                        ),
-                    )
+                    sol_step_off = gr.State(0.0)
+                    sol_sink_tokens = gr.State(0)
                 with gr.Accordion("Cache acceleration", open=True):
                     cache_mode = gr.Radio(
                         ["FirstBlockCache", "EasyCache", "Off"],
@@ -1664,8 +1673,8 @@ def selftest() -> None:
             ),
             "quality": ModelProfile(
                 label="Quality",
-                fl2va="fl2va_quality.safetensors",
-                ref2va="ref2va_quality.safetensors",
+                fl2va="fl2va_quality_convrot.safetensors",
+                ref2va="ref2va_quality_convrot.safetensors",
             ),
         },
         default_profile="speed",
@@ -1676,6 +1685,7 @@ def selftest() -> None:
         turbo_source="test",
     )
     available = required_nodes_for("Text to video", True, "FirstBlockCache", True, use_turbo=True) | required_nodes_for("Reference media", True, "EasyCache", True)
+    available.add("MiniMaxH3ChunkFeedForward")
     # Avoid staging files in selftest; build prompt-only T2V and check graph wiring.
     graph = build_fl2va_graph(
         prompt="test", first_image=None, last_image=None,
@@ -1707,7 +1717,7 @@ def selftest() -> None:
         "MiniMaxH3ImageToVideo",
         "SamplerCustomAdvanced",
         "SaveVideo",
-        "SolAttnMiniMaxH3Patcher",
+        "MiniMaxH3MemoryEfficientSolAttentionPatch",
         "H3FirstBlockCache",
         "LoraLoaderModelOnly",
         "TorchCompileModel",
@@ -1718,14 +1728,14 @@ def selftest() -> None:
 
     sol_nodes = [
         node for node in graph.values()
-        if node["class_type"] == "SolAttnMiniMaxH3Patcher"
+        if node["class_type"] == "MiniMaxH3MemoryEfficientSolAttentionPatch"
     ]
     assert len(sol_nodes) == 1
     assert sol_nodes[0]["inputs"]["thresh_type"] == "exact"
-    assert sol_nodes[0]["inputs"]["exact_mode"] == "exact_kv_and_rows"
-    assert sol_nodes[0]["inputs"]["dense_steps"] == 1
-    assert sol_nodes[0]["inputs"]["step_off"] == 0.0
-    assert sol_nodes[0]["inputs"]["sink_tokens"] == 0
+    assert sol_nodes[0]["inputs"]["sink_conditioning"] == "exact_kv_and_rows"
+    assert sol_nodes[0]["inputs"]["dense_blocks"] == "-1"
+    assert sol_nodes[0]["inputs"]["min_tokens"] == AUTO_SOL_TOKEN_THRESHOLD
+    assert sol_nodes[0]["inputs"]["int8_qk"] is False
 
     cache_nodes = [
         node for node in graph.values()
@@ -1748,7 +1758,7 @@ def selftest() -> None:
     )
     sol_id = next(
         node_id for node_id, node in graph.items()
-        if node["class_type"] == "SolAttnMiniMaxH3Patcher"
+        if node["class_type"] == "MiniMaxH3MemoryEfficientSolAttentionPatch"
     )
     assert graph[sol_id]["inputs"]["model"] == [cache_id, 0]
     assert graph[cache_id]["inputs"]["model"] != [sol_id, 0]
@@ -1819,6 +1829,13 @@ def selftest() -> None:
     assert turbo_nodes[0]["inputs"]["lora_name"].endswith(
         "v0.1_comfy.safetensors"
     )
+    chunk_nodes = [
+        node for node in quality_turbo_graph.values()
+        if node["class_type"] == "MiniMaxH3ChunkFeedForward"
+    ]
+    assert len(chunk_nodes) == 1
+    assert chunk_nodes[0]["inputs"]["chunks"] == 2
+    assert chunk_nodes[0]["inputs"]["min_tokens"] == AUTO_SOL_TOKEN_THRESHOLD
     assert not any(
         node["class_type"] == "MiniMaxH3TurboSampler"
         for node in quality_turbo_graph.values()
@@ -1835,7 +1852,8 @@ def selftest() -> None:
     print(
         f"Selftest OK: {len(graph)} nodes, 5s=124 frames, "
         f"15s=362 frames, tiered resolution presets valid, Sol exact valid, "
-        f"Sol Auto policy valid, FirstBlockCache v2 + Sol composition valid, Kijai LightX2V Turbo + editable steps valid, compile guard active, "
+        f"Sol Auto policy valid, zero-copy Sol + FirstBlockCache composition valid, "
+        f"ConvRot FFN chunking valid, Kijai LightX2V Turbo + editable steps valid, compile guard active, "
         f"SaveVideo codec API valid"
     )
 

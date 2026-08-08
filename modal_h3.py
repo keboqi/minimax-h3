@@ -44,7 +44,8 @@ COMFY_PORT = 8188
 UI_PORT = 7860
 
 COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
-SOL_REPO = "https://github.com/KingGore/ComfyUI_sol-attn_Blackwell.git"
+SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
+SOL_REF = "90467f1c633ce53af7d77e4a1cc243b5001d89b0"
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 APP = os.getenv("H3_MODAL_APP_NAME", "minimax-h3")
@@ -120,8 +121,15 @@ def _run(
     )
 
 
-def _clone(url: str, destination: Path) -> None:
-    _run("git", "clone", "--depth", "1", url, destination)
+def _clone(url: str, destination: Path, *, ref: str | None = None) -> None:
+    if ref is None:
+        _run("git", "clone", "--depth", "1", url, destination)
+        return
+
+    _run("git", "init", destination)
+    _run("git", "-C", destination, "remote", "add", "origin", url)
+    _run("git", "-C", destination, "fetch", "--depth", "1", "origin", ref)
+    _run("git", "-C", destination, "checkout", "--detach", "FETCH_HEAD")
 
 
 
@@ -167,7 +175,7 @@ def build(revision: str) -> None:
     shutil.copy2(Path(ACCEL_SRC), accel_dest)
 
     sol_dir = Path(COMFY) / "custom_nodes" / "ComfyUI_sol-attn_Blackwell"
-    _clone(SOL_REPO, sol_dir)
+    _clone(SOL_REPO, sol_dir, ref=SOL_REF)
 
     _print_git_revision(sol_dir)
 
@@ -433,7 +441,8 @@ def service_env() -> dict[str, str]:
             "MODELS_CONFIG": CONFIG.as_posix(),
             "GRADIO_OUTPUT_DIR": OUTPUT.as_posix(),
             "SERVER_ATTENTION_BACKEND": "sol",
-"SERVER_DENSE_ATTENTION_BACKEND": "pytorch",
+            "SERVER_DENSE_ATTENTION_BACKEND": "pytorch",
+            "SERVER_MEMORY_PROFILE": "gpu-only",
             "GRADIO_ANALYTICS_ENABLED": "False",
             "PYTHONUNBUFFERED": "1",
             "HF_HOME": "/tmp/hf",
