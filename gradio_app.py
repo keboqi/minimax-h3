@@ -1664,7 +1664,7 @@ def postprocess_video(source: Path, option: str) -> Path:
 
 def video_download_path(video: str | Path) -> str:
     """Return a safe, public route for a generated video on this server."""
-    resolved = Path(video).resolve()
+    resolved = managed_video_path(video, require_file=False)
     for bucket, root in (
         ("comfy", OUTPUT_DIR.resolve()),
         ("gradio", OUTPUTS_DIR.resolve()),
@@ -1673,6 +1673,23 @@ def video_download_path(video: str | Path) -> str:
             relative = resolved.relative_to(root).as_posix()
             return f"/downloads/{bucket}/{quote(relative, safe='/')}"
     raise H3Error("Generated video is outside the configured output directories.")
+
+
+def managed_video_path(
+    video: str | Path,
+    *,
+    require_file: bool = True,
+) -> Path:
+    """Resolve a video only when it belongs to a managed output directory."""
+    resolved = Path(video).resolve()
+    roots = (OUTPUT_DIR.resolve(), OUTPUTS_DIR.resolve())
+    if (
+        resolved.suffix.lower() not in VIDEO_EXTENSIONS
+        or not any(resolved.is_relative_to(root) for root in roots)
+        or (require_file and not resolved.is_file())
+    ):
+        raise H3Error("Video is not a managed generated output.")
+    return resolved
 
 
 def absolute_video_url(
@@ -1722,10 +1739,8 @@ def gallery_thumbnail(video: Path) -> Path | None:
     temporary: Path | None = None
     try:
         video_mtime = video.stat().st_mtime
-        cache_key = hashlib.sha256(
-            str(video.resolve()).encode("utf-8")
-        ).hexdigest()[:24]
-        thumbnail = GALLERY_THUMBNAILS_DIR / f"{cache_key}.jpg"
+        thumbnail = gallery_thumbnail_path(video)
+        cache_key = thumbnail.stem
         if thumbnail.is_file() and thumbnail.stat().st_mtime >= video_mtime:
             return thumbnail
 
@@ -1748,6 +1763,13 @@ def gallery_thumbnail(video: Path) -> Path | None:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
         return None
+
+
+def gallery_thumbnail_path(video: str | Path) -> Path:
+    cache_key = hashlib.sha256(
+        str(Path(video).resolve()).encode("utf-8")
+    ).hexdigest()[:24]
+    return GALLERY_THUMBNAILS_DIR / f"{cache_key}.jpg"
 
 
 def refresh_gallery() -> tuple[list[tuple[str, str]], list[str], str]:
@@ -1780,18 +1802,115 @@ def select_gallery_video(
     paths: list[str],
     request: gr.Request,
     evt: gr.SelectData,
-) -> tuple[str | None, str]:
+) -> tuple[str | None, str, str | None]:
     index = evt.index
     if isinstance(index, (tuple, list)):
         index = index[0]
     try:
         video = paths[int(index)]
     except (IndexError, TypeError, ValueError):
-        return None, ""
+        return None, "", None
     download_url = absolute_video_download_url(video, request)
     # Return the local path to gr.Video. Gradio treats arbitrary HTTP URLs as
     # remote fetches and can reject its own public hostname during validation.
-    return video, f"[Download video]({download_url})"
+    return video, f"[Download video]({download_url})", video
+
+
+GalleryMutationResult = tuple[
+    list[tuple[str, str]],
+    list[str],
+    str,
+    Any,
+    Any,
+    str | None,
+    bool,
+]
+
+
+def gallery_mutation_result(
+    message: str,
+    *,
+    selected_video: str | None = None,
+    clear_selection: bool,
+) -> GalleryMutationResult:
+    items, paths, detail = refresh_gallery()
+    player = None if clear_selection else gr.skip()
+    download = "" if clear_selection else gr.skip()
+    selected = None if clear_selection else selected_video
+    return (
+        items,
+        paths,
+        f"{message} · {detail}",
+        player,
+        download,
+        selected,
+        False,
+    )
+
+
+def delete_selected_gallery_video(
+    selected_video: str | None,
+    confirmed: bool,
+) -> GalleryMutationResult:
+    if not confirmed:
+        return gallery_mutation_result(
+            "Confirm permanent deletion first.",
+            selected_video=selected_video,
+            clear_selection=False,
+        )
+    if not selected_video:
+        return gallery_mutation_result(
+            "Select a video to delete.",
+            clear_selection=True,
+        )
+    try:
+        video = managed_video_path(selected_video)
+        thumbnail = gallery_thumbnail_path(video)
+        name = video.name
+        video.unlink()
+        thumbnail.unlink(missing_ok=True)
+        return gallery_mutation_result(
+            f"Deleted `{name}`.",
+            clear_selection=True,
+        )
+    except (H3Error, OSError) as exc:
+        return gallery_mutation_result(
+            f"Delete failed: {exc}",
+            clear_selection=True,
+        )
+
+
+def empty_generated_gallery(
+    selected_video: str | None,
+    confirmed: bool,
+) -> GalleryMutationResult:
+    if not confirmed:
+        return gallery_mutation_result(
+            "Confirm permanent deletion first.",
+            selected_video=selected_video,
+            clear_selection=False,
+        )
+    deleted = 0
+    failed = 0
+    for candidate in gallery_video_paths():
+        try:
+            video = managed_video_path(candidate)
+            gallery_thumbnail_path(video).unlink(missing_ok=True)
+            video.unlink()
+            deleted += 1
+        except (H3Error, OSError):
+            failed += 1
+    if GALLERY_THUMBNAILS_DIR.is_dir():
+        for thumbnail in GALLERY_THUMBNAILS_DIR.iterdir():
+            if thumbnail.is_file() and thumbnail.suffix.lower() in {".jpg", ".tmp"}:
+                try:
+                    thumbnail.unlink()
+                except OSError:
+                    failed += 1
+    result = f"Deleted {deleted} generated video{'s' if deleted != 1 else ''}."
+    if failed:
+        result += f" {failed} file{'s' if failed != 1 else ''} could not be deleted."
+    return gallery_mutation_result(result, clear_selection=True)
 
 
 def backend_status() -> str:
@@ -2648,20 +2767,42 @@ def build_ui() -> gr.Blocks:
                     "Only poster thumbnails are loaded here. Select one to load and play it."
                 )
                 gallery_refresh = gr.Button("Refresh gallery", scale=0)
+                gallery_delete = gr.Button(
+                    "Delete selected",
+                    variant="stop",
+                    scale=0,
+                )
+                gallery_empty = gr.Button(
+                    "Empty all generated",
+                    variant="stop",
+                    scale=0,
+                )
             gallery_status = gr.Markdown("Open this tab to scan generated videos.")
             gallery_paths = gr.State([])
-            gallery_grid = gr.Gallery(
-                value=[],
-                label="Generated video thumbnails",
-                columns=4,
-                height=360,
-                object_fit="cover",
-                allow_preview=False,
-                fit_columns=False,
-                elem_id="generated-video-gallery",
+            gallery_selected = gr.State(None)
+            gallery_confirm_delete = gr.Checkbox(
+                value=False,
+                label="Confirm permanent deletion",
+                info="Required for Delete selected and Empty all generated.",
             )
-            gallery_player = gr.Video(label="Selected video")
-            gallery_download = gr.Markdown()
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=2, min_width=280):
+                    gallery_grid = gr.Gallery(
+                        value=[],
+                        label="Generated video thumbnails",
+                        columns=2,
+                        height=540,
+                        object_fit="cover",
+                        allow_preview=False,
+                        fit_columns=False,
+                        elem_id="generated-video-gallery",
+                    )
+                with gr.Column(scale=5, min_width=480):
+                    gallery_player = gr.Video(
+                        label="Selected video",
+                        height=540,
+                    )
+                    gallery_download = gr.Markdown()
 
         with gr.Group(visible=False) as api_view:
             gr.Markdown(api_guide())
@@ -2791,6 +2932,8 @@ def build_ui() -> gr.Blocks:
                 gr.update(visible=False),
                 None,
                 "",
+                None,
+                False,
             ),
             outputs=[
                 generation_view,
@@ -2798,6 +2941,8 @@ def build_ui() -> gr.Blocks:
                 api_view,
                 gallery_player,
                 gallery_download,
+                gallery_selected,
+                gallery_confirm_delete,
             ],
         )
         gallery_event.then(
@@ -2813,8 +2958,31 @@ def build_ui() -> gr.Blocks:
         gallery_grid.select(
             select_gallery_video,
             inputs=gallery_paths,
-            outputs=[gallery_player, gallery_download],
+            outputs=[gallery_player, gallery_download, gallery_selected],
             show_progress="minimal",
+        )
+        gallery_mutation_outputs = [
+            gallery_grid,
+            gallery_paths,
+            gallery_status,
+            gallery_player,
+            gallery_download,
+            gallery_selected,
+            gallery_confirm_delete,
+        ]
+        gallery_delete.click(
+            delete_selected_gallery_video,
+            inputs=[gallery_selected, gallery_confirm_delete],
+            outputs=gallery_mutation_outputs,
+            show_progress="minimal",
+            api_name=False,
+        )
+        gallery_empty.click(
+            empty_generated_gallery,
+            inputs=[gallery_selected, gallery_confirm_delete],
+            outputs=gallery_mutation_outputs,
+            show_progress="minimal",
+            api_name=False,
         )
         api_tab.select(
             lambda: (
@@ -3115,11 +3283,37 @@ def selftest() -> None:
             class FakeSelectEvent:
                 index = 0
 
-            gallery_play_url, gallery_download_link = select_gallery_video(
+            gallery_play_url, gallery_download_link, selected_video = select_gallery_video(
                 gallery_paths,
                 FakeGalleryRequest(),  # type: ignore[arg-type]
                 FakeSelectEvent(),  # type: ignore[arg-type]
             )
+            unconfirmed_delete = delete_selected_gallery_video(
+                selected_video, False
+            )
+            fallback_exists_after_unconfirmed = fallback_video.exists()
+            confirmed_delete = delete_selected_gallery_video(
+                selected_video, True
+            )
+            fallback_exists_after_delete = fallback_video.exists()
+
+            empty_video_1 = comfy_test_output / "empty-1.mp4"
+            empty_video_2 = gradio_test_output / "empty-2.mp4"
+            empty_video_1.write_bytes(b"test")
+            empty_video_2.write_bytes(b"test")
+            unconfirmed_empty = empty_generated_gallery(None, False)
+            empty_exists_after_unconfirmed = (
+                empty_video_1.exists() and empty_video_2.exists()
+            )
+            confirmed_empty = empty_generated_gallery(None, True)
+            empty_exists_after_delete = (
+                empty_video_1.exists() or empty_video_2.exists()
+            )
+            try:
+                managed_video_path(gallery_root / "outside.mp4", require_file=False)
+                raise AssertionError("Unmanaged gallery path was accepted")
+            except H3Error:
+                pass
         finally:
             globals()["OUTPUT_DIR"] = original_output_dir
             globals()["OUTPUTS_DIR"] = original_outputs_dir
@@ -3128,11 +3322,20 @@ def selftest() -> None:
         assert len(gallery_items) == 1
         assert gallery_paths == [str(fallback_video)]
         assert gallery_play_url == str(fallback_video)
+        assert selected_video == str(fallback_video)
         assert gallery_download_link.endswith(
             "/downloads/comfy/fallback.mp4?download=1)"
         )
         assert "1 generated video" in gallery_detail
         assert "1 thumbnail" in gallery_detail
+        assert fallback_exists_after_unconfirmed is True
+        assert "Confirm permanent deletion" in unconfirmed_delete[2]
+        assert fallback_exists_after_delete is False
+        assert "Deleted `fallback.mp4`" in confirmed_delete[2]
+        assert empty_exists_after_unconfirmed is True
+        assert "Confirm permanent deletion" in unconfirmed_empty[2]
+        assert empty_exists_after_delete is False
+        assert "Deleted 2 generated videos" in confirmed_empty[2]
     assert estimate_packed_tokens("Text to video", 1344, 768, 5) >= AUTO_SOL_TOKEN_THRESHOLD
     assert resolve_sol_policy("Auto", "Text to video", 608, 352, 2, None, None)[0] is False
     assert validate_resolution(865, 481) == (864, 480)
@@ -3346,7 +3549,7 @@ def selftest() -> None:
         f"ConvRot FFN chunking valid, selectable Larry/LightX2V Turbo on "
         f"FL2VA/Ref2VA + editable steps valid, compile guard active, "
         f"SaveVideo codec API valid, prompt API download URL valid, "
-        f"gallery fallback valid, "
+        f"gallery fallback/deletion guards valid, "
         f"/comfyui proxy rewrites valid"
     )
 
