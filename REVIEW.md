@@ -65,6 +65,28 @@ Primary sources:
 - https://github.com/FFFFFFpy/ComfyUI-MiniMaxH3-AdaptiveCache
 - https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3
 
+## Turbo optimization update — 2026-08-09
+
+1. **Adopted: Sol-Attn v0.6.0.** Local and Modal provisioning now pin commit
+   `bd28909e6a152ba5db4e3590d2d9df1c249943f2`. This release adds the SM120
+   pointer-kernel path and the H3 fused-modulation node while retaining the
+   existing zero-copy H3 attention node contract.
+2. **Adopted: bit-exact fused modulation for Turbo.** Every Larry and LightX2V
+   Turbo graph applies `MiniMaxH3FusedModulation` after its LoRA. This placement
+   ensures the fused node receives the model object returned by Larry's runtime
+   loader or LightX2V's core LoRA loader.
+3. **Adopted: thresholded Sol for Turbo.** Auto attention now enables Sol for
+   Turbo jobs at or above the existing 8K packed-token threshold. Switching the
+   UI into Turbo selects Auto rather than forcing Dense; explicit Dense and
+   Sol-Attn selections remain available. Reference Turbo always uses Sol because
+   its uploaded-media conditioning cannot be included in the pre-encoding token
+   estimate.
+4. **Still deferred: step caching in Turbo.** Spectrum, FirstBlockCache, and
+   EasyCache remain forced off because their approximation error is more
+   sensitive in four- and six-step schedules. Sol INT8 QK/PV also stays off.
+
+Primary source: https://github.com/Saganaki22/ComfyUI-sol-attn/releases/tag/v0.6.0
+
 ## Earlier v37 → v38 review
 
 ## Findings addressed

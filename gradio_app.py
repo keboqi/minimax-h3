@@ -81,6 +81,13 @@ DEFAULT_ACCELERATOR = "Spectrum"
 LIGHTX2V_TURBO = "LightX2V v0.1"
 LARRY_TURBO = "Larry v4-600 EMA"
 DEFAULT_TURBO = LARRY_TURBO
+CORE_LORA_LOADER_NODE = "LoraLoaderModelOnly"
+CORE_SAMPLER_NODE = "KSamplerSelect"
+LARRY_TURBO_LORA_NODE = "MiniMaxH3TurboLoRA"
+LARRY_TURBO_SAMPLER_NODE = "MiniMaxH3TurboSampler"
+SOL_ATTENTION_NODE = "MiniMaxH3MemoryEfficientSolAttentionPatch"
+FUSED_MODULATION_NODE = "MiniMaxH3FusedModulation"
+CHUNK_FEED_FORWARD_NODE = "MiniMaxH3ChunkFeedForward"
 TURBO_SETTINGS = {
     LARRY_TURBO: {"steps": 6, "strength": 1.0},
     LIGHTX2V_TURBO: {"steps": 4, "strength": 0.75},
@@ -735,13 +742,18 @@ def resolve_sol_policy(
         return False, tokens, "forced dense"
     if requested in {"sol-attn", "sol", "sparse"}:
         return True, tokens, "forced Sol-Attn"
-    if use_turbo:
-        return False, tokens, "Auto: Turbo stays dense pending Sol+Turbo validation"
-    # References add presentation and conditioning rows which are expensive and
-    # difficult to know exactly before ComfyUI encodes the media, so Auto uses
-    # Sol for Ref2VA. FL2VA uses a conservative target-token lower bound.
+    # Reference conditioning is not available to the estimator before ComfyUI
+    # encodes the uploaded media. Treat it as a large job in both generation
+    # modes instead of making a decision from the target tokens alone.
     if mode == "Reference media":
-        return True, tokens, "Auto: reference mode"
+        prefix = "Auto Turbo" if use_turbo else "Auto"
+        return True, tokens, f"{prefix}: reference mode"
+    if use_turbo:
+        enabled = tokens >= AUTO_SOL_TOKEN_THRESHOLD
+        return enabled, tokens, (
+            f"Auto Turbo: {tokens:,} target tokens "
+            f"{'≥' if enabled else '<'} {AUTO_SOL_TOKEN_THRESHOLD:,}"
+        )
     enabled = tokens >= AUTO_SOL_TOKEN_THRESHOLD
     return enabled, tokens, (
         f"Auto: {tokens:,} target tokens "
@@ -792,7 +804,7 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
             turbo_steps_for(turbo_variant),
             "simple",
             "Off",
-            "Dense",
+            "Auto",
         )
 
     return (
@@ -879,6 +891,63 @@ class Graph:
         return [node_id, slot]
 
 
+def turbo_required_nodes(turbo_variant: str) -> set[str]:
+    """Return the external node contract for one normalized Turbo variant."""
+    if normalize_turbo_variant(turbo_variant) == LARRY_TURBO:
+        return {
+            LARRY_TURBO_LORA_NODE,
+            LARRY_TURBO_SAMPLER_NODE,
+            FUSED_MODULATION_NODE,
+        }
+    return {CORE_LORA_LOADER_NODE, CORE_SAMPLER_NODE, FUSED_MODULATION_NODE}
+
+
+def add_turbo_model_patch(
+    graph: Graph,
+    model_ref: list[Any],
+    *,
+    lora_name: str,
+    turbo_variant: str,
+    strength: float,
+    available_nodes: set[str],
+) -> list[Any]:
+    """Apply a Turbo LoRA followed by Sol's bit-exact modulation fusion."""
+    variant = normalize_turbo_variant(turbo_variant)
+    required = turbo_required_nodes(variant)
+    missing = required - available_nodes
+    if missing:
+        missing_names = ", ".join(sorted(missing))
+        raise H3Error(
+            f"{variant} Turbo requires unavailable nodes: {missing_names}. "
+            "Re-run setup_h3.py and restart ComfyUI."
+        )
+
+    if variant == LARRY_TURBO:
+        turbo = graph.add(
+            LARRY_TURBO_LORA_NODE,
+            model=model_ref,
+            lora_name=lora_name,
+            strength=float(strength),
+            low_vram=False,
+        )
+    else:
+        turbo = graph.add(
+            CORE_LORA_LOADER_NODE,
+            model=model_ref,
+            lora_name=lora_name,
+            strength_model=float(strength),
+        )
+
+    # Install the block-level patch after the LoRA so the fused node receives
+    # the model object returned by either Turbo implementation.
+    fused_modulation = graph.add(
+        FUSED_MODULATION_NODE,
+        model=Graph.out(turbo),
+        enabled=True,
+    )
+    return Graph.out(fused_modulation)
+
+
 def add_model_stack(
     graph: Graph,
     model_name: str,
@@ -912,32 +981,14 @@ def add_model_stack(
     model_ref = Graph.out(unet)
 
     if turbo_lora_name:
-        if turbo_variant == LARRY_TURBO:
-            if "MiniMaxH3TurboLoRA" not in available_nodes:
-                raise H3Error(
-                    "Larry Turbo was requested, but MiniMaxH3TurboLoRA is unavailable. "
-                    "Re-run setup_h3.py and restart ComfyUI."
-                )
-            turbo = graph.add(
-                "MiniMaxH3TurboLoRA",
-                model=model_ref,
-                lora_name=turbo_lora_name,
-                strength=float(turbo_strength),
-                low_vram=False,
-            )
-        else:
-            if "LoraLoaderModelOnly" not in available_nodes:
-                raise H3Error(
-                    "LightX2V Turbo was requested, but core LoraLoaderModelOnly "
-                    "is unavailable. Update ComfyUI and restart the service."
-                )
-            turbo = graph.add(
-                "LoraLoaderModelOnly",
-                model=model_ref,
-                lora_name=turbo_lora_name,
-                strength_model=float(turbo_strength),
-            )
-        model_ref = Graph.out(turbo)
+        model_ref = add_turbo_model_patch(
+            graph,
+            model_ref,
+            lora_name=turbo_lora_name,
+            turbo_variant=turbo_variant,
+            strength=turbo_strength,
+            available_nodes=available_nodes,
+        )
 
     # Keep FirstBlockCache ahead of attention/object patches so its sampling and
     # diffusion wrappers own the outer execution context.
@@ -962,7 +1013,7 @@ def add_model_stack(
 
 
     if use_sol:
-        if "MiniMaxH3MemoryEfficientSolAttentionPatch" not in available_nodes:
+        if SOL_ATTENTION_NODE not in available_nodes:
             raise H3Error(
                 "Sol-Attn was requested, but the H3 zero-copy Sol node is not loaded. "
                 "Run deploy_h3.sh install and inspect the ComfyUI startup log."
@@ -980,7 +1031,7 @@ def add_model_stack(
         # The H3-native path consumes strided q/k/v views directly, avoiding
         # the large contiguous copies required by generic attention hooks.
         sol = graph.add(
-            "MiniMaxH3MemoryEfficientSolAttentionPatch",
+            SOL_ATTENTION_NODE,
             model=model_ref,
             enabled=True,
             tau=float(sol_tau),
@@ -1000,13 +1051,13 @@ def add_model_stack(
     # peak. Two-way token chunking preserves their row-wise quantization math
     # while substantially reducing peak VRAM.
     if "convrot" in model_name.lower():
-        if "MiniMaxH3ChunkFeedForward" not in available_nodes:
+        if CHUNK_FEED_FORWARD_NODE not in available_nodes:
             raise H3Error(
                 "The quality model requires MiniMaxH3ChunkFeedForward, but the "
                 "updated Sol-Attn plugin is not loaded. Re-run setup_h3.py."
             )
         chunked = graph.add(
-            "MiniMaxH3ChunkFeedForward",
+            CHUNK_FEED_FORWARD_NODE,
             model=model_ref,
             enabled=True,
             chunks=2,
@@ -1085,10 +1136,14 @@ def finish_sampling(
 ) -> None:
     noise = graph.add("RandomNoise", noise_seed=int(seed))
     guider = graph.add("BasicGuider", model=model_ref, conditioning=conditioning_ref)
+    use_larry_sampler = (
+        turbo_variant is not None
+        and normalize_turbo_variant(turbo_variant) == LARRY_TURBO
+    )
     sampler = (
-        graph.add("MiniMaxH3TurboSampler")
-        if turbo_variant == LARRY_TURBO
-        else graph.add("KSamplerSelect", sampler_name="res_multistep")
+        graph.add(LARRY_TURBO_SAMPLER_NODE)
+        if use_larry_sampler
+        else graph.add(CORE_SAMPLER_NODE, sampler_name="res_multistep")
     )
     sigmas = graph.add(
         "BasicScheduler",
@@ -1358,16 +1413,13 @@ def required_nodes_for(
     else:
         common |= {"MiniMaxH3ImageToVideo", "LoadImage"}
     if use_turbo:
-        if turbo_variant == LARRY_TURBO:
-            common |= {"MiniMaxH3TurboLoRA", "MiniMaxH3TurboSampler"}
-        else:
-            common |= {"LoraLoaderModelOnly", "KSamplerSelect"}
+        common |= turbo_required_nodes(turbo_variant)
     else:
-        common.add("KSamplerSelect")
+        common.add(CORE_SAMPLER_NODE)
     if use_sol:
-        common.add("MiniMaxH3MemoryEfficientSolAttentionPatch")
+        common.add(SOL_ATTENTION_NODE)
     if "convrot" in model_filename.lower():
-        common.add("MiniMaxH3ChunkFeedForward")
+        common.add(CHUNK_FEED_FORWARD_NODE)
     if str(cache_mode).strip().lower() == "firstblockcache":
         common.add("H3FirstBlockCache")
     elif str(cache_mode).strip().lower() == "spectrum":
@@ -1398,8 +1450,8 @@ def node_stage(class_type: str) -> str:
     """Turn ComfyUI implementation node names into useful user-facing stages."""
     name = str(class_type)
     if name in {
-        "UNETLoader", "CLIPLoader", "VAELoader", "LoraLoaderModelOnly",
-        "MiniMaxH3TurboLoRA",
+        "UNETLoader", "CLIPLoader", "VAELoader", CORE_LORA_LOADER_NODE,
+        LARRY_TURBO_LORA_NODE,
     }:
         return "Loading models"
     if name.startswith("Load") or name == "GetVideoComponents":
@@ -1407,13 +1459,13 @@ def node_stage(class_type: str) -> str:
     if "ImageToVideo" in name or "ReferenceToVideo" in name:
         return "Encoding prompt and conditioning"
     if name in {
-        "TorchCompileModel", "MiniMaxH3MemoryEfficientSolAttentionPatch",
-        "MiniMaxH3ChunkFeedForward", "SpectrumApplyMiniMaxH3",
+        "TorchCompileModel", SOL_ATTENTION_NODE, FUSED_MODULATION_NODE,
+        CHUNK_FEED_FORWARD_NODE, "SpectrumApplyMiniMaxH3",
         "H3FirstBlockCache", "EasyCache",
     }:
         return "Configuring generation model"
     if name in {
-        "RandomNoise", "BasicGuider", "KSamplerSelect", "BasicScheduler",
+        "RandomNoise", "BasicGuider", CORE_SAMPLER_NODE, "BasicScheduler",
     }:
         return "Preparing sampler"
     if name == "SamplerCustomAdvanced" or "Sampler" in name:
@@ -3067,8 +3119,8 @@ def selftest() -> None:
     )
     available = required_nodes_for("Text to video", True, "FirstBlockCache", True, use_turbo=True) | required_nodes_for("Reference media", True, "EasyCache", True)
     available.add("SpectrumApplyMiniMaxH3")
-    available.add("MiniMaxH3ChunkFeedForward")
-    available |= {"MiniMaxH3TurboLoRA", "MiniMaxH3TurboSampler"}
+    available.add(CHUNK_FEED_FORWARD_NODE)
+    available |= {LARRY_TURBO_LORA_NODE, LARRY_TURBO_SAMPLER_NODE}
     assert fake.turbo_lora_for("Text to video", LIGHTX2V_TURBO) == fake.turbo_lora
     assert fake.turbo_lora_for("Reference media", LIGHTX2V_TURBO) == fake.turbo_ref_lora
     assert fake.turbo_lora_for("Text to video", LARRY_TURBO) == fake.larry_turbo_lora
@@ -3107,9 +3159,10 @@ def selftest() -> None:
         "MiniMaxH3ImageToVideo",
         "SamplerCustomAdvanced",
         "SaveVideo",
-        "MiniMaxH3MemoryEfficientSolAttentionPatch",
+        SOL_ATTENTION_NODE,
+        FUSED_MODULATION_NODE,
         "H3FirstBlockCache",
-        "LoraLoaderModelOnly",
+        CORE_LORA_LOADER_NODE,
         "TorchCompileModel",
     }
     missing = expected - classes
@@ -3118,7 +3171,7 @@ def selftest() -> None:
 
     sol_nodes = [
         node for node in graph.values()
-        if node["class_type"] == "MiniMaxH3MemoryEfficientSolAttentionPatch"
+        if node["class_type"] == SOL_ATTENTION_NODE
     ]
     assert len(sol_nodes) == 1
     assert sol_nodes[0]["inputs"]["thresh_type"] == "exact"
@@ -3139,17 +3192,28 @@ def selftest() -> None:
     assert cache_nodes[0]["inputs"]["max_consecutive_cache_hits"] == 2
     assert cache_nodes[0]["inputs"]["temporal_guard"] is True
 
-    # Sol must consume the FirstBlockCache model output. The inverse ordering
-    # reproduces the runtime failure where Sol's executor.original() bypasses
-    # the cache diffusion wrapper.
+    # Turbo LoRA -> fused modulation -> FirstBlockCache -> Sol preserves every
+    # wrapper's execution boundary. The inverse cache/Sol ordering reproduces
+    # the runtime failure where Sol's executor.original() bypasses the cache.
+    turbo_id = next(
+        node_id for node_id, node in graph.items()
+        if node["class_type"] == CORE_LORA_LOADER_NODE
+    )
+    fused_id = next(
+        node_id for node_id, node in graph.items()
+        if node["class_type"] == FUSED_MODULATION_NODE
+    )
     cache_id = next(
         node_id for node_id, node in graph.items()
         if node["class_type"] == "H3FirstBlockCache"
     )
     sol_id = next(
         node_id for node_id, node in graph.items()
-        if node["class_type"] == "MiniMaxH3MemoryEfficientSolAttentionPatch"
+        if node["class_type"] == SOL_ATTENTION_NODE
     )
+    assert graph[fused_id]["inputs"]["model"] == [turbo_id, 0]
+    assert graph[fused_id]["inputs"]["enabled"] is True
+    assert graph[cache_id]["inputs"]["model"] == [fused_id, 0]
     assert graph[sol_id]["inputs"]["model"] == [cache_id, 0]
     assert graph[cache_id]["inputs"]["model"] != [sol_id, 0]
 
@@ -3188,11 +3252,11 @@ def selftest() -> None:
     )
     spectrum_sol_id = next(
         node_id for node_id, node in spectrum_graph.nodes.items()
-        if node["class_type"] == "MiniMaxH3MemoryEfficientSolAttentionPatch"
+        if node["class_type"] == SOL_ATTENTION_NODE
     )
     spectrum_chunk_id = next(
         node_id for node_id, node in spectrum_graph.nodes.items()
-        if node["class_type"] == "MiniMaxH3ChunkFeedForward"
+        if node["class_type"] == CHUNK_FEED_FORWARD_NODE
     )
     spectrum_inputs = spectrum_graph.nodes[spectrum_id]["inputs"]
     assert spectrum_inputs["model"] == [spectrum_chunk_id, 0]
@@ -3338,6 +3402,19 @@ def selftest() -> None:
         assert "Deleted 2 generated videos" in confirmed_empty[2]
     assert estimate_packed_tokens("Text to video", 1344, 768, 5) >= AUTO_SOL_TOKEN_THRESHOLD
     assert resolve_sol_policy("Auto", "Text to video", 608, 352, 2, None, None)[0] is False
+    assert resolve_sol_policy(
+        "Auto", "Text to video", 608, 352, 2, None, None, use_turbo=True
+    )[0] is False
+    reference_turbo_sol = resolve_sol_policy(
+        "Auto", "Reference media", 608, 352, 2, None, None, use_turbo=True
+    )
+    assert reference_turbo_sol[0] is True
+    assert reference_turbo_sol[2] == "Auto Turbo: reference mode"
+    turbo_sol_enabled, _, turbo_sol_reason = resolve_sol_policy(
+        "Auto", "Text to video", 1344, 768, 5, None, None, use_turbo=True
+    )
+    assert turbo_sol_enabled is True
+    assert turbo_sol_reason.startswith("Auto Turbo:")
     assert validate_resolution(865, 481) == (864, 480)
     assert frame_length(5) == 124
     assert frame_length(15) == 362
@@ -3387,9 +3464,9 @@ def selftest() -> None:
     assert live_updates[0][0] == "Generating video and audio"
     assert live_updates[1][3:] == (3, 4)
     turbo_defaults = generation_mode_defaults("Turbo", LARRY_TURBO)
-    assert turbo_defaults[1:] == (6, "simple", "Off", "Dense")
+    assert turbo_defaults[1:] == (6, "simple", "Off", "Auto")
     lightx_defaults = generation_mode_defaults("Turbo", LIGHTX2V_TURBO)
-    assert lightx_defaults[1:] == (4, "simple", "Off", "Dense")
+    assert lightx_defaults[1:] == (4, "simple", "Off", "Auto")
     normal_defaults = generation_mode_defaults("Normal")
     assert normal_defaults[1:] == (18, "simple", "Spectrum", "Auto")
     assert SERVER_DENSE_ATTENTION_BACKEND in {"pytorch", "sage"}
@@ -3430,22 +3507,33 @@ def selftest() -> None:
     assert quality_unets[0]["inputs"]["unet_name"] == fake.profile("quality").fl2va
     turbo_nodes = [
         node for node in quality_turbo_graph.values()
-        if node["class_type"] == "LoraLoaderModelOnly"
+        if node["class_type"] == CORE_LORA_LOADER_NODE
     ]
     assert len(turbo_nodes) == 1
     assert turbo_nodes[0]["inputs"]["strength_model"] == 0.75
     assert turbo_nodes[0]["inputs"]["lora_name"].endswith(
         "v0.1_comfy.safetensors"
     )
+    quality_fused_id = next(
+        node_id for node_id, node in quality_turbo_graph.items()
+        if node["class_type"] == FUSED_MODULATION_NODE
+    )
+    quality_turbo_id = next(
+        node_id for node_id, node in quality_turbo_graph.items()
+        if node["class_type"] == CORE_LORA_LOADER_NODE
+    )
+    assert quality_turbo_graph[quality_fused_id]["inputs"]["model"] == [
+        quality_turbo_id, 0
+    ]
     chunk_nodes = [
         node for node in quality_turbo_graph.values()
-        if node["class_type"] == "MiniMaxH3ChunkFeedForward"
+        if node["class_type"] == CHUNK_FEED_FORWARD_NODE
     ]
     assert len(chunk_nodes) == 1
     assert chunk_nodes[0]["inputs"]["chunks"] == 2
     assert chunk_nodes[0]["inputs"]["min_tokens"] == AUTO_SOL_TOKEN_THRESHOLD
     assert not any(
-        node["class_type"] == "MiniMaxH3TurboSampler"
+        node["class_type"] == LARRY_TURBO_SAMPLER_NODE
         for node in quality_turbo_graph.values()
     )
 
@@ -3478,16 +3566,25 @@ def selftest() -> None:
     )
     larry_loader = next(
         node for node in larry_graph.nodes.values()
-        if node["class_type"] == "MiniMaxH3TurboLoRA"
+        if node["class_type"] == LARRY_TURBO_LORA_NODE
     )
     assert larry_loader["inputs"]["strength"] == 1.0
     assert larry_loader["inputs"]["low_vram"] is False
+    larry_loader_id = next(
+        node_id for node_id, node in larry_graph.nodes.items()
+        if node["class_type"] == LARRY_TURBO_LORA_NODE
+    )
+    larry_fused = next(
+        node for node in larry_graph.nodes.values()
+        if node["class_type"] == FUSED_MODULATION_NODE
+    )
+    assert larry_fused["inputs"]["model"] == [larry_loader_id, 0]
     assert any(
-        node["class_type"] == "MiniMaxH3TurboSampler"
+        node["class_type"] == LARRY_TURBO_SAMPLER_NODE
         for node in larry_graph.nodes.values()
     )
     assert not any(
-        node["class_type"] == "KSamplerSelect"
+        node["class_type"] == CORE_SAMPLER_NODE
         for node in larry_graph.nodes.values()
     )
 
@@ -3526,7 +3623,7 @@ def selftest() -> None:
     )
     ref_lora = next(
         node for node in ref_turbo_graph.nodes.values()
-        if node["class_type"] == "LoraLoaderModelOnly"
+        if node["class_type"] == CORE_LORA_LOADER_NODE
     )
     assert ref_unet["inputs"]["unet_name"] == fake.profile("quality").ref2va
     assert ref_lora["inputs"]["lora_name"] == fake.turbo_ref_lora
@@ -3544,9 +3641,9 @@ def selftest() -> None:
     print(
         f"Selftest OK: {len(graph)} nodes, 5s=124 frames, "
         f"15s=362 frames, tiered resolution presets valid, Sol exact valid, "
-        f"Sol Auto policy valid, Spectrum default + Sol/ConvRot order valid, "
+        f"Sol Auto/Turbo policy valid, Spectrum default + Sol/ConvRot order valid, "
         f"zero-copy Sol + FirstBlockCache composition valid, "
-        f"ConvRot FFN chunking valid, selectable Larry/LightX2V Turbo on "
+        f"fused modulation + ConvRot FFN chunking valid, selectable Larry/LightX2V Turbo on "
         f"FL2VA/Ref2VA + editable steps valid, compile guard active, "
         f"SaveVideo codec API valid, prompt API download URL valid, "
         f"gallery fallback/deletion guards valid, "

@@ -24,7 +24,7 @@ from h3_requirements import (
 
 COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
 SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
-SOL_REF = "90467f1c633ce53af7d77e4a1cc243b5001d89b0"
+SOL_REF = "bd28909e6a152ba5db4e3590d2d9df1c249943f2"  # v0.6.0
 SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_REF = "6a37360e3e785d2b9b5ad58190af380a8de8ec1a"  # v0.2.2
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"

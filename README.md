@@ -11,7 +11,8 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 - Thumbnail gallery that loads a video player only after a generated video is selected
 - Speed and quality NVFP4 model profiles
 - Selectable Larry v4-600 EMA and LightX2V v0.1 Turbo LoRAs
-- H3-native zero-copy Sol sparse attention with SageAttention fallback
+- H3-native zero-copy Sol v0.6.0 sparse attention with SageAttention fallback
+- Bit-exact fused H3 modulation projections in every Turbo workflow
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Hardware-aware ComfyUI memory mode selection
 - Spectrum as the normal-generation default, with audio-isolated offline replay
@@ -31,17 +32,22 @@ The installer pins the ABI-sensitive stack to Torch 2.11.0 + CUDA 13.0,
 NumPy 1.26.4, and SciPy 1.15.3. SageAttention is installed from a prebuilt
 CPython 3.12 Linux wheel; source compilation is intentionally disabled.
 
-The Sol-Attn integration is pinned to a reviewed Apache-2.0 upstream commit so
-its ComfyUI node contract remains reproducible. Sol uses the zero-copy H3 path,
-keeps conditioning KV exact by default, and leaves its optional INT8 attention
-approximations disabled. Quality ConvRot models additionally use bit-preserving
-two-way feed-forward chunking above 8K packed tokens.
+The Sol-Attn integration is pinned to the reviewed v0.6.0 commit
+`bd28909e6a152ba5db4e3590d2d9df1c249943f2` so its ComfyUI node contract
+remains reproducible. Sol uses the zero-copy H3 path, keeps conditioning KV
+exact by default, and leaves its optional INT8 attention approximations
+disabled. Turbo workflows additionally use v0.6.0's bit-exact fused modulation
+node after the selected LoRA. Quality ConvRot models use bit-preserving two-way
+feed-forward chunking above 8K packed tokens.
 
 Spectrum is pinned to v0.2.2 and is applied after LoRA, Sol-Attn, and ConvRot
 feed-forward patches. Its default uses system-RAM history, degree-1 forecasting,
 offline smoothing replay, and zero spectral audio blending. Spectrum,
 FirstBlockCache, and EasyCache are mutually exclusive acceleration choices.
-Turbo mode disables all three pending low-step validation.
+Turbo mode disables all three pending low-step validation. Its attention default
+is Auto: jobs at or above 8K estimated packed tokens use Sol, while smaller jobs
+stay dense. Reference-media jobs always use Sol because their conditioning rows
+cannot be estimated before ComfyUI encodes the uploads.
 The v0.2.2 progress integration exposes one continuous capture-and-replay range
 to ComfyUI, so the Gradio live progress stream remains active during both passes.
 
