@@ -72,6 +72,11 @@ residency, prefetching, and host-memory pressure. It selects `--gpu-only` on
 64 GiB+ GPUs, where keeping the full stack resident avoids unnecessary loading.
 The 96 GiB Modal target likewise remains GPU-only.
 
+The **API** tab includes a copy-ready Python example. Its `/generate_video`
+endpoint only requires a prompt and uses the same defaults shown in the Generate
+tab. The `/generate_video_advanced` endpoint exposes every generation control;
+its current request schema is linked from the API tab.
+
 `run_h3.sh` binds Gradio to `0.0.0.0`, so use host firewall rules or a trusted
 network when the machine is reachable by other devices.
 

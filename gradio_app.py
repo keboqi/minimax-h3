@@ -83,6 +83,37 @@ TURBO_SETTINGS = {
     LARRY_TURBO: {"steps": 6, "strength": 1.0},
     LIGHTX2V_TURBO: {"steps": 4, "strength": 0.75},
 }
+UI_DEFAULTS = {
+    "mode": "Text to video",
+    "model_profile": "Quality",
+    "generation_mode": "Turbo",
+    "turbo_variant": DEFAULT_TURBO,
+    "duration": 5,
+    "width": 864,
+    "height": 480,
+    "steps": 6,
+    "scheduler": "simple",
+    "seed": -1,
+    "attention_mode": "Auto",
+    "sol_tau": 1.0,
+    "sol_thresh_type": "diag",
+    "sol_exact_mode": "exact_kv",
+    "sol_dense_steps": 1,
+    "cache_mode": "Off",
+    "fbcache_preset": DEFAULT_FBCACHE_PRESET,
+    "fbcache_threshold": DEFAULT_FBCACHE_THRESHOLD,
+    "fbcache_start": DEFAULT_FBCACHE_START,
+    "fbcache_end": DEFAULT_FBCACHE_END,
+    "fbcache_max_hits": DEFAULT_FBCACHE_MAX_HITS,
+    "fbcache_temporal_guard": DEFAULT_FBCACHE_TEMPORAL_GUARD,
+    "easycache_threshold": 0.10,
+    "easycache_start": 0.15,
+    "easycache_end": 0.85,
+    "easycache_verbose": False,
+    "compile_model": False,
+    "ref_image_size": "match",
+    "postprocess": "None",
+}
 SPECTRUM_DEFAULT_INPUTS = {
     "enabled": True,
     "blend_weight": 0.50,
@@ -2133,8 +2164,99 @@ def mode_help(mode: str) -> str:
     return "Prompt-only generation using FL2VA with native stereo audio."
 
 
+def generate_with_ui_defaults(
+    prompt: str,
+    progress=gr.Progress(track_tqdm=False),
+):
+    """Generate prompt-only video using the same defaults shown in the UI."""
+    defaults = UI_DEFAULTS
+    yield from generate(
+        mode=defaults["mode"],
+        model_profile=defaults["model_profile"],
+        generation_mode=defaults["generation_mode"],
+        turbo_variant=defaults["turbo_variant"],
+        prompt=prompt,
+        first_image=None,
+        last_image=None,
+        ref_image_1=None,
+        ref_image_2=None,
+        ref_image_3=None,
+        ref_image_4=None,
+        ref_image_5=None,
+        ref_image_6=None,
+        ref_image_7=None,
+        ref_image_8=None,
+        ref_image_9=None,
+        ref_video_1=None,
+        ref_video_2=None,
+        ref_video_3=None,
+        ref_audio_1=None,
+        ref_audio_2=None,
+        ref_audio_3=None,
+        duration=defaults["duration"],
+        width=defaults["width"],
+        height=defaults["height"],
+        steps=defaults["steps"],
+        scheduler=defaults["scheduler"],
+        seed=defaults["seed"],
+        attention_mode=defaults["attention_mode"],
+        sol_tau=defaults["sol_tau"],
+        sol_thresh_type=defaults["sol_thresh_type"],
+        sol_exact_mode=defaults["sol_exact_mode"],
+        sol_dense_steps=defaults["sol_dense_steps"],
+        sol_step_off=0.0,
+        sol_sink_tokens=0,
+        cache_mode=defaults["cache_mode"],
+        fbcache_preset=defaults["fbcache_preset"],
+        fbcache_threshold=defaults["fbcache_threshold"],
+        fbcache_start=defaults["fbcache_start"],
+        fbcache_end=defaults["fbcache_end"],
+        fbcache_max_hits=defaults["fbcache_max_hits"],
+        fbcache_temporal_guard=defaults["fbcache_temporal_guard"],
+        easycache_threshold=defaults["easycache_threshold"],
+        easycache_start=defaults["easycache_start"],
+        easycache_end=defaults["easycache_end"],
+        easycache_verbose=defaults["easycache_verbose"],
+        compile_model=defaults["compile_model"],
+        ref_image_size=defaults["ref_image_size"],
+        postprocess=defaults["postprocess"],
+        progress=progress,
+    )
+
+
+def api_guide() -> str:
+    defaults = UI_DEFAULTS
+    return f"""## Generate through the API
+
+The `/generate_video` endpoint accepts a prompt and uses the same defaults as the **Generate** tab:
+
+`{defaults['mode']}` · `{defaults['model_profile']}` · `{defaults['generation_mode']} / {defaults['turbo_variant']}` · `{defaults['duration']}s` · `{defaults['width']}×{defaults['height']}` · `{defaults['steps']} steps` · `{defaults['scheduler']}` scheduler · random seed
+
+Install the client and submit a job:
+
+```bash
+pip install gradio_client
+```
+
+```python
+from gradio_client import Client
+
+client = Client("http://127.0.0.1:7860")
+video, status = client.predict(
+    "A cinematic tracking shot through a rain-soaked neon city",
+    api_name="/generate_video",
+)
+print(video)
+print(status)
+```
+
+For every control exposed by the Generate tab, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. API requests share the same single-job queue as the UI.
+"""
+
+
 def build_ui() -> gr.Blocks:
     sol_default = SERVER_ATTENTION_BACKEND == "sol"
+    defaults = UI_DEFAULTS
     with gr.Blocks(title="MiniMax H3 Local") as demo:
         gr.Markdown("# MiniMax H3 Local\nNative ComfyUI graphs for T2V, first/last-frame video, and reference media.")
         gr.HTML(
@@ -2147,16 +2269,18 @@ def build_ui() -> gr.Blocks:
                 gr.HTML("")
             with gr.Tab("Gallery") as gallery_tab:
                 gr.HTML("")
+            with gr.Tab("API") as api_tab:
+                gr.HTML("")
         with gr.Row() as generation_view:
             with gr.Column(scale=3):
                 mode = gr.Radio(
                     ["Text to video", "First / last frame", "Reference media"],
-                    value="Text to video", label="Mode",
+                    value=defaults["mode"], label="Mode",
                 )
                 with gr.Row():
                     model_profile = gr.Radio(
                         ["Speed", "Quality"],
-                        value="Quality",
+                        value=defaults["model_profile"],
                         label="Base model",
                         info=(
                             "Speed uses the rebuilt single-pass NVFP4 files. "
@@ -2165,7 +2289,7 @@ def build_ui() -> gr.Blocks:
                     )
                     generation_mode = gr.Radio(
                         ["Normal", "Turbo"],
-                        value="Turbo",
+                        value=defaults["generation_mode"],
                         label="Generation",
                         info=(
                             "Turbo uses the implementation selected in Generation settings. "
@@ -2206,12 +2330,20 @@ def build_ui() -> gr.Blocks:
                         ref_audio_1 = gr.Audio(type="filepath", label="Audio 1")
                         ref_audio_2 = gr.Audio(type="filepath", label="Audio 2")
                         ref_audio_3 = gr.Audio(type="filepath", label="Audio 3")
-                    ref_size = gr.Radio(["match", "max"], value="match", label="Reference image size")
+                    ref_size = gr.Radio(
+                        ["match", "max"],
+                        value=defaults["ref_image_size"],
+                        label="Reference image size",
+                    )
             with gr.Column(scale=2):
                 settings_overview = gr.Markdown(
                     compact_settings_summary(
-                        "Text to video", "Quality", "Turbo", DEFAULT_TURBO, 5,
-                        864, 480, 6, "simple", "Auto", "Off", "None",
+                        defaults["mode"], defaults["model_profile"],
+                        defaults["generation_mode"], defaults["turbo_variant"],
+                        defaults["duration"], defaults["width"], defaults["height"],
+                        defaults["steps"], defaults["scheduler"],
+                        defaults["attention_mode"], defaults["cache_mode"],
+                        defaults["postprocess"],
                     )
                 )
                 output = gr.Video(label="Generated video")
@@ -2223,7 +2355,7 @@ def build_ui() -> gr.Blocks:
                 gr.Markdown("### Generation settings")
                 turbo_variant = gr.Radio(
                     list(TURBO_SETTINGS),
-                    value=DEFAULT_TURBO,
+                    value=defaults["turbo_variant"],
                     label="Turbo implementation",
                     info=(
                         "Larry uses its quantization-aware loader and adaptive sampler at "
@@ -2241,9 +2373,11 @@ def build_ui() -> gr.Blocks:
                     ),
                 )
                 with gr.Row():
-                    duration = gr.Slider(2, 15, value=5, step=0.5, label="Seconds")
+                    duration = gr.Slider(
+                        2, 15, value=defaults["duration"], step=0.5, label="Seconds"
+                    )
                     steps = gr.Slider(
-                        4, 30, value=6, step=1, label="Steps",
+                        4, 30, value=defaults["steps"], step=1, label="Steps",
                         info=(
                             "Larry defaults to 6 steps and LightX2V to 4; this remains editable. "
                             "Normal H3 presets normally use 15–20."
@@ -2269,15 +2403,22 @@ def build_ui() -> gr.Blocks:
                         info="Higher-resolution sizes by aspect ratio.",
                     )
                 with gr.Row():
-                    width = gr.Number(value=864, precision=0, label="Width")
-                    height = gr.Number(value=480, precision=0, label="Height")
-                resolution_info = gr.Markdown(resolution_summary(864, 480))
+                    width = gr.Number(value=defaults["width"], precision=0, label="Width")
+                    height = gr.Number(value=defaults["height"], precision=0, label="Height")
+                resolution_info = gr.Markdown(
+                    resolution_summary(defaults["width"], defaults["height"])
+                )
                 with gr.Row():
-                    scheduler = gr.Radio(["simple", "beta", "normal"], value="simple", label="Scheduler")
-                    seed = gr.Number(value=-1, precision=0, label="Seed (-1 random)")
+                    scheduler = gr.Radio(
+                        ["simple", "beta", "normal"],
+                        value=defaults["scheduler"], label="Scheduler",
+                    )
+                    seed = gr.Number(
+                        value=defaults["seed"], precision=0, label="Seed (-1 random)"
+                    )
                 attention_mode = gr.Radio(
                     ["Auto", "Sol-Attn", "Dense"],
-                    value="Auto",
+                    value=defaults["attention_mode"],
                     label="Attention",
                     interactive=SERVER_ATTENTION_BACKEND == "sol",
                     info=(
@@ -2289,18 +2430,19 @@ def build_ui() -> gr.Blocks:
                 )
                 with gr.Row():
                     sol_tau = gr.Slider(
-                        0.5, 1.5, value=1.0, step=0.1, label="Sol-Attn tau"
+                        0.5, 1.5, value=defaults["sol_tau"], step=0.1,
+                        label="Sol-Attn tau"
                     )
                     sol_thresh_type = gr.Radio(
                         ["diag", "exact"],
-                        value="diag",
+                        value=defaults["sol_thresh_type"],
                         label="Sol threshold",
                         info="diag is faster; exact calculates a more precise routing threshold.",
                     )
                 with gr.Accordion("Zero-copy Sol-Attn quality controls", open=False):
                     sol_exact_mode = gr.Radio(
                         ["off", "exact_kv", "exact_kv_and_rows"],
-                        value="exact_kv",
+                        value=defaults["sol_exact_mode"],
                         label="Exact H3 prefix mode",
                         info=(
                             "exact_kv preserves text/condition/reference/audio KV "
@@ -2310,7 +2452,7 @@ def build_ui() -> gr.Blocks:
                     )
                     with gr.Row():
                         sol_dense_steps = gr.Slider(
-                            0, 4, value=1, step=1,
+                            0, 4, value=defaults["sol_dense_steps"], step=1,
                             label="Dense final transformer blocks",
                             info=(
                                 "Keep the final N H3 transformer blocks dense. "
@@ -2322,7 +2464,7 @@ def build_ui() -> gr.Blocks:
                 with gr.Accordion("Sampling acceleration", open=False):
                     cache_mode = gr.Radio(
                         ["Spectrum", "FirstBlockCache", "EasyCache", "Off"],
-                        value="Off",
+                        value=defaults["cache_mode"],
                         label="Acceleration mode",
                         info=(
                             "Spectrum is the normal H3 default based on broader community "
@@ -2333,7 +2475,7 @@ def build_ui() -> gr.Blocks:
                     )
                     fbcache_preset = gr.Radio(
                         ["Safe", "Fast", "Aggressive", "Custom"],
-                        value=DEFAULT_FBCACHE_PRESET,
+                        value=defaults["fbcache_preset"],
                         label="FirstBlockCache preset",
                         info=(
                             "Fast is the recommended default. Named presets use "
@@ -2344,14 +2486,14 @@ def build_ui() -> gr.Blocks:
                     with gr.Row():
                         fbcache_threshold = gr.Slider(
                             0.0, 0.25,
-                            value=DEFAULT_FBCACHE_THRESHOLD,
+                            value=defaults["fbcache_threshold"],
                             step=0.005,
                             label="FirstBlock threshold",
                             interactive=False,
                         )
                         fbcache_max_hits = gr.Slider(
                             1, 8,
-                            value=DEFAULT_FBCACHE_MAX_HITS,
+                            value=defaults["fbcache_max_hits"],
                             step=1,
                             label="Max consecutive cache hits",
                             interactive=False,
@@ -2359,20 +2501,20 @@ def build_ui() -> gr.Blocks:
                     with gr.Row():
                         fbcache_start = gr.Slider(
                             0.0, 0.90,
-                            value=DEFAULT_FBCACHE_START,
+                            value=defaults["fbcache_start"],
                             step=0.01,
                             label="Cache start percent",
                             interactive=False,
                         )
                         fbcache_end = gr.Slider(
                             0.10, 1.0,
-                            value=DEFAULT_FBCACHE_END,
+                            value=defaults["fbcache_end"],
                             step=0.01,
                             label="Cache end percent",
                             interactive=False,
                         )
                     fbcache_temporal_guard = gr.Checkbox(
-                        value=DEFAULT_FBCACHE_TEMPORAL_GUARD,
+                        value=defaults["fbcache_temporal_guard"],
                         label="Temporal frame guard",
                         info=(
                             "Checks the most-changed target-video latent frame "
@@ -2381,7 +2523,7 @@ def build_ui() -> gr.Blocks:
                     )
                     gr.Markdown("**EasyCache fallback settings**")
                     easycache_threshold = gr.Slider(
-                        0.0, 0.5, value=0.10, step=0.01,
+                        0.0, 0.5, value=defaults["easycache_threshold"], step=0.01,
                         label="Reuse threshold",
                         info=(
                             "Higher skips more steps. Start at 0.10 for H3; "
@@ -2390,21 +2532,21 @@ def build_ui() -> gr.Blocks:
                     )
                     with gr.Row():
                         easycache_start = gr.Slider(
-                            0.0, 0.9, value=0.15, step=0.01,
+                            0.0, 0.9, value=defaults["easycache_start"], step=0.01,
                             label="Start percent",
                         )
                         easycache_end = gr.Slider(
-                            0.1, 1.0, value=0.85, step=0.01,
+                            0.1, 1.0, value=defaults["easycache_end"], step=0.01,
                             label="End percent",
                         )
                     easycache_verbose = gr.Checkbox(
-                        value=False,
+                        value=defaults["easycache_verbose"],
                         label="Log EasyCache decisions",
                         info="Logs skipped-step counts and estimated speedup in ComfyUI.",
                     )
 
                 compile_model = gr.Checkbox(
-                    value=False,
+                    value=defaults["compile_model"],
                     label=(
                         "torch.compile (unsafe for quantized H3)"
                         if not ALLOW_UNSAFE_H3_COMPILE
@@ -2419,7 +2561,7 @@ def build_ui() -> gr.Blocks:
                 )
                 postprocess = gr.Dropdown(
                     ["None", "2× Lanczos", "48 fps interpolation", "2× Lanczos + 48 fps"],
-                    value="None", label="Post-processing",
+                    value=defaults["postprocess"], label="Post-processing",
                 )
 
         with gr.Group(visible=False) as gallery_view:
@@ -2440,6 +2582,20 @@ def build_ui() -> gr.Blocks:
                 allow_preview=False,
             )
             gallery_player = gr.Video(label="Selected video")
+
+        with gr.Group(visible=False) as api_view:
+            gr.Markdown(api_guide())
+            with gr.Accordion("Try the default API request", open=False):
+                api_prompt = gr.Textbox(
+                    label="Prompt",
+                    lines=4,
+                    placeholder="Describe the video, camera motion, dialogue, and sound.",
+                )
+                with gr.Row():
+                    api_run = gr.Button("Generate with UI defaults", variant="primary")
+                    api_stop = gr.Button("Interrupt")
+                api_output = gr.Video(label="Generated video")
+                api_status = gr.Textbox(label="Status", lines=5)
 
         settings_inputs = [
             mode, model_profile, generation_mode, turbo_variant,
@@ -2525,16 +2681,34 @@ def build_ui() -> gr.Blocks:
             ],
             outputs=[output, status],
             show_progress="minimal",
+            api_name="generate_video_advanced",
+        )
+        api_event = api_run.click(
+            generate_with_ui_defaults,
+            inputs=api_prompt,
+            outputs=[api_output, api_status],
+            show_progress="minimal",
+            api_name="generate_video",
         )
         stop.click(interrupt, outputs=status, cancels=[event])
+        api_stop.click(interrupt, outputs=api_status, cancels=[api_event])
         refresh.click(backend_status, outputs=health)
         generate_tab.select(
-            lambda: (gr.update(visible=True), gr.update(visible=False)),
-            outputs=[generation_view, gallery_view],
+            lambda: (
+                gr.update(visible=True),
+                gr.update(visible=False),
+                gr.update(visible=False),
+            ),
+            outputs=[generation_view, gallery_view, api_view],
         )
         gallery_event = gallery_tab.select(
-            lambda: (gr.update(visible=False), gr.update(visible=True), None),
-            outputs=[generation_view, gallery_view, gallery_player],
+            lambda: (
+                gr.update(visible=False),
+                gr.update(visible=True),
+                gr.update(visible=False),
+                None,
+            ),
+            outputs=[generation_view, gallery_view, api_view, gallery_player],
         )
         gallery_event.then(
             refresh_gallery,
@@ -2551,6 +2725,14 @@ def build_ui() -> gr.Blocks:
             inputs=gallery_paths,
             outputs=gallery_player,
             show_progress="minimal",
+        )
+        api_tab.select(
+            lambda: (
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=True),
+            ),
+            outputs=[generation_view, gallery_view, api_view],
         )
     return demo
 
@@ -2779,6 +2961,35 @@ def selftest() -> None:
     assert preset_values("Balanced")[0] == 18
     assert preset_values("Fast")[0] == 15
     assert preset_values("unknown") == preset_values("Balanced")
+    assert UI_DEFAULTS["steps"] == turbo_steps_for(UI_DEFAULTS["turbo_variant"])
+    assert UI_DEFAULTS["width"] == 864 and UI_DEFAULTS["height"] == 480
+    assert 'api_name="/generate_video"' in api_guide()
+    captured_api_call: dict[str, Any] = {}
+    original_generate = globals()["generate"]
+
+    def fake_generate(*args: Any, **kwargs: Any):
+        captured_api_call["args"] = args
+        captured_api_call["kwargs"] = kwargs
+        yield "video.mp4", "complete"
+
+    globals()["generate"] = fake_generate
+    try:
+        assert list(generate_with_ui_defaults("API prompt")) == [
+            ("video.mp4", "complete")
+        ]
+    finally:
+        globals()["generate"] = original_generate
+    assert captured_api_call["args"] == ()
+    api_kwargs = captured_api_call["kwargs"]
+    assert api_kwargs["prompt"] == "API prompt"
+    assert api_kwargs["mode"] == "Text to video"
+    assert api_kwargs["model_profile"] == "Quality"
+    assert api_kwargs["turbo_variant"] == DEFAULT_TURBO
+    for key, expected in UI_DEFAULTS.items():
+        assert api_kwargs[key] == expected
+    assert all(api_kwargs[f"ref_image_{index}"] is None for index in range(1, 10))
+    assert all(api_kwargs[f"ref_video_{index}"] is None for index in range(1, 4))
+    assert all(api_kwargs[f"ref_audio_{index}"] is None for index in range(1, 4))
     assert estimate_packed_tokens("Text to video", 1344, 768, 5) >= AUTO_SOL_TOKEN_THRESHOLD
     assert resolve_sol_policy("Auto", "Text to video", 608, 352, 2, None, None)[0] is False
     assert validate_resolution(865, 481) == (864, 480)
@@ -2991,7 +3202,8 @@ def selftest() -> None:
         f"zero-copy Sol + FirstBlockCache composition valid, "
         f"ConvRot FFN chunking valid, selectable Larry/LightX2V Turbo on "
         f"FL2VA/Ref2VA + editable steps valid, compile guard active, "
-        f"SaveVideo codec API valid, /comfyui proxy rewrites valid"
+        f"SaveVideo codec API valid, prompt API defaults valid, "
+        f"/comfyui proxy rewrites valid"
     )
 
 
