@@ -10,6 +10,7 @@ import random
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -23,8 +24,9 @@ import httpx
 import requests
 import uvicorn
 import websocket
-from fastapi import FastAPI, Request, Response, WebSocket
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.responses import (
+    FileResponse,
     PlainTextResponse,
     RedirectResponse,
     StreamingResponse,
@@ -331,6 +333,35 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
     @app.get(COMFY_PROXY_PATH, include_in_schema=False)
     async def comfy_slash_redirect() -> RedirectResponse:
         return RedirectResponse(f"{COMFY_PROXY_PATH}/", status_code=307)
+
+    @app.get(
+        "/downloads/{bucket}/{file_path:path}",
+        name="download_generated_video",
+        include_in_schema=False,
+    )
+    async def download_generated_video(
+        bucket: str,
+        file_path: str,
+        download: bool = False,
+    ) -> FileResponse:
+        roots = {
+            "comfy": OUTPUT_DIR.resolve(),
+            "gradio": OUTPUTS_DIR.resolve(),
+        }
+        root = roots.get(bucket)
+        if root is None:
+            raise HTTPException(status_code=404, detail="Video not found")
+        candidate = (root / file_path).resolve()
+        if (
+            not candidate.is_relative_to(root)
+            or candidate.suffix.lower() not in VIDEO_EXTENSIONS
+            or not candidate.is_file()
+        ):
+            raise HTTPException(status_code=404, detail="Video not found")
+        return FileResponse(
+            candidate,
+            filename=candidate.name if download else None,
+        )
 
     @app.api_route(
         f"{COMFY_PROXY_PATH}/{{path:path}}",
@@ -1631,6 +1662,35 @@ def postprocess_video(source: Path, option: str) -> Path:
     return target
 
 
+def video_download_path(video: str | Path) -> str:
+    """Return a safe, public route for a generated video on this server."""
+    resolved = Path(video).resolve()
+    for bucket, root in (
+        ("comfy", OUTPUT_DIR.resolve()),
+        ("gradio", OUTPUTS_DIR.resolve()),
+    ):
+        if resolved.is_relative_to(root):
+            relative = resolved.relative_to(root).as_posix()
+            return f"/downloads/{bucket}/{quote(relative, safe='/')}"
+    raise H3Error("Generated video is outside the configured output directories.")
+
+
+def absolute_video_url(
+    video: str | Path,
+    request: gr.Request,
+    *,
+    download: bool = False,
+) -> str:
+    relative_url = video_download_path(video)
+    base_url = str(request.request.base_url).rstrip("/")
+    url = f"{base_url}{relative_url}"
+    return f"{url}?download=1" if download else url
+
+
+def absolute_video_download_url(video: str | Path, request: gr.Request) -> str:
+    return absolute_video_url(video, request, download=True)
+
+
 def gallery_video_paths() -> list[Path]:
     """Return the newest generated videos without loading their media data."""
     videos: dict[Path, Path] = {}
@@ -1699,7 +1759,6 @@ def refresh_gallery() -> tuple[list[tuple[str, str]], list[str], str]:
         thumbnail = gallery_thumbnail(video)
         if thumbnail is None:
             failed += 1
-            continue
         try:
             stat = video.stat()
         except OSError:
@@ -1707,7 +1766,9 @@ def refresh_gallery() -> tuple[list[tuple[str, str]], list[str], str]:
         timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
         size_mb = stat.st_size / (1024 * 1024)
         caption = f"{video.name} · {timestamp} · {size_mb:.1f} MB"
-        items.append((str(thumbnail), caption))
+        # Gradio Gallery accepts videos as well as images. Falling back to the
+        # video itself keeps the item selectable when FFmpeg cannot make a poster.
+        items.append((str(thumbnail or video), caption))
         selectable_paths.append(str(video))
     detail = f"{len(items)} generated video{'s' if len(items) != 1 else ''}"
     if failed:
@@ -1715,14 +1776,22 @@ def refresh_gallery() -> tuple[list[tuple[str, str]], list[str], str]:
     return items, selectable_paths, detail
 
 
-def select_gallery_video(paths: list[str], evt: gr.SelectData) -> str | None:
+def select_gallery_video(
+    paths: list[str],
+    request: gr.Request,
+    evt: gr.SelectData,
+) -> tuple[str | None, str]:
     index = evt.index
     if isinstance(index, (tuple, list)):
         index = index[0]
     try:
-        return paths[int(index)]
+        video = paths[int(index)]
     except (IndexError, TypeError, ValueError):
-        return None
+        return None, ""
+    download_url = absolute_video_download_url(video, request)
+    # Return the local path to gr.Video. Gradio treats arbitrary HTTP URLs as
+    # remote fetches and can reject its own public hostname during validation.
+    return video, f"[Download video]({download_url})"
 
 
 def backend_status() -> str:
@@ -2166,11 +2235,12 @@ def mode_help(mode: str) -> str:
 
 def generate_with_ui_defaults(
     prompt: str,
+    request: gr.Request,
     progress=gr.Progress(track_tqdm=False),
 ):
-    """Generate prompt-only video using the same defaults shown in the UI."""
+    """Generate with UI defaults and return a reusable public download URL."""
     defaults = UI_DEFAULTS
-    yield from generate(
+    updates = generate(
         mode=defaults["mode"],
         model_profile=defaults["model_profile"],
         generation_mode=defaults["generation_mode"],
@@ -2222,6 +2292,11 @@ def generate_with_ui_defaults(
         postprocess=defaults["postprocess"],
         progress=progress,
     )
+    for video, status in updates:
+        download_url = (
+            absolute_video_download_url(video, request) if video is not None else None
+        )
+        yield download_url, status
 
 
 def api_guide() -> str:
@@ -2242,13 +2317,15 @@ pip install gradio_client
 from gradio_client import Client
 
 client = Client("http://127.0.0.1:7860")
-video, status = client.predict(
+download_url, status = client.predict(
     "A cinematic tracking shot through a rain-soaked neon city",
     api_name="/generate_video",
 )
-print(video)
+print(download_url)
 print(status)
 ```
+
+`download_url` is an HTTP URL served by this app, so it can be opened in a browser or downloaded with `curl -L -O` while the app is running.
 
 For every control exposed by the Generate tab, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. API requests share the same single-job queue as the UI.
 """
@@ -2576,12 +2653,15 @@ def build_ui() -> gr.Blocks:
             gallery_grid = gr.Gallery(
                 value=[],
                 label="Generated video thumbnails",
-                columns=[2, 3, 4, 5],
-                height="auto",
-                object_fit="contain",
+                columns=4,
+                height=360,
+                object_fit="cover",
                 allow_preview=False,
+                fit_columns=False,
+                elem_id="generated-video-gallery",
             )
             gallery_player = gr.Video(label="Selected video")
+            gallery_download = gr.Markdown()
 
         with gr.Group(visible=False) as api_view:
             gr.Markdown(api_guide())
@@ -2594,7 +2674,10 @@ def build_ui() -> gr.Blocks:
                 with gr.Row():
                     api_run = gr.Button("Generate with UI defaults", variant="primary")
                     api_stop = gr.Button("Interrupt")
-                api_output = gr.Video(label="Generated video")
+                api_download_url = gr.Textbox(
+                    label="Download URL",
+                    interactive=False,
+                )
                 api_status = gr.Textbox(label="Status", lines=5)
 
         settings_inputs = [
@@ -2686,7 +2769,7 @@ def build_ui() -> gr.Blocks:
         api_event = api_run.click(
             generate_with_ui_defaults,
             inputs=api_prompt,
-            outputs=[api_output, api_status],
+            outputs=[api_download_url, api_status],
             show_progress="minimal",
             api_name="generate_video",
         )
@@ -2707,8 +2790,15 @@ def build_ui() -> gr.Blocks:
                 gr.update(visible=True),
                 gr.update(visible=False),
                 None,
+                "",
             ),
-            outputs=[generation_view, gallery_view, api_view, gallery_player],
+            outputs=[
+                generation_view,
+                gallery_view,
+                api_view,
+                gallery_player,
+                gallery_download,
+            ],
         )
         gallery_event.then(
             refresh_gallery,
@@ -2723,7 +2813,7 @@ def build_ui() -> gr.Blocks:
         gallery_grid.select(
             select_gallery_video,
             inputs=gallery_paths,
-            outputs=gallery_player,
+            outputs=[gallery_player, gallery_download],
             show_progress="minimal",
         )
         api_tab.select(
@@ -2966,19 +3056,25 @@ def selftest() -> None:
     assert 'api_name="/generate_video"' in api_guide()
     captured_api_call: dict[str, Any] = {}
     original_generate = globals()["generate"]
+    original_download_url = globals()["absolute_video_download_url"]
 
     def fake_generate(*args: Any, **kwargs: Any):
         captured_api_call["args"] = args
         captured_api_call["kwargs"] = kwargs
         yield "video.mp4", "complete"
 
+    def fake_download_url(video: str, _request: Any) -> str:
+        return f"https://example.test/downloads/{video}"
+
     globals()["generate"] = fake_generate
+    globals()["absolute_video_download_url"] = fake_download_url
     try:
-        assert list(generate_with_ui_defaults("API prompt")) == [
-            ("video.mp4", "complete")
+        assert list(generate_with_ui_defaults("API prompt", object())) == [
+            ("https://example.test/downloads/video.mp4", "complete")
         ]
     finally:
         globals()["generate"] = original_generate
+        globals()["absolute_video_download_url"] = original_download_url
     assert captured_api_call["args"] == ()
     api_kwargs = captured_api_call["kwargs"]
     assert api_kwargs["prompt"] == "API prompt"
@@ -2990,6 +3086,53 @@ def selftest() -> None:
     assert all(api_kwargs[f"ref_image_{index}"] is None for index in range(1, 10))
     assert all(api_kwargs[f"ref_video_{index}"] is None for index in range(1, 4))
     assert all(api_kwargs[f"ref_audio_{index}"] is None for index in range(1, 4))
+    assert video_download_path(OUTPUT_DIR / "h3" / "result video.mp4") == (
+        "/downloads/comfy/h3/result%20video.mp4"
+    )
+    original_output_dir = globals()["OUTPUT_DIR"]
+    original_outputs_dir = globals()["OUTPUTS_DIR"]
+    original_thumbnails_dir = globals()["GALLERY_THUMBNAILS_DIR"]
+    original_gallery_thumbnail = globals()["gallery_thumbnail"]
+    with tempfile.TemporaryDirectory() as gallery_temp:
+        gallery_root = Path(gallery_temp)
+        comfy_test_output = gallery_root / "comfy"
+        gradio_test_output = gallery_root / "gradio"
+        comfy_test_output.mkdir()
+        gradio_test_output.mkdir()
+        fallback_video = comfy_test_output / "fallback.mp4"
+        fallback_video.write_bytes(b"test")
+        globals()["OUTPUT_DIR"] = comfy_test_output
+        globals()["OUTPUTS_DIR"] = gradio_test_output
+        globals()["GALLERY_THUMBNAILS_DIR"] = gradio_test_output / ".thumbs"
+        globals()["gallery_thumbnail"] = lambda _video: None
+        try:
+            gallery_items, gallery_paths, gallery_detail = refresh_gallery()
+
+            class FakeGalleryRequest:
+                class request:
+                    base_url = "https://example.test/"
+
+            class FakeSelectEvent:
+                index = 0
+
+            gallery_play_url, gallery_download_link = select_gallery_video(
+                gallery_paths,
+                FakeGalleryRequest(),  # type: ignore[arg-type]
+                FakeSelectEvent(),  # type: ignore[arg-type]
+            )
+        finally:
+            globals()["OUTPUT_DIR"] = original_output_dir
+            globals()["OUTPUTS_DIR"] = original_outputs_dir
+            globals()["GALLERY_THUMBNAILS_DIR"] = original_thumbnails_dir
+            globals()["gallery_thumbnail"] = original_gallery_thumbnail
+        assert len(gallery_items) == 1
+        assert gallery_paths == [str(fallback_video)]
+        assert gallery_play_url == str(fallback_video)
+        assert gallery_download_link.endswith(
+            "/downloads/comfy/fallback.mp4?download=1)"
+        )
+        assert "1 generated video" in gallery_detail
+        assert "1 thumbnail" in gallery_detail
     assert estimate_packed_tokens("Text to video", 1344, 768, 5) >= AUTO_SOL_TOKEN_THRESHOLD
     assert resolve_sol_policy("Auto", "Text to video", 608, 352, 2, None, None)[0] is False
     assert validate_resolution(865, 481) == (864, 480)
@@ -3202,7 +3345,8 @@ def selftest() -> None:
         f"zero-copy Sol + FirstBlockCache composition valid, "
         f"ConvRot FFN chunking valid, selectable Larry/LightX2V Turbo on "
         f"FL2VA/Ref2VA + editable steps valid, compile guard active, "
-        f"SaveVideo codec API valid, prompt API defaults valid, "
+        f"SaveVideo codec API valid, prompt API download URL valid, "
+        f"gallery fallback valid, "
         f"/comfyui proxy rewrites valid"
     )
 
