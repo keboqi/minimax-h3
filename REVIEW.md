@@ -71,10 +71,15 @@ Primary sources:
    `bd28909e6a152ba5db4e3590d2d9df1c249943f2`. This release adds the SM120
    pointer-kernel path and the H3 fused-modulation node while retaining the
    existing zero-copy H3 attention node contract.
-2. **Adopted: bit-exact fused modulation for Turbo.** Every Larry and LightX2V
-   Turbo graph applies `MiniMaxH3FusedModulation` after its LoRA. This placement
-   ensures the fused node receives the model object returned by Larry's runtime
-   loader or LightX2V's core LoRA loader.
+2. **Adopted: bit-exact fused modulation for LightX2V Turbo.** LightX2V applies
+   `MiniMaxH3FusedModulation` after its core LoRA. Larry deliberately remains
+   unfused pending GPU validation with its runtime AdaLN forward patches. The
+   pinned Larry node receives a fail-closed provisioning patch: `_unique_t()`
+   now mirrors ComfyUI's dynamic set of video, audio, visual-conditioning, and
+   audio-conditioning timesteps from the actual packed layout. This fixes both
+   the initial 3-vs-2 row mismatch and the later 4-vs-3 mismatch when video and
+   audio schedules diverge after the first denoising step.
+   Larry still uses Sol attention and ConvRot FFN chunking where selected.
 3. **Adopted: thresholded Sol for Turbo.** Auto attention now enables Sol for
    Turbo jobs at or above the existing 8K packed-token threshold. Switching the
    UI into Turbo selects Auto rather than forcing Dense; explicit Dense and

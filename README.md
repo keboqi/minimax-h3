@@ -12,7 +12,7 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 - Speed and quality NVFP4 model profiles
 - Selectable Larry v4-600 EMA and LightX2V v0.1 Turbo LoRAs
 - H3-native zero-copy Sol v0.6.0 sparse attention with SageAttention fallback
-- Bit-exact fused H3 modulation projections in every Turbo workflow
+- Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Hardware-aware ComfyUI memory mode selection
 - Spectrum as the normal-generation default, with audio-isolated offline replay
@@ -36,9 +36,12 @@ The Sol-Attn integration is pinned to the reviewed v0.6.0 commit
 `bd28909e6a152ba5db4e3590d2d9df1c249943f2` so its ComfyUI node contract
 remains reproducible. Sol uses the zero-copy H3 path, keeps conditioning KV
 exact by default, and leaves its optional INT8 attention approximations
-disabled. Turbo workflows additionally use v0.6.0's bit-exact fused modulation
-node after the selected LoRA. Quality ConvRot models use bit-preserving two-way
-feed-forward chunking above 8K packed tokens.
+disabled. LightX2V Turbo additionally uses v0.6.0's bit-exact fused modulation
+node after its LoRA. Larry Turbo keeps its AdaLN path unfused pending composition
+validation. Provisioning applies a fail-closed patch to Larry's pinned node so
+its E-grid adapter derives the same dynamic timestep set as ComfyUI, including
+visual and audio reference-conditioning rows. Quality ConvRot models use
+bit-preserving two-way feed-forward chunking above 8K packed tokens.
 
 Spectrum is pinned to v0.2.2 and is applied after LoRA, Sol-Attn, and ConvRot
 feed-forward patches. Its default uses system-RAM history, degree-1 forecasting,
@@ -129,10 +132,11 @@ The fast checks do not download models or require a GPU:
 
 ```bash
 python3 -m py_compile \
-  gradio_app.py h3_attention.py h3_models.py h3_requirements.py \
+  gradio_app.py h3_attention.py h3_models.py h3_node_patches.py h3_requirements.py \
   modal_h3.py setup_h3.py custom_nodes/H3Acceleration/__init__.py
 python3 h3_requirements.py
 python3 h3_models.py
+python3 h3_node_patches.py --selftest
 python3 h3_attention.py --selftest
 python3 gradio_app.py --selftest
 bash -n run_h3.sh
@@ -144,6 +148,7 @@ bash -n run_h3.sh
 - `setup_h3.py` — local environment and model provisioning
 - `modal_h3.py` — Modal image, volume, and service lifecycle
 - `h3_models.py` — shared model inventory and download logic
+- `h3_node_patches.py` — verified compatibility patches for pinned external nodes
 - `h3_requirements.py` — shared dependency compatibility policy
 - `h3_attention.py` — runtime SageAttention capability probe
 - `custom_nodes/H3Acceleration` — bundled FirstBlockCache node

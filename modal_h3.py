@@ -23,6 +23,7 @@ COMFY = ROOT / "ComfyUI"
 UI = ROOT / "gradio_app.py"
 SHARED_MODELS = ROOT / "h3_models.py"
 SHARED_REQUIREMENTS = ROOT / "h3_requirements.py"
+NODE_PATCHES = ROOT / "h3_node_patches.py"
 ATTENTION_HELPER = ROOT / "h3_attention.py"
 ACCEL_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
@@ -30,6 +31,7 @@ LOCAL_UI = LOCAL / "gradio_app.py"
 LOCAL_ACCEL = LOCAL / "custom_nodes" / "H3Acceleration" / "__init__.py"
 LOCAL_SHARED_MODELS = LOCAL / "h3_models.py"
 LOCAL_SHARED_REQUIREMENTS = LOCAL / "h3_requirements.py"
+LOCAL_NODE_PATCHES = LOCAL / "h3_node_patches.py"
 LOCAL_ATTENTION_HELPER = LOCAL / "h3_attention.py"
 
 DATA = PurePosixPath("/data")
@@ -78,10 +80,12 @@ from h3_requirements import (  # noqa: E402
     TORCHVISION_VERSION,
     filter_pinned_requirements,
 )
+from h3_node_patches import patch_larry_turbo_node  # noqa: E402
 
 
 _BUILD_LOCAL_MOUNTS = (
     (LOCAL_SHARED_REQUIREMENTS, SHARED_REQUIREMENTS),
+    (LOCAL_NODE_PATCHES, NODE_PATCHES),
 )
 _RUNTIME_LOCAL_MOUNTS = (
     (LOCAL_UI, UI),
@@ -178,6 +182,7 @@ def build(revision: str) -> None:
         Path(COMFY) / "custom_nodes" / "ComfyUI-MiniMax-H3-Turbo"
     )
     _clone(LARRY_TURBO_REPO, larry_turbo_dir, ref=LARRY_TURBO_REF)
+    patch_larry_turbo_node(larry_turbo_dir)
     _print_git_revision(larry_turbo_dir)
 
     # ComfyUI currently lists torch/torchvision/torchaudio unpinned.

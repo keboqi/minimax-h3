@@ -894,11 +894,7 @@ class Graph:
 def turbo_required_nodes(turbo_variant: str) -> set[str]:
     """Return the external node contract for one normalized Turbo variant."""
     if normalize_turbo_variant(turbo_variant) == LARRY_TURBO:
-        return {
-            LARRY_TURBO_LORA_NODE,
-            LARRY_TURBO_SAMPLER_NODE,
-            FUSED_MODULATION_NODE,
-        }
+        return {LARRY_TURBO_LORA_NODE, LARRY_TURBO_SAMPLER_NODE}
     return {CORE_LORA_LOADER_NODE, CORE_SAMPLER_NODE, FUSED_MODULATION_NODE}
 
 
@@ -911,7 +907,7 @@ def add_turbo_model_patch(
     strength: float,
     available_nodes: set[str],
 ) -> list[Any]:
-    """Apply a Turbo LoRA followed by Sol's bit-exact modulation fusion."""
+    """Apply a Turbo LoRA and compatible model-level optimizations."""
     variant = normalize_turbo_variant(turbo_variant)
     required = turbo_required_nodes(variant)
     missing = required - available_nodes
@@ -930,16 +926,21 @@ def add_turbo_model_patch(
             strength=float(strength),
             low_vram=False,
         )
-    else:
-        turbo = graph.add(
-            CORE_LORA_LOADER_NODE,
-            model=model_ref,
-            lora_name=lora_name,
-            strength_model=float(strength),
-        )
+        # Larry replaces AdaLN projection forwards at runtime. Its pinned node
+        # receives a provisioning-time modality-row fix; keep this additional
+        # fusion layer disabled until that composition has GPU validation.
+        # Sol attention and FFN chunking do not replace the AdaLN projection.
+        return Graph.out(turbo)
 
-    # Install the block-level patch after the LoRA so the fused node receives
-    # the model object returned by either Turbo implementation.
+    turbo = graph.add(
+        CORE_LORA_LOADER_NODE,
+        model=model_ref,
+        lora_name=lora_name,
+        strength_model=float(strength),
+    )
+
+    # LightX2V uses the core LoRA loader and retains the standard H3 AdaLN shape,
+    # so Sol's bit-exact fused modulation remains compatible.
     fused_modulation = graph.add(
         FUSED_MODULATION_NODE,
         model=Graph.out(turbo),
@@ -3574,11 +3575,12 @@ def selftest() -> None:
         node_id for node_id, node in larry_graph.nodes.items()
         if node["class_type"] == LARRY_TURBO_LORA_NODE
     )
-    larry_fused = next(
-        node for node in larry_graph.nodes.values()
-        if node["class_type"] == FUSED_MODULATION_NODE
-    )
-    assert larry_fused["inputs"]["model"] == [larry_loader_id, 0]
+    assert larry_model == [larry_loader_id, 0]
+    assert FUSED_MODULATION_NODE not in {
+        node["class_type"] for node in larry_graph.nodes.values()
+    }
+    assert FUSED_MODULATION_NODE not in turbo_required_nodes(LARRY_TURBO)
+    assert FUSED_MODULATION_NODE in turbo_required_nodes(LIGHTX2V_TURBO)
     assert any(
         node["class_type"] == LARRY_TURBO_SAMPLER_NODE
         for node in larry_graph.nodes.values()
@@ -3643,7 +3645,8 @@ def selftest() -> None:
         f"15s=362 frames, tiered resolution presets valid, Sol exact valid, "
         f"Sol Auto/Turbo policy valid, Spectrum default + Sol/ConvRot order valid, "
         f"zero-copy Sol + FirstBlockCache composition valid, "
-        f"fused modulation + ConvRot FFN chunking valid, selectable Larry/LightX2V Turbo on "
+        f"LightX fused modulation + Larry compatibility + ConvRot FFN chunking valid, "
+        f"selectable Larry/LightX2V Turbo on "
         f"FL2VA/Ref2VA + editable steps valid, compile guard active, "
         f"SaveVideo codec API valid, prompt API download URL valid, "
         f"gallery fallback/deletion guards valid, "

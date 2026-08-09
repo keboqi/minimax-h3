@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 
 from h3_models import sync_models, write_json_atomic
+from h3_node_patches import patch_larry_turbo_node
 from h3_requirements import (
     NUMPY_VERSION,
     SCIPY_VERSION,
@@ -330,6 +331,7 @@ def sync_external_nodes(
 
     larry_turbo = comfy / "custom_nodes" / "ComfyUI-MiniMax-H3-Turbo"
     sync_git_repo(LARRY_TURBO_REPO, larry_turbo, ref=LARRY_TURBO_REF)
+    patch_larry_turbo_node(larry_turbo)
     if install_requirements and (larry_turbo / "requirements.txt").is_file():
         uv_pip("-r", str(larry_turbo / "requirements.txt"), no_deps=True)
 
