@@ -110,6 +110,13 @@ The Gradio service also exposes the full ComfyUI interface at `/comfyui/`
 on the same public URL. HTTP, uploads, and live WebSocket progress are proxied
 to the private ComfyUI backend on port 8188.
 
+Runtime-only Python files (`gradio_app.py`, `h3_models.py`, `h3_attention.py`,
+and the bundled H3Acceleration node) are mounted into Modal containers at
+startup after the expensive ComfyUI image layer is built. Changes to those files
+therefore reuse the cached ComfyUI, CUDA, Torch, and dependency layers. Only
+`h3_requirements.py`, which controls build-time package installation and ABI
+pins, is copied into an earlier image layer.
+
 ## Validation
 
 The fast checks do not download models or require a GPU:

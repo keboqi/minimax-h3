@@ -21,10 +21,10 @@ LOCAL = Path(__file__).resolve().parent
 ROOT = PurePosixPath("/opt/h3")
 COMFY = ROOT / "ComfyUI"
 UI = ROOT / "gradio_app.py"
-ACCEL_SRC = ROOT / "h3_acceleration.py"
 SHARED_MODELS = ROOT / "h3_models.py"
 SHARED_REQUIREMENTS = ROOT / "h3_requirements.py"
 ATTENTION_HELPER = ROOT / "h3_attention.py"
+ACCEL_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
 LOCAL_UI = LOCAL / "gradio_app.py"
 LOCAL_ACCEL = LOCAL / "custom_nodes" / "H3Acceleration" / "__init__.py"
@@ -84,13 +84,18 @@ from h3_requirements import (  # noqa: E402
 )
 
 
-_REQUIRED_LOCAL_FILES = (
-    LOCAL_UI,
-    LOCAL_ACCEL,
-    LOCAL_SHARED_MODELS,
-    LOCAL_SHARED_REQUIREMENTS,
-    LOCAL_ATTENTION_HELPER,
+_BUILD_LOCAL_MOUNTS = (
+    (LOCAL_SHARED_REQUIREMENTS, SHARED_REQUIREMENTS),
 )
+_RUNTIME_LOCAL_MOUNTS = (
+    (LOCAL_UI, UI),
+    (LOCAL_ACCEL, ACCEL_DEST),
+    (LOCAL_SHARED_MODELS, SHARED_MODELS),
+    (LOCAL_ATTENTION_HELPER, ATTENTION_HELPER),
+)
+_BUILD_LOCAL_FILES = tuple(local for local, _ in _BUILD_LOCAL_MOUNTS)
+_RUNTIME_LOCAL_FILES = tuple(local for local, _ in _RUNTIME_LOCAL_MOUNTS)
+_REQUIRED_LOCAL_FILES = _BUILD_LOCAL_FILES + _RUNTIME_LOCAL_FILES
 if IS_LOCAL:
     missing = [str(path) for path in _REQUIRED_LOCAL_FILES if not path.is_file()]
     if missing:
@@ -104,7 +109,8 @@ def _revision() -> str:
         return "remote-import"
 
     digest = hashlib.sha256()
-    for path in _REQUIRED_LOCAL_FILES:
+    # Runtime-mounted files must not invalidate the expensive image build.
+    for path in _BUILD_LOCAL_FILES:
         digest.update(path.read_bytes())
     return digest.hexdigest()[:16]
 
@@ -155,28 +161,12 @@ def build(revision: str) -> None:
     """Build-time clone/install step baked into the Modal image."""
     print("[modal-h3] runtime", revision, flush=True)
 
-    if not Path(UI).is_file():
-        raise RuntimeError(f"Missing standalone Gradio application: {UI}")
-    if not Path(ACCEL_SRC).is_file():
-        raise RuntimeError(f"Missing bundled H3 acceleration node: {ACCEL_SRC}")
-    if not Path(SHARED_MODELS).is_file():
-        raise RuntimeError(f"Missing shared model module: {SHARED_MODELS}")
     if not Path(SHARED_REQUIREMENTS).is_file():
         raise RuntimeError(
             f"Missing shared requirements module: {SHARED_REQUIREMENTS}"
         )
-    if not Path(ATTENTION_HELPER).is_file():
-        raise RuntimeError(
-            f"Missing attention helper module: {ATTENTION_HELPER}"
-        )
 
     _clone(COMFY_REPO, Path(COMFY))
-
-    accel_dest = (
-        Path(COMFY) / "custom_nodes" / "H3Acceleration" / "__init__.py"
-    )
-    accel_dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(Path(ACCEL_SRC), accel_dest)
 
     sol_dir = Path(COMFY) / "custom_nodes" / "ComfyUI_sol-attn_Blackwell"
     _clone(SOL_REPO, sol_dir, ref=SOL_REF)
@@ -348,37 +338,29 @@ image = (
 )
 
 if IS_LOCAL:
-    image = image.add_local_file(
-        LOCAL_UI,
-        remote_path=UI.as_posix(),
-        copy=True,
-    )
-    image = image.add_local_file(
-        LOCAL_ACCEL,
-        remote_path=ACCEL_SRC.as_posix(),
-        copy=True,
-    )
-    image = image.add_local_file(
-        LOCAL_SHARED_MODELS,
-        remote_path=SHARED_MODELS.as_posix(),
-        copy=True,
-    )
-    image = image.add_local_file(
-        LOCAL_SHARED_REQUIREMENTS,
-        remote_path=SHARED_REQUIREMENTS.as_posix(),
-        copy=True,
-    )
-    image = image.add_local_file(
-        LOCAL_ATTENTION_HELPER,
-        remote_path=ATTENTION_HELPER.as_posix(),
-        copy=True,
-    )
+    for local_path, remote_path in _BUILD_LOCAL_MOUNTS:
+        image = image.add_local_file(
+            local_path,
+            remote_path=remote_path.as_posix(),
+            copy=True,
+        )
 
 image = image.run_function(
     build,
     timeout=7200,
     kwargs={"revision": REVISION},
 )
+
+if IS_LOCAL:
+    # Runtime-only changes are mounted when containers start. Keeping these
+    # after all build steps prevents normal code iteration from rebuilding
+    # ComfyUI and its dependency stack.
+    for local_path, remote_path in _RUNTIME_LOCAL_MOUNTS:
+        image = image.add_local_file(
+            local_path,
+            remote_path=remote_path.as_posix(),
+            copy=False,
+        )
 
 volume = modal.Volume.from_name(VOL, create_if_missing=True)
 app = modal.App(APP, image=image)
