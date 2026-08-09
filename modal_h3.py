@@ -67,12 +67,8 @@ def _shared_import_path() -> Path:
 
 
 sys.path.insert(0, str(_shared_import_path()))
-from h3_models import (  # noqa: E402
-    sync_models,
-    validate_config_files,
-    write_json_atomic,
-)
-from h3_attention import probe_sageattention  # noqa: E402
+# Only build inputs may be imported while Modal constructs the image. Helpers
+# mounted after run_function() must be imported lazily inside runtime functions.
 from h3_requirements import (  # noqa: E402
     NUMPY_VERSION,
     SCIPY_VERSION,
@@ -392,6 +388,8 @@ def layout() -> None:
 
 
 def _provision_unlocked() -> dict:
+    from h3_models import sync_models, validate_config_files, write_json_atomic
+
     layout()
 
     config = sync_models(
@@ -509,6 +507,8 @@ def provision_models():
     requires_proxy_auth=PROXY_AUTH,
 )
 def serve():
+    from h3_attention import probe_sageattention
+
     print("[modal-h3] Starting MiniMax H3 service", flush=True)
     provision()
 
