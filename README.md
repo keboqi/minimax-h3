@@ -8,6 +8,7 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 
 - Text/image-to-video and reference-media-to-video workflows
 - Live queue position, workflow stage, node count, and sampler-step progress
+- Thumbnail gallery that loads a video player only after a generated video is selected
 - Speed and quality NVFP4 model profiles
 - Selectable Larry v4-600 EMA and LightX2V v0.1 Turbo LoRAs
 - H3-native zero-copy Sol sparse attention with SageAttention fallback

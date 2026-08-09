@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import random
@@ -154,6 +155,9 @@ REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "60"))
 GENERATION_TIMEOUT = float(os.getenv("GENERATION_TIMEOUT", "10800"))
 POLL_SECONDS = float(os.getenv("POLL_SECONDS", "1"))
 OUTPUTS_DIR = Path(os.getenv("GRADIO_OUTPUT_DIR", COMFY_DIR.parent / "gradio_outputs"))
+GALLERY_THUMBNAILS_DIR = OUTPUTS_DIR / ".gallery_thumbnails"
+GALLERY_LIMIT = max(1, int(os.getenv("GRADIO_GALLERY_LIMIT", "200")))
+VIDEO_EXTENSIONS = frozenset({".mp4", ".webm", ".mov", ".mkv", ".gif"})
 
 HTTP = requests.Session()
 
@@ -1549,8 +1553,7 @@ def resolve_output(history: dict[str, Any], queued_at: float) -> Path:
         path = (OUTPUT_DIR / ref["subfolder"] / ref["filename"]).resolve()
         if path.is_relative_to(output_root) and path.is_file():
             candidates.append(path)
-    video_exts = {".mp4", ".webm", ".mov", ".mkv", ".gif"}
-    videos = [p for p in candidates if p.suffix.lower() in video_exts]
+    videos = [p for p in candidates if p.suffix.lower() in VIDEO_EXTENSIONS]
     if videos:
         return max(videos, key=lambda p: p.stat().st_mtime)
 
@@ -1558,7 +1561,7 @@ def resolve_output(history: dict[str, Any], queued_at: float) -> Path:
     # Fall back only to files created after this job was queued.
     recent = [
         p for p in OUTPUT_DIR.rglob("*")
-        if p.is_file() and p.suffix.lower() in video_exts and p.stat().st_mtime >= queued_at - 2
+        if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS and p.stat().st_mtime >= queued_at - 2
     ]
     if recent:
         return max(recent, key=lambda p: p.stat().st_mtime)
@@ -1595,6 +1598,100 @@ def postprocess_video(source: Path, option: str) -> Path:
     if proc.returncode != 0:
         raise H3Error(f"Post-processing failed: {proc.stderr.strip()}")
     return target
+
+
+def gallery_video_paths() -> list[Path]:
+    """Return the newest generated videos without loading their media data."""
+    videos: dict[Path, Path] = {}
+    for root in (OUTPUT_DIR, OUTPUTS_DIR):
+        if not root.is_dir():
+            continue
+        resolved_root = root.resolve()
+        for candidate in root.rglob("*"):
+            if not candidate.is_file() or candidate.suffix.lower() not in VIDEO_EXTENSIONS:
+                continue
+            try:
+                resolved = candidate.resolve()
+                if resolved.is_relative_to(resolved_root):
+                    videos[resolved] = candidate
+            except OSError:
+                continue
+
+    def modified(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    return sorted(videos.values(), key=modified, reverse=True)[:GALLERY_LIMIT]
+
+
+def gallery_thumbnail(video: Path) -> Path | None:
+    """Create a small cached poster image for a video."""
+    temporary: Path | None = None
+    try:
+        video_mtime = video.stat().st_mtime
+        cache_key = hashlib.sha256(
+            str(video.resolve()).encode("utf-8")
+        ).hexdigest()[:24]
+        thumbnail = GALLERY_THUMBNAILS_DIR / f"{cache_key}.jpg"
+        if thumbnail.is_file() and thumbnail.stat().st_mtime >= video_mtime:
+            return thumbnail
+
+        GALLERY_THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
+        temporary = GALLERY_THUMBNAILS_DIR / f"{cache_key}.tmp.jpg"
+        temporary.unlink(missing_ok=True)
+        cmd = [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-ss", "0.1", "-i", str(video), "-frames:v", "1",
+            "-vf", "scale=480:-2:force_original_aspect_ratio=decrease",
+            str(temporary),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if proc.returncode != 0 or not temporary.is_file():
+            temporary.unlink(missing_ok=True)
+            return None
+        temporary.replace(thumbnail)
+        return thumbnail
+    except (OSError, subprocess.TimeoutExpired):
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        return None
+
+
+def refresh_gallery() -> tuple[list[tuple[str, str]], list[str], str]:
+    videos = gallery_video_paths()
+    items: list[tuple[str, str]] = []
+    selectable_paths: list[str] = []
+    failed = 0
+    for video in videos:
+        thumbnail = gallery_thumbnail(video)
+        if thumbnail is None:
+            failed += 1
+            continue
+        try:
+            stat = video.stat()
+        except OSError:
+            continue
+        timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
+        size_mb = stat.st_size / (1024 * 1024)
+        caption = f"{video.name} · {timestamp} · {size_mb:.1f} MB"
+        items.append((str(thumbnail), caption))
+        selectable_paths.append(str(video))
+    detail = f"{len(items)} generated video{'s' if len(items) != 1 else ''}"
+    if failed:
+        detail += f" · {failed} thumbnail{'s' if failed != 1 else ''} unavailable"
+    return items, selectable_paths, detail
+
+
+def select_gallery_video(paths: list[str], evt: gr.SelectData) -> str | None:
+    index = evt.index
+    if isinstance(index, (tuple, list)):
+        index = index[0]
+    try:
+        return paths[int(index)]
+    except (IndexError, TypeError, ValueError):
+        return None
 
 
 def backend_status() -> str:
@@ -2045,7 +2142,12 @@ def build_ui() -> gr.Blocks:
             "Open ComfyUI ↗</a>"
         )
         health = gr.Markdown(backend_status())
-        with gr.Row():
+        with gr.Tabs():
+            with gr.Tab("Generate") as generate_tab:
+                gr.HTML("")
+            with gr.Tab("Gallery") as gallery_tab:
+                gr.HTML("")
+        with gr.Row() as generation_view:
             with gr.Column(scale=3):
                 mode = gr.Radio(
                     ["Text to video", "First / last frame", "Reference media"],
@@ -2320,6 +2422,25 @@ def build_ui() -> gr.Blocks:
                     value="None", label="Post-processing",
                 )
 
+        with gr.Group(visible=False) as gallery_view:
+            with gr.Row():
+                gr.Markdown(
+                    "## Generated videos\n"
+                    "Only poster thumbnails are loaded here. Select one to load and play it."
+                )
+                gallery_refresh = gr.Button("Refresh gallery", scale=0)
+            gallery_status = gr.Markdown("Open this tab to scan generated videos.")
+            gallery_paths = gr.State([])
+            gallery_grid = gr.Gallery(
+                value=[],
+                label="Generated video thumbnails",
+                columns=[2, 3, 4, 5],
+                height="auto",
+                object_fit="contain",
+                allow_preview=False,
+            )
+            gallery_player = gr.Video(label="Selected video")
+
         settings_inputs = [
             mode, model_profile, generation_mode, turbo_variant,
             duration, width, height,
@@ -2407,6 +2528,30 @@ def build_ui() -> gr.Blocks:
         )
         stop.click(interrupt, outputs=status, cancels=[event])
         refresh.click(backend_status, outputs=health)
+        generate_tab.select(
+            lambda: (gr.update(visible=True), gr.update(visible=False)),
+            outputs=[generation_view, gallery_view],
+        )
+        gallery_event = gallery_tab.select(
+            lambda: (gr.update(visible=False), gr.update(visible=True), None),
+            outputs=[generation_view, gallery_view, gallery_player],
+        )
+        gallery_event.then(
+            refresh_gallery,
+            outputs=[gallery_grid, gallery_paths, gallery_status],
+            show_progress="hidden",
+        )
+        gallery_refresh.click(
+            refresh_gallery,
+            outputs=[gallery_grid, gallery_paths, gallery_status],
+            show_progress="minimal",
+        )
+        gallery_grid.select(
+            select_gallery_video,
+            inputs=gallery_paths,
+            outputs=gallery_player,
+            show_progress="minimal",
+        )
     return demo
 
 
