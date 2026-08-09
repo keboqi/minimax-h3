@@ -74,6 +74,26 @@ DEFAULT_FBCACHE_START = 0.10
 DEFAULT_FBCACHE_END = 0.95
 DEFAULT_FBCACHE_MAX_HITS = 2
 DEFAULT_FBCACHE_TEMPORAL_GUARD = True
+DEFAULT_ACCELERATOR = "Spectrum"
+TURBO_LORA_STRENGTH = 0.75
+SPECTRUM_DEFAULT_INPUTS = {
+    "enabled": True,
+    "blend_weight": 0.50,
+    "degree": 1,
+    "ridge_lambda": 0.10,
+    "window_size": 2.0,
+    "flex_window": 0.75,
+    "warmup_steps": 1,
+    "tail_actual_steps": 1,
+    "max_history": 8,
+    "debug": False,
+    "history_storage": "system_ram",
+    "bootstrap_first_forecast": True,
+    "anchor_residual_feedback": False,
+    "selective_rollback_correction": False,
+    "offline_smoothing_replay": True,
+    "audio_blend_weight": 0.0,
+}
 
 # The official H3 workflow uses a 768×1344 pixel-area native canvas. Larger
 # entries are kept explicitly marked as extended/experimental.
@@ -394,6 +414,8 @@ class ModelConfig:
     audio_vae: str
     turbo_lora: str | None = None
     turbo_source: str = "unknown"
+    turbo_ref_lora: str | None = None
+    turbo_ref_source: str = "unknown"
 
     def profile(self, name: str) -> ModelProfile:
         key = str(name).strip().lower()
@@ -402,6 +424,11 @@ class ModelConfig:
         if key not in self.profiles:
             raise H3Error(f"Unknown model profile: {name}")
         return self.profiles[key]
+
+    def turbo_lora_for(self, mode: str) -> str | None:
+        if str(mode).strip().lower() == "reference media":
+            return self.turbo_ref_lora
+        return self.turbo_lora
 
 
 def load_model_config() -> ModelConfig:
@@ -436,6 +463,10 @@ def load_model_config() -> ModelConfig:
         audio_vae=data["audio_vae"],
         turbo_lora=data.get("turbo_lora"),
         turbo_source=data.get("turbo_source", "unknown"),
+        turbo_ref_lora=data.get("turbo_ref_lora", data.get("turbo_lora")),
+        turbo_ref_source=data.get(
+            "turbo_ref_source", data.get("turbo_source", "unknown")
+        ),
     )
 
 
@@ -622,7 +653,7 @@ def resolve_sol_policy(
 
 
 def mode_layout_updates(mode: str):
-    """Update task-specific inputs and keep Reference media Normal-only."""
+    """Update task-specific inputs without changing the acceleration choice."""
     show_frames = mode == "First / last frame"
     show_refs = mode == "Reference media"
 
@@ -631,12 +662,12 @@ def mode_layout_updates(mode: str):
             mode_help(mode),
             gr.update(visible=False),
             gr.update(visible=True),
-            gr.update(value="Normal", interactive=False),
-            gr.update(value="Balanced", interactive=True),
-            18,
-            "simple",
-            "FirstBlockCache",
-            "Auto",
+            gr.update(interactive=True),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
         )
 
     return (
@@ -671,7 +702,7 @@ def generation_mode_defaults(name: str):
         gr.update(value="Balanced", interactive=True),
         18,
         "simple",
-        "FirstBlockCache",
+        DEFAULT_ACCELERATOR,
         "Auto",
     )
 
@@ -863,6 +894,22 @@ def add_model_stack(
             min_tokens=AUTO_SOL_TOKEN_THRESHOLD,
         )
         model_ref = Graph.out(chunked)
+
+    # Keep Spectrum after LoRA, Sol-Attn, and feed-forward patches so actual
+    # anchor evaluations observe the final H3 model path. The selected radio
+    # mode prevents it from being stacked with either cache implementation.
+    if cache_mode_normalized == "spectrum":
+        if "SpectrumApplyMiniMaxH3" not in available_nodes:
+            raise H3Error(
+                "Spectrum was requested, but SpectrumApplyMiniMaxH3 is not "
+                "loaded. Re-run setup_h3.py and restart ComfyUI."
+            )
+        spectrum = graph.add(
+            "SpectrumApplyMiniMaxH3",
+            model=model_ref,
+            **SPECTRUM_DEFAULT_INPUTS,
+        )
+        model_ref = Graph.out(spectrum)
 
     if cache_mode_normalized == "easycache":
         if "EasyCache" not in available_nodes:
@@ -1187,6 +1234,8 @@ def required_nodes_for(
         common.add("MiniMaxH3ChunkFeedForward")
     if str(cache_mode).strip().lower() == "firstblockcache":
         common.add("H3FirstBlockCache")
+    elif str(cache_mode).strip().lower() == "spectrum":
+        common.add("SpectrumApplyMiniMaxH3")
     elif str(cache_mode).strip().lower() == "easycache":
         common.add("EasyCache")
     if compile_model:
@@ -1220,7 +1269,8 @@ def node_stage(class_type: str) -> str:
         return "Encoding prompt and conditioning"
     if name in {
         "TorchCompileModel", "MiniMaxH3MemoryEfficientSolAttentionPatch",
-        "MiniMaxH3ChunkFeedForward", "H3FirstBlockCache", "EasyCache",
+        "MiniMaxH3ChunkFeedForward", "SpectrumApplyMiniMaxH3",
+        "H3FirstBlockCache", "EasyCache",
     }:
         return "Configuring generation model"
     if name in {
@@ -1486,7 +1536,8 @@ def backend_status() -> str:
         models = load_model_config()
         easycache_status = "available" if "EasyCache" in live_nodes else "unavailable"
         fbcache_status = "available" if "H3FirstBlockCache" in live_nodes else "unavailable"
-        profile_lines = []
+        spectrum_status = "available" if "SpectrumApplyMiniMaxH3" in live_nodes else "unavailable"
+        profile_lines = [f"**Spectrum accelerator**: {spectrum_status}"]
         for key in ("speed", "quality"):
             if key not in models.profiles:
                 continue
@@ -1498,7 +1549,7 @@ def backend_status() -> str:
         if models.turbo_lora:
             profile_lines.append(
                 f"**LightX2V Turbo** · LoRA `{models.turbo_lora}` · "
-                "4-step default · strength 0.75 · Speed or Quality FL2VA"
+                "4-step default · strength 0.75 · FL2VA and experimental Ref2VA"
             )
         return (
             f"Connected · {gpu}{vram_text} · sparse: {SERVER_ATTENTION_BACKEND} · "
@@ -1578,20 +1629,21 @@ def generate(
         profile = models.profile(model_profile)
 
         requested_generation = str(generation_mode).strip().lower()
-        generation_note = None
-        if mode == "Reference media" and requested_generation == "turbo":
-            use_turbo = False
-            generation_note = "Turbo is FL2VA-only; Reference media used Normal generation."
-        else:
-            use_turbo = requested_generation == "turbo"
+        use_turbo = requested_generation == "turbo"
+        generation_note = (
+            "Reference Turbo is experimental and currently uses the shared "
+            "FL2VA-trained LightX2V LoRA."
+            if mode == "Reference media" and use_turbo
+            else None
+        )
 
         selected_model = profile.ref2va if mode == "Reference media" else profile.fl2va
         if use_turbo:
-            if not models.turbo_lora:
+            turbo_lora_name = models.turbo_lora_for(mode)
+            if not turbo_lora_name:
                 raise H3Error("Turbo LoRA is not provisioned. Re-run setup/provisioning.")
             selected_label = f"{profile.label} · Turbo"
-            turbo_lora_name = models.turbo_lora
-            turbo_strength = 0.75
+            turbo_strength = TURBO_LORA_STRENGTH
         else:
             selected_label = f"{profile.label} · Normal"
             turbo_lora_name = None
@@ -1627,7 +1679,10 @@ def generate(
         cache_note = None
         if use_turbo and effective_cache_mode.lower() != "off":
             effective_cache_mode = "Off"
-            cache_note = "FirstBlock/EasyCache disabled automatically in Turbo mode pending validation."
+            cache_note = (
+                "Spectrum/block caches disabled automatically in Turbo mode "
+                "pending validation."
+            )
         missing = required_nodes_for(
             mode,
             effective_sol,
@@ -1743,6 +1798,11 @@ def generate(
                 f"window={float(fbcache_start):.2f}–{float(fbcache_end):.2f}, "
                 f"max-hits={int(fbcache_max_hits)}, "
                 f"temporal-guard={'on' if fbcache_temporal_guard else 'off'})"
+            )
+        elif effective_cache_mode.lower() == "spectrum":
+            cache_status = (
+                "Spectrum (degree=1, audio-isolated offline replay, "
+                "audio-blend=0, history=system RAM)"
             )
         elif effective_cache_mode.lower() == "easycache":
             cache_status = (
@@ -1917,8 +1977,8 @@ def build_ui() -> gr.Blocks:
                         label="Generation",
                         info=(
                             "Turbo defaults to 4 steps and uses the H3 Turbo LoRA plus "
-                            "dual-clock sampler on whichever FL2VA base model is selected. "
-                            "Reference media is Normal-only."
+                            "normal H3 sampling on the selected base model. Reference media "
+                            "temporarily uses the same FL2VA-trained LoRA and is experimental."
                         ),
                     )
                 help_text = gr.Markdown(mode_help("Text to video"))
@@ -2058,15 +2118,16 @@ def build_ui() -> gr.Blocks:
                         )
                     sol_step_off = gr.State(0.0)
                     sol_sink_tokens = gr.State(0)
-                with gr.Accordion("Cache acceleration", open=False):
+                with gr.Accordion("Sampling acceleration", open=False):
                     cache_mode = gr.Radio(
-                        ["FirstBlockCache", "EasyCache", "Off"],
+                        ["Spectrum", "FirstBlockCache", "EasyCache", "Off"],
                         value="Off",
-                        label="Cache mode",
+                        label="Acceleration mode",
                         info=(
-                            "FirstBlockCache is the recommended H3 default. It keeps every "
-                            "scheduler step but can reuse blocks 1–49 when block-0 residuals "
-                            "are sufficiently similar. Generation=Turbo automatically forces cache Off."
+                            "Spectrum is the normal H3 default based on broader community "
+                            "speed testing. It forecasts selected transformer steps and uses "
+                            "audio-isolated offline replay. FirstBlockCache is the lower-memory "
+                            "fallback. Modes are mutually exclusive; Turbo forces Off."
                         ),
                     )
                     fbcache_preset = gr.Radio(
@@ -2306,9 +2367,17 @@ def selftest() -> None:
         audio_vae="audio_vae.safetensors",
         turbo_lora="minimax_h3_turbo_4step_ema_ckpt850.safetensors",
         turbo_source="test",
+        turbo_ref_lora="minimax_h3_turbo_4step_ema_ckpt850.safetensors",
+        turbo_ref_source="shared-fl2va-test",
     )
     available = required_nodes_for("Text to video", True, "FirstBlockCache", True, use_turbo=True) | required_nodes_for("Reference media", True, "EasyCache", True)
+    available.add("SpectrumApplyMiniMaxH3")
     available.add("MiniMaxH3ChunkFeedForward")
+    assert fake.turbo_lora_for("Text to video") == fake.turbo_lora
+    assert fake.turbo_lora_for("Reference media") == fake.turbo_ref_lora
+    reference_updates = mode_layout_updates("Reference media")
+    assert reference_updates[3].get("interactive") is True
+    assert "value" not in reference_updates[3]
     # Avoid staging files in selftest; build prompt-only T2V and check graph wiring.
     graph = build_fl2va_graph(
         prompt="test", first_image=None, last_image=None,
@@ -2386,6 +2455,58 @@ def selftest() -> None:
     assert graph[sol_id]["inputs"]["model"] == [cache_id, 0]
     assert graph[cache_id]["inputs"]["model"] != [sol_id, 0]
 
+    spectrum_graph = Graph()
+    add_model_stack(
+        spectrum_graph,
+        fake.profile("quality").fl2va,
+        fake,
+        turbo_lora_name=None,
+        turbo_strength=0.75,
+        use_sol=True,
+        sol_tau=1.0,
+        sol_thresh_type="diag",
+        sol_exact_mode="off",
+        sol_dense_steps=1,
+        sol_step_off=0.0,
+        sol_sink_tokens=0,
+        cache_mode="Spectrum",
+        fbcache_preset="Fast",
+        fbcache_threshold=0.10,
+        fbcache_start=0.10,
+        fbcache_end=0.95,
+        fbcache_max_hits=2,
+        fbcache_temporal_guard=True,
+        easycache_threshold=0.10,
+        easycache_start=0.15,
+        easycache_end=0.85,
+        easycache_verbose=False,
+        compile_model=False,
+        available_nodes=available,
+    )
+    spectrum_id = next(
+        node_id for node_id, node in spectrum_graph.nodes.items()
+        if node["class_type"] == "SpectrumApplyMiniMaxH3"
+    )
+    spectrum_sol_id = next(
+        node_id for node_id, node in spectrum_graph.nodes.items()
+        if node["class_type"] == "MiniMaxH3MemoryEfficientSolAttentionPatch"
+    )
+    spectrum_chunk_id = next(
+        node_id for node_id, node in spectrum_graph.nodes.items()
+        if node["class_type"] == "MiniMaxH3ChunkFeedForward"
+    )
+    spectrum_inputs = spectrum_graph.nodes[spectrum_id]["inputs"]
+    assert spectrum_inputs["model"] == [spectrum_chunk_id, 0]
+    assert spectrum_graph.nodes[spectrum_chunk_id]["inputs"]["model"] == [
+        spectrum_sol_id, 0
+    ]
+    assert spectrum_inputs["offline_smoothing_replay"] is True
+    assert spectrum_inputs["audio_blend_weight"] == 0.0
+    assert not any(
+        node["class_type"] == "H3FirstBlockCache"
+        for node in spectrum_graph.nodes.values()
+    )
+
 
     save_nodes = [node for node in graph.values() if node["class_type"] == "SaveVideo"]
     assert len(save_nodes) == 1
@@ -2452,7 +2573,7 @@ def selftest() -> None:
     turbo_defaults = generation_mode_defaults("Turbo")
     assert turbo_defaults[1:] == (4, "simple", "Off", "Dense")
     normal_defaults = generation_mode_defaults("Normal")
-    assert normal_defaults[1:] == (18, "simple", "FirstBlockCache", "Auto")
+    assert normal_defaults[1:] == (18, "simple", "Spectrum", "Auto")
     assert SERVER_DENSE_ATTENTION_BACKEND in {"pytorch", "sage"}
 
     quality_turbo_graph = build_fl2va_graph(
@@ -2508,6 +2629,47 @@ def selftest() -> None:
         node["class_type"] == "MiniMaxH3TurboSampler"
         for node in quality_turbo_graph.values()
     )
+
+    ref_turbo_graph = Graph()
+    add_model_stack(
+        ref_turbo_graph,
+        fake.profile("quality").ref2va,
+        fake,
+        turbo_lora_name=fake.turbo_ref_lora,
+        turbo_strength=0.75,
+        use_sol=False,
+        sol_tau=1.0,
+        sol_thresh_type="diag",
+        sol_exact_mode="off",
+        sol_dense_steps=1,
+        sol_step_off=0.0,
+        sol_sink_tokens=0,
+        cache_mode="Off",
+        fbcache_preset="Fast",
+        fbcache_threshold=0.10,
+        fbcache_start=0.10,
+        fbcache_end=0.95,
+        fbcache_max_hits=2,
+        fbcache_temporal_guard=True,
+        easycache_threshold=0.10,
+        easycache_start=0.15,
+        easycache_end=0.85,
+        easycache_verbose=False,
+        compile_model=False,
+        available_nodes=available,
+    )
+    ref_unet = next(
+        node for node in ref_turbo_graph.nodes.values()
+        if node["class_type"] == "UNETLoader"
+    )
+    ref_lora = next(
+        node for node in ref_turbo_graph.nodes.values()
+        if node["class_type"] == "LoraLoaderModelOnly"
+    )
+    assert ref_unet["inputs"]["unet_name"] == fake.profile("quality").ref2va
+    assert ref_lora["inputs"]["lora_name"] == fake.turbo_ref_lora
+    assert ref_lora["inputs"]["strength_model"] == 0.75
+
     sched_nodes = [
         node for node in quality_turbo_graph.values()
         if node["class_type"] == "BasicScheduler"
@@ -2520,8 +2682,10 @@ def selftest() -> None:
     print(
         f"Selftest OK: {len(graph)} nodes, 5s=124 frames, "
         f"15s=362 frames, tiered resolution presets valid, Sol exact valid, "
-        f"Sol Auto policy valid, zero-copy Sol + FirstBlockCache composition valid, "
-        f"ConvRot FFN chunking valid, Kijai LightX2V Turbo + editable steps valid, compile guard active, "
+        f"Sol Auto policy valid, Spectrum default + Sol/ConvRot order valid, "
+        f"zero-copy Sol + FirstBlockCache composition valid, "
+        f"ConvRot FFN chunking valid, shared LightX2V Turbo on FL2VA/Ref2VA "
+        f"+ editable steps valid, compile guard active, "
         f"SaveVideo codec API valid, /comfyui proxy rewrites valid"
     )
 

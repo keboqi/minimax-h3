@@ -46,6 +46,8 @@ UI_PORT = 7860
 COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
 SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
 SOL_REF = "90467f1c633ce53af7d77e4a1cc243b5001d89b0"
+SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
+SPECTRUM_REF = "6a37360e3e785d2b9b5ad58190af380a8de8ec1a"  # v0.2.2
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 APP = os.getenv("H3_MODAL_APP_NAME", "minimax-h3")
@@ -176,8 +178,13 @@ def build(revision: str) -> None:
 
     sol_dir = Path(COMFY) / "custom_nodes" / "ComfyUI_sol-attn_Blackwell"
     _clone(SOL_REPO, sol_dir, ref=SOL_REF)
-
     _print_git_revision(sol_dir)
+
+    spectrum_dir = (
+        Path(COMFY) / "custom_nodes" / "ComfyUI-Spectrum-MiniMax-H3"
+    )
+    _clone(SPECTRUM_REPO, spectrum_dir, ref=SPECTRUM_REF)
+    _print_git_revision(spectrum_dir)
 
     # ComfyUI currently lists torch/torchvision/torchaudio unpinned.
     # Filter those entries so image build cannot replace the pinned cu130 ABI.

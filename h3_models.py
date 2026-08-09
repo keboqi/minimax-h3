@@ -280,7 +280,7 @@ def _build_config(
     turbo_lora, turbo_source = installed["turbo_lora"]
 
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "default_profile": "speed",
         "profiles": {
             "speed": {
@@ -303,7 +303,12 @@ def _build_config(
         "audio_vae": audio_vae,
         "turbo_lora": turbo_lora,
         "turbo_source": turbo_source,
+        # The current LightX2V file is shared temporarily. Keeping a distinct
+        # config key makes a future Ref2VA-specific Turbo asset a data-only swap.
+        "turbo_ref_lora": turbo_lora,
+        "turbo_ref_source": turbo_source,
         "turbo_supported_profiles": ["speed", "quality"],
+        "turbo_supported_modes": ["fl2va", "ref2va"],
         "manifest": manifest_name,
     }
 
@@ -450,6 +455,7 @@ def selftest() -> None:
         for key, spec in MODEL_SPECS.items()
     }
     cfg = _build_config(fake, "manifest.json")
+    assert cfg["schema_version"] == 3
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
     )
@@ -457,7 +463,9 @@ def selftest() -> None:
         "qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors"
     )
     assert cfg["turbo_lora"] == "minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors"
+    assert cfg["turbo_ref_lora"] == cfg["turbo_lora"]
     assert cfg["turbo_supported_profiles"] == ["speed", "quality"]
+    assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]
     print("h3_models selftest OK")
 
 

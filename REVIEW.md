@@ -48,10 +48,15 @@ The latest H3 and ComfyUI work was compared against this deployment:
 4. **Deferred: AdaptiveCache.** It has promising early RTX 5090 results and a
    more sophisticated partial-tail cache, but is new, lossy, GPL-licensed, and
    not yet validated against this repository's FL2VA/Ref2VA audio safeguards.
-5. **Deferred: Spectrum forecasting.** It has strong community interest, but its
-   own documentation reports trajectory changes and localized degradation in
-   fast motion. It should remain opt-in until fixed-seed video and audio A/B
-   coverage exists here.
+5. **Adopted: Spectrum forecasting as the normal default.** Community results
+   now cover RTX 3090, 4090, 5090, RTX PRO 6000, and an AMD R9700 report, with
+   typical reported sampler-time reductions around 30–45%. Spectrum v0.2.2 is
+   pinned and uses its corrected default path: offline smoothing replay,
+   video blend 0.5, and audio blend 0. FirstBlockCache remains the lower-memory
+   fallback and EasyCache remains available; the three modes are mutually
+   exclusive. Spectrum is still approximate, and its upstream documentation
+   reports possible motion, anatomy, and trajectory changes, so quality-critical
+   outputs still require uncached A/B review.
 
 Primary sources:
 
@@ -113,6 +118,8 @@ tables.
 runtime fixes that have already been validated in production-style testing:
 
 - Turbo is independent from Speed/Quality.
+- Reference Turbo temporarily reuses the FL2VA LightX2V LoRA through a separate
+  `turbo_ref_lora` configuration key.
 - Turbo steps are user-editable.
 - FirstBlockCache must precede Sol-Attn.
 - Turbo disables cache by default.

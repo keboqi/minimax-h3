@@ -2,18 +2,19 @@
 
 A standalone Gradio interface and deployment toolkit for MiniMax H3 video
 generation on NVIDIA Blackwell GPUs. It provisions ComfyUI, the required H3
-models, Sol-Attn, SageAttention, and a bundled FirstBlockCache node.
+models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 
 ## What is included
 
 - Text/image-to-video and reference-media-to-video workflows
 - Live queue position, workflow stage, node count, and sampler-step progress
 - Speed and quality NVFP4 model profiles
-- Optional LightX2V Turbo LoRA
+- Optional LightX2V Turbo LoRA for FL2VA and experimental Ref2VA generation
 - H3-native zero-copy Sol sparse attention with SageAttention fallback
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Hardware-aware ComfyUI memory mode selection
-- FirstBlockCache and native ComfyUI EasyCache support
+- Spectrum as the normal-generation default, with audio-isolated offline replay
+- FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
 - Version-aware, resumable Hugging Face model provisioning
 
@@ -34,6 +35,20 @@ its ComfyUI node contract remains reproducible. Sol uses the zero-copy H3 path,
 keeps conditioning KV exact by default, and leaves its optional INT8 attention
 approximations disabled. Quality ConvRot models additionally use bit-preserving
 two-way feed-forward chunking above 8K packed tokens.
+
+Spectrum is pinned to v0.2.2 and is applied after LoRA, Sol-Attn, and ConvRot
+feed-forward patches. Its default uses system-RAM history, degree-1 forecasting,
+offline smoothing replay, and zero spectral audio blending. Spectrum,
+FirstBlockCache, and EasyCache are mutually exclusive acceleration choices.
+Turbo mode disables all three pending low-step validation.
+The v0.2.2 progress integration exposes one continuous capture-and-replay range
+to ComfyUI, so the Gradio live progress stream remains active during both passes.
+
+Reference mode currently reuses the FL2VA-trained LightX2V Turbo LoRA at strength
+0.75. Community runs show that this can work, but also report occasional audio
+sync, prompt-adherence, and visual issues. The generated model configuration has
+a separate `turbo_ref_lora` key so a dedicated Ref2VA Turbo release can replace
+the shared file without changing workflow construction.
 
 ## Run locally
 
