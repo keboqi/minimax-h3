@@ -118,8 +118,8 @@ tables.
 runtime fixes that have already been validated in production-style testing:
 
 - Turbo is independent from Speed/Quality.
-- Reference Turbo temporarily reuses the FL2VA LightX2V LoRA through a separate
-  `turbo_ref_lora` configuration key.
+- Reference Turbo temporarily reuses the selected FL2VA LoRA through separate
+  LightX2V and Larry Ref2VA configuration keys.
 - Turbo steps are user-editable.
 - FirstBlockCache must precede Sol-Attn.
 - Turbo disables cache by default.
@@ -181,7 +181,6 @@ Core `LoraLoaderModelOnly` now applies the LoRA at strength 0.75 and normal
 `res_multistep` sampling is used. The Larry custom loader/sampler repository is
 no longer provisioned.
 
-
 ## v42 SageAttention install optimization
 
 The previous default source build was unnecessarily slow for the known target
@@ -215,3 +214,17 @@ Sage validation now uses a brand-new Python subprocess. Automatic Sage source co
 Pinned NumPy 1.26.4 / SciPy 1.15.3 and added an existing-install reconciliation
 check. ComfyUI requirements now filter NumPy/SciPy as well as the Torch trio.
 The missing dependency helper functions from the v46 refactor were restored.
+
+
+## v48 selectable Turbo implementations
+
+Larry v4-600 EMA is provisioned again alongside LightX2V v0.1 and is the new UI
+default. Larry runs at a six-step default and strength 1.0 through the pinned
+`MiniMaxH3TurboLoRA` and `MiniMaxH3TurboSampler` nodes. This preserves its
+runtime AdaLN injection and activation-space LoRA path on the pruned quantized
+H3 bases. LightX2V remains available at four steps and strength 0.75 through
+core `LoraLoaderModelOnly` plus normal `res_multistep` sampling.
+
+Both choices remain experimental for Ref2VA because both LoRAs were trained for
+FL2VA. The model configuration keeps separate per-choice Ref2VA keys for future
+dedicated weights.

@@ -19,6 +19,7 @@ from typing import Any
 
 MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
 TURBO_REPO = "Kijai/MiniMax-H3_comfy"
+LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 TEXT_ENCODER_REPO = "sakamakismile/Qwen3-VL-32B-Heretic-MiniMax-H3-NVFP4"
 
 HF_METADATA_WORKERS = 2
@@ -86,6 +87,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "loras",
         "loras/minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors",
         "LightX2V Turbo 4-step v0.1 · Kijai full Comfy conversion",
+    ),
+    "larry_turbo_lora": ModelSpec(
+        LARRY_TURBO_REPO,
+        "loras",
+        "minimax_h3_turbo_v4_step600_ema.safetensors",
+        "Larry v4-600 EMA Turbo · recommended 6-step quality option",
     ),
 }
 
@@ -278,9 +285,10 @@ def _build_config(
     video_vae, _ = installed["video_vae"]
     audio_vae, _ = installed["audio_vae"]
     turbo_lora, turbo_source = installed["turbo_lora"]
+    larry_turbo_lora, larry_turbo_source = installed["larry_turbo_lora"]
 
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "default_profile": "speed",
         "profiles": {
             "speed": {
@@ -307,6 +315,11 @@ def _build_config(
         # config key makes a future Ref2VA-specific Turbo asset a data-only swap.
         "turbo_ref_lora": turbo_lora,
         "turbo_ref_source": turbo_source,
+        "larry_turbo_lora": larry_turbo_lora,
+        "larry_turbo_source": larry_turbo_source,
+        # Larry's FL2VA-trained LoRA is also exposed for experimental Ref2VA.
+        "larry_turbo_ref_lora": larry_turbo_lora,
+        "larry_turbo_ref_source": larry_turbo_source,
         "turbo_supported_profiles": ["speed", "quality"],
         "turbo_supported_modes": ["fl2va", "ref2va"],
         "manifest": manifest_name,
@@ -413,6 +426,7 @@ def validate_config_files(root: Path, config: dict[str, Any]) -> list[str]:
         ("vae", config.get("video_vae")),
         ("vae", config.get("audio_vae")),
         ("loras", config.get("turbo_lora")),
+        ("loras", config.get("larry_turbo_lora")),
     ]
     for profile in ("speed", "quality"):
         data = config.get("profiles", {}).get(profile, {})
@@ -448,6 +462,7 @@ def selftest() -> None:
         "video_vae",
         "audio_vae",
         "turbo_lora",
+        "larry_turbo_lora",
     }
 
     fake = {
@@ -455,7 +470,7 @@ def selftest() -> None:
         for key, spec in MODEL_SPECS.items()
     }
     cfg = _build_config(fake, "manifest.json")
-    assert cfg["schema_version"] == 3
+    assert cfg["schema_version"] == 4
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
     )
@@ -464,6 +479,8 @@ def selftest() -> None:
     )
     assert cfg["turbo_lora"] == "minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors"
     assert cfg["turbo_ref_lora"] == cfg["turbo_lora"]
+    assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"
+    assert cfg["larry_turbo_ref_lora"] == cfg["larry_turbo_lora"]
     assert cfg["turbo_supported_profiles"] == ["speed", "quality"]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]
     print("h3_models selftest OK")

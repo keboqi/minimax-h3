@@ -75,7 +75,13 @@ DEFAULT_FBCACHE_END = 0.95
 DEFAULT_FBCACHE_MAX_HITS = 2
 DEFAULT_FBCACHE_TEMPORAL_GUARD = True
 DEFAULT_ACCELERATOR = "Spectrum"
-TURBO_LORA_STRENGTH = 0.75
+LIGHTX2V_TURBO = "LightX2V v0.1"
+LARRY_TURBO = "Larry v4-600 EMA"
+DEFAULT_TURBO = LARRY_TURBO
+TURBO_SETTINGS = {
+    LARRY_TURBO: {"steps": 6, "strength": 1.0},
+    LIGHTX2V_TURBO: {"steps": 4, "strength": 0.75},
+}
 SPECTRUM_DEFAULT_INPUTS = {
     "enabled": True,
     "blend_weight": 0.50,
@@ -396,6 +402,18 @@ class H3Error(RuntimeError):
     pass
 
 
+def normalize_turbo_variant(value: str) -> str:
+    return value if value in TURBO_SETTINGS else DEFAULT_TURBO
+
+
+def turbo_steps_for(value: str) -> int:
+    return int(TURBO_SETTINGS[normalize_turbo_variant(value)]["steps"])
+
+
+def turbo_strength_for(value: str) -> float:
+    return float(TURBO_SETTINGS[normalize_turbo_variant(value)]["strength"])
+
+
 @dataclass
 class ModelProfile:
     label: str
@@ -416,6 +434,10 @@ class ModelConfig:
     turbo_source: str = "unknown"
     turbo_ref_lora: str | None = None
     turbo_ref_source: str = "unknown"
+    larry_turbo_lora: str | None = None
+    larry_turbo_source: str = "unknown"
+    larry_turbo_ref_lora: str | None = None
+    larry_turbo_ref_source: str = "unknown"
 
     def profile(self, name: str) -> ModelProfile:
         key = str(name).strip().lower()
@@ -425,10 +447,11 @@ class ModelConfig:
             raise H3Error(f"Unknown model profile: {name}")
         return self.profiles[key]
 
-    def turbo_lora_for(self, mode: str) -> str | None:
-        if str(mode).strip().lower() == "reference media":
-            return self.turbo_ref_lora
-        return self.turbo_lora
+    def turbo_lora_for(self, mode: str, turbo_variant: str) -> str | None:
+        reference = str(mode).strip().lower() == "reference media"
+        if normalize_turbo_variant(turbo_variant) == LARRY_TURBO:
+            return self.larry_turbo_ref_lora if reference else self.larry_turbo_lora
+        return self.turbo_ref_lora if reference else self.turbo_lora
 
 
 def load_model_config() -> ModelConfig:
@@ -466,6 +489,14 @@ def load_model_config() -> ModelConfig:
         turbo_ref_lora=data.get("turbo_ref_lora", data.get("turbo_lora")),
         turbo_ref_source=data.get(
             "turbo_ref_source", data.get("turbo_source", "unknown")
+        ),
+        larry_turbo_lora=data.get("larry_turbo_lora"),
+        larry_turbo_source=data.get("larry_turbo_source", "unknown"),
+        larry_turbo_ref_lora=data.get(
+            "larry_turbo_ref_lora", data.get("larry_turbo_lora")
+        ),
+        larry_turbo_ref_source=data.get(
+            "larry_turbo_ref_source", data.get("larry_turbo_source", "unknown")
         ),
     )
 
@@ -683,7 +714,7 @@ def mode_layout_updates(mode: str):
     )
 
 
-def generation_mode_defaults(name: str):
+def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
     """Normal/Turbo is independent from the selected Speed/Quality base.
 
     Important: when entering Turbo, do not change preset.value. Changing it
@@ -692,7 +723,7 @@ def generation_mode_defaults(name: str):
     if str(name).strip().lower() == "turbo":
         return (
             gr.update(interactive=False),
-            4,
+            turbo_steps_for(turbo_variant),
             "simple",
             "Off",
             "Dense",
@@ -705,6 +736,13 @@ def generation_mode_defaults(name: str):
         DEFAULT_ACCELERATOR,
         "Auto",
     )
+
+
+def turbo_variant_defaults(turbo_variant: str, generation_mode: str):
+    """Apply variant sampling defaults only while Turbo is selected."""
+    if str(generation_mode).strip().lower() != "turbo":
+        return gr.update(), gr.update()
+    return turbo_steps_for(turbo_variant), "simple"
 
 
 def fbcache_preset_defaults(name: str):
@@ -781,6 +819,7 @@ def add_model_stack(
     models: ModelConfig,
     *,
     turbo_lora_name: str | None,
+    turbo_variant: str,
     turbo_strength: float,
     use_sol: bool,
     sol_tau: float,
@@ -807,17 +846,31 @@ def add_model_stack(
     model_ref = Graph.out(unet)
 
     if turbo_lora_name:
-        if "LoraLoaderModelOnly" not in available_nodes:
-            raise H3Error(
-                "Turbo was requested, but core LoraLoaderModelOnly is unavailable. "
-                "Update ComfyUI and restart the service."
+        if turbo_variant == LARRY_TURBO:
+            if "MiniMaxH3TurboLoRA" not in available_nodes:
+                raise H3Error(
+                    "Larry Turbo was requested, but MiniMaxH3TurboLoRA is unavailable. "
+                    "Re-run setup_h3.py and restart ComfyUI."
+                )
+            turbo = graph.add(
+                "MiniMaxH3TurboLoRA",
+                model=model_ref,
+                lora_name=turbo_lora_name,
+                strength=float(turbo_strength),
+                low_vram=False,
             )
-        turbo = graph.add(
-            "LoraLoaderModelOnly",
-            model=model_ref,
-            lora_name=turbo_lora_name,
-            strength_model=float(turbo_strength),
-        )
+        else:
+            if "LoraLoaderModelOnly" not in available_nodes:
+                raise H3Error(
+                    "LightX2V Turbo was requested, but core LoraLoaderModelOnly "
+                    "is unavailable. Update ComfyUI and restart the service."
+                )
+            turbo = graph.add(
+                "LoraLoaderModelOnly",
+                model=model_ref,
+                lora_name=turbo_lora_name,
+                strength_model=float(turbo_strength),
+            )
         model_ref = Graph.out(turbo)
 
     # Keep FirstBlockCache ahead of attention/object patches so its sampling and
@@ -961,11 +1014,16 @@ def finish_sampling(
     seed: int,
     steps: int,
     scheduler: str,
+    turbo_variant: str | None,
     filename_prefix: str,
 ) -> None:
     noise = graph.add("RandomNoise", noise_seed=int(seed))
     guider = graph.add("BasicGuider", model=model_ref, conditioning=conditioning_ref)
-    sampler = graph.add("KSamplerSelect", sampler_name="res_multistep")
+    sampler = (
+        graph.add("MiniMaxH3TurboSampler")
+        if turbo_variant == LARRY_TURBO
+        else graph.add("KSamplerSelect", sampler_name="res_multistep")
+    )
     sigmas = graph.add(
         "BasicScheduler",
         model=model_ref,
@@ -1015,6 +1073,7 @@ def build_fl2va_graph(
     seed: int,
     scheduler: str,
     turbo_lora_name: str | None,
+    turbo_variant: str,
     turbo_strength: float,
     use_sol: bool,
     sol_tau: float,
@@ -1045,6 +1104,7 @@ def build_fl2va_graph(
         model_name,
         models,
         turbo_lora_name=turbo_lora_name,
+        turbo_variant=turbo_variant,
         turbo_strength=turbo_strength,
         use_sol=use_sol,
         sol_tau=sol_tau,
@@ -1094,6 +1154,7 @@ def build_fl2va_graph(
         seed=seed,
         steps=steps,
         scheduler=scheduler,
+        turbo_variant=turbo_variant if turbo_lora_name else None,
         filename_prefix=f"h3/fl2va_{int(time.time())}",
     )
     return graph.nodes
@@ -1113,6 +1174,7 @@ def build_ref2va_graph(
     scheduler: str,
     ref_image_size: str,
     turbo_lora_name: str | None,
+    turbo_variant: str,
     turbo_strength: float,
     use_sol: bool,
     sol_tau: float,
@@ -1143,6 +1205,7 @@ def build_ref2va_graph(
         model_name,
         models,
         turbo_lora_name=turbo_lora_name,
+        turbo_variant=turbo_variant,
         turbo_strength=turbo_strength,
         use_sol=use_sol,
         sol_tau=sol_tau,
@@ -1203,6 +1266,7 @@ def build_ref2va_graph(
         seed=seed,
         steps=steps,
         scheduler=scheduler,
+        turbo_variant=turbo_variant if turbo_lora_name else None,
         filename_prefix=f"h3/ref2va_{int(time.time())}",
     )
     return graph.nodes
@@ -1214,11 +1278,12 @@ def required_nodes_for(
     cache_mode: str,
     compile_model: bool,
     use_turbo: bool = False,
+    turbo_variant: str = LIGHTX2V_TURBO,
     model_filename: str = "",
 ) -> set[str]:
     common = {
         "UNETLoader", "CLIPLoader", "VAELoader", "RandomNoise",
-        "BasicGuider", "KSamplerSelect", "BasicScheduler",
+        "BasicGuider", "BasicScheduler",
         "SamplerCustomAdvanced", "VAEDecode", "VAEDecodeAudio",
         "CreateVideo", "SaveVideo",
     }
@@ -1227,7 +1292,12 @@ def required_nodes_for(
     else:
         common |= {"MiniMaxH3ImageToVideo", "LoadImage"}
     if use_turbo:
-        common.add("LoraLoaderModelOnly")
+        if turbo_variant == LARRY_TURBO:
+            common |= {"MiniMaxH3TurboLoRA", "MiniMaxH3TurboSampler"}
+        else:
+            common |= {"LoraLoaderModelOnly", "KSamplerSelect"}
+    else:
+        common.add("KSamplerSelect")
     if use_sol:
         common.add("MiniMaxH3MemoryEfficientSolAttentionPatch")
     if "convrot" in model_filename.lower():
@@ -1261,7 +1331,10 @@ def websocket_url(client_id: str) -> str:
 def node_stage(class_type: str) -> str:
     """Turn ComfyUI implementation node names into useful user-facing stages."""
     name = str(class_type)
-    if name in {"UNETLoader", "CLIPLoader", "VAELoader", "LoraLoaderModelOnly"}:
+    if name in {
+        "UNETLoader", "CLIPLoader", "VAELoader", "LoraLoaderModelOnly",
+        "MiniMaxH3TurboLoRA",
+    }:
         return "Loading models"
     if name.startswith("Load") or name == "GetVideoComponents":
         return "Preparing reference media"
@@ -1546,6 +1619,11 @@ def backend_status() -> str:
                 f"**{profile.label}** · FL2VA `{profile.fl2va}` · "
                 f"Ref2VA `{profile.ref2va}`"
             )
+        if models.larry_turbo_lora:
+            profile_lines.append(
+                f"**Larry Turbo v4-600 EMA** | LoRA `{models.larry_turbo_lora}` | "
+                "6-step default | strength 1.0 | custom loader/sampler"
+            )
         if models.turbo_lora:
             profile_lines.append(
                 f"**LightX2V Turbo** · LoRA `{models.turbo_lora}` · "
@@ -1566,6 +1644,7 @@ def generate(
     mode: str,
     model_profile: str,
     generation_mode: str,
+    turbo_variant: str,
     prompt: str,
     first_image: str | None,
     last_image: str | None,
@@ -1630,26 +1709,31 @@ def generate(
 
         requested_generation = str(generation_mode).strip().lower()
         use_turbo = requested_generation == "turbo"
+        selected_turbo = normalize_turbo_variant(turbo_variant)
         generation_note = (
-            "Reference Turbo is experimental and currently uses the shared "
-            "FL2VA-trained LightX2V LoRA."
+            f"Reference Turbo is experimental and currently uses the "
+            f"FL2VA-trained {selected_turbo} LoRA."
             if mode == "Reference media" and use_turbo
             else None
         )
 
         selected_model = profile.ref2va if mode == "Reference media" else profile.fl2va
         if use_turbo:
-            turbo_lora_name = models.turbo_lora_for(mode)
+            turbo_lora_name = models.turbo_lora_for(mode, selected_turbo)
             if not turbo_lora_name:
-                raise H3Error("Turbo LoRA is not provisioned. Re-run setup/provisioning.")
-            selected_label = f"{profile.label} · Turbo"
-            turbo_strength = TURBO_LORA_STRENGTH
+                raise H3Error(
+                    f"{selected_turbo} Turbo LoRA is not provisioned. "
+                    "Re-run setup/provisioning."
+                )
+            selected_label = f"{profile.label} · Turbo · {selected_turbo}"
+            turbo_strength = turbo_strength_for(selected_turbo)
         else:
             selected_label = f"{profile.label} · Normal"
             turbo_lora_name = None
             turbo_strength = 1.0
 
-        # Turbo defaults to 4/simple in the UI, but the user may deliberately
+        # Each Turbo implementation supplies a recommended simple-scheduler
+        # default, but the user may deliberately
         # change Steps or Scheduler after selecting Turbo. Honor those visible
         # controls instead of silently overriding them at graph-build time.
         effective_steps = int(steps)
@@ -1689,6 +1773,7 @@ def generate(
             effective_cache_mode,
             effective_compile,
             use_turbo=use_turbo,
+            turbo_variant=selected_turbo,
             model_filename=selected_model,
         ) - available
         if missing:
@@ -1725,7 +1810,8 @@ def generate(
                 width=resolved_width, height=resolved_height, duration=float(duration),
                 steps=effective_steps, seed=actual_seed, scheduler=effective_scheduler,
                 ref_image_size=ref_image_size,
-                turbo_lora_name=turbo_lora_name, turbo_strength=turbo_strength,
+                turbo_lora_name=turbo_lora_name, turbo_variant=selected_turbo,
+                turbo_strength=turbo_strength,
                 use_sol=effective_sol, sol_tau=float(sol_tau),
                 sol_thresh_type=sol_thresh_type,
                 sol_exact_mode=sol_exact_mode,
@@ -1751,7 +1837,8 @@ def generate(
                 prompt=prompt, first_image=first_image, last_image=last_image,
                 width=resolved_width, height=resolved_height, duration=float(duration),
                 steps=effective_steps, seed=actual_seed, scheduler=effective_scheduler,
-                turbo_lora_name=turbo_lora_name, turbo_strength=turbo_strength,
+                turbo_lora_name=turbo_lora_name, turbo_variant=selected_turbo,
+                turbo_strength=turbo_strength,
                 use_sol=effective_sol, sol_tau=float(sol_tau),
                 sol_thresh_type=sol_thresh_type,
                 sol_exact_mode=sol_exact_mode,
@@ -1898,6 +1985,7 @@ def compact_settings_summary(
     mode: str,
     model_profile: str,
     generation_mode: str,
+    turbo_variant: str,
     duration: float,
     width: int,
     height: int,
@@ -1907,6 +1995,8 @@ def compact_settings_summary(
     cache_mode: str,
     postprocess: str,
 ) -> str:
+    if generation_mode == "Turbo":
+        generation_mode = f"Turbo / {turbo_variant}"
     try:
         seconds = f"{float(duration):g}s"
     except (TypeError, ValueError):
@@ -1976,9 +2066,9 @@ def build_ui() -> gr.Blocks:
                         value="Turbo",
                         label="Generation",
                         info=(
-                            "Turbo defaults to 4 steps and uses the H3 Turbo LoRA plus "
-                            "normal H3 sampling on the selected base model. Reference media "
-                            "temporarily uses the same FL2VA-trained LoRA and is experimental."
+                            "Turbo uses the implementation selected in Generation settings. "
+                            "Reference media temporarily uses the corresponding FL2VA-trained "
+                            "LoRA and is experimental."
                         ),
                     )
                 help_text = gr.Markdown(mode_help("Text to video"))
@@ -2018,8 +2108,8 @@ def build_ui() -> gr.Blocks:
             with gr.Column(scale=2):
                 settings_overview = gr.Markdown(
                     compact_settings_summary(
-                        "Text to video", "Quality", "Turbo", 5,
-                        864, 480, 4, "simple", "Auto", "Off", "None",
+                        "Text to video", "Quality", "Turbo", DEFAULT_TURBO, 5,
+                        864, 480, 6, "simple", "Auto", "Off", "None",
                     )
                 )
                 output = gr.Video(label="Generated video")
@@ -2029,6 +2119,15 @@ def build_ui() -> gr.Blocks:
                     refresh = gr.Button("Refresh status", scale=1)
                 status = gr.Textbox(label="Status", lines=5)
                 gr.Markdown("### Generation settings")
+                turbo_variant = gr.Radio(
+                    list(TURBO_SETTINGS),
+                    value=DEFAULT_TURBO,
+                    label="Turbo implementation",
+                    info=(
+                        "Larry uses its quantization-aware loader and adaptive sampler at "
+                        "strength 1.0; LightX2V uses the native LoRA loader at strength 0.75."
+                    ),
+                )
                 preset = gr.Radio(
                     ["Quality", "Balanced", "Fast"],
                     value="Balanced",
@@ -2042,9 +2141,9 @@ def build_ui() -> gr.Blocks:
                 with gr.Row():
                     duration = gr.Slider(2, 15, value=5, step=0.5, label="Seconds")
                     steps = gr.Slider(
-                        4, 30, value=4, step=1, label="Steps",
+                        4, 30, value=6, step=1, label="Steps",
                         info=(
-                            "Turbo defaults to 4 steps, but this remains editable. "
+                            "Larry defaults to 6 steps and LightX2V to 4; this remains editable. "
                             "Normal H3 presets normally use 15–20."
                         ),
                     )
@@ -2222,7 +2321,8 @@ def build_ui() -> gr.Blocks:
                 )
 
         settings_inputs = [
-            mode, model_profile, generation_mode, duration, width, height,
+            mode, model_profile, generation_mode, turbo_variant,
+            duration, width, height,
             steps, scheduler, attention_mode, cache_mode, postprocess,
         ]
         for settings_control in settings_inputs:
@@ -2242,8 +2342,13 @@ def build_ui() -> gr.Blocks:
         )
         generation_mode.change(
             generation_mode_defaults,
-            inputs=generation_mode,
+            inputs=[generation_mode, turbo_variant],
             outputs=[preset, steps, scheduler, cache_mode, attention_mode],
+        )
+        turbo_variant.change(
+            turbo_variant_defaults,
+            inputs=[turbo_variant, generation_mode],
+            outputs=[steps, scheduler],
         )
         preset.change(
             preset_values,
@@ -2283,7 +2388,8 @@ def build_ui() -> gr.Blocks:
         event = run.click(
             generate,
             inputs=[
-                mode, model_profile, generation_mode, prompt, first, last,
+                mode, model_profile, generation_mode, turbo_variant,
+                prompt, first, last,
                 ref_image_1, ref_image_2, ref_image_3, ref_image_4, ref_image_5, ref_image_6,
                 ref_image_7, ref_image_8, ref_image_9,
                 ref_video_1, ref_video_2, ref_video_3,
@@ -2369,12 +2475,18 @@ def selftest() -> None:
         turbo_source="test",
         turbo_ref_lora="minimax_h3_turbo_4step_ema_ckpt850.safetensors",
         turbo_ref_source="shared-fl2va-test",
+        larry_turbo_lora="minimax_h3_turbo_v4_step600_ema.safetensors",
+        larry_turbo_source="test",
+        larry_turbo_ref_lora="minimax_h3_turbo_v4_step600_ema.safetensors",
+        larry_turbo_ref_source="shared-fl2va-test",
     )
     available = required_nodes_for("Text to video", True, "FirstBlockCache", True, use_turbo=True) | required_nodes_for("Reference media", True, "EasyCache", True)
     available.add("SpectrumApplyMiniMaxH3")
     available.add("MiniMaxH3ChunkFeedForward")
-    assert fake.turbo_lora_for("Text to video") == fake.turbo_lora
-    assert fake.turbo_lora_for("Reference media") == fake.turbo_ref_lora
+    available |= {"MiniMaxH3TurboLoRA", "MiniMaxH3TurboSampler"}
+    assert fake.turbo_lora_for("Text to video", LIGHTX2V_TURBO) == fake.turbo_lora
+    assert fake.turbo_lora_for("Reference media", LIGHTX2V_TURBO) == fake.turbo_ref_lora
+    assert fake.turbo_lora_for("Text to video", LARRY_TURBO) == fake.larry_turbo_lora
     reference_updates = mode_layout_updates("Reference media")
     assert reference_updates[3].get("interactive") is True
     assert "value" not in reference_updates[3]
@@ -2382,7 +2494,8 @@ def selftest() -> None:
     graph = build_fl2va_graph(
         prompt="test", first_image=None, last_image=None,
         width=864, height=480, duration=5, steps=18, seed=1,
-        scheduler="simple", turbo_lora_name="minimax_h3_turbo_4step_ema_ckpt850.safetensors", turbo_strength=1.0,
+        scheduler="simple", turbo_lora_name="minimax_h3_turbo_4step_ema_ckpt850.safetensors",
+        turbo_variant=LIGHTX2V_TURBO, turbo_strength=1.0,
         use_sol=True, sol_tau=1.0,
         sol_thresh_type="exact",
         sol_exact_mode="exact_kv_and_rows",
@@ -2461,6 +2574,7 @@ def selftest() -> None:
         fake.profile("quality").fl2va,
         fake,
         turbo_lora_name=None,
+        turbo_variant=LIGHTX2V_TURBO,
         turbo_strength=0.75,
         use_sol=True,
         sol_tau=1.0,
@@ -2570,8 +2684,10 @@ def selftest() -> None:
     ))
     assert live_updates[0][0] == "Generating video and audio"
     assert live_updates[1][3:] == (3, 4)
-    turbo_defaults = generation_mode_defaults("Turbo")
-    assert turbo_defaults[1:] == (4, "simple", "Off", "Dense")
+    turbo_defaults = generation_mode_defaults("Turbo", LARRY_TURBO)
+    assert turbo_defaults[1:] == (6, "simple", "Off", "Dense")
+    lightx_defaults = generation_mode_defaults("Turbo", LIGHTX2V_TURBO)
+    assert lightx_defaults[1:] == (4, "simple", "Off", "Dense")
     normal_defaults = generation_mode_defaults("Normal")
     assert normal_defaults[1:] == (18, "simple", "Spectrum", "Auto")
     assert SERVER_DENSE_ATTENTION_BACKEND in {"pytorch", "sage"}
@@ -2581,6 +2697,7 @@ def selftest() -> None:
         width=864, height=480, duration=5, steps=8, seed=2,
         scheduler="simple",
         turbo_lora_name="minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy_v0.1_comfy.safetensors",
+        turbo_variant=LIGHTX2V_TURBO,
         turbo_strength=0.75,
         use_sol=False, sol_tau=1.0,
         sol_thresh_type="diag",
@@ -2630,12 +2747,55 @@ def selftest() -> None:
         for node in quality_turbo_graph.values()
     )
 
+    larry_graph = Graph()
+    larry_model, _, larry_video_vae, larry_audio_vae = add_model_stack(
+        larry_graph,
+        fake.profile("speed").fl2va,
+        fake,
+        turbo_lora_name=fake.larry_turbo_lora,
+        turbo_variant=LARRY_TURBO,
+        turbo_strength=1.0,
+        use_sol=False, sol_tau=1.0, sol_thresh_type="diag",
+        sol_exact_mode="off", sol_dense_steps=1, sol_step_off=0.0,
+        sol_sink_tokens=0, cache_mode="Off", fbcache_preset="Fast",
+        fbcache_threshold=0.10, fbcache_start=0.10, fbcache_end=0.95,
+        fbcache_max_hits=2, fbcache_temporal_guard=True,
+        easycache_threshold=0.10, easycache_start=0.15,
+        easycache_end=0.85, easycache_verbose=False, compile_model=False,
+        available_nodes=available,
+    )
+    finish_sampling(
+        larry_graph,
+        model_ref=larry_model,
+        conditioning_ref=["conditioning", 0],
+        latent_ref=["latent", 0],
+        video_vae_ref=larry_video_vae,
+        audio_vae_ref=larry_audio_vae,
+        seed=3, steps=6, scheduler="simple", turbo_variant=LARRY_TURBO,
+        filename_prefix="h3/larry_test",
+    )
+    larry_loader = next(
+        node for node in larry_graph.nodes.values()
+        if node["class_type"] == "MiniMaxH3TurboLoRA"
+    )
+    assert larry_loader["inputs"]["strength"] == 1.0
+    assert larry_loader["inputs"]["low_vram"] is False
+    assert any(
+        node["class_type"] == "MiniMaxH3TurboSampler"
+        for node in larry_graph.nodes.values()
+    )
+    assert not any(
+        node["class_type"] == "KSamplerSelect"
+        for node in larry_graph.nodes.values()
+    )
+
     ref_turbo_graph = Graph()
     add_model_stack(
         ref_turbo_graph,
         fake.profile("quality").ref2va,
         fake,
         turbo_lora_name=fake.turbo_ref_lora,
+        turbo_variant=LIGHTX2V_TURBO,
         turbo_strength=0.75,
         use_sol=False,
         sol_tau=1.0,
@@ -2684,8 +2844,8 @@ def selftest() -> None:
         f"15s=362 frames, tiered resolution presets valid, Sol exact valid, "
         f"Sol Auto policy valid, Spectrum default + Sol/ConvRot order valid, "
         f"zero-copy Sol + FirstBlockCache composition valid, "
-        f"ConvRot FFN chunking valid, shared LightX2V Turbo on FL2VA/Ref2VA "
-        f"+ editable steps valid, compile guard active, "
+        f"ConvRot FFN chunking valid, selectable Larry/LightX2V Turbo on "
+        f"FL2VA/Ref2VA + editable steps valid, compile guard active, "
         f"SaveVideo codec API valid, /comfyui proxy rewrites valid"
     )
 

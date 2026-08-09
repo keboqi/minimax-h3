@@ -27,6 +27,8 @@ SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
 SOL_REF = "90467f1c633ce53af7d77e4a1cc243b5001d89b0"
 SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_REF = "6a37360e3e785d2b9b5ad58190af380a8de8ec1a"  # v0.2.2
+LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
+LARRY_TURBO_REF = "55fee864dd7b2976b1c4ce3c3d5f7968f181409f"
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -325,6 +327,11 @@ def sync_external_nodes(
     sync_git_repo(SPECTRUM_REPO, spectrum, ref=SPECTRUM_REF)
     if install_requirements and (spectrum / "requirements.txt").is_file():
         uv_pip("-r", str(spectrum / "requirements.txt"), no_deps=True)
+
+    larry_turbo = comfy / "custom_nodes" / "ComfyUI-MiniMax-H3-Turbo"
+    sync_git_repo(LARRY_TURBO_REPO, larry_turbo, ref=LARRY_TURBO_REF)
+    if install_requirements and (larry_turbo / "requirements.txt").is_file():
+        uv_pip("-r", str(larry_turbo / "requirements.txt"), no_deps=True)
 
 
 

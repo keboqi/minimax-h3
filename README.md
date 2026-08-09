@@ -9,7 +9,7 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 - Text/image-to-video and reference-media-to-video workflows
 - Live queue position, workflow stage, node count, and sampler-step progress
 - Speed and quality NVFP4 model profiles
-- Optional LightX2V Turbo LoRA for FL2VA and experimental Ref2VA generation
+- Selectable Larry v4-600 EMA and LightX2V v0.1 Turbo LoRAs
 - H3-native zero-copy Sol sparse attention with SageAttention fallback
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Hardware-aware ComfyUI memory mode selection
@@ -44,11 +44,16 @@ Turbo mode disables all three pending low-step validation.
 The v0.2.2 progress integration exposes one continuous capture-and-replay range
 to ComfyUI, so the Gradio live progress stream remains active during both passes.
 
-Reference mode currently reuses the FL2VA-trained LightX2V Turbo LoRA at strength
-0.75. Community runs show that this can work, but also report occasional audio
-sync, prompt-adherence, and visual issues. The generated model configuration has
-a separate `turbo_ref_lora` key so a dedicated Ref2VA Turbo release can replace
-the shared file without changing workflow construction.
+Turbo defaults to Larry v4-600 EMA at six steps and strength 1.0. Its pinned
+custom node uses a quantization-aware bypass loader plus the adaptive H3 Turbo
+sampler. LightX2V v0.1 remains selectable as the simpler four-step option using
+the core LoRA loader at strength 0.75.
+
+Reference mode currently reuses each option's FL2VA-trained Turbo LoRA and is
+experimental. Community runs show that this can work, but also report occasional
+audio-sync, prompt-adherence, and visual issues. The generated model configuration
+keeps separate Ref2VA keys so dedicated releases can replace either shared file
+without changing workflow construction.
 
 ## Run locally
 
@@ -122,5 +127,6 @@ bash -n run_h3.sh
 - `h3_requirements.py` — shared dependency compatibility policy
 - `h3_attention.py` — runtime SageAttention capability probe
 - `custom_nodes/H3Acceleration` — bundled FirstBlockCache node
+- Larry's pinned `ComfyUI-MiniMax-H3-Turbo` — quantization-aware Turbo loader/sampler
 
 See [REVIEW.md](REVIEW.md) for review findings and refactor history.
