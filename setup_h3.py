@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -102,13 +103,78 @@ def uv_pip(
     run(*command)
 
 
+def _fresh_git_checkout(url: str, dest: Path, ref: str | None) -> None:
+    """Create a complete checkout without reusing destination Git metadata."""
+    run("git", "init", dest)
+    run("git", "-C", dest, "remote", "add", "origin", url)
+    run(
+        "git", "-C", dest, "fetch", "--depth", "1",
+        "origin", ref or "HEAD",
+    )
+    run("git", "-C", dest, "checkout", "--detach", "FETCH_HEAD")
+
+
+def _remove_tree(path: Path) -> None:
+    """Remove a tree, making copied read-only Git objects writable as needed."""
+    def make_writable(function, failed_path, _error) -> None:
+        mode = os.stat(failed_path, follow_symlinks=False).st_mode
+        os.chmod(failed_path, mode | stat.S_IWUSR)
+        function(failed_path)
+
+    shutil.rmtree(path, onexc=make_writable)
+
+
+def _restore_tracked_files(
+    url: str,
+    dest: Path,
+    ref: str | None,
+) -> None:
+    """Restore a full tracked tree while preserving untracked models/nodes."""
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{dest.name}.restore-", dir=dest.parent)
+    )
+    try:
+        _fresh_git_checkout(url, staging, ref)
+        has_git_metadata = (dest / ".git").is_dir()
+        shutil.copytree(
+            staging,
+            dest,
+            dirs_exist_ok=True,
+            symlinks=True,
+            ignore=(
+                shutil.ignore_patterns(".git")
+                if has_git_metadata
+                else None
+            ),
+        )
+        if has_git_metadata:
+            # Replace the stale sparse/skip-worktree index with the complete
+            # index produced by the isolated checkout. HEAD already points at
+            # the same fetched revision from the normal update above.
+            shutil.copy2(staging / ".git" / "index", dest / ".git" / "index")
+    finally:
+        try:
+            _remove_tree(staging)
+        except FileNotFoundError:
+            pass
+
+
+def _missing_required_files(
+    dest: Path,
+    required_paths: tuple[str, ...],
+) -> list[str]:
+    return [path for path in required_paths if not (dest / path).is_file()]
+
+
 def sync_git_repo(
     url: str,
     dest: Path,
     *,
     ref: str | None = None,
+    required_paths: tuple[str, ...] = (),
+    clean_untracked: bool = True,
 ) -> None:
-    """Clone/update a repo; optionally pin it to an exact commit/ref."""
+    """Synchronize a repo and repair incomplete mounted worktrees."""
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     fetch_ref = ref or "HEAD"
@@ -118,35 +184,41 @@ def sync_git_repo(
             "git", "-C", dest, "fetch", "--depth", "1",
             "origin", fetch_ref,
         )
+        # Clear sparse configuration before resetting. Stale skip-worktree
+        # index entries are handled by required-path recovery below.
+        run("git", "-C", dest, "sparse-checkout", "disable")
         run("git", "-C", dest, "reset", "--hard", "FETCH_HEAD")
-        run("git", "-C", dest, "clean", "-ffd")
+        if clean_untracked:
+            run("git", "-C", dest, "clean", "-ffd")
     else:
         if dest.exists():
-            incomplete = dest.with_name(dest.name + ".incomplete")
-            if incomplete.exists():
-                shutil.rmtree(incomplete)
-            dest.rename(incomplete)
-        if ref:
-            run("git", "init", dest)
-            run("git", "-C", dest, "remote", "add", "origin", url)
-            run(
-                "git", "-C", dest, "fetch", "--depth", "1",
-                "origin", ref,
-            )
-            run("git", "-C", dest, "checkout", "--detach", "FETCH_HEAD")
+            _restore_tracked_files(url, dest, ref)
         else:
-            run("git", "clone", "--depth", "1", url, dest)
+            _fresh_git_checkout(url, dest, ref)
 
-    try:
-        revision = subprocess.check_output(
-            ["git", "-C", str(dest), "rev-parse", "--short=12", "HEAD"],
-            text=True,
-        ).strip()
+    missing = _missing_required_files(dest, required_paths)
+    if missing:
+        print(
+            f"[h3-setup] Restoring incomplete checkout {dest.name}; "
+            f"missing tracked files: {', '.join(missing)}",
+            flush=True,
+        )
+        _restore_tracked_files(url, dest, ref)
+        missing = _missing_required_files(dest, required_paths)
+    if missing:
+        raise RuntimeError(
+            f"Repository checkout {dest} is missing required files after a "
+            f"fresh clone: {', '.join(missing)}"
+        )
+
+    revision_probe = subprocess.run(
+        ["git", "-C", str(dest), "rev-parse", "--short=12", "HEAD"],
+        text=True,
+        capture_output=True,
+    )
+    if revision_probe.returncode == 0:
+        revision = revision_probe.stdout.strip()
         print(f"[h3-setup] node revision {dest.name}: {revision}")
-    except Exception:
-        pass
-
-
 
 
 def current_torch_version() -> str | None:
@@ -299,7 +371,12 @@ def install_environment(comfy: Path) -> None:
     install_pinned_torch_stack()
     install_pinned_numpy_stack()
 
-    sync_git_repo(COMFY_REPO, comfy)
+    sync_git_repo(
+        COMFY_REPO,
+        comfy,
+        required_paths=("main.py", "requirements.txt"),
+        clean_untracked=False,
+    )
     install_comfy_requirements(comfy)
     uv_pip(
         "gradio>=5,<7",
@@ -320,17 +397,32 @@ def sync_external_nodes(
     install_requirements: bool,
 ) -> None:
     sol = comfy / "custom_nodes" / "ComfyUI_sol-attn_Blackwell"
-    sync_git_repo(SOL_REPO, sol, ref=SOL_REF)
+    sync_git_repo(
+        SOL_REPO,
+        sol,
+        ref=SOL_REF,
+        required_paths=("__init__.py",),
+    )
     if install_requirements and (sol / "requirements.txt").is_file():
         uv_pip("-r", str(sol / "requirements.txt"), no_deps=True)
 
     spectrum = comfy / "custom_nodes" / "ComfyUI-Spectrum-MiniMax-H3"
-    sync_git_repo(SPECTRUM_REPO, spectrum, ref=SPECTRUM_REF)
+    sync_git_repo(
+        SPECTRUM_REPO,
+        spectrum,
+        ref=SPECTRUM_REF,
+        required_paths=("__init__.py",),
+    )
     if install_requirements and (spectrum / "requirements.txt").is_file():
         uv_pip("-r", str(spectrum / "requirements.txt"), no_deps=True)
 
     larry_turbo = comfy / "custom_nodes" / "ComfyUI-MiniMax-H3-Turbo"
-    sync_git_repo(LARRY_TURBO_REPO, larry_turbo, ref=LARRY_TURBO_REF)
+    sync_git_repo(
+        LARRY_TURBO_REPO,
+        larry_turbo,
+        ref=LARRY_TURBO_REF,
+        required_paths=("__init__.py",),
+    )
     patch_larry_turbo_node(larry_turbo)
     if install_requirements and (larry_turbo / "requirements.txt").is_file():
         uv_pip("-r", str(larry_turbo / "requirements.txt"), no_deps=True)
