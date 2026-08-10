@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from h3_models import sync_models, write_json_atomic
+from h3_models import PRELOAD_MODEL_KEYS, sync_models, write_json_atomic
 from h3_node_patches import patch_larry_turbo_node
 from h3_requirements import (
     NUMPY_VERSION,
@@ -451,6 +451,7 @@ def sync_model_inventory(install_dir: Path, comfy: Path) -> None:
         root=comfy / "models",
         manifest_path=manifest_path,
         log_prefix="[h3-setup]",
+        model_keys=PRELOAD_MODEL_KEYS,
     )
     write_json_atomic(config_path, config)
 

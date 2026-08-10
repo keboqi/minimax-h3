@@ -393,7 +393,12 @@ def layout() -> None:
 
 
 def _provision_unlocked() -> dict:
-    from h3_models import sync_models, validate_config_files, write_json_atomic
+    from h3_models import (
+        PRELOAD_MODEL_KEYS,
+        sync_models,
+        validate_config_files,
+        write_json_atomic,
+    )
 
     layout()
 
@@ -402,6 +407,7 @@ def _provision_unlocked() -> dict:
         manifest_path=Path(MANIFEST),
         token=os.getenv("HF_TOKEN") or None,
         log_prefix="[modal-h3]",
+        model_keys=PRELOAD_MODEL_KEYS,
     )
 
     missing = validate_config_files(Path(MODELS), config)

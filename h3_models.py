@@ -14,10 +14,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
+ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 TURBO_REPO = "Kijai/MiniMax-H3_comfy"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 TEXT_ENCODER_REPO = "sakamakismile/Qwen3-VL-32B-Heretic-MiniMax-H3-NVFP4"
@@ -64,6 +65,18 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "minimax_h3_ref2va_pruned_nvfp4_convrot_int8.safetensors",
         "Quality · mixed NVFP4 / FP8 / INT8 ConvRot",
     ),
+    "original_fl2va": ModelSpec(
+        ORIGINAL_MODEL_REPO,
+        "diffusion_models",
+        "diffusion_models/minimax_h3_fl2va_pruned_bf16.safetensors",
+        "Original · BF16",
+    ),
+    "original_ref2va": ModelSpec(
+        ORIGINAL_MODEL_REPO,
+        "diffusion_models",
+        "diffusion_models/minimax_h3_ref2va_pruned_bf16.safetensors",
+        "Original · BF16",
+    ),
     "text_encoder": ModelSpec(
         TEXT_ENCODER_REPO,
         "text_encoders",
@@ -95,6 +108,32 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "Larry v4-600 EMA Turbo · recommended 6-step quality option",
     ),
 }
+
+PROFILE_MODEL_KEYS = {
+    "speed": ("speed_fl2va", "speed_ref2va"),
+    "quality": ("quality_fl2va", "quality_ref2va"),
+    "original": ("original_fl2va", "original_ref2va"),
+}
+PROFILE_LABELS = {
+    "speed": "Speed",
+    "quality": "Quality",
+    "original": "Original",
+}
+PRELOAD_PROFILES = ("quality",)
+PROFILE_MODEL_KEY_SET = frozenset(
+    key for keys in PROFILE_MODEL_KEYS.values() for key in keys
+)
+SHARED_MODEL_KEYS = tuple(
+    key for key in MODEL_SPECS if key not in PROFILE_MODEL_KEY_SET
+)
+PRELOAD_MODEL_KEYS = (
+    *(
+        key
+        for profile in PRELOAD_PROFILES
+        for key in PROFILE_MODEL_KEYS[profile]
+    ),
+    *SHARED_MODEL_KEYS,
+)
 
 
 def read_json(path: Path, default: Any):
@@ -273,54 +312,48 @@ def _download_model(
     return plan["key"]
 
 
-def _build_config(
-    installed: dict[str, tuple[str, str]],
-    manifest_name: str,
-) -> dict[str, Any]:
-    speed_fl, speed_fl_source = installed["speed_fl2va"]
-    speed_ref, speed_ref_source = installed["speed_ref2va"]
-    quality_fl, quality_fl_source = installed["quality_fl2va"]
-    quality_ref, quality_ref_source = installed["quality_ref2va"]
-    text, _ = installed["text_encoder"]
-    video_vae, _ = installed["video_vae"]
-    audio_vae, _ = installed["audio_vae"]
-    turbo_lora, turbo_source = installed["turbo_lora"]
-    larry_turbo_lora, larry_turbo_source = installed["larry_turbo_lora"]
+def _profile_config(profile: str) -> dict[str, str]:
+    fl2va_key, ref2va_key = PROFILE_MODEL_KEYS[profile]
+    fl2va = MODEL_SPECS[fl2va_key]
+    ref2va = MODEL_SPECS[ref2va_key]
+    return {
+        "label": PROFILE_LABELS[profile],
+        "fl2va": fl2va.local_name,
+        "ref2va": ref2va.local_name,
+        "fl2va_source": fl2va.source,
+        "ref2va_source": ref2va.source,
+    }
+
+
+def _build_config(manifest_name: str) -> dict[str, Any]:
+    text = MODEL_SPECS["text_encoder"]
+    video_vae = MODEL_SPECS["video_vae"]
+    audio_vae = MODEL_SPECS["audio_vae"]
+    turbo_lora = MODEL_SPECS["turbo_lora"]
+    larry_turbo_lora = MODEL_SPECS["larry_turbo_lora"]
 
     return {
-        "schema_version": 4,
-        "default_profile": "speed",
+        "schema_version": 5,
+        "default_profile": "quality",
         "profiles": {
-            "speed": {
-                "label": "Speed",
-                "fl2va": speed_fl,
-                "ref2va": speed_ref,
-                "fl2va_source": speed_fl_source,
-                "ref2va_source": speed_ref_source,
-            },
-            "quality": {
-                "label": "Quality",
-                "fl2va": quality_fl,
-                "ref2va": quality_ref,
-                "fl2va_source": quality_fl_source,
-                "ref2va_source": quality_ref_source,
-            },
+            profile: _profile_config(profile)
+            for profile in PROFILE_MODEL_KEYS
         },
-        "text_encoder": text,
-        "video_vae": video_vae,
-        "audio_vae": audio_vae,
-        "turbo_lora": turbo_lora,
-        "turbo_source": turbo_source,
+        "text_encoder": text.local_name,
+        "video_vae": video_vae.local_name,
+        "audio_vae": audio_vae.local_name,
+        "turbo_lora": turbo_lora.local_name,
+        "turbo_source": turbo_lora.source,
         # The current LightX2V file is shared temporarily. Keeping a distinct
         # config key makes a future Ref2VA-specific Turbo asset a data-only swap.
-        "turbo_ref_lora": turbo_lora,
-        "turbo_ref_source": turbo_source,
-        "larry_turbo_lora": larry_turbo_lora,
-        "larry_turbo_source": larry_turbo_source,
+        "turbo_ref_lora": turbo_lora.local_name,
+        "turbo_ref_source": turbo_lora.source,
+        "larry_turbo_lora": larry_turbo_lora.local_name,
+        "larry_turbo_source": larry_turbo_lora.source,
         # Larry's FL2VA-trained LoRA is also exposed for experimental Ref2VA.
-        "larry_turbo_ref_lora": larry_turbo_lora,
-        "larry_turbo_ref_source": larry_turbo_source,
-        "turbo_supported_profiles": ["speed", "quality"],
+        "larry_turbo_ref_lora": larry_turbo_lora.local_name,
+        "larry_turbo_ref_source": larry_turbo_lora.source,
+        "turbo_supported_profiles": list(PROFILE_MODEL_KEYS),
         "turbo_supported_modes": ["fl2va", "ref2va"],
         "manifest": manifest_name,
     }
@@ -334,8 +367,9 @@ def sync_models(
     log_prefix: str = "[h3-models]",
     metadata_workers: int = HF_METADATA_WORKERS,
     download_workers: int = HF_DOWNLOAD_WORKERS,
+    model_keys: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    """Refresh stale/missing H3 model files and return h3_models.json data."""
+    """Refresh selected model files and return the complete model catalog."""
     root = Path(root)
     manifest_path = Path(manifest_path)
     manifest = read_json(
@@ -343,7 +377,12 @@ def sync_models(
         {"schema_version": 1, "files": {}},
     )
 
-    repo_ids = sorted({spec.repo_id for spec in MODEL_SPECS.values()})
+    selected_keys = tuple(MODEL_SPECS if model_keys is None else model_keys)
+    unknown = sorted(set(selected_keys) - set(MODEL_SPECS))
+    if unknown:
+        raise KeyError("Unknown model keys: " + ", ".join(unknown))
+    selected_specs = {key: MODEL_SPECS[key] for key in selected_keys}
+    repo_ids = sorted({spec.repo_id for spec in selected_specs.values()})
     repo_results = _fetch_repositories(
         repo_ids,
         token,
@@ -359,7 +398,7 @@ def sync_models(
             spec=spec,
             log_prefix=log_prefix,
         )
-        for key, spec in MODEL_SPECS.items()
+        for key, spec in selected_specs.items()
     ]
 
     stale = [plan for plan in plans if plan["needs_download"]]
@@ -411,14 +450,14 @@ def sync_models(
     manifest["checked_at_unix"] = int(time.time())
     write_json_atomic(manifest_path, manifest)
 
-    installed = {
-        plan["key"]: (plan["dest"].name, plan["spec"].source)
-        for plan in plans
-    }
-    return _build_config(installed, manifest_path.name)
+    return _build_config(manifest_path.name)
 
 
-def validate_config_files(root: Path, config: dict[str, Any]) -> list[str]:
+def validate_config_files(
+    root: Path,
+    config: dict[str, Any],
+    profiles: Iterable[str] = PRELOAD_PROFILES,
+) -> list[str]:
     """Return missing/invalid local files referenced by h3_models.json."""
     root = Path(root)
     required = [
@@ -428,7 +467,7 @@ def validate_config_files(root: Path, config: dict[str, Any]) -> list[str]:
         ("loras", config.get("turbo_lora")),
         ("loras", config.get("larry_turbo_lora")),
     ]
-    for profile in ("speed", "quality"):
+    for profile in profiles:
         data = config.get("profiles", {}).get(profile, {})
         required.extend(
             [
@@ -458,6 +497,8 @@ def selftest() -> None:
         "speed_ref2va",
         "quality_fl2va",
         "quality_ref2va",
+        "original_fl2va",
+        "original_ref2va",
         "text_encoder",
         "video_vae",
         "audio_vae",
@@ -465,14 +506,18 @@ def selftest() -> None:
         "larry_turbo_lora",
     }
 
-    fake = {
-        key: (spec.local_name, spec.source)
-        for key, spec in MODEL_SPECS.items()
-    }
-    cfg = _build_config(fake, "manifest.json")
-    assert cfg["schema_version"] == 4
+    cfg = _build_config("manifest.json")
+    assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["speed"])
+    assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["original"])
+    assert set(PROFILE_MODEL_KEYS["quality"]).issubset(PRELOAD_MODEL_KEYS)
+    assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
+    assert cfg["schema_version"] == 5
+    assert cfg["default_profile"] == "quality"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
+    )
+    assert cfg["profiles"]["original"]["fl2va"] == (
+        "minimax_h3_fl2va_pruned_bf16.safetensors"
     )
     assert cfg["text_encoder"] == (
         "qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors"
@@ -481,7 +526,7 @@ def selftest() -> None:
     assert cfg["turbo_ref_lora"] == cfg["turbo_lora"]
     assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"
     assert cfg["larry_turbo_ref_lora"] == cfg["larry_turbo_lora"]
-    assert cfg["turbo_supported_profiles"] == ["speed", "quality"]
+    assert cfg["turbo_supported_profiles"] == ["speed", "quality", "original"]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]
     print("h3_models selftest OK")
 

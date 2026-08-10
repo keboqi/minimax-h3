@@ -170,7 +170,7 @@ tables.
 `generate()` and the ComfyUI graph builders are large, but they encode several
 runtime fixes that have already been validated in production-style testing:
 
-- Turbo is independent from Speed/Quality.
+- Turbo is independent from the Speed, Quality, or Original base profile.
 - Reference Turbo temporarily reuses the selected FL2VA LoRA through separate
   LightX2V and Larry Ref2VA configuration keys.
 - Turbo mode/variant defaults update outside the generation queue (Larry 6,

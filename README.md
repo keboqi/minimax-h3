@@ -7,9 +7,9 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 ## What is included
 
 - Text/image-to-video and reference-media-to-video workflows
-- Live queue position, workflow stage, node count, and sampler-step progress
+- Live queue position, workflow stage, node count, overall work, and sampling schedule
 - Thumbnail gallery that loads a video player only after a generated video is selected
-- Speed and quality NVFP4 model profiles
+- Speed and quality NVFP4 profiles plus the official Original BF16 profile
 - Selectable Larry v4-600 EMA and LightX2V v0.1 Turbo LoRAs
 - H3-native zero-copy Sol v0.6.0 sparse attention with SageAttention fallback
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
@@ -84,8 +84,12 @@ cd minimax-h3
 bash run_h3.sh
 ```
 
-The first run creates `h3/`, installs ComfyUI and dependencies, and downloads
-the models. Later runs check remote model metadata and refresh only stale files.
+The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
+Quality profile plus the shared text encoder, VAEs, and Turbo LoRAs. Speed and
+Original checkpoints download on demand the first time each workflow variant is
+selected. Later runs check remote metadata for the preloaded set and refresh only
+stale files; lazy checkpoints remain local and are fetched again if missing or
+incomplete.
 The UI listens on `http://127.0.0.1:7860` by default. Local launch uses ComfyUI
 Dynamic VRAM on GPUs below 64 GiB, allowing current releases to manage model
 residency, prefetching, and host-memory pressure. It selects `--gpu-only` on

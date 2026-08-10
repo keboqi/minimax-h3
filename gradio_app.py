@@ -31,6 +31,7 @@ from fastapi.responses import (
     RedirectResponse,
     StreamingResponse,
 )
+from h3_models import MIN_VALID_MODEL_BYTES, PROFILE_LABELS, sync_models
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -81,6 +82,7 @@ DEFAULT_ACCELERATOR = "Spectrum"
 LIGHTX2V_TURBO = "LightX2V v0.1"
 LARRY_TURBO = "Larry v4-600 EMA"
 DEFAULT_TURBO = LARRY_TURBO
+MODEL_PROFILE_CHOICES = list(PROFILE_LABELS.values())
 CORE_LORA_LOADER_NODE = "LoraLoaderModelOnly"
 CORE_SAMPLER_NODE = "KSamplerSelect"
 LARRY_TURBO_LORA_NODE = "MiniMaxH3TurboLoRA"
@@ -516,13 +518,16 @@ class ModelConfig:
     larry_turbo_ref_lora: str | None = None
     larry_turbo_ref_source: str = "unknown"
 
-    def profile(self, name: str) -> ModelProfile:
+    def profile_key(self, name: str) -> str:
         key = str(name).strip().lower()
         if key not in self.profiles:
             key = self.default_profile
         if key not in self.profiles:
             raise H3Error(f"Unknown model profile: {name}")
-        return self.profiles[key]
+        return key
+
+    def profile(self, name: str) -> ModelProfile:
+        return self.profiles[self.profile_key(name)]
 
     def turbo_lora_for(self, mode: str, turbo_variant: str) -> str | None:
         reference = str(mode).strip().lower() == "reference media"
@@ -576,6 +581,36 @@ def load_model_config() -> ModelConfig:
             "larry_turbo_ref_source", data.get("larry_turbo_source", "unknown")
         ),
     )
+
+
+def model_file_is_ready(path: Path) -> bool:
+    return path.is_file() and path.stat().st_size > MIN_VALID_MODEL_BYTES
+
+
+def ensure_profile_model(
+    profile_key: str,
+    profile: ModelProfile,
+    mode: str,
+) -> bool:
+    """Download a lazy profile checkpoint before submitting its workflow."""
+    reference = str(mode).strip().lower() == "reference media"
+    filename = profile.ref2va if reference else profile.fl2va
+    destination = COMFY_DIR / "models" / "diffusion_models" / filename
+    if model_file_is_ready(destination):
+        return False
+
+    model_key = f"{profile_key}_{'ref2va' if reference else 'fl2va'}"
+    sync_models(
+        root=COMFY_DIR / "models",
+        manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
+        token=os.getenv("HF_TOKEN") or None,
+        log_prefix="[h3-on-demand]",
+        model_keys=(model_key,),
+        download_workers=1,
+    )
+    if not model_file_is_ready(destination):
+        raise H3Error(f"On-demand model download did not produce {filename}.")
+    return True
 
 
 def is_quantized_h3_model(filename: str) -> bool:
@@ -797,7 +832,7 @@ def mode_layout_updates(mode: str):
 
 
 def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
-    """Normal/Turbo is independent from the selected Speed/Quality base.
+    """Normal/Turbo is independent from the selected base-model profile.
 
     Important: when entering Turbo, do not change preset.value. Changing it
     would fire preset.change() and race with the Turbo Steps update.
@@ -1532,12 +1567,24 @@ def progress_status(
     total_nodes: int = 0,
     step: int | None = None,
     step_total: int | None = None,
+    configured_steps: int | None = None,
     detail: str | None = None,
 ) -> str:
     elapsed = time.monotonic() - started
     lines = [f"{stage} · elapsed {elapsed:.1f}s"]
     if step is not None and step_total:
-        lines.append(f"Sampler step {step}/{step_total} ({100 * step / step_total:.0f}%)")
+        percent = 100 * step / step_total
+        if configured_steps and step_total != configured_steps:
+            lines.append(
+                f"Overall generation progress {step}/{step_total} ({percent:.0f}%)"
+            )
+            lines.append(f"Sampling schedule {configured_steps} steps (UI setting)")
+        elif configured_steps:
+            lines.append(
+                f"Sampler step {step}/{configured_steps} ({percent:.0f}%)"
+            )
+        else:
+            lines.append(f"Stage progress {step}/{step_total} ({percent:.0f}%)")
     if total_nodes:
         lines.append(f"Workflow nodes {completed_nodes}/{total_nodes}")
     if detail:
@@ -2009,10 +2056,7 @@ def backend_status() -> str:
         fbcache_status = "available" if "H3FirstBlockCache" in live_nodes else "unavailable"
         spectrum_status = "available" if "SpectrumApplyMiniMaxH3" in live_nodes else "unavailable"
         profile_lines = [f"**Spectrum accelerator**: {spectrum_status}"]
-        for key in ("speed", "quality"):
-            if key not in models.profiles:
-                continue
-            profile = models.profiles[key]
+        for profile in models.profiles.values():
             profile_lines.append(
                 f"**{profile.label}** · FL2VA `{profile.fl2va}` · "
                 f"Ref2VA `{profile.ref2va}`"
@@ -2103,7 +2147,20 @@ def generate(
         resolved_width, resolved_height = validate_resolution(width, height)
         actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
         models = load_model_config()
-        profile = models.profile(model_profile)
+        profile_key = models.profile_key(model_profile)
+        profile = models.profiles[profile_key]
+
+        selected_model = (
+            profile.ref2va if mode == "Reference media" else profile.fl2va
+        )
+        selected_path = COMFY_DIR / "models" / "diffusion_models" / selected_model
+        if not model_file_is_ready(selected_path):
+            progress(0, desc=f"Downloading {profile.label} model")
+            yield None, progress_status(
+                f"Downloading {profile.label} model on demand",
+                started=started,
+            )
+        ensure_profile_model(profile_key, profile, mode)
 
         requested_generation = str(generation_mode).strip().lower()
         use_turbo = requested_generation == "turbo"
@@ -2115,7 +2172,6 @@ def generate(
             else None
         )
 
-        selected_model = profile.ref2va if mode == "Reference media" else profile.fl2va
         if use_turbo:
             turbo_lora_name = models.turbo_lora_for(mode, selected_turbo)
             if not turbo_lora_name:
@@ -2326,6 +2382,11 @@ def generate(
                 total_nodes=total_nodes,
                 step=step,
                 step_total=step_total,
+                configured_steps=(
+                    effective_steps
+                    if stage == "Generating video and audio"
+                    else None
+                ),
                 detail=f"Job `{prompt_id}`",
             )
 
@@ -2550,12 +2611,14 @@ def build_ui() -> gr.Blocks:
                 )
                 with gr.Row():
                     model_profile = gr.Radio(
-                        ["Speed", "Quality"],
+                        MODEL_PROFILE_CHOICES,
                         value=defaults["model_profile"],
                         label="Base model",
                         info=(
                             "Speed uses the rebuilt single-pass NVFP4 files. "
-                            "Quality uses the larger mixed NVFP4/FP8/INT8 ConvRot files."
+                            "Quality uses the mixed NVFP4/FP8/INT8 ConvRot files. "
+                            "Original uses the official BF16 files. Speed and Original "
+                            "download when first selected."
                         ),
                     )
                     generation_mode = gr.Radio(
@@ -3077,6 +3140,7 @@ def build_ui() -> gr.Blocks:
 
 
 def selftest() -> None:
+    assert MODEL_PROFILE_CHOICES == ["Speed", "Quality", "Original"]
     rewritten_html = _rewrite_comfy_text(
         (
             '<html><head></head><body><script src="/assets/app.js">'
@@ -3131,6 +3195,11 @@ def selftest() -> None:
                 label="Quality",
                 fl2va="fl2va_quality_convrot.safetensors",
                 ref2va="ref2va_quality_convrot.safetensors",
+            ),
+            "original": ModelProfile(
+                label="Original",
+                fl2va="minimax_h3_fl2va_pruned_bf16.safetensors",
+                ref2va="minimax_h3_ref2va_pruned_bf16.safetensors",
             ),
         },
         default_profile="speed",
@@ -3455,9 +3524,17 @@ def selftest() -> None:
     rendered_progress = progress_status(
         "Generating video and audio", started=time.monotonic(),
         completed_nodes=7, total_nodes=12, step=2, step_total=4,
+        configured_steps=4,
     )
     assert "Sampler step 2/4 (50%)" in rendered_progress
     assert "Workflow nodes 7/12" in rendered_progress
+    expanded_progress = progress_status(
+        "Generating video and audio", started=time.monotonic(),
+        step=3, step_total=12, configured_steps=6,
+    )
+    assert "Overall generation progress 3/12 (25%)" in expanded_progress
+    assert "Sampling schedule 6 steps (UI setting)" in expanded_progress
+    assert "Sampler step 3/12" not in expanded_progress
 
     class FakeProgressSocket:
         def __init__(self) -> None:
