@@ -37,6 +37,29 @@ die() {
   exit 1
 }
 
+ensure_ffmpeg() {
+  if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
+    return
+  fi
+
+  command -v apt-get >/dev/null 2>&1 || die \
+    "FFmpeg is missing and apt-get is unavailable; install ffmpeg and ffprobe manually"
+
+  local -a apt_command=(apt-get)
+  if (( EUID != 0 )); then
+    command -v sudo >/dev/null 2>&1 || die \
+      "FFmpeg is missing; install it as root or install sudo"
+    apt_command=(sudo apt-get)
+  fi
+
+  log "FFmpeg is missing; installing the ffmpeg system package"
+  "${apt_command[@]}" update
+  "${apt_command[@]}" install -y ffmpeg
+
+  command -v ffmpeg >/dev/null 2>&1 || die "ffmpeg installation did not provide ffmpeg"
+  command -v ffprobe >/dev/null 2>&1 || die "ffmpeg installation did not provide ffprobe"
+}
+
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
@@ -57,6 +80,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+ensure_ffmpeg
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || die "python3 is required"
 [[ -f "$SCRIPT_DIR/setup_h3.py" ]] || die "Missing setup_h3.py"
 [[ -f "$SCRIPT_DIR/gradio_app.py" ]] || die "Missing gradio_app.py"

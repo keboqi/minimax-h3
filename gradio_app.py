@@ -1691,7 +1691,11 @@ def build_ltx_upscale_graph(
         temporal_overlap=8,
     )
     video = graph.add(
-        "CreateVideo", images=Graph.out(images), fps=24.0, bit_depth=8
+        "CreateVideo",
+        images=Graph.out(images),
+        audio=Graph.out(components, 1),
+        fps=24.0,
+        bit_depth=8,
     )
     graph.add(
         "SaveVideo",
@@ -2047,23 +2051,6 @@ def postprocess_video(source: Path, option: str) -> Path:
 def unload_comfy_models() -> None:
     """Explicitly clear model residency only when the user opts into it."""
     api_post("/free", json={"unload_models": True, "free_memory": True})
-
-
-def remux_source_audio(video: Path, source: Path) -> Path:
-    """Attach the untouched H3 audio stream to the LTX-refined video."""
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    target = OUTPUTS_DIR / f"{video.stem}_h3_audio_{uuid.uuid4().hex[:8]}.mp4"
-    cmd = [
-        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-i", str(video), "-i", str(source),
-        "-map", "0:v:0", "-map", "1:a:0?",
-        "-c:v", "copy", "-c:a", "copy", "-shortest",
-        "-movflags", "+faststart", str(target),
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise H3Error(f"Could not preserve H3 audio: {proc.stderr.strip()}")
-    return target
 
 
 def video_download_path(video: str | Path) -> str:
@@ -2755,11 +2742,7 @@ def generate(
 
             ltx_history = wait_for_history(ltx_prompt_id)
             ltx_video = resolve_output(ltx_history, ltx_queued_at)
-            progress(1, desc="Preserving H3 audio")
-            yield None, progress_status(
-                "Preserving original H3 audio", started=started
-            )
-            result = remux_source_audio(ltx_video, source)
+            result = ltx_video
         else:
             result = postprocess_video(source, postprocess)
         elapsed = time.monotonic() - started
@@ -3781,7 +3764,12 @@ def selftest() -> None:
     ltx_frame_nodes = [node for node in ltx_nodes if node["class_type"] == "ImageFromBatch"]
     assert sorted(node["inputs"]["length"] for node in ltx_frame_nodes) == [1, 121]
     ltx_video = next(node for node in ltx_nodes if node["class_type"] == "CreateVideo")
-    assert "audio" not in ltx_video["inputs"]
+    ltx_components_id = next(
+        node_id
+        for node_id, node in ltx_graph.items()
+        if node["class_type"] == "GetVideoComponents"
+    )
+    assert ltx_video["inputs"]["audio"] == [ltx_components_id, 1]
     assert UI_DEFAULTS["ltx_force_offload"] is False
 
     assert resolution_choice_values("9:16 · 768×1344", "large")[:2] == (768, 1344)
