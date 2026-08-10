@@ -26,6 +26,7 @@ LTX_CHECKPOINT_REPO = "Lightricks/LTX-2.3-fp8"
 LTX_COMFY_REPO = "Comfy-Org/ltx-2.3"
 LTX_TEXT_ENCODER_REPO = "Comfy-Org/ltx-2"
 LTX_UPSCALER_REPO = "Lightricks/LTX-2.3"
+SEEDVR2_REPO = "Comfy-Org/SeedVR2"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -138,6 +139,18 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
         "LTX 2.3 spatial upscaler x2 v1.1 · lazy upscale asset",
     ),
+    "seedvr2_dit": ModelSpec(
+        SEEDVR2_REPO,
+        "diffusion_models",
+        "diffusion_models/seedvr2_3b_int8_convrot.safetensors",
+        "SeedVR2 3B INT8 ConvRot · lazy native 2x upscale model",
+    ),
+    "seedvr2_vae": ModelSpec(
+        SEEDVR2_REPO,
+        "vae",
+        "vae/seedvr2_ema_vae_fp16.safetensors",
+        "SeedVR2 FP16 VAE · lazy native upscale asset",
+    ),
 }
 
 PROFILE_MODEL_KEYS = {
@@ -160,9 +173,14 @@ LTX_UPSCALE_MODEL_KEYS = (
     "ltx_text_encoder",
     "ltx_spatial_upscaler",
 )
+SEEDVR2_UPSCALE_MODEL_KEYS = ("seedvr2_dit", "seedvr2_vae")
+LAZY_POSTPROCESS_MODEL_KEYS = (
+    *LTX_UPSCALE_MODEL_KEYS,
+    *SEEDVR2_UPSCALE_MODEL_KEYS,
+)
 SHARED_MODEL_KEYS = tuple(
     key for key in MODEL_SPECS
-    if key not in PROFILE_MODEL_KEY_SET and key not in LTX_UPSCALE_MODEL_KEYS
+    if key not in PROFILE_MODEL_KEY_SET and key not in LAZY_POSTPROCESS_MODEL_KEYS
 )
 PRELOAD_MODEL_KEYS = (
     *(
@@ -373,9 +391,11 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     ltx_distilled_lora = MODEL_SPECS["ltx_distilled_lora"]
     ltx_text_encoder = MODEL_SPECS["ltx_text_encoder"]
     ltx_spatial_upscaler = MODEL_SPECS["ltx_spatial_upscaler"]
+    seedvr2_dit = MODEL_SPECS["seedvr2_dit"]
+    seedvr2_vae = MODEL_SPECS["seedvr2_vae"]
 
     return {
-        "schema_version": 6,
+        "schema_version": 7,
         "default_profile": "quality",
         "profiles": {
             profile: _profile_config(profile)
@@ -403,6 +423,10 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         "ltx_text_encoder_source": ltx_text_encoder.source,
         "ltx_spatial_upscaler": ltx_spatial_upscaler.local_name,
         "ltx_spatial_upscaler_source": ltx_spatial_upscaler.source,
+        "seedvr2_dit": seedvr2_dit.local_name,
+        "seedvr2_dit_source": seedvr2_dit.source,
+        "seedvr2_vae": seedvr2_vae.local_name,
+        "seedvr2_vae_source": seedvr2_vae.source,
         "turbo_supported_profiles": list(PROFILE_MODEL_KEYS),
         "turbo_supported_modes": ["fl2va", "ref2va"],
         "manifest": manifest_name,
@@ -558,6 +582,8 @@ def selftest() -> None:
         "ltx_distilled_lora",
         "ltx_text_encoder",
         "ltx_spatial_upscaler",
+        "seedvr2_dit",
+        "seedvr2_vae",
     }
 
     cfg = _build_config("manifest.json")
@@ -565,8 +591,9 @@ def selftest() -> None:
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["original"])
     assert set(PROFILE_MODEL_KEYS["quality"]).issubset(PRELOAD_MODEL_KEYS)
     assert set(LTX_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
+    assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 6
+    assert cfg["schema_version"] == 7
     assert cfg["default_profile"] == "quality"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
@@ -586,6 +613,8 @@ def selftest() -> None:
     assert cfg["ltx_spatial_upscaler"] == (
         "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
     )
+    assert cfg["seedvr2_dit"] == "seedvr2_3b_int8_convrot.safetensors"
+    assert cfg["seedvr2_vae"] == "seedvr2_ema_vae_fp16.safetensors"
     assert cfg["turbo_supported_profiles"] == ["speed", "quality", "original"]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]
     print("h3_models selftest OK")

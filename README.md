@@ -10,7 +10,7 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 - Live queue position, workflow stage, node count, overall work, and sampling schedule
 - Thumbnail gallery that loads a video player only after a generated video is selected
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
-- Optional native LTX 2.3 generative 2× spatial upscale after H3 generation
+- Optional LTX 2.3, SeedVR2, and FlashVSR 2× upscalers after H3 generation
 - Selectable Larry v4-600 EMA and LightX2V v0.1 Turbo LoRAs
 - H3-native zero-copy Sol v0.6.0 sparse attention with SageAttention fallback
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
@@ -88,8 +88,9 @@ bash run_h3.sh
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
 Quality profile plus the shared text encoder, VAEs, and Turbo LoRAs. Speed and
 Original checkpoints download on demand the first time each workflow variant is
-selected. The LTX 2.3 checkpoint, distilled LoRA, Gemma text encoder, and spatial
-upscaler are also lazy and download only when LTX post-processing is first used.
+selected. The LTX 2.3 and native SeedVR2 model stacks are lazy and download only
+when their post-processing option is first used. FlashVSR downloads its model
+bundle through its pinned custom node on first use.
 Later runs check remote metadata for the preloaded set and refresh only stale
 files; lazy checkpoints remain local and are fetched again if missing or incomplete.
 On Debian/Ubuntu standalone hosts, `run_h3.sh` also installs the `ffmpeg` system
@@ -105,11 +106,17 @@ Select **LTX 2.3 generative 2x** under Post-processing to run a native LTX
 encode, latent 2× upscale, and three-step refinement pass after H3. For example,
 an H3 render at 1344×768 becomes 2688×1536. The post-process keeps H3's original
 audio stream and only refines the video. ComfyUI manages model residency by
-default. Enable **Unload H3 models before LTX upscale** only when lower peak VRAM
+default. Enable **Unload H3 models before AI upscale** when lower peak VRAM
 is more important than avoiding an H3 model reload on the next generation.
 The LTX path carries audio through native ComfyUI video nodes and does not invoke
 the standalone FFmpeg executable. Lanczos/interpolation post-processing and
 reference-video input conversion still require FFmpeg on the server `PATH`.
+
+Select **SeedVR2 2x** for ComfyUI's native one-step 3B INT8 restoration workflow,
+or **FlashVSR 2x** for the balanced tiled FlashVSR 1.1 workflow. Both preserve the
+generated audio and frame rate. FlashVSR requires at least 21 frames (all supported
+H3 durations satisfy this). The shared **Unload H3 models before AI upscale**
+option applies uniformly to LTX, FlashVSR, and SeedVR2.
 
 The **API** tab includes a copy-ready Python example. Its `/generate_video`
 endpoint only requires a prompt and uses the same defaults shown in the Generate

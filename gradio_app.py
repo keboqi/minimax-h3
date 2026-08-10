@@ -36,6 +36,7 @@ from h3_models import (
     MIN_VALID_MODEL_BYTES,
     MODEL_SPECS,
     PROFILE_LABELS,
+    SEEDVR2_UPSCALE_MODEL_KEYS,
     sync_models,
 )
 
@@ -97,6 +98,9 @@ SOL_ATTENTION_NODE = "MiniMaxH3MemoryEfficientSolAttentionPatch"
 FUSED_MODULATION_NODE = "MiniMaxH3FusedModulation"
 CHUNK_FEED_FORWARD_NODE = "MiniMaxH3ChunkFeedForward"
 LTX_UPSCALE = "LTX 2.3 generative 2x"
+SEEDVR2_UPSCALE = "SeedVR2 2x"
+FLASHVSR_UPSCALE = "FlashVSR 2x"
+COMFY_UPSCALE_OPTIONS = {LTX_UPSCALE, SEEDVR2_UPSCALE, FLASHVSR_UPSCALE}
 LTX_REFINEMENT_SIGMAS = "0.85, 0.7250, 0.4219, 0.0"
 LTX_NEGATIVE_PROMPT = (
     "pc game, console game, video game, cartoon, childish, ugly, slow, "
@@ -539,6 +543,10 @@ class ModelConfig:
     ltx_text_encoder_source: str = "unknown"
     ltx_spatial_upscaler: str | None = None
     ltx_spatial_upscaler_source: str = "unknown"
+    seedvr2_dit: str | None = None
+    seedvr2_dit_source: str = "unknown"
+    seedvr2_vae: str | None = None
+    seedvr2_vae_source: str = "unknown"
 
     def profile_key(self, name: str) -> str:
         key = str(name).strip().lower()
@@ -610,6 +618,10 @@ def load_model_config() -> ModelConfig:
         ltx_text_encoder_source=data.get("ltx_text_encoder_source", "unknown"),
         ltx_spatial_upscaler=data.get("ltx_spatial_upscaler"),
         ltx_spatial_upscaler_source=data.get("ltx_spatial_upscaler_source", "unknown"),
+        seedvr2_dit=data.get("seedvr2_dit"),
+        seedvr2_dit_source=data.get("seedvr2_dit_source", "unknown"),
+        seedvr2_vae=data.get("seedvr2_vae"),
+        seedvr2_vae_source=data.get("seedvr2_vae_source", "unknown"),
     )
 
 
@@ -687,6 +699,48 @@ def ensure_ltx_upscale_models(models: ModelConfig) -> bool:
         path = COMFY_DIR / "models" / spec.folder / configured[key]
         if not model_file_is_ready(path):
             raise H3Error(f"On-demand LTX download did not produce {configured[key]}.")
+    return True
+
+
+def seedvr2_upscale_model_names(models: ModelConfig) -> dict[str, str]:
+    configured = {
+        "seedvr2_dit": models.seedvr2_dit,
+        "seedvr2_vae": models.seedvr2_vae,
+    }
+    missing_config = [key for key, value in configured.items() if not value]
+    if missing_config:
+        raise H3Error(
+            "The model configuration predates SeedVR2 support. Re-run "
+            "setup_h3.py before selecting SeedVR2. Missing keys: "
+            + ", ".join(missing_config)
+        )
+    return {key: str(value) for key, value in configured.items()}
+
+
+def ensure_seedvr2_upscale_models(models: ModelConfig) -> bool:
+    configured = seedvr2_upscale_model_names(models)
+    missing_files = []
+    for key in SEEDVR2_UPSCALE_MODEL_KEYS:
+        spec = MODEL_SPECS[key]
+        if not model_file_is_ready(COMFY_DIR / "models" / spec.folder / configured[key]):
+            missing_files.append(key)
+    if not missing_files:
+        return False
+
+    sync_models(
+        root=COMFY_DIR / "models",
+        manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
+        token=os.getenv("HF_TOKEN") or None,
+        log_prefix="[seedvr2-on-demand]",
+        model_keys=SEEDVR2_UPSCALE_MODEL_KEYS,
+        download_workers=len(SEEDVR2_UPSCALE_MODEL_KEYS),
+    )
+    for key in SEEDVR2_UPSCALE_MODEL_KEYS:
+        spec = MODEL_SPECS[key]
+        if not model_file_is_ready(COMFY_DIR / "models" / spec.folder / configured[key]):
+            raise H3Error(
+                f"On-demand SeedVR2 download did not produce {configured[key]}."
+            )
     return True
 
 
@@ -1707,6 +1761,150 @@ def build_ltx_upscale_graph(
     return graph.nodes
 
 
+def required_seedvr2_upscale_nodes() -> set[str]:
+    return {
+        "LoadVideo",
+        "GetVideoComponents",
+        "ImageScaleBy",
+        "SeedVR2Preprocess",
+        "VAELoader",
+        "UNETLoader",
+        "VAEEncodeTiled",
+        "SeedVR2TemporalChunk",
+        "SeedVR2Conditioning",
+        "KSampler",
+        "SeedVR2TemporalMerge",
+        "VAEDecodeTiled",
+        "SeedVR2PostProcessing",
+        "CreateVideo",
+        "SaveVideo",
+    }
+
+
+def build_seedvr2_upscale_graph(
+    *, source_video: str, seed: int, models: ModelConfig
+) -> dict[str, Any]:
+    """Build ComfyUI's native one-step SeedVR2 3B INT8 2x workflow."""
+    assets = seedvr2_upscale_model_names(models)
+    graph = Graph()
+    loaded = graph.add("LoadVideo", file=source_video)
+    components = graph.add("GetVideoComponents", video=Graph.out(loaded))
+    resized = graph.add(
+        "ImageScaleBy",
+        image=Graph.out(components, 0),
+        upscale_method="lanczos",
+        scale_by=2.0,
+    )
+    prepared = graph.add("SeedVR2Preprocess", resized_images=Graph.out(resized))
+    vae = graph.add("VAELoader", vae_name=assets["seedvr2_vae"])
+    model = graph.add(
+        "UNETLoader", unet_name=assets["seedvr2_dit"], weight_dtype="default"
+    )
+    latent = graph.add(
+        "VAEEncodeTiled",
+        pixels=Graph.out(prepared),
+        vae=Graph.out(vae),
+        tile_size=512,
+        overlap=128,
+        temporal_size=64,
+        temporal_overlap=8,
+    )
+    chunks = graph.add(
+        "SeedVR2TemporalChunk",
+        latent=Graph.out(latent),
+        temporal_overlap=1,
+        chunking_mode={"chunking_mode": "auto"},
+    )
+    conditioning = graph.add(
+        "SeedVR2Conditioning",
+        model=Graph.out(model),
+        vae_conditioning=Graph.out(chunks, 0),
+    )
+    sampled = graph.add(
+        "KSampler",
+        model=Graph.out(model),
+        seed=int(seed),
+        steps=1,
+        cfg=1.0,
+        sampler_name="euler",
+        scheduler="simple",
+        positive=Graph.out(conditioning, 0),
+        negative=Graph.out(conditioning, 1),
+        latent_image=Graph.out(chunks, 0),
+        denoise=1.0,
+    )
+    merged = graph.add(
+        "SeedVR2TemporalMerge",
+        latents=Graph.out(sampled),
+        temporal_overlap=Graph.out(chunks, 1),
+    )
+    decoded = graph.add(
+        "VAEDecodeTiled",
+        samples=Graph.out(merged),
+        vae=Graph.out(vae),
+        tile_size=512,
+        overlap=128,
+        temporal_size=64,
+        temporal_overlap=8,
+    )
+    restored = graph.add(
+        "SeedVR2PostProcessing",
+        images=Graph.out(decoded),
+        original_resized_images=Graph.out(resized),
+        color_correction_method="none",
+    )
+    video = graph.add(
+        "CreateVideo",
+        images=Graph.out(restored),
+        audio=Graph.out(components, 1),
+        fps=24.0,
+        bit_depth=8,
+    )
+    graph.add(
+        "SaveVideo",
+        video=Graph.out(video),
+        filename_prefix=f"seedvr2/upscale_{int(time.time())}",
+        format="auto",
+        codec="auto",
+    )
+    return graph.nodes
+
+
+def required_flashvsr_upscale_nodes() -> set[str]:
+    return {"LoadVideo", "GetVideoComponents", "AILab_FlashVSR", "CreateVideo", "SaveVideo"}
+
+
+def build_flashvsr_upscale_graph(*, source_video: str, seed: int) -> dict[str, Any]:
+    """Build the balanced FlashVSR v1.1 2x tiled workflow."""
+    graph = Graph()
+    loaded = graph.add("LoadVideo", file=source_video)
+    components = graph.add("GetVideoComponents", video=Graph.out(loaded))
+    upscaled = graph.add(
+        "AILab_FlashVSR",
+        frames=Graph.out(components, 0),
+        audio=Graph.out(components, 1),
+        preset="Balanced (2x Quality)",
+        scale=2,
+        unload_model=True,
+        seed=max(1, int(seed)),
+    )
+    video = graph.add(
+        "CreateVideo",
+        images=Graph.out(upscaled, 0),
+        audio=Graph.out(upscaled, 1),
+        fps=24.0,
+        bit_depth=8,
+    )
+    graph.add(
+        "SaveVideo",
+        video=Graph.out(video),
+        filename_prefix=f"flashvsr/upscale_{int(time.time())}",
+        format="auto",
+        codec="auto",
+    )
+    return graph.nodes
+
+
 def required_nodes_for(
     mode: str,
     use_sol: bool,
@@ -2024,8 +2222,8 @@ def has_encoder(name: str) -> bool:
 def postprocess_video(source: Path, option: str) -> Path:
     if option == "None":
         return source
-    if option == LTX_UPSCALE:
-        raise H3Error("LTX upscale must run through the ComfyUI workflow.")
+    if option in COMFY_UPSCALE_OPTIONS:
+        raise H3Error(f"{option} must run through the ComfyUI workflow.")
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     target = OUTPUTS_DIR / f"{source.stem}_{uuid.uuid4().hex[:8]}.mp4"
     filters: list[str] = []
@@ -2413,6 +2611,8 @@ def generate(
         models = load_model_config()
         if postprocess == LTX_UPSCALE:
             ltx_upscale_model_names(models)
+        elif postprocess == SEEDVR2_UPSCALE:
+            seedvr2_upscale_model_names(models)
         profile_key = models.profile_key(model_profile)
         profile = models.profiles[profile_key]
 
@@ -2478,6 +2678,20 @@ def generate(
                 raise H3Error(
                     "LTX upscale requires newer native ComfyUI nodes: "
                     + ", ".join(sorted(missing_ltx_nodes))
+                )
+        elif postprocess == SEEDVR2_UPSCALE:
+            missing_seedvr2_nodes = required_seedvr2_upscale_nodes() - available
+            if missing_seedvr2_nodes:
+                raise H3Error(
+                    "SeedVR2 requires current native ComfyUI nodes: "
+                    + ", ".join(sorted(missing_seedvr2_nodes))
+                )
+        elif postprocess == FLASHVSR_UPSCALE:
+            missing_flashvsr_nodes = required_flashvsr_upscale_nodes() - available
+            if missing_flashvsr_nodes:
+                raise H3Error(
+                    "FlashVSR is not installed or failed to load. Re-run setup_h3.py. "
+                    "Missing nodes: " + ", ".join(sorted(missing_flashvsr_nodes))
                 )
 
         effective_sol, packed_tokens, sol_reason = resolve_sol_policy(
@@ -2678,71 +2892,78 @@ def generate(
             yield None, progress_status(
                 f"Post-processing: {postprocess}", started=started
             )
-        if postprocess == LTX_UPSCALE:
-            yield None, progress_status(
-                "Checking LTX 2.3 upscale models", started=started
-            )
-            downloaded_ltx = ensure_ltx_upscale_models(models)
-            if downloaded_ltx:
-                yield None, progress_status(
-                    "LTX 2.3 upscale models downloaded", started=started
-                )
+        if postprocess in COMFY_UPSCALE_OPTIONS:
+            if postprocess == LTX_UPSCALE:
+                yield None, progress_status("Checking LTX 2.3 upscale models", started=started)
+                downloaded = ensure_ltx_upscale_models(models)
+                stage_bucket = "ltx_upscale"
+            elif postprocess == SEEDVR2_UPSCALE:
+                yield None, progress_status("Checking SeedVR2 upscale models", started=started)
+                downloaded = ensure_seedvr2_upscale_models(models)
+                stage_bucket = "seedvr2_upscale"
+            else:
+                downloaded = False
+                stage_bucket = "flashvsr_upscale"
 
-            staged_source = stage_file(str(source), "ltx_upscale")
-            if bool(ltx_force_offload):
+            if downloaded:
+                yield None, progress_status(f"{postprocess} models downloaded", started=started)
+            staged_source = stage_file(str(source), stage_bucket)
+            unload_h3_before_upscale = bool(ltx_force_offload)
+            if unload_h3_before_upscale:
                 progress(0, desc="Unloading H3 models")
                 yield None, progress_status(
-                    "Unloading H3 models before LTX upscale", started=started
+                    f"Unloading H3 models before {postprocess}", started=started
                 )
                 unload_comfy_models()
 
-            ltx_graph = build_ltx_upscale_graph(
-                source_video=staged_source,
-                prompt=prompt,
-                frame_count=frame_length(duration),
-                seed=actual_seed,
-                models=models,
-            )
-            ltx_queued_at = time.time()
-            ltx_prompt_id = submit_prompt(ltx_graph, client_id)
+            if postprocess == LTX_UPSCALE:
+                upscale_graph = build_ltx_upscale_graph(
+                    source_video=staged_source, prompt=prompt,
+                    frame_count=frame_length(duration), seed=actual_seed, models=models,
+                )
+                configured_upscale_steps = 3
+            elif postprocess == SEEDVR2_UPSCALE:
+                upscale_graph = build_seedvr2_upscale_graph(
+                    source_video=staged_source, seed=actual_seed, models=models
+                )
+                configured_upscale_steps = 1
+            else:
+                upscale_graph = build_flashvsr_upscale_graph(
+                    source_video=staged_source, seed=actual_seed
+                )
+                configured_upscale_steps = 1
+
+            upscale_queued_at = time.time()
+            upscale_prompt_id = submit_prompt(upscale_graph, client_id)
             unload_note = (
-                "forced H3 unload" if ltx_force_offload else "automatic residency"
+                "H3 unload enabled"
+                if unload_h3_before_upscale
+                else "automatic residency"
             )
             yield None, progress_status(
-                "LTX 2.3 upscale queued",
-                started=started,
-                detail=(
-                    f"Job `{ltx_prompt_id}` · {resolved_width * 2}×"
-                    f"{resolved_height * 2} · {unload_note}"
-                ),
+                f"{postprocess} queued", started=started,
+                detail=(f"Job `{upscale_prompt_id}` · {resolved_width * 2}×"
+                        f"{resolved_height * 2} · {unload_note}"),
             )
-
-            ltx_updates = (
-                stream_comfy_progress(ws, ltx_prompt_id, ltx_graph, started)
-                if ws is not None
-                else poll_comfy_progress(ltx_prompt_id, ltx_graph)
+            upscale_updates = (
+                stream_comfy_progress(ws, upscale_prompt_id, upscale_graph, started)
+                if ws is not None else poll_comfy_progress(upscale_prompt_id, upscale_graph)
             )
-            for stage, completed_nodes, total_nodes, step, step_total in ltx_updates:
+            for stage, completed_nodes, total_nodes, step, step_total in upscale_updates:
                 if stage == "Generating video and audio":
-                    stage = "Refining upscaled video"
+                    stage = f"Upscaling with {postprocess}"
                 if step is not None and step_total:
                     progress((step, step_total), desc=stage)
                 elif total_nodes:
                     progress((completed_nodes, total_nodes), desc=stage)
                 yield None, progress_status(
-                    stage,
-                    started=started,
-                    completed_nodes=completed_nodes,
-                    total_nodes=total_nodes,
-                    step=step,
-                    step_total=step_total,
-                    configured_steps=3 if stage == "Refining upscaled video" else None,
-                    detail=f"LTX job `{ltx_prompt_id}`",
+                    stage, started=started, completed_nodes=completed_nodes,
+                    total_nodes=total_nodes, step=step, step_total=step_total,
+                    configured_steps=configured_upscale_steps if step is not None else None,
+                    detail=f"Upscale job `{upscale_prompt_id}`",
                 )
-
-            ltx_history = wait_for_history(ltx_prompt_id)
-            ltx_video = resolve_output(ltx_history, ltx_queued_at)
-            result = ltx_video
+            upscale_history = wait_for_history(upscale_prompt_id)
+            result = resolve_output(upscale_history, upscale_queued_at)
         else:
             result = postprocess_video(source, postprocess)
         elapsed = time.monotonic() - started
@@ -2805,8 +3026,8 @@ def compact_settings_summary(
     except (TypeError, ValueError):
         step_count = "— steps"
     offload_note = (
-        f" · LTX H3 unload: {'on' if ltx_force_offload else 'off'}"
-        if postprocess == LTX_UPSCALE
+        f" · H3 unload: {'on' if ltx_force_offload else 'off'}"
+        if postprocess in COMFY_UPSCALE_OPTIONS
         else ""
     )
     return (
@@ -3248,15 +3469,17 @@ def build_ui() -> gr.Blocks:
                     [
                         "None", "2× Lanczos", "48 fps interpolation",
                         "2× Lanczos + 48 fps", LTX_UPSCALE,
+                        SEEDVR2_UPSCALE, FLASHVSR_UPSCALE,
                     ],
                     value=defaults["postprocess"], label="Post-processing",
                 )
                 ltx_force_offload = gr.Checkbox(
                     value=defaults["ltx_force_offload"],
-                    label="Unload H3 models before LTX upscale",
+                    label="Unload H3 models before AI upscale",
                     info=(
                         "Off by default: ComfyUI manages model residency. Enable to "
-                        "reduce peak VRAM at the cost of reloading H3 next time."
+                        "unload H3 before LTX, FlashVSR, or SeedVR2 and reduce peak "
+                        "VRAM at the cost of reloading H3 next time."
                     ),
                 )
 
@@ -3583,6 +3806,10 @@ def selftest() -> None:
         ltx_text_encoder_source="test",
         ltx_spatial_upscaler="ltx-spatial-upscaler-x2.safetensors",
         ltx_spatial_upscaler_source="test",
+        seedvr2_dit="seedvr2_3b_int8_convrot.safetensors",
+        seedvr2_dit_source="test",
+        seedvr2_vae="seedvr2_ema_vae_fp16.safetensors",
+        seedvr2_vae_source="test",
     )
     available = required_nodes_for("Text to video", True, "FirstBlockCache", True, use_turbo=True) | required_nodes_for("Reference media", True, "EasyCache", True)
     available.add("SpectrumApplyMiniMaxH3")
@@ -3771,6 +3998,37 @@ def selftest() -> None:
     )
     assert ltx_video["inputs"]["audio"] == [ltx_components_id, 1]
     assert UI_DEFAULTS["ltx_force_offload"] is False
+
+    seedvr2_graph = build_seedvr2_upscale_graph(
+        source_video="h3_gradio/seedvr2_upscale/source.mp4", seed=7, models=fake
+    )
+    seedvr2_nodes = list(seedvr2_graph.values())
+    assert required_seedvr2_upscale_nodes() <= {
+        node["class_type"] for node in seedvr2_nodes
+    }
+    seedvr2_scale = next(
+        node for node in seedvr2_nodes if node["class_type"] == "ImageScaleBy"
+    )
+    assert seedvr2_scale["inputs"]["scale_by"] == 2.0
+    seedvr2_sampler = next(
+        node for node in seedvr2_nodes if node["class_type"] == "KSampler"
+    )
+    assert seedvr2_sampler["inputs"]["steps"] == 1
+    assert seedvr2_sampler["inputs"]["denoise"] == 1.0
+
+    flashvsr_graph = build_flashvsr_upscale_graph(
+        source_video="h3_gradio/flashvsr_upscale/source.mp4", seed=7
+    )
+    flashvsr_nodes = list(flashvsr_graph.values())
+    assert required_flashvsr_upscale_nodes() <= {
+        node["class_type"] for node in flashvsr_nodes
+    }
+    flashvsr = next(
+        node for node in flashvsr_nodes if node["class_type"] == "AILab_FlashVSR"
+    )
+    assert flashvsr["inputs"]["scale"] == 2
+    assert flashvsr["inputs"]["preset"] == "Balanced (2x Quality)"
+    assert flashvsr["inputs"]["unload_model"] is True
 
     assert resolution_choice_values("9:16 · 768×1344", "large")[:2] == (768, 1344)
     assert resolution_choice_values("1:1 · 1024×1024", "large")[:2] == (1024, 1024)
