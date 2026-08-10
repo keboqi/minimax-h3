@@ -31,7 +31,13 @@ from fastapi.responses import (
     RedirectResponse,
     StreamingResponse,
 )
-from h3_models import MIN_VALID_MODEL_BYTES, PROFILE_LABELS, sync_models
+from h3_models import (
+    LTX_UPSCALE_MODEL_KEYS,
+    MIN_VALID_MODEL_BYTES,
+    MODEL_SPECS,
+    PROFILE_LABELS,
+    sync_models,
+)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -90,6 +96,13 @@ LARRY_TURBO_SAMPLER_NODE = "MiniMaxH3TurboSampler"
 SOL_ATTENTION_NODE = "MiniMaxH3MemoryEfficientSolAttentionPatch"
 FUSED_MODULATION_NODE = "MiniMaxH3FusedModulation"
 CHUNK_FEED_FORWARD_NODE = "MiniMaxH3ChunkFeedForward"
+LTX_UPSCALE = "LTX 2.3 generative 2x"
+LTX_REFINEMENT_SIGMAS = "0.85, 0.7250, 0.4219, 0.0"
+LTX_NEGATIVE_PROMPT = (
+    "pc game, console game, video game, cartoon, childish, ugly, slow, "
+    "slo-mo, blurry, low quality, still frame, watermark, overlay, titles, "
+    "has blurbox, has subtitles"
+)
 TURBO_SETTINGS = {
     LARRY_TURBO: {"steps": 6, "strength": 1.0},
     LIGHTX2V_TURBO: {"steps": 4, "strength": 0.75},
@@ -124,6 +137,7 @@ UI_DEFAULTS = {
     "compile_model": False,
     "ref_image_size": "match",
     "postprocess": "None",
+    "ltx_force_offload": False,
 }
 SPECTRUM_DEFAULT_INPUTS = {
     "enabled": True,
@@ -517,6 +531,14 @@ class ModelConfig:
     larry_turbo_source: str = "unknown"
     larry_turbo_ref_lora: str | None = None
     larry_turbo_ref_source: str = "unknown"
+    ltx_checkpoint: str | None = None
+    ltx_checkpoint_source: str = "unknown"
+    ltx_distilled_lora: str | None = None
+    ltx_distilled_lora_source: str = "unknown"
+    ltx_text_encoder: str | None = None
+    ltx_text_encoder_source: str = "unknown"
+    ltx_spatial_upscaler: str | None = None
+    ltx_spatial_upscaler_source: str = "unknown"
 
     def profile_key(self, name: str) -> str:
         key = str(name).strip().lower()
@@ -580,6 +602,14 @@ def load_model_config() -> ModelConfig:
         larry_turbo_ref_source=data.get(
             "larry_turbo_ref_source", data.get("larry_turbo_source", "unknown")
         ),
+        ltx_checkpoint=data.get("ltx_checkpoint"),
+        ltx_checkpoint_source=data.get("ltx_checkpoint_source", "unknown"),
+        ltx_distilled_lora=data.get("ltx_distilled_lora"),
+        ltx_distilled_lora_source=data.get("ltx_distilled_lora_source", "unknown"),
+        ltx_text_encoder=data.get("ltx_text_encoder"),
+        ltx_text_encoder_source=data.get("ltx_text_encoder_source", "unknown"),
+        ltx_spatial_upscaler=data.get("ltx_spatial_upscaler"),
+        ltx_spatial_upscaler_source=data.get("ltx_spatial_upscaler_source", "unknown"),
     )
 
 
@@ -610,6 +640,53 @@ def ensure_profile_model(
     )
     if not model_file_is_ready(destination):
         raise H3Error(f"On-demand model download did not produce {filename}.")
+    return True
+
+
+def ltx_upscale_model_names(models: ModelConfig) -> dict[str, str]:
+    """Return a validated LTX asset map from the generated model config."""
+    configured = {
+        "ltx_checkpoint": models.ltx_checkpoint,
+        "ltx_distilled_lora": models.ltx_distilled_lora,
+        "ltx_text_encoder": models.ltx_text_encoder,
+        "ltx_spatial_upscaler": models.ltx_spatial_upscaler,
+    }
+    missing_config = [key for key, value in configured.items() if not value]
+    if missing_config:
+        raise H3Error(
+            "The model configuration predates LTX upscale support. Re-run "
+            "setup_h3.py before selecting LTX upscale. Missing keys: "
+            + ", ".join(missing_config)
+        )
+    return {key: str(value) for key, value in configured.items()}
+
+
+def ensure_ltx_upscale_models(models: ModelConfig) -> bool:
+    """Download the complete LTX upscale stack only when it is selected."""
+    configured = ltx_upscale_model_names(models)
+
+    missing_files = []
+    for key in LTX_UPSCALE_MODEL_KEYS:
+        spec = MODEL_SPECS[key]
+        path = COMFY_DIR / "models" / spec.folder / configured[key]
+        if not model_file_is_ready(path):
+            missing_files.append(key)
+    if not missing_files:
+        return False
+
+    sync_models(
+        root=COMFY_DIR / "models",
+        manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
+        token=os.getenv("HF_TOKEN") or None,
+        log_prefix="[ltx-on-demand]",
+        model_keys=LTX_UPSCALE_MODEL_KEYS,
+        download_workers=len(LTX_UPSCALE_MODEL_KEYS),
+    )
+    for key in LTX_UPSCALE_MODEL_KEYS:
+        spec = MODEL_SPECS[key]
+        path = COMFY_DIR / "models" / spec.folder / configured[key]
+        if not model_file_is_ready(path):
+            raise H3Error(f"On-demand LTX download did not produce {configured[key]}.")
     return True
 
 
@@ -1458,6 +1535,174 @@ def build_ref2va_graph(
     return graph.nodes
 
 
+def required_ltx_upscale_nodes() -> set[str]:
+    return {
+        "LoadVideo",
+        "GetVideoComponents",
+        "ImageFromBatch",
+        "CheckpointLoaderSimple",
+        CORE_LORA_LOADER_NODE,
+        "LTXAVTextEncoderLoader",
+        "LTXVAudioVAELoader",
+        "CLIPTextEncode",
+        "LTXVConditioning",
+        "VAEEncodeTiled",
+        "LatentUpscaleModelLoader",
+        "LTXVLatentUpsampler",
+        "LTXVImgToVideoInplace",
+        "LTXVEmptyLatentAudio",
+        "LTXVConcatAVLatent",
+        "RandomNoise",
+        "CFGGuider",
+        CORE_SAMPLER_NODE,
+        "ManualSigmas",
+        "SamplerCustomAdvanced",
+        "LTXVSeparateAVLatent",
+        "VAEDecodeTiled",
+        "CreateVideo",
+        "SaveVideo",
+    }
+
+
+def build_ltx_upscale_graph(
+    *,
+    source_video: str,
+    prompt: str,
+    frame_count: int,
+    seed: int,
+    models: ModelConfig,
+) -> dict[str, Any]:
+    """Build the native LTX 2.3 decode/encode/x2/refine post-process graph."""
+    assets = ltx_upscale_model_names(models)
+
+    graph = Graph()
+    loaded_video = graph.add("LoadVideo", file=source_video)
+    components = graph.add("GetVideoComponents", video=Graph.out(loaded_video))
+    ltx_frame_count = max(1, ((int(frame_count) - 1) // 8) * 8 + 1)
+    source_frames = graph.add(
+        "ImageFromBatch",
+        image=Graph.out(components, 0),
+        batch_index=0,
+        length=ltx_frame_count,
+    )
+    source_images = Graph.out(source_frames)
+    first_frame = graph.add(
+        "ImageFromBatch", image=source_images, batch_index=0, length=1
+    )
+
+    checkpoint = graph.add(
+        "CheckpointLoaderSimple", ckpt_name=assets["ltx_checkpoint"]
+    )
+    ltx_model = graph.add(
+        CORE_LORA_LOADER_NODE,
+        model=Graph.out(checkpoint, 0),
+        lora_name=assets["ltx_distilled_lora"],
+        strength_model=0.5,
+    )
+    text_encoder = graph.add(
+        "LTXAVTextEncoderLoader",
+        text_encoder=assets["ltx_text_encoder"],
+        ckpt_name=assets["ltx_checkpoint"],
+        device="default",
+    )
+    positive = graph.add(
+        "CLIPTextEncode", clip=Graph.out(text_encoder), text=prompt
+    )
+    negative = graph.add(
+        "CLIPTextEncode",
+        clip=Graph.out(text_encoder),
+        text=LTX_NEGATIVE_PROMPT,
+    )
+    conditioning = graph.add(
+        "LTXVConditioning",
+        positive=Graph.out(positive),
+        negative=Graph.out(negative),
+        frame_rate=24.0,
+    )
+
+    video_latent = graph.add(
+        "VAEEncodeTiled",
+        pixels=source_images,
+        vae=Graph.out(checkpoint, 2),
+        tile_size=768,
+        overlap=64,
+        temporal_size=64,
+        temporal_overlap=8,
+    )
+    upscale_model = graph.add(
+        "LatentUpscaleModelLoader", model_name=assets["ltx_spatial_upscaler"]
+    )
+    upscaled = graph.add(
+        "LTXVLatentUpsampler",
+        samples=Graph.out(video_latent),
+        upscale_model=Graph.out(upscale_model),
+        vae=Graph.out(checkpoint, 2),
+    )
+    guided_video = graph.add(
+        "LTXVImgToVideoInplace",
+        vae=Graph.out(checkpoint, 2),
+        image=Graph.out(first_frame),
+        latent=Graph.out(upscaled),
+        strength=1.0,
+        bypass=False,
+    )
+
+    audio_vae = graph.add(
+        "LTXVAudioVAELoader", ckpt_name=assets["ltx_checkpoint"]
+    )
+    empty_audio = graph.add(
+        "LTXVEmptyLatentAudio",
+        audio_vae=Graph.out(audio_vae),
+        frames_number=ltx_frame_count,
+        frame_rate=24.0,
+        batch_size=1,
+    )
+    av_latent = graph.add(
+        "LTXVConcatAVLatent",
+        video_latent=Graph.out(guided_video),
+        audio_latent=Graph.out(empty_audio),
+    )
+    noise = graph.add("RandomNoise", noise_seed=int(seed))
+    guider = graph.add(
+        "CFGGuider",
+        model=Graph.out(ltx_model),
+        positive=Graph.out(conditioning, 0),
+        negative=Graph.out(conditioning, 1),
+        cfg=1.0,
+    )
+    sampler = graph.add(CORE_SAMPLER_NODE, sampler_name="euler_cfg_pp")
+    sigmas = graph.add("ManualSigmas", sigmas=LTX_REFINEMENT_SIGMAS)
+    sampled = graph.add(
+        "SamplerCustomAdvanced",
+        noise=Graph.out(noise),
+        guider=Graph.out(guider),
+        sampler=Graph.out(sampler),
+        sigmas=Graph.out(sigmas),
+        latent_image=Graph.out(av_latent),
+    )
+    separated = graph.add("LTXVSeparateAVLatent", av_latent=Graph.out(sampled))
+    images = graph.add(
+        "VAEDecodeTiled",
+        samples=Graph.out(separated, 0),
+        vae=Graph.out(checkpoint, 2),
+        tile_size=768,
+        overlap=64,
+        temporal_size=64,
+        temporal_overlap=8,
+    )
+    video = graph.add(
+        "CreateVideo", images=Graph.out(images), fps=24.0, bit_depth=8
+    )
+    graph.add(
+        "SaveVideo",
+        video=Graph.out(video),
+        filename_prefix=f"ltx/upscale_{int(time.time())}",
+        format="auto",
+        codec="auto",
+    )
+    return graph.nodes
+
+
 def required_nodes_for(
     mode: str,
     use_sol: bool,
@@ -1515,12 +1760,18 @@ def node_stage(class_type: str) -> str:
     """Turn ComfyUI implementation node names into useful user-facing stages."""
     name = str(class_type)
     if name in {
-        "UNETLoader", "CLIPLoader", "VAELoader", CORE_LORA_LOADER_NODE,
+        "UNETLoader", "CLIPLoader", "VAELoader", "CheckpointLoaderSimple",
+        "LTXAVTextEncoderLoader", "LTXVAudioVAELoader",
+        "LatentUpscaleModelLoader", CORE_LORA_LOADER_NODE,
         LARRY_TURBO_LORA_NODE,
     }:
         return "Loading models"
     if name.startswith("Load") or name == "GetVideoComponents":
         return "Preparing reference media"
+    if name == "VAEEncodeTiled":
+        return "Encoding H3 video for LTX"
+    if name == "LTXVLatentUpsampler":
+        return "Upscaling LTX video latent"
     if "ImageToVideo" in name or "ReferenceToVideo" in name:
         return "Encoding prompt and conditioning"
     if name in {
@@ -1535,7 +1786,7 @@ def node_stage(class_type: str) -> str:
         return "Preparing sampler"
     if name == "SamplerCustomAdvanced" or "Sampler" in name:
         return "Generating video and audio"
-    if name in {"VAEDecode", "VAEDecodeAudio"}:
+    if name in {"VAEDecode", "VAEDecodeAudio", "VAEDecodeTiled"}:
         return "Decoding output"
     if name == "CreateVideo":
         return "Assembling video"
@@ -1769,6 +2020,8 @@ def has_encoder(name: str) -> bool:
 def postprocess_video(source: Path, option: str) -> Path:
     if option == "None":
         return source
+    if option == LTX_UPSCALE:
+        raise H3Error("LTX upscale must run through the ComfyUI workflow.")
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     target = OUTPUTS_DIR / f"{source.stem}_{uuid.uuid4().hex[:8]}.mp4"
     filters: list[str] = []
@@ -1788,6 +2041,28 @@ def postprocess_video(source: Path, option: str) -> Path:
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise H3Error(f"Post-processing failed: {proc.stderr.strip()}")
+    return target
+
+
+def unload_comfy_models() -> None:
+    """Explicitly clear model residency only when the user opts into it."""
+    api_post("/free", json={"unload_models": True, "free_memory": True})
+
+
+def remux_source_audio(video: Path, source: Path) -> Path:
+    """Attach the untouched H3 audio stream to the LTX-refined video."""
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    target = OUTPUTS_DIR / f"{video.stem}_h3_audio_{uuid.uuid4().hex[:8]}.mp4"
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", str(video), "-i", str(source),
+        "-map", "0:v:0", "-map", "1:a:0?",
+        "-c:v", "copy", "-c:a", "copy", "-shortest",
+        "-movflags", "+faststart", str(target),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise H3Error(f"Could not preserve H3 audio: {proc.stderr.strip()}")
     return target
 
 
@@ -2132,11 +2407,13 @@ def generate(
     compile_model: bool,
     ref_image_size: str,
     postprocess: str,
+    ltx_force_offload: bool = False,
     progress=gr.Progress(track_tqdm=False),
 ):
     started = time.monotonic()
     queued_at = time.time()
     ws: websocket.WebSocket | None = None
+    fallback_video: Path | None = None
     try:
         progress(0, desc="Validating request")
         yield None, progress_status("Validating request", started=started)
@@ -2147,6 +2424,8 @@ def generate(
         resolved_width, resolved_height = validate_resolution(width, height)
         actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
         models = load_model_config()
+        if postprocess == LTX_UPSCALE:
+            ltx_upscale_model_names(models)
         profile_key = models.profile_key(model_profile)
         profile = models.profiles[profile_key]
 
@@ -2206,6 +2485,13 @@ def generate(
 
         info = object_info()
         available = set(info)
+        if postprocess == LTX_UPSCALE:
+            missing_ltx_nodes = required_ltx_upscale_nodes() - available
+            if missing_ltx_nodes:
+                raise H3Error(
+                    "LTX upscale requires newer native ComfyUI nodes: "
+                    + ", ".join(sorted(missing_ltx_nodes))
+                )
 
         effective_sol, packed_tokens, sol_reason = resolve_sol_policy(
             attention_mode, mode, resolved_width, resolved_height, float(duration),
@@ -2399,12 +2685,83 @@ def generate(
         )
         history = wait_for_history(prompt_id)
         source = resolve_output(history, queued_at)
+        fallback_video = source
         if postprocess != "None":
             progress(0, desc="Post-processing video")
             yield None, progress_status(
                 f"Post-processing: {postprocess}", started=started
             )
-        result = postprocess_video(source, postprocess)
+        if postprocess == LTX_UPSCALE:
+            yield None, progress_status(
+                "Checking LTX 2.3 upscale models", started=started
+            )
+            downloaded_ltx = ensure_ltx_upscale_models(models)
+            if downloaded_ltx:
+                yield None, progress_status(
+                    "LTX 2.3 upscale models downloaded", started=started
+                )
+
+            staged_source = stage_file(str(source), "ltx_upscale")
+            if bool(ltx_force_offload):
+                progress(0, desc="Unloading H3 models")
+                yield None, progress_status(
+                    "Unloading H3 models before LTX upscale", started=started
+                )
+                unload_comfy_models()
+
+            ltx_graph = build_ltx_upscale_graph(
+                source_video=staged_source,
+                prompt=prompt,
+                frame_count=frame_length(duration),
+                seed=actual_seed,
+                models=models,
+            )
+            ltx_queued_at = time.time()
+            ltx_prompt_id = submit_prompt(ltx_graph, client_id)
+            unload_note = (
+                "forced H3 unload" if ltx_force_offload else "automatic residency"
+            )
+            yield None, progress_status(
+                "LTX 2.3 upscale queued",
+                started=started,
+                detail=(
+                    f"Job `{ltx_prompt_id}` · {resolved_width * 2}×"
+                    f"{resolved_height * 2} · {unload_note}"
+                ),
+            )
+
+            ltx_updates = (
+                stream_comfy_progress(ws, ltx_prompt_id, ltx_graph, started)
+                if ws is not None
+                else poll_comfy_progress(ltx_prompt_id, ltx_graph)
+            )
+            for stage, completed_nodes, total_nodes, step, step_total in ltx_updates:
+                if stage == "Generating video and audio":
+                    stage = "Refining upscaled video"
+                if step is not None and step_total:
+                    progress((step, step_total), desc=stage)
+                elif total_nodes:
+                    progress((completed_nodes, total_nodes), desc=stage)
+                yield None, progress_status(
+                    stage,
+                    started=started,
+                    completed_nodes=completed_nodes,
+                    total_nodes=total_nodes,
+                    step=step,
+                    step_total=step_total,
+                    configured_steps=3 if stage == "Refining upscaled video" else None,
+                    detail=f"LTX job `{ltx_prompt_id}`",
+                )
+
+            ltx_history = wait_for_history(ltx_prompt_id)
+            ltx_video = resolve_output(ltx_history, ltx_queued_at)
+            progress(1, desc="Preserving H3 audio")
+            yield None, progress_status(
+                "Preserving original H3 audio", started=started
+            )
+            result = remux_source_audio(ltx_video, source)
+        else:
+            result = postprocess_video(source, postprocess)
         elapsed = time.monotonic() - started
         progress(1, desc="Complete")
         yield str(result), (
@@ -2412,7 +2769,9 @@ def generate(
             f"{elapsed / float(duration):.1f}s compute per output second"
         )
     except Exception as exc:
-        yield None, f"Error: {exc}"
+        fallback = str(fallback_video) if fallback_video is not None else None
+        suffix = " The completed H3 video is still available." if fallback else ""
+        yield fallback, f"Error: {exc}{suffix}"
     finally:
         if ws is not None:
             try:
@@ -2446,6 +2805,7 @@ def compact_settings_summary(
     attention_mode: str,
     cache_mode: str,
     postprocess: str,
+    ltx_force_offload: bool,
 ) -> str:
     if generation_mode == "Turbo":
         generation_mode = f"Turbo / {turbo_variant}"
@@ -2461,11 +2821,16 @@ def compact_settings_summary(
         step_count = f"{int(steps)} steps"
     except (TypeError, ValueError):
         step_count = "— steps"
+    offload_note = (
+        f" · LTX H3 unload: {'on' if ltx_force_offload else 'off'}"
+        if postprocess == LTX_UPSCALE
+        else ""
+    )
     return (
         "**Current setup**  \n"
         f"{mode} · {model_profile} / {generation_mode} · {seconds} · {resolution} · "
         f"{step_count} / {scheduler} · Attention: {attention_mode} · "
-        f"Cache: {cache_mode} · Post: {postprocess}"
+        f"Cache: {cache_mode} · Post: {postprocess}{offload_note}"
     )
 
 
@@ -2545,6 +2910,7 @@ def generate_with_ui_defaults(
         compile_model=defaults["compile_model"],
         ref_image_size=defaults["ref_image_size"],
         postprocess=defaults["postprocess"],
+        ltx_force_offload=defaults["ltx_force_offload"],
         progress=progress,
     )
     for video, status in updates:
@@ -2677,7 +3043,7 @@ def build_ui() -> gr.Blocks:
                         defaults["duration"], defaults["width"], defaults["height"],
                         defaults["steps"], defaults["scheduler"],
                         defaults["attention_mode"], defaults["cache_mode"],
-                        defaults["postprocess"],
+                        defaults["postprocess"], defaults["ltx_force_offload"],
                     )
                 )
                 output = gr.Video(label="Generated video")
@@ -2896,8 +3262,19 @@ def build_ui() -> gr.Blocks:
                     ),
                 )
                 postprocess = gr.Dropdown(
-                    ["None", "2× Lanczos", "48 fps interpolation", "2× Lanczos + 48 fps"],
+                    [
+                        "None", "2× Lanczos", "48 fps interpolation",
+                        "2× Lanczos + 48 fps", LTX_UPSCALE,
+                    ],
                     value=defaults["postprocess"], label="Post-processing",
+                )
+                ltx_force_offload = gr.Checkbox(
+                    value=defaults["ltx_force_offload"],
+                    label="Unload H3 models before LTX upscale",
+                    info=(
+                        "Off by default: ComfyUI manages model residency. Enable to "
+                        "reduce peak VRAM at the cost of reloading H3 next time."
+                    ),
                 )
 
         with gr.Group(visible=False) as gallery_view:
@@ -2965,6 +3342,7 @@ def build_ui() -> gr.Blocks:
             mode, model_profile, generation_mode, turbo_variant,
             duration, width, height,
             steps, scheduler, attention_mode, cache_mode, postprocess,
+            ltx_force_offload,
         ]
         for settings_control in settings_inputs:
             settings_control.change(
@@ -3045,7 +3423,7 @@ def build_ui() -> gr.Blocks:
                 cache_mode, fbcache_preset, fbcache_threshold, fbcache_start,
                 fbcache_end, fbcache_max_hits, fbcache_temporal_guard,
                 easycache_threshold, easycache_start, easycache_end, easycache_verbose,
-                compile_model, ref_size, postprocess,
+                compile_model, ref_size, postprocess, ltx_force_offload,
             ],
             outputs=[output, status],
             show_progress="minimal",
@@ -3214,6 +3592,14 @@ def selftest() -> None:
         larry_turbo_source="test",
         larry_turbo_ref_lora="minimax_h3_turbo_v4_step600_ema.safetensors",
         larry_turbo_ref_source="shared-fl2va-test",
+        ltx_checkpoint="ltx-2.3-22b-dev-fp8.safetensors",
+        ltx_checkpoint_source="test",
+        ltx_distilled_lora="ltx-distilled.safetensors",
+        ltx_distilled_lora_source="test",
+        ltx_text_encoder="gemma-3-fp4.safetensors",
+        ltx_text_encoder_source="test",
+        ltx_spatial_upscaler="ltx-spatial-upscaler-x2.safetensors",
+        ltx_spatial_upscaler_source="test",
     )
     available = required_nodes_for("Text to video", True, "FirstBlockCache", True, use_turbo=True) | required_nodes_for("Reference media", True, "EasyCache", True)
     available.add("SpectrumApplyMiniMaxH3")
@@ -3375,6 +3761,29 @@ def selftest() -> None:
     assert save_nodes[0]["inputs"]["codec"] == "auto"
     assert isinstance(save_nodes[0]["inputs"]["codec"], str)
 
+    ltx_graph = build_ltx_upscale_graph(
+        source_video="h3_gradio/ltx_upscale/source.mp4",
+        prompt="preserve fine facial and textile details",
+        frame_count=124,
+        seed=7,
+        models=fake,
+    )
+    ltx_nodes = list(ltx_graph.values())
+    ltx_classes = {node["class_type"] for node in ltx_nodes}
+    assert required_ltx_upscale_nodes() <= ltx_classes
+    ltx_lora = next(node for node in ltx_nodes if node["class_type"] == CORE_LORA_LOADER_NODE)
+    assert ltx_lora["inputs"]["strength_model"] == 0.5
+    ltx_sigmas = next(node for node in ltx_nodes if node["class_type"] == "ManualSigmas")
+    assert ltx_sigmas["inputs"]["sigmas"] == LTX_REFINEMENT_SIGMAS
+    ltx_audio = next(node for node in ltx_nodes if node["class_type"] == "LTXVEmptyLatentAudio")
+    assert ltx_audio["inputs"]["frames_number"] == 121
+    assert ltx_audio["inputs"]["batch_size"] == 1
+    ltx_frame_nodes = [node for node in ltx_nodes if node["class_type"] == "ImageFromBatch"]
+    assert sorted(node["inputs"]["length"] for node in ltx_frame_nodes) == [1, 121]
+    ltx_video = next(node for node in ltx_nodes if node["class_type"] == "CreateVideo")
+    assert "audio" not in ltx_video["inputs"]
+    assert UI_DEFAULTS["ltx_force_offload"] is False
+
     assert resolution_choice_values("9:16 · 768×1344", "large")[:2] == (768, 1344)
     assert resolution_choice_values("1:1 · 1024×1024", "large")[:2] == (1024, 1024)
     assert set(RESOLUTION_TIERS) == {"draft", "fast", "large"}
@@ -3385,6 +3794,22 @@ def selftest() -> None:
     assert UI_DEFAULTS["steps"] == turbo_steps_for(UI_DEFAULTS["turbo_variant"])
     assert UI_DEFAULTS["width"] == 864 and UI_DEFAULTS["height"] == 480
     assert 'api_name="/generate_video"' in api_guide()
+    captured_free_call: dict[str, Any] = {}
+    original_api_post = globals()["api_post"]
+
+    def fake_api_post(path: str, **kwargs: Any) -> None:
+        captured_free_call["path"] = path
+        captured_free_call["kwargs"] = kwargs
+
+    globals()["api_post"] = fake_api_post
+    try:
+        unload_comfy_models()
+    finally:
+        globals()["api_post"] = original_api_post
+    assert captured_free_call == {
+        "path": "/free",
+        "kwargs": {"json": {"unload_models": True, "free_memory": True}},
+    }
     captured_api_call: dict[str, Any] = {}
     original_generate = globals()["generate"]
     original_download_url = globals()["absolute_video_download_url"]

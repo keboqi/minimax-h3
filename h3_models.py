@@ -22,6 +22,10 @@ ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 TURBO_REPO = "Kijai/MiniMax-H3_comfy"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 TEXT_ENCODER_REPO = "sakamakismile/Qwen3-VL-32B-Heretic-MiniMax-H3-NVFP4"
+LTX_CHECKPOINT_REPO = "Lightricks/LTX-2.3-fp8"
+LTX_COMFY_REPO = "Comfy-Org/ltx-2.3"
+LTX_TEXT_ENCODER_REPO = "Comfy-Org/ltx-2"
+LTX_UPSCALER_REPO = "Lightricks/LTX-2.3"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -107,6 +111,33 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "minimax_h3_turbo_v4_step600_ema.safetensors",
         "Larry v4-600 EMA Turbo · recommended 6-step quality option",
     ),
+    "ltx_checkpoint": ModelSpec(
+        LTX_CHECKPOINT_REPO,
+        "checkpoints",
+        "ltx-2.3-22b-dev-fp8.safetensors",
+        "LTX 2.3 22B Dev FP8 · lazy generative-upscale checkpoint",
+    ),
+    "ltx_distilled_lora": ModelSpec(
+        LTX_COMFY_REPO,
+        "loras",
+        (
+            "split_files/loras/"
+            "ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors"
+        ),
+        "LTX 2.3 distilled 1.1 LoRA · lazy generative-upscale asset",
+    ),
+    "ltx_text_encoder": ModelSpec(
+        LTX_TEXT_ENCODER_REPO,
+        "text_encoders",
+        "split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors",
+        "Gemma 3 12B FP4 mixed · lazy LTX text encoder",
+    ),
+    "ltx_spatial_upscaler": ModelSpec(
+        LTX_UPSCALER_REPO,
+        "latent_upscale_models",
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "LTX 2.3 spatial upscaler x2 v1.1 · lazy upscale asset",
+    ),
 }
 
 PROFILE_MODEL_KEYS = {
@@ -123,8 +154,15 @@ PRELOAD_PROFILES = ("quality",)
 PROFILE_MODEL_KEY_SET = frozenset(
     key for keys in PROFILE_MODEL_KEYS.values() for key in keys
 )
+LTX_UPSCALE_MODEL_KEYS = (
+    "ltx_checkpoint",
+    "ltx_distilled_lora",
+    "ltx_text_encoder",
+    "ltx_spatial_upscaler",
+)
 SHARED_MODEL_KEYS = tuple(
-    key for key in MODEL_SPECS if key not in PROFILE_MODEL_KEY_SET
+    key for key in MODEL_SPECS
+    if key not in PROFILE_MODEL_KEY_SET and key not in LTX_UPSCALE_MODEL_KEYS
 )
 PRELOAD_MODEL_KEYS = (
     *(
@@ -331,9 +369,13 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     audio_vae = MODEL_SPECS["audio_vae"]
     turbo_lora = MODEL_SPECS["turbo_lora"]
     larry_turbo_lora = MODEL_SPECS["larry_turbo_lora"]
+    ltx_checkpoint = MODEL_SPECS["ltx_checkpoint"]
+    ltx_distilled_lora = MODEL_SPECS["ltx_distilled_lora"]
+    ltx_text_encoder = MODEL_SPECS["ltx_text_encoder"]
+    ltx_spatial_upscaler = MODEL_SPECS["ltx_spatial_upscaler"]
 
     return {
-        "schema_version": 5,
+        "schema_version": 6,
         "default_profile": "quality",
         "profiles": {
             profile: _profile_config(profile)
@@ -353,6 +395,14 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         # Larry's FL2VA-trained LoRA is also exposed for experimental Ref2VA.
         "larry_turbo_ref_lora": larry_turbo_lora.local_name,
         "larry_turbo_ref_source": larry_turbo_lora.source,
+        "ltx_checkpoint": ltx_checkpoint.local_name,
+        "ltx_checkpoint_source": ltx_checkpoint.source,
+        "ltx_distilled_lora": ltx_distilled_lora.local_name,
+        "ltx_distilled_lora_source": ltx_distilled_lora.source,
+        "ltx_text_encoder": ltx_text_encoder.local_name,
+        "ltx_text_encoder_source": ltx_text_encoder.source,
+        "ltx_spatial_upscaler": ltx_spatial_upscaler.local_name,
+        "ltx_spatial_upscaler_source": ltx_spatial_upscaler.source,
         "turbo_supported_profiles": list(PROFILE_MODEL_KEYS),
         "turbo_supported_modes": ["fl2va", "ref2va"],
         "manifest": manifest_name,
@@ -504,14 +554,19 @@ def selftest() -> None:
         "audio_vae",
         "turbo_lora",
         "larry_turbo_lora",
+        "ltx_checkpoint",
+        "ltx_distilled_lora",
+        "ltx_text_encoder",
+        "ltx_spatial_upscaler",
     }
 
     cfg = _build_config("manifest.json")
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["speed"])
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["original"])
     assert set(PROFILE_MODEL_KEYS["quality"]).issubset(PRELOAD_MODEL_KEYS)
+    assert set(LTX_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 5
+    assert cfg["schema_version"] == 6
     assert cfg["default_profile"] == "quality"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
@@ -526,6 +581,11 @@ def selftest() -> None:
     assert cfg["turbo_ref_lora"] == cfg["turbo_lora"]
     assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"
     assert cfg["larry_turbo_ref_lora"] == cfg["larry_turbo_lora"]
+    assert cfg["ltx_checkpoint"] == "ltx-2.3-22b-dev-fp8.safetensors"
+    assert cfg["ltx_text_encoder"] == "gemma_3_12B_it_fp4_mixed.safetensors"
+    assert cfg["ltx_spatial_upscaler"] == (
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+    )
     assert cfg["turbo_supported_profiles"] == ["speed", "quality", "original"]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]
     print("h3_models selftest OK")
