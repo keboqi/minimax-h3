@@ -108,7 +108,7 @@ UI_DEFAULTS = {
     "sol_thresh_type": "diag",
     "sol_exact_mode": "exact_kv",
     "sol_dense_steps": 1,
-    "cache_mode": "Off",
+    "cache_mode": DEFAULT_ACCELERATOR,
     "fbcache_preset": DEFAULT_FBCACHE_PRESET,
     "fbcache_threshold": DEFAULT_FBCACHE_THRESHOLD,
     "fbcache_start": DEFAULT_FBCACHE_START,
@@ -140,6 +140,10 @@ SPECTRUM_DEFAULT_INPUTS = {
     "selective_rollback_correction": False,
     "offline_smoothing_replay": True,
     "audio_blend_weight": 0.0,
+    # Spectrum v0.2.5 separates the unbounded replay archive from the capped
+    # causal history. Keep all replay anchors in host RAM unless a workflow
+    # explicitly opts into the higher-VRAM path.
+    "offline_archive_storage": "system_ram",
 }
 
 # The official H3 workflow uses a 768×1344 pixel-area native canvas. Larger
@@ -801,15 +805,18 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
     if str(name).strip().lower() == "turbo":
         return (
             gr.update(interactive=False),
-            turbo_steps_for(turbo_variant),
+            gr.update(
+                value=turbo_steps_for(turbo_variant),
+                interactive=True,
+            ),
             "simple",
-            "Off",
+            DEFAULT_ACCELERATOR,
             "Auto",
         )
 
     return (
         gr.update(value="Balanced", interactive=True),
-        18,
+        gr.update(value=18, interactive=True),
         "simple",
         DEFAULT_ACCELERATOR,
         "Auto",
@@ -820,7 +827,29 @@ def turbo_variant_defaults(turbo_variant: str, generation_mode: str):
     """Apply variant sampling defaults only while Turbo is selected."""
     if str(generation_mode).strip().lower() != "turbo":
         return gr.update(), gr.update()
-    return turbo_steps_for(turbo_variant), "simple"
+    return gr.update(
+        value=turbo_steps_for(turbo_variant),
+        interactive=True,
+    ), "simple"
+
+
+def resolve_cache_policy(
+    cache_mode: str, *, use_turbo: bool
+) -> tuple[str, str | None]:
+    """Allow Spectrum for Turbo while rejecting unvalidated block caches."""
+    requested = str(cache_mode).strip()
+    normalized = requested.lower()
+    if not use_turbo or normalized == "off":
+        return requested, None
+    if normalized == "spectrum":
+        return requested, (
+            "Spectrum forecasting with Turbo is experimental. Compare the same "
+            "prompt and seed with acceleration Off for quality-critical output."
+        )
+    return "Off", (
+        f"{requested or 'Selected block cache'} was disabled automatically: "
+        "Turbo currently permits only the validated Spectrum v0.2.5 sampler path."
+    )
 
 
 def fbcache_preset_defaults(name: str):
@@ -2101,10 +2130,8 @@ def generate(
             turbo_lora_name = None
             turbo_strength = 1.0
 
-        # Each Turbo implementation supplies a recommended simple-scheduler
-        # default, but the user may deliberately
-        # change Steps or Scheduler after selecting Turbo. Honor those visible
-        # controls instead of silently overriding them at graph-build time.
+        # Variant defaults update outside the generation queue, while this
+        # request deliberately honors any subsequent manual step adjustment.
         effective_steps = int(steps)
         effective_scheduler = str(scheduler)
 
@@ -2128,14 +2155,9 @@ def generate(
             attention_mode, mode, resolved_width, resolved_height, float(duration),
             first_image, last_image, use_turbo=use_turbo,
         )
-        effective_cache_mode = str(cache_mode).strip()
-        cache_note = None
-        if use_turbo and effective_cache_mode.lower() != "off":
-            effective_cache_mode = "Off"
-            cache_note = (
-                "Spectrum/block caches disabled automatically in Turbo mode "
-                "pending validation."
-            )
+        effective_cache_mode, cache_note = resolve_cache_policy(
+            cache_mode, use_turbo=use_turbo
+        )
         missing = required_nodes_for(
             mode,
             effective_sol,
@@ -2258,7 +2280,7 @@ def generate(
         elif effective_cache_mode.lower() == "spectrum":
             cache_status = (
                 "Spectrum (degree=1, audio-isolated offline replay, "
-                "audio-blend=0, history=system RAM)"
+                "audio-blend=0, history/archive=system RAM)"
             )
         elif effective_cache_mode.lower() == "easycache":
             cache_status = (
@@ -2628,8 +2650,9 @@ def build_ui() -> gr.Blocks:
                     steps = gr.Slider(
                         4, 30, value=defaults["steps"], step=1, label="Steps",
                         info=(
-                            "Larry defaults to 6 steps and LightX2V to 4; this remains editable. "
-                            "Normal H3 presets normally use 15–20."
+                            "Larry defaults to 6 steps and LightX2V to 4. Increase Turbo "
+                            "steps when a clip benefits from extra refinement; Normal H3 "
+                            "presets normally use 15–20."
                         ),
                     )
                 with gr.Row():
@@ -2719,7 +2742,8 @@ def build_ui() -> gr.Blocks:
                             "Spectrum is the normal H3 default based on broader community "
                             "speed testing. It forecasts selected transformer steps and uses "
                             "audio-isolated offline replay. FirstBlockCache is the lower-memory "
-                            "fallback. Modes are mutually exclusive; Turbo forces Off."
+                            "fallback. Modes are mutually exclusive. Turbo defaults to Spectrum; "
+                            "other block caches are disabled in Turbo."
                         ),
                     )
                     fbcache_preset = gr.Radio(
@@ -2898,11 +2922,15 @@ def build_ui() -> gr.Blocks:
             generation_mode_defaults,
             inputs=[generation_mode, turbo_variant],
             outputs=[preset, steps, scheduler, cache_mode, attention_mode],
+            queue=False,
+            show_progress="hidden",
         )
         turbo_variant.change(
             turbo_variant_defaults,
             inputs=[turbo_variant, generation_mode],
             outputs=[steps, scheduler],
+            queue=False,
+            show_progress="hidden",
         )
         preset.change(
             preset_values,
@@ -3266,6 +3294,7 @@ def selftest() -> None:
     ]
     assert spectrum_inputs["offline_smoothing_replay"] is True
     assert spectrum_inputs["audio_blend_weight"] == 0.0
+    assert spectrum_inputs["offline_archive_storage"] == "system_ram"
     assert not any(
         node["class_type"] == "H3FirstBlockCache"
         for node in spectrum_graph.nodes.values()
@@ -3465,11 +3494,27 @@ def selftest() -> None:
     assert live_updates[0][0] == "Generating video and audio"
     assert live_updates[1][3:] == (3, 4)
     turbo_defaults = generation_mode_defaults("Turbo", LARRY_TURBO)
-    assert turbo_defaults[1:] == (6, "simple", "Off", "Auto")
+    assert turbo_defaults[1]["value"] == 6
+    assert turbo_defaults[1]["interactive"] is True
+    assert turbo_defaults[2:] == ("simple", "Spectrum", "Auto")
     lightx_defaults = generation_mode_defaults("Turbo", LIGHTX2V_TURBO)
-    assert lightx_defaults[1:] == (4, "simple", "Off", "Auto")
+    assert lightx_defaults[1]["value"] == 4
+    assert lightx_defaults[1]["interactive"] is True
+    assert lightx_defaults[2:] == ("simple", "Spectrum", "Auto")
     normal_defaults = generation_mode_defaults("Normal")
-    assert normal_defaults[1:] == (18, "simple", "Spectrum", "Auto")
+    assert normal_defaults[1]["value"] == 18
+    assert normal_defaults[1]["interactive"] is True
+    assert normal_defaults[2:] == ("simple", "Spectrum", "Auto")
+    assert resolve_cache_policy("Off", use_turbo=True) == ("Off", None)
+    turbo_spectrum, turbo_spectrum_note = resolve_cache_policy(
+        "Spectrum", use_turbo=True
+    )
+    assert turbo_spectrum == "Spectrum" and turbo_spectrum_note
+    for block_cache in ("FirstBlockCache", "EasyCache"):
+        resolved_cache, resolved_note = resolve_cache_policy(
+            block_cache, use_turbo=True
+        )
+        assert resolved_cache == "Off" and block_cache in str(resolved_note)
     assert SERVER_DENSE_ATTENTION_BACKEND in {"pytorch", "sage"}
 
     quality_turbo_graph = build_fl2va_graph(
@@ -3485,7 +3530,7 @@ def selftest() -> None:
         sol_dense_steps=1,
         sol_step_off=0.0,
         sol_sink_tokens=0,
-        cache_mode="Off",
+        cache_mode="Spectrum",
         fbcache_preset="Fast",
         fbcache_threshold=0.10,
         fbcache_start=0.10,
@@ -3533,6 +3578,20 @@ def selftest() -> None:
     assert len(chunk_nodes) == 1
     assert chunk_nodes[0]["inputs"]["chunks"] == 2
     assert chunk_nodes[0]["inputs"]["min_tokens"] == AUTO_SOL_TOKEN_THRESHOLD
+    lightx_spectrum_id = next(
+        node_id for node_id, node in quality_turbo_graph.items()
+        if node["class_type"] == "SpectrumApplyMiniMaxH3"
+    )
+    lightx_chunk_id = next(
+        node_id for node_id, node in quality_turbo_graph.items()
+        if node["class_type"] == CHUNK_FEED_FORWARD_NODE
+    )
+    assert quality_turbo_graph[lightx_spectrum_id]["inputs"]["model"] == [
+        lightx_chunk_id, 0
+    ]
+    assert quality_turbo_graph[lightx_spectrum_id]["inputs"][
+        "offline_archive_storage"
+    ] == "system_ram"
     assert not any(
         node["class_type"] == LARRY_TURBO_SAMPLER_NODE
         for node in quality_turbo_graph.values()
@@ -3548,7 +3607,7 @@ def selftest() -> None:
         turbo_strength=1.0,
         use_sol=False, sol_tau=1.0, sol_thresh_type="diag",
         sol_exact_mode="off", sol_dense_steps=1, sol_step_off=0.0,
-        sol_sink_tokens=0, cache_mode="Off", fbcache_preset="Fast",
+        sol_sink_tokens=0, cache_mode="Spectrum", fbcache_preset="Fast",
         fbcache_threshold=0.10, fbcache_start=0.10, fbcache_end=0.95,
         fbcache_max_hits=2, fbcache_temporal_guard=True,
         easycache_threshold=0.10, easycache_start=0.15,
@@ -3575,7 +3634,17 @@ def selftest() -> None:
         node_id for node_id, node in larry_graph.nodes.items()
         if node["class_type"] == LARRY_TURBO_LORA_NODE
     )
-    assert larry_model == [larry_loader_id, 0]
+    larry_spectrum_id = next(
+        node_id for node_id, node in larry_graph.nodes.items()
+        if node["class_type"] == "SpectrumApplyMiniMaxH3"
+    )
+    assert larry_graph.nodes[larry_spectrum_id]["inputs"]["model"] == [
+        larry_loader_id, 0
+    ]
+    assert larry_model == [larry_spectrum_id, 0]
+    assert larry_graph.nodes[larry_spectrum_id]["inputs"][
+        "offline_archive_storage"
+    ] == "system_ram"
     assert FUSED_MODULATION_NODE not in {
         node["class_type"] for node in larry_graph.nodes.values()
     }
@@ -3646,8 +3715,9 @@ def selftest() -> None:
         f"Sol Auto/Turbo policy valid, Spectrum default + Sol/ConvRot order valid, "
         f"zero-copy Sol + FirstBlockCache composition valid, "
         f"LightX fused modulation + Larry compatibility + ConvRot FFN chunking valid, "
+        f"Spectrum v0.2.5 Turbo composition + block-cache guard valid, "
         f"selectable Larry/LightX2V Turbo on "
-        f"FL2VA/Ref2VA + editable steps valid, compile guard active, "
+        f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, compile guard active, "
         f"SaveVideo codec API valid, prompt API download URL valid, "
         f"gallery fallback/deletion guards valid, "
         f"/comfyui proxy rewrites valid"

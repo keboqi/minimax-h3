@@ -15,7 +15,7 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Hardware-aware ComfyUI memory mode selection
-- Spectrum as the normal-generation default, with audio-isolated offline replay
+- Spectrum v0.2.5 as the normal-generation default and experimental Turbo option
 - FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
 - Version-aware, resumable Hugging Face model provisioning
@@ -43,21 +43,32 @@ its E-grid adapter derives the same dynamic timestep set as ComfyUI, including
 visual and audio reference-conditioning rows. Quality ConvRot models use
 bit-preserving two-way feed-forward chunking above 8K packed tokens.
 
-Spectrum is pinned to v0.2.2 and is applied after LoRA, Sol-Attn, and ConvRot
-feed-forward patches. Its default uses system-RAM history, degree-1 forecasting,
-offline smoothing replay, and zero spectral audio blending. Spectrum,
-FirstBlockCache, and EasyCache are mutually exclusive acceleration choices.
-Turbo mode disables all three pending low-step validation. Its attention default
-is Auto: jobs at or above 8K estimated packed tokens use Sol, while smaller jobs
-stay dense. Reference-media jobs always use Sol because their conditioning rows
-cannot be estimated before ComfyUI encodes the uploads.
-The v0.2.2 progress integration exposes one continuous capture-and-replay range
-to ComfyUI, so the Gradio live progress stream remains active during both passes.
+Spectrum is pinned to v0.2.5 and is applied after LoRA, Sol-Attn, and ConvRot
+feed-forward patches. Its default uses system-RAM history and replay archives,
+degree-1 forecasting, offline smoothing replay, and zero spectral audio blending.
+Spectrum, FirstBlockCache, and EasyCache are mutually exclusive acceleration
+choices. Turbo defaults to Spectrum through v0.2.5's reviewed Larry Turbo and
+RES multistep sampler paths. Turbo continues to reject FirstBlockCache and
+EasyCache. Its attention default is Auto: jobs at or above 8K estimated packed
+tokens use Sol, while smaller jobs stay dense. Reference-media jobs always use
+Sol because their conditioning rows cannot be estimated before ComfyUI encodes
+the uploads.
+Spectrum exposes one continuous capture-and-replay progress range to ComfyUI,
+so the Gradio live progress stream remains active during both passes.
+
+Turbo Spectrum remains approximate. Its conservative policy permits at most one
+forecast before a completed native refresh, which limits both acceleration and
+trajectory error at four to eight steps. Compare the same prompt and seed with
+Acceleration Off before relying on it for quality-critical output.
 
 Turbo defaults to Larry v4-600 EMA at six steps and strength 1.0. Its pinned
 custom node uses a quantization-aware bypass loader plus the adaptive H3 Turbo
 sampler. LightX2V v0.1 remains selectable as the simpler four-step option using
-the core LoRA loader at strength 0.75.
+the core LoRA loader at strength 0.75. Turbo step defaults are applied by an
+immediate mode/variant UI update before generation is queued, preventing
+Larry's six-step default from surviving a switch to LightX2V. The resulting
+step control remains editable so users can increase either Turbo variant's
+count for clips that benefit from additional refinement.
 
 Reference mode currently reuses each option's FL2VA-trained Turbo LoRA and is
 experimental. Community runs show that this can work, but also report occasional

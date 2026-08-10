@@ -92,6 +92,32 @@ Primary sources:
 
 Primary source: https://github.com/Saganaki22/ComfyUI-sol-attn/releases/tag/v0.6.0
 
+## Spectrum Turbo update — 2026-08-10
+
+1. **Adopted: Spectrum v0.2.5.** Local and Modal provisioning now pin commit
+   `4b9a7d1163348c67e7e475423f24f8b7abb23565`. The release separates the
+   bounded causal history from the offline replay archive and defaults both to
+   system RAM in this deployment, avoiding the earlier all-anchor CUDA archive
+   growth during two-pass replay.
+2. **Adopted as default: Spectrum with Turbo.** Spectrum now recognizes Larry's
+   exact `_turbo_sampler` contract, while its existing allowlist covers the RES
+   multistep sampler used by LightX2V. Both retain the conservative limit of one
+   consecutive forecast followed by a completed native refresh. Entering Turbo
+   selects Spectrum by default and displays an exact-seed A/B warning.
+3. **Still blocked in Turbo: FirstBlockCache and EasyCache.** These modes are
+   automatically replaced with Off because their low-step composition has not
+   received the same sampler-specific upstream validation. Sol INT8 QK/PV also
+   stays off.
+4. **Still deferred: AdaptiveCache.** New RTX 5090 results show additional
+   speed when combined with Sol and Turbo, but the published W4A8 Turbo samples
+   also contain unresolved quality failures. The plugin remains a separately
+   installable GPL experiment pending BF16/NVFP4 audiovisual A/B validation.
+
+Primary sources:
+
+- https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.5
+- https://github.com/FFFFFFpy/ComfyUI-MiniMaxH3-AdaptiveCache
+
 ## Earlier v37 → v38 review
 
 ## Findings addressed
@@ -147,9 +173,10 @@ runtime fixes that have already been validated in production-style testing:
 - Turbo is independent from Speed/Quality.
 - Reference Turbo temporarily reuses the selected FL2VA LoRA through separate
   LightX2V and Larry Ref2VA configuration keys.
-- Turbo steps are user-editable.
+- Turbo mode/variant defaults update outside the generation queue (Larry 6,
+  LightX2V 4), while the resulting step control remains user-editable.
 - FirstBlockCache must precede Sol-Attn.
-- Turbo disables cache by default.
+- Turbo defaults to Spectrum; other block caches remain disabled.
 - quantized H3 full-model torch.compile stays blocked.
 - SaveVideo codec must be the literal `auto` string.
 
