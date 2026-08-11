@@ -1813,7 +1813,9 @@ def build_seedvr2_upscale_graph(
         "SeedVR2TemporalChunk",
         latent=Graph.out(latent),
         temporal_overlap=1,
-        chunking_mode={"chunking_mode": "auto"},
+        # DynamicCombo selections are plain option strings in API prompts;
+        # ComfyUI expands this to the mapping consumed by execute().
+        chunking_mode="auto",
     )
     conditioning = graph.add(
         "SeedVR2Conditioning",
@@ -4013,6 +4015,12 @@ def selftest() -> None:
     seedvr2_sampler = next(
         node for node in seedvr2_nodes if node["class_type"] == "KSampler"
     )
+    seedvr2_chunks = next(
+        node
+        for node in seedvr2_nodes
+        if node["class_type"] == "SeedVR2TemporalChunk"
+    )
+    assert seedvr2_chunks["inputs"]["chunking_mode"] == "auto"
     assert seedvr2_sampler["inputs"]["steps"] == 1
     assert seedvr2_sampler["inputs"]["denoise"] == 1.0
 
