@@ -140,6 +140,7 @@ UI_DEFAULTS = {
     "ref_image_size": "match",
     "postprocess": "None",
     "seedvr2_model": DEFAULT_SEEDVR2_MODEL,
+    "seedvr2_compile_dit": False,
     "upscale_force_offload": False,
 }
 SPECTRUM_DEFAULT_INPUTS = {
@@ -1560,8 +1561,8 @@ def build_ref2va_graph(
     return graph.nodes
 
 
-def required_seedvr2_upscale_nodes() -> set[str]:
-    return {
+def required_seedvr2_upscale_nodes(compile_dit: bool = False) -> set[str]:
+    nodes = {
         "LoadVideo",
         "GetVideoComponents",
         "ImageScaleBy",
@@ -1578,6 +1579,9 @@ def required_seedvr2_upscale_nodes() -> set[str]:
         "CreateVideo",
         "SaveVideo",
     }
+    if compile_dit:
+        nodes.add("TorchCompileModel")
+    return nodes
 
 
 def build_seedvr2_upscale_graph(
@@ -1586,6 +1590,7 @@ def build_seedvr2_upscale_graph(
     seed: int,
     models: ModelConfig,
     model_choice: str = DEFAULT_SEEDVR2_MODEL,
+    compile_dit: bool = False,
     fps: float = 24.0,
 ) -> dict[str, Any]:
     """Build ComfyUI's native one-step SeedVR2 2x workflow."""
@@ -1604,11 +1609,19 @@ def build_seedvr2_upscale_graph(
     model = graph.add(
         "UNETLoader", unet_name=assets["seedvr2_dit"], weight_dtype="default"
     )
+    model_ref = Graph.out(model)
+    if compile_dit:
+        compiled_model = graph.add(
+            "TorchCompileModel",
+            model=model_ref,
+            backend="inductor",
+        )
+        model_ref = Graph.out(compiled_model)
     latent = graph.add(
         "VAEEncodeTiled",
         pixels=Graph.out(prepared),
         vae=Graph.out(vae),
-        tile_size=512,
+        tile_size=1024,
         overlap=128,
         temporal_size=64,
         temporal_overlap=8,
@@ -1623,12 +1636,12 @@ def build_seedvr2_upscale_graph(
     )
     conditioning = graph.add(
         "SeedVR2Conditioning",
-        model=Graph.out(model),
+        model=model_ref,
         vae_conditioning=Graph.out(chunks, 0),
     )
     sampled = graph.add(
         "KSampler",
-        model=Graph.out(model),
+        model=model_ref,
         seed=int(seed),
         steps=1,
         cfg=1.0,
@@ -1648,7 +1661,7 @@ def build_seedvr2_upscale_graph(
         "VAEDecodeTiled",
         samples=Graph.out(merged),
         vae=Graph.out(vae),
-        tile_size=512,
+        tile_size=1024,
         overlap=128,
         temporal_size=64,
         temporal_overlap=8,
@@ -1676,9 +1689,9 @@ def build_seedvr2_upscale_graph(
     return graph.nodes
 
 
-def required_upscale_nodes(option: str) -> set[str]:
+def required_upscale_nodes(option: str, compile_dit: bool = False) -> set[str]:
     if option == SEEDVR2_UPSCALE:
-        return required_seedvr2_upscale_nodes()
+        return required_seedvr2_upscale_nodes(compile_dit)
     raise H3Error(f"Unknown AI post-processing method: {option}")
 
 
@@ -1689,6 +1702,7 @@ def build_upscale_graph(
     seed: int,
     models: ModelConfig,
     seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
+    seedvr2_compile_dit: bool = False,
     fps: float = 24.0,
 ) -> tuple[dict[str, Any], int]:
     """Build one selected AI-upscale workflow and return its sampler steps."""
@@ -1699,6 +1713,7 @@ def build_upscale_graph(
                 seed=seed,
                 models=models,
                 model_choice=seedvr2_model,
+                compile_dit=seedvr2_compile_dit,
                 fps=fps,
             ),
             1,
@@ -1792,6 +1807,8 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Merging SeedVR2 chunks"
     if name == "SeedVR2PostProcessing":
         return "Restoring SeedVR2 output"
+    if name == "TorchCompileModel" and "SeedVR2Preprocess" in workflow_classes:
+        return "Configuring compiled SeedVR2 DiT"
     if "ImageToVideo" in name or "ReferenceToVideo" in name:
         return "Encoding prompt and conditioning"
     if name in {
@@ -2377,6 +2394,7 @@ def postprocess_selected_gallery_video(
     seed: int,
     seedvr2_model: str,
     force_offload: bool,
+    seedvr2_compile_dit: bool,
     request: gr.Request,
     progress=gr.Progress(track_tqdm=False),
 ):
@@ -2403,7 +2421,9 @@ def postprocess_selected_gallery_video(
 
         models = load_model_config()
         available = set(object_info())
-        missing = required_upscale_nodes(option) - available
+        missing = required_upscale_nodes(
+            option, compile_dit=bool(seedvr2_compile_dit)
+        ) - available
         if missing:
             raise H3Error(
                 f"{option} is unavailable. Missing ComfyUI nodes: "
@@ -2430,6 +2450,7 @@ def postprocess_selected_gallery_video(
             seed=actual_seed,
             models=models,
             seedvr2_model=seedvr2_model,
+            seedvr2_compile_dit=bool(seedvr2_compile_dit),
             fps=metadata.fps,
         )
 
@@ -2659,6 +2680,7 @@ def generate(
     postprocess: str,
     upscale_force_offload: bool = False,
     seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
+    seedvr2_compile_dit: bool = False,
     progress=gr.Progress(track_tqdm=False),
 ):
     started = time.monotonic()
@@ -2742,7 +2764,9 @@ def generate(
         info = object_info()
         available = set(info)
         if postprocess == SEEDVR2_UPSCALE:
-            missing_seedvr2_nodes = required_seedvr2_upscale_nodes() - available
+            missing_seedvr2_nodes = required_seedvr2_upscale_nodes(
+                bool(seedvr2_compile_dit)
+            ) - available
             if missing_seedvr2_nodes:
                 raise H3Error(
                     "SeedVR2 requires current native ComfyUI nodes: "
@@ -2972,6 +2996,7 @@ def generate(
                 seed=actual_seed,
                 models=models,
                 seedvr2_model=seedvr2_model,
+                seedvr2_compile_dit=bool(seedvr2_compile_dit),
             )
 
             upscale_queued_at = time.time()
@@ -3052,6 +3077,7 @@ def compact_settings_summary(
     postprocess: str,
     seedvr2_model: str,
     force_offload: bool,
+    seedvr2_compile_dit: bool,
 ) -> str:
     if generation_mode == "Turbo":
         generation_mode = f"Turbo / {turbo_variant}"
@@ -3071,7 +3097,8 @@ def compact_settings_summary(
     if postprocess == SEEDVR2_UPSCALE:
         postprocess_note += (
             f" / {seedvr2_model} / unload first: "
-            f"{'on' if force_offload else 'off'}"
+            f"{'on' if force_offload else 'off'} / DiT compile: "
+            f"{'on' if seedvr2_compile_dit else 'off'}"
         )
     return (
         "**Current setup**  \n"
@@ -3159,6 +3186,7 @@ def generate_with_ui_defaults(
         postprocess=defaults["postprocess"],
         seedvr2_model=defaults["seedvr2_model"],
         upscale_force_offload=defaults["upscale_force_offload"],
+        seedvr2_compile_dit=defaults["seedvr2_compile_dit"],
         progress=progress,
     )
     for video, status in updates:
@@ -3298,6 +3326,7 @@ def build_ui() -> gr.Blocks:
                         defaults["attention_mode"], defaults["cache_mode"],
                         defaults["postprocess"], defaults["seedvr2_model"],
                         defaults["upscale_force_offload"],
+                        defaults["seedvr2_compile_dit"],
                     )
                 )
                 output = gr.Video(label="Generated video")
@@ -3543,6 +3572,14 @@ def build_ui() -> gr.Blocks:
                             "the next generation."
                         ),
                     )
+                    generation_seedvr2_compile_dit = gr.Checkbox(
+                        value=defaults["seedvr2_compile_dit"],
+                        label="Compile SeedVR2 DiT",
+                        info=(
+                            "Experimental opt-in for the RTX PRO 6000. The first fixed-shape "
+                            "run compiles with TorchInductor; later runs reuse the persistent cache."
+                        ),
+                    )
 
         with gr.Group(visible=False) as gallery_view:
             with gr.Row():
@@ -3615,6 +3652,14 @@ def build_ui() -> gr.Blocks:
                                     label="Unload resident models first",
                                     info="Can lower peak VRAM before SeedVR2 starts.",
                                 )
+                                gallery_seedvr2_compile_dit = gr.Checkbox(
+                                    value=defaults["seedvr2_compile_dit"],
+                                    label="Compile SeedVR2 DiT",
+                                    info=(
+                                        "Experimental. First use compiles; matching later runs "
+                                        "reuse the persistent TorchInductor cache."
+                                    ),
+                                )
                         with gr.Row():
                             gallery_post_run = gr.Button(
                                 "Post-process selected",
@@ -3646,6 +3691,7 @@ def build_ui() -> gr.Blocks:
             generation_postprocess,
             generation_seedvr2_model,
             generation_force_offload,
+            generation_seedvr2_compile_dit,
         ]
         for settings_control in settings_inputs:
             settings_control.change(
@@ -3748,6 +3794,7 @@ def build_ui() -> gr.Blocks:
                 easycache_threshold, easycache_start, easycache_end, easycache_verbose,
                 compile_model, ref_size, generation_postprocess,
                 generation_force_offload, generation_seedvr2_model,
+                generation_seedvr2_compile_dit,
             ],
             outputs=[output, status],
             show_progress="minimal",
@@ -3830,6 +3877,7 @@ def build_ui() -> gr.Blocks:
                 gallery_post_seed,
                 gallery_seedvr2_model,
                 gallery_force_offload,
+                gallery_seedvr2_compile_dit,
             ],
             outputs=gallery_mutation_outputs,
             show_progress="minimal",
@@ -3941,11 +3989,11 @@ def selftest() -> None:
         larry_turbo_source="test",
         larry_turbo_ref_lora="minimax_h3_turbo_v4_step600_ema.safetensors",
         larry_turbo_ref_source="shared-fl2va-test",
-        seedvr2_dit="seedvr2_3b_int8_convrot.safetensors",
+        seedvr2_dit="seedvr2_3b_nvfp4.safetensors",
         seedvr2_dit_source="test",
         seedvr2_models={
             "3B NVFP4": "seedvr2_3b_nvfp4.safetensors",
-            "3B INT8 (default)": "seedvr2_3b_int8_convrot.safetensors",
+            "3B INT8": "seedvr2_3b_int8_convrot.safetensors",
             "7B NVFP4": "seedvr2_7b_nvfp4.safetensors",
             "7B Sharp NVFP4": "seedvr2_7b_sharp_nvfp4.safetensors",
         },
@@ -4126,6 +4174,13 @@ def selftest() -> None:
         node for node in seedvr2_nodes if node["class_type"] == "ImageScaleBy"
     )
     assert seedvr2_scale["inputs"]["scale_by"] == 2.0
+    seedvr2_vae_nodes = [
+        node
+        for node in seedvr2_nodes
+        if node["class_type"] in {"VAEEncodeTiled", "VAEDecodeTiled"}
+    ]
+    assert len(seedvr2_vae_nodes) == 2
+    assert all(node["inputs"]["tile_size"] == 1024 for node in seedvr2_vae_nodes)
     seedvr2_sampler = next(
         node for node in seedvr2_nodes if node["class_type"] == "KSampler"
     )
@@ -4149,6 +4204,33 @@ def selftest() -> None:
         node for node in seedvr2_nodes if node["class_type"] == "CreateVideo"
     )
     assert seedvr2_video["inputs"]["fps"] == 48.0
+    compiled_seedvr2_graph = build_seedvr2_upscale_graph(
+        source_video="source.mp4",
+        seed=7,
+        models=fake,
+        compile_dit=True,
+    )
+    compiled_seedvr2_nodes = list(compiled_seedvr2_graph.values())
+    compile_nodes = [
+        node for node in compiled_seedvr2_nodes
+        if node["class_type"] == "TorchCompileModel"
+    ]
+    assert len(compile_nodes) == 1
+    assert compile_nodes[0]["inputs"]["backend"] == "inductor"
+    compile_id = next(
+        node_id for node_id, node in compiled_seedvr2_graph.items()
+        if node["class_type"] == "TorchCompileModel"
+    )
+    compiled_consumers = [
+        node for node in compiled_seedvr2_nodes
+        if node["class_type"] in {"SeedVR2Conditioning", "KSampler"}
+    ]
+    assert all(node["inputs"]["model"] == [compile_id, 0] for node in compiled_consumers)
+    assert "TorchCompileModel" not in required_seedvr2_upscale_nodes()
+    assert "TorchCompileModel" in required_seedvr2_upscale_nodes(True)
+    assert node_stage(
+        "TorchCompileModel", graph_class_types(compiled_seedvr2_graph)
+    ) == "Configuring compiled SeedVR2 DiT"
     for seedvr2_choice, expected_name in fake.seedvr2_models.items():
         choice_graph = build_seedvr2_upscale_graph(
             source_video="source.mp4",

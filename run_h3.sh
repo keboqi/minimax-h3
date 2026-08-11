@@ -8,6 +8,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$SCRIPT_DIR/h3"
 COMFY_DIR="$INSTALL_DIR/ComfyUI"
 MODELS_CONFIG="$INSTALL_DIR/h3_models.json"
+TORCHINDUCTOR_CACHE_DIR="$INSTALL_DIR/torchinductor_cache"
+export TORCHINDUCTOR_CACHE_DIR
+export TORCHINDUCTOR_FX_GRAPH_CACHE=1
+export TORCHINDUCTOR_AUTOGRAD_CACHE=1
 
 PYTHON_BIN="python3"
 
@@ -82,6 +86,7 @@ trap cleanup EXIT INT TERM
 
 ensure_ffmpeg
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || die "python3 is required"
+mkdir -p "$TORCHINDUCTOR_CACHE_DIR"
 [[ -f "$SCRIPT_DIR/setup_h3.py" ]] || die "Missing setup_h3.py"
 [[ -f "$SCRIPT_DIR/gradio_app.py" ]] || die "Missing gradio_app.py"
 

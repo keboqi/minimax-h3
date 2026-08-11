@@ -82,6 +82,10 @@ from h3_requirements import (  # noqa: E402
 )
 from h3_node_patches import patch_larry_turbo_node  # noqa: E402
 
+TORCHINDUCTOR_CACHE = (
+    DATA / "torchinductor-cache" / f"torch-{TORCH_VERSION}-cu130-sm120"
+)
+
 
 _BUILD_LOCAL_MOUNTS = (
     (LOCAL_SHARED_REQUIREMENTS, SHARED_REQUIREMENTS),
@@ -367,7 +371,7 @@ app = modal.App(APP, image=image)
 
 
 def layout() -> None:
-    for path in (MODELS, INPUT, OUTPUT, LOGS):
+    for path in (MODELS, INPUT, OUTPUT, LOGS, TORCHINDUCTOR_CACHE):
         Path(path).mkdir(parents=True, exist_ok=True)
 
     mappings = (
@@ -456,6 +460,9 @@ def service_env() -> dict[str, str]:
             "PYTHONUNBUFFERED": "1",
             "HF_HOME": "/tmp/hf",
             "XDG_CACHE_HOME": "/tmp/cache",
+            "TORCHINDUCTOR_CACHE_DIR": TORCHINDUCTOR_CACHE.as_posix(),
+            "TORCHINDUCTOR_FX_GRAPH_CACHE": "1",
+            "TORCHINDUCTOR_AUTOGRAD_CACHE": "1",
         }
     )
     return env
