@@ -7,6 +7,7 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 ## What is included
 
 - Text/image-to-video and reference-media-to-video workflows
+- A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
 - Live queue position, workflow stage, node count, overall work, and sampling schedule
 - Resolution-aware thumbnail gallery that loads a video only after it is selected
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
@@ -95,6 +96,12 @@ Original checkpoints download on demand the first time each workflow variant is
 selected. SeedVR2 models are lazy and download only when their gallery
 post-processing option is first used. The experimental INT8 ConvRot video VAE
 is also lazy and downloads only when its default-off checkbox is enabled.
+The gated LTX-2.5 distilled transformers are available as **NVFP4 (default and
+recommended for Blackwell)**, **INT8 ConvRot**, and **BF16**. The selected
+transformer plus the shared fine-tuned Gemma text encoder and audio/video VAEs
+download lazily when the **LTX 2.5** tab is first used. Switching variants later
+downloads only the newly selected transformer. Accept the `Lightricks/LTX-2.5`
+Hugging Face license and set `HF_TOKEN` before the first run.
 Later runs check remote metadata for the preloaded set and refresh only stale
 files; lazy checkpoints remain local and are fetched again if missing or incomplete.
 On Debian/Ubuntu standalone hosts, `run_h3.sh` also installs the `ffmpeg` system
@@ -114,7 +121,7 @@ generated audio and frame rate. SeedVR2 can also be selected under
 **Generation post-processing** to run automatically as soon as the base H3
 video finishes; both the source and upscaled results remain available. Enable
 **Unload resident models first** in Gallery, or **Unload H3 models before
-SeedVR2** in Generate, when
+SeedVR2** in MiniMax H3, when
 lower peak VRAM is more important than avoiding an H3 model reload on the next
 generation. **48 fps interpolation** remains available as a non-upscale option
 and requires FFmpeg on the server `PATH`.
@@ -127,10 +134,12 @@ H3 generation run eagerly because full-model compile did not improve measured
 performance and conflicts with the active attention and cache optimizations.
 
 The **API** tab includes a copy-ready Python example. Its `/generate_video`
-endpoint only requires a prompt and uses the same defaults shown in the Generate
+endpoint only requires a prompt and uses the same defaults shown in the MiniMax H3
 tab. It returns a public HTTP download URL instead of a client-local temporary
 file path. The `/generate_video_advanced` endpoint exposes every generation
 control; its current request schema is linked from the API tab.
+The LTX tab is also available as `/generate_ltx25_video` and shares the same
+single-job ComfyUI queue.
 
 `run_h3.sh` binds Gradio to `0.0.0.0`, so use host firewall rules or a trusted
 network when the machine is reachable by other devices.

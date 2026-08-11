@@ -24,6 +24,7 @@ LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
 TEXT_ENCODER_REPO = "sakamakismile/Qwen3-VL-32B-Heretic-MiniMax-H3-NVFP4"
 SEEDVR2_REPO = "Comfy-Org/SeedVR2"
+LTX25_REPO = "Lightricks/LTX-2.5"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -145,6 +146,42 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "vae/seedvr2_ema_vae_fp16.safetensors",
         "SeedVR2 FP16 VAE · lazy native upscale asset",
     ),
+    "ltx25_distilled": ModelSpec(
+        LTX25_REPO,
+        "diffusion_models",
+        "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+        "LTX-2.5 22B distilled transformer; lazy 8-step model",
+    ),
+    "ltx25_distilled_nvfp4": ModelSpec(
+        LTX25_REPO,
+        "diffusion_models",
+        "diffusion_models/ltx-2.5-22b-distilled-transformer-nvfp4.safetensors",
+        "LTX-2.5 22B distilled NVFP4 transformer; recommended for Blackwell",
+    ),
+    "ltx25_distilled_int8": ModelSpec(
+        LTX25_REPO,
+        "diffusion_models",
+        "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+        "LTX-2.5 22B distilled Comfy INT8 ConvRot transformer",
+    ),
+    "ltx25_text_encoder": ModelSpec(
+        LTX25_REPO,
+        "text_encoders",
+        "text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+        "Gemma 4 12B text encoder fine-tuned for LTX-2.5",
+    ),
+    "ltx25_video_vae": ModelSpec(
+        LTX25_REPO,
+        "vae",
+        "vae/ltx-2.5-video-vae-conv-bf16.safetensors",
+        "LTX-2.5 convolutional video VAE; lower-memory decoder",
+    ),
+    "ltx25_audio_vae": ModelSpec(
+        LTX25_REPO,
+        "vae",
+        "vae/ltx-2.5-audio-vae-bf16.safetensors",
+        "LTX-2.5 audio VAE",
+    ),
 }
 
 PROFILE_MODEL_KEYS = {
@@ -175,9 +212,25 @@ SEEDVR2_UPSCALE_MODEL_KEYS = (
 LAZY_POSTPROCESS_MODEL_KEYS = (
     *SEEDVR2_UPSCALE_MODEL_KEYS,
 )
+LTX25_MODEL_CHOICES = {
+    "NVFP4 (Blackwell recommended)": "ltx25_distilled_nvfp4",
+    "INT8 ConvRot": "ltx25_distilled_int8",
+    "BF16": "ltx25_distilled",
+}
+DEFAULT_LTX25_MODEL = "NVFP4 (Blackwell recommended)"
+LTX25_SHARED_MODEL_KEYS = (
+    "ltx25_text_encoder",
+    "ltx25_video_vae",
+    "ltx25_audio_vae",
+)
+LTX25_MODEL_KEYS = (
+    *LTX25_MODEL_CHOICES.values(),
+    *LTX25_SHARED_MODEL_KEYS,
+)
 LAZY_OPTIONAL_MODEL_KEYS = (
     "video_vae_int8",
     *LAZY_POSTPROCESS_MODEL_KEYS,
+    *LTX25_MODEL_KEYS,
 )
 SHARED_MODEL_KEYS = tuple(
     key for key in MODEL_SPECS
@@ -396,7 +449,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
     return {
-        "schema_version": 10,
+        "schema_version": 12,
         "default_profile": "quality",
         "profiles": {
             profile: _profile_config(profile)
@@ -426,6 +479,16 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         "seedvr2_models": seedvr2_models,
         "seedvr2_vae": seedvr2_vae.local_name,
         "seedvr2_vae_source": seedvr2_vae.source,
+        "ltx25_models": {
+            "transformers": {
+                label: MODEL_SPECS[key].local_name
+                for label, key in LTX25_MODEL_CHOICES.items()
+            },
+            **{
+                key.removeprefix("ltx25_"): MODEL_SPECS[key].local_name
+                for key in LTX25_SHARED_MODEL_KEYS
+            },
+        },
         "turbo_supported_profiles": list(PROFILE_MODEL_KEYS),
         "turbo_supported_modes": ["fl2va", "ref2va"],
         "manifest": manifest_name,
@@ -583,6 +646,12 @@ def selftest() -> None:
         "seedvr2_7b_nvfp4",
         "seedvr2_7b_sharp_nvfp4",
         "seedvr2_vae",
+        "ltx25_distilled",
+        "ltx25_distilled_nvfp4",
+        "ltx25_distilled_int8",
+        "ltx25_text_encoder",
+        "ltx25_video_vae",
+        "ltx25_audio_vae",
     }
 
     cfg = _build_config("manifest.json")
@@ -591,7 +660,7 @@ def selftest() -> None:
     assert set(PROFILE_MODEL_KEYS["quality"]).issubset(PRELOAD_MODEL_KEYS)
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 10
+    assert cfg["schema_version"] == 12
     assert cfg["default_profile"] == "quality"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
@@ -618,6 +687,22 @@ def selftest() -> None:
         "7B Sharp NVFP4": "seedvr2_7b_sharp_nvfp4.safetensors",
     }
     assert cfg["seedvr2_vae"] == "seedvr2_ema_vae_fp16.safetensors"
+    assert cfg["ltx25_models"] == {
+        "transformers": {
+            "NVFP4 (Blackwell recommended)": (
+                "ltx-2.5-22b-distilled-transformer-nvfp4.safetensors"
+            ),
+            "INT8 ConvRot": (
+                "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
+            ),
+            "BF16": "ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+        },
+        "text_encoder": "gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+        "video_vae": "ltx-2.5-video-vae-conv-bf16.safetensors",
+        "audio_vae": "ltx-2.5-audio-vae-bf16.safetensors",
+    }
+    assert DEFAULT_LTX25_MODEL == "NVFP4 (Blackwell recommended)"
+    assert set(LTX25_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert cfg["turbo_supported_profiles"] == ["speed", "quality", "original"]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]
     print("h3_models selftest OK")

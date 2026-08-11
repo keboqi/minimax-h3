@@ -33,7 +33,10 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from h3_models import (
+    DEFAULT_LTX25_MODEL,
     DEFAULT_SEEDVR2_MODEL,
+    LTX25_MODEL_CHOICES,
+    LTX25_SHARED_MODEL_KEYS,
     MIN_VALID_MODEL_BYTES,
     MODEL_SPECS,
     PROFILE_LABELS,
@@ -89,6 +92,19 @@ DEFAULT_ACCELERATOR = "Spectrum"
 LIGHTX2V_TURBO = "LightX2V v0.1"
 LARRY_TURBO = "Larry v4-600 EMA"
 DEFAULT_TURBO = LARRY_TURBO
+LTX25_SIGMAS = "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+LTX25_DEFAULTS = {
+    "model": DEFAULT_LTX25_MODEL,
+    "mode": "Text to video",
+    "duration": 5,
+    "fps": 24,
+    "width": 960,
+    "height": 544,
+    "seed": -1,
+    "cfg": 1.0,
+    "sampler": "euler_ancestral",
+    "image_strength": 0.7,
+}
 MODEL_PROFILE_CHOICES = list(PROFILE_LABELS.values())
 CORE_LORA_LOADER_NODE = "LoraLoaderModelOnly"
 CORE_SAMPLER_NODE = "KSamplerSelect"
@@ -679,6 +695,63 @@ def ensure_int8_video_vae(models: ModelConfig) -> bool:
     )
     if not model_file_is_ready(destination):
         raise H3Error(f"On-demand INT8 VAE download did not produce {filename}.")
+    return True
+
+
+def ltx25_model_keys(model_choice: str = DEFAULT_LTX25_MODEL) -> dict[str, str]:
+    selected_key = LTX25_MODEL_CHOICES.get(str(model_choice))
+    if selected_key is None:
+        raise H3Error(f"Unknown LTX-2.5 model: {model_choice}")
+    return {
+        "distilled": selected_key,
+        **{
+            key.removeprefix("ltx25_"): key
+            for key in LTX25_SHARED_MODEL_KEYS
+        },
+    }
+
+
+def ltx25_model_names(model_choice: str = DEFAULT_LTX25_MODEL) -> dict[str, str]:
+    return {
+        role: MODEL_SPECS[key].local_name
+        for role, key in ltx25_model_keys(model_choice).items()
+    }
+
+
+def missing_ltx25_model_names(model_choice: str = DEFAULT_LTX25_MODEL) -> list[str]:
+    return [
+        MODEL_SPECS[key].local_name
+        for key in ltx25_model_keys(model_choice).values()
+        if not model_file_is_ready(
+            COMFY_DIR / "models" / MODEL_SPECS[key].folder / MODEL_SPECS[key].local_name
+        )
+    ]
+
+
+def ensure_ltx25_models(model_choice: str = DEFAULT_LTX25_MODEL) -> bool:
+    """Download the gated LTX-2.5 model set only when its tab is used."""
+    required_keys = tuple(ltx25_model_keys(model_choice).values())
+    if not missing_ltx25_model_names(model_choice):
+        return False
+    try:
+        sync_models(
+            root=COMFY_DIR / "models",
+            manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
+            token=os.getenv("HF_TOKEN") or None,
+            log_prefix="[ltx25-on-demand]",
+            model_keys=required_keys,
+            download_workers=len(required_keys),
+        )
+    except Exception as exc:
+        raise H3Error(
+            "LTX-2.5 model download failed. Accept the Lightricks/LTX-2.5 "
+            "Hugging Face license and configure HF_TOKEN, then retry. "
+            f"Details: {exc}"
+        ) from exc
+    for key in required_keys:
+        spec = MODEL_SPECS[key]
+        if not model_file_is_ready(COMFY_DIR / "models" / spec.folder / spec.local_name):
+            raise H3Error(f"On-demand LTX-2.5 download did not produce {spec.local_name}.")
     return True
 
 
@@ -1576,6 +1649,149 @@ def build_ref2va_graph(
     return graph.nodes
 
 
+def ltx25_frame_length(duration: float, fps: float) -> int:
+    """LTX-2.5 requires a frame count of 8n+1."""
+    return 1 + max(1, int(float(duration) * float(fps)) // 8) * 8
+
+
+def required_ltx25_nodes(*, image_to_video: bool = False) -> set[str]:
+    required = {
+        "UNETLoader", "CLIPLoader", "VAELoader", "CLIPTextEncode",
+        "LTXVConditioning", "EmptyLTXVLatentVideo", "LTXVEmptyLatentAudio",
+        "LTXVConcatAVLatent", "RandomNoise", "CFGGuider", "KSamplerSelect",
+        "ManualSigmas", "SamplerCustomAdvanced", "LTXVSeparateAVLatent",
+        "VAEDecodeTiled", "LTXVAudioVAEDecode", "CreateVideo", "SaveVideo",
+    }
+    if image_to_video:
+        required |= {"LoadImage", "LTXVPreprocess", "LTXVImgToVideoInplace"}
+    return required
+
+
+def build_ltx25_graph(
+    *,
+    model_choice: str = DEFAULT_LTX25_MODEL,
+    prompt: str,
+    negative_prompt: str,
+    first_image: str | None,
+    width: int,
+    height: int,
+    duration: float,
+    fps: float,
+    seed: int,
+    cfg: float,
+    sampler_name: str,
+    image_strength: float,
+) -> dict[str, Any]:
+    """Build the official LTX-2.5 single-stage distilled T2V/I2V graph."""
+    names = ltx25_model_names(model_choice)
+    graph = Graph()
+    model = graph.add(
+        "UNETLoader", unet_name=names["distilled"], weight_dtype="default"
+    )
+    clip = graph.add(
+        "CLIPLoader", clip_name=names["text_encoder"], type="ltxv", device="default"
+    )
+    video_vae = graph.add("VAELoader", vae_name=names["video_vae"])
+    audio_vae = graph.add("VAELoader", vae_name=names["audio_vae"])
+    positive = graph.add("CLIPTextEncode", clip=Graph.out(clip), text=prompt)
+    negative = graph.add(
+        "CLIPTextEncode", clip=Graph.out(clip), text=negative_prompt
+    )
+    conditioned = graph.add(
+        "LTXVConditioning",
+        positive=Graph.out(positive),
+        negative=Graph.out(negative),
+        frame_rate=float(fps),
+    )
+
+    frames = ltx25_frame_length(duration, fps)
+    video_latent = graph.add(
+        "EmptyLTXVLatentVideo",
+        width=int(width),
+        height=int(height),
+        length=frames,
+        batch_size=1,
+    )
+    video_latent_ref = Graph.out(video_latent)
+    if first_image:
+        loaded = graph.add(
+            "LoadImage", image=stage_file(first_image, "ltx25_keyframes")
+        )
+        preprocessed = graph.add(
+            "LTXVPreprocess", image=Graph.out(loaded), img_compression=18
+        )
+        image_latent = graph.add(
+            "LTXVImgToVideoInplace",
+            vae=Graph.out(video_vae),
+            image=Graph.out(preprocessed),
+            latent=video_latent_ref,
+            strength=float(image_strength),
+            bypass=False,
+        )
+        video_latent_ref = Graph.out(image_latent)
+
+    audio_latent = graph.add(
+        "LTXVEmptyLatentAudio",
+        audio_vae=Graph.out(audio_vae),
+        frames_number=frames,
+        frame_rate=int(round(float(fps))),
+        batch_size=1,
+    )
+    av_latent = graph.add(
+        "LTXVConcatAVLatent",
+        video_latent=video_latent_ref,
+        audio_latent=Graph.out(audio_latent),
+    )
+    noise = graph.add("RandomNoise", noise_seed=int(seed))
+    guider = graph.add(
+        "CFGGuider",
+        model=Graph.out(model),
+        positive=Graph.out(conditioned, 0),
+        negative=Graph.out(conditioned, 1),
+        cfg=float(cfg),
+    )
+    sampler = graph.add("KSamplerSelect", sampler_name=str(sampler_name))
+    sigmas = graph.add("ManualSigmas", sigmas=LTX25_SIGMAS)
+    sampled = graph.add(
+        "SamplerCustomAdvanced",
+        noise=Graph.out(noise),
+        guider=Graph.out(guider),
+        sampler=Graph.out(sampler),
+        sigmas=Graph.out(sigmas),
+        latent_image=Graph.out(av_latent),
+    )
+    separated = graph.add("LTXVSeparateAVLatent", av_latent=Graph.out(sampled))
+    images = graph.add(
+        "VAEDecodeTiled",
+        samples=Graph.out(separated, 0),
+        vae=Graph.out(video_vae),
+        tile_size=512,
+        overlap=64,
+        temporal_size=128,
+        temporal_overlap=32,
+    )
+    audio = graph.add(
+        "LTXVAudioVAEDecode",
+        samples=Graph.out(separated, 1),
+        audio_vae=Graph.out(audio_vae),
+    )
+    video = graph.add(
+        "CreateVideo",
+        images=Graph.out(images),
+        audio=Graph.out(audio),
+        fps=float(fps),
+        bit_depth=8,
+    )
+    graph.add(
+        "SaveVideo",
+        video=Graph.out(video),
+        filename_prefix=f"ltx25/generation_{int(time.time())}",
+        format="auto",
+        codec="auto",
+    )
+    return graph.nodes
+
+
 def required_seedvr2_upscale_nodes() -> set[str]:
     return {
         "LoadVideo",
@@ -1792,6 +2008,15 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Loading models"
     if name.startswith("Load") or name == "GetVideoComponents":
         return "Preparing reference media"
+    if name == "LTXVPreprocess":
+        return "Preparing LTX-2.5 first frame"
+    if name in {"CLIPTextEncode", "LTXVConditioning"}:
+        return "Encoding LTX-2.5 prompt"
+    if name in {
+        "EmptyLTXVLatentVideo", "LTXVEmptyLatentAudio",
+        "LTXVImgToVideoInplace", "LTXVConcatAVLatent",
+    }:
+        return "Preparing LTX-2.5 audio-video latents"
     if name == "VAEEncodeTiled":
         if "SeedVR2Preprocess" in workflow_classes:
             return "Encoding H3 video for SeedVR2"
@@ -1815,12 +2040,16 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
     }:
         return "Configuring generation model"
     if name in {
-        "RandomNoise", "BasicGuider", CORE_SAMPLER_NODE, "BasicScheduler",
+        "RandomNoise", "BasicGuider", "CFGGuider", CORE_SAMPLER_NODE,
+        "BasicScheduler", "ManualSigmas",
     }:
         return "Preparing sampler"
     if name == "SamplerCustomAdvanced" or "Sampler" in name:
         return "Generating video and audio"
-    if name in {"VAEDecode", "VAEDecodeAudio", "VAEDecodeTiled"}:
+    if name in {
+        "VAEDecode", "VAEDecodeAudio", "VAEDecodeTiled",
+        "LTXVSeparateAVLatent", "LTXVAudioVAEDecode",
+    }:
         return "Decoding output"
     if name == "CreateVideo":
         return "Assembling video"
@@ -2272,6 +2501,20 @@ def gallery_resolution_text(video: Path) -> str:
     return f"{resolution[0]}×{resolution[1]}" if resolution else "resolution unavailable"
 
 
+def generated_video_family(video: str | Path) -> str:
+    """Identify direct ComfyUI outputs while keeping all managed videos eligible."""
+    resolved = Path(video).resolve()
+    output_root = OUTPUT_DIR.resolve()
+    if resolved.is_relative_to(output_root):
+        relative = resolved.relative_to(output_root)
+        top_level = relative.parts[0].lower() if relative.parts else ""
+        if top_level == "h3":
+            return "MiniMax H3"
+        if top_level == "ltx25":
+            return "LTX-2.5"
+    return "Post-processed"
+
+
 def forget_gallery_metadata(video: str | Path | None = None) -> None:
     if video is None:
         _GALLERY_RESOLUTION_CACHE.clear()
@@ -2297,7 +2540,10 @@ def refresh_gallery() -> tuple[list[tuple[str, str]], list[str], str]:
         timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
         size_mb = stat.st_size / (1024 * 1024)
         resolution = gallery_resolution_text(video)
-        caption = f"{video.name} · {resolution} · {timestamp} · {size_mb:.1f} MB"
+        caption = (
+            f"{generated_video_family(video)} · {video.name} · {resolution} · "
+            f"{timestamp} · {size_mb:.1f} MB"
+        )
         # Gradio Gallery accepts videos as well as images. Falling back to the
         # video itself keeps the item selectable when FFmpeg cannot make a poster.
         items.append((str(thumbnail or video), caption))
@@ -3039,6 +3285,129 @@ def generate(
                 pass
 
 
+def generate_ltx25(
+    mode: str,
+    model_choice: str,
+    prompt: str,
+    negative_prompt: str,
+    first_image: str | None,
+    duration: float,
+    fps: float,
+    width: int,
+    height: int,
+    seed: int,
+    cfg: float,
+    sampler_name: str,
+    image_strength: float,
+    progress=gr.Progress(track_tqdm=False),
+):
+    """Run an LTX-2.5 job through the same ComfyUI queue as H3."""
+    started = time.monotonic()
+    queued_at = time.time()
+    ws: websocket.WebSocket | None = None
+    try:
+        progress(0, desc="Validating LTX-2.5 request")
+        yield None, progress_status("Validating LTX-2.5 request", started=started)
+        if not str(prompt).strip():
+            raise H3Error("Prompt is required.")
+        if not 1 <= float(duration) <= 20:
+            raise H3Error("LTX-2.5 duration must be between 1 and 20 seconds.")
+        if not 1 <= float(fps) <= 60:
+            raise H3Error("Frame rate must be between 1 and 60 fps.")
+        resolved_width, resolved_height = validate_resolution(width, height)
+        actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
+        image_to_video = str(mode).strip().lower() == "image to video"
+        if image_to_video and not first_image:
+            raise H3Error("Image-to-video mode requires a first frame.")
+        if not 0 <= float(image_strength) <= 1:
+            raise H3Error("Image strength must be between 0 and 1.")
+
+        missing_files = missing_ltx25_model_names(model_choice)
+        if missing_files:
+            progress(0, desc="Downloading LTX-2.5 models")
+            yield None, progress_status(
+                "Downloading gated LTX-2.5 models on demand", started=started,
+                detail="Accept the Hugging Face model license and set HF_TOKEN if required.",
+            )
+        ensure_ltx25_models(model_choice)
+
+        available = set(object_info())
+        missing_nodes = required_ltx25_nodes(image_to_video=image_to_video) - available
+        if missing_nodes:
+            raise H3Error(
+                "LTX-2.5 requires a current ComfyUI with LTXVideo nodes: "
+                + ", ".join(sorted(missing_nodes))
+            )
+        progress(0, desc="Building LTX-2.5 workflow")
+        graph = build_ltx25_graph(
+            model_choice=model_choice,
+            prompt=str(prompt).strip(),
+            negative_prompt=str(negative_prompt or ""),
+            first_image=first_image if image_to_video else None,
+            width=resolved_width,
+            height=resolved_height,
+            duration=float(duration),
+            fps=float(fps),
+            seed=actual_seed,
+            cfg=float(cfg),
+            sampler_name=str(sampler_name),
+            image_strength=float(image_strength),
+        )
+
+        client_id = str(uuid.uuid4())
+        try:
+            ws = websocket.create_connection(
+                websocket_url(client_id),
+                timeout=max(1.0, min(REQUEST_TIMEOUT, 10.0)),
+            )
+        except Exception:
+            ws = None
+        prompt_id = submit_prompt(graph, client_id)
+        frames = ltx25_frame_length(duration, fps)
+        yield None, (
+            f"Queued LTX-2.5 job `{prompt_id}` 路 seed {actual_seed} 路 "
+            f"{resolved_width}×{resolved_height} 路 {frames} frames at {float(fps):g} fps 路 "
+            f"{model_choice} distilled 8-step model"
+        )
+
+        updates = (
+            stream_comfy_progress(ws, prompt_id, graph, started)
+            if ws is not None else poll_comfy_progress(prompt_id, graph)
+        )
+        for stage, completed_nodes, total_nodes, step, step_total in updates:
+            if step is not None and step_total:
+                progress((step, step_total), desc=stage)
+            elif total_nodes:
+                progress((completed_nodes, total_nodes), desc=stage)
+            yield None, progress_status(
+                stage,
+                started=started,
+                completed_nodes=completed_nodes,
+                total_nodes=total_nodes,
+                step=step,
+                step_total=step_total,
+                configured_steps=8 if stage == "Generating video and audio" else None,
+                detail=f"LTX-2.5 job `{prompt_id}`",
+            )
+
+        history = wait_for_history(prompt_id)
+        result = resolve_output(history, queued_at)
+        elapsed = time.monotonic() - started
+        progress(1, desc="Complete")
+        yield str(result), (
+            f"LTX-2.5 completed in {elapsed:.1f}s 路 output {result.name} 路 "
+            f"seed {actual_seed}"
+        )
+    except Exception as exc:
+        yield None, f"Error: {exc}"
+    finally:
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+
 def interrupt() -> str:
     try:
         api_post("/interrupt", json={})
@@ -3191,7 +3560,7 @@ def api_guide() -> str:
     defaults = UI_DEFAULTS
     return f"""## Generate through the API
 
-The `/generate_video` endpoint accepts a prompt and uses the same defaults as the **Generate** tab:
+The `/generate_video` endpoint accepts a prompt and uses the same defaults as the **MiniMax H3** tab:
 
 `{defaults['mode']}` · `{defaults['model_profile']}` · `{defaults['generation_mode']} / {defaults['turbo_variant']}` · `{defaults['duration']}s` · `{defaults['width']}×{defaults['height']}` · `{defaults['steps']} steps` · `{defaults['scheduler']}` scheduler · random seed
 
@@ -3215,7 +3584,7 @@ print(status)
 
 `download_url` is an HTTP URL served by this app, so it can be opened in a browser or downloaded with `curl -L -O` while the app is running.
 
-For every control exposed by the Generate tab, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. API requests share the same single-job queue as the UI.
+For every control exposed by the MiniMax H3 tab, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. API requests share the same single-job queue as the UI.
 """
 
 
@@ -3235,7 +3604,9 @@ def build_ui() -> gr.Blocks:
             )
         memory_status = gr.Markdown()
         with gr.Tabs():
-            with gr.Tab("Generate") as generate_tab:
+            with gr.Tab("MiniMax H3") as generate_tab:
+                gr.HTML("")
+            with gr.Tab("LTX 2.5") as ltx25_tab:
                 gr.HTML("")
             with gr.Tab("Gallery") as gallery_tab:
                 gr.HTML("")
@@ -3558,6 +3929,98 @@ def build_ui() -> gr.Blocks:
                         ),
                     )
 
+        with gr.Group(visible=False) as ltx25_view:
+            gr.Markdown(
+                "## LTX-2.5 audio-video generation\n"
+                "Official single-stage distilled workflow on the shared ComfyUI backend. "
+                "The gated model assets download on first use; accept the "
+                "[LTX-2.5 model license](https://huggingface.co/Lightricks/LTX-2.5) "
+                "before generating."
+            )
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=3):
+                    ltx25_model = gr.Dropdown(
+                        choices=list(LTX25_MODEL_CHOICES),
+                        value=LTX25_DEFAULTS["model"],
+                        label="Transformer model",
+                        info=(
+                            "NVFP4 is the default for RTX PRO 6000/Blackwell. "
+                            "Only the selected transformer downloads."
+                        ),
+                    )
+                    ltx25_mode = gr.Radio(
+                        ["Text to video", "Image to video"],
+                        value=LTX25_DEFAULTS["mode"],
+                        label="Mode",
+                    )
+                    ltx25_prompt = gr.Textbox(
+                        label="Positive prompt",
+                        lines=10,
+                        placeholder=(
+                            "Describe the action chronologically, then the setting, "
+                            "camera movement, lighting, dialogue, sound effects, and music."
+                        ),
+                    )
+                    ltx25_negative = gr.Textbox(
+                        label="Negative prompt",
+                        lines=3,
+                        placeholder="Optional artifacts or qualities to avoid",
+                    )
+                    with gr.Group(visible=False) as ltx25_image_group:
+                        ltx25_image = gr.Image(type="filepath", label="First frame")
+                        ltx25_image_strength = gr.Slider(
+                            0.0, 1.0,
+                            value=LTX25_DEFAULTS["image_strength"],
+                            step=0.05,
+                            label="Image strength",
+                        )
+                with gr.Column(scale=2):
+                    ltx25_output = gr.Video(label="Generated LTX-2.5 video")
+                    with gr.Row():
+                        ltx25_run = gr.Button("Generate with LTX-2.5", variant="primary")
+                        ltx25_stop = gr.Button("Interrupt")
+                    ltx25_status = gr.Textbox(label="Status", lines=6)
+                    gr.Markdown("### Generation settings")
+                    with gr.Row():
+                        ltx25_duration = gr.Slider(
+                            1, 20, value=LTX25_DEFAULTS["duration"], step=0.5,
+                            label="Seconds",
+                        )
+                        ltx25_fps = gr.Slider(
+                            1, 60, value=LTX25_DEFAULTS["fps"], step=1,
+                            label="FPS",
+                        )
+                    with gr.Row():
+                        ltx25_width = gr.Number(
+                            value=LTX25_DEFAULTS["width"], precision=0, label="Width"
+                        )
+                        ltx25_height = gr.Number(
+                            value=LTX25_DEFAULTS["height"], precision=0, label="Height"
+                        )
+                    gr.Markdown(
+                        "Width and height are snapped to multiples of 32. Frame count is "
+                        "automatically snapped to `8n + 1`."
+                    )
+                    with gr.Row():
+                        ltx25_seed = gr.Number(
+                            value=LTX25_DEFAULTS["seed"], precision=0,
+                            label="Seed (-1 random)",
+                        )
+                        ltx25_cfg = gr.Slider(
+                            0.0, 3.0, value=LTX25_DEFAULTS["cfg"], step=0.05,
+                            label="CFG",
+                        )
+                    ltx25_sampler = gr.Dropdown(
+                        ["euler_ancestral", "euler", "dpmpp_2m", "dpmpp_2m_sde"],
+                        value=LTX25_DEFAULTS["sampler"],
+                        label="Sampler",
+                    )
+                    gr.Markdown(
+                        "Uses the official distilled 8-step sigma schedule and the "
+                        "lower-memory convolutional LTX-2.5 video VAE. NVFP4 and "
+                        "INT8 are embedded-quantized ComfyUI checkpoints."
+                    )
+
         with gr.Group(visible=False) as gallery_view:
             with gr.Row():
                 gr.Markdown(
@@ -3676,6 +4139,13 @@ def build_ui() -> gr.Blocks:
                 preset, steps, scheduler, cache_mode, attention_mode,
             ],
         )
+        ltx25_mode.change(
+            lambda value: gr.update(visible=value == "Image to video"),
+            inputs=ltx25_mode,
+            outputs=ltx25_image_group,
+            queue=False,
+            show_progress="hidden",
+        )
         gallery_postprocess.change(
             lambda value: (
                 gr.update(visible=value in COMFY_UPSCALE_OPTIONS),
@@ -3768,6 +4238,27 @@ def build_ui() -> gr.Blocks:
             show_progress="minimal",
             api_name="generate_video_advanced",
         )
+        ltx25_event = ltx25_run.click(
+            generate_ltx25,
+            inputs=[
+                ltx25_mode,
+                ltx25_model,
+                ltx25_prompt,
+                ltx25_negative,
+                ltx25_image,
+                ltx25_duration,
+                ltx25_fps,
+                ltx25_width,
+                ltx25_height,
+                ltx25_seed,
+                ltx25_cfg,
+                ltx25_sampler,
+                ltx25_image_strength,
+            ],
+            outputs=[ltx25_output, ltx25_status],
+            show_progress="minimal",
+            api_name="generate_ltx25_video",
+        )
         api_event = api_run.click(
             generate_with_ui_defaults,
             inputs=api_prompt,
@@ -3776,6 +4267,7 @@ def build_ui() -> gr.Blocks:
             api_name="generate_video",
         )
         stop.click(interrupt, outputs=status, cancels=[event])
+        ltx25_stop.click(interrupt, outputs=ltx25_status, cancels=[ltx25_event])
         api_stop.click(interrupt, outputs=api_status, cancels=[api_event])
         refresh.click(backend_status, outputs=health)
         unload_models.click(
@@ -3789,11 +4281,22 @@ def build_ui() -> gr.Blocks:
                 gr.update(visible=True),
                 gr.update(visible=False),
                 gr.update(visible=False),
+                gr.update(visible=False),
             ),
-            outputs=[generation_view, gallery_view, api_view],
+            outputs=[generation_view, ltx25_view, gallery_view, api_view],
+        )
+        ltx25_tab.select(
+            lambda: (
+                gr.update(visible=False),
+                gr.update(visible=True),
+                gr.update(visible=False),
+                gr.update(visible=False),
+            ),
+            outputs=[generation_view, ltx25_view, gallery_view, api_view],
         )
         gallery_event = gallery_tab.select(
             lambda: (
+                gr.update(visible=False),
                 gr.update(visible=False),
                 gr.update(visible=True),
                 gr.update(visible=False),
@@ -3804,6 +4307,7 @@ def build_ui() -> gr.Blocks:
             ),
             outputs=[
                 generation_view,
+                ltx25_view,
                 gallery_view,
                 api_view,
                 gallery_player,
@@ -3874,9 +4378,10 @@ def build_ui() -> gr.Blocks:
             lambda: (
                 gr.update(visible=False),
                 gr.update(visible=False),
+                gr.update(visible=False),
                 gr.update(visible=True),
             ),
-            outputs=[generation_view, gallery_view, api_view],
+            outputs=[generation_view, ltx25_view, gallery_view, api_view],
         )
     return demo
 
@@ -4126,6 +4631,44 @@ def selftest() -> None:
     assert save_nodes[0]["inputs"]["codec"] == "auto"
     assert isinstance(save_nodes[0]["inputs"]["codec"], str)
 
+    ltx25_graph = build_ltx25_graph(
+        prompt="a test shot",
+        negative_prompt="artifacts",
+        first_image=None,
+        width=960,
+        height=544,
+        duration=5,
+        fps=24,
+        seed=9,
+        cfg=1.0,
+        sampler_name="euler_ancestral",
+        image_strength=0.7,
+    )
+    ltx25_nodes = list(ltx25_graph.values())
+    ltx25_classes = {node["class_type"] for node in ltx25_nodes}
+    assert required_ltx25_nodes() <= ltx25_classes
+    assert not ({"LoadImage", "LTXVImgToVideoInplace"} & ltx25_classes)
+    ltx25_unet = next(
+        node for node in ltx25_nodes if node["class_type"] == "UNETLoader"
+    )
+    assert ltx25_unet["inputs"]["unet_name"] == (
+        "ltx-2.5-22b-distilled-transformer-nvfp4.safetensors"
+    )
+    ltx25_video_latent = next(
+        node for node in ltx25_nodes
+        if node["class_type"] == "EmptyLTXVLatentVideo"
+    )
+    assert ltx25_video_latent["inputs"]["length"] == 121
+    ltx25_sigmas = next(
+        node for node in ltx25_nodes if node["class_type"] == "ManualSigmas"
+    )
+    assert ltx25_sigmas["inputs"]["sigmas"] == LTX25_SIGMAS
+    ltx25_save = next(
+        node for node in ltx25_nodes if node["class_type"] == "SaveVideo"
+    )
+    assert ltx25_save["inputs"]["filename_prefix"].startswith("ltx25/")
+    assert ltx25_frame_length(5, 24) == 121
+
     seedvr2_graph = build_seedvr2_upscale_graph(
         source_video="h3_gradio/seedvr2_upscale/source.mp4",
         seed=7,
@@ -4275,6 +4818,18 @@ def selftest() -> None:
         globals()["gallery_thumbnail"] = lambda _video: None
         globals()["gallery_video_resolution"] = lambda _video: (864, 480)
         try:
+            h3_video = comfy_test_output / "h3" / "minimax.mp4"
+            ltx25_video = comfy_test_output / "ltx25" / "ltx.mp4"
+            h3_video.parent.mkdir()
+            ltx25_video.parent.mkdir()
+            h3_video.write_bytes(b"h3")
+            ltx25_video.write_bytes(b"ltx25")
+            discovered_families = {
+                generated_video_family(video) for video in gallery_video_paths()
+            }
+            assert {"MiniMax H3", "LTX-2.5", "Post-processed"} <= discovered_families
+            h3_video.unlink()
+            ltx25_video.unlink()
             gallery_items, gallery_paths, gallery_detail = refresh_gallery()
 
             class FakeGalleryRequest:
