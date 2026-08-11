@@ -118,6 +118,33 @@ Primary sources:
 - https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.5
 - https://github.com/FFFFFFpy/ComfyUI-MiniMaxH3-AdaptiveCache
 
+## Upstream optimization refresh — 2026-08-11
+
+1. **Adopted: Sol-Attn v0.6.1.** Local and Modal provisioning now pin commit
+   `e1d211026583064d33dc4326207c6502e2442208`. The release adds compatibility
+   with KJNodes' single-item low-VRAM activation handoff. Upstream reports no
+   kernel, attention-math, weight, dispatch, or numerical-output changes, so
+   the reviewed v0.6.0 performance and quality policy remains applicable.
+2. **Already inherited: native chunked H3 VAE I/O.** ComfyUI commit
+   `2a68ce33b4c9ea6ee4283e618a74560cefb32694` streams decoded temporal chunks
+   into the intermediate-device output buffer and moves encode clips to the
+   execution device one at a time. This reduces peak H3 VAE VRAM without a
+   custom workflow change. Both local setup and Modal clone current ComfyUI
+   HEAD, so new deployments already contain it.
+3. **No change: Spectrum and Larry Turbo.** Their pinned commits are still the
+   current upstream heads (`4b9a7d1` and `55fee86`, respectively).
+4. **Still deferred: AdaptiveCache.** Its upstream head is unchanged since the
+   previous review. The published RTX 5090 speed results remain promising, but
+   the unresolved W4A8 Turbo quality failures and missing NVFP4 audiovisual
+   exact-seed validation still make it unsuitable as a default here.
+
+Primary sources:
+
+- https://github.com/Saganaki22/ComfyUI-sol-attn/releases/tag/v0.6.1
+- https://github.com/Comfy-Org/ComfyUI/commit/2a68ce33b4c9ea6ee4283e618a74560cefb32694
+- https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.5
+- https://github.com/FFFFFFpy/ComfyUI-MiniMaxH3-AdaptiveCache
+
 ## Earlier v37 → v38 review
 
 ## Findings addressed

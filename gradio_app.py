@@ -103,6 +103,14 @@ LTX_UPSCALE = "LTX 2.3 generative 2x"
 SEEDVR2_UPSCALE = "SeedVR2 2x"
 FLASHVSR_UPSCALE = "FlashVSR 2x"
 COMFY_UPSCALE_OPTIONS = {LTX_UPSCALE, SEEDVR2_UPSCALE, FLASHVSR_UPSCALE}
+POSTPROCESS_OPTIONS = [
+    "2× Lanczos",
+    "48 fps interpolation",
+    "2× Lanczos + 48 fps",
+    LTX_UPSCALE,
+    SEEDVR2_UPSCALE,
+    FLASHVSR_UPSCALE,
+]
 LTX_REFINEMENT_SIGMAS = "0.85, 0.7250, 0.4219, 0.0"
 LTX_NEGATIVE_PROMPT = (
     "pc game, console game, video game, cartoon, childish, ugly, slow, "
@@ -504,6 +512,12 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
 
 class H3Error(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class VideoMetadata:
+    frame_count: int
+    fps: float
 
 
 def normalize_turbo_variant(value: str) -> str:
@@ -1653,6 +1667,7 @@ def build_ltx_upscale_graph(
     frame_count: int,
     seed: int,
     models: ModelConfig,
+    fps: float = 24.0,
 ) -> dict[str, Any]:
     """Build the native LTX 2.3 decode/encode/x2/refine post-process graph."""
     assets = ltx_upscale_model_names(models)
@@ -1699,7 +1714,7 @@ def build_ltx_upscale_graph(
         "LTXVConditioning",
         positive=Graph.out(positive),
         negative=Graph.out(negative),
-        frame_rate=24.0,
+        frame_rate=float(fps),
     )
 
     video_latent = graph.add(
@@ -1736,7 +1751,7 @@ def build_ltx_upscale_graph(
         "LTXVEmptyLatentAudio",
         audio_vae=Graph.out(audio_vae),
         frames_number=ltx_frame_count,
-        frame_rate=24.0,
+        frame_rate=float(fps),
         batch_size=1,
     )
     av_latent = graph.add(
@@ -1776,7 +1791,7 @@ def build_ltx_upscale_graph(
         "CreateVideo",
         images=Graph.out(images),
         audio=Graph.out(components, 1),
-        fps=24.0,
+        fps=float(fps),
         bit_depth=8,
     )
     graph.add(
@@ -1815,6 +1830,7 @@ def build_seedvr2_upscale_graph(
     seed: int,
     models: ModelConfig,
     model_choice: str = DEFAULT_SEEDVR2_MODEL,
+    fps: float = 24.0,
 ) -> dict[str, Any]:
     """Build ComfyUI's native one-step SeedVR2 2x workflow."""
     assets = seedvr2_upscale_model_names(models, model_choice)
@@ -1891,7 +1907,7 @@ def build_seedvr2_upscale_graph(
         "CreateVideo",
         images=Graph.out(restored),
         audio=Graph.out(components, 1),
-        fps=24.0,
+        fps=float(fps),
         bit_depth=8,
     )
     graph.add(
@@ -1908,7 +1924,9 @@ def required_flashvsr_upscale_nodes() -> set[str]:
     return {"LoadVideo", "GetVideoComponents", "AILab_FlashVSR", "CreateVideo", "SaveVideo"}
 
 
-def build_flashvsr_upscale_graph(*, source_video: str, seed: int) -> dict[str, Any]:
+def build_flashvsr_upscale_graph(
+    *, source_video: str, seed: int, fps: float = 24.0
+) -> dict[str, Any]:
     """Build the balanced FlashVSR v1.1 2x tiled workflow."""
     graph = Graph()
     loaded = graph.add("LoadVideo", file=source_video)
@@ -1926,7 +1944,7 @@ def build_flashvsr_upscale_graph(*, source_video: str, seed: int) -> dict[str, A
         "CreateVideo",
         images=Graph.out(upscaled, 0),
         audio=Graph.out(upscaled, 1),
-        fps=24.0,
+        fps=float(fps),
         bit_depth=8,
     )
     graph.add(
@@ -1937,6 +1955,65 @@ def build_flashvsr_upscale_graph(*, source_video: str, seed: int) -> dict[str, A
         codec="auto",
     )
     return graph.nodes
+
+
+def required_upscale_nodes(option: str) -> set[str]:
+    builders = {
+        LTX_UPSCALE: required_ltx_upscale_nodes,
+        SEEDVR2_UPSCALE: required_seedvr2_upscale_nodes,
+        FLASHVSR_UPSCALE: required_flashvsr_upscale_nodes,
+    }
+    try:
+        return builders[option]()
+    except KeyError as exc:
+        raise H3Error(f"Unknown AI post-processing method: {option}") from exc
+
+
+def build_upscale_graph(
+    *,
+    option: str,
+    source_video: str,
+    prompt: str,
+    frame_count: int,
+    seed: int,
+    models: ModelConfig,
+    seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
+    fps: float = 24.0,
+) -> tuple[dict[str, Any], int]:
+    """Build one selected AI-upscale workflow and return its sampler steps."""
+    if option == LTX_UPSCALE:
+        return (
+            build_ltx_upscale_graph(
+                source_video=source_video,
+                prompt=prompt,
+                frame_count=frame_count,
+                seed=seed,
+                models=models,
+                fps=fps,
+            ),
+            3,
+        )
+    if option == SEEDVR2_UPSCALE:
+        return (
+            build_seedvr2_upscale_graph(
+                source_video=source_video,
+                seed=seed,
+                models=models,
+                model_choice=seedvr2_model,
+                fps=fps,
+            ),
+            1,
+        )
+    if option == FLASHVSR_UPSCALE:
+        return (
+            build_flashvsr_upscale_graph(
+                source_video=source_video,
+                seed=seed,
+                fps=fps,
+            ),
+            1,
+        )
+    raise H3Error(f"Unknown AI post-processing method: {option}")
 
 
 def required_nodes_for(
@@ -2309,6 +2386,38 @@ def postprocess_video(source: Path, option: str) -> Path:
     return target
 
 
+def probe_video_metadata(source: Path) -> VideoMetadata:
+    """Return the frame count and frame rate needed by gallery workflows."""
+    cmd = [
+        "ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
+        "-show_entries",
+        "stream=nb_read_frames,nb_frames,avg_frame_rate,r_frame_rate,duration:format=duration",
+        "-of", "json", str(source),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if proc.returncode != 0:
+        raise H3Error(f"Could not inspect selected video: {proc.stderr.strip()}")
+    try:
+        payload = json.loads(proc.stdout)
+        stream = payload["streams"][0]
+        rate = stream.get("avg_frame_rate") or stream.get("r_frame_rate")
+        numerator, denominator = str(rate).split("/", 1)
+        fps = float(numerator) / float(denominator)
+        if fps <= 0:
+            raise ValueError("non-positive frame rate")
+        for key in ("nb_read_frames", "nb_frames"):
+            value = stream.get(key)
+            if value not in (None, "N/A") and int(value) > 0:
+                return VideoMetadata(frame_count=int(value), fps=fps)
+        duration = stream.get("duration") or payload.get("format", {}).get("duration")
+        count = round(float(duration) * fps)
+        if count > 0:
+            return VideoMetadata(frame_count=count, fps=fps)
+    except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError) as exc:
+        raise H3Error("Could not determine the selected video's frame metadata.") from exc
+    raise H3Error("Could not determine the selected video's frame metadata.")
+
+
 def unload_comfy_models() -> None:
     """Explicitly clear model residency only when the user opts into it."""
     api_post("/free", json={"unload_models": True, "free_memory": True})
@@ -2498,6 +2607,163 @@ def gallery_mutation_result(
         selected,
         False,
     )
+
+
+def gallery_progress_result(message: str) -> GalleryMutationResult:
+    return (
+        gr.skip(), gr.skip(), message, gr.skip(), gr.skip(), gr.skip(), gr.skip()
+    )
+
+
+def gallery_processed_result(
+    result: Path,
+    option: str,
+    elapsed: float,
+    request: gr.Request,
+) -> GalleryMutationResult:
+    items, paths, detail = refresh_gallery()
+    download_url = absolute_video_download_url(result, request)
+    return (
+        items,
+        paths,
+        f"Completed {option} in {elapsed:.1f}s · {detail}",
+        str(result),
+        f"[Download processed video]({download_url})",
+        str(result),
+        False,
+    )
+
+
+def postprocess_selected_gallery_video(
+    selected_video: str | None,
+    option: str,
+    prompt: str,
+    seed: int,
+    seedvr2_model: str,
+    force_offload: bool,
+    request: gr.Request,
+    progress=gr.Progress(track_tqdm=False),
+):
+    """Create a new post-processed output from one selected gallery video."""
+    started = time.monotonic()
+    ws: websocket.WebSocket | None = None
+    try:
+        if not selected_video:
+            raise H3Error("Select a gallery video first.")
+        if option not in POSTPROCESS_OPTIONS:
+            raise H3Error("Choose a post-processing method.")
+        source = managed_video_path(selected_video)
+        actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
+        progress(0, desc=f"Preparing {option}")
+        yield gallery_progress_result(f"Preparing `{source.name}` for {option}")
+
+        if option not in COMFY_UPSCALE_OPTIONS:
+            result = postprocess_video(source, option)
+            progress(1, desc="Complete")
+            yield gallery_processed_result(
+                result, option, time.monotonic() - started, request
+            )
+            return
+
+        models = load_model_config()
+        available = set(object_info())
+        missing = required_upscale_nodes(option) - available
+        if missing:
+            raise H3Error(
+                f"{option} is unavailable. Missing ComfyUI nodes: "
+                + ", ".join(sorted(missing))
+            )
+
+        if option == LTX_UPSCALE:
+            if not prompt.strip():
+                raise H3Error("Enter a refinement prompt for LTX 2.3.")
+            yield gallery_progress_result("Checking LTX 2.3 upscale models")
+            downloaded = ensure_ltx_upscale_models(models)
+            stage_bucket = "ltx_upscale"
+        elif option == SEEDVR2_UPSCALE:
+            yield gallery_progress_result(
+                f"Checking SeedVR2 {seedvr2_model} models"
+            )
+            downloaded = ensure_seedvr2_upscale_models(models, seedvr2_model)
+            stage_bucket = "seedvr2_upscale"
+        else:
+            downloaded = False
+            stage_bucket = "flashvsr_upscale"
+
+        if downloaded:
+            yield gallery_progress_result(f"{option} models downloaded")
+        staged_source = stage_file(str(source), stage_bucket)
+        if force_offload:
+            yield gallery_progress_result(f"Unloading resident models before {option}")
+            unload_comfy_models()
+
+        metadata = probe_video_metadata(source)
+        graph, configured_steps = build_upscale_graph(
+            option=option,
+            source_video=staged_source,
+            prompt=prompt.strip(),
+            frame_count=metadata.frame_count,
+            seed=actual_seed,
+            models=models,
+            seedvr2_model=seedvr2_model,
+            fps=metadata.fps,
+        )
+
+        client_id = str(uuid.uuid4())
+        try:
+            ws = websocket.create_connection(
+                websocket_url(client_id),
+                timeout=max(1.0, min(REQUEST_TIMEOUT, 10.0)),
+            )
+        except Exception:
+            ws = None
+        queued_at = time.time()
+        prompt_id = submit_prompt(graph, client_id)
+        yield gallery_progress_result(
+            progress_status(
+                f"{option} queued",
+                started=started,
+                detail=f"Job `{prompt_id}` · seed {actual_seed}",
+            )
+        )
+        updates = (
+            stream_comfy_progress(ws, prompt_id, graph, started)
+            if ws is not None
+            else poll_comfy_progress(prompt_id, graph)
+        )
+        for stage, completed_nodes, total_nodes, step, step_total in updates:
+            if stage == "Generating video and audio":
+                stage = f"Upscaling with {option}"
+            if step is not None and step_total:
+                progress((step, step_total), desc=stage)
+            elif total_nodes:
+                progress((completed_nodes, total_nodes), desc=stage)
+            yield gallery_progress_result(
+                progress_status(
+                    stage,
+                    started=started,
+                    completed_nodes=completed_nodes,
+                    total_nodes=total_nodes,
+                    step=step,
+                    step_total=step_total,
+                    configured_steps=configured_steps if step is not None else None,
+                    detail=f"Post-process job `{prompt_id}`",
+                )
+            )
+
+        result = resolve_output(wait_for_history(prompt_id), queued_at)
+        progress(1, desc="Complete")
+        yield gallery_processed_result(
+            result, option, time.monotonic() - started, request
+        )
+    except Exception as exc:
+        yield gallery_progress_result(f"Post-processing failed: {exc}")
+    finally:
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
 
 
 def delete_selected_gallery_video(
@@ -2983,25 +3249,15 @@ def generate(
                 )
                 unload_comfy_models()
 
-            if postprocess == LTX_UPSCALE:
-                upscale_graph = build_ltx_upscale_graph(
-                    source_video=staged_source, prompt=prompt,
-                    frame_count=frame_length(duration), seed=actual_seed, models=models,
-                )
-                configured_upscale_steps = 3
-            elif postprocess == SEEDVR2_UPSCALE:
-                upscale_graph = build_seedvr2_upscale_graph(
-                    source_video=staged_source,
-                    seed=actual_seed,
-                    models=models,
-                    model_choice=seedvr2_model,
-                )
-                configured_upscale_steps = 1
-            else:
-                upscale_graph = build_flashvsr_upscale_graph(
-                    source_video=staged_source, seed=actual_seed
-                )
-                configured_upscale_steps = 1
+            upscale_graph, configured_upscale_steps = build_upscale_graph(
+                option=postprocess,
+                source_video=staged_source,
+                prompt=prompt,
+                frame_count=frame_length(duration),
+                seed=actual_seed,
+                models=models,
+                seedvr2_model=seedvr2_model,
+            )
 
             upscale_queued_at = time.time()
             upscale_prompt_id = submit_prompt(upscale_graph, client_id)
@@ -3078,9 +3334,6 @@ def compact_settings_summary(
     scheduler: str,
     attention_mode: str,
     cache_mode: str,
-    postprocess: str,
-    seedvr2_model: str,
-    ltx_force_offload: bool,
 ) -> str:
     if generation_mode == "Turbo":
         generation_mode = f"Turbo / {turbo_variant}"
@@ -3096,21 +3349,11 @@ def compact_settings_summary(
         step_count = f"{int(steps)} steps"
     except (TypeError, ValueError):
         step_count = "— steps"
-    offload_note = (
-        f" · H3 unload: {'on' if ltx_force_offload else 'off'}"
-        if postprocess in COMFY_UPSCALE_OPTIONS
-        else ""
-    )
-    seedvr2_note = (
-        f" · SeedVR2 model: {seedvr2_model}"
-        if postprocess == SEEDVR2_UPSCALE
-        else ""
-    )
     return (
         "**Current setup**  \n"
         f"{mode} · {model_profile} / {generation_mode} · {seconds} · {resolution} · "
         f"{step_count} / {scheduler} · Attention: {attention_mode} · "
-        f"Cache: {cache_mode} · Post: {postprocess}{seedvr2_note}{offload_note}"
+        f"Cache: {cache_mode}"
     )
 
 
@@ -3234,7 +3477,6 @@ For every control exposed by the Generate tab, use `/generate_video_advanced` an
 
 
 def build_ui() -> gr.Blocks:
-    sol_default = SERVER_ATTENTION_BACKEND == "sol"
     defaults = UI_DEFAULTS
     with gr.Blocks(title="MiniMax H3 Local") as demo:
         gr.Markdown("# MiniMax H3 Local\nNative ComfyUI graphs for T2V, first/last-frame video, and reference media.")
@@ -3324,8 +3566,6 @@ def build_ui() -> gr.Blocks:
                         defaults["duration"], defaults["width"], defaults["height"],
                         defaults["steps"], defaults["scheduler"],
                         defaults["attention_mode"], defaults["cache_mode"],
-                        defaults["postprocess"], defaults["seedvr2_model"],
-                        defaults["ltx_force_offload"],
                     )
                 )
                 output = gr.Video(label="Generated video")
@@ -3543,33 +3783,12 @@ def build_ui() -> gr.Blocks:
                         "not require this checkbox."
                     ),
                 )
-                postprocess = gr.Dropdown(
-                    [
-                        "None", "2× Lanczos", "48 fps interpolation",
-                        "2× Lanczos + 48 fps", LTX_UPSCALE,
-                        SEEDVR2_UPSCALE, FLASHVSR_UPSCALE,
-                    ],
-                    value=defaults["postprocess"], label="Post-processing",
+                gr.Markdown(
+                    "Post-processing is available per video in the **Gallery** tab."
                 )
-                seedvr2_model = gr.Dropdown(
-                    choices=list(SEEDVR2_MODEL_CHOICES),
-                    value=defaults["seedvr2_model"],
-                    label="SeedVR2 model",
-                    visible=defaults["postprocess"] == SEEDVR2_UPSCALE,
-                    info=(
-                        "Downloaded on first use. 7B Sharp favors stronger detail; "
-                        "NVFP4 variants are optimized for Blackwell GPUs."
-                    ),
-                )
-                ltx_force_offload = gr.Checkbox(
-                    value=defaults["ltx_force_offload"],
-                    label="Unload H3 models before AI upscale",
-                    info=(
-                        "Off by default: ComfyUI manages model residency. Enable to "
-                        "unload H3 before LTX, FlashVSR, or SeedVR2 and reduce peak "
-                        "VRAM at the cost of reloading H3 next time."
-                    ),
-                )
+                generation_postprocess = gr.State("None")
+                generation_seedvr2_model = gr.State(defaults["seedvr2_model"])
+                generation_force_offload = gr.State(False)
 
         with gr.Group(visible=False) as gallery_view:
             with gr.Row():
@@ -3614,6 +3833,50 @@ def build_ui() -> gr.Blocks:
                         height=540,
                     )
                     gallery_download = gr.Markdown()
+                    with gr.Accordion("Post-process selected video", open=True):
+                        gallery_postprocess = gr.Dropdown(
+                            choices=POSTPROCESS_OPTIONS,
+                            value=POSTPROCESS_OPTIONS[0],
+                            label="Method",
+                        )
+                        with gr.Group(visible=False) as gallery_ai_settings:
+                            gallery_post_prompt = gr.Textbox(
+                                value=(
+                                    "Preserve the source video's content, motion, "
+                                    "composition, lighting, and audio."
+                                ),
+                                label="LTX refinement prompt",
+                                lines=3,
+                                visible=False,
+                                info="Used only by LTX 2.3 generative upscale.",
+                            )
+                            gallery_seedvr2_model = gr.Dropdown(
+                                choices=list(SEEDVR2_MODEL_CHOICES),
+                                value=defaults["seedvr2_model"],
+                                label="SeedVR2 model",
+                                visible=False,
+                                info=(
+                                    "Downloaded on first use. 7B Sharp favors stronger "
+                                    "detail; NVFP4 variants are optimized for Blackwell GPUs."
+                                ),
+                            )
+                            with gr.Row():
+                                gallery_post_seed = gr.Number(
+                                    value=-1,
+                                    precision=0,
+                                    label="Seed (-1 random)",
+                                )
+                                gallery_force_offload = gr.Checkbox(
+                                    value=False,
+                                    label="Unload resident models first",
+                                    info="Can lower peak VRAM for AI upscalers.",
+                                )
+                        with gr.Row():
+                            gallery_post_run = gr.Button(
+                                "Post-process selected",
+                                variant="primary",
+                            )
+                            gallery_post_stop = gr.Button("Interrupt")
 
         with gr.Group(visible=False) as api_view:
             gr.Markdown(api_guide())
@@ -3635,8 +3898,7 @@ def build_ui() -> gr.Blocks:
         settings_inputs = [
             mode, model_profile, generation_mode, turbo_variant,
             duration, width, height,
-            steps, scheduler, attention_mode, cache_mode, postprocess,
-            seedvr2_model, ltx_force_offload,
+            steps, scheduler, attention_mode, cache_mode,
         ]
         for settings_control in settings_inputs:
             settings_control.change(
@@ -3653,10 +3915,18 @@ def build_ui() -> gr.Blocks:
                 preset, steps, scheduler, cache_mode, attention_mode,
             ],
         )
-        postprocess.change(
-            lambda value: gr.update(visible=value == SEEDVR2_UPSCALE),
-            inputs=postprocess,
-            outputs=seedvr2_model,
+        gallery_postprocess.change(
+            lambda value: (
+                gr.update(visible=value in COMFY_UPSCALE_OPTIONS),
+                gr.update(visible=value == LTX_UPSCALE),
+                gr.update(visible=value == SEEDVR2_UPSCALE),
+            ),
+            inputs=gallery_postprocess,
+            outputs=[
+                gallery_ai_settings,
+                gallery_post_prompt,
+                gallery_seedvr2_model,
+            ],
             queue=False,
             show_progress="hidden",
         )
@@ -3724,8 +3994,8 @@ def build_ui() -> gr.Blocks:
                 cache_mode, fbcache_preset, fbcache_threshold, fbcache_start,
                 fbcache_end, fbcache_max_hits, fbcache_temporal_guard,
                 easycache_threshold, easycache_start, easycache_end, easycache_verbose,
-                compile_model, ref_size, postprocess, ltx_force_offload,
-                seedvr2_model,
+                compile_model, ref_size, generation_postprocess,
+                generation_force_offload, generation_seedvr2_model,
             ],
             outputs=[output, status],
             show_progress="minimal",
@@ -3794,6 +4064,26 @@ def build_ui() -> gr.Blocks:
             gallery_selected,
             gallery_confirm_delete,
         ]
+        gallery_post_event = gallery_post_run.click(
+            postprocess_selected_gallery_video,
+            inputs=[
+                gallery_selected,
+                gallery_postprocess,
+                gallery_post_prompt,
+                gallery_post_seed,
+                gallery_seedvr2_model,
+                gallery_force_offload,
+            ],
+            outputs=gallery_mutation_outputs,
+            show_progress="minimal",
+            api_name=False,
+        )
+        gallery_post_stop.click(
+            interrupt,
+            outputs=gallery_status,
+            cancels=[gallery_post_event],
+            api_name=False,
+        )
         gallery_delete.click(
             delete_selected_gallery_video,
             inputs=[gallery_selected, gallery_confirm_delete],
@@ -4079,6 +4369,7 @@ def selftest() -> None:
         frame_count=124,
         seed=7,
         models=fake,
+        fps=48.0,
     )
     ltx_nodes = list(ltx_graph.values())
     ltx_classes = {node["class_type"] for node in ltx_nodes}
@@ -4099,13 +4390,18 @@ def selftest() -> None:
         if node["class_type"] == "GetVideoComponents"
     )
     assert ltx_video["inputs"]["audio"] == [ltx_components_id, 1]
+    assert ltx_video["inputs"]["fps"] == 48.0
+    assert ltx_audio["inputs"]["frame_rate"] == 48.0
     assert node_stage(
         "VAEEncodeTiled", graph_class_types(ltx_graph)
     ) == "Encoding H3 video for LTX"
     assert UI_DEFAULTS["ltx_force_offload"] is False
 
     seedvr2_graph = build_seedvr2_upscale_graph(
-        source_video="h3_gradio/seedvr2_upscale/source.mp4", seed=7, models=fake
+        source_video="h3_gradio/seedvr2_upscale/source.mp4",
+        seed=7,
+        models=fake,
+        fps=48.0,
     )
     seedvr2_nodes = list(seedvr2_graph.values())
     assert required_seedvr2_upscale_nodes() <= {
@@ -4134,6 +4430,10 @@ def selftest() -> None:
     )
     assert seedvr2_sampler["inputs"]["steps"] == 1
     assert seedvr2_sampler["inputs"]["denoise"] == 1.0
+    seedvr2_video = next(
+        node for node in seedvr2_nodes if node["class_type"] == "CreateVideo"
+    )
+    assert seedvr2_video["inputs"]["fps"] == 48.0
     for seedvr2_choice, expected_name in fake.seedvr2_models.items():
         choice_graph = build_seedvr2_upscale_graph(
             source_video="source.mp4",
@@ -4149,7 +4449,7 @@ def selftest() -> None:
         assert choice_loader["inputs"]["unet_name"] == expected_name
 
     flashvsr_graph = build_flashvsr_upscale_graph(
-        source_video="h3_gradio/flashvsr_upscale/source.mp4", seed=7
+        source_video="h3_gradio/flashvsr_upscale/source.mp4", seed=7, fps=48.0
     )
     flashvsr_nodes = list(flashvsr_graph.values())
     assert required_flashvsr_upscale_nodes() <= {
@@ -4161,6 +4461,10 @@ def selftest() -> None:
     assert flashvsr["inputs"]["scale"] == 2
     assert flashvsr["inputs"]["preset"] == "Balanced (2x Quality)"
     assert flashvsr["inputs"]["unload_model"] is True
+    flashvsr_video = next(
+        node for node in flashvsr_nodes if node["class_type"] == "CreateVideo"
+    )
+    assert flashvsr_video["inputs"]["fps"] == 48.0
     assert node_stage(
         "AILab_FlashVSR", graph_class_types(flashvsr_graph)
     ) == (
