@@ -111,6 +111,7 @@ TURBO_SETTINGS = {
 UI_DEFAULTS = {
     "mode": "Text to video",
     "model_profile": "Quality",
+    "use_int8_vae": False,
     "generation_mode": "Turbo",
     "turbo_variant": DEFAULT_TURBO,
     "duration": 5,
@@ -538,6 +539,8 @@ class ModelConfig:
     text_encoder: str
     video_vae: str
     audio_vae: str
+    video_vae_int8: str | None = None
+    video_vae_int8_source: str = "unknown"
     turbo_lora: str | None = None
     turbo_source: str = "unknown"
     turbo_ref_lora: str | None = None
@@ -600,6 +603,8 @@ def load_model_config() -> ModelConfig:
         text_encoder=data["text_encoder"],
         video_vae=data["video_vae"],
         audio_vae=data["audio_vae"],
+        video_vae_int8=data.get("video_vae_int8"),
+        video_vae_int8_source=data.get("video_vae_int8_source", "unknown"),
         turbo_lora=data.get("turbo_lora"),
         turbo_source=data.get("turbo_source", "unknown"),
         turbo_ref_lora=data.get("turbo_ref_lora", data.get("turbo_lora")),
@@ -649,6 +654,31 @@ def ensure_profile_model(
     )
     if not model_file_is_ready(destination):
         raise H3Error(f"On-demand model download did not produce {filename}.")
+    return True
+
+
+def ensure_int8_video_vae(models: ModelConfig) -> bool:
+    """Download the optional INT8 ConvRot video VAE on first use."""
+    filename = models.video_vae_int8
+    if not filename:
+        raise H3Error(
+            "The model configuration predates INT8 video VAE support. "
+            "Re-run setup_h3.py before enabling it."
+        )
+    destination = COMFY_DIR / "models" / "vae" / filename
+    if model_file_is_ready(destination):
+        return False
+
+    sync_models(
+        root=COMFY_DIR / "models",
+        manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
+        token=os.getenv("HF_TOKEN") or None,
+        log_prefix="[h3-int8-vae-on-demand]",
+        model_keys=("video_vae_int8",),
+        download_workers=1,
+    )
+    if not model_file_is_ready(destination):
+        raise H3Error(f"On-demand INT8 VAE download did not produce {filename}.")
     return True
 
 
@@ -946,7 +976,7 @@ def turbo_variant_defaults(turbo_variant: str, generation_mode: str):
 def resolve_cache_policy(
     cache_mode: str, *, use_turbo: bool
 ) -> tuple[str, str | None]:
-    """Allow Spectrum for Turbo while rejecting unvalidated block caches."""
+    """Allow opt-in Turbo accelerators with quality warnings."""
     requested = str(cache_mode).strip()
     normalized = requested.lower()
     if not use_turbo or normalized == "off":
@@ -956,9 +986,19 @@ def resolve_cache_policy(
             "Spectrum forecasting with Turbo is experimental. Compare the same "
             "prompt and seed with acceleration Off for quality-critical output."
         )
+    if normalized == "easycache":
+        return requested, (
+            "EasyCache with Turbo is experimental and may amplify low-step "
+            "approximation error. Compare the same prompt and seed with Off."
+        )
+    if normalized == "firstblockcache":
+        return requested, (
+            "FirstBlockCache with Turbo is experimental and may amplify low-step "
+            "approximation error. Compare the same prompt and seed with Off."
+        )
     return "Off", (
         f"{requested or 'Selected block cache'} was disabled automatically: "
-        "Turbo currently permits only the validated Spectrum v0.2.5 sampler path."
+        "the selected acceleration mode is not supported with Turbo."
     )
 
 
@@ -1115,6 +1155,7 @@ def add_model_stack(
     easycache_end: float,
     easycache_verbose: bool,
     available_nodes: set[str],
+    use_int8_vae: bool = False,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     unet = graph.add("UNETLoader", unet_name=model_name, weight_dtype="default")
     model_ref = Graph.out(unet)
@@ -1248,7 +1289,16 @@ def add_model_stack(
         type="minimax",
         device="default",
     )
-    video_vae = graph.add("VAELoader", vae_name=models.video_vae)
+    if use_int8_vae:
+        if not models.video_vae_int8:
+            raise H3Error(
+                "INT8 video VAE was requested but is missing from the model catalog. "
+                "Re-run setup_h3.py."
+            )
+        video_vae_name = models.video_vae_int8
+    else:
+        video_vae_name = models.video_vae
+    video_vae = graph.add("VAELoader", vae_name=video_vae_name)
     audio_vae = graph.add("VAELoader", vae_name=models.audio_vae)
     return model_ref, Graph.out(clip), Graph.out(video_vae), Graph.out(audio_vae)
 
@@ -1350,6 +1400,7 @@ def build_fl2va_graph(
     model_name: str,
     models: ModelConfig,
     available_nodes: set[str],
+    use_int8_vae: bool = False,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -1378,6 +1429,7 @@ def build_fl2va_graph(
         easycache_end=easycache_end,
         easycache_verbose=easycache_verbose,
         available_nodes=available_nodes,
+        use_int8_vae=use_int8_vae,
     )
 
     inputs: dict[str, Any] = {
@@ -1449,6 +1501,7 @@ def build_ref2va_graph(
     model_name: str,
     models: ModelConfig,
     available_nodes: set[str],
+    use_int8_vae: bool = False,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -1477,6 +1530,7 @@ def build_ref2va_graph(
         easycache_end=easycache_end,
         easycache_verbose=easycache_verbose,
         available_nodes=available_nodes,
+        use_int8_vae=use_int8_vae,
     )
 
     inputs: dict[str, Any] = {
@@ -2618,6 +2672,7 @@ def generate(
     postprocess: str,
     upscale_force_offload: bool = False,
     seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
+    use_int8_vae: bool = False,
     progress=gr.Progress(track_tqdm=False),
 ):
     started = time.monotonic()
@@ -2639,6 +2694,9 @@ def generate(
         resolved_width, resolved_height = validate_resolution(width, height)
         actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
         models = load_model_config()
+        if use_int8_vae:
+            progress(0, desc="Preparing INT8 video VAE")
+            ensure_int8_video_vae(models)
         if postprocess == SEEDVR2_UPSCALE:
             seedvr2_upscale_model_names(models, seedvr2_model)
         profile_key = models.profile_key(model_profile)
@@ -2679,6 +2737,9 @@ def generate(
             selected_label = f"{profile.label} · Normal"
             turbo_lora_name = None
             turbo_strength = 1.0
+        selected_label += (
+            " · INT8 ConvRot VAE" if use_int8_vae else " · FP16 VAE"
+        )
 
         # Variant defaults update outside the generation queue, while this
         # request deliberately honors any subsequent manual step adjustment.
@@ -2774,6 +2835,7 @@ def generate(
                 easycache_verbose=bool(easycache_verbose),
                 model_name=selected_model,
                 models=models, available_nodes=available,
+                use_int8_vae=bool(use_int8_vae),
             )
         else:
             graph = build_fl2va_graph(
@@ -2801,6 +2863,7 @@ def generate(
                 easycache_verbose=bool(easycache_verbose),
                 model_name=selected_model,
                 models=models, available_nodes=available,
+                use_int8_vae=bool(use_int8_vae),
             )
 
         client_id = str(uuid.uuid4())
@@ -2991,6 +3054,7 @@ def preset_values(name: str):
 def compact_settings_summary(
     mode: str,
     model_profile: str,
+    use_int8_vae: bool,
     generation_mode: str,
     turbo_variant: str,
     duration: float,
@@ -3004,6 +3068,10 @@ def compact_settings_summary(
     seedvr2_model: str,
     force_offload: bool,
 ) -> str:
+    model_profile = (
+        f"{model_profile} / VAE: "
+        f"{'INT8 ConvRot' if use_int8_vae else 'FP16'}"
+    )
     if generation_mode == "Turbo":
         generation_mode = f"Turbo / {turbo_variant}"
     try:
@@ -3061,6 +3129,7 @@ def generate_with_ui_defaults(
     updates = generate(
         mode=defaults["mode"],
         model_profile=defaults["model_profile"],
+        use_int8_vae=defaults["use_int8_vae"],
         generation_mode=defaults["generation_mode"],
         turbo_variant=defaults["turbo_variant"],
         prompt=prompt,
@@ -3200,6 +3269,14 @@ def build_ui() -> gr.Blocks:
                             "LoRA and is experimental."
                         ),
                     )
+                use_int8_vae = gr.Checkbox(
+                    value=defaults["use_int8_vae"],
+                    label="Experimental INT8 ConvRot video VAE",
+                    info=(
+                        "Default off. Downloads on first use and accelerates H3 video "
+                        "encode/decode; switch off for the reviewed FP16 path."
+                    ),
+                )
                 help_text = gr.Markdown(mode_help("Text to video"))
                 prompt = gr.Textbox(
                     label="Prompt", lines=12,
@@ -3242,6 +3319,7 @@ def build_ui() -> gr.Blocks:
                 settings_overview = gr.Markdown(
                     compact_settings_summary(
                         defaults["mode"], defaults["model_profile"],
+                        defaults["use_int8_vae"],
                         defaults["generation_mode"], defaults["turbo_variant"],
                         defaults["duration"], defaults["width"], defaults["height"],
                         defaults["steps"], defaults["scheduler"],
@@ -3376,7 +3454,7 @@ def build_ui() -> gr.Blocks:
                             "speed testing. It forecasts selected transformer steps and uses "
                             "audio-isolated offline replay. FirstBlockCache is the lower-memory "
                             "fallback. Modes are mutually exclusive. Turbo defaults to Spectrum; "
-                            "other block caches are disabled in Turbo."
+                            "EasyCache and FirstBlockCache are opt-in experimental Turbo options."
                         ),
                     )
                     fbcache_preset = gr.Radio(
@@ -3576,7 +3654,7 @@ def build_ui() -> gr.Blocks:
                 api_status = gr.Textbox(label="Status", lines=5)
 
         settings_inputs = [
-            mode, model_profile, generation_mode, turbo_variant,
+            mode, model_profile, use_int8_vae, generation_mode, turbo_variant,
             duration, width, height,
             steps, scheduler, attention_mode, cache_mode,
             generation_postprocess,
@@ -3684,6 +3762,7 @@ def build_ui() -> gr.Blocks:
                 easycache_threshold, easycache_start, easycache_end, easycache_verbose,
                 ref_size, generation_postprocess,
                 generation_force_offload, generation_seedvr2_model,
+                use_int8_vae,
             ],
             outputs=[output, status],
             show_progress="minimal",
@@ -3869,6 +3948,8 @@ def selftest() -> None:
         text_encoder="text.safetensors",
         video_vae="video_vae.safetensors",
         audio_vae="audio_vae.safetensors",
+        video_vae_int8="video_vae_int8_convrot.safetensors",
+        video_vae_int8_source="test",
         turbo_lora="minimax_h3_turbo_4step_ema_ckpt850.safetensors",
         turbo_source="test",
         turbo_ref_lora="minimax_h3_turbo_4step_ema_ckpt850.safetensors",
@@ -4347,11 +4428,14 @@ def selftest() -> None:
         "Spectrum", use_turbo=True
     )
     assert turbo_spectrum == "Spectrum" and turbo_spectrum_note
-    for block_cache in ("FirstBlockCache", "EasyCache"):
-        resolved_cache, resolved_note = resolve_cache_policy(
-            block_cache, use_turbo=True
-        )
-        assert resolved_cache == "Off" and block_cache in str(resolved_note)
+    turbo_easycache, turbo_easycache_note = resolve_cache_policy(
+        "EasyCache", use_turbo=True
+    )
+    assert turbo_easycache == "EasyCache" and turbo_easycache_note
+    turbo_firstblock, turbo_firstblock_note = resolve_cache_policy(
+        "FirstBlockCache", use_turbo=True
+    )
+    assert turbo_firstblock == "FirstBlockCache" and turbo_firstblock_note
     assert SERVER_DENSE_ATTENTION_BACKEND in {"pytorch", "sage"}
 
     quality_turbo_graph = build_fl2va_graph(
@@ -4380,6 +4464,7 @@ def selftest() -> None:
         easycache_verbose=False,
         model_name=fake.profile("quality").fl2va,
         models=fake, available_nodes=available,
+        use_int8_vae=True,
     )
     quality_unets = [
         node for node in quality_turbo_graph.values()
@@ -4387,6 +4472,12 @@ def selftest() -> None:
     ]
     assert len(quality_unets) == 1
     assert quality_unets[0]["inputs"]["unet_name"] == fake.profile("quality").fl2va
+    quality_video_vae = next(
+        node for node in quality_turbo_graph.values()
+        if node["class_type"] == "VAELoader"
+        and node["inputs"]["vae_name"] == fake.video_vae_int8
+    )
+    assert quality_video_vae["inputs"]["vae_name"] == fake.video_vae_int8
     turbo_nodes = [
         node for node in quality_turbo_graph.values()
         if node["class_type"] == CORE_LORA_LOADER_NODE
@@ -4510,7 +4601,7 @@ def selftest() -> None:
         sol_dense_steps=1,
         sol_step_off=0.0,
         sol_sink_tokens=0,
-        cache_mode="Off",
+        cache_mode="EasyCache",
         fbcache_preset="Fast",
         fbcache_threshold=0.10,
         fbcache_start=0.10,
@@ -4534,6 +4625,11 @@ def selftest() -> None:
     assert ref_unet["inputs"]["unet_name"] == fake.profile("quality").ref2va
     assert ref_lora["inputs"]["lora_name"] == fake.turbo_ref_lora
     assert ref_lora["inputs"]["strength_model"] == 0.75
+    ref_easycache = next(
+        node for node in ref_turbo_graph.nodes.values()
+        if node["class_type"] == "EasyCache"
+    )
+    assert ref_easycache["inputs"]["reuse_threshold"] == 0.10
 
     sched_nodes = [
         node for node in quality_turbo_graph.values()

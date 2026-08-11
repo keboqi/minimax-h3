@@ -21,6 +21,7 @@ MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
 ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 TURBO_REPO = "Kijai/MiniMax-H3_comfy"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
+EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
 TEXT_ENCODER_REPO = "sakamakismile/Qwen3-VL-32B-Heretic-MiniMax-H3-NVFP4"
 SEEDVR2_REPO = "Comfy-Org/SeedVR2"
 
@@ -89,6 +90,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "vae",
         "vae/minimax_h3_video_vae_fp16.safetensors",
         "FP16 video VAE",
+    ),
+    "video_vae_int8": ModelSpec(
+        EXPERIMENTAL_MODEL_REPO,
+        "vae",
+        "minimax_h3_video_vae_int8_convrot.safetensors",
+        "Experimental INT8 ConvRot video VAE",
     ),
     "audio_vae": ModelSpec(
         MODEL_REPO,
@@ -168,9 +175,13 @@ SEEDVR2_UPSCALE_MODEL_KEYS = (
 LAZY_POSTPROCESS_MODEL_KEYS = (
     *SEEDVR2_UPSCALE_MODEL_KEYS,
 )
+LAZY_OPTIONAL_MODEL_KEYS = (
+    "video_vae_int8",
+    *LAZY_POSTPROCESS_MODEL_KEYS,
+)
 SHARED_MODEL_KEYS = tuple(
     key for key in MODEL_SPECS
-    if key not in PROFILE_MODEL_KEY_SET and key not in LAZY_POSTPROCESS_MODEL_KEYS
+    if key not in PROFILE_MODEL_KEY_SET and key not in LAZY_OPTIONAL_MODEL_KEYS
 )
 PRELOAD_MODEL_KEYS = (
     *(
@@ -374,6 +385,7 @@ def _profile_config(profile: str) -> dict[str, str]:
 def _build_config(manifest_name: str) -> dict[str, Any]:
     text = MODEL_SPECS["text_encoder"]
     video_vae = MODEL_SPECS["video_vae"]
+    video_vae_int8 = MODEL_SPECS["video_vae_int8"]
     audio_vae = MODEL_SPECS["audio_vae"]
     turbo_lora = MODEL_SPECS["turbo_lora"]
     larry_turbo_lora = MODEL_SPECS["larry_turbo_lora"]
@@ -384,7 +396,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
     return {
-        "schema_version": 9,
+        "schema_version": 10,
         "default_profile": "quality",
         "profiles": {
             profile: _profile_config(profile)
@@ -392,6 +404,8 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         },
         "text_encoder": text.local_name,
         "video_vae": video_vae.local_name,
+        "video_vae_int8": video_vae_int8.local_name,
+        "video_vae_int8_source": video_vae_int8.source,
         "audio_vae": audio_vae.local_name,
         "turbo_lora": turbo_lora.local_name,
         "turbo_source": turbo_lora.source,
@@ -560,6 +574,7 @@ def selftest() -> None:
         "original_ref2va",
         "text_encoder",
         "video_vae",
+        "video_vae_int8",
         "audio_vae",
         "turbo_lora",
         "larry_turbo_lora",
@@ -576,7 +591,7 @@ def selftest() -> None:
     assert set(PROFILE_MODEL_KEYS["quality"]).issubset(PRELOAD_MODEL_KEYS)
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 9
+    assert cfg["schema_version"] == 10
     assert cfg["default_profile"] == "quality"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
@@ -587,6 +602,10 @@ def selftest() -> None:
     assert cfg["text_encoder"] == (
         "qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors"
     )
+    assert cfg["video_vae_int8"] == (
+        "minimax_h3_video_vae_int8_convrot.safetensors"
+    )
+    assert "video_vae_int8" not in PRELOAD_MODEL_KEYS
     assert cfg["turbo_lora"] == "minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors"
     assert cfg["turbo_ref_lora"] == cfg["turbo_lora"]
     assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"

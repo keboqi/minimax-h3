@@ -15,6 +15,7 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 - H3-native zero-copy Sol v0.6.1 sparse attention with SageAttention fallback
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
+- Optional experimental INT8 ConvRot video VAE, lazy-downloaded on first use
 - Hardware-aware ComfyUI memory mode selection
 - One-click model unloading and VRAM cache release from the UI
 - Spectrum v0.2.5 as the normal-generation default and experimental Turbo option
@@ -50,8 +51,10 @@ feed-forward patches. Its default uses system-RAM history and replay archives,
 degree-1 forecasting, offline smoothing replay, and zero spectral audio blending.
 Spectrum, FirstBlockCache, and EasyCache are mutually exclusive acceleration
 choices. Turbo defaults to Spectrum through v0.2.5's reviewed Larry Turbo and
-RES multistep sampler paths. Turbo continues to reject FirstBlockCache and
-EasyCache. Its attention default is Auto: jobs at or above 8K estimated packed
+RES multistep sampler paths. EasyCache is also available as an experimental,
+default-off Turbo option after ComfyUI's H3 audio-carry fix. FirstBlockCache is
+also available as a default-off experimental Turbo option. Its attention default
+is Auto: jobs at or above 8K estimated packed
 tokens use Sol, while smaller jobs stay dense. Reference-media jobs always use
 Sol because their conditioning rows cannot be estimated before ComfyUI encodes
 the uploads.
@@ -90,7 +93,8 @@ The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
 Quality profile plus the shared text encoder, VAEs, and Turbo LoRAs. Speed and
 Original checkpoints download on demand the first time each workflow variant is
 selected. SeedVR2 models are lazy and download only when their gallery
-post-processing option is first used.
+post-processing option is first used. The experimental INT8 ConvRot video VAE
+is also lazy and downloads only when its default-off checkbox is enabled.
 Later runs check remote metadata for the preloaded set and refresh only stale
 files; lazy checkpoints remain local and are fetched again if missing or incomplete.
 On Debian/Ubuntu standalone hosts, `run_h3.sh` also installs the `ffmpeg` system

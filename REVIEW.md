@@ -145,6 +145,27 @@ Primary sources:
 - https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.5
 - https://github.com/FFFFFFpy/ComfyUI-MiniMaxH3-AdaptiveCache
 
+## Optional INT8 VAE and EasyCache Turbo update — 2026-08-12
+
+1. **Added as default-off: INT8 ConvRot video VAE.** The experimental Kijai
+   checkpoint is recorded in the generated model catalog but excluded from the
+   preload set. Selecting it in the UI downloads it on demand; FP16 remains the
+   default and reviewed fallback.
+2. **Enabled as default-off: EasyCache with Turbo.** ComfyUI v0.31 fixes the H3
+   audio-carry mutation that previously corrupted audio under EasyCache. Turbo
+   continues to default to Spectrum, and selecting EasyCache displays an
+   exact-seed A/B warning because low-step approximation quality remains
+   experimental.
+3. **Enabled as default-off: FirstBlockCache with Turbo.** The existing bounded
+   cache window, temporal guard, and consecutive-hit limit remain active. The UI
+   displays the same exact-seed A/B warning because low-step composition has not
+   received sampler-specific upstream validation.
+
+Primary sources:
+
+- https://github.com/Comfy-Org/ComfyUI/pull/15334
+- https://github.com/Comfy-Org/ComfyUI/pull/15390
+
 ## Earlier v37 → v38 review
 
 ## Findings addressed
@@ -203,7 +224,8 @@ runtime fixes that have already been validated in production-style testing:
 - Turbo mode/variant defaults update outside the generation queue (Larry 6,
   LightX2V 4), while the resulting step control remains user-editable.
 - FirstBlockCache must precede Sol-Attn.
-- Turbo defaults to Spectrum; other block caches remain disabled.
+- Turbo defaults to Spectrum; FirstBlockCache and EasyCache remain explicit,
+  default-off experimental choices.
 - H3 full-model compile is omitted because it conflicts with the active
   attention and cache optimizations without improving measured performance.
 - SaveVideo codec must be the literal `auto` string.
