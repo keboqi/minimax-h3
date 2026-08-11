@@ -140,7 +140,6 @@ UI_DEFAULTS = {
     "ref_image_size": "match",
     "postprocess": "None",
     "seedvr2_model": DEFAULT_SEEDVR2_MODEL,
-    "seedvr2_compile_dit": False,
     "upscale_force_offload": False,
 }
 SPECTRUM_DEFAULT_INPUTS = {
@@ -739,6 +738,34 @@ def resolve_compile_request(
             "Sol-Attn remains enabled independently.",
         )
     return True, None
+
+
+def h3_compile_allowed_for_profile(profile: str) -> bool:
+    return ALLOW_UNSAFE_H3_COMPILE or str(profile).strip().lower() == "original"
+
+
+def h3_compile_control_update(profile: str):
+    allowed = h3_compile_allowed_for_profile(profile)
+    if ALLOW_UNSAFE_H3_COMPILE:
+        label = "torch.compile (experimental override enabled)"
+        info = "Compile is enabled for all H3 profiles by server override."
+    elif allowed:
+        label = "torch.compile (Original BF16)"
+        info = "Available for the official Original BF16 model."
+    else:
+        label = "torch.compile (Original BF16 only)"
+        info = (
+            "Disabled for quantized Speed/Quality H3 models because their tensor "
+            "wrappers fail full-model Dynamo tracing."
+        )
+    update = {
+        "interactive": allowed,
+        "label": label,
+        "info": info,
+    }
+    if not allowed:
+        update["value"] = False
+    return gr.update(**update)
 
 
 def api_get(path: str, **kwargs: Any) -> requests.Response:
@@ -1561,8 +1588,8 @@ def build_ref2va_graph(
     return graph.nodes
 
 
-def required_seedvr2_upscale_nodes(compile_dit: bool = False) -> set[str]:
-    nodes = {
+def required_seedvr2_upscale_nodes() -> set[str]:
+    return {
         "LoadVideo",
         "GetVideoComponents",
         "ImageScaleBy",
@@ -1579,9 +1606,6 @@ def required_seedvr2_upscale_nodes(compile_dit: bool = False) -> set[str]:
         "CreateVideo",
         "SaveVideo",
     }
-    if compile_dit:
-        nodes.add("TorchCompileModel")
-    return nodes
 
 
 def build_seedvr2_upscale_graph(
@@ -1590,7 +1614,6 @@ def build_seedvr2_upscale_graph(
     seed: int,
     models: ModelConfig,
     model_choice: str = DEFAULT_SEEDVR2_MODEL,
-    compile_dit: bool = False,
     fps: float = 24.0,
 ) -> dict[str, Any]:
     """Build ComfyUI's native one-step SeedVR2 2x workflow."""
@@ -1610,13 +1633,6 @@ def build_seedvr2_upscale_graph(
         "UNETLoader", unet_name=assets["seedvr2_dit"], weight_dtype="default"
     )
     model_ref = Graph.out(model)
-    if compile_dit:
-        compiled_model = graph.add(
-            "TorchCompileModel",
-            model=model_ref,
-            backend="inductor",
-        )
-        model_ref = Graph.out(compiled_model)
     latent = graph.add(
         "VAEEncodeTiled",
         pixels=Graph.out(prepared),
@@ -1689,9 +1705,9 @@ def build_seedvr2_upscale_graph(
     return graph.nodes
 
 
-def required_upscale_nodes(option: str, compile_dit: bool = False) -> set[str]:
+def required_upscale_nodes(option: str) -> set[str]:
     if option == SEEDVR2_UPSCALE:
-        return required_seedvr2_upscale_nodes(compile_dit)
+        return required_seedvr2_upscale_nodes()
     raise H3Error(f"Unknown AI post-processing method: {option}")
 
 
@@ -1702,7 +1718,6 @@ def build_upscale_graph(
     seed: int,
     models: ModelConfig,
     seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
-    seedvr2_compile_dit: bool = False,
     fps: float = 24.0,
 ) -> tuple[dict[str, Any], int]:
     """Build one selected AI-upscale workflow and return its sampler steps."""
@@ -1713,7 +1728,6 @@ def build_upscale_graph(
                 seed=seed,
                 models=models,
                 model_choice=seedvr2_model,
-                compile_dit=seedvr2_compile_dit,
                 fps=fps,
             ),
             1,
@@ -1807,8 +1821,6 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Merging SeedVR2 chunks"
     if name == "SeedVR2PostProcessing":
         return "Restoring SeedVR2 output"
-    if name == "TorchCompileModel" and "SeedVR2Preprocess" in workflow_classes:
-        return "Configuring compiled SeedVR2 DiT"
     if "ImageToVideo" in name or "ReferenceToVideo" in name:
         return "Encoding prompt and conditioning"
     if name in {
@@ -2394,7 +2406,6 @@ def postprocess_selected_gallery_video(
     seed: int,
     seedvr2_model: str,
     force_offload: bool,
-    seedvr2_compile_dit: bool,
     request: gr.Request,
     progress=gr.Progress(track_tqdm=False),
 ):
@@ -2421,9 +2432,7 @@ def postprocess_selected_gallery_video(
 
         models = load_model_config()
         available = set(object_info())
-        missing = required_upscale_nodes(
-            option, compile_dit=bool(seedvr2_compile_dit)
-        ) - available
+        missing = required_upscale_nodes(option) - available
         if missing:
             raise H3Error(
                 f"{option} is unavailable. Missing ComfyUI nodes: "
@@ -2450,7 +2459,6 @@ def postprocess_selected_gallery_video(
             seed=actual_seed,
             models=models,
             seedvr2_model=seedvr2_model,
-            seedvr2_compile_dit=bool(seedvr2_compile_dit),
             fps=metadata.fps,
         )
 
@@ -2680,7 +2688,6 @@ def generate(
     postprocess: str,
     upscale_force_offload: bool = False,
     seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
-    seedvr2_compile_dit: bool = False,
     progress=gr.Progress(track_tqdm=False),
 ):
     started = time.monotonic()
@@ -2760,13 +2767,10 @@ def generate(
         effective_compile, compile_note = resolve_compile_request(
             bool(compile_model), selected_model
         )
-
         info = object_info()
         available = set(info)
         if postprocess == SEEDVR2_UPSCALE:
-            missing_seedvr2_nodes = required_seedvr2_upscale_nodes(
-                bool(seedvr2_compile_dit)
-            ) - available
+            missing_seedvr2_nodes = required_seedvr2_upscale_nodes() - available
             if missing_seedvr2_nodes:
                 raise H3Error(
                     "SeedVR2 requires current native ComfyUI nodes: "
@@ -2996,7 +3000,6 @@ def generate(
                 seed=actual_seed,
                 models=models,
                 seedvr2_model=seedvr2_model,
-                seedvr2_compile_dit=bool(seedvr2_compile_dit),
             )
 
             upscale_queued_at = time.time()
@@ -3077,7 +3080,6 @@ def compact_settings_summary(
     postprocess: str,
     seedvr2_model: str,
     force_offload: bool,
-    seedvr2_compile_dit: bool,
 ) -> str:
     if generation_mode == "Turbo":
         generation_mode = f"Turbo / {turbo_variant}"
@@ -3097,8 +3099,7 @@ def compact_settings_summary(
     if postprocess == SEEDVR2_UPSCALE:
         postprocess_note += (
             f" / {seedvr2_model} / unload first: "
-            f"{'on' if force_offload else 'off'} / DiT compile: "
-            f"{'on' if seedvr2_compile_dit else 'off'}"
+            f"{'on' if force_offload else 'off'}"
         )
     return (
         "**Current setup**  \n"
@@ -3186,7 +3187,6 @@ def generate_with_ui_defaults(
         postprocess=defaults["postprocess"],
         seedvr2_model=defaults["seedvr2_model"],
         upscale_force_offload=defaults["upscale_force_offload"],
-        seedvr2_compile_dit=defaults["seedvr2_compile_dit"],
         progress=progress,
     )
     for video, status in updates:
@@ -3326,7 +3326,6 @@ def build_ui() -> gr.Blocks:
                         defaults["attention_mode"], defaults["cache_mode"],
                         defaults["postprocess"], defaults["seedvr2_model"],
                         defaults["upscale_force_offload"],
-                        defaults["seedvr2_compile_dit"],
                     )
                 )
                 output = gr.Video(label="Generated video")
@@ -3533,15 +3532,16 @@ def build_ui() -> gr.Blocks:
                 compile_model = gr.Checkbox(
                     value=defaults["compile_model"],
                     label=(
-                        "torch.compile (unsafe for quantized H3)"
-                        if not ALLOW_UNSAFE_H3_COMPILE
-                        else "torch.compile (experimental override enabled)"
+                        "torch.compile (experimental override enabled)"
+                        if ALLOW_UNSAFE_H3_COMPILE
+                        else "torch.compile (Original BF16 only)"
                     ),
-                    interactive=ALLOW_UNSAFE_H3_COMPILE,
+                    interactive=h3_compile_allowed_for_profile(
+                        defaults["model_profile"]
+                    ),
                     info=(
-                        "Disabled because NVFP4/INT8 H3 weights use tensor wrappers "
-                        "that currently fail full-model Dynamo tracing. Sol-Attn does "
-                        "not require this checkbox."
+                        "Available for Original BF16. Quantized Speed/Quality H3 "
+                        "models remain protected from full-model Dynamo tracing."
                     ),
                 )
                 gr.Markdown("### Generation post-processing")
@@ -3570,14 +3570,6 @@ def build_ui() -> gr.Blocks:
                         info=(
                             "Reduces peak VRAM at the cost of reloading H3 for "
                             "the next generation."
-                        ),
-                    )
-                    generation_seedvr2_compile_dit = gr.Checkbox(
-                        value=defaults["seedvr2_compile_dit"],
-                        label="Compile SeedVR2 DiT",
-                        info=(
-                            "Experimental opt-in for the RTX PRO 6000. The first fixed-shape "
-                            "run compiles with TorchInductor; later runs reuse the persistent cache."
                         ),
                     )
 
@@ -3652,14 +3644,6 @@ def build_ui() -> gr.Blocks:
                                     label="Unload resident models first",
                                     info="Can lower peak VRAM before SeedVR2 starts.",
                                 )
-                                gallery_seedvr2_compile_dit = gr.Checkbox(
-                                    value=defaults["seedvr2_compile_dit"],
-                                    label="Compile SeedVR2 DiT",
-                                    info=(
-                                        "Experimental. First use compiles; matching later runs "
-                                        "reuse the persistent TorchInductor cache."
-                                    ),
-                                )
                         with gr.Row():
                             gallery_post_run = gr.Button(
                                 "Post-process selected",
@@ -3691,7 +3675,6 @@ def build_ui() -> gr.Blocks:
             generation_postprocess,
             generation_seedvr2_model,
             generation_force_offload,
-            generation_seedvr2_compile_dit,
         ]
         for settings_control in settings_inputs:
             settings_control.change(
@@ -3707,6 +3690,13 @@ def build_ui() -> gr.Blocks:
                 help_text, frame_group, reference_group, generation_mode,
                 preset, steps, scheduler, cache_mode, attention_mode,
             ],
+        )
+        model_profile.change(
+            h3_compile_control_update,
+            inputs=model_profile,
+            outputs=compile_model,
+            queue=False,
+            show_progress="hidden",
         )
         gallery_postprocess.change(
             lambda value: (
@@ -3794,7 +3784,6 @@ def build_ui() -> gr.Blocks:
                 easycache_threshold, easycache_start, easycache_end, easycache_verbose,
                 compile_model, ref_size, generation_postprocess,
                 generation_force_offload, generation_seedvr2_model,
-                generation_seedvr2_compile_dit,
             ],
             outputs=[output, status],
             show_progress="minimal",
@@ -3877,7 +3866,6 @@ def build_ui() -> gr.Blocks:
                 gallery_post_seed,
                 gallery_seedvr2_model,
                 gallery_force_offload,
-                gallery_seedvr2_compile_dit,
             ],
             outputs=gallery_mutation_outputs,
             show_progress="minimal",
@@ -4204,33 +4192,6 @@ def selftest() -> None:
         node for node in seedvr2_nodes if node["class_type"] == "CreateVideo"
     )
     assert seedvr2_video["inputs"]["fps"] == 48.0
-    compiled_seedvr2_graph = build_seedvr2_upscale_graph(
-        source_video="source.mp4",
-        seed=7,
-        models=fake,
-        compile_dit=True,
-    )
-    compiled_seedvr2_nodes = list(compiled_seedvr2_graph.values())
-    compile_nodes = [
-        node for node in compiled_seedvr2_nodes
-        if node["class_type"] == "TorchCompileModel"
-    ]
-    assert len(compile_nodes) == 1
-    assert compile_nodes[0]["inputs"]["backend"] == "inductor"
-    compile_id = next(
-        node_id for node_id, node in compiled_seedvr2_graph.items()
-        if node["class_type"] == "TorchCompileModel"
-    )
-    compiled_consumers = [
-        node for node in compiled_seedvr2_nodes
-        if node["class_type"] in {"SeedVR2Conditioning", "KSampler"}
-    ]
-    assert all(node["inputs"]["model"] == [compile_id, 0] for node in compiled_consumers)
-    assert "TorchCompileModel" not in required_seedvr2_upscale_nodes()
-    assert "TorchCompileModel" in required_seedvr2_upscale_nodes(True)
-    assert node_stage(
-        "TorchCompileModel", graph_class_types(compiled_seedvr2_graph)
-    ) == "Configuring compiled SeedVR2 DiT"
     for seedvr2_choice, expected_name in fake.seedvr2_models.items():
         choice_graph = build_seedvr2_upscale_graph(
             source_video="source.mp4",
@@ -4685,8 +4646,14 @@ def selftest() -> None:
     assert len(sched_nodes) == 1
     assert sched_nodes[0]["inputs"]["steps"] == 8
     effective, reason = resolve_compile_request(True, "minimax_h3_fl2va_pruned_nvfp4.safetensors")
+    assert h3_compile_allowed_for_profile("Original") is True
+    original_compile, original_reason = resolve_compile_request(
+        True, "minimax_h3_fl2va_bf16.safetensors"
+    )
+    assert original_compile is True and original_reason is None
     if not ALLOW_UNSAFE_H3_COMPILE:
         assert effective is False and reason
+        assert h3_compile_allowed_for_profile("Quality") is False
     print(
         f"Selftest OK: {len(graph)} nodes, 5s=124 frames, "
         f"15s=362 frames, tiered resolution presets valid, Sol exact valid, "

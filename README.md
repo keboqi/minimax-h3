@@ -118,11 +118,12 @@ and requires FFmpeg on the server `PATH`.
 SeedVR2 offers **3B NVFP4 (default)**, **3B INT8**, **7B NVFP4**, and
 **7B Sharp NVFP4** model choices. Only the selected checkpoint downloads on first
 use; all choices share the same lazy FP16 SeedVR2 VAE. The native workflow uses
-1024-pixel VAE encode/decode tiles for the RTX PRO 6000 target. An experimental
-**Compile SeedVR2 DiT** switch enables TorchInductor for the one-step restoration
-model. Its first fixed-shape run compiles; matching later runs reuse an on-disk
-cache. Local launch stores that cache under `h3/torchinductor_cache`, while Modal
-stores its SM120/Torch-version namespace on the persistent `/data` volume.
+1024-pixel VAE encode/decode tiles for the RTX PRO 6000 target. SeedVR2 runs
+eagerly because compile did not improve measured performance. Main H3 generation
+exposes experimental compile for the Original BF16 profile while keeping it
+disabled for quantized Speed and Quality profiles. Its on-disk TorchInductor
+cache lives under `h3/torchinductor_cache` locally and in an SM120/Torch-version
+namespace on Modal's persistent `/data` volume.
 
 The **API** tab includes a copy-ready Python example. Its `/generate_video`
 endpoint only requires a prompt and uses the same defaults shown in the Generate
