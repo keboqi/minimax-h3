@@ -31,8 +31,6 @@ SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_REF = "4b9a7d1163348c67e7e475423f24f8b7abb23565"  # v0.2.5
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
 LARRY_TURBO_REF = "55fee864dd7b2976b1c4ce3c3d5f7968f181409f"
-FLASHVSR_REPO = "https://github.com/1038lab/ComfyUI-FlashVSR.git"
-FLASHVSR_REF = "8877fdd593ea93b27353956dc69edf423c561fee"  # v1.1.1
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -428,27 +426,6 @@ def sync_external_nodes(
     patch_larry_turbo_node(larry_turbo)
     if install_requirements and (larry_turbo / "requirements.txt").is_file():
         uv_pip("-r", str(larry_turbo / "requirements.txt"), no_deps=True)
-
-    flashvsr = comfy / "custom_nodes" / "ComfyUI-FlashVSR"
-    sync_git_repo(
-        FLASHVSR_REPO,
-        flashvsr,
-        ref=FLASHVSR_REF,
-        required_paths=("__init__.py", "AILab_FlashVSR.py"),
-    )
-    if install_requirements and (flashvsr / "requirements.txt").is_file():
-        lines = (flashvsr / "requirements.txt").read_text(encoding="utf-8").splitlines()
-        filtered, skipped = filter_pinned_requirements(lines)
-        for package, requirement in skipped:
-            print(
-                f"[h3-setup] Keeping pinned {package}; skipping FlashVSR entry: "
-                f"{requirement}",
-                flush=True,
-            )
-        requirements = flashvsr / "requirements.h3-filtered.txt"
-        requirements.write_text("\n".join(filtered) + "\n", encoding="utf-8")
-        uv_pip("-r", str(requirements), no_deps=True)
-
 
 
 def install_bundled_nodes(comfy: Path) -> None:

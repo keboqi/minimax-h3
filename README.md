@@ -8,14 +8,15 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 
 - Text/image-to-video and reference-media-to-video workflows
 - Live queue position, workflow stage, node count, overall work, and sampling schedule
-- Thumbnail gallery that loads a video player only after a generated video is selected
+- Resolution-aware thumbnail gallery that loads a video only after it is selected
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
-- Per-video LTX 2.3, SeedVR2, FlashVSR, Lanczos, and frame-interpolation tools in the gallery
+- Per-video SeedVR2 upscale and frame interpolation in the gallery
 - Selectable Larry v4-600 EMA and LightX2V v0.1 Turbo LoRAs
 - H3-native zero-copy Sol v0.6.1 sparse attention with SageAttention fallback
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Hardware-aware ComfyUI memory mode selection
+- One-click model unloading and VRAM cache release from the UI
 - Spectrum v0.2.5 as the normal-generation default and experimental Turbo option
 - FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
@@ -88,9 +89,8 @@ bash run_h3.sh
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
 Quality profile plus the shared text encoder, VAEs, and Turbo LoRAs. Speed and
 Original checkpoints download on demand the first time each workflow variant is
-selected. The LTX 2.3 and native SeedVR2 model stacks are lazy and download only
-when their post-processing option is first used. FlashVSR downloads its model
-bundle through its pinned custom node on first use.
+selected. SeedVR2 models are lazy and download only when their gallery
+post-processing option is first used.
 Later runs check remote metadata for the preloaded set and refresh only stale
 files; lazy checkpoints remain local and are fetched again if missing or incomplete.
 On Debian/Ubuntu standalone hosts, `run_h3.sh` also installs the `ffmpeg` system
@@ -104,21 +104,16 @@ The 96 GiB Modal target likewise remains GPU-only.
 
 Generate a video, open **Gallery**, select its thumbnail, and choose a method
 under **Post-process selected video**. Each run preserves the source and adds a
-new processed video to the gallery. Select **LTX 2.3 generative 2x** to run a
-native LTX encode, latent 2× upscale, and three-step refinement pass. For example,
-an H3 render at 1344×768 becomes 2688×1536. The post-process keeps H3's original
-audio stream and only refines the video. ComfyUI manages model residency by
-default. Enable **Unload resident models first** when lower peak VRAM
-is more important than avoiding an H3 model reload on the next generation.
-The LTX path carries audio through native ComfyUI video nodes and does not invoke
-the standalone FFmpeg executable. Lanczos/interpolation post-processing and
-reference-video input conversion still require FFmpeg on the server `PATH`.
-
-Select **SeedVR2 2x** for ComfyUI's native one-step restoration workflow,
-or **FlashVSR 2x** for the balanced tiled FlashVSR 1.1 workflow. Both preserve the
-generated audio and frame rate. FlashVSR requires at least 21 frames (all supported
-H3 durations satisfy this). The shared **Unload resident models first**
-option applies uniformly to LTX, FlashVSR, and SeedVR2 gallery jobs.
+new processed video to the gallery. **SeedVR2 2x** is the sole upscale option
+and uses ComfyUI's native one-step restoration workflow while preserving the
+generated audio and frame rate. SeedVR2 can also be selected under
+**Generation post-processing** to run automatically as soon as the base H3
+video finishes; both the source and upscaled results remain available. Enable
+**Unload resident models first** in Gallery, or **Unload H3 models before
+SeedVR2** in Generate, when
+lower peak VRAM is more important than avoiding an H3 model reload on the next
+generation. **48 fps interpolation** remains available as a non-upscale option
+and requires FFmpeg on the server `PATH`.
 
 SeedVR2 offers **3B NVFP4**, **3B INT8 (default)**, **7B NVFP4**, and
 **7B Sharp NVFP4** model choices. Only the selected checkpoint downloads on first

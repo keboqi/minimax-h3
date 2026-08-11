@@ -52,8 +52,6 @@ SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_REF = "4b9a7d1163348c67e7e475423f24f8b7abb23565"  # v0.2.5
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
 LARRY_TURBO_REF = "55fee864dd7b2976b1c4ce3c3d5f7968f181409f"
-FLASHVSR_REPO = "https://github.com/1038lab/ComfyUI-FlashVSR.git"
-FLASHVSR_REF = "8877fdd593ea93b27353956dc69edf423c561fee"  # v1.1.1
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 APP = os.getenv("H3_MODAL_APP_NAME", "minimax-h3")
@@ -187,10 +185,6 @@ def build(revision: str) -> None:
     patch_larry_turbo_node(larry_turbo_dir)
     _print_git_revision(larry_turbo_dir)
 
-    flashvsr_dir = Path(COMFY) / "custom_nodes" / "ComfyUI-FlashVSR"
-    _clone(FLASHVSR_REPO, flashvsr_dir, ref=FLASHVSR_REF)
-    _print_git_revision(flashvsr_dir)
-
     # ComfyUI currently lists torch/torchvision/torchaudio unpinned.
     # Filter those entries so image build cannot replace the pinned cu130 ABI.
     comfy_requirements = Path(COMFY) / "requirements.txt"
@@ -316,27 +310,6 @@ def build(revision: str) -> None:
             "-r",
             sol_requirements,
         )
-
-    flashvsr_requirements = flashvsr_dir / "requirements.txt"
-    if flashvsr_requirements.is_file():
-        filtered_flashvsr = Path("/tmp/flashvsr-requirements-no-abi.txt")
-        flashvsr_lines, skipped = filter_pinned_requirements(
-            flashvsr_requirements.read_text(encoding="utf-8").splitlines()
-        )
-        for package, requirement in skipped:
-            print(
-                f"[modal-h3] Keeping pinned {package}; skipping FlashVSR entry: "
-                f"{requirement}",
-                flush=True,
-            )
-        filtered_flashvsr.write_text(
-            "\n".join(flashvsr_lines) + "\n", encoding="utf-8"
-        )
-        _run(
-            "uv", "pip", "install", "--system", "--no-deps", "-r",
-            filtered_flashvsr,
-        )
-
 
 image = (
     modal.Image.from_registry(
