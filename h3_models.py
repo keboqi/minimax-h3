@@ -160,7 +160,7 @@ SEEDVR2_MODEL_CHOICES = {
     "7B NVFP4": "seedvr2_7b_nvfp4",
     "7B Sharp NVFP4": "seedvr2_7b_sharp_nvfp4",
 }
-DEFAULT_SEEDVR2_MODEL = "3B NVFP4"
+DEFAULT_SEEDVR2_MODEL = "7B NVFP4"
 SEEDVR2_UPSCALE_MODEL_KEYS = (
     *SEEDVR2_MODEL_CHOICES.values(),
     "seedvr2_vae",
@@ -591,7 +591,7 @@ def selftest() -> None:
     assert cfg["turbo_ref_lora"] == cfg["turbo_lora"]
     assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"
     assert cfg["larry_turbo_ref_lora"] == cfg["larry_turbo_lora"]
-    assert cfg["seedvr2_dit"] == "seedvr2_3b_nvfp4.safetensors"
+    assert cfg["seedvr2_dit"] == "seedvr2_7b_nvfp4.safetensors"
     assert cfg["seedvr2_models"] == {
         "3B NVFP4": "seedvr2_3b_nvfp4.safetensors",
         "3B INT8": "seedvr2_3b_int8_convrot.safetensors",

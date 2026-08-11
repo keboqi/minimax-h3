@@ -726,9 +726,17 @@ def is_quantized_h3_model(filename: str) -> bool:
 def resolve_compile_request(
     requested: bool,
     model_filename: str,
+    use_turbo: bool = False,
 ) -> tuple[bool, str | None]:
     if not requested:
         return False, None
+    if use_turbo:
+        return (
+            False,
+            "torch.compile was automatically disabled for Turbo because the "
+            "Turbo LoRA/AdaLN wrappers fail Dynamo fake-tensor tracing. Test "
+            "compile with Original BF16 in Normal generation mode.",
+        )
     if is_quantized_h3_model(model_filename) and not ALLOW_UNSAFE_H3_COMPILE:
         return (
             False,
@@ -740,32 +748,42 @@ def resolve_compile_request(
     return True, None
 
 
-def h3_compile_allowed_for_profile(profile: str) -> bool:
-    return ALLOW_UNSAFE_H3_COMPILE or str(profile).strip().lower() == "original"
-
-
-def h3_compile_control_update(profile: str):
-    allowed = h3_compile_allowed_for_profile(profile)
-    if ALLOW_UNSAFE_H3_COMPILE:
+def h3_compile_control_config(
+    profile: str,
+    generation_mode: str,
+) -> dict[str, Any]:
+    is_turbo = str(generation_mode).strip().lower() == "turbo"
+    is_original = str(profile).strip().lower() == "original"
+    allowed = not is_turbo and (
+        ALLOW_UNSAFE_H3_COMPILE
+        or is_original
+    )
+    auto_enabled = is_original and not is_turbo
+    if is_turbo:
+        label = "torch.compile (Normal generation only)"
+        info = "Disabled because Turbo LoRA/AdaLN wrappers fail Dynamo tracing."
+    elif ALLOW_UNSAFE_H3_COMPILE:
         label = "torch.compile (experimental override enabled)"
         info = "Compile is enabled for all H3 profiles by server override."
     elif allowed:
         label = "torch.compile (Original BF16)"
-        info = "Available for the official Original BF16 model."
+        info = "Automatically enabled for Original BF16 in Normal mode."
     else:
         label = "torch.compile (Original BF16 only)"
         info = (
             "Disabled for quantized Speed/Quality H3 models because their tensor "
             "wrappers fail full-model Dynamo tracing."
         )
-    update = {
+    return {
+        "value": auto_enabled,
         "interactive": allowed,
         "label": label,
         "info": info,
     }
-    if not allowed:
-        update["value"] = False
-    return gr.update(**update)
+
+
+def h3_compile_control_update(profile: str, generation_mode: str):
+    return gr.update(**h3_compile_control_config(profile, generation_mode))
 
 
 def api_get(path: str, **kwargs: Any) -> requests.Response:
@@ -2765,7 +2783,7 @@ def generate(
             )
 
         effective_compile, compile_note = resolve_compile_request(
-            bool(compile_model), selected_model
+            bool(compile_model), selected_model, use_turbo=use_turbo
         )
         info = object_info()
         available = set(info)
@@ -3530,19 +3548,9 @@ def build_ui() -> gr.Blocks:
                     )
 
                 compile_model = gr.Checkbox(
-                    value=defaults["compile_model"],
-                    label=(
-                        "torch.compile (experimental override enabled)"
-                        if ALLOW_UNSAFE_H3_COMPILE
-                        else "torch.compile (Original BF16 only)"
-                    ),
-                    interactive=h3_compile_allowed_for_profile(
-                        defaults["model_profile"]
-                    ),
-                    info=(
-                        "Available for Original BF16. Quantized Speed/Quality H3 "
-                        "models remain protected from full-model Dynamo tracing."
-                    ),
+                    **h3_compile_control_config(
+                        defaults["model_profile"], defaults["generation_mode"]
+                    )
                 )
                 gr.Markdown("### Generation post-processing")
                 generation_postprocess = gr.Dropdown(
@@ -3693,7 +3701,7 @@ def build_ui() -> gr.Blocks:
         )
         model_profile.change(
             h3_compile_control_update,
-            inputs=model_profile,
+            inputs=[model_profile, generation_mode],
             outputs=compile_model,
             queue=False,
             show_progress="hidden",
@@ -3722,6 +3730,13 @@ def build_ui() -> gr.Blocks:
             generation_mode_defaults,
             inputs=[generation_mode, turbo_variant],
             outputs=[preset, steps, scheduler, cache_mode, attention_mode],
+            queue=False,
+            show_progress="hidden",
+        )
+        generation_mode.change(
+            h3_compile_control_update,
+            inputs=[model_profile, generation_mode],
+            outputs=compile_model,
             queue=False,
             show_progress="hidden",
         )
@@ -3977,7 +3992,7 @@ def selftest() -> None:
         larry_turbo_source="test",
         larry_turbo_ref_lora="minimax_h3_turbo_v4_step600_ema.safetensors",
         larry_turbo_ref_source="shared-fl2va-test",
-        seedvr2_dit="seedvr2_3b_nvfp4.safetensors",
+        seedvr2_dit="seedvr2_7b_nvfp4.safetensors",
         seedvr2_dit_source="test",
         seedvr2_models={
             "3B NVFP4": "seedvr2_3b_nvfp4.safetensors",
@@ -4646,14 +4661,25 @@ def selftest() -> None:
     assert len(sched_nodes) == 1
     assert sched_nodes[0]["inputs"]["steps"] == 8
     effective, reason = resolve_compile_request(True, "minimax_h3_fl2va_pruned_nvfp4.safetensors")
-    assert h3_compile_allowed_for_profile("Original") is True
+    original_normal_control = h3_compile_control_config("Original", "Normal")
+    assert original_normal_control["interactive"] is True
+    assert original_normal_control["value"] is True
+    original_turbo_control = h3_compile_control_config("Original", "Turbo")
+    assert original_turbo_control["interactive"] is False
+    assert original_turbo_control["value"] is False
+    quality_normal_control = h3_compile_control_config("Quality", "Normal")
+    assert quality_normal_control["value"] is False
     original_compile, original_reason = resolve_compile_request(
         True, "minimax_h3_fl2va_bf16.safetensors"
     )
     assert original_compile is True and original_reason is None
+    turbo_compile, turbo_reason = resolve_compile_request(
+        True, "minimax_h3_fl2va_bf16.safetensors", use_turbo=True
+    )
+    assert turbo_compile is False and turbo_reason and "Turbo" in turbo_reason
     if not ALLOW_UNSAFE_H3_COMPILE:
         assert effective is False and reason
-        assert h3_compile_allowed_for_profile("Quality") is False
+        assert quality_normal_control["interactive"] is False
     print(
         f"Selftest OK: {len(graph)} nodes, 5s=124 frames, "
         f"15s=362 frames, tiered resolution presets valid, Sol exact valid, "
