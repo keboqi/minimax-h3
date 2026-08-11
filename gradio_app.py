@@ -75,7 +75,6 @@ SERVER_DENSE_ATTENTION_BACKEND = os.getenv(
     "SERVER_DENSE_ATTENTION_BACKEND", "pytorch"
 ).lower()
 SERVER_MEMORY_PROFILE = os.getenv("SERVER_MEMORY_PROFILE", "unknown").lower()
-ALLOW_UNSAFE_H3_COMPILE = os.getenv("ALLOW_UNSAFE_H3_COMPILE", "0") == "1"
 AUTO_SOL_TOKEN_THRESHOLD = 8_192
 MAX_REFERENCE_IMAGES = 9
 MAX_REFERENCE_VIDEOS = 3
@@ -136,7 +135,6 @@ UI_DEFAULTS = {
     "easycache_start": 0.15,
     "easycache_end": 0.85,
     "easycache_verbose": False,
-    "compile_model": False,
     "ref_image_size": "match",
     "postprocess": "None",
     "seedvr2_model": DEFAULT_SEEDVR2_MODEL,
@@ -209,10 +207,10 @@ RESOLUTION_TIERS: dict[str, dict[str, tuple[int, int]]] = {
     "large": LARGE_RESOLUTIONS,
 }
 
-SAMPLING_PRESETS: dict[str, tuple[int, bool, float, str, str, str, int]] = {
-    "Quality": (20, False, 0.8, "exact", "beta", "exact_kv_and_rows", 1),
-    "Balanced": (18, False, 1.0, "diag", "simple", "exact_kv", 1),
-    "Fast": (15, False, 1.2, "diag", "simple", "off", 1),
+SAMPLING_PRESETS: dict[str, tuple[int, float, str, str, str, int]] = {
+    "Quality": (20, 0.8, "exact", "beta", "exact_kv_and_rows", 1),
+    "Balanced": (18, 1.0, "diag", "simple", "exact_kv", 1),
+    "Fast": (15, 1.2, "diag", "simple", "off", 1),
 }
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "60"))
 GENERATION_TIMEOUT = float(os.getenv("GENERATION_TIMEOUT", "10800"))
@@ -715,77 +713,6 @@ def ensure_seedvr2_upscale_models(
     return True
 
 
-def is_quantized_h3_model(filename: str) -> bool:
-    name = filename.lower()
-    quantized_markers = (
-        "nvfp4", "int8", "convrot", "fp8", "awq", "int4", "w4a",
-    )
-    return any(marker in name for marker in quantized_markers)
-
-
-def resolve_compile_request(
-    requested: bool,
-    model_filename: str,
-    use_turbo: bool = False,
-) -> tuple[bool, str | None]:
-    if not requested:
-        return False, None
-    if use_turbo:
-        return (
-            False,
-            "torch.compile was automatically disabled for Turbo because the "
-            "Turbo LoRA/AdaLN wrappers fail Dynamo fake-tensor tracing. Test "
-            "compile with Original BF16 in Normal generation mode.",
-        )
-    if is_quantized_h3_model(model_filename) and not ALLOW_UNSAFE_H3_COMPILE:
-        return (
-            False,
-            "torch.compile was automatically disabled because the selected "
-            f"H3 model is quantized ({model_filename}). Full-model Dynamo "
-            "capture currently fails on ComfyUI's quantized tensor wrappers. "
-            "Sol-Attn remains enabled independently.",
-        )
-    return True, None
-
-
-def h3_compile_control_config(
-    profile: str,
-    generation_mode: str,
-) -> dict[str, Any]:
-    is_turbo = str(generation_mode).strip().lower() == "turbo"
-    is_original = str(profile).strip().lower() == "original"
-    allowed = not is_turbo and (
-        ALLOW_UNSAFE_H3_COMPILE
-        or is_original
-    )
-    auto_enabled = is_original and not is_turbo
-    if is_turbo:
-        label = "torch.compile (Normal generation only)"
-        info = "Disabled because Turbo LoRA/AdaLN wrappers fail Dynamo tracing."
-    elif ALLOW_UNSAFE_H3_COMPILE:
-        label = "torch.compile (experimental override enabled)"
-        info = "Compile is enabled for all H3 profiles by server override."
-    elif allowed:
-        label = "torch.compile (Original BF16)"
-        info = "Automatically enabled for Original BF16 in Normal mode."
-    else:
-        label = "torch.compile (Original BF16 only)"
-        info = (
-            "Disabled for quantized Speed/Quality H3 models because their tensor "
-            "wrappers fail full-model Dynamo tracing."
-        )
-    return {
-        "value": auto_enabled,
-        "interactive": allowed,
-        "label": label,
-        "info": info,
-    }
-
-
-def h3_compile_control_update(profile: str, generation_mode: str):
-    return gr.update(**h3_compile_control_config(profile, generation_mode))
-
-
 def api_get(path: str, **kwargs: Any) -> requests.Response:
     response = HTTP.get(f"{COMFY_URL}{path}", timeout=REQUEST_TIMEOUT, **kwargs)
     response.raise_for_status()
@@ -1187,7 +1114,6 @@ def add_model_stack(
     easycache_start: float,
     easycache_end: float,
     easycache_verbose: bool,
-    compile_model: bool,
     available_nodes: set[str],
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     unet = graph.add("UNETLoader", unet_name=model_name, weight_dtype="default")
@@ -1316,12 +1242,6 @@ def add_model_stack(
         )
         model_ref = Graph.out(cache)
 
-    if compile_model:
-        if "TorchCompileModel" not in available_nodes:
-            raise H3Error("TorchCompileModel is unavailable; update ComfyUI.")
-        compiled = graph.add("TorchCompileModel", model=model_ref, backend="inductor")
-        model_ref = Graph.out(compiled)
-
     clip = graph.add(
         "CLIPLoader",
         clip_name=models.text_encoder,
@@ -1427,7 +1347,6 @@ def build_fl2va_graph(
     easycache_start: float,
     easycache_end: float,
     easycache_verbose: bool,
-    compile_model: bool,
     model_name: str,
     models: ModelConfig,
     available_nodes: set[str],
@@ -1458,7 +1377,6 @@ def build_fl2va_graph(
         easycache_start=easycache_start,
         easycache_end=easycache_end,
         easycache_verbose=easycache_verbose,
-        compile_model=compile_model,
         available_nodes=available_nodes,
     )
 
@@ -1528,7 +1446,6 @@ def build_ref2va_graph(
     easycache_start: float,
     easycache_end: float,
     easycache_verbose: bool,
-    compile_model: bool,
     model_name: str,
     models: ModelConfig,
     available_nodes: set[str],
@@ -1559,7 +1476,6 @@ def build_ref2va_graph(
         easycache_start=easycache_start,
         easycache_end=easycache_end,
         easycache_verbose=easycache_verbose,
-        compile_model=compile_model,
         available_nodes=available_nodes,
     )
 
@@ -1757,7 +1673,6 @@ def required_nodes_for(
     mode: str,
     use_sol: bool,
     cache_mode: str,
-    compile_model: bool,
     use_turbo: bool = False,
     turbo_variant: str = LIGHTX2V_TURBO,
     model_filename: str = "",
@@ -1786,8 +1701,6 @@ def required_nodes_for(
         common.add("SpectrumApplyMiniMaxH3")
     elif str(cache_mode).strip().lower() == "easycache":
         common.add("EasyCache")
-    if compile_model:
-        common.add("TorchCompileModel")
     return common
 
 
@@ -1842,7 +1755,7 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
     if "ImageToVideo" in name or "ReferenceToVideo" in name:
         return "Encoding prompt and conditioning"
     if name in {
-        "TorchCompileModel", SOL_ATTENTION_NODE, FUSED_MODULATION_NODE,
+        SOL_ATTENTION_NODE, FUSED_MODULATION_NODE,
         CHUNK_FEED_FORWARD_NODE, "SpectrumApplyMiniMaxH3",
         "H3FirstBlockCache", "EasyCache",
     }:
@@ -2701,7 +2614,6 @@ def generate(
     easycache_start: float,
     easycache_end: float,
     easycache_verbose: bool,
-    compile_model: bool,
     ref_image_size: str,
     postprocess: str,
     upscale_force_offload: bool = False,
@@ -2782,9 +2694,6 @@ def generate(
                 "Use Generation=Turbo for lower-step generation."
             )
 
-        effective_compile, compile_note = resolve_compile_request(
-            bool(compile_model), selected_model, use_turbo=use_turbo
-        )
         info = object_info()
         available = set(info)
         if postprocess == SEEDVR2_UPSCALE:
@@ -2806,7 +2715,6 @@ def generate(
             mode,
             effective_sol,
             effective_cache_mode,
-            effective_compile,
             use_turbo=use_turbo,
             turbo_variant=selected_turbo,
             model_filename=selected_model,
@@ -2864,7 +2772,7 @@ def generate(
                 easycache_start=float(easycache_start),
                 easycache_end=float(easycache_end),
                 easycache_verbose=bool(easycache_verbose),
-                compile_model=effective_compile, model_name=selected_model,
+                model_name=selected_model,
                 models=models, available_nodes=available,
             )
         else:
@@ -2891,7 +2799,7 @@ def generate(
                 easycache_start=float(easycache_start),
                 easycache_end=float(easycache_end),
                 easycache_verbose=bool(easycache_verbose),
-                compile_model=effective_compile, model_name=selected_model,
+                model_name=selected_model,
                 models=models, available_nodes=available,
             )
 
@@ -2939,11 +2847,8 @@ def generate(
             f"model {selected_label} · {effective_steps} steps/{effective_scheduler} · "
             f"attention {sol_status} ({sol_reason}; ~{packed_tokens:,} target tokens) · "
             f"dense-backend {SERVER_DENSE_ATTENTION_BACKEND} · "
-            f"cache {cache_status} · "
-            f"compile {'on' if effective_compile else 'off'}"
+            f"cache {cache_status}"
         )
-        if compile_note:
-            queued_status += f"\n\nCompatibility notice: {compile_note}"
         if cache_note:
             queued_status += f"\n\nAcceleration notice: {cache_note}"
         if generation_note:
@@ -3200,7 +3105,6 @@ def generate_with_ui_defaults(
         easycache_start=defaults["easycache_start"],
         easycache_end=defaults["easycache_end"],
         easycache_verbose=defaults["easycache_verbose"],
-        compile_model=defaults["compile_model"],
         ref_image_size=defaults["ref_image_size"],
         postprocess=defaults["postprocess"],
         seedvr2_model=defaults["seedvr2_model"],
@@ -3547,11 +3451,6 @@ def build_ui() -> gr.Blocks:
                         info="Logs skipped-step counts and estimated speedup in ComfyUI.",
                     )
 
-                compile_model = gr.Checkbox(
-                    **h3_compile_control_config(
-                        defaults["model_profile"], defaults["generation_mode"]
-                    )
-                )
                 gr.Markdown("### Generation post-processing")
                 generation_postprocess = gr.Dropdown(
                     choices=GENERATION_POSTPROCESS_OPTIONS,
@@ -3699,13 +3598,6 @@ def build_ui() -> gr.Blocks:
                 preset, steps, scheduler, cache_mode, attention_mode,
             ],
         )
-        model_profile.change(
-            h3_compile_control_update,
-            inputs=[model_profile, generation_mode],
-            outputs=compile_model,
-            queue=False,
-            show_progress="hidden",
-        )
         gallery_postprocess.change(
             lambda value: (
                 gr.update(visible=value in COMFY_UPSCALE_OPTIONS),
@@ -3733,13 +3625,6 @@ def build_ui() -> gr.Blocks:
             queue=False,
             show_progress="hidden",
         )
-        generation_mode.change(
-            h3_compile_control_update,
-            inputs=[model_profile, generation_mode],
-            outputs=compile_model,
-            queue=False,
-            show_progress="hidden",
-        )
         turbo_variant.change(
             turbo_variant_defaults,
             inputs=[turbo_variant, generation_mode],
@@ -3751,7 +3636,7 @@ def build_ui() -> gr.Blocks:
             preset_values,
             inputs=preset,
             outputs=[
-                steps, compile_model, sol_tau, sol_thresh_type, scheduler,
+                steps, sol_tau, sol_thresh_type, scheduler,
                 sol_exact_mode, sol_dense_steps,
             ],
         )
@@ -3797,7 +3682,7 @@ def build_ui() -> gr.Blocks:
                 cache_mode, fbcache_preset, fbcache_threshold, fbcache_start,
                 fbcache_end, fbcache_max_hits, fbcache_temporal_guard,
                 easycache_threshold, easycache_start, easycache_end, easycache_verbose,
-                compile_model, ref_size, generation_postprocess,
+                ref_size, generation_postprocess,
                 generation_force_offload, generation_seedvr2_model,
             ],
             outputs=[output, status],
@@ -4036,7 +3921,6 @@ def selftest() -> None:
         easycache_start=0.15,
         easycache_end=0.85,
         easycache_verbose=False,
-        compile_model=True,
         model_name=fake.profile("speed").fl2va,
         models=fake, available_nodes=available,
     )
@@ -4049,7 +3933,6 @@ def selftest() -> None:
         FUSED_MODULATION_NODE,
         "H3FirstBlockCache",
         CORE_LORA_LOADER_NODE,
-        "TorchCompileModel",
     }
     missing = expected - classes
     if missing:
@@ -4129,7 +4012,6 @@ def selftest() -> None:
         easycache_start=0.15,
         easycache_end=0.85,
         easycache_verbose=False,
-        compile_model=False,
         available_nodes=available,
     )
     spectrum_id = next(
@@ -4231,6 +4113,7 @@ def selftest() -> None:
     assert preset_values("Quality")[0] == 20
     assert preset_values("Balanced")[0] == 18
     assert preset_values("Fast")[0] == 15
+    assert all(len(values) == 6 for values in SAMPLING_PRESETS.values())
     assert preset_values("unknown") == preset_values("Balanced")
     assert UI_DEFAULTS["steps"] == turbo_steps_for(UI_DEFAULTS["turbo_variant"])
     assert UI_DEFAULTS["width"] == 864 and UI_DEFAULTS["height"] == 480
@@ -4495,7 +4378,6 @@ def selftest() -> None:
         easycache_start=0.15,
         easycache_end=0.85,
         easycache_verbose=False,
-        compile_model=False,
         model_name=fake.profile("quality").fl2va,
         models=fake, available_nodes=available,
     )
@@ -4565,7 +4447,7 @@ def selftest() -> None:
         fbcache_threshold=0.10, fbcache_start=0.10, fbcache_end=0.95,
         fbcache_max_hits=2, fbcache_temporal_guard=True,
         easycache_threshold=0.10, easycache_start=0.15,
-        easycache_end=0.85, easycache_verbose=False, compile_model=False,
+        easycache_end=0.85, easycache_verbose=False,
         available_nodes=available,
     )
     finish_sampling(
@@ -4639,7 +4521,6 @@ def selftest() -> None:
         easycache_start=0.15,
         easycache_end=0.85,
         easycache_verbose=False,
-        compile_model=False,
         available_nodes=available,
     )
     ref_unet = next(
@@ -4660,26 +4541,6 @@ def selftest() -> None:
     ]
     assert len(sched_nodes) == 1
     assert sched_nodes[0]["inputs"]["steps"] == 8
-    effective, reason = resolve_compile_request(True, "minimax_h3_fl2va_pruned_nvfp4.safetensors")
-    original_normal_control = h3_compile_control_config("Original", "Normal")
-    assert original_normal_control["interactive"] is True
-    assert original_normal_control["value"] is True
-    original_turbo_control = h3_compile_control_config("Original", "Turbo")
-    assert original_turbo_control["interactive"] is False
-    assert original_turbo_control["value"] is False
-    quality_normal_control = h3_compile_control_config("Quality", "Normal")
-    assert quality_normal_control["value"] is False
-    original_compile, original_reason = resolve_compile_request(
-        True, "minimax_h3_fl2va_bf16.safetensors"
-    )
-    assert original_compile is True and original_reason is None
-    turbo_compile, turbo_reason = resolve_compile_request(
-        True, "minimax_h3_fl2va_bf16.safetensors", use_turbo=True
-    )
-    assert turbo_compile is False and turbo_reason and "Turbo" in turbo_reason
-    if not ALLOW_UNSAFE_H3_COMPILE:
-        assert effective is False and reason
-        assert quality_normal_control["interactive"] is False
     print(
         f"Selftest OK: {len(graph)} nodes, 5s=124 frames, "
         f"15s=362 frames, tiered resolution presets valid, Sol exact valid, "
@@ -4688,7 +4549,7 @@ def selftest() -> None:
         f"LightX fused modulation + Larry compatibility + ConvRot FFN chunking valid, "
         f"Spectrum v0.2.5 Turbo composition + block-cache guard valid, "
         f"selectable Larry/LightX2V Turbo on "
-        f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, compile guard active, "
+        f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, "
         f"SaveVideo codec API valid, prompt API download URL valid, "
         f"gallery resolution/fallback/deletion guards + VRAM unload valid, "
         f"/comfyui proxy rewrites valid"

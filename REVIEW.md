@@ -204,7 +204,8 @@ runtime fixes that have already been validated in production-style testing:
   LightX2V 4), while the resulting step control remains user-editable.
 - FirstBlockCache must precede Sol-Attn.
 - Turbo defaults to Spectrum; other block caches remain disabled.
-- quantized H3 full-model torch.compile stays blocked.
+- H3 full-model compile is omitted because it conflicts with the active
+  attention and cache optimizations without improving measured performance.
 - SaveVideo codec must be the literal `auto` string.
 
 A larger rewrite of that path would create more regression risk than immediate
