@@ -139,11 +139,29 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
         "LTX 2.3 spatial upscaler x2 v1.1 · lazy upscale asset",
     ),
-    "seedvr2_dit": ModelSpec(
+    "seedvr2_3b_nvfp4": ModelSpec(
+        SEEDVR2_REPO,
+        "diffusion_models",
+        "diffusion_models/seedvr2_3b_nvfp4.safetensors",
+        "SeedVR2 3B NVFP4 · lazy native 2x upscale model",
+    ),
+    "seedvr2_3b_int8": ModelSpec(
         SEEDVR2_REPO,
         "diffusion_models",
         "diffusion_models/seedvr2_3b_int8_convrot.safetensors",
         "SeedVR2 3B INT8 ConvRot · lazy native 2x upscale model",
+    ),
+    "seedvr2_7b_nvfp4": ModelSpec(
+        SEEDVR2_REPO,
+        "diffusion_models",
+        "diffusion_models/seedvr2_7b_nvfp4.safetensors",
+        "SeedVR2 7B NVFP4 · lazy native 2x upscale model",
+    ),
+    "seedvr2_7b_sharp_nvfp4": ModelSpec(
+        SEEDVR2_REPO,
+        "diffusion_models",
+        "diffusion_models/seedvr2_7b_sharp_nvfp4.safetensors",
+        "SeedVR2 7B Sharp NVFP4 · lazy native 2x upscale model",
     ),
     "seedvr2_vae": ModelSpec(
         SEEDVR2_REPO,
@@ -173,7 +191,17 @@ LTX_UPSCALE_MODEL_KEYS = (
     "ltx_text_encoder",
     "ltx_spatial_upscaler",
 )
-SEEDVR2_UPSCALE_MODEL_KEYS = ("seedvr2_dit", "seedvr2_vae")
+SEEDVR2_MODEL_CHOICES = {
+    "3B NVFP4": "seedvr2_3b_nvfp4",
+    "3B INT8 (default)": "seedvr2_3b_int8",
+    "7B NVFP4": "seedvr2_7b_nvfp4",
+    "7B Sharp NVFP4": "seedvr2_7b_sharp_nvfp4",
+}
+DEFAULT_SEEDVR2_MODEL = "3B INT8 (default)"
+SEEDVR2_UPSCALE_MODEL_KEYS = (
+    *SEEDVR2_MODEL_CHOICES.values(),
+    "seedvr2_vae",
+)
 LAZY_POSTPROCESS_MODEL_KEYS = (
     *LTX_UPSCALE_MODEL_KEYS,
     *SEEDVR2_UPSCALE_MODEL_KEYS,
@@ -391,11 +419,14 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     ltx_distilled_lora = MODEL_SPECS["ltx_distilled_lora"]
     ltx_text_encoder = MODEL_SPECS["ltx_text_encoder"]
     ltx_spatial_upscaler = MODEL_SPECS["ltx_spatial_upscaler"]
-    seedvr2_dit = MODEL_SPECS["seedvr2_dit"]
     seedvr2_vae = MODEL_SPECS["seedvr2_vae"]
+    seedvr2_models = {
+        label: MODEL_SPECS[key].local_name
+        for label, key in SEEDVR2_MODEL_CHOICES.items()
+    }
 
     return {
-        "schema_version": 7,
+        "schema_version": 8,
         "default_profile": "quality",
         "profiles": {
             profile: _profile_config(profile)
@@ -423,8 +454,12 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         "ltx_text_encoder_source": ltx_text_encoder.source,
         "ltx_spatial_upscaler": ltx_spatial_upscaler.local_name,
         "ltx_spatial_upscaler_source": ltx_spatial_upscaler.source,
-        "seedvr2_dit": seedvr2_dit.local_name,
-        "seedvr2_dit_source": seedvr2_dit.source,
+        # Retain the original fields for compatibility with older app code.
+        "seedvr2_dit": seedvr2_models[DEFAULT_SEEDVR2_MODEL],
+        "seedvr2_dit_source": MODEL_SPECS[
+            SEEDVR2_MODEL_CHOICES[DEFAULT_SEEDVR2_MODEL]
+        ].source,
+        "seedvr2_models": seedvr2_models,
         "seedvr2_vae": seedvr2_vae.local_name,
         "seedvr2_vae_source": seedvr2_vae.source,
         "turbo_supported_profiles": list(PROFILE_MODEL_KEYS),
@@ -582,7 +617,10 @@ def selftest() -> None:
         "ltx_distilled_lora",
         "ltx_text_encoder",
         "ltx_spatial_upscaler",
-        "seedvr2_dit",
+        "seedvr2_3b_nvfp4",
+        "seedvr2_3b_int8",
+        "seedvr2_7b_nvfp4",
+        "seedvr2_7b_sharp_nvfp4",
         "seedvr2_vae",
     }
 
@@ -593,7 +631,7 @@ def selftest() -> None:
     assert set(LTX_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 7
+    assert cfg["schema_version"] == 8
     assert cfg["default_profile"] == "quality"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
@@ -614,6 +652,12 @@ def selftest() -> None:
         "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
     )
     assert cfg["seedvr2_dit"] == "seedvr2_3b_int8_convrot.safetensors"
+    assert cfg["seedvr2_models"] == {
+        "3B NVFP4": "seedvr2_3b_nvfp4.safetensors",
+        "3B INT8 (default)": "seedvr2_3b_int8_convrot.safetensors",
+        "7B NVFP4": "seedvr2_7b_nvfp4.safetensors",
+        "7B Sharp NVFP4": "seedvr2_7b_sharp_nvfp4.safetensors",
+    }
     assert cfg["seedvr2_vae"] == "seedvr2_ema_vae_fp16.safetensors"
     assert cfg["turbo_supported_profiles"] == ["speed", "quality", "original"]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]

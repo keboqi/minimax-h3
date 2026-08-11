@@ -32,11 +32,12 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from h3_models import (
+    DEFAULT_SEEDVR2_MODEL,
     LTX_UPSCALE_MODEL_KEYS,
     MIN_VALID_MODEL_BYTES,
     MODEL_SPECS,
     PROFILE_LABELS,
-    SEEDVR2_UPSCALE_MODEL_KEYS,
+    SEEDVR2_MODEL_CHOICES,
     sync_models,
 )
 
@@ -141,6 +142,7 @@ UI_DEFAULTS = {
     "compile_model": False,
     "ref_image_size": "match",
     "postprocess": "None",
+    "seedvr2_model": DEFAULT_SEEDVR2_MODEL,
     "ltx_force_offload": False,
 }
 SPECTRUM_DEFAULT_INPUTS = {
@@ -545,6 +547,7 @@ class ModelConfig:
     ltx_spatial_upscaler_source: str = "unknown"
     seedvr2_dit: str | None = None
     seedvr2_dit_source: str = "unknown"
+    seedvr2_models: dict[str, str] | None = None
     seedvr2_vae: str | None = None
     seedvr2_vae_source: str = "unknown"
 
@@ -620,6 +623,7 @@ def load_model_config() -> ModelConfig:
         ltx_spatial_upscaler_source=data.get("ltx_spatial_upscaler_source", "unknown"),
         seedvr2_dit=data.get("seedvr2_dit"),
         seedvr2_dit_source=data.get("seedvr2_dit_source", "unknown"),
+        seedvr2_models=data.get("seedvr2_models"),
         seedvr2_vae=data.get("seedvr2_vae"),
         seedvr2_vae_source=data.get("seedvr2_vae_source", "unknown"),
     )
@@ -702,11 +706,18 @@ def ensure_ltx_upscale_models(models: ModelConfig) -> bool:
     return True
 
 
-def seedvr2_upscale_model_names(models: ModelConfig) -> dict[str, str]:
-    configured = {
-        "seedvr2_dit": models.seedvr2_dit,
-        "seedvr2_vae": models.seedvr2_vae,
-    }
+def seedvr2_upscale_model_names(
+    models: ModelConfig,
+    model_choice: str,
+) -> dict[str, str]:
+    choice = str(model_choice)
+    if choice not in SEEDVR2_MODEL_CHOICES:
+        raise H3Error(f"Unknown SeedVR2 model: {model_choice}")
+    configured_models = models.seedvr2_models or {}
+    selected = configured_models.get(choice)
+    if selected is None and choice == DEFAULT_SEEDVR2_MODEL:
+        selected = models.seedvr2_dit
+    configured = {"seedvr2_dit": selected, "seedvr2_vae": models.seedvr2_vae}
     missing_config = [key for key, value in configured.items() if not value]
     if missing_config:
         raise H3Error(
@@ -717,12 +728,22 @@ def seedvr2_upscale_model_names(models: ModelConfig) -> dict[str, str]:
     return {key: str(value) for key, value in configured.items()}
 
 
-def ensure_seedvr2_upscale_models(models: ModelConfig) -> bool:
-    configured = seedvr2_upscale_model_names(models)
+def ensure_seedvr2_upscale_models(
+    models: ModelConfig,
+    model_choice: str,
+) -> bool:
+    configured = seedvr2_upscale_model_names(models, model_choice)
+    selected_key = SEEDVR2_MODEL_CHOICES[str(model_choice)]
+    assets = (
+        (selected_key, configured["seedvr2_dit"]),
+        ("seedvr2_vae", configured["seedvr2_vae"]),
+    )
     missing_files = []
-    for key in SEEDVR2_UPSCALE_MODEL_KEYS:
+    for key, filename in assets:
         spec = MODEL_SPECS[key]
-        if not model_file_is_ready(COMFY_DIR / "models" / spec.folder / configured[key]):
+        if not model_file_is_ready(
+            COMFY_DIR / "models" / spec.folder / filename
+        ):
             missing_files.append(key)
     if not missing_files:
         return False
@@ -732,14 +753,16 @@ def ensure_seedvr2_upscale_models(models: ModelConfig) -> bool:
         manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
         token=os.getenv("HF_TOKEN") or None,
         log_prefix="[seedvr2-on-demand]",
-        model_keys=SEEDVR2_UPSCALE_MODEL_KEYS,
-        download_workers=len(SEEDVR2_UPSCALE_MODEL_KEYS),
+        model_keys=tuple(key for key, _filename in assets),
+        download_workers=len(assets),
     )
-    for key in SEEDVR2_UPSCALE_MODEL_KEYS:
+    for key, filename in assets:
         spec = MODEL_SPECS[key]
-        if not model_file_is_ready(COMFY_DIR / "models" / spec.folder / configured[key]):
+        if not model_file_is_ready(
+            COMFY_DIR / "models" / spec.folder / filename
+        ):
             raise H3Error(
-                f"On-demand SeedVR2 download did not produce {configured[key]}."
+                f"On-demand SeedVR2 download did not produce {filename}."
             )
     return True
 
@@ -1782,10 +1805,14 @@ def required_seedvr2_upscale_nodes() -> set[str]:
 
 
 def build_seedvr2_upscale_graph(
-    *, source_video: str, seed: int, models: ModelConfig
+    *,
+    source_video: str,
+    seed: int,
+    models: ModelConfig,
+    model_choice: str = DEFAULT_SEEDVR2_MODEL,
 ) -> dict[str, Any]:
-    """Build ComfyUI's native one-step SeedVR2 3B INT8 2x workflow."""
-    assets = seedvr2_upscale_model_names(models)
+    """Build ComfyUI's native one-step SeedVR2 2x workflow."""
+    assets = seedvr2_upscale_model_names(models, model_choice)
     graph = Graph()
     loaded = graph.add("LoadVideo", file=source_video)
     components = graph.add("GetVideoComponents", video=Graph.out(loaded))
@@ -1960,9 +1987,17 @@ def websocket_url(client_id: str) -> str:
     return urlunsplit((scheme, parsed.netloc, path, f"clientId={quote(client_id)}", ""))
 
 
-def node_stage(class_type: str) -> str:
+def graph_class_types(graph: dict[str, Any]) -> set[str]:
+    return {
+        str(node.get("class_type", ""))
+        for node in graph.values()
+    }
+
+
+def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str:
     """Turn ComfyUI implementation node names into useful user-facing stages."""
     name = str(class_type)
+    workflow_classes = workflow_classes or set()
     if name in {
         "UNETLoader", "CLIPLoader", "VAELoader", "CheckpointLoaderSimple",
         "LTXAVTextEncoderLoader", "LTXVAudioVAELoader",
@@ -1973,9 +2008,25 @@ def node_stage(class_type: str) -> str:
     if name.startswith("Load") or name == "GetVideoComponents":
         return "Preparing reference media"
     if name == "VAEEncodeTiled":
-        return "Encoding H3 video for LTX"
+        if "SeedVR2Preprocess" in workflow_classes:
+            return "Encoding H3 video for SeedVR2"
+        if "LTXVLatentUpsampler" in workflow_classes:
+            return "Encoding H3 video for LTX"
+        return "Encoding video"
     if name == "LTXVLatentUpsampler":
         return "Upscaling LTX video latent"
+    if name == "SeedVR2Preprocess":
+        return "Preparing SeedVR2 input"
+    if name == "SeedVR2TemporalChunk":
+        return "Splitting SeedVR2 video into VRAM-safe chunks"
+    if name == "SeedVR2Conditioning":
+        return "Preparing SeedVR2 conditioning"
+    if name == "SeedVR2TemporalMerge":
+        return "Merging SeedVR2 chunks"
+    if name == "SeedVR2PostProcessing":
+        return "Restoring SeedVR2 output"
+    if name == "AILab_FlashVSR":
+        return "Upscaling with FlashVSR"
     if "ImageToVideo" in name or "ReferenceToVideo" in name:
         return "Encoding prompt and conditioning"
     if name in {
@@ -2055,6 +2106,7 @@ def stream_comfy_progress(
 ) -> Iterable[tuple[str, int, int, int | None, int | None]]:
     """Yield live node and sampler progress from ComfyUI's websocket."""
     total_nodes = len(graph)
+    workflow_classes = graph_class_types(graph)
     completed: set[str] = set()
     current_node: str | None = None
     deadline = time.monotonic() + GENERATION_TIMEOUT
@@ -2122,14 +2174,18 @@ def stream_comfy_progress(
                 completed.add(current_node)
             current_node = str(node)
             class_type = graph.get(current_node, {}).get("class_type", "Processing")
-            yield node_stage(class_type), len(completed), total_nodes, None, None
+            yield node_stage(
+                class_type, workflow_classes
+            ), len(completed), total_nodes, None, None
             continue
         if event_type == "progress":
             node_id = str(data.get("node") or current_node or "")
             class_type = graph.get(node_id, {}).get("class_type", "Processing")
             value = int(data.get("value", 0))
             maximum = int(data.get("max", 0))
-            yield node_stage(class_type), len(completed), total_nodes, value, maximum
+            yield node_stage(
+                class_type, workflow_classes
+            ), len(completed), total_nodes, value, maximum
     raise H3Error(f"Generation timed out after {GENERATION_TIMEOUT:.0f} seconds")
 
 
@@ -2595,6 +2651,7 @@ def generate(
     ref_image_size: str,
     postprocess: str,
     ltx_force_offload: bool = False,
+    seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
     progress=gr.Progress(track_tqdm=False),
 ):
     started = time.monotonic()
@@ -2614,7 +2671,7 @@ def generate(
         if postprocess == LTX_UPSCALE:
             ltx_upscale_model_names(models)
         elif postprocess == SEEDVR2_UPSCALE:
-            seedvr2_upscale_model_names(models)
+            seedvr2_upscale_model_names(models, seedvr2_model)
         profile_key = models.profile_key(model_profile)
         profile = models.profiles[profile_key]
 
@@ -2900,8 +2957,11 @@ def generate(
                 downloaded = ensure_ltx_upscale_models(models)
                 stage_bucket = "ltx_upscale"
             elif postprocess == SEEDVR2_UPSCALE:
-                yield None, progress_status("Checking SeedVR2 upscale models", started=started)
-                downloaded = ensure_seedvr2_upscale_models(models)
+                yield None, progress_status(
+                    f"Checking SeedVR2 {seedvr2_model} models",
+                    started=started,
+                )
+                downloaded = ensure_seedvr2_upscale_models(models, seedvr2_model)
                 stage_bucket = "seedvr2_upscale"
             else:
                 downloaded = False
@@ -2926,7 +2986,10 @@ def generate(
                 configured_upscale_steps = 3
             elif postprocess == SEEDVR2_UPSCALE:
                 upscale_graph = build_seedvr2_upscale_graph(
-                    source_video=staged_source, seed=actual_seed, models=models
+                    source_video=staged_source,
+                    seed=actual_seed,
+                    models=models,
+                    model_choice=seedvr2_model,
                 )
                 configured_upscale_steps = 1
             else:
@@ -3011,6 +3074,7 @@ def compact_settings_summary(
     attention_mode: str,
     cache_mode: str,
     postprocess: str,
+    seedvr2_model: str,
     ltx_force_offload: bool,
 ) -> str:
     if generation_mode == "Turbo":
@@ -3032,11 +3096,16 @@ def compact_settings_summary(
         if postprocess in COMFY_UPSCALE_OPTIONS
         else ""
     )
+    seedvr2_note = (
+        f" · SeedVR2 model: {seedvr2_model}"
+        if postprocess == SEEDVR2_UPSCALE
+        else ""
+    )
     return (
         "**Current setup**  \n"
         f"{mode} · {model_profile} / {generation_mode} · {seconds} · {resolution} · "
         f"{step_count} / {scheduler} · Attention: {attention_mode} · "
-        f"Cache: {cache_mode} · Post: {postprocess}{offload_note}"
+        f"Cache: {cache_mode} · Post: {postprocess}{seedvr2_note}{offload_note}"
     )
 
 
@@ -3116,6 +3185,7 @@ def generate_with_ui_defaults(
         compile_model=defaults["compile_model"],
         ref_image_size=defaults["ref_image_size"],
         postprocess=defaults["postprocess"],
+        seedvr2_model=defaults["seedvr2_model"],
         ltx_force_offload=defaults["ltx_force_offload"],
         progress=progress,
     )
@@ -3249,7 +3319,8 @@ def build_ui() -> gr.Blocks:
                         defaults["duration"], defaults["width"], defaults["height"],
                         defaults["steps"], defaults["scheduler"],
                         defaults["attention_mode"], defaults["cache_mode"],
-                        defaults["postprocess"], defaults["ltx_force_offload"],
+                        defaults["postprocess"], defaults["seedvr2_model"],
+                        defaults["ltx_force_offload"],
                     )
                 )
                 output = gr.Video(label="Generated video")
@@ -3475,6 +3546,16 @@ def build_ui() -> gr.Blocks:
                     ],
                     value=defaults["postprocess"], label="Post-processing",
                 )
+                seedvr2_model = gr.Dropdown(
+                    choices=list(SEEDVR2_MODEL_CHOICES),
+                    value=defaults["seedvr2_model"],
+                    label="SeedVR2 model",
+                    visible=defaults["postprocess"] == SEEDVR2_UPSCALE,
+                    info=(
+                        "Downloaded on first use. 7B Sharp favors stronger detail; "
+                        "NVFP4 variants are optimized for Blackwell GPUs."
+                    ),
+                )
                 ltx_force_offload = gr.Checkbox(
                     value=defaults["ltx_force_offload"],
                     label="Unload H3 models before AI upscale",
@@ -3550,7 +3631,7 @@ def build_ui() -> gr.Blocks:
             mode, model_profile, generation_mode, turbo_variant,
             duration, width, height,
             steps, scheduler, attention_mode, cache_mode, postprocess,
-            ltx_force_offload,
+            seedvr2_model, ltx_force_offload,
         ]
         for settings_control in settings_inputs:
             settings_control.change(
@@ -3566,6 +3647,13 @@ def build_ui() -> gr.Blocks:
                 help_text, frame_group, reference_group, generation_mode,
                 preset, steps, scheduler, cache_mode, attention_mode,
             ],
+        )
+        postprocess.change(
+            lambda value: gr.update(visible=value == SEEDVR2_UPSCALE),
+            inputs=postprocess,
+            outputs=seedvr2_model,
+            queue=False,
+            show_progress="hidden",
         )
         generation_mode.change(
             generation_mode_defaults,
@@ -3632,6 +3720,7 @@ def build_ui() -> gr.Blocks:
                 fbcache_end, fbcache_max_hits, fbcache_temporal_guard,
                 easycache_threshold, easycache_start, easycache_end, easycache_verbose,
                 compile_model, ref_size, postprocess, ltx_force_offload,
+                seedvr2_model,
             ],
             outputs=[output, status],
             show_progress="minimal",
@@ -3810,6 +3899,12 @@ def selftest() -> None:
         ltx_spatial_upscaler_source="test",
         seedvr2_dit="seedvr2_3b_int8_convrot.safetensors",
         seedvr2_dit_source="test",
+        seedvr2_models={
+            "3B NVFP4": "seedvr2_3b_nvfp4.safetensors",
+            "3B INT8 (default)": "seedvr2_3b_int8_convrot.safetensors",
+            "7B NVFP4": "seedvr2_7b_nvfp4.safetensors",
+            "7B Sharp NVFP4": "seedvr2_7b_sharp_nvfp4.safetensors",
+        },
         seedvr2_vae="seedvr2_ema_vae_fp16.safetensors",
         seedvr2_vae_source="test",
     )
@@ -3999,6 +4094,9 @@ def selftest() -> None:
         if node["class_type"] == "GetVideoComponents"
     )
     assert ltx_video["inputs"]["audio"] == [ltx_components_id, 1]
+    assert node_stage(
+        "VAEEncodeTiled", graph_class_types(ltx_graph)
+    ) == "Encoding H3 video for LTX"
     assert UI_DEFAULTS["ltx_force_offload"] is False
 
     seedvr2_graph = build_seedvr2_upscale_graph(
@@ -4021,8 +4119,29 @@ def selftest() -> None:
         if node["class_type"] == "SeedVR2TemporalChunk"
     )
     assert seedvr2_chunks["inputs"]["chunking_mode"] == "auto"
+    assert node_stage("VAEEncodeTiled", graph_class_types(seedvr2_graph)) == (
+        "Encoding H3 video for SeedVR2"
+    )
+    assert node_stage(
+        "SeedVR2TemporalChunk", graph_class_types(seedvr2_graph)
+    ) == (
+        "Splitting SeedVR2 video into VRAM-safe chunks"
+    )
     assert seedvr2_sampler["inputs"]["steps"] == 1
     assert seedvr2_sampler["inputs"]["denoise"] == 1.0
+    for seedvr2_choice, expected_name in fake.seedvr2_models.items():
+        choice_graph = build_seedvr2_upscale_graph(
+            source_video="source.mp4",
+            seed=7,
+            models=fake,
+            model_choice=seedvr2_choice,
+        )
+        choice_loader = next(
+            node
+            for node in choice_graph.values()
+            if node["class_type"] == "UNETLoader"
+        )
+        assert choice_loader["inputs"]["unet_name"] == expected_name
 
     flashvsr_graph = build_flashvsr_upscale_graph(
         source_video="h3_gradio/flashvsr_upscale/source.mp4", seed=7
@@ -4037,6 +4156,11 @@ def selftest() -> None:
     assert flashvsr["inputs"]["scale"] == 2
     assert flashvsr["inputs"]["preset"] == "Balanced (2x Quality)"
     assert flashvsr["inputs"]["unload_model"] is True
+    assert node_stage(
+        "AILab_FlashVSR", graph_class_types(flashvsr_graph)
+    ) == (
+        "Upscaling with FlashVSR"
+    )
 
     assert resolution_choice_values("9:16 · 768×1344", "large")[:2] == (768, 1344)
     assert resolution_choice_values("1:1 · 1024×1024", "large")[:2] == (1024, 1024)

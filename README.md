@@ -112,11 +112,15 @@ The LTX path carries audio through native ComfyUI video nodes and does not invok
 the standalone FFmpeg executable. Lanczos/interpolation post-processing and
 reference-video input conversion still require FFmpeg on the server `PATH`.
 
-Select **SeedVR2 2x** for ComfyUI's native one-step 3B INT8 restoration workflow,
+Select **SeedVR2 2x** for ComfyUI's native one-step restoration workflow,
 or **FlashVSR 2x** for the balanced tiled FlashVSR 1.1 workflow. Both preserve the
 generated audio and frame rate. FlashVSR requires at least 21 frames (all supported
 H3 durations satisfy this). The shared **Unload H3 models before AI upscale**
 option applies uniformly to LTX, FlashVSR, and SeedVR2.
+
+SeedVR2 offers **3B NVFP4**, **3B INT8 (default)**, **7B NVFP4**, and
+**7B Sharp NVFP4** model choices. Only the selected checkpoint downloads on first
+use; all choices share the same lazy FP16 SeedVR2 VAE.
 
 The **API** tab includes a copy-ready Python example. Its `/generate_video`
 endpoint only requires a prompt and uses the same defaults shown in the Generate
