@@ -13,9 +13,10 @@ import subprocess
 import tempfile
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, AsyncIterator, Iterable
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import aiohttp
@@ -352,16 +353,20 @@ def _append_set_cookies(response: Response, headers: httpx.Headers) -> Response:
 
 
 def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
-    app = FastAPI()
     client = httpx.AsyncClient(
         timeout=httpx.Timeout(None, connect=30),
         follow_redirects=False,
         trust_env=False,
     )
 
-    @app.on_event("shutdown")
-    async def close_proxy_client() -> None:
-        await client.aclose()
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            await client.aclose()
+
+    app = FastAPI(lifespan=lifespan)
 
     @app.get(COMFY_PROXY_PATH, include_in_schema=False)
     async def comfy_slash_redirect() -> RedirectResponse:
