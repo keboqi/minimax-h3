@@ -168,6 +168,10 @@ The deployment pins ComfyUI to a revision with native LTX 2.5 NVFP4 support.
 Changing that pin invalidates the Modal image cache so ComfyUI and its matching
 `comfy-kitchen` dependency are rebuilt together.
 
+For local installations, `run_h3.sh` checks the installed ComfyUI revision and
+`comfy-kitchen` version at startup. It automatically refreshes the environment
+once when either is stale; model files are preserved.
+
 Useful environment variables include `H3_MODAL_APP_NAME`,
 `H3_MODAL_VOLUME`, `H3_MODAL_MIN_CONTAINERS`,
 `H3_MODAL_SCALEDOWN_WINDOW`, and `H3_MODAL_PROXY_AUTH`. Set

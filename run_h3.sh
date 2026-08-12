@@ -60,6 +60,36 @@ ensure_ffmpeg() {
   command -v ffprobe >/dev/null 2>&1 || die "ffmpeg installation did not provide ffprobe"
 }
 
+environment_is_current() {
+  [[ -d "$COMFY_DIR/.git" ]] || return 1
+
+  local installed_ref expected_ref installed_kitchen expected_kitchen
+  installed_ref="$(git -C "$COMFY_DIR" rev-parse HEAD 2>/dev/null)" || return 1
+  read -r expected_ref expected_kitchen < <(
+    "$PYTHON_BIN" - "$SCRIPT_DIR" <<'PY'
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from h3_requirements import COMFY_KITCHEN_VERSION, COMFY_REF
+
+print(COMFY_REF, COMFY_KITCHEN_VERSION)
+PY
+  ) || return 1
+  installed_kitchen="$(
+    "$PYTHON_BIN" - <<'PY'
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    print(version("comfy-kitchen"))
+except PackageNotFoundError:
+    raise SystemExit(1)
+PY
+  )" || return 1
+
+  [[ "$installed_ref" == "$expected_ref" ]] || return 1
+  [[ "$installed_kitchen" == "$expected_kitchen" ]] || return 1
+}
+
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
@@ -88,9 +118,14 @@ command -v "$PYTHON_BIN" >/dev/null 2>&1 || die "python3 is required"
 if [[ ! -f "$COMFY_DIR/main.py" || ! -f "$MODELS_CONFIG" ]]; then
   log "Installation or models are missing; running automatic setup"
   "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR"
+elif ! environment_is_current; then
+  log "ComfyUI or comfy-kitchen is stale; refreshing the environment"
+  "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR"
 else
-  log "Checking Hugging Face model versions"
-  "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py"     --install-dir "$INSTALL_DIR"     --skip-env
+  log "ComfyUI environment is current; checking Hugging Face model versions"
+  "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" \
+    --install-dir "$INSTALL_DIR" \
+    --skip-env
 fi
 
 if ! "$PYTHON_BIN" -c 'import websocket' >/dev/null 2>&1; then

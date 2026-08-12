@@ -15,6 +15,7 @@ SCIPY_VERSION = "1.15.3"
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
 # This revision includes native LTX 2.5 NVFP4 checkpoint loading.
 COMFY_REF = "27bca654eb9a70237d93f56a6ea336ab55f8925d"
+COMFY_KITCHEN_VERSION = "0.2.30"
 
 PINNED_REQUIREMENTS = frozenset(
     {"torch", "torchvision", "torchaudio", "numpy", "scipy"}
