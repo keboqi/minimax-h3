@@ -105,6 +105,9 @@ LTX25_DEFAULTS = {
     "cfg": 1.0,
     "sampler": "euler_ancestral",
     "image_strength": 0.7,
+    "middle_time": 2.5,
+    "middle_strength": 0.7,
+    "end_strength": 0.7,
 }
 MODEL_PROFILE_CHOICES = list(PROFILE_LABELS.values())
 CORE_LORA_LOADER_NODE = "LoraLoaderModelOnly"
@@ -1697,7 +1700,7 @@ def required_ltx25_nodes(*, image_to_video: bool = False) -> set[str]:
         "VAEDecodeTiled", "LTXVAudioVAEDecode", "CreateVideo", "SaveVideo",
     }
     if image_to_video:
-        required |= {"LoadImage", "LTXVPreprocess", "LTXVImgToVideoInplace"}
+        required |= {"LoadImage", "LTXVAddGuide"}
     return required
 
 
@@ -1715,8 +1718,13 @@ def build_ltx25_graph(
     cfg: float,
     sampler_name: str,
     image_strength: float,
+    middle_image: str | None = None,
+    middle_time: float = LTX25_DEFAULTS["middle_time"],
+    middle_strength: float = LTX25_DEFAULTS["middle_strength"],
+    end_image: str | None = None,
+    end_strength: float = LTX25_DEFAULTS["end_strength"],
 ) -> dict[str, Any]:
-    """Build the official LTX-2.5 single-stage distilled T2V/I2V graph."""
+    """Build the official LTX-2.5 distilled T2V or multi-keyframe I2V graph."""
     names = ltx25_model_names(model_choice)
     graph = Graph()
     model = graph.add(
@@ -1747,22 +1755,36 @@ def build_ltx25_graph(
         batch_size=1,
     )
     video_latent_ref = Graph.out(video_latent)
-    if first_image:
+    positive_ref = Graph.out(conditioned, 0)
+    negative_ref = Graph.out(conditioned, 1)
+    middle_frame_idx = min(
+        frames - 2,
+        max(1, int(round(float(middle_time) * float(fps)))),
+    )
+    keyframes = (
+        (first_image, 0, image_strength),
+        (middle_image, middle_frame_idx, middle_strength),
+        (end_image, -1, end_strength),
+    )
+    for image, frame_idx, strength in keyframes:
+        if not image:
+            continue
         loaded = graph.add(
-            "LoadImage", image=stage_file(first_image, "ltx25_keyframes")
+            "LoadImage", image=stage_file(image, "ltx25_keyframes")
         )
-        preprocessed = graph.add(
-            "LTXVPreprocess", image=Graph.out(loaded), img_compression=18
-        )
-        image_latent = graph.add(
-            "LTXVImgToVideoInplace",
+        guide = graph.add(
+            "LTXVAddGuide",
+            positive=positive_ref,
+            negative=negative_ref,
             vae=Graph.out(video_vae),
-            image=Graph.out(preprocessed),
             latent=video_latent_ref,
-            strength=float(image_strength),
-            bypass=False,
+            image=Graph.out(loaded),
+            frame_idx=int(frame_idx),
+            strength=float(strength),
         )
-        video_latent_ref = Graph.out(image_latent)
+        positive_ref = Graph.out(guide, 0)
+        negative_ref = Graph.out(guide, 1)
+        video_latent_ref = Graph.out(guide, 2)
 
     audio_latent = graph.add(
         "LTXVEmptyLatentAudio",
@@ -1780,8 +1802,8 @@ def build_ltx25_graph(
     guider = graph.add(
         "CFGGuider",
         model=Graph.out(model),
-        positive=Graph.out(conditioned, 0),
-        negative=Graph.out(conditioned, 1),
+        positive=positive_ref,
+        negative=negative_ref,
         cfg=float(cfg),
     )
     sampler = graph.add("KSamplerSelect", sampler_name=str(sampler_name))
@@ -2042,13 +2064,13 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Loading models"
     if name.startswith("Load") or name == "GetVideoComponents":
         return "Preparing reference media"
-    if name == "LTXVPreprocess":
-        return "Preparing LTX-2.5 first frame"
+    if name == "LTXVAddGuide":
+        return "Applying LTX-2.5 keyframes"
     if name in {"CLIPTextEncode", "LTXVConditioning"}:
         return "Encoding LTX-2.5 prompt"
     if name in {
         "EmptyLTXVLatentVideo", "LTXVEmptyLatentAudio",
-        "LTXVImgToVideoInplace", "LTXVConcatAVLatent",
+        "LTXVConcatAVLatent",
     }:
         return "Preparing LTX-2.5 audio-video latents"
     if name == "VAEEncodeTiled":
@@ -3334,6 +3356,11 @@ def generate_ltx25(
     cfg: float,
     sampler_name: str,
     image_strength: float,
+    middle_image: str | None = None,
+    middle_time: float = LTX25_DEFAULTS["middle_time"],
+    middle_strength: float = LTX25_DEFAULTS["middle_strength"],
+    end_image: str | None = None,
+    end_strength: float = LTX25_DEFAULTS["end_strength"],
     progress=gr.Progress(track_tqdm=False),
 ):
     """Run an LTX-2.5 job through the same ComfyUI queue as H3."""
@@ -3354,8 +3381,20 @@ def generate_ltx25(
         image_to_video = str(mode).strip().lower() == "image to video"
         if image_to_video and not first_image:
             raise H3Error("Image-to-video mode requires a first frame.")
-        if not 0 <= float(image_strength) <= 1:
-            raise H3Error("Image strength must be between 0 and 1.")
+        keyframe_strengths = {
+            "Start image": image_strength,
+            "Middle image": middle_strength,
+            "End image": end_strength,
+        }
+        for label, strength in keyframe_strengths.items():
+            if not 0 <= float(strength) <= 1:
+                raise H3Error(f"{label} strength must be between 0 and 1.")
+        if (
+            image_to_video
+            and middle_image
+            and not 0 < float(middle_time) < float(duration)
+        ):
+            raise H3Error("Middle keyframe time must be inside the video duration.")
 
         missing_files = missing_ltx25_model_names(model_choice)
         if missing_files:
@@ -3387,6 +3426,11 @@ def generate_ltx25(
             cfg=float(cfg),
             sampler_name=str(sampler_name),
             image_strength=float(image_strength),
+            middle_image=middle_image if image_to_video else None,
+            middle_time=float(middle_time),
+            middle_strength=float(middle_strength),
+            end_image=end_image if image_to_video else None,
+            end_strength=float(end_strength),
         )
 
         client_id = str(uuid.uuid4())
@@ -4002,13 +4046,50 @@ def build_ui() -> gr.Blocks:
                         placeholder="Optional artifacts or qualities to avoid",
                     )
                     with gr.Group(visible=False) as ltx25_image_group:
-                        ltx25_image = gr.Image(type="filepath", label="First frame")
-                        ltx25_image_strength = gr.Slider(
-                            0.0, 1.0,
-                            value=LTX25_DEFAULTS["image_strength"],
-                            step=0.05,
-                            label="Image strength",
+                        gr.Markdown(
+                            "Add a required start keyframe and optional middle/end "
+                            "keyframes. Each image is applied at its clip position."
                         )
+                        with gr.Row():
+                            ltx25_image = gr.Image(
+                                type="filepath", label="Start keyframe (required)"
+                            )
+                            ltx25_image_strength = gr.Slider(
+                                0.0, 1.0,
+                                value=LTX25_DEFAULTS["image_strength"],
+                                step=0.05,
+                                label="Start strength",
+                            )
+                        with gr.Accordion(
+                            "Optional middle and end keyframes", open=False
+                        ):
+                            with gr.Row():
+                                ltx25_middle_image = gr.Image(
+                                    type="filepath", label="Middle keyframe"
+                                )
+                                with gr.Column():
+                                    ltx25_middle_time = gr.Slider(
+                                        0.1, 19.9,
+                                        value=LTX25_DEFAULTS["middle_time"],
+                                        step=0.1,
+                                        label="Middle position (seconds)",
+                                    )
+                                    ltx25_middle_strength = gr.Slider(
+                                        0.0, 1.0,
+                                        value=LTX25_DEFAULTS["middle_strength"],
+                                        step=0.05,
+                                        label="Middle strength",
+                                    )
+                            with gr.Row():
+                                ltx25_end_image = gr.Image(
+                                    type="filepath", label="End keyframe"
+                                )
+                                ltx25_end_strength = gr.Slider(
+                                    0.0, 1.0,
+                                    value=LTX25_DEFAULTS["end_strength"],
+                                    step=0.05,
+                                    label="End strength",
+                                )
                 with gr.Column(scale=2):
                     ltx25_output = gr.Video(label="Generated LTX-2.5 video")
                     with gr.Row():
@@ -4289,6 +4370,11 @@ def build_ui() -> gr.Blocks:
                 ltx25_cfg,
                 ltx25_sampler,
                 ltx25_image_strength,
+                ltx25_middle_image,
+                ltx25_middle_time,
+                ltx25_middle_strength,
+                ltx25_end_image,
+                ltx25_end_strength,
             ],
             outputs=[ltx25_output, ltx25_status],
             show_progress="minimal",
@@ -4687,7 +4773,7 @@ def selftest() -> None:
     ltx25_nodes = list(ltx25_graph.values())
     ltx25_classes = {node["class_type"] for node in ltx25_nodes}
     assert required_ltx25_nodes() <= ltx25_classes
-    assert not ({"LoadImage", "LTXVImgToVideoInplace"} & ltx25_classes)
+    assert not ({"LoadImage", "LTXVAddGuide"} & ltx25_classes)
     ltx25_unet = next(
         node for node in ltx25_nodes if node["class_type"] == "UNETLoader"
     )
@@ -4708,6 +4794,63 @@ def selftest() -> None:
     )
     assert ltx25_save["inputs"]["filename_prefix"].startswith("ltx25/")
     assert ltx25_frame_length(5, 24) == 121
+
+    original_stage_file = globals()["stage_file"]
+    try:
+        globals()["stage_file"] = (
+            lambda path, category: f"{category}/{Path(path).name}"
+        )
+        ltx25_keyframe_graph = build_ltx25_graph(
+            prompt="a guided test shot",
+            negative_prompt="artifacts",
+            first_image="start.png",
+            middle_image="middle.png",
+            middle_time=2.5,
+            end_image="end.png",
+            width=960,
+            height=544,
+            duration=5,
+            fps=24,
+            seed=10,
+            cfg=1.0,
+            sampler_name="euler_ancestral",
+            image_strength=0.8,
+            middle_strength=0.65,
+            end_strength=0.9,
+        )
+    finally:
+        globals()["stage_file"] = original_stage_file
+    keyframe_nodes = ltx25_keyframe_graph.values()
+    guides = [
+        node for node in keyframe_nodes if node["class_type"] == "LTXVAddGuide"
+    ]
+    assert required_ltx25_nodes(image_to_video=True) <= {
+        node["class_type"] for node in keyframe_nodes
+    }
+    assert [node["inputs"]["frame_idx"] for node in guides] == [0, 60, -1]
+    assert [node["inputs"]["strength"] for node in guides] == [0.8, 0.65, 0.9]
+    guide_ids = [
+        node_id for node_id, node in ltx25_keyframe_graph.items()
+        if node["class_type"] == "LTXVAddGuide"
+    ]
+    assert guides[1]["inputs"]["positive"] == Graph.out(guide_ids[0], 0)
+    assert guides[1]["inputs"]["negative"] == Graph.out(guide_ids[0], 1)
+    assert guides[1]["inputs"]["latent"] == Graph.out(guide_ids[0], 2)
+    assert guides[2]["inputs"]["positive"] == Graph.out(guide_ids[1], 0)
+    assert guides[2]["inputs"]["negative"] == Graph.out(guide_ids[1], 1)
+    assert guides[2]["inputs"]["latent"] == Graph.out(guide_ids[1], 2)
+    keyframe_guider = next(
+        node for node in keyframe_nodes if node["class_type"] == "CFGGuider"
+    )
+    assert keyframe_guider["inputs"]["positive"] == Graph.out(guide_ids[2], 0)
+    assert keyframe_guider["inputs"]["negative"] == Graph.out(guide_ids[2], 1)
+    keyframe_av_latent = next(
+        node for node in keyframe_nodes
+        if node["class_type"] == "LTXVConcatAVLatent"
+    )
+    assert keyframe_av_latent["inputs"]["video_latent"] == Graph.out(
+        guide_ids[2], 2
+    )
 
     seedvr2_graph = build_seedvr2_upscale_graph(
         source_video="h3_gradio/seedvr2_upscale/source.mp4",

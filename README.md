@@ -102,6 +102,9 @@ transformer plus the shared fine-tuned Gemma text encoder and audio/video VAEs
 download lazily when the **LTX 2.5** tab is first used. Switching variants later
 downloads only the newly selected transformer. Accept the `Lightricks/LTX-2.5`
 Hugging Face license and set `HF_TOKEN` before the first run.
+Image-to-video accepts a required start keyframe plus optional middle and end
+keyframes. The middle position and each keyframe's conditioning strength are
+configurable; text-to-video does not load or apply image guides.
 Later runs check remote metadata for the preloaded set and refresh only stale
 files; lazy checkpoints remain local and are fetched again if missing or incomplete.
 On Debian/Ubuntu standalone hosts, `run_h3.sh` also installs the `ffmpeg` system
