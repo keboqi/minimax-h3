@@ -358,3 +358,15 @@ release. The UI now exposes the 4-step 768p and 8-step 544p adapters separately,
 uses strength 1.0 for both, and synchronizes the editable step control to the
 selected adapter. Both official files are provisioned directly from
 `lightx2v/Minimax-h3-Turbo`.
+
+## v50 profile-aware Turbo loading
+
+Original BF16 now applies both Larry and LightX2V Turbo adapters through runtime
+bypass, preventing ComfyUI's reversible merge path from retaining up to 37.3 GiB
+of original H3 projection weights alongside their patched copies. Speed and
+Quality instead merge both adapter families: their compact quantized bases have
+ample headroom, merging avoids per-step LoRA matrix multiplies, and it preserves
+compatibility with fused kernels that read weights without calling a module's
+forward method. The bundled LightX2V bypass accepts only the exact official
+50-block plus two-refiner, four-projection layout and fails closed on missing keys, unexpected
+ranks, unsupported extensions, or incomplete hook installation.

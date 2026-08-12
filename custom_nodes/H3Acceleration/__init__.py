@@ -2,10 +2,192 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from dataclasses import dataclass
 
 import torch
+import torch.nn.functional as F
+import comfy.lora
 import comfy.patcher_extension
+import comfy.utils
+import comfy.weight_adapter
+import folder_paths
+
+
+LIGHTX_LORA_PATTERN = re.compile(
+    r"^(diffusion_model\.(?:blocks\.\d+|token_refiner\.blocks\.\d+)\."
+    r"(?:attn\.(?:qkv_proj|out_proj)|mlp\.fc[12]))\."
+    r"(lora_[AB]\.weight|alpha)$"
+)
+LIGHTX_BACKBONE_BLOCKS = 50
+LIGHTX_REFINER_BLOCKS = 2
+LIGHTX_TARGETS_PER_BLOCK = 4
+
+
+class H3InplaceLoRAAdapter(comfy.weight_adapter.LoRAAdapter):
+    """Apply a linear LoRA delta directly into the fresh base activation."""
+
+    def __init__(self, loaded_keys, weights):
+        super().__init__(loaded_keys, weights)
+        up, down, alpha, mid, dora_scale, reshape = weights
+        if getattr(self, "is_conv", False):
+            raise RuntimeError("MiniMax H3 LightX2V bypass only supports linear layers")
+        if mid is not None or dora_scale is not None or reshape is not None:
+            raise RuntimeError("Unsupported non-linear LightX2V LoRA extension")
+
+        rank = int(down.shape[0])
+        self.intrinsic_scale = (
+            float(alpha) / rank if alpha is not None else 1.0
+        )
+
+    def bypass_forward(self, original_forward, x, *args, **kwargs):
+        up, down, _alpha, _mid, _dora_scale, _reshape = self.weights
+        base_output = original_forward(x, *args, **kwargs)
+        if up.dtype != x.dtype or up.device != x.device:
+            up = up.to(device=x.device, dtype=x.dtype)
+        if down.dtype != x.dtype or down.device != x.device:
+            down = down.to(device=x.device, dtype=x.dtype)
+        scale = self.intrinsic_scale * float(getattr(self, "multiplier", 1.0))
+        update = F.linear(F.linear(x, down), up)
+        return base_output.add_(update, alpha=scale)
+
+
+def _lightx_key_map(model, lora):
+    modules: dict[str, set[str]] = {}
+    for key in lora:
+        match = LIGHTX_LORA_PATTERN.fullmatch(key)
+        if match is None:
+            raise ValueError(f"Unexpected LightX2V LoRA key: {key}")
+        modules.setdefault(match.group(1), set()).add(match.group(2))
+
+    target_suffixes = (
+        "attn.qkv_proj",
+        "attn.out_proj",
+        "mlp.fc1",
+        "mlp.fc2",
+    )
+    expected_module_names = {
+        f"diffusion_model.blocks.{block}.{suffix}"
+        for block in range(LIGHTX_BACKBONE_BLOCKS)
+        for suffix in target_suffixes
+    } | {
+        f"diffusion_model.token_refiner.blocks.{block}.{suffix}"
+        for block in range(LIGHTX_REFINER_BLOCKS)
+        for suffix in target_suffixes
+    }
+    expected_modules = (
+        LIGHTX_BACKBONE_BLOCKS + LIGHTX_REFINER_BLOCKS
+    ) * LIGHTX_TARGETS_PER_BLOCK
+    if set(modules) != expected_module_names:
+        raise ValueError(
+            f"LightX2V LoRA has {len(modules)} modules; expected "
+            f"the exact {expected_modules}-module H3 backbone/refiner layout"
+        )
+    expected_parts = {"lora_A.weight", "lora_B.weight", "alpha"}
+    incomplete = sorted(
+        module for module, parts in modules.items() if parts != expected_parts
+    )
+    if incomplete:
+        raise ValueError(
+            "LightX2V LoRA has incomplete module tensors: "
+            + ", ".join(incomplete[:5])
+        )
+
+    for module in modules:
+        down = lora[module + ".lora_A.weight"]
+        up = lora[module + ".lora_B.weight"]
+        alpha = lora[module + ".alpha"]
+        expected_rank = 384 if module.endswith("attn.qkv_proj") else 128
+        if (
+            down.ndim != 2
+            or up.ndim != 2
+            or int(down.shape[0]) != expected_rank
+            or int(up.shape[1]) != expected_rank
+            or alpha.numel() != 1
+        ):
+            raise ValueError(f"Unexpected LightX2V tensor layout for {module}")
+
+    native_map = comfy.lora.model_lora_keys_unet(model.model, {})
+    missing = sorted(module for module in modules if module not in native_map)
+    if missing:
+        raise ValueError(
+            "LightX2V LoRA does not match this MiniMax H3 model: "
+            + ", ".join(missing[:5])
+        )
+
+    model_state = model.model.state_dict()
+    for module in modules:
+        down = lora[module + ".lora_A.weight"]
+        up = lora[module + ".lora_B.weight"]
+        base_weight = model_state[native_map[module]]
+        if (
+            base_weight.ndim != 2
+            or int(down.shape[1]) != int(base_weight.shape[1])
+            or int(up.shape[0]) != int(base_weight.shape[0])
+        ):
+            raise ValueError(f"LightX2V tensor shapes do not match {module}")
+    return {module: native_map[module] for module in modules}
+
+
+class H3LightX2VBypassLoRA:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "lora_name": (folder_paths.get_filename_list("loras"),),
+                "strength": (
+                    "FLOAT",
+                    {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01},
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "apply_lora"
+    CATEGORY = "model/patch/minimax"
+    DESCRIPTION = (
+        "Apply an official LightX2V MiniMax H3 LoRA in activation space, "
+        "avoiding BF16 base-weight duplication."
+    )
+
+    def apply_lora(self, model, lora_name, strength):
+        path = folder_paths.get_full_path("loras", lora_name)
+        if path is None:
+            raise FileNotFoundError(f"LightX2V LoRA is missing: {lora_name}")
+        lora = comfy.utils.load_torch_file(path, safe_load=True)
+        key_map = _lightx_key_map(model, lora)
+        loaded = comfy.lora.load_lora(lora, key_map, log_missing=False)
+        if set(loaded) != set(key_map.values()):
+            missing = sorted(set(key_map.values()) - set(loaded))
+            raise ValueError(
+                "LightX2V bypass failed to load every adapter: "
+                + ", ".join(missing[:5])
+            )
+
+        patched = model.clone()
+        manager = comfy.weight_adapter.BypassInjectionManager()
+        for key, adapter in loaded.items():
+            if not isinstance(adapter, comfy.weight_adapter.LoRAAdapter):
+                raise TypeError(f"Unsupported LightX2V adapter for {key}")
+            if len(adapter.weights) != 6:
+                raise ValueError(f"Unexpected LightX2V adapter layout for {key}")
+            adapter = H3InplaceLoRAAdapter(adapter.loaded_keys, adapter.weights)
+            manager.add_adapter(key, adapter, strength=float(strength))
+
+        injections = manager.create_injections(patched.model)
+        if manager.get_hook_count() != len(loaded):
+            raise RuntimeError(
+                f"LightX2V bypass created {manager.get_hook_count()} hooks for "
+                f"{len(loaded)} adapters"
+            )
+        patched.set_injections("h3_lightx2v_bypass", injections)
+        logging.info(
+            "MiniMax H3 LightX2V runtime bypass: %d adapters at strength %.3f",
+            len(loaded),
+            float(strength),
+        )
+        return (patched,)
 
 
 @dataclass(frozen=True)
@@ -452,8 +634,10 @@ class H3FirstBlockCache:
 
 NODE_CLASS_MAPPINGS = {
     "H3FirstBlockCache": H3FirstBlockCache,
+    "H3LightX2VBypassLoRA": H3LightX2VBypassLoRA,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3FirstBlockCache": "MiniMax H3 FirstBlockCache",
+    "H3LightX2VBypassLoRA": "MiniMax H3 LightX2V Bypass LoRA",
 }

@@ -115,6 +115,7 @@ CORE_LORA_LOADER_NODE = "LoraLoaderModelOnly"
 CORE_SAMPLER_NODE = "KSamplerSelect"
 LARRY_TURBO_LORA_NODE = "MiniMaxH3TurboLoRA"
 LARRY_TURBO_SAMPLER_NODE = "MiniMaxH3TurboSampler"
+LIGHTX2V_BYPASS_LORA_NODE = "H3LightX2VBypassLoRA"
 SOL_ATTENTION_NODE = "MiniMaxH3MemoryEfficientSolAttentionPatch"
 FUSED_MODULATION_NODE = "MiniMaxH3FusedModulation"
 CHUNK_FEED_FORWARD_NODE = "MiniMaxH3ChunkFeedForward"
@@ -574,6 +575,14 @@ def turbo_strength_for(value: str) -> float:
 
 def turbo_uses_custom_nodes(value: str) -> bool:
     return TURBO_SETTINGS[normalize_turbo_variant(value)].custom_nodes
+
+
+def is_original_bf16_model(model_filename: str) -> bool:
+    originals = {
+        MODEL_SPECS["original_fl2va"].local_name,
+        MODEL_SPECS["original_ref2va"].local_name,
+    }
+    return Path(str(model_filename)).name in originals
 
 
 @dataclass
@@ -1224,11 +1233,18 @@ class Graph:
         return [node_id, slot]
 
 
-def turbo_required_nodes(turbo_variant: str) -> set[str]:
+def turbo_required_nodes(
+    turbo_variant: str, model_filename: str = ""
+) -> set[str]:
     """Return the external node contract for one normalized Turbo variant."""
     if turbo_uses_custom_nodes(turbo_variant):
         return {LARRY_TURBO_LORA_NODE, LARRY_TURBO_SAMPLER_NODE}
-    return {CORE_LORA_LOADER_NODE, CORE_SAMPLER_NODE, FUSED_MODULATION_NODE}
+    lora_node = (
+        LIGHTX2V_BYPASS_LORA_NODE
+        if is_original_bf16_model(model_filename)
+        else CORE_LORA_LOADER_NODE
+    )
+    return {lora_node, CORE_SAMPLER_NODE, FUSED_MODULATION_NODE}
 
 
 def add_turbo_model_patch(
@@ -1236,13 +1252,15 @@ def add_turbo_model_patch(
     model_ref: list[Any],
     *,
     lora_name: str,
+    model_filename: str,
     turbo_variant: str,
     strength: float,
     available_nodes: set[str],
 ) -> list[Any]:
     """Apply a Turbo LoRA and compatible model-level optimizations."""
     variant = normalize_turbo_variant(turbo_variant)
-    required = turbo_required_nodes(variant)
+    runtime_bypass = is_original_bf16_model(model_filename)
+    required = turbo_required_nodes(variant, model_filename)
     missing = required - available_nodes
     if missing:
         missing_names = ", ".join(sorted(missing))
@@ -1257,23 +1275,31 @@ def add_turbo_model_patch(
             model=model_ref,
             lora_name=lora_name,
             strength=float(strength),
-            low_vram=False,
+            low_vram=not runtime_bypass,
         )
-        # Larry replaces AdaLN projection forwards at runtime. Its pinned node
-        # receives a provisioning-time modality-row fix; keep this additional
-        # fusion layer disabled until that composition has GPU validation.
-        # Sol attention and FFN chunking do not replace the AdaLN projection.
+        # Larry bypasses projections on Original BF16 and merges on compact
+        # Speed/Quality bases. Its pinned node receives a provisioning-time
+        # modality-row fix; keep fused modulation disabled for both paths.
         return Graph.out(turbo)
 
-    turbo = graph.add(
-        CORE_LORA_LOADER_NODE,
-        model=model_ref,
-        lora_name=lora_name,
-        strength_model=float(strength),
-    )
+    if runtime_bypass:
+        turbo = graph.add(
+            LIGHTX2V_BYPASS_LORA_NODE,
+            model=model_ref,
+            lora_name=lora_name,
+            strength=float(strength),
+        )
+    else:
+        turbo = graph.add(
+            CORE_LORA_LOADER_NODE,
+            model=model_ref,
+            lora_name=lora_name,
+            strength_model=float(strength),
+        )
 
-    # LightX2V uses the core LoRA loader and retains the standard H3 AdaLN shape,
-    # so Sol's bit-exact fused modulation remains compatible.
+    # LightX2V bypasses Original BF16 to avoid retaining a second copy of every
+    # patched backbone weight. Compact Speed/Quality bases keep the faster core
+    # merge path. Both retain the standard AdaLN shape, so fusion is compatible.
     fused_modulation = graph.add(
         FUSED_MODULATION_NODE,
         model=Graph.out(turbo),
@@ -1319,6 +1345,7 @@ def add_model_stack(
             graph,
             model_ref,
             lora_name=turbo_lora_name,
+            model_filename=model_name,
             turbo_variant=turbo_variant,
             strength=turbo_strength,
             available_nodes=available_nodes,
@@ -2058,7 +2085,7 @@ def required_nodes_for(
     else:
         common |= {"MiniMaxH3ImageToVideo", "LoadImage"}
     if use_turbo:
-        common |= turbo_required_nodes(turbo_variant)
+        common |= turbo_required_nodes(turbo_variant, model_filename)
     else:
         common.add(CORE_SAMPLER_NODE)
     if use_sol:
@@ -2103,7 +2130,7 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
     if name in {
         "UNETLoader", "CLIPLoader", "VAELoader", "CheckpointLoaderSimple",
         "LatentUpscaleModelLoader", CORE_LORA_LOADER_NODE,
-        LARRY_TURBO_LORA_NODE,
+        LARRY_TURBO_LORA_NODE, LIGHTX2V_BYPASS_LORA_NODE,
     }:
         return "Loading models"
     if name.startswith("Load") or name == "GetVideoComponents":
@@ -3839,9 +3866,9 @@ def build_ui() -> gr.Blocks:
                     value=defaults["turbo_variant"],
                     label="Turbo implementation",
                     info=(
-                        "Larry uses its quantization-aware loader and adaptive sampler at "
-                        "strength 1.0; both LightX2V v1.0 variants use the native LoRA "
-                        "loader at strength 1.0."
+                        "Original BF16 uses memory-safe runtime LoRA bypass. Speed and "
+                        "Quality use faster merged weights. Larry also uses its adaptive "
+                        "sampler; all variants run at strength 1.0."
                     ),
                 )
                 preset = gr.Radio(
@@ -4658,7 +4685,11 @@ def selftest() -> None:
     ) | required_nodes_for("Reference media", True, "EasyCache", True)
     available.add("SpectrumApplyMiniMaxH3")
     available.add(CHUNK_FEED_FORWARD_NODE)
-    available |= {LARRY_TURBO_LORA_NODE, LARRY_TURBO_SAMPLER_NODE}
+    available |= {
+        LARRY_TURBO_LORA_NODE,
+        LARRY_TURBO_SAMPLER_NODE,
+        LIGHTX2V_BYPASS_LORA_NODE,
+    }
     assert fake.turbo_lora_for("Text to video", LIGHTX2V_4STEP_TURBO) == fake.turbo_lora
     assert fake.turbo_lora_for("Reference media", LIGHTX2V_4STEP_TURBO) == fake.turbo_ref_lora
     assert fake.turbo_lora_for("Text to video", LIGHTX2V_8STEP_TURBO) == fake.turbo_8step_lora
@@ -5359,7 +5390,7 @@ def selftest() -> None:
         if node["class_type"] == LARRY_TURBO_LORA_NODE
     )
     assert larry_loader["inputs"]["strength"] == 1.0
-    assert larry_loader["inputs"]["low_vram"] is False
+    assert larry_loader["inputs"]["low_vram"] is True
     larry_loader_id = next(
         node_id for node_id, node in larry_graph.nodes.items()
         if node["class_type"] == LARRY_TURBO_LORA_NODE
@@ -5391,6 +5422,76 @@ def selftest() -> None:
     assert not any(
         node["class_type"] == CORE_SAMPLER_NODE
         for node in larry_graph.nodes.values()
+    )
+
+    def turbo_route_graph(profile_name: str, variant: str) -> Graph:
+        route_graph = Graph()
+        profile = fake.profile(profile_name)
+        add_model_stack(
+            route_graph,
+            profile.fl2va,
+            fake,
+            turbo_lora_name=fake.turbo_lora_for("Text to video", variant),
+            turbo_variant=variant,
+            turbo_strength=turbo_strength_for(variant),
+            use_sol=False,
+            sol_tau=1.0,
+            sol_thresh_type="diag",
+            sol_exact_mode="off",
+            sol_dense_steps=1,
+            sol_step_off=0.0,
+            sol_sink_tokens=0,
+            cache_mode="Off",
+            fbcache_preset="Fast",
+            fbcache_threshold=0.10,
+            fbcache_start=0.10,
+            fbcache_end=0.95,
+            fbcache_max_hits=2,
+            fbcache_temporal_guard=True,
+            easycache_threshold=0.10,
+            easycache_start=0.15,
+            easycache_end=0.85,
+            easycache_verbose=False,
+            available_nodes=available,
+        )
+        return route_graph
+
+    for profile_name in ("speed", "quality", "original"):
+        original = profile_name == "original"
+        larry_route = turbo_route_graph(profile_name, LARRY_TURBO)
+        larry_route_loader = next(
+            node for node in larry_route.nodes.values()
+            if node["class_type"] == LARRY_TURBO_LORA_NODE
+        )
+        assert larry_route_loader["inputs"]["low_vram"] is not original
+
+        for lightx_variant in (
+            LIGHTX2V_4STEP_TURBO,
+            LIGHTX2V_8STEP_TURBO,
+        ):
+            lightx_route = turbo_route_graph(profile_name, lightx_variant)
+            route_classes = {
+                node["class_type"] for node in lightx_route.nodes.values()
+            }
+            expected_loader = (
+                LIGHTX2V_BYPASS_LORA_NODE
+                if original else CORE_LORA_LOADER_NODE
+            )
+            rejected_loader = (
+                CORE_LORA_LOADER_NODE
+                if original else LIGHTX2V_BYPASS_LORA_NODE
+            )
+            assert expected_loader in route_classes
+            assert rejected_loader not in route_classes
+            assert FUSED_MODULATION_NODE in route_classes
+
+    original_name = fake.profile("original").fl2va
+    assert is_original_bf16_model(original_name) is True
+    assert LIGHTX2V_BYPASS_LORA_NODE in turbo_required_nodes(
+        LIGHTX2V_4STEP_TURBO, original_name
+    )
+    assert CORE_LORA_LOADER_NODE not in turbo_required_nodes(
+        LIGHTX2V_4STEP_TURBO, original_name
     )
 
     ref_turbo_graph = Graph()

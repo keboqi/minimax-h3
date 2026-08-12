@@ -70,8 +70,13 @@ Acceleration Off before relying on it for quality-critical output.
 Turbo defaults to Larry v4-600 EMA at six steps and strength 1.0. Its pinned
 custom node uses a quantization-aware bypass loader plus the adaptive H3 Turbo
 sampler. The official LightX2V v1.0 adapters are selectable as a four-step 768p
-option and an eight-step 544p option, both using the core LoRA loader at strength
-1.0. Turbo step defaults are applied by an
+option and an eight-step 544p option, both at strength 1.0. Loader policy follows
+the base model: Original BF16 applies either LoRA in
+activation space, avoiding reversible weight-merge copies that exceed 96 GiB;
+the compact Speed and Quality profiles merge either LoRA for faster inference
+and compatibility with direct-weight quantized kernels. LightX2V's Original
+bypass validates the exact official 50-block plus two-refiner adapter layout before installing
+any hooks and retains fused modulation. Turbo step defaults are applied by an
 immediate mode/variant UI update before generation is queued, preventing
 Larry's six-step default from surviving a switch to LightX2V. The resulting
 step control remains editable so users can increase either Turbo variant's
