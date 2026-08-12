@@ -1,5 +1,23 @@
 # Code review and refactor notes
 
+## LTX 2.5 and shared-gallery review — 2026-08-12
+
+1. **Consolidated lazy-model freshness checks.** LTX had grown a UI-local
+   manifest validator while H3 profile, INT8 VAE, and SeedVR2 lazy downloads
+   still treated any file larger than 1 MiB as current. The source, remote
+   filename, pinned SHA-256, and recorded byte size are now validated once in
+   `h3_models.py` and reused by every lazy model path.
+2. **Hardened the Comfy-ready NVFP4 boundary.** The replacement checkpoint is
+   pinned by SHA-256 and its safetensors header must contain `.comfy_quant`
+   markers before a prompt can be submitted. INT8 ConvRot and BF16 remain
+   direct Lightricks assets.
+3. **Fixed full-gallery deletion.** Display remains capped by
+   `GRADIO_GALLERY_LIMIT`, but **Empty gallery** now scans all managed outputs
+   instead of deleting only the newest visible page.
+4. **Preserved the validated graph.** The working LTX 2.5 node ordering,
+   distilled sigma schedule, shared ComfyUI queue, and H3/LTX gallery family
+   routing were reviewed and intentionally left unchanged.
+
 ## Current review
 
 The repository-level review found and addressed these issues:

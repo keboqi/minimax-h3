@@ -272,6 +272,66 @@ def write_json_atomic(path: Path, value: Any) -> None:
     os.replace(tmp, path)
 
 
+def model_manifest_key(spec: ModelSpec) -> str:
+    return f"{spec.folder}/{spec.local_name}"
+
+
+def model_file_matches_manifest(
+    root: Path,
+    manifest: dict[str, Any],
+    spec: ModelSpec,
+) -> bool:
+    """Return whether a local model matches its recorded source and size."""
+    path = Path(root) / spec.folder / spec.local_name
+    if not path.is_file():
+        return False
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return False
+    if size <= MIN_VALID_MODEL_BYTES:
+        return False
+
+    files = manifest.get("files", {})
+    if not isinstance(files, dict):
+        return False
+    entry = files.get(model_manifest_key(spec), {})
+    if not isinstance(entry, dict):
+        return False
+    recorded_size = entry.get("size")
+    return (
+        entry.get("repo_id") == spec.repo_id
+        and entry.get("filename") == spec.filename
+        and isinstance(recorded_size, int)
+        and recorded_size == size
+        and (
+            spec.expected_sha256 is None
+            or entry.get("sha256") == spec.expected_sha256
+        )
+    )
+
+
+def stale_model_keys(
+    *,
+    root: Path,
+    manifest_path: Path,
+    model_keys: Iterable[str],
+) -> list[str]:
+    """Return selected model keys missing or stale against the local manifest."""
+    selected = tuple(model_keys)
+    unknown = sorted(set(selected) - set(MODEL_SPECS))
+    if unknown:
+        raise KeyError("Unknown model keys: " + ", ".join(unknown))
+    manifest = read_json(manifest_path, {"files": {}})
+    if not isinstance(manifest, dict):
+        manifest = {"files": {}}
+    return [
+        key
+        for key in selected
+        if not model_file_matches_manifest(root, manifest, MODEL_SPECS[key])
+    ]
+
+
 def metadata_value(value: Any, name: str):
     if value is None:
         return None
@@ -324,7 +384,7 @@ def _plan_model(
     dest_dir = root / spec.folder
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / spec.local_name
-    manifest_key = f"{spec.folder}/{dest.name}"
+    manifest_key = model_manifest_key(spec)
     old = manifest.setdefault("files", {}).get(manifest_key, {})
 
     repo_result = repo_results[spec.repo_id]
@@ -524,6 +584,10 @@ def sync_models(
         manifest_path,
         {"schema_version": 1, "files": {}},
     )
+    if not isinstance(manifest, dict):
+        manifest = {"schema_version": 1, "files": {}}
+    if not isinstance(manifest.get("files"), dict):
+        manifest["files"] = {}
 
     selected_keys = tuple(MODEL_SPECS if model_keys is None else model_keys)
     unknown = sorted(set(selected_keys) - set(MODEL_SPECS))
@@ -636,6 +700,8 @@ def validate_config_files(
 
 
 def selftest() -> None:
+    import tempfile
+
     assert MODEL_SPECS["text_encoder"].repo_id == TEXT_ENCODER_REPO
     assert MODEL_SPECS["text_encoder"].local_name == (
         "qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors"
@@ -720,6 +786,26 @@ def selftest() -> None:
     assert nvfp4.expected_sha256 == (
         "2f3599d1adf22fc4c4a5bb9328cb42d64f449ed78dce5f47a16f098481bdee74"
     )
+    with tempfile.TemporaryDirectory() as model_temp:
+        root = Path(model_temp)
+        path = root / nvfp4.folder / nvfp4.local_name
+        path.parent.mkdir(parents=True)
+        with path.open("wb") as handle:
+            handle.seek(MIN_VALID_MODEL_BYTES)
+            handle.write(b"x")
+        manifest = {
+            "files": {
+                model_manifest_key(nvfp4): {
+                    "repo_id": nvfp4.repo_id,
+                    "filename": nvfp4.filename,
+                    "sha256": nvfp4.expected_sha256,
+                    "size": path.stat().st_size,
+                }
+            }
+        }
+        assert model_file_matches_manifest(root, manifest, nvfp4)
+        manifest["files"][model_manifest_key(nvfp4)]["size"] += 1
+        assert not model_file_matches_manifest(root, manifest, nvfp4)
     assert set(LTX25_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert cfg["turbo_supported_profiles"] == ["speed", "quality", "original"]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]

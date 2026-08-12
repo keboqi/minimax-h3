@@ -41,7 +41,7 @@ from h3_models import (
     MODEL_SPECS,
     PROFILE_LABELS,
     SEEDVR2_MODEL_CHOICES,
-    read_json,
+    stale_model_keys,
     sync_models,
 )
 
@@ -656,14 +656,20 @@ def ensure_profile_model(
     """Download a lazy profile checkpoint before submitting its workflow."""
     reference = str(mode).strip().lower() == "reference media"
     filename = profile.ref2va if reference else profile.fl2va
-    destination = COMFY_DIR / "models" / "diffusion_models" / filename
-    if model_file_is_ready(destination):
-        return False
-
     model_key = f"{profile_key}_{'ref2va' if reference else 'fl2va'}"
+    destination = (
+        COMFY_DIR / "models" / MODEL_SPECS[model_key].folder / filename
+    )
+    manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
+    if not stale_model_keys(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        model_keys=(model_key,),
+    ):
+        return False
     sync_models(
         root=COMFY_DIR / "models",
-        manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
+        manifest_path=manifest_path,
         token=os.getenv("HF_TOKEN") or None,
         log_prefix="[h3-on-demand]",
         model_keys=(model_key,),
@@ -682,13 +688,20 @@ def ensure_int8_video_vae(models: ModelConfig) -> bool:
             "The model configuration predates INT8 video VAE support. "
             "Re-run setup_h3.py before enabling it."
         )
-    destination = COMFY_DIR / "models" / "vae" / filename
-    if model_file_is_ready(destination):
+    destination = (
+        COMFY_DIR / "models" / MODEL_SPECS["video_vae_int8"].folder / filename
+    )
+    manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
+    if not stale_model_keys(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        model_keys=("video_vae_int8",),
+    ):
         return False
 
     sync_models(
         root=COMFY_DIR / "models",
-        manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
+        manifest_path=manifest_path,
         token=os.getenv("HF_TOKEN") or None,
         log_prefix="[h3-int8-vae-on-demand]",
         model_keys=("video_vae_int8",),
@@ -720,28 +733,12 @@ def ltx25_model_names(model_choice: str = DEFAULT_LTX25_MODEL) -> dict[str, str]
 
 
 def missing_ltx25_model_names(model_choice: str = DEFAULT_LTX25_MODEL) -> list[str]:
-    manifest = read_json(
-        MODELS_CONFIG.parent / "h3_model_manifest.json",
-        {"files": {}},
+    stale = stale_model_keys(
+        root=COMFY_DIR / "models",
+        manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
+        model_keys=ltx25_model_keys(model_choice).values(),
     )
-    manifest_files = manifest.get("files", {})
-    stale: list[str] = []
-    for key in ltx25_model_keys(model_choice).values():
-        spec = MODEL_SPECS[key]
-        path = COMFY_DIR / "models" / spec.folder / spec.local_name
-        entry = manifest_files.get(f"{spec.folder}/{spec.local_name}", {})
-        current = (
-            model_file_is_ready(path)
-            and entry.get("repo_id") == spec.repo_id
-            and entry.get("filename") == spec.filename
-            and (
-                spec.expected_sha256 is None
-                or entry.get("sha256") == spec.expected_sha256
-            )
-        )
-        if not current:
-            stale.append(spec.local_name)
-    return stale
+    return [MODEL_SPECS[key].local_name for key in stale]
 
 
 def validate_ltx25_nvfp4_header(model_choice: str) -> None:
@@ -825,19 +822,18 @@ def ensure_seedvr2_upscale_models(
         (selected_key, configured["seedvr2_dit"]),
         ("seedvr2_vae", configured["seedvr2_vae"]),
     )
-    missing_files = []
-    for key, filename in assets:
-        spec = MODEL_SPECS[key]
-        if not model_file_is_ready(
-            COMFY_DIR / "models" / spec.folder / filename
-        ):
-            missing_files.append(key)
+    manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
+    missing_files = stale_model_keys(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        model_keys=(key for key, _filename in assets),
+    )
     if not missing_files:
         return False
 
     sync_models(
         root=COMFY_DIR / "models",
-        manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
+        manifest_path=manifest_path,
         token=os.getenv("HF_TOKEN") or None,
         log_prefix="[seedvr2-on-demand]",
         model_keys=tuple(key for key, _filename in assets),
@@ -2430,8 +2426,8 @@ def absolute_video_download_url(video: str | Path, request: gr.Request) -> str:
     return absolute_video_url(video, request, download=True)
 
 
-def gallery_video_paths() -> list[Path]:
-    """Return the newest generated videos without loading their media data."""
+def gallery_video_paths(*, limit: int | None = GALLERY_LIMIT) -> list[Path]:
+    """Return generated videos, optionally limited to the newest entries."""
     videos: dict[Path, Path] = {}
     for root in (OUTPUT_DIR, OUTPUTS_DIR):
         if not root.is_dir():
@@ -2453,7 +2449,8 @@ def gallery_video_paths() -> list[Path]:
         except OSError:
             return 0.0
 
-    return sorted(videos.values(), key=modified, reverse=True)[:GALLERY_LIMIT]
+    ordered = sorted(videos.values(), key=modified, reverse=True)
+    return ordered if limit is None else ordered[:max(0, int(limit))]
 
 
 def gallery_thumbnail(video: Path) -> Path | None:
@@ -2833,7 +2830,7 @@ def empty_generated_gallery(
         )
     deleted = 0
     failed = 0
-    for candidate in gallery_video_paths():
+    for candidate in gallery_video_paths(limit=None):
         try:
             video = managed_video_path(candidate)
             gallery_thumbnail_path(video).unlink(missing_ok=True)
@@ -4867,6 +4864,8 @@ def selftest() -> None:
             ltx25_video.parent.mkdir()
             h3_video.write_bytes(b"h3")
             ltx25_video.write_bytes(b"ltx25")
+            assert len(gallery_video_paths(limit=1)) == 1
+            assert len(gallery_video_paths(limit=None)) == 3
             discovered_families = {
                 generated_video_family(video) for video in gallery_video_paths()
             }
