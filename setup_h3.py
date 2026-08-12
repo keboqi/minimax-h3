@@ -14,6 +14,7 @@ from pathlib import Path
 from h3_models import PRELOAD_MODEL_KEYS, sync_models, write_json_atomic
 from h3_node_patches import patch_larry_turbo_node
 from h3_requirements import (
+    COMFY_REF,
     NUMPY_VERSION,
     SCIPY_VERSION,
     TORCH_INDEX,
@@ -374,6 +375,7 @@ def install_environment(comfy: Path) -> None:
     sync_git_repo(
         COMFY_REPO,
         comfy,
+        ref=COMFY_REF,
         required_paths=("main.py", "requirements.txt"),
         clean_untracked=False,
     )

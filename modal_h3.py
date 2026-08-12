@@ -72,6 +72,7 @@ sys.path.insert(0, str(_shared_import_path()))
 # Only build inputs may be imported while Modal constructs the image. Helpers
 # mounted after run_function() must be imported lazily inside runtime functions.
 from h3_requirements import (  # noqa: E402
+    COMFY_REF,
     NUMPY_VERSION,
     SCIPY_VERSION,
     TORCH_INDEX,
@@ -165,7 +166,8 @@ def build(revision: str) -> None:
             f"Missing shared requirements module: {SHARED_REQUIREMENTS}"
         )
 
-    _clone(COMFY_REPO, Path(COMFY))
+    _clone(COMFY_REPO, Path(COMFY), ref=COMFY_REF)
+    _print_git_revision(Path(COMFY))
 
     sol_dir = Path(COMFY) / "custom_nodes" / "ComfyUI_sol-attn_Blackwell"
     _clone(SOL_REPO, sol_dir, ref=SOL_REF)

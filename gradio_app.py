@@ -4474,7 +4474,12 @@ def selftest() -> None:
         seedvr2_vae="seedvr2_ema_vae_fp16.safetensors",
         seedvr2_vae_source="test",
     )
-    available = required_nodes_for("Text to video", True, "FirstBlockCache", True, use_turbo=True) | required_nodes_for("Reference media", True, "EasyCache", True)
+    available = required_nodes_for(
+        "Text to video",
+        True,
+        "FirstBlockCache",
+        use_turbo=True,
+    ) | required_nodes_for("Reference media", True, "EasyCache", True)
     available.add("SpectrumApplyMiniMaxH3")
     available.add(CHUNK_FEED_FORWARD_NODE)
     available |= {LARRY_TURBO_LORA_NODE, LARRY_TURBO_SAMPLER_NODE}

@@ -164,6 +164,10 @@ Install and authenticate the Modal CLI, then run:
 modal deploy modal_h3.py
 ```
 
+The deployment pins ComfyUI to a revision with native LTX 2.5 NVFP4 support.
+Changing that pin invalidates the Modal image cache so ComfyUI and its matching
+`comfy-kitchen` dependency are rebuilt together.
+
 Useful environment variables include `H3_MODAL_APP_NAME`,
 `H3_MODAL_VOLUME`, `H3_MODAL_MIN_CONTAINERS`,
 `H3_MODAL_SCALEDOWN_WINDOW`, and `H3_MODAL_PROXY_AUTH`. Set
