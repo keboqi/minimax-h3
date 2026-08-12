@@ -350,3 +350,11 @@ core `LoraLoaderModelOnly` plus normal `res_multistep` sampling.
 Both choices remain experimental for Ref2VA because both LoRAs were trained for
 FL2VA. The model configuration keeps separate per-choice Ref2VA keys for future
 dedicated weights.
+
+## v49 LightX2V v1.0 Turbo adapters
+
+The preview LightX2V v0.1 adapter is replaced by the official ComfyUI BF16 v1.0
+release. The UI now exposes the 4-step 768p and 8-step 544p adapters separately,
+uses strength 1.0 for both, and synchronizes the editable step control to the
+selected adapter. Both official files are provisioned directly from
+`lightx2v/Minimax-h3-Turbo`.

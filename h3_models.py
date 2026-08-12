@@ -19,7 +19,7 @@ from typing import Any, Iterable
 
 MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
 ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
-TURBO_REPO = "Kijai/MiniMax-H3_comfy"
+TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
 TEXT_ENCODER_REPO = "sakamakismile/Qwen3-VL-32B-Heretic-MiniMax-H3-NVFP4"
@@ -110,8 +110,14 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     "turbo_lora": ModelSpec(
         TURBO_REPO,
         "loras",
-        "loras/minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors",
-        "LightX2V Turbo 4-step v0.1 · Kijai full Comfy conversion",
+        "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+        "LightX2V Turbo 4-step v1.0 · official 768p ComfyUI BF16",
+    ),
+    "turbo_8step_lora": ModelSpec(
+        TURBO_REPO,
+        "loras",
+        "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+        "LightX2V Turbo 8-step v1.0 · official 544p ComfyUI BF16",
     ),
     "larry_turbo_lora": ModelSpec(
         LARRY_TURBO_REPO,
@@ -513,6 +519,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     video_vae_int8 = MODEL_SPECS["video_vae_int8"]
     audio_vae = MODEL_SPECS["audio_vae"]
     turbo_lora = MODEL_SPECS["turbo_lora"]
+    turbo_8step_lora = MODEL_SPECS["turbo_8step_lora"]
     larry_turbo_lora = MODEL_SPECS["larry_turbo_lora"]
     seedvr2_vae = MODEL_SPECS["seedvr2_vae"]
     seedvr2_models = {
@@ -521,7 +528,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
     return {
-        "schema_version": 12,
+        "schema_version": 13,
         "default_profile": "quality",
         "profiles": {
             profile: _profile_config(profile)
@@ -538,6 +545,10 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         # config key makes a future Ref2VA-specific Turbo asset a data-only swap.
         "turbo_ref_lora": turbo_lora.local_name,
         "turbo_ref_source": turbo_lora.source,
+        "turbo_8step_lora": turbo_8step_lora.local_name,
+        "turbo_8step_source": turbo_8step_lora.source,
+        "turbo_8step_ref_lora": turbo_8step_lora.local_name,
+        "turbo_8step_ref_source": turbo_8step_lora.source,
         "larry_turbo_lora": larry_turbo_lora.local_name,
         "larry_turbo_source": larry_turbo_lora.source,
         # Larry's FL2VA-trained LoRA is also exposed for experimental Ref2VA.
@@ -677,6 +688,7 @@ def validate_config_files(
         ("vae", config.get("video_vae")),
         ("vae", config.get("audio_vae")),
         ("loras", config.get("turbo_lora")),
+        ("loras", config.get("turbo_8step_lora")),
         ("loras", config.get("larry_turbo_lora")),
     ]
     for profile in profiles:
@@ -718,6 +730,7 @@ def selftest() -> None:
         "video_vae_int8",
         "audio_vae",
         "turbo_lora",
+        "turbo_8step_lora",
         "larry_turbo_lora",
         "seedvr2_3b_nvfp4",
         "seedvr2_3b_int8",
@@ -738,7 +751,7 @@ def selftest() -> None:
     assert set(PROFILE_MODEL_KEYS["quality"]).issubset(PRELOAD_MODEL_KEYS)
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 12
+    assert cfg["schema_version"] == 13
     assert cfg["default_profile"] == "quality"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
@@ -753,8 +766,11 @@ def selftest() -> None:
         "minimax_h3_video_vae_int8_convrot.safetensors"
     )
     assert "video_vae_int8" not in PRELOAD_MODEL_KEYS
-    assert cfg["turbo_lora"] == "minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors"
+    assert cfg["turbo_lora"] == "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"
     assert cfg["turbo_ref_lora"] == cfg["turbo_lora"]
+    assert cfg["turbo_8step_lora"] == "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"
+    assert cfg["turbo_8step_ref_lora"] == cfg["turbo_8step_lora"]
+    assert {"turbo_lora", "turbo_8step_lora"}.issubset(PRELOAD_MODEL_KEYS)
     assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"
     assert cfg["larry_turbo_ref_lora"] == cfg["larry_turbo_lora"]
     assert cfg["seedvr2_dit"] == "seedvr2_7b_nvfp4.safetensors"

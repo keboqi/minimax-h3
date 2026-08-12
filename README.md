@@ -12,7 +12,7 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 - Resolution-aware thumbnail gallery that loads a video only after it is selected
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
 - Per-video SeedVR2 upscale and frame interpolation in the gallery
-- Selectable Larry v4-600 EMA and LightX2V v0.1 Turbo LoRAs
+- Selectable Larry v4-600 EMA and official LightX2V v1.0 4-step/8-step Turbo LoRAs
 - H3-native zero-copy Sol v0.6.1 sparse attention with SageAttention fallback
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
@@ -69,8 +69,9 @@ Acceleration Off before relying on it for quality-critical output.
 
 Turbo defaults to Larry v4-600 EMA at six steps and strength 1.0. Its pinned
 custom node uses a quantization-aware bypass loader plus the adaptive H3 Turbo
-sampler. LightX2V v0.1 remains selectable as the simpler four-step option using
-the core LoRA loader at strength 0.75. Turbo step defaults are applied by an
+sampler. The official LightX2V v1.0 adapters are selectable as a four-step 768p
+option and an eight-step 544p option, both using the core LoRA loader at strength
+1.0. Turbo step defaults are applied by an
 immediate mode/variant UI update before generation is queued, preventing
 Larry's six-step default from surviving a switch to LightX2V. The resulting
 step control remains editable so users can increase either Turbo variant's

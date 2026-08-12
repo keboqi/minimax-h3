@@ -90,7 +90,8 @@ DEFAULT_FBCACHE_END = 0.95
 DEFAULT_FBCACHE_MAX_HITS = 2
 DEFAULT_FBCACHE_TEMPORAL_GUARD = True
 DEFAULT_ACCELERATOR = "Spectrum"
-LIGHTX2V_TURBO = "LightX2V v0.1"
+LIGHTX2V_4STEP_TURBO = "LightX2V v1.0 / 4-step 768p"
+LIGHTX2V_8STEP_TURBO = "LightX2V v1.0 / 8-step 544p"
 LARRY_TURBO = "Larry v4-600 EMA"
 DEFAULT_TURBO = LARRY_TURBO
 LTX25_SIGMAS = "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
@@ -124,9 +125,37 @@ POSTPROCESS_OPTIONS = [
     "48 fps interpolation",
 ]
 GENERATION_POSTPROCESS_OPTIONS = ["None", SEEDVR2_UPSCALE]
+
+
+@dataclass(frozen=True)
+class TurboSpec:
+    steps: int
+    strength: float
+    lora_attr: str
+    ref_lora_attr: str
+    custom_nodes: bool = False
+
+
 TURBO_SETTINGS = {
-    LARRY_TURBO: {"steps": 6, "strength": 1.0},
-    LIGHTX2V_TURBO: {"steps": 4, "strength": 0.75},
+    LARRY_TURBO: TurboSpec(
+        steps=6,
+        strength=1.0,
+        lora_attr="larry_turbo_lora",
+        ref_lora_attr="larry_turbo_ref_lora",
+        custom_nodes=True,
+    ),
+    LIGHTX2V_4STEP_TURBO: TurboSpec(
+        steps=4,
+        strength=1.0,
+        lora_attr="turbo_lora",
+        ref_lora_attr="turbo_ref_lora",
+    ),
+    LIGHTX2V_8STEP_TURBO: TurboSpec(
+        steps=8,
+        strength=1.0,
+        lora_attr="turbo_8step_lora",
+        ref_lora_attr="turbo_8step_ref_lora",
+    ),
 }
 UI_DEFAULTS = {
     "mode": "Text to video",
@@ -536,11 +565,15 @@ def normalize_turbo_variant(value: str) -> str:
 
 
 def turbo_steps_for(value: str) -> int:
-    return int(TURBO_SETTINGS[normalize_turbo_variant(value)]["steps"])
+    return TURBO_SETTINGS[normalize_turbo_variant(value)].steps
 
 
 def turbo_strength_for(value: str) -> float:
-    return float(TURBO_SETTINGS[normalize_turbo_variant(value)]["strength"])
+    return TURBO_SETTINGS[normalize_turbo_variant(value)].strength
+
+
+def turbo_uses_custom_nodes(value: str) -> bool:
+    return TURBO_SETTINGS[normalize_turbo_variant(value)].custom_nodes
 
 
 @dataclass
@@ -565,6 +598,10 @@ class ModelConfig:
     turbo_source: str = "unknown"
     turbo_ref_lora: str | None = None
     turbo_ref_source: str = "unknown"
+    turbo_8step_lora: str | None = None
+    turbo_8step_source: str = "unknown"
+    turbo_8step_ref_lora: str | None = None
+    turbo_8step_ref_source: str = "unknown"
     larry_turbo_lora: str | None = None
     larry_turbo_source: str = "unknown"
     larry_turbo_ref_lora: str | None = None
@@ -588,9 +625,8 @@ class ModelConfig:
 
     def turbo_lora_for(self, mode: str, turbo_variant: str) -> str | None:
         reference = str(mode).strip().lower() == "reference media"
-        if normalize_turbo_variant(turbo_variant) == LARRY_TURBO:
-            return self.larry_turbo_ref_lora if reference else self.larry_turbo_lora
-        return self.turbo_ref_lora if reference else self.turbo_lora
+        spec = TURBO_SETTINGS[normalize_turbo_variant(turbo_variant)]
+        return getattr(self, spec.ref_lora_attr if reference else spec.lora_attr)
 
 
 def load_model_config() -> ModelConfig:
@@ -630,6 +666,14 @@ def load_model_config() -> ModelConfig:
         turbo_ref_lora=data.get("turbo_ref_lora", data.get("turbo_lora")),
         turbo_ref_source=data.get(
             "turbo_ref_source", data.get("turbo_source", "unknown")
+        ),
+        turbo_8step_lora=data.get("turbo_8step_lora"),
+        turbo_8step_source=data.get("turbo_8step_source", "unknown"),
+        turbo_8step_ref_lora=data.get(
+            "turbo_8step_ref_lora", data.get("turbo_8step_lora")
+        ),
+        turbo_8step_ref_source=data.get(
+            "turbo_8step_ref_source", data.get("turbo_8step_source", "unknown")
         ),
         larry_turbo_lora=data.get("larry_turbo_lora"),
         larry_turbo_source=data.get("larry_turbo_source", "unknown"),
@@ -1182,7 +1226,7 @@ class Graph:
 
 def turbo_required_nodes(turbo_variant: str) -> set[str]:
     """Return the external node contract for one normalized Turbo variant."""
-    if normalize_turbo_variant(turbo_variant) == LARRY_TURBO:
+    if turbo_uses_custom_nodes(turbo_variant):
         return {LARRY_TURBO_LORA_NODE, LARRY_TURBO_SAMPLER_NODE}
     return {CORE_LORA_LOADER_NODE, CORE_SAMPLER_NODE, FUSED_MODULATION_NODE}
 
@@ -1207,7 +1251,7 @@ def add_turbo_model_patch(
             "Re-run setup_h3.py and restart ComfyUI."
         )
 
-    if variant == LARRY_TURBO:
+    if turbo_uses_custom_nodes(variant):
         turbo = graph.add(
             LARRY_TURBO_LORA_NODE,
             model=model_ref,
@@ -1431,7 +1475,7 @@ def finish_sampling(
     guider = graph.add("BasicGuider", model=model_ref, conditioning=conditioning_ref)
     use_larry_sampler = (
         turbo_variant is not None
-        and normalize_turbo_variant(turbo_variant) == LARRY_TURBO
+        and turbo_uses_custom_nodes(turbo_variant)
     )
     sampler = (
         graph.add(LARRY_TURBO_SAMPLER_NODE)
@@ -2000,7 +2044,7 @@ def required_nodes_for(
     use_sol: bool,
     cache_mode: str,
     use_turbo: bool = False,
-    turbo_variant: str = LIGHTX2V_TURBO,
+    turbo_variant: str = LIGHTX2V_4STEP_TURBO,
     model_filename: str = "",
 ) -> set[str]:
     common = {
@@ -2910,8 +2954,13 @@ def backend_status() -> str:
             )
         if models.turbo_lora:
             profile_lines.append(
-                f"**LightX2V Turbo** · LoRA `{models.turbo_lora}` · "
-                "4-step default · strength 0.75 · FL2VA and experimental Ref2VA"
+                f"**LightX2V Turbo v1.0 / 4-step 768p** · LoRA `{models.turbo_lora}` · "
+                "4-step default · strength 1.0 · FL2VA and experimental Ref2VA"
+            )
+        if models.turbo_8step_lora:
+            profile_lines.append(
+                f"**LightX2V Turbo v1.0 / 8-step 544p** · LoRA `{models.turbo_8step_lora}` · "
+                "8-step default · strength 1.0 · FL2VA and experimental Ref2VA"
             )
         return (
             f"Connected · {gpu}{vram_text} · sparse: {SERVER_ATTENTION_BACKEND} · "
@@ -3791,7 +3840,8 @@ def build_ui() -> gr.Blocks:
                     label="Turbo implementation",
                     info=(
                         "Larry uses its quantization-aware loader and adaptive sampler at "
-                        "strength 1.0; LightX2V uses the native LoRA loader at strength 0.75."
+                        "strength 1.0; both LightX2V v1.0 variants use the native LoRA "
+                        "loader at strength 1.0."
                     ),
                 )
                 preset = gr.Radio(
@@ -3811,7 +3861,8 @@ def build_ui() -> gr.Blocks:
                     steps = gr.Slider(
                         4, 30, value=defaults["steps"], step=1, label="Steps",
                         info=(
-                            "Larry defaults to 6 steps and LightX2V to 4. Increase Turbo "
+                            "Larry defaults to 6 steps; LightX2V variants default to their "
+                            "trained 4 or 8 steps. Increase Turbo "
                             "steps when a clip benefits from extra refinement; Normal H3 "
                             "presets normally use 15–20."
                         ),
@@ -4580,6 +4631,10 @@ def selftest() -> None:
         turbo_source="test",
         turbo_ref_lora="minimax_h3_turbo_4step_ema_ckpt850.safetensors",
         turbo_ref_source="shared-fl2va-test",
+        turbo_8step_lora="minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+        turbo_8step_source="test",
+        turbo_8step_ref_lora="minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+        turbo_8step_ref_source="shared-fl2va-test",
         larry_turbo_lora="minimax_h3_turbo_v4_step600_ema.safetensors",
         larry_turbo_source="test",
         larry_turbo_ref_lora="minimax_h3_turbo_v4_step600_ema.safetensors",
@@ -4604,8 +4659,10 @@ def selftest() -> None:
     available.add("SpectrumApplyMiniMaxH3")
     available.add(CHUNK_FEED_FORWARD_NODE)
     available |= {LARRY_TURBO_LORA_NODE, LARRY_TURBO_SAMPLER_NODE}
-    assert fake.turbo_lora_for("Text to video", LIGHTX2V_TURBO) == fake.turbo_lora
-    assert fake.turbo_lora_for("Reference media", LIGHTX2V_TURBO) == fake.turbo_ref_lora
+    assert fake.turbo_lora_for("Text to video", LIGHTX2V_4STEP_TURBO) == fake.turbo_lora
+    assert fake.turbo_lora_for("Reference media", LIGHTX2V_4STEP_TURBO) == fake.turbo_ref_lora
+    assert fake.turbo_lora_for("Text to video", LIGHTX2V_8STEP_TURBO) == fake.turbo_8step_lora
+    assert fake.turbo_lora_for("Reference media", LIGHTX2V_8STEP_TURBO) == fake.turbo_8step_ref_lora
     assert fake.turbo_lora_for("Text to video", LARRY_TURBO) == fake.larry_turbo_lora
     reference_updates = mode_layout_updates("Reference media")
     assert reference_updates[3].get("interactive") is True
@@ -4615,7 +4672,7 @@ def selftest() -> None:
         prompt="test", first_image=None, last_image=None,
         width=864, height=480, duration=5, steps=18, seed=1,
         scheduler="simple", turbo_lora_name="minimax_h3_turbo_4step_ema_ckpt850.safetensors",
-        turbo_variant=LIGHTX2V_TURBO, turbo_strength=1.0,
+        turbo_variant=LIGHTX2V_4STEP_TURBO, turbo_strength=1.0,
         use_sol=True, sol_tau=1.0,
         sol_thresh_type="exact",
         sol_exact_mode="exact_kv_and_rows",
@@ -4704,8 +4761,8 @@ def selftest() -> None:
         fake.profile("quality").fl2va,
         fake,
         turbo_lora_name=None,
-        turbo_variant=LIGHTX2V_TURBO,
-        turbo_strength=0.75,
+        turbo_variant=LIGHTX2V_4STEP_TURBO,
+        turbo_strength=1.0,
         use_sol=True,
         sol_tau=1.0,
         sol_thresh_type="diag",
@@ -5155,10 +5212,16 @@ def selftest() -> None:
     assert turbo_defaults[1]["value"] == 6
     assert turbo_defaults[1]["interactive"] is True
     assert turbo_defaults[2:] == ("simple", "Spectrum", "Auto")
-    lightx_defaults = generation_mode_defaults("Turbo", LIGHTX2V_TURBO)
+    lightx_defaults = generation_mode_defaults("Turbo", LIGHTX2V_4STEP_TURBO)
     assert lightx_defaults[1]["value"] == 4
     assert lightx_defaults[1]["interactive"] is True
     assert lightx_defaults[2:] == ("simple", "Spectrum", "Auto")
+    lightx_8step_defaults = generation_mode_defaults(
+        "Turbo", LIGHTX2V_8STEP_TURBO
+    )
+    assert lightx_8step_defaults[1]["value"] == 8
+    assert lightx_8step_defaults[1]["interactive"] is True
+    assert lightx_8step_defaults[2:] == ("simple", "Spectrum", "Auto")
     normal_defaults = generation_mode_defaults("Normal")
     assert normal_defaults[1]["value"] == 18
     assert normal_defaults[1]["interactive"] is True
@@ -5182,9 +5245,9 @@ def selftest() -> None:
         prompt="test", first_image=None, last_image=None,
         width=864, height=480, duration=5, steps=8, seed=2,
         scheduler="simple",
-        turbo_lora_name="minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy_v0.1_comfy.safetensors",
-        turbo_variant=LIGHTX2V_TURBO,
-        turbo_strength=0.75,
+        turbo_lora_name="minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+        turbo_variant=LIGHTX2V_4STEP_TURBO,
+        turbo_strength=1.0,
         use_sol=False, sol_tau=1.0,
         sol_thresh_type="diag",
         sol_exact_mode="off",
@@ -5223,9 +5286,9 @@ def selftest() -> None:
         if node["class_type"] == CORE_LORA_LOADER_NODE
     ]
     assert len(turbo_nodes) == 1
-    assert turbo_nodes[0]["inputs"]["strength_model"] == 0.75
+    assert turbo_nodes[0]["inputs"]["strength_model"] == 1.0
     assert turbo_nodes[0]["inputs"]["lora_name"].endswith(
-        "v0.1_comfy.safetensors"
+        "v1.0_768p_comfyui_bf16.safetensors"
     )
     quality_fused_id = next(
         node_id for node_id, node in quality_turbo_graph.items()
@@ -5316,7 +5379,11 @@ def selftest() -> None:
         node["class_type"] for node in larry_graph.nodes.values()
     }
     assert FUSED_MODULATION_NODE not in turbo_required_nodes(LARRY_TURBO)
-    assert FUSED_MODULATION_NODE in turbo_required_nodes(LIGHTX2V_TURBO)
+    assert FUSED_MODULATION_NODE in turbo_required_nodes(LIGHTX2V_4STEP_TURBO)
+    assert FUSED_MODULATION_NODE in turbo_required_nodes(LIGHTX2V_8STEP_TURBO)
+    assert turbo_uses_custom_nodes(LARRY_TURBO) is True
+    assert turbo_uses_custom_nodes(LIGHTX2V_4STEP_TURBO) is False
+    assert turbo_uses_custom_nodes(LIGHTX2V_8STEP_TURBO) is False
     assert any(
         node["class_type"] == LARRY_TURBO_SAMPLER_NODE
         for node in larry_graph.nodes.values()
@@ -5332,8 +5399,8 @@ def selftest() -> None:
         fake.profile("quality").ref2va,
         fake,
         turbo_lora_name=fake.turbo_ref_lora,
-        turbo_variant=LIGHTX2V_TURBO,
-        turbo_strength=0.75,
+        turbo_variant=LIGHTX2V_4STEP_TURBO,
+        turbo_strength=1.0,
         use_sol=False,
         sol_tau=1.0,
         sol_thresh_type="diag",
@@ -5364,7 +5431,7 @@ def selftest() -> None:
     )
     assert ref_unet["inputs"]["unet_name"] == fake.profile("quality").ref2va
     assert ref_lora["inputs"]["lora_name"] == fake.turbo_ref_lora
-    assert ref_lora["inputs"]["strength_model"] == 0.75
+    assert ref_lora["inputs"]["strength_model"] == 1.0
     ref_easycache = next(
         node for node in ref_turbo_graph.nodes.values()
         if node["class_type"] == "EasyCache"
