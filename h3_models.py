@@ -25,6 +25,7 @@ EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
 TEXT_ENCODER_REPO = "sakamakismile/Qwen3-VL-32B-Heretic-MiniMax-H3-NVFP4"
 SEEDVR2_REPO = "Comfy-Org/SeedVR2"
 LTX25_REPO = "Lightricks/LTX-2.5"
+LTX25_NVFP4_COMFY_REPO = "BennyDaBall/LTX-2.5-22b-distilled-nvfp4-comfy"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -37,10 +38,12 @@ class ModelSpec:
     folder: str
     filename: str
     source: str
+    local_filename: str | None = None
+    expected_sha256: str | None = None
 
     @property
     def local_name(self) -> str:
-        return Path(self.filename).name
+        return self.local_filename or Path(self.filename).name
 
 
 MODEL_SPECS: dict[str, ModelSpec] = {
@@ -153,10 +156,14 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "LTX-2.5 22B distilled transformer; lazy 8-step model",
     ),
     "ltx25_distilled_nvfp4": ModelSpec(
-        LTX25_REPO,
+        LTX25_NVFP4_COMFY_REPO,
         "diffusion_models",
-        "diffusion_models/ltx-2.5-22b-distilled-transformer-nvfp4.safetensors",
-        "LTX-2.5 22B distilled NVFP4 transformer; recommended for Blackwell",
+        "ltx-2.5-22b-distilled-transformer-nvfp4-comfy.safetensors",
+        "LTX-2.5 22B distilled NVFP4; official weights with Comfy quant markers",
+        local_filename="ltx-2.5-22b-distilled-transformer-nvfp4.safetensors",
+        expected_sha256=(
+            "2f3599d1adf22fc4c4a5bb9328cb42d64f449ed78dce5f47a16f098481bdee74"
+        ),
     ),
     "ltx25_distilled_int8": ModelSpec(
         LTX25_REPO,
@@ -213,11 +220,11 @@ LAZY_POSTPROCESS_MODEL_KEYS = (
     *SEEDVR2_UPSCALE_MODEL_KEYS,
 )
 LTX25_MODEL_CHOICES = {
-    "NVFP4 (Blackwell recommended)": "ltx25_distilled_nvfp4",
+    "NVFP4 Comfy-ready (Blackwell recommended)": "ltx25_distilled_nvfp4",
     "INT8 ConvRot": "ltx25_distilled_int8",
     "BF16": "ltx25_distilled",
 }
-DEFAULT_LTX25_MODEL = "NVFP4 (Blackwell recommended)"
+DEFAULT_LTX25_MODEL = "NVFP4 Comfy-ready (Blackwell recommended)"
 LTX25_SHARED_MODEL_KEYS = (
     "ltx25_text_encoder",
     "ltx25_video_vae",
@@ -352,6 +359,11 @@ def _plan_model(
     size = getattr(sibling, "size", None) or metadata_value(lfs, "size")
     blob_id = getattr(sibling, "blob_id", None)
     identity = sha256 or blob_id or f"{revision}:{spec.filename}:{size}"
+    if spec.expected_sha256 and sha256 != spec.expected_sha256:
+        raise RuntimeError(
+            f"Unexpected SHA-256 for {spec.repo_id}/{spec.filename}: "
+            f"{sha256 or 'missing'} != {spec.expected_sha256}"
+        )
 
     valid = dest.is_file() and dest.stat().st_size > MIN_VALID_MODEL_BYTES
     size_ok = size is None or (valid and dest.stat().st_size == int(size))
@@ -689,7 +701,7 @@ def selftest() -> None:
     assert cfg["seedvr2_vae"] == "seedvr2_ema_vae_fp16.safetensors"
     assert cfg["ltx25_models"] == {
         "transformers": {
-            "NVFP4 (Blackwell recommended)": (
+            "NVFP4 Comfy-ready (Blackwell recommended)": (
                 "ltx-2.5-22b-distilled-transformer-nvfp4.safetensors"
             ),
             "INT8 ConvRot": (
@@ -701,7 +713,13 @@ def selftest() -> None:
         "video_vae": "ltx-2.5-video-vae-conv-bf16.safetensors",
         "audio_vae": "ltx-2.5-audio-vae-bf16.safetensors",
     }
-    assert DEFAULT_LTX25_MODEL == "NVFP4 (Blackwell recommended)"
+    assert DEFAULT_LTX25_MODEL == "NVFP4 Comfy-ready (Blackwell recommended)"
+    nvfp4 = MODEL_SPECS["ltx25_distilled_nvfp4"]
+    assert nvfp4.repo_id == LTX25_NVFP4_COMFY_REPO
+    assert nvfp4.filename.endswith("-nvfp4-comfy.safetensors")
+    assert nvfp4.expected_sha256 == (
+        "2f3599d1adf22fc4c4a5bb9328cb42d64f449ed78dce5f47a16f098481bdee74"
+    )
     assert set(LTX25_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert cfg["turbo_supported_profiles"] == ["speed", "quality", "original"]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]

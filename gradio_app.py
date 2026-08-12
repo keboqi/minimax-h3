@@ -41,6 +41,7 @@ from h3_models import (
     MODEL_SPECS,
     PROFILE_LABELS,
     SEEDVR2_MODEL_CHOICES,
+    read_json,
     sync_models,
 )
 
@@ -719,19 +720,55 @@ def ltx25_model_names(model_choice: str = DEFAULT_LTX25_MODEL) -> dict[str, str]
 
 
 def missing_ltx25_model_names(model_choice: str = DEFAULT_LTX25_MODEL) -> list[str]:
-    return [
-        MODEL_SPECS[key].local_name
-        for key in ltx25_model_keys(model_choice).values()
-        if not model_file_is_ready(
-            COMFY_DIR / "models" / MODEL_SPECS[key].folder / MODEL_SPECS[key].local_name
+    manifest = read_json(
+        MODELS_CONFIG.parent / "h3_model_manifest.json",
+        {"files": {}},
+    )
+    manifest_files = manifest.get("files", {})
+    stale: list[str] = []
+    for key in ltx25_model_keys(model_choice).values():
+        spec = MODEL_SPECS[key]
+        path = COMFY_DIR / "models" / spec.folder / spec.local_name
+        entry = manifest_files.get(f"{spec.folder}/{spec.local_name}", {})
+        current = (
+            model_file_is_ready(path)
+            and entry.get("repo_id") == spec.repo_id
+            and entry.get("filename") == spec.filename
+            and (
+                spec.expected_sha256 is None
+                or entry.get("sha256") == spec.expected_sha256
+            )
         )
-    ]
+        if not current:
+            stale.append(spec.local_name)
+    return stale
+
+
+def validate_ltx25_nvfp4_header(model_choice: str) -> None:
+    selected_key = LTX25_MODEL_CHOICES.get(str(model_choice))
+    if selected_key != "ltx25_distilled_nvfp4":
+        return
+
+    from safetensors import safe_open
+
+    spec = MODEL_SPECS[selected_key]
+    path = COMFY_DIR / "models" / spec.folder / spec.local_name
+    with safe_open(path, framework="pt", device="cpu") as checkpoint:
+        has_quant_markers = any(
+            key.endswith(".comfy_quant") for key in checkpoint.keys()
+        )
+    if not has_quant_markers:
+        raise H3Error(
+            "The LTX-2.5 NVFP4 checkpoint lacks ComfyUI quantization markers. "
+            "Remove the stale file and retry so the Comfy-ready build is downloaded."
+        )
 
 
 def ensure_ltx25_models(model_choice: str = DEFAULT_LTX25_MODEL) -> bool:
     """Download the gated LTX-2.5 model set only when its tab is used."""
     required_keys = tuple(ltx25_model_keys(model_choice).values())
     if not missing_ltx25_model_names(model_choice):
+        validate_ltx25_nvfp4_header(model_choice)
         return False
     try:
         sync_models(
@@ -752,6 +789,7 @@ def ensure_ltx25_models(model_choice: str = DEFAULT_LTX25_MODEL) -> bool:
         spec = MODEL_SPECS[key]
         if not model_file_is_ready(COMFY_DIR / "models" / spec.folder / spec.local_name):
             raise H3Error(f"On-demand LTX-2.5 download did not produce {spec.local_name}.")
+    validate_ltx25_nvfp4_header(model_choice)
     return True
 
 

@@ -172,6 +172,11 @@ For local installations, `run_h3.sh` checks the installed ComfyUI revision and
 `comfy-kitchen` version at startup. It automatically refreshes the environment
 once when either is stale; model files are preserved.
 
+The default LTX 2.5 NVFP4 option uses the official packed weights with the
+missing ComfyUI quantization markers added. Its SHA-256 is pinned and the
+checkpoint header is validated before generation. The INT8 ConvRot and BF16
+options continue to come directly from `Lightricks/LTX-2.5`.
+
 Useful environment variables include `H3_MODAL_APP_NAME`,
 `H3_MODAL_VOLUME`, `H3_MODAL_MIN_CONTAINERS`,
 `H3_MODAL_SCALEDOWN_WINDOW`, and `H3_MODAL_PROXY_AUTH`. Set
