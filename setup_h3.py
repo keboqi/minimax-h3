@@ -32,6 +32,14 @@ SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_REF = "7911ec7827921de599492f21eade181211266029"  # v0.2.7
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
 LARRY_TURBO_REF = "55fee864dd7b2976b1c4ce3c3d5f7968f181409f"
+LTXVIDEO_REPO = "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+LTXVIDEO_REF = "ac4d99839020b983e956a8ab67ec38aec1b6e65a"
+KJNODES_REPO = "https://github.com/kijai/ComfyUI-KJNodes.git"
+KJNODES_REF = "6ab7e8130e449ed2c0037589bcf84146ceb7fc9c"
+CONTROLNET_AUX_REPO = "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+CONTROLNET_AUX_REF = "e8b689a513c3e6b63edc44066560ca5919c0576e"
+VIDEO_DEPTH_REPO = "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.git"
+VIDEO_DEPTH_REF = "a0db08e63d1ea571601c45cde4aaee0acdd0544d"
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -429,6 +437,54 @@ def sync_external_nodes(
     if install_requirements and (larry_turbo / "requirements.txt").is_file():
         uv_pip("-r", str(larry_turbo / "requirements.txt"), no_deps=True)
 
+    official_nodes = (
+        (LTXVIDEO_REPO, LTXVIDEO_REF, "ComfyUI-LTXVideo"),
+        (KJNODES_REPO, KJNODES_REF, "ComfyUI-KJNodes"),
+        (CONTROLNET_AUX_REPO, CONTROLNET_AUX_REF, "comfyui_controlnet_aux"),
+        (VIDEO_DEPTH_REPO, VIDEO_DEPTH_REF, "ComfyUI-Video-Depth-Anything"),
+    )
+    installed: dict[str, Path] = {}
+    for repo, ref, directory_name in official_nodes:
+        destination = comfy / "custom_nodes" / directory_name
+        required_paths = ("__init__.py",)
+        if directory_name == "ComfyUI-LTXVideo":
+            required_paths += (
+                "example_workflows/2.5/"
+                "LTX-2.5_T2A_Single_Stage_Distilled.json",
+            )
+        sync_git_repo(
+            repo,
+            destination,
+            ref=ref,
+            required_paths=required_paths,
+        )
+        installed[directory_name] = destination
+        requirements = destination / "requirements.txt"
+        if requirements.is_file():
+            uv_pip("-r", str(requirements), no_deps=True)
+    # --no-deps deliberately protects the pinned CUDA/Torch stack, so install
+    # the one dependency expressed only through transformers' `timm` extra.
+    uv_pip("timm>=0.9.16,<2", no_deps=True)
+
+    workflow_source = (
+        installed["ComfyUI-LTXVideo"] / "example_workflows" / "2.5"
+    )
+    workflow_destination = (
+        comfy / "user" / "default" / "workflows" / "LTX 2.5"
+    )
+    workflow_destination.mkdir(parents=True, exist_ok=True)
+    workflows = list(workflow_source.glob("*.json"))
+    if len(workflows) != 9:
+        raise RuntimeError(
+            f"Expected 9 official LTX 2.5 workflows, found {len(workflows)}"
+        )
+    for workflow in workflows:
+        shutil.copy2(workflow, workflow_destination / workflow.name)
+    print(
+        f"[h3-setup] synced official LTX 2.5 workflows to {workflow_destination}",
+        flush=True,
+    )
+
 
 def install_bundled_nodes(comfy: Path) -> None:
     if not BUNDLED_ACCEL_NODE.is_file():
@@ -497,6 +553,10 @@ def main() -> None:
         comfy,
         install_requirements=not args.skip_env,
     )
+    if not torch_stack_matches():
+        install_pinned_torch_stack()
+    if not numpy_stack_matches():
+        install_pinned_numpy_stack()
     install_bundled_nodes(comfy)
     sync_model_inventory(install_dir, comfy)
 

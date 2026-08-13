@@ -26,6 +26,7 @@ TEXT_ENCODER_REPO = "sakamakismile/Qwen3-VL-32B-Heretic-MiniMax-H3-NVFP4"
 SEEDVR2_REPO = "Comfy-Org/SeedVR2"
 LTX25_REPO = "Lightricks/LTX-2.5"
 LTX25_NVFP4_COMFY_REPO = "BennyDaBall/LTX-2.5-22b-distilled-nvfp4-comfy"
+LTX23_REPO = "Lightricks/LTX-2.3"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -195,6 +196,54 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "vae/ltx-2.5-audio-vae-bf16.safetensors",
         "LTX-2.5 audio VAE",
     ),
+    "ltx25_video_vae_full": ModelSpec(
+        LTX25_REPO,
+        "vae",
+        "vae/ltx-2.5-video-vae-bf16.safetensors",
+        "LTX-2.5 diffusion-decoder video VAE for official workflows",
+    ),
+    "ltx25_text_enhancer": ModelSpec(
+        "Comfy-Org/gemma-4",
+        "text_encoders",
+        "text_encoders/gemma4_e2b_it_bf16.safetensors",
+        "Optional Gemma 4 prompt enhancer used by official workflows",
+    ),
+    "ltx25_spatial_upscaler": ModelSpec(
+        LTX23_REPO,
+        "latent_upscale_models",
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "LTX 2x latent upscaler for official two-stage workflows",
+    ),
+    "ltx25_iclora_ingredients": ModelSpec(
+        "Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients",
+        "loras",
+        "ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors",
+        "LTX IC-LoRA ingredients/reference-sheet control",
+    ),
+    "ltx25_iclora_in_outpaint": ModelSpec(
+        "Lightricks/LTX-2.3-22b-IC-LoRA-In-Outpainting",
+        "loras",
+        "ltx-2.3-22b-ic-lora-in-outpainting-0.9.safetensors",
+        "LTX IC-LoRA video inpainting and outpainting",
+    ),
+    "ltx25_iclora_motion_track": ModelSpec(
+        "Lightricks/LTX-2.3-22b-IC-LoRA-Motion-Track-Control",
+        "loras",
+        "ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors",
+        "LTX IC-LoRA sparse motion-track control",
+    ),
+    "ltx25_iclora_union_control": ModelSpec(
+        "Lightricks/LTX-2.3-22b-IC-LoRA-Union-Control",
+        "loras",
+        "ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
+        "LTX IC-LoRA pose, depth, and canny union control",
+    ),
+    "ltx25_iclora_instant_shave": ModelSpec(
+        "Lightricks/LTX-2.3-22b-IC-LoRA-Instant-Shave",
+        "loras",
+        "ltx-2.3-22b-ic-lora-instant-shave-0.9.safetensors",
+        "LTX IC-LoRA instant-shave video edit",
+    ),
 }
 
 PROFILE_MODEL_KEYS = {
@@ -240,10 +289,21 @@ LTX25_MODEL_KEYS = (
     *LTX25_MODEL_CHOICES.values(),
     *LTX25_SHARED_MODEL_KEYS,
 )
+LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS = (
+    "ltx25_video_vae_full",
+    "ltx25_text_enhancer",
+    "ltx25_spatial_upscaler",
+    "ltx25_iclora_ingredients",
+    "ltx25_iclora_in_outpaint",
+    "ltx25_iclora_motion_track",
+    "ltx25_iclora_union_control",
+    "ltx25_iclora_instant_shave",
+)
 LAZY_OPTIONAL_MODEL_KEYS = (
     "video_vae_int8",
     *LAZY_POSTPROCESS_MODEL_KEYS,
     *LTX25_MODEL_KEYS,
+    *LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS,
 )
 SHARED_MODEL_KEYS = tuple(
     key for key in MODEL_SPECS
@@ -743,6 +803,14 @@ def selftest() -> None:
         "ltx25_text_encoder",
         "ltx25_video_vae",
         "ltx25_audio_vae",
+        "ltx25_video_vae_full",
+        "ltx25_text_enhancer",
+        "ltx25_spatial_upscaler",
+        "ltx25_iclora_ingredients",
+        "ltx25_iclora_in_outpaint",
+        "ltx25_iclora_motion_track",
+        "ltx25_iclora_union_control",
+        "ltx25_iclora_instant_shave",
     }
 
     cfg = _build_config("manifest.json")
@@ -823,6 +891,9 @@ def selftest() -> None:
         manifest["files"][model_manifest_key(nvfp4)]["size"] += 1
         assert not model_file_matches_manifest(root, manifest, nvfp4)
     assert set(LTX25_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
+    assert set(LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS).isdisjoint(
+        PRELOAD_MODEL_KEYS
+    )
     assert cfg["turbo_supported_profiles"] == ["speed", "quality", "original"]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]
     print("h3_models selftest OK")

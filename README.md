@@ -8,6 +8,9 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 
 - Text/image-to-video and reference-media-to-video workflows
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
+- All nine official LTX-2.5 ComfyUI workflows for two-stage generation,
+  text-to-audio, video editing, reference sheets, motion tracks,
+  in/outpainting, and pose/depth/canny control
 - Live queue position, workflow stage, node count, overall work, and sampling schedule
 - Resolution-aware thumbnail gallery that loads a video only after it is selected
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
@@ -114,6 +117,11 @@ Hugging Face license and set `HF_TOKEN` before the first run.
 Image-to-video accepts a required start keyframe plus optional middle and end
 keyframes. The middle position and each keyframe's conditioning strength are
 configurable; text-to-video does not load or apply image guides.
+The tab's **Official advanced workflows** section installs the upstream JSON
+templates under **Workflows → Browse → LTX 2.5** in the proxied ComfyUI editor.
+Its **Prepare required models** button lazily downloads the official BF16 base,
+full diffusion-decoder VAE, prompt enhancer, spatial upscaler, and selected
+IC-LoRA assets only when that workflow is requested.
 Later runs check remote metadata for the preloaded set and refresh only stale
 files; lazy checkpoints remain local and are fetched again if missing or incomplete.
 On Debian/Ubuntu standalone hosts, `run_h3.sh` also installs the `ffmpeg` system
@@ -232,5 +240,8 @@ bash -n run_h3.sh
 - `h3_attention.py` — runtime SageAttention capability probe
 - `custom_nodes/H3Acceleration` — bundled FirstBlockCache node
 - Larry's pinned `ComfyUI-MiniMax-H3-Turbo` — quantization-aware Turbo loader/sampler
+- Lightricks' pinned `ComfyUI-LTXVideo` plus the pinned KJNodes, ControlNet
+  preprocessors, and Video Depth Anything nodes required by the official LTX-2.5
+  workflow collection
 
 See [REVIEW.md](REVIEW.md) for review findings and refactor history.

@@ -52,6 +52,14 @@ SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_REF = "7911ec7827921de599492f21eade181211266029"  # v0.2.7
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
 LARRY_TURBO_REF = "55fee864dd7b2976b1c4ce3c3d5f7968f181409f"
+LTXVIDEO_REPO = "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+LTXVIDEO_REF = "ac4d99839020b983e956a8ab67ec38aec1b6e65a"
+KJNODES_REPO = "https://github.com/kijai/ComfyUI-KJNodes.git"
+KJNODES_REF = "6ab7e8130e449ed2c0037589bcf84146ceb7fc9c"
+CONTROLNET_AUX_REPO = "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+CONTROLNET_AUX_REF = "e8b689a513c3e6b63edc44066560ca5919c0576e"
+VIDEO_DEPTH_REPO = "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.git"
+VIDEO_DEPTH_REF = "a0db08e63d1ea571601c45cde4aaee0acdd0544d"
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 APP = os.getenv("H3_MODAL_APP_NAME", "minimax-h3")
@@ -186,6 +194,34 @@ def build(revision: str) -> None:
     patch_larry_turbo_node(larry_turbo_dir)
     _print_git_revision(larry_turbo_dir)
 
+    official_nodes = (
+        (LTXVIDEO_REPO, LTXVIDEO_REF, "ComfyUI-LTXVideo"),
+        (KJNODES_REPO, KJNODES_REF, "ComfyUI-KJNodes"),
+        (CONTROLNET_AUX_REPO, CONTROLNET_AUX_REF, "comfyui_controlnet_aux"),
+        (VIDEO_DEPTH_REPO, VIDEO_DEPTH_REF, "ComfyUI-Video-Depth-Anything"),
+    )
+    installed_nodes: dict[str, Path] = {}
+    for repo, ref, directory_name in official_nodes:
+        destination = Path(COMFY) / "custom_nodes" / directory_name
+        _clone(repo, destination, ref=ref)
+        _print_git_revision(destination)
+        installed_nodes[directory_name] = destination
+
+    workflow_source = (
+        installed_nodes["ComfyUI-LTXVideo"] / "example_workflows" / "2.5"
+    )
+    workflow_destination = (
+        Path(COMFY) / "user" / "default" / "workflows" / "LTX 2.5"
+    )
+    workflow_destination.mkdir(parents=True, exist_ok=True)
+    workflows = list(workflow_source.glob("*.json"))
+    if len(workflows) != 9:
+        raise RuntimeError(
+            f"Expected 9 official LTX 2.5 workflows, found {len(workflows)}"
+        )
+    for workflow in workflows:
+        shutil.copy2(workflow, workflow_destination / workflow.name)
+
     # ComfyUI currently lists torch/torchvision/torchaudio unpinned.
     # Filter those entries so image build cannot replace the pinned cu130 ABI.
     comfy_requirements = Path(COMFY) / "requirements.txt"
@@ -300,8 +336,14 @@ def build(revision: str) -> None:
         flush=True,
     )
 
-    sol_requirements = sol_dir / "requirements.txt"
-    if sol_requirements.is_file():
+    custom_requirements = [sol_dir / "requirements.txt"]
+    custom_requirements.extend(
+        directory / "requirements.txt"
+        for directory in installed_nodes.values()
+    )
+    for requirements in custom_requirements:
+        if not requirements.is_file():
+            continue
         _run(
             "uv",
             "pip",
@@ -309,8 +351,25 @@ def build(revision: str) -> None:
             "--system",
             "--no-deps",
             "-r",
-            sol_requirements,
+            requirements,
         )
+    _run(
+        "uv", "pip", "install", "--system", "--upgrade", "--no-deps",
+        "timm>=0.9.16,<2",
+    )
+    # Custom-node requirements must not drift the pinned Torch/NumPy ABI.
+    _run(
+        "uv", "pip", "install", "--system", "--upgrade",
+        f"torch=={TORCH_VERSION}",
+        f"torchvision=={TORCHVISION_VERSION}",
+        f"torchaudio=={TORCHAUDIO_VERSION}",
+        "--index-url", TORCH_INDEX,
+    )
+    _run(
+        "uv", "pip", "install", "--system", "--upgrade",
+        f"numpy=={NUMPY_VERSION}",
+        f"scipy=={SCIPY_VERSION}",
+    )
 
 image = (
     modal.Image.from_registry(

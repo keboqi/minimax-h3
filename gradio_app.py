@@ -110,6 +110,88 @@ LTX25_DEFAULTS = {
     "middle_strength": 0.7,
     "end_strength": 0.7,
 }
+LTX25_WORKFLOW_TEMPLATE_DIR = (
+    COMFY_DIR / "user" / "default" / "workflows" / "LTX 2.5"
+)
+LTX25_WORKFLOWS = {
+    "Text / image to video — single stage": {
+        "id": "t2v-i2v-single-stage",
+        "filename": "LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
+        "description": "The official 8-step text-to-video and start-image workflow.",
+        "inputs": "Prompt and optional start image.",
+        "extra_models": (),
+    },
+    "Text / image to video — two stage": {
+        "id": "t2v-i2v-two-stage",
+        "filename": "LTX-2.5_T2V_I2V_Two_Stage_Distilled.json",
+        "description": "Generates low resolution, then performs a 2x latent refinement pass.",
+        "inputs": "Prompt and optional start image.",
+        "extra_models": ("ltx25_spatial_upscaler",),
+    },
+    "Text to audio": {
+        "id": "text-to-audio",
+        "filename": "LTX-2.5_T2A_Single_Stage_Distilled.json",
+        "description": "Generates standalone audio from a text description.",
+        "inputs": "Prompt, duration, and frame rate; no image or video.",
+        "extra_models": (),
+        "audio_only": True,
+    },
+    "Ingredients / reference sheet — IC-LoRA": {
+        "id": "iclora-ingredients",
+        "filename": "LTX-2.5_ICLoRA_Ingredients_Single_Stage_Distilled.json",
+        "description": "Uses a reference sheet of characters, props, wardrobe, or locations.",
+        "inputs": "Prompt and one reference-sheet image.",
+        "extra_models": ("ltx25_iclora_ingredients",),
+    },
+    "Video to video / instant shave — IC-LoRA": {
+        "id": "iclora-video-to-video",
+        "filename": "LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled.json",
+        "description": "Applies the official instant-shave edit while preserving timing and audio.",
+        "inputs": "Source video, prompt, and optional start image.",
+        "extra_models": ("ltx25_iclora_instant_shave",),
+    },
+    "Motion tracking — IC-LoRA": {
+        "id": "iclora-motion-track",
+        "filename": "LTX-2.5_ICLoRA_Motion_Track_Distilled.json",
+        "description": "Draws sparse point tracks that control motion through the clip.",
+        "inputs": "Prompt, start image, and tracks drawn in ComfyUI.",
+        "extra_models": ("ltx25_iclora_motion_track",),
+    },
+    "Video inpaint — two stage IC-LoRA": {
+        "id": "iclora-inpaint",
+        "filename": "LTX-2.5_ICLoRA_Inpaint_Two_Stage_Distilled.json",
+        "description": "Regenerates masked areas and blends them into a source video.",
+        "inputs": "Source video, matching black/white mask video, prompt, and optional start image.",
+        "extra_models": (
+            "ltx25_iclora_in_outpaint", "ltx25_spatial_upscaler",
+        ),
+    },
+    "Video outpaint — two stage IC-LoRA": {
+        "id": "iclora-outpaint",
+        "filename": "LTX-2.5_ICLoRA_Outpaint_Two_Stage_Distilled.json",
+        "description": "Extends a source video beyond its original frame and refines at 2x.",
+        "inputs": "Source video, target canvas/padding, prompt, and optional start image.",
+        "extra_models": (
+            "ltx25_iclora_in_outpaint", "ltx25_spatial_upscaler",
+        ),
+    },
+    "Pose / depth / canny control — IC-LoRA": {
+        "id": "iclora-union-control",
+        "filename": "LTX-2.5_ICLoRA_Union_Control_Distilled.json",
+        "description": "Controls generation from pose, depth, or canny guidance extracted from video.",
+        "inputs": "Reference video, control type, prompt, and optional start image.",
+        "extra_models": (
+            "ltx25_iclora_union_control", "ltx25_spatial_upscaler",
+        ),
+    },
+}
+LTX25_WORKFLOW_COMMON_MODEL_KEYS = (
+    "ltx25_distilled",
+    "ltx25_text_encoder",
+    "ltx25_video_vae_full",
+    "ltx25_audio_vae",
+    "ltx25_text_enhancer",
+)
 MODEL_PROFILE_CHOICES = list(PROFILE_LABELS.values())
 CORE_LORA_LOADER_NODE = "LoraLoaderModelOnly"
 CORE_SAMPLER_NODE = "KSamplerSelect"
@@ -421,6 +503,34 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
             await client.aclose()
 
     app = FastAPI(lifespan=lifespan)
+
+    @app.get(
+        "/ltx25-workflows/{workflow_id}.json",
+        name="download_ltx25_workflow",
+        include_in_schema=False,
+    )
+    async def download_ltx25_workflow(workflow_id: str) -> FileResponse:
+        entry = next(
+            (
+                candidate for candidate in LTX25_WORKFLOWS.values()
+                if candidate["id"] == workflow_id
+            ),
+            None,
+        )
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        root = LTX25_WORKFLOW_TEMPLATE_DIR.resolve()
+        candidate = (root / entry["filename"]).resolve()
+        if not candidate.is_relative_to(root) or not candidate.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail="Workflow template is not installed; re-run setup_h3.py",
+            )
+        return FileResponse(
+            candidate,
+            filename=entry["filename"],
+            media_type="application/json",
+        )
 
     @app.get(COMFY_PROXY_PATH, include_in_schema=False)
     async def comfy_slash_redirect() -> RedirectResponse:
@@ -848,6 +958,89 @@ def ensure_ltx25_models(model_choice: str = DEFAULT_LTX25_MODEL) -> bool:
             raise H3Error(f"On-demand LTX-2.5 download did not produce {spec.local_name}.")
     validate_ltx25_nvfp4_header(model_choice)
     return True
+
+
+def ltx25_workflow_entry(workflow_label: str) -> dict[str, Any]:
+    entry = LTX25_WORKFLOWS.get(str(workflow_label))
+    if entry is None:
+        raise H3Error(f"Unknown official LTX-2.5 workflow: {workflow_label}")
+    return entry
+
+
+def ltx25_workflow_model_keys(workflow_label: str) -> tuple[str, ...]:
+    entry = ltx25_workflow_entry(workflow_label)
+    common = list(LTX25_WORKFLOW_COMMON_MODEL_KEYS)
+    if entry.get("audio_only"):
+        common.remove("ltx25_video_vae_full")
+    return tuple(dict.fromkeys((*common, *entry["extra_models"])))
+
+
+def render_ltx25_workflow_details(workflow_label: str) -> str:
+    entry = ltx25_workflow_entry(workflow_label)
+    extra_names = [
+        MODEL_SPECS[key].local_name for key in entry["extra_models"]
+    ]
+    extras = (
+        ", ".join(f"`{name}`" for name in extra_names)
+        if extra_names else "No use-case-specific checkpoint."
+    )
+    return (
+        f"### {workflow_label}\n\n"
+        f"{entry['description']}\n\n"
+        f"**Inputs:** {entry['inputs']}\n\n"
+        f"**Additional checkpoint(s):** {extras}\n\n"
+        "Model preparation also installs the official BF16 transformer, text "
+        "encoder, prompt enhancer, audio VAE, and (for video workflows) the "
+        "full diffusion-decoder video VAE. These are large gated downloads.\n\n"
+        f"[Download official workflow JSON](/ltx25-workflows/{entry['id']}.json) · "
+        "[Open ComfyUI](/comfyui/)\n\n"
+        "The template is also installed under **Workflows → Browse → LTX 2.5**. "
+        "Prepare its models here first, then configure its visual nodes in ComfyUI."
+    )
+
+
+def prepare_ltx25_official_workflow(workflow_label: str):
+    """Lazily fetch every checkpoint referenced by one official template."""
+    try:
+        required_keys = ltx25_workflow_model_keys(workflow_label)
+        stale = stale_model_keys(
+            root=COMFY_DIR / "models",
+            manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
+            model_keys=required_keys,
+        )
+        if not stale:
+            yield f"Ready: all models for **{workflow_label}** are installed."
+            return
+        names = ", ".join(MODEL_SPECS[key].local_name for key in stale)
+        yield f"Downloading models for **{workflow_label}**: {names}"
+        sync_models(
+            root=COMFY_DIR / "models",
+            manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
+            token=os.getenv("HF_TOKEN") or None,
+            log_prefix="[ltx25-workflow-on-demand]",
+            model_keys=stale,
+            download_workers=min(len(stale), 4),
+        )
+        missing = [
+            MODEL_SPECS[key].local_name
+            for key in required_keys
+            if not model_file_is_ready(
+                COMFY_DIR / "models" / MODEL_SPECS[key].folder
+                / MODEL_SPECS[key].local_name
+            )
+        ]
+        if missing:
+            raise H3Error("Downloads did not produce: " + ", ".join(missing))
+        yield (
+            f"Ready: installed all models for **{workflow_label}**. "
+            "Open ComfyUI and load the template from **LTX 2.5**."
+        )
+    except Exception as exc:
+        yield (
+            "Error preparing official workflow models. Accept the linked "
+            "Hugging Face licenses and set HF_TOKEN, then retry. "
+            f"Details: {exc}"
+        )
 
 
 def seedvr2_upscale_model_names(
@@ -4219,6 +4412,31 @@ def build_ui() -> gr.Blocks:
                         "INT8 are embedded-quantized ComfyUI checkpoints."
                     )
 
+            with gr.Accordion("Official advanced workflows", open=False):
+                gr.Markdown(
+                    "The complete official Lightricks LTX-2.5 workflow set is "
+                    "installed in the bundled ComfyUI editor. These visual "
+                    "workflows cover audio-only generation, two-stage refinement, "
+                    "video editing, reference sheets, motion tracks, in/outpainting, "
+                    "and pose/depth/canny control."
+                )
+                with gr.Row():
+                    ltx25_workflow = gr.Dropdown(
+                        choices=list(LTX25_WORKFLOWS),
+                        value=next(iter(LTX25_WORKFLOWS)),
+                        label="Official workflow",
+                        scale=3,
+                    )
+                    ltx25_prepare_workflow = gr.Button(
+                        "Prepare required models",
+                        variant="secondary",
+                        scale=1,
+                    )
+                ltx25_workflow_details = gr.Markdown(
+                    render_ltx25_workflow_details(next(iter(LTX25_WORKFLOWS)))
+                )
+                ltx25_workflow_status = gr.Markdown()
+
         with gr.Group(visible=False) as gallery_view:
             with gr.Row():
                 gr.Markdown(
@@ -4343,6 +4561,19 @@ def build_ui() -> gr.Blocks:
             outputs=ltx25_image_group,
             queue=False,
             show_progress="hidden",
+        )
+        ltx25_workflow.change(
+            render_ltx25_workflow_details,
+            inputs=ltx25_workflow,
+            outputs=ltx25_workflow_details,
+            queue=False,
+            show_progress="hidden",
+        )
+        ltx25_prepare_workflow.click(
+            prepare_ltx25_official_workflow,
+            inputs=ltx25_workflow,
+            outputs=ltx25_workflow_status,
+            show_progress="minimal",
         )
         gallery_postprocess.change(
             lambda value: (
@@ -4888,6 +5119,16 @@ def selftest() -> None:
     )
     assert ltx25_save["inputs"]["filename_prefix"].startswith("ltx25/")
     assert ltx25_frame_length(5, 24) == 121
+    assert len(LTX25_WORKFLOWS) == 9
+    assert len({entry["id"] for entry in LTX25_WORKFLOWS.values()}) == 9
+    assert all(
+        entry["filename"].startswith("LTX-2.5_")
+        and entry["filename"].endswith(".json")
+        for entry in LTX25_WORKFLOWS.values()
+    )
+    for label in LTX25_WORKFLOWS:
+        assert set(ltx25_workflow_model_keys(label)) <= set(MODEL_SPECS)
+        assert "/ltx25-workflows/" in render_ltx25_workflow_details(label)
 
     original_stage_file = globals()["stage_file"]
     try:
@@ -5562,7 +5803,7 @@ def selftest() -> None:
         f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, "
         f"SaveVideo codec API valid, prompt API download URL valid, "
         f"gallery resolution/fallback/deletion guards + VRAM unload valid, "
-        f"/comfyui proxy rewrites valid"
+        f"9 official LTX-2.5 workflow mappings valid, /comfyui proxy rewrites valid"
     )
 
 
