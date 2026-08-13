@@ -202,12 +202,14 @@ SOL_ATTENTION_NODE = "MiniMaxH3MemoryEfficientSolAttentionPatch"
 FUSED_MODULATION_NODE = "MiniMaxH3FusedModulation"
 CHUNK_FEED_FORWARD_NODE = "MiniMaxH3ChunkFeedForward"
 SEEDVR2_UPSCALE = "SeedVR2 2x"
-COMFY_UPSCALE_OPTIONS = {SEEDVR2_UPSCALE}
+LTX25_UPSCALE = "LTX-2.5 IC-LoRA 2x"
+COMFY_UPSCALE_OPTIONS = {SEEDVR2_UPSCALE, LTX25_UPSCALE}
 POSTPROCESS_OPTIONS = [
     SEEDVR2_UPSCALE,
+    LTX25_UPSCALE,
     "48 fps interpolation",
 ]
-GENERATION_POSTPROCESS_OPTIONS = ["None", SEEDVR2_UPSCALE]
+GENERATION_POSTPROCESS_OPTIONS = ["None", SEEDVR2_UPSCALE, LTX25_UPSCALE]
 
 
 @dataclass(frozen=True)
@@ -673,6 +675,8 @@ class H3Error(RuntimeError):
 @dataclass(frozen=True)
 class VideoMetadata:
     fps: float
+    width: int
+    height: int
 
 
 def normalize_turbo_variant(value: str) -> str:
@@ -1100,6 +1104,36 @@ def ensure_seedvr2_upscale_models(
             raise H3Error(
                 f"On-demand SeedVR2 download did not produce {filename}."
             )
+    return True
+
+
+def ensure_ltx25_upscale_models(
+    model_choice: str = DEFAULT_LTX25_MODEL,
+) -> bool:
+    """Lazily install the selected LTX base set and the 2x upscaler IC-LoRA."""
+    base_downloaded = ensure_ltx25_models(model_choice)
+    upscaler_key = "ltx25_pixel_upscaler_x2"
+    manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
+    if not stale_model_keys(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        model_keys=(upscaler_key,),
+    ):
+        return base_downloaded
+
+    sync_models(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        token=os.getenv("HF_TOKEN") or None,
+        log_prefix="[ltx25-upscale-on-demand]",
+        model_keys=(upscaler_key,),
+        download_workers=1,
+    )
+    spec = MODEL_SPECS[upscaler_key]
+    if not model_file_is_ready(COMFY_DIR / "models" / spec.folder / spec.local_name):
+        raise H3Error(
+            f"On-demand LTX-2.5 upscaler download did not produce {spec.local_name}."
+        )
     return True
 
 
@@ -2233,9 +2267,181 @@ def build_seedvr2_upscale_graph(
     return graph.nodes
 
 
+def required_ltx25_upscale_nodes() -> set[str]:
+    return {
+        "LoadVideo",
+        "GetVideoComponents",
+        "ImageScale",
+        "GetImageSize",
+        "UNETLoader",
+        "LTXICLoRALoaderModelOnly",
+        "CLIPLoader",
+        "VAELoader",
+        "CLIPTextEncode",
+        "LTXVConditioning",
+        "EmptyLTXVLatentVideo",
+        "LTXAddVideoICLoRAGuide",
+        "LTXVEmptyLatentAudio",
+        "LTXVConcatAVLatent",
+        "RandomNoise",
+        "CFGGuider",
+        "KSamplerSelect",
+        "ManualSigmas",
+        "SamplerCustomAdvanced",
+        "LTXVSeparateAVLatent",
+        "LTXVCropGuides",
+        "VAEDecodeTiled",
+        "CreateVideo",
+        "SaveVideo",
+    }
+
+
+def build_ltx25_upscale_graph(
+    *,
+    source_video: str,
+    seed: int,
+    model_choice: str = DEFAULT_LTX25_MODEL,
+    prompt: str = "",
+    width: int,
+    height: int,
+    fps: float = 24.0,
+) -> dict[str, Any]:
+    """Build Lightricks' single-stage IC-LoRA generative 2x upscaler."""
+    names = ltx25_model_names(model_choice)
+    base_width = snap32(width)
+    base_height = snap32(height)
+    target_width = base_width * 2
+    target_height = base_height * 2
+
+    graph = Graph()
+    loaded = graph.add("LoadVideo", file=source_video)
+    components = graph.add("GetVideoComponents", video=Graph.out(loaded))
+    guide = graph.add(
+        "ImageScale",
+        image=Graph.out(components, 0),
+        upscale_method="lanczos",
+        width=base_width,
+        height=base_height,
+        crop="disabled",
+    )
+    guide_size = graph.add("GetImageSize", image=Graph.out(guide))
+
+    base_model = graph.add(
+        "UNETLoader", unet_name=names["distilled"], weight_dtype="default"
+    )
+    upscaler = graph.add(
+        "LTXICLoRALoaderModelOnly",
+        model=Graph.out(base_model),
+        lora_name=MODEL_SPECS["ltx25_pixel_upscaler_x2"].local_name,
+        strength_model=1.0,
+    )
+    clip = graph.add(
+        "CLIPLoader", clip_name=names["text_encoder"], type="ltxv", device="default"
+    )
+    video_vae = graph.add("VAELoader", vae_name=names["video_vae"])
+    audio_vae = graph.add("VAELoader", vae_name=names["audio_vae"])
+    positive = graph.add(
+        "CLIPTextEncode",
+        clip=Graph.out(clip),
+        text=(prompt.strip() or "high quality, detailed video"),
+    )
+    negative = graph.add("CLIPTextEncode", clip=Graph.out(clip), text="")
+    conditioned = graph.add(
+        "LTXVConditioning",
+        positive=Graph.out(positive),
+        negative=Graph.out(negative),
+        frame_rate=float(fps),
+    )
+    video_latent = graph.add(
+        "EmptyLTXVLatentVideo",
+        width=target_width,
+        height=target_height,
+        length=Graph.out(guide_size, 2),
+        batch_size=1,
+    )
+    guided = graph.add(
+        "LTXAddVideoICLoRAGuide",
+        positive=Graph.out(conditioned, 0),
+        negative=Graph.out(conditioned, 1),
+        vae=Graph.out(video_vae),
+        latent=Graph.out(video_latent),
+        image=Graph.out(guide),
+        frame_idx=0,
+        strength=1.0,
+        latent_downscale_factor=Graph.out(upscaler, 1),
+        crop="disabled",
+        use_tiled_encode=True,
+        tile_size=512,
+        tile_overlap=64,
+    )
+    audio_latent = graph.add(
+        "LTXVEmptyLatentAudio",
+        audio_vae=Graph.out(audio_vae),
+        frames_number=Graph.out(guide_size, 2),
+        frame_rate=int(round(float(fps))),
+        batch_size=1,
+    )
+    av_latent = graph.add(
+        "LTXVConcatAVLatent",
+        video_latent=Graph.out(guided, 2),
+        audio_latent=Graph.out(audio_latent),
+    )
+    noise = graph.add("RandomNoise", noise_seed=int(seed))
+    guider = graph.add(
+        "CFGGuider",
+        model=Graph.out(upscaler),
+        positive=Graph.out(guided, 0),
+        negative=Graph.out(guided, 1),
+        cfg=1.0,
+    )
+    sampler = graph.add("KSamplerSelect", sampler_name="euler_ancestral")
+    sigmas = graph.add("ManualSigmas", sigmas=LTX25_SIGMAS)
+    sampled = graph.add(
+        "SamplerCustomAdvanced",
+        noise=Graph.out(noise),
+        guider=Graph.out(guider),
+        sampler=Graph.out(sampler),
+        sigmas=Graph.out(sigmas),
+        latent_image=Graph.out(av_latent),
+    )
+    separated = graph.add("LTXVSeparateAVLatent", av_latent=Graph.out(sampled))
+    cropped = graph.add(
+        "LTXVCropGuides",
+        positive=Graph.out(guided, 0),
+        negative=Graph.out(guided, 1),
+        latent=Graph.out(separated, 0),
+    )
+    images = graph.add(
+        "VAEDecodeTiled",
+        samples=Graph.out(cropped, 2),
+        vae=Graph.out(video_vae),
+        tile_size=512,
+        overlap=64,
+        temporal_size=128,
+        temporal_overlap=32,
+    )
+    video = graph.add(
+        "CreateVideo",
+        images=Graph.out(images),
+        audio=Graph.out(components, 1),
+        fps=float(fps),
+        bit_depth=8,
+    )
+    graph.add(
+        "SaveVideo",
+        video=Graph.out(video),
+        filename_prefix=f"ltx25/upscale_{int(time.time())}",
+        format="auto",
+        codec="auto",
+    )
+    return graph.nodes
+
+
 def required_upscale_nodes(option: str) -> set[str]:
     if option == SEEDVR2_UPSCALE:
         return required_seedvr2_upscale_nodes()
+    if option == LTX25_UPSCALE:
+        return required_ltx25_upscale_nodes()
     raise H3Error(f"Unknown AI post-processing method: {option}")
 
 
@@ -2246,6 +2452,10 @@ def build_upscale_graph(
     seed: int,
     models: ModelConfig,
     seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
+    ltx25_model: str = DEFAULT_LTX25_MODEL,
+    prompt: str = "",
+    width: int | None = None,
+    height: int | None = None,
     fps: float = 24.0,
 ) -> tuple[dict[str, Any], int]:
     """Build one selected AI-upscale workflow and return its sampler steps."""
@@ -2259,6 +2469,21 @@ def build_upscale_graph(
                 fps=fps,
             ),
             1,
+        )
+    if option == LTX25_UPSCALE:
+        if width is None or height is None:
+            raise H3Error("LTX-2.5 upscaling requires the source video dimensions.")
+        return (
+            build_ltx25_upscale_graph(
+                source_video=source_video,
+                seed=seed,
+                model_choice=ltx25_model,
+                prompt=prompt,
+                width=width,
+                height=height,
+                fps=fps,
+            ),
+            8,
         )
     raise H3Error(f"Unknown AI post-processing method: {option}")
 
@@ -2327,13 +2552,18 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
     if name in {
         "UNETLoader", "CLIPLoader", "VAELoader", "CheckpointLoaderSimple",
         "LatentUpscaleModelLoader", CORE_LORA_LOADER_NODE,
-        LARRY_TURBO_LORA_NODE, LIGHTX2V_BYPASS_LORA_NODE,
+        "LTXICLoRALoaderModelOnly", LARRY_TURBO_LORA_NODE,
+        LIGHTX2V_BYPASS_LORA_NODE,
     }:
         return "Loading models"
     if name.startswith("Load") or name == "GetVideoComponents":
         return "Preparing reference media"
     if name == "LTXVAddGuide":
         return "Applying LTX-2.5 keyframes"
+    if name == "LTXAddVideoICLoRAGuide":
+        return "Encoding source video for LTX-2.5 2x upscaling"
+    if name == "LTXVCropGuides":
+        return "Removing LTX-2.5 reference tokens"
     if name in {"CLIPTextEncode", "LTXVConditioning"}:
         return "Encoding LTX-2.5 prompt"
     if name in {
@@ -2635,10 +2865,10 @@ def postprocess_video(source: Path, option: str) -> Path:
 
 
 def probe_video_metadata(source: Path) -> VideoMetadata:
-    """Return the frame rate needed by the SeedVR2 gallery workflow."""
+    """Return dimensions and frame rate needed by AI upscale workflows."""
     cmd = [
         "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-        "stream=avg_frame_rate,r_frame_rate",
+        "stream=width,height,avg_frame_rate,r_frame_rate",
         "-of", "json", str(source),
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -2651,9 +2881,13 @@ def probe_video_metadata(source: Path) -> VideoMetadata:
         fps = float(numerator) / float(denominator)
         if fps <= 0:
             raise ValueError("non-positive frame rate")
-        return VideoMetadata(fps=fps)
+        width = int(stream["width"])
+        height = int(stream["height"])
+        if width <= 0 or height <= 0:
+            raise ValueError("non-positive dimensions")
+        return VideoMetadata(fps=fps, width=width, height=height)
     except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError) as exc:
-        raise H3Error("Could not determine the selected video's frame rate.") from exc
+        raise H3Error("Could not determine the selected video's metadata.") from exc
 
 
 def unload_comfy_models() -> None:
@@ -2961,6 +3195,8 @@ def postprocess_selected_gallery_video(
     option: str,
     seed: int,
     seedvr2_model: str,
+    ltx25_model: str,
+    ltx25_prompt: str,
     force_offload: bool,
     request: gr.Request,
     progress=gr.Progress(track_tqdm=False),
@@ -2995,11 +3231,16 @@ def postprocess_selected_gallery_video(
                 + ", ".join(sorted(missing))
             )
 
-        yield gallery_progress_result(
-            f"Checking SeedVR2 {seedvr2_model} models"
-        )
-        downloaded = ensure_seedvr2_upscale_models(models, seedvr2_model)
-        stage_bucket = "seedvr2_upscale"
+        if option == SEEDVR2_UPSCALE:
+            model_status = f"SeedVR2 {seedvr2_model}"
+            yield gallery_progress_result(f"Checking {model_status} models")
+            downloaded = ensure_seedvr2_upscale_models(models, seedvr2_model)
+            stage_bucket = "seedvr2_upscale"
+        else:
+            model_status = f"LTX-2.5 {ltx25_model} and 2x IC-LoRA"
+            yield gallery_progress_result(f"Checking {model_status} models")
+            downloaded = ensure_ltx25_upscale_models(ltx25_model)
+            stage_bucket = "ltx25_upscale"
 
         if downloaded:
             yield gallery_progress_result(f"{option} models downloaded")
@@ -3015,6 +3256,10 @@ def postprocess_selected_gallery_video(
             seed=actual_seed,
             models=models,
             seedvr2_model=seedvr2_model,
+            ltx25_model=ltx25_model,
+            prompt=ltx25_prompt,
+            width=metadata.width,
+            height=metadata.height,
             fps=metadata.fps,
         )
 
@@ -3248,6 +3493,7 @@ def generate(
     postprocess: str,
     upscale_force_offload: bool = False,
     seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
+    ltx25_model: str = DEFAULT_LTX25_MODEL,
     use_int8_vae: bool = False,
     progress=gr.Progress(track_tqdm=False),
 ):
@@ -3259,10 +3505,7 @@ def generate(
         progress(0, desc="Validating request")
         yield None, progress_status("Validating request", started=started)
         if postprocess not in GENERATION_POSTPROCESS_OPTIONS:
-            raise H3Error(
-                "Unsupported post-processing method. SeedVR2 is the only "
-                "available upscale option."
-            )
+            raise H3Error("Unsupported post-processing method.")
         if not prompt.strip():
             raise H3Error("Prompt is required.")
         if not 2 <= float(duration) <= 15:
@@ -3275,6 +3518,8 @@ def generate(
             ensure_int8_video_vae(models)
         if postprocess == SEEDVR2_UPSCALE:
             seedvr2_upscale_model_names(models, seedvr2_model)
+        elif postprocess == LTX25_UPSCALE:
+            ltx25_model_keys(ltx25_model)
         profile_key = models.profile_key(model_profile)
         profile = models.profiles[profile_key]
 
@@ -3333,12 +3578,12 @@ def generate(
 
         info = object_info()
         available = set(info)
-        if postprocess == SEEDVR2_UPSCALE:
-            missing_seedvr2_nodes = required_seedvr2_upscale_nodes() - available
-            if missing_seedvr2_nodes:
+        if postprocess in COMFY_UPSCALE_OPTIONS:
+            missing_upscale_nodes = required_upscale_nodes(postprocess) - available
+            if missing_upscale_nodes:
                 raise H3Error(
-                    "SeedVR2 requires current native ComfyUI nodes: "
-                    + ", ".join(sorted(missing_seedvr2_nodes))
+                    f"{postprocess} requires current ComfyUI nodes: "
+                    + ", ".join(sorted(missing_upscale_nodes))
                 )
 
         effective_sol, packed_tokens, sol_reason = resolve_sol_policy(
@@ -3538,12 +3783,20 @@ def generate(
                 f"Post-processing: {postprocess}", started=started
             )
         if postprocess in COMFY_UPSCALE_OPTIONS:
-            yield None, progress_status(
-                f"Checking SeedVR2 {seedvr2_model} models",
-                started=started,
-            )
-            downloaded = ensure_seedvr2_upscale_models(models, seedvr2_model)
-            stage_bucket = "seedvr2_upscale"
+            if postprocess == SEEDVR2_UPSCALE:
+                model_status = f"SeedVR2 {seedvr2_model}"
+                stage_bucket = "seedvr2_upscale"
+                yield None, progress_status(
+                    f"Checking {model_status} models", started=started
+                )
+                downloaded = ensure_seedvr2_upscale_models(models, seedvr2_model)
+            else:
+                model_status = f"LTX-2.5 {ltx25_model} and 2x IC-LoRA"
+                stage_bucket = "ltx25_upscale"
+                yield None, progress_status(
+                    f"Checking {model_status} models", started=started
+                )
+                downloaded = ensure_ltx25_upscale_models(ltx25_model)
 
             if downloaded:
                 yield None, progress_status(f"{postprocess} models downloaded", started=started)
@@ -3562,6 +3815,10 @@ def generate(
                 seed=actual_seed,
                 models=models,
                 seedvr2_model=seedvr2_model,
+                ltx25_model=ltx25_model,
+                prompt=prompt,
+                width=resolved_width,
+                height=resolved_height,
             )
 
             upscale_queued_at = time.time()
@@ -3787,6 +4044,7 @@ def compact_settings_summary(
     cache_mode: str,
     postprocess: str,
     seedvr2_model: str,
+    ltx25_model: str,
     force_offload: bool,
 ) -> str:
     model_profile = (
@@ -3811,6 +4069,11 @@ def compact_settings_summary(
     if postprocess == SEEDVR2_UPSCALE:
         postprocess_note += (
             f" / {seedvr2_model} / unload first: "
+            f"{'on' if force_offload else 'off'}"
+        )
+    elif postprocess == LTX25_UPSCALE:
+        postprocess_note += (
+            f" / {ltx25_model} / unload first: "
             f"{'on' if force_offload else 'off'}"
         )
     return (
@@ -3898,6 +4161,7 @@ def generate_with_ui_defaults(
         ref_image_size=defaults["ref_image_size"],
         postprocess=defaults["postprocess"],
         seedvr2_model=defaults["seedvr2_model"],
+        ltx25_model=DEFAULT_LTX25_MODEL,
         upscale_force_offload=defaults["upscale_force_offload"],
         progress=progress,
     )
@@ -4048,6 +4312,7 @@ def build_ui() -> gr.Blocks:
                         defaults["steps"], defaults["scheduler"],
                         defaults["attention_mode"], defaults["cache_mode"],
                         defaults["postprocess"], defaults["seedvr2_model"],
+                        DEFAULT_LTX25_MODEL,
                         defaults["upscale_force_offload"],
                     )
                 )
@@ -4260,7 +4525,7 @@ def build_ui() -> gr.Blocks:
                     value=defaults["postprocess"],
                     label="After generation",
                     info=(
-                        "Optionally run SeedVR2 immediately after the base H3 "
+                        "Optionally run SeedVR2 or LTX-2.5 2x immediately after the base H3 "
                         "video finishes. The source video remains in the gallery."
                     ),
                 )
@@ -4274,9 +4539,15 @@ def build_ui() -> gr.Blocks:
                             "detail; NVFP4 variants are optimized for Blackwell GPUs."
                         ),
                     )
+                    generation_ltx25_note = gr.Markdown(
+                        "Uses the transformer selected in the **LTX 2.5** tab and "
+                        "the H3 generation prompt. The gated 2x IC-LoRA downloads "
+                        "on first use.",
+                        visible=False,
+                    )
                     generation_force_offload = gr.Checkbox(
                         value=defaults["upscale_force_offload"],
-                        label="Unload H3 models before SeedVR2",
+                        label="Unload H3 models before upscaling",
                         info=(
                             "Reduces peak VRAM at the cost of reloading H3 for "
                             "the next generation."
@@ -4497,6 +4768,16 @@ def build_ui() -> gr.Blocks:
                                     "detail; NVFP4 variants are optimized for Blackwell GPUs."
                                 ),
                             )
+                            gallery_ltx25_prompt = gr.Textbox(
+                                label="LTX-2.5 upscale prompt",
+                                placeholder="Describe the source scene and desired fine detail",
+                                lines=3,
+                                visible=False,
+                                info=(
+                                    "Optional but recommended. Uses the transformer selected "
+                                    "in the LTX 2.5 tab."
+                                ),
+                            )
                             with gr.Row():
                                 gallery_post_seed = gr.Number(
                                     value=-1,
@@ -4506,7 +4787,7 @@ def build_ui() -> gr.Blocks:
                                 gallery_force_offload = gr.Checkbox(
                                     value=False,
                                     label="Unload resident models first",
-                                    info="Can lower peak VRAM before SeedVR2 starts.",
+                                    info="Can lower peak VRAM before AI upscaling starts.",
                                 )
                         with gr.Row():
                             gallery_post_run = gr.Button(
@@ -4538,6 +4819,7 @@ def build_ui() -> gr.Blocks:
             steps, scheduler, attention_mode, cache_mode,
             generation_postprocess,
             generation_seedvr2_model,
+            ltx25_model,
             generation_force_offload,
         ]
         for settings_control in settings_inputs:
@@ -4579,19 +4861,29 @@ def build_ui() -> gr.Blocks:
             lambda value: (
                 gr.update(visible=value in COMFY_UPSCALE_OPTIONS),
                 gr.update(visible=value == SEEDVR2_UPSCALE),
+                gr.update(visible=value == LTX25_UPSCALE),
             ),
             inputs=gallery_postprocess,
             outputs=[
                 gallery_ai_settings,
                 gallery_seedvr2_model,
+                gallery_ltx25_prompt,
             ],
             queue=False,
             show_progress="hidden",
         )
         generation_postprocess.change(
-            lambda value: gr.update(visible=value == SEEDVR2_UPSCALE),
+            lambda value: (
+                gr.update(visible=value in COMFY_UPSCALE_OPTIONS),
+                gr.update(visible=value == SEEDVR2_UPSCALE),
+                gr.update(visible=value == LTX25_UPSCALE),
+            ),
             inputs=generation_postprocess,
-            outputs=generation_postprocess_settings,
+            outputs=[
+                generation_postprocess_settings,
+                generation_seedvr2_model,
+                generation_ltx25_note,
+            ],
             queue=False,
             show_progress="hidden",
         )
@@ -4661,6 +4953,7 @@ def build_ui() -> gr.Blocks:
                 easycache_threshold, easycache_start, easycache_end, easycache_verbose,
                 ref_size, generation_postprocess,
                 generation_force_offload, generation_seedvr2_model,
+                ltx25_model,
                 use_int8_vae,
             ],
             outputs=[output, status],
@@ -4782,6 +5075,8 @@ def build_ui() -> gr.Blocks:
                 gallery_postprocess,
                 gallery_post_seed,
                 gallery_seedvr2_model,
+                ltx25_model,
+                gallery_ltx25_prompt,
                 gallery_force_offload,
             ],
             outputs=gallery_mutation_outputs,
@@ -5245,9 +5540,48 @@ def selftest() -> None:
         )
         assert choice_loader["inputs"]["unet_name"] == expected_name
 
-    assert COMFY_UPSCALE_OPTIONS == {SEEDVR2_UPSCALE}
-    assert POSTPROCESS_OPTIONS == [SEEDVR2_UPSCALE, "48 fps interpolation"]
-    assert GENERATION_POSTPROCESS_OPTIONS == ["None", SEEDVR2_UPSCALE]
+    ltx25_upscale_graph = build_ltx25_upscale_graph(
+        source_video="h3_gradio/ltx25_upscale/source.mp4",
+        seed=11,
+        model_choice="INT8 ConvRot",
+        prompt="a detailed test scene",
+        width=864,
+        height=480,
+        fps=24.0,
+    )
+    ltx25_upscale_nodes = list(ltx25_upscale_graph.values())
+    assert required_ltx25_upscale_nodes() <= {
+        node["class_type"] for node in ltx25_upscale_nodes
+    }
+    ltx25_upscale_loader = next(
+        node for node in ltx25_upscale_nodes
+        if node["class_type"] == "LTXICLoRALoaderModelOnly"
+    )
+    assert ltx25_upscale_loader["inputs"]["lora_name"] == (
+        "ltx-2.5-22b-ic-lora-pixel-spatial-upscaler-x2-1.0.safetensors"
+    )
+    ltx25_upscale_unet = next(
+        node for node in ltx25_upscale_nodes if node["class_type"] == "UNETLoader"
+    )
+    assert ltx25_upscale_unet["inputs"]["unet_name"] == (
+        "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
+    )
+    ltx25_upscale_latent = next(
+        node for node in ltx25_upscale_nodes
+        if node["class_type"] == "EmptyLTXVLatentVideo"
+    )
+    assert ltx25_upscale_latent["inputs"]["width"] == 1728
+    assert ltx25_upscale_latent["inputs"]["height"] == 960
+    assert any(
+        node["class_type"] == "LTXVCropGuides" for node in ltx25_upscale_nodes
+    )
+    assert COMFY_UPSCALE_OPTIONS == {SEEDVR2_UPSCALE, LTX25_UPSCALE}
+    assert POSTPROCESS_OPTIONS == [
+        SEEDVR2_UPSCALE, LTX25_UPSCALE, "48 fps interpolation"
+    ]
+    assert GENERATION_POSTPROCESS_OPTIONS == [
+        "None", SEEDVR2_UPSCALE, LTX25_UPSCALE
+    ]
 
     assert resolution_choice_values("9:16 · 768×1344", "large")[:2] == (768, 1344)
     assert resolution_choice_values("1:1 · 1024×1024", "large")[:2] == (1024, 1024)

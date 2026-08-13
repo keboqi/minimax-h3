@@ -15,7 +15,7 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 - Resolution-aware thumbnail gallery that loads a video only after it is selected
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
 - Official Qwen3-VL 32B NVFP4/AWQ text encoder from the Comfy H3 release
-- Per-video SeedVR2 upscale and frame interpolation in the gallery
+- Per-video SeedVR2 or LTX-2.5 IC-LoRA 2x upscale and frame interpolation
 - Selectable Larry v4-600 EMA and official LightX2V v1.0 4-step/8-step Turbo LoRAs
 - H3-native zero-copy Sol v0.6.1 sparse attention with SageAttention fallback
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
@@ -106,15 +106,18 @@ bash run_h3.sh
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
 Quality profile plus the shared text encoder, VAEs, and Turbo LoRAs. Speed and
 Original checkpoints download on demand the first time each workflow variant is
-selected. SeedVR2 models are lazy and download only when their gallery
-post-processing option is first used. The experimental INT8 ConvRot video VAE
+selected. SeedVR2 models and the LTX-2.5 2x upscaler IC-LoRA are lazy and
+download only when their post-processing option is first used. The experimental
+INT8 ConvRot video VAE
 is also lazy and downloads only when its default-off checkbox is enabled.
 The gated LTX-2.5 distilled transformers are available as **NVFP4 (default and
 recommended for Blackwell)**, **INT8 ConvRot**, and **BF16**. The selected
 transformer plus the shared fine-tuned Gemma text encoder and audio/video VAEs
 download lazily when the **LTX 2.5** tab is first used. Switching variants later
 downloads only the newly selected transformer. Accept the `Lightricks/LTX-2.5`
-Hugging Face license and set `HF_TOKEN` before the first run.
+Hugging Face license and, before using LTX upscaling, the separate
+[`LTX-2.5 2x pixel spatial upscaler`](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler)
+license. Set `HF_TOKEN` before the first run.
 Image-to-video accepts a required start keyframe plus optional middle and end
 keyframes. The middle position and each keyframe's conditioning strength are
 configurable; text-to-video does not load or apply image guides.
@@ -136,13 +139,15 @@ The 96 GiB Modal target likewise remains GPU-only.
 
 Generate a video, open **Gallery**, select its thumbnail, and choose a method
 under **Post-process selected video**. Each run preserves the source and adds a
-new processed video to the gallery. **SeedVR2 2x** is the sole upscale option
-and uses ComfyUI's native one-step restoration workflow while preserving the
-generated audio and frame rate. SeedVR2 can also be selected under
-**Generation post-processing** to run automatically as soon as the base H3
-video finishes; both the source and upscaled results remain available. Enable
+new processed video to the gallery. **SeedVR2 2x** uses ComfyUI's native
+one-step restoration workflow. **LTX-2.5 IC-LoRA 2x** is a generative alternative
+that synthesizes fine detail with the transformer selected in the **LTX 2.5**
+tab and the official gated pixel spatial upscaler IC-LoRA. Gallery runs accept
+an optional scene prompt; automatic post-processing reuses the H3 generation
+prompt. Both upscale methods preserve the source audio and frame rate and can
+also run automatically as soon as the base H3 video finishes. Enable
 **Unload resident models first** in Gallery, or **Unload H3 models before
-SeedVR2** in MiniMax H3, when
+upscaling** in MiniMax H3, when
 lower peak VRAM is more important than avoiding an H3 model reload on the next
 generation. **48 fps interpolation** remains available as a non-upscale option
 and requires FFmpeg on the server `PATH`.

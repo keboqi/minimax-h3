@@ -26,6 +26,9 @@ TEXT_ENCODER_REPO = "Comfy-Org/MiniMax-H3"
 SEEDVR2_REPO = "Comfy-Org/SeedVR2"
 LTX25_REPO = "Lightricks/LTX-2.5"
 LTX25_NVFP4_COMFY_REPO = "BennyDaBall/LTX-2.5-22b-distilled-nvfp4-comfy"
+LTX25_PIXEL_UPSCALER_REPO = (
+    "Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler"
+)
 LTX23_REPO = "Lightricks/LTX-2.3"
 
 HF_METADATA_WORKERS = 2
@@ -214,6 +217,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
         "LTX 2x latent upscaler for official two-stage workflows",
     ),
+    "ltx25_pixel_upscaler_x2": ModelSpec(
+        LTX25_PIXEL_UPSCALER_REPO,
+        "loras",
+        "ltx-2.5-22b-ic-lora-pixel-spatial-upscaler-x2-1.0.safetensors",
+        "LTX-2.5 22B IC-LoRA generative pixel-space 2x video upscaler",
+    ),
     "ltx25_iclora_ingredients": ModelSpec(
         "Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients",
         "loras",
@@ -273,6 +282,7 @@ SEEDVR2_UPSCALE_MODEL_KEYS = (
 )
 LAZY_POSTPROCESS_MODEL_KEYS = (
     *SEEDVR2_UPSCALE_MODEL_KEYS,
+    "ltx25_pixel_upscaler_x2",
 )
 LTX25_MODEL_CHOICES = {
     "NVFP4 Comfy-ready (Blackwell recommended)": "ltx25_distilled_nvfp4",
@@ -806,6 +816,7 @@ def selftest() -> None:
         "ltx25_video_vae_full",
         "ltx25_text_enhancer",
         "ltx25_spatial_upscaler",
+        "ltx25_pixel_upscaler_x2",
         "ltx25_iclora_ingredients",
         "ltx25_iclora_in_outpaint",
         "ltx25_iclora_motion_track",
@@ -869,6 +880,9 @@ def selftest() -> None:
     assert nvfp4.filename.endswith("-nvfp4-comfy.safetensors")
     assert nvfp4.expected_sha256 == (
         "2f3599d1adf22fc4c4a5bb9328cb42d64f449ed78dce5f47a16f098481bdee74"
+    )
+    assert MODEL_SPECS["ltx25_pixel_upscaler_x2"].repo_id == (
+        LTX25_PIXEL_UPSCALER_REPO
     )
     with tempfile.TemporaryDirectory() as model_temp:
         root = Path(model_temp)
