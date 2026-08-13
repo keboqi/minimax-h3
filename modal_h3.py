@@ -81,6 +81,7 @@ sys.path.insert(0, str(_shared_import_path()))
 # mounted after run_function() must be imported lazily inside runtime functions.
 from h3_requirements import (  # noqa: E402
     COMFY_REF,
+    LAZY_LOADER_REQUIREMENT,
     NUMPY_VERSION,
     SCIPY_VERSION,
     TORCH_INDEX,
@@ -356,6 +357,10 @@ def build(revision: str) -> None:
     _run(
         "uv", "pip", "install", "--system", "--upgrade", "--no-deps",
         "timm>=0.9.16,<2",
+    )
+    _run(
+        "uv", "pip", "install", "--system", "--upgrade", "--no-deps",
+        LAZY_LOADER_REQUIREMENT,
     )
     # Custom-node requirements must not drift the pinned Torch/NumPy ABI.
     _run(

@@ -17,6 +17,7 @@ SCIPY_VERSION = "1.15.3"
 # Dynamic VRAM automatically on supported NVIDIA WSL installations.
 COMFY_REF = "2220d111c8b036f094eb465400fdf962626e4afa"
 COMFY_KITCHEN_VERSION = "0.2.30"
+LAZY_LOADER_REQUIREMENT = "lazy-loader>=0.4,<1"
 
 PINNED_REQUIREMENTS = frozenset(
     {"torch", "torchvision", "torchaudio", "numpy", "scipy"}

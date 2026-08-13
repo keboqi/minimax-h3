@@ -15,6 +15,7 @@ from h3_models import PRELOAD_MODEL_KEYS, sync_models, write_json_atomic
 from h3_node_patches import patch_larry_turbo_node
 from h3_requirements import (
     COMFY_REF,
+    LAZY_LOADER_REQUIREMENT,
     NUMPY_VERSION,
     SCIPY_VERSION,
     TORCH_INDEX,
@@ -271,6 +272,24 @@ def install_pinned_numpy_stack() -> None:
         f"numpy=={NUMPY_VERSION}",
         f"scipy=={SCIPY_VERSION}",
     )
+
+
+def ensure_controlnet_aux_runtime_dependencies() -> None:
+    """Install transitive imports omitted by custom-node --no-deps policy."""
+    probe = subprocess.run(
+        [sys.executable, "-c", "import lazy_loader"],
+        text=True,
+        capture_output=True,
+    )
+    if probe.returncode == 0:
+        return
+
+    print(
+        "[h3-setup] Installing missing ControlNet Aux runtime dependency: "
+        f"{LAZY_LOADER_REQUIREMENT}",
+        flush=True,
+    )
+    uv_pip(LAZY_LOADER_REQUIREMENT, no_deps=True)
 
 
 def install_comfy_requirements(comfy: Path) -> None:
@@ -553,6 +572,7 @@ def main() -> None:
         comfy,
         install_requirements=not args.skip_env,
     )
+    ensure_controlnet_aux_runtime_dependencies()
     if not torch_stack_matches():
         install_pinned_torch_stack()
     if not numpy_stack_matches():
