@@ -22,7 +22,7 @@ ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
-TEXT_ENCODER_REPO = "sakamakismile/Qwen3-VL-32B-Heretic-MiniMax-H3-NVFP4"
+TEXT_ENCODER_REPO = "Comfy-Org/MiniMax-H3"
 SEEDVR2_REPO = "Comfy-Org/SeedVR2"
 LTX25_REPO = "Lightricks/LTX-2.5"
 LTX25_NVFP4_COMFY_REPO = "BennyDaBall/LTX-2.5-22b-distilled-nvfp4-comfy"
@@ -87,8 +87,8 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     "text_encoder": ModelSpec(
         TEXT_ENCODER_REPO,
         "text_encoders",
-        "qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors",
-        "Heretic NVFP4 text encoder",
+        "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "Official Qwen3-VL 32B NVFP4/AWQ text encoder",
     ),
     "video_vae": ModelSpec(
         MODEL_REPO,
@@ -776,7 +776,7 @@ def selftest() -> None:
 
     assert MODEL_SPECS["text_encoder"].repo_id == TEXT_ENCODER_REPO
     assert MODEL_SPECS["text_encoder"].local_name == (
-        "qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors"
+        "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert set(MODEL_SPECS) == {
         "speed_fl2va",
@@ -828,7 +828,7 @@ def selftest() -> None:
         "minimax_h3_fl2va_pruned_bf16.safetensors"
     )
     assert cfg["text_encoder"] == (
-        "qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors"
+        "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert cfg["video_vae_int8"] == (
         "minimax_h3_video_vae_int8_convrot.safetensors"

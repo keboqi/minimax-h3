@@ -14,6 +14,7 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 - Live queue position, workflow stage, node count, overall work, and sampling schedule
 - Resolution-aware thumbnail gallery that loads a video only after it is selected
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
+- Official Qwen3-VL 32B NVFP4/AWQ text encoder from the Comfy H3 release
 - Per-video SeedVR2 upscale and frame interpolation in the gallery
 - Selectable Larry v4-600 EMA and official LightX2V v1.0 4-step/8-step Turbo LoRAs
 - H3-native zero-copy Sol v0.6.1 sparse attention with SageAttention fallback
