@@ -17,7 +17,14 @@ SCIPY_VERSION = "1.15.3"
 # Dynamic VRAM automatically on supported NVIDIA WSL installations.
 COMFY_REF = "2220d111c8b036f094eb465400fdf962626e4afa"
 COMFY_KITCHEN_VERSION = "0.2.30"
-LAZY_LOADER_REQUIREMENT = "lazy-loader>=0.4,<1"
+
+ABI_CONSTRAINTS = (
+    f"torch=={TORCH_VERSION}",
+    f"torchvision=={TORCHVISION_VERSION}",
+    f"torchaudio=={TORCHAUDIO_VERSION}",
+    f"numpy=={NUMPY_VERSION}",
+    f"scipy=={SCIPY_VERSION}",
+)
 
 PINNED_REQUIREMENTS = frozenset(
     {"torch", "torchvision", "torchaudio", "numpy", "scipy"}
@@ -67,6 +74,13 @@ def selftest() -> None:
     filtered, skipped = filter_pinned_requirements(source)
     assert [package for package, _ in skipped] == ["torch", "numpy", "scipy"]
     assert filtered == source[3:]
+    assert ABI_CONSTRAINTS == (
+        "torch==2.11.0",
+        "torchvision==0.26.0",
+        "torchaudio==2.11.0",
+        "numpy==1.26.4",
+        "scipy==1.15.3",
+    )
     print("h3_requirements selftest OK")
 
 

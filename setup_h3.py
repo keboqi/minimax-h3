@@ -14,8 +14,8 @@ from pathlib import Path
 from h3_models import PRELOAD_MODEL_KEYS, sync_models, write_json_atomic
 from h3_node_patches import patch_larry_turbo_node
 from h3_requirements import (
+    ABI_CONSTRAINTS,
     COMFY_REF,
-    LAZY_LOADER_REQUIREMENT,
     NUMPY_VERSION,
     SCIPY_VERSION,
     TORCH_INDEX,
@@ -274,22 +274,73 @@ def install_pinned_numpy_stack() -> None:
     )
 
 
-def ensure_controlnet_aux_runtime_dependencies() -> None:
-    """Install transitive imports omitted by custom-node --no-deps policy."""
+def controlnet_aux_dependencies_importable() -> bool:
+    """Check the dependency chains exercised by ControlNet Aux at startup."""
     probe = subprocess.run(
-        [sys.executable, "-c", "import lazy_loader"],
+        [
+            sys.executable,
+            "-c",
+            "import lazy_loader, matplotlib, pyparsing, skimage",
+        ],
         text=True,
         capture_output=True,
     )
-    if probe.returncode == 0:
+    return probe.returncode == 0
+
+
+def install_controlnet_aux_requirements(requirements: Path) -> None:
+    """Resolve ControlNet Aux dependencies without drifting the CUDA ABI."""
+    filtered, skipped = filter_pinned_requirements(
+        requirements.read_text(encoding="utf-8").splitlines()
+    )
+    for package, requirement in skipped:
+        print(
+            f"[h3-setup] Keeping pinned {package}; "
+            f"skipping ControlNet Aux entry: {requirement}",
+            flush=True,
+        )
+
+    requirement_path: Path | None = None
+    constraint_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".txt", delete=False
+        ) as handle:
+            handle.write("\n".join(filtered) + "\n")
+            requirement_path = Path(handle.name)
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".txt", delete=False
+        ) as handle:
+            handle.write("\n".join(ABI_CONSTRAINTS) + "\n")
+            constraint_path = Path(handle.name)
+        uv_pip(
+            "-r",
+            str(requirement_path),
+            "--constraint",
+            str(constraint_path),
+        )
+    finally:
+        if requirement_path is not None:
+            requirement_path.unlink(missing_ok=True)
+        if constraint_path is not None:
+            constraint_path.unlink(missing_ok=True)
+
+
+def ensure_controlnet_aux_runtime_dependencies(requirements: Path) -> None:
+    """Repair incomplete prior installs, then verify startup imports."""
+    if controlnet_aux_dependencies_importable():
         return
 
     print(
-        "[h3-setup] Installing missing ControlNet Aux runtime dependency: "
-        f"{LAZY_LOADER_REQUIREMENT}",
+        "[h3-setup] Repairing ControlNet Aux dependency graph",
         flush=True,
     )
-    uv_pip(LAZY_LOADER_REQUIREMENT, no_deps=True)
+    install_controlnet_aux_requirements(requirements)
+    if not controlnet_aux_dependencies_importable():
+        raise RuntimeError(
+            "ControlNet Aux dependencies installed but matplotlib/scikit-image "
+            "still fail to import"
+        )
 
 
 def install_comfy_requirements(comfy: Path) -> None:
@@ -480,7 +531,14 @@ def sync_external_nodes(
         installed[directory_name] = destination
         requirements = destination / "requirements.txt"
         if requirements.is_file():
-            uv_pip("-r", str(requirements), no_deps=True)
+            if directory_name == "comfyui_controlnet_aux":
+                if install_requirements:
+                    install_controlnet_aux_requirements(requirements)
+            else:
+                uv_pip("-r", str(requirements), no_deps=True)
+    ensure_controlnet_aux_runtime_dependencies(
+        installed["comfyui_controlnet_aux"] / "requirements.txt"
+    )
     # --no-deps deliberately protects the pinned CUDA/Torch stack, so install
     # the one dependency expressed only through transformers' `timm` extra.
     uv_pip("timm>=0.9.16,<2", no_deps=True)
@@ -572,7 +630,6 @@ def main() -> None:
         comfy,
         install_requirements=not args.skip_env,
     )
-    ensure_controlnet_aux_runtime_dependencies()
     if not torch_stack_matches():
         install_pinned_torch_stack()
     if not numpy_stack_matches():

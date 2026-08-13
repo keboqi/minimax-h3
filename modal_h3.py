@@ -80,8 +80,8 @@ sys.path.insert(0, str(_shared_import_path()))
 # Only build inputs may be imported while Modal constructs the image. Helpers
 # mounted after run_function() must be imported lazily inside runtime functions.
 from h3_requirements import (  # noqa: E402
+    ABI_CONSTRAINTS,
     COMFY_REF,
-    LAZY_LOADER_REQUIREMENT,
     NUMPY_VERSION,
     SCIPY_VERSION,
     TORCH_INDEX,
@@ -342,8 +342,36 @@ def build(revision: str) -> None:
         directory / "requirements.txt"
         for directory in installed_nodes.values()
     )
+    abi_constraints = Path("/tmp/h3-abi-constraints.txt")
+    abi_constraints.write_text(
+        "\n".join(ABI_CONSTRAINTS) + "\n",
+        encoding="utf-8",
+    )
     for requirements in custom_requirements:
         if not requirements.is_file():
+            continue
+        if requirements.parent.name == "comfyui_controlnet_aux":
+            filtered, skipped = filter_pinned_requirements(
+                requirements.read_text(encoding="utf-8").splitlines()
+            )
+            for package, requirement in skipped:
+                print(
+                    f"[modal-h3] Keeping pinned {package}; skipping "
+                    f"ControlNet Aux entry: {requirement}",
+                    flush=True,
+                )
+            filtered_controlnet = Path(
+                "/tmp/controlnet-aux-requirements-constrained.txt"
+            )
+            filtered_controlnet.write_text(
+                "\n".join(filtered) + "\n",
+                encoding="utf-8",
+            )
+            _run(
+                "uv", "pip", "install", "--system", "--upgrade",
+                "--constraint", abi_constraints,
+                "-r", filtered_controlnet,
+            )
             continue
         _run(
             "uv",
@@ -358,10 +386,20 @@ def build(revision: str) -> None:
         "uv", "pip", "install", "--system", "--upgrade", "--no-deps",
         "timm>=0.9.16,<2",
     )
-    _run(
-        "uv", "pip", "install", "--system", "--upgrade", "--no-deps",
-        LAZY_LOADER_REQUIREMENT,
+    controlnet_import = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import lazy_loader, matplotlib, pyparsing, skimage",
+        ],
+        text=True,
+        capture_output=True,
     )
+    if controlnet_import.returncode != 0:
+        raise RuntimeError(
+            "ControlNet Aux dependency verification failed: "
+            + (controlnet_import.stderr or controlnet_import.stdout).strip()
+        )
     # Custom-node requirements must not drift the pinned Torch/NumPy ABI.
     _run(
         "uv", "pip", "install", "--system", "--upgrade",
