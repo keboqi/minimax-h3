@@ -208,10 +208,14 @@ SPECTRUM_DEFAULT_INPUTS = {
     "selective_rollback_correction": False,
     "offline_smoothing_replay": True,
     "audio_blend_weight": 0.0,
-    # Spectrum v0.2.5 separates the unbounded replay archive from the capped
+    # Spectrum separates the unbounded replay archive from the capped
     # causal history. Keep all replay anchors in host RAM unless a workflow
     # explicitly opts into the higher-VRAM path.
     "offline_archive_storage": "system_ram",
+    # v0.2.7 keeps legacy behavior when model-aware forecasting is off. Make
+    # that compatibility policy explicit instead of relying on the node default.
+    "model_aware_mode": "off",
+    "model_aware_risk_threshold": 0.65,
 }
 
 # The official H3 workflow uses a 768×1344 pixel-area native canvas. Larger
@@ -4834,6 +4838,8 @@ def selftest() -> None:
     assert spectrum_inputs["offline_smoothing_replay"] is True
     assert spectrum_inputs["audio_blend_weight"] == 0.0
     assert spectrum_inputs["offline_archive_storage"] == "system_ram"
+    assert spectrum_inputs["model_aware_mode"] == "off"
+    assert spectrum_inputs["model_aware_risk_threshold"] == 0.65
     assert not any(
         node["class_type"] == "H3FirstBlockCache"
         for node in spectrum_graph.nodes.values()
@@ -5551,7 +5557,7 @@ def selftest() -> None:
         f"Sol Auto/Turbo policy valid, Spectrum default + Sol/ConvRot order valid, "
         f"zero-copy Sol + FirstBlockCache composition valid, "
         f"LightX fused modulation + Larry compatibility + ConvRot FFN chunking valid, "
-        f"Spectrum v0.2.5 Turbo composition + block-cache guard valid, "
+        f"Spectrum v0.2.7 legacy Turbo composition + block-cache guard valid, "
         f"selectable Larry/LightX2V Turbo on "
         f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, "
         f"SaveVideo codec API valid, prompt API download URL valid, "

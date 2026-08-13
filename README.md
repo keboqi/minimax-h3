@@ -19,7 +19,7 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 - Optional experimental INT8 ConvRot video VAE, lazy-downloaded on first use
 - Hardware-aware ComfyUI memory mode selection
 - One-click model unloading and VRAM cache release from the UI
-- Spectrum v0.2.5 as the normal-generation default and experimental Turbo option
+- Spectrum v0.2.7 in legacy mode as the normal-generation default and experimental Turbo option
 - FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
 - Version-aware, resumable Hugging Face model provisioning
@@ -47,11 +47,14 @@ its E-grid adapter derives the same dynamic timestep set as ComfyUI, including
 visual and audio reference-conditioning rows. Quality ConvRot models use
 bit-preserving two-way feed-forward chunking above 8K packed tokens.
 
-Spectrum is pinned to v0.2.5 and is applied after LoRA, Sol-Attn, and ConvRot
+Spectrum is pinned to v0.2.7 and is applied after LoRA, Sol-Attn, and ConvRot
 feed-forward patches. Its default uses system-RAM history and replay archives,
-degree-1 forecasting, offline smoothing replay, and zero spectral audio blending.
+degree-1 forecasting, offline smoothing replay, zero spectral audio blending,
+and explicit legacy (`model_aware_mode=off`) scheduling. v0.2.7 also contains
+native ER-SDE support and its protected two-actual-step replay tail, while the
+current H3 graphs continue to use the reviewed Larry and RES sampler paths.
 Spectrum, FirstBlockCache, and EasyCache are mutually exclusive acceleration
-choices. Turbo defaults to Spectrum through v0.2.5's reviewed Larry Turbo and
+choices. Turbo defaults to Spectrum through the reviewed Larry Turbo and
 RES multistep sampler paths. EasyCache is also available as an experimental,
 default-off Turbo option after ComfyUI's H3 audio-carry fix. FirstBlockCache is
 also available as a default-off experimental Turbo option. Its attention default

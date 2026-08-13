@@ -370,3 +370,20 @@ compatibility with fused kernels that read weights without calling a module's
 forward method. The bundled LightX2V bypass accepts only the exact official
 50-block plus two-refiner, four-projection layout and fails closed on missing keys, unexpected
 ranks, unsupported extensions, or incomplete hook installation.
+
+## v51 ComfyUI and Spectrum refresh
+
+ComfyUI is pinned to `2220d111c8b036f094eb465400fdf962626e4afa`.
+Relative to the previous pin, this enables automatic Dynamic VRAM on supported
+NVIDIA WSL installations and carries only the intervening reviewed maintenance
+fixes. Spectrum is updated from v0.2.5 to v0.2.7 at
+`7911ec7827921de599492f21eade181211266029`. The new release supports native
+ER-SDE and protects its offline replay tail, but the launcher continues to use
+Larry and RES samplers. Its experimental model-aware controller is explicitly
+set to `off`, preserving the existing scheduling, fitting, and correction
+behavior.
+
+Primary sources:
+
+- https://github.com/Comfy-Org/ComfyUI/commit/2220d111c8b036f094eb465400fdf962626e4afa
+- https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.7

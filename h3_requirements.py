@@ -13,8 +13,9 @@ TORCHAUDIO_VERSION = "2.11.0"
 NUMPY_VERSION = "1.26.4"
 SCIPY_VERSION = "1.15.3"
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
-# This revision includes native LTX 2.5 NVFP4 checkpoint loading.
-COMFY_REF = "27bca654eb9a70237d93f56a6ea336ab55f8925d"
+# This revision includes native LTX 2.5 NVFP4 checkpoint loading and enables
+# Dynamic VRAM automatically on supported NVIDIA WSL installations.
+COMFY_REF = "2220d111c8b036f094eb465400fdf962626e4afa"
 COMFY_KITCHEN_VERSION = "0.2.30"
 
 PINNED_REQUIREMENTS = frozenset(
