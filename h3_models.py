@@ -695,6 +695,8 @@ def sync_models(
     ]
 
     stale = [plan for plan in plans if plan["needs_download"]]
+    downloaded_keys: set[str] = set()
+    download_failure: RuntimeError | None = None
     if stale:
         workers = max(1, min(download_workers, len(stale)))
         print(
@@ -710,15 +712,22 @@ def sync_models(
             for future in as_completed(futures):
                 plan = futures[future]
                 try:
-                    future.result()
+                    downloaded_keys.add(future.result())
                 except Exception as exc:
-                    raise RuntimeError(
-                        f"Parallel download failed for {plan['key']}: {exc}"
-                    ) from exc
+                    if download_failure is None:
+                        download_failure = RuntimeError(
+                            f"Parallel download failed for {plan['key']}: {exc}"
+                        )
+                        download_failure.__cause__ = exc
 
     files_manifest = manifest.setdefault("files", {})
     for plan in plans:
         if not plan["remote_ok"]:
+            continue
+        # Record successful workers even when a sibling worker failed. This
+        # prevents a completed multi-gigabyte file from being downloaded again
+        # merely because the parallel batch could not finish every model.
+        if plan["needs_download"] and plan["key"] not in downloaded_keys:
             continue
         spec: ModelSpec = plan["spec"]
         dest: Path = plan["dest"]
@@ -742,6 +751,9 @@ def sync_models(
     manifest["repo_id"] = MODEL_REPO
     manifest["checked_at_unix"] = int(time.time())
     write_json_atomic(manifest_path, manifest)
+
+    if download_failure is not None:
+        raise download_failure
 
     return _build_config(manifest_path.name)
 

@@ -187,8 +187,13 @@ python3 setup_h3.py --install-dir ./h3 --skip-env
 Install and authenticate the Modal CLI, then run:
 
 ```bash
+modal secret create custom-secret HF_TOKEN="$HF_TOKEN"
 modal deploy modal_h3.py
 ```
+
+The deployment attaches the `custom-secret` Modal Secret to both runtime
+functions and requires it to contain `HF_TOKEN`. If your existing secret uses a
+different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`.
 
 The deployment pins ComfyUI to a revision with native LTX 2.5 NVFP4 support.
 Changing that pin invalidates the Modal image cache so ComfyUI and its matching

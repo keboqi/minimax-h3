@@ -70,6 +70,7 @@ SCALEDOWN_WINDOW = int(
     os.getenv("H3_MODAL_SCALEDOWN_WINDOW", "1200")
 )
 PROXY_AUTH = os.getenv("H3_MODAL_PROXY_AUTH", "0") != "0"
+HF_SECRET_NAME = os.getenv("H3_MODAL_HF_SECRET", "custom-secret")
 
 
 def _shared_import_path() -> Path:
@@ -82,6 +83,7 @@ sys.path.insert(0, str(_shared_import_path()))
 from h3_requirements import (  # noqa: E402
     ABI_CONSTRAINTS,
     COMFY_REF,
+    KORNIA_VERSION,
     NUMPY_VERSION,
     SCIPY_VERSION,
     TORCH_INDEX,
@@ -382,6 +384,36 @@ def build(revision: str) -> None:
             "-r",
             requirements,
         )
+    # The pinned ComfyUI-LTXVideo revision imports a compatibility symbol that
+    # Kornia removed in 0.8.2. Its requirement is unbounded, so restore the
+    # known-compatible version after all custom-node requirements are applied.
+    _run(
+        "uv", "pip", "install", "--system", "--upgrade", "--no-deps",
+        f"kornia=={KORNIA_VERSION}",
+    )
+    kornia_import = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import kornia; "
+                "from kornia.geometry.transform.pyramid import pad; "
+                "print(kornia.__version__)"
+            ),
+        ],
+        text=True,
+        capture_output=True,
+    )
+    if kornia_import.returncode != 0:
+        raise RuntimeError(
+            "LTX Kornia compatibility verification failed: "
+            + (kornia_import.stderr or kornia_import.stdout).strip()
+        )
+    print(
+        "[modal-h3] LTX Kornia compatibility OK: "
+        + kornia_import.stdout.strip(),
+        flush=True,
+    )
     _run(
         "uv", "pip", "install", "--system", "--upgrade", "--no-deps",
         "timm>=0.9.16,<2",
@@ -467,6 +499,10 @@ if IS_LOCAL:
 
 volume = modal.Volume.from_name(VOL, create_if_missing=True)
 app = modal.App(APP, image=image)
+hf_secret = modal.Secret.from_name(
+    HF_SECRET_NAME,
+    required_keys=["HF_TOKEN"],
+)
 
 
 def layout() -> None:
@@ -596,6 +632,7 @@ def wait_for_service(
 @app.function(
     timeout=21600,
     volumes={DATA.as_posix(): volume},
+    secrets=[hf_secret],
     max_containers=1,
 )
 def provision_models():
@@ -607,6 +644,7 @@ def provision_models():
     timeout=86400,
     startup_timeout=3600,
     volumes={DATA.as_posix(): volume},
+    secrets=[hf_secret],
     min_containers=MIN_CONTAINERS,
     max_containers=1,
     buffer_containers=0,
@@ -623,6 +661,11 @@ def serve():
     from h3_attention import probe_sageattention
 
     print("[modal-h3] Starting MiniMax H3 service", flush=True)
+    print(
+        "[modal-h3] Hugging Face token injected: "
+        + ("yes" if os.getenv("HF_TOKEN") else "no"),
+        flush=True,
+    )
     provision()
 
     env = service_env()

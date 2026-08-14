@@ -16,6 +16,7 @@ from h3_node_patches import patch_larry_turbo_node
 from h3_requirements import (
     ABI_CONSTRAINTS,
     COMFY_REF,
+    KORNIA_VERSION,
     NUMPY_VERSION,
     SCIPY_VERSION,
     TORCH_INDEX,
@@ -542,6 +543,9 @@ def sync_external_nodes(
     # --no-deps deliberately protects the pinned CUDA/Torch stack, so install
     # the one dependency expressed only through transformers' `timm` extra.
     uv_pip("timm>=0.9.16,<2", no_deps=True)
+    # ComfyUI-LTXVideo imports ``pad`` from the pyramid module; that compatibility
+    # export was removed after Kornia 0.8.1.
+    uv_pip(f"kornia=={KORNIA_VERSION}", no_deps=True)
 
     workflow_source = (
         installed["ComfyUI-LTXVideo"] / "example_workflows" / "2.5"

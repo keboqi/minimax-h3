@@ -941,11 +941,17 @@ def ensure_ltx25_models(model_choice: str = DEFAULT_LTX25_MODEL) -> bool:
     if not missing_ltx25_model_names(model_choice):
         validate_ltx25_nvfp4_header(model_choice)
         return False
+    token = os.getenv("HF_TOKEN") or None
+    if token is None:
+        raise H3Error(
+            "HF_TOKEN is not present in the running container. Attach a Modal "
+            "Secret containing HF_TOKEN to the serve function, then redeploy."
+        )
     try:
         sync_models(
             root=COMFY_DIR / "models",
             manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
-            token=os.getenv("HF_TOKEN") or None,
+            token=token,
             log_prefix="[ltx25-on-demand]",
             model_keys=required_keys,
             download_workers=len(required_keys),
@@ -3142,6 +3148,17 @@ GalleryMutationResult = tuple[
     bool,
 ]
 
+GalleryPostprocessResult = tuple[
+    list[tuple[str, str]],
+    list[str],
+    str,
+    Any,
+    Any,
+    str | None,
+    bool,
+    str,
+]
+
 
 def gallery_mutation_result(
     message: str,
@@ -3164,9 +3181,16 @@ def gallery_mutation_result(
     )
 
 
-def gallery_progress_result(message: str) -> GalleryMutationResult:
+def gallery_progress_result(message: str) -> GalleryPostprocessResult:
     return (
-        gr.skip(), gr.skip(), message, gr.skip(), gr.skip(), gr.skip(), gr.skip()
+        gr.skip(),
+        gr.skip(),
+        message,
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        message,
     )
 
 
@@ -3175,7 +3199,7 @@ def gallery_processed_result(
     option: str,
     elapsed: float,
     request: gr.Request,
-) -> GalleryMutationResult:
+) -> GalleryPostprocessResult:
     items, paths, detail = refresh_gallery()
     download_url = absolute_video_download_url(result, request)
     resolution = gallery_resolution_text(result)
@@ -3187,6 +3211,7 @@ def gallery_processed_result(
         f"**Resolution:** {resolution} · [Download processed video]({download_url})",
         str(result),
         False,
+        f"Completed {option} in {elapsed:.1f}s",
     )
 
 
@@ -4795,6 +4820,7 @@ def build_ui() -> gr.Blocks:
                                 variant="primary",
                             )
                             gallery_post_stop = gr.Button("Interrupt")
+                        gallery_post_status = gr.Markdown()
 
         with gr.Group(visible=False) as api_view:
             gr.Markdown(api_guide())
@@ -5079,13 +5105,13 @@ def build_ui() -> gr.Blocks:
                 gallery_ltx25_prompt,
                 gallery_force_offload,
             ],
-            outputs=gallery_mutation_outputs,
+            outputs=gallery_mutation_outputs + [gallery_post_status],
             show_progress="minimal",
             api_name=False,
         )
         gallery_post_stop.click(
             interrupt,
-            outputs=gallery_status,
+            outputs=gallery_post_status,
             cancels=[gallery_post_event],
             api_name=False,
         )
