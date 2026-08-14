@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
+import shutil
 from collections.abc import Iterable
 from importlib import resources
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 from urllib.request import urlopen
 
 
@@ -27,6 +28,17 @@ COMFY_REF = "2220d111c8b036f094eb465400fdf962626e4afa"
 COMFY_KITCHEN_VERSION = "0.2.30"
 COMFY_FRONTEND_VERSION = "1.48.7"
 WSPROTO_VERSION = "1.2.0"
+LTX25_WORKFLOW_FILENAMES = (
+    "LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
+    "LTX-2.5_T2V_I2V_Two_Stage_Distilled.json",
+    "LTX-2.5_T2A_Single_Stage_Distilled.json",
+    "LTX-2.5_ICLoRA_Ingredients_Single_Stage_Distilled.json",
+    "LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled.json",
+    "LTX-2.5_ICLoRA_Motion_Track_Distilled.json",
+    "LTX-2.5_ICLoRA_Inpaint_Two_Stage_Distilled.json",
+    "LTX-2.5_ICLoRA_Outpaint_Two_Stage_Distilled.json",
+    "LTX-2.5_ICLoRA_Union_Control_Distilled.json",
+)
 
 ABI_CONSTRAINTS = (
     f"torch=={TORCH_VERSION}",
@@ -39,6 +51,29 @@ ABI_CONSTRAINTS = (
 PINNED_REQUIREMENTS = frozenset(
     {"torch", "torchvision", "torchaudio", "numpy", "scipy"}
 )
+
+
+def sync_ltx25_workflows(source: Path, destination: Path) -> tuple[Path, ...]:
+    """Install the exact official LTX 2.5 templates from the pinned node."""
+    source = Path(source)
+    destination = Path(destination)
+    discovered = {path.name for path in source.glob("*.json")}
+    expected = set(LTX25_WORKFLOW_FILENAMES)
+    if discovered != expected:
+        missing = sorted(expected - discovered)
+        extra = sorted(discovered - expected)
+        raise RuntimeError(
+            "Official LTX 2.5 workflow set does not match the pinned release; "
+            f"missing={missing}, extra={extra}"
+        )
+
+    destination.mkdir(parents=True, exist_ok=True)
+    installed = []
+    for filename in LTX25_WORKFLOW_FILENAMES:
+        target = destination / filename
+        shutil.copy2(source / filename, target)
+        installed.append(target)
+    return tuple(installed)
 
 
 def comfy_frontend_static_references(content: str) -> list[str]:
@@ -122,6 +157,24 @@ def probe_comfy_frontend(base_url: str, timeout: float = 5) -> int:
     return len(references)
 
 
+def probe_comfy_workflow(base_url: str, timeout: float = 5) -> int:
+    """Fetch one bundled nested workflow through ComfyUI's userdata route."""
+    relative_path = f"workflows/LTX 2.5/{LTX25_WORKFLOW_FILENAMES[3]}"
+    workflow_url = urljoin(
+        base_url.rstrip("/") + "/",
+        "api/userdata/" + quote(relative_path, safe=""),
+    )
+    with urlopen(workflow_url, timeout=timeout) as response:
+        if response.status >= 400:
+            raise RuntimeError(
+                f"ComfyUI workflow returned HTTP {response.status}: {workflow_url}"
+            )
+        content = response.read()
+    if not content:
+        raise RuntimeError(f"ComfyUI workflow was empty: {workflow_url}")
+    return len(content)
+
+
 def requirement_name(line: str) -> str | None:
     """Return a normalized package name for a requirement-file line."""
     stripped = line.strip()
@@ -153,6 +206,22 @@ def filter_pinned_requirements(
 
 
 def selftest() -> None:
+    import tempfile
+    from unittest.mock import patch
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read() -> bytes:
+            return b"{}"
+
     source = [
         "torch>=2.0",
         "NumPy==2.0; python_version >= '3.12'",
@@ -175,10 +244,27 @@ def selftest() -> None:
     assert KORNIA_VERSION == "0.8.1"
     assert COMFY_FRONTEND_VERSION == "1.48.7"
     assert WSPROTO_VERSION == "1.2.0"
+    assert len(LTX25_WORKFLOW_FILENAMES) == 9
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        source = root / "source"
+        destination = root / "destination"
+        source.mkdir()
+        for filename in LTX25_WORKFLOW_FILENAMES:
+            (source / filename).write_text(filename, encoding="utf-8")
+        installed = sync_ltx25_workflows(source, destination)
+        assert tuple(path.name for path in installed) == LTX25_WORKFLOW_FILENAMES
+        assert all(
+            path.read_text(encoding="utf-8") == path.name for path in installed
+        )
     assert comfy_frontend_static_references(
         '<link href="user.css"><link href="materialdesignicons.min.css">'
         '<script src="./assets/index-abc.js"></script>'
     ) == ["materialdesignicons.min.css", "./assets/index-abc.js"]
+    with patch(f"{__name__}.urlopen", return_value=FakeResponse()) as request:
+        assert probe_comfy_workflow("http://127.0.0.1:7860/comfyui/") == 2
+        workflow_url = request.call_args.args[0]
+        assert "/api/userdata/workflows%2FLTX%202.5%2F" in workflow_url
     print("h3_requirements selftest OK")
 
 

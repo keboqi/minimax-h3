@@ -27,6 +27,7 @@ from h3_requirements import (
     WSPROTO_VERSION,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
+    sync_ltx25_workflows,
 )
 
 
@@ -627,16 +628,10 @@ def sync_external_nodes(
     workflow_destination = (
         comfy / "user" / "default" / "workflows" / "LTX 2.5"
     )
-    workflow_destination.mkdir(parents=True, exist_ok=True)
-    workflows = list(workflow_source.glob("*.json"))
-    if len(workflows) != 9:
-        raise RuntimeError(
-            f"Expected 9 official LTX 2.5 workflows, found {len(workflows)}"
-        )
-    for workflow in workflows:
-        shutil.copy2(workflow, workflow_destination / workflow.name)
+    workflows = sync_ltx25_workflows(workflow_source, workflow_destination)
     print(
-        f"[h3-setup] synced official LTX 2.5 workflows to {workflow_destination}",
+        f"[h3-setup] synced {len(workflows)} official LTX 2.5 workflows "
+        f"to {workflow_destination}",
         flush=True,
     )
 

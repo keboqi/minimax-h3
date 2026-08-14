@@ -125,6 +125,8 @@ keyframes. The middle position and each keyframe's conditioning strength are
 configurable; text-to-video does not load or apply image guides.
 The tab's **Official advanced workflows** section installs the upstream JSON
 templates under **Workflows → Browse → LTX 2.5** in the proxied ComfyUI editor.
+Modal re-synchronizes these image-local templates from the pinned LTXVideo node
+on every cold start before launching ComfyUI.
 Its **Prepare required models** button lazily downloads the official BF16 base,
 full diffusion-decoder VAE, prompt enhancer, spatial upscaler, and selected
 IC-LoRA assets only when that workflow is requested.
@@ -208,8 +210,8 @@ repairs the environment when any check fails; model files are preserved.
 Frontend assets are installed in copy mode because aiohttp intentionally rejects
 static files that are symlinked outside the package's declared web root.
 Both the standalone launcher and Modal deployment also probe the rendered
-`/comfyui/` page and its immutable assets. A failed proxy check is reported
-without withholding the main Gradio UI.
+`/comfyui/` page, its immutable assets, and one encoded nested LTX workflow. A
+failed proxy check is reported without withholding the main Gradio UI.
 Encoded nested userdata paths are forwarded unchanged so saved workflow folders
 load correctly through the proxy, including the bundled LTX 2.5 workflows.
 

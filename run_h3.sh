@@ -283,7 +283,7 @@ import sys
 import time
 
 sys.path.insert(0, sys.argv[3])
-from h3_requirements import probe_comfy_frontend
+from h3_requirements import probe_comfy_frontend, probe_comfy_workflow
 
 url = sys.argv[1]
 pid = int(sys.argv[2])
@@ -296,8 +296,10 @@ while time.monotonic() < deadline:
         raise SystemExit(f"Gradio exited during startup: {exc}")
     try:
         count = probe_comfy_frontend(url, timeout=2)
+        workflow_size = probe_comfy_workflow(url, timeout=2)
         print(
-            f"[h3-run] /comfyui proxy served {count} frontend assets",
+            f"[h3-run] /comfyui proxy served {count} frontend assets and "
+            f"a {workflow_size}-byte nested workflow",
             flush=True,
         )
         raise SystemExit(0)

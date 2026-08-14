@@ -95,6 +95,8 @@ from h3_requirements import (  # noqa: E402
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
     probe_comfy_frontend,
+    probe_comfy_workflow,
+    sync_ltx25_workflows,
 )
 from h3_node_patches import patch_larry_turbo_node  # noqa: E402
 
@@ -220,14 +222,11 @@ def build(revision: str) -> None:
     workflow_destination = (
         Path(COMFY) / "user" / "default" / "workflows" / "LTX 2.5"
     )
-    workflow_destination.mkdir(parents=True, exist_ok=True)
-    workflows = list(workflow_source.glob("*.json"))
-    if len(workflows) != 9:
-        raise RuntimeError(
-            f"Expected 9 official LTX 2.5 workflows, found {len(workflows)}"
-        )
-    for workflow in workflows:
-        shutil.copy2(workflow, workflow_destination / workflow.name)
+    workflows = sync_ltx25_workflows(workflow_source, workflow_destination)
+    print(
+        f"[modal-h3] baked {len(workflows)} official LTX 2.5 workflows",
+        flush=True,
+    )
 
     # ComfyUI currently lists torch/torchvision/torchaudio unpinned.
     # Filter those entries so image build cannot replace the pinned cu130 ABI.
@@ -672,8 +671,10 @@ def wait_for_comfy_frontend(
             )
         try:
             count = probe_comfy_frontend(url)
+            workflow_size = probe_comfy_workflow(url)
             print(
-                f"[modal-h3] {label} served {count} frontend assets",
+                f"[modal-h3] {label} served {count} frontend assets and "
+                f"a {workflow_size}-byte nested workflow",
                 flush=True,
             )
             return
@@ -721,6 +722,23 @@ def serve():
         flush=True,
     )
     provision()
+
+    # User workflow files live in the image filesystem rather than the model
+    # volume. Re-sync them on every cold start so a reused image layer can never
+    # expose newer UI mappings without their corresponding JSON templates.
+    workflow_source = (
+        Path(COMFY) / "custom_nodes" / "ComfyUI-LTXVideo"
+        / "example_workflows" / "2.5"
+    )
+    workflow_destination = (
+        Path(COMFY) / "user" / "default" / "workflows" / "LTX 2.5"
+    )
+    workflows = sync_ltx25_workflows(workflow_source, workflow_destination)
+    print(
+        f"[modal-h3] runtime-synced {len(workflows)} official LTX 2.5 "
+        f"workflows to {workflow_destination}",
+        flush=True,
+    )
 
     env = service_env()
     env["GRADIO_SERVER_NAME"] = "0.0.0.0"
