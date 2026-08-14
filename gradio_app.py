@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import math
 import os
 import random
 import re
@@ -293,6 +294,8 @@ UI_DEFAULTS = {
     "postprocess": "None",
     "seedvr2_model": DEFAULT_SEEDVR2_MODEL,
     "upscale_force_offload": False,
+    "upscale_split_enabled": False,
+    "upscale_split_seconds": 5.0,
 }
 SPECTRUM_DEFAULT_INPUTS = {
     "enabled": True,
@@ -722,6 +725,16 @@ class VideoMetadata:
     fps: float
     width: int
     height: int
+    duration: float = 0.0
+    frame_count: int = 0
+    has_audio: bool = False
+
+
+@dataclass(frozen=True)
+class UpscaleClipBatch:
+    sources: tuple[str, ...]
+    temporary_inputs: tuple[Path, ...] = ()
+    temporary_directory: Path | None = None
 
 
 def normalize_turbo_variant(value: str) -> str:
@@ -2982,15 +2995,19 @@ def postprocess_video(source: Path, option: str) -> Path:
 def probe_video_metadata(source: Path) -> VideoMetadata:
     """Return dimensions and frame rate needed by AI upscale workflows."""
     cmd = [
-        "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-        "stream=width,height,avg_frame_rate,r_frame_rate",
+        "ffprobe", "-v", "error", "-show_entries",
+        "stream=codec_type,width,height,avg_frame_rate,r_frame_rate,nb_frames,duration:format=duration",
         "-of", "json", str(source),
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if proc.returncode != 0:
         raise H3Error(f"Could not inspect selected video: {proc.stderr.strip()}")
     try:
-        stream = json.loads(proc.stdout)["streams"][0]
+        payload = json.loads(proc.stdout)
+        streams = payload["streams"]
+        stream = next(
+            item for item in streams if item.get("codec_type", "video") == "video"
+        )
         rate = stream.get("avg_frame_rate") or stream.get("r_frame_rate")
         numerator, denominator = str(rate).split("/", 1)
         fps = float(numerator) / float(denominator)
@@ -3000,9 +3017,160 @@ def probe_video_metadata(source: Path) -> VideoMetadata:
         height = int(stream["height"])
         if width <= 0 or height <= 0:
             raise ValueError("non-positive dimensions")
-        return VideoMetadata(fps=fps, width=width, height=height)
-    except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError) as exc:
+        raw_duration = (
+            payload.get("format", {}).get("duration")
+            or stream.get("duration")
+        )
+        duration = float(raw_duration)
+        if duration <= 0:
+            raise ValueError("non-positive duration")
+        raw_frames = stream.get("nb_frames")
+        frame_count = int(raw_frames) if str(raw_frames).isdigit() else round(duration * fps)
+        if frame_count <= 0:
+            raise ValueError("non-positive frame count")
+        return VideoMetadata(
+            fps=fps,
+            width=width,
+            height=height,
+            duration=duration,
+            frame_count=frame_count,
+            has_audio=any(item.get("codec_type") == "audio" for item in streams),
+        )
+    except (
+        KeyError, IndexError, StopIteration, TypeError, ValueError,
+        ZeroDivisionError,
+    ) as exc:
         raise H3Error("Could not determine the selected video's metadata.") from exc
+
+
+def prepare_upscale_clip_batch(
+    source: Path,
+    *,
+    category: str,
+    split_enabled: bool,
+    split_seconds: float,
+    metadata: VideoMetadata,
+) -> UpscaleClipBatch:
+    """Stage one source, or exact-frame LTX-safe source clips, for ComfyUI."""
+    if not split_enabled:
+        return UpscaleClipBatch((stage_file(str(source), category),))
+    seconds = float(split_seconds)
+    if not 1.0 <= seconds <= 15.0:
+        raise H3Error("Upscale clip length must be between 1 and 15 seconds.")
+    if metadata.duration <= 0 or metadata.frame_count <= 0:
+        raise H3Error("Could not determine the source duration for split upscaling.")
+
+    # LTX video lengths are 8n+1. Every clip is padded to this exact size;
+    # concat_upscaled_clips trims only the final padded tail back off.
+    clip_frames = ltx25_frame_length(seconds, metadata.fps)
+    clip_duration = clip_frames / metadata.fps
+    clip_count = max(1, math.ceil(metadata.frame_count / clip_frames))
+    directory = INPUT_DIR / "h3_gradio" / category / f"clips_{uuid.uuid4().hex}"
+    directory.mkdir(parents=True, exist_ok=False)
+    paths: list[Path] = []
+    try:
+        for index in range(clip_count):
+            path = directory / f"clip_{index + 1:04d}.mp4"
+            start = index * clip_frames / metadata.fps
+            cmd = [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-i", str(source), "-ss", f"{start:.9f}",
+                "-map", "0:v:0",
+            ]
+            if metadata.has_audio:
+                cmd += ["-map", "0:a:0?", "-af", "apad"]
+            cmd += [
+                "-vf", (
+                    f"fps={metadata.fps:.9f},"
+                    f"tpad=stop_mode=clone:stop_duration={clip_duration:.9f}"
+                ),
+                "-frames:v", str(clip_frames),
+                "-t", f"{clip_duration:.9f}",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-pix_fmt", "yuv420p",
+            ]
+            if metadata.has_audio:
+                cmd += ["-c:a", "aac", "-b:a", "192k"]
+            cmd += ["-avoid_negative_ts", "make_zero", str(path)]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if proc.returncode != 0 or not path.is_file():
+                raise H3Error(
+                    f"Could not create upscale clip {index + 1}/{clip_count}: "
+                    f"{proc.stderr.strip()}"
+                )
+            paths.append(path)
+    except Exception:
+        for path in paths:
+            path.unlink(missing_ok=True)
+        directory.rmdir()
+        raise
+    return UpscaleClipBatch(
+        tuple(path.relative_to(INPUT_DIR).as_posix() for path in paths),
+        tuple(paths),
+        directory,
+    )
+
+
+def concat_upscaled_clips(
+    source: Path,
+    clips: list[Path],
+    *,
+    option: str,
+    duration: float,
+    frame_count: int,
+) -> Path:
+    """Losslessly concatenate upscale video streams and restore source audio."""
+    if not clips:
+        raise H3Error("No upscaled clips were produced.")
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex[:8]
+    manifest = OUTPUTS_DIR / f".upscale_concat_{token}.txt"
+    target = OUTPUTS_DIR / f"{source.stem}_{token}.mp4"
+
+    def manifest_path(path: Path) -> str:
+        escaped = path.resolve().as_posix().replace("'", "'\\''")
+        return f"file '{escaped}'"
+
+    manifest.write_text(
+        "\n".join(manifest_path(path) for path in clips) + "\n",
+        encoding="utf-8",
+    )
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "concat", "-safe", "0", "-i", str(manifest),
+        "-i", str(source),
+        "-map", "0:v:0", "-map", "1:a:0?",
+        "-t", f"{float(duration):.9f}",
+        "-frames:v", str(int(frame_count)),
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart", str(target),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if proc.returncode != 0 or not target.is_file():
+            target.unlink(missing_ok=True)
+            raise H3Error(f"Could not concatenate upscaled clips: {proc.stderr.strip()}")
+        return target
+    finally:
+        manifest.unlink(missing_ok=True)
+
+
+def cleanup_upscale_clip_batch(
+    batch: UpscaleClipBatch | None,
+    outputs: Iterable[Path] = (),
+) -> None:
+    """Remove only the explicitly tracked inputs and intermediate outputs."""
+    for output in outputs:
+        output.unlink(missing_ok=True)
+    if batch is None:
+        return
+    for path in batch.temporary_inputs:
+        path.unlink(missing_ok=True)
+    if batch.temporary_directory is not None:
+        try:
+            batch.temporary_directory.rmdir()
+        except OSError:
+            pass
 
 
 def unload_comfy_models() -> None:
@@ -3332,12 +3500,16 @@ def postprocess_selected_gallery_video(
     ltx25_model: str,
     ltx25_prompt: str,
     force_offload: bool,
+    split_upscale: bool,
+    split_seconds: float,
     request: gr.Request,
     progress=gr.Progress(track_tqdm=False),
 ):
     """Create a new post-processed output from one selected gallery video."""
     started = time.monotonic()
     ws: websocket.WebSocket | None = None
+    clip_batch: UpscaleClipBatch | None = None
+    clip_outputs: list[Path] = []
     try:
         if not selected_video:
             raise H3Error("Select a gallery video first.")
@@ -3378,24 +3550,38 @@ def postprocess_selected_gallery_video(
 
         if downloaded:
             yield gallery_progress_result(f"{option} models downloaded")
-        staged_source = stage_file(str(source), stage_bucket)
+        metadata = probe_video_metadata(source)
+        use_split = option == LTX25_UPSCALE and bool(split_upscale)
+        clip_batch = prepare_upscale_clip_batch(
+            source,
+            category=stage_bucket,
+            split_enabled=use_split,
+            split_seconds=split_seconds,
+            metadata=metadata,
+        )
+        clip_count = len(clip_batch.sources)
+        if use_split:
+            yield gallery_progress_result(
+                f"Split `{source.name}` into {clip_count} LTX-safe clips "
+                f"(target {float(split_seconds):g}s each)"
+            )
         if force_offload:
             yield gallery_progress_result(f"Unloading resident models before {option}")
             unload_comfy_models()
 
-        metadata = probe_video_metadata(source)
-        graph, configured_steps = build_upscale_graph(
-            option=option,
-            source_video=staged_source,
-            seed=actual_seed,
-            models=models,
-            seedvr2_model=seedvr2_model,
-            ltx25_model=ltx25_model,
-            prompt=ltx25_prompt,
-            width=metadata.width,
-            height=metadata.height,
-            fps=metadata.fps,
-        )
+        if not use_split:
+            graph, configured_steps = build_upscale_graph(
+                option=option,
+                source_video=clip_batch.sources[0],
+                seed=actual_seed,
+                models=models,
+                seedvr2_model=seedvr2_model,
+                ltx25_model=ltx25_model,
+                prompt=ltx25_prompt,
+                width=metadata.width,
+                height=metadata.height,
+                fps=metadata.fps,
+            )
 
         client_id = str(uuid.uuid4())
         try:
@@ -3405,6 +3591,85 @@ def postprocess_selected_gallery_video(
             )
         except Exception:
             ws = None
+        if use_split:
+            for clip_index, staged_source in enumerate(clip_batch.sources):
+                clip_seed = (actual_seed + clip_index) % (2**63 - 1)
+                graph, configured_steps = build_upscale_graph(
+                    option=option,
+                    source_video=staged_source,
+                    seed=clip_seed,
+                    models=models,
+                    seedvr2_model=seedvr2_model,
+                    ltx25_model=ltx25_model,
+                    prompt=ltx25_prompt,
+                    width=metadata.width,
+                    height=metadata.height,
+                    fps=metadata.fps,
+                )
+                queued_at = time.time()
+                prompt_id = submit_prompt(graph, client_id)
+                clip_label = f"Clip {clip_index + 1}/{clip_count}"
+                yield gallery_progress_result(
+                    progress_status(
+                        f"{option} queued",
+                        started=started,
+                        detail=f"{clip_label} 路 job `{prompt_id}` 路 seed {clip_seed}",
+                    )
+                )
+                updates = (
+                    stream_comfy_progress(ws, prompt_id, graph, started)
+                    if ws is not None
+                    else poll_comfy_progress(prompt_id, graph)
+                )
+                for stage, completed_nodes, total_nodes, step, step_total in updates:
+                    if stage == "Generating video and audio":
+                        stage = f"Upscaling with {option}"
+                    if step is not None and step_total:
+                        progress(
+                            (clip_index * step_total + step, clip_count * step_total),
+                            desc=f"{clip_label}: {stage}",
+                        )
+                    elif total_nodes:
+                        progress(
+                            (
+                                clip_index * total_nodes + completed_nodes,
+                                clip_count * total_nodes,
+                            ),
+                            desc=f"{clip_label}: {stage}",
+                        )
+                    yield gallery_progress_result(
+                        progress_status(
+                            f"{clip_label}: {stage}",
+                            started=started,
+                            completed_nodes=completed_nodes,
+                            total_nodes=total_nodes,
+                            step=step,
+                            step_total=step_total,
+                            configured_steps=(
+                                configured_steps if step is not None else None
+                            ),
+                            detail=f"Post-process job `{prompt_id}`",
+                        )
+                    )
+                clip_outputs.append(
+                    resolve_output(wait_for_history(prompt_id), queued_at)
+                )
+            yield gallery_progress_result(
+                f"Concatenating {clip_count} upscaled clips and restoring source audio"
+            )
+            result = concat_upscaled_clips(
+                source,
+                clip_outputs,
+                option=option,
+                duration=metadata.duration,
+                frame_count=metadata.frame_count,
+            )
+            progress(1, desc="Complete")
+            yield gallery_processed_result(
+                result, option, time.monotonic() - started, request
+            )
+            return
+
         queued_at = time.time()
         prompt_id = submit_prompt(graph, client_id)
         yield gallery_progress_result(
@@ -3447,6 +3712,10 @@ def postprocess_selected_gallery_video(
     except Exception as exc:
         yield gallery_progress_result(f"Post-processing failed: {exc}")
     finally:
+        cleanup_upscale_clip_batch(
+            clip_batch,
+            clip_outputs if clip_batch and clip_batch.temporary_inputs else (),
+        )
         if ws is not None:
             try:
                 ws.close()
@@ -3626,6 +3895,8 @@ def generate(
     ref_image_size: str,
     postprocess: str,
     upscale_force_offload: bool = False,
+    upscale_split_enabled: bool = False,
+    upscale_split_seconds: float = 5.0,
     seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
     ltx25_model: str = DEFAULT_LTX25_MODEL,
     use_int8_vae: bool = False,
@@ -3635,6 +3906,8 @@ def generate(
     queued_at = time.time()
     ws: websocket.WebSocket | None = None
     fallback_video: Path | None = None
+    clip_batch: UpscaleClipBatch | None = None
+    clip_outputs: list[Path] = []
     try:
         progress(0, desc="Validating request")
         yield None, progress_status("Validating request", started=started)
@@ -3934,7 +4207,23 @@ def generate(
 
             if downloaded:
                 yield None, progress_status(f"{postprocess} models downloaded", started=started)
-            staged_source = stage_file(str(source), stage_bucket)
+            metadata = probe_video_metadata(source)
+            use_split = postprocess == LTX25_UPSCALE and bool(upscale_split_enabled)
+            clip_batch = prepare_upscale_clip_batch(
+                source,
+                category=stage_bucket,
+                split_enabled=use_split,
+                split_seconds=upscale_split_seconds,
+                metadata=metadata,
+            )
+            clip_count = len(clip_batch.sources)
+            if use_split:
+                yield None, progress_status(
+                    f"Split source into {clip_count} LTX-safe clips",
+                    started=started,
+                    detail=f"Target clip length {float(upscale_split_seconds):g}s",
+                )
+            staged_source = clip_batch.sources[0]
             unload_h3_before_upscale = bool(upscale_force_offload)
             if unload_h3_before_upscale:
                 progress(0, desc="Unloading H3 models")
@@ -3953,6 +4242,7 @@ def generate(
                 prompt=prompt,
                 width=resolved_width,
                 height=resolved_height,
+                fps=metadata.fps,
             )
 
             upscale_queued_at = time.time()
@@ -3986,6 +4276,87 @@ def generate(
                 )
             upscale_history = wait_for_history(upscale_prompt_id)
             result = resolve_output(upscale_history, upscale_queued_at)
+            clip_outputs.append(result)
+            for clip_index, staged_source in enumerate(
+                clip_batch.sources[1:], start=1
+            ):
+                clip_seed = (actual_seed + clip_index) % (2**63 - 1)
+                upscale_graph, configured_upscale_steps = build_upscale_graph(
+                    option=postprocess,
+                    source_video=staged_source,
+                    seed=clip_seed,
+                    models=models,
+                    seedvr2_model=seedvr2_model,
+                    ltx25_model=ltx25_model,
+                    prompt=prompt,
+                    width=resolved_width,
+                    height=resolved_height,
+                    fps=metadata.fps,
+                )
+                upscale_queued_at = time.time()
+                upscale_prompt_id = submit_prompt(upscale_graph, client_id)
+                clip_label = f"Clip {clip_index + 1}/{clip_count}"
+                yield None, progress_status(
+                    f"{postprocess} queued",
+                    started=started,
+                    detail=(
+                        f"{clip_label} 路 job `{upscale_prompt_id}` 路 "
+                        f"seed {clip_seed} 路 {unload_note}"
+                    ),
+                )
+                upscale_updates = (
+                    stream_comfy_progress(
+                        ws, upscale_prompt_id, upscale_graph, started
+                    )
+                    if ws is not None
+                    else poll_comfy_progress(upscale_prompt_id, upscale_graph)
+                )
+                for stage, completed_nodes, total_nodes, step, step_total in upscale_updates:
+                    if stage == "Generating video and audio":
+                        stage = f"Upscaling with {postprocess}"
+                    if step is not None and step_total:
+                        progress(
+                            (clip_index * step_total + step, clip_count * step_total),
+                            desc=f"{clip_label}: {stage}",
+                        )
+                    elif total_nodes:
+                        progress(
+                            (
+                                clip_index * total_nodes + completed_nodes,
+                                clip_count * total_nodes,
+                            ),
+                            desc=f"{clip_label}: {stage}",
+                        )
+                    yield None, progress_status(
+                        f"{clip_label}: {stage}",
+                        started=started,
+                        completed_nodes=completed_nodes,
+                        total_nodes=total_nodes,
+                        step=step,
+                        step_total=step_total,
+                        configured_steps=(
+                            configured_upscale_steps if step is not None else None
+                        ),
+                        detail=f"Upscale job `{upscale_prompt_id}`",
+                    )
+                clip_outputs.append(
+                    resolve_output(
+                        wait_for_history(upscale_prompt_id), upscale_queued_at
+                    )
+                )
+            if use_split:
+                yield None, progress_status(
+                    "Concatenating upscaled clips and restoring source audio",
+                    started=started,
+                    detail=f"{clip_count} clips",
+                )
+                result = concat_upscaled_clips(
+                    source,
+                    clip_outputs,
+                    option=postprocess,
+                    duration=metadata.duration,
+                    frame_count=metadata.frame_count,
+                )
         else:
             result = postprocess_video(source, postprocess)
         elapsed = time.monotonic() - started
@@ -3999,6 +4370,10 @@ def generate(
         suffix = " The completed H3 video is still available." if fallback else ""
         yield fallback, f"Error: {exc}{suffix}"
     finally:
+        cleanup_upscale_clip_batch(
+            clip_batch,
+            clip_outputs if clip_batch and clip_batch.temporary_inputs else (),
+        )
         if ws is not None:
             try:
                 ws.close()
@@ -4183,6 +4558,8 @@ def compact_settings_summary(
     seedvr2_model: str,
     ltx25_model: str,
     force_offload: bool,
+    split_upscale: bool,
+    split_seconds: float,
 ) -> str:
     model_profile = (
         f"{model_profile} / VAE: "
@@ -4213,6 +4590,8 @@ def compact_settings_summary(
             f" / {ltx25_model} / unload first: "
             f"{'on' if force_offload else 'off'}"
         )
+        if split_upscale:
+            postprocess_note += f" / split: {float(split_seconds):g}s clips"
     return (
         "**Current setup**  \n"
         f"{mode} · {model_profile} / {generation_mode} · {seconds} · {resolution} · "
@@ -4300,6 +4679,8 @@ def generate_with_ui_defaults(
         seedvr2_model=defaults["seedvr2_model"],
         ltx25_model=DEFAULT_LTX25_MODEL,
         upscale_force_offload=defaults["upscale_force_offload"],
+        upscale_split_enabled=defaults["upscale_split_enabled"],
+        upscale_split_seconds=defaults["upscale_split_seconds"],
         progress=progress,
     )
     for video, status in updates:
@@ -4451,6 +4832,8 @@ def build_ui() -> gr.Blocks:
                         defaults["postprocess"], defaults["seedvr2_model"],
                         DEFAULT_LTX25_MODEL,
                         defaults["upscale_force_offload"],
+                        defaults["upscale_split_enabled"],
+                        defaults["upscale_split_seconds"],
                     )
                 )
                 output = gr.Video(label="Generated video")
@@ -4689,6 +5072,27 @@ def build_ui() -> gr.Blocks:
                             "Reduces peak VRAM at the cost of reloading H3 for "
                             "the next generation."
                         ),
+                    )
+                    generation_split_upscale = gr.Checkbox(
+                        value=defaults["upscale_split_enabled"],
+                        label="Split source into clips before LTX upscaling",
+                        info=(
+                            "Opt in after an out-of-VRAM error. Each clip is "
+                            "upscaled independently and concatenated afterward."
+                        ),
+                        visible=False,
+                    )
+                    generation_split_seconds = gr.Slider(
+                        1.0,
+                        15.0,
+                        value=defaults["upscale_split_seconds"],
+                        step=0.5,
+                        label="Target clip length (seconds)",
+                        info=(
+                            "5 seconds is the recommended starting point. The "
+                            "actual cut is adjusted to an LTX-valid frame count."
+                        ),
+                        visible=False,
                     )
 
         with gr.Group(visible=False) as ltx25_view:
@@ -4947,6 +5351,27 @@ def build_ui() -> gr.Blocks:
                                     label="Unload resident models first",
                                     info="Can lower peak VRAM before AI upscaling starts.",
                                 )
+                            gallery_split_upscale = gr.Checkbox(
+                                value=False,
+                                label="Split source into clips before LTX upscaling",
+                                info=(
+                                    "Opt in after an out-of-VRAM error. Upscales "
+                                    "clips independently, then concatenates them."
+                                ),
+                                visible=False,
+                            )
+                            gallery_split_seconds = gr.Slider(
+                                1.0,
+                                15.0,
+                                value=5.0,
+                                step=0.5,
+                                label="Target clip length (seconds)",
+                                info=(
+                                    "The actual cut is adjusted to an LTX-valid "
+                                    "frame count."
+                                ),
+                                visible=False,
+                            )
                         with gr.Row():
                             gallery_post_run = gr.Button(
                                 "Post-process selected",
@@ -4980,6 +5405,8 @@ def build_ui() -> gr.Blocks:
             generation_seedvr2_model,
             ltx25_model,
             generation_force_offload,
+            generation_split_upscale,
+            generation_split_seconds,
         ]
         for settings_control in settings_inputs:
             settings_control.change(
@@ -5032,12 +5459,16 @@ def build_ui() -> gr.Blocks:
                 gr.update(visible=value in COMFY_UPSCALE_OPTIONS),
                 gr.update(visible=value == SEEDVR2_UPSCALE),
                 gr.update(visible=value == LTX25_UPSCALE),
+                gr.update(visible=value == LTX25_UPSCALE),
+                gr.update(visible=value == LTX25_UPSCALE),
             ),
             inputs=gallery_postprocess,
             outputs=[
                 gallery_ai_settings,
                 gallery_seedvr2_model,
                 gallery_ltx25_prompt,
+                gallery_split_upscale,
+                gallery_split_seconds,
             ],
             queue=False,
             show_progress="hidden",
@@ -5047,12 +5478,16 @@ def build_ui() -> gr.Blocks:
                 gr.update(visible=value in COMFY_UPSCALE_OPTIONS),
                 gr.update(visible=value == SEEDVR2_UPSCALE),
                 gr.update(visible=value == LTX25_UPSCALE),
+                gr.update(visible=value == LTX25_UPSCALE),
+                gr.update(visible=value == LTX25_UPSCALE),
             ),
             inputs=generation_postprocess,
             outputs=[
                 generation_postprocess_settings,
                 generation_seedvr2_model,
                 generation_ltx25_note,
+                generation_split_upscale,
+                generation_split_seconds,
             ],
             queue=False,
             show_progress="hidden",
@@ -5122,7 +5557,9 @@ def build_ui() -> gr.Blocks:
                 fbcache_end, fbcache_max_hits, fbcache_temporal_guard,
                 easycache_threshold, easycache_start, easycache_end, easycache_verbose,
                 ref_size, generation_postprocess,
-                generation_force_offload, generation_seedvr2_model,
+                generation_force_offload,
+                generation_split_upscale, generation_split_seconds,
+                generation_seedvr2_model,
                 ltx25_model,
                 use_int8_vae,
             ],
@@ -5248,6 +5685,8 @@ def build_ui() -> gr.Blocks:
                 ltx25_model,
                 gallery_ltx25_prompt,
                 gallery_force_offload,
+                gallery_split_upscale,
+                gallery_split_seconds,
             ],
             outputs=gallery_mutation_outputs + [gallery_post_status],
             show_progress="minimal",

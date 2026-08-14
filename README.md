@@ -162,6 +162,15 @@ lower peak VRAM is more important than avoiding an H3 model reload on the next
 generation. **48 fps interpolation** remains available as a non-upscale option
 and requires FFmpeg on the server `PATH`.
 
+LTX-2.5 upscaling remains a single full-video pass by default. If a long or
+high-resolution source runs out of VRAM, enable **Split source into clips before
+LTX upscaling** in Gallery or the MiniMax H3 post-processing settings. The
+default target is 5 seconds per clip; cuts are adjusted to LTX-compatible frame
+counts, clips are upscaled sequentially, and their video streams are joined
+without an additional video encode. The final file is trimmed to the original
+frame count and remuxed with the original source audio. Because clips are
+generated independently, a visible detail or motion change can occur at a cut.
+
 SeedVR2 offers **3B NVFP4**, **3B INT8**, **7B NVFP4 (default)**, and
 **7B Sharp NVFP4** model choices. Only the selected checkpoint downloads on first
 use; all choices share the same lazy FP16 SeedVR2 VAE. The native workflow uses
