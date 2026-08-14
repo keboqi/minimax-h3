@@ -22,8 +22,8 @@ GRADIO_SERVER_PORT="7860"
 GRADIO_OUTPUT_DIR="$INSTALL_DIR/gradio_outputs"
 
 SERVER_ATTENTION_BACKEND="sol"
-SERVER_DENSE_ATTENTION_BACKEND="pytorch"
-COMFY_ATTENTION_ARGS=()
+SERVER_DENSE_ATTENTION_BACKEND="comfy-kitchen"
+COMFY_ATTENTION_ARGS=(--use-ck-attention)
 
 COMFY_PID=""
 GRADIO_PID=""
@@ -169,18 +169,7 @@ fi
 
 [[ -f "$COMFY_DIR/main.py" ]] || die "ComfyUI installation failed"
 [[ -f "$MODELS_CONFIG" ]] || die "Model setup failed"
-[[ -f "$SCRIPT_DIR/h3_attention.py" ]] || die "Missing h3_attention.py"
-
-log "Probing native SageAttention dense backend"
-if "$PYTHON_BIN" "$SCRIPT_DIR/h3_attention.py" --probe; then
-  SERVER_DENSE_ATTENTION_BACKEND="sage"
-  COMFY_ATTENTION_ARGS=(--use-sage-attention)
-  log "Dense/fallback attention: SageAttention"
-else
-  SERVER_DENSE_ATTENTION_BACKEND="pytorch"
-  COMFY_ATTENTION_ARGS=()
-  log "Dense/fallback attention: PyTorch"
-fi
+log "Dense/fallback attention: Comfy Kitchen"
 
 log "Starting ComfyUI at $COMFY_URL"
 if command -v nvidia-smi >/dev/null 2>&1; then

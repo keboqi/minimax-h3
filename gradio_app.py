@@ -95,7 +95,7 @@ MODELS_CONFIG = Path(
 ).expanduser().resolve()
 SERVER_ATTENTION_BACKEND = os.getenv("SERVER_ATTENTION_BACKEND", "sol").lower()
 SERVER_DENSE_ATTENTION_BACKEND = os.getenv(
-    "SERVER_DENSE_ATTENTION_BACKEND", "pytorch"
+    "SERVER_DENSE_ATTENTION_BACKEND", "comfy-kitchen"
 ).lower()
 SERVER_MEMORY_PROFILE = os.getenv("SERVER_MEMORY_PROFILE", "unknown").lower()
 AUTO_SOL_TOKEN_THRESHOLD = 8_192
@@ -219,6 +219,7 @@ LARRY_TURBO_LORA_NODE = "MiniMaxH3TurboLoRA"
 LARRY_TURBO_SAMPLER_NODE = "MiniMaxH3TurboSampler"
 LIGHTX2V_BYPASS_LORA_NODE = "H3LightX2VBypassLoRA"
 SOL_ATTENTION_NODE = "MiniMaxH3MemoryEfficientSolAttentionPatch"
+SAGE_ATTENTION_NODE = "PathchSageAttentionKJ"
 FUSED_MODULATION_NODE = "MiniMaxH3FusedModulation"
 CHUNK_FEED_FORWARD_NODE = "MiniMaxH3ChunkFeedForward"
 SEEDVR2_UPSCALE = "SeedVR2 2x"
@@ -274,7 +275,7 @@ UI_DEFAULTS = {
     "steps": 6,
     "scheduler": "simple",
     "seed": -1,
-    "attention_mode": "Auto",
+    "attention_mode": "Kitchen",
     "sol_tau": 1.0,
     "sol_thresh_type": "diag",
     "sol_exact_mode": "exact_kv",
@@ -1402,10 +1403,12 @@ def resolve_sol_policy(
     tokens = estimate_packed_tokens(
         mode, width, height, duration, first_image, last_image
     )
+    if requested in {"dense", "kitchen", "comfy-kitchen"}:
+        return False, tokens, "forced Comfy Kitchen"
+    if requested in {"sage", "sage 2", "sage2"}:
+        return False, tokens, "forced Sage 2"
     if SERVER_ATTENTION_BACKEND != "sol":
         return False, tokens, "Sol backend unavailable"
-    if requested == "dense":
-        return False, tokens, "forced dense"
     if requested in {"sol-attn", "sol", "sparse"}:
         return True, tokens, "forced Sol-Attn"
     # Reference conditioning is not available to the estimator before ComfyUI
@@ -1473,7 +1476,7 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
             ),
             "simple",
             DEFAULT_ACCELERATOR,
-            "Auto",
+            "Kitchen",
         )
 
     return (
@@ -1481,7 +1484,7 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
         gr.update(value=18, interactive=True),
         "simple",
         DEFAULT_ACCELERATOR,
-        "Auto",
+        "Kitchen",
     )
 
 
@@ -1695,6 +1698,7 @@ def add_model_stack(
     easycache_verbose: bool,
     available_nodes: set[str],
     use_int8_vae: bool = False,
+    use_sage: bool = False,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     unet = graph.add("UNETLoader", unet_name=model_name, weight_dtype="default")
     model_ref = Graph.out(unet)
@@ -1731,6 +1735,20 @@ def add_model_stack(
         )
         model_ref = Graph.out(cache)
 
+
+    if use_sage:
+        if SAGE_ATTENTION_NODE not in available_nodes:
+            raise H3Error(
+                "Sage 2 was requested, but Patch Sage Attention KJ is not loaded. "
+                "Re-run setup_h3.py and restart ComfyUI."
+            )
+        sage = graph.add(
+            SAGE_ATTENTION_NODE,
+            model=model_ref,
+            sage_attention="auto",
+            allow_compile=False,
+        )
+        model_ref = Graph.out(sage)
 
     if use_sol:
         if SOL_ATTENTION_NODE not in available_nodes:
@@ -1941,6 +1959,7 @@ def build_fl2va_graph(
     models: ModelConfig,
     available_nodes: set[str],
     use_int8_vae: bool = False,
+    use_sage: bool = False,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -1970,6 +1989,7 @@ def build_fl2va_graph(
         easycache_verbose=easycache_verbose,
         available_nodes=available_nodes,
         use_int8_vae=use_int8_vae,
+        use_sage=use_sage,
     )
 
     inputs: dict[str, Any] = {
@@ -2042,6 +2062,7 @@ def build_ref2va_graph(
     models: ModelConfig,
     available_nodes: set[str],
     use_int8_vae: bool = False,
+    use_sage: bool = False,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -2071,6 +2092,7 @@ def build_ref2va_graph(
         easycache_verbose=easycache_verbose,
         available_nodes=available_nodes,
         use_int8_vae=use_int8_vae,
+        use_sage=use_sage,
     )
 
     inputs: dict[str, Any] = {
@@ -2623,6 +2645,7 @@ def required_nodes_for(
     use_turbo: bool = False,
     turbo_variant: str = LIGHTX2V_4STEP_TURBO,
     model_filename: str = "",
+    use_sage: bool = False,
 ) -> set[str]:
     common = {
         "UNETLoader", "CLIPLoader", "VAELoader", "RandomNoise",
@@ -2640,6 +2663,8 @@ def required_nodes_for(
         common.add(CORE_SAMPLER_NODE)
     if use_sol:
         common.add(SOL_ATTENTION_NODE)
+    if use_sage:
+        common.add(SAGE_ATTENTION_NODE)
     if "convrot" in model_filename.lower():
         common.add(CHUNK_FEED_FORWARD_NODE)
     if str(cache_mode).strip().lower() == "firstblockcache":
@@ -2716,7 +2741,7 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
     if "ImageToVideo" in name or "ReferenceToVideo" in name:
         return "Encoding prompt and conditioning"
     if name in {
-        SOL_ATTENTION_NODE, FUSED_MODULATION_NODE,
+        SOL_ATTENTION_NODE, SAGE_ATTENTION_NODE, FUSED_MODULATION_NODE,
         CHUNK_FEED_FORWARD_NODE, "SpectrumApplyMiniMaxH3",
         "H3FirstBlockCache", "EasyCache",
     }:
@@ -3997,6 +4022,9 @@ def generate(
             attention_mode, mode, resolved_width, resolved_height, float(duration),
             first_image, last_image, use_turbo=use_turbo,
         )
+        effective_sage = str(attention_mode).strip().lower() in {
+            "sage", "sage 2", "sage2"
+        }
         effective_cache_mode, cache_note = resolve_cache_policy(
             cache_mode, use_turbo=use_turbo
         )
@@ -4004,6 +4032,7 @@ def generate(
             mode,
             effective_sol,
             effective_cache_mode,
+            use_sage=effective_sage,
             use_turbo=use_turbo,
             turbo_variant=selected_turbo,
             model_filename=selected_model,
@@ -4045,6 +4074,7 @@ def generate(
                 turbo_lora_name=turbo_lora_name, turbo_variant=selected_turbo,
                 turbo_strength=turbo_strength,
                 use_sol=effective_sol, sol_tau=float(sol_tau),
+                use_sage=effective_sage,
                 sol_thresh_type=sol_thresh_type,
                 sol_exact_mode=sol_exact_mode,
                 sol_dense_steps=int(sol_dense_steps),
@@ -4073,6 +4103,7 @@ def generate(
                 turbo_lora_name=turbo_lora_name, turbo_variant=selected_turbo,
                 turbo_strength=turbo_strength,
                 use_sol=effective_sol, sol_tau=float(sol_tau),
+                use_sage=effective_sage,
                 sol_thresh_type=sol_thresh_type,
                 sol_exact_mode=sol_exact_mode,
                 sol_dense_steps=int(sol_dense_steps),
@@ -4910,15 +4941,16 @@ def build_ui() -> gr.Blocks:
                         value=defaults["seed"], precision=0, label="Seed (-1 random)"
                     )
                 attention_mode = gr.Radio(
-                    ["Auto", "Sol-Attn", "Dense"],
+                    ["Kitchen", "Sage 2", "Sol-Attn", "Auto"],
                     value=defaults["attention_mode"],
                     label="Attention",
                     interactive=SERVER_ATTENTION_BACKEND == "sol",
                     info=(
                         f"Auto enables Sol-Attn for Reference mode or when estimated "
                         f"packed target tokens reach {AUTO_SOL_TOKEN_THRESHOLD:,}; "
-                        "smaller jobs stay dense. Sol forced-dense/fallback calls use "
-                        f"the native {SERVER_DENSE_ATTENTION_BACKEND} backend."
+                        "smaller jobs use Kitchen. Sage 2 applies the pinned KJNodes "
+                        "model override for direct same-workflow comparisons. Sol "
+                        f"dense/fallback calls use {SERVER_DENSE_ATTENTION_BACKEND}."
                     ),
                 )
                 with gr.Row():
@@ -5835,6 +5867,7 @@ def selftest() -> None:
     ) | required_nodes_for("Reference media", True, "EasyCache", True)
     available.add("SpectrumApplyMiniMaxH3")
     available.add(CHUNK_FEED_FORWARD_NODE)
+    available.add(SAGE_ATTENTION_NODE)
     available |= {
         LARRY_TURBO_LORA_NODE,
         LARRY_TURBO_SAMPLER_NODE,
@@ -5898,6 +5931,47 @@ def selftest() -> None:
     assert sol_nodes[0]["inputs"]["dense_blocks"] == "-1"
     assert sol_nodes[0]["inputs"]["min_tokens"] == AUTO_SOL_TOKEN_THRESHOLD
     assert sol_nodes[0]["inputs"]["int8_qk"] is False
+
+    sage_graph = Graph()
+    add_model_stack(
+        sage_graph,
+        fake.profile("speed").fl2va,
+        fake,
+        turbo_lora_name=None,
+        turbo_variant=LIGHTX2V_4STEP_TURBO,
+        turbo_strength=1.0,
+        use_sol=False,
+        sol_tau=1.0,
+        sol_thresh_type="diag",
+        sol_exact_mode="off",
+        sol_dense_steps=1,
+        sol_step_off=0.0,
+        sol_sink_tokens=0,
+        cache_mode="Off",
+        fbcache_preset="Fast",
+        fbcache_threshold=0.10,
+        fbcache_start=0.10,
+        fbcache_end=0.95,
+        fbcache_max_hits=2,
+        fbcache_temporal_guard=True,
+        easycache_threshold=0.10,
+        easycache_start=0.15,
+        easycache_end=0.85,
+        easycache_verbose=False,
+        available_nodes=available,
+        use_sage=True,
+    )
+    sage_nodes = [
+        node for node in sage_graph.nodes.values()
+        if node["class_type"] == SAGE_ATTENTION_NODE
+    ]
+    assert len(sage_nodes) == 1
+    assert sage_nodes[0]["inputs"]["sage_attention"] == "auto"
+    assert sage_nodes[0]["inputs"]["allow_compile"] is False
+    assert not any(
+        node["class_type"] == SOL_ATTENTION_NODE
+        for node in sage_graph.nodes.values()
+    )
 
     cache_nodes = [
         node for node in graph.values()
@@ -6391,6 +6465,14 @@ def selftest() -> None:
         assert empty_exists_after_delete is False
         assert "Deleted 2 generated videos" in confirmed_empty[2]
     assert estimate_packed_tokens("Text to video", 1344, 768, 5) >= AUTO_SOL_TOKEN_THRESHOLD
+    kitchen_policy = resolve_sol_policy(
+        "Kitchen", "Text to video", 608, 352, 2, None, None
+    )
+    assert kitchen_policy[0] is False and kitchen_policy[2] == "forced Comfy Kitchen"
+    sage_policy = resolve_sol_policy(
+        "Sage 2", "Text to video", 608, 352, 2, None, None
+    )
+    assert sage_policy[0] is False and sage_policy[2] == "forced Sage 2"
     assert resolve_sol_policy("Auto", "Text to video", 608, 352, 2, None, None)[0] is False
     assert resolve_sol_policy(
         "Auto", "Text to video", 608, 352, 2, None, None, use_turbo=True
@@ -6464,21 +6546,21 @@ def selftest() -> None:
     turbo_defaults = generation_mode_defaults("Turbo", LARRY_TURBO)
     assert turbo_defaults[1]["value"] == 6
     assert turbo_defaults[1]["interactive"] is True
-    assert turbo_defaults[2:] == ("simple", "Spectrum", "Auto")
+    assert turbo_defaults[2:] == ("simple", "Spectrum", "Kitchen")
     lightx_defaults = generation_mode_defaults("Turbo", LIGHTX2V_4STEP_TURBO)
     assert lightx_defaults[1]["value"] == 4
     assert lightx_defaults[1]["interactive"] is True
-    assert lightx_defaults[2:] == ("simple", "Spectrum", "Auto")
+    assert lightx_defaults[2:] == ("simple", "Spectrum", "Kitchen")
     lightx_8step_defaults = generation_mode_defaults(
         "Turbo", LIGHTX2V_8STEP_TURBO
     )
     assert lightx_8step_defaults[1]["value"] == 8
     assert lightx_8step_defaults[1]["interactive"] is True
-    assert lightx_8step_defaults[2:] == ("simple", "Spectrum", "Auto")
+    assert lightx_8step_defaults[2:] == ("simple", "Spectrum", "Kitchen")
     normal_defaults = generation_mode_defaults("Normal")
     assert normal_defaults[1]["value"] == 18
     assert normal_defaults[1]["interactive"] is True
-    assert normal_defaults[2:] == ("simple", "Spectrum", "Auto")
+    assert normal_defaults[2:] == ("simple", "Spectrum", "Kitchen")
     assert resolve_cache_policy("Off", use_turbo=True) == ("Off", None)
     turbo_spectrum, turbo_spectrum_note = resolve_cache_policy(
         "Spectrum", use_turbo=True
@@ -6492,7 +6574,7 @@ def selftest() -> None:
         "FirstBlockCache", use_turbo=True
     )
     assert turbo_firstblock == "FirstBlockCache" and turbo_firstblock_note
-    assert SERVER_DENSE_ATTENTION_BACKEND in {"pytorch", "sage"}
+    assert SERVER_DENSE_ATTENTION_BACKEND == "comfy-kitchen"
 
     quality_turbo_graph = build_fl2va_graph(
         prompt="test", first_image=None, last_image=None,

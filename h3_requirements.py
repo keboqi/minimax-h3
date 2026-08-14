@@ -22,9 +22,9 @@ SCIPY_VERSION = "1.15.3"
 # Kornia 0.8.2+ removed that module-level compatibility export.
 KORNIA_VERSION = "0.8.1"
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
-# This revision includes native LTX 2.5 NVFP4 checkpoint loading and enables
-# Dynamic VRAM automatically on supported NVIDIA WSL installations.
-COMFY_REF = "2220d111c8b036f094eb465400fdf962626e4afa"
+# ComfyUI v0.32.0 includes native LTX 2.5 loading and the Comfy Kitchen
+# attention backend selected by the launchers.
+COMFY_REF = "c2bcbecd82ec5ae66594340b395c24ef0217b238"
 COMFY_KITCHEN_VERSION = "0.2.30"
 COMFY_FRONTEND_VERSION = "1.48.7"
 WSPROTO_VERSION = "1.2.0"
@@ -242,6 +242,8 @@ def selftest() -> None:
         "scipy==1.15.3",
     )
     assert KORNIA_VERSION == "0.8.1"
+    assert COMFY_REF == "c2bcbecd82ec5ae66594340b395c24ef0217b238"
+    assert COMFY_KITCHEN_VERSION == "0.2.30"
     assert COMFY_FRONTEND_VERSION == "1.48.7"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 9

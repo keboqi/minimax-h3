@@ -2,7 +2,8 @@
 
 A standalone Gradio interface and deployment toolkit for MiniMax H3 video
 generation on NVIDIA Blackwell GPUs. It provisions ComfyUI, the required H3
-models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
+models, Sol-Attn, Comfy Kitchen attention, SageAttention 2, Spectrum, and a bundled
+FirstBlockCache node.
 
 ## What is included
 
@@ -18,7 +19,8 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 - Per-video SeedVR2 or LTX-2.5 IC-LoRA 2x upscale and frame interpolation
 - Selectable Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
   including the dedicated Ref2V 4-step adapter
-- H3-native zero-copy Sol v0.6.1 sparse attention with SageAttention fallback
+- Comfy Kitchen attention as the default backend, with selectable SageAttention
+  2 comparison and optional H3-native zero-copy Sol v0.6.1 sparse attention
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Optional experimental INT8 ConvRot video VAE, lazy-downloaded on first use
@@ -38,8 +40,9 @@ models, Sol-Attn, SageAttention, Spectrum, and a bundled FirstBlockCache node.
 - Hugging Face access to every configured model repository
 
 The installer pins the ABI-sensitive stack to Torch 2.11.0 + CUDA 13.0,
-NumPy 1.26.4, and SciPy 1.15.3. SageAttention is installed from a prebuilt
-CPython 3.12 Linux wheel; source compilation is intentionally disabled.
+NumPy 1.26.4, and SciPy 1.15.3. The pinned ComfyUI 0.32 stack supplies Comfy
+Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
+2.2.0 remains installed from the pinned prebuilt wheel for UI comparisons.
 
 The Sol-Attn integration is pinned to the reviewed v0.6.1 commit
 `e1d211026583064d33dc4326207c6502e2442208` so its ComfyUI node contract
@@ -62,11 +65,11 @@ Spectrum, FirstBlockCache, and EasyCache are mutually exclusive acceleration
 choices. Turbo defaults to Spectrum through the reviewed Larry Turbo and
 RES multistep sampler paths. EasyCache is also available as an experimental,
 default-off Turbo option after ComfyUI's H3 audio-carry fix. FirstBlockCache is
-also available as a default-off experimental Turbo option. Its attention default
-is Auto: jobs at or above 8K estimated packed
-tokens use Sol, while smaller jobs stay dense. Reference-media jobs always use
-Sol because their conditioning rows cannot be estimated before ComfyUI encodes
-the uploads.
+also available as a default-off experimental Turbo option. Attention defaults
+to Kitchen. Sage 2 applies KJNodes' per-model Sage override so it can be compared
+without restarting the service. Sol remains available as an explicit option;
+Auto can still route jobs at or above 8K estimated packed tokens (and
+reference-media jobs) through Sol.
 Spectrum exposes one continuous capture-and-replay progress range to ComfyUI,
 so the Gradio live progress stream remains active during both passes.
 
@@ -214,7 +217,8 @@ The deployment attaches the `custom-secret` Modal Secret to both runtime
 functions and requires it to contain `HF_TOKEN`. If your existing secret uses a
 different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`.
 
-The deployment pins ComfyUI to a revision with native LTX 2.5 NVFP4 support.
+The deployment pins the immutable ComfyUI v0.32.0 release, which includes
+native LTX 2.5 NVFP4 support and Comfy Kitchen attention.
 Changing that pin invalidates the Modal image cache so ComfyUI and its matching
 `comfy-kitchen` dependency are rebuilt together.
 

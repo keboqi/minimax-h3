@@ -613,7 +613,7 @@ def service_env() -> dict[str, str]:
             "MODELS_CONFIG": CONFIG.as_posix(),
             "GRADIO_OUTPUT_DIR": OUTPUT.as_posix(),
             "SERVER_ATTENTION_BACKEND": "sol",
-            "SERVER_DENSE_ATTENTION_BACKEND": "pytorch",
+            "SERVER_DENSE_ATTENTION_BACKEND": "comfy-kitchen",
             "SERVER_MEMORY_PROFILE": "gpu-only",
             "GRADIO_ANALYTICS_ENABLED": "False",
             "PYTHONUNBUFFERED": "1",
@@ -713,8 +713,6 @@ def provision_models():
     requires_proxy_auth=PROXY_AUTH,
 )
 def serve():
-    from h3_attention import probe_sageattention
-
     print("[modal-h3] Starting MiniMax H3 service", flush=True)
     print(
         "[modal-h3] Hugging Face token injected: "
@@ -744,7 +742,6 @@ def serve():
     env["GRADIO_SERVER_NAME"] = "0.0.0.0"
     env["GRADIO_SERVER_PORT"] = str(UI_PORT)
 
-    sage = probe_sageattention()
     comfy_args = [
         "python",
         "-u",
@@ -754,22 +751,9 @@ def serve():
         "--port",
         str(COMFY_PORT),
         "--gpu-only",
+        "--use-ck-attention",
     ]
-    if sage.available:
-        env["SERVER_DENSE_ATTENTION_BACKEND"] = "sage"
-        comfy_args.append("--use-sage-attention")
-        print(
-            f"[modal-h3] Dense/fallback attention: SageAttention "
-            f"({sage.message})",
-            flush=True,
-        )
-    else:
-        env["SERVER_DENSE_ATTENTION_BACKEND"] = "pytorch"
-        print(
-            f"[modal-h3] Dense/fallback attention: PyTorch "
-            f"({sage.message})",
-            flush=True,
-        )
+    print("[modal-h3] Dense/fallback attention: Comfy Kitchen", flush=True)
     comfy_args += ["--enable-cors-header", "*"]
 
     print("[modal-h3] Launching ComfyUI", flush=True)
