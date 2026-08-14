@@ -762,13 +762,6 @@ def serve():
         timeout=20 * 60,
         label="ComfyUI",
     )
-    wait_for_comfy_frontend(
-        f"http://127.0.0.1:{COMFY_PORT}/",
-        comfy_process,
-        timeout=2 * 60,
-        label="ComfyUI",
-    )
-
     print("[modal-h3] Launching Gradio", flush=True)
     gradio_process = subprocess.Popen(
         ["python", "-u", UI.as_posix()],
@@ -780,17 +773,23 @@ def serve():
         timeout=10 * 60,
         label="Gradio",
     )
-    wait_for_comfy_frontend(
-        f"http://127.0.0.1:{UI_PORT}/comfyui/",
-        gradio_process,
-        timeout=2 * 60,
-        label="ComfyUI proxy",
-    )
-
     print(
         f"[modal-h3] Public Gradio server is listening on port {UI_PORT}",
         flush=True,
     )
+    try:
+        wait_for_comfy_frontend(
+            f"http://127.0.0.1:{UI_PORT}/comfyui/",
+            gradio_process,
+            timeout=30,
+            label="ComfyUI proxy",
+        )
+    except Exception as exc:
+        print(
+            "[modal-h3] WARNING: Main UI is running, but "
+            f"/comfyui asset validation failed: {exc}",
+            flush=True,
+        )
 
 
 @app.local_entrypoint()

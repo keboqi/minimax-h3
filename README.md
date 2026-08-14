@@ -204,7 +204,8 @@ For local installations, `run_h3.sh` checks the installed ComfyUI revision and
 static file referenced by the frontend index. It automatically refreshes and
 repairs the environment when any check fails; model files are preserved.
 Both the standalone launcher and Modal deployment also probe the rendered
-`/comfyui/` page and its immutable assets before reporting the service ready.
+`/comfyui/` page and its immutable assets. A failed proxy check is reported
+without withholding the main Gradio UI.
 
 The default LTX 2.5 NVFP4 option uses the official packed weights with the
 missing ComfyUI quantization markers added. Its SHA-256 is pinned and the
