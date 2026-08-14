@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import math
 import os
 import random
 import re
@@ -2395,16 +2396,12 @@ def required_ltx25_upscale_nodes() -> set[str]:
         "CLIPTextEncode",
         "LTXVConditioning",
         "EmptyLTXVLatentVideo",
-        "LTXAddVideoICLoRAGuide",
-        "LTXVEmptyLatentAudio",
-        "LTXVConcatAVLatent",
+        "VAEEncodeTiled",
         "RandomNoise",
         "CFGGuider",
         "KSamplerSelect",
         "ManualSigmas",
-        "SamplerCustomAdvanced",
-        "LTXVSeparateAVLatent",
-        "LTXVCropGuides",
+        "LTXVLoopingSampler",
         "VAEDecodeTiled",
         "CreateVideo",
         "SaveVideo",
@@ -2421,7 +2418,14 @@ def build_ltx25_upscale_graph(
     height: int,
     fps: float = 24.0,
 ) -> dict[str, Any]:
-    """Build Lightricks' single-stage IC-LoRA generative 2x upscaler."""
+    """Build Lightricks' tiled IC-LoRA generative 2x upscaler.
+
+    Sampling the complete target latent at once has an extreme activation peak:
+    a 12-second 1344x768 source becomes a roughly 288-frame 2688x1536 target.
+    LTXVLoopingSampler keeps that workload bounded by processing overlapping
+    temporal and spatial tiles, then blending them.  Audio stays outside the
+    diffusion latent and is remuxed unchanged by CreateVideo.
+    """
     names = ltx25_model_names(model_choice)
     base_width = snap32(width)
     base_height = snap32(height)
@@ -2454,7 +2458,6 @@ def build_ltx25_upscale_graph(
         "CLIPLoader", clip_name=names["text_encoder"], type="ltxv", device="default"
     )
     video_vae = graph.add("VAELoader", vae_name=names["video_vae"])
-    audio_vae = graph.add("VAELoader", vae_name=names["audio_vae"])
     positive = graph.add(
         "CLIPTextEncode",
         clip=Graph.out(clip),
@@ -2474,61 +2477,54 @@ def build_ltx25_upscale_graph(
         length=Graph.out(guide_size, 2),
         batch_size=1,
     )
-    guided = graph.add(
-        "LTXAddVideoICLoRAGuide",
-        positive=Graph.out(conditioned, 0),
-        negative=Graph.out(conditioned, 1),
+    guiding_latent = graph.add(
+        "VAEEncodeTiled",
+        pixels=Graph.out(guide),
         vae=Graph.out(video_vae),
-        latent=Graph.out(video_latent),
-        image=Graph.out(guide),
-        frame_idx=0,
-        strength=1.0,
-        latent_downscale_factor=Graph.out(upscaler, 1),
-        crop="disabled",
-        use_tiled_encode=True,
         tile_size=512,
-        tile_overlap=64,
-    )
-    audio_latent = graph.add(
-        "LTXVEmptyLatentAudio",
-        audio_vae=Graph.out(audio_vae),
-        frames_number=Graph.out(guide_size, 2),
-        frame_rate=int(round(float(fps))),
-        batch_size=1,
-    )
-    av_latent = graph.add(
-        "LTXVConcatAVLatent",
-        video_latent=Graph.out(guided, 2),
-        audio_latent=Graph.out(audio_latent),
+        overlap=64,
+        temporal_size=64,
+        temporal_overlap=8,
     )
     noise = graph.add("RandomNoise", noise_seed=int(seed))
     guider = graph.add(
         "CFGGuider",
         model=Graph.out(upscaler),
-        positive=Graph.out(guided, 0),
-        negative=Graph.out(guided, 1),
+        positive=Graph.out(conditioned, 0),
+        negative=Graph.out(conditioned, 1),
         cfg=1.0,
     )
     sampler = graph.add("KSamplerSelect", sampler_name="euler_ancestral")
     sigmas = graph.add("ManualSigmas", sigmas=LTX25_SIGMAS)
+    # Keep each transformer invocation comfortably below the full-frame peak.
+    # The tile count is resolution-aware so smaller upscales do not pay for
+    # unnecessary spatial passes. Values are pixel-space recommendations from
+    # the Lightricks sampler; spatial overlap is measured in latent cells.
+    horizontal_tiles = max(1, math.ceil(target_width / 1536))
+    vertical_tiles = max(1, math.ceil(target_height / 1024))
     sampled = graph.add(
-        "SamplerCustomAdvanced",
+        "LTXVLoopingSampler",
+        model=Graph.out(upscaler),
+        vae=Graph.out(video_vae),
         noise=Graph.out(noise),
         guider=Graph.out(guider),
         sampler=Graph.out(sampler),
         sigmas=Graph.out(sigmas),
-        latent_image=Graph.out(av_latent),
-    )
-    separated = graph.add("LTXVSeparateAVLatent", av_latent=Graph.out(sampled))
-    cropped = graph.add(
-        "LTXVCropGuides",
-        positive=Graph.out(guided, 0),
-        negative=Graph.out(guided, 1),
-        latent=Graph.out(separated, 0),
+        latents=Graph.out(video_latent),
+        temporal_tile_size=80,
+        temporal_overlap=24,
+        guiding_strength=1.0,
+        temporal_overlap_cond_strength=0.5,
+        cond_image_strength=1.0,
+        horizontal_tiles=horizontal_tiles,
+        vertical_tiles=vertical_tiles,
+        spatial_overlap=2,
+        optional_guiding_latents=Graph.out(guiding_latent),
+        adain_factor=0.1,
     )
     images = graph.add(
         "VAEDecodeTiled",
-        samples=Graph.out(cropped, 2),
+        samples=Graph.out(sampled),
         vae=Graph.out(video_vae),
         tile_size=512,
         overlap=64,
@@ -2677,6 +2673,8 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Applying LTX-2.5 keyframes"
     if name == "LTXAddVideoICLoRAGuide":
         return "Encoding source video for LTX-2.5 2x upscaling"
+    if name == "LTXVLoopingSampler":
+        return "Upscaling LTX-2.5 temporal/spatial tiles"
     if name == "LTXVCropGuides":
         return "Removing LTX-2.5 reference tokens"
     if name in {"CLIPTextEncode", "LTXVConditioning"}:
@@ -5770,9 +5768,33 @@ def selftest() -> None:
     )
     assert ltx25_upscale_latent["inputs"]["width"] == 1728
     assert ltx25_upscale_latent["inputs"]["height"] == 960
-    assert any(
-        node["class_type"] == "LTXVCropGuides" for node in ltx25_upscale_nodes
+    ltx25_looping_sampler = next(
+        node for node in ltx25_upscale_nodes
+        if node["class_type"] == "LTXVLoopingSampler"
     )
+    assert ltx25_looping_sampler["inputs"]["temporal_tile_size"] == 80
+    assert ltx25_looping_sampler["inputs"]["temporal_overlap"] == 24
+    assert ltx25_looping_sampler["inputs"]["horizontal_tiles"] == 2
+    assert ltx25_looping_sampler["inputs"]["vertical_tiles"] == 1
+    assert not ({
+        "LTXVEmptyLatentAudio", "LTXVConcatAVLatent", "SamplerCustomAdvanced",
+    } & {node["class_type"] for node in ltx25_upscale_nodes})
+
+    ltx25_large_upscale_graph = build_ltx25_upscale_graph(
+        source_video="h3_gradio/ltx25_upscale/large.mp4",
+        seed=42,
+        model_choice="INT8 ConvRot",
+        prompt="restore detail",
+        width=1344,
+        height=768,
+        fps=24,
+    )
+    ltx25_large_sampler = next(
+        node for node in ltx25_large_upscale_graph.values()
+        if node["class_type"] == "LTXVLoopingSampler"
+    )
+    assert ltx25_large_sampler["inputs"]["horizontal_tiles"] == 2
+    assert ltx25_large_sampler["inputs"]["vertical_tiles"] == 2
     assert COMFY_UPSCALE_OPTIONS == {SEEDVR2_UPSCALE, LTX25_UPSCALE}
     assert UVICORN_WEBSOCKET_OPTIONS == {
         "ws": "wsproto",
