@@ -63,9 +63,10 @@ ensure_ffmpeg() {
 environment_is_current() {
   [[ -d "$COMFY_DIR/.git" ]] || return 1
 
-  local installed_ref expected_ref installed_kitchen expected_kitchen expected_frontend
+  local installed_ref expected_ref installed_kitchen installed_wsproto
+  local expected_ref expected_kitchen expected_frontend expected_wsproto
   installed_ref="$(git -C "$COMFY_DIR" rev-parse HEAD 2>/dev/null)" || return 1
-  read -r expected_ref expected_kitchen expected_frontend < <(
+  read -r expected_ref expected_kitchen expected_frontend expected_wsproto < <(
     "$PYTHON_BIN" - "$SCRIPT_DIR" <<'PY'
 import sys
 
@@ -74,9 +75,15 @@ from h3_requirements import (
     COMFY_FRONTEND_VERSION,
     COMFY_KITCHEN_VERSION,
     COMFY_REF,
+    WSPROTO_VERSION,
 )
 
-print(COMFY_REF, COMFY_KITCHEN_VERSION, COMFY_FRONTEND_VERSION)
+print(
+    COMFY_REF,
+    COMFY_KITCHEN_VERSION,
+    COMFY_FRONTEND_VERSION,
+    WSPROTO_VERSION,
+)
 PY
   ) || return 1
   installed_kitchen="$(
@@ -89,9 +96,20 @@ except PackageNotFoundError:
     raise SystemExit(1)
 PY
   )" || return 1
+  installed_wsproto="$(
+    "$PYTHON_BIN" - <<'PY'
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    print(version("wsproto"))
+except PackageNotFoundError:
+    raise SystemExit(1)
+PY
+  )" || return 1
 
   [[ "$installed_ref" == "$expected_ref" ]] || return 1
   [[ "$installed_kitchen" == "$expected_kitchen" ]] || return 1
+  [[ "$installed_wsproto" == "$expected_wsproto" ]] || return 1
   "$PYTHON_BIN" - "$SCRIPT_DIR" <<'PY' >/dev/null || return 1
 import sys
 

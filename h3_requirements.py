@@ -26,6 +26,7 @@ KORNIA_VERSION = "0.8.1"
 COMFY_REF = "2220d111c8b036f094eb465400fdf962626e4afa"
 COMFY_KITCHEN_VERSION = "0.2.30"
 COMFY_FRONTEND_VERSION = "1.48.7"
+WSPROTO_VERSION = "1.2.0"
 
 ABI_CONSTRAINTS = (
     f"torch=={TORCH_VERSION}",
@@ -162,6 +163,7 @@ def selftest() -> None:
     )
     assert KORNIA_VERSION == "0.8.1"
     assert COMFY_FRONTEND_VERSION == "1.48.7"
+    assert WSPROTO_VERSION == "1.2.0"
     assert comfy_frontend_static_references(
         '<link href="user.css"><link href="materialdesignicons.min.css">'
         '<script src="./assets/index-abc.js"></script>'

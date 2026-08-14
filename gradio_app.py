@@ -429,6 +429,17 @@ def _rewrite_comfy_text(content: str, content_type: str) -> str:
     return content
 
 
+def _comfy_upstream_path(path: str, raw_path: bytes | None) -> str:
+    """Preserve encoded userdata separators consumed by ASGI route matching."""
+    prefix = f"{COMFY_PROXY_PATH}/".encode("ascii")
+    if isinstance(raw_path, bytes) and raw_path.startswith(prefix):
+        try:
+            return raw_path[len(prefix):].decode("ascii")
+        except UnicodeDecodeError:
+            pass
+    return quote(path, safe="/:@")
+
+
 async def _close_websocket(socket: WebSocket, code: int = 1000) -> None:
     try:
         await socket.close(code=code)
@@ -573,7 +584,11 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
         include_in_schema=False,
     )
     async def comfy_http_proxy(path: str, request: Request) -> Response:
-        target = f"{COMFY_URL}/{quote(path, safe='/:@')}"
+        upstream_path = _comfy_upstream_path(
+            path,
+            request.scope.get("raw_path"),
+        )
+        target = f"{COMFY_URL}/{upstream_path}"
         if request.url.query:
             target += f"?{request.url.query}"
         upstream_request = client.build_request(
@@ -634,7 +649,11 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
     async def comfy_websocket_proxy(socket: WebSocket, path: str) -> None:
         query = f"?{socket.url.query}" if socket.url.query else ""
         upstream_url = re.sub(r"^http", "ws", COMFY_URL, count=1)
-        upstream_url += f"/{quote(path, safe='/:@')}{query}"
+        upstream_path = _comfy_upstream_path(
+            path,
+            socket.scope.get("raw_path"),
+        )
+        upstream_url += f"/{upstream_path}{query}"
         protocols = [
             value.strip()
             for value in socket.headers.get("sec-websocket-protocol", "").split(",")
@@ -5160,6 +5179,17 @@ def selftest() -> None:
     assert _rewrite_comfy_text("const route = '/api';", "application/javascript") == (
         "const route = '/api';"
     )
+    assert _comfy_upstream_path(
+        "api/userdata/workflows/LTX 2.5/example.json",
+        (
+            b"/comfyui/api/userdata/"
+            b"workflows%2FLTX%202.5%2Fexample.json"
+        ),
+    ) == "api/userdata/workflows%2FLTX%202.5%2Fexample.json"
+    assert _comfy_upstream_path(
+        "assets/app.js",
+        b"/comfyui/assets/app.js",
+    ) == "assets/app.js"
     existing_base = _rewrite_comfy_text(
         '<html><head><base href="/custom/"></head></html>',
         "text/html",

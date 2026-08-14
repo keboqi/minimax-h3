@@ -24,6 +24,7 @@ from h3_requirements import (
     TORCH_VERSION,
     TORCHAUDIO_VERSION,
     TORCHVISION_VERSION,
+    WSPROTO_VERSION,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
 )
@@ -137,6 +138,16 @@ def _remove_tree(path: Path) -> None:
     shutil.rmtree(path, onexc=make_writable)
 
 
+def _git_worktree_is_valid(dest: Path) -> bool:
+    """Return whether Git recognizes dest, not merely whether .git exists."""
+    probe = subprocess.run(
+        ["git", "-C", str(dest), "rev-parse", "--is-inside-work-tree"],
+        text=True,
+        capture_output=True,
+    )
+    return probe.returncode == 0 and probe.stdout.strip() == "true"
+
+
 def _restore_tracked_files(
     url: str,
     dest: Path,
@@ -148,7 +159,13 @@ def _restore_tracked_files(
     )
     try:
         _fresh_git_checkout(url, staging, ref)
-        has_git_metadata = (dest / ".git").is_dir()
+        has_git_metadata = _git_worktree_is_valid(dest)
+        git_metadata = dest / ".git"
+        if not has_git_metadata and git_metadata.exists():
+            if git_metadata.is_dir() and not git_metadata.is_symlink():
+                _remove_tree(git_metadata)
+            else:
+                git_metadata.unlink()
         shutil.copytree(
             staging,
             dest,
@@ -191,7 +208,7 @@ def sync_git_repo(
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     fetch_ref = ref or "HEAD"
-    if (dest / ".git").is_dir():
+    if _git_worktree_is_valid(dest):
         run("git", "-C", dest, "remote", "set-url", "origin", url)
         run(
             "git", "-C", dest, "fetch", "--depth", "1",
@@ -484,6 +501,7 @@ def install_environment(comfy: Path) -> None:
         "aiohttp>=3.11,<4",
         "httpx>=0.27",
         "uvicorn>=0.30",
+        f"wsproto=={WSPROTO_VERSION}",
         "Pillow>=10",
     )
     install_pinned_numpy_stack()

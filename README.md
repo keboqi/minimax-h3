@@ -206,6 +206,8 @@ repairs the environment when any check fails; model files are preserved.
 Both the standalone launcher and Modal deployment also probe the rendered
 `/comfyui/` page and its immutable assets. A failed proxy check is reported
 without withholding the main Gradio UI.
+Encoded nested userdata paths are forwarded unchanged so saved workflow folders
+load correctly through the proxy, including the bundled LTX 2.5 workflows.
 
 The default LTX 2.5 NVFP4 option uses the official packed weights with the
 missing ComfyUI quantization markers added. Its SHA-256 is pinned and the
