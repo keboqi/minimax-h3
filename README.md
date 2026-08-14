@@ -162,11 +162,6 @@ lower peak VRAM is more important than avoiding an H3 model reload on the next
 generation. **48 fps interpolation** remains available as a non-upscale option
 and requires FFmpeg on the server `PATH`.
 
-LTX-2.5 upscaling uses Lightricks' looping sampler with overlapping temporal
-and resolution-aware spatial tiles. This bounds transformer activation memory
-for long 768p sources (including 12-second 1344x768 clips) while blending tile
-boundaries. The source audio bypasses diffusion and is remuxed unchanged.
-
 SeedVR2 offers **3B NVFP4**, **3B INT8**, **7B NVFP4 (default)**, and
 **7B Sharp NVFP4** model choices. Only the selected checkpoint downloads on first
 use; all choices share the same lazy FP16 SeedVR2 VAE. The native workflow uses
