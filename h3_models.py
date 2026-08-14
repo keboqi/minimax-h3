@@ -313,15 +313,18 @@ LTX25_MODEL_KEYS = (
     *LTX25_MODEL_CHOICES.values(),
     *LTX25_SHARED_MODEL_KEYS,
 )
-LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS = (
-    "ltx25_video_vae_full",
-    "ltx25_text_enhancer",
-    "ltx25_spatial_upscaler",
+LTX25_ICLORA_MODEL_KEYS = (
     "ltx25_iclora_ingredients",
     "ltx25_iclora_in_outpaint",
     "ltx25_iclora_motion_track",
     "ltx25_iclora_union_control",
     "ltx25_iclora_instant_shave",
+)
+LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS = (
+    "ltx25_video_vae_full",
+    "ltx25_text_enhancer",
+    "ltx25_spatial_upscaler",
+    *LTX25_ICLORA_MODEL_KEYS,
 )
 LAZY_OPTIONAL_MODEL_KEYS = (
     "video_vae_int8",
@@ -942,6 +945,8 @@ def selftest() -> None:
         manifest["files"][model_manifest_key(nvfp4)]["size"] += 1
         assert not model_file_matches_manifest(root, manifest, nvfp4)
     assert set(LTX25_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
+    assert len(LTX25_ICLORA_MODEL_KEYS) == 5
+    assert all(MODEL_SPECS[key].folder == "loras" for key in LTX25_ICLORA_MODEL_KEYS)
     assert set(LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS).isdisjoint(
         PRELOAD_MODEL_KEYS
     )

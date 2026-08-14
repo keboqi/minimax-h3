@@ -43,6 +43,7 @@ from h3_models import (
     DEFAULT_LTX25_MODEL,
     DEFAULT_SEEDVR2_MODEL,
     LTX25_MODEL_CHOICES,
+    LTX25_ICLORA_MODEL_KEYS,
     LTX25_SHARED_MODEL_KEYS,
     MIN_VALID_MODEL_BYTES,
     MODEL_SPECS,
@@ -205,6 +206,7 @@ LTX25_WORKFLOWS = {
 LTX25_WORKFLOW_COMMON_MODEL_KEYS = (
     "ltx25_distilled",
     "ltx25_text_encoder",
+    "ltx25_video_vae",
     "ltx25_video_vae_full",
     "ltx25_audio_vae",
     "ltx25_text_enhancer",
@@ -1027,8 +1029,43 @@ def ltx25_workflow_model_keys(workflow_label: str) -> tuple[str, ...]:
     entry = ltx25_workflow_entry(workflow_label)
     common = list(LTX25_WORKFLOW_COMMON_MODEL_KEYS)
     if entry.get("audio_only"):
+        common.remove("ltx25_video_vae")
         common.remove("ltx25_video_vae_full")
     return tuple(dict.fromkeys((*common, *entry["extra_models"])))
+
+
+def ltx25_official_inventory_keys() -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            (
+                *LTX25_WORKFLOW_COMMON_MODEL_KEYS,
+                *LTX25_ICLORA_MODEL_KEYS,
+                "ltx25_spatial_upscaler",
+            )
+        )
+    )
+
+
+def render_ltx25_official_model_inventory() -> str:
+    keys = ltx25_official_inventory_keys()
+    installed = 0
+    rows = []
+    for key in keys:
+        spec = MODEL_SPECS[key]
+        path = COMFY_DIR / "models" / spec.folder / spec.local_name
+        ready = model_file_is_ready(path)
+        installed += int(ready)
+        status = "✅ Installed" if ready else "⬇️ Available"
+        source = f"[{spec.repo_id}](https://huggingface.co/{spec.repo_id})"
+        rows.append(
+            f"| `{spec.local_name}` | `{spec.folder}` | {status} | {source} |"
+        )
+    return (
+        f"**Installed: {installed}/{len(keys)}**\n\n"
+        "| Model | ComfyUI folder | Status | Source / license |\n"
+        "|---|---|---|---|\n"
+        + "\n".join(rows)
+    )
 
 
 def render_ltx25_workflow_details(workflow_label: str) -> str:
@@ -1051,24 +1088,31 @@ def render_ltx25_workflow_details(workflow_label: str) -> str:
         f"[Download official workflow JSON](/ltx25-workflows/{entry['id']}.json) · "
         "[Open ComfyUI](/comfyui/)\n\n"
         "The template is also installed under **Workflows → Browse → LTX 2.5**. "
-        "Prepare its models here first, then configure its visual nodes in ComfyUI."
+        "Download its models here first, then reload ComfyUI so its model "
+        "dropdowns rescan the shared model folders."
     )
 
 
-def prepare_ltx25_official_workflow(workflow_label: str):
-    """Lazily fetch every checkpoint referenced by one official template."""
+def _prepare_ltx25_model_set(required_keys: Iterable[str], label: str):
+    """Lazily fetch a named set and refresh the visible model inventory."""
     try:
-        required_keys = ltx25_workflow_model_keys(workflow_label)
+        required_keys = tuple(dict.fromkeys(required_keys))
         stale = stale_model_keys(
             root=COMFY_DIR / "models",
             manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
             model_keys=required_keys,
         )
         if not stale:
-            yield f"Ready: all models for **{workflow_label}** are installed."
+            yield (
+                f"Ready: all models for **{label}** are installed.",
+                render_ltx25_official_model_inventory(),
+            )
             return
         names = ", ".join(MODEL_SPECS[key].local_name for key in stale)
-        yield f"Downloading models for **{workflow_label}**: {names}"
+        yield (
+            f"Downloading models for **{label}**: {names}",
+            render_ltx25_official_model_inventory(),
+        )
         sync_models(
             root=COMFY_DIR / "models",
             manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
@@ -1088,16 +1132,34 @@ def prepare_ltx25_official_workflow(workflow_label: str):
         if missing:
             raise H3Error("Downloads did not produce: " + ", ".join(missing))
         yield (
-            f"Ready: installed all models for **{workflow_label}**. "
-            "Open ComfyUI and load the template from **LTX 2.5**."
+            f"Ready: installed all models for **{label}**. Open ComfyUI and "
+            "refresh model definitions or reload the page.",
+            render_ltx25_official_model_inventory(),
         )
     except Exception as exc:
         yield (
-            "Error preparing official workflow models. Accept the linked "
-            "Hugging Face licenses and authenticate with `hf auth login` or "
-            "HF_TOKEN, then retry. "
-            f"Details: {exc}"
+            "Error downloading official workflow models. Open the Source / "
+            "license links below, accept any gated terms, and authenticate "
+            "with `hf auth login` or HF_TOKEN. "
+            f"Details: {exc}",
+            render_ltx25_official_model_inventory(),
         )
+
+
+def prepare_ltx25_official_workflow(workflow_label: str):
+    """Lazily fetch every checkpoint referenced by one official template."""
+    yield from _prepare_ltx25_model_set(
+        ltx25_workflow_model_keys(workflow_label),
+        workflow_label,
+    )
+
+
+def prepare_all_ltx25_icloras():
+    """Download every IC-LoRA referenced across the official workflow set."""
+    yield from _prepare_ltx25_model_set(
+        LTX25_ICLORA_MODEL_KEYS,
+        "all five official IC-LoRAs",
+    )
 
 
 def seedvr2_upscale_model_names(
@@ -4758,13 +4820,19 @@ def build_ui() -> gr.Blocks:
                         "INT8 are embedded-quantized ComfyUI checkpoints."
                     )
 
-            with gr.Accordion("Official advanced workflows", open=False):
+            with gr.Accordion(
+                "Official workflows and model downloads",
+                open=True,
+            ):
                 gr.Markdown(
                     "The complete official Lightricks LTX-2.5 workflow set is "
                     "installed in the bundled ComfyUI editor. These visual "
                     "workflows cover audio-only generation, two-stage refinement, "
                     "video editing, reference sheets, motion tracks, in/outpainting, "
-                    "and pose/depth/canny control."
+                    "and pose/depth/canny control. **ComfyUI does not download "
+                    "missing dropdown models automatically.** Use the buttons "
+                    "below first. The official LTX 2.5 templates reuse LTX 2.3 "
+                    "IC-LoRAs, so those filenames are expected."
                 )
                 with gr.Row():
                     ltx25_workflow = gr.Dropdown(
@@ -4774,14 +4842,26 @@ def build_ui() -> gr.Blocks:
                         scale=3,
                     )
                     ltx25_prepare_workflow = gr.Button(
-                        "Prepare required models",
-                        variant="secondary",
+                        "Download selected workflow models",
+                        variant="primary",
                         scale=1,
+                    )
+                with gr.Row():
+                    ltx25_prepare_icloras = gr.Button(
+                        "Download all 5 IC-LoRAs",
+                        variant="secondary",
+                    )
+                    ltx25_refresh_models = gr.Button(
+                        "Refresh model availability",
+                        variant="secondary",
                     )
                 ltx25_workflow_details = gr.Markdown(
                     render_ltx25_workflow_details(next(iter(LTX25_WORKFLOWS)))
                 )
                 ltx25_workflow_status = gr.Markdown()
+                ltx25_model_inventory = gr.Markdown(
+                    render_ltx25_official_model_inventory()
+                )
 
         with gr.Group(visible=False) as gallery_view:
             with gr.Row():
@@ -4930,8 +5010,19 @@ def build_ui() -> gr.Blocks:
         ltx25_prepare_workflow.click(
             prepare_ltx25_official_workflow,
             inputs=ltx25_workflow,
-            outputs=ltx25_workflow_status,
+            outputs=[ltx25_workflow_status, ltx25_model_inventory],
             show_progress="minimal",
+        )
+        ltx25_prepare_icloras.click(
+            prepare_all_ltx25_icloras,
+            outputs=[ltx25_workflow_status, ltx25_model_inventory],
+            show_progress="minimal",
+        )
+        ltx25_refresh_models.click(
+            render_ltx25_official_model_inventory,
+            outputs=ltx25_model_inventory,
+            queue=False,
+            show_progress="hidden",
         )
         gallery_postprocess.change(
             lambda value: (
@@ -5511,6 +5602,23 @@ def selftest() -> None:
     for label in LTX25_WORKFLOWS:
         assert set(ltx25_workflow_model_keys(label)) <= set(MODEL_SPECS)
         assert "/ltx25-workflows/" in render_ltx25_workflow_details(label)
+    audio_label = next(
+        label for label, entry in LTX25_WORKFLOWS.items()
+        if entry.get("audio_only")
+    )
+    assert not {
+        "ltx25_video_vae", "ltx25_video_vae_full",
+    } & set(ltx25_workflow_model_keys(audio_label))
+    video_label = next(
+        label for label, entry in LTX25_WORKFLOWS.items()
+        if not entry.get("audio_only")
+    )
+    assert {
+        "ltx25_video_vae", "ltx25_video_vae_full",
+    } <= set(ltx25_workflow_model_keys(video_label))
+    inventory = render_ltx25_official_model_inventory()
+    assert all(MODEL_SPECS[key].repo_id in inventory for key in LTX25_ICLORA_MODEL_KEYS)
+    assert set(LTX25_ICLORA_MODEL_KEYS) <= set(ltx25_official_inventory_keys())
 
     original_stage_file = globals()["stage_file"]
     try:

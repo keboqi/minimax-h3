@@ -123,13 +123,14 @@ takes priority when set, including for Modal deployment secrets.
 Image-to-video accepts a required start keyframe plus optional middle and end
 keyframes. The middle position and each keyframe's conditioning strength are
 configurable; text-to-video does not load or apply image guides.
-The tab's **Official advanced workflows** section installs the upstream JSON
+The tab's **Official workflows and model downloads** section installs the upstream JSON
 templates under **Workflows → Browse → LTX 2.5** in the proxied ComfyUI editor.
 Modal re-synchronizes these image-local templates from the pinned LTXVideo node
 on every cold start before launching ComfyUI.
-Its **Prepare required models** button lazily downloads the official BF16 base,
-full diffusion-decoder VAE, prompt enhancer, spatial upscaler, and selected
-IC-LoRA assets only when that workflow is requested.
+Its open **Official workflows and model downloads** panel shows live model
+availability and Hugging Face source/license links. It can download every model
+for the selected workflow or all five IC-LoRAs at once. The official LTX 2.5
+templates intentionally reuse LTX 2.3 IC-LoRAs; this is not a version mismatch.
 Later runs check remote metadata for the preloaded set and refresh only stale
 files; lazy checkpoints remain local and are fetched again if missing or incomplete.
 On Debian/Ubuntu standalone hosts, `run_h3.sh` also installs the `ffmpeg` system
