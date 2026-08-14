@@ -82,6 +82,7 @@ sys.path.insert(0, str(_shared_import_path()))
 # mounted after run_function() must be imported lazily inside runtime functions.
 from h3_requirements import (  # noqa: E402
     ABI_CONSTRAINTS,
+    COMFY_FRONTEND_VERSION,
     COMFY_REF,
     KORNIA_VERSION,
     NUMPY_VERSION,
@@ -90,7 +91,9 @@ from h3_requirements import (  # noqa: E402
     TORCH_VERSION,
     TORCHAUDIO_VERSION,
     TORCHVISION_VERSION,
+    comfy_frontend_package_is_ready,
     filter_pinned_requirements,
+    probe_comfy_frontend,
 )
 from h3_node_patches import patch_larry_turbo_node  # noqa: E402
 
@@ -252,6 +255,24 @@ def build(revision: str) -> None:
         "-r",
         filtered_requirements,
     )
+    if not comfy_frontend_package_is_ready():
+        print(
+            "[modal-h3] Repairing incomplete ComfyUI frontend package",
+            flush=True,
+        )
+        _run(
+            "uv",
+            "pip",
+            "install",
+            "--system",
+            "--force-reinstall",
+            "--no-deps",
+            f"comfyui-frontend-package=={COMFY_FRONTEND_VERSION}",
+        )
+    if not comfy_frontend_package_is_ready():
+        raise RuntimeError(
+            "ComfyUI frontend package is incomplete after reinstall"
+        )
 
     # Reassert the ABI trio after all Comfy requirements.
     _run(
@@ -629,6 +650,35 @@ def wait_for_service(
     raise TimeoutError(f"{label} did not start: {last_error}")
 
 
+def wait_for_comfy_frontend(
+    url: str,
+    process: subprocess.Popen,
+    *,
+    timeout: int,
+    label: str,
+) -> None:
+    print(f"[modal-h3] Checking {label}: {url}", flush=True)
+    deadline = time.monotonic() + timeout
+    last_error = None
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(
+                f"{label} exited before its frontend became ready: "
+                f"{process.returncode}"
+            )
+        try:
+            count = probe_comfy_frontend(url)
+            print(
+                f"[modal-h3] {label} served {count} frontend assets",
+                flush=True,
+            )
+            return
+        except Exception as exc:
+            last_error = exc
+        time.sleep(2)
+    raise TimeoutError(f"{label} frontend did not start: {last_error}")
+
+
 @app.function(
     timeout=21600,
     volumes={DATA.as_posix(): volume},
@@ -712,6 +762,12 @@ def serve():
         timeout=20 * 60,
         label="ComfyUI",
     )
+    wait_for_comfy_frontend(
+        f"http://127.0.0.1:{COMFY_PORT}/",
+        comfy_process,
+        timeout=2 * 60,
+        label="ComfyUI",
+    )
 
     print("[modal-h3] Launching Gradio", flush=True)
     gradio_process = subprocess.Popen(
@@ -723,6 +779,12 @@ def serve():
         gradio_process,
         timeout=10 * 60,
         label="Gradio",
+    )
+    wait_for_comfy_frontend(
+        f"http://127.0.0.1:{UI_PORT}/comfyui/",
+        gradio_process,
+        timeout=2 * 60,
+        label="ComfyUI proxy",
     )
 
     print(

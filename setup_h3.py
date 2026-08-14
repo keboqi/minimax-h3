@@ -15,6 +15,7 @@ from h3_models import PRELOAD_MODEL_KEYS, sync_models, write_json_atomic
 from h3_node_patches import patch_larry_turbo_node
 from h3_requirements import (
     ABI_CONSTRAINTS,
+    COMFY_FRONTEND_VERSION,
     COMFY_REF,
     KORNIA_VERSION,
     NUMPY_VERSION,
@@ -23,6 +24,7 @@ from h3_requirements import (
     TORCH_VERSION,
     TORCHAUDIO_VERSION,
     TORCHVISION_VERSION,
+    comfy_frontend_package_is_ready,
     filter_pinned_requirements,
 )
 
@@ -369,6 +371,21 @@ def install_comfy_requirements(comfy: Path) -> None:
         uv_pip("-r", str(filtered_path))
     finally:
         filtered_path.unlink(missing_ok=True)
+
+    if not comfy_frontend_package_is_ready():
+        print(
+            "[h3-setup] Repairing incomplete ComfyUI frontend package",
+            flush=True,
+        )
+        uv_pip(
+            "--force-reinstall",
+            "--no-deps",
+            f"comfyui-frontend-package=={COMFY_FRONTEND_VERSION}",
+        )
+    if not comfy_frontend_package_is_ready():
+        raise RuntimeError(
+            "ComfyUI frontend package is still incomplete after reinstall"
+        )
 
     if not torch_stack_matches():
         found = current_torch_version()

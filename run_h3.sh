@@ -63,16 +63,20 @@ ensure_ffmpeg() {
 environment_is_current() {
   [[ -d "$COMFY_DIR/.git" ]] || return 1
 
-  local installed_ref expected_ref installed_kitchen expected_kitchen
+  local installed_ref expected_ref installed_kitchen expected_kitchen expected_frontend
   installed_ref="$(git -C "$COMFY_DIR" rev-parse HEAD 2>/dev/null)" || return 1
-  read -r expected_ref expected_kitchen < <(
+  read -r expected_ref expected_kitchen expected_frontend < <(
     "$PYTHON_BIN" - "$SCRIPT_DIR" <<'PY'
 import sys
 
 sys.path.insert(0, sys.argv[1])
-from h3_requirements import COMFY_KITCHEN_VERSION, COMFY_REF
+from h3_requirements import (
+    COMFY_FRONTEND_VERSION,
+    COMFY_KITCHEN_VERSION,
+    COMFY_REF,
+)
 
-print(COMFY_REF, COMFY_KITCHEN_VERSION)
+print(COMFY_REF, COMFY_KITCHEN_VERSION, COMFY_FRONTEND_VERSION)
 PY
   ) || return 1
   installed_kitchen="$(
@@ -88,6 +92,14 @@ PY
 
   [[ "$installed_ref" == "$expected_ref" ]] || return 1
   [[ "$installed_kitchen" == "$expected_kitchen" ]] || return 1
+  "$PYTHON_BIN" - "$SCRIPT_DIR" <<'PY' >/dev/null || return 1
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from h3_requirements import comfy_frontend_package_is_ready
+
+raise SystemExit(0 if comfy_frontend_package_is_ready() else 1)
+PY
 }
 
 cleanup() {
@@ -119,7 +131,7 @@ if [[ ! -f "$COMFY_DIR/main.py" || ! -f "$MODELS_CONFIG" ]]; then
   log "Installation or models are missing; running automatic setup"
   "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR"
 elif ! environment_is_current; then
-  log "ComfyUI or comfy-kitchen is stale; refreshing the environment"
+  log "ComfyUI environment or frontend assets are stale; refreshing the environment"
   "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR"
 else
   log "ComfyUI environment is current; checking Hugging Face model versions"
@@ -173,7 +185,7 @@ log "Memory profile: $COMFYUI_MEMORY_MODE"
 COMFY_PID=$!
 
 log "Waiting for ComfyUI"
-"$PYTHON_BIN" - "$COMFY_URL" "$COMFY_PID" <<'PY'
+"$PYTHON_BIN" - "$COMFY_URL" "$COMFY_PID" "$SCRIPT_DIR" <<'PY'
 import os
 import sys
 import time
@@ -181,6 +193,9 @@ import urllib.request
 
 url = sys.argv[1].rstrip("/") + "/system_stats"
 pid = int(sys.argv[2])
+sys.path.insert(0, sys.argv[3])
+from h3_requirements import probe_comfy_frontend
+
 deadline = time.monotonic() + 1200
 last_error = None
 
@@ -193,7 +208,11 @@ while time.monotonic() < deadline:
     try:
         with urllib.request.urlopen(url, timeout=5) as response:
             if response.status < 500:
-                print("[h3-run] ComfyUI is ready", flush=True)
+                count = probe_comfy_frontend(sys.argv[1])
+                print(
+                    f"[h3-run] ComfyUI served {count} frontend assets",
+                    flush=True,
+                )
                 raise SystemExit(0)
     except Exception as exc:
         last_error = exc
@@ -217,6 +236,37 @@ export AUTO_START_COMFYUI="0"
 log "Starting Gradio"
 "$PYTHON_BIN" -u "$SCRIPT_DIR/gradio_app.py" &
 GRADIO_PID=$!
+
+log "Checking the /comfyui proxy"
+"$PYTHON_BIN" - "http://127.0.0.1:$GRADIO_SERVER_PORT/comfyui/" "$GRADIO_PID" "$SCRIPT_DIR" <<'PY'
+import os
+import sys
+import time
+
+sys.path.insert(0, sys.argv[3])
+from h3_requirements import probe_comfy_frontend
+
+url = sys.argv[1]
+pid = int(sys.argv[2])
+deadline = time.monotonic() + 120
+last_error = None
+while time.monotonic() < deadline:
+    try:
+        os.kill(pid, 0)
+    except OSError as exc:
+        raise SystemExit(f"Gradio exited during startup: {exc}")
+    try:
+        count = probe_comfy_frontend(url)
+        print(
+            f"[h3-run] /comfyui proxy served {count} frontend assets",
+            flush=True,
+        )
+        raise SystemExit(0)
+    except Exception as exc:
+        last_error = exc
+    time.sleep(2)
+raise SystemExit(f"Timed out waiting for /comfyui proxy: {last_error}")
+PY
 
 log "MiniMax H3 is ready at http://127.0.0.1:$GRADIO_SERVER_PORT"
 log "Press Ctrl+C to stop"
