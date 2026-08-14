@@ -428,12 +428,14 @@ def install_comfy_requirements(comfy: Path) -> None:
 
     if not comfy_frontend_package_is_ready():
         print(
-            "[h3-setup] Repairing incomplete ComfyUI frontend package",
+            "[h3-setup] Reinstalling ComfyUI frontend as contained files",
             flush=True,
         )
         uv_pip(
             "--force-reinstall",
             "--no-deps",
+            "--link-mode",
+            "copy",
             f"comfyui-frontend-package=={COMFY_FRONTEND_VERSION}",
         )
     if not comfy_frontend_package_is_ready():

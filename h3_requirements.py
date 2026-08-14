@@ -63,7 +63,7 @@ def comfy_frontend_static_references(content: str) -> list[str]:
 
 
 def comfy_frontend_package_is_ready() -> bool:
-    """Validate the pinned frontend package and its immutable index assets."""
+    """Validate assets using the same containment rule as aiohttp static."""
     try:
         if version("comfyui-frontend-package") != COMFY_FRONTEND_VERSION:
             return False
@@ -81,9 +81,20 @@ def comfy_frontend_package_is_ready() -> bool:
         return False
 
     references = comfy_frontend_static_references(content)
-    return bool(references) and all(
-        (root / urlsplit(reference).path.lstrip("/").removeprefix("./")).is_file()
-        for reference in references
+    try:
+        resolved_root = root.resolve(strict=True)
+        resolved_assets = [
+            (
+                root
+                / urlsplit(reference).path.lstrip("/").removeprefix("./")
+            ).resolve(strict=True)
+            for reference in references
+        ]
+    except (OSError, RuntimeError):
+        return False
+    return bool(resolved_assets) and all(
+        asset.is_file() and asset.is_relative_to(resolved_root)
+        for asset in resolved_assets
     )
 
 

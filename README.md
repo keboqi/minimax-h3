@@ -203,6 +203,8 @@ For local installations, `run_h3.sh` checks the installed ComfyUI revision and
 `comfy-kitchen` and frontend-package versions at startup. It also verifies every
 static file referenced by the frontend index. It automatically refreshes and
 repairs the environment when any check fails; model files are preserved.
+Frontend assets are installed in copy mode because aiohttp intentionally rejects
+static files that are symlinked outside the package's declared web root.
 Both the standalone launcher and Modal deployment also probe the rendered
 `/comfyui/` page and its immutable assets. A failed proxy check is reported
 without withholding the main Gradio UI.
@@ -221,7 +223,9 @@ Useful environment variables include `H3_MODAL_APP_NAME`,
 
 The Gradio service also exposes the full ComfyUI interface at `/comfyui/`
 on the same public URL. HTTP, uploads, and live WebSocket progress are proxied
-to the private ComfyUI backend on port 8188.
+to the private ComfyUI backend on port 8188. Its public Uvicorn transport uses
+`wsproto` with per-message compression disabled, matching Modal's WebSocket
+feature set while remaining compatible with standalone servers.
 
 Runtime-only Python files (`gradio_app.py`, `h3_models.py`, `h3_attention.py`,
 and the bundled H3Acceleration node) are mounted into Modal containers at

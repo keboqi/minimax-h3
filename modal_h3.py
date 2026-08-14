@@ -258,7 +258,7 @@ def build(revision: str) -> None:
     )
     if not comfy_frontend_package_is_ready():
         print(
-            "[modal-h3] Repairing incomplete ComfyUI frontend package",
+            "[modal-h3] Reinstalling ComfyUI frontend as contained files",
             flush=True,
         )
         _run(
@@ -268,6 +268,8 @@ def build(revision: str) -> None:
             "--system",
             "--force-reinstall",
             "--no-deps",
+            "--link-mode",
+            "copy",
             f"comfyui-frontend-package=={COMFY_FRONTEND_VERSION}",
         )
     if not comfy_frontend_package_is_ready():

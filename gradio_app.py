@@ -25,7 +25,14 @@ import httpx
 import requests
 import uvicorn
 import websocket
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import (
     FileResponse,
     PlainTextResponse,
@@ -68,6 +75,15 @@ def _detect_comfy_dir() -> Path:
 
 COMFY_URL = os.getenv("COMFY_URL", "http://127.0.0.1:8188").rstrip("/")
 COMFY_PROXY_PATH = "/comfyui"
+# Modal supports RFC 6455 WebSockets but deliberately does not support the
+# RFC 7692 permessage-deflate extension. Uvicorn enables that extension by
+# default, which makes Modal close the connection as soon as ComfyUI sends its
+# initial status frame. Keep the transport deterministic on Modal and local
+# standalone servers by using the dependency we install and disabling RFC 7692.
+UVICORN_WEBSOCKET_OPTIONS = {
+    "ws": "wsproto",
+    "ws_per_message_deflate": False,
+}
 COMFY_DIR = _detect_comfy_dir()
 INPUT_DIR = COMFY_DIR / "input"
 OUTPUT_DIR = COMFY_DIR / "output"
@@ -443,7 +459,7 @@ def _comfy_upstream_path(path: str, raw_path: bytes | None) -> str:
 async def _close_websocket(socket: WebSocket, code: int = 1000) -> None:
     try:
         await socket.close(code=code)
-    except RuntimeError:
+    except (RuntimeError, WebSocketDisconnect):
         # The browser may already have completed its side of the close handshake.
         pass
 
@@ -674,8 +690,15 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
                     await socket.accept(subprotocol=upstream.protocol or None)
                     await _relay_comfy_websocket(socket, upstream)
                     await _close_websocket(socket, upstream.close_code or 1000)
+        except WebSocketDisconnect:
+            # The browser or an outer deployment proxy completed the close.
+            return
         except Exception as exc:
-            print(f"[h3-ui] ComfyUI websocket proxy error: {exc}", flush=True)
+            print(
+                "[h3-ui] ComfyUI websocket proxy error: "
+                f"{type(exc).__name__}: {exc!r}",
+                flush=True,
+            )
             await _close_websocket(socket, code=1011)
 
     return gr.mount_gradio_app(
@@ -5632,6 +5655,10 @@ def selftest() -> None:
         node["class_type"] == "LTXVCropGuides" for node in ltx25_upscale_nodes
     )
     assert COMFY_UPSCALE_OPTIONS == {SEEDVR2_UPSCALE, LTX25_UPSCALE}
+    assert UVICORN_WEBSOCKET_OPTIONS == {
+        "ws": "wsproto",
+        "ws_per_message_deflate": False,
+    }
     assert POSTPROCESS_OPTIONS == [
         SEEDVR2_UPSCALE, LTX25_UPSCALE, "48 fps interpolation"
     ]
@@ -6232,6 +6259,7 @@ def main() -> None:
         host=os.getenv("GRADIO_SERVER_NAME", "0.0.0.0"),
         port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
         log_level="info",
+        **UVICORN_WEBSOCKET_OPTIONS,
     )
 
 
