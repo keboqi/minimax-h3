@@ -59,6 +59,7 @@ def run(
     *args,
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
+    timeout: float | None = None,
 ) -> None:
     print("[h3-setup]", *args, flush=True)
     subprocess.run(
@@ -66,6 +67,7 @@ def run(
         cwd=str(cwd) if cwd else None,
         env=env,
         check=True,
+        timeout=timeout,
     )
 
 
@@ -119,13 +121,17 @@ def uv_pip(
 
 def _fresh_git_checkout(url: str, dest: Path, ref: str | None) -> None:
     """Create a complete checkout without reusing destination Git metadata."""
-    run("git", "init", dest)
-    run("git", "-C", dest, "remote", "add", "origin", url)
+    run("git", "init", dest, timeout=30)
+    run("git", "-C", dest, "remote", "add", "origin", url, timeout=30)
     run(
         "git", "-C", dest, "fetch", "--depth", "1",
         "origin", ref or "HEAD",
+        timeout=300,
     )
-    run("git", "-C", dest, "checkout", "--detach", "FETCH_HEAD")
+    run(
+        "git", "-C", dest, "checkout", "--detach", "FETCH_HEAD",
+        timeout=120,
+    )
 
 
 def _remove_tree(path: Path) -> None:
@@ -148,6 +154,11 @@ def _git_worktree_is_valid(dest: Path) -> bool:
     return probe.returncode == 0 and probe.stdout.strip() == "true"
 
 
+def _requires_staged_git_update(dest: Path) -> bool:
+    """Teamspace mounts can block indefinitely during in-place Git resets."""
+    return dest.as_posix().startswith("/teamspace/")
+
+
 def _restore_tracked_files(
     url: str,
     dest: Path,
@@ -159,9 +170,8 @@ def _restore_tracked_files(
     )
     try:
         _fresh_git_checkout(url, staging, ref)
-        has_git_metadata = _git_worktree_is_valid(dest)
         git_metadata = dest / ".git"
-        if not has_git_metadata and git_metadata.exists():
+        if git_metadata.exists() or git_metadata.is_symlink():
             if git_metadata.is_dir() and not git_metadata.is_symlink():
                 _remove_tree(git_metadata)
             else:
@@ -171,17 +181,7 @@ def _restore_tracked_files(
             dest,
             dirs_exist_ok=True,
             symlinks=True,
-            ignore=(
-                shutil.ignore_patterns(".git")
-                if has_git_metadata
-                else None
-            ),
         )
-        if has_git_metadata:
-            # Replace the stale sparse/skip-worktree index with the complete
-            # index produced by the isolated checkout. HEAD already points at
-            # the same fetched revision from the normal update above.
-            shutil.copy2(staging / ".git" / "index", dest / ".git" / "index")
     finally:
         try:
             _remove_tree(staging)
@@ -208,18 +208,55 @@ def sync_git_repo(
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     fetch_ref = ref or "HEAD"
-    if _git_worktree_is_valid(dest):
-        run("git", "-C", dest, "remote", "set-url", "origin", url)
-        run(
-            "git", "-C", dest, "fetch", "--depth", "1",
-            "origin", fetch_ref,
+    valid_worktree = _git_worktree_is_valid(dest)
+    if valid_worktree and _requires_staged_git_update(dest):
+        print(
+            f"[h3-setup] Using staged Git update for mounted checkout "
+            f"{dest.name}",
+            flush=True,
         )
-        # Clear sparse configuration before resetting. Stale skip-worktree
-        # index entries are handled by required-path recovery below.
-        run("git", "-C", dest, "sparse-checkout", "disable")
-        run("git", "-C", dest, "reset", "--hard", "FETCH_HEAD")
-        if clean_untracked:
-            run("git", "-C", dest, "clean", "-ffd")
+        _restore_tracked_files(url, dest, ref)
+    elif valid_worktree:
+        try:
+            run(
+                "git", "-C", dest, "remote", "set-url", "origin", url,
+                timeout=30,
+            )
+            run(
+                "git", "-C", dest, "fetch", "--depth", "1",
+                "origin", fetch_ref,
+                timeout=300,
+            )
+            # Mounted worktrees can have stale sparse/index metadata. Bound
+            # both operations so network filesystems cannot block setup.
+            run(
+                "git", "-C", dest, "sparse-checkout", "disable",
+                timeout=60,
+            )
+            run(
+                "git", "-C", dest, "reset", "--hard", "FETCH_HEAD",
+                timeout=90,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            print(
+                f"[h3-setup] In-place Git update failed for {dest.name} "
+                f"({exc}); rebuilding its checkout metadata",
+                flush=True,
+            )
+            _restore_tracked_files(url, dest, ref)
+        else:
+            if clean_untracked:
+                try:
+                    run("git", "-C", dest, "clean", "-ffd", timeout=90)
+                except (
+                    subprocess.CalledProcessError,
+                    subprocess.TimeoutExpired,
+                ) as exc:
+                    print(
+                        f"[h3-setup] WARNING: could not clean untracked "
+                        f"files in {dest.name}: {exc}",
+                        flush=True,
+                    )
     else:
         if dest.exists():
             _restore_tracked_files(url, dest, ref)
