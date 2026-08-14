@@ -131,6 +131,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
         "LightX2V Turbo 4-step v1.0 · official 768p ComfyUI BF16",
     ),
+    "turbo_ref_lora": ModelSpec(
+        TURBO_REPO,
+        "loras",
+        "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+        "LightX2V Ref2V Turbo 4-step v0.1 · official ComfyUI BF16",
+    ),
     "turbo_8step_lora": ModelSpec(
         TURBO_REPO,
         "loras",
@@ -606,6 +612,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     video_vae_int8 = MODEL_SPECS["video_vae_int8"]
     audio_vae = MODEL_SPECS["audio_vae"]
     turbo_lora = MODEL_SPECS["turbo_lora"]
+    turbo_ref_lora = MODEL_SPECS["turbo_ref_lora"]
     turbo_8step_lora = MODEL_SPECS["turbo_8step_lora"]
     larry_turbo_lora = MODEL_SPECS["larry_turbo_lora"]
     seedvr2_vae = MODEL_SPECS["seedvr2_vae"]
@@ -628,10 +635,8 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         "audio_vae": audio_vae.local_name,
         "turbo_lora": turbo_lora.local_name,
         "turbo_source": turbo_lora.source,
-        # The current LightX2V file is shared temporarily. Keeping a distinct
-        # config key makes a future Ref2VA-specific Turbo asset a data-only swap.
-        "turbo_ref_lora": turbo_lora.local_name,
-        "turbo_ref_source": turbo_lora.source,
+        "turbo_ref_lora": turbo_ref_lora.local_name,
+        "turbo_ref_source": turbo_ref_lora.source,
         "turbo_8step_lora": turbo_8step_lora.local_name,
         "turbo_8step_source": turbo_8step_lora.source,
         "turbo_8step_ref_lora": turbo_8step_lora.local_name,
@@ -788,6 +793,7 @@ def validate_config_files(
         ("vae", config.get("video_vae")),
         ("vae", config.get("audio_vae")),
         ("loras", config.get("turbo_lora")),
+        ("loras", config.get("turbo_ref_lora")),
         ("loras", config.get("turbo_8step_lora")),
         ("loras", config.get("larry_turbo_lora")),
     ]
@@ -840,6 +846,7 @@ def selftest() -> None:
         "video_vae_int8",
         "audio_vae",
         "turbo_lora",
+        "turbo_ref_lora",
         "turbo_8step_lora",
         "larry_turbo_lora",
         "seedvr2_3b_nvfp4",
@@ -886,10 +893,14 @@ def selftest() -> None:
     )
     assert "video_vae_int8" not in PRELOAD_MODEL_KEYS
     assert cfg["turbo_lora"] == "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"
-    assert cfg["turbo_ref_lora"] == cfg["turbo_lora"]
+    assert cfg["turbo_ref_lora"] == (
+        "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
+    )
     assert cfg["turbo_8step_lora"] == "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"
     assert cfg["turbo_8step_ref_lora"] == cfg["turbo_8step_lora"]
-    assert {"turbo_lora", "turbo_8step_lora"}.issubset(PRELOAD_MODEL_KEYS)
+    assert {"turbo_lora", "turbo_ref_lora", "turbo_8step_lora"}.issubset(
+        PRELOAD_MODEL_KEYS
+    )
     assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"
     assert cfg["larry_turbo_ref_lora"] == cfg["larry_turbo_lora"]
     assert cfg["seedvr2_dit"] == "seedvr2_7b_nvfp4.safetensors"

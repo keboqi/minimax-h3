@@ -237,8 +237,9 @@ tables.
 runtime fixes that have already been validated in production-style testing:
 
 - Turbo is independent from the Speed, Quality, or Original base profile.
-- Reference Turbo temporarily reuses the selected FL2VA LoRA through separate
-  LightX2V and Larry Ref2VA configuration keys.
+- Four-step LightX2V Reference Turbo uses its dedicated Ref2V adapter. Eight-step
+  LightX2V and Larry temporarily reuse their FL2VA LoRAs through separate Ref2VA
+  configuration keys.
 - Turbo mode/variant defaults update outside the generation queue (Larry 6,
   LightX2V 4), while the resulting step control remains user-editable.
 - FirstBlockCache must precede Sol-Attn.
@@ -387,3 +388,14 @@ Primary sources:
 
 - https://github.com/Comfy-Org/ComfyUI/commit/2220d111c8b036f094eb465400fdf962626e4afa
 - https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.7
+
+## v52 dedicated LightX2V Ref2V Turbo adapter
+
+The four-step LightX2V option now routes reference-media generation to the
+official `minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors` adapter.
+The new adapter is trained for four-step 544p inference; FL2VA continues to use
+the v1.0 768p adapter. Provisioning preloads and validates both mode-specific
+files, while older generated configurations retain their existing FL2VA fallback
+through the app's compatibility loader. No dedicated Ref2V files are currently
+published for LightX2V eight-step or Larry Turbo, so those reference routes
+remain experimental shared-LoRA paths.

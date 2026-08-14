@@ -108,7 +108,7 @@ DEFAULT_FBCACHE_END = 0.95
 DEFAULT_FBCACHE_MAX_HITS = 2
 DEFAULT_FBCACHE_TEMPORAL_GUARD = True
 DEFAULT_ACCELERATOR = "Spectrum"
-LIGHTX2V_4STEP_TURBO = "LightX2V v1.0 / 4-step 768p"
+LIGHTX2V_4STEP_TURBO = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
 LIGHTX2V_8STEP_TURBO = "LightX2V v1.0 / 8-step 544p"
 LARRY_TURBO = "Larry v4-600 EMA"
 DEFAULT_TURBO = LARRY_TURBO
@@ -3557,8 +3557,8 @@ def backend_status() -> str:
             )
         if models.turbo_lora:
             profile_lines.append(
-                f"**LightX2V Turbo v1.0 / 4-step 768p** · LoRA `{models.turbo_lora}` · "
-                "4-step default · strength 1.0 · FL2VA and experimental Ref2VA"
+                f"**LightX2V Turbo / 4-step** · FL2VA v1.0 `{models.turbo_lora}` · "
+                f"Ref2VA v0.1 544p `{models.turbo_ref_lora}` · strength 1.0"
             )
         if models.turbo_8step_lora:
             profile_lines.append(
@@ -5364,8 +5364,8 @@ def selftest() -> None:
         video_vae_int8_source="test",
         turbo_lora="minimax_h3_turbo_4step_ema_ckpt850.safetensors",
         turbo_source="test",
-        turbo_ref_lora="minimax_h3_turbo_4step_ema_ckpt850.safetensors",
-        turbo_ref_source="shared-fl2va-test",
+        turbo_ref_lora="minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+        turbo_ref_source="ref2v-test",
         turbo_8step_lora="minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
         turbo_8step_source="test",
         turbo_8step_ref_lora="minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
