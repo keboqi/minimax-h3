@@ -48,6 +48,7 @@ from h3_models import (
     MODEL_SPECS,
     PROFILE_LABELS,
     SEEDVR2_MODEL_CHOICES,
+    resolve_hf_token,
     stale_model_keys,
     sync_models,
 )
@@ -886,7 +887,7 @@ def ensure_profile_model(
     sync_models(
         root=COMFY_DIR / "models",
         manifest_path=manifest_path,
-        token=os.getenv("HF_TOKEN") or None,
+        token=resolve_hf_token(),
         log_prefix="[h3-on-demand]",
         model_keys=(model_key,),
         download_workers=1,
@@ -918,7 +919,7 @@ def ensure_int8_video_vae(models: ModelConfig) -> bool:
     sync_models(
         root=COMFY_DIR / "models",
         manifest_path=manifest_path,
-        token=os.getenv("HF_TOKEN") or None,
+        token=resolve_hf_token(),
         log_prefix="[h3-int8-vae-on-demand]",
         model_keys=("video_vae_int8",),
         download_workers=1,
@@ -983,11 +984,13 @@ def ensure_ltx25_models(model_choice: str = DEFAULT_LTX25_MODEL) -> bool:
     if not missing_ltx25_model_names(model_choice):
         validate_ltx25_nvfp4_header(model_choice)
         return False
-    token = os.getenv("HF_TOKEN") or None
+    token = resolve_hf_token()
     if token is None:
         raise H3Error(
-            "HF_TOKEN is not present in the running container. Attach a Modal "
-            "Secret containing HF_TOKEN to the serve function, then redeploy."
+            "No Hugging Face credential was found. On standalone, run "
+            "`hf auth login` as the same user that launches run_h3.sh, or set "
+            "HF_TOKEN. On Modal, attach a Secret containing HF_TOKEN to the "
+            "serve function and redeploy."
         )
     try:
         sync_models(
@@ -1001,7 +1004,8 @@ def ensure_ltx25_models(model_choice: str = DEFAULT_LTX25_MODEL) -> bool:
     except Exception as exc:
         raise H3Error(
             "LTX-2.5 model download failed. Accept the Lightricks/LTX-2.5 "
-            "Hugging Face license and configure HF_TOKEN, then retry. "
+            "Hugging Face license and authenticate with `hf auth login` or "
+            "HF_TOKEN, then retry. "
             f"Details: {exc}"
         ) from exc
     for key in required_keys:
@@ -1068,7 +1072,7 @@ def prepare_ltx25_official_workflow(workflow_label: str):
         sync_models(
             root=COMFY_DIR / "models",
             manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
-            token=os.getenv("HF_TOKEN") or None,
+            token=resolve_hf_token(),
             log_prefix="[ltx25-workflow-on-demand]",
             model_keys=stale,
             download_workers=min(len(stale), 4),
@@ -1090,7 +1094,8 @@ def prepare_ltx25_official_workflow(workflow_label: str):
     except Exception as exc:
         yield (
             "Error preparing official workflow models. Accept the linked "
-            "Hugging Face licenses and set HF_TOKEN, then retry. "
+            "Hugging Face licenses and authenticate with `hf auth login` or "
+            "HF_TOKEN, then retry. "
             f"Details: {exc}"
         )
 
@@ -1139,7 +1144,7 @@ def ensure_seedvr2_upscale_models(
     sync_models(
         root=COMFY_DIR / "models",
         manifest_path=manifest_path,
-        token=os.getenv("HF_TOKEN") or None,
+        token=resolve_hf_token(),
         log_prefix="[seedvr2-on-demand]",
         model_keys=tuple(key for key, _filename in assets),
         download_workers=len(assets),
@@ -1172,7 +1177,7 @@ def ensure_ltx25_upscale_models(
     sync_models(
         root=COMFY_DIR / "models",
         manifest_path=manifest_path,
-        token=os.getenv("HF_TOKEN") or None,
+        token=resolve_hf_token(),
         log_prefix="[ltx25-upscale-on-demand]",
         model_keys=(upscaler_key,),
         download_workers=1,
@@ -3998,7 +4003,10 @@ def generate_ltx25(
             progress(0, desc="Downloading LTX-2.5 models")
             yield None, progress_status(
                 "Downloading gated LTX-2.5 models on demand", started=started,
-                detail="Accept the Hugging Face model license and set HF_TOKEN if required.",
+                detail=(
+                    "Accept the Hugging Face model license and authenticate "
+                    "with `hf auth login` or HF_TOKEN if required."
+                ),
             )
         ensure_ltx25_models(model_choice)
 

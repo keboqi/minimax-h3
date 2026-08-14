@@ -36,6 +36,20 @@ HF_DOWNLOAD_WORKERS = 6
 MIN_VALID_MODEL_BYTES = 1024 * 1024
 
 
+def resolve_hf_token(token: str | None = None) -> str | None:
+    """Resolve an explicit/Modal token, then the active Hugging Face CLI login."""
+    configured = token or os.getenv("HF_TOKEN")
+    if configured:
+        return configured
+
+    # ``hf auth login`` persists the active token under HF_HOME. Using the Hub
+    # helper keeps standalone launches aligned with the CLI's path overrides
+    # and multi-token selection instead of assuming ~/.cache/huggingface/token.
+    from huggingface_hub import get_token
+
+    return get_token()
+
+
 @dataclass(frozen=True)
 class ModelSpec:
     repo_id: str
@@ -659,6 +673,7 @@ def sync_models(
     model_keys: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Refresh selected model files and return the complete model catalog."""
+    token = resolve_hf_token(token)
     root = Path(root)
     manifest_path = Path(manifest_path)
     manifest = read_json(
@@ -795,6 +810,16 @@ def validate_config_files(
 
 def selftest() -> None:
     import tempfile
+    from unittest.mock import patch
+
+    assert resolve_hf_token("explicit-token") == "explicit-token"
+    with patch.dict(os.environ, {"HF_TOKEN": "environment-token"}):
+        assert resolve_hf_token() == "environment-token"
+    with (
+        patch.dict(os.environ, {"HF_TOKEN": ""}),
+        patch("huggingface_hub.get_token", return_value="cli-token"),
+    ):
+        assert resolve_hf_token() == "cli-token"
 
     assert MODEL_SPECS["text_encoder"].repo_id == TEXT_ENCODER_REPO
     assert MODEL_SPECS["text_encoder"].local_name == (

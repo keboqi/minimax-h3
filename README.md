@@ -117,7 +117,9 @@ download lazily when the **LTX 2.5** tab is first used. Switching variants later
 downloads only the newly selected transformer. Accept the `Lightricks/LTX-2.5`
 Hugging Face license and, before using LTX upscaling, the separate
 [`LTX-2.5 2x pixel spatial upscaler`](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler)
-license. Set `HF_TOKEN` before the first run.
+license. For standalone use, authenticate once with `hf auth login`; the server
+automatically uses the active CLI credential. `HF_TOKEN` remains supported and
+takes priority when set, including for Modal deployment secrets.
 Image-to-video accepts a required start keyframe plus optional middle and end
 keyframes. The middle position and each keyframe's conditioning strength are
 configurable; text-to-video does not load or apply image guides.
