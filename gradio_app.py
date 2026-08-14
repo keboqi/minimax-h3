@@ -275,7 +275,7 @@ UI_DEFAULTS = {
     "steps": 6,
     "scheduler": "simple",
     "seed": -1,
-    "attention_mode": "Kitchen",
+    "attention_mode": "Sage 2",
     "sol_tau": 1.0,
     "sol_thresh_type": "diag",
     "sol_exact_mode": "exact_kv",
@@ -1476,7 +1476,7 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
             ),
             "simple",
             DEFAULT_ACCELERATOR,
-            "Kitchen",
+            "Sage 2",
         )
 
     return (
@@ -1484,7 +1484,7 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
         gr.update(value=18, interactive=True),
         "simple",
         DEFAULT_ACCELERATOR,
-        "Kitchen",
+        "Sage 2",
     )
 
 
@@ -4941,15 +4941,16 @@ def build_ui() -> gr.Blocks:
                         value=defaults["seed"], precision=0, label="Seed (-1 random)"
                     )
                 attention_mode = gr.Radio(
-                    ["Kitchen", "Sage 2", "Sol-Attn", "Auto"],
+                    ["Sage 2", "Kitchen", "Sol-Attn", "Auto"],
                     value=defaults["attention_mode"],
                     label="Attention",
                     interactive=SERVER_ATTENTION_BACKEND == "sol",
                     info=(
                         f"Auto enables Sol-Attn for Reference mode or when estimated "
                         f"packed target tokens reach {AUTO_SOL_TOKEN_THRESHOLD:,}; "
-                        "smaller jobs use Kitchen. Sage 2 applies the pinned KJNodes "
-                        "model override for direct same-workflow comparisons. Sol "
+                        "Sage 2 is the measured-fastest default and applies the pinned "
+                        "KJNodes model override. Kitchen selects the global ComfyUI "
+                        "backend. Auto uses Kitchen for smaller jobs. Sol "
                         f"dense/fallback calls use {SERVER_DENSE_ATTENTION_BACKEND}."
                     ),
                 )
@@ -6546,21 +6547,21 @@ def selftest() -> None:
     turbo_defaults = generation_mode_defaults("Turbo", LARRY_TURBO)
     assert turbo_defaults[1]["value"] == 6
     assert turbo_defaults[1]["interactive"] is True
-    assert turbo_defaults[2:] == ("simple", "Spectrum", "Kitchen")
+    assert turbo_defaults[2:] == ("simple", "Spectrum", "Sage 2")
     lightx_defaults = generation_mode_defaults("Turbo", LIGHTX2V_4STEP_TURBO)
     assert lightx_defaults[1]["value"] == 4
     assert lightx_defaults[1]["interactive"] is True
-    assert lightx_defaults[2:] == ("simple", "Spectrum", "Kitchen")
+    assert lightx_defaults[2:] == ("simple", "Spectrum", "Sage 2")
     lightx_8step_defaults = generation_mode_defaults(
         "Turbo", LIGHTX2V_8STEP_TURBO
     )
     assert lightx_8step_defaults[1]["value"] == 8
     assert lightx_8step_defaults[1]["interactive"] is True
-    assert lightx_8step_defaults[2:] == ("simple", "Spectrum", "Kitchen")
+    assert lightx_8step_defaults[2:] == ("simple", "Spectrum", "Sage 2")
     normal_defaults = generation_mode_defaults("Normal")
     assert normal_defaults[1]["value"] == 18
     assert normal_defaults[1]["interactive"] is True
-    assert normal_defaults[2:] == ("simple", "Spectrum", "Kitchen")
+    assert normal_defaults[2:] == ("simple", "Spectrum", "Sage 2")
     assert resolve_cache_policy("Off", use_turbo=True) == ("Off", None)
     turbo_spectrum, turbo_spectrum_note = resolve_cache_policy(
         "Spectrum", use_turbo=True

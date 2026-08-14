@@ -19,8 +19,8 @@ FirstBlockCache node.
 - Per-video SeedVR2 or LTX-2.5 IC-LoRA 2x upscale and frame interpolation
 - Selectable Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
   including the dedicated Ref2V 4-step adapter
-- Comfy Kitchen attention as the default backend, with selectable SageAttention
-  2 comparison and optional H3-native zero-copy Sol v0.6.1 sparse attention
+- SageAttention 2 as the measured-fastest H3 default, with selectable Comfy
+  Kitchen comparison and optional H3-native zero-copy Sol v0.6.1 sparse attention
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Optional experimental INT8 ConvRot video VAE, lazy-downloaded on first use
@@ -66,10 +66,10 @@ choices. Turbo defaults to Spectrum through the reviewed Larry Turbo and
 RES multistep sampler paths. EasyCache is also available as an experimental,
 default-off Turbo option after ComfyUI's H3 audio-carry fix. FirstBlockCache is
 also available as a default-off experimental Turbo option. Attention defaults
-to Kitchen. Sage 2 applies KJNodes' per-model Sage override so it can be compared
-without restarting the service. Sol remains available as an explicit option;
-Auto can still route jobs at or above 8K estimated packed tokens (and
-reference-media jobs) through Sol.
+to Sage 2 through KJNodes' per-model override. Kitchen remains ComfyUI's global
+backend and a selectable comparison/fallback. Sol remains available as an
+explicit option; Auto can still route jobs at or above 8K estimated packed
+tokens (and reference-media jobs) through Sol.
 Spectrum exposes one continuous capture-and-replay progress range to ComfyUI,
 so the Gradio live progress stream remains active during both passes.
 
