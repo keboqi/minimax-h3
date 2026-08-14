@@ -131,8 +131,11 @@ Modal re-synchronizes these image-local templates from the pinned LTXVideo node
 on every cold start before launching ComfyUI.
 Its open **Official workflows and model downloads** panel shows live model
 availability and Hugging Face source/license links. It can download every model
-for the selected workflow or all five IC-LoRAs at once. The official LTX 2.5
-templates intentionally reuse LTX 2.3 IC-LoRAs; this is not a version mismatch.
+for the selected workflow or every missing model in the displayed inventory at
+once. The official LTX 2.5 templates intentionally reuse LTX 2.3 IC-LoRAs; this
+is not a version mismatch. Each IC-LoRA repository may require its own Hugging
+Face license acceptance; accepting the main LTX-2.5 license does not grant
+access to all of them.
 Later runs check remote metadata for the preloaded set and refresh only stale
 files; lazy checkpoints remain local and are fetched again if missing or incomplete.
 On Debian/Ubuntu standalone hosts, `run_h3.sh` also installs the `ffmpeg` system

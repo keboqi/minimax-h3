@@ -719,7 +719,7 @@ def sync_models(
 
     stale = [plan for plan in plans if plan["needs_download"]]
     downloaded_keys: set[str] = set()
-    download_failure: RuntimeError | None = None
+    download_failures: list[tuple[str, Exception]] = []
     if stale:
         workers = max(1, min(download_workers, len(stale)))
         print(
@@ -737,11 +737,7 @@ def sync_models(
                 try:
                     downloaded_keys.add(future.result())
                 except Exception as exc:
-                    if download_failure is None:
-                        download_failure = RuntimeError(
-                            f"Parallel download failed for {plan['key']}: {exc}"
-                        )
-                        download_failure.__cause__ = exc
+                    download_failures.append((plan["key"], exc))
 
     files_manifest = manifest.setdefault("files", {})
     for plan in plans:
@@ -775,8 +771,14 @@ def sync_models(
     manifest["checked_at_unix"] = int(time.time())
     write_json_atomic(manifest_path, manifest)
 
-    if download_failure is not None:
-        raise download_failure
+    if download_failures:
+        details = "; ".join(
+            f"{key} ({MODEL_SPECS[key].repo_id}): {exc}"
+            for key, exc in download_failures
+        )
+        raise RuntimeError(
+            f"{len(download_failures)} model download(s) failed: {details}"
+        ) from download_failures[0][1]
 
     return _build_config(manifest_path.name)
 

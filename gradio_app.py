@@ -1154,11 +1154,11 @@ def prepare_ltx25_official_workflow(workflow_label: str):
     )
 
 
-def prepare_all_ltx25_icloras():
-    """Download every IC-LoRA referenced across the official workflow set."""
+def prepare_all_ltx25_official_models():
+    """Download every missing model displayed in the official inventory."""
     yield from _prepare_ltx25_model_set(
-        LTX25_ICLORA_MODEL_KEYS,
-        "all five official IC-LoRAs",
+        ltx25_official_inventory_keys(),
+        "all official workflow models",
     )
 
 
@@ -4832,7 +4832,10 @@ def build_ui() -> gr.Blocks:
                     "and pose/depth/canny control. **ComfyUI does not download "
                     "missing dropdown models automatically.** Use the buttons "
                     "below first. The official LTX 2.5 templates reuse LTX 2.3 "
-                    "IC-LoRAs, so those filenames are expected."
+                    "IC-LoRAs, so those filenames are expected. Each linked "
+                    "Hugging Face repository can require separate license "
+                    "acceptance; access to the main LTX-2.5 repository does "
+                    "not grant access to every IC-LoRA."
                 )
                 with gr.Row():
                     ltx25_workflow = gr.Dropdown(
@@ -4847,8 +4850,8 @@ def build_ui() -> gr.Blocks:
                         scale=1,
                     )
                 with gr.Row():
-                    ltx25_prepare_icloras = gr.Button(
-                        "Download all 5 IC-LoRAs",
+                    ltx25_prepare_all_models = gr.Button(
+                        "Download all missing models",
                         variant="secondary",
                     )
                     ltx25_refresh_models = gr.Button(
@@ -5013,8 +5016,8 @@ def build_ui() -> gr.Blocks:
             outputs=[ltx25_workflow_status, ltx25_model_inventory],
             show_progress="minimal",
         )
-        ltx25_prepare_icloras.click(
-            prepare_all_ltx25_icloras,
+        ltx25_prepare_all_models.click(
+            prepare_all_ltx25_official_models,
             outputs=[ltx25_workflow_status, ltx25_model_inventory],
             show_progress="minimal",
         )
