@@ -222,8 +222,9 @@ The deployment attaches the `custom-secret` Modal Secret to both runtime
 functions and requires it to contain `HF_TOKEN`. If your existing secret uses a
 different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`.
 
-The deployment pins the immutable ComfyUI v0.33.0 release, which includes
-native MiniMax Music 3, LTX 2.5 NVFP4 support, and Comfy Kitchen attention.
+The deployment pins the immutable ComfyUI v0.33.1 release, which includes
+native MiniMax Music 3, its non-dynamic-VRAM fix, LTX 2.5 NVFP4 support, and
+Comfy Kitchen attention.
 Changing that pin invalidates the Modal image cache so ComfyUI and its matching
 `comfy-kitchen` dependency are rebuilt together.
 
