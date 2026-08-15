@@ -2695,7 +2695,7 @@ def required_music3_nodes(tiled_decode: bool) -> set[str]:
         "UNETLoader", "CLIPLoader", "VAELoader",
         "MiniMaxMusic3TextEncode", "ConditioningZeroOut",
         "EmptyMiniMaxMusic3LatentAudio", "KSampler",
-        "SaveAudioAdvanced",
+        "SaveAudioMP3",
     }
     nodes.add("VAEDecodeAudioTiled" if tiled_decode else "VAEDecodeAudio")
     return nodes
@@ -2752,12 +2752,12 @@ def build_music3_graph(
         decode_inputs.update(tile_size=1536, overlap=64)
     audio = graph.add(decoder, **decode_inputs)
     graph.add(
-        "SaveAudioAdvanced", audio=Graph.out(audio),
+        # SaveAudioAdvanced's DynamicCombo currently validates through the API
+        # but its normalized execution path drops ``format``. The dedicated
+        # MP3 node has a stable flat schema and produces the same V0 output.
+        "SaveAudioMP3", audio=Graph.out(audio),
         filename_prefix="audio/minimax_music3",
-        # SaveAudioAdvanced receives its DynamicCombo selection and dependent
-        # fields as one nested value. Supplying quality beside format makes
-        # ComfyUI expand the MP3 schema but then discard the sibling field.
-        format={"format": "mp3", "quality": "V0"},
+        quality="V0",
     )
     return graph.nodes
 
@@ -6172,13 +6172,10 @@ def selftest() -> None:
     assert music_encode["inputs"]["top_k"] == 50
     music_save = next(
         node for node in music_graph.values()
-        if node["class_type"] == "SaveAudioAdvanced"
+        if node["class_type"] == "SaveAudioMP3"
     )
-    assert music_save["inputs"]["format"] == {
-        "format": "mp3",
-        "quality": "V0",
-    }
-    assert "quality" not in music_save["inputs"]
+    assert music_save["inputs"]["quality"] == "V0"
+    assert "format" not in music_save["inputs"]
     rewritten_html = _rewrite_comfy_text(
         (
             '<html><head></head><body><script src="/assets/app.js">'
