@@ -9,6 +9,7 @@ FirstBlockCache node.
 
 - Text/image-to-video and reference-media-to-video workflows
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
+- A dedicated MiniMax Music 3 tab for caption-and-lyrics song generation
 - All nine official LTX-2.5 ComfyUI workflows for two-stage generation,
   text-to-audio, video editing, reference sheets, motion tracks,
   in/outpainting, and pose/depth/canny control
@@ -139,6 +140,10 @@ once. The official LTX 2.5 templates intentionally reuse LTX 2.3 IC-LoRAs; this
 is not a version mismatch. Each IC-LoRA repository may require its own Hugging
 Face license acceptance; accepting the main LTX-2.5 license does not grant
 access to all of them.
+The **MiniMax Music 3** tab uses the same ComfyUI queue and downloads its selected
+INT8 ConvRot or FP16 DiT plus the shared autoregressive encoder and audio decoder
+on first use. It supports tagged song sections and a maximum duration of five
+minutes, with tiled audio decoding enabled by default for lower peak VRAM.
 Later runs check remote metadata for the preloaded set and refresh only stale
 files; lazy checkpoints remain local and are fetched again if missing or incomplete.
 On Debian/Ubuntu standalone hosts, `run_h3.sh` also installs the `ffmpeg` system
@@ -217,8 +222,8 @@ The deployment attaches the `custom-secret` Modal Secret to both runtime
 functions and requires it to contain `HF_TOKEN`. If your existing secret uses a
 different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`.
 
-The deployment pins the immutable ComfyUI v0.32.0 release, which includes
-native LTX 2.5 NVFP4 support and Comfy Kitchen attention.
+The deployment pins the immutable ComfyUI v0.33.0 release, which includes
+native MiniMax Music 3, LTX 2.5 NVFP4 support, and Comfy Kitchen attention.
 Changing that pin invalidates the Modal image cache so ComfyUI and its matching
 `comfy-kitchen` dependency are rebuilt together.
 

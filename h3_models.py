@@ -30,6 +30,7 @@ LTX25_PIXEL_UPSCALER_REPO = (
     "Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler"
 )
 LTX23_REPO = "Lightricks/LTX-2.3"
+MINIMAX_MUSIC3_REPO = "Comfy-Org/MiniMax-Music-3"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -273,6 +274,30 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "ltx-2.3-22b-ic-lora-instant-shave-0.9.safetensors",
         "LTX IC-LoRA instant-shave video edit",
     ),
+    "music3_dit_int8": ModelSpec(
+        MINIMAX_MUSIC3_REPO,
+        "diffusion_models",
+        "diffusion_models/minimax_music3_dit_int8_convrot.safetensors",
+        "MiniMax Music 3 DiT INT8 ConvRot; low-VRAM lazy model",
+    ),
+    "music3_dit_fp16": ModelSpec(
+        MINIMAX_MUSIC3_REPO,
+        "diffusion_models",
+        "diffusion_models/minimax_music3_dit_fp16.safetensors",
+        "MiniMax Music 3 DiT FP16; highest-quality lazy model",
+    ),
+    "music3_text_encoder": ModelSpec(
+        MINIMAX_MUSIC3_REPO,
+        "text_encoders",
+        "text_encoders/minimax_music3_text_encoder_pruned_int8_convrot.safetensors",
+        "MiniMax Music 3 pruned INT8 ConvRot autoregressive text encoder",
+    ),
+    "music3_vae": ModelSpec(
+        MINIMAX_MUSIC3_REPO,
+        "vae",
+        "vae/minimax_music3_dav.safetensors",
+        "MiniMax Music 3 stereo audio decoder",
+    ),
 }
 
 PROFILE_MODEL_KEYS = {
@@ -332,11 +357,19 @@ LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS = (
     "ltx25_spatial_upscaler",
     *LTX25_ICLORA_MODEL_KEYS,
 )
+MUSIC3_MODEL_CHOICES = {
+    "INT8 ConvRot (lower VRAM)": "music3_dit_int8",
+    "FP16": "music3_dit_fp16",
+}
+DEFAULT_MUSIC3_MODEL = "INT8 ConvRot (lower VRAM)"
+MUSIC3_SHARED_MODEL_KEYS = ("music3_text_encoder", "music3_vae")
+MUSIC3_MODEL_KEYS = (*MUSIC3_MODEL_CHOICES.values(), *MUSIC3_SHARED_MODEL_KEYS)
 LAZY_OPTIONAL_MODEL_KEYS = (
     "video_vae_int8",
     *LAZY_POSTPROCESS_MODEL_KEYS,
     *LTX25_MODEL_KEYS,
     *LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS,
+    *MUSIC3_MODEL_KEYS,
 )
 SHARED_MODEL_KEYS = tuple(
     key for key in MODEL_SPECS
@@ -871,6 +904,10 @@ def selftest() -> None:
         "ltx25_iclora_motion_track",
         "ltx25_iclora_union_control",
         "ltx25_iclora_instant_shave",
+        "music3_dit_int8",
+        "music3_dit_fp16",
+        "music3_text_encoder",
+        "music3_vae",
     }
 
     cfg = _build_config("manifest.json")
@@ -958,6 +995,8 @@ def selftest() -> None:
         manifest["files"][model_manifest_key(nvfp4)]["size"] += 1
         assert not model_file_matches_manifest(root, manifest, nvfp4)
     assert set(LTX25_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
+    assert set(MUSIC3_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
+    assert DEFAULT_MUSIC3_MODEL == "INT8 ConvRot (lower VRAM)"
     assert len(LTX25_ICLORA_MODEL_KEYS) == 5
     assert all(MODEL_SPECS[key].folder == "loras" for key in LTX25_ICLORA_MODEL_KEYS)
     assert set(LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS).isdisjoint(

@@ -41,6 +41,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from h3_models import (
+    DEFAULT_MUSIC3_MODEL,
     DEFAULT_LTX25_MODEL,
     DEFAULT_SEEDVR2_MODEL,
     LTX25_MODEL_CHOICES,
@@ -48,6 +49,8 @@ from h3_models import (
     LTX25_SHARED_MODEL_KEYS,
     MIN_VALID_MODEL_BYTES,
     MODEL_SPECS,
+    MUSIC3_MODEL_CHOICES,
+    MUSIC3_SHARED_MODEL_KEYS,
     PROFILE_LABELS,
     SEEDVR2_MODEL_CHOICES,
     resolve_hf_token,
@@ -128,6 +131,16 @@ LTX25_DEFAULTS = {
     "middle_time": 2.5,
     "middle_strength": 0.7,
     "end_strength": 0.7,
+}
+MUSIC3_DEFAULTS = {
+    "model": DEFAULT_MUSIC3_MODEL,
+    "duration": 120,
+    "seed": -1,
+    "steps": 30,
+    "cfg": 1.7,
+    "ar_cfg": 1.7,
+    "top_k": 50,
+    "tiled_decode": True,
 }
 LTX25_WORKFLOW_TEMPLATE_DIR = (
     COMFY_DIR / "user" / "default" / "workflows" / "LTX 2.5"
@@ -381,6 +394,7 @@ OUTPUTS_DIR = Path(os.getenv("GRADIO_OUTPUT_DIR", COMFY_DIR.parent / "gradio_out
 GALLERY_THUMBNAILS_DIR = OUTPUTS_DIR / ".gallery_thumbnails"
 GALLERY_LIMIT = max(1, int(os.getenv("GRADIO_GALLERY_LIMIT", "200")))
 VIDEO_EXTENSIONS = frozenset({".mp4", ".webm", ".mov", ".mkv", ".gif"})
+AUDIO_EXTENSIONS = frozenset({".mp3", ".wav", ".flac", ".ogg", ".m4a"})
 GALLERY_METADATA_CACHE_LIMIT = max(
     GALLERY_LIMIT,
     int(os.getenv("GRADIO_GALLERY_METADATA_CACHE_LIMIT", "512")),
@@ -1263,6 +1277,44 @@ def ensure_ltx25_upscale_models(
         raise H3Error(
             f"On-demand LTX-2.5 upscaler download did not produce {spec.local_name}."
         )
+    return True
+
+
+def music3_model_keys(model_choice: str) -> tuple[str, ...]:
+    choice = str(model_choice)
+    if choice not in MUSIC3_MODEL_CHOICES:
+        raise H3Error(f"Unknown MiniMax Music 3 model: {model_choice}")
+    return (MUSIC3_MODEL_CHOICES[choice], *MUSIC3_SHARED_MODEL_KEYS)
+
+
+def missing_music3_model_names(model_choice: str) -> list[str]:
+    missing = stale_model_keys(
+        root=COMFY_DIR / "models",
+        manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
+        model_keys=music3_model_keys(model_choice),
+    )
+    return [MODEL_SPECS[key].local_name for key in missing]
+
+
+def ensure_music3_models(model_choice: str) -> bool:
+    """Lazily install the selected Music 3 DiT and its shared model files."""
+    keys = music3_model_keys(model_choice)
+    manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
+    missing = stale_model_keys(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        model_keys=keys,
+    )
+    if not missing:
+        return False
+    sync_models(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        token=resolve_hf_token(),
+        log_prefix="[music3-on-demand]",
+        model_keys=keys,
+        download_workers=len(keys),
+    )
     return True
 
 
@@ -2638,6 +2690,74 @@ def build_upscale_graph(
     raise H3Error(f"Unknown AI post-processing method: {option}")
 
 
+def required_music3_nodes(tiled_decode: bool) -> set[str]:
+    nodes = {
+        "UNETLoader", "CLIPLoader", "VAELoader",
+        "MiniMaxMusic3TextEncode", "ConditioningZeroOut",
+        "EmptyMiniMaxMusic3LatentAudio", "KSampler",
+        "SaveAudioAdvanced",
+    }
+    nodes.add("VAEDecodeAudioTiled" if tiled_decode else "VAEDecodeAudio")
+    return nodes
+
+
+def build_music3_graph(
+    *,
+    model_choice: str,
+    caption: str,
+    lyrics: str,
+    max_duration: float,
+    seed: int,
+    steps: int,
+    cfg: float,
+    ar_cfg: float,
+    top_k: int,
+    tiled_decode: bool,
+) -> dict[str, Any]:
+    """Build the official native ComfyUI MiniMax Music 3 workflow."""
+    graph = Graph()
+    dit = MODEL_SPECS[MUSIC3_MODEL_CHOICES[str(model_choice)]].local_name
+    text_encoder = MODEL_SPECS["music3_text_encoder"].local_name
+    vae_name = MODEL_SPECS["music3_vae"].local_name
+    model = graph.add("UNETLoader", unet_name=dit, weight_dtype="default")
+    clip = graph.add(
+        "CLIPLoader", clip_name=text_encoder, type="minimax", device="default"
+    )
+    vae = graph.add("VAELoader", vae_name=vae_name)
+    conditioning = graph.add(
+        "MiniMaxMusic3TextEncode",
+        clip=Graph.out(clip), caption=str(caption), lyrics=str(lyrics),
+        seed=int(seed), max_duration=float(max_duration),
+        cfg_scale=float(ar_cfg), top_k=int(top_k),
+    )
+    negative = graph.add(
+        "ConditioningZeroOut", conditioning=Graph.out(conditioning)
+    )
+    latent = graph.add(
+        "EmptyMiniMaxMusic3LatentAudio",
+        seconds=Graph.out(conditioning, 1), batch_size=1,
+    )
+    sampled = graph.add(
+        "KSampler",
+        model=Graph.out(model), positive=Graph.out(conditioning),
+        negative=Graph.out(negative), latent_image=Graph.out(latent),
+        seed=int(seed), steps=int(steps), cfg=float(cfg),
+        sampler_name="euler", scheduler="simple", denoise=1.0,
+    )
+    decoder = "VAEDecodeAudioTiled" if tiled_decode else "VAEDecodeAudio"
+    decode_inputs: dict[str, Any] = {
+        "samples": Graph.out(sampled), "vae": Graph.out(vae),
+    }
+    if tiled_decode:
+        decode_inputs.update(tile_size=1536, overlap=64)
+    audio = graph.add(decoder, **decode_inputs)
+    graph.add(
+        "SaveAudioAdvanced", audio=Graph.out(audio),
+        filename_prefix="audio/minimax_music3", format="mp3", quality="V0",
+    )
+    return graph.nodes
+
+
 def required_nodes_for(
     mode: str,
     use_sol: bool,
@@ -2719,6 +2839,10 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Removing LTX-2.5 reference tokens"
     if name in {"CLIPTextEncode", "LTXVConditioning"}:
         return "Encoding LTX-2.5 prompt"
+    if name == "MiniMaxMusic3TextEncode":
+        return "Composing song structure and acoustic conditioning"
+    if name == "EmptyMiniMaxMusic3LatentAudio":
+        return "Preparing Music 3 audio latents"
     if name in {
         "EmptyLTXVLatentVideo", "LTXVEmptyLatentAudio",
         "LTXVConcatAVLatent",
@@ -2751,6 +2875,8 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         "BasicScheduler", "ManualSigmas",
     }:
         return "Preparing sampler"
+    if name == "KSampler" and "MiniMaxMusic3TextEncode" in workflow_classes:
+        return "Generating music"
     if name == "SamplerCustomAdvanced" or "Sampler" in name:
         return "Generating video and audio"
     if name in {
@@ -2761,7 +2887,7 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
     if name == "CreateVideo":
         return "Assembling video"
     if name.startswith("Save"):
-        return "Saving video"
+        return "Saving audio" if "Audio" in name else "Saving video"
     return name
 
 
@@ -2983,6 +3109,32 @@ def resolve_output(history: dict[str, Any], queued_at: float) -> Path:
     if recent:
         return max(recent, key=lambda p: p.stat().st_mtime)
     raise H3Error("Generation completed, but no saved video could be located.")
+
+
+def resolve_audio_output(history: dict[str, Any], queued_at: float) -> Path:
+    candidates: list[Path] = []
+    output_root = OUTPUT_DIR.resolve()
+    for ref in walk_saved_refs(history.get("outputs", {})):
+        if ref["type"] != "output":
+            continue
+        path = (OUTPUT_DIR / ref["subfolder"] / ref["filename"]).resolve()
+        if (
+            path.is_relative_to(output_root)
+            and path.is_file()
+            and path.suffix.lower() in AUDIO_EXTENSIONS
+        ):
+            candidates.append(path)
+    if candidates:
+        return max(candidates, key=lambda path: path.stat().st_mtime)
+    recent = [
+        path for path in OUTPUT_DIR.rglob("*")
+        if path.is_file()
+        and path.suffix.lower() in AUDIO_EXTENSIONS
+        and path.stat().st_mtime >= queued_at - 2
+    ]
+    if recent:
+        return max(recent, key=lambda path: path.stat().st_mtime)
+    raise H3Error("Generation completed, but no saved audio could be located.")
 
 
 def has_encoder(name: str) -> bool:
@@ -4560,6 +4712,113 @@ def generate_ltx25(
                 pass
 
 
+def generate_music3(
+    model_choice: str,
+    caption: str,
+    lyrics: str,
+    max_duration: float,
+    seed: int,
+    steps: int,
+    cfg: float,
+    ar_cfg: float,
+    top_k: int,
+    tiled_decode: bool,
+    progress=gr.Progress(track_tqdm=False),
+):
+    """Run MiniMax Music 3 through the same ComfyUI queue as video jobs."""
+    started = time.monotonic()
+    queued_at = time.time()
+    ws: websocket.WebSocket | None = None
+    try:
+        yield None, progress_status("Validating Music 3 request", started=started)
+        if not str(caption).strip():
+            raise H3Error("A music caption is required.")
+        if not 1 <= float(max_duration) <= 300:
+            raise H3Error("Maximum duration must be between 1 and 300 seconds.")
+        if not 1 <= int(steps) <= 100:
+            raise H3Error("Sampling steps must be between 1 and 100.")
+        if not 0 <= float(cfg) <= 100 or not 0 <= float(ar_cfg) <= 100:
+            raise H3Error("CFG values must be between 0 and 100.")
+        if not 1 <= int(top_k) <= 8192:
+            raise H3Error("Top K must be between 1 and 8192.")
+        actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
+
+        missing_files = missing_music3_model_names(model_choice)
+        if missing_files:
+            yield None, progress_status(
+                "Downloading MiniMax Music 3 models on demand",
+                started=started,
+                detail=", ".join(missing_files),
+            )
+        ensure_music3_models(model_choice)
+        available = set(object_info())
+        missing_nodes = required_music3_nodes(bool(tiled_decode)) - available
+        if missing_nodes:
+            raise H3Error(
+                "MiniMax Music 3 requires ComfyUI 0.33.0 or newer; missing nodes: "
+                + ", ".join(sorted(missing_nodes))
+            )
+        graph = build_music3_graph(
+            model_choice=model_choice,
+            caption=str(caption).strip(),
+            lyrics=str(lyrics or "").strip(),
+            max_duration=float(max_duration),
+            seed=actual_seed,
+            steps=int(steps),
+            cfg=float(cfg),
+            ar_cfg=float(ar_cfg),
+            top_k=int(top_k),
+            tiled_decode=bool(tiled_decode),
+        )
+        client_id = str(uuid.uuid4())
+        try:
+            ws = websocket.create_connection(
+                websocket_url(client_id),
+                timeout=max(1.0, min(REQUEST_TIMEOUT, 10.0)),
+            )
+        except Exception:
+            ws = None
+        prompt_id = submit_prompt(graph, client_id)
+        yield None, (
+            f"Queued Music 3 job `{prompt_id}` · seed {actual_seed} · "
+            f"up to {float(max_duration):g}s · {model_choice}"
+        )
+        updates = (
+            stream_comfy_progress(ws, prompt_id, graph, started)
+            if ws is not None else poll_comfy_progress(prompt_id, graph)
+        )
+        for stage, completed_nodes, total_nodes, step, step_total in updates:
+            if step is not None and step_total:
+                progress((step, step_total), desc=stage)
+            elif total_nodes:
+                progress((completed_nodes, total_nodes), desc=stage)
+            yield None, progress_status(
+                stage,
+                started=started,
+                completed_nodes=completed_nodes,
+                total_nodes=total_nodes,
+                step=step,
+                step_total=step_total,
+                configured_steps=int(steps) if stage == "Generating music" else None,
+                detail=f"Music 3 job `{prompt_id}`",
+            )
+        result = resolve_audio_output(wait_for_history(prompt_id), queued_at)
+        elapsed = time.monotonic() - started
+        progress(1, desc="Complete")
+        yield str(result), (
+            f"Music 3 completed in {elapsed:.1f}s · output {result.name} · "
+            f"seed {actual_seed}"
+        )
+    except Exception as exc:
+        yield None, f"Error: {exc}"
+    finally:
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+
 def interrupt() -> str:
     try:
         api_post("/interrupt", json={})
@@ -4772,6 +5031,8 @@ def build_ui() -> gr.Blocks:
             with gr.Tab("MiniMax H3") as generate_tab:
                 gr.HTML("")
             with gr.Tab("LTX 2.5") as ltx25_tab:
+                gr.HTML("")
+            with gr.Tab("MiniMax Music 3") as music3_tab:
                 gr.HTML("")
             with gr.Tab("Gallery") as gallery_tab:
                 gr.HTML("")
@@ -5303,6 +5564,90 @@ def build_ui() -> gr.Blocks:
                     render_ltx25_official_model_inventory()
                 )
 
+        with gr.Group(visible=False) as music3_view:
+            gr.Markdown(
+                "## MiniMax Music 3\n"
+                "Generate complete stereo songs with the native workflow on the shared "
+                "ComfyUI backend. Write a detailed **caption** for style, vocals, and "
+                "arrangement, then use section tags such as `[Intro]`, `[Verse]`, "
+                "`[Chorus]`, `[Bridge]`, `[Instrumental]`, and `[Outro]` in the lyrics. "
+                "[ComfyUI guide](https://docs.comfy.org/tutorials/audio/minimax/minimax-music-3) · "
+                "[Official prompting skill](https://github.com/MiniMax-AI/MiniMax-Music3/tree/main/skills/music-caption-rewriter)"
+            )
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=3):
+                    music3_caption = gr.Textbox(
+                        label="Music caption",
+                        lines=12,
+                        placeholder=(
+                            "Global Metadata: genre, BPM, key, mood, production...\n\n"
+                            "Vocal Details: singer, delivery, harmonies, effects...\n\n"
+                            "Arrangement: instruments, groove, section-by-section evolution..."
+                        ),
+                    )
+                    music3_lyrics = gr.Textbox(
+                        label="Lyrics and song structure",
+                        lines=16,
+                        placeholder=(
+                            "[Intro]\n\n[Verse]\nWrite lyrics here...\n\n"
+                            "[Chorus]\n...\n\n[Bridge]\n...\n\n[Outro]"
+                        ),
+                        info="For an instrumental, repeat [Instrumental] sections to guide length.",
+                    )
+                with gr.Column(scale=2):
+                    music3_output = gr.Audio(
+                        label="Generated song", type="filepath"
+                    )
+                    with gr.Row():
+                        music3_run = gr.Button(
+                            "Generate with Music 3", variant="primary"
+                        )
+                        music3_stop = gr.Button("Interrupt")
+                    music3_status = gr.Textbox(label="Status", lines=7)
+                    gr.Markdown("### Generation settings")
+                    music3_model = gr.Dropdown(
+                        choices=list(MUSIC3_MODEL_CHOICES),
+                        value=MUSIC3_DEFAULTS["model"],
+                        label="Diffusion model",
+                        info="The selected DiT and shared encoder/decoder download on first use.",
+                    )
+                    with gr.Row():
+                        music3_duration = gr.Slider(
+                            1, 300, value=MUSIC3_DEFAULTS["duration"], step=1,
+                            label="Maximum seconds",
+                        )
+                        music3_seed = gr.Number(
+                            value=MUSIC3_DEFAULTS["seed"], precision=0,
+                            label="Seed (-1 random)",
+                        )
+                    music3_tiled = gr.Checkbox(
+                        value=MUSIC3_DEFAULTS["tiled_decode"],
+                        label="Tiled audio decode",
+                        info="Reduces peak VRAM for long songs; disable for fastest decode on high-VRAM GPUs.",
+                    )
+                    with gr.Accordion("Advanced sampling", open=False):
+                        music3_steps = gr.Slider(
+                            1, 100, value=MUSIC3_DEFAULTS["steps"], step=1,
+                            label="Diffusion steps",
+                        )
+                        with gr.Row():
+                            music3_cfg = gr.Slider(
+                                0, 10, value=MUSIC3_DEFAULTS["cfg"], step=0.05,
+                                label="Diffusion CFG",
+                            )
+                            music3_ar_cfg = gr.Slider(
+                                0, 10, value=MUSIC3_DEFAULTS["ar_cfg"], step=0.05,
+                                label="Autoregressive CFG",
+                            )
+                        music3_top_k = gr.Slider(
+                            1, 200, value=MUSIC3_DEFAULTS["top_k"], step=1,
+                            label="Autoregressive Top K",
+                        )
+                    gr.Markdown(
+                        "Output is saved as V0-quality MP3 under `ComfyUI/output/audio`. "
+                        "Music 3 may end a song before the maximum duration."
+                    )
+
         with gr.Group(visible=False) as gallery_view:
             with gr.Row():
                 gr.Markdown(
@@ -5626,6 +5971,24 @@ def build_ui() -> gr.Blocks:
             show_progress="minimal",
             api_name="generate_ltx25_video",
         )
+        music3_event = music3_run.click(
+            generate_music3,
+            inputs=[
+                music3_model,
+                music3_caption,
+                music3_lyrics,
+                music3_duration,
+                music3_seed,
+                music3_steps,
+                music3_cfg,
+                music3_ar_cfg,
+                music3_top_k,
+                music3_tiled,
+            ],
+            outputs=[music3_output, music3_status],
+            show_progress="minimal",
+            api_name="generate_music3",
+        )
         api_event = api_run.click(
             generate_with_ui_defaults,
             inputs=api_prompt,
@@ -5635,6 +5998,7 @@ def build_ui() -> gr.Blocks:
         )
         stop.click(interrupt, outputs=status, cancels=[event])
         ltx25_stop.click(interrupt, outputs=ltx25_status, cancels=[ltx25_event])
+        music3_stop.click(interrupt, outputs=music3_status, cancels=[music3_event])
         api_stop.click(interrupt, outputs=api_status, cancels=[api_event])
         refresh.click(backend_status, outputs=health)
         unload_models.click(
@@ -5649,8 +6013,11 @@ def build_ui() -> gr.Blocks:
                 gr.update(visible=False),
                 gr.update(visible=False),
                 gr.update(visible=False),
+                gr.update(visible=False),
             ),
-            outputs=[generation_view, ltx25_view, gallery_view, api_view],
+            outputs=[
+                generation_view, ltx25_view, music3_view, gallery_view, api_view
+            ],
         )
         ltx25_tab.select(
             lambda: (
@@ -5658,11 +6025,27 @@ def build_ui() -> gr.Blocks:
                 gr.update(visible=True),
                 gr.update(visible=False),
                 gr.update(visible=False),
+                gr.update(visible=False),
             ),
-            outputs=[generation_view, ltx25_view, gallery_view, api_view],
+            outputs=[
+                generation_view, ltx25_view, music3_view, gallery_view, api_view
+            ],
+        )
+        music3_tab.select(
+            lambda: (
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=True),
+                gr.update(visible=False),
+                gr.update(visible=False),
+            ),
+            outputs=[
+                generation_view, ltx25_view, music3_view, gallery_view, api_view
+            ],
         )
         gallery_event = gallery_tab.select(
             lambda: (
+                gr.update(visible=False),
                 gr.update(visible=False),
                 gr.update(visible=False),
                 gr.update(visible=True),
@@ -5675,6 +6058,7 @@ def build_ui() -> gr.Blocks:
             outputs=[
                 generation_view,
                 ltx25_view,
+                music3_view,
                 gallery_view,
                 api_view,
                 gallery_player,
@@ -5750,15 +6134,44 @@ def build_ui() -> gr.Blocks:
                 gr.update(visible=False),
                 gr.update(visible=False),
                 gr.update(visible=False),
+                gr.update(visible=False),
                 gr.update(visible=True),
             ),
-            outputs=[generation_view, ltx25_view, gallery_view, api_view],
+            outputs=[
+                generation_view, ltx25_view, music3_view, gallery_view, api_view
+            ],
         )
     return demo
 
 
 def selftest() -> None:
     assert MODEL_PROFILE_CHOICES == ["Speed", "Quality", "Original"]
+    music_graph = build_music3_graph(
+        model_choice=DEFAULT_MUSIC3_MODEL,
+        caption="Global Metadata: test song",
+        lyrics="[Instrumental]",
+        max_duration=30,
+        seed=7,
+        steps=30,
+        cfg=1.7,
+        ar_cfg=1.7,
+        top_k=50,
+        tiled_decode=True,
+    )
+    music_classes = graph_class_types(music_graph)
+    assert required_music3_nodes(True) == music_classes
+    music_encode = next(
+        node for node in music_graph.values()
+        if node["class_type"] == "MiniMaxMusic3TextEncode"
+    )
+    assert music_encode["inputs"]["max_duration"] == 30.0
+    assert music_encode["inputs"]["top_k"] == 50
+    music_save = next(
+        node for node in music_graph.values()
+        if node["class_type"] == "SaveAudioAdvanced"
+    )
+    assert music_save["inputs"]["format"] == "mp3"
+    assert music_save["inputs"]["quality"] == "V0"
     rewritten_html = _rewrite_comfy_text(
         (
             '<html><head></head><body><script src="/assets/app.js">'
@@ -6861,7 +7274,8 @@ def selftest() -> None:
         f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, "
         f"SaveVideo codec API valid, prompt API download URL valid, "
         f"gallery resolution/fallback/deletion guards + VRAM unload valid, "
-        f"9 official LTX-2.5 workflow mappings valid, /comfyui proxy rewrites valid"
+        f"9 official LTX-2.5 workflow mappings valid, MiniMax Music 3 graph valid, "
+        f"/comfyui proxy rewrites valid"
     )
 
 

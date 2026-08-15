@@ -22,10 +22,10 @@ SCIPY_VERSION = "1.15.3"
 # Kornia 0.8.2+ removed that module-level compatibility export.
 KORNIA_VERSION = "0.8.1"
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
-# ComfyUI v0.32.0 includes native LTX 2.5 loading and the Comfy Kitchen
-# attention backend selected by the launchers.
-COMFY_REF = "c2bcbecd82ec5ae66594340b395c24ef0217b238"
-COMFY_KITCHEN_VERSION = "0.2.30"
+# ComfyUI v0.33.0 adds native MiniMax Music 3 support while retaining LTX 2.5.
+# Keep its Comfy Kitchen dependency in lockstep for Music 3 CUDA graphs.
+COMFY_REF = "2f35f4a08176d993cded35dac3332be4f7287f41"
+COMFY_KITCHEN_VERSION = "0.2.31"
 COMFY_FRONTEND_VERSION = "1.48.7"
 WSPROTO_VERSION = "1.2.0"
 LTX25_WORKFLOW_FILENAMES = (
@@ -242,8 +242,8 @@ def selftest() -> None:
         "scipy==1.15.3",
     )
     assert KORNIA_VERSION == "0.8.1"
-    assert COMFY_REF == "c2bcbecd82ec5ae66594340b395c24ef0217b238"
-    assert COMFY_KITCHEN_VERSION == "0.2.30"
+    assert COMFY_REF == "2f35f4a08176d993cded35dac3332be4f7287f41"
+    assert COMFY_KITCHEN_VERSION == "0.2.31"
     assert COMFY_FRONTEND_VERSION == "1.48.7"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 9
