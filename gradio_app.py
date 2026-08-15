@@ -2753,7 +2753,11 @@ def build_music3_graph(
     audio = graph.add(decoder, **decode_inputs)
     graph.add(
         "SaveAudioAdvanced", audio=Graph.out(audio),
-        filename_prefix="audio/minimax_music3", format="mp3", quality="V0",
+        filename_prefix="audio/minimax_music3",
+        # SaveAudioAdvanced receives its DynamicCombo selection and dependent
+        # fields as one nested value. Supplying quality beside format makes
+        # ComfyUI expand the MP3 schema but then discard the sibling field.
+        format={"format": "mp3", "quality": "V0"},
     )
     return graph.nodes
 
@@ -6170,8 +6174,11 @@ def selftest() -> None:
         node for node in music_graph.values()
         if node["class_type"] == "SaveAudioAdvanced"
     )
-    assert music_save["inputs"]["format"] == "mp3"
-    assert music_save["inputs"]["quality"] == "V0"
+    assert music_save["inputs"]["format"] == {
+        "format": "mp3",
+        "quality": "V0",
+    }
+    assert "quality" not in music_save["inputs"]
     rewritten_html = _rewrite_comfy_text(
         (
             '<html><head></head><body><script src="/assets/app.js">'
