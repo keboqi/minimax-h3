@@ -553,6 +553,40 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
             await client.aclose()
 
     app = FastAPI(lifespan=lifespan)
+    queue_dependencies = {
+        dependency["id"]: dependency.get("api_name", "unknown")
+        for dependency in demo.get_config_file().get("dependencies", ())
+    }
+    queue_join_counts: dict[int | None, int] = {}
+
+    @app.middleware("http")
+    async def trace_gradio_queue_join(
+        request: Request,
+        call_next: Any,
+    ) -> Response:
+        """Identify the callback behind repeated Gradio queue submissions."""
+        if request.url.path.endswith("/gradio_api/queue/join"):
+            try:
+                payload = await request.json()
+                fn_index = payload.get("fn_index")
+                queue_join_counts[fn_index] = queue_join_counts.get(fn_index, 0) + 1
+                count = queue_join_counts[fn_index]
+                if count <= 5 or count % 25 == 0:
+                    print(
+                        "[h3-ui] queue/join "
+                        f"fn={fn_index} "
+                        f"api={queue_dependencies.get(fn_index, 'unknown')} "
+                        f"trigger={payload.get('trigger_id')} "
+                        f"count={count} "
+                        f"session={payload.get('session_hash')}",
+                        flush=True,
+                    )
+            except Exception as exc:
+                print(
+                    f"[h3-ui] queue/join trace failed: {type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+        return await call_next(request)
 
     @app.get(
         "/ltx25-workflows/{workflow_id}.json",
@@ -7305,6 +7339,7 @@ def main() -> None:
             "models_config": str(MODELS_CONFIG),
             "comfy_output": str(OUTPUT_DIR),
             "gradio_output": str(OUTPUTS_DIR),
+            "gradio_version": gr.__version__,
             "attention_backend": SERVER_ATTENTION_BACKEND,
             "dense_attention_backend": SERVER_DENSE_ATTENTION_BACKEND,
             "allowed_paths": allowed_paths,
