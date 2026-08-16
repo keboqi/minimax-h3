@@ -1391,11 +1391,13 @@ def resolution_for_aspect_ratio(
 # Gradio runs this in the browser when the file is selected. It deliberately
 # uses the local File/preview object, so reading dimensions does not add a
 # second server upload or require a Python callback.
-AUTO_RESOLUTION_JS = r"""async () => {
+AUTO_RESOLUTION_JS = r"""async (_value, currentWidth, currentHeight) => {
     const root = document.getElementById("first-frame-image");
-    const input = root?.querySelector('input[type="file"]');
+    const input = root?.querySelector('input[type="file"]')
+        || document.querySelector('#first-frame-image input[type="file"]');
     const file = input?.files?.[0];
-    const preview = root?.querySelector("img");
+    const preview = root?.querySelector("img")
+        || document.querySelector('#first-frame-image img');
     let imageWidth = 0;
     let imageHeight = 0;
 
@@ -1426,7 +1428,16 @@ AUTO_RESOLUTION_JS = r"""async () => {
         imageHeight = preview?.naturalHeight || 0;
     }
 
-    if (!imageWidth || !imageHeight) return [null, null, null];
+    // Gradio may clear the native input as soon as its upload completes. Do
+    // not overwrite valid controls with null in that race; the next change
+    // event can still apply the automatic size when a local preview exists.
+    if (!imageWidth || !imageHeight) {
+        return [
+            Number(currentWidth) || 864,
+            Number(currentHeight) || 480,
+            "Resolution unchanged: image dimensions were unavailable locally.",
+        ];
+    }
 
     const maxPixels = 2000000 - 1;
     const ratio = imageWidth / imageHeight;
@@ -6024,9 +6035,9 @@ def build_ui() -> gr.Blocks:
             inputs=large_resolution,
             outputs=[width, height, resolution_info],
         )
-        first.upload(
+        first.change(
             fn=None,
-            inputs=first,
+            inputs=[first, width, height],
             outputs=[width, height, resolution_info],
             js=AUTO_RESOLUTION_JS,
             queue=False,
