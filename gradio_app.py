@@ -1487,6 +1487,30 @@ def resolution_summary(width: int | float, height: int | float) -> str:
     )
 
 
+def auto_resolution_from_start_frame(
+    first_image: Any,
+    current_width: int | float | None,
+    current_height: int | float | None,
+) -> tuple[int | float, int | float, str]:
+    """Apply the automatic ratio resolution after Gradio stages the image."""
+    fallback_width = current_width or UI_DEFAULTS["width"]
+    fallback_height = current_height or UI_DEFAULTS["height"]
+    paths = normalize_paths(first_image)
+    if not paths:
+        return fallback_width, fallback_height, resolution_summary(
+            fallback_width, fallback_height
+        )
+
+    try:
+        from PIL import Image
+
+        with Image.open(paths[0]) as image:
+            width, height = resolution_for_aspect_ratio(*image.size)
+    except Exception as exc:
+        return fallback_width, fallback_height, f"⚠️ Unable to read start frame dimensions: {exc}"
+    return width, height, resolution_summary(width, height)
+
+
 def resolution_choice_values(name: str, tier: str) -> tuple[int, int, str]:
     key = str(tier).strip().lower()
     if key not in RESOLUTION_TIERS:
@@ -6035,11 +6059,21 @@ def build_ui() -> gr.Blocks:
             inputs=large_resolution,
             outputs=[width, height, resolution_info],
         )
-        first.change(
+        # Run immediately from the browser while the native File object is
+        # still available. The staged-file callback below is a hosted-Gradio
+        # fallback for environments that clear the input before JS runs.
+        first.upload(
             fn=None,
             inputs=[first, width, height],
             outputs=[width, height, resolution_info],
             js=AUTO_RESOLUTION_JS,
+            queue=False,
+            show_progress="hidden",
+        )
+        first.change(
+            fn=auto_resolution_from_start_frame,
+            inputs=[first, width, height],
+            outputs=[width, height, resolution_info],
             queue=False,
             show_progress="hidden",
         )
@@ -7058,6 +7092,8 @@ def selftest() -> None:
     assert auto_portrait[0] * auto_portrait[1] < 2_000_000
     assert abs(auto_landscape[0] / auto_landscape[1] - 16 / 9) < 0.1
     assert abs(auto_portrait[0] / auto_portrait[1] - 9 / 16) < 0.1
+    unchanged = auto_resolution_from_start_frame(None, 640, 480)
+    assert unchanged[:2] == (640, 480)
     assert frame_length(5) == 124
     assert frame_length(15) == 362
     assert websocket_url("client id").startswith("ws://")
