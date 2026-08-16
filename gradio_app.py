@@ -5948,16 +5948,25 @@ def build_ui() -> gr.Blocks:
             generation_split_seconds,
         ]
         for settings_control in settings_inputs:
-            event_options = (
-                {"queue": False, "show_progress": "hidden"}
+            # Width and height are also outputs of the resolution preset and
+            # start-frame callbacks. A Gradio `.change()` listener fires for
+            # those programmatic updates and can be resubmitted repeatedly by
+            # hosted proxies while a generator is streaming. `.input()` only
+            # handles an actual user edit, avoiding that feedback loop.
+            settings_event = (
+                settings_control.input
                 if settings_control in (width, height)
-                else {}
+                else settings_control.change
             )
-            settings_control.change(
+            settings_event(
                 compact_settings_summary,
                 inputs=settings_inputs,
                 outputs=settings_overview,
-                **event_options,
+                **(
+                    {"queue": False, "show_progress": "hidden"}
+                    if settings_control in (width, height)
+                    else {}
+                ),
             )
 
         mode.change(
@@ -6059,21 +6068,33 @@ def build_ui() -> gr.Blocks:
                 sol_exact_mode, sol_dense_steps,
             ],
         )
-        draft_resolution.change(
+        draft_resolution_event = draft_resolution.change(
             lambda name: resolution_choice_values(name, "draft"),
             inputs=draft_resolution,
             outputs=[width, height, resolution_info],
         )
-        fast_resolution.change(
+        fast_resolution_event = fast_resolution.change(
             lambda name: resolution_choice_values(name, "fast"),
             inputs=fast_resolution,
             outputs=[width, height, resolution_info],
         )
-        large_resolution.change(
+        large_resolution_event = large_resolution.change(
             lambda name: resolution_choice_values(name, "large"),
             inputs=large_resolution,
             outputs=[width, height, resolution_info],
         )
+        for resolution_event in (
+            draft_resolution_event,
+            fast_resolution_event,
+            large_resolution_event,
+        ):
+            resolution_event.then(
+                compact_settings_summary,
+                inputs=settings_inputs,
+                outputs=settings_overview,
+                queue=False,
+                show_progress="hidden",
+            )
         # Run immediately from the browser while the native File object is
         # still available. The staged-file callback below is a hosted-Gradio
         # fallback for environments that clear the input before JS runs.
@@ -6085,10 +6106,17 @@ def build_ui() -> gr.Blocks:
             queue=False,
             show_progress="hidden",
         )
-        first.change(
+        first_change_event = first.change(
             fn=auto_resolution_from_start_frame,
             inputs=[first, width, height],
             outputs=[width, height, resolution_info],
+            queue=False,
+            show_progress="hidden",
+        )
+        first_change_event.then(
+            compact_settings_summary,
+            inputs=settings_inputs,
+            outputs=settings_overview,
             queue=False,
             show_progress="hidden",
         )
@@ -6102,14 +6130,14 @@ def build_ui() -> gr.Blocks:
                 fbcache_max_hits,
             ],
         )
-        width.change(
+        width.input(
             resolution_summary,
             inputs=[width, height],
             outputs=resolution_info,
             queue=False,
             show_progress="hidden",
         )
-        height.change(
+        height.input(
             resolution_summary,
             inputs=[width, height],
             outputs=resolution_info,
