@@ -342,6 +342,7 @@ SPECTRUM_DEFAULT_INPUTS = {
 # entries are kept explicitly marked as extended/experimental.
 NATIVE_PIXEL_CAP = 768 * 1344
 EXTENDED_PIXEL_CAP = 1920 * 1088
+AUTO_RESOLUTION_PIXEL_CAP = 2_000_000 - 1
 DRAFT_RESOLUTIONS: dict[str, tuple[int, int]] = {
     "1:1 · 512×512": (512, 512),
     "16:9 · 608×352": (608, 352),
@@ -553,41 +554,6 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
             await client.aclose()
 
     app = FastAPI(lifespan=lifespan)
-    queue_dependencies = {
-        dependency["id"]: dependency.get("api_name", "unknown")
-        for dependency in demo.get_config_file().get("dependencies", ())
-    }
-    queue_join_counts: dict[int | None, int] = {}
-
-    @app.middleware("http")
-    async def trace_gradio_queue_join(
-        request: Request,
-        call_next: Any,
-    ) -> Response:
-        """Identify the callback behind repeated Gradio queue submissions."""
-        if request.url.path.endswith("/gradio_api/queue/join"):
-            try:
-                payload = await request.json()
-                fn_index = payload.get("fn_index")
-                queue_join_counts[fn_index] = queue_join_counts.get(fn_index, 0) + 1
-                count = queue_join_counts[fn_index]
-                if count <= 5 or count % 25 == 0:
-                    print(
-                        "[h3-ui] queue/join "
-                        f"fn={fn_index} "
-                        f"api={queue_dependencies.get(fn_index, 'unknown')} "
-                        f"trigger={payload.get('trigger_id')} "
-                        f"count={count} "
-                        f"session={payload.get('session_hash')}",
-                        flush=True,
-                    )
-            except Exception as exc:
-                print(
-                    f"[h3-ui] queue/join trace failed: {type(exc).__name__}: {exc}",
-                    flush=True,
-                )
-        return await call_next(request)
-
     @app.get(
         "/ltx25-workflows/{workflow_id}.json",
         name="download_ltx25_workflow",
@@ -1387,6 +1353,109 @@ def validate_resolution(width: int | float, height: int | float) -> tuple[int, i
             f"limit of 1920×1088 ({EXTENDED_PIXEL_CAP / 1_000_000:.2f} MP)."
         )
     return resolved_width, resolved_height
+
+
+def resolution_for_aspect_ratio(
+    source_width: int | float,
+    source_height: int | float,
+) -> tuple[int, int]:
+    """Return a 32-aligned canvas matching an image ratio and staying below 2 MP."""
+    width = float(source_width)
+    height = float(source_height)
+    if not math.isfinite(width) or not math.isfinite(height) or width <= 0 or height <= 0:
+        raise H3Error("The start frame has no usable image dimensions.")
+
+    ratio = width / height
+    if ratio >= 1:
+        resolved_width = max(
+            32, math.floor(math.sqrt(AUTO_RESOLUTION_PIXEL_CAP * ratio) / 32) * 32
+        )
+        resolved_height = max(32, math.floor(resolved_width / ratio / 32) * 32)
+    else:
+        resolved_height = max(
+            32, math.floor(math.sqrt(AUTO_RESOLUTION_PIXEL_CAP / ratio) / 32) * 32
+        )
+        resolved_width = max(32, math.floor(resolved_height * ratio / 32) * 32)
+
+    # Rounding to the model's 32-pixel grid can cross the strict 2 MP boundary.
+    while resolved_width * resolved_height >= 2_000_000:
+        if ratio >= 1:
+            resolved_width = max(32, resolved_width - 32)
+            resolved_height = max(32, math.floor(resolved_width / ratio / 32) * 32)
+        else:
+            resolved_height = max(32, resolved_height - 32)
+            resolved_width = max(32, math.floor(resolved_height * ratio / 32) * 32)
+    return resolved_width, resolved_height
+
+
+# Gradio runs this in the browser when the file is selected. It deliberately
+# uses the local File/preview object, so reading dimensions does not add a
+# second server upload or require a Python callback.
+AUTO_RESOLUTION_JS = r"""async () => {
+    const root = document.getElementById("first-frame-image");
+    const input = root?.querySelector('input[type="file"]');
+    const file = input?.files?.[0];
+    const preview = root?.querySelector("img");
+    let imageWidth = 0;
+    let imageHeight = 0;
+
+    if (file) {
+        try {
+            const bitmap = await createImageBitmap(file);
+            imageWidth = bitmap.width;
+            imageHeight = bitmap.height;
+            bitmap.close();
+        } catch (_) {
+            const objectUrl = URL.createObjectURL(file);
+            try {
+                const image = new Image();
+                image.src = objectUrl;
+                await image.decode();
+                imageWidth = image.naturalWidth;
+                imageHeight = image.naturalHeight;
+            } finally {
+                URL.revokeObjectURL(objectUrl);
+            }
+        }
+    }
+
+    // The preview is a local-only fallback for browsers without bitmap APIs
+    // or when Gradio has already replaced the file input after upload.
+    if (!imageWidth || !imageHeight) {
+        imageWidth = preview?.naturalWidth || 0;
+        imageHeight = preview?.naturalHeight || 0;
+    }
+
+    if (!imageWidth || !imageHeight) return [null, null, null];
+
+    const maxPixels = 2000000 - 1;
+    const ratio = imageWidth / imageHeight;
+    let width;
+    let height;
+    if (ratio >= 1) {
+        width = Math.max(32, Math.floor(Math.sqrt(maxPixels * ratio) / 32) * 32);
+        height = Math.max(32, Math.floor(width / ratio / 32) * 32);
+    } else {
+        height = Math.max(32, Math.floor(Math.sqrt(maxPixels / ratio) / 32) * 32);
+        width = Math.max(32, Math.floor(height * ratio / 32) * 32);
+    }
+    while (width * height >= 2000000) {
+        if (ratio >= 1) {
+            width = Math.max(32, width - 32);
+            height = Math.max(32, Math.floor(width / ratio / 32) * 32);
+        } else {
+            height = Math.max(32, height - 32);
+            width = Math.max(32, Math.floor(height * ratio / 32) * 32);
+        }
+    }
+    const megapixels = (width * height / 1000000).toFixed(2);
+    const displayRatio = (width / height).toFixed(2);
+    return [
+        width,
+        height,
+        `**Auto from start frame** · **${width}×${height}** · ${megapixels} MP · ${displayRatio}:1`,
+    ];
+}"""
 
 
 def resolution_summary(width: int | float, height: int | float) -> str:
@@ -5120,7 +5189,11 @@ def build_ui() -> gr.Blocks:
                 with gr.Group(visible=False) as frame_group:
                     gr.Markdown("### First / last frame inputs")
                     with gr.Row():
-                        first = gr.Image(type="filepath", label="First frame")
+                        first = gr.Image(
+                            type="filepath",
+                            label="First frame (auto resolution)",
+                            elem_id="first-frame-image",
+                        )
                         last = gr.Image(type="filepath", label="Last frame")
                 with gr.Group(visible=False) as reference_group:
                     gr.Markdown("### Reference media")
@@ -5825,10 +5898,16 @@ def build_ui() -> gr.Blocks:
             generation_split_seconds,
         ]
         for settings_control in settings_inputs:
+            event_options = (
+                {"queue": False, "show_progress": "hidden"}
+                if settings_control in (width, height)
+                else {}
+            )
             settings_control.change(
                 compact_settings_summary,
                 inputs=settings_inputs,
                 outputs=settings_overview,
+                **event_options,
             )
 
         mode.change(
@@ -5945,6 +6024,14 @@ def build_ui() -> gr.Blocks:
             inputs=large_resolution,
             outputs=[width, height, resolution_info],
         )
+        first.upload(
+            fn=None,
+            inputs=first,
+            outputs=[width, height, resolution_info],
+            js=AUTO_RESOLUTION_JS,
+            queue=False,
+            show_progress="hidden",
+        )
         fbcache_preset.change(
             fbcache_preset_defaults,
             inputs=fbcache_preset,
@@ -5955,8 +6042,20 @@ def build_ui() -> gr.Blocks:
                 fbcache_max_hits,
             ],
         )
-        width.change(resolution_summary, inputs=[width, height], outputs=resolution_info)
-        height.change(resolution_summary, inputs=[width, height], outputs=resolution_info)
+        width.change(
+            resolution_summary,
+            inputs=[width, height],
+            outputs=resolution_info,
+            queue=False,
+            show_progress="hidden",
+        )
+        height.change(
+            resolution_summary,
+            inputs=[width, height],
+            outputs=resolution_info,
+            queue=False,
+            show_progress="hidden",
+        )
         event = run.click(
             generate,
             inputs=[
@@ -6940,6 +7039,14 @@ def selftest() -> None:
     assert turbo_sol_enabled is True
     assert turbo_sol_reason.startswith("Auto Turbo:")
     assert validate_resolution(865, 481) == (864, 480)
+    auto_landscape = resolution_for_aspect_ratio(16, 9)
+    auto_portrait = resolution_for_aspect_ratio(9, 16)
+    assert auto_landscape[0] % 32 == 0 and auto_landscape[1] % 32 == 0
+    assert auto_portrait[0] % 32 == 0 and auto_portrait[1] % 32 == 0
+    assert auto_landscape[0] * auto_landscape[1] < 2_000_000
+    assert auto_portrait[0] * auto_portrait[1] < 2_000_000
+    assert abs(auto_landscape[0] / auto_landscape[1] - 16 / 9) < 0.1
+    assert abs(auto_portrait[0] / auto_portrait[1] - 9 / 16) < 0.1
     assert frame_length(5) == 124
     assert frame_length(15) == 362
     assert websocket_url("client id").startswith("ws://")
@@ -7339,7 +7446,6 @@ def main() -> None:
             "models_config": str(MODELS_CONFIG),
             "comfy_output": str(OUTPUT_DIR),
             "gradio_output": str(OUTPUTS_DIR),
-            "gradio_version": gr.__version__,
             "attention_backend": SERVER_ATTENTION_BACKEND,
             "dense_attention_backend": SERVER_DENSE_ATTENTION_BACKEND,
             "allowed_paths": allowed_paths,

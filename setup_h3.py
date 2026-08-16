@@ -17,7 +17,6 @@ from h3_requirements import (
     ABI_CONSTRAINTS,
     COMFY_FRONTEND_VERSION,
     COMFY_REF,
-    GRADIO_VERSION,
     KORNIA_VERSION,
     NUMPY_VERSION,
     SCIPY_VERSION,
@@ -535,7 +534,7 @@ def install_environment(comfy: Path) -> None:
     )
     install_comfy_requirements(comfy)
     uv_pip(
-        f"gradio=={GRADIO_VERSION}",
+        "gradio>=5,<7",
         "huggingface_hub>=0.34",
         "requests>=2.32",
         "websocket-client>=1.8",

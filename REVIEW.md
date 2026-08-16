@@ -437,16 +437,14 @@ Primary source:
 - https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo/commit/4274783a23afcfdbea3b4876cb79effd6c510785
 
 
-## v54 Gradio queue reconnect correction
+## v54 Resolution callback queue correction
 
-Local and Modal dependency installation now pins Gradio 6.3.0. The previous
-`gradio>=5,<7` range resolved to 6.24.0, exposing an upstream regression present
-since 6.4.0 in proxied or iframe deployments: the frontend repeatedly reconnects
-and resubmits `/gradio_api/queue/join`, with traffic increasing while a streamed
-generation is active. The lightweight UI callbacks remain `queue=False`, but the
-version pin addresses the transport-level loop affecting the real generation
-queue.
-
-Primary source:
-
-- https://github.com/gradio-app/gradio/issues/13629
+Queue payload tracing isolated the repeated `/gradio_api/queue/join` traffic to
+four display-only callbacks: width and height each triggered both the compact
+settings summary and resolution summary. Resolution presets update both number
+components programmatically, after which those four queued `.change()` listeners
+were repeatedly resubmitted through the deployment proxy; an active streamed
+generation increased the retry rate. Only these four callbacks now bypass the
+queue. Generation, model operations, other settings callbacks, and gallery work
+retain their original queue behavior. The temporary payload tracing and the
+disproven Gradio 6.3.0 pin were removed.
