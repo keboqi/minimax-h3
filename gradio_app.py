@@ -5795,8 +5795,6 @@ def build_ui() -> gr.Blocks:
                 compact_settings_summary,
                 inputs=settings_inputs,
                 outputs=settings_overview,
-                queue=False,
-                show_progress="hidden",
             )
 
         mode.change(
@@ -5806,8 +5804,6 @@ def build_ui() -> gr.Blocks:
                 help_text, frame_group, reference_group, generation_mode,
                 preset, steps, scheduler, cache_mode, attention_mode,
             ],
-            queue=False,
-            show_progress="hidden",
         )
         ltx25_mode.change(
             lambda value: gr.update(visible=value == "Image to video"),
@@ -5899,29 +5895,21 @@ def build_ui() -> gr.Blocks:
                 steps, sol_tau, sol_thresh_type, scheduler,
                 sol_exact_mode, sol_dense_steps,
             ],
-            queue=False,
-            show_progress="hidden",
         )
         draft_resolution.change(
             lambda name: resolution_choice_values(name, "draft"),
             inputs=draft_resolution,
             outputs=[width, height, resolution_info],
-            queue=False,
-            show_progress="hidden",
         )
         fast_resolution.change(
             lambda name: resolution_choice_values(name, "fast"),
             inputs=fast_resolution,
             outputs=[width, height, resolution_info],
-            queue=False,
-            show_progress="hidden",
         )
         large_resolution.change(
             lambda name: resolution_choice_values(name, "large"),
             inputs=large_resolution,
             outputs=[width, height, resolution_info],
-            queue=False,
-            show_progress="hidden",
         )
         fbcache_preset.change(
             fbcache_preset_defaults,
@@ -5932,23 +5920,9 @@ def build_ui() -> gr.Blocks:
                 fbcache_end,
                 fbcache_max_hits,
             ],
-            queue=False,
-            show_progress="hidden",
         )
-        width.change(
-            resolution_summary,
-            inputs=[width, height],
-            outputs=resolution_info,
-            queue=False,
-            show_progress="hidden",
-        )
-        height.change(
-            resolution_summary,
-            inputs=[width, height],
-            outputs=resolution_info,
-            queue=False,
-            show_progress="hidden",
-        )
+        width.change(resolution_summary, inputs=[width, height], outputs=resolution_info)
+        height.change(resolution_summary, inputs=[width, height], outputs=resolution_info)
         event = run.click(
             generate,
             inputs=[
@@ -6030,12 +6004,7 @@ def build_ui() -> gr.Blocks:
         ltx25_stop.click(interrupt, outputs=ltx25_status, cancels=[ltx25_event])
         music3_stop.click(interrupt, outputs=music3_status, cancels=[music3_event])
         api_stop.click(interrupt, outputs=api_status, cancels=[api_event])
-        refresh.click(
-            backend_status,
-            outputs=health,
-            queue=False,
-            show_progress="hidden",
-        )
+        refresh.click(backend_status, outputs=health)
         unload_models.click(
             unload_all_models,
             outputs=[memory_status, health],
@@ -6053,8 +6022,6 @@ def build_ui() -> gr.Blocks:
             outputs=[
                 generation_view, ltx25_view, music3_view, gallery_view, api_view
             ],
-            queue=False,
-            show_progress="hidden",
         )
         ltx25_tab.select(
             lambda: (
@@ -6067,8 +6034,6 @@ def build_ui() -> gr.Blocks:
             outputs=[
                 generation_view, ltx25_view, music3_view, gallery_view, api_view
             ],
-            queue=False,
-            show_progress="hidden",
         )
         music3_tab.select(
             lambda: (
@@ -6081,8 +6046,6 @@ def build_ui() -> gr.Blocks:
             outputs=[
                 generation_view, ltx25_view, music3_view, gallery_view, api_view
             ],
-            queue=False,
-            show_progress="hidden",
         )
         gallery_event = gallery_tab.select(
             lambda: (
@@ -6107,27 +6070,22 @@ def build_ui() -> gr.Blocks:
                 gallery_selected,
                 gallery_confirm_delete,
             ],
-            queue=False,
-            show_progress="hidden",
         )
         gallery_event.then(
             refresh_gallery,
             outputs=[gallery_grid, gallery_paths, gallery_status],
-            queue=False,
             show_progress="hidden",
         )
         gallery_refresh.click(
             refresh_gallery,
             outputs=[gallery_grid, gallery_paths, gallery_status],
-            queue=False,
-            show_progress="hidden",
+            show_progress="minimal",
         )
         gallery_grid.select(
             select_gallery_video,
             inputs=gallery_paths,
             outputs=[gallery_player, gallery_download, gallery_selected],
-            queue=False,
-            show_progress="hidden",
+            show_progress="minimal",
         )
         gallery_mutation_outputs = [
             gallery_grid,
@@ -6186,8 +6144,6 @@ def build_ui() -> gr.Blocks:
             outputs=[
                 generation_view, ltx25_view, music3_view, gallery_view, api_view
             ],
-            queue=False,
-            show_progress="hidden",
         )
     return demo
 

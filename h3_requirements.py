@@ -27,6 +27,9 @@ KORNIA_VERSION = "0.8.1"
 COMFY_REF = "72865f4f27eaf5396f8f36370e0a2be3a9a090ee"
 COMFY_KITCHEN_VERSION = "0.2.31"
 COMFY_FRONTEND_VERSION = "1.48.7"
+# Gradio 6.4.0+ has an open proxy/iframe reconnect regression that repeatedly
+# resubmits queue events. 6.3.0 is the last upstream-confirmed working release.
+GRADIO_VERSION = "6.3.0"
 WSPROTO_VERSION = "1.2.0"
 LTX25_WORKFLOW_FILENAMES = (
     "LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
@@ -245,6 +248,7 @@ def selftest() -> None:
     assert COMFY_REF == "72865f4f27eaf5396f8f36370e0a2be3a9a090ee"
     assert COMFY_KITCHEN_VERSION == "0.2.31"
     assert COMFY_FRONTEND_VERSION == "1.48.7"
+    assert GRADIO_VERSION == "6.3.0"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 9
     with tempfile.TemporaryDirectory() as temp:

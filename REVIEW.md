@@ -435,3 +435,18 @@ implementation and remains fail-closed for older source shapes.
 Primary source:
 
 - https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo/commit/4274783a23afcfdbea3b4876cb79effd6c510785
+
+
+## v54 Gradio queue reconnect correction
+
+Local and Modal dependency installation now pins Gradio 6.3.0. The previous
+`gradio>=5,<7` range resolved to 6.24.0, exposing an upstream regression present
+since 6.4.0 in proxied or iframe deployments: the frontend repeatedly reconnects
+and resubmits `/gradio_api/queue/join`, with traffic increasing while a streamed
+generation is active. The lightweight UI callbacks remain `queue=False`, but the
+version pin addresses the transport-level loop affecting the real generation
+queue.
+
+Primary source:
+
+- https://github.com/gradio-app/gradio/issues/13629

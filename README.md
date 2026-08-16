@@ -44,6 +44,9 @@ The installer pins the ABI-sensitive stack to Torch 2.11.0 + CUDA 13.0,
 NumPy 1.26.4, and SciPy 1.15.3. The pinned ComfyUI 0.32 stack supplies Comfy
 Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
 2.2.0 remains installed from the pinned prebuilt wheel for UI comparisons.
+Gradio is pinned to 6.3.0 because 6.4.0 and later have an unresolved
+proxy/iframe reconnect regression that can repeatedly submit `/queue/join`
+requests during idle and active generations.
 
 The Sol-Attn integration is pinned to the reviewed v0.6.2 commit
 `930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf` so its ComfyUI node contract
