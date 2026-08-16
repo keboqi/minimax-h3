@@ -1365,6 +1365,11 @@ def resolution_for_aspect_ratio(
     if not math.isfinite(width) or not math.isfinite(height) or width <= 0 or height <= 0:
         raise H3Error("The start frame has no usable image dimensions.")
 
+    # Do not upscale a smaller source image. Preserve its native dimensions;
+    # only oversized inputs need aspect-ratio-based downscaling.
+    if width * height < 2_000_000:
+        return int(width), int(height)
+
     ratio = width / height
     if ratio >= 1:
         resolved_width = max(
@@ -1436,6 +1441,16 @@ AUTO_RESOLUTION_JS = r"""async (_value, currentWidth, currentHeight) => {
             Number(currentWidth) || 864,
             Number(currentHeight) || 480,
             "Resolution unchanged: image dimensions were unavailable locally.",
+        ];
+    }
+
+    if (imageWidth * imageHeight < 2000000) {
+        const megapixels = (imageWidth * imageHeight / 1000000).toFixed(2);
+        const displayRatio = (imageWidth / imageHeight).toFixed(2);
+        return [
+            imageWidth,
+            imageHeight,
+            `**Start frame native resolution** · **${imageWidth}×${imageHeight}** · ${megapixels} MP · ${displayRatio}:1`,
         ];
     }
 
@@ -7084,8 +7099,9 @@ def selftest() -> None:
     assert turbo_sol_enabled is True
     assert turbo_sol_reason.startswith("Auto Turbo:")
     assert validate_resolution(865, 481) == (864, 480)
-    auto_landscape = resolution_for_aspect_ratio(16, 9)
-    auto_portrait = resolution_for_aspect_ratio(9, 16)
+    auto_landscape = resolution_for_aspect_ratio(4096, 2304)
+    auto_portrait = resolution_for_aspect_ratio(2304, 4096)
+    assert resolution_for_aspect_ratio(1024, 1024) == (1024, 1024)
     assert auto_landscape[0] % 32 == 0 and auto_landscape[1] % 32 == 0
     assert auto_portrait[0] % 32 == 0 and auto_portrait[1] % 32 == 0
     assert auto_landscape[0] * auto_landscape[1] < 2_000_000
