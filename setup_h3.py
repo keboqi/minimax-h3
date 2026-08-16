@@ -33,11 +33,11 @@ from h3_requirements import (
 
 COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
 SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
-SOL_REF = "e1d211026583064d33dc4326207c6502e2442208"  # v0.6.1
+SOL_REF = "930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf"  # v0.6.2, SM86 support
 SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_REF = "7911ec7827921de599492f21eade181211266029"  # v0.2.7
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
-LARRY_TURBO_REF = "55fee864dd7b2976b1c4ce3c3d5f7968f181409f"
+LARRY_TURBO_REF = "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
 LTXVIDEO_REPO = "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
 LTXVIDEO_REF = "ac4d99839020b983e956a8ab67ec38aec1b6e65a"
 KJNODES_REPO = "https://github.com/kijai/ComfyUI-KJNodes.git"

@@ -61,9 +61,16 @@ _LARRY_REPLACEMENTS = (
     (_LARRY_CALL_ORIGINAL, _LARRY_CALL_PATCHED),
 )
 
+_LARRY_UPSTREAM_FIXED_MARKERS = (
+    "def _unique_t(timestep, shift_v, shift_a, payload):",
+    "adaln_t_table",
+)
+
 
 def _patch_larry_source(source: str) -> tuple[str, bool]:
     """Return validated patched source and whether a transformation occurred."""
+    if all(marker in source for marker in _LARRY_UPSTREAM_FIXED_MARKERS):
+        return source, False
     original_counts = [source.count(old) for old, _ in _LARRY_REPLACEMENTS]
     patched_counts = [source.count(new) for _, new in _LARRY_REPLACEMENTS]
     if original_counts == [0, 0] and patched_counts == [1, 1]:

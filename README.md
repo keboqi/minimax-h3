@@ -21,7 +21,7 @@ FirstBlockCache node.
 - Selectable Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
   including the dedicated Ref2V 4-step adapter
 - SageAttention 2 as the measured-fastest H3 default, with selectable Comfy
-  Kitchen comparison and optional H3-native zero-copy Sol v0.6.1 sparse attention
+  Kitchen comparison and optional H3-native zero-copy Sol v0.6.2 sparse attention
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Optional experimental INT8 ConvRot video VAE, lazy-downloaded on first use
@@ -45,15 +45,17 @@ NumPy 1.26.4, and SciPy 1.15.3. The pinned ComfyUI 0.32 stack supplies Comfy
 Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
 2.2.0 remains installed from the pinned prebuilt wheel for UI comparisons.
 
-The Sol-Attn integration is pinned to the reviewed v0.6.1 commit
-`e1d211026583064d33dc4326207c6502e2442208` so its ComfyUI node contract
-remains reproducible. Sol uses the zero-copy H3 path, keeps conditioning KV
+The Sol-Attn integration is pinned to the reviewed v0.6.2 commit
+`930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf` so its ComfyUI node contract
+remains reproducible. v0.6.2 adds MiniMax H3 support for SM86 / RTX 30-series
+GPUs without changing the attention math or routing policy. Sol uses the zero-copy H3 path, keeps conditioning KV
 exact by default, and leaves its optional INT8 attention approximations
 disabled. LightX2V Turbo additionally uses v0.6.0's bit-exact fused modulation
 node after its LoRA. Larry Turbo keeps its AdaLN path unfused pending composition
-validation. Provisioning applies a fail-closed patch to Larry's pinned node so
-its E-grid adapter derives the same dynamic timestep set as ComfyUI, including
-visual and audio reference-conditioning rows. Quality ConvRot models use
+validation. Provisioning validates Larry's pinned node against the upstream
+dynamic timestep and AdaLN-row implementation; older compatible source is
+patched fail-closed so its E-grid adapter derives the same rows as ComfyUI,
+including visual and audio reference-conditioning rows. Quality ConvRot models use
 bit-preserving two-way feed-forward chunking above 8K packed tokens.
 
 Spectrum is pinned to v0.2.7 and is applied after LoRA, Sol-Attn, and ConvRot

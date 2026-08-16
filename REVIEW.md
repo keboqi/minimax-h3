@@ -410,3 +410,28 @@ files, while older generated configurations retain their existing FL2VA fallback
 through the app's compatibility loader. No dedicated Ref2V files are currently
 published for LightX2V eight-step or Larry Turbo, so those reference routes
 remain experimental shared-LoRA paths.
+
+
+## v53 Sol-Attn SM86 refresh
+
+The local and Modal installers now pin Saganaki22's Sol-Attn v0.6.2 commit
+`930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf`. This adds MiniMax H3 pointer-kernel
+support for SM86 / RTX 30-series GPUs while leaving the existing SM89, SM90,
+SM100, SM120, and SM121 paths unchanged. The upstream release reports no
+attention-math, weight, sparsity, or output-quality changes; SM86 performance
+still needs hardware benchmarking before changing the default routing policy.
+
+Primary source:
+
+- https://github.com/Saganaki22/ComfyUI-sol-attn/releases/tag/v0.6.2
+
+Larry Turbo is also advanced from the original v1.2.0-era pin to
+`4274783a23afcfdbea3b4876cb79effd6c510785`. The upstream node now adapts to
+ComfyUI's native `ModelSamplingAV` instead of applying the audio schedule a
+second time, and includes fixes for audio-reference AdaLN rows and modulation
+segment lookup. The local compatibility patch accepts this upstream-fixed
+implementation and remains fail-closed for older source shapes.
+
+Primary source:
+
+- https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo/commit/4274783a23afcfdbea3b4876cb79effd6c510785
