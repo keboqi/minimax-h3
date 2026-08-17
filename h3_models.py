@@ -311,6 +311,7 @@ PROFILE_LABELS = {
     "original": "Original",
 }
 PRELOAD_PROFILES = ("quality",)
+PRELOAD_PROFILE_MODEL_KEYS = ("quality_fl2va",)
 PROFILE_MODEL_KEY_SET = frozenset(
     key for keys in PROFILE_MODEL_KEYS.values() for key in keys
 )
@@ -366,6 +367,8 @@ MUSIC3_SHARED_MODEL_KEYS = ("music3_text_encoder", "music3_vae")
 MUSIC3_MODEL_KEYS = (*MUSIC3_MODEL_CHOICES.values(), *MUSIC3_SHARED_MODEL_KEYS)
 LAZY_OPTIONAL_MODEL_KEYS = (
     "video_vae_int8",
+    "turbo_8step_lora",
+    "larry_turbo_lora",
     *LAZY_POSTPROCESS_MODEL_KEYS,
     *LTX25_MODEL_KEYS,
     *LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS,
@@ -376,11 +379,7 @@ SHARED_MODEL_KEYS = tuple(
     if key not in PROFILE_MODEL_KEY_SET and key not in LAZY_OPTIONAL_MODEL_KEYS
 )
 PRELOAD_MODEL_KEYS = (
-    *(
-        key
-        for profile in PRELOAD_PROFILES
-        for key in PROFILE_MODEL_KEYS[profile]
-    ),
+    *PRELOAD_PROFILE_MODEL_KEYS,
     *SHARED_MODEL_KEYS,
 )
 
@@ -829,21 +828,24 @@ def validate_config_files(
         ("vae", config.get("audio_vae")),
         ("loras", config.get("turbo_lora")),
         ("loras", config.get("turbo_ref_lora")),
-        ("loras", config.get("turbo_8step_lora")),
-        ("loras", config.get("larry_turbo_lora")),
     ]
     for profile in profiles:
         data = config.get("profiles", {}).get(profile, {})
         required.extend(
             [
-                ("diffusion_models", data.get("fl2va")),
-                ("diffusion_models", data.get("ref2va")),
+                ("diffusion_models", data.get("fl2va"))
+                if f"{profile}_fl2va" in PRELOAD_MODEL_KEYS
+                else None,
+                ("diffusion_models", data.get("ref2va"))
+                if f"{profile}_ref2va" in PRELOAD_MODEL_KEYS
+                else None,
             ]
         )
 
     return [
         f"{folder}/{name}"
         for folder, name in required
+        if folder and name
         if (
             not name
             or not (root / folder / name).is_file()
@@ -913,7 +915,9 @@ def selftest() -> None:
     cfg = _build_config("manifest.json")
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["speed"])
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["original"])
-    assert set(PROFILE_MODEL_KEYS["quality"]).issubset(PRELOAD_MODEL_KEYS)
+    assert PRELOAD_PROFILE_MODEL_KEYS == ("quality_fl2va",)
+    assert "quality_fl2va" in PRELOAD_MODEL_KEYS
+    assert "quality_ref2va" not in PRELOAD_MODEL_KEYS
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
     assert cfg["schema_version"] == 13
@@ -937,11 +941,13 @@ def selftest() -> None:
     )
     assert cfg["turbo_8step_lora"] == "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"
     assert cfg["turbo_8step_ref_lora"] == cfg["turbo_8step_lora"]
-    assert {"turbo_lora", "turbo_ref_lora", "turbo_8step_lora"}.issubset(
+    assert {"turbo_lora", "turbo_ref_lora"}.issubset(
         PRELOAD_MODEL_KEYS
     )
+    assert "turbo_8step_lora" not in PRELOAD_MODEL_KEYS
     assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"
     assert cfg["larry_turbo_ref_lora"] == cfg["larry_turbo_lora"]
+    assert "larry_turbo_lora" not in PRELOAD_MODEL_KEYS
     assert cfg["seedvr2_dit"] == "seedvr2_7b_nvfp4.safetensors"
     assert cfg["seedvr2_models"] == {
         "3B NVFP4": "seedvr2_3b_nvfp4.safetensors",

@@ -1236,6 +1236,41 @@ def ensure_profile_model(
     return True
 
 
+def ensure_turbo_lora(models: ModelConfig, turbo_variant: str, mode: str) -> bool:
+    """Download a non-default Turbo LoRA only when its variant is selected."""
+    variant = normalize_turbo_variant(turbo_variant)
+    reference = str(mode).strip().lower() == "reference media"
+    if variant == LARRY_TURBO:
+        model_key = "larry_turbo_lora"
+        filename = models.larry_turbo_ref_lora if reference else models.larry_turbo_lora
+    elif variant == LIGHTX2V_8STEP_TURBO:
+        model_key = "turbo_8step_lora"
+        filename = models.turbo_8step_ref_lora if reference else models.turbo_8step_lora
+    else:
+        return False
+    if not filename:
+        raise H3Error(f"{variant} Turbo LoRA is not configured.")
+    manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
+    if not stale_model_keys(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        model_keys=(model_key,),
+    ):
+        return False
+    sync_models(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        token=resolve_hf_token(),
+        log_prefix="[h3-turbo-on-demand]",
+        model_keys=(model_key,),
+        download_workers=1,
+    )
+    destination = COMFY_DIR / "models" / MODEL_SPECS[model_key].folder / filename
+    if not model_file_is_ready(destination):
+        raise H3Error(f"On-demand Turbo LoRA download did not produce {filename}.")
+    return True
+
+
 def ensure_int8_video_vae(models: ModelConfig) -> bool:
     """Download the optional INT8 ConvRot video VAE on first use."""
     filename = models.video_vae_int8
@@ -4602,6 +4637,8 @@ def generate(
                     f"{selected_turbo} Turbo LoRA is not provisioned. "
                     "Re-run setup/provisioning."
                 )
+            if ensure_turbo_lora(models, selected_turbo, mode):
+                progress(0, desc=f"Downloaded {selected_turbo} Turbo LoRA")
             selected_label = f"{profile.label} · Turbo · {selected_turbo}"
             turbo_strength = turbo_strength_for(selected_turbo)
         else:

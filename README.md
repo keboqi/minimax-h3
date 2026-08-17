@@ -117,9 +117,11 @@ bash run_h3.sh
 ```
 
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
-Quality profile plus the shared text encoder, VAEs, and Turbo LoRAs. Speed and
-Original checkpoints download on demand the first time each workflow variant is
-selected. SeedVR2 models and the LTX-2.5 2x upscaler IC-LoRA are lazy and
+Quality FL2VA checkpoint plus the shared text encoder, VAEs, and default 4-step
+Turbo LoRAs. The Quality Ref2VA checkpoint and selectable 6-step/8-step Turbo
+LoRAs download on demand when selected. Speed and Original checkpoints download
+on demand the first time each workflow variant is selected. SeedVR2 models and the
+LTX-2.5 2x upscaler IC-LoRA are lazy and
 download only when their post-processing option is first used. The experimental
 INT8 ConvRot video VAE
 is also lazy and downloads only when its default-off checkbox is enabled.
