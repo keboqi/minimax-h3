@@ -29,7 +29,7 @@ FirstBlockCache node.
 - Optional experimental INT8 ConvRot video VAE, lazy-downloaded on first use
 - Hardware-aware ComfyUI memory mode selection
 - One-click model unloading and VRAM cache release from the UI
-- Spectrum v0.2.14 in legacy mode as the normal-generation default and experimental Turbo option
+- Spectrum v0.2.15 in legacy mode as the normal-generation default and experimental Turbo option
 - FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
 - Version-aware, resumable Hugging Face model provisioning
@@ -59,10 +59,12 @@ patched fail-closed so its E-grid adapter derives the same rows as ComfyUI,
 including visual and audio reference-conditioning rows. Quality ConvRot models use
 bit-preserving two-way feed-forward chunking above 8K packed tokens.
 
-Spectrum is pinned to v0.2.14 and is applied after LoRA, Sol-Attn, and ConvRot
+Spectrum is pinned to v0.2.15 and is applied after LoRA, Sol-Attn, and ConvRot
 feed-forward patches. Its default uses system-RAM history and replay archives,
 degree-1 forecasting, offline smoothing replay, zero spectral audio blending,
-and explicit legacy (`model_aware_mode=off`) scheduling. v0.2.14 adds a narrow
+and explicit legacy (`model_aware_mode=off`) scheduling. v0.2.15 adds H3 Continuum
+actual-prefix interoperability and closes an ER-SDE solver-space edge case while
+preserving the existing scheduling behavior. v0.2.14 added a narrow
 native ER-SDE offline-replay guard that avoids KJ preview decode/copy work during
 the transformer-free replay while preserving the existing solver behavior. It
 also contains
