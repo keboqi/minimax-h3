@@ -25,6 +25,7 @@ SHARED_MODELS = ROOT / "h3_models.py"
 SHARED_REQUIREMENTS = ROOT / "h3_requirements.py"
 NODE_PATCHES = ROOT / "h3_node_patches.py"
 ATTENTION_HELPER = ROOT / "h3_attention.py"
+PROMPT_ENHANCER = ROOT / "prompt.txt"
 ACCEL_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
 LOCAL_UI = LOCAL / "gradio_app.py"
@@ -33,6 +34,7 @@ LOCAL_SHARED_MODELS = LOCAL / "h3_models.py"
 LOCAL_SHARED_REQUIREMENTS = LOCAL / "h3_requirements.py"
 LOCAL_NODE_PATCHES = LOCAL / "h3_node_patches.py"
 LOCAL_ATTENTION_HELPER = LOCAL / "h3_attention.py"
+LOCAL_PROMPT_ENHANCER = LOCAL / "prompt.txt"
 
 DATA = PurePosixPath("/data")
 MODELS = DATA / "models"
@@ -109,6 +111,7 @@ _RUNTIME_LOCAL_MOUNTS = (
     (LOCAL_ACCEL, ACCEL_DEST),
     (LOCAL_SHARED_MODELS, SHARED_MODELS),
     (LOCAL_ATTENTION_HELPER, ATTENTION_HELPER),
+    (LOCAL_PROMPT_ENHANCER, PROMPT_ENHANCER),
 )
 _BUILD_LOCAL_FILES = tuple(local for local, _ in _BUILD_LOCAL_MOUNTS)
 _RUNTIME_LOCAL_FILES = tuple(local for local, _ in _RUNTIME_LOCAL_MOUNTS)

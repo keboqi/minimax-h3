@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import math
+import mimetypes
 import os
 import random
 import re
@@ -105,6 +106,15 @@ AUTO_SOL_TOKEN_THRESHOLD = 8_192
 MAX_REFERENCE_IMAGES = 9
 MAX_REFERENCE_VIDEOS = 3
 MAX_REFERENCE_AUDIOS = 3
+GEMINI_PROMPT_MODELS = (
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+)
+DEFAULT_GEMINI_PROMPT_MODEL = GEMINI_PROMPT_MODELS[0]
+GEMINI_API_ROOT = "https://generativelanguage.googleapis.com"
+PROMPT_ENHANCER_SYSTEM_PATH = SCRIPT_DIR / "prompt.txt"
 DEFAULT_FBCACHE_PRESET = "Fast"
 DEFAULT_FBCACHE_THRESHOLD = 0.10
 DEFAULT_FBCACHE_START = 0.10
@@ -733,6 +743,305 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
 
 class H3Error(RuntimeError):
     pass
+
+
+def _gemini_api_key(temporary_key: str | None) -> str:
+    key = str(temporary_key or "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
+    if not key:
+        raise H3Error(
+            "Set GEMINI_API_KEY in the server environment or enter a temporary "
+            "Gemini API key in Prompt enhancer."
+        )
+    return key
+
+
+def _uploaded_media_path(value: Any) -> Path | None:
+    """Resolve filepath values returned by Gradio media components."""
+    if value is None:
+        return None
+    if isinstance(value, (str, Path)):
+        candidate = Path(value)
+    elif isinstance(value, dict):
+        raw = value.get("path") or value.get("name")
+        candidate = Path(raw) if raw else None
+    elif isinstance(value, (tuple, list)) and value:
+        # Older Gradio Video versions may return (video_path, subtitles_path).
+        return _uploaded_media_path(value[0])
+    else:
+        raw = getattr(value, "path", None) or getattr(value, "name", None)
+        candidate = Path(raw) if raw else None
+    if candidate is None or not candidate.is_file():
+        raise H3Error(f"Prompt-enhancer media file does not exist: {candidate}")
+    return candidate
+
+
+def _gemini_mime_type(path: Path) -> str:
+    mime_type = mimetypes.guess_type(path.name)[0]
+    if mime_type:
+        return mime_type
+    suffix_defaults = {
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".webm": "video/webm",
+    }
+    return suffix_defaults.get(path.suffix.lower(), "application/octet-stream")
+
+
+def _gemini_error(response: requests.Response, action: str) -> H3Error:
+    try:
+        payload = response.json()
+        detail = payload.get("error", {}).get("message") or response.text
+    except (ValueError, AttributeError):
+        detail = response.text
+    detail = re.sub(r"\s+", " ", str(detail)).strip()[:800]
+    return H3Error(f"Gemini {action} failed (HTTP {response.status_code}): {detail}")
+
+
+def _upload_gemini_file(
+    session: requests.Session,
+    path: Path,
+    api_key: str,
+) -> dict[str, Any]:
+    mime_type = _gemini_mime_type(path)
+    size = path.stat().st_size
+    headers = {
+        "x-goog-api-key": api_key,
+        "X-Goog-Upload-Protocol": "resumable",
+        "X-Goog-Upload-Command": "start",
+        "X-Goog-Upload-Header-Content-Length": str(size),
+        "X-Goog-Upload-Header-Content-Type": mime_type,
+        "Content-Type": "application/json",
+    }
+    started = session.post(
+        f"{GEMINI_API_ROOT}/upload/v1beta/files",
+        headers=headers,
+        json={"file": {"displayName": path.name[:512]}},
+        timeout=60,
+    )
+    if not started.ok:
+        raise _gemini_error(started, f"upload initialization for {path.name}")
+    upload_url = started.headers.get("x-goog-upload-url")
+    if not upload_url:
+        raise H3Error(f"Gemini did not return an upload URL for {path.name}.")
+    with path.open("rb") as source:
+        uploaded = session.post(
+            upload_url,
+            headers={
+                "Content-Length": str(size),
+                "X-Goog-Upload-Offset": "0",
+                "X-Goog-Upload-Command": "upload, finalize",
+                "Content-Type": mime_type,
+            },
+            data=source,
+            timeout=600,
+        )
+    if not uploaded.ok:
+        raise _gemini_error(uploaded, f"upload for {path.name}")
+    file_info = uploaded.json().get("file", {})
+    if not file_info.get("name") or not file_info.get("uri"):
+        raise H3Error(f"Gemini returned incomplete file metadata for {path.name}.")
+    return file_info
+
+
+def _wait_for_gemini_file(
+    session: requests.Session,
+    file_info: dict[str, Any],
+    api_key: str,
+) -> dict[str, Any]:
+    name = str(file_info["name"])
+    deadline = time.monotonic() + 600
+    while str(file_info.get("state", "ACTIVE")).upper() == "PROCESSING":
+        if time.monotonic() >= deadline:
+            raise H3Error(f"Gemini timed out while processing {name}.")
+        time.sleep(2)
+        response = session.get(
+            f"{GEMINI_API_ROOT}/v1beta/{name}",
+            headers={"x-goog-api-key": api_key},
+            timeout=60,
+        )
+        if not response.ok:
+            raise _gemini_error(response, f"file status check for {name}")
+        file_info = response.json()
+    state = str(file_info.get("state", "ACTIVE")).upper()
+    if state == "FAILED":
+        detail = file_info.get("error", {}).get("message", "unknown processing error")
+        raise H3Error(f"Gemini could not process {name}: {detail}")
+    return file_info
+
+
+def _active_prompt_media(
+    mode: str,
+    first_image: Any,
+    last_image: Any,
+    reference_images: Iterable[Any],
+    reference_videos: Iterable[Any],
+    reference_audios: Iterable[Any],
+) -> list[tuple[str, Path]]:
+    media: list[tuple[str, Path]] = []
+    if mode == "First / last frame":
+        frame_values = []
+        if first_image is not None:
+            frame_values.append(("<Picture 1> (first frame)", first_image))
+        if last_image is not None:
+            picture_number = 2 if first_image is not None else 1
+            frame_values.append(
+                (f"<Picture {picture_number}> (last frame)", last_image)
+            )
+        for label, value in frame_values:
+            path = _uploaded_media_path(value) if value is not None else None
+            if path is not None:
+                media.append((label, path))
+        return media
+    if mode != "Reference media":
+        return media
+    groups = (
+        ("Picture", reference_images),
+        ("Video", reference_videos),
+        ("Audio", reference_audios),
+    )
+    for prefix, values in groups:
+        for index, value in enumerate(values, 1):
+            path = _uploaded_media_path(value) if value is not None else None
+            if path is not None:
+                media.append((f"<{prefix} {index}>", path))
+    return media
+
+
+def enhance_h3_prompt(
+    prompt: str,
+    model: str,
+    temporary_api_key: str,
+    mode: str,
+    first_image: Any,
+    last_image: Any,
+    ref_image_1: Any,
+    ref_image_2: Any,
+    ref_image_3: Any,
+    ref_image_4: Any,
+    ref_image_5: Any,
+    ref_image_6: Any,
+    ref_image_7: Any,
+    ref_image_8: Any,
+    ref_image_9: Any,
+    ref_video_1: Any,
+    ref_video_2: Any,
+    ref_video_3: Any,
+    ref_audio_1: Any,
+    ref_audio_2: Any,
+    ref_audio_3: Any,
+    duration: float,
+    width: int,
+    height: int,
+) -> tuple[str, str]:
+    """Generate or enhance an H3 prompt from the active text and media inputs."""
+    try:
+        if model not in GEMINI_PROMPT_MODELS:
+            raise H3Error(f"Unsupported Gemini prompt model: {model}")
+        key = _gemini_api_key(temporary_api_key)
+        if not PROMPT_ENHANCER_SYSTEM_PATH.is_file():
+            raise H3Error(
+                f"Missing prompt enhancer system prompt: {PROMPT_ENHANCER_SYSTEM_PATH}"
+            )
+        system_prompt = PROMPT_ENHANCER_SYSTEM_PATH.read_text(
+            encoding="utf-8"
+        ).strip()
+        if not system_prompt:
+            raise H3Error("prompt.txt is empty.")
+        media = _active_prompt_media(
+            mode,
+            first_image,
+            last_image,
+            (
+                ref_image_1, ref_image_2, ref_image_3, ref_image_4, ref_image_5,
+                ref_image_6, ref_image_7, ref_image_8, ref_image_9,
+            ),
+            (ref_video_1, ref_video_2, ref_video_3),
+            (ref_audio_1, ref_audio_2, ref_audio_3),
+        )
+        rough_prompt = str(prompt or "").strip()
+        if not rough_prompt and not media:
+            raise H3Error("Enter a prompt or upload media before enhancing.")
+
+        parts: list[dict[str, Any]] = [{
+            "text": (
+                "Create the final MiniMax H3 prompt from the following user request.\n"
+                f"UI mode: {mode}\nRequested duration: {float(duration):.2f} seconds\n"
+                f"Requested output: {int(width)}x{int(height)}\n"
+                f"User text:\n{rough_prompt or '(No text supplied; infer only from the media.)'}"
+            )
+        }]
+        uploaded_names: list[str] = []
+        with requests.Session() as session:
+            try:
+                for label, path in media:
+                    parts.append({"text": f"The next uploaded file is {label}."})
+                    file_info = _upload_gemini_file(session, path, key)
+                    uploaded_names.append(str(file_info["name"]))
+                    file_info = _wait_for_gemini_file(session, file_info, key)
+                    parts.append({
+                        "fileData": {
+                            "mimeType": file_info.get("mimeType")
+                            or _gemini_mime_type(path),
+                            "fileUri": file_info["uri"],
+                        }
+                    })
+                response = session.post(
+                    f"{GEMINI_API_ROOT}/v1beta/models/{model}:generateContent",
+                    headers={
+                        "x-goog-api-key": key,
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "systemInstruction": {"parts": [{"text": system_prompt}]},
+                        "contents": [{"role": "user", "parts": parts}],
+                        "generationConfig": {
+                            "temperature": 0.6,
+                            "maxOutputTokens": 16384,
+                        },
+                    },
+                    timeout=600,
+                )
+                if not response.ok:
+                    raise _gemini_error(response, "prompt generation")
+                payload = response.json()
+                candidates = payload.get("candidates") or []
+                text_parts = (
+                    candidates[0].get("content", {}).get("parts", [])
+                    if candidates else []
+                )
+                enhanced = "".join(
+                    str(part.get("text", "")) for part in text_parts
+                ).strip()
+                if enhanced.startswith("```") and enhanced.endswith("```"):
+                    enhanced = re.sub(r"^```[^\n]*\n?", "", enhanced)
+                    enhanced = re.sub(r"\n?```$", "", enhanced).strip()
+                if not enhanced:
+                    reason = (
+                        candidates[0].get("finishReason") if candidates else
+                        payload.get("promptFeedback", {}).get(
+                            "blockReason", "no candidate"
+                        )
+                    )
+                    raise H3Error(f"Gemini returned no enhanced prompt ({reason}).")
+                return (
+                    enhanced,
+                    f"Enhanced with {model} using {len(media)} media file(s).",
+                )
+            finally:
+                for name in uploaded_names:
+                    try:
+                        session.delete(
+                            f"{GEMINI_API_ROOT}/v1beta/{name}",
+                            headers={"x-goog-api-key": key},
+                            timeout=30,
+                        )
+                    except requests.RequestException:
+                        pass
+    except (H3Error, requests.RequestException, OSError, ValueError) as exc:
+        return str(prompt or ""), f"Prompt enhancement failed: {exc}"
 
 
 @dataclass(frozen=True)
@@ -5236,6 +5545,27 @@ def build_ui() -> gr.Blocks:
                     label="Prompt", lines=12,
                     placeholder="Describe shots, camera motion, dialogue, sound effects, ambience, music, and any tagged references.",
                 )
+                with gr.Accordion("Gemini prompt enhancer", open=False):
+                    gr.Markdown(
+                        "Uses the active text and media inputs with `prompt.txt`. "
+                        "Set `GEMINI_API_KEY` on the server or enter a key below; "
+                        "a UI key is used only for this request and then cleared."
+                    )
+                    with gr.Row():
+                        gemini_prompt_model = gr.Dropdown(
+                            choices=list(GEMINI_PROMPT_MODELS),
+                            value=DEFAULT_GEMINI_PROMPT_MODEL,
+                            label="Gemini model",
+                        )
+                        gemini_api_key = gr.Textbox(
+                            label="Temporary Gemini API key",
+                            type="password",
+                            placeholder="Uses GEMINI_API_KEY when blank",
+                        )
+                    enhance_prompt_button = gr.Button("Generate / enhance prompt")
+                    enhance_prompt_status = gr.Textbox(
+                        label="Prompt enhancer status", lines=2, interactive=False
+                    )
                 with gr.Group(visible=False) as frame_group:
                     gr.Markdown("### First / last frame inputs")
                     with gr.Row():
@@ -6170,6 +6500,27 @@ def build_ui() -> gr.Blocks:
             show_progress="minimal",
             api_name="generate_video_advanced",
         )
+        enhance_prompt_event = enhance_prompt_button.click(
+            enhance_h3_prompt,
+            inputs=[
+                prompt, gemini_prompt_model, gemini_api_key, mode, first, last,
+                ref_image_1, ref_image_2, ref_image_3, ref_image_4, ref_image_5,
+                ref_image_6, ref_image_7, ref_image_8, ref_image_9,
+                ref_video_1, ref_video_2, ref_video_3,
+                ref_audio_1, ref_audio_2, ref_audio_3,
+                duration, width, height,
+            ],
+            outputs=[prompt, enhance_prompt_status],
+            show_progress="minimal",
+            api_name="enhance_prompt",
+        )
+        enhance_prompt_event.then(
+            lambda: "",
+            outputs=gemini_api_key,
+            queue=False,
+            show_progress="hidden",
+            api_name=False,
+        )
         ltx25_event = ltx25_run.click(
             generate_ltx25,
             inputs=[
@@ -6371,6 +6722,39 @@ def build_ui() -> gr.Blocks:
 
 def selftest() -> None:
     assert MODEL_PROFILE_CHOICES == ["Speed", "Quality", "Original"]
+    assert GEMINI_PROMPT_MODELS == (
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+    )
+    with tempfile.TemporaryDirectory() as enhancer_temp:
+        enhancer_root = Path(enhancer_temp)
+        first_path = enhancer_root / "first.png"
+        last_path = enhancer_root / "last.png"
+        video_path = enhancer_root / "reference.mp4"
+        for path in (first_path, last_path, video_path):
+            path.write_bytes(b"test")
+        last_only = _active_prompt_media(
+            "First / last frame", None, str(last_path), (), (), ()
+        )
+        assert last_only == [("<Picture 1> (last frame)", last_path)]
+        both_frames = _active_prompt_media(
+            "First / last frame", str(first_path), str(last_path), (), (), ()
+        )
+        assert [label for label, _ in both_frames] == [
+            "<Picture 1> (first frame)",
+            "<Picture 2> (last frame)",
+        ]
+        references = _active_prompt_media(
+            "Reference media",
+            None,
+            None,
+            (None, str(first_path)),
+            (str(video_path),),
+            (),
+        )
+        assert [label for label, _ in references] == ["<Picture 2>", "<Video 1>"]
     music_graph = build_music3_graph(
         model_choice=DEFAULT_MUSIC3_MODEL,
         caption="Global Metadata: test song",

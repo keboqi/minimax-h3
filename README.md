@@ -162,6 +162,16 @@ residency, prefetching, and host-memory pressure. It selects `--gpu-only` on
 64 GiB+ GPUs, where keeping the full stack resident avoids unnecessary loading.
 The 96 GiB Modal target likewise remains GPU-only.
 
+The **MiniMax H3** tab includes a Gemini prompt enhancer that combines the
+current text, active first/last-frame or reference image/video/audio inputs,
+duration, and resolution with the bundled `prompt.txt` system instruction. It
+supports `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, and
+`gemini-3.5-flash-lite`. Set `GEMINI_API_KEY` in the server environment, or
+enter a temporary key in the enhancer panel; a key entered in the UI is passed
+only to that enhancement request, is not saved, and is cleared afterward.
+Uploaded Gemini Files are deleted after each request. The same operation is
+exposed as `/enhance_prompt`.
+
 Generate a video, open **Gallery**, select its thumbnail, and choose a method
 under **Post-process selected video**. Each run preserves the source and adds a
 new processed video to the gallery. **SeedVR2 2x** uses ComfyUI's native
@@ -227,7 +237,9 @@ modal deploy modal_h3.py
 
 The deployment attaches the `custom-secret` Modal Secret to both runtime
 functions and requires it to contain `HF_TOKEN`. If your existing secret uses a
-different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`.
+different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`. To make the
+Gemini enhancer available without entering a key in the UI, also store
+`GEMINI_API_KEY` in that Modal Secret.
 
 The deployment pins the immutable ComfyUI v0.33.1 release, which includes
 native MiniMax Music 3, its non-dynamic-VRAM fix, LTX 2.5 NVFP4 support, and
