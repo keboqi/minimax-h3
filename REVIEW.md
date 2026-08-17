@@ -477,8 +477,6 @@ can still increase the editable step count when additional refinement is useful.
 
 ## v57 LTX-2.5 multi-image input
 
-The LTX-2.5 image-to-video tab now accepts multiple image uploads. Images are
-mapped to evenly spaced `LTXVAddGuide` keyframes from the first through last
-frame, while the existing single-image plus custom middle/end-keyframe path is
-preserved. Multiple uploads and custom middle/end timing are mutually exclusive
-to avoid ambiguous guide ordering.
+The LTX-2.5 image-to-video tab keeps a visual start-frame input with optional
+middle and end keyframes. The implementation uses the native sequential
+`LTXVAddGuide` path and does not add a separate multi-file reference mode.
