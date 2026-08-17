@@ -168,7 +168,8 @@ duration, and resolution with the bundled `prompt.txt` system instruction. It
 supports `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, and
 `gemini-3.5-flash-lite`. Set `GEMINI_API_KEY` in the server environment, or
 enter a temporary key in the enhancer panel; a key entered in the UI is passed
-only to that enhancement request, is not saved, and is cleared afterward.
+only to enhancement requests and is not stored by the server. It remains in the
+browser field for reuse until it is cleared manually or the page is refreshed.
 Uploaded Gemini Files are deleted after each request. The same operation is
 exposed as `/enhance_prompt`.
 

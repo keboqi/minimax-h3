@@ -5549,7 +5549,8 @@ def build_ui() -> gr.Blocks:
                     gr.Markdown(
                         "Uses the active text and media inputs with `prompt.txt`. "
                         "Set `GEMINI_API_KEY` on the server or enter a key below; "
-                        "a UI key is used only for this request and then cleared."
+                        "a UI key remains in this browser field until you clear it "
+                        "or refresh the page, and is not stored by the server."
                     )
                     with gr.Row():
                         gemini_prompt_model = gr.Dropdown(
@@ -6500,7 +6501,7 @@ def build_ui() -> gr.Blocks:
             show_progress="minimal",
             api_name="generate_video_advanced",
         )
-        enhance_prompt_event = enhance_prompt_button.click(
+        enhance_prompt_button.click(
             enhance_h3_prompt,
             inputs=[
                 prompt, gemini_prompt_model, gemini_api_key, mode, first, last,
@@ -6513,13 +6514,6 @@ def build_ui() -> gr.Blocks:
             outputs=[prompt, enhance_prompt_status],
             show_progress="minimal",
             api_name="enhance_prompt",
-        )
-        enhance_prompt_event.then(
-            lambda: "",
-            outputs=gemini_api_key,
-            queue=False,
-            show_progress="hidden",
-            api_name=False,
         )
         ltx25_event = ltx25_run.click(
             generate_ltx25,
