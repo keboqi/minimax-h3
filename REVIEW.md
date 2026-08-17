@@ -448,3 +448,28 @@ generation increased the retry rate. Only these four callbacks now bypass the
 queue. Generation, model operations, other settings callbacks, and gallery work
 retain their original queue behavior. The temporary payload tracing and the
 disproven Gradio 6.3.0 pin were removed.
+
+
+## v55 Spectrum replay-safety refresh
+
+Spectrum is advanced from v0.2.7 to v0.2.14 at
+`b573186214f5091b6d1bd715d8aec6d8c3b92d9a`. The release adds a narrowly scoped
+native ER-SDE offline-replay guard: KJNodes preview remains enabled during the
+transformer-backed capture pass, but its synchronous preview decode and
+GPU-to-CPU copy are bypassed during the fast transformer-free replay. The
+release explicitly preserves solver math, RNG ownership, forecast cadence,
+scheduler behavior, and the normal actual/forecast NFE budget. Existing graph
+inputs and the project's legacy `model_aware_mode=off` policy remain unchanged.
+
+Primary source:
+
+- https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.14
+
+
+## v56 LightX2V Turbo default
+
+The default Turbo variant now uses the LightX2V four-step adapter. This matches
+the preferred faster workflow while retaining Larry v4-600 EMA at six steps and
+LightX2V eight-step as selectable alternatives. The UI's initial step value,
+variant default, and generation-mode self-tests now agree on four steps; users
+can still increase the editable step count when additional refinement is useful.

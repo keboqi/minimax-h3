@@ -27,7 +27,7 @@ FirstBlockCache node.
 - Optional experimental INT8 ConvRot video VAE, lazy-downloaded on first use
 - Hardware-aware ComfyUI memory mode selection
 - One-click model unloading and VRAM cache release from the UI
-- Spectrum v0.2.7 in legacy mode as the normal-generation default and experimental Turbo option
+- Spectrum v0.2.14 in legacy mode as the normal-generation default and experimental Turbo option
 - FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
 - Version-aware, resumable Hugging Face model provisioning
@@ -57,10 +57,13 @@ patched fail-closed so its E-grid adapter derives the same rows as ComfyUI,
 including visual and audio reference-conditioning rows. Quality ConvRot models use
 bit-preserving two-way feed-forward chunking above 8K packed tokens.
 
-Spectrum is pinned to v0.2.7 and is applied after LoRA, Sol-Attn, and ConvRot
+Spectrum is pinned to v0.2.14 and is applied after LoRA, Sol-Attn, and ConvRot
 feed-forward patches. Its default uses system-RAM history and replay archives,
 degree-1 forecasting, offline smoothing replay, zero spectral audio blending,
-and explicit legacy (`model_aware_mode=off`) scheduling. v0.2.7 also contains
+and explicit legacy (`model_aware_mode=off`) scheduling. v0.2.14 adds a narrow
+native ER-SDE offline-replay guard that avoids KJ preview decode/copy work during
+the transformer-free replay while preserving the existing solver behavior. It
+also contains
 native ER-SDE support and its protected two-actual-step replay tail, while the
 current H3 graphs continue to use the reviewed Larry and RES sampler paths.
 Spectrum, FirstBlockCache, and EasyCache are mutually exclusive acceleration
@@ -80,9 +83,11 @@ forecast before a completed native refresh, which limits both acceleration and
 trajectory error at four to eight steps. Compare the same prompt and seed with
 Acceleration Off before relying on it for quality-critical output.
 
-Turbo defaults to Larry v4-600 EMA at six steps and strength 1.0. Its pinned
-custom node uses a quantization-aware bypass loader plus the adaptive H3 Turbo
-sampler. LightX2V provides a mode-specific four-step option (FL2V v1.0 768p or
+Turbo defaults to the LightX2V four-step adapter at strength 1.0 (FL2V v1.0
+768p or the dedicated Ref2V 544p adapter). Larry v4-600 EMA remains available
+at six steps through its pinned custom node, which uses a quantization-aware
+bypass loader plus the adaptive H3 Turbo sampler. LightX2V also provides a
+mode-specific four-step option (FL2V v1.0 768p or
 Ref2V v0.1 544p) and an FL2V v1.0 eight-step 544p option, all at strength 1.0.
 Loader policy follows the base model: Original BF16 applies either LoRA in
 activation space, avoiding reversible weight-merge copies that exceed 96 GiB;
@@ -91,9 +96,8 @@ and compatibility with direct-weight quantized kernels. LightX2V's Original
 bypass validates the exact official 50-block plus two-refiner adapter layout before installing
 any hooks and retains fused modulation. Turbo step defaults are applied by an
 immediate mode/variant UI update before generation is queued, preventing
-Larry's six-step default from surviving a switch to LightX2V. The resulting
-step control remains editable so users can increase either Turbo variant's
-count for clips that benefit from additional refinement.
+The resulting step control remains editable so users can increase any Turbo
+variant's count for clips that benefit from additional refinement.
 
 Reference mode automatically selects LightX2V's dedicated Ref2V v0.1 adapter
 for the four-step option. The LightX2V eight-step and Larry options still reuse

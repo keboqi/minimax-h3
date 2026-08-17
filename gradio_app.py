@@ -115,7 +115,7 @@ DEFAULT_ACCELERATOR = "Spectrum"
 LIGHTX2V_4STEP_TURBO = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
 LIGHTX2V_8STEP_TURBO = "LightX2V v1.0 / 8-step 544p"
 LARRY_TURBO = "Larry v4-600 EMA"
-DEFAULT_TURBO = LARRY_TURBO
+DEFAULT_TURBO = LIGHTX2V_4STEP_TURBO
 LTX25_SIGMAS = "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
 LTX25_DEFAULTS = {
     "model": DEFAULT_LTX25_MODEL,
@@ -285,7 +285,7 @@ UI_DEFAULTS = {
     "duration": 5,
     "width": 864,
     "height": 480,
-    "steps": 6,
+    "steps": 4,
     "scheduler": "simple",
     "seed": -1,
     "attention_mode": "Sage 2",
@@ -5323,8 +5323,8 @@ def build_ui() -> gr.Blocks:
                     steps = gr.Slider(
                         4, 30, value=defaults["steps"], step=1, label="Steps",
                         info=(
-                            "Larry defaults to 6 steps; LightX2V variants default to their "
-                            "trained 4 or 8 steps. Increase Turbo "
+                            "LightX2V 4-step is the default Turbo variant; Larry and the "
+                            "8-step LightX2V variant keep their trained step counts. Increase Turbo "
                             "steps when a clip benefits from extra refinement; Normal H3 "
                             "presets normally use 15–20."
                         ),
@@ -7193,10 +7193,15 @@ def selftest() -> None:
     ))
     assert live_updates[0][0] == "Generating video and audio"
     assert live_updates[1][3:] == (3, 4)
-    turbo_defaults = generation_mode_defaults("Turbo", LARRY_TURBO)
-    assert turbo_defaults[1]["value"] == 6
+    turbo_defaults = generation_mode_defaults("Turbo")
+    assert DEFAULT_TURBO == LIGHTX2V_4STEP_TURBO
+    assert turbo_defaults[1]["value"] == 4
     assert turbo_defaults[1]["interactive"] is True
     assert turbo_defaults[2:] == ("simple", "Spectrum", "Sage 2")
+    larry_defaults = generation_mode_defaults("Turbo", LARRY_TURBO)
+    assert larry_defaults[1]["value"] == 6
+    assert larry_defaults[1]["interactive"] is True
+    assert larry_defaults[2:] == ("simple", "Spectrum", "Sage 2")
     lightx_defaults = generation_mode_defaults("Turbo", LIGHTX2V_4STEP_TURBO)
     assert lightx_defaults[1]["value"] == 4
     assert lightx_defaults[1]["interactive"] is True
@@ -7505,7 +7510,7 @@ def selftest() -> None:
         f"Sol Auto/Turbo policy valid, Spectrum default + Sol/ConvRot order valid, "
         f"zero-copy Sol + FirstBlockCache composition valid, "
         f"LightX fused modulation + Larry compatibility + ConvRot FFN chunking valid, "
-        f"Spectrum v0.2.7 legacy Turbo composition + block-cache guard valid, "
+        f"Spectrum v0.2.14 legacy Turbo composition + block-cache guard valid, "
         f"selectable Larry/LightX2V Turbo on "
         f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, "
         f"SaveVideo codec API valid, prompt API download URL valid, "
