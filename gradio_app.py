@@ -2348,6 +2348,47 @@ def ltx25_frame_length(duration: float, fps: float) -> int:
     return 1 + max(1, int(float(duration) * float(fps)) // 8) * 8
 
 
+def ltx25_uploaded_keyframes(
+    images: Any,
+    frames: int,
+    strength: float,
+) -> list[tuple[str, int, float]]:
+    """Map one or more uploaded images to evenly spaced LTX keyframes."""
+    paths = normalize_paths(images)
+    if not paths:
+        return []
+    if len(paths) == 1:
+        positions = [0]
+    else:
+        positions = [
+            round(index * (frames - 1) / (len(paths) - 1))
+            for index in range(len(paths))
+        ]
+    return [
+        (
+            path,
+            position if len(paths) == 1 or index < len(paths) - 1 else -1,
+            float(strength),
+        )
+        for index, (path, position) in enumerate(zip(paths, positions))
+    ]
+
+
+def ltx25_keyframe_paths(
+    images: Any,
+    middle_image: Any = None,
+    end_image: Any = None,
+) -> list[str]:
+    """Normalize LTX image inputs and reject ambiguous timing combinations."""
+    paths = normalize_paths(images)
+    if len(paths) > 1 and (middle_image or end_image):
+        raise H3Error(
+            "Use either multiple uploaded images or the optional middle/end "
+            "keyframes, not both."
+        )
+    return paths
+
+
 def required_ltx25_nodes(*, image_to_video: bool = False) -> set[str]:
     required = {
         "UNETLoader", "CLIPLoader", "VAELoader", "CLIPTextEncode",
@@ -2366,7 +2407,7 @@ def build_ltx25_graph(
     model_choice: str = DEFAULT_LTX25_MODEL,
     prompt: str,
     negative_prompt: str,
-    first_image: str | None,
+    first_image: Any,
     width: int,
     height: int,
     duration: float,
@@ -2418,10 +2459,18 @@ def build_ltx25_graph(
         frames - 2,
         max(1, int(round(float(middle_time) * float(fps)))),
     )
+    uploaded_paths = ltx25_keyframe_paths(first_image, middle_image, end_image)
+    uploaded_keyframes = ltx25_uploaded_keyframes(
+        uploaded_paths, frames, image_strength
+    )
     keyframes = (
-        (first_image, 0, image_strength),
-        (middle_image, middle_frame_idx, middle_strength),
-        (end_image, -1, end_strength),
+        tuple(uploaded_keyframes)
+        if len(uploaded_paths) > 1
+        else (
+            (uploaded_paths[0] if uploaded_paths else None, 0, image_strength),
+            (middle_image, middle_frame_idx, middle_strength),
+            (end_image, -1, end_strength),
+        )
     )
     for image, frame_idx, strength in keyframes:
         if not image:
@@ -4726,7 +4775,7 @@ def generate_ltx25(
     model_choice: str,
     prompt: str,
     negative_prompt: str,
-    first_image: str | None,
+    first_image: Any,
     duration: float,
     fps: float,
     width: int,
@@ -4758,8 +4807,11 @@ def generate_ltx25(
         resolved_width, resolved_height = validate_resolution(width, height)
         actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
         image_to_video = str(mode).strip().lower() == "image to video"
-        if image_to_video and not first_image:
-            raise H3Error("Image-to-video mode requires a first frame.")
+        uploaded_images = ltx25_keyframe_paths(
+            first_image, middle_image, end_image
+        )
+        if image_to_video and not uploaded_images:
+            raise H3Error("Image-to-video mode requires at least one image.")
         keyframe_strengths = {
             "Start image": image_strength,
             "Middle image": middle_strength,
@@ -5589,12 +5641,18 @@ def build_ui() -> gr.Blocks:
                     )
                     with gr.Group(visible=False) as ltx25_image_group:
                         gr.Markdown(
-                            "Add a required start keyframe and optional middle/end "
-                            "keyframes. Each image is applied at its clip position."
+                            "Upload one or more images. Multiple images are applied "
+                            "as evenly spaced keyframes from the first to last frame. "
+                            "For custom timing, upload one image and use the optional "
+                            "middle/end keyframes below."
                         )
                         with gr.Row():
-                            ltx25_image = gr.Image(
-                                type="filepath", label="Start keyframe (required)"
+                            ltx25_image = gr.File(
+                                file_count="multiple",
+                                file_types=["image"],
+                                type="filepath",
+                                label="Keyframes (one or more images; required)",
+                                height=120,
                             )
                             ltx25_image_strength = gr.Slider(
                                 0.0, 1.0,
@@ -6774,6 +6832,16 @@ def selftest() -> None:
     inventory = render_ltx25_official_model_inventory()
     assert all(MODEL_SPECS[key].repo_id in inventory for key in LTX25_ICLORA_MODEL_KEYS)
     assert set(LTX25_ICLORA_MODEL_KEYS) <= set(ltx25_official_inventory_keys())
+    assert ltx25_uploaded_keyframes("start.png", 121, 0.8) == [
+        ("start.png", 0, 0.8),
+    ]
+    assert ltx25_uploaded_keyframes(
+        ["a.png", "b.png", "c.png"], 121, 0.8
+    ) == [
+        ("a.png", 0, 0.8),
+        ("b.png", 60, 0.8),
+        ("c.png", -1, 0.8),
+    ]
 
     original_stage_file = globals()["stage_file"]
     try:

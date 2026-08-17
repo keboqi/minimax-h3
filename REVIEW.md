@@ -473,3 +473,12 @@ the preferred faster workflow while retaining Larry v4-600 EMA at six steps and
 LightX2V eight-step as selectable alternatives. The UI's initial step value,
 variant default, and generation-mode self-tests now agree on four steps; users
 can still increase the editable step count when additional refinement is useful.
+
+
+## v57 LTX-2.5 multi-image input
+
+The LTX-2.5 image-to-video tab now accepts multiple image uploads. Images are
+mapped to evenly spaced `LTXVAddGuide` keyframes from the first through last
+frame, while the existing single-image plus custom middle/end-keyframe path is
+preserved. Multiple uploads and custom middle/end timing are mutually exclusive
+to avoid ambiguous guide ordering.

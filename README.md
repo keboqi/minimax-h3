@@ -13,6 +13,8 @@ FirstBlockCache node.
 - All nine official LTX-2.5 ComfyUI workflows for two-stage generation,
   text-to-audio, video editing, reference sheets, motion tracks,
   in/outpainting, and pose/depth/canny control
+- LTX-2.5 image-to-video accepts one or more uploaded images as evenly spaced
+  keyframes, with optional custom middle/end timing for single-image input
 - Live queue position, workflow stage, node count, overall work, and sampling schedule
 - Resolution-aware thumbnail gallery that loads a video only after it is selected
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
