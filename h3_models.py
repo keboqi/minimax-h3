@@ -25,7 +25,6 @@ EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
 TEXT_ENCODER_REPO = "Comfy-Org/MiniMax-H3"
 SEEDVR2_REPO = "Comfy-Org/SeedVR2"
 LTX25_REPO = "Lightricks/LTX-2.5"
-LTX25_NVFP4_COMFY_REPO = "BennyDaBall/LTX-2.5-22b-distilled-nvfp4-comfy"
 LTX25_PIXEL_UPSCALER_REPO = (
     "Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler"
 )
@@ -187,14 +186,10 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "LTX-2.5 22B distilled transformer; lazy 8-step model",
     ),
     "ltx25_distilled_nvfp4": ModelSpec(
-        LTX25_NVFP4_COMFY_REPO,
+        LTX25_REPO,
         "diffusion_models",
-        "ltx-2.5-22b-distilled-transformer-nvfp4-comfy.safetensors",
-        "LTX-2.5 22B distilled NVFP4; official weights with Comfy quant markers",
-        local_filename="ltx-2.5-22b-distilled-transformer-nvfp4.safetensors",
-        expected_sha256=(
-            "2f3599d1adf22fc4c4a5bb9328cb42d64f449ed78dce5f47a16f098481bdee74"
-        ),
+        "diffusion_models/ltx-2.5-22b-distilled-transformer-nvfp4.safetensors",
+        "LTX-2.5 22B distilled NVFP4; official Lightricks weights",
     ),
     "ltx25_distilled_int8": ModelSpec(
         LTX25_REPO,
@@ -226,6 +221,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "vae/ltx-2.5-video-vae-bf16.safetensors",
         "LTX-2.5 diffusion-decoder video VAE for official workflows",
     ),
+    "ltx25_duration_head": ModelSpec(
+        LTX25_REPO,
+        "model_patches",
+        "model_patches/ltx-2.5-duration-head-bf16.safetensors",
+        "LTX-2.5 duration model patch for official workflows",
+    ),
     "ltx25_text_enhancer": ModelSpec(
         "Comfy-Org/gemma-4",
         "text_encoders",
@@ -233,10 +234,16 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "Optional Gemma 4 prompt enhancer used by official workflows",
     ),
     "ltx25_spatial_upscaler": ModelSpec(
-        LTX23_REPO,
+        LTX25_REPO,
         "latent_upscale_models",
-        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
-        "LTX 2x latent upscaler for official two-stage workflows",
+        "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+        "LTX-2.5 latent spatial upscaler for official two-stage workflows",
+    ),
+    "ltx25_temporal_upscaler": ModelSpec(
+        LTX25_REPO,
+        "latent_upscale_models",
+        "latent_upscale_models/ltx-2.5-latent-temporal-upscaler-x2-bf16-1.0.safetensors",
+        "LTX-2.5 latent temporal upscaler for official two-stage workflows",
     ),
     "ltx25_pixel_upscaler_x2": ModelSpec(
         LTX25_PIXEL_UPSCALER_REPO,
@@ -331,11 +338,11 @@ LAZY_POSTPROCESS_MODEL_KEYS = (
     "ltx25_pixel_upscaler_x2",
 )
 LTX25_MODEL_CHOICES = {
-    "NVFP4 Comfy-ready (Blackwell recommended)": "ltx25_distilled_nvfp4",
+    "NVFP4 (Blackwell recommended)": "ltx25_distilled_nvfp4",
     "INT8 ConvRot": "ltx25_distilled_int8",
     "BF16": "ltx25_distilled",
 }
-DEFAULT_LTX25_MODEL = "NVFP4 Comfy-ready (Blackwell recommended)"
+DEFAULT_LTX25_MODEL = "NVFP4 (Blackwell recommended)"
 LTX25_SHARED_MODEL_KEYS = (
     "ltx25_text_encoder",
     "ltx25_video_vae",
@@ -355,7 +362,9 @@ LTX25_ICLORA_MODEL_KEYS = (
 LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS = (
     "ltx25_video_vae_full",
     "ltx25_text_enhancer",
+    "ltx25_duration_head",
     "ltx25_spatial_upscaler",
+    "ltx25_temporal_upscaler",
     *LTX25_ICLORA_MODEL_KEYS,
 )
 MUSIC3_MODEL_CHOICES = {
@@ -898,8 +907,10 @@ def selftest() -> None:
         "ltx25_video_vae",
         "ltx25_audio_vae",
         "ltx25_video_vae_full",
+        "ltx25_duration_head",
         "ltx25_text_enhancer",
         "ltx25_spatial_upscaler",
+        "ltx25_temporal_upscaler",
         "ltx25_pixel_upscaler_x2",
         "ltx25_iclora_ingredients",
         "ltx25_iclora_in_outpaint",
@@ -958,7 +969,7 @@ def selftest() -> None:
     assert cfg["seedvr2_vae"] == "seedvr2_ema_vae_fp16.safetensors"
     assert cfg["ltx25_models"] == {
         "transformers": {
-            "NVFP4 Comfy-ready (Blackwell recommended)": (
+            "NVFP4 (Blackwell recommended)": (
                 "ltx-2.5-22b-distilled-transformer-nvfp4.safetensors"
             ),
             "INT8 ConvRot": (
@@ -970,13 +981,11 @@ def selftest() -> None:
         "video_vae": "ltx-2.5-video-vae-conv-bf16.safetensors",
         "audio_vae": "ltx-2.5-audio-vae-bf16.safetensors",
     }
-    assert DEFAULT_LTX25_MODEL == "NVFP4 Comfy-ready (Blackwell recommended)"
+    assert DEFAULT_LTX25_MODEL == "NVFP4 (Blackwell recommended)"
     nvfp4 = MODEL_SPECS["ltx25_distilled_nvfp4"]
-    assert nvfp4.repo_id == LTX25_NVFP4_COMFY_REPO
-    assert nvfp4.filename.endswith("-nvfp4-comfy.safetensors")
-    assert nvfp4.expected_sha256 == (
-        "2f3599d1adf22fc4c4a5bb9328cb42d64f449ed78dce5f47a16f098481bdee74"
-    )
+    assert nvfp4.repo_id == LTX25_REPO
+    assert nvfp4.filename.endswith("-nvfp4.safetensors")
+    assert nvfp4.expected_sha256 is None
     assert MODEL_SPECS["ltx25_pixel_upscaler_x2"].repo_id == (
         LTX25_PIXEL_UPSCALER_REPO
     )

@@ -264,10 +264,11 @@ failed proxy check is reported without withholding the main Gradio UI.
 Encoded nested userdata paths are forwarded unchanged so saved workflow folders
 load correctly through the proxy, including the bundled LTX 2.5 workflows.
 
-The default LTX 2.5 NVFP4 option uses the official packed weights with the
-missing ComfyUI quantization markers added. Its SHA-256 is pinned and the
-checkpoint header is validated before generation. The INT8 ConvRot and BF16
-options continue to come directly from `Lightricks/LTX-2.5`.
+The default LTX 2.5 NVFP4 option now uses the current official packed weights
+directly from `Lightricks/LTX-2.5`. The official workflow inventory also uses
+the current LTX-2.5 duration head and spatial/temporal latent upscalers. The
+INT8 ConvRot and BF16 options continue to come directly from the same
+repository.
 
 Useful environment variables include `H3_MODAL_APP_NAME`,
 `H3_MODAL_VOLUME`, `H3_MODAL_MIN_CONTAINERS`,
