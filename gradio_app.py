@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -23,6 +24,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import aiohttp
 import gradio as gr
+from gradio import networking as gradio_networking
 import httpx
 import requests
 import uvicorn
@@ -363,9 +365,8 @@ SPECTRUM_DEFAULT_INPUTS = {
 }
 
 # The official H3 workflow uses a 768×1344 pixel-area native canvas. Larger
-# entries are kept explicitly marked as extended/experimental.
+# entries are still available for workflows that can handle them.
 NATIVE_PIXEL_CAP = 768 * 1344
-EXTENDED_PIXEL_CAP = 1920 * 1088
 AUTO_RESOLUTION_PIXEL_CAP = 2_000_000 - 1
 DRAFT_RESOLUTIONS: dict[str, tuple[int, int]] = {
     "1:1 · 512×512": (512, 512),
@@ -1827,12 +1828,6 @@ def snap32(value: int | float) -> int:
 def validate_resolution(width: int | float, height: int | float) -> tuple[int, int]:
     resolved_width = snap32(width)
     resolved_height = snap32(height)
-    pixels = resolved_width * resolved_height
-    if pixels > EXTENDED_PIXEL_CAP:
-        raise H3Error(
-            f"Resolution {resolved_width}×{resolved_height} is above the UI safety "
-            f"limit of 1920×1088 ({EXTENDED_PIXEL_CAP / 1_000_000:.2f} MP)."
-        )
     return resolved_width, resolved_height
 
 
@@ -8079,6 +8074,7 @@ def selftest() -> None:
     assert turbo_sol_enabled is True
     assert turbo_sol_reason.startswith("Auto Turbo:")
     assert validate_resolution(865, 481) == (864, 480)
+    assert validate_resolution(2048, 2048) == (2048, 2048)
     auto_landscape = resolution_for_aspect_ratio(4096, 2304)
     auto_portrait = resolution_for_aspect_ratio(2304, 4096)
     assert resolution_for_aspect_ratio(1024, 1024) == (1024, 1024)
@@ -8502,13 +8498,52 @@ def main() -> None:
     )
     demo = build_ui().queue(default_concurrency_limit=1, max_size=8)
     app = build_server(demo, allowed_paths)
-    uvicorn.run(
-        app,
-        host=os.getenv("GRADIO_SERVER_NAME", "0.0.0.0"),
-        port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
-        log_level="info",
-        **UVICORN_WEBSOCKET_OPTIONS,
+    host = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
+    port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
+    share_enabled = os.getenv("GRADIO_SHARE", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level="info",
+            **UVICORN_WEBSOCKET_OPTIONS,
+        )
     )
+    server_thread = threading.Thread(target=server.run, daemon=True)
+    server_thread.start()
+
+    if share_enabled:
+        try:
+            # The app is mounted into a custom FastAPI server, so demo.launch()
+            # cannot create the tunnel without starting a second server. Use
+            # the same Gradio tunnel implementation against this server.
+            share_url = gradio_networking.setup_tunnel(
+                local_host="127.0.0.1",
+                local_port=port,
+                share_token=demo.share_token,
+                share_server_address=getattr(demo, "share_server_address", None),
+                share_server_tls_certificate=getattr(
+                    demo, "share_server_tls_certificate", None
+                ),
+            )
+            print(f"[h3-ui] Public Gradio URL: {share_url}", flush=True)
+        except Exception as exc:
+            print(
+                f"[h3-ui] Could not create Gradio share link: {exc}",
+                flush=True,
+            )
+
+    try:
+        server_thread.join()
+    except KeyboardInterrupt:
+        server.should_exit = True
+        server_thread.join(timeout=5)
 
 
 if __name__ == "__main__":
