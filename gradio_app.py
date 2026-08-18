@@ -323,7 +323,7 @@ UI_DEFAULTS = {
     "ref_image_size": "match",
     "latent_upscale": False,
     "latent_upscaler_model": DEFAULT_H3_LATENT_UPSCALER_MODEL,
-    "latent_upscale_split_step": 3,
+    "latent_upscale_refine_steps": 2,
     "postprocess": "None",
     "seedvr2_model": DEFAULT_SEEDVR2_MODEL,
     "upscale_force_offload": False,
@@ -2469,7 +2469,7 @@ def finish_sampling(
     initial_latent_ref: list[Any] | None = None,
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
-    latent_upscale_split_step: int = 3,
+    latent_upscale_refine_steps: int = 2,
 ) -> None:
     noise = graph.add("RandomNoise", noise_seed=int(seed))
     guider = graph.add("BasicGuider", model=model_ref, conditioning=conditioning_ref)
@@ -2492,10 +2492,10 @@ def finish_sampling(
     if latent_upscale_model_name is not None:
         if initial_conditioning_ref is None or initial_latent_ref is None:
             raise H3Error("H3 latent upscaling requires a low-resolution H3 stage.")
-        split_sigmas = graph.add(
+        refine_sigmas = graph.add(
             "SplitSigmas",
             sigmas=Graph.out(sigmas),
-            step=int(latent_upscale_split_step),
+            step=int(steps) - int(latent_upscale_refine_steps),
         )
         initial_guider = graph.add(
             "BasicGuider",
@@ -2507,7 +2507,7 @@ def finish_sampling(
             noise=Graph.out(noise),
             guider=Graph.out(initial_guider),
             sampler=Graph.out(sampler),
-            sigmas=Graph.out(split_sigmas, 0),
+            sigmas=Graph.out(sigmas),
             latent_image=initial_latent_ref,
         )
         separated = graph.add(
@@ -2527,15 +2527,15 @@ def finish_sampling(
             video_latent=Graph.out(upscaled_video),
             audio_latent=Graph.out(separated, 1),
         )
-        disabled_noise = graph.add("DisableNoise")
         sampled = graph.add(
             "SamplerCustomAdvanced",
-            noise=Graph.out(disabled_noise),
+            noise=Graph.out(noise),
             guider=Graph.out(guider),
             sampler=Graph.out(sampler),
-            sigmas=Graph.out(split_sigmas, 1),
+            sigmas=Graph.out(refine_sigmas, 1),
             latent_image=Graph.out(combined),
         )
+        audio_samples = Graph.out(initial_sampled)
     else:
         sampled = graph.add(
             "SamplerCustomAdvanced",
@@ -2545,8 +2545,9 @@ def finish_sampling(
             sigmas=Graph.out(sigmas),
             latent_image=latent_ref,
         )
+        audio_samples = Graph.out(sampled)
     images = graph.add("VAEDecode", samples=Graph.out(sampled), vae=video_vae_ref)
-    audio = graph.add("VAEDecodeAudio", samples=Graph.out(sampled), vae=audio_vae_ref)
+    audio = graph.add("VAEDecodeAudio", samples=audio_samples, vae=audio_vae_ref)
     video = graph.add(
         "CreateVideo",
         images=Graph.out(images),
@@ -2606,7 +2607,7 @@ def build_fl2va_graph(
     use_sage: bool = False,
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
-    latent_upscale_split_step: int = 3,
+    latent_upscale_refine_steps: int = 2,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -2690,7 +2691,7 @@ def build_fl2va_graph(
         initial_latent_ref=Graph.out(initial_h3, 1),
         latent_upscale_model_name=latent_upscale_model_name,
         latent_upscale_precision=latent_upscale_precision,
-        latent_upscale_split_step=latent_upscale_split_step,
+        latent_upscale_refine_steps=latent_upscale_refine_steps,
     )
     return graph.nodes
 
@@ -2736,7 +2737,7 @@ def build_ref2va_graph(
     use_sage: bool = False,
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
-    latent_upscale_split_step: int = 3,
+    latent_upscale_refine_steps: int = 2,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -2831,7 +2832,7 @@ def build_ref2va_graph(
         initial_latent_ref=Graph.out(initial_h3, 1),
         latent_upscale_model_name=latent_upscale_model_name,
         latent_upscale_precision=latent_upscale_precision,
-        latent_upscale_split_step=latent_upscale_split_step,
+        latent_upscale_refine_steps=latent_upscale_refine_steps,
     )
     return graph.nodes
 
@@ -3439,7 +3440,6 @@ def required_nodes_for(
     if latent_upscale:
         common |= {
             "SplitSigmas",
-            "DisableNoise",
             H3_LATENT_UPSCALER_NODE,
             H3_SEPARATE_AV_LATENT_NODE,
             H3_COMBINE_AV_LATENT_NODE,
@@ -3531,7 +3531,7 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Configuring generation model"
     if name in {
         "RandomNoise", "BasicGuider", "CFGGuider", CORE_SAMPLER_NODE,
-        "BasicScheduler", "ManualSigmas", "SplitSigmas", "DisableNoise",
+        "BasicScheduler", "ManualSigmas", "SplitSigmas",
     }:
         return "Preparing sampler"
     if name == H3_SEPARATE_AV_LATENT_NODE:
@@ -4738,7 +4738,7 @@ def generate(
     postprocess: str,
     latent_upscale: bool = False,
     latent_upscaler_model: str = DEFAULT_H3_LATENT_UPSCALER_MODEL,
-    latent_upscale_split_step: int = 3,
+    latent_upscale_refine_steps: int = 2,
     upscale_force_offload: bool = False,
     upscale_split_enabled: bool = False,
     upscale_split_seconds: float = 5.0,
@@ -4840,10 +4840,10 @@ def generate(
                 resolved_width,
                 resolved_height,
             ) = h3_latent_upscale_dimensions(resolved_width, resolved_height)
-            split_step = int(latent_upscale_split_step)
-            if split_step < 1 or split_step >= effective_steps:
+            refine_steps = int(latent_upscale_refine_steps)
+            if refine_steps < 1 or refine_steps >= effective_steps:
                 raise H3Error(
-                    "H3 latent upscale split step must be at least 1 and smaller "
+                    "H3 latent upscale refinement steps must be at least 1 and smaller "
                     f"than the total {effective_steps} sampling steps."
                 )
             (
@@ -4885,6 +4885,13 @@ def generate(
         effective_cache_mode, cache_note = resolve_cache_policy(
             cache_mode, use_turbo=use_turbo
         )
+        if latent_upscale and effective_cache_mode.lower() != "off":
+            cache_note = (
+                f"{effective_cache_mode} was disabled because cache state is not "
+                "safe across the low-resolution generation and high-resolution "
+                "refinement samplers."
+            )
+            effective_cache_mode = "Off"
         missing = required_nodes_for(
             mode,
             effective_sol,
@@ -4954,7 +4961,7 @@ def generate(
                 use_int8_vae=bool(use_int8_vae),
                 latent_upscale_model_name=latent_upscale_model_name,
                 latent_upscale_precision=latent_upscale_precision,
-                latent_upscale_split_step=int(latent_upscale_split_step),
+                latent_upscale_refine_steps=int(latent_upscale_refine_steps),
             )
         else:
             graph = build_fl2va_graph(
@@ -4986,7 +4993,7 @@ def generate(
                 use_int8_vae=bool(use_int8_vae),
                 latent_upscale_model_name=latent_upscale_model_name,
                 latent_upscale_precision=latent_upscale_precision,
-                latent_upscale_split_step=int(latent_upscale_split_step),
+                latent_upscale_refine_steps=int(latent_upscale_refine_steps),
             )
 
         client_id = str(uuid.uuid4())
@@ -5038,9 +5045,10 @@ def generate(
         if latent_upscale:
             queued_status += (
                 f"\n\nH3 latent upscale: {latent_upscaler_model} · "
+                f"full {effective_steps}-step generation at "
                 f"{latent_source_width}×{latent_source_height} → "
-                f"{resolved_width}×{resolved_height} · split after "
-                f"{int(latent_upscale_split_step)}/{effective_steps} steps."
+                f"{resolved_width}×{resolved_height} · "
+                f"{int(latent_upscale_refine_steps)} low-denoise refinement steps."
             )
         if cache_note:
             queued_status += f"\n\nAcceleration notice: {cache_note}"
@@ -5565,7 +5573,7 @@ def compact_settings_summary(
     cache_mode: str,
     latent_upscale: bool,
     latent_upscaler_model: str,
-    latent_upscale_split_step: int,
+    latent_upscale_refine_steps: int,
     postprocess: str,
     seedvr2_model: str,
     ltx25_model: str,
@@ -5607,8 +5615,8 @@ def compact_settings_summary(
     latent_note = "Off"
     if latent_upscale:
         latent_note = (
-            f"2x / {latent_upscaler_model} / split at "
-            f"step {int(latent_upscale_split_step)}"
+            f"2x / {latent_upscaler_model} / "
+            f"{int(latent_upscale_refine_steps)} refinement steps"
         )
     return (
         "**Current setup**  \n"
@@ -5697,7 +5705,7 @@ def generate_with_ui_defaults(
         postprocess=defaults["postprocess"],
         latent_upscale=defaults["latent_upscale"],
         latent_upscaler_model=defaults["latent_upscaler_model"],
-        latent_upscale_split_step=defaults["latent_upscale_split_step"],
+        latent_upscale_refine_steps=defaults["latent_upscale_refine_steps"],
         seedvr2_model=defaults["seedvr2_model"],
         ltx25_model=DEFAULT_LTX25_MODEL,
         upscale_force_offload=defaults["upscale_force_offload"],
@@ -5881,7 +5889,7 @@ def build_ui() -> gr.Blocks:
                         defaults["attention_mode"], defaults["cache_mode"],
                         defaults["latent_upscale"],
                         defaults["latent_upscaler_model"],
-                        defaults["latent_upscale_split_step"],
+                        defaults["latent_upscale_refine_steps"],
                         defaults["postprocess"], defaults["seedvr2_model"],
                         DEFAULT_LTX25_MODEL,
                         defaults["upscale_force_offload"],
@@ -6113,14 +6121,15 @@ def build_ui() -> gr.Blocks:
                             "Quality uses FP32 and needs more memory. Downloaded on first use."
                         ),
                     )
-                    latent_upscale_split_step = gr.Slider(
-                        1, 12,
-                        value=defaults["latent_upscale_split_step"],
+                    latent_upscale_refine_steps = gr.Slider(
+                        1, 6,
+                        value=defaults["latent_upscale_refine_steps"],
                         step=1,
-                        label="Upscale after sampling step",
+                        label="High-resolution refinement steps",
                         info=(
-                            "The first steps run at half resolution; remaining steps refine "
-                            "the 2x latent. Step 3 is the balanced default."
+                            "H3 first finishes all generation steps at half resolution. "
+                            "The clean 2x latent is then lightly re-noised and refined. "
+                            "Two expensive high-resolution steps is the default."
                         ),
                     )
                     gr.Markdown(
@@ -6577,7 +6586,7 @@ def build_ui() -> gr.Blocks:
             steps, scheduler, attention_mode, cache_mode,
             latent_upscale,
             latent_upscaler_model,
-            latent_upscale_split_step,
+            latent_upscale_refine_steps,
             generation_postprocess,
             generation_seedvr2_model,
             ltx25_model,
@@ -6803,7 +6812,7 @@ def build_ui() -> gr.Blocks:
                 fbcache_end, fbcache_max_hits, fbcache_temporal_guard,
                 easycache_threshold, easycache_start, easycache_end, easycache_verbose,
                 ref_size, generation_postprocess,
-                latent_upscale, latent_upscaler_model, latent_upscale_split_step,
+                latent_upscale, latent_upscaler_model, latent_upscale_refine_steps,
                 generation_force_offload,
                 generation_split_upscale, generation_split_seconds,
                 generation_seedvr2_model,
@@ -7272,7 +7281,7 @@ def selftest() -> None:
         model_name=fake.profile("speed").fl2va, models=fake,
         available_nodes=available,
         latent_upscale_model_name="minimax_h3_latent_upscaler_3d_bf16.safetensors",
-        latent_upscale_precision="bf16", latent_upscale_split_step=3,
+        latent_upscale_precision="bf16", latent_upscale_refine_steps=2,
     )
     latent_conditioning = [
         node for node in latent_graph.values()
@@ -7289,14 +7298,19 @@ def selftest() -> None:
         node_id for node_id, node in latent_graph.items()
         if node["class_type"] == "SplitSigmas"
     )
-    disable_noise_id = next(
+    scheduler_id = next(
         node_id for node_id, node in latent_graph.items()
-        if node["class_type"] == "DisableNoise"
+        if node["class_type"] == "BasicScheduler"
     )
-    assert latent_graph[split_id]["inputs"]["step"] == 3
-    assert latent_samplers[0][1]["inputs"]["sigmas"] == Graph.out(split_id, 0)
+    noise_id = next(
+        node_id for node_id, node in latent_graph.items()
+        if node["class_type"] == "RandomNoise"
+    )
+    assert latent_graph[split_id]["inputs"]["step"] == 6
+    assert latent_samplers[0][1]["inputs"]["sigmas"] == Graph.out(scheduler_id)
     assert latent_samplers[1][1]["inputs"]["sigmas"] == Graph.out(split_id, 1)
-    assert latent_samplers[1][1]["inputs"]["noise"] == Graph.out(disable_noise_id)
+    assert latent_samplers[0][1]["inputs"]["noise"] == Graph.out(noise_id)
+    assert latent_samplers[1][1]["inputs"]["noise"] == Graph.out(noise_id)
     separate_id = next(
         node_id for node_id, node in latent_graph.items()
         if node["class_type"] == H3_SEPARATE_AV_LATENT_NODE
@@ -7322,6 +7336,12 @@ def selftest() -> None:
     assert latent_graph[combine_id]["inputs"]["audio_latent"] == Graph.out(
         separate_id, 1
     )
+    initial_sampler_id = latent_samplers[0][0]
+    audio_decode = next(
+        node for node in latent_graph.values()
+        if node["class_type"] == "VAEDecodeAudio"
+    )
+    assert audio_decode["inputs"]["samples"] == Graph.out(initial_sampler_id)
     assert h3_latent_upscale_dimensions(1024, 1024) == (512, 512, 1024, 1024)
     try:
         h3_latent_upscale_dimensions(864, 480)

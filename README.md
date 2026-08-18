@@ -185,15 +185,16 @@ exposed as `/enhance_prompt`.
 ### Native H3 latent upscale
 
 Enable **Generate at half resolution, then latent upscale 2x** in the MiniMax H3
-generation settings to run the upscaler inside the denoising workflow. The UI
+generation settings to run the upscaler inside the generation workflow. The UI
 width and height always describe the final output: a 1024×1024 request first
-samples a 512×512 H3 latent, upscales the video latent 2x, and continues the
-remaining denoising steps at 1024×1024. The audio latent bypasses the upscaler
-and is recombined before refinement.
+finishes a 512×512 H3 generation, upscales its clean video latent 2x, then
+lightly re-noises and refines it at 1024×1024. The clean first-pass audio is
+preserved for the final output.
 
 This is not a gallery or post-processing option. It is disabled by default,
-defaults to a step-3 split, and currently requires both final dimensions to be
-divisible by 64. The selected model is downloaded from
+defaults to two high-resolution refinement steps, disables cache wrappers across
+the two samplers, and currently requires both final dimensions to be divisible
+by 64. The selected model is downloaded from
 [`LBH-123-AI/Minimax_h3_latent_Upscaler`](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)
 on first use.
 
