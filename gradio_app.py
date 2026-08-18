@@ -1115,12 +1115,14 @@ def enhance_h3_prompt(
             if normalized_result == "Image"
             else f"Requested duration: {float(duration):.2f} seconds"
         )
+        requested_width = 32 if normalized_result == "Audio" else int(width)
+        requested_height = 32 if normalized_result == "Audio" else int(height)
         parts: list[dict[str, Any]] = [{
             "text": (
                 "Create the final MiniMax H3 prompt from the following user request.\n"
                 f"UI mode: {mode}\nResult format: {normalized_result}\n"
                 f"{timing_request}\n"
-                f"Requested output: {int(width)}x{int(height)}\n"
+                f"Requested output: {requested_width}x{requested_height}\n"
                 f"User text:\n{rough_prompt or '(No text supplied; infer only from the media.)'}"
             )
         }]
@@ -1878,8 +1880,17 @@ def image_sampling_length(frame_count: int) -> int:
     return 5 if validate_image_frame_count(frame_count) <= 5 else 22
 
 
+def snap_to_grid(value: int | float, grid: int = 32) -> int:
+    grid = max(1, int(grid))
+    return max(grid, round(int(value) / grid) * grid)
+
+
 def snap32(value: int | float) -> int:
-    return max(32, round(int(value) / 32) * 32)
+    return snap_to_grid(value, 32)
+
+
+def snap64(value: int | float) -> int:
+    return snap_to_grid(value, 64)
 
 
 def validate_resolution(width: int | float, height: int | float) -> tuple[int, int]:
@@ -1892,14 +1903,8 @@ def h3_latent_upscale_dimensions(
     width: int | float,
     height: int | float,
 ) -> tuple[int, int, int, int]:
-    """Return exact 2x source/target canvases on H3's 32-pixel grid."""
-    target_width, target_height = validate_resolution(width, height)
-    if target_width % 64 or target_height % 64:
-        raise H3Error(
-            "H3 latent 2x requires the final width and height to be divisible "
-            "by 64 so the half-resolution pass stays on H3's 32-pixel grid. "
-            f"Received {target_width}×{target_height}."
-        )
+    """Return auto-aligned 2x source/target canvases for native H3 upscale."""
+    target_width, target_height = snap64(width), snap64(height)
     source_width = target_width // 2
     source_height = target_height // 2
     return source_width, source_height, target_width, target_height
@@ -1908,12 +1913,18 @@ def h3_latent_upscale_dimensions(
 def resolution_for_aspect_ratio(
     source_width: int | float,
     source_height: int | float,
+    *,
+    preserve_native: bool = False,
+    alignment: int = 32,
 ) -> tuple[int, int]:
-    """Return a 32-aligned canvas matching an image ratio and staying below 2 MP."""
+    """Return an aligned native or sub-2 MP canvas matching an image ratio."""
     width = float(source_width)
     height = float(source_height)
     if not math.isfinite(width) or not math.isfinite(height) or width <= 0 or height <= 0:
         raise H3Error("The start frame has no usable image dimensions.")
+
+    if preserve_native:
+        return snap_to_grid(width, alignment), snap_to_grid(height, alignment)
 
     # Do not upscale a smaller source image. Preserve its native dimensions;
     # only oversized inputs need aspect-ratio-based downscaling.
@@ -1923,30 +1934,46 @@ def resolution_for_aspect_ratio(
     ratio = width / height
     if ratio >= 1:
         resolved_width = max(
-            32, math.floor(math.sqrt(AUTO_RESOLUTION_PIXEL_CAP * ratio) / 32) * 32
+            alignment,
+            math.floor(math.sqrt(AUTO_RESOLUTION_PIXEL_CAP * ratio) / alignment)
+            * alignment,
         )
-        resolved_height = max(32, math.floor(resolved_width / ratio / 32) * 32)
+        resolved_height = max(
+            alignment,
+            math.floor(resolved_width / ratio / alignment) * alignment,
+        )
     else:
         resolved_height = max(
-            32, math.floor(math.sqrt(AUTO_RESOLUTION_PIXEL_CAP / ratio) / 32) * 32
+            alignment,
+            math.floor(math.sqrt(AUTO_RESOLUTION_PIXEL_CAP / ratio) / alignment)
+            * alignment,
         )
-        resolved_width = max(32, math.floor(resolved_height * ratio / 32) * 32)
+        resolved_width = max(
+            alignment,
+            math.floor(resolved_height * ratio / alignment) * alignment,
+        )
 
     # Rounding to the model's 32-pixel grid can cross the strict 2 MP boundary.
     while resolved_width * resolved_height >= 2_000_000:
         if ratio >= 1:
-            resolved_width = max(32, resolved_width - 32)
-            resolved_height = max(32, math.floor(resolved_width / ratio / 32) * 32)
+            resolved_width = max(alignment, resolved_width - alignment)
+            resolved_height = max(
+                alignment,
+                math.floor(resolved_width / ratio / alignment) * alignment,
+            )
         else:
-            resolved_height = max(32, resolved_height - 32)
-            resolved_width = max(32, math.floor(resolved_height * ratio / 32) * 32)
+            resolved_height = max(alignment, resolved_height - alignment)
+            resolved_width = max(
+                alignment,
+                math.floor(resolved_height * ratio / alignment) * alignment,
+            )
     return resolved_width, resolved_height
 
 
 # Gradio runs this in the browser when the file is selected. It deliberately
 # uses the local File/preview object, so reading dimensions does not add a
 # second server upload or require a Python callback.
-AUTO_RESOLUTION_JS = r"""async (_value, currentWidth, currentHeight) => {
+AUTO_RESOLUTION_JS = r"""async (_value, currentWidth, currentHeight, resultFormat, latentUpscale) => {
     const root = document.getElementById("first-frame-image");
     const input = root?.querySelector('input[type="file"]')
         || document.querySelector('#first-frame-image input[type="file"]');
@@ -1994,13 +2021,37 @@ AUTO_RESOLUTION_JS = r"""async (_value, currentWidth, currentHeight) => {
         ];
     }
 
-    if (imageWidth * imageHeight < 2000000) {
-        const megapixels = (imageWidth * imageHeight / 1000000).toFixed(2);
-        const displayRatio = (imageWidth / imageHeight).toFixed(2);
+    if (String(resultFormat).toLowerCase() === "audio") {
         return [
-            imageWidth,
-            imageHeight,
-            `**Start frame native resolution** · **${imageWidth}×${imageHeight}** · ${megapixels} MP · ${displayRatio}:1`,
+            Number(currentWidth) || 864,
+            Number(currentHeight) || 480,
+            "**Audio result** · resolution controls are ignored; H3 samples at 32×32.",
+        ];
+    }
+
+    const grid = latentUpscale ? 64 : 32;
+    const snap = (value) => Math.max(grid, Math.round(value / grid) * grid);
+    if (String(resultFormat).toLowerCase() === "image") {
+        const width = snap(imageWidth);
+        const height = snap(imageHeight);
+        const megapixels = (width * height / 1000000).toFixed(2);
+        const displayRatio = (width / height).toFixed(2);
+        return [
+            width,
+            height,
+            `**Image mode: start frame resolution** · **${width}×${height}** · ${megapixels} MP · ${displayRatio}:1 · ${grid}-pixel aligned`,
+        ];
+    }
+
+    if (imageWidth * imageHeight < 2000000) {
+        const width = snap(imageWidth);
+        const height = snap(imageHeight);
+        const megapixels = (width * height / 1000000).toFixed(2);
+        const displayRatio = (width / height).toFixed(2);
+        return [
+            width,
+            height,
+            `**Start frame native resolution** · **${width}×${height}** · ${megapixels} MP · ${displayRatio}:1 · ${grid}-pixel aligned`,
         ];
     }
 
@@ -2009,19 +2060,19 @@ AUTO_RESOLUTION_JS = r"""async (_value, currentWidth, currentHeight) => {
     let width;
     let height;
     if (ratio >= 1) {
-        width = Math.max(32, Math.floor(Math.sqrt(maxPixels * ratio) / 32) * 32);
-        height = Math.max(32, Math.floor(width / ratio / 32) * 32);
+        width = Math.max(grid, Math.floor(Math.sqrt(maxPixels * ratio) / grid) * grid);
+        height = Math.max(grid, Math.floor(width / ratio / grid) * grid);
     } else {
-        height = Math.max(32, Math.floor(Math.sqrt(maxPixels / ratio) / 32) * 32);
-        width = Math.max(32, Math.floor(height * ratio / 32) * 32);
+        height = Math.max(grid, Math.floor(Math.sqrt(maxPixels / ratio) / grid) * grid);
+        width = Math.max(grid, Math.floor(height * ratio / grid) * grid);
     }
     while (width * height >= 2000000) {
         if (ratio >= 1) {
-            width = Math.max(32, width - 32);
-            height = Math.max(32, Math.floor(width / ratio / 32) * 32);
+            width = Math.max(grid, width - grid);
+            height = Math.max(grid, Math.floor(width / ratio / grid) * grid);
         } else {
-            height = Math.max(32, height - 32);
-            width = Math.max(32, Math.floor(height * ratio / 32) * 32);
+            height = Math.max(grid, height - grid);
+            width = Math.max(grid, Math.floor(height * ratio / grid) * grid);
         }
     }
     const megapixels = (width * height / 1000000).toFixed(2);
@@ -2029,7 +2080,7 @@ AUTO_RESOLUTION_JS = r"""async (_value, currentWidth, currentHeight) => {
     return [
         width,
         height,
-        `**Auto from start frame** · **${width}×${height}** · ${megapixels} MP · ${displayRatio}:1`,
+        `**Auto from start frame** · **${width}×${height}** · ${megapixels} MP · ${displayRatio}:1 · ${grid}-pixel aligned`,
     ];
 }"""
 
@@ -2052,14 +2103,46 @@ def resolution_summary(width: int | float, height: int | float) -> str:
     )
 
 
+def resolution_control_updates(
+    width: int | float,
+    height: int | float,
+    latent_upscale: bool,
+    result_format: str,
+) -> tuple[int | float, int | float, str]:
+    if normalize_result_format(result_format) == "Audio":
+        return (
+            width,
+            height,
+            "**Audio result** · resolution controls are ignored; H3 samples at 32×32.",
+        )
+    alignment = 64 if latent_upscale else 32
+    resolved_width = snap_to_grid(width, alignment)
+    resolved_height = snap_to_grid(height, alignment)
+    prefix = "**Latent upscale 64-pixel alignment** · " if latent_upscale else ""
+    return (
+        resolved_width,
+        resolved_height,
+        prefix + resolution_summary(resolved_width, resolved_height),
+    )
+
+
 def auto_resolution_from_start_frame(
     first_image: Any,
     current_width: int | float | None,
     current_height: int | float | None,
+    result_format: str = DEFAULT_RESULT_FORMAT,
+    latent_upscale: bool = False,
 ) -> tuple[int | float, int | float, str]:
     """Apply the automatic ratio resolution after Gradio stages the image."""
     fallback_width = current_width or UI_DEFAULTS["width"]
     fallback_height = current_height or UI_DEFAULTS["height"]
+    normalized_result = normalize_result_format(result_format)
+    if normalized_result == "Audio":
+        return (
+            fallback_width,
+            fallback_height,
+            "**Audio result** · resolution controls are ignored; H3 samples at 32×32.",
+        )
     paths = normalize_paths(first_image)
     if not paths:
         return fallback_width, fallback_height, resolution_summary(
@@ -2070,7 +2153,11 @@ def auto_resolution_from_start_frame(
         from PIL import Image
 
         with Image.open(paths[0]) as image:
-            width, height = resolution_for_aspect_ratio(*image.size)
+            width, height = resolution_for_aspect_ratio(
+                *image.size,
+                preserve_native=normalized_result == "Image",
+                alignment=64 if latent_upscale else 32,
+            )
     except Exception as exc:
         return fallback_width, fallback_height, f"⚠️ Unable to read start frame dimensions: {exc}"
     return width, height, resolution_summary(width, height)
@@ -2111,6 +2198,49 @@ def normalize_paths(value: Any) -> list[str]:
         else:
             result.append(str(item))
     return result
+
+
+def start_frame_generation_resolution(
+    first_image: Any,
+    *,
+    alignment: int,
+) -> tuple[int, int] | None:
+    paths = normalize_paths(first_image)
+    if not paths:
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(paths[0]) as image:
+            return resolution_for_aspect_ratio(
+                *image.size,
+                preserve_native=True,
+                alignment=alignment,
+            )
+    except Exception as exc:
+        raise H3Error(f"Unable to read start frame dimensions: {exc}") from exc
+
+
+def generation_resolution(
+    width: int | float,
+    height: int | float,
+    *,
+    result_format: str,
+    latent_upscale: bool,
+    mode: str,
+    first_image: Any,
+) -> tuple[int, int]:
+    normalized_result = normalize_result_format(result_format)
+    if normalized_result == "Audio":
+        return 32, 32
+    alignment = 64 if latent_upscale else 32
+    if normalized_result == "Image" and mode == "First / last frame" and first_image:
+        start_resolution = start_frame_generation_resolution(
+            first_image, alignment=alignment
+        )
+        if start_resolution is not None:
+            return start_resolution
+    return snap_to_grid(width, alignment), snap_to_grid(height, alignment)
 
 
 def collect_reference_slots(*groups: Any) -> list[str]:
@@ -2216,10 +2346,34 @@ def mode_layout_updates(mode: str):
     )
 
 
-def result_format_layout_updates(result_format: str):
+def result_format_layout_updates(
+    result_format: str,
+    current_width: int | float,
+    current_height: int | float,
+    first_image: Any,
+    latent_upscale: bool,
+):
     result_format = normalize_result_format(result_format)
     is_image = result_format == "Image"
     is_audio = result_format == "Audio"
+    display_width, display_height = current_width, current_height
+    if not is_audio:
+        alignment = 64 if latent_upscale else 32
+        if first_image:
+            try:
+                display_width, display_height, _ = auto_resolution_from_start_frame(
+                    first_image,
+                    current_width,
+                    current_height,
+                    result_format,
+                    latent_upscale,
+                )
+            except Exception:
+                display_width = snap_to_grid(current_width, alignment)
+                display_height = snap_to_grid(current_height, alignment)
+        else:
+            display_width = snap_to_grid(current_width, alignment)
+            display_height = snap_to_grid(current_height, alignment)
     return (
         gr.update(visible=not is_image),
         gr.update(visible=is_image),
@@ -2236,7 +2390,41 @@ def result_format_layout_updates(result_format: str):
             if is_audio
             else gr.update(interactive=True)
         ),
+        gr.update(value=display_width, interactive=not is_audio),
+        gr.update(value=display_height, interactive=not is_audio),
+        (
+            "**Audio result** · resolution controls are ignored; H3 samples at 32×32."
+            if is_audio
+            else resolution_summary(display_width, display_height)
+        ),
         gr.update(value=f"Generate {result_format.lower()}"),
+    )
+
+
+def latent_upscale_layout_updates(
+    enabled: bool,
+    width: int | float,
+    height: int | float,
+    result_format: str,
+):
+    if normalize_result_format(result_format) == "Audio":
+        return (
+            gr.update(visible=False),
+            width,
+            height,
+            "**Audio result** · resolution controls are ignored; H3 samples at 32×32.",
+        )
+    if enabled:
+        resolved_width, resolved_height = snap64(width), snap64(height)
+        note = "**Latent upscale 64-pixel alignment** · "
+    else:
+        resolved_width, resolved_height = validate_resolution(width, height)
+        note = ""
+    return (
+        gr.update(visible=bool(enabled)),
+        resolved_width,
+        resolved_height,
+        note + resolution_summary(resolved_width, resolved_height),
     )
 
 
@@ -5127,7 +5315,14 @@ def generate(
             else frame_length(duration)
         )
         policy_duration = generation_frames / 24.0
-        resolved_width, resolved_height = validate_resolution(width, height)
+        resolved_width, resolved_height = generation_resolution(
+            width,
+            height,
+            result_format=result_format,
+            latent_upscale=bool(latent_upscale),
+            mode=mode,
+            first_image=first_image,
+        )
         actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
         models = load_model_config()
         if use_int8_vae:
@@ -5995,10 +6190,13 @@ def compact_settings_summary(
             timing = f"{float(duration):g}s"
         except (TypeError, ValueError):
             timing = "—s"
-    try:
-        resolution = f"{int(width)}×{int(height)}"
-    except (TypeError, ValueError):
-        resolution = "—×—"
+    if result_format == "Audio":
+        resolution = "32×32 automatic canvas"
+    else:
+        try:
+            resolution = f"{int(width)}×{int(height)}"
+        except (TypeError, ValueError):
+            resolution = "—×—"
     try:
         step_count = f"{int(steps)} steps"
     except (TypeError, ValueError):
@@ -7142,25 +7340,14 @@ def build_ui() -> gr.Blocks:
             image_frames,
         ]
         for settings_control in settings_inputs:
-            # Width and height are also outputs of the resolution preset and
-            # start-frame callbacks. A Gradio `.change()` listener fires for
-            # those programmatic updates and can be resubmitted repeatedly by
-            # hosted proxies while a generator is streaming. `.input()` only
-            # handles an actual user edit, avoiding that feedback loop.
-            settings_event = (
-                settings_control.input
-                if settings_control in (width, height)
-                else settings_control.change
-            )
-            settings_event(
+            # Width and height have dedicated input callbacks below so their
+            # 32/64-pixel alignment is applied before the summary is refreshed.
+            if settings_control in (width, height):
+                continue
+            settings_control.change(
                 compact_settings_summary,
                 inputs=settings_inputs,
                 outputs=settings_overview,
-                **(
-                    {"queue": False, "show_progress": "hidden"}
-                    if settings_control in (width, height)
-                    else {}
-                ),
             )
 
         mode.change(
@@ -7173,7 +7360,7 @@ def build_ui() -> gr.Blocks:
         )
         result_format.change(
             result_format_layout_updates,
-            inputs=result_format,
+            inputs=[result_format, width, height, first, latent_upscale],
             outputs=[
                 duration,
                 image_frames,
@@ -7182,15 +7369,23 @@ def build_ui() -> gr.Blocks:
                 audio_output,
                 generation_postprocess,
                 latent_upscale,
+                width,
+                height,
+                resolution_info,
                 run,
             ],
             queue=False,
             show_progress="hidden",
         )
         latent_upscale.change(
-            lambda enabled: gr.update(visible=bool(enabled)),
-            inputs=latent_upscale,
-            outputs=latent_upscale_settings,
+            latent_upscale_layout_updates,
+            inputs=[latent_upscale, width, height, result_format],
+            outputs=[
+                latent_upscale_settings,
+                width,
+                height,
+                resolution_info,
+            ],
         )
         ltx25_mode.change(
             lambda value: gr.update(visible=value == "Image to video"),
@@ -7303,7 +7498,14 @@ def build_ui() -> gr.Blocks:
             fast_resolution_event,
             large_resolution_event,
         ):
-            resolution_event.then(
+            aligned_resolution_event = resolution_event.then(
+                resolution_control_updates,
+                inputs=[width, height, latent_upscale, result_format],
+                outputs=[width, height, resolution_info],
+                queue=False,
+                show_progress="hidden",
+            )
+            aligned_resolution_event.then(
                 compact_settings_summary,
                 inputs=settings_inputs,
                 outputs=settings_overview,
@@ -7315,7 +7517,7 @@ def build_ui() -> gr.Blocks:
         # fallback for environments that clear the input before JS runs.
         first.upload(
             fn=None,
-            inputs=[first, width, height],
+            inputs=[first, width, height, result_format, latent_upscale],
             outputs=[width, height, resolution_info],
             js=AUTO_RESOLUTION_JS,
             queue=False,
@@ -7323,7 +7525,7 @@ def build_ui() -> gr.Blocks:
         )
         first_change_event = first.change(
             fn=auto_resolution_from_start_frame,
-            inputs=[first, width, height],
+            inputs=[first, width, height, result_format, latent_upscale],
             outputs=[width, height, resolution_info],
             queue=False,
             show_progress="hidden",
@@ -7345,20 +7547,28 @@ def build_ui() -> gr.Blocks:
                 fbcache_max_hits,
             ],
         )
-        width.input(
-            resolution_summary,
-            inputs=[width, height],
-            outputs=resolution_info,
+        width_input_event = width.input(
+            resolution_control_updates,
+            inputs=[width, height, latent_upscale, result_format],
+            outputs=[width, height, resolution_info],
             queue=False,
             show_progress="hidden",
         )
-        height.input(
-            resolution_summary,
-            inputs=[width, height],
-            outputs=resolution_info,
+        height_input_event = height.input(
+            resolution_control_updates,
+            inputs=[width, height, latent_upscale, result_format],
+            outputs=[width, height, resolution_info],
             queue=False,
             show_progress="hidden",
         )
+        for resolution_input_event in (width_input_event, height_input_event):
+            resolution_input_event.then(
+                compact_settings_summary,
+                inputs=settings_inputs,
+                outputs=settings_overview,
+                queue=False,
+                show_progress="hidden",
+            )
         event = run.click(
             generate_for_ui,
             inputs=[
@@ -8083,12 +8293,7 @@ def selftest() -> None:
     )
     assert audio_decode["inputs"]["samples"] == Graph.out(initial_sampler_id)
     assert h3_latent_upscale_dimensions(1024, 1024) == (512, 512, 1024, 1024)
-    try:
-        h3_latent_upscale_dimensions(864, 480)
-    except H3Error as exc:
-        assert "divisible by 64" in str(exc)
-    else:
-        raise AssertionError("Expected an incompatible latent-upscale resolution error")
+    assert h3_latent_upscale_dimensions(864, 480) == (448, 256, 896, 512)
 
     sol_nodes = [
         node for node in graph.values()
@@ -8657,6 +8862,14 @@ def selftest() -> None:
     assert turbo_sol_reason.startswith("Auto Turbo:")
     assert validate_resolution(865, 481) == (864, 480)
     assert validate_resolution(2048, 2048) == (2048, 2048)
+    assert generation_resolution(
+        1344, 768, result_format="Audio", latent_upscale=False,
+        mode="Text to video", first_image=None,
+    ) == (32, 32)
+    assert generation_resolution(
+        865, 481, result_format="Video", latent_upscale=True,
+        mode="Text to video", first_image=None,
+    ) == (896, 512)
     auto_landscape = resolution_for_aspect_ratio(4096, 2304)
     auto_portrait = resolution_for_aspect_ratio(2304, 4096)
     assert resolution_for_aspect_ratio(1024, 1024) == (1024, 1024)
@@ -8666,6 +8879,30 @@ def selftest() -> None:
     assert auto_portrait[0] * auto_portrait[1] < 2_000_000
     assert abs(auto_landscape[0] / auto_landscape[1] - 16 / 9) < 0.1
     assert abs(auto_portrait[0] / auto_portrait[1] - 9 / 16) < 0.1
+    assert resolution_for_aspect_ratio(
+        4096, 2304, preserve_native=True
+    ) == (4096, 2304)
+    assert resolution_for_aspect_ratio(
+        4010, 2250, preserve_native=True, alignment=64
+    ) == (4032, 2240)
+    assert resolution_control_updates(865, 481, True, "Video")[0:2] == (
+        896, 512
+    )
+    assert "32×32" in resolution_control_updates(
+        1344, 768, False, "Audio"
+    )[2]
+    with tempfile.TemporaryDirectory() as resolution_temp:
+        from PIL import Image
+
+        native_start = Path(resolution_temp) / "native-start.png"
+        Image.new("RGB", (2048, 1152)).save(native_start)
+        assert generation_resolution(
+            864, 480, result_format="Image", latent_upscale=False,
+            mode="First / last frame", first_image=str(native_start),
+        ) == (2048, 1152)
+        assert auto_resolution_from_start_frame(
+            str(native_start), 864, 480, "Image", False
+        )[:2] == (2048, 1152)
     unchanged = auto_resolution_from_start_frame(None, 640, 480)
     assert unchanged[:2] == (640, 480)
     assert frame_length(5) == 124

@@ -196,10 +196,14 @@ and audio latent; the selected format controls the final decode:
 - **Image** replaces the duration control with a 1–20 frame control (5 by
   default), decodes the requested visual frames, and shows every frame in a
   gallery. Select one or more frames and use **Save selected frames** to copy
-  only those PNGs into `ComfyUI/output/h3/images`.
+  only those PNGs into `ComfyUI/output/h3/images`. With a start frame, Image
+  mode uses its native resolution without the video workflow's 2 MP cap,
+  rounded only to H3's required 32-pixel grid (or 64-pixel grid when native
+  latent upscale is enabled).
 - **Audio** decodes the native stereo soundtrack to MP3 and skips video decode
   and muxing. Dialogue, ambience, music, and sound effects continue to come
-  from the same H3 prompt and optional audio references.
+  from the same H3 prompt and optional audio references. Resolution controls
+  are ignored and the visual branch uses the minimum 32×32 canvas.
 
 H3's native short temporal packets contain 5 or 22 frames. Image requests up
 to 5 frames sample the 5-frame packet; requests from 6 through 20 sample the
@@ -221,9 +225,10 @@ lightly re-noises and refines it at 1024×1024. The clean first-pass audio is
 preserved for the final output.
 
 This is not a gallery or post-processing option. It is disabled by default,
-defaults to two high-resolution refinement steps, disables cache wrappers across
-the two samplers, and currently requires both final dimensions to be divisible
-by 64. The selected model is downloaded from
+defaults to two high-resolution refinement steps, and disables cache wrappers
+across the two samplers. Enabling it automatically rounds both final dimensions
+to the nearest multiple of 64 so the half-resolution pass remains on H3's
+32-pixel grid. The selected model is downloaded from
 [`LBH-123-AI/Minimax_h3_latent_Upscaler`](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)
 on first use.
 
