@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 import comfy.lora
+import comfy.nested_tensor
 import comfy.patcher_extension
 import comfy.utils
 import comfy.weight_adapter
@@ -632,12 +633,86 @@ class H3FirstBlockCache:
         return (patched,)
 
 
+class H3SeparateAVLatent:
+    """Expose MiniMax H3's video and audio tensors as ordinary LATENT values."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"latent": ("LATENT",)}}
+
+    RETURN_TYPES = ("LATENT", "LATENT")
+    RETURN_NAMES = ("video_latent", "audio_latent")
+    FUNCTION = "separate"
+    CATEGORY = "model/latent/minimax"
+
+    def separate(self, latent):
+        samples = latent.get("samples")
+        if (
+            samples is None
+            or not getattr(samples, "is_nested", False)
+            or len(samples.tensors) != 2
+        ):
+            raise ValueError("H3 Separate AV Latent expects a MiniMax H3 AV latent")
+        video, audio = samples.tensors
+        if video.ndim != 5 or video.shape[1] != 24:
+            raise ValueError(
+                "H3 video latent must have shape [B, 24, T, H, W]"
+            )
+        if audio.ndim != 4 or audio.shape[1] != 32:
+            raise ValueError(
+                "H3 audio latent must have shape [B, 32, 2, T]"
+            )
+        video_output = latent.copy()
+        video_output["samples"] = video
+        audio_output = latent.copy()
+        audio_output["samples"] = audio
+        return (video_output, audio_output)
+
+
+class H3CombineAVLatent:
+    """Rebuild MiniMax H3's nested AV latent after video-only processing."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "video_latent": ("LATENT",),
+                "audio_latent": ("LATENT",),
+            }
+        }
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "combine"
+    CATEGORY = "model/latent/minimax"
+
+    def combine(self, video_latent, audio_latent):
+        video = video_latent.get("samples")
+        audio = audio_latent.get("samples")
+        if video is None or video.ndim != 5 or video.shape[1] != 24:
+            raise ValueError(
+                "H3 video latent must have shape [B, 24, T, H, W]"
+            )
+        if audio is None or audio.ndim != 4 or audio.shape[1] != 32:
+            raise ValueError(
+                "H3 audio latent must have shape [B, 32, 2, T]"
+            )
+        if video.shape[0] != audio.shape[0]:
+            raise ValueError("H3 video and audio latent batch sizes must match")
+        output = video_latent.copy()
+        output["samples"] = comfy.nested_tensor.NestedTensor((video, audio))
+        return (output,)
+
+
 NODE_CLASS_MAPPINGS = {
     "H3FirstBlockCache": H3FirstBlockCache,
     "H3LightX2VBypassLoRA": H3LightX2VBypassLoRA,
+    "H3SeparateAVLatent": H3SeparateAVLatent,
+    "H3CombineAVLatent": H3CombineAVLatent,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3FirstBlockCache": "MiniMax H3 FirstBlockCache",
     "H3LightX2VBypassLoRA": "MiniMax H3 LightX2V Bypass LoRA",
+    "H3SeparateAVLatent": "MiniMax H3 Separate AV Latent",
+    "H3CombineAVLatent": "MiniMax H3 Combine AV Latent",
 }

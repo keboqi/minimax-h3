@@ -38,6 +38,10 @@ SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_REF = "ac247efcc2c9b6324fa106b3bd8e148a583db4a9"  # v0.2.15
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
 LARRY_TURBO_REF = "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
+H3_LATENT_UPSCALER_NODE_REPO = (
+    "https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler.git"
+)
+H3_LATENT_UPSCALER_NODE_REF = "59f399f63a9ff81c588521e405b391c0d6decb90"
 LTXVIDEO_REPO = "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
 LTXVIDEO_REF = "ac4d99839020b983e956a8ab67ec38aec1b6e65a"
 KJNODES_REPO = "https://github.com/kijai/ComfyUI-KJNodes.git"
@@ -584,6 +588,11 @@ def sync_external_nodes(
         uv_pip("-r", str(larry_turbo / "requirements.txt"), no_deps=True)
 
     official_nodes = (
+        (
+            H3_LATENT_UPSCALER_NODE_REPO,
+            H3_LATENT_UPSCALER_NODE_REF,
+            "Comfyui_Minimax_h3_latent_Upscaler",
+        ),
         (LTXVIDEO_REPO, LTXVIDEO_REF, "ComfyUI-LTXVideo"),
         (KJNODES_REPO, KJNODES_REF, "ComfyUI-KJNodes"),
         (CONTROLNET_AUX_REPO, CONTROLNET_AUX_REF, "comfyui_controlnet_aux"),

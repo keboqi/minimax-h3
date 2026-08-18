@@ -20,6 +20,8 @@ FirstBlockCache node.
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
 - Official Qwen3-VL 32B NVFP4/AWQ text encoder from the Comfy H3 release
 - Per-video SeedVR2 or LTX-2.5 IC-LoRA 2x upscale and frame interpolation
+- Optional generation-stage MiniMax H3 latent 2x upscale, with Balanced BF16,
+  Fast FP16, and Quality FP32 model choices
 - Selectable Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
   including the dedicated Ref2V 4-step adapter
 - SageAttention 2 as the measured-fastest H3 default, with selectable Comfy
@@ -127,9 +129,12 @@ LTX-2.5 2x upscaler IC-LoRA are lazy and
 download only when their post-processing option is first used. The experimental
 INT8 ConvRot video VAE
 is also lazy and downloads only when its default-off checkbox is enabled.
-The gated LTX-2.5 distilled transformers are available as **NVFP4 (default and
-recommended for Blackwell)**, **INT8 ConvRot**, and **BF16**. The selected
-transformer plus the shared fine-tuned Gemma text encoder and audio/video VAEs
+The native H3 latent upscaler is also default-off and lazy-downloads only the
+selected checkpoint. **Balanced (BF16)** is the default choice; **Fast (FP16)**
+and **Quality (FP32)** remain selectable.
+The gated LTX-2.5 distilled transformers are available as **INT8 ConvRot
+(default)** and **BF16**. The selected transformer plus the shared fine-tuned
+Gemma text encoder and audio/video VAEs
 download lazily when the **LTX 2.5** tab is first used. Switching variants later
 downloads only the newly selected transformer. Accept the `Lightricks/LTX-2.5`
 Hugging Face license and, before using LTX upscaling, the separate
@@ -176,6 +181,21 @@ only to enhancement requests and is not stored by the server. It remains in the
 browser field for reuse until it is cleared manually or the page is refreshed.
 Uploaded Gemini Files are deleted after each request. The same operation is
 exposed as `/enhance_prompt`.
+
+### Native H3 latent upscale
+
+Enable **Generate at half resolution, then latent upscale 2x** in the MiniMax H3
+generation settings to run the upscaler inside the denoising workflow. The UI
+width and height always describe the final output: a 1024×1024 request first
+samples a 512×512 H3 latent, upscales the video latent 2x, and continues the
+remaining denoising steps at 1024×1024. The audio latent bypasses the upscaler
+and is recombined before refinement.
+
+This is not a gallery or post-processing option. It is disabled by default,
+defaults to a step-3 split, and currently requires both final dimensions to be
+divisible by 64. The selected model is downloaded from
+[`LBH-123-AI/Minimax_h3_latent_Upscaler`](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)
+on first use.
 
 Generate a video, open **Gallery**, select its thumbnail, and choose a method
 under **Post-process selected video**. Each run preserves the source and adds a
@@ -247,7 +267,7 @@ Gemini enhancer available without entering a key in the UI, also store
 `GEMINI_API_KEY` in that Modal Secret.
 
 The deployment pins the immutable ComfyUI v0.33.1 release, which includes
-native MiniMax Music 3, its non-dynamic-VRAM fix, LTX 2.5 NVFP4 support, and
+native MiniMax Music 3, its non-dynamic-VRAM fix, LTX 2.5 INT8 support, and
 Comfy Kitchen attention.
 Changing that pin invalidates the Modal image cache so ComfyUI and its matching
 `comfy-kitchen` dependency are rebuilt together.
@@ -264,8 +284,8 @@ failed proxy check is reported without withholding the main Gradio UI.
 Encoded nested userdata paths are forwarded unchanged so saved workflow folders
 load correctly through the proxy, including the bundled LTX 2.5 workflows.
 
-The default LTX 2.5 NVFP4 option now uses the current official packed weights
-directly from `Lightricks/LTX-2.5`. The official workflow inventory also uses
+The default LTX 2.5 INT8 option uses the official Comfy ConvRot weights from
+`Lightricks/LTX-2.5`. The official workflow inventory also uses
 the current LTX-2.5 duration head and spatial/temporal latent upscalers. The
 INT8 ConvRot and BF16 options continue to come directly from the same
 repository.

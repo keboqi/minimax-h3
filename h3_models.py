@@ -24,6 +24,7 @@ LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
 TEXT_ENCODER_REPO = "Comfy-Org/MiniMax-H3"
 SEEDVR2_REPO = "Comfy-Org/SeedVR2"
+H3_LATENT_UPSCALER_REPO = "LBH-123-AI/Minimax_h3_latent_Upscaler"
 LTX25_REPO = "Lightricks/LTX-2.5"
 LTX25_PIXEL_UPSCALER_REPO = (
     "Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler"
@@ -179,17 +180,29 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "vae/seedvr2_ema_vae_fp16.safetensors",
         "SeedVR2 FP16 VAE · lazy native upscale asset",
     ),
+    "h3_latent_upscaler_3d_bf16": ModelSpec(
+        H3_LATENT_UPSCALER_REPO,
+        "latent_upscale_models",
+        "minimax_h3_latent_upscaler_3d_bf16.safetensors",
+        "MiniMax H3 native 3D latent upscaler · Balanced BF16",
+    ),
+    "h3_latent_upscaler_3d_fp16": ModelSpec(
+        H3_LATENT_UPSCALER_REPO,
+        "latent_upscale_models",
+        "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+        "MiniMax H3 native 3D latent upscaler · Fast FP16",
+    ),
+    "h3_latent_upscaler_3d_fp32": ModelSpec(
+        H3_LATENT_UPSCALER_REPO,
+        "latent_upscale_models",
+        "minimax_h3_latent_upscaler_3d_fp32.pth",
+        "MiniMax H3 native 3D latent upscaler · Quality FP32",
+    ),
     "ltx25_distilled": ModelSpec(
         LTX25_REPO,
         "diffusion_models",
         "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors",
         "LTX-2.5 22B distilled transformer; lazy 8-step model",
-    ),
-    "ltx25_distilled_nvfp4": ModelSpec(
-        LTX25_REPO,
-        "diffusion_models",
-        "diffusion_models/ltx-2.5-22b-distilled-transformer-nvfp4.safetensors",
-        "LTX-2.5 22B distilled NVFP4; official Lightricks weights",
     ),
     "ltx25_distilled_int8": ModelSpec(
         LTX25_REPO,
@@ -337,12 +350,18 @@ LAZY_POSTPROCESS_MODEL_KEYS = (
     *SEEDVR2_UPSCALE_MODEL_KEYS,
     "ltx25_pixel_upscaler_x2",
 )
+H3_LATENT_UPSCALER_MODEL_CHOICES = {
+    "Balanced (BF16)": "h3_latent_upscaler_3d_bf16",
+    "Fast (FP16)": "h3_latent_upscaler_3d_fp16",
+    "Quality (FP32)": "h3_latent_upscaler_3d_fp32",
+}
+DEFAULT_H3_LATENT_UPSCALER_MODEL = "Balanced (BF16)"
+H3_LATENT_UPSCALER_MODEL_KEYS = tuple(H3_LATENT_UPSCALER_MODEL_CHOICES.values())
 LTX25_MODEL_CHOICES = {
-    "NVFP4 (Blackwell recommended)": "ltx25_distilled_nvfp4",
     "INT8 ConvRot": "ltx25_distilled_int8",
     "BF16": "ltx25_distilled",
 }
-DEFAULT_LTX25_MODEL = "NVFP4 (Blackwell recommended)"
+DEFAULT_LTX25_MODEL = "INT8 ConvRot"
 LTX25_SHARED_MODEL_KEYS = (
     "ltx25_text_encoder",
     "ltx25_video_vae",
@@ -378,6 +397,7 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     "video_vae_int8",
     "turbo_8step_lora",
     "larry_turbo_lora",
+    *H3_LATENT_UPSCALER_MODEL_KEYS,
     *LAZY_POSTPROCESS_MODEL_KEYS,
     *LTX25_MODEL_KEYS,
     *LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS,
@@ -900,8 +920,10 @@ def selftest() -> None:
         "seedvr2_7b_nvfp4",
         "seedvr2_7b_sharp_nvfp4",
         "seedvr2_vae",
+        "h3_latent_upscaler_3d_bf16",
+        "h3_latent_upscaler_3d_fp16",
+        "h3_latent_upscaler_3d_fp32",
         "ltx25_distilled",
-        "ltx25_distilled_nvfp4",
         "ltx25_distilled_int8",
         "ltx25_text_encoder",
         "ltx25_video_vae",
@@ -930,6 +952,7 @@ def selftest() -> None:
     assert "quality_fl2va" in PRELOAD_MODEL_KEYS
     assert "quality_ref2va" not in PRELOAD_MODEL_KEYS
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
+    assert set(H3_LATENT_UPSCALER_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
     assert cfg["schema_version"] == 13
     assert cfg["default_profile"] == "quality"
@@ -959,6 +982,21 @@ def selftest() -> None:
     assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"
     assert cfg["larry_turbo_ref_lora"] == cfg["larry_turbo_lora"]
     assert "larry_turbo_lora" not in PRELOAD_MODEL_KEYS
+    h3_upscaler = MODEL_SPECS["h3_latent_upscaler_3d_bf16"]
+    assert h3_upscaler.repo_id == H3_LATENT_UPSCALER_REPO
+    assert h3_upscaler.folder == "latent_upscale_models"
+    assert h3_upscaler.local_name == (
+        "minimax_h3_latent_upscaler_3d_bf16.safetensors"
+    )
+    assert DEFAULT_H3_LATENT_UPSCALER_MODEL == "Balanced (BF16)"
+    assert {
+        label: MODEL_SPECS[key].local_name
+        for label, key in H3_LATENT_UPSCALER_MODEL_CHOICES.items()
+    } == {
+        "Balanced (BF16)": "minimax_h3_latent_upscaler_3d_bf16.safetensors",
+        "Fast (FP16)": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+        "Quality (FP32)": "minimax_h3_latent_upscaler_3d_fp32.pth",
+    }
     assert cfg["seedvr2_dit"] == "seedvr2_7b_nvfp4.safetensors"
     assert cfg["seedvr2_models"] == {
         "3B NVFP4": "seedvr2_3b_nvfp4.safetensors",
@@ -969,9 +1007,6 @@ def selftest() -> None:
     assert cfg["seedvr2_vae"] == "seedvr2_ema_vae_fp16.safetensors"
     assert cfg["ltx25_models"] == {
         "transformers": {
-            "NVFP4 (Blackwell recommended)": (
-                "ltx-2.5-22b-distilled-transformer-nvfp4.safetensors"
-            ),
             "INT8 ConvRot": (
                 "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
             ),
@@ -981,34 +1016,31 @@ def selftest() -> None:
         "video_vae": "ltx-2.5-video-vae-conv-bf16.safetensors",
         "audio_vae": "ltx-2.5-audio-vae-bf16.safetensors",
     }
-    assert DEFAULT_LTX25_MODEL == "NVFP4 (Blackwell recommended)"
-    nvfp4 = MODEL_SPECS["ltx25_distilled_nvfp4"]
-    assert nvfp4.repo_id == LTX25_REPO
-    assert nvfp4.filename.endswith("-nvfp4.safetensors")
-    assert nvfp4.expected_sha256 is None
+    assert DEFAULT_LTX25_MODEL == "INT8 ConvRot"
     assert MODEL_SPECS["ltx25_pixel_upscaler_x2"].repo_id == (
         LTX25_PIXEL_UPSCALER_REPO
     )
     with tempfile.TemporaryDirectory() as model_temp:
         root = Path(model_temp)
-        path = root / nvfp4.folder / nvfp4.local_name
+        int8 = MODEL_SPECS["ltx25_distilled_int8"]
+        path = root / int8.folder / int8.local_name
         path.parent.mkdir(parents=True)
         with path.open("wb") as handle:
             handle.seek(MIN_VALID_MODEL_BYTES)
             handle.write(b"x")
         manifest = {
             "files": {
-                model_manifest_key(nvfp4): {
-                    "repo_id": nvfp4.repo_id,
-                    "filename": nvfp4.filename,
-                    "sha256": nvfp4.expected_sha256,
+                model_manifest_key(int8): {
+                    "repo_id": int8.repo_id,
+                    "filename": int8.filename,
+                    "sha256": int8.expected_sha256,
                     "size": path.stat().st_size,
                 }
             }
         }
-        assert model_file_matches_manifest(root, manifest, nvfp4)
-        manifest["files"][model_manifest_key(nvfp4)]["size"] += 1
-        assert not model_file_matches_manifest(root, manifest, nvfp4)
+        assert model_file_matches_manifest(root, manifest, int8)
+        manifest["files"][model_manifest_key(int8)]["size"] += 1
+        assert not model_file_matches_manifest(root, manifest, int8)
     assert set(LTX25_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert set(MUSIC3_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert DEFAULT_MUSIC3_MODEL == "INT8 ConvRot (lower VRAM)"

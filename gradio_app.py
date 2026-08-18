@@ -42,9 +42,11 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from h3_models import (
+    DEFAULT_H3_LATENT_UPSCALER_MODEL,
     DEFAULT_MUSIC3_MODEL,
     DEFAULT_LTX25_MODEL,
     DEFAULT_SEEDVR2_MODEL,
+    H3_LATENT_UPSCALER_MODEL_CHOICES,
     LTX25_MODEL_CHOICES,
     LTX25_ICLORA_MODEL_KEYS,
     LTX25_SHARED_MODEL_KEYS,
@@ -241,6 +243,10 @@ CORE_SAMPLER_NODE = "KSamplerSelect"
 LARRY_TURBO_LORA_NODE = "MiniMaxH3TurboLoRA"
 LARRY_TURBO_SAMPLER_NODE = "MiniMaxH3TurboSampler"
 LIGHTX2V_BYPASS_LORA_NODE = "H3LightX2VBypassLoRA"
+H3_LATENT_UPSCALER_NODE = "MinimaxH3LatentUpscalerNode3D"
+H3_SEPARATE_AV_LATENT_NODE = "H3SeparateAVLatent"
+H3_COMBINE_AV_LATENT_NODE = "H3CombineAVLatent"
+H3_LATENT_UPSCALE_SCALE = 2.0
 SOL_ATTENTION_NODE = "MiniMaxH3MemoryEfficientSolAttentionPatch"
 SAGE_ATTENTION_NODE = "PathchSageAttentionKJ"
 FUSED_MODULATION_NODE = "MiniMaxH3FusedModulation"
@@ -315,6 +321,9 @@ UI_DEFAULTS = {
     "easycache_end": 0.85,
     "easycache_verbose": False,
     "ref_image_size": "match",
+    "latent_upscale": False,
+    "latent_upscaler_model": DEFAULT_H3_LATENT_UPSCALER_MODEL,
+    "latent_upscale_split_step": 3,
     "postprocess": "None",
     "seedvr2_model": DEFAULT_SEEDVR2_MODEL,
     "upscale_force_offload": False,
@@ -1204,6 +1213,44 @@ def model_file_is_ready(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > MIN_VALID_MODEL_BYTES
 
 
+def h3_latent_upscaler_settings(model_choice: str) -> tuple[str, str, str]:
+    key = H3_LATENT_UPSCALER_MODEL_CHOICES.get(str(model_choice))
+    if key is None:
+        raise H3Error(f"Unknown H3 latent upscaler model: {model_choice}")
+    precision = {
+        "h3_latent_upscaler_3d_bf16": "bf16",
+        "h3_latent_upscaler_3d_fp16": "fp16",
+        "h3_latent_upscaler_3d_fp32": "fp32",
+    }[key]
+    return key, MODEL_SPECS[key].local_name, precision
+
+
+def ensure_h3_latent_upscaler_model(model_choice: str) -> bool:
+    """Download the selected native H3 latent upscaler on first use."""
+    model_key, filename, _precision = h3_latent_upscaler_settings(model_choice)
+    manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
+    if not stale_model_keys(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        model_keys=(model_key,),
+    ):
+        return False
+    sync_models(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        token=resolve_hf_token(),
+        log_prefix="[h3-latent-upscaler-on-demand]",
+        model_keys=(model_key,),
+        download_workers=1,
+    )
+    destination = COMFY_DIR / "models" / MODEL_SPECS[model_key].folder / filename
+    if not model_file_is_ready(destination):
+        raise H3Error(
+            f"On-demand H3 latent upscaler download did not produce {filename}."
+        )
+    return True
+
+
 def ensure_profile_model(
     profile_key: str,
     profile: ModelProfile,
@@ -1332,31 +1379,10 @@ def missing_ltx25_model_names(model_choice: str = DEFAULT_LTX25_MODEL) -> list[s
     return [MODEL_SPECS[key].local_name for key in stale]
 
 
-def validate_ltx25_nvfp4_header(model_choice: str) -> None:
-    selected_key = LTX25_MODEL_CHOICES.get(str(model_choice))
-    if selected_key != "ltx25_distilled_nvfp4":
-        return
-
-    from safetensors import safe_open
-
-    spec = MODEL_SPECS[selected_key]
-    path = COMFY_DIR / "models" / spec.folder / spec.local_name
-    with safe_open(path, framework="pt", device="cpu") as checkpoint:
-        has_quant_markers = any(
-            key.endswith(".comfy_quant") for key in checkpoint.keys()
-        )
-    if not has_quant_markers:
-        raise H3Error(
-            "The LTX-2.5 NVFP4 checkpoint lacks ComfyUI quantization markers. "
-            "Remove the stale file and retry so the Comfy-ready build is downloaded."
-        )
-
-
 def ensure_ltx25_models(model_choice: str = DEFAULT_LTX25_MODEL) -> bool:
     """Download the gated LTX-2.5 model set only when its tab is used."""
     required_keys = tuple(ltx25_model_keys(model_choice).values())
     if not missing_ltx25_model_names(model_choice):
-        validate_ltx25_nvfp4_header(model_choice)
         return False
     token = resolve_hf_token()
     if token is None:
@@ -1386,7 +1412,6 @@ def ensure_ltx25_models(model_choice: str = DEFAULT_LTX25_MODEL) -> bool:
         spec = MODEL_SPECS[key]
         if not model_file_is_ready(COMFY_DIR / "models" / spec.folder / spec.local_name):
             raise H3Error(f"On-demand LTX-2.5 download did not produce {spec.local_name}.")
-    validate_ltx25_nvfp4_header(model_choice)
     return True
 
 
@@ -1697,6 +1722,23 @@ def validate_resolution(width: int | float, height: int | float) -> tuple[int, i
             f"limit of 1920×1088 ({EXTENDED_PIXEL_CAP / 1_000_000:.2f} MP)."
         )
     return resolved_width, resolved_height
+
+
+def h3_latent_upscale_dimensions(
+    width: int | float,
+    height: int | float,
+) -> tuple[int, int, int, int]:
+    """Return exact 2x source/target canvases on H3's 32-pixel grid."""
+    target_width, target_height = validate_resolution(width, height)
+    if target_width % 64 or target_height % 64:
+        raise H3Error(
+            "H3 latent 2x requires the final width and height to be divisible "
+            "by 64 so the half-resolution pass stays on H3's 32-pixel grid. "
+            f"Received {target_width}×{target_height}."
+        )
+    source_width = target_width // 2
+    source_height = target_height // 2
+    return source_width, source_height, target_width, target_height
 
 
 def resolution_for_aspect_ratio(
@@ -2423,6 +2465,11 @@ def finish_sampling(
     scheduler: str,
     turbo_variant: str | None,
     filename_prefix: str,
+    initial_conditioning_ref: list[Any] | None = None,
+    initial_latent_ref: list[Any] | None = None,
+    latent_upscale_model_name: str | None = None,
+    latent_upscale_precision: str = "bf16",
+    latent_upscale_split_step: int = 3,
 ) -> None:
     noise = graph.add("RandomNoise", noise_seed=int(seed))
     guider = graph.add("BasicGuider", model=model_ref, conditioning=conditioning_ref)
@@ -2442,14 +2489,62 @@ def finish_sampling(
         steps=int(steps),
         denoise=1.0,
     )
-    sampled = graph.add(
-        "SamplerCustomAdvanced",
-        noise=Graph.out(noise),
-        guider=Graph.out(guider),
-        sampler=Graph.out(sampler),
-        sigmas=Graph.out(sigmas),
-        latent_image=latent_ref,
-    )
+    if latent_upscale_model_name is not None:
+        if initial_conditioning_ref is None or initial_latent_ref is None:
+            raise H3Error("H3 latent upscaling requires a low-resolution H3 stage.")
+        split_sigmas = graph.add(
+            "SplitSigmas",
+            sigmas=Graph.out(sigmas),
+            step=int(latent_upscale_split_step),
+        )
+        initial_guider = graph.add(
+            "BasicGuider",
+            model=model_ref,
+            conditioning=initial_conditioning_ref,
+        )
+        initial_sampled = graph.add(
+            "SamplerCustomAdvanced",
+            noise=Graph.out(noise),
+            guider=Graph.out(initial_guider),
+            sampler=Graph.out(sampler),
+            sigmas=Graph.out(split_sigmas, 0),
+            latent_image=initial_latent_ref,
+        )
+        separated = graph.add(
+            H3_SEPARATE_AV_LATENT_NODE,
+            latent=Graph.out(initial_sampled),
+        )
+        upscaled_video = graph.add(
+            H3_LATENT_UPSCALER_NODE,
+            latent=Graph.out(separated, 0),
+            model_name=latent_upscale_model_name,
+            scale=H3_LATENT_UPSCALE_SCALE,
+            device="cuda",
+            precision=latent_upscale_precision,
+        )
+        combined = graph.add(
+            H3_COMBINE_AV_LATENT_NODE,
+            video_latent=Graph.out(upscaled_video),
+            audio_latent=Graph.out(separated, 1),
+        )
+        disabled_noise = graph.add("DisableNoise")
+        sampled = graph.add(
+            "SamplerCustomAdvanced",
+            noise=Graph.out(disabled_noise),
+            guider=Graph.out(guider),
+            sampler=Graph.out(sampler),
+            sigmas=Graph.out(split_sigmas, 1),
+            latent_image=Graph.out(combined),
+        )
+    else:
+        sampled = graph.add(
+            "SamplerCustomAdvanced",
+            noise=Graph.out(noise),
+            guider=Graph.out(guider),
+            sampler=Graph.out(sampler),
+            sigmas=Graph.out(sigmas),
+            latent_image=latent_ref,
+        )
     images = graph.add("VAEDecode", samples=Graph.out(sampled), vae=video_vae_ref)
     audio = graph.add("VAEDecodeAudio", samples=Graph.out(sampled), vae=audio_vae_ref)
     video = graph.add(
@@ -2509,6 +2604,9 @@ def build_fl2va_graph(
     available_nodes: set[str],
     use_int8_vae: bool = False,
     use_sage: bool = False,
+    latent_upscale_model_name: str | None = None,
+    latent_upscale_precision: str = "bf16",
+    latent_upscale_split_step: int = 3,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -2541,12 +2639,18 @@ def build_fl2va_graph(
         use_sage=use_sage,
     )
 
+    target_width = snap32(width)
+    target_height = snap32(height)
+    source_width, source_height = target_width, target_height
+    if latent_upscale_model_name is not None:
+        source_width, source_height, target_width, target_height = (
+            h3_latent_upscale_dimensions(target_width, target_height)
+        )
+
     inputs: dict[str, Any] = {
         "clip": clip_ref,
         "vae": video_vae_ref,
         "prompt": prompt,
-        "width": snap32(width),
-        "height": snap32(height),
         "length": frame_length(duration),
     }
     if first_image:
@@ -2556,12 +2660,25 @@ def build_fl2va_graph(
         loaded = graph.add("LoadImage", image=stage_file(last_image, "keyframes"))
         inputs["last_frame"] = Graph.out(loaded)
 
-    h3 = graph.add("MiniMaxH3ImageToVideo", **inputs)
+    target_h3 = graph.add(
+        "MiniMaxH3ImageToVideo",
+        **inputs,
+        width=target_width,
+        height=target_height,
+    )
+    initial_h3 = target_h3
+    if latent_upscale_model_name is not None:
+        initial_h3 = graph.add(
+            "MiniMaxH3ImageToVideo",
+            **inputs,
+            width=source_width,
+            height=source_height,
+        )
     finish_sampling(
         graph,
         model_ref=model_ref,
-        conditioning_ref=Graph.out(h3, 0),
-        latent_ref=Graph.out(h3, 1),
+        conditioning_ref=Graph.out(target_h3, 0),
+        latent_ref=Graph.out(target_h3, 1),
         video_vae_ref=video_vae_ref,
         audio_vae_ref=audio_vae_ref,
         seed=seed,
@@ -2569,6 +2686,11 @@ def build_fl2va_graph(
         scheduler=scheduler,
         turbo_variant=turbo_variant if turbo_lora_name else None,
         filename_prefix=f"h3/fl2va_{int(time.time())}",
+        initial_conditioning_ref=Graph.out(initial_h3, 0),
+        initial_latent_ref=Graph.out(initial_h3, 1),
+        latent_upscale_model_name=latent_upscale_model_name,
+        latent_upscale_precision=latent_upscale_precision,
+        latent_upscale_split_step=latent_upscale_split_step,
     )
     return graph.nodes
 
@@ -2612,6 +2734,9 @@ def build_ref2va_graph(
     available_nodes: set[str],
     use_int8_vae: bool = False,
     use_sage: bool = False,
+    latent_upscale_model_name: str | None = None,
+    latent_upscale_precision: str = "bf16",
+    latent_upscale_split_step: int = 3,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -2644,13 +2769,19 @@ def build_ref2va_graph(
         use_sage=use_sage,
     )
 
+    target_width = snap32(width)
+    target_height = snap32(height)
+    source_width, source_height = target_width, target_height
+    if latent_upscale_model_name is not None:
+        source_width, source_height, target_width, target_height = (
+            h3_latent_upscale_dimensions(target_width, target_height)
+        )
+
     inputs: dict[str, Any] = {
         "clip": clip_ref,
         "vae": video_vae_ref,
         "audio_vae": audio_vae_ref,
         "prompt": prompt,
-        "width": snap32(width),
-        "height": snap32(height),
         "length": frame_length(duration),
         "ref_image_size": ref_image_size,
     }
@@ -2670,12 +2801,25 @@ def build_ref2va_graph(
         loaded = graph.add("LoadAudio", audio=stage_file(path, "reference_audios"))
         inputs[f"ref_audios.ref_audio_{index}"] = Graph.out(loaded)
 
-    h3 = graph.add("MiniMaxH3ReferenceToVideo", **inputs)
+    target_h3 = graph.add(
+        "MiniMaxH3ReferenceToVideo",
+        **inputs,
+        width=target_width,
+        height=target_height,
+    )
+    initial_h3 = target_h3
+    if latent_upscale_model_name is not None:
+        initial_h3 = graph.add(
+            "MiniMaxH3ReferenceToVideo",
+            **inputs,
+            width=source_width,
+            height=source_height,
+        )
     finish_sampling(
         graph,
         model_ref=model_ref,
-        conditioning_ref=Graph.out(h3, 0),
-        latent_ref=Graph.out(h3, 1),
+        conditioning_ref=Graph.out(target_h3, 0),
+        latent_ref=Graph.out(target_h3, 1),
         video_vae_ref=video_vae_ref,
         audio_vae_ref=audio_vae_ref,
         seed=seed,
@@ -2683,6 +2827,11 @@ def build_ref2va_graph(
         scheduler=scheduler,
         turbo_variant=turbo_variant if turbo_lora_name else None,
         filename_prefix=f"h3/ref2va_{int(time.time())}",
+        initial_conditioning_ref=Graph.out(initial_h3, 0),
+        initial_latent_ref=Graph.out(initial_h3, 1),
+        latent_upscale_model_name=latent_upscale_model_name,
+        latent_upscale_precision=latent_upscale_precision,
+        latent_upscale_split_step=latent_upscale_split_step,
     )
     return graph.nodes
 
@@ -3267,6 +3416,7 @@ def required_nodes_for(
     turbo_variant: str = LIGHTX2V_4STEP_TURBO,
     model_filename: str = "",
     use_sage: bool = False,
+    latent_upscale: bool = False,
 ) -> set[str]:
     common = {
         "UNETLoader", "CLIPLoader", "VAELoader", "RandomNoise",
@@ -3286,6 +3436,14 @@ def required_nodes_for(
         common.add(SOL_ATTENTION_NODE)
     if use_sage:
         common.add(SAGE_ATTENTION_NODE)
+    if latent_upscale:
+        common |= {
+            "SplitSigmas",
+            "DisableNoise",
+            H3_LATENT_UPSCALER_NODE,
+            H3_SEPARATE_AV_LATENT_NODE,
+            H3_COMBINE_AV_LATENT_NODE,
+        }
     if "convrot" in model_filename.lower():
         common.add(CHUNK_FEED_FORWARD_NODE)
     if str(cache_mode).strip().lower() == "firstblockcache":
@@ -3373,9 +3531,15 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Configuring generation model"
     if name in {
         "RandomNoise", "BasicGuider", "CFGGuider", CORE_SAMPLER_NODE,
-        "BasicScheduler", "ManualSigmas",
+        "BasicScheduler", "ManualSigmas", "SplitSigmas", "DisableNoise",
     }:
         return "Preparing sampler"
+    if name == H3_SEPARATE_AV_LATENT_NODE:
+        return "Separating H3 video and audio latents"
+    if name == H3_LATENT_UPSCALER_NODE:
+        return "Upscaling H3 video latent 2x"
+    if name == H3_COMBINE_AV_LATENT_NODE:
+        return "Recombining H3 video and audio latents"
     if name == "KSampler" and "MiniMaxMusic3TextEncode" in workflow_classes:
         return "Generating music"
     if name == "SamplerCustomAdvanced" or "Sampler" in name:
@@ -4572,6 +4736,9 @@ def generate(
     easycache_verbose: bool,
     ref_image_size: str,
     postprocess: str,
+    latent_upscale: bool = False,
+    latent_upscaler_model: str = DEFAULT_H3_LATENT_UPSCALER_MODEL,
+    latent_upscale_split_step: int = 3,
     upscale_force_offload: bool = False,
     upscale_split_enabled: bool = False,
     upscale_split_seconds: float = 5.0,
@@ -4663,6 +4830,41 @@ def generate(
                 "Use Generation=Turbo for lower-step generation."
             )
 
+        latent_upscale_model_name: str | None = None
+        latent_upscale_precision = "bf16"
+        latent_source_width, latent_source_height = resolved_width, resolved_height
+        if latent_upscale:
+            (
+                latent_source_width,
+                latent_source_height,
+                resolved_width,
+                resolved_height,
+            ) = h3_latent_upscale_dimensions(resolved_width, resolved_height)
+            split_step = int(latent_upscale_split_step)
+            if split_step < 1 or split_step >= effective_steps:
+                raise H3Error(
+                    "H3 latent upscale split step must be at least 1 and smaller "
+                    f"than the total {effective_steps} sampling steps."
+                )
+            (
+                _latent_upscale_key,
+                latent_upscale_model_name,
+                latent_upscale_precision,
+            ) = h3_latent_upscaler_settings(latent_upscaler_model)
+            destination = (
+                COMFY_DIR
+                / "models"
+                / "latent_upscale_models"
+                / latent_upscale_model_name
+            )
+            if not model_file_is_ready(destination):
+                progress(0, desc="Downloading H3 latent upscaler")
+                yield None, progress_status(
+                    f"Downloading {latent_upscaler_model} H3 latent upscaler",
+                    started=started,
+                )
+            ensure_h3_latent_upscaler_model(latent_upscaler_model)
+
         info = object_info()
         available = set(info)
         if postprocess in COMFY_UPSCALE_OPTIONS:
@@ -4691,6 +4893,7 @@ def generate(
             use_turbo=use_turbo,
             turbo_variant=selected_turbo,
             model_filename=selected_model,
+            latent_upscale=bool(latent_upscale),
         ) - available
         if missing:
             raise H3Error("Missing ComfyUI nodes: " + ", ".join(sorted(missing)))
@@ -4749,6 +4952,9 @@ def generate(
                 model_name=selected_model,
                 models=models, available_nodes=available,
                 use_int8_vae=bool(use_int8_vae),
+                latent_upscale_model_name=latent_upscale_model_name,
+                latent_upscale_precision=latent_upscale_precision,
+                latent_upscale_split_step=int(latent_upscale_split_step),
             )
         else:
             graph = build_fl2va_graph(
@@ -4778,6 +4984,9 @@ def generate(
                 model_name=selected_model,
                 models=models, available_nodes=available,
                 use_int8_vae=bool(use_int8_vae),
+                latent_upscale_model_name=latent_upscale_model_name,
+                latent_upscale_precision=latent_upscale_precision,
+                latent_upscale_split_step=int(latent_upscale_split_step),
             )
 
         client_id = str(uuid.uuid4())
@@ -4826,6 +5035,13 @@ def generate(
             f"dense-backend {SERVER_DENSE_ATTENTION_BACKEND} · "
             f"cache {cache_status}"
         )
+        if latent_upscale:
+            queued_status += (
+                f"\n\nH3 latent upscale: {latent_upscaler_model} · "
+                f"{latent_source_width}×{latent_source_height} → "
+                f"{resolved_width}×{resolved_height} · split after "
+                f"{int(latent_upscale_split_step)}/{effective_steps} steps."
+            )
         if cache_note:
             queued_status += f"\n\nAcceleration notice: {cache_note}"
         if generation_note:
@@ -5347,6 +5563,9 @@ def compact_settings_summary(
     scheduler: str,
     attention_mode: str,
     cache_mode: str,
+    latent_upscale: bool,
+    latent_upscaler_model: str,
+    latent_upscale_split_step: int,
     postprocess: str,
     seedvr2_model: str,
     ltx25_model: str,
@@ -5385,11 +5604,18 @@ def compact_settings_summary(
         )
         if split_upscale:
             postprocess_note += f" / split: {float(split_seconds):g}s clips"
+    latent_note = "Off"
+    if latent_upscale:
+        latent_note = (
+            f"2x / {latent_upscaler_model} / split at "
+            f"step {int(latent_upscale_split_step)}"
+        )
     return (
         "**Current setup**  \n"
         f"{mode} · {model_profile} / {generation_mode} · {seconds} · {resolution} · "
         f"{step_count} / {scheduler} · Attention: {attention_mode} · "
-        f"Cache: {cache_mode} · Post: {postprocess_note}"
+        f"Cache: {cache_mode} · Native latent: {latent_note} · "
+        f"Post: {postprocess_note}"
     )
 
 
@@ -5469,6 +5695,9 @@ def generate_with_ui_defaults(
         easycache_verbose=defaults["easycache_verbose"],
         ref_image_size=defaults["ref_image_size"],
         postprocess=defaults["postprocess"],
+        latent_upscale=defaults["latent_upscale"],
+        latent_upscaler_model=defaults["latent_upscaler_model"],
+        latent_upscale_split_step=defaults["latent_upscale_split_step"],
         seedvr2_model=defaults["seedvr2_model"],
         ltx25_model=DEFAULT_LTX25_MODEL,
         upscale_force_offload=defaults["upscale_force_offload"],
@@ -5650,6 +5879,9 @@ def build_ui() -> gr.Blocks:
                         defaults["duration"], defaults["width"], defaults["height"],
                         defaults["steps"], defaults["scheduler"],
                         defaults["attention_mode"], defaults["cache_mode"],
+                        defaults["latent_upscale"],
+                        defaults["latent_upscaler_model"],
+                        defaults["latent_upscale_split_step"],
                         defaults["postprocess"], defaults["seedvr2_model"],
                         DEFAULT_LTX25_MODEL,
                         defaults["upscale_force_offload"],
@@ -5862,6 +6094,41 @@ def build_ui() -> gr.Blocks:
                         info="Logs skipped-step counts and estimated speedup in ComfyUI.",
                     )
 
+                gr.Markdown("### Native H3 latent upscale")
+                latent_upscale = gr.Checkbox(
+                    value=defaults["latent_upscale"],
+                    label="Generate at half resolution, then latent upscale 2x",
+                    info=(
+                        "Runs inside H3 sampling, not after video generation. Width and "
+                        "height remain the final output resolution. Disabled by default."
+                    ),
+                )
+                with gr.Group(visible=defaults["latent_upscale"]) as latent_upscale_settings:
+                    latent_upscaler_model = gr.Dropdown(
+                        choices=list(H3_LATENT_UPSCALER_MODEL_CHOICES),
+                        value=defaults["latent_upscaler_model"],
+                        label="Latent upscaler model",
+                        info=(
+                            "Balanced uses BF16 and is the default. Fast uses FP16; "
+                            "Quality uses FP32 and needs more memory. Downloaded on first use."
+                        ),
+                    )
+                    latent_upscale_split_step = gr.Slider(
+                        1, 12,
+                        value=defaults["latent_upscale_split_step"],
+                        step=1,
+                        label="Upscale after sampling step",
+                        info=(
+                            "The first steps run at half resolution; remaining steps refine "
+                            "the 2x latent. Step 3 is the balanced default."
+                        ),
+                    )
+                    gr.Markdown(
+                        "Final width and height must both be divisible by 64. For example, "
+                        "1024×1024 generates the first stage at 512×512 and finishes at "
+                        "1024×1024. Only the video latent is upscaled; H3 audio is preserved."
+                    )
+
                 gr.Markdown("### Generation post-processing")
                 generation_postprocess = gr.Dropdown(
                     choices=GENERATION_POSTPROCESS_OPTIONS,
@@ -5933,7 +6200,7 @@ def build_ui() -> gr.Blocks:
                         value=LTX25_DEFAULTS["model"],
                         label="Transformer model",
                         info=(
-                            "NVFP4 is the default for RTX PRO 6000/Blackwell. "
+                            "INT8 ConvRot is the default lower-memory option. "
                             "Only the selected transformer downloads."
                         ),
                     )
@@ -6043,8 +6310,8 @@ def build_ui() -> gr.Blocks:
                     )
                     gr.Markdown(
                         "Uses the official distilled 8-step sigma schedule and the "
-                        "lower-memory convolutional LTX-2.5 video VAE. NVFP4 and "
-                        "INT8 are embedded-quantized ComfyUI checkpoints."
+                        "lower-memory convolutional LTX-2.5 video VAE. INT8 is an "
+                        "embedded-quantized ComfyUI checkpoint."
                     )
 
             with gr.Accordion(
@@ -6308,6 +6575,9 @@ def build_ui() -> gr.Blocks:
             mode, model_profile, use_int8_vae, generation_mode, turbo_variant,
             duration, width, height,
             steps, scheduler, attention_mode, cache_mode,
+            latent_upscale,
+            latent_upscaler_model,
+            latent_upscale_split_step,
             generation_postprocess,
             generation_seedvr2_model,
             ltx25_model,
@@ -6344,6 +6614,11 @@ def build_ui() -> gr.Blocks:
                 help_text, frame_group, reference_group, generation_mode,
                 preset, steps, scheduler, cache_mode, attention_mode,
             ],
+        )
+        latent_upscale.change(
+            lambda enabled: gr.update(visible=bool(enabled)),
+            inputs=latent_upscale,
+            outputs=latent_upscale_settings,
         )
         ltx25_mode.change(
             lambda value: gr.update(visible=value == "Image to video"),
@@ -6528,6 +6803,7 @@ def build_ui() -> gr.Blocks:
                 fbcache_end, fbcache_max_hits, fbcache_temporal_guard,
                 easycache_threshold, easycache_start, easycache_end, easycache_verbose,
                 ref_size, generation_postprocess,
+                latent_upscale, latent_upscaler_model, latent_upscale_split_step,
                 generation_force_offload,
                 generation_split_upscale, generation_split_seconds,
                 generation_seedvr2_model,
@@ -6919,6 +7195,12 @@ def selftest() -> None:
         "FirstBlockCache",
         use_turbo=True,
     ) | required_nodes_for("Reference media", True, "EasyCache", True)
+    available |= required_nodes_for(
+        "Text to video",
+        False,
+        "Off",
+        latent_upscale=True,
+    )
     available.add("SpectrumApplyMiniMaxH3")
     available.add(CHUNK_FEED_FORWARD_NODE)
     available.add(SAGE_ATTENTION_NODE)
@@ -6974,6 +7256,79 @@ def selftest() -> None:
     missing = expected - classes
     if missing:
         raise SystemExit(f"Selftest failed; missing nodes: {missing}")
+
+    latent_graph = build_fl2va_graph(
+        prompt="latent upscale test", first_image=None, last_image=None,
+        width=1024, height=1024, duration=5, steps=8, seed=2,
+        scheduler="beta", turbo_lora_name=None,
+        turbo_variant=LIGHTX2V_8STEP_TURBO, turbo_strength=1.0,
+        use_sol=False, sol_tau=1.0, sol_thresh_type="diag",
+        sol_exact_mode="off", sol_dense_steps=0, sol_step_off=0.0,
+        sol_sink_tokens=0, cache_mode="Off", fbcache_preset="Fast",
+        fbcache_threshold=0.10, fbcache_start=0.10, fbcache_end=0.95,
+        fbcache_max_hits=2, fbcache_temporal_guard=True,
+        easycache_threshold=0.10, easycache_start=0.15,
+        easycache_end=0.85, easycache_verbose=False,
+        model_name=fake.profile("speed").fl2va, models=fake,
+        available_nodes=available,
+        latent_upscale_model_name="minimax_h3_latent_upscaler_3d_bf16.safetensors",
+        latent_upscale_precision="bf16", latent_upscale_split_step=3,
+    )
+    latent_conditioning = [
+        node for node in latent_graph.values()
+        if node["class_type"] == "MiniMaxH3ImageToVideo"
+    ]
+    assert {(node["inputs"]["width"], node["inputs"]["height"])
+            for node in latent_conditioning} == {(512, 512), (1024, 1024)}
+    latent_samplers = [
+        (node_id, node) for node_id, node in latent_graph.items()
+        if node["class_type"] == "SamplerCustomAdvanced"
+    ]
+    assert len(latent_samplers) == 2
+    split_id = next(
+        node_id for node_id, node in latent_graph.items()
+        if node["class_type"] == "SplitSigmas"
+    )
+    disable_noise_id = next(
+        node_id for node_id, node in latent_graph.items()
+        if node["class_type"] == "DisableNoise"
+    )
+    assert latent_graph[split_id]["inputs"]["step"] == 3
+    assert latent_samplers[0][1]["inputs"]["sigmas"] == Graph.out(split_id, 0)
+    assert latent_samplers[1][1]["inputs"]["sigmas"] == Graph.out(split_id, 1)
+    assert latent_samplers[1][1]["inputs"]["noise"] == Graph.out(disable_noise_id)
+    separate_id = next(
+        node_id for node_id, node in latent_graph.items()
+        if node["class_type"] == H3_SEPARATE_AV_LATENT_NODE
+    )
+    upscaler_id = next(
+        node_id for node_id, node in latent_graph.items()
+        if node["class_type"] == H3_LATENT_UPSCALER_NODE
+    )
+    combine_id = next(
+        node_id for node_id, node in latent_graph.items()
+        if node["class_type"] == H3_COMBINE_AV_LATENT_NODE
+    )
+    assert latent_graph[upscaler_id]["inputs"] == {
+        "latent": Graph.out(separate_id, 0),
+        "model_name": "minimax_h3_latent_upscaler_3d_bf16.safetensors",
+        "scale": 2.0,
+        "device": "cuda",
+        "precision": "bf16",
+    }
+    assert latent_graph[combine_id]["inputs"]["video_latent"] == Graph.out(
+        upscaler_id
+    )
+    assert latent_graph[combine_id]["inputs"]["audio_latent"] == Graph.out(
+        separate_id, 1
+    )
+    assert h3_latent_upscale_dimensions(1024, 1024) == (512, 512, 1024, 1024)
+    try:
+        h3_latent_upscale_dimensions(864, 480)
+    except H3Error as exc:
+        assert "divisible by 64" in str(exc)
+    else:
+        raise AssertionError("Expected an incompatible latent-upscale resolution error")
 
     sol_nodes = [
         node for node in graph.values()
@@ -7146,7 +7501,7 @@ def selftest() -> None:
         node for node in ltx25_nodes if node["class_type"] == "UNETLoader"
     )
     assert ltx25_unet["inputs"]["unet_name"] == (
-        "ltx-2.5-22b-distilled-transformer-nvfp4.safetensors"
+        "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
     )
     ltx25_video_latent = next(
         node for node in ltx25_nodes
