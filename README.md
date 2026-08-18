@@ -7,7 +7,11 @@ FirstBlockCache node.
 
 ## What is included
 
-- Text/image-to-video and reference-media-to-video workflows
+- Unified H3 video, image-frame, and audio result formats across text,
+  first/last-frame, and reference-media conditioning
+- Image results expose 1–20 decoded frames in a preview gallery and save only
+  the frames selected by the user
+- Audio results decode the native H3 stereo soundtrack without creating a video
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
 - A dedicated MiniMax Music 3 tab for caption-and-lyrics song generation
 - All nine official LTX-2.5 ComfyUI workflows for two-stage generation,
@@ -181,6 +185,25 @@ only to enhancement requests and is not stored by the server. It remains in the
 browser field for reuse until it is cleared manually or the page is refreshed.
 Uploaded Gemini Files are deleted after each request. The same operation is
 exposed as `/enhance_prompt`.
+
+### H3 result formats
+
+The **Result format** control in the MiniMax H3 tab defaults to **Video** and
+does not change conditioning or sampling. H3 still generates its joint visual
+and audio latent; the selected format controls the final decode:
+
+- **Video** decodes both streams and muxes the existing synchronized MP4.
+- **Image** replaces the duration control with a 1–20 frame control (5 by
+  default), decodes the requested visual frames, and shows every frame in a
+  gallery. Select one or more frames and use **Save selected frames** to copy
+  only those PNGs into `ComfyUI/output/h3/images`.
+- **Audio** decodes the native stereo soundtrack to MP3 and skips video decode
+  and muxing. Dialogue, ambience, music, and sound effects continue to come
+  from the same H3 prompt and optional audio references.
+
+H3's native short temporal packets contain 5 or 22 frames. Image requests up
+to 5 frames sample the 5-frame packet; requests from 6 through 20 sample the
+22-frame packet and trim the decoded batch to the exact requested count.
 
 The **LTX-2.5** tab and **MiniMax Music 3** tab include their own Gemini prompt
 writers. They create or enhance prompts from text plus optional keyframe or

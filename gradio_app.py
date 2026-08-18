@@ -135,6 +135,11 @@ LIGHTX2V_4STEP_TURBO = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
 LIGHTX2V_8STEP_TURBO = "LightX2V v1.0 / 8-step 544p"
 LARRY_TURBO = "Larry v4-600 EMA"
 DEFAULT_TURBO = LIGHTX2V_4STEP_TURBO
+RESULT_FORMATS = ("Video", "Image", "Audio")
+DEFAULT_RESULT_FORMAT = RESULT_FORMATS[0]
+DEFAULT_IMAGE_FRAMES = 5
+MIN_IMAGE_FRAMES = 1
+MAX_IMAGE_FRAMES = 20
 LTX25_SIGMAS = "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
 LTX25_DEFAULTS = {
     "model": DEFAULT_LTX25_MODEL,
@@ -301,6 +306,8 @@ TURBO_SETTINGS = {
 }
 UI_DEFAULTS = {
     "mode": "Text to video",
+    "result_format": DEFAULT_RESULT_FORMAT,
+    "image_frames": DEFAULT_IMAGE_FRAMES,
     "model_profile": "Quality",
     "use_int8_vae": False,
     "generation_mode": "Turbo",
@@ -421,6 +428,7 @@ GALLERY_THUMBNAILS_DIR = OUTPUTS_DIR / ".gallery_thumbnails"
 GALLERY_LIMIT = max(1, int(os.getenv("GRADIO_GALLERY_LIMIT", "200")))
 VIDEO_EXTENSIONS = frozenset({".mp4", ".webm", ".mov", ".mkv", ".gif"})
 AUDIO_EXTENSIONS = frozenset({".mp3", ".wav", ".flac", ".ogg", ".m4a"})
+IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp"})
 GALLERY_METADATA_CACHE_LIMIT = max(
     GALLERY_LIMIT,
     int(os.getenv("GRADIO_GALLERY_METADATA_CACHE_LIMIT", "512")),
@@ -1069,6 +1077,8 @@ def enhance_h3_prompt(
     duration: float,
     width: int,
     height: int,
+    result_format: str = DEFAULT_RESULT_FORMAT,
+    image_frames: int = DEFAULT_IMAGE_FRAMES,
 ) -> tuple[str, str]:
     """Generate or enhance an H3 prompt from the active text and media inputs."""
     try:
@@ -1099,10 +1109,17 @@ def enhance_h3_prompt(
         if not rough_prompt and not media:
             raise H3Error("Enter a prompt or upload media before enhancing.")
 
+        normalized_result = normalize_result_format(result_format)
+        timing_request = (
+            f"Requested image frames: {validate_image_frame_count(image_frames)}"
+            if normalized_result == "Image"
+            else f"Requested duration: {float(duration):.2f} seconds"
+        )
         parts: list[dict[str, Any]] = [{
             "text": (
                 "Create the final MiniMax H3 prompt from the following user request.\n"
-                f"UI mode: {mode}\nRequested duration: {float(duration):.2f} seconds\n"
+                f"UI mode: {mode}\nResult format: {normalized_result}\n"
+                f"{timing_request}\n"
                 f"Requested output: {int(width)}x{int(height)}\n"
                 f"User text:\n{rough_prompt or '(No text supplied; infer only from the media.)'}"
             )
@@ -1833,6 +1850,34 @@ def frame_length(duration: float) -> int:
     return frames + (5 - (frames % 17)) % 17
 
 
+def normalize_result_format(value: Any) -> str:
+    requested = str(value or DEFAULT_RESULT_FORMAT).strip().lower()
+    for result_format in RESULT_FORMATS:
+        if requested == result_format.lower():
+            return result_format
+    raise H3Error(
+        f"Unsupported result format: {value!r}. Choose {', '.join(RESULT_FORMATS)}."
+    )
+
+
+def validate_image_frame_count(value: Any) -> int:
+    try:
+        frames = int(value)
+    except (TypeError, ValueError) as exc:
+        raise H3Error("Image frame count must be an integer.") from exc
+    if not MIN_IMAGE_FRAMES <= frames <= MAX_IMAGE_FRAMES:
+        raise H3Error(
+            f"Image frame count must be between {MIN_IMAGE_FRAMES} and "
+            f"{MAX_IMAGE_FRAMES}."
+        )
+    return frames
+
+
+def image_sampling_length(frame_count: int) -> int:
+    """Return the smallest native H3 temporal packet covering the request."""
+    return 5 if validate_image_frame_count(frame_count) <= 5 else 22
+
+
 def snap32(value: int | float) -> int:
     return max(32, round(int(value) / 32) * 32)
 
@@ -2168,6 +2213,30 @@ def mode_layout_updates(mode: str):
         gr.update(),
         gr.update(),
         gr.update(),
+    )
+
+
+def result_format_layout_updates(result_format: str):
+    result_format = normalize_result_format(result_format)
+    is_image = result_format == "Image"
+    is_audio = result_format == "Audio"
+    return (
+        gr.update(visible=not is_image),
+        gr.update(visible=is_image),
+        gr.update(visible=result_format == "Video", value=None),
+        gr.update(visible=is_image),
+        gr.update(visible=is_audio, value=None),
+        (
+            gr.update(interactive=True)
+            if result_format == "Video"
+            else gr.update(value="None", interactive=False)
+        ),
+        (
+            gr.update(value=False, interactive=False)
+            if is_audio
+            else gr.update(interactive=True)
+        ),
+        gr.update(value=f"Generate {result_format.lower()}"),
     )
 
 
@@ -2584,12 +2653,15 @@ def finish_sampling(
     scheduler: str,
     turbo_variant: str | None,
     filename_prefix: str,
+    result_format: str = DEFAULT_RESULT_FORMAT,
+    image_frames: int = DEFAULT_IMAGE_FRAMES,
     initial_conditioning_ref: list[Any] | None = None,
     initial_latent_ref: list[Any] | None = None,
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
 ) -> None:
+    result_format = normalize_result_format(result_format)
     noise = graph.add("RandomNoise", noise_seed=int(seed))
     guider = graph.add("BasicGuider", model=model_ref, conditioning=conditioning_ref)
     use_larry_sampler = (
@@ -2665,6 +2737,40 @@ def finish_sampling(
             latent_image=latent_ref,
         )
         audio_samples = Graph.out(sampled)
+    if result_format == "Image":
+        requested_frames = validate_image_frame_count(image_frames)
+        images = graph.add(
+            "VAEDecode", samples=Graph.out(sampled), vae=video_vae_ref
+        )
+        image_ref = Graph.out(images)
+        native_frames = image_sampling_length(requested_frames)
+        if requested_frames != native_frames:
+            selected = graph.add(
+                "ImageFromBatch",
+                image=image_ref,
+                batch_index=0,
+                length=requested_frames,
+            )
+            image_ref = Graph.out(selected)
+        graph.add(
+            "SaveImage",
+            images=image_ref,
+            filename_prefix=filename_prefix,
+        )
+        return
+
+    if result_format == "Audio":
+        audio = graph.add(
+            "VAEDecodeAudio", samples=audio_samples, vae=audio_vae_ref
+        )
+        graph.add(
+            "SaveAudioMP3",
+            audio=Graph.out(audio),
+            filename_prefix=filename_prefix,
+            quality="V0",
+        )
+        return
+
     images = graph.add("VAEDecode", samples=Graph.out(sampled), vae=video_vae_ref)
     audio = graph.add("VAEDecodeAudio", samples=audio_samples, vae=audio_vae_ref)
     video = graph.add(
@@ -2727,6 +2833,8 @@ def build_fl2va_graph(
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
+    result_format: str = DEFAULT_RESULT_FORMAT,
+    image_frames: int = DEFAULT_IMAGE_FRAMES,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -2771,7 +2879,11 @@ def build_fl2va_graph(
         "clip": clip_ref,
         "vae": video_vae_ref,
         "prompt": prompt,
-        "length": frame_length(duration),
+        "length": (
+            image_sampling_length(image_frames)
+            if normalize_result_format(result_format) == "Image"
+            else frame_length(duration)
+        ),
     }
     if first_image:
         loaded = graph.add("LoadImage", image=stage_file(first_image, "keyframes"))
@@ -2805,7 +2917,15 @@ def build_fl2va_graph(
         steps=steps,
         scheduler=scheduler,
         turbo_variant=turbo_variant if turbo_lora_name else None,
-        filename_prefix=f"h3/fl2va_{int(time.time())}",
+        filename_prefix=(
+            f"h3/image_staging/fl2va_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+            if normalize_result_format(result_format) == "Image"
+            else f"audio/h3_fl2va_{int(time.time())}"
+            if normalize_result_format(result_format) == "Audio"
+            else f"h3/fl2va_{int(time.time())}"
+        ),
+        result_format=result_format,
+        image_frames=image_frames,
         initial_conditioning_ref=Graph.out(initial_h3, 0),
         initial_latent_ref=Graph.out(initial_h3, 1),
         latent_upscale_model_name=latent_upscale_model_name,
@@ -2857,6 +2977,8 @@ def build_ref2va_graph(
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
+    result_format: str = DEFAULT_RESULT_FORMAT,
+    image_frames: int = DEFAULT_IMAGE_FRAMES,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -2902,7 +3024,11 @@ def build_ref2va_graph(
         "vae": video_vae_ref,
         "audio_vae": audio_vae_ref,
         "prompt": prompt,
-        "length": frame_length(duration),
+        "length": (
+            image_sampling_length(image_frames)
+            if normalize_result_format(result_format) == "Image"
+            else frame_length(duration)
+        ),
         "ref_image_size": ref_image_size,
     }
 
@@ -2946,7 +3072,15 @@ def build_ref2va_graph(
         steps=steps,
         scheduler=scheduler,
         turbo_variant=turbo_variant if turbo_lora_name else None,
-        filename_prefix=f"h3/ref2va_{int(time.time())}",
+        filename_prefix=(
+            f"h3/image_staging/ref2va_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+            if normalize_result_format(result_format) == "Image"
+            else f"audio/h3_ref2va_{int(time.time())}"
+            if normalize_result_format(result_format) == "Audio"
+            else f"h3/ref2va_{int(time.time())}"
+        ),
+        result_format=result_format,
+        image_frames=image_frames,
         initial_conditioning_ref=Graph.out(initial_h3, 0),
         initial_latent_ref=Graph.out(initial_h3, 1),
         latent_upscale_model_name=latent_upscale_model_name,
@@ -3537,13 +3671,22 @@ def required_nodes_for(
     model_filename: str = "",
     use_sage: bool = False,
     latent_upscale: bool = False,
+    result_format: str = DEFAULT_RESULT_FORMAT,
 ) -> set[str]:
+    result_format = normalize_result_format(result_format)
     common = {
         "UNETLoader", "CLIPLoader", "VAELoader", "RandomNoise",
         "BasicGuider", "BasicScheduler",
-        "SamplerCustomAdvanced", "VAEDecode", "VAEDecodeAudio",
-        "CreateVideo", "SaveVideo",
+        "SamplerCustomAdvanced",
     }
+    if result_format == "Image":
+        common |= {"VAEDecode", "ImageFromBatch", "SaveImage"}
+    elif result_format == "Audio":
+        common |= {"VAEDecodeAudio", "SaveAudioMP3"}
+    else:
+        common |= {
+            "VAEDecode", "VAEDecodeAudio", "CreateVideo", "SaveVideo",
+        }
     if mode == "Reference media":
         common |= {"MiniMaxH3ReferenceToVideo", "LoadImage", "LoadVideo", "GetVideoComponents", "LoadAudio"}
     else:
@@ -3919,6 +4062,95 @@ def resolve_audio_output(history: dict[str, Any], queued_at: float) -> Path:
     if recent:
         return max(recent, key=lambda path: path.stat().st_mtime)
     raise H3Error("Generation completed, but no saved audio could be located.")
+
+
+def resolve_image_outputs(
+    history: dict[str, Any], queued_at: float, expected_count: int
+) -> list[Path]:
+    expected_count = validate_image_frame_count(expected_count)
+    output_root = OUTPUT_DIR.resolve()
+    staging_root = (OUTPUT_DIR / "h3" / "image_staging").resolve()
+    candidates: list[Path] = []
+    for ref in walk_saved_refs(history.get("outputs", {})):
+        if ref["type"] != "output":
+            continue
+        path = (OUTPUT_DIR / ref["subfolder"] / ref["filename"]).resolve()
+        if (
+            path.is_relative_to(output_root)
+            and path.is_relative_to(staging_root)
+            and path.is_file()
+            and path.suffix.lower() in IMAGE_EXTENSIONS
+        ):
+            candidates.append(path)
+    unique = sorted(set(candidates), key=lambda path: path.name)
+    if len(unique) >= expected_count:
+        return unique[:expected_count]
+
+    recent = sorted(
+        (
+            path.resolve()
+            for path in staging_root.rglob("*")
+            if path.is_file()
+            and path.suffix.lower() in IMAGE_EXTENSIONS
+            and path.stat().st_mtime >= queued_at - 2
+        ),
+        key=lambda path: (path.stat().st_mtime, path.name),
+    )
+    if len(recent) >= expected_count:
+        return recent[-expected_count:]
+    raise H3Error(
+        "Generation completed, but the decoded image frame batch could not be located."
+    )
+
+
+def image_frame_labels(frame_paths: Iterable[Any]) -> list[str]:
+    return [f"Frame {index + 1}" for index, _ in enumerate(frame_paths)]
+
+
+def select_all_image_frames(frame_paths: Iterable[Any]) -> list[str]:
+    return image_frame_labels(frame_paths)
+
+
+def save_selected_image_frames(
+    frame_paths: Iterable[Any], selected_labels: Iterable[str]
+) -> tuple[list[str], str]:
+    paths = [Path(path).resolve() for path in normalize_paths(frame_paths)]
+    labels = list(selected_labels or [])
+    if not paths:
+        raise gr.Error("Generate image frames before saving a selection.")
+    if not labels:
+        raise gr.Error("Select at least one image frame to save.")
+
+    selected_indices: list[int] = []
+    for label in labels:
+        match = re.fullmatch(r"Frame\s+(\d+)", str(label).strip())
+        if not match:
+            raise gr.Error(f"Invalid frame selection: {label}")
+        index = int(match.group(1)) - 1
+        if index < 0 or index >= len(paths):
+            raise gr.Error(f"Frame selection is out of range: {label}")
+        if index not in selected_indices:
+            selected_indices.append(index)
+
+    staging_root = (OUTPUT_DIR / "h3" / "image_staging").resolve()
+    for index in selected_indices:
+        source = paths[index]
+        if not source.is_relative_to(staging_root) or not source.is_file():
+            raise gr.Error("A selected frame is outside the H3 image staging directory.")
+
+    destination = (
+        OUTPUT_DIR
+        / "h3"
+        / "images"
+        / f"selection_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+    )
+    destination.mkdir(parents=True, exist_ok=False)
+    saved: list[str] = []
+    for index in selected_indices:
+        target = destination / f"frame_{index + 1:03d}.png"
+        shutil.copy2(paths[index], target)
+        saved.append(str(target))
+    return saved, f"Saved {len(saved)} selected frame(s) to `{destination}`."
 
 
 def has_encoder(name: str) -> bool:
@@ -4864,6 +5096,8 @@ def generate(
     seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
     ltx25_model: str = DEFAULT_LTX25_MODEL,
     use_int8_vae: bool = False,
+    result_format: str = DEFAULT_RESULT_FORMAT,
+    image_frames: int = DEFAULT_IMAGE_FRAMES,
     progress=gr.Progress(track_tqdm=False),
 ):
     started = time.monotonic()
@@ -4875,12 +5109,24 @@ def generate(
     try:
         progress(0, desc="Validating request")
         yield None, progress_status("Validating request", started=started)
+        result_format = normalize_result_format(result_format)
+        requested_image_frames = validate_image_frame_count(image_frames)
         if postprocess not in GENERATION_POSTPROCESS_OPTIONS:
             raise H3Error("Unsupported post-processing method.")
         if not prompt.strip():
             raise H3Error("Prompt is required.")
-        if not 2 <= float(duration) <= 15:
+        if result_format != "Image" and not 2 <= float(duration) <= 15:
             raise H3Error("Duration must be between 2 and 15 seconds.")
+        if result_format != "Video":
+            postprocess = "None"
+        if result_format == "Audio":
+            latent_upscale = False
+        generation_frames = (
+            image_sampling_length(requested_image_frames)
+            if result_format == "Image"
+            else frame_length(duration)
+        )
+        policy_duration = generation_frames / 24.0
         resolved_width, resolved_height = validate_resolution(width, height)
         actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
         models = load_model_config()
@@ -4995,7 +5241,7 @@ def generate(
                 )
 
         effective_sol, packed_tokens, sol_reason = resolve_sol_policy(
-            attention_mode, mode, resolved_width, resolved_height, float(duration),
+            attention_mode, mode, resolved_width, resolved_height, policy_duration,
             first_image, last_image, use_turbo=use_turbo,
         )
         effective_sage = str(attention_mode).strip().lower() in {
@@ -5020,6 +5266,7 @@ def generate(
             turbo_variant=selected_turbo,
             model_filename=selected_model,
             latent_upscale=bool(latent_upscale),
+            result_format=result_format,
         ) - available
         if missing:
             raise H3Error("Missing ComfyUI nodes: " + ", ".join(sorted(missing)))
@@ -5053,6 +5300,7 @@ def generate(
                 reference_videos=refs_v,
                 reference_audios=refs_a,
                 width=resolved_width, height=resolved_height, duration=float(duration),
+                result_format=result_format, image_frames=requested_image_frames,
                 steps=effective_steps, seed=actual_seed, scheduler=effective_scheduler,
                 ref_image_size=ref_image_size,
                 turbo_lora_name=turbo_lora_name, turbo_variant=selected_turbo,
@@ -5086,6 +5334,7 @@ def generate(
             graph = build_fl2va_graph(
                 prompt=prompt, first_image=first_image, last_image=last_image,
                 width=resolved_width, height=resolved_height, duration=float(duration),
+                result_format=result_format, image_frames=requested_image_frames,
                 steps=effective_steps, seed=actual_seed, scheduler=effective_scheduler,
                 turbo_lora_name=turbo_lora_name, turbo_variant=selected_turbo,
                 turbo_strength=turbo_strength,
@@ -5155,8 +5404,14 @@ def generate(
             cache_status = "off"
         queued_status = (
             f"Queued `{prompt_id}` · seed {actual_seed} · "
-            f"{resolved_width}×{resolved_height} · {frame_length(duration)} frames · "
-            f"model {selected_label} · {effective_steps} steps/{effective_scheduler} · "
+            f"{resolved_width}×{resolved_height} · {generation_frames} sampled frames · "
+            f"result {result_format.lower()}"
+            + (
+                f" ({requested_image_frames} decoded frame(s)) · "
+                if result_format == "Image"
+                else " · "
+            )
+            + f"model {selected_label} · {effective_steps} steps/{effective_scheduler} · "
             f"attention {sol_status} ({sol_reason}; ~{packed_tokens:,} target tokens) · "
             f"dense-backend {SERVER_DENSE_ATTENTION_BACKEND} · "
             f"cache {cache_status}"
@@ -5211,6 +5466,27 @@ def generate(
             total_nodes=len(graph),
         )
         history = wait_for_history(prompt_id)
+        if result_format == "Image":
+            results = resolve_image_outputs(
+                history, queued_at, requested_image_frames
+            )
+            elapsed = time.monotonic() - started
+            progress(1, desc="Complete")
+            yield [str(path) for path in results], (
+                f"Completed in {elapsed:.1f}s · {len(results)} image frame(s) ready "
+                f"for selection · seed {actual_seed}"
+            )
+            return
+        if result_format == "Audio":
+            result = resolve_audio_output(history, queued_at)
+            elapsed = time.monotonic() - started
+            progress(1, desc="Complete")
+            yield str(result), (
+                f"Completed in {elapsed:.1f}s · audio {result.name} · "
+                f"seed {actual_seed} · "
+                f"{elapsed / float(duration):.1f}s compute per output second"
+            )
+            return
         source = resolve_output(history, queued_at)
         fallback_video = source
         if postprocess != "None":
@@ -5699,6 +5975,8 @@ def compact_settings_summary(
     force_offload: bool,
     split_upscale: bool,
     split_seconds: float,
+    result_format: str = DEFAULT_RESULT_FORMAT,
+    image_frames: int = DEFAULT_IMAGE_FRAMES,
 ) -> str:
     model_profile = (
         f"{model_profile} / VAE: "
@@ -5706,10 +5984,17 @@ def compact_settings_summary(
     )
     if generation_mode == "Turbo":
         generation_mode = f"Turbo / {turbo_variant}"
-    try:
-        seconds = f"{float(duration):g}s"
-    except (TypeError, ValueError):
-        seconds = "—s"
+    result_format = normalize_result_format(result_format)
+    if result_format == "Image":
+        try:
+            timing = f"{validate_image_frame_count(image_frames)} image frames"
+        except H3Error:
+            timing = "— image frames"
+    else:
+        try:
+            timing = f"{float(duration):g}s"
+        except (TypeError, ValueError):
+            timing = "—s"
     try:
         resolution = f"{int(width)}×{int(height)}"
     except (TypeError, ValueError):
@@ -5739,7 +6024,8 @@ def compact_settings_summary(
         )
     return (
         "**Current setup**  \n"
-        f"{mode} · {model_profile} / {generation_mode} · {seconds} · {resolution} · "
+        f"{mode} · Result: {result_format} · {model_profile} / {generation_mode} · "
+        f"{timing} · {resolution} · "
         f"{step_count} / {scheduler} · Attention: {attention_mode} · "
         f"Cache: {cache_mode} · Native latent: {latent_note} · "
         f"Post: {postprocess_note}"
@@ -5776,6 +6062,8 @@ def generate_with_ui_defaults(
         mode=defaults["mode"],
         model_profile=defaults["model_profile"],
         use_int8_vae=defaults["use_int8_vae"],
+        result_format=defaults["result_format"],
+        image_frames=defaults["image_frames"],
         generation_mode=defaults["generation_mode"],
         turbo_variant=defaults["turbo_variant"],
         prompt=prompt,
@@ -5839,11 +6127,69 @@ def generate_with_ui_defaults(
         yield download_url, status
 
 
+def generate_for_ui(*args: Any):
+    """Adapt the shared result path to the three result components in the H3 tab."""
+    if len(args) < 2:
+        raise H3Error("Missing result-format inputs.")
+    result_format = normalize_result_format(args[-2])
+    first_update = True
+    for result, status in generate(*args):
+        if first_update:
+            first_update = False
+            yield (
+                gr.update(value=None, visible=result_format == "Video"),
+                gr.update(visible=result_format == "Image"),
+                gr.update(value=[]),
+                gr.update(choices=[], value=[]),
+                [],
+                gr.update(value=None),
+                gr.update(value=None, visible=result_format == "Audio"),
+                gr.update(value=""),
+                status,
+            )
+            if result is None:
+                continue
+
+        if result is None:
+            yield (
+                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                gr.update(), gr.update(), gr.update(), status,
+            )
+            continue
+
+        if result_format == "Image":
+            paths = normalize_paths(result)
+            labels = image_frame_labels(paths)
+            gallery = [(path, label) for path, label in zip(paths, labels)]
+            yield (
+                gr.update(),
+                gr.update(visible=True),
+                gr.update(value=gallery),
+                gr.update(choices=labels, value=[]),
+                paths,
+                gr.update(value=None),
+                gr.update(),
+                gr.update(),
+                status,
+            )
+        elif result_format == "Audio":
+            yield (
+                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                gr.update(), gr.update(value=result, visible=True), gr.update(), status,
+            )
+        else:
+            yield (
+                gr.update(value=result, visible=True),
+                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
+                gr.update(), gr.update(), status,
+            )
+
+
 def api_guide() -> str:
     defaults = UI_DEFAULTS
     return f"""## Generate through the API
 
-The `/generate_video` endpoint accepts a prompt and uses the same defaults as the **MiniMax H3** tab:
+The `/generate_video` endpoint accepts a prompt and preserves the existing **Video** defaults from the **MiniMax H3** tab:
 
 `{defaults['mode']}` · `{defaults['model_profile']}` · `{defaults['generation_mode']} / {defaults['turbo_variant']}` · `{defaults['duration']}s` · `{defaults['width']}×{defaults['height']}` · `{defaults['steps']} steps` · `{defaults['scheduler']}` scheduler · random seed
 
@@ -5867,7 +6213,7 @@ print(status)
 
 `download_url` is an HTTP URL served by this app, so it can be opened in a browser or downloaded with `curl -L -O` while the app is running.
 
-For every control exposed by the MiniMax H3 tab, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. API requests share the same single-job queue as the UI.
+For every control exposed by the MiniMax H3 tab, including **Image** and **Audio** result formats, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. Image selections can be persisted through `/save_h3_image_frames`. API requests share the same single-job queue as the UI.
 """
 
 
@@ -5899,10 +6245,17 @@ def build_ui() -> gr.Blocks:
                 gr.HTML("")
         with gr.Row() as generation_view:
             with gr.Column(scale=3):
-                mode = gr.Radio(
-                    ["Text to video", "First / last frame", "Reference media"],
-                    value=defaults["mode"], label="Mode",
-                )
+                with gr.Row():
+                    mode = gr.Radio(
+                        ["Text to video", "First / last frame", "Reference media"],
+                        value=defaults["mode"], label="Conditioning mode",
+                    )
+                    result_format = gr.Radio(
+                        RESULT_FORMATS,
+                        value=defaults["result_format"],
+                        label="Result format",
+                        info="H3 always samples vision and audio; this selects what is decoded and shown.",
+                    )
                 with gr.Row():
                     model_profile = gr.Radio(
                         MODEL_PROFILE_CHOICES,
@@ -6014,11 +6367,42 @@ def build_ui() -> gr.Blocks:
                         defaults["upscale_force_offload"],
                         defaults["upscale_split_enabled"],
                         defaults["upscale_split_seconds"],
+                        defaults["result_format"], defaults["image_frames"],
                     )
                 )
                 output = gr.Video(label="Generated video")
+                with gr.Group(visible=False) as image_output_group:
+                    image_output = gr.Gallery(
+                        value=[],
+                        label="Generated image frames",
+                        columns=4,
+                        object_fit="contain",
+                        allow_preview=True,
+                        height=520,
+                    )
+                    image_frame_paths = gr.State([])
+                    image_selection = gr.CheckboxGroup(
+                        choices=[],
+                        value=[],
+                        label="Frames to save",
+                    )
+                    with gr.Row():
+                        image_select_all = gr.Button("Select all")
+                        image_clear_selection = gr.Button("Clear selection")
+                        image_save_selected = gr.Button(
+                            "Save selected frames", variant="primary"
+                        )
+                    image_saved_files = gr.File(
+                        label="Saved image files",
+                        file_count="multiple",
+                        interactive=False,
+                    )
+                    image_save_status = gr.Markdown()
+                audio_output = gr.Audio(
+                    label="Generated audio", type="filepath", visible=False
+                )
                 with gr.Row():
-                    run = gr.Button("Generate", variant="primary", scale=2)
+                    run = gr.Button("Generate video", variant="primary", scale=2)
                     stop = gr.Button("Interrupt", scale=1)
                     refresh = gr.Button("Refresh status", scale=1)
                 status = gr.Textbox(label="Status", lines=5)
@@ -6046,6 +6430,18 @@ def build_ui() -> gr.Blocks:
                 with gr.Row():
                     duration = gr.Slider(
                         2, 15, value=defaults["duration"], step=0.5, label="Seconds"
+                    )
+                    image_frames = gr.Slider(
+                        MIN_IMAGE_FRAMES,
+                        MAX_IMAGE_FRAMES,
+                        value=defaults["image_frames"],
+                        step=1,
+                        label="Image frames",
+                        visible=False,
+                        info=(
+                            "H3 samples a native 5- or 22-frame packet, then returns "
+                            "exactly this many decoded frames."
+                        ),
                     )
                     steps = gr.Slider(
                         4, 30, value=defaults["steps"], step=1, label="Steps",
@@ -6742,6 +7138,8 @@ def build_ui() -> gr.Blocks:
             generation_force_offload,
             generation_split_upscale,
             generation_split_seconds,
+            result_format,
+            image_frames,
         ]
         for settings_control in settings_inputs:
             # Width and height are also outputs of the resolution preset and
@@ -6772,6 +7170,22 @@ def build_ui() -> gr.Blocks:
                 help_text, frame_group, reference_group, generation_mode,
                 preset, steps, scheduler, cache_mode, attention_mode,
             ],
+        )
+        result_format.change(
+            result_format_layout_updates,
+            inputs=result_format,
+            outputs=[
+                duration,
+                image_frames,
+                output,
+                image_output_group,
+                audio_output,
+                generation_postprocess,
+                latent_upscale,
+                run,
+            ],
+            queue=False,
+            show_progress="hidden",
         )
         latent_upscale.change(
             lambda enabled: gr.update(visible=bool(enabled)),
@@ -6946,7 +7360,7 @@ def build_ui() -> gr.Blocks:
             show_progress="hidden",
         )
         event = run.click(
-            generate,
+            generate_for_ui,
             inputs=[
                 mode, model_profile, generation_mode, turbo_variant,
                 prompt, first, last,
@@ -6967,10 +7381,44 @@ def build_ui() -> gr.Blocks:
                 generation_seedvr2_model,
                 ltx25_model,
                 use_int8_vae,
+                result_format,
+                image_frames,
             ],
-            outputs=[output, status],
+            outputs=[
+                output,
+                image_output_group,
+                image_output,
+                image_selection,
+                image_frame_paths,
+                image_saved_files,
+                audio_output,
+                image_save_status,
+                status,
+            ],
             show_progress="minimal",
             api_name="generate_video_advanced",
+        )
+        image_select_all.click(
+            select_all_image_frames,
+            inputs=image_frame_paths,
+            outputs=image_selection,
+            queue=False,
+            show_progress="hidden",
+            api_name=False,
+        )
+        image_clear_selection.click(
+            lambda: [],
+            outputs=image_selection,
+            queue=False,
+            show_progress="hidden",
+            api_name=False,
+        )
+        image_save_selected.click(
+            save_selected_image_frames,
+            inputs=[image_frame_paths, image_selection],
+            outputs=[image_saved_files, image_save_status],
+            show_progress="minimal",
+            api_name="save_h3_image_frames",
         )
         enhance_prompt_button.click(
             enhance_h3_prompt,
@@ -6981,6 +7429,7 @@ def build_ui() -> gr.Blocks:
                 ref_video_1, ref_video_2, ref_video_3,
                 ref_audio_1, ref_audio_2, ref_audio_3,
                 duration, width, height,
+                result_format, image_frames,
             ],
             outputs=[prompt, enhance_prompt_status],
             show_progress="minimal",
@@ -7435,6 +7884,127 @@ def selftest() -> None:
     missing = expected - classes
     if missing:
         raise SystemExit(f"Selftest failed; missing nodes: {missing}")
+
+    image_graph = build_fl2va_graph(
+        prompt="image result test", first_image=None, last_image=None,
+        width=864, height=480, duration=5, steps=4, seed=2,
+        scheduler="simple", turbo_lora_name=None,
+        turbo_variant=LIGHTX2V_4STEP_TURBO, turbo_strength=1.0,
+        use_sol=False, sol_tau=1.0, sol_thresh_type="diag",
+        sol_exact_mode="off", sol_dense_steps=0, sol_step_off=0.0,
+        sol_sink_tokens=0, cache_mode="Off", fbcache_preset="Fast",
+        fbcache_threshold=0.10, fbcache_start=0.10, fbcache_end=0.95,
+        fbcache_max_hits=2, fbcache_temporal_guard=True,
+        easycache_threshold=0.10, easycache_start=0.15,
+        easycache_end=0.85, easycache_verbose=False,
+        model_name=fake.profile("speed").fl2va, models=fake,
+        available_nodes=available, result_format="Image", image_frames=20,
+    )
+    image_conditioning = next(
+        node for node in image_graph.values()
+        if node["class_type"] == "MiniMaxH3ImageToVideo"
+    )
+    assert image_conditioning["inputs"]["length"] == 22
+    assert {"ImageFromBatch", "SaveImage"} <= {
+        node["class_type"] for node in image_graph.values()
+    }
+
+    assert normalize_result_format("image") == "Image"
+    assert image_sampling_length(1) == 5
+    assert image_sampling_length(5) == 5
+    assert image_sampling_length(6) == 22
+    assert image_sampling_length(20) == 22
+    assert {"VAEDecode", "ImageFromBatch", "SaveImage"} <= required_nodes_for(
+        "Text to video", False, "Off", result_format="Image"
+    )
+    assert {"VAEDecodeAudio", "SaveAudioMP3"} <= required_nodes_for(
+        "Text to video", False, "Off", result_format="Audio"
+    )
+
+    image_result_graph = Graph()
+    finish_sampling(
+        image_result_graph,
+        model_ref=["model", 0], conditioning_ref=["conditioning", 0],
+        latent_ref=["latent", 0], video_vae_ref=["video_vae", 0],
+        audio_vae_ref=["audio_vae", 0], seed=1, steps=4,
+        scheduler="simple", turbo_variant=None,
+        filename_prefix="h3/image_staging/selftest",
+        result_format="Image", image_frames=3,
+    )
+    image_result_classes = {
+        node["class_type"] for node in image_result_graph.nodes.values()
+    }
+    assert {"VAEDecode", "ImageFromBatch", "SaveImage"} <= image_result_classes
+    assert not image_result_classes & {"VAEDecodeAudio", "CreateVideo", "SaveVideo"}
+    image_slice = next(
+        node for node in image_result_graph.nodes.values()
+        if node["class_type"] == "ImageFromBatch"
+    )
+    assert image_slice["inputs"]["length"] == 3
+
+    audio_result_graph = Graph()
+    finish_sampling(
+        audio_result_graph,
+        model_ref=["model", 0], conditioning_ref=["conditioning", 0],
+        latent_ref=["latent", 0], video_vae_ref=["video_vae", 0],
+        audio_vae_ref=["audio_vae", 0], seed=1, steps=4,
+        scheduler="simple", turbo_variant=None,
+        filename_prefix="audio/h3_selftest", result_format="Audio",
+    )
+    audio_result_classes = {
+        node["class_type"] for node in audio_result_graph.nodes.values()
+    }
+    assert {"VAEDecodeAudio", "SaveAudioMP3"} <= audio_result_classes
+    assert not audio_result_classes & {"VAEDecode", "CreateVideo", "SaveVideo"}
+
+    original_image_output_dir = globals()["OUTPUT_DIR"]
+    with tempfile.TemporaryDirectory() as image_temp:
+        image_root = Path(image_temp)
+        staging = image_root / "h3" / "image_staging"
+        staging.mkdir(parents=True)
+        staged_paths = []
+        image_refs = []
+        for index in range(3):
+            staged = staging / f"packet_{index:05d}.png"
+            staged.write_bytes(f"frame-{index}".encode())
+            staged_paths.append(staged)
+            image_refs.append(
+                {
+                    "filename": staged.name,
+                    "subfolder": "h3/image_staging",
+                    "type": "output",
+                }
+            )
+        globals()["OUTPUT_DIR"] = image_root
+        try:
+            resolved_frames = resolve_image_outputs(
+                {"outputs": {"save": {"images": image_refs}}}, time.time(), 3
+            )
+            assert resolved_frames == staged_paths
+            saved_frames, _ = save_selected_image_frames(
+                resolved_frames, ["Frame 1", "Frame 3"]
+            )
+            assert [Path(path).name for path in saved_frames] == [
+                "frame_001.png", "frame_003.png"
+            ]
+            assert all(Path(path).is_file() for path in saved_frames)
+        finally:
+            globals()["OUTPUT_DIR"] = original_image_output_dir
+
+    original_ui_generate = globals()["generate"]
+
+    def fake_image_generate(*_args: Any):
+        yield None, "working"
+        yield ["frame-a.png", "frame-b.png"], "complete"
+
+    globals()["generate"] = fake_image_generate
+    try:
+        ui_updates = list(generate_for_ui("Image", 2))
+    finally:
+        globals()["generate"] = original_ui_generate
+    assert len(ui_updates) == 2
+    assert all(len(update) == 9 for update in ui_updates)
+    assert ui_updates[-1][4] == ["frame-a.png", "frame-b.png"]
 
     latent_graph = build_fl2va_graph(
         prompt="latent upscale test", first_image=None, last_image=None,
@@ -8473,6 +9043,7 @@ def selftest() -> None:
         f"Spectrum v0.2.14 legacy Turbo composition + block-cache guard valid, "
         f"selectable Larry/LightX2V Turbo on "
         f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, "
+        f"video/image/audio result branches + image selection saving valid, "
         f"SaveVideo codec API valid, prompt API download URL valid, "
         f"gallery resolution/fallback/deletion guards + VRAM unload valid, "
         f"9 official LTX-2.5 workflow mappings valid, MiniMax Music 3 graph valid, "
