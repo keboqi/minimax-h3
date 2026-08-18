@@ -1016,7 +1016,19 @@ def enhance_music3_prompt(
         media_values=(("Music reference image 1", ref_image_1), ("Music reference image 2", ref_image_2), ("Music reference image 3", ref_image_3)),
         context=f"Existing lyrics (preserve them unless formatting only):\n{lyrics or '(none)'}",
     )
-    return caption, lyrics, status
+    # Music 3's writer returns both fields using explicit markers. Keep a
+    # graceful fallback for older/custom prompt responses that return caption
+    # text only.
+    generated_lyrics = str(lyrics or "").strip()
+    marker_match = re.search(
+        r"(?is)^\s*CAPTION:\s*(.*?)\s*LYRICS:\s*(.*)\s*$", caption
+    )
+    if marker_match:
+        caption = marker_match.group(1).strip()
+        candidate_lyrics = marker_match.group(2).strip()
+        if not generated_lyrics and candidate_lyrics.upper() != "N/A":
+            generated_lyrics = candidate_lyrics
+    return caption, generated_lyrics, status
 
 
 def enhance_ltx25_prompt(
