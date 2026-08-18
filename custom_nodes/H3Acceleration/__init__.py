@@ -698,6 +698,12 @@ class H3CombineAVLatent:
             )
         if video.shape[0] != audio.shape[0]:
             raise ValueError("H3 video and audio latent batch sizes must match")
+        # The neural upscaler executes on its selected device and returns the
+        # video latent there. The bypassed audio latent can remain on ComfyUI's
+        # offload device (normally CPU). H3's sampler packs both nested tensors
+        # with torch.cat, so reunify their device before the refinement pass.
+        if audio.device != video.device:
+            audio = audio.to(device=video.device, non_blocking=True)
         output = video_latent.copy()
         output["samples"] = comfy.nested_tensor.NestedTensor((video, audio))
         return (output,)
