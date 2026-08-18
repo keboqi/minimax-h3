@@ -117,6 +117,11 @@ GEMINI_PROMPT_MODELS = (
 DEFAULT_GEMINI_PROMPT_MODEL = GEMINI_PROMPT_MODELS[0]
 GEMINI_API_ROOT = "https://generativelanguage.googleapis.com"
 PROMPT_ENHANCER_SYSTEM_PATH = SCRIPT_DIR / "prompt.txt"
+PROMPT_ENHANCER_SYSTEMS = {
+    "MiniMax H3": PROMPT_ENHANCER_SYSTEM_PATH,
+    "MiniMax Music 3": SCRIPT_DIR / "prompt_music3.txt",
+    "LTX-2.5": SCRIPT_DIR / "prompt_ltx25.txt",
+}
 DEFAULT_FBCACHE_PRESET = "Fast"
 DEFAULT_FBCACHE_THRESHOLD = 0.10
 DEFAULT_FBCACHE_START = 0.10
@@ -917,6 +922,113 @@ def _active_prompt_media(
             if path is not None:
                 media.append((f"<{prefix} {index}>", path))
     return media
+
+
+def _enhance_prompt_from_media(
+    *,
+    prompt: str,
+    model: str,
+    temporary_api_key: str,
+    target: str,
+    system_path: Path,
+    media_values: Iterable[tuple[str, Any]],
+    context: str,
+) -> tuple[str, str]:
+    """Generate a model-specific prompt from text and optional image inputs."""
+    try:
+        if model not in GEMINI_PROMPT_MODELS:
+            raise H3Error(f"Unsupported Gemini prompt model: {model}")
+        key = _gemini_api_key(temporary_api_key)
+        if not system_path.is_file():
+            raise H3Error(f"Missing {target} system prompt: {system_path}")
+        system_prompt = system_path.read_text(encoding="utf-8").strip()
+        if not system_prompt:
+            raise H3Error(f"{target} system prompt is empty.")
+        media: list[tuple[str, Path]] = []
+        for label, value in media_values:
+            if value is not None:
+                path = _uploaded_media_path(value)
+                if path is not None:
+                    media.append((label, path))
+        rough_prompt = str(prompt or "").strip()
+        if not rough_prompt and not media:
+            raise H3Error("Enter a prompt or upload an image before enhancing.")
+        parts: list[dict[str, Any]] = [{
+            "text": (
+                f"Create the final {target} prompt from the following user input.\n"
+                f"{context}\nUser text:\n"
+                f"{rough_prompt or '(No text supplied; infer only from the images.)'}"
+            )
+        }]
+        uploaded_names: list[str] = []
+        with requests.Session() as session:
+            try:
+                for label, path in media:
+                    parts.append({"text": f"The next uploaded image is {label}."})
+                    file_info = _upload_gemini_file(session, path, key)
+                    uploaded_names.append(str(file_info["name"]))
+                    file_info = _wait_for_gemini_file(session, file_info, key)
+                    parts.append({"fileData": {
+                        "mimeType": file_info.get("mimeType") or _gemini_mime_type(path),
+                        "fileUri": file_info["uri"],
+                    }})
+                response = session.post(
+                    f"{GEMINI_API_ROOT}/v1beta/models/{model}:generateContent",
+                    headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+                    json={
+                        "systemInstruction": {"parts": [{"text": system_prompt}]},
+                        "contents": [{"role": "user", "parts": parts}],
+                        "generationConfig": {"temperature": 0.6, "maxOutputTokens": 16384},
+                    },
+                    timeout=600,
+                )
+                if not response.ok:
+                    raise _gemini_error(response, "prompt generation")
+                payload = response.json()
+                candidates = payload.get("candidates") or []
+                text_parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
+                enhanced = "".join(str(part.get("text", "")) for part in text_parts).strip()
+                if enhanced.startswith("```") and enhanced.endswith("```"):
+                    enhanced = re.sub(r"^```[^\n]*\n?", "", enhanced)
+                    enhanced = re.sub(r"\n?```$", "", enhanced).strip()
+                if not enhanced:
+                    reason = candidates[0].get("finishReason") if candidates else payload.get("promptFeedback", {}).get("blockReason", "no candidate")
+                    raise H3Error(f"Gemini returned no enhanced prompt ({reason}).")
+                return enhanced, f"Enhanced {target} prompt with {model} using {len(media)} image(s)."
+            finally:
+                for name in uploaded_names:
+                    try:
+                        session.delete(f"{GEMINI_API_ROOT}/v1beta/{name}", headers={"x-goog-api-key": key}, timeout=30)
+                    except requests.RequestException:
+                        pass
+    except (H3Error, requests.RequestException, OSError, ValueError) as exc:
+        return str(prompt or ""), f"Prompt enhancement failed: {exc}"
+
+
+def enhance_music3_prompt(
+    prompt: str, model: str, temporary_api_key: str,
+    lyrics: str, ref_image_1: Any, ref_image_2: Any, ref_image_3: Any,
+) -> tuple[str, str, str]:
+    caption, status = _enhance_prompt_from_media(
+        prompt=prompt, model=model, temporary_api_key=temporary_api_key,
+        target="MiniMax Music 3", system_path=PROMPT_ENHANCER_SYSTEMS["MiniMax Music 3"],
+        media_values=(("Music reference image 1", ref_image_1), ("Music reference image 2", ref_image_2), ("Music reference image 3", ref_image_3)),
+        context=f"Existing lyrics (preserve them unless formatting only):\n{lyrics or '(none)'}",
+    )
+    return caption, lyrics, status
+
+
+def enhance_ltx25_prompt(
+    prompt: str, model: str, temporary_api_key: str, mode: str,
+    start_image: Any, middle_image: Any, end_image: Any,
+    duration: float, width: int, height: int,
+) -> tuple[str, str]:
+    return _enhance_prompt_from_media(
+        prompt=prompt, model=model, temporary_api_key=temporary_api_key,
+        target="LTX-2.5", system_path=PROMPT_ENHANCER_SYSTEMS["LTX-2.5"],
+        media_values=(("Start keyframe", start_image), ("Middle keyframe", middle_image), ("End keyframe", end_image)),
+        context=f"Mode: {mode}\nDuration: {float(duration):.2f} seconds\nOutput: {int(width)}x{int(height)}",
+    )
 
 
 def enhance_h3_prompt(
@@ -6226,6 +6338,19 @@ def build_ui() -> gr.Blocks:
                             "camera movement, lighting, dialogue, sound effects, and music."
                         ),
                     )
+                    with gr.Accordion("Gemini LTX-2.5 prompt writer", open=False):
+                        gr.Markdown("Create or enhance the prompt from text and optional start, middle, or end images.")
+                        with gr.Row():
+                            ltx25_prompt_model = gr.Dropdown(
+                                choices=list(GEMINI_PROMPT_MODELS), value=DEFAULT_GEMINI_PROMPT_MODEL,
+                                label="Gemini model",
+                            )
+                            ltx25_api_key = gr.Textbox(
+                                label="Temporary Gemini API key", type="password",
+                                placeholder="Uses GEMINI_API_KEY when blank",
+                            )
+                        ltx25_enhance = gr.Button("Generate / enhance LTX-2.5 prompt")
+                        ltx25_enhance_status = gr.Textbox(label="Prompt writer status", lines=2, interactive=False)
                     ltx25_negative = gr.Textbox(
                         label="Negative prompt",
                         lines=3,
@@ -6399,6 +6524,23 @@ def build_ui() -> gr.Blocks:
                         ),
                         info="For an instrumental, repeat [Instrumental] sections to guide length.",
                     )
+                    with gr.Accordion("Gemini Music 3 prompt writer", open=False):
+                        gr.Markdown("Create or enhance the caption from text, lyrics, and optional visual reference images.")
+                        with gr.Row():
+                            music3_prompt_model = gr.Dropdown(
+                                choices=list(GEMINI_PROMPT_MODELS), value=DEFAULT_GEMINI_PROMPT_MODEL,
+                                label="Gemini model",
+                            )
+                            music3_api_key = gr.Textbox(
+                                label="Temporary Gemini API key", type="password",
+                                placeholder="Uses GEMINI_API_KEY when blank",
+                            )
+                        with gr.Row():
+                            music3_ref_image_1 = gr.Image(type="filepath", label="Reference image 1")
+                            music3_ref_image_2 = gr.Image(type="filepath", label="Reference image 2")
+                            music3_ref_image_3 = gr.Image(type="filepath", label="Reference image 3")
+                        music3_enhance = gr.Button("Generate / enhance Music 3 caption")
+                        music3_enhance_status = gr.Textbox(label="Prompt writer status", lines=2, interactive=False)
                 with gr.Column(scale=2):
                     music3_output = gr.Audio(
                         label="Generated song", type="filepath"
@@ -6836,6 +6978,27 @@ def build_ui() -> gr.Blocks:
             outputs=[prompt, enhance_prompt_status],
             show_progress="minimal",
             api_name="enhance_prompt",
+        )
+        ltx25_enhance.click(
+            enhance_ltx25_prompt,
+            inputs=[
+                ltx25_prompt, ltx25_prompt_model, ltx25_api_key, ltx25_mode,
+                ltx25_image, ltx25_middle_image, ltx25_end_image,
+                ltx25_duration, ltx25_width, ltx25_height,
+            ],
+            outputs=[ltx25_prompt, ltx25_enhance_status],
+            show_progress="minimal",
+            api_name="enhance_ltx25_prompt",
+        )
+        music3_enhance.click(
+            enhance_music3_prompt,
+            inputs=[
+                music3_caption, music3_prompt_model, music3_api_key, music3_lyrics,
+                music3_ref_image_1, music3_ref_image_2, music3_ref_image_3,
+            ],
+            outputs=[music3_caption, music3_lyrics, music3_enhance_status],
+            show_progress="minimal",
+            api_name="enhance_music3_prompt",
         )
         ltx25_event = ltx25_run.click(
             generate_ltx25,

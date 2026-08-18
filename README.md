@@ -182,6 +182,12 @@ browser field for reuse until it is cleared manually or the page is refreshed.
 Uploaded Gemini Files are deleted after each request. The same operation is
 exposed as `/enhance_prompt`.
 
+The **LTX-2.5** tab and **MiniMax Music 3** tab include their own Gemini prompt
+writers. They create or enhance prompts from text plus optional keyframe or
+visual-reference images, using `prompt_ltx25.txt` and `prompt_music3.txt`.
+Their UI/API operations are exposed as `/enhance_ltx25_prompt` and
+`/enhance_music3_prompt`.
+
 ### Native H3 latent upscale
 
 Enable **Generate at half resolution, then latent upscale 2x** in the MiniMax H3
