@@ -860,16 +860,15 @@ def validate_config_files(
     ]
     for profile in profiles:
         data = config.get("profiles", {}).get(profile, {})
-        required.extend(
-            [
-                ("diffusion_models", data.get("fl2va"))
-                if f"{profile}_fl2va" in PRELOAD_MODEL_KEYS
-                else None,
-                ("diffusion_models", data.get("ref2va"))
-                if f"{profile}_ref2va" in PRELOAD_MODEL_KEYS
-                else None,
-            ]
-        )
+        profile_files = [
+            ("diffusion_models", data.get("fl2va"))
+            if f"{profile}_fl2va" in PRELOAD_MODEL_KEYS
+            else None,
+            ("diffusion_models", data.get("ref2va"))
+            if f"{profile}_ref2va" in PRELOAD_MODEL_KEYS
+            else None,
+        ]
+        required.extend(item for item in profile_files if item is not None)
 
     return [
         f"{folder}/{name}"
@@ -946,6 +945,9 @@ def selftest() -> None:
     }
 
     cfg = _build_config("manifest.json")
+    missing = validate_config_files(Path(tempfile.mkdtemp()), cfg)
+    assert "diffusion_models/" + cfg["profiles"]["quality"]["fl2va"] in missing
+    assert "diffusion_models/" + cfg["profiles"]["quality"]["ref2va"] not in missing
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["speed"])
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["original"])
     assert PRELOAD_PROFILE_MODEL_KEYS == ("quality_fl2va",)
