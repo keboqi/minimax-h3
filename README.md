@@ -33,6 +33,8 @@ FirstBlockCache node.
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Optional experimental INT8 ConvRot video VAE, lazy-downloaded on first use
+- Optional 500K single-frame image decoder, lazy-downloaded only when selected;
+  the official FP16 video VAE remains the default
 - Hardware-aware ComfyUI memory mode selection
 - One-click model unloading and VRAM cache release from the UI
 - Spectrum v0.2.15 in legacy mode as the normal-generation default and experimental Turbo option
@@ -93,12 +95,14 @@ forecast before a completed native refresh, which limits both acceleration and
 trajectory error at four to eight steps. Compare the same prompt and seed with
 Acceleration Off before relying on it for quality-critical output.
 
-Turbo defaults to the LightX2V four-step adapter at strength 1.0 (FL2V v1.0
+Turbo defaults to the LightX2V four-step adapter at strength 1.0 (FL2V v1.1
 768p or the dedicated Ref2V 544p adapter). Larry v4-600 EMA remains available
 at six steps through its pinned custom node, which uses a quantization-aware
 bypass loader plus the adaptive H3 Turbo sampler. LightX2V also provides a
-mode-specific four-step option (FL2V v1.0 768p or
+mode-specific four-step option (FL2V v1.1 768p or
 Ref2V v0.1 544p) and an FL2V v1.0 eight-step 544p option, all at strength 1.0.
+The FL2V v1.1 workflow applies LightX2V's recommended video/audio sigma shifts
+of 6/3 and uses four Euler steps with the simple scheduler by default.
 Loader policy follows the base model: Original BF16 applies either LoRA in
 activation space, avoiding reversible weight-merge copies that exceed 96 GiB;
 the compact Speed and Quality profiles merge either LoRA for faster inference
@@ -133,6 +137,9 @@ LTX-2.5 2x upscaler IC-LoRA are lazy and
 download only when their post-processing option is first used. The experimental
 INT8 ConvRot video VAE
 is also lazy and downloads only when its default-off checkbox is enabled.
+The experimental **Single-frame 500K** image VAE is a separate 9.69 GB lazy
+download. It is used only for Image results; Video continues to use the
+official H3 video VAE regardless of this image setting.
 The native H3 latent upscaler is also default-off and lazy-downloads only the
 selected checkpoint. **Balanced (BF16)** is the default choice; **Fast (FP16)**
 and **Quality (FP32)** remain selectable.
@@ -208,15 +215,25 @@ and audio latent; the selected format controls the final decode:
   only those PNGs into `ComfyUI/output/h3/images`. With a start frame, Image
   mode uses its native resolution without the video workflow's 2 MP cap,
   rounded only to H3's required 32-pixel grid (or 64-pixel grid when native
-  latent upscale is enabled).
+  latent upscale is enabled). **Image VAE** defaults to **Official video VAE**.
+  The optional **Single-frame 500K (experimental)** decoder independently
+  decodes one temporal latent slice per requested image. It is intended for
+  structured graphics, diagrams, documents, UI-like layouts, line art, and
+  product contours; the official decoder generally remains preferable for
+  natural photographs, fine texture, and small scene text.
 - **Audio** decodes the native stereo soundtrack to MP3 and skips video decode
   and muxing. Dialogue, ambience, music, and sound effects continue to come
   from the same H3 prompt and optional audio references. Resolution controls
   are ignored and the visual branch uses the minimum 32×32 canvas.
 
-H3's native short temporal packets contain 5 or 22 frames. Image requests up
-to 5 frames sample the 5-frame packet; requests from 6 through 20 sample the
-22-frame packet and trim the decoded batch to the exact requested count.
+With the default official VAE, H3's native short temporal packets contain 5 or
+22 frames. Image requests up to 5 frames sample the 5-frame packet; requests
+from 6 through 20 sample the 22-frame packet and trim the decoded batch to the
+exact requested count. The single-frame decoder instead needs one latent slice
+per output image, so it samples the shortest native `17k+5` packet providing
+enough slices: 5 frames for 1–2 images, 22 for 3–7, 39 for 8–12, 56 for 13–17,
+and 73 for 18–20. Higher image counts therefore cost more generation time with
+that decoder.
 
 The **LTX-2.5** tab and **MiniMax Music 3** tab include their own Gemini prompt
 writers. They create or enhance prompts from text plus optional keyframe or

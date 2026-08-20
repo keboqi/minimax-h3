@@ -22,6 +22,7 @@ ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
+SINGLE_FRAME_VAE_REPO = "iamkaikai/MiniMax-H3-Single-Frame-VAE-500K"
 TEXT_ENCODER_REPO = "Comfy-Org/MiniMax-H3"
 SEEDVR2_REPO = "Comfy-Org/SeedVR2"
 H3_LATENT_UPSCALER_REPO = "LBH-123-AI/Minimax_h3_latent_Upscaler"
@@ -120,6 +121,15 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "minimax_h3_video_vae_int8_convrot.safetensors",
         "Experimental INT8 ConvRot video VAE",
     ),
+    "image_vae_500k": ModelSpec(
+        SINGLE_FRAME_VAE_REPO,
+        "vae",
+        "minimax_h3_single_frame_decoder_500k.safetensors",
+        "Experimental 500K single-frame image decoder",
+        expected_sha256=(
+            "6c5ff2caa8fade6769f4dd53ee244f77a06652c8cb66b2fedc93f75046d9f001"
+        ),
+    ),
     "audio_vae": ModelSpec(
         MODEL_REPO,
         "vae",
@@ -129,8 +139,11 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     "turbo_lora": ModelSpec(
         TURBO_REPO,
         "loras",
-        "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
-        "LightX2V Turbo 4-step v1.0 · official 768p ComfyUI BF16",
+        "minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors",
+        "LightX2V Turbo 4-step v1.1 · official 768p ComfyUI BF16",
+        expected_sha256=(
+            "449d80f301ac571622c72e28b8fd72a4b3681b7a8df8a92f17c8f6ec43f56558"
+        ),
     ),
     "turbo_ref_lora": ModelSpec(
         TURBO_REPO,
@@ -395,6 +408,7 @@ MUSIC3_SHARED_MODEL_KEYS = ("music3_text_encoder", "music3_vae")
 MUSIC3_MODEL_KEYS = (*MUSIC3_MODEL_CHOICES.values(), *MUSIC3_SHARED_MODEL_KEYS)
 LAZY_OPTIONAL_MODEL_KEYS = (
     "video_vae_int8",
+    "image_vae_500k",
     "turbo_8step_lora",
     "larry_turbo_lora",
     *H3_LATENT_UPSCALER_MODEL_KEYS,
@@ -671,6 +685,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     text = MODEL_SPECS["text_encoder"]
     video_vae = MODEL_SPECS["video_vae"]
     video_vae_int8 = MODEL_SPECS["video_vae_int8"]
+    image_vae_500k = MODEL_SPECS["image_vae_500k"]
     audio_vae = MODEL_SPECS["audio_vae"]
     turbo_lora = MODEL_SPECS["turbo_lora"]
     turbo_ref_lora = MODEL_SPECS["turbo_ref_lora"]
@@ -683,7 +698,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
     return {
-        "schema_version": 13,
+        "schema_version": 14,
         "default_profile": "quality",
         "profiles": {
             profile: _profile_config(profile)
@@ -693,6 +708,8 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         "video_vae": video_vae.local_name,
         "video_vae_int8": video_vae_int8.local_name,
         "video_vae_int8_source": video_vae_int8.source,
+        "image_vae_500k": image_vae_500k.local_name,
+        "image_vae_500k_source": image_vae_500k.source,
         "audio_vae": audio_vae.local_name,
         "turbo_lora": turbo_lora.local_name,
         "turbo_source": turbo_lora.source,
@@ -909,6 +926,7 @@ def selftest() -> None:
         "text_encoder",
         "video_vae",
         "video_vae_int8",
+        "image_vae_500k",
         "audio_vae",
         "turbo_lora",
         "turbo_ref_lora",
@@ -956,7 +974,7 @@ def selftest() -> None:
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert set(H3_LATENT_UPSCALER_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 13
+    assert cfg["schema_version"] == 14
     assert cfg["default_profile"] == "quality"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
@@ -971,7 +989,11 @@ def selftest() -> None:
         "minimax_h3_video_vae_int8_convrot.safetensors"
     )
     assert "video_vae_int8" not in PRELOAD_MODEL_KEYS
-    assert cfg["turbo_lora"] == "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"
+    assert cfg["image_vae_500k"] == (
+        "minimax_h3_single_frame_decoder_500k.safetensors"
+    )
+    assert "image_vae_500k" not in PRELOAD_MODEL_KEYS
+    assert cfg["turbo_lora"] == "minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors"
     assert cfg["turbo_ref_lora"] == (
         "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
     )

@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import comfy.lora
 import comfy.nested_tensor
 import comfy.patcher_extension
+import comfy.sd
 import comfy.utils
 import comfy.weight_adapter
 import folder_paths
@@ -709,11 +710,147 @@ class H3CombineAVLatent:
         return (output,)
 
 
+class H3SingleFrameVAELoader:
+    """Overlay the audited image-only decoder onto a complete official H3 VAE."""
+
+    EXPECTED_DECODER_TENSORS = 585
+    DECODER_PREFIXES = ("decoder.", "post_quant_conv.")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        vaes = folder_paths.get_filename_list("vae")
+        return {
+            "required": {
+                "base_vae_name": (vaes,),
+                "decoder_name": (vaes,),
+            }
+        }
+
+    RETURN_TYPES = ("VAE",)
+    FUNCTION = "load_vae"
+    CATEGORY = "loaders/minimax"
+    DESCRIPTION = (
+        "Load the official MiniMax H3 VAE architecture and replace only its "
+        "decoder with the experimental 500K single-frame checkpoint."
+    )
+
+    @staticmethod
+    def _vae_path(name):
+        path = folder_paths.get_full_path("vae", name)
+        if path is None:
+            raise FileNotFoundError(f"MiniMax H3 VAE file is missing: {name}")
+        return path
+
+    def load_vae(self, base_vae_name, decoder_name):
+        base_path = self._vae_path(base_vae_name)
+        decoder_path = self._vae_path(decoder_name)
+        base, metadata = comfy.utils.load_torch_file(
+            base_path,
+            safe_load=True,
+            return_metadata=True,
+        )
+        decoder = comfy.utils.load_torch_file(decoder_path, safe_load=True)
+
+        invalid = sorted(
+            key for key in decoder if not key.startswith(self.DECODER_PREFIXES)
+        )
+        if invalid:
+            raise ValueError(
+                "Single-frame checkpoint contains non-decoder tensors: "
+                + ", ".join(invalid[:5])
+            )
+        if len(decoder) != self.EXPECTED_DECODER_TENSORS:
+            raise ValueError(
+                f"Single-frame checkpoint contains {len(decoder)} tensors; "
+                f"expected {self.EXPECTED_DECODER_TENSORS}."
+            )
+
+        expected = {
+            key for key in base if key.startswith(self.DECODER_PREFIXES)
+        }
+        missing = sorted(expected - set(decoder))
+        extra = sorted(set(decoder) - expected)
+        if missing or extra:
+            raise ValueError(
+                "Single-frame decoder does not match the official H3 VAE keys; "
+                f"missing={missing[:5]}, extra={extra[:5]}"
+            )
+        mismatched = sorted(
+            key for key in expected
+            if tuple(base[key].shape) != tuple(decoder[key].shape)
+        )
+        if mismatched:
+            raise ValueError(
+                "Single-frame decoder tensor shapes do not match the official H3 VAE: "
+                + ", ".join(mismatched[:5])
+            )
+
+        base.update(decoder)
+        logging.info(
+            "Loaded MiniMax H3 single-frame decoder %s over %s",
+            decoder_name,
+            base_vae_name,
+        )
+        return (comfy.sd.VAE(sd=base, metadata=metadata),)
+
+
+class H3VideoLatentSlicesToBatch:
+    """Turn independent H3 temporal slices into one-frame batch elements."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "latent": ("LATENT",),
+                "frames": (
+                    "INT",
+                    {"default": 1, "min": 1, "max": 20, "step": 1},
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "select"
+    CATEGORY = "model/latent/minimax"
+
+    def select(self, latent, frames):
+        samples = latent.get("samples")
+        if samples is not None and getattr(samples, "is_nested", False):
+            if len(samples.tensors) != 2:
+                raise ValueError("Expected a MiniMax H3 video/audio latent")
+            samples = samples.tensors[0]
+        if samples is None or samples.ndim != 5 or samples.shape[1] != 24:
+            raise ValueError(
+                "H3 single-frame decode expects video latents shaped [B, 24, T, H, W]"
+            )
+
+        count = int(frames)
+        available = int(samples.shape[2])
+        if count < 1 or count > available:
+            raise ValueError(
+                f"Requested {count} independent image slices, but the sampled "
+                f"H3 latent contains {available}."
+            )
+        batch, channels, _time, height, width = samples.shape
+        selected = samples[:, :, :count].permute(0, 2, 1, 3, 4).reshape(
+            batch * count,
+            channels,
+            1,
+            height,
+            width,
+        )
+        output = latent.copy()
+        output["samples"] = selected
+        return (output,)
+
+
 NODE_CLASS_MAPPINGS = {
     "H3FirstBlockCache": H3FirstBlockCache,
     "H3LightX2VBypassLoRA": H3LightX2VBypassLoRA,
     "H3SeparateAVLatent": H3SeparateAVLatent,
     "H3CombineAVLatent": H3CombineAVLatent,
+    "H3SingleFrameVAELoader": H3SingleFrameVAELoader,
+    "H3VideoLatentSlicesToBatch": H3VideoLatentSlicesToBatch,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -721,4 +858,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3LightX2VBypassLoRA": "MiniMax H3 LightX2V Bypass LoRA",
     "H3SeparateAVLatent": "MiniMax H3 Separate AV Latent",
     "H3CombineAVLatent": "MiniMax H3 Combine AV Latent",
+    "H3SingleFrameVAELoader": "MiniMax H3 Single-Frame VAE Loader",
+    "H3VideoLatentSlicesToBatch": "MiniMax H3 Video Slices to Image Batch",
 }

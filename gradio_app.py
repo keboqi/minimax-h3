@@ -148,6 +148,10 @@ LARRY_TURBO = "Larry v4-600 EMA"
 DEFAULT_TURBO = LIGHTX2V_4STEP_TURBO
 RESULT_FORMATS = ("Video", "Image", "Audio")
 DEFAULT_RESULT_FORMAT = RESULT_FORMATS[0]
+OFFICIAL_IMAGE_VAE = "Official video VAE"
+SINGLE_FRAME_IMAGE_VAE = "Single-frame 500K (experimental)"
+IMAGE_VAE_CHOICES = (OFFICIAL_IMAGE_VAE, SINGLE_FRAME_IMAGE_VAE)
+DEFAULT_IMAGE_VAE = OFFICIAL_IMAGE_VAE
 DEFAULT_IMAGE_FRAMES = 5
 MIN_IMAGE_FRAMES = 1
 MAX_IMAGE_FRAMES = 20
@@ -263,12 +267,15 @@ LTX25_WORKFLOW_COMMON_MODEL_KEYS = (
 MODEL_PROFILE_CHOICES = list(PROFILE_LABELS.values())
 CORE_LORA_LOADER_NODE = "LoraLoaderModelOnly"
 CORE_SAMPLER_NODE = "KSamplerSelect"
+H3_SIGMA_SHIFT_NODE = "MiniMaxH3SigmaShift"
 LARRY_TURBO_LORA_NODE = "MiniMaxH3TurboLoRA"
 LARRY_TURBO_SAMPLER_NODE = "MiniMaxH3TurboSampler"
 LIGHTX2V_BYPASS_LORA_NODE = "H3LightX2VBypassLoRA"
 H3_LATENT_UPSCALER_NODE = "MinimaxH3LatentUpscalerNode3D"
 H3_SEPARATE_AV_LATENT_NODE = "H3SeparateAVLatent"
 H3_COMBINE_AV_LATENT_NODE = "H3CombineAVLatent"
+H3_SINGLE_FRAME_VAE_LOADER_NODE = "H3SingleFrameVAELoader"
+H3_IMAGE_SLICES_NODE = "H3VideoLatentSlicesToBatch"
 H3_LATENT_UPSCALE_SCALE = 2.0
 SOL_ATTENTION_NODE = "MiniMaxH3MemoryEfficientSolAttentionPatch"
 SAGE_ATTENTION_NODE = "PathchSageAttentionKJ"
@@ -318,6 +325,7 @@ TURBO_SETTINGS = {
 UI_DEFAULTS = {
     "mode": "Text to video",
     "result_format": DEFAULT_RESULT_FORMAT,
+    "image_vae": DEFAULT_IMAGE_VAE,
     "image_frames": DEFAULT_IMAGE_FRAMES,
     "model_profile": "Quality",
     "use_int8_vae": False,
@@ -1346,6 +1354,19 @@ def turbo_uses_custom_nodes(value: str) -> bool:
     return TURBO_SETTINGS[normalize_turbo_variant(value)].custom_nodes
 
 
+def is_lightx2v_v11_fl2va(turbo_variant: str, lora_filename: str | None) -> bool:
+    """Identify the FL2VA-only v1.1 adapter with its dedicated sampler settings."""
+    return (
+        normalize_turbo_variant(turbo_variant) == LIGHTX2V_4STEP_TURBO
+        and "minimax_h3_fl2v_turbo_4step_v1.1_768p"
+        in Path(str(lora_filename or "")).name.lower()
+    )
+
+
+def turbo_sampler_name(turbo_variant: str, lora_filename: str | None) -> str:
+    return "euler" if is_lightx2v_v11_fl2va(turbo_variant, lora_filename) else "res_multistep"
+
+
 def is_original_bf16_model(model_filename: str) -> bool:
     originals = {
         MODEL_SPECS["original_fl2va"].local_name,
@@ -1372,6 +1393,8 @@ class ModelConfig:
     audio_vae: str
     video_vae_int8: str | None = None
     video_vae_int8_source: str = "unknown"
+    image_vae_500k: str | None = None
+    image_vae_500k_source: str = "unknown"
     turbo_lora: str | None = None
     turbo_source: str = "unknown"
     turbo_ref_lora: str | None = None
@@ -1439,6 +1462,8 @@ def load_model_config() -> ModelConfig:
         audio_vae=data["audio_vae"],
         video_vae_int8=data.get("video_vae_int8"),
         video_vae_int8_source=data.get("video_vae_int8_source", "unknown"),
+        image_vae_500k=data.get("image_vae_500k"),
+        image_vae_500k_source=data.get("image_vae_500k_source", "unknown"),
         turbo_lora=data.get("turbo_lora"),
         turbo_source=data.get("turbo_source", "unknown"),
         turbo_ref_lora=data.get("turbo_ref_lora", data.get("turbo_lora")),
@@ -1607,6 +1632,40 @@ def ensure_int8_video_vae(models: ModelConfig) -> bool:
     )
     if not model_file_is_ready(destination):
         raise H3Error(f"On-demand INT8 VAE download did not produce {filename}.")
+    return True
+
+
+def ensure_single_frame_image_vae(models: ModelConfig) -> bool:
+    """Download the optional 500K image-only decoder on first use."""
+    filename = models.image_vae_500k
+    if not filename:
+        raise H3Error(
+            "The model configuration predates single-frame image VAE support. "
+            "Re-run setup_h3.py before selecting it."
+        )
+    model_key = "image_vae_500k"
+    destination = (
+        COMFY_DIR / "models" / MODEL_SPECS[model_key].folder / filename
+    )
+    manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
+    if not stale_model_keys(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        model_keys=(model_key,),
+    ):
+        return False
+    sync_models(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        token=resolve_hf_token(),
+        log_prefix="[h3-image-vae-on-demand]",
+        model_keys=(model_key,),
+        download_workers=1,
+    )
+    if not model_file_is_ready(destination):
+        raise H3Error(
+            f"On-demand single-frame image VAE download did not produce {filename}."
+        )
     return True
 
 
@@ -1991,9 +2050,35 @@ def validate_image_frame_count(value: Any) -> int:
     return frames
 
 
+def normalize_image_vae(value: Any) -> str:
+    requested = str(value or DEFAULT_IMAGE_VAE).strip().lower()
+    for choice in IMAGE_VAE_CHOICES:
+        if requested == choice.lower():
+            return choice
+    raise H3Error(
+        f"Unsupported image VAE: {value!r}. Choose {', '.join(IMAGE_VAE_CHOICES)}."
+    )
+
+
 def image_sampling_length(frame_count: int) -> int:
     """Return the smallest native H3 temporal packet covering the request."""
     return 5 if validate_image_frame_count(frame_count) <= 5 else 22
+
+
+def single_frame_image_sampling_length(frame_count: int) -> int:
+    """Return the shortest native packet with enough independent latent slices."""
+    frames = validate_image_frame_count(frame_count)
+    # Native H3 geometry is 17k+5 pixel frames <-> 5k+2 latent slices.
+    packets = max(0, math.ceil((frames - 2) / 5))
+    return 17 * packets + 5
+
+
+def selected_image_sampling_length(frame_count: int, image_vae: Any) -> int:
+    return (
+        single_frame_image_sampling_length(frame_count)
+        if normalize_image_vae(image_vae) == SINGLE_FRAME_IMAGE_VAE
+        else image_sampling_length(frame_count)
+    )
 
 
 def snap_to_grid(value: int | float, grid: int = 32) -> int:
@@ -2522,6 +2607,7 @@ def result_format_layout_updates(
     return (
         gr.update(visible=not is_image),
         gr.update(visible=is_image),
+        gr.update(visible=is_image),
         gr.update(visible=result_format == "Video", value=None),
         gr.update(visible=is_image),
         gr.update(visible=is_audio, value=None),
@@ -2708,7 +2794,9 @@ class Graph:
 
 
 def turbo_required_nodes(
-    turbo_variant: str, model_filename: str = ""
+    turbo_variant: str,
+    model_filename: str = "",
+    lora_filename: str = "",
 ) -> set[str]:
     """Return the external node contract for one normalized Turbo variant."""
     if turbo_uses_custom_nodes(turbo_variant):
@@ -2718,7 +2806,10 @@ def turbo_required_nodes(
         if is_original_bf16_model(model_filename)
         else CORE_LORA_LOADER_NODE
     )
-    return {lora_node, CORE_SAMPLER_NODE, FUSED_MODULATION_NODE}
+    required = {lora_node, CORE_SAMPLER_NODE, FUSED_MODULATION_NODE}
+    if is_lightx2v_v11_fl2va(turbo_variant, lora_filename):
+        required.add(H3_SIGMA_SHIFT_NODE)
+    return required
 
 
 def add_turbo_model_patch(
@@ -2734,7 +2825,7 @@ def add_turbo_model_patch(
     """Apply a Turbo LoRA and compatible model-level optimizations."""
     variant = normalize_turbo_variant(turbo_variant)
     runtime_bypass = is_original_bf16_model(model_filename)
-    required = turbo_required_nodes(variant, model_filename)
+    required = turbo_required_nodes(variant, model_filename, lora_name)
     missing = required - available_nodes
     if missing:
         missing_names = ", ".join(sorted(missing))
@@ -2953,6 +3044,22 @@ def add_model_stack(
         )
         model_ref = Graph.out(cache)
 
+    if turbo_lora_name and is_lightx2v_v11_fl2va(
+        turbo_variant, turbo_lora_name
+    ):
+        if H3_SIGMA_SHIFT_NODE not in available_nodes:
+            raise H3Error(
+                "LightX2V FL2VA Turbo v1.1 requires MiniMaxH3SigmaShift. "
+                "Update ComfyUI and restart the service."
+            )
+        shifted = graph.add(
+            H3_SIGMA_SHIFT_NODE,
+            model=model_ref,
+            shift_video=6.0,
+            shift_audio=3.0,
+        )
+        model_ref = Graph.out(shifted)
+
     clip = graph.add(
         "CLIPLoader",
         clip_name=models.text_encoder,
@@ -2986,8 +3093,11 @@ def finish_sampling(
     scheduler: str,
     turbo_variant: str | None,
     filename_prefix: str,
+    sampler_name: str = "res_multistep",
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
+    image_vae_ref: list[Any] | None = None,
+    single_frame_images: bool = False,
     initial_conditioning_ref: list[Any] | None = None,
     initial_latent_ref: list[Any] | None = None,
     latent_upscale_model_name: str | None = None,
@@ -3004,7 +3114,7 @@ def finish_sampling(
     sampler = (
         graph.add(LARRY_TURBO_SAMPLER_NODE)
         if use_larry_sampler
-        else graph.add(CORE_SAMPLER_NODE, sampler_name="res_multistep")
+        else graph.add(CORE_SAMPLER_NODE, sampler_name=sampler_name)
     )
     sigmas = graph.add(
         "BasicScheduler",
@@ -3072,12 +3182,22 @@ def finish_sampling(
         audio_samples = Graph.out(sampled)
     if result_format == "Image":
         requested_frames = validate_image_frame_count(image_frames)
+        decode_samples = Graph.out(sampled)
+        if single_frame_images:
+            slices = graph.add(
+                H3_IMAGE_SLICES_NODE,
+                latent=decode_samples,
+                frames=requested_frames,
+            )
+            decode_samples = Graph.out(slices)
         images = graph.add(
-            "VAEDecode", samples=Graph.out(sampled), vae=video_vae_ref
+            "VAEDecode",
+            samples=decode_samples,
+            vae=image_vae_ref or video_vae_ref,
         )
         image_ref = Graph.out(images)
         native_frames = image_sampling_length(requested_frames)
-        if requested_frames != native_frames:
+        if not single_frame_images and requested_frames != native_frames:
             selected = graph.add(
                 "ImageFromBatch",
                 image=image_ref,
@@ -3168,6 +3288,7 @@ def build_fl2va_graph(
     latent_upscale_refine_steps: int = 2,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
+    image_vae: str = DEFAULT_IMAGE_VAE,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -3199,6 +3320,21 @@ def build_fl2va_graph(
         use_int8_vae=use_int8_vae,
         use_sage=use_sage,
     )
+    normalized_image_vae = normalize_image_vae(image_vae)
+    single_frame_images = (
+        normalize_result_format(result_format) == "Image"
+        and normalized_image_vae == SINGLE_FRAME_IMAGE_VAE
+    )
+    image_vae_ref = None
+    if single_frame_images:
+        if not models.image_vae_500k:
+            raise H3Error("The 500K single-frame image VAE is not configured.")
+        image_loader = graph.add(
+            H3_SINGLE_FRAME_VAE_LOADER_NODE,
+            base_vae_name=models.video_vae,
+            decoder_name=models.image_vae_500k,
+        )
+        image_vae_ref = Graph.out(image_loader)
 
     target_width = snap32(width)
     target_height = snap32(height)
@@ -3213,7 +3349,7 @@ def build_fl2va_graph(
         "vae": video_vae_ref,
         "prompt": prompt,
         "length": (
-            image_sampling_length(image_frames)
+            selected_image_sampling_length(image_frames, normalized_image_vae)
             if normalize_result_format(result_format) == "Image"
             else frame_length(duration)
         ),
@@ -3250,6 +3386,7 @@ def build_fl2va_graph(
         steps=steps,
         scheduler=scheduler,
         turbo_variant=turbo_variant if turbo_lora_name else None,
+        sampler_name=turbo_sampler_name(turbo_variant, turbo_lora_name),
         filename_prefix=(
             f"h3/image_staging/fl2va_{int(time.time())}_{uuid.uuid4().hex[:8]}"
             if normalize_result_format(result_format) == "Image"
@@ -3259,6 +3396,8 @@ def build_fl2va_graph(
         ),
         result_format=result_format,
         image_frames=image_frames,
+        image_vae_ref=image_vae_ref,
+        single_frame_images=single_frame_images,
         initial_conditioning_ref=Graph.out(initial_h3, 0),
         initial_latent_ref=Graph.out(initial_h3, 1),
         latent_upscale_model_name=latent_upscale_model_name,
@@ -3312,6 +3451,7 @@ def build_ref2va_graph(
     latent_upscale_refine_steps: int = 2,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
+    image_vae: str = DEFAULT_IMAGE_VAE,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -3343,6 +3483,21 @@ def build_ref2va_graph(
         use_int8_vae=use_int8_vae,
         use_sage=use_sage,
     )
+    normalized_image_vae = normalize_image_vae(image_vae)
+    single_frame_images = (
+        normalize_result_format(result_format) == "Image"
+        and normalized_image_vae == SINGLE_FRAME_IMAGE_VAE
+    )
+    image_vae_ref = None
+    if single_frame_images:
+        if not models.image_vae_500k:
+            raise H3Error("The 500K single-frame image VAE is not configured.")
+        image_loader = graph.add(
+            H3_SINGLE_FRAME_VAE_LOADER_NODE,
+            base_vae_name=models.video_vae,
+            decoder_name=models.image_vae_500k,
+        )
+        image_vae_ref = Graph.out(image_loader)
 
     target_width = snap32(width)
     target_height = snap32(height)
@@ -3358,7 +3513,7 @@ def build_ref2va_graph(
         "audio_vae": audio_vae_ref,
         "prompt": prompt,
         "length": (
-            image_sampling_length(image_frames)
+            selected_image_sampling_length(image_frames, normalized_image_vae)
             if normalize_result_format(result_format) == "Image"
             else frame_length(duration)
         ),
@@ -3405,6 +3560,7 @@ def build_ref2va_graph(
         steps=steps,
         scheduler=scheduler,
         turbo_variant=turbo_variant if turbo_lora_name else None,
+        sampler_name=turbo_sampler_name(turbo_variant, turbo_lora_name),
         filename_prefix=(
             f"h3/image_staging/ref2va_{int(time.time())}_{uuid.uuid4().hex[:8]}"
             if normalize_result_format(result_format) == "Image"
@@ -3414,6 +3570,8 @@ def build_ref2va_graph(
         ),
         result_format=result_format,
         image_frames=image_frames,
+        image_vae_ref=image_vae_ref,
+        single_frame_images=single_frame_images,
         initial_conditioning_ref=Graph.out(initial_h3, 0),
         initial_latent_ref=Graph.out(initial_h3, 1),
         latent_upscale_model_name=latent_upscale_model_name,
@@ -4002,9 +4160,11 @@ def required_nodes_for(
     use_turbo: bool = False,
     turbo_variant: str = LIGHTX2V_4STEP_TURBO,
     model_filename: str = "",
+    turbo_lora_filename: str = "",
     use_sage: bool = False,
     latent_upscale: bool = False,
     result_format: str = DEFAULT_RESULT_FORMAT,
+    image_vae: str = DEFAULT_IMAGE_VAE,
 ) -> set[str]:
     result_format = normalize_result_format(result_format)
     common = {
@@ -4013,7 +4173,14 @@ def required_nodes_for(
         "SamplerCustomAdvanced",
     }
     if result_format == "Image":
-        common |= {"VAEDecode", "ImageFromBatch", "SaveImage"}
+        common |= {"VAEDecode", "SaveImage"}
+        if normalize_image_vae(image_vae) == SINGLE_FRAME_IMAGE_VAE:
+            common |= {
+                H3_SINGLE_FRAME_VAE_LOADER_NODE,
+                H3_IMAGE_SLICES_NODE,
+            }
+        else:
+            common.add("ImageFromBatch")
     elif result_format == "Audio":
         common |= {"VAEDecodeAudio", "SaveAudioMP3"}
     else:
@@ -4025,7 +4192,9 @@ def required_nodes_for(
     else:
         common |= {"MiniMaxH3ImageToVideo", "LoadImage"}
     if use_turbo:
-        common |= turbo_required_nodes(turbo_variant, model_filename)
+        common |= turbo_required_nodes(
+            turbo_variant, model_filename, turbo_lora_filename
+        )
     else:
         common.add(CORE_SAMPLER_NODE)
     if use_sol:
@@ -5355,7 +5524,7 @@ def backend_status() -> str:
             )
         if models.turbo_lora:
             profile_lines.append(
-                f"**LightX2V Turbo / 4-step** · FL2VA v1.0 `{models.turbo_lora}` · "
+                f"**LightX2V Turbo / 4-step** · FL2VA v1.1 `{models.turbo_lora}` · "
                 f"Ref2VA v0.1 544p `{models.turbo_ref_lora}` · strength 1.0"
             )
         if models.turbo_8step_lora:
@@ -5432,6 +5601,7 @@ def generate(
     seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
     ltx25_model: str = DEFAULT_LTX25_MODEL,
     use_int8_vae: bool = False,
+    image_vae: str = DEFAULT_IMAGE_VAE,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     progress=gr.Progress(track_tqdm=False),
@@ -5447,6 +5617,7 @@ def generate(
         progress(0, desc="Validating request")
         yield None, progress_status("Validating request", started=started)
         result_format = normalize_result_format(result_format)
+        selected_image_vae = normalize_image_vae(image_vae)
         requested_image_frames = validate_image_frame_count(image_frames)
         if postprocess not in GENERATION_POSTPROCESS_OPTIONS:
             raise H3Error("Unsupported post-processing method.")
@@ -5459,7 +5630,10 @@ def generate(
         if result_format == "Audio":
             latent_upscale = False
         generation_frames = (
-            image_sampling_length(requested_image_frames)
+            selected_image_sampling_length(
+                requested_image_frames,
+                selected_image_vae,
+            )
             if result_format == "Image"
             else frame_length(duration)
         )
@@ -5477,6 +5651,20 @@ def generate(
         if use_int8_vae:
             progress(0, desc="Preparing INT8 video VAE")
             ensure_int8_video_vae(models)
+        if result_format == "Image" and selected_image_vae == SINGLE_FRAME_IMAGE_VAE:
+            decoder_ready = (
+                models.image_vae_500k
+                and model_file_is_ready(
+                    COMFY_DIR / "models" / "vae" / models.image_vae_500k
+                )
+            )
+            if not decoder_ready:
+                progress(0, desc="Downloading single-frame image VAE")
+                yield None, progress_status(
+                    "Downloading the 500K single-frame image VAE on demand",
+                    started=started,
+                )
+            ensure_single_frame_image_vae(models)
         if postprocess == SEEDVR2_UPSCALE:
             seedvr2_upscale_model_names(models, seedvr2_model)
         elif postprocess == LTX25_UPSCALE:
@@ -5524,6 +5712,8 @@ def generate(
         selected_label += (
             " · INT8 ConvRot VAE" if use_int8_vae else " · FP16 VAE"
         )
+        if result_format == "Image":
+            selected_label += f" · image decoder {selected_image_vae}"
 
         # Variant defaults update outside the generation queue, while this
         # request deliberately honors any subsequent manual step adjustment.
@@ -5609,8 +5799,10 @@ def generate(
             use_turbo=use_turbo,
             turbo_variant=selected_turbo,
             model_filename=selected_model,
+            turbo_lora_filename=turbo_lora_name or "",
             latent_upscale=bool(latent_upscale),
             result_format=result_format,
+            image_vae=selected_image_vae,
         ) - available
         if missing:
             raise H3Error("Missing ComfyUI nodes: " + ", ".join(sorted(missing)))
@@ -5645,6 +5837,7 @@ def generate(
                 reference_audios=refs_a,
                 width=resolved_width, height=resolved_height, duration=float(duration),
                 result_format=result_format, image_frames=requested_image_frames,
+                image_vae=selected_image_vae,
                 steps=effective_steps, seed=actual_seed, scheduler=effective_scheduler,
                 ref_image_size=ref_image_size,
                 turbo_lora_name=turbo_lora_name, turbo_variant=selected_turbo,
@@ -5679,6 +5872,7 @@ def generate(
                 prompt=prompt, first_image=first_image, last_image=last_image,
                 width=resolved_width, height=resolved_height, duration=float(duration),
                 result_format=result_format, image_frames=requested_image_frames,
+                image_vae=selected_image_vae,
                 steps=effective_steps, seed=actual_seed, scheduler=effective_scheduler,
                 turbo_lora_name=turbo_lora_name, turbo_variant=selected_turbo,
                 turbo_strength=turbo_strength,
@@ -6323,6 +6517,7 @@ def compact_settings_summary(
     split_seconds: float,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
+    image_vae: str = DEFAULT_IMAGE_VAE,
 ) -> str:
     model_profile = (
         f"{model_profile} / VAE: "
@@ -6332,6 +6527,7 @@ def compact_settings_summary(
         generation_mode = f"Turbo / {turbo_variant}"
     result_format = normalize_result_format(result_format)
     if result_format == "Image":
+        model_profile += f" / Image VAE: {normalize_image_vae(image_vae)}"
         try:
             timing = f"{validate_image_frame_count(image_frames)} image frames"
         except H3Error:
@@ -6411,6 +6607,7 @@ def generate_with_ui_defaults(
         mode=defaults["mode"],
         model_profile=defaults["model_profile"],
         use_int8_vae=defaults["use_int8_vae"],
+        image_vae=defaults["image_vae"],
         result_format=defaults["result_format"],
         image_frames=defaults["image_frames"],
         generation_mode=defaults["generation_mode"],
@@ -6635,6 +6832,17 @@ def build_ui() -> gr.Blocks:
                         "encode/decode; switch off for the reviewed FP16 path."
                     ),
                 )
+                image_vae = gr.Radio(
+                    IMAGE_VAE_CHOICES,
+                    value=defaults["image_vae"],
+                    label="Image VAE",
+                    visible=False,
+                    info=(
+                        "Official is the default and remains the only video decoder. "
+                        "The experimental 500K option downloads 9.69 GB on first use "
+                        "and independently decodes temporal latent slices."
+                    ),
+                )
                 help_text = gr.Markdown(mode_help("Text to video"))
                 prompt = gr.Textbox(
                     label="Prompt", lines=12,
@@ -6757,6 +6965,7 @@ def build_ui() -> gr.Blocks:
                         defaults["upscale_split_enabled"],
                         defaults["upscale_split_seconds"],
                         defaults["result_format"], defaults["image_frames"],
+                        defaults["image_vae"],
                     )
                 )
                 output = gr.Video(label="Generated video")
@@ -6828,8 +7037,9 @@ def build_ui() -> gr.Blocks:
                         label="Image frames",
                         visible=False,
                         info=(
-                            "H3 samples a native 5- or 22-frame packet, then returns "
-                            "exactly this many decoded frames."
+                            "Returns exactly this many images. The official VAE uses "
+                            "short 5/22-frame packets; the single-frame VAE needs a "
+                            "separate temporal latent slice per image."
                         ),
                     )
                     steps = gr.Slider(
@@ -7529,6 +7739,7 @@ def build_ui() -> gr.Blocks:
             generation_split_seconds,
             result_format,
             image_frames,
+            image_vae,
         ]
         for settings_control in settings_inputs:
             # Width and height have dedicated input callbacks below so their
@@ -7555,6 +7766,7 @@ def build_ui() -> gr.Blocks:
             outputs=[
                 duration,
                 image_frames,
+                image_vae,
                 output,
                 image_output_group,
                 audio_output,
@@ -7793,6 +8005,7 @@ def build_ui() -> gr.Blocks:
                 generation_seedvr2_model,
                 ltx25_model,
                 use_int8_vae,
+                image_vae,
                 result_format,
                 image_frames,
             ],
@@ -8224,7 +8437,9 @@ def selftest() -> None:
         audio_vae="audio_vae.safetensors",
         video_vae_int8="video_vae_int8_convrot.safetensors",
         video_vae_int8_source="test",
-        turbo_lora="minimax_h3_turbo_4step_ema_ckpt850.safetensors",
+        image_vae_500k="minimax_h3_single_frame_decoder_500k.safetensors",
+        image_vae_500k_source="test",
+        turbo_lora="minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors",
         turbo_source="test",
         turbo_ref_lora="minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
         turbo_ref_source="ref2v-test",
@@ -8266,6 +8481,9 @@ def selftest() -> None:
         LARRY_TURBO_LORA_NODE,
         LARRY_TURBO_SAMPLER_NODE,
         LIGHTX2V_BYPASS_LORA_NODE,
+        H3_SIGMA_SHIFT_NODE,
+        H3_SINGLE_FRAME_VAE_LOADER_NODE,
+        H3_IMAGE_SLICES_NODE,
     }
     assert fake.turbo_lora_for("Text to video", LIGHTX2V_4STEP_TURBO) == fake.turbo_lora
     assert fake.turbo_lora_for("Reference media", LIGHTX2V_4STEP_TURBO) == fake.turbo_ref_lora
@@ -8344,11 +8562,63 @@ def selftest() -> None:
     assert image_sampling_length(5) == 5
     assert image_sampling_length(6) == 22
     assert image_sampling_length(20) == 22
+    assert single_frame_image_sampling_length(1) == 5
+    assert single_frame_image_sampling_length(2) == 5
+    assert single_frame_image_sampling_length(3) == 22
+    assert single_frame_image_sampling_length(7) == 22
+    assert single_frame_image_sampling_length(8) == 39
+    assert single_frame_image_sampling_length(20) == 73
+    assert selected_image_sampling_length(20, OFFICIAL_IMAGE_VAE) == 22
+    assert selected_image_sampling_length(20, SINGLE_FRAME_IMAGE_VAE) == 73
     assert {"VAEDecode", "ImageFromBatch", "SaveImage"} <= required_nodes_for(
         "Text to video", False, "Off", result_format="Image"
     )
     assert {"VAEDecodeAudio", "SaveAudioMP3"} <= required_nodes_for(
         "Text to video", False, "Off", result_format="Audio"
+    )
+
+    single_frame_graph = build_fl2va_graph(
+        prompt="single-frame image result test", first_image=None, last_image=None,
+        width=864, height=480, duration=5, steps=4, seed=3,
+        scheduler="simple", turbo_lora_name=None,
+        turbo_variant=LIGHTX2V_4STEP_TURBO, turbo_strength=1.0,
+        use_sol=False, sol_tau=1.0, sol_thresh_type="diag",
+        sol_exact_mode="off", sol_dense_steps=0, sol_step_off=0.0,
+        sol_sink_tokens=0, cache_mode="Off", fbcache_preset="Fast",
+        fbcache_threshold=0.10, fbcache_start=0.10,
+        fbcache_end=0.95, fbcache_max_hits=2, fbcache_temporal_guard=True,
+        easycache_threshold=0.10, easycache_start=0.15,
+        easycache_end=0.85, easycache_verbose=False,
+        model_name=fake.profile("speed").fl2va, models=fake,
+        available_nodes=available, result_format="Image", image_frames=20,
+        image_vae=SINGLE_FRAME_IMAGE_VAE,
+    )
+    single_classes = {
+        node["class_type"] for node in single_frame_graph.values()
+    }
+    single_conditioning = next(
+        node for node in single_frame_graph.values()
+        if node["class_type"] == "MiniMaxH3ImageToVideo"
+    )
+    assert single_conditioning["inputs"]["length"] == 73
+    assert {H3_SINGLE_FRAME_VAE_LOADER_NODE, H3_IMAGE_SLICES_NODE} <= single_classes
+    assert "ImageFromBatch" not in single_classes
+    single_loader = next(
+        node for node in single_frame_graph.values()
+        if node["class_type"] == H3_SINGLE_FRAME_VAE_LOADER_NODE
+    )
+    assert single_loader["inputs"] == {
+        "base_vae_name": fake.video_vae,
+        "decoder_name": fake.image_vae_500k,
+    }
+    assert {H3_SINGLE_FRAME_VAE_LOADER_NODE, H3_IMAGE_SLICES_NODE} <= (
+        required_nodes_for(
+            "Text to video",
+            False,
+            "Off",
+            result_format="Image",
+            image_vae=SINGLE_FRAME_IMAGE_VAE,
+        )
     )
 
     image_result_graph = Graph()
@@ -9222,7 +9492,7 @@ def selftest() -> None:
         prompt="test", first_image=None, last_image=None,
         width=864, height=480, duration=5, steps=8, seed=2,
         scheduler="simple",
-        turbo_lora_name="minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+        turbo_lora_name="minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors",
         turbo_variant=LIGHTX2V_4STEP_TURBO,
         turbo_strength=1.0,
         use_sol=False, sol_tau=1.0,
@@ -9265,7 +9535,7 @@ def selftest() -> None:
     assert len(turbo_nodes) == 1
     assert turbo_nodes[0]["inputs"]["strength_model"] == 1.0
     assert turbo_nodes[0]["inputs"]["lora_name"].endswith(
-        "v1.0_768p_comfyui_bf16.safetensors"
+        "v1.1_768p_comfyui_bf16.safetensors"
     )
     quality_fused_id = next(
         node_id for node_id, node in quality_turbo_graph.items()
@@ -9299,6 +9569,20 @@ def selftest() -> None:
     assert quality_turbo_graph[lightx_spectrum_id]["inputs"][
         "offline_archive_storage"
     ] == "system_ram"
+    shift_id = next(
+        node_id for node_id, node in quality_turbo_graph.items()
+        if node["class_type"] == H3_SIGMA_SHIFT_NODE
+    )
+    assert quality_turbo_graph[shift_id]["inputs"] == {
+        "model": [lightx_spectrum_id, 0],
+        "shift_video": 6.0,
+        "shift_audio": 3.0,
+    }
+    quality_sampler = next(
+        node for node in quality_turbo_graph.values()
+        if node["class_type"] == CORE_SAMPLER_NODE
+    )
+    assert quality_sampler["inputs"]["sampler_name"] == "euler"
     assert not any(
         node["class_type"] == LARRY_TURBO_SAMPLER_NODE
         for node in quality_turbo_graph.values()
@@ -9358,6 +9642,17 @@ def selftest() -> None:
     assert FUSED_MODULATION_NODE not in turbo_required_nodes(LARRY_TURBO)
     assert FUSED_MODULATION_NODE in turbo_required_nodes(LIGHTX2V_4STEP_TURBO)
     assert FUSED_MODULATION_NODE in turbo_required_nodes(LIGHTX2V_8STEP_TURBO)
+    assert H3_SIGMA_SHIFT_NODE in turbo_required_nodes(
+        LIGHTX2V_4STEP_TURBO, "", fake.turbo_lora
+    )
+    assert H3_SIGMA_SHIFT_NODE not in turbo_required_nodes(
+        LIGHTX2V_4STEP_TURBO, "", fake.turbo_ref_lora
+    )
+    assert turbo_sampler_name(LIGHTX2V_4STEP_TURBO, fake.turbo_lora) == "euler"
+    assert (
+        turbo_sampler_name(LIGHTX2V_4STEP_TURBO, fake.turbo_ref_lora)
+        == "res_multistep"
+    )
     assert turbo_uses_custom_nodes(LARRY_TURBO) is True
     assert turbo_uses_custom_nodes(LIGHTX2V_4STEP_TURBO) is False
     assert turbo_uses_custom_nodes(LIGHTX2V_8STEP_TURBO) is False
@@ -9479,6 +9774,9 @@ def selftest() -> None:
     assert ref_unet["inputs"]["unet_name"] == fake.profile("quality").ref2va
     assert ref_lora["inputs"]["lora_name"] == fake.turbo_ref_lora
     assert ref_lora["inputs"]["strength_model"] == 1.0
+    assert H3_SIGMA_SHIFT_NODE not in {
+        node["class_type"] for node in ref_turbo_graph.nodes.values()
+    }
     ref_easycache = next(
         node for node in ref_turbo_graph.nodes.values()
         if node["class_type"] == "EasyCache"
@@ -9491,6 +9789,7 @@ def selftest() -> None:
     ]
     assert len(sched_nodes) == 1
     assert sched_nodes[0]["inputs"]["steps"] == 8
+    assert sched_nodes[0]["inputs"]["scheduler"] == "simple"
     print(
         f"Selftest OK: {len(graph)} nodes, 5s=124 frames, "
         f"15s=362 frames, tiered resolution presets valid, Sol exact valid, "
