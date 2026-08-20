@@ -5814,6 +5814,13 @@ def generate(
         text_encoder_key, selected_text_encoder, bf16_text_encoder = (
             h3_text_encoder_settings(models, text_encoder)
         )
+        effective_stage_offload = bool(stage_model_offload) or bf16_text_encoder
+        if effective_stage_offload and SERVER_MEMORY_PROFILE == "gpu-only":
+            raise H3Error(
+                "H3 stage offload cannot release VRAM while ComfyUI is running "
+                "with --gpu-only because every model's offload device is CUDA. "
+                "Update and restart run_h3.sh/Modal so ComfyUI uses Dynamic VRAM."
+            )
         text_encoder_path = (
             COMFY_DIR
             / "models"
@@ -5834,7 +5841,6 @@ def generate(
         selected_text_encoder, bf16_text_encoder = ensure_h3_text_encoder(
             models, text_encoder
         )
-        effective_stage_offload = bool(stage_model_offload) or bf16_text_encoder
         if use_int8_vae:
             progress(0, desc="Preparing INT8 video VAE")
             ensure_int8_video_vae(models)

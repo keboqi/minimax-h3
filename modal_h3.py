@@ -638,7 +638,7 @@ def service_env() -> dict[str, str]:
             "GRADIO_OUTPUT_DIR": OUTPUT.as_posix(),
             "SERVER_ATTENTION_BACKEND": "sol",
             "SERVER_DENSE_ATTENTION_BACKEND": "comfy-kitchen",
-            "SERVER_MEMORY_PROFILE": "gpu-only",
+            "SERVER_MEMORY_PROFILE": "dynamic",
             "GRADIO_ANALYTICS_ENABLED": "False",
             "PYTHONUNBUFFERED": "1",
             "HF_HOME": "/tmp/hf",
@@ -774,7 +774,6 @@ def serve():
         "127.0.0.1",
         "--port",
         str(COMFY_PORT),
-        "--gpu-only",
         "--use-ck-attention",
     ]
     print("[modal-h3] Dense/fallback attention: Comfy Kitchen", flush=True)

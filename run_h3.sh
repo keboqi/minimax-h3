@@ -208,13 +208,6 @@ free_port "$COMFY_PORT"
 free_port "$GRADIO_SERVER_PORT"
 
 log "Starting ComfyUI at $COMFY_URL"
-if command -v nvidia-smi >/dev/null 2>&1; then
-  GPU_MEMORY_MIB="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '[:space:]')"
-  if [[ "$GPU_MEMORY_MIB" =~ ^[0-9]+$ ]] && (( GPU_MEMORY_MIB >= 65536 )); then
-    COMFYUI_MEMORY_MODE="gpu-only"
-    COMFY_MEMORY_ARGS=(--gpu-only)
-  fi
-fi
 log "Memory profile: $COMFYUI_MEMORY_MODE"
 (
   cd "$COMFY_DIR"

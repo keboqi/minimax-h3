@@ -957,8 +957,15 @@ class H3StageModelOffload:
         additional_conditioning,
         additional_latent,
     ):
+        before = len(comfy.model_management.loaded_models())
         comfy.model_management.unload_all_models()
         comfy.model_management.soft_empty_cache()
+        after = len(comfy.model_management.loaded_models())
+        logging.info(
+            "MiniMax H3 stage offload: resident Comfy models %d -> %d",
+            before,
+            after,
+        )
         return conditioning, latent, additional_conditioning, additional_latent
 
 

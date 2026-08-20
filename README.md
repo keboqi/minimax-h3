@@ -184,13 +184,13 @@ files; lazy checkpoints remain local and are fetched again if missing or incompl
 On Debian/Ubuntu standalone hosts, `run_h3.sh` also installs the `ffmpeg` system
 package through `apt-get` (using `sudo` when needed) if `ffmpeg` or `ffprobe` is
 missing.
-The UI listens on `http://127.0.0.1:7860` by default. Local launch uses ComfyUI
-Dynamic VRAM on GPUs below 64 GiB, allowing current releases to manage model
-residency, prefetching, and host-memory pressure. It selects `--gpu-only` on
-64 GiB+ GPUs, where keeping the default compact stack resident avoids unnecessary
-loading. The 96 GiB Modal target likewise remains GPU-only. The H3 stage-offload
-workflow overrides that residency between stages when explicitly enabled or
-when the 51.5 GB BF16 text encoder is selected.
+The UI listens on `http://127.0.0.1:7860` by default. Local and Modal launches
+use ComfyUI Dynamic VRAM on every GPU size, allowing stage-offload workflows to
+move models to system RAM. Without an offload barrier, ComfyUI smart memory can
+still retain the compact NVFP4/INT8 stack in VRAM. Do not launch with
+`--gpu-only` when using the 51.5 GB BF16 text encoder: under that mode ComfyUI
+sets each model's offload device to CUDA, so an unload request cannot release
+its VRAM residency.
 
 The **MiniMax H3** tab includes local and Gemini prompt writers. The local writer
 uses `lightx2v/MiniMax-H3-Prompt-Rewriter-LoRA-8B` with
