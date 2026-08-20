@@ -120,22 +120,55 @@ raise SystemExit(0 if comfy_frontend_package_is_ready() else 1)
 PY
 }
 
+free_port() {
+  local port="$1"
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k -n tcp "$port" 2>/dev/null || true
+  elif command -v lsof >/dev/null 2>&1; then
+    local pids
+    pids=$(lsof -ti :"$port" 2>/dev/null) || true
+    if [[ -n "$pids" ]]; then
+      kill -9 $pids 2>/dev/null || true
+    fi
+  elif command -v ss >/dev/null 2>&1 && command -v grep >/dev/null 2>&1; then
+    local pids
+    pids=$(ss -lptn "sport = :$port" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2) || true
+    if [[ -n "$pids" ]]; then
+      kill -9 $pids 2>/dev/null || true
+    fi
+  fi
+}
+
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
 
-  if [[ -n "$GRADIO_PID" ]] && kill -0 "$GRADIO_PID" 2>/dev/null; then
-    log "Stopping Gradio"
-    kill "$GRADIO_PID" 2>/dev/null || true
+  local pids=()
+  [[ -n "$GRADIO_PID" ]] && pids+=("$GRADIO_PID")
+  [[ -n "$COMFY_PID" ]] && pids+=("$COMFY_PID")
+
+  if [[ ${#pids[@]} -gt 0 ]]; then
+    log "Stopping Gradio and ComfyUI"
+    for pid in "${pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -TERM "$pid" 2>/dev/null || true
+      fi
+    done
+
+    local deadline=$((SECONDS + 3))
+    for pid in "${pids[@]}"; do
+      while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
+        sleep 0.1
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+      fi
+    done
   fi
 
-  if [[ -n "$COMFY_PID" ]] && kill -0 "$COMFY_PID" 2>/dev/null; then
-    log "Stopping ComfyUI"
-    kill "$COMFY_PID" 2>/dev/null || true
-  fi
+  free_port "$GRADIO_SERVER_PORT"
+  free_port "$COMFY_PORT"
 
-  [[ -n "$GRADIO_PID" ]] && wait "$GRADIO_PID" 2>/dev/null || true
-  [[ -n "$COMFY_PID" ]] && wait "$COMFY_PID" 2>/dev/null || true
   exit "$status"
 }
 trap cleanup EXIT INT TERM
@@ -170,6 +203,9 @@ fi
 [[ -f "$COMFY_DIR/main.py" ]] || die "ComfyUI installation failed"
 [[ -f "$MODELS_CONFIG" ]] || die "Model setup failed"
 log "Dense/fallback attention: Comfy Kitchen"
+
+free_port "$COMFY_PORT"
+free_port "$GRADIO_SERVER_PORT"
 
 log "Starting ComfyUI at $COMFY_URL"
 if command -v nvidia-smi >/dev/null 2>&1; then

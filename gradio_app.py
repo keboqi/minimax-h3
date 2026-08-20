@@ -11,6 +11,7 @@ import os
 import random
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -9545,6 +9546,27 @@ def main() -> None:
         "yes",
         "on",
     }
+    shutdown_requested = threading.Event()
+
+    def handle_shutdown(signum, frame):
+        shutdown_requested.set()
+        server.should_exit = True
+        server.force_exit = True
+
+    try:
+        signal.signal(signal.SIGINT, handle_shutdown)
+    except (ValueError, AttributeError):
+        pass
+    try:
+        signal.signal(signal.SIGTERM, handle_shutdown)
+    except (ValueError, AttributeError):
+        pass
+    if hasattr(signal, "SIGHUP"):
+        try:
+            signal.signal(signal.SIGHUP, handle_shutdown)
+        except (ValueError, AttributeError):
+            pass
+
     server = uvicorn.Server(
         uvicorn.Config(
             app,
@@ -9579,10 +9601,18 @@ def main() -> None:
             )
 
     try:
-        server_thread.join()
-    except KeyboardInterrupt:
+        while server_thread.is_alive() and not shutdown_requested.is_set():
+            server_thread.join(timeout=0.5)
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
         server.should_exit = True
-        server_thread.join(timeout=5)
+        server.force_exit = True
+        server_thread.join(timeout=3)
+        try:
+            demo.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
