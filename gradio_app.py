@@ -127,7 +127,7 @@ GEMINI_PROMPT_MODELS = (
 DEFAULT_GEMINI_PROMPT_MODEL = GEMINI_PROMPT_MODELS[0]
 GEMINI_API_ROOT = "https://generativelanguage.googleapis.com"
 PROMPT_WRITER_BACKENDS = ("Local MiniMax-H3 8B", "Gemini")
-DEFAULT_PROMPT_WRITER_BACKEND = PROMPT_WRITER_BACKENDS[0]
+DEFAULT_PROMPT_WRITER_BACKEND = PROMPT_WRITER_BACKENDS[1]
 PROMPT_ENHANCER_SYSTEM_PATH = SCRIPT_DIR / "prompt.txt"
 PROMPT_ENHANCER_SYSTEMS = {
     "MiniMax H3": PROMPT_ENHANCER_SYSTEM_PATH,
@@ -6621,14 +6621,14 @@ def build_ui() -> gr.Blocks:
                         value=DEFAULT_PROMPT_WRITER_BACKEND,
                         label="Prompt writer",
                     )
-                    with gr.Group(visible=True) as local_prompt_writer_group:
+                    with gr.Group(visible=False) as local_prompt_writer_group:
                         local_prompt_base_model = gr.Dropdown(
                             choices=list(LOCAL_PROMPT_BASE_MODELS),
                             value=DEFAULT_LOCAL_PROMPT_BASE_MODEL,
                             label="Local base model",
                             info=(
-                                "FP8 is the default lower-memory checkpoint. BF16 is "
-                                "available as the full-precision alternative."
+                                "BF16 is the default full-precision checkpoint. FP8 is "
+                                "available as the lower-memory alternative."
                             ),
                         )
                         with gr.Accordion("Local decoding settings", open=False):
@@ -6651,7 +6651,7 @@ def build_ui() -> gr.Blocks:
                             local_prompt_seed = gr.Number(
                                 value=42, precision=0, label="Seed"
                             )
-                    with gr.Group(visible=False) as gemini_prompt_writer_group:
+                    with gr.Group(visible=True) as gemini_prompt_writer_group:
                         gr.Markdown(
                             "Uses the active inputs with `prompt.txt`. Set "
                             "`GEMINI_API_KEY` on the server or enter a temporary key; "

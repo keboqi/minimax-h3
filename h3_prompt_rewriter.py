@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_BASE_MODEL_LABEL = "Qwen3-VL 8B · FP8"
+DEFAULT_BASE_MODEL_LABEL = "Qwen3-VL 8B · BF16"
 BASE_MODEL_CHOICES = {
-    DEFAULT_BASE_MODEL_LABEL: "Qwen/Qwen3-VL-8B-Instruct-FP8",
-    "Qwen3-VL 8B · BF16": "Qwen/Qwen3-VL-8B-Instruct",
+    DEFAULT_BASE_MODEL_LABEL: "Qwen/Qwen3-VL-8B-Instruct",
+    "Qwen3-VL 8B · FP8": "Qwen/Qwen3-VL-8B-Instruct-FP8",
 }
 DEFAULT_ADAPTER_REPO = "lightx2v/MiniMax-H3-Prompt-Rewriter-LoRA-8B"
 SUPPORTED_RESOLUTIONS = ("21:9", "16:9", "4:3", "1:1", "3:4", "9:16")
@@ -411,7 +411,7 @@ def selftest() -> None:
 
     assert resolve_base_model(None) == (
         DEFAULT_BASE_MODEL_LABEL,
-        "Qwen/Qwen3-VL-8B-Instruct-FP8",
+        "Qwen/Qwen3-VL-8B-Instruct",
     )
     assert task_for_inputs("Text to video", None, None) == "t2av"
     assert task_for_inputs("First / last frame", "first.png", None) == "i2av"
