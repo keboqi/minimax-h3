@@ -508,6 +508,10 @@ def ensure_sageattention(install_dir: Path) -> bool:
         "--python",
         sys.executable,
         "--upgrade",
+        # A stale Sage wheel can have the same 2.2.0 package version while
+        # targeting a different Torch C++ ABI. Without a forced reinstall uv
+        # reports "Checked 1 package" and leaves that incompatible .so in place.
+        "--force-reinstall",
         "--no-deps",
         SAGE_WHEEL_URL,
     ]
@@ -515,7 +519,7 @@ def ensure_sageattention(install_dir: Path) -> bool:
 
     if not sageattention_importable():
         raise RuntimeError(
-            "The prebuilt SageAttention wheel installed but still failed a "
+            "The prebuilt SageAttention wheel was force-reinstalled but still failed a "
             "fresh-process import check. Source compilation is disabled by "
             "design; inspect the fresh-import error above."
         )
