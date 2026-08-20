@@ -2219,20 +2219,23 @@ def resolution_summary(width: int | float, height: int | float) -> str:
 
 
 def resolution_control_updates(
-    width: int | float,
-    height: int | float,
+    width: int | float | None,
+    height: int | float | None,
     latent_upscale: bool,
     result_format: str,
 ) -> tuple[int | float, int | float, str]:
     if normalize_result_format(result_format) == "Audio":
         return (
-            width,
-            height,
+            width if width is not None else 32,
+            height if height is not None else 32,
             "**Audio result** · resolution controls are ignored; H3 samples at 32×32.",
         )
     alignment = 64 if latent_upscale else 32
-    resolved_width = snap_to_grid(width, alignment)
-    resolved_height = snap_to_grid(height, alignment)
+    try:
+        resolved_width = snap_to_grid(width, alignment) if width is not None else 864
+        resolved_height = snap_to_grid(height, alignment) if height is not None else 480
+    except Exception:
+        resolved_width, resolved_height = 864, 480
     prefix = "**Latent upscale 64-pixel alignment** · " if latent_upscale else ""
     return (
         resolved_width,
@@ -2241,38 +2244,30 @@ def resolution_control_updates(
     )
 
 
-# Inline script injected via gr.HTML.  Attaches ``blur`` listeners to the
-# width / height number inputs so that when the user finishes typing the
-# hidden ``#resolution-snap-btn`` is clicked, triggering the Python
-# ``resolution_control_updates`` callback that snaps the values to the grid.
-# While the input is focused the ``.input()`` event is suppressed by the
-# ``RESOLUTION_INPUT_GUARD_JS`` gate so the typed value is never overwritten
-# mid-keystroke.
-RESOLUTION_BLUR_SNAP_JS = r"""<script>
-(() => {
-    function attach() {
-        const ids = ['h3-width', 'h3-height'];
-        for (const id of ids) {
-            const root = document.getElementById(id);
-            const input = root && root.querySelector('input[type="number"]');
-            if (!input || input.__h3blur) continue;
-            input.__h3blur = true;
-            input.addEventListener('focus', () => { window.__h3ResInputFocused = true; });
-            input.addEventListener('blur', () => {
-                window.__h3ResInputFocused = false;
-                const btn = document.getElementById('resolution-snap-btn');
-                if (btn) btn.click();
-            });
-        }
-    }
-    // Gradio renders asynchronously; retry until the inputs exist.
-    const iv = setInterval(() => {
-        attach();
-        if (document.getElementById('h3-width') &&
-            document.getElementById('h3-height')) clearInterval(iv);
-    }, 200);
-})();
-</script>"""
+def resolution_info_preview(
+    width: int | float | None,
+    height: int | float | None,
+    latent_upscale: bool,
+    result_format: str,
+) -> str:
+    """Return only the resolution info text without snapping the input values.
+
+    Called on ``.input()`` so the user sees live feedback while typing, without
+    the width/height fields being overwritten mid-keystroke.  The actual snap
+    happens on ``.blur()`` or ``.submit()`` via ``resolution_control_updates``.
+    """
+    if normalize_result_format(result_format) == "Audio":
+        return "**Audio result** · resolution controls are ignored; H3 samples at 32×32."
+    if width is None or height is None:
+        return ""
+    try:
+        alignment = 64 if latent_upscale else 32
+        resolved_width = snap_to_grid(width, alignment)
+        resolved_height = snap_to_grid(height, alignment)
+    except Exception as exc:
+        return f"⚠️ {exc}"
+    prefix = "**Latent upscale 64-pixel alignment** · " if latent_upscale else ""
+    return prefix + resolution_summary(resolved_width, resolved_height)
 
 
 def auto_resolution_from_start_frame(
@@ -6865,16 +6860,11 @@ def build_ui() -> gr.Blocks:
                         info="Higher-resolution sizes by aspect ratio.",
                     )
                 with gr.Row():
-                    width = gr.Number(value=defaults["width"], precision=0, label="Width", elem_id="h3-width")
-                    height = gr.Number(value=defaults["height"], precision=0, label="Height", elem_id="h3-height")
+                    width = gr.Number(value=defaults["width"], precision=0, label="Width")
+                    height = gr.Number(value=defaults["height"], precision=0, label="Height")
                 resolution_info = gr.Markdown(
                     resolution_summary(defaults["width"], defaults["height"])
                 )
-                # Hidden button clicked on blur of width/height inputs.
-                resolution_snap_btn = gr.Button(
-                    visible=False, elem_id="resolution-snap-btn",
-                )
-                gr.HTML(RESOLUTION_BLUR_SNAP_JS, visible=False)
                 with gr.Row():
                     scheduler = gr.Radio(
                         ["simple", "beta", "normal"],
@@ -7747,59 +7737,39 @@ def build_ui() -> gr.Blocks:
                 fbcache_max_hits,
             ],
         )
-        # --- Width / Height input: focus-aware resolution snap ----------------
-        # The original .input() handler snaps values on every keystroke, but
-        # that makes it impossible to type multi-digit numbers (e.g. typing
-        # "1" to start "1024" would immediately snap to 32).  Solution:
-        #   • .input() still calls resolution_control_updates so that
-        #     programmatic changes (presets, image upload, etc.) are snapped
-        #     immediately — but a JS guard skips the call when the user is
-        #     actively typing (input focused).
-        #   • A blur listener (injected via RESOLUTION_BLUR_SNAP_JS) clicks
-        #     the hidden resolution_snap_btn when the user finishes typing,
-        #     triggering the same resolution_control_updates callback.
-        _res_guard_js = r"""(width, height, lu, rf) => {
-            if (window.__h3ResInputFocused) throw new Error('__skip__');
-            return [width, height, lu, rf];
-        }"""
-        width_input_event = width.input(
-            resolution_control_updates,
+        # --- Width / Height input: native Gradio input/blur/submit ----------
+        # While typing (input event), update only the markdown resolution info
+        # preview so manual multi-digit typing is never overwritten mid-keystroke.
+        width.input(
+            resolution_info_preview,
             inputs=[width, height, latent_upscale, result_format],
-            outputs=[width, height, resolution_info],
+            outputs=[resolution_info],
             queue=False,
             show_progress="hidden",
-            js=_res_guard_js,
         )
-        height_input_event = height.input(
-            resolution_control_updates,
+        height.input(
+            resolution_info_preview,
             inputs=[width, height, latent_upscale, result_format],
-            outputs=[width, height, resolution_info],
+            outputs=[resolution_info],
             queue=False,
             show_progress="hidden",
-            js=_res_guard_js,
         )
-        for resolution_input_event in (width_input_event, height_input_event):
-            resolution_input_event.then(
+        # When typing completes (focus lost or Enter pressed), snap width/height.
+        for res_event_trigger in (width.blur, height.blur, width.submit, height.submit):
+            res_snap_event = res_event_trigger(
+                resolution_control_updates,
+                inputs=[width, height, latent_upscale, result_format],
+                outputs=[width, height, resolution_info],
+                queue=False,
+                show_progress="hidden",
+            )
+            res_snap_event.then(
                 compact_settings_summary,
                 inputs=settings_inputs,
                 outputs=settings_overview,
                 queue=False,
                 show_progress="hidden",
             )
-        resolution_snap_event = resolution_snap_btn.click(
-            resolution_control_updates,
-            inputs=[width, height, latent_upscale, result_format],
-            outputs=[width, height, resolution_info],
-            queue=False,
-            show_progress="hidden",
-        )
-        resolution_snap_event.then(
-            compact_settings_summary,
-            inputs=settings_inputs,
-            outputs=settings_overview,
-            queue=False,
-            show_progress="hidden",
-        )
         event = run.click(
             generate_for_ui,
             inputs=[
