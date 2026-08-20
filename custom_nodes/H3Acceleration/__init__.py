@@ -873,7 +873,7 @@ class H3VideoLatentSlicesToBatch:
                 "latent": ("LATENT",),
                 "frames": (
                     "INT",
-                    {"default": 1, "min": 1, "max": 20, "step": 1},
+                    {"default": 1, "min": 1, "max": 1, "step": 1},
                 ),
             }
         }
@@ -895,14 +895,16 @@ class H3VideoLatentSlicesToBatch:
 
         count = int(frames)
         available = int(samples.shape[2])
-        if count < 1 or count > available:
+        if count != 1:
             raise ValueError(
-                f"Requested {count} independent image slices, but the sampled "
-                f"H3 latent contains {available}."
+                "The 500K single-frame decoder supports exactly one image from "
+                "the first H3 temporal latent slice."
             )
+        if available < 1:
+            raise ValueError("The sampled H3 latent contains no video slices")
         batch, channels, _time, height, width = samples.shape
-        selected = samples[:, :, :count].permute(0, 2, 1, 3, 4).reshape(
-            batch * count,
+        selected = samples[:, :, 0:1].reshape(
+            batch,
             channels,
             1,
             height,

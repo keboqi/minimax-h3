@@ -216,8 +216,9 @@ and audio latent; the selected format controls the final decode:
   mode uses its native resolution without the video workflow's 2 MP cap,
   rounded only to H3's required 32-pixel grid (or 64-pixel grid when native
   latent upscale is enabled). **Image VAE** defaults to **Official video VAE**.
-  The optional **Single-frame 500K (experimental)** decoder independently
-  decodes one temporal latent slice per requested image. It is intended for
+  The optional **Single-frame 500K (experimental)** decoder returns exactly one
+  image from temporal latent slice 0, matching its published inference recipe.
+  It is intended for
   structured graphics, diagrams, documents, UI-like layouts, line art, and
   product contours; the official decoder generally remains preferable for
   natural photographs, fine texture, and small scene text.
@@ -229,11 +230,11 @@ and audio latent; the selected format controls the final decode:
 With the default official VAE, H3's native short temporal packets contain 5 or
 22 frames. Image requests up to 5 frames sample the 5-frame packet; requests
 from 6 through 20 sample the 22-frame packet and trim the decoded batch to the
-exact requested count. The single-frame decoder instead needs one latent slice
-per output image, so it samples the shortest native `17k+5` packet providing
-enough slices: 5 frames for 1–2 images, 22 for 3–7, 39 for 8–12, 56 for 13–17,
-and 73 for 18–20. Higher image counts therefore cost more generation time with
-that decoder.
+exact requested count. The single-frame decoder always samples the shortest
+5-frame packet and independently decodes only the first normalized video-latent
+slice. This keeps official-versus-500K comparisons on the same denoising
+trajectory when both request one image. Use the official VAE for multi-image
+results.
 
 The **LTX-2.5** tab and **MiniMax Music 3** tab include their own Gemini prompt
 writers. They create or enhance prompts from text plus optional keyframe or

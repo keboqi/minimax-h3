@@ -2066,11 +2066,14 @@ def image_sampling_length(frame_count: int) -> int:
 
 
 def single_frame_image_sampling_length(frame_count: int) -> int:
-    """Return the shortest native packet with enough independent latent slices."""
+    """Use the publisher-supported first slice of H3's shortest packet."""
     frames = validate_image_frame_count(frame_count)
-    # Native H3 geometry is 17k+5 pixel frames <-> 5k+2 latent slices.
-    packets = max(0, math.ceil((frames - 2) / 5))
-    return 17 * packets + 5
+    if frames != 1:
+        raise H3Error(
+            "Single-frame 500K supports exactly one output image. "
+            "Select the official video VAE for multi-frame image results."
+        )
+    return 5
 
 
 def selected_image_sampling_length(frame_count: int, image_vae: Any) -> int:
@@ -2629,6 +2632,21 @@ def result_format_layout_updates(
             else resolution_summary(display_width, display_height)
         ),
         gr.update(value=f"Generate {result_format.lower()}"),
+    )
+
+
+def image_vae_frame_updates(image_vae: Any):
+    if normalize_image_vae(image_vae) == SINGLE_FRAME_IMAGE_VAE:
+        return gr.update(
+            value=1,
+            interactive=False,
+            info=(
+                "The 500K decoder supports one image from temporal latent slice 0."
+            ),
+        )
+    return gr.update(
+        interactive=True,
+        info="The official VAE returns 1–20 decoded video frames.",
     )
 
 
@@ -6840,7 +6858,7 @@ def build_ui() -> gr.Blocks:
                     info=(
                         "Official is the default and remains the only video decoder. "
                         "The experimental 500K option downloads 9.69 GB on first use "
-                        "and independently decodes temporal latent slices."
+                        "and decodes one image from temporal latent slice 0."
                     ),
                 )
                 help_text = gr.Markdown(mode_help("Text to video"))
@@ -7037,9 +7055,8 @@ def build_ui() -> gr.Blocks:
                         label="Image frames",
                         visible=False,
                         info=(
-                            "Returns exactly this many images. The official VAE uses "
-                            "short 5/22-frame packets; the single-frame VAE needs a "
-                            "separate temporal latent slice per image."
+                            "The official VAE returns 1–20 decoded video frames. "
+                            "Selecting the 500K decoder fixes this to one image."
                         ),
                     )
                     steps = gr.Slider(
@@ -7777,6 +7794,13 @@ def build_ui() -> gr.Blocks:
                 resolution_info,
                 run,
             ],
+            queue=False,
+            show_progress="hidden",
+        )
+        image_vae.change(
+            image_vae_frame_updates,
+            inputs=image_vae,
+            outputs=image_frames,
             queue=False,
             show_progress="hidden",
         )
@@ -8563,13 +8587,16 @@ def selftest() -> None:
     assert image_sampling_length(6) == 22
     assert image_sampling_length(20) == 22
     assert single_frame_image_sampling_length(1) == 5
-    assert single_frame_image_sampling_length(2) == 5
-    assert single_frame_image_sampling_length(3) == 22
-    assert single_frame_image_sampling_length(7) == 22
-    assert single_frame_image_sampling_length(8) == 39
-    assert single_frame_image_sampling_length(20) == 73
     assert selected_image_sampling_length(20, OFFICIAL_IMAGE_VAE) == 22
-    assert selected_image_sampling_length(20, SINGLE_FRAME_IMAGE_VAE) == 73
+    try:
+        selected_image_sampling_length(2, SINGLE_FRAME_IMAGE_VAE)
+    except H3Error as exc:
+        assert "exactly one output image" in str(exc)
+    else:
+        raise AssertionError("Single-frame 500K accepted multiple output images")
+    single_frame_update = image_vae_frame_updates(SINGLE_FRAME_IMAGE_VAE)
+    assert single_frame_update["value"] == 1
+    assert single_frame_update["interactive"] is False
     assert {"VAEDecode", "ImageFromBatch", "SaveImage"} <= required_nodes_for(
         "Text to video", False, "Off", result_format="Image"
     )
@@ -8590,7 +8617,7 @@ def selftest() -> None:
         easycache_threshold=0.10, easycache_start=0.15,
         easycache_end=0.85, easycache_verbose=False,
         model_name=fake.profile("speed").fl2va, models=fake,
-        available_nodes=available, result_format="Image", image_frames=20,
+        available_nodes=available, result_format="Image", image_frames=1,
         image_vae=SINGLE_FRAME_IMAGE_VAE,
     )
     single_classes = {
@@ -8600,7 +8627,7 @@ def selftest() -> None:
         node for node in single_frame_graph.values()
         if node["class_type"] == "MiniMaxH3ImageToVideo"
     )
-    assert single_conditioning["inputs"]["length"] == 73
+    assert single_conditioning["inputs"]["length"] == 5
     assert {H3_SINGLE_FRAME_VAE_LOADER_NODE, H3_IMAGE_SLICES_NODE} <= single_classes
     assert "ImageFromBatch" not in single_classes
     single_loader = next(
