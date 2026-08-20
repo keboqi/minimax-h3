@@ -25,6 +25,7 @@ SHARED_MODELS = ROOT / "h3_models.py"
 SHARED_REQUIREMENTS = ROOT / "h3_requirements.py"
 NODE_PATCHES = ROOT / "h3_node_patches.py"
 ATTENTION_HELPER = ROOT / "h3_attention.py"
+PROMPT_REWRITER = ROOT / "h3_prompt_rewriter.py"
 PROMPT_ENHANCER = ROOT / "prompt.txt"
 ACCEL_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
@@ -34,6 +35,7 @@ LOCAL_SHARED_MODELS = LOCAL / "h3_models.py"
 LOCAL_SHARED_REQUIREMENTS = LOCAL / "h3_requirements.py"
 LOCAL_NODE_PATCHES = LOCAL / "h3_node_patches.py"
 LOCAL_ATTENTION_HELPER = LOCAL / "h3_attention.py"
+LOCAL_PROMPT_REWRITER = LOCAL / "h3_prompt_rewriter.py"
 LOCAL_PROMPT_ENHANCER = LOCAL / "prompt.txt"
 
 DATA = PurePosixPath("/data")
@@ -115,6 +117,7 @@ _RUNTIME_LOCAL_MOUNTS = (
     (LOCAL_ACCEL, ACCEL_DEST),
     (LOCAL_SHARED_MODELS, SHARED_MODELS),
     (LOCAL_ATTENTION_HELPER, ATTENTION_HELPER),
+    (LOCAL_PROMPT_REWRITER, PROMPT_REWRITER),
     (LOCAL_PROMPT_ENHANCER, PROMPT_ENHANCER),
 )
 _BUILD_LOCAL_FILES = tuple(local for local, _ in _BUILD_LOCAL_MOUNTS)
@@ -318,6 +321,10 @@ def build(revision: str) -> None:
         "--upgrade",
         "gradio>=5,<7",
         "huggingface_hub>=0.34",
+        "transformers>=4.57.1",
+        "accelerate>=1.10",
+        "peft>=0.18",
+        "safetensors>=0.5",
         "requests>=2.32",
         "websocket-client>=1.8",
         "aiohttp>=3.11,<4",

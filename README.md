@@ -175,16 +175,25 @@ residency, prefetching, and host-memory pressure. It selects `--gpu-only` on
 64 GiB+ GPUs, where keeping the full stack resident avoids unnecessary loading.
 The 96 GiB Modal target likewise remains GPU-only.
 
-The **MiniMax H3** tab includes a Gemini prompt enhancer that combines the
-current text, active first/last-frame or reference image/video/audio inputs,
-duration, and resolution with the bundled `prompt.txt` system instruction. It
-supports `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, and
-`gemini-3.5-flash-lite`. Set `GEMINI_API_KEY` in the server environment, or
-enter a temporary key in the enhancer panel; a key entered in the UI is passed
-only to enhancement requests and is not stored by the server. It remains in the
-browser field for reuse until it is cleared manually or the page is refreshed.
-Uploaded Gemini Files are deleted after each request. The same operation is
-exposed as `/enhance_prompt`.
+The **MiniMax H3** tab includes local and Gemini prompt writers. The local writer
+uses `lightx2v/MiniMax-H3-Prompt-Rewriter-LoRA-8B` with
+`Qwen/Qwen3-VL-8B-Instruct-FP8` by default; the BF16
+`Qwen/Qwen3-VL-8B-Instruct` base is selectable. It supports the four tasks used
+to train the adapter: T2VA, first-frame I2VA, last-frame L2VA, and first/last
+frame FL2VA. The model loads lazily on the first local rewrite and is unloaded
+before generation so it does not compete with ComfyUI for VRAM. Local rewriting
+uses whole-second durations from 4 through 15 seconds. Override the adapter
+repository or local path with `H3_PROMPT_REWRITER_ADAPTER` when needed.
+
+Gemini combines the current text, active first/last-frame or reference
+image/video/audio inputs, duration, and resolution with the bundled `prompt.txt`
+system instruction. It supports `gemini-3.7-flash`, `gemini-3.6-flash`,
+`gemini-3.5-flash`, and `gemini-3.5-flash-lite`. Use Gemini for the separate
+Reference media mode, which is not one of the four tasks supported by the local
+adapter. Set `GEMINI_API_KEY` in the server environment, or enter a temporary
+key in the enhancer panel; a key entered in the UI is passed only to enhancement
+requests and is not stored by the server. Uploaded Gemini Files are deleted
+after each request. The selected operation is exposed as `/enhance_prompt`.
 
 ### H3 result formats
 
@@ -337,8 +346,8 @@ to the private ComfyUI backend on port 8188. Its public Uvicorn transport uses
 feature set while remaining compatible with standalone servers.
 
 Runtime-only Python files (`gradio_app.py`, `h3_models.py`, `h3_attention.py`,
-and the bundled H3Acceleration node) are mounted into Modal containers at
-startup after the expensive ComfyUI image layer is built. Changes to those files
+`h3_prompt_rewriter.py`, and the bundled H3Acceleration node) are mounted into
+Modal containers at startup after the expensive ComfyUI image layer is built. Changes to those files
 therefore reuse the cached ComfyUI, CUDA, Torch, and dependency layers. Only
 `h3_requirements.py`, which controls build-time package installation and ABI
 pins, is copied into an earlier image layer.
@@ -349,12 +358,13 @@ The fast checks do not download models or require a GPU:
 
 ```bash
 python3 -m py_compile \
-  gradio_app.py h3_attention.py h3_models.py h3_node_patches.py h3_requirements.py \
+  gradio_app.py h3_attention.py h3_models.py h3_node_patches.py h3_prompt_rewriter.py h3_requirements.py \
   modal_h3.py setup_h3.py custom_nodes/H3Acceleration/__init__.py
 python3 h3_requirements.py
 python3 h3_models.py
 python3 h3_node_patches.py --selftest
 python3 h3_attention.py --selftest
+python3 h3_prompt_rewriter.py
 python3 gradio_app.py --selftest
 bash -n run_h3.sh
 ```
@@ -362,6 +372,7 @@ bash -n run_h3.sh
 ## Repository layout
 
 - `gradio_app.py` — UI, workflow construction, and ComfyUI API client
+- `h3_prompt_rewriter.py` — lazy local Qwen3-VL 8B + MiniMax-H3 LoRA writer
 - `setup_h3.py` — local environment and model provisioning
 - `modal_h3.py` — Modal image, volume, and service lifecycle
 - `h3_models.py` — shared model inventory and download logic

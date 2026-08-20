@@ -62,6 +62,14 @@ from h3_models import (
     stale_model_keys,
     sync_models,
 )
+from h3_prompt_rewriter import (
+    BASE_MODEL_CHOICES as LOCAL_PROMPT_BASE_MODELS,
+    DEFAULT_BASE_MODEL_LABEL as DEFAULT_LOCAL_PROMPT_BASE_MODEL,
+    resolution_for_size as local_prompt_resolution,
+    rewrite_prompt as rewrite_local_h3_prompt,
+    task_for_inputs as local_prompt_task,
+    unload_prompt_rewriter,
+)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -118,6 +126,8 @@ GEMINI_PROMPT_MODELS = (
 )
 DEFAULT_GEMINI_PROMPT_MODEL = GEMINI_PROMPT_MODELS[0]
 GEMINI_API_ROOT = "https://generativelanguage.googleapis.com"
+PROMPT_WRITER_BACKENDS = ("Local MiniMax-H3 8B", "Gemini")
+DEFAULT_PROMPT_WRITER_BACKEND = PROMPT_WRITER_BACKENDS[0]
 PROMPT_ENHANCER_SYSTEM_PATH = SCRIPT_DIR / "prompt.txt"
 PROMPT_ENHANCER_SYSTEMS = {
     "MiniMax H3": PROMPT_ENHANCER_SYSTEM_PATH,
@@ -1052,7 +1062,7 @@ def enhance_ltx25_prompt(
     )
 
 
-def enhance_h3_prompt(
+def _enhance_h3_prompt_with_gemini(
     prompt: str,
     model: str,
     temporary_api_key: str,
@@ -1195,6 +1205,111 @@ def enhance_h3_prompt(
                         pass
     except (H3Error, requests.RequestException, OSError, ValueError) as exc:
         return str(prompt or ""), f"Prompt enhancement failed: {exc}"
+
+
+def enhance_h3_prompt(
+    prompt: str,
+    backend: str,
+    local_base_model: str,
+    local_max_new_tokens: int,
+    local_temperature: float,
+    local_top_p: float,
+    local_greedy: bool,
+    local_seed: int,
+    gemini_model: str,
+    temporary_api_key: str,
+    mode: str,
+    first_image: Any,
+    last_image: Any,
+    ref_image_1: Any,
+    ref_image_2: Any,
+    ref_image_3: Any,
+    ref_image_4: Any,
+    ref_image_5: Any,
+    ref_image_6: Any,
+    ref_image_7: Any,
+    ref_image_8: Any,
+    ref_image_9: Any,
+    ref_video_1: Any,
+    ref_video_2: Any,
+    ref_video_3: Any,
+    ref_audio_1: Any,
+    ref_audio_2: Any,
+    ref_audio_3: Any,
+    duration: float,
+    width: int,
+    height: int,
+    result_format: str = DEFAULT_RESULT_FORMAT,
+    image_frames: int = DEFAULT_IMAGE_FRAMES,
+) -> tuple[str, str]:
+    """Dispatch H3 prompt enhancement to the selected local or Gemini backend."""
+    if backend == "Gemini":
+        return _enhance_h3_prompt_with_gemini(
+            prompt,
+            gemini_model,
+            temporary_api_key,
+            mode,
+            first_image,
+            last_image,
+            ref_image_1,
+            ref_image_2,
+            ref_image_3,
+            ref_image_4,
+            ref_image_5,
+            ref_image_6,
+            ref_image_7,
+            ref_image_8,
+            ref_image_9,
+            ref_video_1,
+            ref_video_2,
+            ref_video_3,
+            ref_audio_1,
+            ref_audio_2,
+            ref_audio_3,
+            duration,
+            width,
+            height,
+            result_format,
+            image_frames,
+        )
+    if backend != "Local MiniMax-H3 8B":
+        return str(prompt or ""), f"Prompt enhancement failed: unsupported backend {backend!r}."
+    try:
+        if normalize_result_format(result_format) != "Video":
+            raise H3Error("The local 8B writer supports H3 audio-video prompts only.")
+        rough_prompt = str(prompt or "").strip()
+        if not rough_prompt:
+            raise H3Error("Enter a text prompt before enhancing locally.")
+        numeric_duration = float(duration)
+        if not numeric_duration.is_integer():
+            raise H3Error(
+                "The local 8B writer was trained for whole-second durations; "
+                "choose an integer duration from 4 to 15 seconds."
+            )
+        task = local_prompt_task(mode, first_image, last_image)
+        resolution = local_prompt_resolution(width, height, task)
+        return rewrite_local_h3_prompt(
+            prompt=rough_prompt,
+            task=task,
+            resolution=resolution,
+            duration=int(numeric_duration),
+            first_frame=first_image,
+            last_frame=last_image,
+            base_model=local_base_model,
+            max_new_tokens=int(local_max_new_tokens),
+            temperature=float(local_temperature),
+            top_p=float(local_top_p),
+            greedy=bool(local_greedy),
+            seed=int(local_seed),
+        )
+    except (H3Error, OSError, RuntimeError, ValueError) as exc:
+        return str(prompt or ""), f"Local prompt enhancement failed: {exc}"
+
+
+def prompt_writer_backend_visibility(backend: str) -> tuple[Any, Any]:
+    """Show only controls belonging to the selected prompt-writer backend."""
+    local_selected = backend == "Local MiniMax-H3 8B"
+    return gr.update(visible=local_selected), gr.update(visible=not local_selected)
 
 
 @dataclass(frozen=True)
@@ -4561,11 +4676,14 @@ def unload_comfy_models() -> None:
 
 def unload_all_models() -> tuple[str, str]:
     """Unload every resident ComfyUI model and refresh the backend summary."""
+    local_was_loaded = unload_prompt_rewriter()
     try:
         unload_comfy_models()
-        return "All models unloaded and cached VRAM released.", backend_status()
+        local_note = " Local 8B prompt writer unloaded." if local_was_loaded else ""
+        return f"All models unloaded and cached VRAM released.{local_note}", backend_status()
     except Exception as exc:
-        return f"VRAM release failed: {exc}", backend_status()
+        local_note = " Local 8B prompt writer was unloaded." if local_was_loaded else ""
+        return f"ComfyUI VRAM release failed: {exc}.{local_note}", backend_status()
 
 
 def video_download_path(video: str | Path) -> str:
@@ -5295,6 +5413,7 @@ def generate(
     clip_batch: UpscaleClipBatch | None = None
     clip_outputs: list[Path] = []
     try:
+        unload_prompt_rewriter()
         progress(0, desc="Validating request")
         yield None, progress_status("Validating request", started=started)
         result_format = normalize_result_format(result_format)
@@ -5907,6 +6026,7 @@ def generate_ltx25(
     queued_at = time.time()
     ws: websocket.WebSocket | None = None
     try:
+        unload_prompt_rewriter()
         progress(0, desc="Validating LTX-2.5 request")
         yield None, progress_status("Validating LTX-2.5 request", started=started)
         if not str(prompt).strip():
@@ -6047,6 +6167,7 @@ def generate_music3(
     queued_at = time.time()
     ws: websocket.WebSocket | None = None
     try:
+        unload_prompt_rewriter()
         yield None, progress_status("Validating Music 3 request", started=started)
         if not str(caption).strip():
             raise H3Error("A music caption is required.")
@@ -6489,24 +6610,64 @@ def build_ui() -> gr.Blocks:
                     label="Prompt", lines=12,
                     placeholder="Describe shots, camera motion, dialogue, sound effects, ambience, music, and any tagged references.",
                 )
-                with gr.Accordion("Gemini prompt enhancer", open=False):
+                with gr.Accordion("Prompt writer / enhancer", open=False):
                     gr.Markdown(
-                        "Uses the active text and media inputs with `prompt.txt`. "
-                        "Set `GEMINI_API_KEY` on the server or enter a key below; "
-                        "a UI key remains in this browser field until you clear it "
-                        "or refresh the page, and is not stored by the server."
+                        "The local MiniMax-H3 8B writer supports T2VA, I2VA, "
+                        "L2VA, and FL2VA. Gemini remains available for Reference "
+                        "media and other multimodal enhancement."
                     )
-                    with gr.Row():
-                        gemini_prompt_model = gr.Dropdown(
-                            choices=list(GEMINI_PROMPT_MODELS),
-                            value=DEFAULT_GEMINI_PROMPT_MODEL,
-                            label="Gemini model",
+                    prompt_writer_backend = gr.Radio(
+                        PROMPT_WRITER_BACKENDS,
+                        value=DEFAULT_PROMPT_WRITER_BACKEND,
+                        label="Prompt writer",
+                    )
+                    with gr.Group(visible=True) as local_prompt_writer_group:
+                        local_prompt_base_model = gr.Dropdown(
+                            choices=list(LOCAL_PROMPT_BASE_MODELS),
+                            value=DEFAULT_LOCAL_PROMPT_BASE_MODEL,
+                            label="Local base model",
+                            info=(
+                                "FP8 is the default lower-memory checkpoint. BF16 is "
+                                "available as the full-precision alternative."
+                            ),
                         )
-                        gemini_api_key = gr.Textbox(
-                            label="Temporary Gemini API key",
-                            type="password",
-                            placeholder="Uses GEMINI_API_KEY when blank",
+                        with gr.Accordion("Local decoding settings", open=False):
+                            local_prompt_greedy = gr.Checkbox(
+                                value=True, label="Greedy decoding"
+                            )
+                            local_prompt_max_tokens = gr.Slider(
+                                256, 8192, value=4096, step=256,
+                                label="Max new tokens",
+                            )
+                            with gr.Row():
+                                local_prompt_temperature = gr.Slider(
+                                    0.1, 2.0, value=0.7, step=0.1,
+                                    label="Temperature (sampling)",
+                                )
+                                local_prompt_top_p = gr.Slider(
+                                    0.05, 1.0, value=0.8, step=0.05,
+                                    label="Top-p (sampling)",
+                                )
+                            local_prompt_seed = gr.Number(
+                                value=42, precision=0, label="Seed"
+                            )
+                    with gr.Group(visible=False) as gemini_prompt_writer_group:
+                        gr.Markdown(
+                            "Uses the active inputs with `prompt.txt`. Set "
+                            "`GEMINI_API_KEY` on the server or enter a temporary key; "
+                            "the server does not store UI keys."
                         )
+                        with gr.Row():
+                            gemini_prompt_model = gr.Dropdown(
+                                choices=list(GEMINI_PROMPT_MODELS),
+                                value=DEFAULT_GEMINI_PROMPT_MODEL,
+                                label="Gemini model",
+                            )
+                            gemini_api_key = gr.Textbox(
+                                label="Temporary Gemini API key",
+                                type="password",
+                                placeholder="Uses GEMINI_API_KEY when blank",
+                            )
                     enhance_prompt_button = gr.Button("Generate / enhance prompt")
                     enhance_prompt_status = gr.Textbox(
                         label="Prompt enhancer status", lines=2, interactive=False
@@ -7630,10 +7791,28 @@ def build_ui() -> gr.Blocks:
             show_progress="minimal",
             api_name="save_h3_image_frames",
         )
+        prompt_writer_backend.change(
+            prompt_writer_backend_visibility,
+            inputs=prompt_writer_backend,
+            outputs=[local_prompt_writer_group, gemini_prompt_writer_group],
+            queue=False,
+            show_progress="hidden",
+            api_name=False,
+        )
         enhance_prompt_button.click(
             enhance_h3_prompt,
             inputs=[
-                prompt, gemini_prompt_model, gemini_api_key, mode, first, last,
+                prompt,
+                prompt_writer_backend,
+                local_prompt_base_model,
+                local_prompt_max_tokens,
+                local_prompt_temperature,
+                local_prompt_top_p,
+                local_prompt_greedy,
+                local_prompt_seed,
+                gemini_prompt_model,
+                gemini_api_key,
+                mode, first, last,
                 ref_image_1, ref_image_2, ref_image_3, ref_image_4, ref_image_5,
                 ref_image_6, ref_image_7, ref_image_8, ref_image_9,
                 ref_video_1, ref_video_2, ref_video_3,

@@ -540,6 +540,10 @@ def install_environment(comfy: Path) -> None:
     uv_pip(
         "gradio>=5,<7",
         "huggingface_hub>=0.34",
+        "transformers>=4.57.1",
+        "accelerate>=1.10",
+        "peft>=0.18",
+        "safetensors>=0.5",
         "requests>=2.32",
         "websocket-client>=1.8",
         "aiohttp>=3.11,<4",
