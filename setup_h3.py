@@ -541,21 +541,50 @@ def install_environment(comfy: Path) -> None:
         clean_untracked=False,
     )
     install_comfy_requirements(comfy)
-    uv_pip(
-        "gradio>=5,<7",
-        "huggingface_hub>=0.34",
-        "transformers>=4.57.1",
-        "accelerate>=1.10",
-        "peft>=0.18",
-        "safetensors>=0.5",
-        "requests>=2.32",
-        "websocket-client>=1.8",
-        "aiohttp>=3.11,<4",
-        "httpx>=0.27",
-        "uvicorn>=0.30",
-        f"wsproto=={WSPROTO_VERSION}",
-        "Pillow>=10",
-    )
+    app_constraint_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".txt", delete=False
+        ) as handle:
+            handle.write("\n".join(ABI_CONSTRAINTS) + "\n")
+            app_constraint_path = Path(handle.name)
+        uv_pip(
+            "gradio>=5,<7",
+            "huggingface_hub>=0.34",
+            "transformers>=4.57.1",
+            "accelerate>=1.10",
+            "peft>=0.18",
+            "safetensors>=0.5",
+            "requests>=2.32",
+            "websocket-client>=1.8",
+            "aiohttp>=3.11,<4",
+            "httpx>=0.27",
+            "uvicorn>=0.30",
+            f"wsproto=={WSPROTO_VERSION}",
+            "Pillow>=10",
+            "--constraint",
+            str(app_constraint_path),
+        )
+    finally:
+        if app_constraint_path is not None:
+            app_constraint_path.unlink(missing_ok=True)
+
+    # PEFT depends on Torch. Keep --upgrade from moving the environment to a
+    # newer C++ ABI after the earlier ComfyUI pin check, and repair any drift
+    # before importing binary extensions such as SageAttention.
+    if not torch_stack_matches():
+        found = current_torch_version()
+        print(
+            f"[h3-setup] App dependency Torch drift detected ({found}); "
+            f"restoring {TORCH_VERSION}+cu130",
+            flush=True,
+        )
+        install_pinned_torch_stack()
+    if not torch_stack_matches():
+        raise RuntimeError(
+            f"Torch remains {current_torch_version()} after ABI repair; expected "
+            f"{TORCH_VERSION}+cu130"
+        )
     install_pinned_numpy_stack()
 
 

@@ -261,6 +261,11 @@ def build(revision: str) -> None:
         "\n".join(filtered_lines) + "\n",
         encoding="utf-8",
     )
+    abi_constraints = Path("/tmp/h3-abi-constraints.txt")
+    abi_constraints.write_text(
+        "\n".join(ABI_CONSTRAINTS) + "\n",
+        encoding="utf-8",
+    )
     _run(
         "uv",
         "pip",
@@ -335,6 +340,8 @@ def build(revision: str) -> None:
         f"numpy=={NUMPY_VERSION}",
         f"scipy=={SCIPY_VERSION}",
         "setuptools<82",
+        "--constraint",
+        abi_constraints,
     )
 
     import torch as _torch
@@ -355,6 +362,7 @@ def build(revision: str) -> None:
         "install",
         "--system",
         "--upgrade",
+        "--force-reinstall",
         "--no-deps",
         SAGE_WHEEL_URL,
     )
@@ -386,11 +394,6 @@ def build(revision: str) -> None:
     custom_requirements.extend(
         directory / "requirements.txt"
         for directory in installed_nodes.values()
-    )
-    abi_constraints = Path("/tmp/h3-abi-constraints.txt")
-    abi_constraints.write_text(
-        "\n".join(ABI_CONSTRAINTS) + "\n",
-        encoding="utf-8",
     )
     for requirements in custom_requirements:
         if not requirements.is_file():
