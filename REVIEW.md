@@ -1,5 +1,19 @@
 # Code review and refactor notes
 
+## Output discovery review — 2026-08-20
+
+1. **Closed a containment gap in fallback output scans.** History-reported
+   video, audio, and image paths were resolved and checked against their managed
+   directory, while time-based fallback scans trusted the unresolved entry.
+   Both paths now use the same resolved-path containment policy, including for
+   symlinks.
+2. **Consolidated output candidate discovery.** Shared helpers now own history
+   parsing, extension filtering, recent-file filtering, deduplication, and
+   filesystem race handling for all three generated media families.
+3. **Added regression coverage.** The application self-test exercises accepted
+   video/image outputs, rejects a traversal reference, and covers recent-file
+   discovery.
+
 ## LTX 2.5 and shared-gallery review — 2026-08-12
 
 1. **Consolidated lazy-model freshness checks.** LTX had grown a UI-local

@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import unittest.mock
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -4677,51 +4678,78 @@ def walk_saved_refs(value: Any) -> Iterable[dict[str, str]]:
             yield from walk_saved_refs(child)
 
 
-def resolve_output(history: dict[str, Any], queued_at: float) -> Path:
-    candidates: list[Path] = []
+def _history_output_candidates(
+    history: dict[str, Any],
+    extensions: frozenset[str],
+    *,
+    directory: Path | None = None,
+) -> list[Path]:
+    """Return existing history outputs contained by the requested directory."""
     output_root = OUTPUT_DIR.resolve()
+    resolved_directory = (OUTPUT_DIR if directory is None else directory).resolve()
+    if not resolved_directory.is_relative_to(output_root):
+        raise ValueError("Output candidate directory must be inside OUTPUT_DIR")
+
+    candidates: list[Path] = []
     for ref in walk_saved_refs(history.get("outputs", {})):
         if ref["type"] != "output":
             continue
-        path = (OUTPUT_DIR / ref["subfolder"] / ref["filename"]).resolve()
-        if path.is_relative_to(output_root) and path.is_file():
-            candidates.append(path)
-    videos = [p for p in candidates if p.suffix.lower() in VIDEO_EXTENSIONS]
+        try:
+            path = (OUTPUT_DIR / ref["subfolder"] / ref["filename"]).resolve()
+            if (
+                path.is_relative_to(resolved_directory)
+                and path.is_file()
+                and path.suffix.lower() in extensions
+            ):
+                candidates.append(path)
+        except OSError:
+            continue
+    return candidates
+
+
+def _recent_output_candidates(
+    directory: Path,
+    extensions: frozenset[str],
+    queued_at: float,
+) -> list[Path]:
+    """Return recent files without following outputs outside the scan root."""
+    if not directory.is_dir():
+        return []
+    resolved_directory = directory.resolve()
+    candidates: dict[Path, Path] = {}
+    for candidate in directory.rglob("*"):
+        try:
+            path = candidate.resolve()
+            if (
+                path.is_relative_to(resolved_directory)
+                and path.is_file()
+                and path.suffix.lower() in extensions
+                and path.stat().st_mtime >= queued_at - 2
+            ):
+                candidates[path] = path
+        except OSError:
+            continue
+    return list(candidates.values())
+
+
+def resolve_output(history: dict[str, Any], queued_at: float) -> Path:
+    videos = _history_output_candidates(history, VIDEO_EXTENSIONS)
     if videos:
         return max(videos, key=lambda p: p.stat().st_mtime)
 
     # Newer SaveVideo UI payloads can be omitted from the public history shape.
     # Fall back only to files created after this job was queued.
-    recent = [
-        p for p in OUTPUT_DIR.rglob("*")
-        if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS and p.stat().st_mtime >= queued_at - 2
-    ]
+    recent = _recent_output_candidates(OUTPUT_DIR, VIDEO_EXTENSIONS, queued_at)
     if recent:
         return max(recent, key=lambda p: p.stat().st_mtime)
     raise H3Error("Generation completed, but no saved video could be located.")
 
 
 def resolve_audio_output(history: dict[str, Any], queued_at: float) -> Path:
-    candidates: list[Path] = []
-    output_root = OUTPUT_DIR.resolve()
-    for ref in walk_saved_refs(history.get("outputs", {})):
-        if ref["type"] != "output":
-            continue
-        path = (OUTPUT_DIR / ref["subfolder"] / ref["filename"]).resolve()
-        if (
-            path.is_relative_to(output_root)
-            and path.is_file()
-            and path.suffix.lower() in AUDIO_EXTENSIONS
-        ):
-            candidates.append(path)
+    candidates = _history_output_candidates(history, AUDIO_EXTENSIONS)
     if candidates:
         return max(candidates, key=lambda path: path.stat().st_mtime)
-    recent = [
-        path for path in OUTPUT_DIR.rglob("*")
-        if path.is_file()
-        and path.suffix.lower() in AUDIO_EXTENSIONS
-        and path.stat().st_mtime >= queued_at - 2
-    ]
+    recent = _recent_output_candidates(OUTPUT_DIR, AUDIO_EXTENSIONS, queued_at)
     if recent:
         return max(recent, key=lambda path: path.stat().st_mtime)
     raise H3Error("Generation completed, but no saved audio could be located.")
@@ -4731,32 +4759,18 @@ def resolve_image_outputs(
     history: dict[str, Any], queued_at: float, expected_count: int
 ) -> list[Path]:
     expected_count = validate_image_frame_count(expected_count)
-    output_root = OUTPUT_DIR.resolve()
     staging_root = (OUTPUT_DIR / "h3" / "image_staging").resolve()
-    candidates: list[Path] = []
-    for ref in walk_saved_refs(history.get("outputs", {})):
-        if ref["type"] != "output":
-            continue
-        path = (OUTPUT_DIR / ref["subfolder"] / ref["filename"]).resolve()
-        if (
-            path.is_relative_to(output_root)
-            and path.is_relative_to(staging_root)
-            and path.is_file()
-            and path.suffix.lower() in IMAGE_EXTENSIONS
-        ):
-            candidates.append(path)
+    candidates = _history_output_candidates(
+        history,
+        IMAGE_EXTENSIONS,
+        directory=staging_root,
+    )
     unique = sorted(set(candidates), key=lambda path: path.name)
     if len(unique) >= expected_count:
         return unique[:expected_count]
 
     recent = sorted(
-        (
-            path.resolve()
-            for path in staging_root.rglob("*")
-            if path.is_file()
-            and path.suffix.lower() in IMAGE_EXTENSIONS
-            and path.stat().st_mtime >= queued_at - 2
-        ),
+        _recent_output_candidates(staging_root, IMAGE_EXTENSIONS, queued_at),
         key=lambda path: (path.stat().st_mtime, path.name),
     )
     if len(recent) >= expected_count:
@@ -8547,6 +8561,43 @@ def selftest() -> None:
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
     )
+    with tempfile.TemporaryDirectory() as output_temp:
+        output_root = Path(output_temp)
+        staging_root = output_root / "h3" / "image_staging"
+        staging_root.mkdir(parents=True)
+        video_path = output_root / "video.mp4"
+        image_path = staging_root / "frame.png"
+        video_path.write_bytes(b"video")
+        image_path.write_bytes(b"image")
+        history = {
+            "outputs": {
+                "video": {"filename": "video.mp4", "type": "output"},
+                "image": {
+                    "filename": "frame.png",
+                    "subfolder": "h3/image_staging",
+                    "type": "output",
+                },
+                "escape": {
+                    "filename": "outside.mp4",
+                    "subfolder": "../",
+                    "type": "output",
+                },
+            }
+        }
+        with unittest.mock.patch(f"{__name__}.OUTPUT_DIR", output_root):
+            assert _history_output_candidates(history, VIDEO_EXTENSIONS) == [
+                video_path.resolve()
+            ]
+            assert _history_output_candidates(
+                history,
+                IMAGE_EXTENSIONS,
+                directory=staging_root,
+            ) == [image_path.resolve()]
+            assert _recent_output_candidates(
+                output_root,
+                VIDEO_EXTENSIONS,
+                time.time(),
+            ) == [video_path.resolve()]
     with tempfile.TemporaryDirectory() as enhancer_temp:
         enhancer_root = Path(enhancer_temp)
         first_path = enhancer_root / "first.png"
