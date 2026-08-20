@@ -715,6 +715,9 @@ class H3SingleFrameVAELoader:
 
     EXPECTED_DECODER_TENSORS = 585
     DECODER_PREFIXES = ("decoder.", "post_quant_conv.")
+    DECODER_BLOCKS = 36
+    ATTENTION_HEADS = 32
+    ATTENTION_HEAD_DIM = 64
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -741,6 +744,68 @@ class H3SingleFrameVAELoader:
             raise FileNotFoundError(f"MiniMax H3 VAE file is missing: {name}")
         return path
 
+    @classmethod
+    def _convert_diffusers_decoder(cls, state):
+        """Convert the published Diffusers decoder into ComfyUI's native layout."""
+
+        def rename(source, target):
+            if source not in state:
+                raise ValueError(f"Single-frame decoder is missing {source}")
+            if target in state:
+                raise ValueError(f"Single-frame decoder already contains {target}")
+            state[target] = state.pop(source)
+
+        for suffix in ("weight", "bias"):
+            rename(f"decoder.proj_in.{suffix}", f"decoder.x_embedder.{suffix}")
+
+        inner_dim = cls.ATTENTION_HEADS * cls.ATTENTION_HEAD_DIM
+        for index in range(cls.DECODER_BLOCKS):
+            prefix = f"decoder.transformer_blocks.{index}"
+            attention = f"{prefix}.attn"
+            for suffix in ("weight", "bias"):
+                projections = []
+                for name in ("q", "k", "v"):
+                    key = f"{attention}.to_{name}.{suffix}"
+                    if key not in state:
+                        raise ValueError(f"Single-frame decoder is missing {key}")
+                    tensor = state.pop(key)
+                    if tensor.shape[0] != inner_dim:
+                        raise ValueError(
+                            f"{key} has {tensor.shape[0]} rows; expected {inner_dim}"
+                        )
+                    projections.append(
+                        tensor.reshape(
+                            cls.ATTENTION_HEADS,
+                            cls.ATTENTION_HEAD_DIM,
+                            *tensor.shape[1:],
+                        )
+                    )
+                # The native checkpoint stores q/k/v per head:
+                # [head0 q k v, head1 q k v, ...].
+                fused = torch.cat(projections, dim=1).reshape(
+                    3 * inner_dim, *projections[0].shape[2:]
+                )
+                state[f"{attention}.to_qkv.{suffix}"] = fused.contiguous()
+
+                rename(
+                    f"{attention}.to_out.0.{suffix}",
+                    f"{attention}.to_out.{suffix}",
+                )
+
+                first = f"{prefix}.ff.net.0.proj.{suffix}"
+                if first not in state:
+                    raise ValueError(f"Single-frame decoder is missing {first}")
+                # Diffusers SwiGLU stores [up; gate]; ComfyUI expects [gate; up].
+                up, gate = state.pop(first).chunk(2, dim=0)
+                state[f"{prefix}.ff.w1.{suffix}"] = torch.cat(
+                    (gate, up), dim=0
+                ).contiguous()
+                rename(
+                    f"{prefix}.ff.net.2.{suffix}",
+                    f"{prefix}.ff.w2.{suffix}",
+                )
+        return state
+
     def load_vae(self, base_vae_name, decoder_name):
         base_path = self._vae_path(base_vae_name)
         decoder_path = self._vae_path(decoder_name)
@@ -765,10 +830,14 @@ class H3SingleFrameVAELoader:
                 f"expected {self.EXPECTED_DECODER_TENSORS}."
             )
 
+        decoder = self._convert_diffusers_decoder(decoder)
         expected = {
             key for key in base if key.startswith(self.DECODER_PREFIXES)
         }
-        missing = sorted(expected - set(decoder))
+        # mask_token is an unused all-zero training buffer which the published
+        # Diffusers-format decoder intentionally omits. Retain it from the base.
+        replaceable = expected - {"decoder.mask_token"}
+        missing = sorted(replaceable - set(decoder))
         extra = sorted(set(decoder) - expected)
         if missing or extra:
             raise ValueError(
@@ -776,7 +845,7 @@ class H3SingleFrameVAELoader:
                 f"missing={missing[:5]}, extra={extra[:5]}"
             )
         mismatched = sorted(
-            key for key in expected
+            key for key in replaceable
             if tuple(base[key].shape) != tuple(decoder[key].shape)
         )
         if mismatched:
