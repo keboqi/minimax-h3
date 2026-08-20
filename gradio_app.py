@@ -2241,6 +2241,41 @@ def resolution_control_updates(
     )
 
 
+def resolution_info_preview(
+    width: int | float,
+    height: int | float,
+    latent_upscale: bool,
+    result_format: str,
+) -> str:
+    """Return only the info text showing what the snapped value *would* be.
+
+    Unlike ``resolution_control_updates`` this does **not** write the snapped
+    values back into the width/height inputs, so the user can keep typing
+    multi-digit numbers without the field being overwritten mid-keystroke.
+    """
+    if normalize_result_format(result_format) == "Audio":
+        return "**Audio result** · resolution controls are ignored; H3 samples at 32×32."
+    alignment = 64 if latent_upscale else 32
+    resolved_width = snap_to_grid(width, alignment)
+    resolved_height = snap_to_grid(height, alignment)
+    prefix = "**Latent upscale 64-pixel alignment** · " if latent_upscale else ""
+    return prefix + resolution_summary(resolved_width, resolved_height)
+
+
+# Client-side debounce for the resolution snap.  After the user stops typing
+# for 1 000 ms the hidden ``#resolution-snap-btn`` is clicked, which triggers
+# the actual Python ``resolution_control_updates`` callback that writes the
+# snapped values back into the width/height fields.
+RESOLUTION_SNAP_DEBOUNCE_JS = r"""(...args) => {
+    window.__h3ResSnapTimer && clearTimeout(window.__h3ResSnapTimer);
+    window.__h3ResSnapTimer = setTimeout(() => {
+        const btn = document.getElementById('resolution-snap-btn');
+        if (btn) btn.click();
+    }, 1000);
+    return args;
+}"""
+
+
 def auto_resolution_from_start_frame(
     first_image: Any,
     current_width: int | float | None,
@@ -6836,6 +6871,10 @@ def build_ui() -> gr.Blocks:
                 resolution_info = gr.Markdown(
                     resolution_summary(defaults["width"], defaults["height"])
                 )
+                # Hidden button clicked by JS debounce after user stops typing.
+                resolution_snap_btn = gr.Button(
+                    visible=False, elem_id="resolution-snap-btn",
+                )
                 with gr.Row():
                     scheduler = gr.Radio(
                         ["simple", "beta", "normal"],
@@ -7708,28 +7747,43 @@ def build_ui() -> gr.Blocks:
                 fbcache_max_hits,
             ],
         )
-        width_input_event = width.input(
+        # --- Width / Height input: debounced resolution snap ----------------
+        # On every keystroke we update the info text immediately (preview of
+        # what the snapped value *would* be) without overwriting the typed
+        # value, and start a 1 000 ms JS debounce timer.  When the timer
+        # fires it clicks the hidden ``resolution_snap_btn`` which runs the
+        # full ``resolution_control_updates`` callback that writes the
+        # snapped values back into the fields.
+        width.input(
+            resolution_info_preview,
+            inputs=[width, height, latent_upscale, result_format],
+            outputs=[resolution_info],
+            queue=False,
+            show_progress="hidden",
+            js=RESOLUTION_SNAP_DEBOUNCE_JS,
+        )
+        height.input(
+            resolution_info_preview,
+            inputs=[width, height, latent_upscale, result_format],
+            outputs=[resolution_info],
+            queue=False,
+            show_progress="hidden",
+            js=RESOLUTION_SNAP_DEBOUNCE_JS,
+        )
+        resolution_snap_event = resolution_snap_btn.click(
             resolution_control_updates,
             inputs=[width, height, latent_upscale, result_format],
             outputs=[width, height, resolution_info],
             queue=False,
             show_progress="hidden",
         )
-        height_input_event = height.input(
-            resolution_control_updates,
-            inputs=[width, height, latent_upscale, result_format],
-            outputs=[width, height, resolution_info],
+        resolution_snap_event.then(
+            compact_settings_summary,
+            inputs=settings_inputs,
+            outputs=settings_overview,
             queue=False,
             show_progress="hidden",
         )
-        for resolution_input_event in (width_input_event, height_input_event):
-            resolution_input_event.then(
-                compact_settings_summary,
-                inputs=settings_inputs,
-                outputs=settings_overview,
-                queue=False,
-                show_progress="hidden",
-            )
         event = run.click(
             generate_for_ui,
             inputs=[
