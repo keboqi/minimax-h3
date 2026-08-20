@@ -18,6 +18,8 @@ TORCHVISION_VERSION = "0.26.0"
 TORCHAUDIO_VERSION = "2.11.0"
 NUMPY_VERSION = "1.26.4"
 SCIPY_VERSION = "1.15.3"
+# Transformers' fine-grained FP8 loader requires this exact minor release.
+KERNELS_VERSION = "0.16.0"
 # ComfyUI-LTXVideo ac4d998 imports ``pad`` from Kornia's pyramid module.
 # Kornia 0.8.2+ removed that module-level compatibility export.
 KORNIA_VERSION = "0.8.1"
@@ -242,6 +244,7 @@ def selftest() -> None:
         "scipy==1.15.3",
     )
     assert KORNIA_VERSION == "0.8.1"
+    assert KERNELS_VERSION == "0.16.0"
     assert COMFY_REF == "72865f4f27eaf5396f8f36370e0a2be3a9a090ee"
     assert COMFY_KITCHEN_VERSION == "0.2.31"
     assert COMFY_FRONTEND_VERSION == "1.48.7"

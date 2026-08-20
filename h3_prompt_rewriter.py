@@ -147,6 +147,16 @@ def expected_image_count(task: str) -> int:
     return {"t2av": 0, "i2av": 1, "l2av": 1, "fl2av": 2}[normalize_task(task)]
 
 
+def render_chat_template(processor: Any, messages: list[dict[str, Any]]) -> str:
+    """Render without leaking template options into processor.__call__."""
+    return processor.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+        template_kwargs={"enable_thinking": False},
+    )
+
+
 def task_for_inputs(mode: str, first_frame: Any, last_frame: Any) -> str:
     if mode == "Text to video":
         return "t2av"
@@ -319,12 +329,7 @@ class _LocalPromptRewriter:
             if torch.cuda.is_available():
                 torch.cuda.manual_seed_all(int(seed))
             messages = build_messages(prompt, task, resolution, duration)
-            rendered = processor.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=False,
-            )
+            rendered = render_chat_template(processor, messages)
             processor_kwargs: dict[str, Any] = {
                 "text": [rendered],
                 "return_tensors": "pt",
@@ -397,6 +402,13 @@ def prompt_rewriter_is_loaded() -> bool:
 
 
 def selftest() -> None:
+    class FakeProcessor:
+        @staticmethod
+        def apply_chat_template(*_args: Any, **kwargs: Any) -> str:
+            assert kwargs["template_kwargs"] == {"enable_thinking": False}
+            assert "enable_thinking" not in kwargs
+            return "rendered"
+
     assert resolve_base_model(None) == (
         DEFAULT_BASE_MODEL_LABEL,
         "Qwen/Qwen3-VL-8B-Instruct-FP8",
@@ -416,6 +428,7 @@ def selftest() -> None:
     ]
     assert len(image_parts) == 2
     assert "duration: 10s" in messages[1]["content"][-1]["text"]
+    assert render_chat_template(FakeProcessor(), messages) == "rendered"
     print("H3 prompt rewriter selftest OK")
 
 
