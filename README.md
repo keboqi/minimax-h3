@@ -22,7 +22,8 @@ FirstBlockCache node.
 - Live queue position, workflow stage, node count, overall work, and sampling schedule
 - Resolution-aware thumbnail gallery that loads a video only after it is selected
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
-- Official Qwen3-VL 32B NVFP4/AWQ text encoder from the Comfy H3 release
+- Selectable official Qwen3-VL 32B NVFP4/AWQ, INT8 ConvRot, and BF16 text encoders
+- Optional model offload at every H3 stage boundary, automatically required for BF16
 - Per-video SeedVR2 or LTX-2.5 IC-LoRA 2x upscale and frame interpolation
 - Optional generation-stage MiniMax H3 latent 2x upscale, with Balanced BF16,
   Fast FP16, and Quality FP32 model choices
@@ -143,6 +144,13 @@ official H3 video VAE regardless of this image setting.
 The native H3 latent upscaler is also default-off and lazy-downloads only the
 selected checkpoint. **Balanced (BF16)** is the default choice; **Fast (FP16)**
 and **Quality (FP32)** remain selectable.
+The H3 text encoder defaults to the preloaded **NVFP4 / AWQ** checkpoint. The
+**INT8 ConvRot** (27.1 GB) and **BF16** (51.5 GB) checkpoints download on first
+selection. Choosing BF16 automatically enables and locks **Offload models
+between H3 stages** so the text encoder, diffusion model, optional latent
+upscaler, and VAEs do not need to remain resident together. INT8 and NVFP4 keep
+the current all-VRAM path by default; stage offload can still be enabled
+manually for either one.
 The gated LTX-2.5 distilled transformers are available as **INT8 ConvRot
 (default)** and **BF16**. The selected transformer plus the shared fine-tuned
 Gemma text encoder and audio/video VAEs
@@ -179,8 +187,10 @@ missing.
 The UI listens on `http://127.0.0.1:7860` by default. Local launch uses ComfyUI
 Dynamic VRAM on GPUs below 64 GiB, allowing current releases to manage model
 residency, prefetching, and host-memory pressure. It selects `--gpu-only` on
-64 GiB+ GPUs, where keeping the full stack resident avoids unnecessary loading.
-The 96 GiB Modal target likewise remains GPU-only.
+64 GiB+ GPUs, where keeping the default compact stack resident avoids unnecessary
+loading. The 96 GiB Modal target likewise remains GPU-only. The H3 stage-offload
+workflow overrides that residency between stages when explicitly enabled or
+when the 51.5 GB BF16 text encoder is selected.
 
 The **MiniMax H3** tab includes local and Gemini prompt writers. The local writer
 uses `lightx2v/MiniMax-H3-Prompt-Rewriter-LoRA-8B` with
@@ -397,7 +407,7 @@ bash -n run_h3.sh
 - `h3_node_patches.py` — verified compatibility patches for pinned external nodes
 - `h3_requirements.py` — shared dependency compatibility policy
 - `h3_attention.py` — runtime SageAttention capability probe
-- `custom_nodes/H3Acceleration` — bundled FirstBlockCache node
+- `custom_nodes/H3Acceleration` — bundled H3 acceleration and stage-offload nodes
 - Larry's pinned `ComfyUI-MiniMax-H3-Turbo` — quantization-aware Turbo loader/sampler
 - Lightricks' pinned `ComfyUI-LTXVideo` plus the pinned KJNodes, ControlNet
   preprocessors, and Video Depth Anything nodes required by the official LTX-2.5

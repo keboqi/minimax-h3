@@ -45,11 +45,13 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from h3_models import (
+    DEFAULT_H3_TEXT_ENCODER,
     DEFAULT_H3_LATENT_UPSCALER_MODEL,
     DEFAULT_MUSIC3_MODEL,
     DEFAULT_LTX25_MODEL,
     DEFAULT_SEEDVR2_MODEL,
     H3_LATENT_UPSCALER_MODEL_CHOICES,
+    H3_TEXT_ENCODER_CHOICES,
     LTX25_MODEL_CHOICES,
     LTX25_ICLORA_MODEL_KEYS,
     LTX25_SHARED_MODEL_KEYS,
@@ -276,6 +278,7 @@ H3_SEPARATE_AV_LATENT_NODE = "H3SeparateAVLatent"
 H3_COMBINE_AV_LATENT_NODE = "H3CombineAVLatent"
 H3_SINGLE_FRAME_VAE_LOADER_NODE = "H3SingleFrameVAELoader"
 H3_IMAGE_SLICES_NODE = "H3VideoLatentSlicesToBatch"
+H3_STAGE_OFFLOAD_NODE = "H3StageModelOffload"
 H3_LATENT_UPSCALE_SCALE = 2.0
 SOL_ATTENTION_NODE = "MiniMaxH3MemoryEfficientSolAttentionPatch"
 SAGE_ATTENTION_NODE = "PathchSageAttentionKJ"
@@ -328,6 +331,8 @@ UI_DEFAULTS = {
     "image_vae": DEFAULT_IMAGE_VAE,
     "image_frames": DEFAULT_IMAGE_FRAMES,
     "model_profile": "Quality",
+    "text_encoder": DEFAULT_H3_TEXT_ENCODER,
+    "stage_model_offload": False,
     "use_int8_vae": False,
     "generation_mode": "Turbo",
     "turbo_variant": DEFAULT_TURBO,
@@ -1391,6 +1396,7 @@ class ModelConfig:
     text_encoder: str
     video_vae: str
     audio_vae: str
+    text_encoders: dict[str, str] | None = None
     video_vae_int8: str | None = None
     video_vae_int8_source: str = "unknown"
     image_vae_500k: str | None = None
@@ -1458,6 +1464,7 @@ def load_model_config() -> ModelConfig:
         profiles=profiles,
         default_profile=default_profile,
         text_encoder=data["text_encoder"],
+        text_encoders=data.get("text_encoders"),
         video_vae=data["video_vae"],
         audio_vae=data["audio_vae"],
         video_vae_int8=data.get("video_vae_int8"),
@@ -1496,6 +1503,64 @@ def load_model_config() -> ModelConfig:
 
 def model_file_is_ready(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > MIN_VALID_MODEL_BYTES
+
+
+def h3_text_encoder_settings(
+    models: ModelConfig,
+    model_choice: str,
+) -> tuple[str, str, bool]:
+    """Resolve an H3 text-encoder label to its inventory key and filename."""
+    choice = str(model_choice)
+    model_key = H3_TEXT_ENCODER_CHOICES.get(choice)
+    if model_key is None:
+        raise H3Error(f"Unknown H3 text encoder: {model_choice}")
+    configured = models.text_encoders or {
+        DEFAULT_H3_TEXT_ENCODER: models.text_encoder,
+    }
+    filename = configured.get(choice, MODEL_SPECS[model_key].local_name)
+    return model_key, filename, model_key == "text_encoder_bf16"
+
+
+def ensure_h3_text_encoder(models: ModelConfig, model_choice: str) -> tuple[str, bool]:
+    """Download an optional H3 text encoder on first use."""
+    model_key, filename, requires_offload = h3_text_encoder_settings(
+        models, model_choice
+    )
+    manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
+    if stale_model_keys(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        model_keys=(model_key,),
+    ):
+        sync_models(
+            root=COMFY_DIR / "models",
+            manifest_path=manifest_path,
+            token=resolve_hf_token(),
+            log_prefix="[h3-text-encoder-on-demand]",
+            model_keys=(model_key,),
+            download_workers=1,
+        )
+    destination = COMFY_DIR / "models" / MODEL_SPECS[model_key].folder / filename
+    if not model_file_is_ready(destination):
+        raise H3Error(
+            f"On-demand H3 text encoder download did not produce {filename}."
+        )
+    return filename, requires_offload
+
+
+def text_encoder_offload_update(model_choice: str):
+    """Keep the UI memory option aligned with the selected encoder tier."""
+    bf16 = H3_TEXT_ENCODER_CHOICES.get(str(model_choice)) == "text_encoder_bf16"
+    return gr.update(
+        value=bf16,
+        interactive=not bf16,
+        info=(
+            "Required for the 51.5 GB BF16 encoder; models are unloaded between "
+            "text encoding, diffusion, latent upscaling, and VAE decoding."
+            if bf16
+            else "Unload resident models at each H3 stage boundary to reduce peak VRAM."
+        ),
+    )
 
 
 def h3_latent_upscaler_settings(model_choice: str) -> tuple[str, str, str]:
@@ -2918,6 +2983,7 @@ def add_model_stack(
     easycache_end: float,
     easycache_verbose: bool,
     available_nodes: set[str],
+    text_encoder_name: str | None = None,
     use_int8_vae: bool = False,
     use_sage: bool = False,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
@@ -3080,7 +3146,7 @@ def add_model_stack(
 
     clip = graph.add(
         "CLIPLoader",
-        clip_name=models.text_encoder,
+        clip_name=text_encoder_name or models.text_encoder,
         type="minimax",
         device="default",
     )
@@ -3096,6 +3162,24 @@ def add_model_stack(
     video_vae = graph.add("VAELoader", vae_name=video_vae_name)
     audio_vae = graph.add("VAELoader", vae_name=models.audio_vae)
     return model_ref, Graph.out(clip), Graph.out(video_vae), Graph.out(audio_vae)
+
+
+def add_h3_stage_offload(
+    graph: Graph,
+    conditioning_ref: list[Any],
+    latent_ref: list[Any],
+    additional_conditioning_ref: list[Any] | None = None,
+    additional_latent_ref: list[Any] | None = None,
+) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
+    """Insert an execution barrier that unloads one H3 stage before the next."""
+    barrier = graph.add(
+        H3_STAGE_OFFLOAD_NODE,
+        conditioning=conditioning_ref,
+        latent=latent_ref,
+        additional_conditioning=additional_conditioning_ref or conditioning_ref,
+        additional_latent=additional_latent_ref or latent_ref,
+    )
+    return tuple(Graph.out(barrier, slot) for slot in range(4))  # type: ignore[return-value]
 
 
 def finish_sampling(
@@ -3121,8 +3205,22 @@ def finish_sampling(
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
+    stage_model_offload: bool = False,
 ) -> None:
     result_format = normalize_result_format(result_format)
+    if stage_model_offload:
+        (
+            conditioning_ref,
+            latent_ref,
+            initial_conditioning_ref,
+            initial_latent_ref,
+        ) = add_h3_stage_offload(
+            graph,
+            conditioning_ref,
+            latent_ref,
+            initial_conditioning_ref,
+            initial_latent_ref,
+        )
     noise = graph.add("RandomNoise", noise_seed=int(seed))
     guider = graph.add("BasicGuider", model=model_ref, conditioning=conditioning_ref)
     use_larry_sampler = (
@@ -3162,9 +3260,21 @@ def finish_sampling(
             sigmas=Graph.out(sigmas),
             latent_image=initial_latent_ref,
         )
+        initial_sampled_ref = Graph.out(initial_sampled)
+        if stage_model_offload:
+            (
+                _unused_conditioning,
+                initial_sampled_ref,
+                _unused_additional_conditioning,
+                _unused_additional_latent,
+            ) = add_h3_stage_offload(
+                graph,
+                conditioning_ref,
+                initial_sampled_ref,
+            )
         separated = graph.add(
             H3_SEPARATE_AV_LATENT_NODE,
-            latent=Graph.out(initial_sampled),
+            latent=initial_sampled_ref,
         )
         upscaled_video = graph.add(
             H3_LATENT_UPSCALER_NODE,
@@ -3179,15 +3289,23 @@ def finish_sampling(
             video_latent=Graph.out(upscaled_video),
             audio_latent=Graph.out(separated, 1),
         )
+        combined_ref = Graph.out(combined)
+        if stage_model_offload:
+            (
+                _unused_conditioning,
+                combined_ref,
+                _unused_additional_conditioning,
+                _unused_additional_latent,
+            ) = add_h3_stage_offload(graph, conditioning_ref, combined_ref)
         sampled = graph.add(
             "SamplerCustomAdvanced",
             noise=Graph.out(noise),
             guider=Graph.out(guider),
             sampler=Graph.out(sampler),
             sigmas=Graph.out(refine_sigmas, 1),
-            latent_image=Graph.out(combined),
+            latent_image=combined_ref,
         )
-        audio_samples = Graph.out(initial_sampled)
+        audio_samples = initial_sampled_ref
     else:
         sampled = graph.add(
             "SamplerCustomAdvanced",
@@ -3198,9 +3316,23 @@ def finish_sampling(
             latent_image=latent_ref,
         )
         audio_samples = Graph.out(sampled)
+    sampled_ref = Graph.out(sampled)
+    if stage_model_offload:
+        (
+            _unused_conditioning,
+            sampled_ref,
+            _unused_additional_conditioning,
+            audio_samples,
+        ) = add_h3_stage_offload(
+            graph,
+            conditioning_ref,
+            sampled_ref,
+            conditioning_ref,
+            audio_samples,
+        )
     if result_format == "Image":
         requested_frames = validate_image_frame_count(image_frames)
-        decode_samples = Graph.out(sampled)
+        decode_samples = sampled_ref
         if single_frame_images:
             slices = graph.add(
                 H3_IMAGE_SLICES_NODE,
@@ -3242,7 +3374,7 @@ def finish_sampling(
         )
         return
 
-    images = graph.add("VAEDecode", samples=Graph.out(sampled), vae=video_vae_ref)
+    images = graph.add("VAEDecode", samples=sampled_ref, vae=video_vae_ref)
     audio = graph.add("VAEDecodeAudio", samples=audio_samples, vae=audio_vae_ref)
     video = graph.add(
         "CreateVideo",
@@ -3307,6 +3439,8 @@ def build_fl2va_graph(
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae: str = DEFAULT_IMAGE_VAE,
+    text_encoder_name: str | None = None,
+    stage_model_offload: bool = False,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -3335,6 +3469,7 @@ def build_fl2va_graph(
         easycache_end=easycache_end,
         easycache_verbose=easycache_verbose,
         available_nodes=available_nodes,
+        text_encoder_name=text_encoder_name,
         use_int8_vae=use_int8_vae,
         use_sage=use_sage,
     )
@@ -3421,6 +3556,7 @@ def build_fl2va_graph(
         latent_upscale_model_name=latent_upscale_model_name,
         latent_upscale_precision=latent_upscale_precision,
         latent_upscale_refine_steps=latent_upscale_refine_steps,
+        stage_model_offload=stage_model_offload,
     )
     return graph.nodes
 
@@ -3470,6 +3606,8 @@ def build_ref2va_graph(
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae: str = DEFAULT_IMAGE_VAE,
+    text_encoder_name: str | None = None,
+    stage_model_offload: bool = False,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -3498,6 +3636,7 @@ def build_ref2va_graph(
         easycache_end=easycache_end,
         easycache_verbose=easycache_verbose,
         available_nodes=available_nodes,
+        text_encoder_name=text_encoder_name,
         use_int8_vae=use_int8_vae,
         use_sage=use_sage,
     )
@@ -3595,6 +3734,7 @@ def build_ref2va_graph(
         latent_upscale_model_name=latent_upscale_model_name,
         latent_upscale_precision=latent_upscale_precision,
         latent_upscale_refine_steps=latent_upscale_refine_steps,
+        stage_model_offload=stage_model_offload,
     )
     return graph.nodes
 
@@ -4183,6 +4323,7 @@ def required_nodes_for(
     latent_upscale: bool = False,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_vae: str = DEFAULT_IMAGE_VAE,
+    stage_model_offload: bool = False,
 ) -> set[str]:
     result_format = normalize_result_format(result_format)
     common = {
@@ -4226,6 +4367,8 @@ def required_nodes_for(
             H3_SEPARATE_AV_LATENT_NODE,
             H3_COMBINE_AV_LATENT_NODE,
         }
+    if stage_model_offload:
+        common.add(H3_STAGE_OFFLOAD_NODE)
     if "convrot" in model_filename.lower():
         common.add(CHUNK_FEED_FORWARD_NODE)
     if str(cache_mode).strip().lower() == "firstblockcache":
@@ -5564,6 +5707,8 @@ def backend_status() -> str:
 def generate(
     mode: str,
     model_profile: str,
+    text_encoder: str,
+    stage_model_offload: bool,
     generation_mode: str,
     turbo_variant: str,
     prompt: str,
@@ -5666,6 +5811,30 @@ def generate(
         )
         actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
         models = load_model_config()
+        text_encoder_key, selected_text_encoder, bf16_text_encoder = (
+            h3_text_encoder_settings(models, text_encoder)
+        )
+        text_encoder_path = (
+            COMFY_DIR
+            / "models"
+            / MODEL_SPECS[text_encoder_key].folder
+            / selected_text_encoder
+        )
+        if not model_file_is_ready(text_encoder_path):
+            progress(0, desc=f"Downloading {text_encoder} text encoder")
+            yield None, progress_status(
+                f"Downloading the {text_encoder} H3 text encoder on demand",
+                started=started,
+                detail=(
+                    "The BF16 checkpoint is approximately 51.5 GB."
+                    if bf16_text_encoder
+                    else None
+                ),
+            )
+        selected_text_encoder, bf16_text_encoder = ensure_h3_text_encoder(
+            models, text_encoder
+        )
+        effective_stage_offload = bool(stage_model_offload) or bf16_text_encoder
         if use_int8_vae:
             progress(0, desc="Preparing INT8 video VAE")
             ensure_int8_video_vae(models)
@@ -5729,6 +5898,10 @@ def generate(
             turbo_strength = 1.0
         selected_label += (
             " · INT8 ConvRot VAE" if use_int8_vae else " · FP16 VAE"
+        )
+        selected_label += (
+            f" · text encoder {text_encoder} · stage offload "
+            f"{'on' if effective_stage_offload else 'off'}"
         )
         if result_format == "Image":
             selected_label += f" · image decoder {selected_image_vae}"
@@ -5821,6 +5994,7 @@ def generate(
             latent_upscale=bool(latent_upscale),
             result_format=result_format,
             image_vae=selected_image_vae,
+            stage_model_offload=effective_stage_offload,
         ) - available
         if missing:
             raise H3Error("Missing ComfyUI nodes: " + ", ".join(sorted(missing)))
@@ -5884,6 +6058,8 @@ def generate(
                 latent_upscale_model_name=latent_upscale_model_name,
                 latent_upscale_precision=latent_upscale_precision,
                 latent_upscale_refine_steps=int(latent_upscale_refine_steps),
+                text_encoder_name=selected_text_encoder,
+                stage_model_offload=effective_stage_offload,
             )
         else:
             graph = build_fl2va_graph(
@@ -5918,6 +6094,8 @@ def generate(
                 latent_upscale_model_name=latent_upscale_model_name,
                 latent_upscale_precision=latent_upscale_precision,
                 latent_upscale_refine_steps=int(latent_upscale_refine_steps),
+                text_encoder_name=selected_text_encoder,
+                stage_model_offload=effective_stage_offload,
             )
 
         client_id = str(uuid.uuid4())
@@ -6514,6 +6692,8 @@ def preset_values(name: str):
 def compact_settings_summary(
     mode: str,
     model_profile: str,
+    text_encoder: str,
+    stage_model_offload: bool,
     use_int8_vae: bool,
     generation_mode: str,
     turbo_variant: str,
@@ -6538,7 +6718,8 @@ def compact_settings_summary(
     image_vae: str = DEFAULT_IMAGE_VAE,
 ) -> str:
     model_profile = (
-        f"{model_profile} / VAE: "
+        f"{model_profile} / text: {text_encoder} / stage offload: "
+        f"{'on' if stage_model_offload or text_encoder == 'BF16' else 'off'} / VAE: "
         f"{'INT8 ConvRot' if use_int8_vae else 'FP16'}"
     )
     if generation_mode == "Turbo":
@@ -6624,6 +6805,8 @@ def generate_with_ui_defaults(
     updates = generate(
         mode=defaults["mode"],
         model_profile=defaults["model_profile"],
+        text_encoder=defaults["text_encoder"],
+        stage_model_offload=defaults["stage_model_offload"],
         use_int8_vae=defaults["use_int8_vae"],
         image_vae=defaults["image_vae"],
         result_format=defaults["result_format"],
@@ -6842,6 +7025,24 @@ def build_ui() -> gr.Blocks:
                             "LoRA and is experimental."
                         ),
                     )
+                with gr.Row():
+                    text_encoder = gr.Dropdown(
+                        choices=list(H3_TEXT_ENCODER_CHOICES),
+                        value=defaults["text_encoder"],
+                        label="Text encoder",
+                        info=(
+                            "NVFP4 is preloaded. INT8 ConvRot and BF16 download on first "
+                            "use; BF16 is approximately 51.5 GB."
+                        ),
+                    )
+                    stage_model_offload = gr.Checkbox(
+                        value=defaults["stage_model_offload"],
+                        label="Offload models between H3 stages",
+                        info=(
+                            "Unload resident models between text encoding, diffusion, "
+                            "latent upscaling, and VAE decoding."
+                        ),
+                    )
                 use_int8_vae = gr.Checkbox(
                     value=defaults["use_int8_vae"],
                     label="Experimental INT8 ConvRot video VAE",
@@ -6969,6 +7170,7 @@ def build_ui() -> gr.Blocks:
                 settings_overview = gr.Markdown(
                     compact_settings_summary(
                         defaults["mode"], defaults["model_profile"],
+                        defaults["text_encoder"], defaults["stage_model_offload"],
                         defaults["use_int8_vae"],
                         defaults["generation_mode"], defaults["turbo_variant"],
                         defaults["duration"], defaults["width"], defaults["height"],
@@ -7742,7 +7944,8 @@ def build_ui() -> gr.Blocks:
                 api_status = gr.Textbox(label="Status", lines=5)
 
         settings_inputs = [
-            mode, model_profile, use_int8_vae, generation_mode, turbo_variant,
+            mode, model_profile, text_encoder, stage_model_offload,
+            use_int8_vae, generation_mode, turbo_variant,
             duration, width, height,
             steps, scheduler, attention_mode, cache_mode,
             latent_upscale,
@@ -7776,6 +7979,13 @@ def build_ui() -> gr.Blocks:
                 help_text, frame_group, reference_group, generation_mode,
                 preset, steps, scheduler, cache_mode, attention_mode,
             ],
+        )
+        text_encoder.change(
+            text_encoder_offload_update,
+            inputs=text_encoder,
+            outputs=stage_model_offload,
+            queue=False,
+            show_progress="hidden",
         )
         result_format.change(
             result_format_layout_updates,
@@ -8010,7 +8220,8 @@ def build_ui() -> gr.Blocks:
         event = run.click(
             generate_for_ui,
             inputs=[
-                mode, model_profile, generation_mode, turbo_variant,
+                mode, model_profile, text_encoder, stage_model_offload,
+                generation_mode, turbo_variant,
                 prompt, first, last,
                 ref_image_1, ref_image_2, ref_image_3, ref_image_4, ref_image_5, ref_image_6,
                 ref_image_7, ref_image_8, ref_image_9,
@@ -8508,7 +8719,21 @@ def selftest() -> None:
         H3_SIGMA_SHIFT_NODE,
         H3_SINGLE_FRAME_VAE_LOADER_NODE,
         H3_IMAGE_SLICES_NODE,
+        H3_STAGE_OFFLOAD_NODE,
     }
+    assert h3_text_encoder_settings(fake, "NVFP4 / AWQ") == (
+        "text_encoder", "text.safetensors", False
+    )
+    assert h3_text_encoder_settings(fake, "BF16") == (
+        "text_encoder_bf16",
+        "qwen3vl_32b_minimax_h3_bf16.safetensors",
+        True,
+    )
+    assert text_encoder_offload_update("BF16")["value"] is True
+    assert text_encoder_offload_update("BF16")["interactive"] is False
+    assert H3_STAGE_OFFLOAD_NODE in required_nodes_for(
+        "Text to video", False, "Off", stage_model_offload=True
+    )
     assert fake.turbo_lora_for("Text to video", LIGHTX2V_4STEP_TURBO) == fake.turbo_lora
     assert fake.turbo_lora_for("Reference media", LIGHTX2V_4STEP_TURBO) == fake.turbo_ref_lora
     assert fake.turbo_lora_for("Text to video", LIGHTX2V_8STEP_TURBO) == fake.turbo_8step_lora
@@ -8542,6 +8767,8 @@ def selftest() -> None:
         easycache_verbose=False,
         model_name=fake.profile("speed").fl2va,
         models=fake, available_nodes=available,
+        text_encoder_name="qwen3vl_32b_minimax_h3_bf16.safetensors",
+        stage_model_offload=True,
     )
     classes = {node["class_type"] for node in graph.values()}
     expected = {
@@ -8556,6 +8783,15 @@ def selftest() -> None:
     missing = expected - classes
     if missing:
         raise SystemExit(f"Selftest failed; missing nodes: {missing}")
+    clip_loader = next(
+        node for node in graph.values() if node["class_type"] == "CLIPLoader"
+    )
+    assert clip_loader["inputs"]["clip_name"] == (
+        "qwen3vl_32b_minimax_h3_bf16.safetensors"
+    )
+    assert sum(
+        node["class_type"] == H3_STAGE_OFFLOAD_NODE for node in graph.values()
+    ) == 2
 
     image_graph = build_fl2va_graph(
         prompt="image result test", first_image=None, last_image=None,
@@ -8749,6 +8985,7 @@ def selftest() -> None:
         available_nodes=available,
         latent_upscale_model_name="minimax_h3_latent_upscaler_3d_bf16.safetensors",
         latent_upscale_precision="bf16", latent_upscale_refine_steps=2,
+        stage_model_offload=True,
     )
     latent_conditioning = [
         node for node in latent_graph.values()
@@ -8761,6 +8998,10 @@ def selftest() -> None:
         if node["class_type"] == "SamplerCustomAdvanced"
     ]
     assert len(latent_samplers) == 2
+    assert sum(
+        node["class_type"] == H3_STAGE_OFFLOAD_NODE
+        for node in latent_graph.values()
+    ) == 4
     split_id = next(
         node_id for node_id, node in latent_graph.items()
         if node["class_type"] == "SplitSigmas"
@@ -8808,7 +9049,14 @@ def selftest() -> None:
         node for node in latent_graph.values()
         if node["class_type"] == "VAEDecodeAudio"
     )
-    assert audio_decode["inputs"]["samples"] == Graph.out(initial_sampler_id)
+    audio_offload_ref = audio_decode["inputs"]["samples"]
+    assert audio_offload_ref[1] == 3
+    audio_offload = latent_graph[audio_offload_ref[0]]
+    assert audio_offload["class_type"] == H3_STAGE_OFFLOAD_NODE
+    initial_offload_ref = audio_offload["inputs"]["additional_latent"]
+    initial_offload = latent_graph[initial_offload_ref[0]]
+    assert initial_offload["class_type"] == H3_STAGE_OFFLOAD_NODE
+    assert initial_offload["inputs"]["latent"] == Graph.out(initial_sampler_id)
     assert h3_latent_upscale_dimensions(1024, 1024) == (512, 512, 1024, 1024)
     assert h3_latent_upscale_dimensions(864, 480) == (448, 256, 896, 512)
 

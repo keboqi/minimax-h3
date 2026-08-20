@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 import comfy.lora
+import comfy.model_management
 import comfy.nested_tensor
 import comfy.patcher_extension
 import comfy.sd
@@ -915,6 +916,52 @@ class H3VideoLatentSlicesToBatch:
         return (output,)
 
 
+class H3StageModelOffload:
+    """Pass stage results through after forcing resident Comfy models off VRAM."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "conditioning": ("CONDITIONING",),
+                "latent": ("LATENT",),
+                "additional_conditioning": ("CONDITIONING",),
+                "additional_latent": ("LATENT",),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "LATENT", "CONDITIONING", "LATENT")
+    RETURN_NAMES = (
+        "conditioning",
+        "latent",
+        "additional_conditioning",
+        "additional_latent",
+    )
+    FUNCTION = "offload"
+    CATEGORY = "model/management/minimax"
+    DESCRIPTION = (
+        "Force-unloads resident ComfyUI models at an H3 stage boundary while "
+        "passing conditioning and latents through unchanged."
+    )
+
+    @classmethod
+    def IS_CHANGED(cls, **_kwargs):
+        # The memory-management side effect must run even when upstream prompt
+        # encoding is cached across otherwise-identical workflow submissions.
+        return float("nan")
+
+    def offload(
+        self,
+        conditioning,
+        latent,
+        additional_conditioning,
+        additional_latent,
+    ):
+        comfy.model_management.unload_all_models()
+        comfy.model_management.soft_empty_cache()
+        return conditioning, latent, additional_conditioning, additional_latent
+
+
 NODE_CLASS_MAPPINGS = {
     "H3FirstBlockCache": H3FirstBlockCache,
     "H3LightX2VBypassLoRA": H3LightX2VBypassLoRA,
@@ -922,6 +969,7 @@ NODE_CLASS_MAPPINGS = {
     "H3CombineAVLatent": H3CombineAVLatent,
     "H3SingleFrameVAELoader": H3SingleFrameVAELoader,
     "H3VideoLatentSlicesToBatch": H3VideoLatentSlicesToBatch,
+    "H3StageModelOffload": H3StageModelOffload,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -931,4 +979,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3CombineAVLatent": "MiniMax H3 Combine AV Latent",
     "H3SingleFrameVAELoader": "MiniMax H3 Single-Frame VAE Loader",
     "H3VideoLatentSlicesToBatch": "MiniMax H3 Video Slices to Image Batch",
+    "H3StageModelOffload": "MiniMax H3 Stage Model Offload",
 }

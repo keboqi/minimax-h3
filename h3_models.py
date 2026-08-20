@@ -109,6 +109,18 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
         "Official Qwen3-VL 32B NVFP4/AWQ text encoder",
     ),
+    "text_encoder_int8": ModelSpec(
+        TEXT_ENCODER_REPO,
+        "text_encoders",
+        "text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "Official Qwen3-VL 32B INT8 ConvRot text encoder",
+    ),
+    "text_encoder_bf16": ModelSpec(
+        TEXT_ENCODER_REPO,
+        "text_encoders",
+        "text_encoders/qwen3vl_32b_minimax_h3_bf16.safetensors",
+        "Official Qwen3-VL 32B BF16 text encoder",
+    ),
     "video_vae": ModelSpec(
         MODEL_REPO,
         "vae",
@@ -370,6 +382,16 @@ H3_LATENT_UPSCALER_MODEL_CHOICES = {
 }
 DEFAULT_H3_LATENT_UPSCALER_MODEL = "Balanced (BF16)"
 H3_LATENT_UPSCALER_MODEL_KEYS = tuple(H3_LATENT_UPSCALER_MODEL_CHOICES.values())
+H3_TEXT_ENCODER_CHOICES = {
+    "NVFP4 / AWQ": "text_encoder",
+    "INT8 ConvRot": "text_encoder_int8",
+    "BF16": "text_encoder_bf16",
+}
+DEFAULT_H3_TEXT_ENCODER = "NVFP4 / AWQ"
+H3_OPTIONAL_TEXT_ENCODER_KEYS = (
+    "text_encoder_int8",
+    "text_encoder_bf16",
+)
 LTX25_MODEL_CHOICES = {
     "INT8 ConvRot": "ltx25_distilled_int8",
     "BF16": "ltx25_distilled",
@@ -407,6 +429,7 @@ DEFAULT_MUSIC3_MODEL = "INT8 ConvRot (lower VRAM)"
 MUSIC3_SHARED_MODEL_KEYS = ("music3_text_encoder", "music3_vae")
 MUSIC3_MODEL_KEYS = (*MUSIC3_MODEL_CHOICES.values(), *MUSIC3_SHARED_MODEL_KEYS)
 LAZY_OPTIONAL_MODEL_KEYS = (
+    *H3_OPTIONAL_TEXT_ENCODER_KEYS,
     "video_vae_int8",
     "image_vae_500k",
     "turbo_8step_lora",
@@ -698,13 +721,17 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
     return {
-        "schema_version": 14,
+        "schema_version": 15,
         "default_profile": "quality",
         "profiles": {
             profile: _profile_config(profile)
             for profile in PROFILE_MODEL_KEYS
         },
         "text_encoder": text.local_name,
+        "text_encoders": {
+            label: MODEL_SPECS[key].local_name
+            for label, key in H3_TEXT_ENCODER_CHOICES.items()
+        },
         "video_vae": video_vae.local_name,
         "video_vae_int8": video_vae_int8.local_name,
         "video_vae_int8_source": video_vae_int8.source,
@@ -924,6 +951,8 @@ def selftest() -> None:
         "original_fl2va",
         "original_ref2va",
         "text_encoder",
+        "text_encoder_int8",
+        "text_encoder_bf16",
         "video_vae",
         "video_vae_int8",
         "image_vae_500k",
@@ -974,7 +1003,7 @@ def selftest() -> None:
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert set(H3_LATENT_UPSCALER_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 14
+    assert cfg["schema_version"] == 15
     assert cfg["default_profile"] == "quality"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
@@ -985,6 +1014,12 @@ def selftest() -> None:
     assert cfg["text_encoder"] == (
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
+    assert cfg["text_encoders"] == {
+        "NVFP4 / AWQ": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "INT8 ConvRot": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "BF16": "qwen3vl_32b_minimax_h3_bf16.safetensors",
+    }
+    assert set(H3_OPTIONAL_TEXT_ENCODER_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert cfg["video_vae_int8"] == (
         "minimax_h3_video_vae_int8_convrot.safetensors"
     )
