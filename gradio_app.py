@@ -4530,6 +4530,59 @@ def progress_status(
     return "\n".join(lines)
 
 
+class StageTimings:
+    """Accumulate user-facing pipeline stage durations and log transitions."""
+
+    def __init__(self, label: str, started: float, initial_stage: str) -> None:
+        self.label = label
+        self.started = started
+        self.current_stage: str | None = initial_stage
+        self.current_started = started
+        self.durations: dict[str, float] = {}
+        self.finished = False
+
+    def transition(self, stage: str, *, now: float | None = None) -> None:
+        if self.finished or stage == self.current_stage:
+            return
+        timestamp = time.monotonic() if now is None else now
+        self._close_current(timestamp)
+        self.current_stage = stage
+        self.current_started = timestamp
+
+    def _close_current(self, now: float) -> None:
+        if self.current_stage is None:
+            return
+        elapsed = max(0.0, now - self.current_started)
+        self.durations[self.current_stage] = (
+            self.durations.get(self.current_stage, 0.0) + elapsed
+        )
+        print(
+            f"[h3-timing] {self.label} · {self.current_stage}: {elapsed:.2f}s",
+            flush=True,
+        )
+
+    def finish(self, *, now: float | None = None) -> float:
+        timestamp = time.monotonic() if now is None else now
+        if not self.finished:
+            self._close_current(timestamp)
+            self.current_stage = None
+            self.finished = True
+            print(
+                f"[h3-timing] {self.label} · total: "
+                f"{max(0.0, timestamp - self.started):.2f}s",
+                flush=True,
+            )
+        return max(0.0, timestamp - self.started)
+
+    def summary(self, *, now: float | None = None) -> str:
+        self.finish(now=now)
+        details = " · ".join(
+            f"{stage} {elapsed:.1f}s"
+            for stage, elapsed in self.durations.items()
+        )
+        return f"Step times: {details}" if details else "Step times: unavailable"
+
+
 def stream_comfy_progress(
     ws: websocket.WebSocket,
     prompt_id: str,
@@ -5784,6 +5837,7 @@ def generate(
     progress=gr.Progress(track_tqdm=False),
 ):
     started = time.monotonic()
+    timings = StageTimings("H3 generation", started, "Preparing request")
     queued_at = time.time()
     ws: websocket.WebSocket | None = None
     fallback_video: Path | None = None
@@ -6131,6 +6185,8 @@ def generate(
                 f"({type(exc).__name__})."
             )
         prompt_id = submit_prompt(graph, client_id)
+        timings.label = f"H3 job {prompt_id}"
+        timings.transition("Waiting for ComfyUI")
         sol_status = (
             f"zero-copy on ({sol_thresh_type}, τ={float(sol_tau):.1f}, "
             f"{sol_exact_mode}, dense-tail-blocks={int(sol_dense_steps)})"
@@ -6193,6 +6249,7 @@ def generate(
             else poll_comfy_progress(prompt_id, graph)
         )
         for stage, completed_nodes, total_nodes, step, step_total in updates:
+            timings.transition(stage)
             if step is not None and step_total:
                 progress((step, step_total), desc=stage)
             elif total_nodes:
@@ -6212,6 +6269,7 @@ def generate(
                 detail=f"Job `{prompt_id}`",
             )
 
+        timings.transition("Locating generated output")
         progress(1, desc="Resolving generated output")
         yield None, progress_status(
             "Generation complete; locating output",
@@ -6224,26 +6282,32 @@ def generate(
             results = resolve_image_outputs(
                 history, queued_at, requested_image_frames
             )
-            elapsed = time.monotonic() - started
+            finished_at = time.monotonic()
+            elapsed = finished_at - started
+            timing_summary = timings.summary(now=finished_at)
             progress(1, desc="Complete")
             yield [str(path) for path in results], (
                 f"Completed in {elapsed:.1f}s · {len(results)} image frame(s) ready "
-                f"for selection · seed {actual_seed}"
+                f"for selection · seed {actual_seed}\n\n{timing_summary}"
             )
             return
         if result_format == "Audio":
             result = resolve_audio_output(history, queued_at)
-            elapsed = time.monotonic() - started
+            finished_at = time.monotonic()
+            elapsed = finished_at - started
+            timing_summary = timings.summary(now=finished_at)
             progress(1, desc="Complete")
             yield str(result), (
                 f"Completed in {elapsed:.1f}s · audio {result.name} · "
                 f"seed {actual_seed} · "
                 f"{elapsed / float(duration):.1f}s compute per output second"
+                f"\n\n{timing_summary}"
             )
             return
         source = resolve_output(history, queued_at)
         fallback_video = source
         if postprocess != "None":
+            timings.transition(f"Post-processing: {postprocess}")
             progress(0, desc="Post-processing video")
             yield None, progress_status(
                 f"Post-processing: {postprocess}", started=started
@@ -6323,6 +6387,7 @@ def generate(
             for stage, completed_nodes, total_nodes, step, step_total in upscale_updates:
                 if stage == "Generating video and audio":
                     stage = f"Upscaling with {postprocess}"
+                timings.transition(stage)
                 if step is not None and step_total:
                     progress((step, step_total), desc=stage)
                 elif total_nodes:
@@ -6373,6 +6438,7 @@ def generate(
                 for stage, completed_nodes, total_nodes, step, step_total in upscale_updates:
                     if stage == "Generating video and audio":
                         stage = f"Upscaling with {postprocess}"
+                    timings.transition(f"{clip_label}: {stage}")
                     if step is not None and step_total:
                         progress(
                             (clip_index * step_total + step, clip_count * step_total),
@@ -6404,6 +6470,7 @@ def generate(
                     )
                 )
             if use_split:
+                timings.transition("Concatenating upscaled clips")
                 yield None, progress_status(
                     "Concatenating upscaled clips and restoring source audio",
                     started=started,
@@ -6417,18 +6484,24 @@ def generate(
                     frame_count=metadata.frame_count,
                 )
         else:
+            if postprocess != "None":
+                timings.transition(f"Applying {postprocess}")
             result = postprocess_video(source, postprocess)
-        elapsed = time.monotonic() - started
+        finished_at = time.monotonic()
+        elapsed = finished_at - started
+        timing_summary = timings.summary(now=finished_at)
         progress(1, desc="Complete")
         yield str(result), (
             f"Completed in {elapsed:.1f}s · output {result.name} · seed {actual_seed} · "
             f"{elapsed / float(duration):.1f}s compute per output second"
+            f"\n\n{timing_summary}"
         )
     except Exception as exc:
         fallback = str(fallback_video) if fallback_video is not None else None
         suffix = " The completed H3 video is still available." if fallback else ""
-        yield fallback, f"Error: {exc}{suffix}"
+        yield fallback, f"Error: {exc}{suffix}\n\n{timings.summary()}"
     finally:
+        timings.finish()
         cleanup_upscale_clip_batch(
             clip_batch,
             clip_outputs if clip_batch and clip_batch.temporary_inputs else (),
@@ -6463,6 +6536,7 @@ def generate_ltx25(
 ):
     """Run an LTX-2.5 job through the same ComfyUI queue as H3."""
     started = time.monotonic()
+    timings = StageTimings("LTX-2.5 generation", started, "Preparing request")
     queued_at = time.time()
     ws: websocket.WebSocket | None = None
     try:
@@ -6544,6 +6618,8 @@ def generate_ltx25(
         except Exception:
             ws = None
         prompt_id = submit_prompt(graph, client_id)
+        timings.label = f"LTX-2.5 job {prompt_id}"
+        timings.transition("Waiting for ComfyUI")
         frames = ltx25_frame_length(duration, fps)
         yield None, (
             f"Queued LTX-2.5 job `{prompt_id}` 路 seed {actual_seed} 路 "
@@ -6556,6 +6632,7 @@ def generate_ltx25(
             if ws is not None else poll_comfy_progress(prompt_id, graph)
         )
         for stage, completed_nodes, total_nodes, step, step_total in updates:
+            timings.transition(stage)
             if step is not None and step_total:
                 progress((step, step_total), desc=stage)
             elif total_nodes:
@@ -6571,17 +6648,21 @@ def generate_ltx25(
                 detail=f"LTX-2.5 job `{prompt_id}`",
             )
 
+        timings.transition("Locating generated output")
         history = wait_for_history(prompt_id)
         result = resolve_output(history, queued_at)
-        elapsed = time.monotonic() - started
+        finished_at = time.monotonic()
+        elapsed = finished_at - started
+        timing_summary = timings.summary(now=finished_at)
         progress(1, desc="Complete")
         yield str(result), (
             f"LTX-2.5 completed in {elapsed:.1f}s 路 output {result.name} 路 "
-            f"seed {actual_seed}"
+            f"seed {actual_seed}\n\n{timing_summary}"
         )
     except Exception as exc:
-        yield None, f"Error: {exc}"
+        yield None, f"Error: {exc}\n\n{timings.summary()}"
     finally:
+        timings.finish()
         if ws is not None:
             try:
                 ws.close()
@@ -6604,6 +6685,7 @@ def generate_music3(
 ):
     """Run MiniMax Music 3 through the same ComfyUI queue as video jobs."""
     started = time.monotonic()
+    timings = StageTimings("Music 3 generation", started, "Preparing request")
     queued_at = time.time()
     ws: websocket.WebSocket | None = None
     try:
@@ -6657,6 +6739,8 @@ def generate_music3(
         except Exception:
             ws = None
         prompt_id = submit_prompt(graph, client_id)
+        timings.label = f"Music 3 job {prompt_id}"
+        timings.transition("Waiting for ComfyUI")
         yield None, (
             f"Queued Music 3 job `{prompt_id}` · seed {actual_seed} · "
             f"up to {float(max_duration):g}s · {model_choice}"
@@ -6666,6 +6750,7 @@ def generate_music3(
             if ws is not None else poll_comfy_progress(prompt_id, graph)
         )
         for stage, completed_nodes, total_nodes, step, step_total in updates:
+            timings.transition(stage)
             if step is not None and step_total:
                 progress((step, step_total), desc=stage)
             elif total_nodes:
@@ -6680,16 +6765,20 @@ def generate_music3(
                 configured_steps=int(steps) if stage == "Generating music" else None,
                 detail=f"Music 3 job `{prompt_id}`",
             )
+        timings.transition("Locating generated output")
         result = resolve_audio_output(wait_for_history(prompt_id), queued_at)
-        elapsed = time.monotonic() - started
+        finished_at = time.monotonic()
+        elapsed = finished_at - started
+        timing_summary = timings.summary(now=finished_at)
         progress(1, desc="Complete")
         yield str(result), (
             f"Music 3 completed in {elapsed:.1f}s · output {result.name} · "
-            f"seed {actual_seed}"
+            f"seed {actual_seed}\n\n{timing_summary}"
         )
     except Exception as exc:
-        yield None, f"Error: {exc}"
+        yield None, f"Error: {exc}\n\n{timings.summary()}"
     finally:
+        timings.finish()
         if ws is not None:
             try:
                 ws.close()
@@ -9747,6 +9836,21 @@ def selftest() -> None:
     assert "Overall generation progress 3/12 (25%)" in expanded_progress
     assert "Sampling schedule 6 steps (UI setting)" in expanded_progress
     assert "Sampler step 3/12" not in expanded_progress
+
+    with unittest.mock.patch("builtins.print") as timing_print:
+        stage_timings = StageTimings("test job", 100.0, "Preparing request")
+        stage_timings.transition("Loading models", now=102.0)
+        stage_timings.transition("Loading models", now=103.0)
+        timing_summary = stage_timings.summary(now=105.5)
+        stage_timings.finish(now=106.0)
+    assert stage_timings.durations == {
+        "Preparing request": 2.0,
+        "Loading models": 3.5,
+    }
+    assert timing_summary == (
+        "Step times: Preparing request 2.0s · Loading models 3.5s"
+    )
+    assert timing_print.call_count == 3
 
     class FakeProgressSocket:
         def __init__(self) -> None:
