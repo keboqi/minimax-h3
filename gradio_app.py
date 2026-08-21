@@ -331,7 +331,7 @@ UI_DEFAULTS = {
     "result_format": DEFAULT_RESULT_FORMAT,
     "image_vae": DEFAULT_IMAGE_VAE,
     "image_frames": DEFAULT_IMAGE_FRAMES,
-    "model_profile": "Quality",
+    "model_profile": "Original",
     "text_encoder": DEFAULT_H3_TEXT_ENCODER,
     "stage_model_offload": False,
     "use_int8_vae": False,
@@ -360,7 +360,7 @@ UI_DEFAULTS = {
     "easycache_end": 0.85,
     "easycache_verbose": False,
     "ref_image_size": "match",
-    "latent_upscale": False,
+    "latent_upscale": True,
     "latent_upscaler_model": DEFAULT_H3_LATENT_UPSCALER_MODEL,
     "latent_upscale_refine_steps": 2,
     "postprocess": "None",
@@ -8779,7 +8779,7 @@ def selftest() -> None:
         H3_STAGE_OFFLOAD_NODE,
     }
     assert h3_text_encoder_settings(fake, "NVFP4 / AWQ") == (
-        "text_encoder", "text.safetensors", False
+        "text_encoder", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", False
     )
     assert h3_text_encoder_settings(fake, "BF16") == (
         "text_encoder_bf16",
@@ -9551,7 +9551,7 @@ def selftest() -> None:
     api_kwargs = captured_api_call["kwargs"]
     assert api_kwargs["prompt"] == "API prompt"
     assert api_kwargs["mode"] == "Text to video"
-    assert api_kwargs["model_profile"] == "Quality"
+    assert api_kwargs["model_profile"] == "Original"
     assert api_kwargs["turbo_variant"] == DEFAULT_TURBO
     for key, expected in UI_DEFAULTS.items():
         assert api_kwargs[key] == expected

@@ -355,8 +355,8 @@ PROFILE_LABELS = {
     "quality": "Quality",
     "original": "Original",
 }
-PRELOAD_PROFILES = ("quality",)
-PRELOAD_PROFILE_MODEL_KEYS = ("quality_fl2va",)
+PRELOAD_PROFILES = ("original",)
+PRELOAD_PROFILE_MODEL_KEYS = ("original_fl2va", "original_ref2va")
 PROFILE_MODEL_KEY_SET = frozenset(
     key for keys in PROFILE_MODEL_KEYS.values() for key in keys
 )
@@ -380,16 +380,17 @@ H3_LATENT_UPSCALER_MODEL_CHOICES = {
     "Fast (FP16)": "h3_latent_upscaler_3d_fp16",
     "Quality (FP32)": "h3_latent_upscaler_3d_fp32",
 }
-DEFAULT_H3_LATENT_UPSCALER_MODEL = "Balanced (BF16)"
+DEFAULT_H3_LATENT_UPSCALER_MODEL = "Quality (FP32)"
 H3_LATENT_UPSCALER_MODEL_KEYS = tuple(H3_LATENT_UPSCALER_MODEL_CHOICES.values())
 H3_TEXT_ENCODER_CHOICES = {
     "NVFP4 / AWQ": "text_encoder",
     "INT8 ConvRot": "text_encoder_int8",
     "BF16": "text_encoder_bf16",
 }
-DEFAULT_H3_TEXT_ENCODER = "NVFP4 / AWQ"
+DEFAULT_H3_TEXT_ENCODER = "INT8 ConvRot"
+DEFAULT_H3_TEXT_ENCODER_KEY = "text_encoder_int8"
 H3_OPTIONAL_TEXT_ENCODER_KEYS = (
-    "text_encoder_int8",
+    "text_encoder",
     "text_encoder_bf16",
 )
 LTX25_MODEL_CHOICES = {
@@ -434,7 +435,8 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     "image_vae_500k",
     "turbo_8step_lora",
     "larry_turbo_lora",
-    *H3_LATENT_UPSCALER_MODEL_KEYS,
+    "h3_latent_upscaler_3d_bf16",
+    "h3_latent_upscaler_3d_fp16",
     *LAZY_POSTPROCESS_MODEL_KEYS,
     *LTX25_MODEL_KEYS,
     *LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS,
@@ -446,6 +448,8 @@ SHARED_MODEL_KEYS = tuple(
 )
 PRELOAD_MODEL_KEYS = (
     *PRELOAD_PROFILE_MODEL_KEYS,
+    DEFAULT_H3_TEXT_ENCODER_KEY,
+    "h3_latent_upscaler_3d_fp32",
     *SHARED_MODEL_KEYS,
 )
 
@@ -705,7 +709,7 @@ def _profile_config(profile: str) -> dict[str, str]:
 
 
 def _build_config(manifest_name: str) -> dict[str, Any]:
-    text = MODEL_SPECS["text_encoder"]
+    text = MODEL_SPECS[DEFAULT_H3_TEXT_ENCODER_KEY]
     video_vae = MODEL_SPECS["video_vae"]
     video_vae_int8 = MODEL_SPECS["video_vae_int8"]
     image_vae_500k = MODEL_SPECS["image_vae_500k"]
@@ -722,7 +726,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
 
     return {
         "schema_version": 15,
-        "default_profile": "quality",
+        "default_profile": "original",
         "profiles": {
             profile: _profile_config(profile)
             for profile in PROFILE_MODEL_KEYS
@@ -993,18 +997,18 @@ def selftest() -> None:
 
     cfg = _build_config("manifest.json")
     missing = validate_config_files(Path(tempfile.mkdtemp()), cfg)
-    assert "diffusion_models/" + cfg["profiles"]["quality"]["fl2va"] in missing
-    assert "diffusion_models/" + cfg["profiles"]["quality"]["ref2va"] not in missing
+    assert "diffusion_models/" + cfg["profiles"]["original"]["fl2va"] in missing
+    assert "diffusion_models/" + cfg["profiles"]["original"]["ref2va"] in missing
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["speed"])
-    assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["original"])
-    assert PRELOAD_PROFILE_MODEL_KEYS == ("quality_fl2va",)
-    assert "quality_fl2va" in PRELOAD_MODEL_KEYS
-    assert "quality_ref2va" not in PRELOAD_MODEL_KEYS
+    assert set(PRELOAD_MODEL_KEYS).issuperset(PROFILE_MODEL_KEYS["original"])
+    assert PRELOAD_PROFILE_MODEL_KEYS == ("original_fl2va", "original_ref2va")
+    assert "original_fl2va" in PRELOAD_MODEL_KEYS
+    assert "original_ref2va" in PRELOAD_MODEL_KEYS
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
-    assert set(H3_LATENT_UPSCALER_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
+    assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
     assert cfg["schema_version"] == 15
-    assert cfg["default_profile"] == "quality"
+    assert cfg["default_profile"] == "original"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
     )
@@ -1012,7 +1016,7 @@ def selftest() -> None:
         "minimax_h3_fl2va_pruned_bf16.safetensors"
     )
     assert cfg["text_encoder"] == (
-        "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
     )
     assert cfg["text_encoders"] == {
         "NVFP4 / AWQ": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
@@ -1047,7 +1051,7 @@ def selftest() -> None:
     assert h3_upscaler.local_name == (
         "minimax_h3_latent_upscaler_3d_bf16.safetensors"
     )
-    assert DEFAULT_H3_LATENT_UPSCALER_MODEL == "Balanced (BF16)"
+    assert DEFAULT_H3_LATENT_UPSCALER_MODEL == "Quality (FP32)"
     assert {
         label: MODEL_SPECS[key].local_name
         for label, key in H3_LATENT_UPSCALER_MODEL_CHOICES.items()
