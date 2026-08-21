@@ -68,10 +68,18 @@ def run(
     timeout: float | None = None,
 ) -> None:
     print("[h3-setup]", *args, flush=True)
+    command_env = os.environ.copy()
+    if env:
+        command_env.update(env)
+    if args and str(args[0]) == "git":
+        # Setup runs in hosted/network-mounted workspaces where Git prompts
+        # and LFS smudge filters can wait forever during checkout.
+        command_env.setdefault("GIT_TERMINAL_PROMPT", "0")
+        command_env.setdefault("GIT_LFS_SKIP_SMUDGE", "1")
     subprocess.run(
         [str(arg) for arg in args],
         cwd=str(cwd) if cwd else None,
-        env=env,
+        env=command_env,
         check=True,
         timeout=timeout,
     )
