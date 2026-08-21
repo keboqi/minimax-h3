@@ -24,6 +24,8 @@ FirstBlockCache node.
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
 - Selectable official Qwen3-VL 32B NVFP4/AWQ, INT8 ConvRot, and BF16 text encoders
 - Optional model offload at every H3 stage boundary, automatically required for BF16
+- Default-on reuse of unchanged prompt and image/audio/video conditioning through
+  content-addressed ComfyUI input staging
 - Per-video SeedVR2 or LTX-2.5 IC-LoRA 2x upscale and frame interpolation
 - Optional generation-stage MiniMax H3 latent 2x upscale, with Balanced BF16,
   Fast FP16, and Quality FP32 model choices
@@ -151,6 +153,12 @@ between H3 stages** so the text encoder, diffusion model, optional latent
 upscaler, and VAEs do not need to remain resident together. INT8 and NVFP4 keep
 the current all-VRAM path by default; stage offload can still be enabled
 manually for either one.
+**Reuse unchanged prompt and media** is enabled by default. Uploaded H3 inputs are
+staged under content-derived names, so repeating the same prompt and ordered media
+combination lets ComfyUI restore its loading and conditioning outputs. A changed
+prompt, media file, order, resolution, or conditioning setting invalidates the
+relevant cache entry normally. A changed or random seed still reruns diffusion;
+disable the option to stage fresh media copies for that request.
 The gated LTX-2.5 distilled transformers are available as **INT8 ConvRot
 (default)** and **BF16**. The selected transformer plus the shared fine-tuned
 Gemma text encoder and audio/video VAEs

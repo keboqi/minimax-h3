@@ -334,6 +334,7 @@ UI_DEFAULTS = {
     "model_profile": "Original",
     "text_encoder": DEFAULT_H3_TEXT_ENCODER,
     "stage_model_offload": False,
+    "reuse_unchanged_inputs": True,
     "use_int8_vae": False,
     "generation_mode": "Turbo",
     "turbo_variant": DEFAULT_TURBO,
@@ -2833,30 +2834,69 @@ def fbcache_preset_defaults(name: str):
     )
 
 
-def stage_file(path: str, category: str, transcode_video: bool = False) -> str:
+def file_content_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def stage_file(
+    path: str,
+    category: str,
+    transcode_video: bool = False,
+    reuse: bool = False,
+) -> str:
     src = Path(path)
     if not src.is_file():
         raise H3Error(f"Input file does not exist: {src}")
     target_dir = INPUT_DIR / "h3_gradio" / category
     target_dir.mkdir(parents=True, exist_ok=True)
-    token = uuid.uuid4().hex
+    if reuse:
+        source_digest = file_content_sha256(src)
+        token = (
+            f"video-v1-{source_digest}"
+            if transcode_video
+            else source_digest
+        )
+    else:
+        token = uuid.uuid4().hex
 
     if transcode_video:
         dst = target_dir / f"{token}.mp4"
+        if reuse and dst.is_file():
+            print(
+                f"[h3-input-cache] Reusing {category}/{dst.name}", flush=True
+            )
+            return dst.relative_to(INPUT_DIR).as_posix()
+        temporary = target_dir / f".{token}-{uuid.uuid4().hex}.tmp.mp4"
         cmd = [
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
             "-i", str(src), "-t", "15", "-vf", "fps=24",
             "-c:v", "libx264", "-preset", "fast", "-crf", "18",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-            str(dst),
+            str(temporary),
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:
+            temporary.unlink(missing_ok=True)
             raise H3Error(f"Reference-video conversion failed: {proc.stderr.strip()}")
+        temporary.replace(dst)
     else:
         suffix = src.suffix.lower() or ".bin"
         dst = target_dir / f"{token}{suffix}"
-        shutil.copy2(src, dst)
+        if reuse and dst.is_file():
+            print(
+                f"[h3-input-cache] Reusing {category}/{dst.name}", flush=True
+            )
+            return dst.relative_to(INPUT_DIR).as_posix()
+        temporary = target_dir / f".{token}-{uuid.uuid4().hex}.tmp{suffix}"
+        shutil.copy2(src, temporary)
+        temporary.replace(dst)
+
+    if reuse:
+        print(f"[h3-input-cache] Stored {category}/{dst.name}", flush=True)
 
     return dst.relative_to(INPUT_DIR).as_posix()
 
@@ -3441,6 +3481,7 @@ def build_fl2va_graph(
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae: str = DEFAULT_IMAGE_VAE,
     text_encoder_name: str | None = None,
+    reuse_unchanged_inputs: bool = True,
     stage_model_offload: bool = False,
 ) -> dict[str, Any]:
     graph = Graph()
@@ -3509,10 +3550,20 @@ def build_fl2va_graph(
         ),
     }
     if first_image:
-        loaded = graph.add("LoadImage", image=stage_file(first_image, "keyframes"))
+        loaded = graph.add(
+            "LoadImage",
+            image=stage_file(
+                first_image, "keyframes", reuse=reuse_unchanged_inputs
+            ),
+        )
         inputs["first_frame"] = Graph.out(loaded)
     if last_image:
-        loaded = graph.add("LoadImage", image=stage_file(last_image, "keyframes"))
+        loaded = graph.add(
+            "LoadImage",
+            image=stage_file(
+                last_image, "keyframes", reuse=reuse_unchanged_inputs
+            ),
+        )
         inputs["last_frame"] = Graph.out(loaded)
 
     target_h3 = graph.add(
@@ -3608,6 +3659,7 @@ def build_ref2va_graph(
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae: str = DEFAULT_IMAGE_VAE,
     text_encoder_name: str | None = None,
+    reuse_unchanged_inputs: bool = True,
     stage_model_offload: bool = False,
 ) -> dict[str, Any]:
     graph = Graph()
@@ -3679,18 +3731,33 @@ def build_ref2va_graph(
     }
 
     for index, path in enumerate(reference_images[:MAX_REFERENCE_IMAGES]):
-        loaded = graph.add("LoadImage", image=stage_file(path, "reference_images"))
+        loaded = graph.add(
+            "LoadImage",
+            image=stage_file(
+                path, "reference_images", reuse=reuse_unchanged_inputs
+            ),
+        )
         inputs[f"ref_images.ref_image_{index}"] = Graph.out(loaded)
 
     for index, path in enumerate(reference_videos[:MAX_REFERENCE_VIDEOS]):
-        staged = stage_file(path, "reference_videos", transcode_video=True)
+        staged = stage_file(
+            path,
+            "reference_videos",
+            transcode_video=True,
+            reuse=reuse_unchanged_inputs,
+        )
         loaded = graph.add("LoadVideo", file=staged)
         components = graph.add("GetVideoComponents", video=Graph.out(loaded))
         inputs[f"ref_videos.ref_video_{index}"] = Graph.out(components, 0)
         inputs[f"ref_video_audios.ref_video_audio_{index}"] = Graph.out(components, 1)
 
     for index, path in enumerate(reference_audios[:MAX_REFERENCE_AUDIOS]):
-        loaded = graph.add("LoadAudio", audio=stage_file(path, "reference_audios"))
+        loaded = graph.add(
+            "LoadAudio",
+            audio=stage_file(
+                path, "reference_audios", reuse=reuse_unchanged_inputs
+            ),
+        )
         inputs[f"ref_audios.ref_audio_{index}"] = Graph.out(loaded)
 
     target_h3 = graph.add(
@@ -5822,6 +5889,7 @@ def generate(
     easycache_verbose: bool,
     ref_image_size: str,
     postprocess: str,
+    reuse_unchanged_inputs: bool = True,
     latent_upscale: bool = False,
     latent_upscaler_model: str = DEFAULT_H3_LATENT_UPSCALER_MODEL,
     latent_upscale_refine_steps: int = 2,
@@ -6133,6 +6201,7 @@ def generate(
                 latent_upscale_precision=latent_upscale_precision,
                 latent_upscale_refine_steps=int(latent_upscale_refine_steps),
                 text_encoder_name=selected_text_encoder,
+                reuse_unchanged_inputs=bool(reuse_unchanged_inputs),
                 stage_model_offload=effective_stage_offload,
             )
         else:
@@ -6169,6 +6238,7 @@ def generate(
                 latent_upscale_precision=latent_upscale_precision,
                 latent_upscale_refine_steps=int(latent_upscale_refine_steps),
                 text_encoder_name=selected_text_encoder,
+                reuse_unchanged_inputs=bool(reuse_unchanged_inputs),
                 stage_model_offload=effective_stage_offload,
             )
 
@@ -6224,7 +6294,8 @@ def generate(
             + f"model {selected_label} · {effective_steps} steps/{effective_scheduler} · "
             f"attention {sol_status} ({sol_reason}; ~{packed_tokens:,} target tokens) · "
             f"dense-backend {SERVER_DENSE_ATTENTION_BACKEND} · "
-            f"cache {cache_status}"
+            f"cache {cache_status} · unchanged-input reuse "
+            f"{'on' if reuse_unchanged_inputs else 'off'}"
         )
         if latent_upscale:
             queued_status += (
@@ -6803,6 +6874,7 @@ def compact_settings_summary(
     model_profile: str,
     text_encoder: str,
     stage_model_offload: bool,
+    reuse_unchanged_inputs: bool,
     use_int8_vae: bool,
     generation_mode: str,
     turbo_variant: str,
@@ -6880,7 +6952,9 @@ def compact_settings_summary(
         f"{mode} · Result: {result_format} · {model_profile} / {generation_mode} · "
         f"{timing} · {resolution} · "
         f"{step_count} / {scheduler} · Attention: {attention_mode} · "
-        f"Cache: {cache_mode} · Native latent: {latent_note} · "
+        f"Cache: {cache_mode} · Input reuse: "
+        f"{'on' if reuse_unchanged_inputs else 'off'} · "
+        f"Native latent: {latent_note} · "
         f"Post: {postprocess_note}"
     )
 
@@ -6966,6 +7040,7 @@ def generate_with_ui_defaults(
         easycache_verbose=defaults["easycache_verbose"],
         ref_image_size=defaults["ref_image_size"],
         postprocess=defaults["postprocess"],
+        reuse_unchanged_inputs=defaults["reuse_unchanged_inputs"],
         latent_upscale=defaults["latent_upscale"],
         latent_upscaler_model=defaults["latent_upscaler_model"],
         latent_upscale_refine_steps=defaults["latent_upscale_refine_steps"],
@@ -7045,7 +7120,7 @@ def api_guide() -> str:
     defaults = UI_DEFAULTS
     return f"""## Generate through the API
 
-The `/generate_video` endpoint accepts a prompt and preserves the existing **Video** defaults from the **MiniMax H3** tab:
+The `/generate_video` endpoint accepts a prompt and preserves the existing **Video** defaults from the **MiniMax H3** tab, including default-on reuse of unchanged prompt/media conditioning:
 
 `{defaults['mode']}` · `{defaults['model_profile']}` · `{defaults['generation_mode']} / {defaults['turbo_variant']}` · `{defaults['duration']}s` · `{defaults['width']}×{defaults['height']}` · `{defaults['steps']} steps` · `{defaults['scheduler']}` scheduler · random seed
 
@@ -7150,6 +7225,15 @@ def build_ui() -> gr.Blocks:
                         info=(
                             "Unload resident models between text encoding, diffusion, "
                             "latent upscaling, and VAE decoding."
+                        ),
+                    )
+                    reuse_unchanged_inputs = gr.Checkbox(
+                        value=defaults["reuse_unchanged_inputs"],
+                        label="Reuse unchanged prompt and media",
+                        info=(
+                            "Use content-addressed staged inputs so ComfyUI can skip "
+                            "unchanged loading and conditioning work. Sampling still "
+                            "reruns when the seed changes."
                         ),
                     )
                 use_int8_vae = gr.Checkbox(
@@ -7280,6 +7364,7 @@ def build_ui() -> gr.Blocks:
                     compact_settings_summary(
                         defaults["mode"], defaults["model_profile"],
                         defaults["text_encoder"], defaults["stage_model_offload"],
+                        defaults["reuse_unchanged_inputs"],
                         defaults["use_int8_vae"],
                         defaults["generation_mode"], defaults["turbo_variant"],
                         defaults["duration"], defaults["width"], defaults["height"],
@@ -8054,6 +8139,7 @@ def build_ui() -> gr.Blocks:
 
         settings_inputs = [
             mode, model_profile, text_encoder, stage_model_offload,
+            reuse_unchanged_inputs,
             use_int8_vae, generation_mode, turbo_variant,
             duration, width, height,
             steps, scheduler, attention_mode, cache_mode,
@@ -8342,7 +8428,7 @@ def build_ui() -> gr.Blocks:
                 cache_mode, fbcache_preset, fbcache_threshold, fbcache_start,
                 fbcache_end, fbcache_max_hits, fbcache_temporal_guard,
                 easycache_threshold, easycache_start, easycache_end, easycache_verbose,
-                ref_size, generation_postprocess,
+                ref_size, generation_postprocess, reuse_unchanged_inputs,
                 latent_upscale, latent_upscaler_model, latent_upscale_refine_steps,
                 generation_force_offload,
                 generation_split_upscale, generation_split_seconds,
@@ -9592,7 +9678,71 @@ def selftest() -> None:
     assert preset_values("unknown") == preset_values("Balanced")
     assert UI_DEFAULTS["steps"] == turbo_steps_for(UI_DEFAULTS["turbo_variant"])
     assert UI_DEFAULTS["width"] == 864 and UI_DEFAULTS["height"] == 480
+    assert UI_DEFAULTS["reuse_unchanged_inputs"] is True
     assert 'api_name="/generate_video"' in api_guide()
+
+    original_input_dir = globals()["INPUT_DIR"]
+    with tempfile.TemporaryDirectory() as staging_temp:
+        staging_root = Path(staging_temp)
+        staged_input_root = staging_root / "comfy-input"
+        source = staging_root / "reference.png"
+        source.write_bytes(b"same input bytes")
+        globals()["INPUT_DIR"] = staged_input_root
+        try:
+            with unittest.mock.patch("builtins.print") as cache_print:
+                cached_first = stage_file(
+                    str(source), "reference_images", reuse=True
+                )
+                cached_second = stage_file(
+                    str(source), "reference_images", reuse=True
+                )
+            assert cached_first == cached_second
+            assert cache_print.call_count == 2
+            assert "Stored" in cache_print.call_args_list[0].args[0]
+            assert "Reusing" in cache_print.call_args_list[1].args[0]
+            assert (staged_input_root / cached_first).read_bytes() == b"same input bytes"
+
+            uncached_first = stage_file(
+                str(source), "reference_images", reuse=False
+            )
+            uncached_second = stage_file(
+                str(source), "reference_images", reuse=False
+            )
+            assert uncached_first != uncached_second
+
+            source.write_bytes(b"changed input bytes")
+            with unittest.mock.patch("builtins.print"):
+                changed = stage_file(str(source), "reference_images", reuse=True)
+            assert changed != cached_first
+
+            video_source = staging_root / "reference.mov"
+            video_source.write_bytes(b"video input bytes")
+
+            def fake_ffmpeg(command: list[str], **_kwargs: Any):
+                Path(command[-1]).write_bytes(b"transcoded video")
+                return unittest.mock.Mock(returncode=0, stderr="")
+
+            with (
+                unittest.mock.patch("subprocess.run", side_effect=fake_ffmpeg) as run,
+                unittest.mock.patch("builtins.print"),
+            ):
+                video_first = stage_file(
+                    str(video_source),
+                    "reference_videos",
+                    transcode_video=True,
+                    reuse=True,
+                )
+                video_second = stage_file(
+                    str(video_source),
+                    "reference_videos",
+                    transcode_video=True,
+                    reuse=True,
+                )
+            assert video_first == video_second
+            assert run.call_count == 1
+            assert (staged_input_root / video_first).read_bytes() == b"transcoded video"
+        finally:
+            globals()["INPUT_DIR"] = original_input_dir
     captured_free_call: dict[str, Any] = {}
     original_api_post = globals()["api_post"]
     original_backend_status = globals()["backend_status"]
