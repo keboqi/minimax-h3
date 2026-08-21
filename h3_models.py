@@ -356,7 +356,7 @@ PROFILE_LABELS = {
     "original": "Original",
 }
 PRELOAD_PROFILES = ("original",)
-PRELOAD_PROFILE_MODEL_KEYS = ("original_fl2va", "original_ref2va")
+PRELOAD_PROFILE_MODEL_KEYS = ("original_fl2va",)
 PROFILE_MODEL_KEY_SET = frozenset(
     key for keys in PROFILE_MODEL_KEYS.values() for key in keys
 )
@@ -998,12 +998,12 @@ def selftest() -> None:
     cfg = _build_config("manifest.json")
     missing = validate_config_files(Path(tempfile.mkdtemp()), cfg)
     assert "diffusion_models/" + cfg["profiles"]["original"]["fl2va"] in missing
-    assert "diffusion_models/" + cfg["profiles"]["original"]["ref2va"] in missing
+    assert "diffusion_models/" + cfg["profiles"]["original"]["ref2va"] not in missing
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["speed"])
-    assert set(PRELOAD_MODEL_KEYS).issuperset(PROFILE_MODEL_KEYS["original"])
-    assert PRELOAD_PROFILE_MODEL_KEYS == ("original_fl2va", "original_ref2va")
     assert "original_fl2va" in PRELOAD_MODEL_KEYS
-    assert "original_ref2va" in PRELOAD_MODEL_KEYS
+    assert PRELOAD_PROFILE_MODEL_KEYS == ("original_fl2va",)
+    assert "original_fl2va" in PRELOAD_MODEL_KEYS
+    assert "original_ref2va" not in PRELOAD_MODEL_KEYS
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
