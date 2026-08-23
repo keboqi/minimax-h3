@@ -148,6 +148,30 @@ DEFAULT_FBCACHE_END = 0.95
 DEFAULT_FBCACHE_MAX_HITS = 2
 DEFAULT_FBCACHE_TEMPORAL_GUARD = True
 DEFAULT_ACCELERATOR = "Spectrum"
+DEFAULT_SLA_PRESET = "Fast"
+SLA_PRESET_INPUTS = {
+    "Fast": {
+        "sparsity_ratio": 0.90,
+        "block_size": "64",
+        "min_seq_len": 8192,
+        "dense_last_steps": 0,
+        "protect_audio": True,
+    },
+    "Balanced": {
+        "sparsity_ratio": 0.85,
+        "block_size": "64",
+        "min_seq_len": 8192,
+        "dense_last_steps": 0,
+        "protect_audio": True,
+    },
+    "Quality": {
+        "sparsity_ratio": 0.85,
+        "block_size": "64",
+        "min_seq_len": 8192,
+        "dense_last_steps": 1,
+        "protect_audio": True,
+    },
+}
 LIGHTX2V_4STEP_TURBO = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
 LIGHTX2V_8STEP_TURBO = "LightX2V v1.0 / 8-step 544p"
 LARRY_TURBO = "Larry v4-600 EMA"
@@ -349,6 +373,7 @@ UI_DEFAULTS = {
     "scheduler": "simple",
     "seed": -1,
     "attention_mode": "Sage 2",
+    "sla_preset": DEFAULT_SLA_PRESET,
     "sol_tau": 1.0,
     "sol_thresh_type": "diag",
     "sol_exact_mode": "exact_kv",
@@ -2578,6 +2603,18 @@ def estimate_packed_tokens(
     return video_tokens + audio_tokens + keyframe_tokens
 
 
+def resolve_sla_preset(value: str) -> tuple[str, dict[str, Any]]:
+    requested = str(value).strip().lower()
+    if requested == "balance":
+        requested = "balanced"
+    for name, inputs in SLA_PRESET_INPUTS.items():
+        if requested == name.lower():
+            return name, dict(inputs)
+    raise H3Error(
+        "Unknown SLA preset. Choose Fast, Balanced, or Quality."
+    )
+
+
 def resolve_sol_policy(
     attention_mode: str,
     mode: str,
@@ -3065,6 +3102,7 @@ def add_model_stack(
     use_int8_vae: bool = False,
     use_sage: bool = False,
     use_sla: bool = False,
+    sla_preset: str = DEFAULT_SLA_PRESET,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     unet = graph.add("UNETLoader", unet_name=model_name, weight_dtype="default")
     model_ref = Graph.out(unet)
@@ -3107,14 +3145,11 @@ def add_model_stack(
                 "SLA was requested, but H3 SLA Attention is not loaded. "
                 "Re-run setup_h3.py and restart ComfyUI."
             )
+        _sla_name, sla_inputs = resolve_sla_preset(sla_preset)
         sla = graph.add(
             SLA_ATTENTION_NODE,
             model=model_ref,
-            sparsity_ratio=0.90,
-            block_size="64",
-            min_seq_len=8192,
-            dense_last_steps=0,
-            protect_audio=True,
+            **sla_inputs,
             enabled=True,
         )
         model_ref = Graph.out(sla)
@@ -3530,6 +3565,7 @@ def build_fl2va_graph(
     use_int8_vae: bool = False,
     use_sage: bool = False,
     use_sla: bool = False,
+    sla_preset: str = DEFAULT_SLA_PRESET,
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
@@ -3571,6 +3607,7 @@ def build_fl2va_graph(
         use_int8_vae=use_int8_vae,
         use_sage=use_sage,
         use_sla=use_sla,
+        sla_preset=sla_preset,
     )
     normalized_image_vae = normalize_image_vae(image_vae)
     single_frame_images = (
@@ -3710,6 +3747,7 @@ def build_ref2va_graph(
     use_int8_vae: bool = False,
     use_sage: bool = False,
     use_sla: bool = False,
+    sla_preset: str = DEFAULT_SLA_PRESET,
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
@@ -3751,6 +3789,7 @@ def build_ref2va_graph(
         use_int8_vae=use_int8_vae,
         use_sage=use_sage,
         use_sla=use_sla,
+        sla_preset=sla_preset,
     )
     normalized_image_vae = normalize_image_vae(image_vae)
     single_frame_images = (
@@ -5932,6 +5971,7 @@ def generate(
     scheduler: str,
     seed: int,
     attention_mode: str,
+    sla_preset: str,
     sol_tau: float,
     sol_thresh_type: str,
     sol_exact_mode: str,
@@ -6179,6 +6219,14 @@ def generate(
         effective_sla = str(attention_mode).strip().lower() in {
             "sla", "sla attention", "sparse-linear"
         }
+        if effective_sla:
+            effective_sla_preset, effective_sla_inputs = resolve_sla_preset(
+                sla_preset
+            )
+        else:
+            effective_sla_preset, effective_sla_inputs = resolve_sla_preset(
+                DEFAULT_SLA_PRESET
+            )
         effective_cache_mode, cache_note = resolve_cache_policy(
             cache_mode, use_turbo=use_turbo
         )
@@ -6246,6 +6294,7 @@ def generate(
                 use_sage=effective_sage,
                 use_sla=effective_sla,
                 sol_thresh_type=sol_thresh_type,
+                sla_preset=effective_sla_preset,
                 sol_exact_mode=sol_exact_mode,
                 sol_dense_steps=int(sol_dense_steps),
                 sol_step_off=float(sol_step_off),
@@ -6284,6 +6333,7 @@ def generate(
                 use_sage=effective_sage,
                 use_sla=effective_sla,
                 sol_thresh_type=sol_thresh_type,
+                sla_preset=effective_sla_preset,
                 sol_exact_mode=sol_exact_mode,
                 sol_dense_steps=int(sol_dense_steps),
                 sol_step_off=float(sol_step_off),
@@ -6326,7 +6376,10 @@ def generate(
         timings.label = f"H3 job {prompt_id}"
         timings.transition("Waiting for ComfyUI")
         attention_status = (
-            "SLA (sparsity=0.90, block=64, audio protected)"
+            f"SLA {effective_sla_preset} "
+            f"(sparsity={effective_sla_inputs['sparsity_ratio']:.2f}, "
+            f"block={effective_sla_inputs['block_size']}, "
+            f"dense-last={effective_sla_inputs['dense_last_steps']}, audio protected)"
             if effective_sla else
             "Sage 2"
             if effective_sage else
@@ -6956,6 +7009,7 @@ def compact_settings_summary(
     steps: int,
     scheduler: str,
     attention_mode: str,
+    sla_preset: str,
     cache_mode: str,
     latent_upscale: bool,
     latent_upscaler_model: str,
@@ -7000,6 +7054,12 @@ def compact_settings_summary(
         step_count = f"{int(steps)} steps"
     except (TypeError, ValueError):
         step_count = "— steps"
+    attention_note = attention_mode
+    if str(attention_mode).strip().lower() in {
+        "sla", "sla attention", "sparse-linear"
+    }:
+        resolved_sla_preset, _sla_inputs = resolve_sla_preset(sla_preset)
+        attention_note = f"{attention_mode} / {resolved_sla_preset}"
     postprocess_note = postprocess
     if postprocess == SEEDVR2_UPSCALE:
         postprocess_note += (
@@ -7023,7 +7083,7 @@ def compact_settings_summary(
         "**Current setup**  \n"
         f"{mode} · Result: {result_format} · {model_profile} / {generation_mode} · "
         f"{timing} · {resolution} · "
-        f"{step_count} / {scheduler} · Attention: {attention_mode} · "
+        f"{step_count} / {scheduler} · Attention: {attention_note} · "
         f"Cache: {cache_mode} · Input reuse: "
         f"{'on' if reuse_unchanged_inputs else 'off'} · "
         f"Native latent: {latent_note} · "
@@ -7094,6 +7154,7 @@ def generate_with_ui_defaults(
         seed=defaults["seed"],
         attention_mode=defaults["attention_mode"],
         sol_tau=defaults["sol_tau"],
+        sla_preset=defaults["sla_preset"],
         sol_thresh_type=defaults["sol_thresh_type"],
         sol_exact_mode=defaults["sol_exact_mode"],
         sol_dense_steps=defaults["sol_dense_steps"],
@@ -7441,7 +7502,8 @@ def build_ui() -> gr.Blocks:
                         defaults["generation_mode"], defaults["turbo_variant"],
                         defaults["duration"], defaults["width"], defaults["height"],
                         defaults["steps"], defaults["scheduler"],
-                        defaults["attention_mode"], defaults["cache_mode"],
+                        defaults["attention_mode"], defaults["sla_preset"],
+                        defaults["cache_mode"],
                         defaults["latent_upscale"],
                         defaults["latent_upscaler_model"],
                         defaults["latent_upscale_refine_steps"],
@@ -7586,6 +7648,20 @@ def build_ui() -> gr.Blocks:
                         f"dense/fallback calls use {SERVER_DENSE_ATTENTION_BACKEND}."
                     ),
                 )
+                with gr.Accordion("SLA quality controls", open=False):
+                    sla_preset = gr.Radio(
+                        list(SLA_PRESET_INPUTS),
+                        value=defaults["sla_preset"],
+                        label="SLA preset",
+                        info=(
+                            "Fast uses validated 0.90 sparsity. Balanced uses the "
+                            "LoRA-distilled 0.85 sparsity. Quality also runs the final "
+                            "sampling step dense to recover fine detail; in a two-stage "
+                            "latent-upscale workflow this applies to both stages. All "
+                            "presets use 64-token blocks and protect audio."
+                        ),
+                    )
+
                 with gr.Row():
                     sol_tau = gr.Slider(
                         0.5, 1.5, value=defaults["sol_tau"], step=0.1,
@@ -8217,7 +8293,7 @@ def build_ui() -> gr.Blocks:
             reuse_unchanged_inputs,
             use_int8_vae, generation_mode, turbo_variant,
             duration, width, height,
-            steps, scheduler, attention_mode, cache_mode,
+            steps, scheduler, attention_mode, sla_preset, cache_mode,
             latent_upscale,
             latent_upscaler_model,
             latent_upscale_refine_steps,
@@ -8497,7 +8573,8 @@ def build_ui() -> gr.Blocks:
                 ref_image_7, ref_image_8, ref_image_9,
                 ref_video_1, ref_video_2, ref_video_3,
                 ref_audio_1, ref_audio_2, ref_audio_3,
-                duration, width, height, steps, scheduler, seed, attention_mode, sol_tau,
+                duration, width, height, steps, scheduler, seed,
+                attention_mode, sla_preset, sol_tau,
                 sol_thresh_type, sol_exact_mode, sol_dense_steps,
                 sol_step_off, sol_sink_tokens,
                 cache_mode, fbcache_preset, fbcache_threshold, fbcache_start,
@@ -9420,6 +9497,12 @@ def selftest() -> None:
         for node in sage_graph.nodes.values()
     )
 
+    assert resolve_sla_preset("Fast") == ("Fast", SLA_PRESET_INPUTS["Fast"])
+    assert resolve_sla_preset("Balance") == (
+        "Balanced", SLA_PRESET_INPUTS["Balanced"]
+    )
+    assert resolve_sla_preset("Quality") == ("Quality", SLA_PRESET_INPUTS["Quality"])
+
     sla_graph = Graph()
     add_model_stack(
         sla_graph,
@@ -9448,6 +9531,7 @@ def selftest() -> None:
         easycache_verbose=False,
         available_nodes=available,
         use_sla=True,
+        sla_preset="Quality",
     )
     sla_nodes = [
         node for node in sla_graph.nodes.values()
@@ -9456,10 +9540,10 @@ def selftest() -> None:
     assert len(sla_nodes) == 1
     assert sla_nodes[0]["inputs"] == {
         "model": sla_nodes[0]["inputs"]["model"],
-        "sparsity_ratio": 0.90,
+        "sparsity_ratio": 0.85,
         "block_size": "64",
         "min_seq_len": 8192,
-        "dense_last_steps": 0,
+        "dense_last_steps": 1,
         "protect_audio": True,
         "enabled": True,
     }

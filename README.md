@@ -59,9 +59,14 @@ NumPy 1.26.4, and SciPy 1.15.3. The pinned ComfyUI 0.32 stack supplies Comfy
 Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
 2.2.0 remains installed from the pinned prebuilt wheel for UI comparisons.
 SLA is provided by the pinned PlagueKind node pack at
-`6ca3037bd16dc143b6d461c67c87a28ca8074063`. Selecting **SLA** applies 0.90
-sparsity with 64-token blocks, protects the audio prefix, and leaves sequences
-shorter than 8192 tokens dense. Use it with an SLA-distilled H3 LoRA.
+`6ca3037bd16dc143b6d461c67c87a28ca8074063`. Selecting **SLA** exposes three
+quality presets: **Fast** uses validated 0.90 sparsity, **Balanced** uses the
+LoRA-distilled 0.85 sparsity, and **Quality** uses 0.85 sparsity plus a dense
+final sampling step. In a two-stage latent-upscale workflow the Quality dense
+tail applies independently to both sampling stages. Every preset uses 64-token
+blocks, protects the audio prefix, and leaves sequences shorter than 8192 tokens
+dense. Use SLA with an SLA-distilled H3 LoRA.
+
 The Sol-Attn integration is pinned to the reviewed v0.6.2 commit
 `930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf` so its ComfyUI node contract
 remains reproducible. v0.6.2 adds MiniMax H3 support for SM86 / RTX 30-series
@@ -93,7 +98,8 @@ default-off Turbo option after ComfyUI's H3 audio-carry fix. FirstBlockCache is
 also available as a default-off experimental Turbo option. Attention defaults
 to Sage 2 through KJNodes' per-model override. Kitchen remains ComfyUI's global
 backend and a selectable comparison/fallback. SLA and Sol remain available as
-explicit options; SLA uses its audio-safe sparse-linear defaults, while Auto can
+explicit options; SLA offers audio-safe Fast/Balanced/Quality presets, while
+Auto can
 still route jobs at or above 8K estimated packed tokens (and reference-media
 jobs) through Sol.
 Spectrum exposes one continuous capture-and-replay progress range to ComfyUI,
