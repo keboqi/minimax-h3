@@ -27,6 +27,8 @@ NODE_PATCHES = ROOT / "h3_node_patches.py"
 ATTENTION_HELPER = ROOT / "h3_attention.py"
 PROMPT_REWRITER = ROOT / "h3_prompt_rewriter.py"
 PROMPT_ENHANCER = ROOT / "prompt.txt"
+PROMPT_MUSIC3 = ROOT / "prompt_music3.txt"
+PROMPT_LTX25 = ROOT / "prompt_ltx25.txt"
 ACCEL_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
 LOCAL_UI = LOCAL / "gradio_app.py"
@@ -37,6 +39,8 @@ LOCAL_NODE_PATCHES = LOCAL / "h3_node_patches.py"
 LOCAL_ATTENTION_HELPER = LOCAL / "h3_attention.py"
 LOCAL_PROMPT_REWRITER = LOCAL / "h3_prompt_rewriter.py"
 LOCAL_PROMPT_ENHANCER = LOCAL / "prompt.txt"
+LOCAL_PROMPT_MUSIC3 = LOCAL / "prompt_music3.txt"
+LOCAL_PROMPT_LTX25 = LOCAL / "prompt_ltx25.txt"
 
 DATA = PurePosixPath("/data")
 MODELS = DATA / "models"
@@ -122,6 +126,8 @@ _RUNTIME_LOCAL_MOUNTS = (
     (LOCAL_ATTENTION_HELPER, ATTENTION_HELPER),
     (LOCAL_PROMPT_REWRITER, PROMPT_REWRITER),
     (LOCAL_PROMPT_ENHANCER, PROMPT_ENHANCER),
+    (LOCAL_PROMPT_MUSIC3, PROMPT_MUSIC3),
+    (LOCAL_PROMPT_LTX25, PROMPT_LTX25),
 )
 _BUILD_LOCAL_FILES = tuple(local for local, _ in _BUILD_LOCAL_MOUNTS)
 _RUNTIME_LOCAL_FILES = tuple(local for local, _ in _RUNTIME_LOCAL_MOUNTS)
@@ -401,6 +407,8 @@ def build(revision: str) -> None:
     custom_requirements = [
         sol_dir / "requirements.txt",
         sla_dir / "requirements.txt",
+        spectrum_dir / "requirements.txt",
+        larry_turbo_dir / "requirements.txt",
     ]
     custom_requirements.extend(
         directory / "requirements.txt"
@@ -647,6 +655,9 @@ def service_env() -> dict[str, str]:
             "GRADIO_OUTPUT_DIR": OUTPUT.as_posix(),
             "SERVER_ATTENTION_BACKEND": "sol",
             "SERVER_DENSE_ATTENTION_BACKEND": "comfy-kitchen",
+            # Modal already provides the public endpoint. Avoid asking Gradio
+            # to create a second, unauthenticated share tunnel at startup.
+            "GRADIO_SHARE": "false",
             "SERVER_MEMORY_PROFILE": "dynamic",
             "GRADIO_ANALYTICS_ENABLED": "False",
             "PYTHONUNBUFFERED": "1",
