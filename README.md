@@ -27,6 +27,8 @@ bundled FirstBlockCache node.
 - Default-on reuse of unchanged prompt and image/audio/video conditioning through
   content-addressed ComfyUI input staging
 - Per-video SeedVR2 or LTX-2.5 IC-LoRA 2x upscale and frame interpolation
+- Selectable SeedVR2 target-frame preprocessing for start/end frames and reference
+  images, with downloadable results and no forced downscaling
 - Optional generation-stage MiniMax H3 latent 2x upscale, with Balanced BF16,
   Fast FP16, and Quality FP32 model choices
 - Selectable Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
@@ -288,6 +290,22 @@ to the nearest multiple of 64 so the half-resolution pass remains on H3's
 32-pixel grid. The selected model is downloaded from
 [`LBH-123-AI/Minimax_h3_latent_Upscaler`](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)
 on first use.
+
+### Input image upscale
+
+Open **Upscale input images with SeedVR2** in the MiniMax H3 tab after uploading
+first/last frames or reference pictures. Select any populated image slots and run
+**Upscale selected inputs to frame**. Choose a **1280×1280**, **1920×1920**, or
+**3840×3840** bounding-frame preset, or enter a custom width and height. Each
+smaller image is enlarged by the greatest uniform scale that fits inside that
+frame, preserving its aspect ratio. Images that cannot be enlarged without
+exceeding the frame are left at their original resolution; nothing is downscaled.
+For example, a 1920×1920 frame maps 500×700 to 1371×1920, leaves 2048×2048
+unchanged, and maps 800×400 to 1920×960. One shared SeedVR2 workflow processes
+only the images that need enlargement, replaces those UI inputs automatically,
+and exposes every selected result (including unchanged originals) for download.
+The SeedVR2 model and VAE remain lazy-downloaded, and the optional resident-model
+unload control can reduce peak VRAM before this preprocessing pass.
 
 Generate a video, open **Gallery**, select its thumbnail, and choose a method
 under **Post-process selected video**. Each run preserves the source and adds a

@@ -322,6 +322,18 @@ POSTPROCESS_OPTIONS = [
     "48 fps interpolation",
 ]
 GENERATION_POSTPROCESS_OPTIONS = ["None", SEEDVR2_UPSCALE, LTX25_UPSCALE]
+INPUT_IMAGE_UPSCALE_SLOTS = (
+    "First frame",
+    "Last frame",
+    *(f"Picture {index}" for index in range(1, MAX_REFERENCE_IMAGES + 1)),
+)
+INPUT_IMAGE_FRAME_PRESETS = {
+    "1280 × 1280": (1280, 1280),
+    "1920 × 1920": (1920, 1920),
+    "3840 × 3840": (3840, 3840),
+    "Custom": None,
+}
+DEFAULT_INPUT_IMAGE_FRAME_PRESET = "1920 × 1920"
 
 
 @dataclass(frozen=True)
@@ -4087,6 +4099,100 @@ def required_seedvr2_upscale_nodes() -> set[str]:
     }
 
 
+def required_seedvr2_image_upscale_nodes() -> set[str]:
+    """Return the node contract for pre-generation still-image upscaling."""
+    return {
+        "LoadImage",
+        "ImageScaleBy",
+        "SeedVR2Preprocess",
+        "VAELoader",
+        "UNETLoader",
+        "VAEEncodeTiled",
+        "SeedVR2Conditioning",
+        "KSampler",
+        "VAEDecodeTiled",
+        "SeedVR2PostProcessing",
+        "SaveImage",
+    }
+
+
+def build_seedvr2_image_upscale_graph(
+    *,
+    source_images: list[tuple[str, str, float]],
+    seed: int,
+    models: ModelConfig,
+    model_choice: str = DEFAULT_SEEDVR2_MODEL,
+    output_token: str,
+) -> dict[str, Any]:
+    """Build one native SeedVR2 graph for one or more independent stills."""
+    if not source_images:
+        raise H3Error("Select at least one input image to upscale.")
+    assets = seedvr2_upscale_model_names(models, model_choice)
+    graph = Graph()
+    vae = graph.add("VAELoader", vae_name=assets["seedvr2_vae"])
+    model = graph.add(
+        "UNETLoader", unet_name=assets["seedvr2_dit"], weight_dtype="default"
+    )
+    model_ref = Graph.out(model)
+    for image_index, (slot_key, source_image, scale_by) in enumerate(source_images):
+        loaded = graph.add("LoadImage", image=source_image)
+        resized = graph.add(
+            "ImageScaleBy",
+            image=Graph.out(loaded),
+            upscale_method="lanczos",
+            scale_by=float(scale_by),
+        )
+        prepared = graph.add("SeedVR2Preprocess", resized_images=Graph.out(resized))
+        latent = graph.add(
+            "VAEEncodeTiled",
+            pixels=Graph.out(prepared),
+            vae=Graph.out(vae),
+            tile_size=1024,
+            overlap=128,
+            temporal_size=64,
+            temporal_overlap=8,
+        )
+        conditioning = graph.add(
+            "SeedVR2Conditioning",
+            model=model_ref,
+            vae_conditioning=Graph.out(latent),
+        )
+        sampled = graph.add(
+            "KSampler",
+            model=model_ref,
+            seed=(int(seed) + image_index) % (2**63 - 1),
+            steps=1,
+            cfg=1.0,
+            sampler_name="euler",
+            scheduler="simple",
+            positive=Graph.out(conditioning, 0),
+            negative=Graph.out(conditioning, 1),
+            latent_image=Graph.out(latent),
+            denoise=1.0,
+        )
+        decoded = graph.add(
+            "VAEDecodeTiled",
+            samples=Graph.out(sampled),
+            vae=Graph.out(vae),
+            tile_size=1024,
+            overlap=128,
+            temporal_size=64,
+            temporal_overlap=8,
+        )
+        restored = graph.add(
+            "SeedVR2PostProcessing",
+            images=Graph.out(decoded),
+            original_resized_images=Graph.out(resized),
+            color_correction_method="none",
+        )
+        graph.add(
+            "SaveImage",
+            images=Graph.out(restored),
+            filename_prefix=f"h3/input_upscale/{output_token}_{slot_key}",
+        )
+    return graph.nodes
+
+
 def build_seedvr2_upscale_graph(
     *,
     source_video: str,
@@ -4999,6 +5105,243 @@ def resolve_image_outputs(
     raise H3Error(
         "Generation completed, but the decoded image frame batch could not be located."
     )
+
+
+def resolve_seedvr2_input_upscale_outputs(
+    history: dict[str, Any],
+    queued_at: float,
+    output_token: str,
+    slot_keys: Iterable[str],
+) -> dict[str, Path]:
+    """Resolve each named still written by a SeedVR2 input-upscale graph."""
+    output_root = (OUTPUT_DIR / "h3" / "input_upscale").resolve()
+    candidates = _history_output_candidates(
+        history,
+        IMAGE_EXTENSIONS,
+        directory=output_root,
+    )
+    if not candidates:
+        candidates = _recent_output_candidates(
+            output_root, IMAGE_EXTENSIONS, queued_at
+        )
+    resolved: dict[str, Path] = {}
+    for slot_key in slot_keys:
+        prefix = f"{output_token}_{slot_key}_"
+        matches = [path for path in candidates if path.name.startswith(prefix)]
+        if matches:
+            resolved[slot_key] = max(matches, key=lambda path: path.stat().st_mtime)
+    missing = [slot_key for slot_key in slot_keys if slot_key not in resolved]
+    if missing:
+        raise H3Error(
+            "SeedVR2 completed, but these upscaled inputs could not be located: "
+            + ", ".join(missing)
+        )
+    return resolved
+
+
+def input_image_frame_preset_updates(
+    preset: str,
+    current_width: int | float,
+    current_height: int | float,
+) -> tuple[Any, Any]:
+    dimensions = INPUT_IMAGE_FRAME_PRESETS.get(str(preset))
+    if dimensions is None:
+        return gr.update(value=current_width), gr.update(value=current_height)
+    return dimensions
+
+
+def input_image_upscale_dimensions(
+    image_path: str,
+    frame_width: int | float,
+    frame_height: int | float,
+) -> tuple[int, int, int, int, float]:
+    """Fit an image upward into a bounding frame without ever downscaling it."""
+    try:
+        target_width = int(round(float(frame_width)))
+        target_height = int(round(float(frame_height)))
+    except (TypeError, ValueError) as exc:
+        raise H3Error("Input upscale frame width and height must be numbers.") from exc
+    if target_width < 1 or target_height < 1:
+        raise H3Error("Input upscale frame width and height must be positive.")
+
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(image_path) as image:
+            source_width, source_height = ImageOps.exif_transpose(image).size
+    except Exception as exc:
+        raise H3Error(f"Could not read input image dimensions: {exc}") from exc
+    if source_width < 1 or source_height < 1:
+        raise H3Error("Input image has invalid dimensions.")
+
+    scale_by = min(
+        target_width / source_width,
+        target_height / source_height,
+    )
+    if scale_by <= 1.0:
+        return source_width, source_height, source_width, source_height, 1.0
+    destination_width = min(target_width, round(source_width * scale_by))
+    destination_height = min(target_height, round(source_height * scale_by))
+    return (
+        source_width,
+        source_height,
+        destination_width,
+        destination_height,
+        scale_by,
+    )
+
+
+def upscale_selected_input_images(
+    selected_slots: Iterable[str],
+    model_choice: str,
+    seed: int,
+    force_offload: bool,
+    frame_width: int,
+    frame_height: int,
+    first_image: Any,
+    last_image: Any,
+    ref_image_1: Any,
+    ref_image_2: Any,
+    ref_image_3: Any,
+    ref_image_4: Any,
+    ref_image_5: Any,
+    ref_image_6: Any,
+    ref_image_7: Any,
+    ref_image_8: Any,
+    ref_image_9: Any,
+    progress=gr.Progress(track_tqdm=False),
+):
+    """Upscale selected H3 stills to fit a frame and replace their UI values."""
+    slot_labels = list(INPUT_IMAGE_UPSCALE_SLOTS)
+    slot_keys = ["first", "last", *(
+        f"picture_{index}" for index in range(1, MAX_REFERENCE_IMAGES + 1)
+    )]
+    image_values = (
+        first_image,
+        last_image,
+        ref_image_1,
+        ref_image_2,
+        ref_image_3,
+        ref_image_4,
+        ref_image_5,
+        ref_image_6,
+        ref_image_7,
+        ref_image_8,
+        ref_image_9,
+    )
+    selected = list(dict.fromkeys(str(value) for value in (selected_slots or [])))
+    if not selected:
+        raise gr.Error("Select at least one start, end, or reference image to upscale.")
+    unknown = sorted(set(selected) - set(slot_labels))
+    if unknown:
+        raise gr.Error("Unknown input image selection: " + ", ".join(unknown))
+
+    values_by_label = dict(zip(slot_labels, image_values))
+    keys_by_label = dict(zip(slot_labels, slot_keys))
+    staged: list[tuple[str, str, float]] = []
+    unchanged_results: dict[str, Path] = {}
+    dimension_notes: list[str] = []
+    for label in selected:
+        paths = normalize_paths(values_by_label[label])
+        if not paths:
+            raise gr.Error(f"Upload {label} before selecting it for upscaling.")
+        source_path = Path(paths[0]).resolve()
+        try:
+            source_width, source_height, dest_width, dest_height, scale_by = (
+                input_image_upscale_dimensions(
+                    str(source_path), frame_width, frame_height
+                )
+            )
+        except Exception as exc:
+            raise gr.Error(f"Could not prepare {label}: {exc}") from exc
+        slot_key = keys_by_label[label]
+        if scale_by > 1.0:
+            staged.append(
+                (
+                    slot_key,
+                    stage_file(str(source_path), "input_image_upscale", reuse=True),
+                    scale_by,
+                )
+            )
+            dimension_notes.append(
+                f"{label}: {source_width}×{source_height} → "
+                f"{dest_width}×{dest_height}"
+            )
+        else:
+            unchanged_results[slot_key] = source_path
+            dimension_notes.append(
+                f"{label}: {source_width}×{source_height} unchanged"
+            )
+
+    actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
+    generated_keys = {slot_key for slot_key, _path, _scale in staged}
+    results = dict(unchanged_results)
+    try:
+        if staged:
+            progress(0, desc="Checking SeedVR2 input upscaler")
+            available = set(object_info())
+            missing = required_seedvr2_image_upscale_nodes() - available
+            if missing:
+                raise H3Error(
+                    "SeedVR2 input upscaling requires current ComfyUI nodes: "
+                    + ", ".join(sorted(missing))
+                )
+            models = load_model_config()
+            ensure_seedvr2_upscale_models(models, model_choice)
+            if force_offload:
+                progress(0, desc="Unloading resident models")
+                unload_comfy_models()
+
+            output_token = uuid.uuid4().hex
+            graph = build_seedvr2_image_upscale_graph(
+                source_images=staged,
+                seed=actual_seed,
+                models=models,
+                model_choice=model_choice,
+                output_token=output_token,
+            )
+            client_id = str(uuid.uuid4())
+            queued_at = time.time()
+            prompt_id = submit_prompt(graph, client_id)
+            for stage, completed, total, step, step_total in poll_comfy_progress(
+                prompt_id, graph
+            ):
+                if step is not None and step_total:
+                    progress((step, step_total), desc=f"Upscaling inputs: {stage}")
+                elif total:
+                    progress((completed, total), desc=f"Upscaling inputs: {stage}")
+            history = wait_for_history(prompt_id)
+            results.update(
+                resolve_seedvr2_input_upscale_outputs(
+                    history,
+                    queued_at,
+                    output_token,
+                    generated_keys,
+                )
+            )
+    except gr.Error:
+        raise
+    except Exception as exc:
+        raise gr.Error(f"Input image upscaling failed: {exc}") from exc
+
+    component_updates: list[Any] = []
+    downloads: list[str] = []
+    for slot_key in slot_keys:
+        if slot_key in generated_keys:
+            path = str(results[slot_key])
+            component_updates.append(gr.update(value=path))
+        else:
+            component_updates.append(gr.update())
+        if slot_key in results:
+            downloads.append(str(results[slot_key]))
+    progress(1, desc="Input images ready")
+    summary = (
+        f"Fit selected images into a {int(frame_width)}×{int(frame_height)} frame: "
+        f"{len(staged)} upscaled with SeedVR2 {model_choice}, "
+        f"{len(unchanged_results)} already large enough. Aspect ratios were preserved "
+        "and no image was downscaled.\n\n" + "  \n".join(dimension_notes)
+    )
+    return (*component_updates, downloads, summary)
 
 
 def image_frame_labels(frame_paths: Iterable[Any]) -> list[str]:
@@ -7492,6 +7835,59 @@ def build_ui() -> gr.Blocks:
                         value=defaults["ref_image_size"],
                         label="Reference image size",
                     )
+                with gr.Accordion("Upscale input images with SeedVR2", open=False):
+                    gr.Markdown(
+                        "Select uploaded start/end frames or reference pictures, then "
+                        "fit smaller images upward into a target frame before generation. "
+                        "Aspect ratio is preserved and images already at or beyond the "
+                        "frame are not downscaled."
+                    )
+                    input_upscale_slots = gr.CheckboxGroup(
+                        choices=list(INPUT_IMAGE_UPSCALE_SLOTS),
+                        value=[],
+                        label="Images to upscale",
+                    )
+                    input_upscale_frame_preset = gr.Dropdown(
+                        choices=list(INPUT_IMAGE_FRAME_PRESETS),
+                        value=DEFAULT_INPUT_IMAGE_FRAME_PRESET,
+                        label="Target frame preset",
+                    )
+                    with gr.Row():
+                        input_upscale_frame_width = gr.Number(
+                            value=1920,
+                            precision=0,
+                            label="Frame width",
+                        )
+                        input_upscale_frame_height = gr.Number(
+                            value=1920,
+                            precision=0,
+                            label="Frame height",
+                        )
+                    with gr.Row():
+                        input_upscale_model = gr.Dropdown(
+                            choices=list(SEEDVR2_MODEL_CHOICES),
+                            value=defaults["seedvr2_model"],
+                            label="SeedVR2 model",
+                        )
+                        input_upscale_seed = gr.Number(
+                            value=-1,
+                            precision=0,
+                            label="Seed (-1 random)",
+                        )
+                    input_upscale_force_offload = gr.Checkbox(
+                        value=False,
+                        label="Unload resident models before input upscaling",
+                        info="Useful when H3 or another large model is already resident in VRAM.",
+                    )
+                    input_upscale_run = gr.Button(
+                        "Upscale selected inputs to frame", variant="secondary"
+                    )
+                    input_upscale_downloads = gr.File(
+                        label="Selected input image files",
+                        file_count="multiple",
+                        interactive=False,
+                    )
+                    input_upscale_status = gr.Markdown()
             with gr.Column(scale=2):
                 settings_overview = gr.Markdown(
                     compact_settings_summary(
@@ -8563,6 +8959,57 @@ def build_ui() -> gr.Blocks:
                 queue=False,
                 show_progress="hidden",
             )
+        input_upscale_frame_preset.change(
+            input_image_frame_preset_updates,
+            inputs=[
+                input_upscale_frame_preset,
+                input_upscale_frame_width,
+                input_upscale_frame_height,
+            ],
+            outputs=[input_upscale_frame_width, input_upscale_frame_height],
+            queue=False,
+            show_progress="hidden",
+            api_name=False,
+        )
+        input_upscale_event = input_upscale_run.click(
+            upscale_selected_input_images,
+            inputs=[
+                input_upscale_slots,
+                input_upscale_model,
+                input_upscale_seed,
+                input_upscale_force_offload,
+                input_upscale_frame_width,
+                input_upscale_frame_height,
+                first,
+                last,
+                ref_image_1,
+                ref_image_2,
+                ref_image_3,
+                ref_image_4,
+                ref_image_5,
+                ref_image_6,
+                ref_image_7,
+                ref_image_8,
+                ref_image_9,
+            ],
+            outputs=[
+                first,
+                last,
+                ref_image_1,
+                ref_image_2,
+                ref_image_3,
+                ref_image_4,
+                ref_image_5,
+                ref_image_6,
+                ref_image_7,
+                ref_image_8,
+                ref_image_9,
+                input_upscale_downloads,
+                input_upscale_status,
+            ],
+            show_progress="minimal",
+            api_name="upscale_h3_input_images",
+        )
         event = run.click(
             generate_for_ui,
             inputs=[
@@ -8732,7 +9179,11 @@ def build_ui() -> gr.Blocks:
             show_progress="minimal",
             api_name="generate_video",
         )
-        stop.click(interrupt, outputs=status, cancels=[event])
+        stop.click(
+            interrupt,
+            outputs=status,
+            cancels=[event, input_upscale_event],
+        )
         ltx25_stop.click(interrupt, outputs=ltx25_status, cancels=[ltx25_event])
         music3_stop.click(interrupt, outputs=music3_status, cancels=[music3_event])
         api_stop.click(interrupt, outputs=api_status, cancels=[api_event])
@@ -9828,6 +10279,71 @@ def selftest() -> None:
             if node["class_type"] == "UNETLoader"
         )
         assert choice_loader["inputs"]["unet_name"] == expected_name
+
+    seedvr2_image_graph = build_seedvr2_image_upscale_graph(
+        source_images=[
+            ("first", "h3_gradio/input_image_upscale/first.png", 2.5),
+            ("picture_2", "h3_gradio/input_image_upscale/picture.png", 1.25),
+        ],
+        seed=7,
+        models=fake,
+        model_choice=DEFAULT_SEEDVR2_MODEL,
+        output_token="inputtest",
+    )
+    seedvr2_image_nodes = list(seedvr2_image_graph.values())
+    assert required_seedvr2_image_upscale_nodes() <= {
+        node["class_type"] for node in seedvr2_image_nodes
+    }
+    assert sum(
+        node["class_type"] == "VAELoader" for node in seedvr2_image_nodes
+    ) == 1
+    assert sum(
+        node["class_type"] == "UNETLoader" for node in seedvr2_image_nodes
+    ) == 1
+    assert [
+        node["inputs"]["seed"]
+        for node in seedvr2_image_nodes
+        if node["class_type"] == "KSampler"
+    ] == [7, 8]
+    assert [
+        node["inputs"]["scale_by"]
+        for node in seedvr2_image_nodes
+        if node["class_type"] == "ImageScaleBy"
+    ] == [2.5, 1.25]
+    assert {
+        node["inputs"]["filename_prefix"]
+        for node in seedvr2_image_nodes
+        if node["class_type"] == "SaveImage"
+    } == {
+        "h3/input_upscale/inputtest_first",
+        "h3/input_upscale/inputtest_picture_2",
+    }
+    assert tuple(INPUT_IMAGE_UPSCALE_SLOTS[:3]) == (
+        "First frame", "Last frame", "Picture 1"
+    )
+    assert INPUT_IMAGE_FRAME_PRESETS["1920 × 1920"] == (1920, 1920)
+    assert input_image_frame_preset_updates(
+        "3840 × 3840", 1920, 1920
+    ) == (3840, 3840)
+    from PIL import Image
+
+    with tempfile.TemporaryDirectory() as upscale_dimensions_temp:
+        dimension_root = Path(upscale_dimensions_temp)
+        portrait = dimension_root / "portrait.png"
+        square = dimension_root / "square.png"
+        landscape = dimension_root / "landscape.png"
+        Image.new("RGB", (500, 700)).save(portrait)
+        Image.new("RGB", (2048, 2048)).save(square)
+        Image.new("RGB", (800, 400)).save(landscape)
+        assert input_image_upscale_dimensions(str(portrait), 1920, 1920)[:4] == (
+            500, 700, 1371, 1920
+        )
+        assert input_image_upscale_dimensions(str(square), 1920, 1920) == (
+            2048, 2048, 2048, 2048, 1.0
+        )
+        assert input_image_upscale_dimensions(str(landscape), 1920, 1920)[:4] == (
+            800, 400, 1920, 960
+        )
 
     ltx25_upscale_graph = build_ltx25_upscale_graph(
         source_video="h3_gradio/ltx25_upscale/source.mp4",
