@@ -286,6 +286,7 @@ H3_STAGE_OFFLOAD_NODE = "H3StageModelOffload"
 H3_LATENT_UPSCALE_SCALE = 2.0
 SOL_ATTENTION_NODE = "MiniMaxH3MemoryEfficientSolAttentionPatch"
 SAGE_ATTENTION_NODE = "PathchSageAttentionKJ"
+SLA_ATTENTION_NODE = "H3SLAAttention"
 FUSED_MODULATION_NODE = "MiniMaxH3FusedModulation"
 CHUNK_FEED_FORWARD_NODE = "MiniMaxH3ChunkFeedForward"
 SEEDVR2_UPSCALE = "SeedVR2 2x"
@@ -2595,6 +2596,8 @@ def resolve_sol_policy(
         return False, tokens, "forced Comfy Kitchen"
     if requested in {"sage", "sage 2", "sage2"}:
         return False, tokens, "forced Sage 2"
+    if requested in {"sla", "sla attention", "sparse-linear"}:
+        return False, tokens, "forced SLA"
     if SERVER_ATTENTION_BACKEND != "sol":
         return False, tokens, "Sol backend unavailable"
     if requested in {"sol-attn", "sol", "sparse"}:
@@ -3061,6 +3064,7 @@ def add_model_stack(
     text_encoder_name: str | None = None,
     use_int8_vae: bool = False,
     use_sage: bool = False,
+    use_sla: bool = False,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     unet = graph.add("UNETLoader", unet_name=model_name, weight_dtype="default")
     model_ref = Graph.out(unet)
@@ -3097,6 +3101,23 @@ def add_model_stack(
         )
         model_ref = Graph.out(cache)
 
+    if use_sla:
+        if SLA_ATTENTION_NODE not in available_nodes:
+            raise H3Error(
+                "SLA was requested, but H3 SLA Attention is not loaded. "
+                "Re-run setup_h3.py and restart ComfyUI."
+            )
+        sla = graph.add(
+            SLA_ATTENTION_NODE,
+            model=model_ref,
+            sparsity_ratio=0.90,
+            block_size="64",
+            min_seq_len=8192,
+            dense_last_steps=0,
+            protect_audio=True,
+            enabled=True,
+        )
+        model_ref = Graph.out(sla)
 
     if use_sage:
         if SAGE_ATTENTION_NODE not in available_nodes:
@@ -3508,6 +3529,7 @@ def build_fl2va_graph(
     available_nodes: set[str],
     use_int8_vae: bool = False,
     use_sage: bool = False,
+    use_sla: bool = False,
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
@@ -3548,6 +3570,7 @@ def build_fl2va_graph(
         text_encoder_name=text_encoder_name,
         use_int8_vae=use_int8_vae,
         use_sage=use_sage,
+        use_sla=use_sla,
     )
     normalized_image_vae = normalize_image_vae(image_vae)
     single_frame_images = (
@@ -3686,6 +3709,7 @@ def build_ref2va_graph(
     available_nodes: set[str],
     use_int8_vae: bool = False,
     use_sage: bool = False,
+    use_sla: bool = False,
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
@@ -3726,6 +3750,7 @@ def build_ref2va_graph(
         text_encoder_name=text_encoder_name,
         use_int8_vae=use_int8_vae,
         use_sage=use_sage,
+        use_sla=use_sla,
     )
     normalized_image_vae = normalize_image_vae(image_vae)
     single_frame_images = (
@@ -4422,6 +4447,7 @@ def required_nodes_for(
     model_filename: str = "",
     turbo_lora_filename: str = "",
     use_sage: bool = False,
+    use_sla: bool = False,
     latent_upscale: bool = False,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_vae: str = DEFAULT_IMAGE_VAE,
@@ -4462,6 +4488,8 @@ def required_nodes_for(
         common.add(SOL_ATTENTION_NODE)
     if use_sage:
         common.add(SAGE_ATTENTION_NODE)
+    if use_sla:
+        common.add(SLA_ATTENTION_NODE)
     if latent_upscale:
         common |= {
             "SplitSigmas",
@@ -6148,6 +6176,9 @@ def generate(
         effective_sage = str(attention_mode).strip().lower() in {
             "sage", "sage 2", "sage2"
         }
+        effective_sla = str(attention_mode).strip().lower() in {
+            "sla", "sla attention", "sparse-linear"
+        }
         effective_cache_mode, cache_note = resolve_cache_policy(
             cache_mode, use_turbo=use_turbo
         )
@@ -6163,6 +6194,7 @@ def generate(
             effective_sol,
             effective_cache_mode,
             use_sage=effective_sage,
+            use_sla=effective_sla,
             use_turbo=use_turbo,
             turbo_variant=selected_turbo,
             model_filename=selected_model,
@@ -6212,6 +6244,7 @@ def generate(
                 turbo_strength=turbo_strength,
                 use_sol=effective_sol, sol_tau=float(sol_tau),
                 use_sage=effective_sage,
+                use_sla=effective_sla,
                 sol_thresh_type=sol_thresh_type,
                 sol_exact_mode=sol_exact_mode,
                 sol_dense_steps=int(sol_dense_steps),
@@ -6249,6 +6282,7 @@ def generate(
                 turbo_strength=turbo_strength,
                 use_sol=effective_sol, sol_tau=float(sol_tau),
                 use_sage=effective_sage,
+                use_sla=effective_sla,
                 sol_thresh_type=sol_thresh_type,
                 sol_exact_mode=sol_exact_mode,
                 sol_dense_steps=int(sol_dense_steps),
@@ -6291,10 +6325,14 @@ def generate(
         prompt_id = submit_prompt(graph, client_id)
         timings.label = f"H3 job {prompt_id}"
         timings.transition("Waiting for ComfyUI")
-        sol_status = (
+        attention_status = (
+            "SLA (sparsity=0.90, block=64, audio protected)"
+            if effective_sla else
+            "Sage 2"
+            if effective_sage else
             f"zero-copy on ({sol_thresh_type}, τ={float(sol_tau):.1f}, "
             f"{sol_exact_mode}, dense-tail-blocks={int(sol_dense_steps)})"
-            if effective_sol else "off"
+            if effective_sol else "Comfy Kitchen"
         )
         if effective_cache_mode.lower() == "firstblockcache":
             cache_status = (
@@ -6326,7 +6364,7 @@ def generate(
                 else " · "
             )
             + f"model {selected_label} · {effective_steps} steps/{effective_scheduler} · "
-            f"attention {sol_status} ({sol_reason}; ~{packed_tokens:,} target tokens) · "
+            f"attention {attention_status} ({sol_reason}; ~{packed_tokens:,} target tokens) · "
             f"dense-backend {SERVER_DENSE_ATTENTION_BACKEND} · "
             f"cache {cache_status} · unchanged-input reuse "
             f"{'on' if reuse_unchanged_inputs else 'off'}"
@@ -7532,7 +7570,7 @@ def build_ui() -> gr.Blocks:
                         value=defaults["seed"], precision=0, label="Seed (-1 random)"
                     )
                 attention_mode = gr.Radio(
-                    ["Sage 2", "Kitchen", "Sol-Attn", "Auto"],
+                    ["Sage 2", "Kitchen", "SLA", "Sol-Attn", "Auto"],
                     value=defaults["attention_mode"],
                     label="Attention",
                     interactive=SERVER_ATTENTION_BACKEND == "sol",
@@ -7541,7 +7579,10 @@ def build_ui() -> gr.Blocks:
                         f"packed target tokens reach {AUTO_SOL_TOKEN_THRESHOLD:,}; "
                         "Sage 2 is the measured-fastest default and applies the pinned "
                         "KJNodes model override. Kitchen selects the global ComfyUI "
-                        "backend. Auto uses Kitchen for smaller jobs. Sol "
+                        "backend. SLA uses block-sparse attention with audio-safe "
+                        "defaults and automatically keeps short sequences dense; it "
+                        "is intended for SLA-distilled H3 LoRAs. Auto uses Kitchen for "
+                        "smaller jobs. Sol "
                         f"dense/fallback calls use {SERVER_DENSE_ATTENTION_BACKEND}."
                     ),
                 )
@@ -8978,6 +9019,7 @@ def selftest() -> None:
     available.add("SpectrumApplyMiniMaxH3")
     available.add(CHUNK_FEED_FORWARD_NODE)
     available.add(SAGE_ATTENTION_NODE)
+    available.add(SLA_ATTENTION_NODE)
     available |= {
         LARRY_TURBO_LORA_NODE,
         LARRY_TURBO_SAMPLER_NODE,
@@ -9376,6 +9418,54 @@ def selftest() -> None:
     assert not any(
         node["class_type"] == SOL_ATTENTION_NODE
         for node in sage_graph.nodes.values()
+    )
+
+    sla_graph = Graph()
+    add_model_stack(
+        sla_graph,
+        fake.profile("speed").fl2va,
+        fake,
+        turbo_lora_name=None,
+        turbo_variant=LIGHTX2V_4STEP_TURBO,
+        turbo_strength=1.0,
+        use_sol=False,
+        sol_tau=1.0,
+        sol_thresh_type="diag",
+        sol_exact_mode="off",
+        sol_dense_steps=1,
+        sol_step_off=0.0,
+        sol_sink_tokens=0,
+        cache_mode="Off",
+        fbcache_preset="Fast",
+        fbcache_threshold=0.10,
+        fbcache_start=0.10,
+        fbcache_end=0.95,
+        fbcache_max_hits=2,
+        fbcache_temporal_guard=True,
+        easycache_threshold=0.10,
+        easycache_start=0.15,
+        easycache_end=0.85,
+        easycache_verbose=False,
+        available_nodes=available,
+        use_sla=True,
+    )
+    sla_nodes = [
+        node for node in sla_graph.nodes.values()
+        if node["class_type"] == SLA_ATTENTION_NODE
+    ]
+    assert len(sla_nodes) == 1
+    assert sla_nodes[0]["inputs"] == {
+        "model": sla_nodes[0]["inputs"]["model"],
+        "sparsity_ratio": 0.90,
+        "block_size": "64",
+        "min_seq_len": 8192,
+        "dense_last_steps": 0,
+        "protect_audio": True,
+        "enabled": True,
+    }
+    assert not any(
+        node["class_type"] in {SOL_ATTENTION_NODE, SAGE_ATTENTION_NODE}
+        for node in sla_graph.nodes.values()
     )
 
     cache_nodes = [
@@ -9969,6 +10059,10 @@ def selftest() -> None:
         "Sage 2", "Text to video", 608, 352, 2, None, None
     )
     assert sage_policy[0] is False and sage_policy[2] == "forced Sage 2"
+    sla_policy = resolve_sol_policy(
+        "SLA", "Text to video", 608, 352, 2, None, None
+    )
+    assert sla_policy[0] is False and sla_policy[2] == "forced SLA"
     assert resolve_sol_policy("Auto", "Text to video", 608, 352, 2, None, None)[0] is False
     assert resolve_sol_policy(
         "Auto", "Text to video", 608, 352, 2, None, None, use_turbo=True

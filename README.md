@@ -2,8 +2,8 @@
 
 A standalone Gradio interface and deployment toolkit for MiniMax H3 video
 generation on NVIDIA Blackwell GPUs. It provisions ComfyUI, the required H3
-models, Sol-Attn, Comfy Kitchen attention, SageAttention 2, Spectrum, and a bundled
-FirstBlockCache node.
+models, SLA, Sol-Attn, Comfy Kitchen attention, SageAttention 2, Spectrum, and a
+bundled FirstBlockCache node.
 
 ## What is included
 
@@ -32,7 +32,8 @@ FirstBlockCache node.
 - Selectable Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
   including the dedicated Ref2V 4-step adapter
 - SageAttention 2 as the measured-fastest H3 default, with selectable Comfy
-  Kitchen comparison and optional H3-native zero-copy Sol v0.6.2 sparse attention
+  Kitchen comparison, audio-safe SLA block-sparse attention, and optional
+  H3-native zero-copy Sol v0.6.2 sparse attention
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Optional experimental INT8 ConvRot video VAE, lazy-downloaded on first use
@@ -57,6 +58,10 @@ The installer pins the ABI-sensitive stack to Torch 2.11.0 + CUDA 13.0,
 NumPy 1.26.4, and SciPy 1.15.3. The pinned ComfyUI 0.32 stack supplies Comfy
 Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
 2.2.0 remains installed from the pinned prebuilt wheel for UI comparisons.
+SLA is provided by the pinned PlagueKind node pack at
+`6ca3037bd16dc143b6d461c67c87a28ca8074063`. Selecting **SLA** applies 0.90
+sparsity with 64-token blocks, protects the audio prefix, and leaves sequences
+shorter than 8192 tokens dense. Use it with an SLA-distilled H3 LoRA.
 The Sol-Attn integration is pinned to the reviewed v0.6.2 commit
 `930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf` so its ComfyUI node contract
 remains reproducible. v0.6.2 adds MiniMax H3 support for SM86 / RTX 30-series
@@ -87,9 +92,10 @@ RES multistep sampler paths. EasyCache is also available as an experimental,
 default-off Turbo option after ComfyUI's H3 audio-carry fix. FirstBlockCache is
 also available as a default-off experimental Turbo option. Attention defaults
 to Sage 2 through KJNodes' per-model override. Kitchen remains ComfyUI's global
-backend and a selectable comparison/fallback. Sol remains available as an
-explicit option; Auto can still route jobs at or above 8K estimated packed
-tokens (and reference-media jobs) through Sol.
+backend and a selectable comparison/fallback. SLA and Sol remain available as
+explicit options; SLA uses its audio-safe sparse-linear defaults, while Auto can
+still route jobs at or above 8K estimated packed tokens (and reference-media
+jobs) through Sol.
 Spectrum exposes one continuous capture-and-replay progress range to ComfyUI,
 so the Gradio live progress stream remains active during both passes.
 

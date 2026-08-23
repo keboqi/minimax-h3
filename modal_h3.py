@@ -52,6 +52,8 @@ UI_PORT = 7860
 COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
 SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
 SOL_REF = "930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf"  # v0.6.2, SM86 support
+SLA_REPO = "https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes.git"
+SLA_REF = "6ca3037bd16dc143b6d461c67c87a28ca8074063"
 SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_REF = "ac247efcc2c9b6324fa106b3bd8e148a583db4a9"  # v0.2.15
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
@@ -200,6 +202,10 @@ def build(revision: str) -> None:
     sol_dir = Path(COMFY) / "custom_nodes" / "ComfyUI_sol-attn_Blackwell"
     _clone(SOL_REPO, sol_dir, ref=SOL_REF)
     _print_git_revision(sol_dir)
+
+    sla_dir = Path(COMFY) / "custom_nodes" / "ComfyUI-PlagueKind-Nodes"
+    _clone(SLA_REPO, sla_dir, ref=SLA_REF)
+    _print_git_revision(sla_dir)
 
     spectrum_dir = (
         Path(COMFY) / "custom_nodes" / "ComfyUI-Spectrum-MiniMax-H3"
@@ -392,7 +398,10 @@ def build(revision: str) -> None:
         flush=True,
     )
 
-    custom_requirements = [sol_dir / "requirements.txt"]
+    custom_requirements = [
+        sol_dir / "requirements.txt",
+        sla_dir / "requirements.txt",
+    ]
     custom_requirements.extend(
         directory / "requirements.txt"
         for directory in installed_nodes.values()
