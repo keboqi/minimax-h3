@@ -98,9 +98,10 @@ choices. Turbo defaults to Spectrum through the reviewed Larry Turbo and
 RES multistep sampler paths. EasyCache is also available as an experimental,
 default-off Turbo option after ComfyUI's H3 audio-carry fix. FirstBlockCache is
 also available as a default-off experimental Turbo option. Attention defaults
-to Sage 2 through KJNodes' per-model override. Kitchen remains ComfyUI's global
-backend and a selectable comparison/fallback. SLA and Sol remain available as
-explicit options; SLA offers audio-safe Fast/Balanced/Quality presets, while
+to **SLA with the Quality preset**, which uses audio-safe block-sparse attention
+and a dense final sampling step. Sage 2 remains available through KJNodes'
+per-model override, and Kitchen remains ComfyUI's global backend and a selectable
+comparison/fallback. SLA also offers Fast and Balanced presets, while
 Auto can
 still route jobs at or above 8K estimated packed tokens (and reference-media
 jobs) through Sol.
@@ -160,9 +161,9 @@ official H3 video VAE regardless of this image setting.
 The native H3 latent upscaler is also default-off and lazy-downloads only the
 selected checkpoint. **Balanced (BF16)** is the default choice; **Fast (FP16)**
 and **Quality (FP32)** remain selectable.
-The H3 text encoder defaults to the preloaded **NVFP4 / AWQ** checkpoint. The
-**INT8 ConvRot** (27.1 GB) and **BF16** (51.5 GB) checkpoints download on first
-selection. Choosing BF16 automatically enables and locks **Offload models
+The H3 text encoder defaults to the preloaded **BF16** checkpoint (51.5 GB).
+The **NVFP4 / AWQ** and **INT8 ConvRot** (27.1 GB) checkpoints download on first
+selection. BF16 automatically enables and locks **Offload models
 between H3 stages** so the text encoder, diffusion model, optional latent
 upscaler, and VAEs do not need to remain resident together. INT8 and NVFP4 keep
 the current all-VRAM path by default; stage offload can still be enabled
@@ -240,12 +241,18 @@ The **Result format** control in the MiniMax H3 tab defaults to **Video** and
 does not change conditioning or sampling. H3 still generates its joint visual
 and audio latent; the selected format controls the final decode:
 
+For video start frames, **Auto cap** sits beside Width and Height and defaults to
+**4 MP**. Select **1 MP**, **2 MP**, or **4 MP** to choose the maximum automatic
+canvas while retaining the uploaded aspect ratio and required model alignment.
+Changing the cap recomputes an already-loaded start frame. Manually entered Width
+and Height values are not capped.
+
 - **Video** decodes both streams and muxes the existing synchronized MP4.
 - **Image** replaces the duration control with a 1–20 frame control (5 by
   default), decodes the requested visual frames, and shows every frame in a
   gallery. Select one or more frames and use **Save selected frames** to copy
   only those PNGs into `ComfyUI/output/h3/images`. With a start frame, Image
-  mode uses its native resolution without the video workflow's 2 MP cap,
+  mode uses its native resolution without the video workflow's 4 MP cap,
   rounded only to H3's required 32-pixel grid (or 64-pixel grid when native
   latent upscale is enabled). **Image VAE** defaults to **Official video VAE**.
   The optional **Single-frame 500K (experimental)** decoder returns exactly one

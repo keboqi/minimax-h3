@@ -387,11 +387,11 @@ H3_TEXT_ENCODER_CHOICES = {
     "INT8 ConvRot": "text_encoder_int8",
     "BF16": "text_encoder_bf16",
 }
-DEFAULT_H3_TEXT_ENCODER = "INT8 ConvRot"
-DEFAULT_H3_TEXT_ENCODER_KEY = "text_encoder_int8"
+DEFAULT_H3_TEXT_ENCODER = "BF16"
+DEFAULT_H3_TEXT_ENCODER_KEY = "text_encoder_bf16"
 H3_OPTIONAL_TEXT_ENCODER_KEYS = (
     "text_encoder",
-    "text_encoder_bf16",
+    "text_encoder_int8",
 )
 LTX25_MODEL_CHOICES = {
     "INT8 ConvRot": "ltx25_distilled_int8",
@@ -1016,7 +1016,7 @@ def selftest() -> None:
         "minimax_h3_fl2va_pruned_bf16.safetensors"
     )
     assert cfg["text_encoder"] == (
-        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
+        "qwen3vl_32b_minimax_h3_bf16.safetensors"
     )
     assert cfg["text_encoders"] == {
         "NVFP4 / AWQ": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",

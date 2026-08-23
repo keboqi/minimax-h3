@@ -148,7 +148,7 @@ DEFAULT_FBCACHE_END = 0.95
 DEFAULT_FBCACHE_MAX_HITS = 2
 DEFAULT_FBCACHE_TEMPORAL_GUARD = True
 DEFAULT_ACCELERATOR = "Spectrum"
-DEFAULT_SLA_PRESET = "Fast"
+DEFAULT_SLA_PRESET = "Quality"
 SLA_PRESET_INPUTS = {
     "Fast": {
         "sparsity_ratio": 0.90,
@@ -373,7 +373,7 @@ UI_DEFAULTS = {
     "image_frames": DEFAULT_IMAGE_FRAMES,
     "model_profile": "Original",
     "text_encoder": DEFAULT_H3_TEXT_ENCODER,
-    "stage_model_offload": False,
+    "stage_model_offload": True,
     "reuse_unchanged_inputs": True,
     "use_int8_vae": False,
     "generation_mode": "Turbo",
@@ -384,7 +384,7 @@ UI_DEFAULTS = {
     "steps": 4,
     "scheduler": "simple",
     "seed": -1,
-    "attention_mode": "Sage 2",
+    "attention_mode": "SLA",
     "sla_preset": DEFAULT_SLA_PRESET,
     "sol_tau": 1.0,
     "sol_thresh_type": "diag",
@@ -441,7 +441,15 @@ SPECTRUM_DEFAULT_INPUTS = {
 # The official H3 workflow uses a 768×1344 pixel-area native canvas. Larger
 # entries are still available for workflows that can handle them.
 NATIVE_PIXEL_CAP = 768 * 1344
-AUTO_RESOLUTION_PIXEL_CAP = 2_000_000 - 1
+AUTO_RESOLUTION_MEGAPIXEL_PRESETS = {
+    "1 MP": 1_000_000 - 1,
+    "2 MP": 2_000_000 - 1,
+    "4 MP": 4_000_000 - 1,
+}
+DEFAULT_AUTO_RESOLUTION_MEGAPIXELS = "4 MP"
+AUTO_RESOLUTION_PIXEL_CAP = AUTO_RESOLUTION_MEGAPIXEL_PRESETS[
+    DEFAULT_AUTO_RESOLUTION_MEGAPIXELS
+]
 DRAFT_RESOLUTIONS: dict[str, tuple[int, int]] = {
     "1:1 · 512×512": (512, 512),
     "16:9 · 608×352": (608, 352),
@@ -1557,9 +1565,15 @@ def h3_text_encoder_settings(
     model_key = H3_TEXT_ENCODER_CHOICES.get(choice)
     if model_key is None:
         raise H3Error(f"Unknown H3 text encoder: {model_choice}")
-    configured = models.text_encoders or {
-        DEFAULT_H3_TEXT_ENCODER: models.text_encoder,
-    }
+    configured = dict(models.text_encoders or {})
+    if not configured:
+        # Legacy configs expose one unnamed encoder. Associate it only when
+        # its filename identifies a known choice; changing the UI default must
+        # not relabel an older INT8/NVFP4 file as BF16.
+        for label, key in H3_TEXT_ENCODER_CHOICES.items():
+            if models.text_encoder == MODEL_SPECS[key].local_name:
+                configured[label] = models.text_encoder
+                break
     filename = configured.get(choice, MODEL_SPECS[model_key].local_name)
     return model_key, filename, model_key == "text_encoder_bf16"
 
@@ -2228,8 +2242,9 @@ def resolution_for_aspect_ratio(
     *,
     preserve_native: bool = False,
     alignment: int = 32,
+    pixel_cap: int = AUTO_RESOLUTION_PIXEL_CAP,
 ) -> tuple[int, int]:
-    """Return an aligned native or sub-2 MP canvas matching an image ratio."""
+    """Return an aligned native or sub-4 MP canvas matching an image ratio."""
     width = float(source_width)
     height = float(source_height)
     if not math.isfinite(width) or not math.isfinite(height) or width <= 0 or height <= 0:
@@ -2240,14 +2255,17 @@ def resolution_for_aspect_ratio(
 
     # Do not upscale a smaller source image. Preserve its native dimensions;
     # only oversized inputs need aspect-ratio-based downscaling.
-    if width * height < 2_000_000:
+    resolved_pixel_cap = int(pixel_cap)
+    if resolved_pixel_cap < 1:
+        raise H3Error("The automatic resolution pixel cap must be positive.")
+    if width * height <= resolved_pixel_cap:
         return int(width), int(height)
 
     ratio = width / height
     if ratio >= 1:
         resolved_width = max(
             alignment,
-            math.floor(math.sqrt(AUTO_RESOLUTION_PIXEL_CAP * ratio) / alignment)
+            math.floor(math.sqrt(resolved_pixel_cap * ratio) / alignment)
             * alignment,
         )
         resolved_height = max(
@@ -2257,7 +2275,7 @@ def resolution_for_aspect_ratio(
     else:
         resolved_height = max(
             alignment,
-            math.floor(math.sqrt(AUTO_RESOLUTION_PIXEL_CAP / ratio) / alignment)
+            math.floor(math.sqrt(resolved_pixel_cap / ratio) / alignment)
             * alignment,
         )
         resolved_width = max(
@@ -2265,8 +2283,8 @@ def resolution_for_aspect_ratio(
             math.floor(resolved_height * ratio / alignment) * alignment,
         )
 
-    # Rounding to the model's 32-pixel grid can cross the strict 2 MP boundary.
-    while resolved_width * resolved_height >= 2_000_000:
+    # Rounding to the model grid can cross the selected pixel boundary.
+    while resolved_width * resolved_height > resolved_pixel_cap:
         if ratio >= 1:
             resolved_width = max(alignment, resolved_width - alignment)
             resolved_height = max(
@@ -2285,7 +2303,7 @@ def resolution_for_aspect_ratio(
 # Gradio runs this in the browser when the file is selected. It deliberately
 # uses the local File/preview object, so reading dimensions does not add a
 # second server upload or require a Python callback.
-AUTO_RESOLUTION_JS = r"""async (_value, currentWidth, currentHeight, resultFormat, latentUpscale) => {
+AUTO_RESOLUTION_JS = r"""async (_value, currentWidth, currentHeight, resultFormat, latentUpscale, autoMegapixels) => {
     const root = document.getElementById("first-frame-image");
     const input = root?.querySelector('input[type="file"]')
         || document.querySelector('#first-frame-image input[type="file"]');
@@ -2355,7 +2373,9 @@ AUTO_RESOLUTION_JS = r"""async (_value, currentWidth, currentHeight, resultForma
         ];
     }
 
-    if (imageWidth * imageHeight < 2000000) {
+    const selectedMegapixels = Number.parseInt(String(autoMegapixels), 10) || 4;
+    const pixelLimit = selectedMegapixels * 1000000;
+    if (imageWidth * imageHeight < pixelLimit) {
         const width = snap(imageWidth);
         const height = snap(imageHeight);
         const megapixels = (width * height / 1000000).toFixed(2);
@@ -2367,7 +2387,7 @@ AUTO_RESOLUTION_JS = r"""async (_value, currentWidth, currentHeight, resultForma
         ];
     }
 
-    const maxPixels = 2000000 - 1;
+    const maxPixels = pixelLimit - 1;
     const ratio = imageWidth / imageHeight;
     let width;
     let height;
@@ -2378,7 +2398,7 @@ AUTO_RESOLUTION_JS = r"""async (_value, currentWidth, currentHeight, resultForma
         height = Math.max(grid, Math.floor(Math.sqrt(maxPixels / ratio) / grid) * grid);
         width = Math.max(grid, Math.floor(height * ratio / grid) * grid);
     }
-    while (width * height >= 2000000) {
+    while (width * height >= pixelLimit) {
         if (ratio >= 1) {
             width = Math.max(grid, width - grid);
             height = Math.max(grid, Math.floor(width / ratio / grid) * grid);
@@ -2467,12 +2487,21 @@ def resolution_info_preview(
     return prefix + resolution_summary(resolved_width, resolved_height)
 
 
+def auto_resolution_pixel_cap(value: str | None) -> int:
+    preset = str(value or DEFAULT_AUTO_RESOLUTION_MEGAPIXELS)
+    try:
+        return AUTO_RESOLUTION_MEGAPIXEL_PRESETS[preset]
+    except KeyError as exc:
+        raise H3Error(f"Unknown automatic resolution cap: {value}") from exc
+
+
 def auto_resolution_from_start_frame(
     first_image: Any,
     current_width: int | float | None,
     current_height: int | float | None,
     result_format: str = DEFAULT_RESULT_FORMAT,
     latent_upscale: bool = False,
+    auto_megapixels: str = DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
 ) -> tuple[int | float, int | float, str]:
     """Apply the automatic ratio resolution after Gradio stages the image."""
     fallback_width = current_width or UI_DEFAULTS["width"]
@@ -2498,6 +2527,7 @@ def auto_resolution_from_start_frame(
                 *image.size,
                 preserve_native=normalized_result == "Image",
                 alignment=64 if latent_upscale else 32,
+                pixel_cap=auto_resolution_pixel_cap(auto_megapixels),
             )
     except Exception as exc:
         return fallback_width, fallback_height, f"⚠️ Unable to read start frame dimensions: {exc}"
@@ -2814,7 +2844,7 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
             ),
             "simple",
             DEFAULT_ACCELERATOR,
-            "Sage 2",
+            "SLA",
         )
 
     return (
@@ -2822,7 +2852,7 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
         gr.update(value=18, interactive=True),
         "simple",
         DEFAULT_ACCELERATOR,
-        "Sage 2",
+        "SLA",
     )
 
 
@@ -7691,12 +7721,13 @@ def build_ui() -> gr.Blocks:
                         value=defaults["text_encoder"],
                         label="Text encoder",
                         info=(
-                            "NVFP4 is preloaded. INT8 ConvRot and BF16 download on first "
-                            "use; BF16 is approximately 51.5 GB."
+                            "BF16 is the preloaded default and is approximately 51.5 GB. "
+                            "NVFP4/AWQ and INT8 ConvRot download on first use."
                         ),
                     )
                     stage_model_offload = gr.Checkbox(
                         value=defaults["stage_model_offload"],
+                        interactive=defaults["text_encoder"] != "BF16",
                         label="Offload models between H3 stages",
                         info=(
                             "Unload resident models between text encoding, diffusion, "
@@ -8016,6 +8047,12 @@ def build_ui() -> gr.Blocks:
                 with gr.Row():
                     width = gr.Number(value=defaults["width"], precision=0, label="Width")
                     height = gr.Number(value=defaults["height"], precision=0, label="Height")
+                    auto_megapixels = gr.Dropdown(
+                        choices=list(AUTO_RESOLUTION_MEGAPIXEL_PRESETS),
+                        value=DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
+                        label="Auto cap",
+                        info="Maximum start-frame auto resolution; manual sizes are unchanged.",
+                    )
                 resolution_info = gr.Markdown(
                     resolution_summary(defaults["width"], defaults["height"])
                 )
@@ -8035,11 +8072,11 @@ def build_ui() -> gr.Blocks:
                     info=(
                         f"Auto enables Sol-Attn for Reference mode or when estimated "
                         f"packed target tokens reach {AUTO_SOL_TOKEN_THRESHOLD:,}; "
-                        "Sage 2 is the measured-fastest default and applies the pinned "
-                        "KJNodes model override. Kitchen selects the global ComfyUI "
-                        "backend. SLA uses block-sparse attention with audio-safe "
-                        "defaults and automatically keeps short sequences dense; it "
-                        "is intended for SLA-distilled H3 LoRAs. Auto uses Kitchen for "
+                        "Sage 2 applies the pinned KJNodes model override. Kitchen "
+                        "selects the global ComfyUI backend. SLA is the default, uses "
+                        "the Quality audio-safe block-sparse preset, and automatically "
+                        "keeps short sequences dense; it is intended for SLA-distilled "
+                        "H3 LoRAs. Auto uses Kitchen for "
                         "smaller jobs. Sol "
                         f"dense/fallback calls use {SERVER_DENSE_ATTENTION_BACKEND}."
                     ),
@@ -8896,7 +8933,10 @@ def build_ui() -> gr.Blocks:
         # fallback for environments that clear the input before JS runs.
         first.upload(
             fn=None,
-            inputs=[first, width, height, result_format, latent_upscale],
+            inputs=[
+                first, width, height, result_format, latent_upscale,
+                auto_megapixels,
+            ],
             outputs=[width, height, resolution_info],
             js=AUTO_RESOLUTION_JS,
             queue=False,
@@ -8904,12 +8944,32 @@ def build_ui() -> gr.Blocks:
         )
         first_change_event = first.change(
             fn=auto_resolution_from_start_frame,
-            inputs=[first, width, height, result_format, latent_upscale],
+            inputs=[
+                first, width, height, result_format, latent_upscale,
+                auto_megapixels,
+            ],
             outputs=[width, height, resolution_info],
             queue=False,
             show_progress="hidden",
         )
         first_change_event.then(
+            compact_settings_summary,
+            inputs=settings_inputs,
+            outputs=settings_overview,
+            queue=False,
+            show_progress="hidden",
+        )
+        auto_megapixels_change = auto_megapixels.change(
+            fn=auto_resolution_from_start_frame,
+            inputs=[
+                first, width, height, result_format, latent_upscale,
+                auto_megapixels,
+            ],
+            outputs=[width, height, resolution_info],
+            queue=False,
+            show_progress="hidden",
+        )
+        auto_megapixels_change.then(
             compact_settings_summary,
             inputs=settings_inputs,
             outputs=settings_overview,
@@ -10692,10 +10752,23 @@ def selftest() -> None:
     assert resolution_for_aspect_ratio(1024, 1024) == (1024, 1024)
     assert auto_landscape[0] % 32 == 0 and auto_landscape[1] % 32 == 0
     assert auto_portrait[0] % 32 == 0 and auto_portrait[1] % 32 == 0
-    assert auto_landscape[0] * auto_landscape[1] < 2_000_000
-    assert auto_portrait[0] * auto_portrait[1] < 2_000_000
+    assert auto_landscape[0] * auto_landscape[1] < 4_000_000
+    assert auto_portrait[0] * auto_portrait[1] < 4_000_000
     assert abs(auto_landscape[0] / auto_landscape[1] - 16 / 9) < 0.1
     assert abs(auto_portrait[0] / auto_portrait[1] - 9 / 16) < 0.1
+    one_mp_landscape = resolution_for_aspect_ratio(
+        4096, 2304, pixel_cap=auto_resolution_pixel_cap("1 MP")
+    )
+    two_mp_landscape = resolution_for_aspect_ratio(
+        4096, 2304, pixel_cap=auto_resolution_pixel_cap("2 MP")
+    )
+    assert one_mp_landscape[0] * one_mp_landscape[1] < 1_000_000
+    assert two_mp_landscape[0] * two_mp_landscape[1] < 2_000_000
+    assert auto_resolution_pixel_cap("4 MP") == 4_000_000 - 1
+    assert UI_DEFAULTS["text_encoder"] == "BF16"
+    assert UI_DEFAULTS["stage_model_offload"] is True
+    assert UI_DEFAULTS["attention_mode"] == "SLA"
+    assert UI_DEFAULTS["sla_preset"] == "Quality"
     assert resolution_for_aspect_ratio(
         4096, 2304, preserve_native=True
     ) == (4096, 2304)
@@ -10720,6 +10793,10 @@ def selftest() -> None:
         assert auto_resolution_from_start_frame(
             str(native_start), 864, 480, "Image", False
         )[:2] == (2048, 1152)
+        one_mp_auto = auto_resolution_from_start_frame(
+            str(native_start), 864, 480, "Video", False, "1 MP"
+        )[:2]
+        assert one_mp_auto[0] * one_mp_auto[1] < 1_000_000
     unchanged = auto_resolution_from_start_frame(None, 640, 480)
     assert unchanged[:2] == (640, 480)
     assert frame_length(5) == 124
@@ -10796,25 +10873,25 @@ def selftest() -> None:
     assert DEFAULT_TURBO == LIGHTX2V_4STEP_TURBO
     assert turbo_defaults[1]["value"] == 4
     assert turbo_defaults[1]["interactive"] is True
-    assert turbo_defaults[2:] == ("simple", "Spectrum", "Sage 2")
+    assert turbo_defaults[2:] == ("simple", "Spectrum", "SLA")
     larry_defaults = generation_mode_defaults("Turbo", LARRY_TURBO)
     assert larry_defaults[1]["value"] == 6
     assert larry_defaults[1]["interactive"] is True
-    assert larry_defaults[2:] == ("simple", "Spectrum", "Sage 2")
+    assert larry_defaults[2:] == ("simple", "Spectrum", "SLA")
     lightx_defaults = generation_mode_defaults("Turbo", LIGHTX2V_4STEP_TURBO)
     assert lightx_defaults[1]["value"] == 4
     assert lightx_defaults[1]["interactive"] is True
-    assert lightx_defaults[2:] == ("simple", "Spectrum", "Sage 2")
+    assert lightx_defaults[2:] == ("simple", "Spectrum", "SLA")
     lightx_8step_defaults = generation_mode_defaults(
         "Turbo", LIGHTX2V_8STEP_TURBO
     )
     assert lightx_8step_defaults[1]["value"] == 8
     assert lightx_8step_defaults[1]["interactive"] is True
-    assert lightx_8step_defaults[2:] == ("simple", "Spectrum", "Sage 2")
+    assert lightx_8step_defaults[2:] == ("simple", "Spectrum", "SLA")
     normal_defaults = generation_mode_defaults("Normal")
     assert normal_defaults[1]["value"] == 18
     assert normal_defaults[1]["interactive"] is True
-    assert normal_defaults[2:] == ("simple", "Spectrum", "Sage 2")
+    assert normal_defaults[2:] == ("simple", "Spectrum", "SLA")
     assert resolve_cache_policy("Off", use_turbo=True) == ("Off", None)
     turbo_spectrum, turbo_spectrum_note = resolve_cache_policy(
         "Spectrum", use_turbo=True
