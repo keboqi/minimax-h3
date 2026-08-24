@@ -19,6 +19,7 @@ import time
 import unittest.mock
 import uuid
 from contextlib import asynccontextmanager
+from html import escape
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
@@ -335,6 +336,22 @@ INPUT_IMAGE_FRAME_PRESETS = {
 }
 DEFAULT_INPUT_IMAGE_FRAME_PRESET = "1920 × 1920"
 
+
+H3_UI_CSS = """
+:root { --h3-accent: #6d5dfc; --h3-accent-soft: color-mix(in srgb, var(--h3-accent) 12%, transparent); --h3-panel: color-mix(in srgb, var(--background-fill-primary) 94%, var(--h3-accent) 6%); }
+.gradio-container { max-width: 1540px !important; }
+.h3-hero { padding: 1.15rem 1.3rem; border: 1px solid var(--border-color-primary); border-radius: 18px; background: linear-gradient(135deg, var(--h3-accent-soft), transparent 62%); margin-bottom: .75rem; }
+.h3-hero h1 { margin: 0 0 .25rem; font-size: clamp(1.55rem, 2.4vw, 2.25rem); }
+.h3-hero p { margin: 0; opacity: .78; }
+.h3-system-ready, .h3-system-warning { padding: .55rem .8rem; border-radius: 12px; border: 1px solid var(--border-color-primary); margin: .25rem 0 .65rem; }
+.h3-system-ready { background: color-mix(in srgb, #22c55e 10%, transparent); }
+.h3-system-warning { background: color-mix(in srgb, #f59e0b 12%, transparent); }
+.h3-action-dock { position: sticky; top: .65rem; z-index: 8; padding: .75rem; border: 1px solid var(--border-color-primary); border-radius: 16px; background: var(--h3-panel); box-shadow: 0 10px 28px rgba(0, 0, 0, .10); }
+.h3-primary-action button { min-height: 48px; font-size: 1.02rem; font-weight: 700; }
+.h3-status textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.h3-danger-zone { border-color: color-mix(in srgb, #ef4444 55%, var(--border-color-primary)); }
+@media (max-width: 900px) { .h3-action-dock { position: static; } .gradio-container { padding-left: .55rem !important; padding-right: .55rem !important; } }
+"""
 
 @dataclass(frozen=True)
 class TurboSpec:
@@ -7654,21 +7671,69 @@ For every control exposed by the MiniMax H3 tab, including **Image** and **Audio
 """
 
 
+def compact_backend_status(detail: str) -> str:
+    """Render a calm, glanceable status while retaining diagnostics separately."""
+    if str(detail).startswith("Connected"):
+        headline = escape(str(detail).split("  \n", 1)[0])
+        return f'<div class="h3-system-ready"><strong>Ready</strong> | {headline}</div>'
+    return (
+        '<div class="h3-system-warning"><strong>Backend needs attention</strong> | '
+        f'{escape(str(detail))}</div>'
+    )
+
+
+def refresh_backend_views() -> tuple[str, str]:
+    detail = backend_status()
+    return compact_backend_status(detail), detail
+
+
+def generation_preflight(
+    mode: str,
+    prompt: str,
+    first_image: Any,
+    last_image: Any,
+    *reference_media: Any,
+) -> tuple[str, Any]:
+    """Keep invalid jobs out of the expensive backend queue."""
+    missing: list[str] = []
+    if not str(prompt or "").strip():
+        missing.append("write a prompt")
+    if mode == "First / last frame" and not (first_image or last_image):
+        missing.append("upload a first or last frame")
+    if mode == "Reference media" and not any(reference_media):
+        missing.append("add at least one reference")
+    if missing:
+        message = " | ".join(missing)
+        return (
+            f'<div class="h3-system-warning"><strong>Before generating:</strong> {message}.</div>',
+            gr.update(interactive=False),
+        )
+    return (
+        '<div class="h3-system-ready"><strong>Ready to generate.</strong> Review the setup summary, then start the job.</div>',
+        gr.update(interactive=True),
+    )
+
+
 def build_ui() -> gr.Blocks:
     defaults = UI_DEFAULTS
+    initial_backend = backend_status()
     with gr.Blocks(title="MiniMax H3 Local") as demo:
-        gr.Markdown("# MiniMax H3 Local\nNative ComfyUI graphs for T2V, first/last-frame video, and reference media.")
+        demo.css = H3_UI_CSS
         gr.HTML(
+            '<section class="h3-hero"><h1>MiniMax H3 Local</h1>'
+            '<p>Create video, images, audio, and music on the shared ComfyUI backend · '
             '<a href="/comfyui/" target="_blank" rel="noopener noreferrer">'
-            "Open ComfyUI ↗</a>"
+            'Open ComfyUI ↗</a></p></section>'
         )
-        with gr.Row(equal_height=True):
-            health = gr.Markdown(backend_status())
-            unload_models = gr.Button(
-                "Unload all models / free VRAM",
-                scale=0,
-            )
-        memory_status = gr.Markdown()
+        system_summary = gr.HTML(compact_backend_status(initial_backend))
+        with gr.Accordion("System details and VRAM", open=False):
+            with gr.Row(equal_height=True):
+                health = gr.Markdown(initial_backend)
+                unload_models = gr.Button(
+                    "Unload all models / free VRAM",
+                    scale=0,
+                )
+            memory_status = gr.Markdown()
         with gr.Tabs():
             with gr.Tab("MiniMax H3") as generate_tab:
                 gr.HTML("")
@@ -7715,53 +7780,54 @@ def build_ui() -> gr.Blocks:
                             "LoRA and is experimental."
                         ),
                     )
-                with gr.Row():
-                    text_encoder = gr.Dropdown(
-                        choices=list(H3_TEXT_ENCODER_CHOICES),
-                        value=defaults["text_encoder"],
-                        label="Text encoder",
+                with gr.Accordion("Model and memory (advanced)", open=False):
+                    with gr.Row():
+                        text_encoder = gr.Dropdown(
+                            choices=list(H3_TEXT_ENCODER_CHOICES),
+                            value=defaults["text_encoder"],
+                            label="Text encoder",
+                            info=(
+                                "BF16 is the preloaded default and is approximately 51.5 GB. "
+                                "NVFP4/AWQ and INT8 ConvRot download on first use."
+                            ),
+                        )
+                        stage_model_offload = gr.Checkbox(
+                            value=defaults["stage_model_offload"],
+                            interactive=defaults["text_encoder"] != "BF16",
+                            label="Offload models between H3 stages",
+                            info=(
+                                "Unload resident models between text encoding, diffusion, "
+                                "latent upscaling, and VAE decoding."
+                            ),
+                        )
+                        reuse_unchanged_inputs = gr.Checkbox(
+                            value=defaults["reuse_unchanged_inputs"],
+                            label="Reuse unchanged prompt and media",
+                            info=(
+                                "Use content-addressed staged inputs so ComfyUI can skip "
+                                "unchanged loading and conditioning work. Sampling still "
+                                "reruns when the seed changes."
+                            ),
+                        )
+                    use_int8_vae = gr.Checkbox(
+                        value=defaults["use_int8_vae"],
+                        label="Experimental INT8 ConvRot video VAE",
                         info=(
-                            "BF16 is the preloaded default and is approximately 51.5 GB. "
-                            "NVFP4/AWQ and INT8 ConvRot download on first use."
+                            "Default off. Downloads on first use and accelerates H3 video "
+                            "encode/decode; switch off for the reviewed FP16 path."
                         ),
                     )
-                    stage_model_offload = gr.Checkbox(
-                        value=defaults["stage_model_offload"],
-                        interactive=defaults["text_encoder"] != "BF16",
-                        label="Offload models between H3 stages",
+                    image_vae = gr.Radio(
+                        IMAGE_VAE_CHOICES,
+                        value=defaults["image_vae"],
+                        label="Image VAE",
+                        visible=False,
                         info=(
-                            "Unload resident models between text encoding, diffusion, "
-                            "latent upscaling, and VAE decoding."
+                            "Official is the default and remains the only video decoder. "
+                            "The experimental 500K option downloads 9.69 GB on first use "
+                            "and decodes one image from temporal latent slice 0."
                         ),
                     )
-                    reuse_unchanged_inputs = gr.Checkbox(
-                        value=defaults["reuse_unchanged_inputs"],
-                        label="Reuse unchanged prompt and media",
-                        info=(
-                            "Use content-addressed staged inputs so ComfyUI can skip "
-                            "unchanged loading and conditioning work. Sampling still "
-                            "reruns when the seed changes."
-                        ),
-                    )
-                use_int8_vae = gr.Checkbox(
-                    value=defaults["use_int8_vae"],
-                    label="Experimental INT8 ConvRot video VAE",
-                    info=(
-                        "Default off. Downloads on first use and accelerates H3 video "
-                        "encode/decode; switch off for the reviewed FP16 path."
-                    ),
-                )
-                image_vae = gr.Radio(
-                    IMAGE_VAE_CHOICES,
-                    value=defaults["image_vae"],
-                    label="Image VAE",
-                    visible=False,
-                    info=(
-                        "Official is the default and remains the only video decoder. "
-                        "The experimental 500K option downloads 9.69 GB on first use "
-                        "and decodes one image from temporal latent slice 0."
-                    ),
-                )
                 help_text = gr.Markdown(mode_help("Text to video"))
                 prompt = gr.Textbox(
                     label="Prompt", lines=12,
@@ -7841,26 +7907,29 @@ def build_ui() -> gr.Blocks:
                 with gr.Group(visible=False) as reference_group:
                     gr.Markdown("### Reference media")
                     gr.Markdown(reference_prompt_help())
-                    with gr.Row():
-                        ref_image_1 = gr.Image(type="filepath", label="Picture 1")
-                        ref_image_2 = gr.Image(type="filepath", label="Picture 2")
-                        ref_image_3 = gr.Image(type="filepath", label="Picture 3")
-                    with gr.Row():
-                        ref_image_4 = gr.Image(type="filepath", label="Picture 4")
-                        ref_image_5 = gr.Image(type="filepath", label="Picture 5")
-                        ref_image_6 = gr.Image(type="filepath", label="Picture 6")
-                    with gr.Row():
-                        ref_image_7 = gr.Image(type="filepath", label="Picture 7")
-                        ref_image_8 = gr.Image(type="filepath", label="Picture 8")
-                        ref_image_9 = gr.Image(type="filepath", label="Picture 9")
-                    with gr.Row():
-                        ref_video_1 = gr.Video(label="Video 1")
-                        ref_video_2 = gr.Video(label="Video 2")
-                        ref_video_3 = gr.Video(label="Video 3")
-                    with gr.Row():
-                        ref_audio_1 = gr.Audio(type="filepath", label="Audio 1")
-                        ref_audio_2 = gr.Audio(type="filepath", label="Audio 2")
-                        ref_audio_3 = gr.Audio(type="filepath", label="Audio 3")
+                    with gr.Accordion("Reference images · up to 9", open=True):
+                        with gr.Row():
+                            ref_image_1 = gr.Image(type="filepath", label="Picture 1")
+                            ref_image_2 = gr.Image(type="filepath", label="Picture 2")
+                            ref_image_3 = gr.Image(type="filepath", label="Picture 3")
+                        with gr.Row():
+                            ref_image_4 = gr.Image(type="filepath", label="Picture 4")
+                            ref_image_5 = gr.Image(type="filepath", label="Picture 5")
+                            ref_image_6 = gr.Image(type="filepath", label="Picture 6")
+                        with gr.Row():
+                            ref_image_7 = gr.Image(type="filepath", label="Picture 7")
+                            ref_image_8 = gr.Image(type="filepath", label="Picture 8")
+                            ref_image_9 = gr.Image(type="filepath", label="Picture 9")
+                    with gr.Accordion("Reference videos · up to 3", open=False):
+                        with gr.Row():
+                            ref_video_1 = gr.Video(label="Video 1")
+                            ref_video_2 = gr.Video(label="Video 2")
+                            ref_video_3 = gr.Video(label="Video 3")
+                    with gr.Accordion("Reference audio · up to 3", open=False):
+                        with gr.Row():
+                            ref_audio_1 = gr.Audio(type="filepath", label="Audio 1")
+                            ref_audio_2 = gr.Audio(type="filepath", label="Audio 2")
+                            ref_audio_3 = gr.Audio(type="filepath", label="Audio 3")
                     ref_size = gr.Radio(
                         ["match", "max"],
                         value=defaults["ref_image_size"],
@@ -7974,12 +8043,24 @@ def build_ui() -> gr.Blocks:
                 audio_output = gr.Audio(
                     label="Generated audio", type="filepath", visible=False
                 )
-                with gr.Row():
-                    run = gr.Button("Generate video", variant="primary", scale=2)
+                generation_readiness = gr.HTML(
+                    '<div class="h3-system-warning"><strong>Before generating:</strong> write a prompt.</div>'
+                )
+                with gr.Row(elem_classes=["h3-action-dock"]):
+                    run = gr.Button(
+                        "Generate video", variant="primary", scale=2,
+                        interactive=False, elem_classes=["h3-primary-action"],
+                    )
                     stop = gr.Button("Interrupt", scale=1)
                     refresh = gr.Button("Refresh status", scale=1)
-                status = gr.Textbox(label="Status", lines=5)
-                gr.Markdown("### Generation settings")
+                status = gr.Textbox(
+                    label="Generation progress", lines=5,
+                    interactive=False, elem_classes=["h3-status"],
+                )
+                gr.Markdown(
+                    "### Generation settings\n"
+                    "Start with the defaults. Open the sections below only when you need finer control."
+                )
                 turbo_variant = gr.Radio(
                     list(TURBO_SETTINGS),
                     value=defaults["turbo_variant"],
@@ -8616,8 +8697,9 @@ def build_ui() -> gr.Blocks:
             gallery_selected = gr.State(None)
             gallery_confirm_delete = gr.Checkbox(
                 value=False,
-                label="Confirm permanent deletion",
-                info="Required for Delete selected and Empty all generated.",
+                label="I understand deletion is permanent",
+                info="Required before Delete selected or Empty all generated can run.",
+                elem_classes=["h3-danger-zone"],
             )
             with gr.Row(equal_height=False):
                 with gr.Column(scale=2, min_width=280):
@@ -8740,6 +8822,32 @@ def build_ui() -> gr.Blocks:
             image_frames,
             image_vae,
         ]
+        preflight_inputs = [
+            mode, prompt, first, last,
+            ref_image_1, ref_image_2, ref_image_3,
+            ref_image_4, ref_image_5, ref_image_6,
+            ref_image_7, ref_image_8, ref_image_9,
+            ref_video_1, ref_video_2, ref_video_3,
+            ref_audio_1, ref_audio_2, ref_audio_3,
+        ]
+        for preflight_control in preflight_inputs:
+            preflight_control.change(
+                generation_preflight,
+                inputs=preflight_inputs,
+                outputs=[generation_readiness, run],
+                queue=False,
+                show_progress="hidden",
+                api_name=False,
+            )
+        prompt.input(
+            generation_preflight,
+            inputs=preflight_inputs,
+            outputs=[generation_readiness, run],
+            queue=False,
+            show_progress="hidden",
+            api_name=False,
+        )
+
         for settings_control in settings_inputs:
             # Width and height have dedicated input callbacks below so their
             # 32/64-pixel alignment is applied before the summary is refreshed.
@@ -9247,12 +9355,22 @@ def build_ui() -> gr.Blocks:
         ltx25_stop.click(interrupt, outputs=ltx25_status, cancels=[ltx25_event])
         music3_stop.click(interrupt, outputs=music3_status, cancels=[music3_event])
         api_stop.click(interrupt, outputs=api_status, cancels=[api_event])
-        refresh.click(backend_status, outputs=health)
+        refresh.click(
+            refresh_backend_views,
+            outputs=[system_summary, health],
+            queue=False,
+            show_progress="hidden",
+        )
         unload_models.click(
             unload_all_models,
             outputs=[memory_status, health],
             show_progress="minimal",
             api_name=False,
+        ).then(
+            refresh_backend_views,
+            outputs=[system_summary, health],
+            queue=False,
+            show_progress="hidden",
         )
         generate_tab.select(
             lambda: (
@@ -9399,6 +9517,22 @@ def selftest() -> None:
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
     )
+    preflight_message, preflight_update = generation_preflight(
+        "Text to video", "", None, None
+    )
+    assert "write a prompt" in preflight_message
+    assert preflight_update["interactive"] is False
+    preflight_message, preflight_update = generation_preflight(
+        "First / last frame", "A tracking shot", "first.png", None
+    )
+    assert "Ready to generate" in preflight_message
+    assert preflight_update["interactive"] is True
+    preflight_message, preflight_update = generation_preflight(
+        "Reference media", "Match the subject", None, None, None
+    )
+    assert "add at least one reference" in preflight_message
+    assert preflight_update["interactive"] is False
+    assert "h3-action-dock" in H3_UI_CSS
     with tempfile.TemporaryDirectory() as output_temp:
         output_root = Path(output_temp)
         staging_root = output_root / "h3" / "image_staging"
