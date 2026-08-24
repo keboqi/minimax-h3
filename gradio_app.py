@@ -349,6 +349,11 @@ H3_UI_CSS = """
 .h3-action-dock { position: sticky; top: .65rem; z-index: 8; padding: .75rem; border: 1px solid var(--border-color-primary); border-radius: 16px; background: var(--h3-panel); box-shadow: 0 10px 28px rgba(0, 0, 0, .10); }
 .h3-primary-action button { min-height: 48px; font-size: 1.02rem; font-weight: 700; }
 .h3-status textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.h3-settings-panel { gap: .65rem; }
+.h3-settings-summary { padding: .7rem .85rem; border: 1px solid var(--border-color-primary); border-radius: 14px; background: var(--h3-panel); }
+.h3-settings-summary p { margin: 0; line-height: 1.45; }
+.h3-settings-section { margin-top: .2rem; border-radius: 14px; overflow: hidden; }
+.h3-settings-section > div { gap: .75rem; }
 .h3-danger-zone { border-color: color-mix(in srgb, #ef4444 55%, var(--border-color-primary)); }
 @media (max-width: 900px) { .h3-action-dock { position: static; } .gradio-container { padding-left: .55rem !important; padding-right: .55rem !important; } }
 """
@@ -7988,7 +7993,11 @@ def build_ui() -> gr.Blocks:
                         interactive=False,
                     )
                     input_upscale_status = gr.Markdown()
-            with gr.Column(scale=2):
+            with gr.Column(
+                scale=2,
+                min_width=420,
+                elem_classes=["h3-settings-panel"],
+            ):
                 settings_overview = gr.Markdown(
                     compact_settings_summary(
                         defaults["mode"], defaults["model_profile"],
@@ -8010,7 +8019,22 @@ def build_ui() -> gr.Blocks:
                         defaults["upscale_split_seconds"],
                         defaults["result_format"], defaults["image_frames"],
                         defaults["image_vae"],
+                    ),
+                    elem_classes=["h3-settings-summary"],
+                )
+                generation_readiness = gr.HTML(
+                    '<div class="h3-system-warning"><strong>Before generating:</strong> write a prompt.</div>'
+                )
+                with gr.Row(elem_classes=["h3-action-dock"]):
+                    run = gr.Button(
+                        "Generate video", variant="primary", scale=2,
+                        interactive=False, elem_classes=["h3-primary-action"],
                     )
+                    stop = gr.Button("Interrupt", scale=1)
+                    refresh = gr.Button("Refresh status", scale=1)
+                status = gr.Textbox(
+                    label="Generation progress", lines=3,
+                    interactive=False, elem_classes=["h3-status"],
                 )
                 output = gr.Video(label="Generated video")
                 with gr.Group(visible=False) as image_output_group:
@@ -8043,348 +8067,364 @@ def build_ui() -> gr.Blocks:
                 audio_output = gr.Audio(
                     label="Generated audio", type="filepath", visible=False
                 )
-                generation_readiness = gr.HTML(
-                    '<div class="h3-system-warning"><strong>Before generating:</strong> write a prompt.</div>'
-                )
-                with gr.Row(elem_classes=["h3-action-dock"]):
-                    run = gr.Button(
-                        "Generate video", variant="primary", scale=2,
-                        interactive=False, elem_classes=["h3-primary-action"],
-                    )
-                    stop = gr.Button("Interrupt", scale=1)
-                    refresh = gr.Button("Refresh status", scale=1)
-                status = gr.Textbox(
-                    label="Generation progress", lines=5,
-                    interactive=False, elem_classes=["h3-status"],
-                )
                 gr.Markdown(
                     "### Generation settings\n"
                     "Start with the defaults. Open the sections below only when you need finer control."
                 )
-                turbo_variant = gr.Radio(
-                    list(TURBO_SETTINGS),
-                    value=defaults["turbo_variant"],
-                    label="Turbo implementation",
-                    info=(
-                        "Original BF16 uses memory-safe runtime LoRA bypass. Speed and "
-                        "Quality use faster merged weights. Larry also uses its adaptive "
-                        "sampler; all variants run at strength 1.0."
-                    ),
-                )
-                preset = gr.Radio(
-                    ["Quality", "Balanced", "Fast"],
-                    value="Balanced",
-                    label="Sampling preset",
-                    interactive=False,
-                    info=(
-                        "Normal-generation preset. Disabled in Turbo so it cannot overwrite "
-                        "the Turbo Steps/Scheduler controls."
-                    ),
-                )
-                with gr.Row():
-                    duration = gr.Slider(
-                        2, 15, value=defaults["duration"], step=0.5, label="Seconds"
-                    )
-                    image_frames = gr.Slider(
-                        MIN_IMAGE_FRAMES,
-                        MAX_IMAGE_FRAMES,
-                        value=defaults["image_frames"],
-                        step=1,
-                        label="Image frames",
-                        visible=False,
+                with gr.Accordion(
+                    "Output, duration & resolution",
+                    open=True,
+                    elem_classes=["h3-settings-section"],
+                ):
+                    gr.Markdown("Choose the result length, quality target, canvas, and seed.")
+                    preset = gr.Radio(
+                        ["Quality", "Balanced", "Fast"],
+                        value="Balanced",
+                        label="Sampling preset",
+                        interactive=False,
                         info=(
-                            "The official VAE returns 1–20 decoded video frames. "
-                            "Selecting the 500K decoder fixes this to one image."
+                            "Normal-generation preset. Disabled in Turbo so it cannot overwrite "
+                            "the Turbo Steps/Scheduler controls."
                         ),
                     )
-                    steps = gr.Slider(
-                        4, 30, value=defaults["steps"], step=1, label="Steps",
-                        info=(
-                            "LightX2V 4-step is the default Turbo variant; Larry and the "
-                            "8-step LightX2V variant keep their trained step counts. Increase Turbo "
-                            "steps when a clip benefits from extra refinement; Normal H3 "
-                            "presets normally use 15–20."
-                        ),
-                    )
-                with gr.Row():
-                    draft_resolution = gr.Dropdown(
-                        choices=list(DRAFT_RESOLUTIONS),
-                        value=None,
-                        label="Draft",
-                        info="Quick test sizes by aspect ratio.",
-                    )
+                    with gr.Row():
+                        duration = gr.Slider(
+                            2, 15, value=defaults["duration"], step=0.5, label="Seconds"
+                        )
+                        image_frames = gr.Slider(
+                            MIN_IMAGE_FRAMES,
+                            MAX_IMAGE_FRAMES,
+                            value=defaults["image_frames"],
+                            step=1,
+                            label="Image frames",
+                            visible=False,
+                            info=(
+                                "The official VAE returns 1–20 decoded video frames. "
+                                "Selecting the 500K decoder fixes this to one image."
+                            ),
+                        )
+                        steps = gr.Slider(
+                            4, 30, value=defaults["steps"], step=1, label="Steps",
+                            info=(
+                                "LightX2V 4-step is the default Turbo variant; Larry and the "
+                                "8-step LightX2V variant keep their trained step counts. Increase Turbo "
+                                "steps when a clip benefits from extra refinement; Normal H3 "
+                                "presets normally use 15–20."
+                            ),
+                        )
                     fast_resolution = gr.Dropdown(
                         choices=list(FAST_RESOLUTIONS),
                         value="16:9 · 864×480",
-                        label="Fast",
-                        info="Recommended working sizes by aspect ratio.",
+                        label="Recommended size",
+                        info="Recommended working resolutions by aspect ratio.",
                     )
-                    large_resolution = gr.Dropdown(
-                        choices=list(LARGE_RESOLUTIONS),
-                        value=None,
-                        label="Large",
-                        info="Higher-resolution sizes by aspect ratio.",
-                    )
-                with gr.Row():
-                    width = gr.Number(value=defaults["width"], precision=0, label="Width")
-                    height = gr.Number(value=defaults["height"], precision=0, label="Height")
-                    auto_megapixels = gr.Dropdown(
-                        choices=list(AUTO_RESOLUTION_MEGAPIXEL_PRESETS),
-                        value=DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
-                        label="Auto cap",
-                        info="Maximum start-frame auto resolution; manual sizes are unchanged.",
-                    )
-                resolution_info = gr.Markdown(
-                    resolution_summary(defaults["width"], defaults["height"])
-                )
-                with gr.Row():
-                    scheduler = gr.Radio(
-                        ["simple", "beta", "normal"],
-                        value=defaults["scheduler"], label="Scheduler",
-                    )
-                    seed = gr.Number(
-                        value=defaults["seed"], precision=0, label="Seed (-1 random)"
-                    )
-                attention_mode = gr.Radio(
-                    ["Sage 2", "Kitchen", "SLA", "Sol-Attn", "Auto"],
-                    value=defaults["attention_mode"],
-                    label="Attention",
-                    interactive=SERVER_ATTENTION_BACKEND == "sol",
-                    info=(
-                        f"Auto enables Sol-Attn for Reference mode or when estimated "
-                        f"packed target tokens reach {AUTO_SOL_TOKEN_THRESHOLD:,}; "
-                        "Sage 2 applies the pinned KJNodes model override. Kitchen "
-                        "selects the global ComfyUI backend. SLA is the default, uses "
-                        "the Quality audio-safe block-sparse preset, and automatically "
-                        "keeps short sequences dense; it is intended for SLA-distilled "
-                        "H3 LoRAs. Auto uses Kitchen for "
-                        "smaller jobs. Sol "
-                        f"dense/fallback calls use {SERVER_DENSE_ATTENTION_BACKEND}."
-                    ),
-                )
-                with gr.Accordion("SLA quality controls", open=False):
-                    sla_preset = gr.Radio(
-                        list(SLA_PRESET_INPUTS),
-                        value=defaults["sla_preset"],
-                        label="SLA preset",
-                        info=(
-                            "Fast uses validated 0.90 sparsity. Balanced uses the "
-                            "LoRA-distilled 0.85 sparsity. Quality also runs the final "
-                            "sampling step dense to recover fine detail; in a two-stage "
-                            "latent-upscale workflow this applies to both stages. All "
-                            "presets use 64-token blocks and protect audio."
-                        ),
-                    )
-
-                with gr.Row():
-                    sol_tau = gr.Slider(
-                        0.5, 1.5, value=defaults["sol_tau"], step=0.1,
-                        label="Sol-Attn tau"
-                    )
-                    sol_thresh_type = gr.Radio(
-                        ["diag", "exact"],
-                        value=defaults["sol_thresh_type"],
-                        label="Sol threshold",
-                        info="diag is faster; exact calculates a more precise routing threshold.",
-                    )
-                with gr.Accordion("Zero-copy Sol-Attn quality controls", open=False):
-                    sol_exact_mode = gr.Radio(
-                        ["off", "exact_kv", "exact_kv_and_rows"],
-                        value=defaults["sol_exact_mode"],
-                        label="Exact H3 prefix mode",
-                        info=(
-                            "exact_kv preserves text/condition/reference/audio KV "
-                            "rows at low cost. exact_kv_and_rows also keeps prefix "
-                            "query rows dense for maximum audio/conditioning fidelity."
-                        ),
-                    )
+                    with gr.Accordion("More resolution presets", open=False):
+                        with gr.Row():
+                            draft_resolution = gr.Dropdown(
+                                choices=list(DRAFT_RESOLUTIONS),
+                                value=None,
+                                label="Draft preview",
+                                info="Small sizes for quick composition tests.",
+                            )
+                            large_resolution = gr.Dropdown(
+                                choices=list(LARGE_RESOLUTIONS),
+                                value=None,
+                                label="Large output",
+                                info="Higher-resolution sizes that need more time and VRAM.",
+                            )
                     with gr.Row():
-                        sol_dense_steps = gr.Slider(
-                            0, 4, value=defaults["sol_dense_steps"], step=1,
-                            label="Dense final transformer blocks",
+                        width = gr.Number(
+                            value=defaults["width"], precision=0, label="Width"
+                        )
+                        height = gr.Number(
+                            value=defaults["height"], precision=0, label="Height"
+                        )
+                        auto_megapixels = gr.Dropdown(
+                            choices=list(AUTO_RESOLUTION_MEGAPIXEL_PRESETS),
+                            value=DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
+                            label="Start-frame auto cap",
                             info=(
-                                "Keep the final N H3 transformer blocks dense. "
-                                "The final block is the most approximation-sensitive."
+                                "Maximum automatic resolution from the first frame; "
+                                "manual sizes are unchanged."
                             ),
                         )
-                    sol_step_off = gr.State(0.0)
-                    sol_sink_tokens = gr.State(0)
-                with gr.Accordion("Sampling acceleration", open=False):
-                    cache_mode = gr.Radio(
-                        ["Spectrum", "FirstBlockCache", "EasyCache", "Off"],
-                        value=defaults["cache_mode"],
-                        label="Acceleration mode",
+                    resolution_info = gr.Markdown(
+                        resolution_summary(defaults["width"], defaults["height"])
+                    )
+                    seed = gr.Number(
+                        value=defaults["seed"],
+                        precision=0,
+                        label="Seed",
+                        info="Use -1 for a new random seed on each generation.",
+                    )
+                with gr.Accordion(
+                    "Performance & sampling",
+                    open=False,
+                    elem_classes=["h3-settings-section"],
+                ):
+                    gr.Markdown("Tune Turbo, attention, and caching. Defaults are recommended for most jobs.")
+                    turbo_variant = gr.Radio(
+                        list(TURBO_SETTINGS),
+                        value=defaults["turbo_variant"],
+                        label="Turbo implementation",
                         info=(
-                            "Spectrum is the normal H3 default based on broader community "
-                            "speed testing. It forecasts selected transformer steps and uses "
-                            "audio-isolated offline replay. FirstBlockCache is the lower-memory "
-                            "fallback. Modes are mutually exclusive. Turbo defaults to Spectrum; "
-                            "EasyCache and FirstBlockCache are opt-in experimental Turbo options."
+                            "Original BF16 uses memory-safe runtime LoRA bypass. Speed and "
+                            "Quality use faster merged weights. Larry also uses its adaptive "
+                            "sampler; all variants run at strength 1.0."
                         ),
                     )
-                    fbcache_preset = gr.Radio(
-                        ["Safe", "Fast", "Aggressive", "Custom"],
-                        value=defaults["fbcache_preset"],
-                        label="FirstBlockCache preset",
+                    scheduler = gr.Radio(
+                        ["simple", "beta", "normal"],
+                        value=defaults["scheduler"],
+                        label="Scheduler",
+                        info="Controls how sampling steps are distributed across denoising.",
+                    )
+                    attention_mode = gr.Radio(
+                        ["Sage 2", "Kitchen", "SLA", "Sol-Attn", "Auto"],
+                        value=defaults["attention_mode"],
+                        label="Attention",
+                        interactive=SERVER_ATTENTION_BACKEND == "sol",
                         info=(
-                            "Fast is the recommended default. Named presets use "
-                            "a protected 10–95% denoising window and at most two "
-                            "consecutive cache hits."
+                            f"Auto enables Sol-Attn for Reference mode or when estimated "
+                            f"packed target tokens reach {AUTO_SOL_TOKEN_THRESHOLD:,}; "
+                            "Sage 2 applies the pinned KJNodes model override. Kitchen "
+                            "selects the global ComfyUI backend. SLA is the default, uses "
+                            "the Quality audio-safe block-sparse preset, and automatically "
+                            "keeps short sequences dense; it is intended for SLA-distilled "
+                            "H3 LoRAs. Auto uses Kitchen for "
+                            "smaller jobs. Sol "
+                            f"dense/fallback calls use {SERVER_DENSE_ATTENTION_BACKEND}."
                         ),
                     )
-                    with gr.Row():
-                        fbcache_threshold = gr.Slider(
-                            0.0, 0.25,
-                            value=defaults["fbcache_threshold"],
-                            step=0.005,
-                            label="FirstBlock threshold",
-                            interactive=False,
+                    with gr.Accordion("SLA quality controls", open=False):
+                        sla_preset = gr.Radio(
+                            list(SLA_PRESET_INPUTS),
+                            value=defaults["sla_preset"],
+                            label="SLA preset",
+                            info=(
+                                "Fast uses validated 0.90 sparsity. Balanced uses the "
+                                "LoRA-distilled 0.85 sparsity. Quality also runs the final "
+                                "sampling step dense to recover fine detail; in a two-stage "
+                                "latent-upscale workflow this applies to both stages. All "
+                                "presets use 64-token blocks and protect audio."
+                            ),
                         )
-                        fbcache_max_hits = gr.Slider(
-                            1, 8,
-                            value=defaults["fbcache_max_hits"],
+
+                    with gr.Row():
+                        sol_tau = gr.Slider(
+                            0.5, 1.5, value=defaults["sol_tau"], step=0.1,
+                            label="Sol-Attn tau"
+                        )
+                        sol_thresh_type = gr.Radio(
+                            ["diag", "exact"],
+                            value=defaults["sol_thresh_type"],
+                            label="Sol threshold",
+                            info="diag is faster; exact calculates a more precise routing threshold.",
+                        )
+                    with gr.Accordion("Zero-copy Sol-Attn quality controls", open=False):
+                        sol_exact_mode = gr.Radio(
+                            ["off", "exact_kv", "exact_kv_and_rows"],
+                            value=defaults["sol_exact_mode"],
+                            label="Exact H3 prefix mode",
+                            info=(
+                                "exact_kv preserves text/condition/reference/audio KV "
+                                "rows at low cost. exact_kv_and_rows also keeps prefix "
+                                "query rows dense for maximum audio/conditioning fidelity."
+                            ),
+                        )
+                        with gr.Row():
+                            sol_dense_steps = gr.Slider(
+                                0, 4, value=defaults["sol_dense_steps"], step=1,
+                                label="Dense final transformer blocks",
+                                info=(
+                                    "Keep the final N H3 transformer blocks dense. "
+                                    "The final block is the most approximation-sensitive."
+                                ),
+                            )
+                        sol_step_off = gr.State(0.0)
+                        sol_sink_tokens = gr.State(0)
+                    with gr.Accordion("Sampling acceleration", open=False):
+                        cache_mode = gr.Radio(
+                            ["Spectrum", "FirstBlockCache", "EasyCache", "Off"],
+                            value=defaults["cache_mode"],
+                            label="Acceleration mode",
+                            info=(
+                                "Spectrum is the normal H3 default based on broader community "
+                                "speed testing. It forecasts selected transformer steps and uses "
+                                "audio-isolated offline replay. FirstBlockCache is the lower-memory "
+                                "fallback. Modes are mutually exclusive. Turbo defaults to Spectrum; "
+                                "EasyCache and FirstBlockCache are opt-in experimental Turbo options."
+                            ),
+                        )
+                        fbcache_preset = gr.Radio(
+                            ["Safe", "Fast", "Aggressive", "Custom"],
+                            value=defaults["fbcache_preset"],
+                            label="FirstBlockCache preset",
+                            info=(
+                                "Fast is the recommended default. Named presets use "
+                                "a protected 10–95% denoising window and at most two "
+                                "consecutive cache hits."
+                            ),
+                        )
+                        with gr.Row():
+                            fbcache_threshold = gr.Slider(
+                                0.0, 0.25,
+                                value=defaults["fbcache_threshold"],
+                                step=0.005,
+                                label="FirstBlock threshold",
+                                interactive=False,
+                            )
+                            fbcache_max_hits = gr.Slider(
+                                1, 8,
+                                value=defaults["fbcache_max_hits"],
+                                step=1,
+                                label="Max consecutive cache hits",
+                                interactive=False,
+                            )
+                        with gr.Row():
+                            fbcache_start = gr.Slider(
+                                0.0, 0.90,
+                                value=defaults["fbcache_start"],
+                                step=0.01,
+                                label="Cache start percent",
+                                interactive=False,
+                            )
+                            fbcache_end = gr.Slider(
+                                0.10, 1.0,
+                                value=defaults["fbcache_end"],
+                                step=0.01,
+                                label="Cache end percent",
+                                interactive=False,
+                            )
+                        fbcache_temporal_guard = gr.Checkbox(
+                            value=defaults["fbcache_temporal_guard"],
+                            label="Temporal frame guard",
+                            info=(
+                                "Checks the most-changed target-video latent frame "
+                                "in addition to the global residual average."
+                            ),
+                        )
+                        gr.Markdown("**EasyCache fallback settings**")
+                        easycache_threshold = gr.Slider(
+                            0.0, 0.5, value=defaults["easycache_threshold"], step=0.01,
+                            label="Reuse threshold",
+                            info=(
+                                "Higher skips more steps. Start at 0.10 for H3; "
+                                "ComfyUI's generic default is 0.20."
+                            ),
+                        )
+                        with gr.Row():
+                            easycache_start = gr.Slider(
+                                0.0, 0.9, value=defaults["easycache_start"], step=0.01,
+                                label="Start percent",
+                            )
+                            easycache_end = gr.Slider(
+                                0.1, 1.0, value=defaults["easycache_end"], step=0.01,
+                                label="End percent",
+                            )
+                        easycache_verbose = gr.Checkbox(
+                            value=defaults["easycache_verbose"],
+                            label="Log EasyCache decisions",
+                            info="Logs skipped-step counts and estimated speedup in ComfyUI.",
+                        )
+
+                with gr.Accordion(
+                    "Upscaling & finishing",
+                    open=False,
+                    elem_classes=["h3-settings-section"],
+                ):
+                    gr.Markdown("Increase resolution during sampling or run an optional finishing pass.")
+                    gr.Markdown("**Native latent upscale**")
+                    latent_upscale = gr.Checkbox(
+                        value=defaults["latent_upscale"],
+                        label="Generate at half resolution, then latent upscale 2x",
+                        info=(
+                            "Runs inside H3 sampling, not after video generation. Width and "
+                            "height remain the final output resolution. Disabled by default."
+                        ),
+                    )
+                    with gr.Group(visible=defaults["latent_upscale"]) as latent_upscale_settings:
+                        latent_upscaler_model = gr.Dropdown(
+                            choices=list(H3_LATENT_UPSCALER_MODEL_CHOICES),
+                            value=defaults["latent_upscaler_model"],
+                            label="Latent upscaler model",
+                            info=(
+                                "Balanced uses BF16 and is the default. Fast uses FP16; "
+                                "Quality uses FP32 and needs more memory. Downloaded on first use."
+                            ),
+                        )
+                        latent_upscale_refine_steps = gr.Slider(
+                            1, 6,
+                            value=defaults["latent_upscale_refine_steps"],
                             step=1,
-                            label="Max consecutive cache hits",
-                            interactive=False,
+                            label="High-resolution refinement steps",
+                            info=(
+                                "H3 first finishes all generation steps at half resolution. "
+                                "The clean 2x latent is then lightly re-noised and refined. "
+                                "Two expensive high-resolution steps is the default."
+                            ),
                         )
-                    with gr.Row():
-                        fbcache_start = gr.Slider(
-                            0.0, 0.90,
-                            value=defaults["fbcache_start"],
-                            step=0.01,
-                            label="Cache start percent",
-                            interactive=False,
+                        gr.Markdown(
+                            "Final width and height must both be divisible by 64. For example, "
+                            "1024×1024 generates the first stage at 512×512 and finishes at "
+                            "1024×1024. Only the video latent is upscaled; H3 audio is preserved."
                         )
-                        fbcache_end = gr.Slider(
-                            0.10, 1.0,
-                            value=defaults["fbcache_end"],
-                            step=0.01,
-                            label="Cache end percent",
-                            interactive=False,
-                        )
-                    fbcache_temporal_guard = gr.Checkbox(
-                        value=defaults["fbcache_temporal_guard"],
-                        label="Temporal frame guard",
-                        info=(
-                            "Checks the most-changed target-video latent frame "
-                            "in addition to the global residual average."
-                        ),
-                    )
-                    gr.Markdown("**EasyCache fallback settings**")
-                    easycache_threshold = gr.Slider(
-                        0.0, 0.5, value=defaults["easycache_threshold"], step=0.01,
-                        label="Reuse threshold",
-                        info=(
-                            "Higher skips more steps. Start at 0.10 for H3; "
-                            "ComfyUI's generic default is 0.20."
-                        ),
-                    )
-                    with gr.Row():
-                        easycache_start = gr.Slider(
-                            0.0, 0.9, value=defaults["easycache_start"], step=0.01,
-                            label="Start percent",
-                        )
-                        easycache_end = gr.Slider(
-                            0.1, 1.0, value=defaults["easycache_end"], step=0.01,
-                            label="End percent",
-                        )
-                    easycache_verbose = gr.Checkbox(
-                        value=defaults["easycache_verbose"],
-                        label="Log EasyCache decisions",
-                        info="Logs skipped-step counts and estimated speedup in ComfyUI.",
-                    )
 
-                gr.Markdown("### Native H3 latent upscale")
-                latent_upscale = gr.Checkbox(
-                    value=defaults["latent_upscale"],
-                    label="Generate at half resolution, then latent upscale 2x",
-                    info=(
-                        "Runs inside H3 sampling, not after video generation. Width and "
-                        "height remain the final output resolution. Disabled by default."
-                    ),
-                )
-                with gr.Group(visible=defaults["latent_upscale"]) as latent_upscale_settings:
-                    latent_upscaler_model = gr.Dropdown(
-                        choices=list(H3_LATENT_UPSCALER_MODEL_CHOICES),
-                        value=defaults["latent_upscaler_model"],
-                        label="Latent upscaler model",
+                    gr.Markdown("**After generation**")
+                    generation_postprocess = gr.Dropdown(
+                        choices=GENERATION_POSTPROCESS_OPTIONS,
+                        value=defaults["postprocess"],
+                        label="After generation",
                         info=(
-                            "Balanced uses BF16 and is the default. Fast uses FP16; "
-                            "Quality uses FP32 and needs more memory. Downloaded on first use."
+                            "Optionally run SeedVR2 or LTX-2.5 2x immediately after the base H3 "
+                            "video finishes. The source video remains in the gallery."
                         ),
                     )
-                    latent_upscale_refine_steps = gr.Slider(
-                        1, 6,
-                        value=defaults["latent_upscale_refine_steps"],
-                        step=1,
-                        label="High-resolution refinement steps",
-                        info=(
-                            "H3 first finishes all generation steps at half resolution. "
-                            "The clean 2x latent is then lightly re-noised and refined. "
-                            "Two expensive high-resolution steps is the default."
-                        ),
-                    )
-                    gr.Markdown(
-                        "Final width and height must both be divisible by 64. For example, "
-                        "1024×1024 generates the first stage at 512×512 and finishes at "
-                        "1024×1024. Only the video latent is upscaled; H3 audio is preserved."
-                    )
-
-                gr.Markdown("### Generation post-processing")
-                generation_postprocess = gr.Dropdown(
-                    choices=GENERATION_POSTPROCESS_OPTIONS,
-                    value=defaults["postprocess"],
-                    label="After generation",
-                    info=(
-                        "Optionally run SeedVR2 or LTX-2.5 2x immediately after the base H3 "
-                        "video finishes. The source video remains in the gallery."
-                    ),
-                )
-                with gr.Group(visible=False) as generation_postprocess_settings:
-                    generation_seedvr2_model = gr.Dropdown(
-                        choices=list(SEEDVR2_MODEL_CHOICES),
-                        value=defaults["seedvr2_model"],
-                        label="SeedVR2 model",
-                        info=(
-                            "Downloaded on first use. 7B Sharp favors stronger "
-                            "detail; NVFP4 variants are optimized for Blackwell GPUs."
-                        ),
-                    )
-                    generation_ltx25_note = gr.Markdown(
-                        "Uses the transformer selected in the **LTX 2.5** tab and "
-                        "the H3 generation prompt. The gated 2x IC-LoRA downloads "
-                        "on first use.",
-                        visible=False,
-                    )
-                    generation_force_offload = gr.Checkbox(
-                        value=defaults["upscale_force_offload"],
-                        label="Unload H3 models before upscaling",
-                        info=(
-                            "Reduces peak VRAM at the cost of reloading H3 for "
-                            "the next generation."
-                        ),
-                    )
-                    generation_split_upscale = gr.Checkbox(
-                        value=defaults["upscale_split_enabled"],
-                        label="Split source into clips before LTX upscaling",
-                        info=(
-                            "Opt in after an out-of-VRAM error. Each clip is "
-                            "upscaled independently and concatenated afterward."
-                        ),
-                        visible=False,
-                    )
-                    generation_split_seconds = gr.Slider(
-                        1.0,
-                        15.0,
-                        value=defaults["upscale_split_seconds"],
-                        step=0.5,
-                        label="Target clip length (seconds)",
-                        info=(
-                            "5 seconds is the recommended starting point. The "
-                            "actual cut is adjusted to an LTX-valid frame count."
-                        ),
-                        visible=False,
-                    )
+                    with gr.Group(visible=False) as generation_postprocess_settings:
+                        generation_seedvr2_model = gr.Dropdown(
+                            choices=list(SEEDVR2_MODEL_CHOICES),
+                            value=defaults["seedvr2_model"],
+                            label="SeedVR2 model",
+                            info=(
+                                "Downloaded on first use. 7B Sharp favors stronger "
+                                "detail; NVFP4 variants are optimized for Blackwell GPUs."
+                            ),
+                        )
+                        generation_ltx25_note = gr.Markdown(
+                            "Uses the transformer selected in the **LTX 2.5** tab and "
+                            "the H3 generation prompt. The gated 2x IC-LoRA downloads "
+                            "on first use.",
+                            visible=False,
+                        )
+                        generation_force_offload = gr.Checkbox(
+                            value=defaults["upscale_force_offload"],
+                            label="Unload H3 models before upscaling",
+                            info=(
+                                "Reduces peak VRAM at the cost of reloading H3 for "
+                                "the next generation."
+                            ),
+                        )
+                        generation_split_upscale = gr.Checkbox(
+                            value=defaults["upscale_split_enabled"],
+                            label="Split source into clips before LTX upscaling",
+                            info=(
+                                "Opt in after an out-of-VRAM error. Each clip is "
+                                "upscaled independently and concatenated afterward."
+                            ),
+                            visible=False,
+                        )
+                        generation_split_seconds = gr.Slider(
+                            1.0,
+                            15.0,
+                            value=defaults["upscale_split_seconds"],
+                            step=0.5,
+                            label="Target clip length (seconds)",
+                            info=(
+                                "5 seconds is the recommended starting point. The "
+                                "actual cut is adjusted to an LTX-valid frame count."
+                            ),
+                            visible=False,
+                        )
 
         with gr.Group(visible=False) as ltx25_view:
             gr.Markdown(
