@@ -185,6 +185,14 @@ text encoder. A changed prompt, media file/order, text encoder, or reference-med
 encoder sizing performs a fresh encode and retains normal BF16 stage offloading.
 Disable reuse to stage fresh media copies and use unconditional BF16 offloading for
 that request.
+
+**Videos per batch** generates one to four variants (one by default). Multi-video
+batches assign every video an independent random seed and show all completed videos
+in separate players for comparison. The videos run one after another through the
+same generation path, like clicking Generate repeatedly with a random seed. The
+existing **Reuse unchanged prompt and media** setting is passed through unchanged,
+so later variants reuse conditioning only when that setting is enabled.
+
 The gated LTX-2.5 distilled transformers are available as **INT8 ConvRot
 (default)** and **BF16**. The selected transformer plus the shared fine-tuned
 Gemma text encoder and audio/video VAEs

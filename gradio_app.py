@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import inspect
 import json
 import math
 import mimetypes
@@ -179,6 +180,9 @@ LARRY_TURBO = "Larry v4-600 EMA"
 DEFAULT_TURBO = LIGHTX2V_4STEP_TURBO
 RESULT_FORMATS = ("Video", "Image", "Audio")
 DEFAULT_RESULT_FORMAT = RESULT_FORMATS[0]
+MIN_VIDEO_BATCH_COUNT = 1
+MAX_VIDEO_BATCH_COUNT = 4
+DEFAULT_VIDEO_BATCH_COUNT = 1
 OFFICIAL_IMAGE_VAE = "Official video VAE"
 SINGLE_FRAME_IMAGE_VAE = "Single-frame 500K (experimental)"
 IMAGE_VAE_CHOICES = (OFFICIAL_IMAGE_VAE, SINGLE_FRAME_IMAGE_VAE)
@@ -2803,6 +2807,14 @@ def result_format_layout_updates(
         gr.update(visible=is_image),
         gr.update(visible=is_image),
         gr.update(visible=result_format == "Video", value=None),
+        gr.update(visible=False, value=None),
+        gr.update(visible=False, value=None),
+        gr.update(visible=False, value=None),
+        (
+            gr.update(visible=True)
+            if result_format == "Video"
+            else gr.update(value=DEFAULT_VIDEO_BATCH_COUNT, visible=False)
+        ),
         gr.update(visible=is_image),
         gr.update(visible=is_audio, value=None),
         (
@@ -7724,62 +7736,100 @@ def generate_with_ui_defaults(
         yield download_url, status
 
 
-def generate_for_ui(*args: Any):
-    """Adapt the shared result path to the three result components in the H3 tab."""
+def video_batch_seeds(seed: int, batch_count: int) -> list[int]:
+    """Resolve distinct seeds while preserving the single-run random-seed behavior."""
+    count = int(batch_count)
+    if not MIN_VIDEO_BATCH_COUNT <= count <= MAX_VIDEO_BATCH_COUNT:
+        raise H3Error(
+            f"Video batch count must be between {MIN_VIDEO_BATCH_COUNT} and "
+            f"{MAX_VIDEO_BATCH_COUNT}."
+        )
+    base_seed = int(seed)
+    if count == 1:
+        return [base_seed]
+    return random.sample(range(0, 2**63 - 1), count)
+
+
+def generate_for_ui(batch_count: int, *args: Any):
+    """Adapt shared generation to UI outputs, including 1-4 video variants."""
     if len(args) < 2:
         raise H3Error("Missing result-format inputs.")
     result_format = normalize_result_format(args[-2])
+    count = int(batch_count) if result_format == "Video" else 1
+    seed_index: int | None = None
+    seeds: list[int | None] = [None]
+    if result_format == "Video":
+        seed_index = list(inspect.signature(generate).parameters).index("seed")
+        seeds = video_batch_seeds(int(args[seed_index]), count)
     first_update = True
-    for result, status in generate(*args):
-        if first_update:
-            first_update = False
-            yield (
-                gr.update(value=None, visible=result_format == "Video"),
-                gr.update(visible=result_format == "Image"),
-                gr.update(value=[]),
-                gr.update(choices=[], value=[]),
-                [],
-                gr.update(value=None),
-                gr.update(value=None, visible=result_format == "Audio"),
-                gr.update(value=""),
-                status,
-            )
+    for batch_index, batch_seed in enumerate(seeds):
+        batch_args = list(args)
+        if batch_seed is not None and seed_index is not None:
+            batch_args[seed_index] = batch_seed
+        prefix = f"Video {batch_index + 1}/{count} · " if count > 1 else ""
+        for result, status in generate(*batch_args):
+            status = prefix + status
+            video_updates = [gr.update() for _ in range(MAX_VIDEO_BATCH_COUNT)]
+            if first_update:
+                first_update = False
+                video_updates = [
+                    gr.update(
+                        value=None,
+                        visible=(result_format == "Video" and index < count),
+                    )
+                    for index in range(MAX_VIDEO_BATCH_COUNT)
+                ]
+                yield (
+                    *video_updates,
+                    gr.update(visible=result_format == "Image"),
+                    gr.update(value=[]),
+                    gr.update(choices=[], value=[]),
+                    [],
+                    gr.update(value=None),
+                    gr.update(value=None, visible=result_format == "Audio"),
+                    gr.update(value=""),
+                    status,
+                )
+                if result is None:
+                    continue
+
             if result is None:
+                yield (
+                    *video_updates,
+                    gr.update(), gr.update(), gr.update(), gr.update(),
+                    gr.update(), gr.update(), gr.update(), status,
+                )
                 continue
 
-        if result is None:
-            yield (
-                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
-                gr.update(), gr.update(), gr.update(), status,
-            )
-            continue
-
-        if result_format == "Image":
-            paths = normalize_paths(result)
-            labels = image_frame_labels(paths)
-            gallery = [(path, label) for path, label in zip(paths, labels)]
-            yield (
-                gr.update(),
-                gr.update(visible=True),
-                gr.update(value=gallery),
-                gr.update(choices=labels, value=[]),
-                paths,
-                gr.update(value=None),
-                gr.update(),
-                gr.update(),
-                status,
-            )
-        elif result_format == "Audio":
-            yield (
-                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
-                gr.update(), gr.update(value=result, visible=True), gr.update(), status,
-            )
-        else:
-            yield (
-                gr.update(value=result, visible=True),
-                gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
-                gr.update(), gr.update(), status,
-            )
+            if result_format == "Image":
+                paths = normalize_paths(result)
+                labels = image_frame_labels(paths)
+                gallery = [(path, label) for path, label in zip(paths, labels)]
+                yield (
+                    *video_updates,
+                    gr.update(visible=True),
+                    gr.update(value=gallery),
+                    gr.update(choices=labels, value=[]),
+                    paths,
+                    gr.update(value=None),
+                    gr.update(),
+                    gr.update(),
+                    status,
+                )
+            elif result_format == "Audio":
+                yield (
+                    *video_updates,
+                    gr.update(), gr.update(), gr.update(), gr.update(),
+                    gr.update(), gr.update(value=result, visible=True),
+                    gr.update(), status,
+                )
+            else:
+                video_updates[batch_index] = gr.update(value=result, visible=True)
+                yield (
+                    *video_updates,
+                    gr.update(), gr.update(), gr.update(), gr.update(),
+                    gr.update(), gr.update(), gr.update(), status,
+                )
 
 
 def api_guide() -> str:
@@ -8174,7 +8224,12 @@ def build_ui() -> gr.Blocks:
                     label="Generation progress", lines=3,
                     interactive=False, elem_classes=["h3-status"],
                 )
-                output = gr.Video(label="Generated video")
+                with gr.Row():
+                    output = gr.Video(label="Generated video 1")
+                    output_2 = gr.Video(label="Generated video 2", visible=False)
+                with gr.Row():
+                    output_3 = gr.Video(label="Generated video 3", visible=False)
+                    output_4 = gr.Video(label="Generated video 4", visible=False)
                 with gr.Group(visible=False) as image_output_group:
                     image_output = gr.Gallery(
                         value=[],
@@ -8289,12 +8344,24 @@ def build_ui() -> gr.Blocks:
                     resolution_info = gr.Markdown(
                         resolution_summary(defaults["width"], defaults["height"])
                     )
-                    seed = gr.Number(
-                        value=defaults["seed"],
-                        precision=0,
-                        label="Seed",
-                        info="Use -1 for a new random seed on each generation.",
-                    )
+                    with gr.Row():
+                        seed = gr.Number(
+                            value=defaults["seed"],
+                            precision=0,
+                            label="Seed",
+                            info=(
+                                "Used for a single video. Batch videos always use "
+                                "independent random seeds."
+                            ),
+                        )
+                        batch_count = gr.Slider(
+                            MIN_VIDEO_BATCH_COUNT,
+                            MAX_VIDEO_BATCH_COUNT,
+                            value=DEFAULT_VIDEO_BATCH_COUNT,
+                            step=1,
+                            label="Videos per batch",
+                            info="Generate up to four random-seed variants in one run.",
+                        )
                 with gr.Accordion(
                     "Performance & sampling",
                     open=False,
@@ -9060,6 +9127,10 @@ def build_ui() -> gr.Blocks:
                 image_frames,
                 image_vae,
                 output,
+                output_2,
+                output_3,
+                output_4,
+                batch_count,
                 image_output_group,
                 audio_output,
                 generation_postprocess,
@@ -9361,6 +9432,7 @@ def build_ui() -> gr.Blocks:
         event = run.click(
             generate_for_ui,
             inputs=[
+                batch_count,
                 mode, model_profile, text_encoder, stage_model_offload,
                 generation_mode, turbo_variant,
                 prompt, first, last,
@@ -9388,6 +9460,9 @@ def build_ui() -> gr.Blocks:
             ],
             outputs=[
                 output,
+                output_2,
+                output_3,
+                output_4,
                 image_output_group,
                 image_output,
                 image_selection,
@@ -10205,12 +10280,44 @@ def selftest() -> None:
 
     globals()["generate"] = fake_image_generate
     try:
-        ui_updates = list(generate_for_ui("Image", 2))
+        ui_updates = list(generate_for_ui(1, "Image", 2))
     finally:
         globals()["generate"] = original_ui_generate
     assert len(ui_updates) == 2
-    assert all(len(update) == 9 for update in ui_updates)
-    assert ui_updates[-1][4] == ["frame-a.png", "frame-b.png"]
+    assert all(len(update) == 12 for update in ui_updates)
+    assert ui_updates[-1][7] == ["frame-a.png", "frame-b.png"]
+    assert video_batch_seeds(7, 1) == [7]
+
+    captured_batch_args: list[tuple[Any, ...]] = []
+    original_generate_signature = inspect.signature(original_ui_generate)
+
+    def fake_batch_generate(*batch_args: Any):
+        captured_batch_args.append(batch_args)
+        yield None, "working"
+        yield f"video-{len(captured_batch_args)}.mp4", "complete"
+
+    fake_batch_generate.__signature__ = original_generate_signature
+    generate_parameters = list(original_generate_signature.parameters)
+    batch_args = [None] * generate_parameters.index("progress")
+    seed_index = generate_parameters.index("seed")
+    reuse_index = generate_parameters.index("reuse_unchanged_inputs")
+    batch_args[seed_index] = 7
+    batch_args[reuse_index] = False
+    batch_args[-2] = "Video"
+    batch_args[-1] = 5
+    original_random_sample = random.sample
+    random.sample = lambda _population, count: list(range(101, 101 + count))
+    globals()["generate"] = fake_batch_generate
+    try:
+        assert video_batch_seeds(7, 4) == [101, 102, 103, 104]
+        batch_updates = list(generate_for_ui(3, *batch_args))
+    finally:
+        globals()["generate"] = original_ui_generate
+        random.sample = original_random_sample
+    assert [args[seed_index] for args in captured_batch_args] == [101, 102, 103]
+    assert all(args[reuse_index] is False for args in captured_batch_args)
+    assert len(batch_updates) == 6
+    assert all(len(update) == 12 for update in batch_updates)
 
     latent_graph = build_fl2va_graph(
         prompt="latent upscale test", first_image=None, last_image=None,
