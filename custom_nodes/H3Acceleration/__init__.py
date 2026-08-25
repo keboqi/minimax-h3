@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import math
 import re
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 
 import torch
@@ -916,6 +918,157 @@ class H3VideoLatentSlicesToBatch:
         return (output,)
 
 
+class _H3ConditioningReuseCache:
+    """Small process-local cache keyed only by encoder conditioning inputs."""
+
+    def __init__(self, max_entries: int = 2) -> None:
+        self._entries: OrderedDict[str, object] = OrderedDict()
+        self._fresh_since_policy: dict[str, bool] = {}
+        self._max_entries = max_entries
+        self._lock = threading.Lock()
+
+    def encode(self, cache_key: str, encode):
+        with self._lock:
+            if cache_key in self._entries:
+                conditioning = self._entries[cache_key]
+                self._entries.move_to_end(cache_key)
+                logging.info("MiniMax H3 reused cached text/media conditioning")
+                return conditioning
+
+        conditioning = encode()
+        with self._lock:
+            self._entries[cache_key] = conditioning
+            self._entries.move_to_end(cache_key)
+            self._fresh_since_policy[cache_key] = True
+            while len(self._entries) > self._max_entries:
+                evicted_key, _value = self._entries.popitem(last=False)
+                self._fresh_since_policy.pop(evicted_key, None)
+        return conditioning
+
+    def conditioning_was_reused(self, cache_key: str) -> bool:
+        with self._lock:
+            if cache_key not in self._entries:
+                return False
+            fresh = self._fresh_since_policy.pop(cache_key, False)
+            return not fresh
+
+
+_H3_CONDITIONING_REUSE_CACHE = _H3ConditioningReuseCache()
+
+
+class _H3CachedCLIPProxy:
+    def __init__(self, clip, cache_key: str) -> None:
+        self._clip = clip
+        self._cache_key = cache_key
+
+    def __getattr__(self, name):
+        return getattr(self._clip, name)
+
+    def encode_from_tokens_scheduled(self, tokens, *args, **kwargs):
+        return _H3_CONDITIONING_REUSE_CACHE.encode(
+            self._cache_key,
+            lambda: self._clip.encode_from_tokens_scheduled(
+                tokens, *args, **kwargs
+            ),
+        )
+
+
+class H3ConditioningCache:
+    """Wrap H3 CLIP so unchanged prompt/media conditioning skips encoding."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "clip": ("CLIP",),
+                "cache_key": ("STRING", {"default": ""}),
+            }
+        }
+
+    RETURN_TYPES = ("CLIP",)
+    FUNCTION = "wrap"
+    CATEGORY = "model/management/minimax"
+    DESCRIPTION = (
+        "Caches H3 text/media conditioning independently from resolution, "
+        "duration, seed, sampler, and other generation-only settings."
+    )
+
+    def wrap(self, clip, cache_key):
+        return (_H3CachedCLIPProxy(clip, str(cache_key)),)
+
+
+def _offload_h3_models(label: str) -> None:
+    before = len(comfy.model_management.loaded_models())
+    comfy.model_management.unload_all_models()
+    comfy.model_management.soft_empty_cache()
+    after = len(comfy.model_management.loaded_models())
+    logging.info(
+        "MiniMax H3 %s: resident Comfy models %d -> %d",
+        label,
+        before,
+        after,
+    )
+
+
+class H3StageOffloadPolicy:
+    """Disable BF16 stage offloads when conditioning was actually reused."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "conditioning": ("CONDITIONING",),
+                "latent": ("LATENT",),
+                "additional_conditioning": ("CONDITIONING",),
+                "additional_latent": ("LATENT",),
+                "cache_key": ("STRING", {"default": ""}),
+            }
+        }
+
+    RETURN_TYPES = (
+        "CONDITIONING", "LATENT", "CONDITIONING", "LATENT", "BOOLEAN"
+    )
+    RETURN_NAMES = (
+        "conditioning",
+        "latent",
+        "additional_conditioning",
+        "additional_latent",
+        "stage_offload_enabled",
+    )
+    FUNCTION = "choose"
+    CATEGORY = "model/management/minimax"
+
+    @classmethod
+    def IS_CHANGED(cls, **_kwargs):
+        return float("nan")
+
+    def choose(
+        self,
+        conditioning,
+        latent,
+        additional_conditioning,
+        additional_latent,
+        cache_key,
+    ):
+        reused = _H3_CONDITIONING_REUSE_CACHE.conditioning_was_reused(
+            str(cache_key)
+        )
+        enabled = not reused
+        if enabled:
+            _offload_h3_models("encode-stage offload")
+        else:
+            logging.info(
+                "MiniMax H3 conditioning reused; skipping stage offloads for this run"
+            )
+        return (
+            conditioning,
+            latent,
+            additional_conditioning,
+            additional_latent,
+            enabled,
+        )
+
+
 class H3StageModelOffload:
     """Pass stage results through after forcing resident Comfy models off VRAM."""
 
@@ -927,7 +1080,8 @@ class H3StageModelOffload:
                 "latent": ("LATENT",),
                 "additional_conditioning": ("CONDITIONING",),
                 "additional_latent": ("LATENT",),
-            }
+            },
+            "optional": {"enabled": ("BOOLEAN", {"default": True})},
         }
 
     RETURN_TYPES = ("CONDITIONING", "LATENT", "CONDITIONING", "LATENT")
@@ -956,16 +1110,10 @@ class H3StageModelOffload:
         latent,
         additional_conditioning,
         additional_latent,
+        enabled=True,
     ):
-        before = len(comfy.model_management.loaded_models())
-        comfy.model_management.unload_all_models()
-        comfy.model_management.soft_empty_cache()
-        after = len(comfy.model_management.loaded_models())
-        logging.info(
-            "MiniMax H3 stage offload: resident Comfy models %d -> %d",
-            before,
-            after,
-        )
+        if enabled:
+            _offload_h3_models("stage offload")
         return conditioning, latent, additional_conditioning, additional_latent
 
 
@@ -976,6 +1124,8 @@ NODE_CLASS_MAPPINGS = {
     "H3CombineAVLatent": H3CombineAVLatent,
     "H3SingleFrameVAELoader": H3SingleFrameVAELoader,
     "H3VideoLatentSlicesToBatch": H3VideoLatentSlicesToBatch,
+    "H3ConditioningCache": H3ConditioningCache,
+    "H3StageOffloadPolicy": H3StageOffloadPolicy,
     "H3StageModelOffload": H3StageModelOffload,
 }
 
@@ -986,5 +1136,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3CombineAVLatent": "MiniMax H3 Combine AV Latent",
     "H3SingleFrameVAELoader": "MiniMax H3 Single-Frame VAE Loader",
     "H3VideoLatentSlicesToBatch": "MiniMax H3 Video Slices to Image Batch",
+    "H3ConditioningCache": "MiniMax H3 Conditioning Cache",
+    "H3StageOffloadPolicy": "MiniMax H3 Stage Offload Policy",
     "H3StageModelOffload": "MiniMax H3 Stage Model Offload",
 }

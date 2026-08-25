@@ -164,16 +164,22 @@ and **Quality (FP32)** remain selectable.
 The H3 text encoder defaults to the preloaded **BF16** checkpoint (51.5 GB).
 The **NVFP4 / AWQ** and **INT8 ConvRot** (27.1 GB) checkpoints download on first
 selection. BF16 automatically enables and locks **Offload models
-between H3 stages** so the text encoder, diffusion model, optional latent
-upscaler, and VAEs do not need to remain resident together. INT8 and NVFP4 keep
-the current all-VRAM path by default; stage offload can still be enabled
-manually for either one.
+between H3 stages**. After a fresh encode this keeps the text encoder, diffusion
+model, optional latent upscaler, and VAEs from remaining resident together. When
+unchanged BF16 conditioning is reused, the encoder never loads and all remaining
+stage offloads are skipped for that run. INT8 and NVFP4 keep the current all-VRAM
+path by default; stage offload can still be enabled manually for either one.
 **Reuse unchanged prompt and media** is enabled by default. Uploaded H3 inputs are
 staged under content-derived names, so repeating the same prompt and ordered media
-combination lets ComfyUI restore its loading and conditioning outputs. A changed
-prompt, media file, order, resolution, or conditioning setting invalidates the
-relevant cache entry normally. A changed or random seed still reruns diffusion;
-disable the option to stage fresh media copies for that request.
+combination reuses the expensive text/media conditioning. The cache identity
+contains only the prompt, ordered image/audio/video content, selected text encoder,
+and reference-media encoder sizing. Generation-only changes such as seed, steps,
+sampler, attention/cache mode, duration, resolution, output format, or latent
+upscaling still rebuild the required latent/sampling graph but do not re-run the
+text encoder. A changed prompt, media file/order, text encoder, or reference-media
+encoder sizing performs a fresh encode and retains normal BF16 stage offloading.
+Disable reuse to stage fresh media copies and use unconditional BF16 offloading for
+that request.
 The gated LTX-2.5 distilled transformers are available as **INT8 ConvRot
 (default)** and **BF16**. The selected transformer plus the shared fine-tuned
 Gemma text encoder and audio/video VAEs

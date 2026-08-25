@@ -308,6 +308,8 @@ H3_COMBINE_AV_LATENT_NODE = "H3CombineAVLatent"
 H3_SINGLE_FRAME_VAE_LOADER_NODE = "H3SingleFrameVAELoader"
 H3_IMAGE_SLICES_NODE = "H3VideoLatentSlicesToBatch"
 H3_STAGE_OFFLOAD_NODE = "H3StageModelOffload"
+H3_CONDITIONING_CACHE_NODE = "H3ConditioningCache"
+H3_STAGE_OFFLOAD_POLICY_NODE = "H3StageOffloadPolicy"
 H3_LATENT_UPSCALE_SCALE = 2.0
 SOL_ATTENTION_NODE = "MiniMaxH3MemoryEfficientSolAttentionPatch"
 SAGE_ATTENTION_NODE = "PathchSageAttentionKJ"
@@ -3359,21 +3361,41 @@ def add_model_stack(
     return model_ref, Graph.out(clip), Graph.out(video_vae), Graph.out(audio_vae)
 
 
+def h3_conditioning_cache_key(
+    mode: str,
+    prompt: str,
+    text_encoder_name: str,
+    media: list[tuple[str, str]],
+    *,
+    encoder_settings: dict[str, Any] | None = None,
+) -> str:
+    payload = [
+        mode, prompt, text_encoder_name, media, encoder_settings or {},
+    ]
+    serialized = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
 def add_h3_stage_offload(
     graph: Graph,
     conditioning_ref: list[Any],
     latent_ref: list[Any],
     additional_conditioning_ref: list[Any] | None = None,
     additional_latent_ref: list[Any] | None = None,
+    enabled_ref: list[Any] | None = None,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     """Insert an execution barrier that unloads one H3 stage before the next."""
-    barrier = graph.add(
-        H3_STAGE_OFFLOAD_NODE,
-        conditioning=conditioning_ref,
-        latent=latent_ref,
-        additional_conditioning=additional_conditioning_ref or conditioning_ref,
-        additional_latent=additional_latent_ref or latent_ref,
-    )
+    inputs = {
+        "conditioning": conditioning_ref,
+        "latent": latent_ref,
+        "additional_conditioning": additional_conditioning_ref or conditioning_ref,
+        "additional_latent": additional_latent_ref or latent_ref,
+    }
+    if enabled_ref is not None:
+        inputs["enabled"] = enabled_ref
+    barrier = graph.add(H3_STAGE_OFFLOAD_NODE, **inputs)
     return tuple(Graph.out(barrier, slot) for slot in range(4))  # type: ignore[return-value]
 
 
@@ -3401,21 +3423,40 @@ def finish_sampling(
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
     stage_model_offload: bool = False,
+    smart_stage_offload: bool = False,
+    conditioning_cache_key: str | None = None,
 ) -> None:
     result_format = normalize_result_format(result_format)
+    stage_offload_enabled_ref: list[Any] | None = None
     if stage_model_offload:
-        (
-            conditioning_ref,
-            latent_ref,
-            initial_conditioning_ref,
-            initial_latent_ref,
-        ) = add_h3_stage_offload(
-            graph,
-            conditioning_ref,
-            latent_ref,
-            initial_conditioning_ref,
-            initial_latent_ref,
-        )
+        if smart_stage_offload:
+            if not conditioning_cache_key:
+                raise H3Error("Smart H3 stage offload requires a conditioning key.")
+            policy = graph.add(
+                H3_STAGE_OFFLOAD_POLICY_NODE,
+                conditioning=conditioning_ref,
+                latent=latent_ref,
+                additional_conditioning=initial_conditioning_ref or conditioning_ref,
+                additional_latent=initial_latent_ref or latent_ref,
+                cache_key=conditioning_cache_key,
+            )
+            conditioning_ref, latent_ref = Graph.out(policy, 0), Graph.out(policy, 1)
+            initial_conditioning_ref = Graph.out(policy, 2)
+            initial_latent_ref = Graph.out(policy, 3)
+            stage_offload_enabled_ref = Graph.out(policy, 4)
+        else:
+            (
+                conditioning_ref,
+                latent_ref,
+                initial_conditioning_ref,
+                initial_latent_ref,
+            ) = add_h3_stage_offload(
+                graph,
+                conditioning_ref,
+                latent_ref,
+                initial_conditioning_ref,
+                initial_latent_ref,
+            )
     noise = graph.add("RandomNoise", noise_seed=int(seed))
     guider = graph.add("BasicGuider", model=model_ref, conditioning=conditioning_ref)
     use_larry_sampler = (
@@ -3466,6 +3507,7 @@ def finish_sampling(
                 graph,
                 conditioning_ref,
                 initial_sampled_ref,
+                enabled_ref=stage_offload_enabled_ref,
             )
         separated = graph.add(
             H3_SEPARATE_AV_LATENT_NODE,
@@ -3491,7 +3533,12 @@ def finish_sampling(
                 combined_ref,
                 _unused_additional_conditioning,
                 _unused_additional_latent,
-            ) = add_h3_stage_offload(graph, conditioning_ref, combined_ref)
+            ) = add_h3_stage_offload(
+                graph,
+                conditioning_ref,
+                combined_ref,
+                enabled_ref=stage_offload_enabled_ref,
+            )
         sampled = graph.add(
             "SamplerCustomAdvanced",
             noise=Graph.out(noise),
@@ -3524,6 +3571,7 @@ def finish_sampling(
             sampled_ref,
             conditioning_ref,
             audio_samples,
+            enabled_ref=stage_offload_enabled_ref,
         )
     if result_format == "Image":
         requested_frames = validate_image_frame_count(image_frames)
@@ -3639,6 +3687,7 @@ def build_fl2va_graph(
     text_encoder_name: str | None = None,
     reuse_unchanged_inputs: bool = True,
     stage_model_offload: bool = False,
+    smart_stage_offload: bool = False,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -3697,8 +3746,8 @@ def build_fl2va_graph(
             h3_latent_upscale_dimensions(target_width, target_height)
         )
 
+    conditioning_media: list[tuple[str, str]] = []
     inputs: dict[str, Any] = {
-        "clip": clip_ref,
         "vae": video_vae_ref,
         "prompt": prompt,
         "length": (
@@ -3708,21 +3757,41 @@ def build_fl2va_graph(
         ),
     }
     if first_image:
+        staged = stage_file(
+            first_image, "keyframes", reuse=reuse_unchanged_inputs
+        )
+        conditioning_media.append(("first_image", staged))
         loaded = graph.add(
             "LoadImage",
-            image=stage_file(
-                first_image, "keyframes", reuse=reuse_unchanged_inputs
-            ),
+            image=staged,
         )
         inputs["first_frame"] = Graph.out(loaded)
     if last_image:
+        staged = stage_file(
+            last_image, "keyframes", reuse=reuse_unchanged_inputs
+        )
+        conditioning_media.append(("last_image", staged))
         loaded = graph.add(
             "LoadImage",
-            image=stage_file(
-                last_image, "keyframes", reuse=reuse_unchanged_inputs
-            ),
+            image=staged,
         )
         inputs["last_frame"] = Graph.out(loaded)
+
+    conditioning_cache_key: str | None = None
+    if smart_stage_offload:
+        conditioning_cache_key = h3_conditioning_cache_key(
+            "fl2va",
+            prompt,
+            text_encoder_name or models.text_encoder,
+            conditioning_media,
+        )
+        cache_node = graph.add(
+            H3_CONDITIONING_CACHE_NODE,
+            clip=clip_ref,
+            cache_key=conditioning_cache_key,
+        )
+        clip_ref = Graph.out(cache_node)
+    inputs["clip"] = clip_ref
 
     target_h3 = graph.add(
         "MiniMaxH3ImageToVideo",
@@ -3767,6 +3836,8 @@ def build_fl2va_graph(
         latent_upscale_precision=latent_upscale_precision,
         latent_upscale_refine_steps=latent_upscale_refine_steps,
         stage_model_offload=stage_model_offload,
+        smart_stage_offload=smart_stage_offload,
+        conditioning_cache_key=conditioning_cache_key,
     )
     return graph.nodes
 
@@ -3819,6 +3890,7 @@ def build_ref2va_graph(
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae: str = DEFAULT_IMAGE_VAE,
     text_encoder_name: str | None = None,
+    smart_stage_offload: bool = False,
     reuse_unchanged_inputs: bool = True,
     stage_model_offload: bool = False,
 ) -> dict[str, Any]:
@@ -3879,8 +3951,8 @@ def build_ref2va_graph(
             h3_latent_upscale_dimensions(target_width, target_height)
         )
 
+    conditioning_media: list[tuple[str, str]] = []
     inputs: dict[str, Any] = {
-        "clip": clip_ref,
         "vae": video_vae_ref,
         "audio_vae": audio_vae_ref,
         "prompt": prompt,
@@ -3893,11 +3965,13 @@ def build_ref2va_graph(
     }
 
     for index, path in enumerate(reference_images[:MAX_REFERENCE_IMAGES]):
+        staged = stage_file(
+            path, "reference_images", reuse=reuse_unchanged_inputs
+        )
+        conditioning_media.append((f"reference_image_{index}", staged))
         loaded = graph.add(
             "LoadImage",
-            image=stage_file(
-                path, "reference_images", reuse=reuse_unchanged_inputs
-            ),
+            image=staged,
         )
         inputs[f"ref_images.ref_image_{index}"] = Graph.out(loaded)
 
@@ -3908,19 +3982,39 @@ def build_ref2va_graph(
             transcode_video=True,
             reuse=reuse_unchanged_inputs,
         )
+        conditioning_media.append((f"reference_video_{index}", staged))
         loaded = graph.add("LoadVideo", file=staged)
         components = graph.add("GetVideoComponents", video=Graph.out(loaded))
         inputs[f"ref_videos.ref_video_{index}"] = Graph.out(components, 0)
         inputs[f"ref_video_audios.ref_video_audio_{index}"] = Graph.out(components, 1)
 
     for index, path in enumerate(reference_audios[:MAX_REFERENCE_AUDIOS]):
+        staged = stage_file(
+            path, "reference_audios", reuse=reuse_unchanged_inputs
+        )
+        conditioning_media.append((f"reference_audio_{index}", staged))
         loaded = graph.add(
             "LoadAudio",
-            audio=stage_file(
-                path, "reference_audios", reuse=reuse_unchanged_inputs
-            ),
+            audio=staged,
         )
         inputs[f"ref_audios.ref_audio_{index}"] = Graph.out(loaded)
+
+    conditioning_cache_key: str | None = None
+    if smart_stage_offload:
+        conditioning_cache_key = h3_conditioning_cache_key(
+            "ref2va",
+            prompt,
+            text_encoder_name or models.text_encoder,
+            conditioning_media,
+            encoder_settings={"ref_image_size": ref_image_size},
+        )
+        cache_node = graph.add(
+            H3_CONDITIONING_CACHE_NODE,
+            clip=clip_ref,
+            cache_key=conditioning_cache_key,
+        )
+        clip_ref = Graph.out(cache_node)
+    inputs["clip"] = clip_ref
 
     target_h3 = graph.add(
         "MiniMaxH3ReferenceToVideo",
@@ -3965,6 +4059,8 @@ def build_ref2va_graph(
         latent_upscale_precision=latent_upscale_precision,
         latent_upscale_refine_steps=latent_upscale_refine_steps,
         stage_model_offload=stage_model_offload,
+        smart_stage_offload=smart_stage_offload,
+        conditioning_cache_key=conditioning_cache_key,
     )
     return graph.nodes
 
@@ -4649,6 +4745,7 @@ def required_nodes_for(
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_vae: str = DEFAULT_IMAGE_VAE,
     stage_model_offload: bool = False,
+    smart_stage_offload: bool = False,
 ) -> set[str]:
     result_format = normalize_result_format(result_format)
     common = {
@@ -4696,6 +4793,11 @@ def required_nodes_for(
         }
     if stage_model_offload:
         common.add(H3_STAGE_OFFLOAD_NODE)
+        if smart_stage_offload:
+            common |= {
+                H3_CONDITIONING_CACHE_NODE,
+                H3_STAGE_OFFLOAD_POLICY_NODE,
+            }
     if "convrot" in model_filename.lower():
         common.add(CHUNK_FEED_FORWARD_NODE)
     if str(cache_mode).strip().lower() == "firstblockcache":
@@ -6448,6 +6550,9 @@ def generate(
             h3_text_encoder_settings(models, text_encoder)
         )
         effective_stage_offload = bool(stage_model_offload) or bf16_text_encoder
+        smart_stage_offload = (
+            bf16_text_encoder and bool(reuse_unchanged_inputs)
+        )
         if effective_stage_offload and SERVER_MEMORY_PROFILE == "gpu-only":
             raise H3Error(
                 "H3 stage offload cannot release VRAM while ComfyUI is running "
@@ -6646,6 +6751,7 @@ def generate(
             result_format=result_format,
             image_vae=selected_image_vae,
             stage_model_offload=effective_stage_offload,
+            smart_stage_offload=smart_stage_offload,
         ) - available
         if missing:
             raise H3Error("Missing ComfyUI nodes: " + ", ".join(sorted(missing)))
@@ -6714,6 +6820,7 @@ def generate(
                 text_encoder_name=selected_text_encoder,
                 reuse_unchanged_inputs=bool(reuse_unchanged_inputs),
                 stage_model_offload=effective_stage_offload,
+                smart_stage_offload=smart_stage_offload,
             )
         else:
             graph = build_fl2va_graph(
@@ -6753,6 +6860,7 @@ def generate(
                 text_encoder_name=selected_text_encoder,
                 reuse_unchanged_inputs=bool(reuse_unchanged_inputs),
                 stage_model_offload=effective_stage_offload,
+                smart_stage_offload=smart_stage_offload,
             )
 
         client_id = str(uuid.uuid4())
@@ -9790,6 +9898,8 @@ def selftest() -> None:
         H3_SINGLE_FRAME_VAE_LOADER_NODE,
         H3_IMAGE_SLICES_NODE,
         H3_STAGE_OFFLOAD_NODE,
+        H3_CONDITIONING_CACHE_NODE,
+        H3_STAGE_OFFLOAD_POLICY_NODE,
     }
     assert h3_text_encoder_settings(fake, "NVFP4 / AWQ") == (
         "text_encoder", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", False
@@ -9803,6 +9913,14 @@ def selftest() -> None:
     assert text_encoder_offload_update("BF16")["interactive"] is False
     assert H3_STAGE_OFFLOAD_NODE in required_nodes_for(
         "Text to video", False, "Off", stage_model_offload=True
+    )
+    assert {
+        H3_STAGE_OFFLOAD_NODE,
+        H3_CONDITIONING_CACHE_NODE,
+        H3_STAGE_OFFLOAD_POLICY_NODE,
+    } <= required_nodes_for(
+        "Text to video", False, "Off",
+        stage_model_offload=True, smart_stage_offload=True,
     )
     assert fake.turbo_lora_for("Text to video", LIGHTX2V_4STEP_TURBO) == fake.turbo_lora
     assert fake.turbo_lora_for("Reference media", LIGHTX2V_4STEP_TURBO) == fake.turbo_ref_lora
@@ -9839,6 +9957,7 @@ def selftest() -> None:
         models=fake, available_nodes=available,
         text_encoder_name="qwen3vl_32b_minimax_h3_bf16.safetensors",
         stage_model_offload=True,
+        smart_stage_offload=True,
     )
     classes = {node["class_type"] for node in graph.values()}
     expected = {
@@ -9861,7 +9980,29 @@ def selftest() -> None:
     )
     assert sum(
         node["class_type"] == H3_STAGE_OFFLOAD_NODE for node in graph.values()
-    ) == 2
+    ) == 1
+    cache_node = next(
+        node for node in graph.values()
+        if node["class_type"] == H3_CONDITIONING_CACHE_NODE
+    )
+    expected_cache_key = h3_conditioning_cache_key(
+        "fl2va", "test",
+        "qwen3vl_32b_minimax_h3_bf16.safetensors", [],
+    )
+    assert cache_node["inputs"]["cache_key"] == expected_cache_key
+    policy_id, policy = next(
+        (node_id, node) for node_id, node in graph.items()
+        if node["class_type"] == H3_STAGE_OFFLOAD_POLICY_NODE
+    )
+    assert policy["inputs"]["cache_key"] == expected_cache_key
+    assert expected_cache_key != h3_conditioning_cache_key(
+        "fl2va", "changed", "qwen3vl_32b_minimax_h3_bf16.safetensors", [],
+    )
+    final_offload = next(
+        node for node in graph.values()
+        if node["class_type"] == H3_STAGE_OFFLOAD_NODE
+    )
+    assert final_offload["inputs"]["enabled"] == [policy_id, 4]
 
     image_graph = build_fl2va_graph(
         prompt="image result test", first_image=None, last_image=None,
