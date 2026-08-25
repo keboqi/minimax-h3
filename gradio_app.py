@@ -149,7 +149,7 @@ DEFAULT_FBCACHE_END = 0.95
 DEFAULT_FBCACHE_MAX_HITS = 2
 DEFAULT_FBCACHE_TEMPORAL_GUARD = True
 DEFAULT_ACCELERATOR = "Spectrum"
-DEFAULT_SLA_PRESET = "Quality"
+DEFAULT_SLA_PRESET = "Balanced"
 SLA_PRESET_INPUTS = {
     "Fast": {
         "sparsity_ratio": 0.90,
@@ -470,7 +470,7 @@ AUTO_RESOLUTION_MEGAPIXEL_PRESETS = {
     "2 MP": 2_000_000 - 1,
     "4 MP": 4_000_000 - 1,
 }
-DEFAULT_AUTO_RESOLUTION_MEGAPIXELS = "4 MP"
+DEFAULT_AUTO_RESOLUTION_MEGAPIXELS = "2 MP"
 AUTO_RESOLUTION_PIXEL_CAP = AUTO_RESOLUTION_MEGAPIXEL_PRESETS[
     DEFAULT_AUTO_RESOLUTION_MEGAPIXELS
 ]
@@ -8316,7 +8316,7 @@ def build_ui() -> gr.Blocks:
                             f"packed target tokens reach {AUTO_SOL_TOKEN_THRESHOLD:,}; "
                             "Sage 2 applies the pinned KJNodes model override. Kitchen "
                             "selects the global ComfyUI backend. SLA is the default, uses "
-                            "the Quality audio-safe block-sparse preset, and automatically "
+                            "the Balanced audio-safe block-sparse preset, and automatically "
                             "keeps short sequences dense; it is intended for SLA-distilled "
                             "H3 LoRAs. Auto uses Kitchen for "
                             "smaller jobs. Sol "
@@ -11115,8 +11115,12 @@ def selftest() -> None:
     assert auto_resolution_pixel_cap("4 MP") == 4_000_000 - 1
     assert UI_DEFAULTS["text_encoder"] == "BF16"
     assert UI_DEFAULTS["stage_model_offload"] is True
-    assert UI_DEFAULTS["attention_mode"] == "SLA"
-    assert UI_DEFAULTS["sla_preset"] == "Quality"
+    balanced_defaults = preset_values("Balanced")
+    assert DEFAULT_AUTO_RESOLUTION_MEGAPIXELS == balanced_defaults[6]
+    assert UI_DEFAULTS["turbo_variant"] == balanced_defaults[7]
+    assert UI_DEFAULTS["attention_mode"] == balanced_defaults[8]
+    assert UI_DEFAULTS["sla_preset"] == balanced_defaults[9]
+    assert UI_DEFAULTS["latent_upscale_refine_steps"] == balanced_defaults[10]
     assert resolution_for_aspect_ratio(
         4096, 2304, preserve_native=True
     ) == (4096, 2304)
