@@ -514,10 +514,19 @@ RESOLUTION_TIERS: dict[str, dict[str, tuple[int, int]]] = {
     "large": LARGE_RESOLUTIONS,
 }
 
-SAMPLING_PRESETS: dict[str, tuple[int, float, str, str, str, int]] = {
-    "Quality": (20, 0.8, "exact", "beta", "exact_kv_and_rows", 1),
-    "Balanced": (18, 1.0, "diag", "simple", "exact_kv", 1),
-    "Fast": (15, 1.2, "diag", "simple", "off", 1),
+SAMPLING_PRESETS: dict[str, tuple[Any, ...]] = {
+    "Quality": (
+        20, 0.8, "exact", "beta", "exact_kv_and_rows", 1,
+        "4 MP", LIGHTX2V_8STEP_TURBO, "SLA", "Quality", 2,
+    ),
+    "Balanced": (
+        18, 1.0, "diag", "simple", "exact_kv", 1,
+        "2 MP", LIGHTX2V_4STEP_TURBO, "SLA", "Balanced", 2,
+    ),
+    "Fast": (
+        15, 1.2, "diag", "simple", "off", 1,
+        "1 MP", LIGHTX2V_4STEP_TURBO, "SLA", "Fast", 1,
+    ),
 }
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "60"))
 GENERATION_TIMEOUT = float(os.getenv("GENERATION_TIMEOUT", "10800"))
@@ -2861,7 +2870,7 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
     """
     if str(name).strip().lower() == "turbo":
         return (
-            gr.update(interactive=False),
+            gr.update(interactive=True),
             gr.update(
                 value=turbo_steps_for(turbo_variant),
                 interactive=True,
@@ -7493,8 +7502,18 @@ def interrupt() -> str:
         return f"Interrupt failed: {exc}"
 
 
-def preset_values(name: str):
-    return SAMPLING_PRESETS.get(str(name), SAMPLING_PRESETS["Balanced"])
+def preset_values(name: str, generation_mode: str = "Normal"):
+    values = SAMPLING_PRESETS.get(str(name), SAMPLING_PRESETS["Balanced"])
+    if str(generation_mode).strip().lower() != "turbo":
+        return values
+
+    turbo_variant = values[7]
+    return (
+        turbo_steps_for(turbo_variant),
+        *values[1:3],
+        "simple",
+        *values[4:],
+    )
 
 
 def compact_settings_summary(
@@ -8189,10 +8208,10 @@ def build_ui() -> gr.Blocks:
                         ["Quality", "Balanced", "Fast"],
                         value="Balanced",
                         label="Sampling preset",
-                        interactive=False,
+                        interactive=True,
                         info=(
-                            "Normal-generation preset. Disabled in Turbo so it cannot overwrite "
-                            "the Turbo Steps/Scheduler controls."
+                            "Sets sampling, start-frame cap, Turbo LoRA, attention, SLA, and "
+                            "high-resolution refinement defaults."
                         ),
                     )
                     with gr.Row():
@@ -9144,10 +9163,12 @@ def build_ui() -> gr.Blocks:
         )
         preset.change(
             preset_values,
-            inputs=preset,
+            inputs=[preset, generation_mode],
             outputs=[
                 steps, sol_tau, sol_thresh_type, scheduler,
                 sol_exact_mode, sol_dense_steps,
+                auto_megapixels, turbo_variant, attention_mode, sla_preset,
+                latent_upscale_refine_steps,
             ],
         )
         draft_resolution_event = draft_resolution.change(
@@ -10773,7 +10794,19 @@ def selftest() -> None:
     assert preset_values("Quality")[0] == 20
     assert preset_values("Balanced")[0] == 18
     assert preset_values("Fast")[0] == 15
-    assert all(len(values) == 6 for values in SAMPLING_PRESETS.values())
+    assert all(len(values) == 11 for values in SAMPLING_PRESETS.values())
+    assert preset_values("Fast")[6:] == (
+        "1 MP", LIGHTX2V_4STEP_TURBO, "SLA", "Fast", 1,
+    )
+    assert preset_values("Balanced")[6:] == (
+        "2 MP", LIGHTX2V_4STEP_TURBO, "SLA", "Balanced", 2,
+    )
+    assert preset_values("Quality")[6:] == (
+        "4 MP", LIGHTX2V_8STEP_TURBO, "SLA", "Quality", 2,
+    )
+    assert preset_values("Fast", "Turbo")[0] == 4
+    assert preset_values("Balanced", "Turbo")[0] == 4
+    assert preset_values("Quality", "Turbo")[0] == 8
     assert preset_values("unknown") == preset_values("Balanced")
     assert UI_DEFAULTS["steps"] == turbo_steps_for(UI_DEFAULTS["turbo_variant"])
     assert UI_DEFAULTS["width"] == 864 and UI_DEFAULTS["height"] == 480
