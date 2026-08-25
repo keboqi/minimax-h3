@@ -310,6 +310,7 @@ H3_IMAGE_SLICES_NODE = "H3VideoLatentSlicesToBatch"
 H3_STAGE_OFFLOAD_NODE = "H3StageModelOffload"
 H3_CONDITIONING_CACHE_NODE = "H3ConditioningCache"
 H3_STAGE_OFFLOAD_POLICY_NODE = "H3StageOffloadPolicy"
+H3_NVENC_SAVE_NODE = "H3SaveVideoNVENC"
 H3_LATENT_UPSCALE_SCALE = 2.0
 SOL_ATTENTION_NODE = "MiniMaxH3MemoryEfficientSolAttentionPatch"
 SAGE_ATTENTION_NODE = "PathchSageAttentionKJ"
@@ -3635,16 +3636,12 @@ def finish_sampling(
         fps=24.0,
         bit_depth=8,
     )
-    # SaveVideo.codec is a ComfyUI DynamicCombo. API prompts must send the
-    # selected option key as a plain string. Sending {"codec": "auto"} causes
-    # dynamic schema expansion to discard the input, and execute() then raises
-    # "missing 1 required positional argument: codec".
     graph.add(
-        "SaveVideo",
+        H3_NVENC_SAVE_NODE,
         video=Graph.out(video),
         filename_prefix=filename_prefix,
-        format="auto",
-        codec="auto",
+        preset="p4",
+        constant_quality=23,
     )
 
 
@@ -4775,7 +4772,7 @@ def required_nodes_for(
         common |= {"VAEDecodeAudio", "SaveAudioMP3"}
     else:
         common |= {
-            "VAEDecode", "VAEDecodeAudio", "CreateVideo", "SaveVideo",
+            "VAEDecode", "VAEDecodeAudio", "CreateVideo", H3_NVENC_SAVE_NODE,
         }
     if mode == "Reference media":
         common |= {"MiniMaxH3ReferenceToVideo", "LoadImage", "LoadVideo", "GetVideoComponents", "LoadAudio"}
@@ -4914,6 +4911,8 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Decoding output"
     if name == "CreateVideo":
         return "Assembling video"
+    if name == H3_NVENC_SAVE_NODE:
+        return "Saving video with NVENC"
     if name.startswith("Save"):
         return "Saving audio" if "Audio" in name else "Saving video"
     return name
@@ -9984,7 +9983,7 @@ def selftest() -> None:
     expected = {
         "MiniMaxH3ImageToVideo",
         "SamplerCustomAdvanced",
-        "SaveVideo",
+        H3_NVENC_SAVE_NODE,
         SOL_ATTENTION_NODE,
         FUSED_MODULATION_NODE,
         "H3FirstBlockCache",
@@ -10492,10 +10491,13 @@ def selftest() -> None:
     )
 
 
-    save_nodes = [node for node in graph.values() if node["class_type"] == "SaveVideo"]
+    save_nodes = [
+        node for node in graph.values()
+        if node["class_type"] == H3_NVENC_SAVE_NODE
+    ]
     assert len(save_nodes) == 1
-    assert save_nodes[0]["inputs"]["codec"] == "auto"
-    assert isinstance(save_nodes[0]["inputs"]["codec"], str)
+    assert save_nodes[0]["inputs"]["preset"] == "p4"
+    assert save_nodes[0]["inputs"]["constant_quality"] == 23
 
     ltx25_graph = build_ltx25_graph(
         prompt="a test shot",
@@ -11157,6 +11159,7 @@ def selftest() -> None:
     assert "clientId=client%20id" in websocket_url("client id")
     assert node_stage("SamplerCustomAdvanced") == "Generating video and audio"
     assert node_stage("VAEDecode") == "Decoding output"
+    assert node_stage(H3_NVENC_SAVE_NODE) == "Saving video with NVENC"
     rendered_progress = progress_status(
         "Generating video and audio", started=time.monotonic(),
         completed_nodes=7, total_nodes=12, step=2, step_total=4,
@@ -11571,7 +11574,7 @@ def selftest() -> None:
         f"selectable Larry/LightX2V Turbo on "
         f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, "
         f"video/image/audio result branches + image selection saving valid, "
-        f"SaveVideo codec API valid, prompt API download URL valid, "
+        f"H3 NVENC save wiring valid, prompt API download URL valid, "
         f"gallery resolution/fallback/deletion guards + VRAM unload valid, "
         f"9 official LTX-2.5 workflow mappings valid, MiniMax Music 3 graph valid, "
         f"/comfyui proxy rewrites valid"

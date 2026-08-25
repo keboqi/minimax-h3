@@ -39,6 +39,7 @@ bundled FirstBlockCache node.
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Optional experimental INT8 ConvRot video VAE, lazy-downloaded on first use
+- H.264 NVENC hardware encoding for MiniMax H3 video outputs
 - Optional 500K single-frame image decoder, lazy-downloaded only when selected;
   the official FP16 video VAE remains the default
 - Hardware-aware ComfyUI memory mode selection
@@ -54,6 +55,7 @@ bundled FirstBlockCache node.
 - Python 3.12
 - An NVIDIA Blackwell GPU and a compatible CUDA 13 driver
 - Git, FFmpeg, and enough disk space for ComfyUI and the model set
+- An NVIDIA driver/GPU with NVENC support for MiniMax H3 video output
 - Hugging Face access to every configured model repository
 
 The installer pins the ABI-sensitive stack to Torch 2.11.0 + CUDA 13.0,

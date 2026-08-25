@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
 import logging
 import math
+import os
 import re
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
+from fractions import Fraction
 
+import av
 import torch
 import torch.nn.functional as F
 import comfy.lora
@@ -1117,6 +1121,185 @@ class H3StageModelOffload:
         return conditioning, latent, additional_conditioning, additional_latent
 
 
+class H3SaveVideoNVENC:
+    """Encode an in-memory ComfyUI VIDEO with NVIDIA's H.264 hardware encoder."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "video": ("VIDEO",),
+                "filename_prefix": (
+                    "STRING",
+                    {"default": "h3/generation"},
+                ),
+                "preset": (
+                    ["p1", "p2", "p3", "p4", "p5", "p6", "p7"],
+                    {"default": "p4"},
+                ),
+                "constant_quality": (
+                    "INT",
+                    {"default": 23, "min": 0, "max": 51, "step": 1},
+                ),
+            },
+            "hidden": {
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
+        }
+
+    RETURN_TYPES = ()
+    FUNCTION = "save"
+    CATEGORY = "video/minimax"
+    OUTPUT_NODE = True
+    DESCRIPTION = (
+        "Saves an H.264 MP4 using the NVIDIA NVENC hardware encoder. "
+        "Requires PyAV/FFmpeg with h264_nvenc and an NVIDIA driver."
+    )
+
+    @staticmethod
+    def _require_encoder() -> None:
+        try:
+            av.Codec("h264_nvenc", "w")
+        except Exception as exc:
+            raise RuntimeError(
+                "H3 NVENC output requires an FFmpeg/PyAV build with the "
+                "h264_nvenc encoder. Verify that ffmpeg -encoders lists "
+                "h264_nvenc and install an NVENC-enabled PyAV/FFmpeg build."
+            ) from exc
+
+    def save(
+        self,
+        video,
+        filename_prefix,
+        preset,
+        constant_quality,
+        prompt=None,
+        extra_pnginfo=None,
+    ):
+        self._require_encoder()
+        components = video.get_components()
+        images = components.images
+        if images.ndim != 4 or images.shape[0] < 1 or images.shape[-1] < 3:
+            raise ValueError(
+                "H3 NVENC output expects video images shaped [frames, H, W, RGB]"
+            )
+
+        height, width = int(images.shape[1]), int(images.shape[2])
+        if width % 2 or height % 2:
+            raise ValueError(
+                f"H.264 NVENC requires even dimensions, got {width}x{height}"
+            )
+        full_output_folder, filename, counter, subfolder, _prefix = (
+            folder_paths.get_save_image_path(
+                str(filename_prefix),
+                folder_paths.get_output_directory(),
+                width,
+                height,
+            )
+        )
+        file = f"{filename}_{counter:05}_.mp4"
+        path = os.path.join(full_output_folder, file)
+        frame_rate = Fraction(
+            round(float(components.frame_rate) * 1000), 1000
+        )
+
+        try:
+            with av.open(
+                path,
+                mode="w",
+                format="mp4",
+                options={"movflags": "use_metadata_tags+faststart"},
+            ) as output:
+                metadata = {}
+                if extra_pnginfo:
+                    metadata.update(extra_pnginfo)
+                if prompt is not None:
+                    metadata["prompt"] = prompt
+                for key, value in metadata.items():
+                    output.metadata[str(key)] = (
+                        value if isinstance(value, str) else json.dumps(value)
+                    )
+
+                video_stream = output.add_stream("h264_nvenc", rate=frame_rate)
+                video_stream.width = width
+                video_stream.height = height
+                video_stream.pix_fmt = "yuv420p"
+                video_stream.bit_rate = 0
+                video_stream.options = {
+                    "preset": str(preset),
+                    "tune": "hq",
+                    "rc": "vbr",
+                    "cq": str(int(constant_quality)),
+                }
+
+                audio = components.audio
+                audio_stream = None
+                audio_frame = None
+                if audio:
+                    sample_rate = int(audio["sample_rate"])
+                    waveform = audio["waveform"][0]
+                    sample_count = math.ceil(
+                        sample_rate * int(images.shape[0]) / float(frame_rate)
+                    )
+                    waveform = waveform[:, :sample_count]
+                    layout = {
+                        1: "mono",
+                        2: "stereo",
+                        6: "5.1",
+                    }.get(int(waveform.shape[0]), "stereo")
+                    audio_stream = output.add_stream(
+                        "aac", rate=sample_rate, layout=layout
+                    )
+                    audio_frame = av.AudioFrame.from_ndarray(
+                        waveform.float().cpu().contiguous().numpy(),
+                        format="fltp",
+                        layout=layout,
+                    )
+                    audio_frame.sample_rate = sample_rate
+                    audio_frame.pts = 0
+
+                for image in images:
+                    pixels = (
+                        image[..., :3]
+                        .mul(255.0)
+                        .clamp(0.0, 255.0)
+                        .to(device="cpu", dtype=torch.uint8)
+                        .contiguous()
+                        .numpy()
+                    )
+                    frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
+                    frame = frame.reformat(format="yuv420p")
+                    for packet in video_stream.encode(frame):
+                        output.mux(packet)
+                for packet in video_stream.encode(None):
+                    output.mux(packet)
+
+                if audio_stream is not None and audio_frame is not None:
+                    for packet in audio_stream.encode(audio_frame):
+                        output.mux(packet)
+                    for packet in audio_stream.encode(None):
+                        output.mux(packet)
+        except Exception:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
+            raise
+
+        return {
+            "ui": {
+                "videos": [{
+                    "filename": file,
+                    "subfolder": subfolder,
+                    "type": "output",
+                    "format": "video/mp4",
+                }]
+            }
+        }
+
+
 NODE_CLASS_MAPPINGS = {
     "H3FirstBlockCache": H3FirstBlockCache,
     "H3LightX2VBypassLoRA": H3LightX2VBypassLoRA,
@@ -1127,6 +1310,7 @@ NODE_CLASS_MAPPINGS = {
     "H3ConditioningCache": H3ConditioningCache,
     "H3StageOffloadPolicy": H3StageOffloadPolicy,
     "H3StageModelOffload": H3StageModelOffload,
+    "H3SaveVideoNVENC": H3SaveVideoNVENC,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1139,4 +1323,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3ConditioningCache": "MiniMax H3 Conditioning Cache",
     "H3StageOffloadPolicy": "MiniMax H3 Stage Offload Policy",
     "H3StageModelOffload": "MiniMax H3 Stage Model Offload",
+    "H3SaveVideoNVENC": "MiniMax H3 Save Video (NVENC)",
 }
