@@ -163,9 +163,12 @@ official H3 video VAE regardless of this image setting.
 The native H3 latent upscaler is also default-off and lazy-downloads only the
 selected checkpoint. **Balanced (BF16)** is the default choice; **Fast (FP16)**
 and **Quality (FP32)** remain selectable.
-The H3 text encoder defaults to the preloaded **BF16** checkpoint (51.5 GB).
-The **NVFP4 / AWQ** and **INT8 ConvRot** (27.1 GB) checkpoints download on first
-selection. BF16 automatically enables and locks **Offload models
+The sampling presets also select the H3 text encoder: **Fast** uses
+**NVFP4 / AWQ**, **Balanced** uses **INT8 ConvRot**, and **Quality** uses
+**BF16** (51.5 GB). Balanced is the initial preset. The NVFP4/AWQ and INT8
+ConvRot (27.1 GB) checkpoints download on first selection. Fast and Balanced
+disable model offload by default while leaving the checkbox editable; Quality
+automatically enables and locks **Offload models
 between H3 stages**. After a fresh encode this keeps the text encoder, diffusion
 model, optional latent upscaler, and VAEs from remaining resident together. When
 unchanged BF16 conditioning is reused, the encoder never loads and all remaining

@@ -391,14 +391,19 @@ TURBO_SETTINGS = {
         ref_lora_attr="turbo_8step_ref_lora",
     ),
 }
+SAMPLING_PRESET_TEXT_ENCODERS = {
+    "Fast": "NVFP4 / AWQ",
+    "Balanced": "INT8 ConvRot",
+    "Quality": "BF16",
+}
 UI_DEFAULTS = {
     "mode": "Text to video",
     "result_format": DEFAULT_RESULT_FORMAT,
     "image_vae": DEFAULT_IMAGE_VAE,
     "image_frames": DEFAULT_IMAGE_FRAMES,
     "model_profile": "Original",
-    "text_encoder": DEFAULT_H3_TEXT_ENCODER,
-    "stage_model_offload": True,
+    "text_encoder": SAMPLING_PRESET_TEXT_ENCODERS["Balanced"],
+    "stage_model_offload": False,
     "reuse_unchanged_inputs": True,
     "use_int8_vae": False,
     "generation_mode": "Turbo",
@@ -7502,16 +7507,23 @@ def interrupt() -> str:
 
 
 def preset_values(name: str, generation_mode: str = "Normal"):
-    values = SAMPLING_PRESETS.get(str(name), SAMPLING_PRESETS["Balanced"])
-    if str(generation_mode).strip().lower() != "turbo":
-        return values
-
-    turbo_variant = values[7]
+    preset_name = str(name)
+    values = SAMPLING_PRESETS.get(preset_name, SAMPLING_PRESETS["Balanced"])
+    text_encoder = SAMPLING_PRESET_TEXT_ENCODERS.get(
+        preset_name, SAMPLING_PRESET_TEXT_ENCODERS["Balanced"]
+    )
+    if str(generation_mode).strip().lower() == "turbo":
+        turbo_variant = values[7]
+        values = (
+            turbo_steps_for(turbo_variant),
+            *values[1:3],
+            "simple",
+            *values[4:],
+        )
     return (
-        turbo_steps_for(turbo_variant),
-        *values[1:3],
-        "simple",
-        *values[4:],
+        *values,
+        text_encoder,
+        text_encoder_offload_update(text_encoder),
     )
 
 
@@ -7918,7 +7930,7 @@ def build_ui() -> gr.Blocks:
                             value=defaults["text_encoder"],
                             label="Text encoder",
                             info=(
-                                "BF16 is the preloaded default and is approximately 51.5 GB. "
+                                "BF16 is approximately 51.5 GB. "
                                 "NVFP4/AWQ and INT8 ConvRot download on first use."
                             ),
                         )
@@ -8209,8 +8221,8 @@ def build_ui() -> gr.Blocks:
                         label="Sampling preset",
                         interactive=True,
                         info=(
-                            "Sets sampling, start-frame cap, Turbo LoRA, attention, SLA, and "
-                            "high-resolution refinement defaults."
+                            "Sets sampling, text encoder, model offload, start-frame cap, "
+                            "Turbo LoRA, attention, SLA, and high-resolution refinement defaults."
                         ),
                     )
                     with gr.Row():
@@ -9167,7 +9179,7 @@ def build_ui() -> gr.Blocks:
                 steps, sol_tau, sol_thresh_type, scheduler,
                 sol_exact_mode, sol_dense_steps,
                 auto_megapixels, turbo_variant, attention_mode, sla_preset,
-                latent_upscale_refine_steps,
+                latent_upscale_refine_steps, text_encoder, stage_model_offload,
             ],
         )
         draft_resolution_event = draft_resolution.change(
@@ -10797,15 +10809,21 @@ def selftest() -> None:
     assert preset_values("Balanced")[0] == 18
     assert preset_values("Fast")[0] == 15
     assert all(len(values) == 11 for values in SAMPLING_PRESETS.values())
-    assert preset_values("Fast")[6:] == (
+    assert preset_values("Fast")[6:11] == (
         "1 MP", LIGHTX2V_4STEP_TURBO, "SLA", "Fast", 1,
     )
-    assert preset_values("Balanced")[6:] == (
+    assert preset_values("Balanced")[6:11] == (
         "2 MP", LIGHTX2V_4STEP_TURBO, "SLA", "Balanced", 2,
     )
-    assert preset_values("Quality")[6:] == (
+    assert preset_values("Quality")[6:11] == (
         "4 MP", LIGHTX2V_8STEP_TURBO, "SLA", "Quality", 2,
     )
+    for preset_name, encoder in SAMPLING_PRESET_TEXT_ENCODERS.items():
+        preset_defaults = preset_values(preset_name)
+        assert preset_defaults[11] == encoder
+        offload_update = preset_defaults[12]
+        assert offload_update["value"] is (encoder == "BF16")
+        assert offload_update["interactive"] is (encoder != "BF16")
     assert preset_values("Fast", "Turbo")[0] == 4
     assert preset_values("Balanced", "Turbo")[0] == 4
     assert preset_values("Quality", "Turbo")[0] == 8
@@ -11115,8 +11133,8 @@ def selftest() -> None:
     assert one_mp_landscape[0] * one_mp_landscape[1] < 1_000_000
     assert two_mp_landscape[0] * two_mp_landscape[1] < 2_000_000
     assert auto_resolution_pixel_cap("4 MP") == 4_000_000 - 1
-    assert UI_DEFAULTS["text_encoder"] == "BF16"
-    assert UI_DEFAULTS["stage_model_offload"] is True
+    assert UI_DEFAULTS["text_encoder"] == "INT8 ConvRot"
+    assert UI_DEFAULTS["stage_model_offload"] is False
     balanced_defaults = preset_values("Balanced")
     assert DEFAULT_AUTO_RESOLUTION_MEGAPIXELS == balanced_defaults[6]
     assert UI_DEFAULTS["turbo_variant"] == balanced_defaults[7]
