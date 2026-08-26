@@ -175,6 +175,7 @@ SLA_PRESET_INPUTS = {
     },
 }
 LIGHTX2V_4STEP_TURBO = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
+LIGHTX2V_SLA_4STEP_TURBO = "LightX2V Turbo-SLA / 4-step 768p (FL2V only)"
 LIGHTX2V_8STEP_TURBO = "LightX2V v1.0 / 8-step 544p"
 LARRY_TURBO = "Larry v4-600 EMA"
 DEFAULT_TURBO = LIGHTX2V_4STEP_TURBO
@@ -370,7 +371,7 @@ class TurboSpec:
     steps: int
     strength: float
     lora_attr: str
-    ref_lora_attr: str
+    ref_lora_attr: str | None
     custom_nodes: bool = False
 
 
@@ -387,6 +388,12 @@ TURBO_SETTINGS = {
         strength=1.0,
         lora_attr="turbo_lora",
         ref_lora_attr="turbo_ref_lora",
+    ),
+    LIGHTX2V_SLA_4STEP_TURBO: TurboSpec(
+        steps=4,
+        strength=1.0,
+        lora_attr="turbo_sla_lora",
+        ref_lora_attr=None,
     ),
     LIGHTX2V_8STEP_TURBO: TurboSpec(
         steps=8,
@@ -1454,11 +1461,15 @@ def turbo_uses_custom_nodes(value: str) -> bool:
 
 
 def is_lightx2v_v11_fl2va(turbo_variant: str, lora_filename: str | None) -> bool:
-    """Identify the FL2VA-only v1.1 adapter with its dedicated sampler settings."""
+    """Identify LightX2V FL2VA adapters that require Euler and 6/3 sigma shifts."""
+    variant = normalize_turbo_variant(turbo_variant)
+    filename = Path(str(lora_filename or "")).name.lower()
     return (
-        normalize_turbo_variant(turbo_variant) == LIGHTX2V_4STEP_TURBO
-        and "minimax_h3_fl2v_turbo_4step_v1.1_768p"
-        in Path(str(lora_filename or "")).name.lower()
+        variant == LIGHTX2V_4STEP_TURBO
+        and "minimax_h3_fl2v_turbo_4step_v1.1_768p" in filename
+    ) or (
+        variant == LIGHTX2V_SLA_4STEP_TURBO
+        and "minimax_h3_fl2v_turbo_4step_v0.1_768p_sla" in filename
     )
 
 
@@ -1497,6 +1508,8 @@ class ModelConfig:
     image_vae_500k_source: str = "unknown"
     turbo_lora: str | None = None
     turbo_source: str = "unknown"
+    turbo_sla_lora: str | None = None
+    turbo_sla_source: str = "unknown"
     turbo_ref_lora: str | None = None
     turbo_ref_source: str = "unknown"
     turbo_8step_lora: str | None = None
@@ -1527,7 +1540,8 @@ class ModelConfig:
     def turbo_lora_for(self, mode: str, turbo_variant: str) -> str | None:
         reference = str(mode).strip().lower() == "reference media"
         spec = TURBO_SETTINGS[normalize_turbo_variant(turbo_variant)]
-        return getattr(self, spec.ref_lora_attr if reference else spec.lora_attr)
+        attr = spec.ref_lora_attr if reference else spec.lora_attr
+        return getattr(self, attr) if attr else None
 
 
 def load_model_config() -> ModelConfig:
@@ -1567,6 +1581,8 @@ def load_model_config() -> ModelConfig:
         image_vae_500k_source=data.get("image_vae_500k_source", "unknown"),
         turbo_lora=data.get("turbo_lora"),
         turbo_source=data.get("turbo_source", "unknown"),
+        turbo_sla_lora=data.get("turbo_sla_lora"),
+        turbo_sla_source=data.get("turbo_sla_source", "unknown"),
         turbo_ref_lora=data.get("turbo_ref_lora", data.get("turbo_lora")),
         turbo_ref_source=data.get(
             "turbo_ref_source", data.get("turbo_source", "unknown")
@@ -1740,6 +1756,14 @@ def ensure_turbo_lora(models: ModelConfig, turbo_variant: str, mode: str) -> boo
     if variant == LARRY_TURBO:
         model_key = "larry_turbo_lora"
         filename = models.larry_turbo_ref_lora if reference else models.larry_turbo_lora
+    elif variant == LIGHTX2V_SLA_4STEP_TURBO:
+        if reference:
+            raise H3Error(
+                "LightX2V Turbo-SLA is FL2V-only; use Text to video or "
+                "First / last frame mode."
+            )
+        model_key = "turbo_sla_lora"
+        filename = models.turbo_sla_lora
     elif variant == LIGHTX2V_8STEP_TURBO:
         model_key = "turbo_8step_lora"
         filename = models.turbo_8step_ref_lora if reference else models.turbo_8step_lora
@@ -2910,11 +2934,16 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
 def turbo_variant_defaults(turbo_variant: str, generation_mode: str):
     """Apply variant sampling defaults only while Turbo is selected."""
     if str(generation_mode).strip().lower() != "turbo":
-        return gr.update(), gr.update()
+        return gr.update(), gr.update(), gr.update(), gr.update()
+    variant = normalize_turbo_variant(turbo_variant)
     return gr.update(
-        value=turbo_steps_for(turbo_variant),
+        value=turbo_steps_for(variant),
         interactive=True,
-    ), "simple"
+    ), "simple", (
+        "SLA" if variant == LIGHTX2V_SLA_4STEP_TURBO else gr.update()
+    ), (
+        "Balanced" if variant == LIGHTX2V_SLA_4STEP_TURBO else gr.update()
+    )
 
 
 def resolve_cache_policy(
@@ -6445,6 +6474,11 @@ def backend_status() -> str:
                 f"**LightX2V Turbo / 4-step** · FL2VA v1.1 `{models.turbo_lora}` · "
                 f"Ref2VA v0.1 544p `{models.turbo_ref_lora}` · strength 1.0"
             )
+        if models.turbo_sla_lora:
+            profile_lines.append(
+                f"**LightX2V Turbo-SLA / 4-step 768p** · FL2VA-only "
+                f"`{models.turbo_sla_lora}` · SLA Balanced (85%) · strength 1.0"
+            )
         if models.turbo_8step_lora:
             profile_lines.append(
                 f"**LightX2V Turbo v1.0 / 8-step 544p** · LoRA `{models.turbo_8step_lora}` · "
@@ -6653,6 +6687,14 @@ def generate(
         if use_turbo:
             turbo_lora_name = models.turbo_lora_for(mode, selected_turbo)
             if not turbo_lora_name:
+                if (
+                    mode == "Reference media"
+                    and selected_turbo == LIGHTX2V_SLA_4STEP_TURBO
+                ):
+                    raise H3Error(
+                        "LightX2V Turbo-SLA is FL2V-only; use Text to video or "
+                        "First / last frame mode."
+                    )
                 raise H3Error(
                     f"{selected_turbo} Turbo LoRA is not provisioned. "
                     "Re-run setup/provisioning."
@@ -8375,7 +8417,8 @@ def build_ui() -> gr.Blocks:
                         info=(
                             "Original BF16 uses memory-safe runtime LoRA bypass. Speed and "
                             "Quality use faster merged weights. Larry also uses its adaptive "
-                            "sampler; all variants run at strength 1.0."
+                            "sampler. Turbo-SLA is FL2V-only and selects SLA Balanced (85%); "
+                            "all variants run at strength 1.0."
                         ),
                     )
                     scheduler = gr.Radio(
@@ -9239,7 +9282,7 @@ def build_ui() -> gr.Blocks:
         turbo_variant.change(
             turbo_variant_defaults,
             inputs=[turbo_variant, generation_mode],
-            outputs=[steps, scheduler],
+            outputs=[steps, scheduler, attention_mode, sla_preset],
             queue=False,
             show_progress="hidden",
         )
@@ -9960,6 +10003,10 @@ def selftest() -> None:
         image_vae_500k_source="test",
         turbo_lora="minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors",
         turbo_source="test",
+        turbo_sla_lora=(
+            "minimax_h3_fl2v_turbo_4step_v0.1_768p_sla_comfyui_bf16.safetensors"
+        ),
+        turbo_sla_source="sla-test",
         turbo_ref_lora="minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
         turbo_ref_source="ref2v-test",
         turbo_8step_lora="minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
@@ -10031,6 +10078,11 @@ def selftest() -> None:
     )
     assert fake.turbo_lora_for("Text to video", LIGHTX2V_4STEP_TURBO) == fake.turbo_lora
     assert fake.turbo_lora_for("Reference media", LIGHTX2V_4STEP_TURBO) == fake.turbo_ref_lora
+    assert (
+        fake.turbo_lora_for("Text to video", LIGHTX2V_SLA_4STEP_TURBO)
+        == fake.turbo_sla_lora
+    )
+    assert fake.turbo_lora_for("Reference media", LIGHTX2V_SLA_4STEP_TURBO) is None
     assert fake.turbo_lora_for("Text to video", LIGHTX2V_8STEP_TURBO) == fake.turbo_8step_lora
     assert fake.turbo_lora_for("Reference media", LIGHTX2V_8STEP_TURBO) == fake.turbo_8step_ref_lora
     assert fake.turbo_lora_for("Text to video", LARRY_TURBO) == fake.larry_turbo_lora
@@ -11368,6 +11420,11 @@ def selftest() -> None:
     assert lightx_8step_defaults[1]["value"] == 8
     assert lightx_8step_defaults[1]["interactive"] is True
     assert lightx_8step_defaults[2:] == ("simple", "Spectrum", "SLA")
+    turbo_sla_defaults = turbo_variant_defaults(
+        LIGHTX2V_SLA_4STEP_TURBO, "Turbo"
+    )
+    assert turbo_sla_defaults[0]["value"] == 4
+    assert turbo_sla_defaults[1:] == ("simple", "SLA", "Balanced")
     normal_defaults = generation_mode_defaults("Normal")
     assert normal_defaults[1]["value"] == 18
     assert normal_defaults[1]["interactive"] is True
@@ -11540,6 +11597,9 @@ def selftest() -> None:
     }
     assert FUSED_MODULATION_NODE not in turbo_required_nodes(LARRY_TURBO)
     assert FUSED_MODULATION_NODE in turbo_required_nodes(LIGHTX2V_4STEP_TURBO)
+    assert FUSED_MODULATION_NODE in turbo_required_nodes(
+        LIGHTX2V_SLA_4STEP_TURBO
+    )
     assert FUSED_MODULATION_NODE in turbo_required_nodes(LIGHTX2V_8STEP_TURBO)
     assert H3_SIGMA_SHIFT_NODE in turbo_required_nodes(
         LIGHTX2V_4STEP_TURBO, "", fake.turbo_lora
@@ -11549,11 +11609,16 @@ def selftest() -> None:
     )
     assert turbo_sampler_name(LIGHTX2V_4STEP_TURBO, fake.turbo_lora) == "euler"
     assert (
+        turbo_sampler_name(LIGHTX2V_SLA_4STEP_TURBO, fake.turbo_sla_lora)
+        == "euler"
+    )
+    assert (
         turbo_sampler_name(LIGHTX2V_4STEP_TURBO, fake.turbo_ref_lora)
         == "res_multistep"
     )
     assert turbo_uses_custom_nodes(LARRY_TURBO) is True
     assert turbo_uses_custom_nodes(LIGHTX2V_4STEP_TURBO) is False
+    assert turbo_uses_custom_nodes(LIGHTX2V_SLA_4STEP_TURBO) is False
     assert turbo_uses_custom_nodes(LIGHTX2V_8STEP_TURBO) is False
     assert any(
         node["class_type"] == LARRY_TURBO_SAMPLER_NODE
