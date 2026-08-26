@@ -32,8 +32,7 @@ bundled FirstBlockCache node.
 - Optional generation-stage MiniMax H3 latent 2x upscale, with Balanced BF16,
   Fast FP16, and Quality FP32 model choices
 - Selectable Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
-  including the dedicated Ref2V 4-step adapter and an experimental FL2V-only
-  Turbo-SLA 4-step 768p adapter
+  including the dedicated Ref2V 4-step adapter
 - SageAttention 2 as the measured-fastest H3 default, with selectable Comfy
   Kitchen comparison, audio-safe SLA block-sparse attention, and optional
   H3-native zero-copy Sol v0.6.2 sparse attention
@@ -122,10 +121,6 @@ at six steps through its pinned custom node, which uses a quantization-aware
 bypass loader plus the adaptive H3 Turbo sampler. LightX2V also provides a
 mode-specific four-step option (FL2V v1.1 768p or
 Ref2V v0.1 544p) and an FL2V v1.0 eight-step 544p option, all at strength 1.0.
-The experimental LightX2V Turbo-SLA v0.1 option is a separate FL2V-only
-four-step 768p adapter. It downloads on demand and selecting it applies SLA
-Balanced (85% sparsity), while leaving the attention controls editable for
-comparison tests.
 The FL2V v1.1 workflow applies LightX2V's recommended video/audio sigma shifts
 of 6/3 and uses four Euler steps with the simple scheduler by default.
 Loader policy follows the base model: Original BF16 applies either LoRA in

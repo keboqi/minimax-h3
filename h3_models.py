@@ -20,7 +20,6 @@ from typing import Any, Iterable
 MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
 ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
-TURBO_SLA_REPO = "lightx2v/Minimax-h3-Turbo-SLA"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
 SINGLE_FRAME_VAE_REPO = "iamkaikai/MiniMax-H3-Single-Frame-VAE-500K"
@@ -157,12 +156,6 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         expected_sha256=(
             "449d80f301ac571622c72e28b8fd72a4b3681b7a8df8a92f17c8f6ec43f56558"
         ),
-    ),
-    "turbo_sla_lora": ModelSpec(
-        TURBO_SLA_REPO,
-        "loras",
-        "minimax_h3_fl2v_turbo_4step_v0.1_768p_sla_comfyui_bf16.safetensors",
-        "LightX2V Turbo-SLA 4-step v0.1 · 85% SLA · official 768p ComfyUI BF16",
     ),
     "turbo_ref_lora": ModelSpec(
         TURBO_REPO,
@@ -440,7 +433,6 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     *H3_OPTIONAL_TEXT_ENCODER_KEYS,
     "video_vae_int8",
     "image_vae_500k",
-    "turbo_sla_lora",
     "turbo_8step_lora",
     "larry_turbo_lora",
     "h3_latent_upscaler_3d_bf16",
@@ -723,7 +715,6 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     image_vae_500k = MODEL_SPECS["image_vae_500k"]
     audio_vae = MODEL_SPECS["audio_vae"]
     turbo_lora = MODEL_SPECS["turbo_lora"]
-    turbo_sla_lora = MODEL_SPECS["turbo_sla_lora"]
     turbo_ref_lora = MODEL_SPECS["turbo_ref_lora"]
     turbo_8step_lora = MODEL_SPECS["turbo_8step_lora"]
     larry_turbo_lora = MODEL_SPECS["larry_turbo_lora"]
@@ -734,7 +725,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
     return {
-        "schema_version": 16,
+        "schema_version": 15,
         "default_profile": "original",
         "profiles": {
             profile: _profile_config(profile)
@@ -753,8 +744,6 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         "audio_vae": audio_vae.local_name,
         "turbo_lora": turbo_lora.local_name,
         "turbo_source": turbo_lora.source,
-        "turbo_sla_lora": turbo_sla_lora.local_name,
-        "turbo_sla_source": turbo_sla_lora.source,
         "turbo_ref_lora": turbo_ref_lora.local_name,
         "turbo_ref_source": turbo_ref_lora.source,
         "turbo_8step_lora": turbo_8step_lora.local_name,
@@ -973,7 +962,6 @@ def selftest() -> None:
         "image_vae_500k",
         "audio_vae",
         "turbo_lora",
-        "turbo_sla_lora",
         "turbo_ref_lora",
         "turbo_8step_lora",
         "larry_turbo_lora",
@@ -1019,7 +1007,7 @@ def selftest() -> None:
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 16
+    assert cfg["schema_version"] == 15
     assert cfg["default_profile"] == "original"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
@@ -1045,11 +1033,6 @@ def selftest() -> None:
     )
     assert "image_vae_500k" not in PRELOAD_MODEL_KEYS
     assert cfg["turbo_lora"] == "minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors"
-    assert cfg["turbo_sla_lora"] == (
-        "minimax_h3_fl2v_turbo_4step_v0.1_768p_sla_comfyui_bf16.safetensors"
-    )
-    assert MODEL_SPECS["turbo_sla_lora"].repo_id == TURBO_SLA_REPO
-    assert "turbo_sla_lora" not in PRELOAD_MODEL_KEYS
     assert cfg["turbo_ref_lora"] == (
         "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
     )
