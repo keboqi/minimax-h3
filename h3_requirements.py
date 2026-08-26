@@ -28,7 +28,7 @@ KORNIA_VERSION = "0.8.1"
 # Kitchen in lockstep even though the H3 launchers use dynamic model residency.
 COMFY_REF = "12d5279438bfefc058a269eae805ceab6047777f"
 COMFY_KITCHEN_VERSION = "0.2.31"
-COMFY_FRONTEND_VERSION = "1.48.7"
+COMFY_FRONTEND_VERSION = "1.50.6"
 WSPROTO_VERSION = "1.2.0"
 LTX25_WORKFLOW_FILENAMES = (
     "LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
@@ -247,7 +247,7 @@ def selftest() -> None:
     assert KERNELS_VERSION == "0.16.0"
     assert COMFY_REF == "12d5279438bfefc058a269eae805ceab6047777f"
     assert COMFY_KITCHEN_VERSION == "0.2.31"
-    assert COMFY_FRONTEND_VERSION == "1.48.7"
+    assert COMFY_FRONTEND_VERSION == "1.50.6"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 9
     with tempfile.TemporaryDirectory() as temp:
