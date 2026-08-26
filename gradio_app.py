@@ -479,6 +479,7 @@ AUTO_RESOLUTION_MEGAPIXEL_PRESETS = {
     "1 MP": 1_000_000 - 1,
     "2 MP": 2_000_000 - 1,
     "4 MP": 4_000_000 - 1,
+    "8 MP": 8_000_000 - 1,
 }
 DEFAULT_AUTO_RESOLUTION_MEGAPIXELS = "2 MP"
 AUTO_RESOLUTION_PIXEL_CAP = AUTO_RESOLUTION_MEGAPIXEL_PRESETS[
@@ -2287,7 +2288,7 @@ def resolution_for_aspect_ratio(
     alignment: int = 32,
     pixel_cap: int = AUTO_RESOLUTION_PIXEL_CAP,
 ) -> tuple[int, int]:
-    """Return an aligned native or sub-4 MP canvas matching an image ratio."""
+    """Return an aligned native or capped canvas matching an image ratio."""
     width = float(source_width)
     height = float(source_height)
     if not math.isfinite(width) or not math.isfinite(height) or width <= 0 or height <= 0:
@@ -11240,6 +11241,7 @@ def selftest() -> None:
     assert one_mp_landscape[0] * one_mp_landscape[1] < 1_000_000
     assert two_mp_landscape[0] * two_mp_landscape[1] < 2_000_000
     assert auto_resolution_pixel_cap("4 MP") == 4_000_000 - 1
+    assert auto_resolution_pixel_cap("8 MP") == 8_000_000 - 1
     assert UI_DEFAULTS["text_encoder"] == "INT8 ConvRot"
     assert UI_DEFAULTS["stage_model_offload"] is False
     balanced_defaults = preset_values("Balanced")

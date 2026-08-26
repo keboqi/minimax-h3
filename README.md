@@ -261,7 +261,7 @@ does not change conditioning or sampling. H3 still generates its joint visual
 and audio latent; the selected format controls the final decode:
 
 For video start frames, **Auto cap** sits beside Width and Height and defaults to
-**4 MP**. Select **1 MP**, **2 MP**, or **4 MP** to choose the maximum automatic
+**2 MP**. Select **1 MP**, **2 MP**, **4 MP**, or **8 MP** to choose the maximum automatic
 canvas while retaining the uploaded aspect ratio and required model alignment.
 Changing the cap recomputes an already-loaded start frame. Manually entered Width
 and Height values are not capped.
@@ -271,7 +271,7 @@ and Height values are not capped.
   default), decodes the requested visual frames, and shows every frame in a
   gallery. Select one or more frames and use **Save selected frames** to copy
   only those PNGs into `ComfyUI/output/h3/images`. With a start frame, Image
-  mode uses its native resolution without the video workflow's 4 MP cap,
+  mode uses its native resolution without the video workflow's automatic cap,
   rounded only to H3's required 32-pixel grid (or 64-pixel grid when native
   latent upscale is enabled). **Image VAE** defaults to **Official video VAE**.
   The optional **Single-frame 500K (experimental)** decoder returns exactly one
