@@ -24,9 +24,9 @@ KERNELS_VERSION = "0.16.0"
 # Kornia 0.8.2+ removed that module-level compatibility export.
 KORNIA_VERSION = "0.8.1"
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
-# ComfyUI v0.33.1 fixes MiniMax Music 3 on non-dynamic-VRAM modes. Keep Comfy
+# ComfyUI v0.34.0 includes the current MiniMax Music 3 and non-dynamic-VRAM fixes. Keep Comfy
 # Kitchen in lockstep even though the H3 launchers use dynamic model residency.
-COMFY_REF = "72865f4f27eaf5396f8f36370e0a2be3a9a090ee"
+COMFY_REF = "12d5279438bfefc058a269eae805ceab6047777f"
 COMFY_KITCHEN_VERSION = "0.2.31"
 COMFY_FRONTEND_VERSION = "1.48.7"
 WSPROTO_VERSION = "1.2.0"
@@ -245,7 +245,7 @@ def selftest() -> None:
     )
     assert KORNIA_VERSION == "0.8.1"
     assert KERNELS_VERSION == "0.16.0"
-    assert COMFY_REF == "72865f4f27eaf5396f8f36370e0a2be3a9a090ee"
+    assert COMFY_REF == "12d5279438bfefc058a269eae805ceab6047777f"
     assert COMFY_KITCHEN_VERSION == "0.2.31"
     assert COMFY_FRONTEND_VERSION == "1.48.7"
     assert WSPROTO_VERSION == "1.2.0"

@@ -304,7 +304,7 @@ used by dense and fallback calls.
 A GPU-side probe controls `--use-sage-attention`, preventing a bad Sage build
 from breaking service startup.
 
-The current ComfyUI 0.33.1 deployment supersedes this launch policy: both local
+The current ComfyUI 0.34.0 deployment supersedes this launch policy: both local
 and Modal launchers now pass `--use-ck-attention` and report `comfy-kitchen` as
 the dense/fallback backend. H3 workflows default to Sage 2 after local comparison
 showed it slightly faster than Kitchen. This applies pinned KJNodes'
@@ -312,8 +312,8 @@ showed it slightly faster than Kitchen. This applies pinned KJNodes'
 SageAttention 2.2.0 wheel. Kitchen remains selectable and backs Sol's dense
 calls. Sol remains an explicit workflow override (including the optional
 Auto routing policy). The
-source pin is the immutable v0.33.1 commit
-`72865f4f27eaf5396f8f36370e0a2be3a9a090ee`, paired with `comfy-kitchen==0.2.31`.
+source pin is the immutable v0.34.0 commit
+`12d5279438bfefc058a269eae805ceab6047777f`, paired with `comfy-kitchen==0.2.31`.
 
 
 ## v40 Turbo replacement

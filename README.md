@@ -402,7 +402,7 @@ different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`. To make the
 Gemini enhancer available without entering a key in the UI, also store
 `GEMINI_API_KEY` in that Modal Secret.
 
-The deployment pins the immutable ComfyUI v0.33.1 release, which includes
+The deployment pins the immutable ComfyUI v0.34.0 release, which includes
 native MiniMax Music 3, its non-dynamic-VRAM fix, LTX 2.5 INT8 support, and
 Comfy Kitchen attention.
 Changing that pin invalidates the Modal image cache so ComfyUI and its matching
