@@ -149,7 +149,7 @@ bash run_h3.sh
 ```
 
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
-Quality FL2VA checkpoint plus the shared text encoder, VAEs, and default 4-step
+Original FL2VA checkpoint plus the Balanced INT8 text encoder, default FP32 latent-upscaler checkpoint, shared VAEs, and default 4-step
 Turbo LoRAs. The Quality Ref2VA checkpoint and selectable 6-step/8-step Turbo
 LoRAs download on demand when selected. Speed and Original checkpoints download
 on demand the first time each workflow variant is selected. SeedVR2 models and the

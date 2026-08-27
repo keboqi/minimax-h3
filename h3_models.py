@@ -392,6 +392,7 @@ DEFAULT_H3_TEXT_ENCODER_KEY = "text_encoder_bf16"
 H3_OPTIONAL_TEXT_ENCODER_KEYS = (
     "text_encoder",
     "text_encoder_int8",
+    "text_encoder_bf16",
 )
 LTX25_MODEL_CHOICES = {
     "INT8 ConvRot": "ltx25_distilled_int8",
@@ -448,7 +449,8 @@ SHARED_MODEL_KEYS = tuple(
 )
 PRELOAD_MODEL_KEYS = (
     *PRELOAD_PROFILE_MODEL_KEYS,
-    DEFAULT_H3_TEXT_ENCODER_KEY,
+    # Keep provisioning aligned with the UI's initial Balanced preset.
+    "text_encoder_int8",
     "h3_latent_upscaler_3d_fp32",
     *SHARED_MODEL_KEYS,
 )
@@ -1006,6 +1008,7 @@ def selftest() -> None:
     assert "original_ref2va" not in PRELOAD_MODEL_KEYS
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
+    assert "h3_latent_upscaler_3d_bf16" not in PRELOAD_MODEL_KEYS
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
     assert cfg["schema_version"] == 15
     assert cfg["default_profile"] == "original"
@@ -1023,7 +1026,10 @@ def selftest() -> None:
         "INT8 ConvRot": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
         "BF16": "qwen3vl_32b_minimax_h3_bf16.safetensors",
     }
-    assert set(H3_OPTIONAL_TEXT_ENCODER_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
+    assert (set(H3_OPTIONAL_TEXT_ENCODER_KEYS) - {"text_encoder_int8"}).isdisjoint(
+        PRELOAD_MODEL_KEYS
+    )
+    assert "text_encoder_int8" in PRELOAD_MODEL_KEYS
     assert cfg["video_vae_int8"] == (
         "minimax_h3_video_vae_int8_convrot.safetensors"
     )
