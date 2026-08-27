@@ -21,6 +21,7 @@ MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
 ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
+PDD_TURBO_REPO = "aptech0081/MiniMax-H3-Acc-LoRAs-ComfyUI"
 EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
 SINGLE_FRAME_VAE_REPO = "iamkaikai/MiniMax-H3-Single-Frame-VAE-500K"
 TEXT_ENCODER_REPO = "Comfy-Org/MiniMax-H3"
@@ -174,6 +175,18 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "loras",
         "minimax_h3_turbo_v4_step600_ema.safetensors",
         "Larry v4-600 EMA Turbo · recommended 6-step quality option",
+    ),
+    "pdd_turbo_lora": ModelSpec(
+        PDD_TURBO_REPO,
+        "pdd_acc",
+        "minimax_h3_fl2va_pdd_acc_8step_comfyui.safetensors",
+        "Alibaba PDD Acc 8-step FL2VA · ComfyUI conversion",
+    ),
+    "pdd_turbo_ref_lora": ModelSpec(
+        PDD_TURBO_REPO,
+        "pdd_acc",
+        "minimax_h3_ref2va_pdd_acc_8step_comfyui.safetensors",
+        "Alibaba PDD Acc 8-step Ref2VA · ComfyUI conversion",
     ),
     "seedvr2_3b_nvfp4": ModelSpec(
         SEEDVR2_REPO,
@@ -435,6 +448,8 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     "image_vae_500k",
     "turbo_8step_lora",
     "larry_turbo_lora",
+    "pdd_turbo_lora",
+    "pdd_turbo_ref_lora",
     "h3_latent_upscaler_3d_bf16",
     "h3_latent_upscaler_3d_fp16",
     *LAZY_POSTPROCESS_MODEL_KEYS,
@@ -718,6 +733,8 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     turbo_ref_lora = MODEL_SPECS["turbo_ref_lora"]
     turbo_8step_lora = MODEL_SPECS["turbo_8step_lora"]
     larry_turbo_lora = MODEL_SPECS["larry_turbo_lora"]
+    pdd_turbo_lora = MODEL_SPECS["pdd_turbo_lora"]
+    pdd_turbo_ref_lora = MODEL_SPECS["pdd_turbo_ref_lora"]
     seedvr2_vae = MODEL_SPECS["seedvr2_vae"]
     seedvr2_models = {
         label: MODEL_SPECS[key].local_name
@@ -725,7 +742,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
     return {
-        "schema_version": 15,
+        "schema_version": 16,
         "default_profile": "original",
         "profiles": {
             profile: _profile_config(profile)
@@ -755,6 +772,10 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         # Larry's FL2VA-trained LoRA is also exposed for experimental Ref2VA.
         "larry_turbo_ref_lora": larry_turbo_lora.local_name,
         "larry_turbo_ref_source": larry_turbo_lora.source,
+        "pdd_turbo_lora": pdd_turbo_lora.local_name,
+        "pdd_turbo_source": pdd_turbo_lora.source,
+        "pdd_turbo_ref_lora": pdd_turbo_ref_lora.local_name,
+        "pdd_turbo_ref_source": pdd_turbo_ref_lora.source,
         # Retain the original fields for compatibility with older app code.
         "seedvr2_dit": seedvr2_models[DEFAULT_SEEDVR2_MODEL],
         "seedvr2_dit_source": MODEL_SPECS[
@@ -965,6 +986,8 @@ def selftest() -> None:
         "turbo_ref_lora",
         "turbo_8step_lora",
         "larry_turbo_lora",
+        "pdd_turbo_lora",
+        "pdd_turbo_ref_lora",
         "seedvr2_3b_nvfp4",
         "seedvr2_3b_int8",
         "seedvr2_7b_nvfp4",
@@ -1007,7 +1030,7 @@ def selftest() -> None:
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 15
+    assert cfg["schema_version"] == 16
     assert cfg["default_profile"] == "original"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
@@ -1045,6 +1068,15 @@ def selftest() -> None:
     assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"
     assert cfg["larry_turbo_ref_lora"] == cfg["larry_turbo_lora"]
     assert "larry_turbo_lora" not in PRELOAD_MODEL_KEYS
+    assert cfg["pdd_turbo_lora"] == (
+        "minimax_h3_fl2va_pdd_acc_8step_comfyui.safetensors"
+    )
+    assert cfg["pdd_turbo_ref_lora"] == (
+        "minimax_h3_ref2va_pdd_acc_8step_comfyui.safetensors"
+    )
+    assert {"pdd_turbo_lora", "pdd_turbo_ref_lora"}.isdisjoint(
+        PRELOAD_MODEL_KEYS
+    )
     h3_upscaler = MODEL_SPECS["h3_latent_upscaler_3d_bf16"]
     assert h3_upscaler.repo_id == H3_LATENT_UPSCALER_REPO
     assert h3_upscaler.folder == "latent_upscale_models"

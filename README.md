@@ -121,6 +121,10 @@ at six steps through its pinned custom node, which uses a quantization-aware
 bypass loader plus the adaptive H3 Turbo sampler. LightX2V also provides a
 mode-specific four-step option (FL2V v1.1 768p or
 Ref2V v0.1 544p) and an FL2V v1.0 eight-step 544p option, all at strength 1.0.
+Alibaba's PDD Acc release is available as a separate eight-step option using
+the converted ComfyUI FL2VA/Ref2VA files and the pinned
+`ComfyUI-MiniMax-H3-PDD-Acc` node. It applies both the rank-64 trunk LoRA and
+the parallel-decoding head bank; the ordinary ComfyUI LoRA loader is not used.
 The FL2V v1.1 workflow applies LightX2V's recommended video/audio sigma shifts
 of 6/3 and uses four Euler steps with the simple scheduler by default.
 Loader policy follows the base model: Original BF16 applies either LoRA in
@@ -130,13 +134,17 @@ and compatibility with direct-weight quantized kernels. LightX2V's Original
 bypass validates the exact official 50-block plus two-refiner adapter layout before installing
 any hooks and retains fused modulation. Turbo step defaults are applied by an
 immediate mode/variant UI update before generation is queued, preventing
-The resulting step control remains editable so users can increase any Turbo
-variant's count for clips that benefit from additional refinement.
+stale step settings from being submitted. The step control remains editable for
+Larry and LightX2V. PDD is fixed at its trained eight steps and uses Euler, the
+Apply node's exact sigma boundaries, 12/3 video/audio shifts, CFG 1.0, and
+Acceleration Off; Spectrum, FirstBlockCache, and EasyCache are incompatible
+with its per-boundary final-head selection.
 
 Reference mode automatically selects LightX2V's dedicated Ref2V v0.1 adapter
 for the four-step option. The LightX2V eight-step and Larry options still reuse
 their FL2VA-trained LoRAs in reference mode and remain experimental because no
-dedicated Ref2V counterparts are published. The generated model configuration
+dedicated Ref2V counterparts are published. PDD selects its dedicated converted
+Ref2VA checkpoint. The generated model configuration
 keeps separate Ref2VA keys so those shared files can be replaced without
 changing workflow construction.
 
@@ -150,8 +158,9 @@ bash run_h3.sh
 
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
 Quality FL2VA checkpoint plus the shared text encoder, VAEs, and default 4-step
-Turbo LoRAs. The Quality Ref2VA checkpoint and selectable 6-step/8-step Turbo
-LoRAs download on demand when selected. Speed and Original checkpoints download
+Turbo LoRAs. The Quality Ref2VA checkpoint and selectable Larry, LightX2V
+eight-step, and PDD FL2VA/Ref2VA files download on demand when selected. Speed
+and Original checkpoints download
 on demand the first time each workflow variant is selected. SeedVR2 models and the
 LTX-2.5 2x upscaler IC-LoRA are lazy and
 download only when their post-processing option is first used. The experimental

@@ -177,6 +177,7 @@ SLA_PRESET_INPUTS = {
 LIGHTX2V_4STEP_TURBO = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
 LIGHTX2V_8STEP_TURBO = "LightX2V v1.0 / 8-step 544p"
 LARRY_TURBO = "Larry v4-600 EMA"
+PDD_8STEP_TURBO = "Alibaba PDD Acc / 8-step (ComfyUI)"
 DEFAULT_TURBO = LIGHTX2V_4STEP_TURBO
 RESULT_FORMATS = ("Video", "Image", "Audio")
 DEFAULT_RESULT_FORMAT = RESULT_FORMATS[0]
@@ -305,6 +306,7 @@ CORE_SAMPLER_NODE = "KSamplerSelect"
 H3_SIGMA_SHIFT_NODE = "MiniMaxH3SigmaShift"
 LARRY_TURBO_LORA_NODE = "MiniMaxH3TurboLoRA"
 LARRY_TURBO_SAMPLER_NODE = "MiniMaxH3TurboSampler"
+PDD_TURBO_APPLY_NODE = "MiniMaxH3PDDAccApply"
 LIGHTX2V_BYPASS_LORA_NODE = "H3LightX2VBypassLoRA"
 H3_LATENT_UPSCALER_NODE = "MinimaxH3LatentUpscalerNode3D"
 H3_SEPARATE_AV_LATENT_NODE = "H3SeparateAVLatent"
@@ -372,6 +374,7 @@ class TurboSpec:
     lora_attr: str
     ref_lora_attr: str
     custom_nodes: bool = False
+    pdd: bool = False
 
 
 TURBO_SETTINGS = {
@@ -393,6 +396,13 @@ TURBO_SETTINGS = {
         strength=1.0,
         lora_attr="turbo_8step_lora",
         ref_lora_attr="turbo_8step_ref_lora",
+    ),
+    PDD_8STEP_TURBO: TurboSpec(
+        steps=8,
+        strength=1.0,
+        lora_attr="pdd_turbo_lora",
+        ref_lora_attr="pdd_turbo_ref_lora",
+        pdd=True,
     ),
 }
 SAMPLING_PRESET_TEXT_ENCODERS = {
@@ -1454,6 +1464,20 @@ def turbo_uses_custom_nodes(value: str) -> bool:
     return TURBO_SETTINGS[normalize_turbo_variant(value)].custom_nodes
 
 
+def turbo_is_pdd(value: str) -> bool:
+    return TURBO_SETTINGS[normalize_turbo_variant(value)].pdd
+
+
+def validate_turbo_steps(value: str, steps: int) -> int:
+    resolved = int(steps)
+    if turbo_is_pdd(value) and resolved != turbo_steps_for(value):
+        raise H3Error(
+            f"{normalize_turbo_variant(value)} requires exactly "
+            f"{turbo_steps_for(value)} sampler steps."
+        )
+    return resolved
+
+
 def is_lightx2v_v11_fl2va(turbo_variant: str, lora_filename: str | None) -> bool:
     """Identify the FL2VA-only v1.1 adapter with its dedicated sampler settings."""
     return (
@@ -1464,7 +1488,12 @@ def is_lightx2v_v11_fl2va(turbo_variant: str, lora_filename: str | None) -> bool
 
 
 def turbo_sampler_name(turbo_variant: str, lora_filename: str | None) -> str:
-    return "euler" if is_lightx2v_v11_fl2va(turbo_variant, lora_filename) else "res_multistep"
+    return (
+        "euler"
+        if turbo_is_pdd(turbo_variant)
+        or is_lightx2v_v11_fl2va(turbo_variant, lora_filename)
+        else "res_multistep"
+    )
 
 
 def is_original_bf16_model(model_filename: str) -> bool:
@@ -1508,6 +1537,10 @@ class ModelConfig:
     larry_turbo_source: str = "unknown"
     larry_turbo_ref_lora: str | None = None
     larry_turbo_ref_source: str = "unknown"
+    pdd_turbo_lora: str | None = None
+    pdd_turbo_source: str = "unknown"
+    pdd_turbo_ref_lora: str | None = None
+    pdd_turbo_ref_source: str = "unknown"
     seedvr2_dit: str | None = None
     seedvr2_dit_source: str = "unknown"
     seedvr2_models: dict[str, str] | None = None
@@ -1588,6 +1621,10 @@ def load_model_config() -> ModelConfig:
         larry_turbo_ref_source=data.get(
             "larry_turbo_ref_source", data.get("larry_turbo_source", "unknown")
         ),
+        pdd_turbo_lora=data.get("pdd_turbo_lora"),
+        pdd_turbo_source=data.get("pdd_turbo_source", "unknown"),
+        pdd_turbo_ref_lora=data.get("pdd_turbo_ref_lora"),
+        pdd_turbo_ref_source=data.get("pdd_turbo_ref_source", "unknown"),
         seedvr2_dit=data.get("seedvr2_dit"),
         seedvr2_dit_source=data.get("seedvr2_dit_source", "unknown"),
         seedvr2_models=data.get("seedvr2_models"),
@@ -1744,6 +1781,9 @@ def ensure_turbo_lora(models: ModelConfig, turbo_variant: str, mode: str) -> boo
     elif variant == LIGHTX2V_8STEP_TURBO:
         model_key = "turbo_8step_lora"
         filename = models.turbo_8step_ref_lora if reference else models.turbo_8step_lora
+    elif variant == PDD_8STEP_TURBO:
+        model_key = "pdd_turbo_ref_lora" if reference else "pdd_turbo_lora"
+        filename = models.pdd_turbo_ref_lora if reference else models.pdd_turbo_lora
     else:
         return False
     if not filename:
@@ -2888,15 +2928,16 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
     would fire preset.change() and race with the Turbo Steps update.
     """
     if str(name).strip().lower() == "turbo":
+        pdd = turbo_is_pdd(turbo_variant)
         return (
             gr.update(interactive=True),
             gr.update(
                 value=turbo_steps_for(turbo_variant),
-                interactive=True,
+                interactive=not pdd,
             ),
             "simple",
-            DEFAULT_ACCELERATOR,
-            "SLA",
+            "Off" if pdd else DEFAULT_ACCELERATOR,
+            "Kitchen" if pdd else "SLA",
         )
 
     return (
@@ -2911,19 +2952,30 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
 def turbo_variant_defaults(turbo_variant: str, generation_mode: str):
     """Apply variant sampling defaults only while Turbo is selected."""
     if str(generation_mode).strip().lower() != "turbo":
-        return gr.update(), gr.update()
-    return gr.update(
-        value=turbo_steps_for(turbo_variant),
-        interactive=True,
-    ), "simple"
+        return gr.update(), gr.update(), gr.update(), gr.update()
+    pdd = turbo_is_pdd(turbo_variant)
+    return (
+        gr.update(
+            value=turbo_steps_for(turbo_variant),
+            interactive=not pdd,
+        ),
+        "simple",
+        "Off" if pdd else DEFAULT_ACCELERATOR,
+        "Kitchen" if pdd else "SLA",
+    )
 
 
 def resolve_cache_policy(
-    cache_mode: str, *, use_turbo: bool
+    cache_mode: str, *, use_turbo: bool, turbo_variant: str = DEFAULT_TURBO
 ) -> tuple[str, str | None]:
     """Allow opt-in Turbo accelerators with quality warnings."""
     requested = str(cache_mode).strip()
     normalized = requested.lower()
+    if use_turbo and turbo_is_pdd(turbo_variant) and normalized != "off":
+        return "Off", (
+            f"{requested} was disabled because PDD final-head selection must run "
+            "on every trained sigma boundary."
+        )
     if not use_turbo or normalized == "off":
         return requested, None
     if normalized == "spectrum":
@@ -3091,6 +3143,8 @@ def turbo_required_nodes(
     lora_filename: str = "",
 ) -> set[str]:
     """Return the external node contract for one normalized Turbo variant."""
+    if turbo_is_pdd(turbo_variant):
+        return {PDD_TURBO_APPLY_NODE, CORE_SAMPLER_NODE, H3_SIGMA_SHIFT_NODE}
     if turbo_uses_custom_nodes(turbo_variant):
         return {LARRY_TURBO_LORA_NODE, LARRY_TURBO_SAMPLER_NODE}
     lora_node = (
@@ -3113,7 +3167,7 @@ def add_turbo_model_patch(
     turbo_variant: str,
     strength: float,
     available_nodes: set[str],
-) -> list[Any]:
+) -> tuple[list[Any], list[Any] | None]:
     """Apply a Turbo LoRA and compatible model-level optimizations."""
     variant = normalize_turbo_variant(turbo_variant)
     runtime_bypass = is_original_bf16_model(model_filename)
@@ -3126,6 +3180,19 @@ def add_turbo_model_patch(
             "Re-run setup_h3.py and restart ComfyUI."
         )
 
+    if turbo_is_pdd(variant):
+        pdd = graph.add(
+            PDD_TURBO_APPLY_NODE,
+            model=model_ref,
+            pdd_file=lora_name,
+            nfe=str(turbo_steps_for(variant)),
+            lora_strength=float(strength),
+            head_strength=1.0,
+            on_off_grid="error",
+            partition="",
+        )
+        return Graph.out(pdd), Graph.out(pdd, 1)
+
     if turbo_uses_custom_nodes(variant):
         turbo = graph.add(
             LARRY_TURBO_LORA_NODE,
@@ -3137,7 +3204,7 @@ def add_turbo_model_patch(
         # Larry bypasses projections on Original BF16 and merges on compact
         # Speed/Quality bases. Its pinned node receives a provisioning-time
         # modality-row fix; keep fused modulation disabled for both paths.
-        return Graph.out(turbo)
+        return Graph.out(turbo), None
 
     if runtime_bypass:
         turbo = graph.add(
@@ -3162,7 +3229,7 @@ def add_turbo_model_patch(
         model=Graph.out(turbo),
         enabled=True,
     )
-    return Graph.out(fused_modulation)
+    return Graph.out(fused_modulation), None
 
 
 def add_model_stack(
@@ -3197,12 +3264,13 @@ def add_model_stack(
     use_sage: bool = False,
     use_sla: bool = False,
     sla_preset: str = DEFAULT_SLA_PRESET,
-) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
+) -> tuple[list[Any], list[Any], list[Any], list[Any], list[Any] | None]:
     unet = graph.add("UNETLoader", unet_name=model_name, weight_dtype="default")
     model_ref = Graph.out(unet)
+    turbo_sigmas_ref: list[Any] | None = None
 
     if turbo_lora_name:
-        model_ref = add_turbo_model_patch(
+        model_ref, turbo_sigmas_ref = add_turbo_model_patch(
             graph,
             model_ref,
             lora_name=turbo_lora_name,
@@ -3215,6 +3283,8 @@ def add_model_stack(
     # Keep FirstBlockCache ahead of attention/object patches so its sampling and
     # diffusion wrappers own the outer execution context.
     cache_mode_normalized = str(cache_mode).strip().lower()
+    if turbo_lora_name and turbo_is_pdd(turbo_variant) and cache_mode_normalized != "off":
+        raise H3Error("Alibaba PDD Acc cannot be stacked with Spectrum or cache nodes.")
     if cache_mode_normalized == "firstblockcache":
         if "H3FirstBlockCache" not in available_nodes:
             raise H3Error(
@@ -3353,7 +3423,20 @@ def add_model_stack(
         )
         model_ref = Graph.out(cache)
 
-    if turbo_lora_name and is_lightx2v_v11_fl2va(
+    if turbo_lora_name and turbo_is_pdd(turbo_variant):
+        if H3_SIGMA_SHIFT_NODE not in available_nodes:
+            raise H3Error(
+                "Alibaba PDD Acc requires MiniMaxH3SigmaShift. Update ComfyUI "
+                "and restart the service."
+            )
+        shifted = graph.add(
+            H3_SIGMA_SHIFT_NODE,
+            model=model_ref,
+            shift_video=12.0,
+            shift_audio=3.0,
+        )
+        model_ref = Graph.out(shifted)
+    elif turbo_lora_name and is_lightx2v_v11_fl2va(
         turbo_variant, turbo_lora_name
     ):
         if H3_SIGMA_SHIFT_NODE not in available_nodes:
@@ -3386,7 +3469,13 @@ def add_model_stack(
         video_vae_name = models.video_vae
     video_vae = graph.add("VAELoader", vae_name=video_vae_name)
     audio_vae = graph.add("VAELoader", vae_name=models.audio_vae)
-    return model_ref, Graph.out(clip), Graph.out(video_vae), Graph.out(audio_vae)
+    return (
+        model_ref,
+        Graph.out(clip),
+        Graph.out(video_vae),
+        Graph.out(audio_vae),
+        turbo_sigmas_ref,
+    )
 
 
 def h3_conditioning_cache_key(
@@ -3441,6 +3530,7 @@ def finish_sampling(
     turbo_variant: str | None,
     filename_prefix: str,
     sampler_name: str = "res_multistep",
+    sigmas_ref: list[Any] | None = None,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae_ref: list[Any] | None = None,
@@ -3496,19 +3586,21 @@ def finish_sampling(
         if use_larry_sampler
         else graph.add(CORE_SAMPLER_NODE, sampler_name=sampler_name)
     )
-    sigmas = graph.add(
-        "BasicScheduler",
-        model=model_ref,
-        scheduler=scheduler,
-        steps=int(steps),
-        denoise=1.0,
-    )
+    if sigmas_ref is None:
+        sigmas = graph.add(
+            "BasicScheduler",
+            model=model_ref,
+            scheduler=scheduler,
+            steps=int(steps),
+            denoise=1.0,
+        )
+        sigmas_ref = Graph.out(sigmas)
     if latent_upscale_model_name is not None:
         if initial_conditioning_ref is None or initial_latent_ref is None:
             raise H3Error("H3 latent upscaling requires a low-resolution H3 stage.")
         refine_sigmas = graph.add(
             "SplitSigmas",
-            sigmas=Graph.out(sigmas),
+            sigmas=sigmas_ref,
             step=int(steps) - int(latent_upscale_refine_steps),
         )
         initial_guider = graph.add(
@@ -3521,7 +3613,7 @@ def finish_sampling(
             noise=Graph.out(noise),
             guider=Graph.out(initial_guider),
             sampler=Graph.out(sampler),
-            sigmas=Graph.out(sigmas),
+            sigmas=sigmas_ref,
             latent_image=initial_latent_ref,
         )
         initial_sampled_ref = Graph.out(initial_sampled)
@@ -3582,7 +3674,7 @@ def finish_sampling(
             noise=Graph.out(noise),
             guider=Graph.out(guider),
             sampler=Graph.out(sampler),
-            sigmas=Graph.out(sigmas),
+            sigmas=sigmas_ref,
             latent_image=latent_ref,
         )
         audio_samples = Graph.out(sampled)
@@ -3713,8 +3805,10 @@ def build_fl2va_graph(
     stage_model_offload: bool = False,
     smart_stage_offload: bool = False,
 ) -> dict[str, Any]:
+    if turbo_lora_name:
+        validate_turbo_steps(turbo_variant, steps)
     graph = Graph()
-    model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
+    model_ref, clip_ref, video_vae_ref, audio_vae_ref, turbo_sigmas_ref = add_model_stack(
         graph,
         model_name,
         models,
@@ -3843,6 +3937,7 @@ def build_fl2va_graph(
         scheduler=scheduler,
         turbo_variant=turbo_variant if turbo_lora_name else None,
         sampler_name=turbo_sampler_name(turbo_variant, turbo_lora_name),
+        sigmas_ref=turbo_sigmas_ref,
         filename_prefix=(
             f"h3/image_staging/fl2va_{int(time.time())}_{uuid.uuid4().hex[:8]}"
             if normalize_result_format(result_format) == "Image"
@@ -3918,8 +4013,10 @@ def build_ref2va_graph(
     reuse_unchanged_inputs: bool = True,
     stage_model_offload: bool = False,
 ) -> dict[str, Any]:
+    if turbo_lora_name:
+        validate_turbo_steps(turbo_variant, steps)
     graph = Graph()
-    model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
+    model_ref, clip_ref, video_vae_ref, audio_vae_ref, turbo_sigmas_ref = add_model_stack(
         graph,
         model_name,
         models,
@@ -4066,6 +4163,7 @@ def build_ref2va_graph(
         scheduler=scheduler,
         turbo_variant=turbo_variant if turbo_lora_name else None,
         sampler_name=turbo_sampler_name(turbo_variant, turbo_lora_name),
+        sigmas_ref=turbo_sigmas_ref,
         filename_prefix=(
             f"h3/image_staging/ref2va_{int(time.time())}_{uuid.uuid4().hex[:8]}"
             if normalize_result_format(result_format) == "Image"
@@ -6754,7 +6852,7 @@ def generate(
                 DEFAULT_SLA_PRESET
             )
         effective_cache_mode, cache_note = resolve_cache_policy(
-            cache_mode, use_turbo=use_turbo
+            cache_mode, use_turbo=use_turbo, turbo_variant=turbo_variant
         )
         if latent_upscale and effective_cache_mode.lower() != "off":
             cache_note = (
@@ -8376,7 +8474,9 @@ def build_ui() -> gr.Blocks:
                         info=(
                             "Original BF16 uses memory-safe runtime LoRA bypass. Speed and "
                             "Quality use faster merged weights. Larry also uses its adaptive "
-                            "sampler; all variants run at strength 1.0."
+                            "sampler. Alibaba PDD uses its dedicated loader, trained sigma grid, "
+                            "Euler sampler, and disables step caching; all variants run at "
+                            "strength 1.0."
                         ),
                     )
                     scheduler = gr.Radio(
@@ -8459,7 +8559,8 @@ def build_ui() -> gr.Blocks:
                                 "speed testing. It forecasts selected transformer steps and uses "
                                 "audio-isolated offline replay. FirstBlockCache is the lower-memory "
                                 "fallback. Modes are mutually exclusive. Turbo defaults to Spectrum; "
-                                "EasyCache and FirstBlockCache are opt-in experimental Turbo options."
+                                "EasyCache and FirstBlockCache are opt-in experimental Turbo options. "
+                                "PDD always runs with acceleration Off."
                             ),
                         )
                         fbcache_preset = gr.Radio(
@@ -9240,7 +9341,7 @@ def build_ui() -> gr.Blocks:
         turbo_variant.change(
             turbo_variant_defaults,
             inputs=[turbo_variant, generation_mode],
-            outputs=[steps, scheduler],
+            outputs=[steps, scheduler, cache_mode, attention_mode],
             queue=False,
             show_progress="hidden",
         )
@@ -9971,6 +10072,10 @@ def selftest() -> None:
         larry_turbo_source="test",
         larry_turbo_ref_lora="minimax_h3_turbo_v4_step600_ema.safetensors",
         larry_turbo_ref_source="shared-fl2va-test",
+        pdd_turbo_lora="minimax_h3_fl2va_pdd_acc_8step_comfyui.safetensors",
+        pdd_turbo_source="test",
+        pdd_turbo_ref_lora="minimax_h3_ref2va_pdd_acc_8step_comfyui.safetensors",
+        pdd_turbo_ref_source="test",
         seedvr2_dit="seedvr2_7b_nvfp4.safetensors",
         seedvr2_dit_source="test",
         seedvr2_models={
@@ -10001,6 +10106,7 @@ def selftest() -> None:
     available |= {
         LARRY_TURBO_LORA_NODE,
         LARRY_TURBO_SAMPLER_NODE,
+        PDD_TURBO_APPLY_NODE,
         LIGHTX2V_BYPASS_LORA_NODE,
         H3_SIGMA_SHIFT_NODE,
         H3_SINGLE_FRAME_VAE_LOADER_NODE,
@@ -10035,6 +10141,8 @@ def selftest() -> None:
     assert fake.turbo_lora_for("Text to video", LIGHTX2V_8STEP_TURBO) == fake.turbo_8step_lora
     assert fake.turbo_lora_for("Reference media", LIGHTX2V_8STEP_TURBO) == fake.turbo_8step_ref_lora
     assert fake.turbo_lora_for("Text to video", LARRY_TURBO) == fake.larry_turbo_lora
+    assert fake.turbo_lora_for("Text to video", PDD_8STEP_TURBO) == fake.pdd_turbo_lora
+    assert fake.turbo_lora_for("Reference media", PDD_8STEP_TURBO) == fake.pdd_turbo_ref_lora
     reference_updates = mode_layout_updates("Reference media")
     assert reference_updates[3].get("interactive") is True
     assert "value" not in reference_updates[3]
@@ -11370,6 +11478,14 @@ def selftest() -> None:
     assert lightx_8step_defaults[1]["value"] == 8
     assert lightx_8step_defaults[1]["interactive"] is True
     assert lightx_8step_defaults[2:] == ("simple", "Spectrum", "SLA")
+    pdd_defaults = generation_mode_defaults("Turbo", PDD_8STEP_TURBO)
+    assert pdd_defaults[1]["value"] == 8
+    assert pdd_defaults[1]["interactive"] is False
+    assert pdd_defaults[2:] == ("simple", "Off", "Kitchen")
+    pdd_variant_defaults = turbo_variant_defaults(PDD_8STEP_TURBO, "Turbo")
+    assert pdd_variant_defaults[0]["value"] == 8
+    assert pdd_variant_defaults[0]["interactive"] is False
+    assert pdd_variant_defaults[1:] == ("simple", "Off", "Kitchen")
     normal_defaults = generation_mode_defaults("Normal")
     assert normal_defaults[1]["value"] == 18
     assert normal_defaults[1]["interactive"] is True
@@ -11490,7 +11606,7 @@ def selftest() -> None:
     )
 
     larry_graph = Graph()
-    larry_model, _, larry_video_vae, larry_audio_vae = add_model_stack(
+    larry_model, _, larry_video_vae, larry_audio_vae, _ = add_model_stack(
         larry_graph,
         fake.profile("speed").fl2va,
         fake,
@@ -11598,6 +11714,66 @@ def selftest() -> None:
         )
         return route_graph
 
+    pdd_route = turbo_route_graph("speed", PDD_8STEP_TURBO)
+    pdd_apply_id = next(
+        node_id for node_id, node in pdd_route.nodes.items()
+        if node["class_type"] == PDD_TURBO_APPLY_NODE
+    )
+    pdd_shift_id = next(
+        node_id for node_id, node in pdd_route.nodes.items()
+        if node["class_type"] == H3_SIGMA_SHIFT_NODE
+    )
+    pdd_apply = pdd_route.nodes[pdd_apply_id]
+    assert pdd_apply["inputs"]["pdd_file"] == fake.pdd_turbo_lora
+    assert pdd_apply["inputs"]["nfe"] == "8"
+    assert pdd_apply["inputs"]["lora_strength"] == 1.0
+    assert pdd_apply["inputs"]["head_strength"] == 1.0
+    assert pdd_route.nodes[pdd_shift_id]["inputs"] == {
+        "model": [pdd_apply_id, 0],
+        "shift_video": 12.0,
+        "shift_audio": 3.0,
+    }
+    finish_sampling(
+        pdd_route,
+        model_ref=[pdd_shift_id, 0],
+        conditioning_ref=["conditioning", 0],
+        latent_ref=["latent", 0],
+        video_vae_ref=["video_vae", 0],
+        audio_vae_ref=["audio_vae", 0],
+        seed=4,
+        steps=8,
+        scheduler="simple",
+        turbo_variant=PDD_8STEP_TURBO,
+        filename_prefix="h3/pdd_test",
+        sampler_name="euler",
+        sigmas_ref=[pdd_apply_id, 1],
+    )
+    pdd_classes = {node["class_type"] for node in pdd_route.nodes.values()}
+    assert "BasicScheduler" not in pdd_classes
+    assert not pdd_classes & {"SpectrumApplyMiniMaxH3", "EasyCache", "H3FirstBlockCache"}
+    pdd_sampler = next(
+        node for node in pdd_route.nodes.values()
+        if node["class_type"] == CORE_SAMPLER_NODE
+    )
+    assert pdd_sampler["inputs"]["sampler_name"] == "euler"
+    pdd_advanced = next(
+        node for node in pdd_route.nodes.values()
+        if node["class_type"] == "SamplerCustomAdvanced"
+    )
+    assert pdd_advanced["inputs"]["sigmas"] == [pdd_apply_id, 1]
+    assert turbo_sampler_name(PDD_8STEP_TURBO, fake.pdd_turbo_lora) == "euler"
+    assert turbo_is_pdd(PDD_8STEP_TURBO) is True
+    assert PDD_TURBO_APPLY_NODE in turbo_required_nodes(PDD_8STEP_TURBO)
+    assert resolve_cache_policy(
+        "Spectrum", use_turbo=True, turbo_variant=PDD_8STEP_TURBO
+    )[0] == "Off"
+    try:
+        validate_turbo_steps(PDD_8STEP_TURBO, 4)
+    except H3Error:
+        pass
+    else:
+        raise AssertionError("PDD must reject non-8-step sampling")
+
     for profile_name in ("speed", "quality", "original"):
         original = profile_name == "original"
         larry_route = turbo_route_graph(profile_name, LARRY_TURBO)
@@ -11697,9 +11873,9 @@ def selftest() -> None:
         f"Sol Auto/Turbo policy valid, Spectrum default + Sol/ConvRot order valid, "
         f"zero-copy Sol + FirstBlockCache composition valid, "
         f"LightX fused modulation + Larry compatibility + ConvRot FFN chunking valid, "
-        f"Spectrum v0.2.14 legacy Turbo composition + block-cache guard valid, "
-        f"selectable Larry/LightX2V Turbo on "
-        f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, "
+        f"Spectrum v0.2.15 legacy Turbo composition + block-cache guard valid, "
+        f"selectable Larry/LightX2V/PDD Turbo on FL2VA/Ref2VA + synchronized "
+        f"editable/fixed Turbo steps and PDD trained-sigma routing valid, "
         f"video/image/audio result branches + image selection saving valid, "
         f"H3 NVENC save wiring valid, prompt API download URL valid, "
         f"gallery resolution/fallback/deletion guards + VRAM unload valid, "

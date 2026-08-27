@@ -62,6 +62,8 @@ SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_REF = "ac247efcc2c9b6324fa106b3bd8e148a583db4a9"  # v0.2.15
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
 LARRY_TURBO_REF = "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
+PDD_TURBO_REPO = "https://github.com/Jalen-Brunson/ComfyUI-MiniMax-H3-PDD-Acc.git"
+PDD_TURBO_REF = "195a98d483324ef832191e59b8da6eb1bc9c42b0"
 H3_LATENT_UPSCALER_NODE_REPO = (
     "https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler.git"
 )
@@ -225,6 +227,12 @@ def build(revision: str) -> None:
     _clone(LARRY_TURBO_REPO, larry_turbo_dir, ref=LARRY_TURBO_REF)
     patch_larry_turbo_node(larry_turbo_dir)
     _print_git_revision(larry_turbo_dir)
+
+    pdd_turbo_dir = (
+        Path(COMFY) / "custom_nodes" / "ComfyUI-MiniMax-H3-PDD-Acc"
+    )
+    _clone(PDD_TURBO_REPO, pdd_turbo_dir, ref=PDD_TURBO_REF)
+    _print_git_revision(pdd_turbo_dir)
 
     official_nodes = (
         (
