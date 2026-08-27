@@ -3801,20 +3801,21 @@ def build_fl2va_graph(
         )
         inputs["last_frame"] = Graph.out(loaded)
 
-    conditioning_cache_key: str | None = None
-    if smart_stage_offload:
-        conditioning_cache_key = h3_conditioning_cache_key(
-            "fl2va",
-            prompt,
-            text_encoder_name or models.text_encoder,
-            conditioning_media,
-        )
-        cache_node = graph.add(
-            H3_CONDITIONING_CACHE_NODE,
-            clip=clip_ref,
-            cache_key=conditioning_cache_key,
-        )
-        clip_ref = Graph.out(cache_node)
+    # Tie the native H3 node's upstream CLIP identity to the actual
+    # conditioning inputs. This forces changed prompts/media to execute while
+    # unchanged conditioning can still reuse the encoded result.
+    conditioning_cache_key = h3_conditioning_cache_key(
+        "fl2va",
+        prompt,
+        text_encoder_name or models.text_encoder,
+        conditioning_media,
+    )
+    cache_node = graph.add(
+        H3_CONDITIONING_CACHE_NODE,
+        clip=clip_ref,
+        cache_key=conditioning_cache_key,
+    )
+    clip_ref = Graph.out(cache_node)
     inputs["clip"] = clip_ref
 
     target_h3 = graph.add(
@@ -4023,21 +4024,19 @@ def build_ref2va_graph(
         )
         inputs[f"ref_audios.ref_audio_{index}"] = Graph.out(loaded)
 
-    conditioning_cache_key: str | None = None
-    if smart_stage_offload:
-        conditioning_cache_key = h3_conditioning_cache_key(
-            "ref2va",
-            prompt,
-            text_encoder_name or models.text_encoder,
-            conditioning_media,
-            encoder_settings={"ref_image_size": ref_image_size},
-        )
-        cache_node = graph.add(
-            H3_CONDITIONING_CACHE_NODE,
-            clip=clip_ref,
-            cache_key=conditioning_cache_key,
-        )
-        clip_ref = Graph.out(cache_node)
+    conditioning_cache_key = h3_conditioning_cache_key(
+        "ref2va",
+        prompt,
+        text_encoder_name or models.text_encoder,
+        conditioning_media,
+        encoder_settings={"ref_image_size": ref_image_size},
+    )
+    cache_node = graph.add(
+        H3_CONDITIONING_CACHE_NODE,
+        clip=clip_ref,
+        cache_key=conditioning_cache_key,
+    )
+    clip_ref = Graph.out(cache_node)
     inputs["clip"] = clip_ref
 
     target_h3 = graph.add(
