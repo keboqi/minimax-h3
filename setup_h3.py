@@ -16,6 +16,7 @@ from h3_node_patches import patch_larry_turbo_node
 from h3_requirements import (
     ABI_CONSTRAINTS,
     COMFY_FRONTEND_VERSION,
+    COMFY_KITCHEN_VERSION,
     COMFY_REF,
     KERNELS_VERSION,
     KORNIA_VERSION,
@@ -443,6 +444,11 @@ def install_comfy_requirements(comfy: Path) -> None:
         uv_pip("-r", str(filtered_path))
     finally:
         filtered_path.unlink(missing_ok=True)
+
+    # ComfyUI's requirement currently selects 0.2.31, whose DynamicVRAM path
+    # can hang MiniMax-H3 while staging the text encoder. Install the reviewed
+    # compatibility pin explicitly after filtering that upstream requirement.
+    uv_pip(f"comfy-kitchen=={COMFY_KITCHEN_VERSION}")
 
     if not comfy_frontend_package_is_ready():
         print(

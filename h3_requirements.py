@@ -23,11 +23,11 @@ KERNELS_VERSION = "0.16.0"
 # ComfyUI-LTXVideo ac4d998 imports ``pad`` from Kornia's pyramid module.
 # Kornia 0.8.2+ removed that module-level compatibility export.
 KORNIA_VERSION = "0.8.1"
-# Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
-# ComfyUI v0.34.0 includes the current MiniMax Music 3 and non-dynamic-VRAM fixes. Keep Comfy
-# Kitchen in lockstep even though the H3 launchers use dynamic model residency.
+# ComfyUI v0.34.0 includes the current MiniMax Music 3 and non-dynamic-VRAM fixes.
+# Keep Kitchen at 0.2.30 until the 0.2.31 DynamicVRAM regression affecting
+# MiniMax-H3 model initialization is fixed upstream.
 COMFY_REF = "12d5279438bfefc058a269eae805ceab6047777f"
-COMFY_KITCHEN_VERSION = "0.2.31"
+COMFY_KITCHEN_VERSION = "0.2.30"
 COMFY_FRONTEND_VERSION = "1.50.6"
 WSPROTO_VERSION = "1.2.0"
 LTX25_WORKFLOW_FILENAMES = (
@@ -51,7 +51,7 @@ ABI_CONSTRAINTS = (
 )
 
 PINNED_REQUIREMENTS = frozenset(
-    {"torch", "torchvision", "torchaudio", "numpy", "scipy"}
+    {"torch", "torchvision", "torchaudio", "numpy", "scipy", "comfy-kitchen"}
 )
 
 
@@ -246,7 +246,7 @@ def selftest() -> None:
     assert KORNIA_VERSION == "0.8.1"
     assert KERNELS_VERSION == "0.16.0"
     assert COMFY_REF == "12d5279438bfefc058a269eae805ceab6047777f"
-    assert COMFY_KITCHEN_VERSION == "0.2.31"
+    assert COMFY_KITCHEN_VERSION == "0.2.30"
     assert COMFY_FRONTEND_VERSION == "1.50.6"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 9
