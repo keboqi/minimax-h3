@@ -16,7 +16,6 @@ from h3_node_patches import patch_larry_turbo_node
 from h3_requirements import (
     ABI_CONSTRAINTS,
     COMFY_FRONTEND_VERSION,
-    COMFY_KITCHEN_VERSION,
     COMFY_REF,
     KERNELS_VERSION,
     KORNIA_VERSION,
@@ -42,8 +41,6 @@ SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_REF = "ac247efcc2c9b6324fa106b3bd8e148a583db4a9"  # v0.2.15
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
 LARRY_TURBO_REF = "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
-PDD_TURBO_REPO = "https://github.com/Jalen-Brunson/ComfyUI-MiniMax-H3-PDD-Acc.git"
-PDD_TURBO_REF = "195a98d483324ef832191e59b8da6eb1bc9c42b0"
 H3_LATENT_UPSCALER_NODE_REPO = (
     "https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler.git"
 )
@@ -445,11 +442,6 @@ def install_comfy_requirements(comfy: Path) -> None:
     finally:
         filtered_path.unlink(missing_ok=True)
 
-    # ComfyUI's requirement currently selects 0.2.31, whose DynamicVRAM path
-    # can hang MiniMax-H3 while staging the text encoder. Install the reviewed
-    # compatibility pin explicitly after filtering that upstream requirement.
-    uv_pip(f"comfy-kitchen=={COMFY_KITCHEN_VERSION}")
-
     if not comfy_frontend_package_is_ready():
         print(
             "[h3-setup] Reinstalling ComfyUI frontend as contained files",
@@ -656,16 +648,6 @@ def sync_external_nodes(
     patch_larry_turbo_node(larry_turbo)
     if install_requirements and (larry_turbo / "requirements.txt").is_file():
         uv_pip("-r", str(larry_turbo / "requirements.txt"), no_deps=True)
-
-    pdd_turbo = comfy / "custom_nodes" / "ComfyUI-MiniMax-H3-PDD-Acc"
-    sync_git_repo(
-        PDD_TURBO_REPO,
-        pdd_turbo,
-        ref=PDD_TURBO_REF,
-        required_paths=("__init__.py", "nodes.py", "pdd_acc_core.py"),
-    )
-    if install_requirements and (pdd_turbo / "requirements.txt").is_file():
-        uv_pip("-r", str(pdd_turbo / "requirements.txt"), no_deps=True)
 
     official_nodes = (
         (
