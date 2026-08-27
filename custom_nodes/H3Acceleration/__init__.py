@@ -968,6 +968,11 @@ class _H3CachedCLIPProxy:
     def __getattr__(self, name):
         return getattr(self._clip, name)
 
+    def clone(self, *args, **kwargs):
+        # Native H3 nodes clone CLIP before encoding. Preserve the proxy so
+        # both latent-upscale stages use the same prompt/media cache entry.
+        return type(self)(self._clip.clone(*args, **kwargs), self._cache_key)
+
     def encode_from_tokens_scheduled(self, tokens, *args, **kwargs):
         return _H3_CONDITIONING_REUSE_CACHE.encode(
             self._cache_key,
