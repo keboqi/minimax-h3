@@ -323,13 +323,33 @@ FUSED_MODULATION_NODE = "MiniMaxH3FusedModulation"
 CHUNK_FEED_FORWARD_NODE = "MiniMaxH3ChunkFeedForward"
 SEEDVR2_UPSCALE = "SeedVR2 2x"
 LTX25_UPSCALE = "LTX-2.5 IC-LoRA 2x"
+SWIFTVR_UPSCALE = "SwiftVR 2x"
 COMFY_UPSCALE_OPTIONS = {SEEDVR2_UPSCALE, LTX25_UPSCALE}
-POSTPROCESS_OPTIONS = [
-    SEEDVR2_UPSCALE,
-    LTX25_UPSCALE,
-    "48 fps interpolation",
-]
-GENERATION_POSTPROCESS_OPTIONS = ["None", SEEDVR2_UPSCALE, LTX25_UPSCALE]
+AI_POSTPROCESS_OPTIONS = COMFY_UPSCALE_OPTIONS | {SWIFTVR_UPSCALE}
+POSTPROCESS_OPTIONS = [SEEDVR2_UPSCALE, LTX25_UPSCALE, SWIFTVR_UPSCALE, "48 fps interpolation"]
+GENERATION_POSTPROCESS_OPTIONS = ["None", SEEDVR2_UPSCALE, LTX25_UPSCALE, SWIFTVR_UPSCALE]
+UPSCALE_RESOLUTION_PRESETS = {
+    "1280 × 1280": (1280, 1280),
+    "1920 × 1920": (1920, 1920),
+    "2560 × 2560": (2560, 2560),
+    "3840 × 3840": (3840, 3840),
+}
+DEFAULT_UPSCALE_RESOLUTION = "1920 × 1920"
+_SWIFTVR_PIPELINE: Any | None = None
+_SWIFTVR_LOCK = threading.RLock()
+
+def upscale_target_dimensions(source_width: int, source_height: int, preset: str) -> tuple[int, int]:
+    try:
+        max_width, max_height = UPSCALE_RESOLUTION_PRESETS[str(preset)]
+        source_width, source_height = int(source_width), int(source_height)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise H3Error(f"Unknown upscale resolution preset: {preset}") from exc
+    scale = min(max_width / source_width, max_height / source_height)
+    # SeedVR2 and SwiftVR can preserve the fitted source ratio exactly.
+    # LTX applies its required latent alignment inside its graph.
+    width = max(1, int(round(source_width * scale)))
+    height = max(1, int(round(source_height * scale)))
+    return min(width, max_width), min(height, max_height)
 INPUT_IMAGE_UPSCALE_SLOTS = (
     "First frame",
     "Last frame",
@@ -4370,6 +4390,8 @@ def build_seedvr2_upscale_graph(
     seed: int,
     models: ModelConfig,
     model_choice: str = DEFAULT_SEEDVR2_MODEL,
+    target_width: int | None = None,
+    source_width: int | None = None,
     fps: float = 24.0,
 ) -> dict[str, Any]:
     """Build ComfyUI's native one-step SeedVR2 2x workflow."""
@@ -4381,7 +4403,7 @@ def build_seedvr2_upscale_graph(
         "ImageScaleBy",
         image=Graph.out(components, 0),
         upscale_method="lanczos",
-        scale_by=2.0,
+        scale_by=(float(target_width) / float(source_width) if target_width and source_width else 2.0),
     )
     prepared = graph.add("SeedVR2Preprocess", resized_images=Graph.out(resized))
     vae = graph.add("VAELoader", vae_name=assets["seedvr2_vae"])
@@ -4498,14 +4520,22 @@ def build_ltx25_upscale_graph(
     prompt: str = "",
     width: int,
     height: int,
+    target_width: int | None = None,
+    target_height: int | None = None,
     fps: float = 24.0,
 ) -> dict[str, Any]:
     """Build Lightricks' single-stage IC-LoRA generative 2x upscaler."""
     names = ltx25_model_names(model_choice)
-    base_width = snap32(width)
-    base_height = snap32(height)
-    target_width = base_width * 2
-    target_height = base_height * 2
+    if target_width is None or target_height is None:
+        base_width = snap32(width)
+        base_height = snap32(height)
+        target_width = base_width * 2
+        target_height = base_height * 2
+    else:
+        base_width = snap32(int(target_width) // 2)
+        base_height = snap32(int(target_height) // 2)
+        target_width = base_width * 2
+        target_height = base_height * 2
 
     graph = Graph()
     loaded = graph.add("LoadVideo", file=source_video)
@@ -4650,6 +4680,8 @@ def build_upscale_graph(
     prompt: str = "",
     width: int | None = None,
     height: int | None = None,
+    target_width: int | None = None,
+    target_height: int | None = None,
     fps: float = 24.0,
 ) -> tuple[dict[str, Any], int]:
     """Build one selected AI-upscale workflow and return its sampler steps."""
@@ -4660,6 +4692,8 @@ def build_upscale_graph(
                 seed=seed,
                 models=models,
                 model_choice=seedvr2_model,
+                target_width=target_width,
+                source_width=width,
                 fps=fps,
             ),
             1,
@@ -4675,6 +4709,8 @@ def build_upscale_graph(
                 prompt=prompt,
                 width=width,
                 height=height,
+                target_width=target_width,
+                target_height=target_height,
                 fps=fps,
             ),
             8,
@@ -5580,6 +5616,33 @@ def has_encoder(name: str) -> bool:
     return name in proc.stdout
 
 
+def postprocess_swiftvr_video(source: Path, *, fps: float, target_width: int, target_height: int) -> Path:
+    checkpoint = Path(os.getenv("SWIFTVR_CHECKPOINT_DIR", str(COMFY_DIR / "models" / "swiftvr"))).expanduser().resolve()
+    required = (checkpoint / "reae.safetensors", checkpoint / "prompt_embedding.safetensors", checkpoint / "transformer" / "config.json")
+    if not all(path.is_file() for path in required):
+        raise H3Error("SwiftVR is not configured. Set SWIFTVR_CHECKPOINT_DIR to a valid checkpoint directory.")
+    try:
+        from swiftvr import SwiftVRPipeline
+    except Exception as exc:
+        raise H3Error("SwiftVR is not installed in the ComfyUI Python environment.") from exc
+    global _SWIFTVR_PIPELINE
+    with _SWIFTVR_LOCK:
+        if _SWIFTVR_PIPELINE is None:
+            _SWIFTVR_PIPELINE = SwiftVRPipeline.from_pretrained(checkpoint, device="cuda", dtype="bfloat16")
+        token = uuid.uuid4().hex[:8]
+        raw = OUTPUTS_DIR / f".swiftvr_{token}.mp4"
+        result = OUTPUTS_DIR / "swiftvr" / f"upscale_{token}.mp4"
+        result.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            _SWIFTVR_PIPELINE.restore_video(source, raw, resolution=(int(target_width), int(target_height)), upscale=2, clip_len=24, fps=float(fps), quality=95)
+            cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(raw), "-i", str(source), "-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", str(result)]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=REQUEST_TIMEOUT)
+            if proc.returncode != 0 or not result.is_file():
+                raise H3Error(f"SwiftVR output mux failed: {proc.stderr.strip()}")
+            return result
+        finally:
+            raw.unlink(missing_ok=True)
+
 def postprocess_video(source: Path, option: str) -> Path:
     if option == "None":
         return source
@@ -5982,6 +6045,19 @@ def forget_gallery_metadata(video: str | Path | None = None) -> None:
         _GALLERY_RESOLUTION_CACHE.pop(key, None)
 
 
+def import_gallery_video(uploaded_video: str | None) -> GalleryMutationResult:
+    if not uploaded_video:
+        return gallery_mutation_result("Choose a local video first.", clear_selection=False)
+    source = Path(uploaded_video).expanduser().resolve()
+    if not source.is_file() or source.suffix.lower() not in VIDEO_EXTENSIONS:
+        return gallery_mutation_result("The selected file is not a supported video.", clear_selection=False)
+    destination_dir = OUTPUTS_DIR / "imports"
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination = destination_dir / f"import_{int(time.time())}_{uuid.uuid4().hex[:8]}{source.suffix.lower()}"
+    shutil.copy2(source, destination)
+    return gallery_mutation_result(f"Imported `{source.name}`", selected_video=str(destination), clear_selection=False)
+
+
 def refresh_gallery() -> tuple[list[tuple[str, str]], list[str], str]:
     videos = gallery_video_paths()
     items: list[tuple[str, str]] = []
@@ -6118,6 +6194,7 @@ def postprocess_selected_gallery_video(
     force_offload: bool,
     split_upscale: bool,
     split_seconds: float,
+    upscale_resolution: str,
     request: gr.Request,
     progress=gr.Progress(track_tqdm=False),
 ):
@@ -6135,6 +6212,14 @@ def postprocess_selected_gallery_video(
         actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
         progress(0, desc=f"Preparing {option}")
         yield gallery_progress_result(f"Preparing `{source.name}` for {option}")
+
+        if option == SWIFTVR_UPSCALE:
+            metadata = probe_video_metadata(source)
+            target_width, target_height = upscale_target_dimensions(metadata.width, metadata.height, upscale_resolution)
+            result = postprocess_swiftvr_video(source, fps=metadata.fps, target_width=target_width, target_height=target_height)
+            progress(1, desc="Complete")
+            yield gallery_processed_result(result, option, time.monotonic() - started, request)
+            return
 
         if option not in COMFY_UPSCALE_OPTIONS:
             result = postprocess_video(source, option)
@@ -6167,6 +6252,7 @@ def postprocess_selected_gallery_video(
         if downloaded:
             yield gallery_progress_result(f"{option} models downloaded")
         metadata = probe_video_metadata(source)
+        target_width, target_height = upscale_target_dimensions(metadata.width, metadata.height, upscale_resolution)
         use_split = option == LTX25_UPSCALE and bool(split_upscale)
         clip_batch = prepare_upscale_clip_batch(
             source,
@@ -6196,6 +6282,8 @@ def postprocess_selected_gallery_video(
                 prompt=ltx25_prompt,
                 width=metadata.width,
                 height=metadata.height,
+                target_width=target_width,
+                target_height=target_height,
                 fps=metadata.fps,
             )
 
@@ -6220,6 +6308,8 @@ def postprocess_selected_gallery_video(
                     prompt=ltx25_prompt,
                     width=metadata.width,
                     height=metadata.height,
+                    target_width=target_width,
+                    target_height=target_height,
                     fps=metadata.fps,
                 )
                 queued_at = time.time()
@@ -6520,6 +6610,7 @@ def generate(
     upscale_force_offload: bool = False,
     upscale_split_enabled: bool = False,
     upscale_split_seconds: float = 5.0,
+    upscale_resolution: str = DEFAULT_UPSCALE_RESOLUTION,
     seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
     ltx25_model: str = DEFAULT_LTX25_MODEL,
     use_int8_vae: bool = False,
@@ -7036,7 +7127,13 @@ def generate(
             yield None, progress_status(
                 f"Post-processing: {postprocess}", started=started
             )
-        if postprocess in COMFY_UPSCALE_OPTIONS:
+        if postprocess == SWIFTVR_UPSCALE:
+            metadata = probe_video_metadata(source)
+            target_width, target_height = upscale_target_dimensions(metadata.width, metadata.height, upscale_resolution)
+            if upscale_force_offload:
+                unload_comfy_models()
+            result = postprocess_swiftvr_video(source, fps=metadata.fps, target_width=target_width, target_height=target_height)
+        elif postprocess in COMFY_UPSCALE_OPTIONS:
             if postprocess == SEEDVR2_UPSCALE:
                 model_status = f"SeedVR2 {seedvr2_model}"
                 stage_bucket = "seedvr2_upscale"
@@ -7055,6 +7152,7 @@ def generate(
             if downloaded:
                 yield None, progress_status(f"{postprocess} models downloaded", started=started)
             metadata = probe_video_metadata(source)
+            target_width, target_height = upscale_target_dimensions(metadata.width, metadata.height, upscale_resolution)
             use_split = postprocess == LTX25_UPSCALE and bool(upscale_split_enabled)
             clip_batch = prepare_upscale_clip_batch(
                 source,
@@ -7089,6 +7187,8 @@ def generate(
                 prompt=prompt,
                 width=resolved_width,
                 height=resolved_height,
+                target_width=target_width,
+                target_height=target_height,
                 fps=metadata.fps,
             )
 
@@ -7139,6 +7239,8 @@ def generate(
                     prompt=prompt,
                     width=resolved_width,
                     height=resolved_height,
+                    target_width=target_width,
+                    target_height=target_height,
                     fps=metadata.fps,
                 )
                 upscale_queued_at = time.time()
@@ -8586,6 +8688,11 @@ def build_ui() -> gr.Blocks:
                         ),
                     )
                     with gr.Group(visible=False) as generation_postprocess_settings:
+                        generation_upscale_resolution = gr.Dropdown(
+                            choices=list(UPSCALE_RESOLUTION_PRESETS), value=DEFAULT_UPSCALE_RESOLUTION,
+                            label="Output resolution",
+                            info="Fits the source inside the selected square while preserving aspect ratio.",
+                        )
                         generation_seedvr2_model = gr.Dropdown(
                             choices=list(SEEDVR2_MODEL_CHOICES),
                             value=defaults["seedvr2_model"],
@@ -8927,6 +9034,8 @@ def build_ui() -> gr.Blocks:
                     "Only poster thumbnails are loaded here. Select one to load and play it."
                 )
                 gallery_refresh = gr.Button("Refresh gallery", scale=0)
+                gallery_upload_video = gr.Video(label="Upload local video", sources=["upload"], height=100)
+                gallery_import_video = gr.Button("Add to gallery", variant="secondary", scale=0)
                 gallery_delete = gr.Button(
                     "Delete selected",
                     variant="stop",
@@ -8969,6 +9078,11 @@ def build_ui() -> gr.Blocks:
                             choices=POSTPROCESS_OPTIONS,
                             value=POSTPROCESS_OPTIONS[0],
                             label="Method",
+                        )
+                        gallery_upscale_resolution = gr.Dropdown(
+                            choices=list(UPSCALE_RESOLUTION_PRESETS), value=DEFAULT_UPSCALE_RESOLUTION,
+                            label="Output resolution",
+                            info="Fits the source inside the selected square while preserving aspect ratio.",
                         )
                         with gr.Group(visible=True) as gallery_ai_settings:
                             gallery_seedvr2_model = gr.Dropdown(
@@ -9193,7 +9307,7 @@ def build_ui() -> gr.Blocks:
         )
         gallery_postprocess.change(
             lambda value: (
-                gr.update(visible=value in COMFY_UPSCALE_OPTIONS),
+                gr.update(visible=value in AI_POSTPROCESS_OPTIONS),
                 gr.update(visible=value == SEEDVR2_UPSCALE),
                 gr.update(visible=value == LTX25_UPSCALE),
                 gr.update(visible=value == LTX25_UPSCALE),
@@ -9212,7 +9326,7 @@ def build_ui() -> gr.Blocks:
         )
         generation_postprocess.change(
             lambda value: (
-                gr.update(visible=value in COMFY_UPSCALE_OPTIONS),
+                gr.update(visible=value in AI_POSTPROCESS_OPTIONS),
                 gr.update(visible=value == SEEDVR2_UPSCALE),
                 gr.update(visible=value == LTX25_UPSCALE),
                 gr.update(visible=value == LTX25_UPSCALE),
@@ -9447,7 +9561,8 @@ def build_ui() -> gr.Blocks:
                 cache_mode, fbcache_preset, fbcache_threshold, fbcache_start,
                 fbcache_end, fbcache_max_hits, fbcache_temporal_guard,
                 easycache_threshold, easycache_start, easycache_end, easycache_verbose,
-                ref_size, generation_postprocess, reuse_unchanged_inputs,
+                ref_size, generation_postprocess, generation_upscale_resolution,
+                reuse_unchanged_inputs,
                 latent_upscale, latent_upscaler_model, latent_upscale_refine_steps,
                 generation_force_offload,
                 generation_split_upscale, generation_split_seconds,
@@ -9712,6 +9827,13 @@ def build_ui() -> gr.Blocks:
             gallery_selected,
             gallery_confirm_delete,
         ]
+        gallery_import_video.click(
+            import_gallery_video,
+            inputs=[gallery_upload_video],
+            outputs=gallery_mutation_outputs,
+            show_progress="minimal",
+            api_name=False,
+        )
         gallery_post_event = gallery_post_run.click(
             postprocess_selected_gallery_video,
             inputs=[
@@ -9724,6 +9846,7 @@ def build_ui() -> gr.Blocks:
                 gallery_force_offload,
                 gallery_split_upscale,
                 gallery_split_seconds,
+                gallery_upscale_resolution,
             ],
             outputs=gallery_mutation_outputs + [gallery_post_status],
             show_progress="minimal",
@@ -10903,10 +11026,10 @@ def selftest() -> None:
         "ws_per_message_deflate": False,
     }
     assert POSTPROCESS_OPTIONS == [
-        SEEDVR2_UPSCALE, LTX25_UPSCALE, "48 fps interpolation"
+        SEEDVR2_UPSCALE, LTX25_UPSCALE, SWIFTVR_UPSCALE, "48 fps interpolation"
     ]
     assert GENERATION_POSTPROCESS_OPTIONS == [
-        "None", SEEDVR2_UPSCALE, LTX25_UPSCALE
+        "None", SEEDVR2_UPSCALE, LTX25_UPSCALE, SWIFTVR_UPSCALE
     ]
 
     assert resolution_choice_values("9:16 · 768×1344", "large")[:2] == (768, 1344)

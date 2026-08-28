@@ -333,10 +333,14 @@ and exposes every selected result (including unchanged originals) for download.
 The SeedVR2 model and VAE remain lazy-downloaded, and the optional resident-model
 unload control can reduce peak VRAM before this preprocessing pass.
 
-Generate a video, open **Gallery**, select its thumbnail, and choose a method
-under **Post-process selected video**. Each run preserves the source and adds a
-new processed video to the gallery. **SeedVR2 2x** uses ComfyUI's native
-one-step restoration workflow. **LTX-2.5 IC-LoRA 2x** is a generative alternative
+Generate a video, open **Gallery**, or upload a local video into Gallery and
+click **Add to gallery**. Select its thumbnail and choose a method under
+**Post-process selected video**. Each run preserves the source and adds a new
+processed video to the gallery. Choose an output-resolution preset from
+**1280 × 1280**, **1920 × 1920**, **2560 × 2560**, or **3840 × 3840**; the source
+is fitted inside that square without cropping, so its original aspect ratio is
+preserved. **SeedVR2 2x** uses ComfyUI's native one-step restoration workflow.
+**LTX-2.5 IC-LoRA 2x** is a generative alternative
 that synthesizes fine detail with the transformer selected in the **LTX 2.5**
 tab and the official gated pixel spatial upscaler IC-LoRA. Gallery runs accept
 an optional scene prompt; automatic post-processing reuses the H3 generation
