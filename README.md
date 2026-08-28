@@ -120,7 +120,7 @@ Turbo defaults to the LightX2V four-step adapter at strength 1.0 (FL2V v1.1
 at six steps through its pinned custom node, which uses a quantization-aware
 bypass loader plus the adaptive H3 Turbo sampler. LightX2V also provides a
 mode-specific four-step option (FL2V v1.1 768p or
-Ref2V v0.1 544p) and an FL2V v1.0 eight-step 544p option, all at strength 1.0.
+Ref2V v0.1 544p) and an FL2V v1.0 eight-step 768p option, all at strength 1.0.
 The FL2V v1.1 workflow applies LightX2V's recommended video/audio sigma shifts
 of 6/3 and uses four Euler steps with the simple scheduler by default.
 Loader policy follows the base model: Original BF16 applies either LoRA in

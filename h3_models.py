@@ -166,8 +166,8 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     "turbo_8step_lora": ModelSpec(
         TURBO_REPO,
         "loras",
-        "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
-        "LightX2V Turbo 8-step v1.0 · official 544p ComfyUI BF16",
+        "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+        "LightX2V Turbo 8-step v1.0 · official 768p ComfyUI BF16",
     ),
     "larry_turbo_lora": ModelSpec(
         LARRY_TURBO_REPO,
@@ -1042,7 +1042,7 @@ def selftest() -> None:
     assert cfg["turbo_ref_lora"] == (
         "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
     )
-    assert cfg["turbo_8step_lora"] == "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"
+    assert cfg["turbo_8step_lora"] == "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
     assert cfg["turbo_8step_ref_lora"] == cfg["turbo_8step_lora"]
     assert {"turbo_lora", "turbo_ref_lora"}.issubset(
         PRELOAD_MODEL_KEYS

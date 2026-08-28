@@ -175,7 +175,7 @@ SLA_PRESET_INPUTS = {
     },
 }
 LIGHTX2V_4STEP_TURBO = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
-LIGHTX2V_8STEP_TURBO = "LightX2V v1.0 / 8-step 544p"
+LIGHTX2V_8STEP_TURBO = "LightX2V v1.0 / 8-step 768p"
 LARRY_TURBO = "Larry v4-600 EMA"
 DEFAULT_TURBO = LIGHTX2V_4STEP_TURBO
 RESULT_FORMATS = ("Video", "Image", "Audio")
@@ -6447,7 +6447,7 @@ def backend_status() -> str:
             )
         if models.turbo_8step_lora:
             profile_lines.append(
-                f"**LightX2V Turbo v1.0 / 8-step 544p** · LoRA `{models.turbo_8step_lora}` · "
+                f"**LightX2V Turbo v1.0 / 8-step 768p** · LoRA `{models.turbo_8step_lora}` · "
                 "8-step default · strength 1.0 · FL2VA and experimental Ref2VA"
             )
         return (
@@ -9962,9 +9962,9 @@ def selftest() -> None:
         turbo_source="test",
         turbo_ref_lora="minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
         turbo_ref_source="ref2v-test",
-        turbo_8step_lora="minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+        turbo_8step_lora="minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
         turbo_8step_source="test",
-        turbo_8step_ref_lora="minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+        turbo_8step_ref_lora="minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
         turbo_8step_ref_source="shared-fl2va-test",
         larry_turbo_lora="minimax_h3_turbo_v4_step600_ema.safetensors",
         larry_turbo_source="test",
