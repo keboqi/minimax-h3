@@ -107,6 +107,8 @@ from h3_requirements import (  # noqa: E402
     TORCHAUDIO_VERSION,
     TORCHVISION_VERSION,
     WSPROTO_VERSION,
+    SWIFTVR_REF,
+    SWIFTVR_REPO,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
     probe_comfy_frontend,
@@ -204,6 +206,10 @@ def build(revision: str) -> None:
 
     _clone(COMFY_REPO, Path(COMFY), ref=COMFY_REF)
     _print_git_revision(Path(COMFY))
+
+    swiftvr_dir = Path(ROOT) / "SwiftVR"
+    _clone(SWIFTVR_REPO, swiftvr_dir, ref=SWIFTVR_REF)
+    _print_git_revision(swiftvr_dir)
 
     sol_dir = Path(COMFY) / "custom_nodes" / "ComfyUI_sol-attn_Blackwell"
     _clone(SOL_REPO, sol_dir, ref=SOL_REF)
@@ -340,10 +346,15 @@ def build(revision: str) -> None:
         "gradio>=5,<7",
         "huggingface_hub>=0.34",
         "transformers>=4.57.1",
+        "diffusers>=0.36,<0.37",
         f"kernels=={KERNELS_VERSION}",
-        "accelerate>=1.10",
+        "accelerate>=1.12",
         "peft>=0.18",
-        "safetensors>=0.5",
+        "safetensors>=0.7",
+        "einops>=0.8.2",
+        "decord==0.6.0",
+        "imageio>=2.37.2",
+        "imageio-ffmpeg>=0.6",
         "requests>=2.32",
         "websocket-client>=1.8",
         "aiohttp>=3.11,<4",

@@ -26,6 +26,8 @@ from h3_requirements import (
     TORCHAUDIO_VERSION,
     TORCHVISION_VERSION,
     WSPROTO_VERSION,
+    SWIFTVR_REF,
+    SWIFTVR_REPO,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
     sync_ltx25_workflows,
@@ -563,10 +565,15 @@ def install_environment(comfy: Path) -> None:
             "gradio>=5,<7",
             "huggingface_hub>=0.34",
             "transformers>=4.57.1",
+            "diffusers>=0.36,<0.37",
             f"kernels=={KERNELS_VERSION}",
-            "accelerate>=1.10",
+            "accelerate>=1.12",
             "peft>=0.18",
-            "safetensors>=0.5",
+            "safetensors>=0.7",
+            "einops>=0.8.2",
+            "decord==0.6.0",
+            "imageio>=2.37.2",
+            "imageio-ffmpeg>=0.6",
             "requests>=2.32",
             "websocket-client>=1.8",
             "aiohttp>=3.11,<4",
@@ -707,6 +714,20 @@ def sync_external_nodes(
     )
 
 
+def sync_swiftvr_runtime(install_dir: Path) -> None:
+    runtime = install_dir / "SwiftVR"
+    sync_git_repo(
+        SWIFTVR_REPO,
+        runtime,
+        ref=SWIFTVR_REF,
+        required_paths=(
+            "setup.py",
+            "swiftvr/__init__.py",
+            "swiftvr/pipeline.py",
+        ),
+    )
+
+
 def install_bundled_nodes(comfy: Path) -> None:
     if not BUNDLED_ACCEL_NODE.is_file():
         raise RuntimeError(
@@ -774,6 +795,7 @@ def main() -> None:
         comfy,
         install_requirements=not args.skip_env,
     )
+    sync_swiftvr_runtime(install_dir)
     if not torch_stack_matches():
         install_pinned_torch_stack()
     if not numpy_stack_matches():

@@ -64,9 +64,13 @@ environment_is_current() {
   [[ -d "$COMFY_DIR/.git" ]] || return 1
 
   local installed_ref expected_ref installed_kitchen installed_wsproto
-  local expected_ref expected_kitchen expected_frontend expected_wsproto
+  local installed_swiftvr_ref expected_swiftvr_ref
+  local expected_kitchen expected_frontend expected_wsproto
   installed_ref="$(git -C "$COMFY_DIR" rev-parse HEAD 2>/dev/null)" || return 1
-  read -r expected_ref expected_kitchen expected_frontend expected_wsproto < <(
+  installed_swiftvr_ref="$(
+    git -C "$INSTALL_DIR/SwiftVR" rev-parse HEAD 2>/dev/null
+  )" || return 1
+  read -r expected_ref expected_swiftvr_ref expected_kitchen expected_frontend expected_wsproto < <(
     "$PYTHON_BIN" - "$SCRIPT_DIR" <<'PY'
 import sys
 
@@ -76,10 +80,12 @@ from h3_requirements import (
     COMFY_KITCHEN_VERSION,
     COMFY_REF,
     WSPROTO_VERSION,
+    SWIFTVR_REF,
 )
 
 print(
     COMFY_REF,
+    SWIFTVR_REF,
     COMFY_KITCHEN_VERSION,
     COMFY_FRONTEND_VERSION,
     WSPROTO_VERSION,
@@ -108,6 +114,7 @@ PY
   )" || return 1
 
   [[ "$installed_ref" == "$expected_ref" ]] || return 1
+  [[ "$installed_swiftvr_ref" == "$expected_swiftvr_ref" ]] || return 1
   [[ "$installed_kitchen" == "$expected_kitchen" ]] || return 1
   [[ "$installed_wsproto" == "$expected_wsproto" ]] || return 1
   "$PYTHON_BIN" - "$SCRIPT_DIR" <<'PY' >/dev/null || return 1
@@ -117,6 +124,14 @@ sys.path.insert(0, sys.argv[1])
 from h3_requirements import comfy_frontend_package_is_ready
 
 raise SystemExit(0 if comfy_frontend_package_is_ready() else 1)
+PY
+  "$PYTHON_BIN" - "$INSTALL_DIR/SwiftVR" <<'PY' >/dev/null || return 1
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import decord
+import diffusers
+import swiftvr
 PY
 }
 

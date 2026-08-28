@@ -14,6 +14,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -68,6 +69,7 @@ from h3_models import (
     stale_model_keys,
     sync_models,
 )
+from h3_requirements import SWIFTVR_HF_REPO
 from h3_prompt_rewriter import (
     BASE_MODEL_CHOICES as LOCAL_PROMPT_BASE_MODELS,
     DEFAULT_BASE_MODEL_LABEL as DEFAULT_LOCAL_PROMPT_BASE_MODEL,
@@ -382,7 +384,28 @@ H3_UI_CSS = """
 .h3-settings-section { margin-top: .2rem; border-radius: 14px; overflow: hidden; }
 .h3-settings-section > div { gap: .75rem; }
 .h3-danger-zone { border-color: color-mix(in srgb, #ef4444 55%, var(--border-color-primary)); }
-@media (max-width: 900px) { .h3-action-dock { position: static; } .gradio-container { padding-left: .55rem !important; padding-right: .55rem !important; } }
+.h3-gallery-shell { gap: .8rem; }
+.h3-gallery-heading { padding: 1rem 1.15rem; border: 1px solid var(--border-color-primary); border-radius: 18px; background: linear-gradient(135deg, var(--h3-accent-soft), transparent 68%); }
+.h3-gallery-heading h2, .h3-gallery-heading p, .h3-gallery-section-title h3, .h3-gallery-section-title p { margin-bottom: 0; }
+.h3-gallery-heading p, .h3-gallery-section-title p { opacity: .72; }
+.h3-gallery-toolbar { align-items: center; gap: .8rem; }
+.h3-gallery-toolbar button { min-height: 42px; font-weight: 650; }
+.h3-gallery-status { min-height: 42px; display: flex; align-items: center; padding: .45rem .75rem; border: 1px solid var(--border-color-primary); border-radius: 12px; background: var(--h3-panel); }
+.h3-gallery-status p { margin: 0; }
+.h3-gallery-card { border-radius: 15px; overflow: hidden; border-color: var(--border-color-primary); }
+.h3-gallery-import { align-items: end; }
+.h3-gallery-import button { min-height: 46px; margin-bottom: 2px; font-weight: 700; }
+.h3-gallery-workspace { gap: 1rem; align-items: stretch; }
+.h3-gallery-section-title { min-height: 58px; padding: .15rem .2rem; }
+.h3-gallery-grid { border-radius: 14px; overflow: hidden; }
+.h3-gallery-player video { border-radius: 12px; background: #08090c; }
+.h3-gallery-download { min-height: 34px; }
+.h3-gallery-ai-settings { padding: .25rem; border-radius: 12px; background: color-mix(in srgb, var(--h3-panel) 72%, transparent); }
+.h3-gallery-actions button { min-height: 48px; font-weight: 700; }
+.h3-gallery-danger { border-color: color-mix(in srgb, #ef4444 45%, var(--border-color-primary)); }
+.h3-gallery-danger-actions button { min-height: 44px; }
+.h3-gallery-post-status { min-height: 24px; }
+@media (max-width: 900px) { .h3-action-dock { position: static; } .gradio-container { padding-left: .55rem !important; padding-right: .55rem !important; } .h3-gallery-workspace { gap: .55rem; } .h3-gallery-heading { padding: .85rem; } }
 """
 
 @dataclass(frozen=True)
@@ -5616,29 +5639,123 @@ def has_encoder(name: str) -> bool:
     return name in proc.stdout
 
 
-def postprocess_swiftvr_video(source: Path, *, fps: float, target_width: int, target_height: int) -> Path:
-    checkpoint = Path(os.getenv("SWIFTVR_CHECKPOINT_DIR", str(COMFY_DIR / "models" / "swiftvr"))).expanduser().resolve()
-    required = (checkpoint / "reae.safetensors", checkpoint / "prompt_embedding.safetensors", checkpoint / "transformer" / "config.json")
-    if not all(path.is_file() for path in required):
-        raise H3Error("SwiftVR is not configured. Set SWIFTVR_CHECKPOINT_DIR to a valid checkpoint directory.")
+def ensure_swiftvr_checkpoint() -> tuple[Path, bool]:
+    configured = os.getenv("SWIFTVR_CHECKPOINT_DIR")
+    checkpoint = Path(
+        configured or COMFY_DIR / "models" / "swiftvr"
+    ).expanduser().resolve()
+    required = (
+        checkpoint / "reae.safetensors",
+        checkpoint / "prompt_embedding.safetensors",
+        checkpoint / "transformer" / "config.json",
+        checkpoint / "transformer" / "diffusion_pytorch_model.safetensors",
+    )
+    if all(path.is_file() for path in required):
+        return checkpoint, False
+    if configured:
+        missing = ", ".join(
+            str(path.relative_to(checkpoint))
+            for path in required
+            if not path.is_file()
+        )
+        raise H3Error(
+            f"SWIFTVR_CHECKPOINT_DIR is incomplete ({checkpoint}). "
+            f"Missing: {missing}."
+        )
+
+    try:
+        from huggingface_hub import snapshot_download
+
+        checkpoint.mkdir(parents=True, exist_ok=True)
+        snapshot_download(
+            repo_id=SWIFTVR_HF_REPO,
+            local_dir=str(checkpoint),
+            token=resolve_hf_token(),
+            allow_patterns=(
+                "reae.safetensors",
+                "prompt_embedding.safetensors",
+                "transformer/*.json",
+                "transformer/*.safetensors",
+            ),
+        )
+    except Exception as exc:
+        raise H3Error(
+            "SwiftVR checkpoint download failed from "
+            f"{SWIFTVR_HF_REPO}. Check network access and available disk "
+            f"space, then retry. Details: {exc}"
+        ) from exc
+
+    missing = [path for path in required if not path.is_file()]
+    if missing:
+        raise H3Error(
+            "SwiftVR download completed without the required files: "
+            + ", ".join(str(path.relative_to(checkpoint)) for path in missing)
+        )
+    return checkpoint, True
+
+
+def import_swiftvr_pipeline() -> Any:
+    source_checkout = COMFY_DIR.parent / "SwiftVR"
+    if source_checkout.is_dir() and str(source_checkout) not in sys.path:
+        sys.path.insert(0, str(source_checkout))
     try:
         from swiftvr import SwiftVRPipeline
     except Exception as exc:
-        raise H3Error("SwiftVR is not installed in the ComfyUI Python environment.") from exc
+        raise H3Error(
+            "SwiftVR runtime is not installed. Re-run setup_h3.py without "
+            "--skip-env, then restart the app."
+        ) from exc
+    return SwiftVRPipeline
+
+
+def postprocess_swiftvr_video(
+    source: Path,
+    *,
+    fps: float,
+    target_width: int,
+    target_height: int,
+) -> Path:
     global _SWIFTVR_PIPELINE
     with _SWIFTVR_LOCK:
+        checkpoint, _ = ensure_swiftvr_checkpoint()
         if _SWIFTVR_PIPELINE is None:
-            _SWIFTVR_PIPELINE = SwiftVRPipeline.from_pretrained(checkpoint, device="cuda", dtype="bfloat16")
+            pipeline_class = import_swiftvr_pipeline()
+            _SWIFTVR_PIPELINE = pipeline_class.from_pretrained(
+                checkpoint,
+                device="cuda",
+                dtype="bfloat16",
+            )
         token = uuid.uuid4().hex[:8]
         raw = OUTPUTS_DIR / f".swiftvr_{token}.mp4"
         result = OUTPUTS_DIR / "swiftvr" / f"upscale_{token}.mp4"
         result.parent.mkdir(parents=True, exist_ok=True)
         try:
-            _SWIFTVR_PIPELINE.restore_video(source, raw, resolution=(int(target_width), int(target_height)), upscale=2, clip_len=24, fps=float(fps), quality=95)
-            cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(raw), "-i", str(source), "-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", str(result)]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=REQUEST_TIMEOUT)
+            _SWIFTVR_PIPELINE.restore_video(
+                source,
+                raw,
+                resolution=(int(target_width), int(target_height)),
+                upscale=2,
+                clip_len=24,
+                fps=float(fps),
+                quality=95,
+            )
+            cmd = [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-i", str(raw), "-i", str(source),
+                "-map", "0:v:0", "-map", "1:a:0?",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-shortest", str(result),
+            ]
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=REQUEST_TIMEOUT,
+            )
             if proc.returncode != 0 or not result.is_file():
-                raise H3Error(f"SwiftVR output mux failed: {proc.stderr.strip()}")
+                raise H3Error(
+                    f"SwiftVR output mux failed: {proc.stderr.strip()}"
+                )
             return result
         finally:
             raw.unlink(missing_ok=True)
@@ -6214,6 +6331,11 @@ def postprocess_selected_gallery_video(
         yield gallery_progress_result(f"Preparing `{source.name}` for {option}")
 
         if option == SWIFTVR_UPSCALE:
+            progress(0, desc="Checking SwiftVR runtime and checkpoint")
+            yield gallery_progress_result(
+                "Checking SwiftVR runtime and downloading its checkpoint "
+                "on first use."
+            )
             metadata = probe_video_metadata(source)
             target_width, target_height = upscale_target_dimensions(metadata.width, metadata.height, upscale_resolution)
             result = postprocess_swiftvr_video(source, fps=metadata.fps, target_width=target_width, target_height=target_height)
@@ -9027,64 +9149,140 @@ def build_ui() -> gr.Blocks:
                         "Music 3 may end a song before the maximum duration."
                     )
 
-        with gr.Group(visible=False) as gallery_view:
-            with gr.Row():
-                gr.Markdown(
-                    "## Generated videos\n"
-                    "Only poster thumbnails are loaded here. Select one to load and play it."
-                )
-                gallery_refresh = gr.Button("Refresh gallery", scale=0)
-                gallery_upload_video = gr.Video(label="Upload local video", sources=["upload"], height=100)
-                gallery_import_video = gr.Button("Add to gallery", variant="secondary", scale=0)
-                gallery_delete = gr.Button(
-                    "Delete selected",
-                    variant="stop",
+        with gr.Group(
+            visible=False,
+            elem_classes=["h3-gallery-shell"],
+        ) as gallery_view:
+            gr.Markdown(
+                "## Video gallery\n"
+                "Browse generated work, import a local clip, and enhance the selected video.",
+                elem_classes=["h3-gallery-heading"],
+            )
+
+            with gr.Row(equal_height=True, elem_classes=["h3-gallery-toolbar"]):
+                gallery_refresh = gr.Button(
+                    "Refresh library",
+                    variant="secondary",
                     scale=0,
+                    min_width=150,
                 )
-                gallery_empty = gr.Button(
-                    "Empty all generated",
-                    variant="stop",
-                    scale=0,
+                gallery_status = gr.Markdown(
+                    "Open this tab to scan generated videos.",
+                    elem_classes=["h3-gallery-status"],
                 )
-            gallery_status = gr.Markdown("Open this tab to scan generated videos.")
+
             gallery_paths = gr.State([])
             gallery_selected = gr.State(None)
-            gallery_confirm_delete = gr.Checkbox(
-                value=False,
-                label="I understand deletion is permanent",
-                info="Required before Delete selected or Empty all generated can run.",
-                elem_classes=["h3-danger-zone"],
-            )
-            with gr.Row(equal_height=False):
-                with gr.Column(scale=2, min_width=280):
+
+            with gr.Accordion(
+                "Import a local video",
+                open=False,
+                elem_classes=["h3-gallery-card"],
+            ):
+                gr.Markdown(
+                    "Add an existing video to this library so it can be previewed "
+                    "and post-processed alongside generated clips."
+                )
+                with gr.Row(equal_height=True, elem_classes=["h3-gallery-import"]):
+                    gallery_upload_video = gr.File(
+                        label="Choose a video",
+                        file_count="single",
+                        file_types=["video"],
+                        type="filepath",
+                        height=90,
+                        scale=4,
+                    )
+                    gallery_import_video = gr.Button(
+                        "Add to library",
+                        variant="primary",
+                        scale=0,
+                        min_width=170,
+                    )
+
+            with gr.Row(equal_height=False, elem_classes=["h3-gallery-workspace"]):
+                with gr.Column(scale=3, min_width=320):
+                    gr.Markdown(
+                        "### Library\n"
+                        "Select a thumbnail to load the full video.",
+                        elem_classes=["h3-gallery-section-title"],
+                    )
                     gallery_grid = gr.Gallery(
                         value=[],
-                        label="Generated video thumbnails",
-                        columns=2,
-                        height=540,
+                        label="Video library",
+                        columns=3,
+                        height=620,
                         object_fit="cover",
                         allow_preview=False,
                         fit_columns=False,
                         elem_id="generated-video-gallery",
+                        elem_classes=["h3-gallery-grid"],
                     )
+                    with gr.Accordion(
+                        "Manage library",
+                        open=False,
+                        elem_classes=["h3-gallery-card", "h3-gallery-danger"],
+                    ):
+                        gallery_confirm_delete = gr.Checkbox(
+                            value=False,
+                            label="I understand deletion is permanent",
+                            info=(
+                                "Required before deleting the selected video "
+                                "or emptying the generated library."
+                            ),
+                        )
+                        with gr.Row(
+                            equal_height=True,
+                            elem_classes=["h3-gallery-danger-actions"],
+                        ):
+                            gallery_delete = gr.Button(
+                                "Delete selected",
+                                variant="stop",
+                            )
+                            gallery_empty = gr.Button(
+                                "Empty generated library",
+                                variant="stop",
+                            )
+
                 with gr.Column(scale=5, min_width=480):
+                    gr.Markdown(
+                        "### Preview & enhance\n"
+                        "Review the selected clip, download it, or create an enhanced copy.",
+                        elem_classes=["h3-gallery-section-title"],
+                    )
                     gallery_player = gr.Video(
                         label="Selected video",
-                        height=540,
+                        height=420,
+                        elem_classes=["h3-gallery-player"],
                     )
-                    gallery_download = gr.Markdown()
-                    with gr.Accordion("Post-process selected video", open=True):
-                        gallery_postprocess = gr.Dropdown(
-                            choices=POSTPROCESS_OPTIONS,
-                            value=POSTPROCESS_OPTIONS[0],
-                            label="Method",
-                        )
-                        gallery_upscale_resolution = gr.Dropdown(
-                            choices=list(UPSCALE_RESOLUTION_PRESETS), value=DEFAULT_UPSCALE_RESOLUTION,
-                            label="Output resolution",
-                            info="Fits the source inside the selected square while preserving aspect ratio.",
-                        )
-                        with gr.Group(visible=True) as gallery_ai_settings:
+                    gallery_download = gr.Markdown(
+                        elem_classes=["h3-gallery-download"],
+                    )
+                    with gr.Accordion(
+                        "Enhance selected video",
+                        open=True,
+                        elem_classes=["h3-gallery-card", "h3-gallery-enhance"],
+                    ):
+                        with gr.Row(equal_height=True):
+                            gallery_postprocess = gr.Dropdown(
+                                choices=POSTPROCESS_OPTIONS,
+                                value=POSTPROCESS_OPTIONS[0],
+                                label="Method",
+                                scale=2,
+                            )
+                            gallery_upscale_resolution = gr.Dropdown(
+                                choices=list(UPSCALE_RESOLUTION_PRESETS),
+                                value=DEFAULT_UPSCALE_RESOLUTION,
+                                label="Target resolution",
+                                info=(
+                                    "Fits the source inside this frame while "
+                                    "preserving its aspect ratio."
+                                ),
+                                scale=2,
+                            )
+                        with gr.Group(
+                            visible=True,
+                            elem_classes=["h3-gallery-ai-settings"],
+                        ) as gallery_ai_settings:
                             gallery_seedvr2_model = gr.Dropdown(
                                 choices=list(SEEDVR2_MODEL_CHOICES),
                                 value=defaults["seedvr2_model"],
@@ -9137,13 +9335,22 @@ def build_ui() -> gr.Blocks:
                                 ),
                                 visible=False,
                             )
-                        with gr.Row():
+                        with gr.Row(
+                            equal_height=True,
+                            elem_classes=["h3-gallery-actions"],
+                        ):
                             gallery_post_run = gr.Button(
-                                "Post-process selected",
+                                "Enhance selected video",
                                 variant="primary",
+                                scale=3,
                             )
-                            gallery_post_stop = gr.Button("Interrupt")
-                        gallery_post_status = gr.Markdown()
+                            gallery_post_stop = gr.Button(
+                                "Interrupt",
+                                scale=1,
+                            )
+                        gallery_post_status = gr.Markdown(
+                            elem_classes=["h3-gallery-post-status"],
+                        )
 
         with gr.Group(visible=False) as api_view:
             gr.Markdown(api_guide())
