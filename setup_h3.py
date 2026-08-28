@@ -575,6 +575,7 @@ def install_environment(comfy: Path) -> None:
             "imageio>=2.37.2",
             "imageio-ffmpeg>=0.6",
             "requests>=2.32",
+            "openai>=1.109,<3",
             "websocket-client>=1.8",
             "aiohttp>=3.11,<4",
             "httpx>=0.27",

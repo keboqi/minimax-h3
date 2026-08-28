@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import hashlib
 import inspect
 import json
@@ -34,6 +35,7 @@ import httpx
 import requests
 import uvicorn
 import websocket
+from openai import OpenAI, OpenAIError
 from fastapi import (
     FastAPI,
     HTTPException,
@@ -137,7 +139,9 @@ GEMINI_PROMPT_MODELS = (
 )
 DEFAULT_GEMINI_PROMPT_MODEL = GEMINI_PROMPT_MODELS[0]
 GEMINI_API_ROOT = "https://generativelanguage.googleapis.com"
-PROMPT_WRITER_BACKENDS = ("Local MiniMax-H3 8B", "Gemini")
+LIGHTNING_PROMPT_MODEL = "openai/gpt-5.6-luna"
+LIGHTNING_API_ROOT = "https://lightning.ai/api/v1/"
+PROMPT_WRITER_BACKENDS = ("Local MiniMax-H3 8B", "Gemini", "Lightning AI")
 DEFAULT_PROMPT_WRITER_BACKEND = PROMPT_WRITER_BACKENDS[1]
 PROMPT_ENHANCER_SYSTEM_PATH = SCRIPT_DIR / "prompt.txt"
 PROMPT_ENHANCER_SYSTEMS = {
@@ -940,6 +944,18 @@ def _gemini_api_key(temporary_key: str | None) -> str:
     return key
 
 
+def _lightning_api_key(temporary_key: str | None) -> str:
+    key = str(temporary_key or "").strip() or os.getenv(
+        "LIGHTNING_API_KEY", ""
+    ).strip()
+    if not key:
+        raise H3Error(
+            "Set LIGHTNING_API_KEY in the server environment or enter a temporary "
+            "Lightning API key in Prompt enhancer."
+        )
+    return key
+
+
 def _uploaded_media_path(value: Any) -> Path | None:
     """Resolve filepath values returned by Gradio media components."""
     if value is None:
@@ -1359,16 +1375,8 @@ def _enhance_h3_prompt_with_gemini(
         return str(prompt or ""), f"Prompt enhancement failed: {exc}"
 
 
-def enhance_h3_prompt(
+def _enhance_h3_prompt_with_lightning(
     prompt: str,
-    backend: str,
-    local_base_model: str,
-    local_max_new_tokens: int,
-    local_temperature: float,
-    local_top_p: float,
-    local_greedy: bool,
-    local_seed: int,
-    gemini_model: str,
     temporary_api_key: str,
     mode: str,
     first_image: Any,
@@ -1394,12 +1402,173 @@ def enhance_h3_prompt(
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
 ) -> tuple[str, str]:
-    """Dispatch H3 prompt enhancement to the selected local or Gemini backend."""
+    """Generate or enhance an H3 prompt through Lightning's OpenAI API."""
+    try:
+        key = _lightning_api_key(temporary_api_key)
+        if not PROMPT_ENHANCER_SYSTEM_PATH.is_file():
+            raise H3Error(
+                f"Missing prompt enhancer system prompt: {PROMPT_ENHANCER_SYSTEM_PATH}"
+            )
+        system_prompt = PROMPT_ENHANCER_SYSTEM_PATH.read_text(
+            encoding="utf-8"
+        ).strip()
+        if not system_prompt:
+            raise H3Error("prompt.txt is empty.")
+        media = _active_prompt_media(
+            mode,
+            first_image,
+            last_image,
+            (
+                ref_image_1, ref_image_2, ref_image_3, ref_image_4, ref_image_5,
+                ref_image_6, ref_image_7, ref_image_8, ref_image_9,
+            ),
+            (ref_video_1, ref_video_2, ref_video_3),
+            (ref_audio_1, ref_audio_2, ref_audio_3),
+        )
+        rough_prompt = str(prompt or "").strip()
+        if not rough_prompt and not media:
+            raise H3Error("Enter a prompt or upload an image before enhancing.")
+
+        unsupported = [
+            label for label, path in media
+            if not _gemini_mime_type(path).startswith("image/")
+        ]
+        if unsupported:
+            raise H3Error(
+                "Lightning AI prompt enhancement supports text and images; use "
+                "Gemini for active video or audio references ("
+                + ", ".join(unsupported)
+                + ")."
+            )
+
+        normalized_result = normalize_result_format(result_format)
+        timing_request = (
+            f"Requested image frames: {validate_image_frame_count(image_frames)}"
+            if normalized_result == "Image"
+            else f"Requested duration: {float(duration):.2f} seconds"
+        )
+        requested_width = 32 if normalized_result == "Audio" else int(width)
+        requested_height = 32 if normalized_result == "Audio" else int(height)
+        content: list[dict[str, Any]] = [{
+            "type": "text",
+            "text": (
+                "Create the final MiniMax H3 prompt from the following user request.\n"
+                f"UI mode: {mode}\nResult format: {normalized_result}\n"
+                f"{timing_request}\n"
+                f"Requested output: {requested_width}x{requested_height}\n"
+                f"User text:\n{rough_prompt or '(No text supplied; infer only from the images.)'}"
+            ),
+        }]
+        for label, path in media:
+            mime_type = _gemini_mime_type(path)
+            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+            content.extend((
+                {"type": "text", "text": f"The next image is {label}."},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{encoded}",
+                        "detail": "high",
+                    },
+                },
+            ))
+
+        client = OpenAI(
+            base_url=LIGHTNING_API_ROOT,
+            api_key=key,
+            timeout=600.0,
+        )
+        completion = client.chat.completions.create(
+            model=LIGHTNING_PROMPT_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": content},
+            ],
+        )
+        enhanced = str(completion.choices[0].message.content or "").strip()
+        if enhanced.startswith("```") and enhanced.endswith("```"):
+            enhanced = re.sub(r"^```[^\n]*\n?", "", enhanced)
+            enhanced = re.sub(r"\n?```$", "", enhanced).strip()
+        if not enhanced:
+            raise H3Error("Lightning AI returned no enhanced prompt.")
+        return (
+            enhanced,
+            f"Enhanced with {LIGHTNING_PROMPT_MODEL} using {len(media)} image(s).",
+        )
+    except (H3Error, OpenAIError, OSError, ValueError, IndexError) as exc:
+        return str(prompt or ""), f"Lightning AI prompt enhancement failed: {exc}"
+
+
+def enhance_h3_prompt(
+    prompt: str,
+    backend: str,
+    local_base_model: str,
+    local_max_new_tokens: int,
+    local_temperature: float,
+    local_top_p: float,
+    local_greedy: bool,
+    local_seed: int,
+    gemini_model: str,
+    gemini_api_key: str,
+    lightning_api_key: str,
+    mode: str,
+    first_image: Any,
+    last_image: Any,
+    ref_image_1: Any,
+    ref_image_2: Any,
+    ref_image_3: Any,
+    ref_image_4: Any,
+    ref_image_5: Any,
+    ref_image_6: Any,
+    ref_image_7: Any,
+    ref_image_8: Any,
+    ref_image_9: Any,
+    ref_video_1: Any,
+    ref_video_2: Any,
+    ref_video_3: Any,
+    ref_audio_1: Any,
+    ref_audio_2: Any,
+    ref_audio_3: Any,
+    duration: float,
+    width: int,
+    height: int,
+    result_format: str = DEFAULT_RESULT_FORMAT,
+    image_frames: int = DEFAULT_IMAGE_FRAMES,
+) -> tuple[str, str]:
+    """Dispatch H3 prompt enhancement to the selected prompt-writer backend."""
     if backend == "Gemini":
         return _enhance_h3_prompt_with_gemini(
             prompt,
             gemini_model,
-            temporary_api_key,
+            gemini_api_key,
+            mode,
+            first_image,
+            last_image,
+            ref_image_1,
+            ref_image_2,
+            ref_image_3,
+            ref_image_4,
+            ref_image_5,
+            ref_image_6,
+            ref_image_7,
+            ref_image_8,
+            ref_image_9,
+            ref_video_1,
+            ref_video_2,
+            ref_video_3,
+            ref_audio_1,
+            ref_audio_2,
+            ref_audio_3,
+            duration,
+            width,
+            height,
+            result_format,
+            image_frames,
+        )
+    if backend == "Lightning AI":
+        return _enhance_h3_prompt_with_lightning(
+            prompt,
+            lightning_api_key,
             mode,
             first_image,
             last_image,
@@ -1458,10 +1627,14 @@ def enhance_h3_prompt(
         return str(prompt or ""), f"Local prompt enhancement failed: {exc}"
 
 
-def prompt_writer_backend_visibility(backend: str) -> tuple[Any, Any]:
+def prompt_writer_backend_visibility(backend: str) -> tuple[Any, Any, Any]:
     """Show only controls belonging to the selected prompt-writer backend."""
     local_selected = backend == "Local MiniMax-H3 8B"
-    return gr.update(visible=local_selected), gr.update(visible=not local_selected)
+    return (
+        gr.update(visible=local_selected),
+        gr.update(visible=backend == "Gemini"),
+        gr.update(visible=backend == "Lightning AI"),
+    )
 
 
 @dataclass(frozen=True)
@@ -8253,8 +8426,8 @@ def build_ui() -> gr.Blocks:
                 with gr.Accordion("Prompt writer / enhancer", open=False):
                     gr.Markdown(
                         "The local MiniMax-H3 8B writer supports T2VA, I2VA, "
-                        "L2VA, and FL2VA. Gemini remains available for Reference "
-                        "media and other multimodal enhancement."
+                        "L2VA, and FL2VA. Gemini supports all Reference media; "
+                        "Lightning AI supports text and image enhancement."
                     )
                     prompt_writer_backend = gr.Radio(
                         PROMPT_WRITER_BACKENDS,
@@ -8308,6 +8481,18 @@ def build_ui() -> gr.Blocks:
                                 type="password",
                                 placeholder="Uses GEMINI_API_KEY when blank",
                             )
+                    with gr.Group(visible=False) as lightning_prompt_writer_group:
+                        gr.Markdown(
+                            f"Uses `{LIGHTNING_PROMPT_MODEL}` with the active text "
+                            "and images plus `prompt.txt`. Video and audio references "
+                            "require Gemini. Set `LIGHTNING_API_KEY` on the server or "
+                            "enter a temporary key; the server does not store UI keys."
+                        )
+                        lightning_api_key = gr.Textbox(
+                            label="Temporary Lightning API key",
+                            type="password",
+                            placeholder="Uses LIGHTNING_API_KEY when blank",
+                        )
                     enhance_prompt_button = gr.Button("Generate / enhance prompt")
                     enhance_prompt_status = gr.Textbox(
                         label="Prompt enhancer status", lines=2, interactive=False
@@ -9823,7 +10008,11 @@ def build_ui() -> gr.Blocks:
         prompt_writer_backend.change(
             prompt_writer_backend_visibility,
             inputs=prompt_writer_backend,
-            outputs=[local_prompt_writer_group, gemini_prompt_writer_group],
+            outputs=[
+                local_prompt_writer_group,
+                gemini_prompt_writer_group,
+                lightning_prompt_writer_group,
+            ],
             queue=False,
             show_progress="hidden",
             api_name=False,
@@ -9841,6 +10030,7 @@ def build_ui() -> gr.Blocks:
                 local_prompt_seed,
                 gemini_prompt_model,
                 gemini_api_key,
+                lightning_api_key,
                 mode, first, last,
                 ref_image_1, ref_image_2, ref_image_3, ref_image_4, ref_image_5,
                 ref_image_6, ref_image_7, ref_image_8, ref_image_9,
@@ -10103,6 +10293,59 @@ def selftest() -> None:
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
     )
+    assert LIGHTNING_API_ROOT == "https://lightning.ai/api/v1/"
+    assert LIGHTNING_PROMPT_MODEL == "openai/gpt-5.6-luna"
+    assert PROMPT_WRITER_BACKENDS == (
+        "Local MiniMax-H3 8B",
+        "Gemini",
+        "Lightning AI",
+    )
+    with unittest.mock.patch.dict(
+        os.environ, {"LIGHTNING_API_KEY": "selftest-lightning-key"}
+    ), unittest.mock.patch(f"{__name__}.OpenAI") as openai_client:
+        completion = unittest.mock.Mock()
+        completion.choices = [
+            unittest.mock.Mock(
+                message=unittest.mock.Mock(content="Rewritten Lightning prompt")
+            )
+        ]
+        openai_client.return_value.chat.completions.create.return_value = completion
+        rewritten, lightning_status = _enhance_h3_prompt_with_lightning(
+            prompt="A moonlit tracking shot",
+            temporary_api_key="",
+            mode="Text to video",
+            first_image=None,
+            last_image=None,
+            ref_image_1=None,
+            ref_image_2=None,
+            ref_image_3=None,
+            ref_image_4=None,
+            ref_image_5=None,
+            ref_image_6=None,
+            ref_image_7=None,
+            ref_image_8=None,
+            ref_image_9=None,
+            ref_video_1=None,
+            ref_video_2=None,
+            ref_video_3=None,
+            ref_audio_1=None,
+            ref_audio_2=None,
+            ref_audio_3=None,
+            duration=6,
+            width=768,
+            height=512,
+        )
+        assert rewritten == "Rewritten Lightning prompt"
+        assert LIGHTNING_PROMPT_MODEL in lightning_status
+        openai_client.assert_called_once_with(
+            base_url=LIGHTNING_API_ROOT,
+            api_key="selftest-lightning-key",
+            timeout=600.0,
+        )
+        request = openai_client.return_value.chat.completions.create.call_args.kwargs
+        assert request["model"] == LIGHTNING_PROMPT_MODEL
+        assert request["messages"][0]["role"] == "system"
+        assert "A moonlit tracking shot" in request["messages"][1]["content"][0]["text"]
     preflight_message, preflight_update = generation_preflight(
         "Text to video", "", None, None
     )

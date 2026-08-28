@@ -236,7 +236,8 @@ still retain the compact NVFP4/INT8 stack in VRAM. Do not launch with
 sets each model's offload device to CUDA, so an unload request cannot release
 its VRAM residency.
 
-The **MiniMax H3** tab includes local and Gemini prompt writers. The local writer
+The **MiniMax H3** tab includes local, Gemini, and Lightning AI prompt writers.
+The local writer
 uses `lightx2v/MiniMax-H3-Prompt-Rewriter-LoRA-8B` with
 `Qwen/Qwen3-VL-8B-Instruct-FP8` by default; the BF16
 `Qwen/Qwen3-VL-8B-Instruct` base is selectable. It supports the four tasks used
@@ -255,6 +256,13 @@ adapter. Set `GEMINI_API_KEY` in the server environment, or enter a temporary
 key in the enhancer panel; a key entered in the UI is passed only to enhancement
 requests and is not stored by the server. Uploaded Gemini Files are deleted
 after each request. The selected operation is exposed as `/enhance_prompt`.
+
+Lightning AI uses the OpenAI Python SDK with
+`https://lightning.ai/api/v1/` and the fixed `openai/gpt-5.6-luna` model. It
+supports prompt enhancement from text plus active first/last-frame or reference
+images. Select Gemini when the active references include video or audio. Set
+`LIGHTNING_API_KEY` in the server environment, or enter a temporary key in the
+enhancer panel; UI keys are passed only to the request and are not stored.
 
 ### H3 result formats
 
@@ -409,9 +417,9 @@ modal deploy modal_h3.py
 
 The deployment attaches the `custom-secret` Modal Secret to both runtime
 functions and requires it to contain `HF_TOKEN`. If your existing secret uses a
-different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`. To make the
-Gemini enhancer available without entering a key in the UI, also store
-`GEMINI_API_KEY` in that Modal Secret.
+different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`. To make a
+hosted prompt enhancer available without entering a key in the UI, also store
+`GEMINI_API_KEY` and/or `LIGHTNING_API_KEY` in that Modal Secret.
 
 The deployment pins the immutable ComfyUI v0.34.0 release, which includes
 native MiniMax Music 3, its non-dynamic-VRAM fix, LTX 2.5 INT8 support, and
