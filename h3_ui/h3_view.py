@@ -436,7 +436,7 @@ def build_h3_view(
             )
             output_settings_section = gr.Accordion(
                 "Output essentials",
-                open=True,
+                open=False,
                 elem_classes=["h3-settings-section"],
             )
             performance_section = gr.Accordion(
@@ -448,10 +448,6 @@ def build_h3_view(
                 "Upscaling & finishing (advanced)",
                 open=False,
                 elem_classes=["h3-settings-section"],
-            )
-            gr.HTML(
-                '<div class="h3-section-intro"><h2>Review & run</h2>'
-                "<p>Confirm the effective setup before starting the job.</p></div>"
             )
             settings_overview = gr.HTML(
                 services["compact_settings_summary"](

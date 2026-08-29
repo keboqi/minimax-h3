@@ -129,6 +129,13 @@ class UiContractTests(unittest.TestCase):
         self.assertLess(performance, finishing)
         self.assertLess(finishing, summary)
         self.assertLess(summary, action)
+        self.assertFalse(direct_components[essentials].get("props", {}).get("open", True))
+        html_values = [
+            component.get("props", {}).get("value", "")
+            for component in direct_components
+            if component.get("type") == "html"
+        ]
+        self.assertFalse(any("Review & run" in val for val in html_values))
 
     def test_presentation_state_is_pure_and_semantic(self) -> None:
         self.assertTrue(mode_presentation("First / last frame").show_frames)
