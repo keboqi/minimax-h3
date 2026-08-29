@@ -98,7 +98,7 @@ from h3_ui.app_bindings import bind_app
 from h3_ui.h3_view import build_h3_view
 from h3_ui.layout import create_app_views
 from h3_ui.ltx_view import build_ltx_view
-from h3_ui.styles import H3_UI_CSS
+from h3_ui.styles import H3_SETUP_CSS, H3_UI_CSS
 from h3_ui.views import build_api_view, build_gallery_view, build_music_view
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -939,7 +939,7 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
         path="/",
         allowed_paths=allowed_paths,
         show_error=True,
-        css=H3_UI_CSS,
+        css=H3_SETUP_CSS,
     )
 
 
@@ -8468,8 +8468,6 @@ def compact_settings_summary(
     compact_pills = "".join(
         (
             pill("Original", model_profile, "purple"),
-            pill("Text", text_encoder, "blue"),
-            pill("VAE", vae_note, "pink"),
             pill("Attention", attention_note, "purple"),
             pill("Cache", cache_mode, "cyan"),
             pill("Latent", latent_note, "green" if latent_upscale else "neutral"),

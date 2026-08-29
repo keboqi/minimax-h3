@@ -11,7 +11,7 @@ from h3_ui.presentation import (
     mode_presentation,
     result_format_presentation,
 )
-from h3_ui.styles import H3_UI_CSS
+from h3_ui.styles import H3_SETUP_CSS, H3_UI_CSS
 
 
 class UiContractTests(unittest.TestCase):
@@ -92,7 +92,9 @@ class UiContractTests(unittest.TestCase):
         ):
             result = gradio_app.build_server(mock.Mock(), [])
         self.assertIs(result, mock.sentinel.mounted_app)
-        self.assertEqual(mount.call_args.kwargs["css"], H3_UI_CSS)
+        mounted_css = mount.call_args.kwargs["css"]
+        self.assertEqual(mounted_css, H3_SETUP_CSS)
+        self.assertNotIn(".gradio-container", mounted_css)
 
     def test_h3_progressive_section_order(self) -> None:
         tabs = next(
@@ -177,21 +179,19 @@ class UiContractTests(unittest.TestCase):
         self.assertIn("Original &lt;unsafe&gt;", summary)
         self.assertNotIn("Original <unsafe>", summary)
 
-    def test_responsive_and_accessibility_css_contract(self) -> None:
+    def test_scoped_setup_css_contract(self) -> None:
         for rule in (
-            "button:focus-visible",
-            "@media (max-width: 900px)",
-            "@media (max-width: 600px)",
             "prefers-reduced-motion",
-            "bottom: .35rem",
-            ".h3-advanced-block",
+            "@container (max-width: 430px)",
+            ".h3-settings-summary",
             ".h3-setup-disclosure",
             ".h3-setup-detail-grid",
             ".h3-setup-metric-icon",
             ".h3-setup-pill",
             "linear-gradient(118deg",
         ):
-            self.assertIn(rule, H3_UI_CSS)
+            self.assertIn(rule, H3_SETUP_CSS)
+        self.assertNotIn(".gradio-container", H3_SETUP_CSS)
 
 
 if __name__ == "__main__":
