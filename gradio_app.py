@@ -939,6 +939,7 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
         path="/",
         allowed_paths=allowed_paths,
         show_error=True,
+        css=H3_UI_CSS,
     )
 
 
@@ -8805,7 +8806,6 @@ def build_ui() -> gr.Blocks:
     defaults = UI_DEFAULTS
     initial_backend = backend_status()
     with gr.Blocks(title="MiniMax H3 Local") as demo:
-        demo.css = H3_UI_CSS
         gr.HTML(
             '<section class="h3-hero"><h1>MiniMax H3 Local</h1>'
             "<p>Create video, images, audio, and music on the shared ComfyUI backend · "

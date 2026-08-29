@@ -81,6 +81,19 @@ class UiContractTests(unittest.TestCase):
             ["row", "group", "group", "group", "group"],
         )
 
+    def test_custom_server_mount_receives_ui_styles(self) -> None:
+        with (
+            mock.patch.object(gradio_app.httpx, "AsyncClient"),
+            mock.patch.object(
+                gradio_app.gr,
+                "mount_gradio_app",
+                return_value=mock.sentinel.mounted_app,
+            ) as mount,
+        ):
+            result = gradio_app.build_server(mock.Mock(), [])
+        self.assertIs(result, mock.sentinel.mounted_app)
+        self.assertEqual(mount.call_args.kwargs["css"], H3_UI_CSS)
+
     def test_h3_progressive_section_order(self) -> None:
         tabs = next(
             component

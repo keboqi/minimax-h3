@@ -111,7 +111,7 @@ H3_UI_CSS = """
 .h3-setup-disclosure[open] .h3-setup-hide { display: inline; }
 .h3-setup-chevron { width: .45rem; height: .45rem; margin-left: auto; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); transition: transform .16s ease; }
 .h3-setup-disclosure[open] .h3-setup-chevron { transform: rotate(225deg); }
-.h3-setup-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; padding: .7rem .75rem .8rem; background: color-mix(in srgb, var(--h3-accent) 3%, var(--background-fill-primary)); }
+.h3-setup-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: .55rem; padding: .7rem .75rem .8rem; background: color-mix(in srgb, var(--h3-accent) 3%, var(--background-fill-primary)); }
 .h3-setup-group { padding: .35rem .6rem .5rem; border: 1px solid var(--border-color-primary); border-radius: 10px; background: var(--background-fill-primary); }
 .h3-setup-detail-grid h4 { display: flex; align-items: center; gap: .38rem; margin: .2rem 0 .4rem; color: var(--body-text-color); font-size: .7rem; font-weight: 850; letter-spacing: .065em; text-transform: uppercase; }
 .h3-setup-detail-grid h4 span { color: var(--h3-accent); }
