@@ -126,6 +126,41 @@ class UiContractTests(unittest.TestCase):
         self.assertIn('role="alert"', blocked.html)
         self.assertIn("&lt;offline&gt;", backend_status_html("<offline>"))
 
+    def test_settings_summary_is_compact_disclosure_with_escaped_values(self) -> None:
+        summary = gradio_app.compact_settings_summary(
+            "Text to video",
+            "Original <unsafe>",
+            "BF16",
+            True,
+            True,
+            False,
+            "Turbo",
+            gradio_app.LIGHTX2V_8STEP_TURBO,
+            5,
+            1344,
+            768,
+            8,
+            "simple",
+            "SLA",
+            "Quality",
+            "Spectrum",
+            True,
+            "Quality (FP32)",
+            2,
+            "None",
+            "unused",
+            "unused",
+            False,
+            False,
+            5,
+        )
+        self.assertIn('<details class="h3-setup-disclosure">', summary)
+        self.assertNotIn("<details open", summary)
+        self.assertIn("View all settings", summary)
+        self.assertIn("LightX2V v1.0 / 8-step 768p", summary)
+        self.assertIn("Original &lt;unsafe&gt;", summary)
+        self.assertNotIn("Original <unsafe>", summary)
+
     def test_responsive_and_accessibility_css_contract(self) -> None:
         for rule in (
             "button:focus-visible",
@@ -134,6 +169,8 @@ class UiContractTests(unittest.TestCase):
             "prefers-reduced-motion",
             "bottom: .35rem",
             ".h3-advanced-block",
+            ".h3-setup-disclosure",
+            ".h3-setup-detail-grid",
         ):
             self.assertIn(rule, H3_UI_CSS)
 

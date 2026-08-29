@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import base64
 import hashlib
+import html
 import inspect
 import json
 import math
@@ -8379,16 +8380,13 @@ def compact_settings_summary(
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae: str = DEFAULT_IMAGE_VAE,
 ) -> str:
-    model_profile = (
-        f"{model_profile} / text: {text_encoder} / stage offload: "
-        f"{'on' if stage_model_offload or text_encoder == 'BF16' else 'off'} / VAE: "
-        f"{'INT8 ConvRot' if use_int8_vae else 'FP16'}"
-    )
+    stage_offload_note = "On" if stage_model_offload or text_encoder == "BF16" else "Off"
+    vae_note = "INT8 ConvRot" if use_int8_vae else "FP16"
     if generation_mode == "Turbo":
         generation_mode = f"Turbo / {turbo_variant}"
     result_format = normalize_result_format(result_format)
     if result_format == "Image":
-        model_profile += f" / Image VAE: {normalize_image_vae(image_vae)}"
+        image_vae_note = normalize_image_vae(image_vae)
         try:
             timing = f"{validate_image_frame_count(image_frames)} image frames"
         except H3Error:
@@ -8430,15 +8428,79 @@ def compact_settings_summary(
             f"2x / {latent_upscaler_model} / "
             f"{int(latent_upscale_refine_steps)} refinement steps"
         )
+
+    def safe(value: object) -> str:
+        return html.escape(str(value), quote=True)
+
+    def fact(label: str, value: object, tone: str = "neutral") -> str:
+        return (
+            f'<span class="h3-setup-fact h3-setup-fact--{tone}">'
+            f'<span class="h3-setup-fact-label">{safe(label)}</span>'
+            f'<strong>{safe(value)}</strong></span>'
+        )
+
+    def detail(label: str, value: object) -> str:
+        return (
+            '<div class="h3-setup-detail">'
+            f'<dt>{safe(label)}</dt><dd>{safe(value)}</dd></div>'
+        )
+
+    compact_facts = "".join(
+        (
+            fact("Task", f"{mode} / {result_format}", "accent"),
+            fact("Profile", generation_mode, "speed"),
+            fact("Size", resolution, "size"),
+            fact("Length", timing, "time"),
+        )
+    )
+    output_details = "".join(
+        (
+            detail("Mode", mode),
+            detail("Result", result_format),
+            detail("Resolution", resolution),
+            detail("Length", timing),
+        )
+    )
+    model_details = "".join(
+        (
+            detail("Original", model_profile),
+            detail("Text encoder", text_encoder),
+            detail("Stage offload", stage_offload_note),
+            detail("VAE", vae_note),
+            detail("Image VAE", image_vae_note) if result_format == "Image" else "",
+        )
+    )
+    sampling_details = "".join(
+        (
+            detail("Generation", generation_mode),
+            detail("Steps", step_count),
+            detail("Scheduler", scheduler),
+            detail("Attention", attention_note),
+        )
+    )
+    optimization_details = "".join(
+        (
+            detail("Cache", cache_mode),
+            detail("Input reuse", "On" if reuse_unchanged_inputs else "Off"),
+            detail("Native latent", latent_note),
+            detail("Post-process", postprocess_note),
+        )
+    )
     return (
-        "**Current setup**  \n"
-        f"{mode} · Result: {result_format} · {model_profile} / {generation_mode} · "
-        f"{timing} · {resolution} · "
-        f"{step_count} / {scheduler} · Attention: {attention_note} · "
-        f"Cache: {cache_mode} · Input reuse: "
-        f"{'on' if reuse_unchanged_inputs else 'off'} · "
-        f"Native latent: {latent_note} · "
-        f"Post: {postprocess_note}"
+        '<section class="h3-setup-card" aria-label="Effective generation setup">'
+        '<div class="h3-setup-heading"><span>Current setup</span>'
+        '<span class="h3-setup-live">Effective values</span></div>'
+        f'<div class="h3-setup-facts">{compact_facts}</div>'
+        '<details class="h3-setup-disclosure"><summary>'
+        '<span class="h3-setup-show">View all settings</span>'
+        '<span class="h3-setup-hide">Hide settings</span>'
+        '<span class="h3-setup-chevron" aria-hidden="true"></span>'
+        '</summary><div class="h3-setup-detail-grid">'
+        f'<div><h4>Output</h4><dl>{output_details}</dl></div>'
+        f'<div><h4>Model</h4><dl>{model_details}</dl></div>'
+        f'<div><h4>Sampling</h4><dl>{sampling_details}</dl></div>'
+        f'<div><h4>Optimization</h4><dl>{optimization_details}</dl></div>'
+        '</div></details></section>'
     )
 
 

@@ -453,7 +453,7 @@ def build_h3_view(
                 '<div class="h3-section-intro"><h2>Review & run</h2>'
                 "<p>Confirm the effective setup before starting the job.</p></div>"
             )
-            settings_overview = gr.Markdown(
+            settings_overview = gr.HTML(
                 services["compact_settings_summary"](
                     defaults["mode"],
                     defaults["model_profile"],
