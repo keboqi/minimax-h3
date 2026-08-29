@@ -21,6 +21,7 @@ LOCAL = Path(__file__).resolve().parent
 ROOT = PurePosixPath("/opt/h3")
 COMFY = ROOT / "ComfyUI"
 UI = ROOT / "gradio_app.py"
+UI_PACKAGE = ROOT / "h3_ui"
 SHARED_MODELS = ROOT / "h3_models.py"
 SHARED_REQUIREMENTS = ROOT / "h3_requirements.py"
 NODE_PATCHES = ROOT / "h3_node_patches.py"
@@ -32,6 +33,7 @@ PROMPT_LTX25 = ROOT / "prompt_ltx25.txt"
 ACCEL_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
 LOCAL_UI = LOCAL / "gradio_app.py"
+LOCAL_UI_PACKAGE = LOCAL / "h3_ui"
 LOCAL_ACCEL = LOCAL / "custom_nodes" / "H3Acceleration" / "__init__.py"
 LOCAL_SHARED_MODELS = LOCAL / "h3_models.py"
 LOCAL_SHARED_REQUIREMENTS = LOCAL / "h3_requirements.py"
@@ -136,6 +138,8 @@ _RUNTIME_LOCAL_FILES = tuple(local for local, _ in _RUNTIME_LOCAL_MOUNTS)
 _REQUIRED_LOCAL_FILES = _BUILD_LOCAL_FILES + _RUNTIME_LOCAL_FILES
 if IS_LOCAL:
     missing = [str(path) for path in _REQUIRED_LOCAL_FILES if not path.is_file()]
+    if not LOCAL_UI_PACKAGE.is_dir():
+        missing.append(str(LOCAL_UI_PACKAGE))
     if missing:
         raise RuntimeError(
             "Keep these files beside modal_h3.py: " + ", ".join(missing)
@@ -573,6 +577,11 @@ if IS_LOCAL:
             remote_path=remote_path.as_posix(),
             copy=False,
         )
+    image = image.add_local_dir(
+        LOCAL_UI_PACKAGE,
+        remote_path=UI_PACKAGE.as_posix(),
+        copy=False,
+    )
 
 volume = modal.Volume.from_name(VOL, create_if_missing=True)
 app = modal.App(APP, image=image)

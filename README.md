@@ -456,9 +456,10 @@ to the private ComfyUI backend on port 8188. Its public Uvicorn transport uses
 `wsproto` with per-message compression disabled, matching Modal's WebSocket
 feature set while remaining compatible with standalone servers.
 
-Runtime-only Python files (`gradio_app.py`, `h3_models.py`, `h3_attention.py`,
-`h3_prompt_rewriter.py`, and the bundled H3Acceleration node) are mounted into
-Modal containers at startup after the expensive ComfyUI image layer is built. Changes to those files
+Runtime-only Python sources (`gradio_app.py`, the `h3_ui` package,
+`h3_models.py`, `h3_attention.py`, `h3_prompt_rewriter.py`, and the bundled
+H3Acceleration node) are mounted into Modal containers at startup after the
+expensive ComfyUI image layer is built. Changes to those sources
 therefore reuse the cached ComfyUI, CUDA, Torch, and dependency layers. Only
 `h3_requirements.py`, which controls build-time package installation and ABI
 pins, is copied into an earlier image layer.
@@ -469,7 +470,7 @@ The fast checks do not download models or require a GPU:
 
 ```bash
 python3 -m py_compile \
-  gradio_app.py h3_attention.py h3_models.py h3_node_patches.py h3_prompt_rewriter.py h3_requirements.py \
+  gradio_app.py h3_ui/*.py h3_attention.py h3_models.py h3_node_patches.py h3_prompt_rewriter.py h3_requirements.py \
   modal_h3.py setup_h3.py custom_nodes/H3Acceleration/__init__.py
 python3 h3_requirements.py
 python3 h3_models.py
