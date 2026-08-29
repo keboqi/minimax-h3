@@ -8382,7 +8382,10 @@ def compact_settings_summary(
 ) -> str:
     stage_offload_note = "On" if stage_model_offload or text_encoder == "BF16" else "Off"
     vae_note = "INT8 ConvRot" if use_int8_vae else "FP16"
+    generation_badge = generation_mode
+    generation_description = "Standard sampling"
     if generation_mode == "Turbo":
+        generation_description = turbo_variant
         generation_mode = f"Turbo / {turbo_variant}"
     result_format = normalize_result_format(result_format)
     if result_format == "Image":
@@ -8432,74 +8435,99 @@ def compact_settings_summary(
     def safe(value: object) -> str:
         return html.escape(str(value), quote=True)
 
-    def fact(label: str, value: object, tone: str = "neutral") -> str:
+    def metric(icon: str, label: str, value: object, tone: str) -> str:
         return (
-            f'<span class="h3-setup-fact h3-setup-fact--{tone}">'
-            f'<span class="h3-setup-fact-label">{safe(label)}</span>'
-            f'<strong>{safe(value)}</strong></span>'
+            f'<div class="h3-setup-metric h3-tone-{tone}">'
+            f'<span class="h3-setup-metric-icon" aria-hidden="true">{safe(icon)}</span>'
+            '<span class="h3-setup-metric-copy">'
+            f'<strong>{safe(value)}</strong><span>{safe(label)}</span></span></div>'
         )
 
-    def detail(label: str, value: object) -> str:
+    def pill(label: str, value: object, tone: str) -> str:
+        return (
+            f'<span class="h3-setup-pill h3-tone-{tone}">'
+            f'<span>{safe(label)}</span><strong>{safe(value)}</strong></span>'
+        )
+
+    def detail(label: str, value: object, tone: str = "neutral") -> str:
         return (
             '<div class="h3-setup-detail">'
-            f'<dt>{safe(label)}</dt><dd>{safe(value)}</dd></div>'
+            f'<dt>{safe(label)}</dt>'
+            f'<dd><span class="h3-setup-value h3-tone-{tone}">{safe(value)}</span></dd>'
+            '</div>'
         )
 
-    compact_facts = "".join(
+    compact_metrics = "".join(
         (
-            fact("Task", f"{mode} / {result_format}", "accent"),
-            fact("Profile", generation_mode, "speed"),
-            fact("Size", resolution, "size"),
-            fact("Length", timing, "time"),
+            metric("▣", "Resolution", resolution, "cyan"),
+            metric("◷", "Duration", timing, "green"),
+            metric("↗", "Sampling steps", step_count, "amber"),
+        )
+    )
+    compact_pills = "".join(
+        (
+            pill("Original", model_profile, "purple"),
+            pill("Text", text_encoder, "blue"),
+            pill("VAE", vae_note, "pink"),
+            pill("Attention", attention_note, "purple"),
+            pill("Cache", cache_mode, "cyan"),
+            pill("Latent", latent_note, "green" if latent_upscale else "neutral"),
         )
     )
     output_details = "".join(
         (
-            detail("Mode", mode),
-            detail("Result", result_format),
-            detail("Resolution", resolution),
-            detail("Length", timing),
+            detail("Mode", mode, "purple"),
+            detail("Result", result_format, "blue"),
+            detail("Resolution", resolution, "cyan"),
+            detail("Length", timing, "green"),
         )
     )
     model_details = "".join(
         (
-            detail("Original", model_profile),
-            detail("Text encoder", text_encoder),
-            detail("Stage offload", stage_offload_note),
-            detail("VAE", vae_note),
-            detail("Image VAE", image_vae_note) if result_format == "Image" else "",
+            detail("Original", model_profile, "purple"),
+            detail("Text encoder", text_encoder, "blue"),
+            detail("Stage offload", stage_offload_note, "green" if stage_offload_note == "On" else "neutral"),
+            detail("VAE", vae_note, "pink"),
+            detail("Image VAE", image_vae_note, "pink") if result_format == "Image" else "",
         )
     )
     sampling_details = "".join(
         (
-            detail("Generation", generation_mode),
-            detail("Steps", step_count),
+            detail("Generation", generation_mode, "amber"),
+            detail("Steps", step_count, "amber"),
             detail("Scheduler", scheduler),
-            detail("Attention", attention_note),
+            detail("Attention", attention_note, "purple"),
         )
     )
     optimization_details = "".join(
         (
-            detail("Cache", cache_mode),
-            detail("Input reuse", "On" if reuse_unchanged_inputs else "Off"),
-            detail("Native latent", latent_note),
-            detail("Post-process", postprocess_note),
+            detail("Cache", cache_mode, "cyan"),
+            detail("Input reuse", "On" if reuse_unchanged_inputs else "Off", "green" if reuse_unchanged_inputs else "neutral"),
+            detail("Native latent", latent_note, "green" if latent_upscale else "neutral"),
+            detail("Post-process", postprocess_note, "neutral" if postprocess == "None" else "blue"),
         )
     )
     return (
         '<section class="h3-setup-card" aria-label="Effective generation setup">'
-        '<div class="h3-setup-heading"><span>Current setup</span>'
-        '<span class="h3-setup-live">Effective values</span></div>'
-        f'<div class="h3-setup-facts">{compact_facts}</div>'
+        '<div class="h3-setup-heading">'
+        '<div class="h3-setup-title"><span class="h3-setup-symbol" aria-hidden="true">▶</span>'
+        '<span><small>Ready to generate</small>'
+        f'<strong>{safe(mode)}</strong></span></div>'
+        f'<span class="h3-setup-result h3-tone-blue">{safe(result_format)}</span></div>'
+        '<div class="h3-setup-profile">'
+        f'<span class="h3-setup-profile-badge h3-tone-amber">{safe(generation_badge)}</span>'
+        f'<strong>{safe(generation_description)}</strong></div>'
+        f'<div class="h3-setup-metrics">{compact_metrics}</div>'
+        f'<div class="h3-setup-pills">{compact_pills}</div>'
         '<details class="h3-setup-disclosure"><summary>'
         '<span class="h3-setup-show">View all settings</span>'
         '<span class="h3-setup-hide">Hide settings</span>'
         '<span class="h3-setup-chevron" aria-hidden="true"></span>'
         '</summary><div class="h3-setup-detail-grid">'
-        f'<div><h4>Output</h4><dl>{output_details}</dl></div>'
-        f'<div><h4>Model</h4><dl>{model_details}</dl></div>'
-        f'<div><h4>Sampling</h4><dl>{sampling_details}</dl></div>'
-        f'<div><h4>Optimization</h4><dl>{optimization_details}</dl></div>'
+        f'<div class="h3-setup-group"><h4><span aria-hidden="true">◆</span> Output</h4><dl>{output_details}</dl></div>'
+        f'<div class="h3-setup-group"><h4><span aria-hidden="true">◈</span> Model</h4><dl>{model_details}</dl></div>'
+        f'<div class="h3-setup-group"><h4><span aria-hidden="true">↗</span> Sampling</h4><dl>{sampling_details}</dl></div>'
+        f'<div class="h3-setup-group"><h4><span aria-hidden="true">⚡</span> Optimization</h4><dl>{optimization_details}</dl></div>'
         '</div></details></section>'
     )
 

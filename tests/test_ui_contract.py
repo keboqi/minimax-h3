@@ -157,6 +157,9 @@ class UiContractTests(unittest.TestCase):
         self.assertIn('<details class="h3-setup-disclosure">', summary)
         self.assertNotIn("<details open", summary)
         self.assertIn("View all settings", summary)
+        self.assertIn('class="h3-setup-metrics"', summary)
+        self.assertIn('class="h3-setup-pills"', summary)
+        self.assertIn("Ready to generate", summary)
         self.assertIn("LightX2V v1.0 / 8-step 768p", summary)
         self.assertIn("Original &lt;unsafe&gt;", summary)
         self.assertNotIn("Original <unsafe>", summary)
@@ -171,6 +174,9 @@ class UiContractTests(unittest.TestCase):
             ".h3-advanced-block",
             ".h3-setup-disclosure",
             ".h3-setup-detail-grid",
+            ".h3-setup-metric-icon",
+            ".h3-setup-pill",
+            "linear-gradient(118deg",
         ):
             self.assertIn(rule, H3_UI_CSS)
 
