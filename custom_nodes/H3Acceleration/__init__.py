@@ -33,6 +33,15 @@ LIGHTX_REFINER_BLOCKS = 2
 LIGHTX_TARGETS_PER_BLOCK = 4
 
 
+def _logical_weight_shape(weight) -> tuple[int, ...]:
+    """Return a quantized tensor's logical shape or a plain tensor's shape."""
+    quant_params = getattr(weight, "_params", None)
+    shape = getattr(quant_params, "orig_shape", None)
+    if shape is None:
+        shape = weight.shape
+    return tuple(int(dimension) for dimension in shape)
+
+
 class H3InplaceLoRAAdapter(comfy.weight_adapter.LoRAAdapter):
     """Apply a linear LoRA delta directly into the fresh base activation."""
 
@@ -124,18 +133,43 @@ def _lightx_key_map(model, lora):
             + ", ".join(missing[:5])
         )
 
-    model_state = model.model.state_dict()
     for module in modules:
         down = lora[module + ".lora_A.weight"]
         up = lora[module + ".lora_B.weight"]
-        base_weight = model_state[native_map[module]]
+        base_weight = comfy.utils.get_attr(model.model, native_map[module])
+        base_shape = _logical_weight_shape(base_weight)
         if (
-            base_weight.ndim != 2
-            or int(down.shape[1]) != int(base_weight.shape[1])
-            or int(up.shape[0]) != int(base_weight.shape[0])
+            len(base_shape) != 2
+            or int(down.shape[1]) != int(base_shape[1])
+            or int(up.shape[0]) != int(base_shape[0])
         ):
             raise ValueError(f"LightX2V tensor shapes do not match {module}")
     return {module: native_map[module] for module in modules}
+
+
+def _lightx_int8_fused_fc2_keys(
+    model, key_map: dict[str, str]
+) -> set[str]:
+    """Return adapters whose ConvRot INT8 kernel bypasses fc2.forward.
+
+    MiniMax H3's fused INT8 MLP path consumes fc2.weight directly, so a forward
+    bypass hook on those modules never executes.  Route only those adapters
+    through ComfyUI's transient weight-cast patch path; the LoRA delta is then
+    applied after dequantization instead of being requantized into the base.
+    """
+    fused: set[str] = set()
+    for module, key in key_map.items():
+        if not module.endswith(".mlp.fc2"):
+            continue
+        # _lightx_key_map already proved this native key exists. Failing here
+        # must abort adapter installation instead of silently losing an fc2.
+        weight = comfy.utils.get_attr(model.model, key)
+        if (
+            getattr(weight, "_layout_cls", None) == "TensorWiseINT8Layout"
+            and not getattr(getattr(weight, "_params", None), "transposed", False)
+        ):
+            fused.add(key)
+    return fused
 
 
 class H3LightX2VBypassLoRA:
@@ -157,7 +191,7 @@ class H3LightX2VBypassLoRA:
     CATEGORY = "model/patch/minimax"
     DESCRIPTION = (
         "Apply an official LightX2V MiniMax H3 LoRA in activation space, "
-        "avoiding BF16 base-weight duplication."
+        "with fused ConvRot INT8 fc2 projections patched during weight cast."
     )
 
     def apply_lora(self, model, lora_name, strength):
@@ -175,8 +209,24 @@ class H3LightX2VBypassLoRA:
             )
 
         patched = model.clone()
+        fused_fc2_keys = _lightx_int8_fused_fc2_keys(model, key_map)
+        fused_fc2 = {
+            key: adapter for key, adapter in loaded.items() if key in fused_fc2_keys
+        }
+        bypass = {
+            key: adapter for key, adapter in loaded.items() if key not in fused_fc2_keys
+        }
+        if fused_fc2:
+            patched_fc2 = set(patched.add_patches(fused_fc2, float(strength)))
+            if patched_fc2 != set(fused_fc2):
+                missing_fc2 = sorted(set(fused_fc2) - patched_fc2)
+                raise RuntimeError(
+                    "LightX2V failed to patch fused INT8 fc2 adapters: "
+                    + ", ".join(missing_fc2[:5])
+                )
+
         manager = comfy.weight_adapter.BypassInjectionManager()
-        for key, adapter in loaded.items():
+        for key, adapter in bypass.items():
             if not isinstance(adapter, comfy.weight_adapter.LoRAAdapter):
                 raise TypeError(f"Unsupported LightX2V adapter for {key}")
             if len(adapter.weights) != 6:
@@ -185,15 +235,18 @@ class H3LightX2VBypassLoRA:
             manager.add_adapter(key, adapter, strength=float(strength))
 
         injections = manager.create_injections(patched.model)
-        if manager.get_hook_count() != len(loaded):
+        if manager.get_hook_count() != len(bypass):
             raise RuntimeError(
                 f"LightX2V bypass created {manager.get_hook_count()} hooks for "
-                f"{len(loaded)} adapters"
+                f"{len(bypass)} adapters"
             )
-        patched.set_injections("h3_lightx2v_bypass", injections)
+        if manager.get_hook_count() > 0:
+            patched.set_injections("h3_lightx2v_bypass", injections)
         logging.info(
-            "MiniMax H3 LightX2V runtime bypass: %d adapters at strength %.3f",
-            len(loaded),
+            "MiniMax H3 LightX2V runtime bypass: %d activation adapters, "
+            "%d fused INT8 fc2 weight-cast adapters at strength %.3f",
+            len(bypass),
+            len(fused_fc2),
             float(strength),
         )
         return (patched,)

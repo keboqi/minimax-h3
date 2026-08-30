@@ -494,3 +494,27 @@ can still increase the editable step count when additional refinement is useful.
 The LTX-2.5 image-to-video tab keeps a visual start-frame input with optional
 middle and end keyframes. The implementation uses the native sequential
 `LTXVAddGuide` path and does not add a separate multi-file reference mode.
+
+
+## v58 universal Turbo runtime loading and official schedules
+
+The profile-based merge policy is removed. Larry now receives
+`low_vram=False` on Original, Speed, and Quality, matching its pinned
+documentation: bypass is the recommended sharp path, while `low_vram=True`
+merges deltas and can soften quantized/pruned bases through rounding.
+LightX2V likewise uses the bundled runtime-bypass node on every profile.
+Quality's fused ConvRot INT8 FC2 projections are the required exception: their
+kernel reads `fc2.weight` directly and never calls `fc2.forward`, so those
+adapters use a transient post-dequantization weight-cast patch, matching the
+pinned Larry implementation instead of silently dropping FC2 LoRA updates.
+Adapter validation reads quantized weights' `_params.orig_shape` logical
+matrix dimensions rather than the packed storage tensors emitted by
+`state_dict()`; plain BF16 weights continue to validate against `.shape`.
+
+LightX2V scheduling now follows the checkpoint metadata and ModelTC's official
+model table. Both configured 768p FL2VA adapters use video/audio shifts 6/3,
+Euler, and their trained NFE (four or eight). The dedicated 544p Ref2VA adapter
+uses shifts 12/3, Euler, and four NFE. Previously only the 4-step v1.1 filename
+received the 6/3 shift and Euler override; the configured 8-step 768p adapter
+therefore incorrectly used the native RES multistep path without its trained
+shift.

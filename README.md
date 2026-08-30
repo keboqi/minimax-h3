@@ -121,16 +121,18 @@ at six steps through its pinned custom node, which uses a quantization-aware
 bypass loader plus the adaptive H3 Turbo sampler. LightX2V also provides a
 mode-specific four-step option (FL2V v1.1 768p or
 Ref2V v0.1 544p) and an FL2V v1.0 eight-step 768p option, all at strength 1.0.
-The FL2V v1.1 workflow applies LightX2V's recommended video/audio sigma shifts
-of 6/3 and uses four Euler steps with the simple scheduler by default.
-Loader policy follows the base model: Original BF16 applies either LoRA in
-activation space, avoiding reversible weight-merge copies that exceed 96 GiB;
-the compact Speed and Quality profiles merge either LoRA for faster inference
-and compatibility with direct-weight quantized kernels. LightX2V's Original
-bypass validates the exact official 50-block plus two-refiner adapter layout before installing
-any hooks and retains fused modulation. Turbo step defaults are applied by an
-immediate mode/variant UI update before generation is queued, preventing
-The resulting step control remains editable so users can increase any Turbo
+The 768p FL2V workflows apply LightX2V's official video/audio sigma shifts of
+6/3 and use Euler sampling (four or eight NFE according to the selected LoRA)
+with the simple scheduler by default. The 544p Ref2V adapter uses its official
+12/3 shifts and four Euler NFE. Every base profile applies either Turbo LoRA
+through its sharper runtime path. On Quality ConvRot INT8, fused FC2 kernels
+read weights directly and cannot execute a forward bypass hook, so those FC2
+adapters alone use ComfyUI's transient post-dequantization weight-cast patch;
+the delta is not requantized into the base. LightX2V validates the exact
+official 50-block plus two-refiner adapter layout before installing any hooks
+and retains fused modulation. Turbo step defaults are applied by an
+immediate mode/variant UI update before generation is queued. The resulting
+step control remains editable so users can increase any Turbo
 variant's count for clips that benefit from additional refinement.
 
 Reference mode automatically selects LightX2V's dedicated Ref2V v0.1 adapter

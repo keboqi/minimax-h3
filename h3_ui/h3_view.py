@@ -655,9 +655,10 @@ def build_h3_view(
                     value=defaults["turbo_variant"],
                     label="Turbo implementation",
                     info=(
-                        "Original BF16 uses memory-safe runtime LoRA bypass. Speed and "
-                        "Quality use faster merged weights. Larry also uses its adaptive "
-                        "sampler; all variants run at strength 1.0."
+                        "All base profiles use the sharper runtime LoRA path. Quality's "
+                        "fused INT8 FC2 projections use a post-dequantization weight-cast "
+                        "exception. "
+                        "Larry also uses its adaptive sampler; strength stays at 1.0."
                     ),
                 )
                 scheduler = gr.Radio(

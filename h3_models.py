@@ -899,26 +899,23 @@ def validate_config_files(
     config: dict[str, Any],
     profiles: Iterable[str] = PRELOAD_PROFILES,
 ) -> list[str]:
-    """Return missing/invalid local files referenced by h3_models.json."""
+    """Return missing/invalid files from the startup preload inventory.
+
+    ``h3_models.json`` keeps ``text_encoder`` as a legacy compatibility field
+    pointing at the BF16 encoder. That checkpoint is intentionally lazy: the
+    default Balanced UI preset uses the preloaded INT8 encoder instead. Do not
+    validate every file named in the complete catalog here, or Modal will fail
+    startup before the on-demand downloader can run.
+    """
     root = Path(root)
+    # ``config`` and ``profiles`` remain accepted for API compatibility with
+    # callers from older releases. The source of truth for startup is the same
+    # inventory passed to ``sync_models``.
+    del config, profiles
     required = [
-        ("text_encoders", config.get("text_encoder")),
-        ("vae", config.get("video_vae")),
-        ("vae", config.get("audio_vae")),
-        ("loras", config.get("turbo_lora")),
-        ("loras", config.get("turbo_ref_lora")),
+        (MODEL_SPECS[key].folder, MODEL_SPECS[key].local_name)
+        for key in PRELOAD_MODEL_KEYS
     ]
-    for profile in profiles:
-        data = config.get("profiles", {}).get(profile, {})
-        profile_files = [
-            ("diffusion_models", data.get("fl2va"))
-            if f"{profile}_fl2va" in PRELOAD_MODEL_KEYS
-            else None,
-            ("diffusion_models", data.get("ref2va"))
-            if f"{profile}_ref2va" in PRELOAD_MODEL_KEYS
-            else None,
-        ]
-        required.extend(item for item in profile_files if item is not None)
 
     return [
         f"{folder}/{name}"
@@ -1000,6 +997,10 @@ def selftest() -> None:
     cfg = _build_config("manifest.json")
     missing = validate_config_files(Path(tempfile.mkdtemp()), cfg)
     assert "diffusion_models/" + cfg["profiles"]["original"]["fl2va"] in missing
+    assert "text_encoders/" + MODEL_SPECS["text_encoder_int8"].local_name in missing
+    assert (
+        "text_encoders/" + MODEL_SPECS["text_encoder_bf16"].local_name not in missing
+    )
     assert "diffusion_models/" + cfg["profiles"]["original"]["ref2va"] not in missing
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["speed"])
     assert "original_fl2va" in PRELOAD_MODEL_KEYS
