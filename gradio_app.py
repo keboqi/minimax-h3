@@ -481,7 +481,7 @@ UI_DEFAULTS = {
     "ref_image_size": "match",
     "latent_upscale": True,
     "latent_upscaler_model": DEFAULT_H3_LATENT_UPSCALER_MODEL,
-    "latent_upscale_refine_steps": 1,
+    "latent_upscale_refine_steps": 2,
     "postprocess": "None",
     "seedvr2_model": DEFAULT_SEEDVR2_MODEL,
     "upscale_force_offload": False,
@@ -606,7 +606,7 @@ SAMPLING_PRESETS: dict[str, tuple[Any, ...]] = {
         LIGHTX2V_4STEP_TURBO,
         "SLA",
         "Fast",
-        1,
+        2,
     ),
 }
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "60"))
@@ -10358,7 +10358,7 @@ def selftest() -> None:
         LIGHTX2V_4STEP_TURBO,
         "SLA",
         "Fast",
-        1,
+        2,
     )
     assert preset_values("Balanced")[6:11] == (
         "2 MP",
