@@ -355,8 +355,8 @@ PROFILE_LABELS = {
     "quality": "Quality",
     "original": "Original",
 }
-PRELOAD_PROFILES = ("original",)
-PRELOAD_PROFILE_MODEL_KEYS = ("original_fl2va",)
+PRELOAD_PROFILES = ("speed",)
+PRELOAD_PROFILE_MODEL_KEYS = ("speed_fl2va",)
 PROFILE_MODEL_KEY_SET = frozenset(
     key for keys in PROFILE_MODEL_KEYS.values() for key in keys
 )
@@ -449,8 +449,9 @@ SHARED_MODEL_KEYS = tuple(
 )
 PRELOAD_MODEL_KEYS = (
     *PRELOAD_PROFILE_MODEL_KEYS,
-    # Keep provisioning aligned with the UI's initial Balanced preset.
-    "text_encoder_int8",
+    # Keep provisioning aligned with the UI's initial Fast preset.
+    "text_encoder",
+    "larry_turbo_lora",
     "h3_latent_upscaler_3d_fp32",
     *SHARED_MODEL_KEYS,
 )
@@ -728,7 +729,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
 
     return {
         "schema_version": 15,
-        "default_profile": "original",
+        "default_profile": "speed",
         "profiles": {
             profile: _profile_config(profile)
             for profile in PROFILE_MODEL_KEYS
@@ -903,7 +904,7 @@ def validate_config_files(
 
     ``h3_models.json`` keeps ``text_encoder`` as a legacy compatibility field
     pointing at the BF16 encoder. That checkpoint is intentionally lazy: the
-    default Balanced UI preset uses the preloaded INT8 encoder instead. Do not
+    default Fast UI preset uses the preloaded NVFP4/AWQ encoder instead. Do not
     validate every file named in the complete catalog here, or Modal will fail
     startup before the on-demand downloader can run.
     """
@@ -996,23 +997,23 @@ def selftest() -> None:
 
     cfg = _build_config("manifest.json")
     missing = validate_config_files(Path(tempfile.mkdtemp()), cfg)
-    assert "diffusion_models/" + cfg["profiles"]["original"]["fl2va"] in missing
-    assert "text_encoders/" + MODEL_SPECS["text_encoder_int8"].local_name in missing
+    assert "diffusion_models/" + cfg["profiles"]["speed"]["fl2va"] in missing
+    assert "text_encoders/" + MODEL_SPECS["text_encoder"].local_name in missing
     assert (
         "text_encoders/" + MODEL_SPECS["text_encoder_bf16"].local_name not in missing
     )
-    assert "diffusion_models/" + cfg["profiles"]["original"]["ref2va"] not in missing
-    assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["speed"])
-    assert "original_fl2va" in PRELOAD_MODEL_KEYS
-    assert PRELOAD_PROFILE_MODEL_KEYS == ("original_fl2va",)
-    assert "original_fl2va" in PRELOAD_MODEL_KEYS
-    assert "original_ref2va" not in PRELOAD_MODEL_KEYS
+    assert "diffusion_models/" + cfg["profiles"]["speed"]["ref2va"] not in missing
+    assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["original"])
+    assert "speed_fl2va" in PRELOAD_MODEL_KEYS
+    assert PRELOAD_PROFILE_MODEL_KEYS == ("speed_fl2va",)
+    assert "speed_fl2va" in PRELOAD_MODEL_KEYS
+    assert "speed_ref2va" not in PRELOAD_MODEL_KEYS
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
     assert "h3_latent_upscaler_3d_bf16" not in PRELOAD_MODEL_KEYS
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
     assert cfg["schema_version"] == 15
-    assert cfg["default_profile"] == "original"
+    assert cfg["default_profile"] == "speed"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
     )
@@ -1027,10 +1028,10 @@ def selftest() -> None:
         "INT8 ConvRot": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
         "BF16": "qwen3vl_32b_minimax_h3_bf16.safetensors",
     }
-    assert (set(H3_OPTIONAL_TEXT_ENCODER_KEYS) - {"text_encoder_int8"}).isdisjoint(
+    assert (set(H3_OPTIONAL_TEXT_ENCODER_KEYS) - {"text_encoder"}).isdisjoint(
         PRELOAD_MODEL_KEYS
     )
-    assert "text_encoder_int8" in PRELOAD_MODEL_KEYS
+    assert "text_encoder" in PRELOAD_MODEL_KEYS
     assert cfg["video_vae_int8"] == (
         "minimax_h3_video_vae_int8_convrot.safetensors"
     )
@@ -1051,7 +1052,7 @@ def selftest() -> None:
     assert "turbo_8step_lora" not in PRELOAD_MODEL_KEYS
     assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"
     assert cfg["larry_turbo_ref_lora"] == cfg["larry_turbo_lora"]
-    assert "larry_turbo_lora" not in PRELOAD_MODEL_KEYS
+    assert "larry_turbo_lora" in PRELOAD_MODEL_KEYS
     h3_upscaler = MODEL_SPECS["h3_latent_upscaler_3d_bf16"]
     assert h3_upscaler.repo_id == H3_LATENT_UPSCALER_REPO
     assert h3_upscaler.folder == "latent_upscale_models"

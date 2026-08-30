@@ -151,10 +151,7 @@ bash run_h3.sh
 ```
 
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
-Original FL2VA checkpoint plus the Balanced INT8 text encoder, default FP32 latent-upscaler checkpoint, shared VAEs, and default 4-step
-Turbo LoRAs. The Quality Ref2VA checkpoint and selectable 6-step/8-step Turbo
-LoRAs download on demand when selected. Speed and Original checkpoints download
-on demand the first time each workflow variant is selected. SeedVR2 models, the
+Speed FL2VA checkpoint plus the Fast NVFP4/AWQ text encoder, default FP32 latent-upscaler checkpoint, shared VAEs, and default 4-step Turbo LoRAs. The Quality and Original checkpoints plus the selectable 8-step Turbo LoRA download on demand when selected; the Balanced preset's 6-step Larry LoRA is preloaded. SeedVR2 models, the
 LTX-2.5 2x upscaler IC-LoRA, and SwiftVR checkpoints are lazy and download only
 when their post-processing option is first used. The installer pins the official
 SwiftVR inference source; no SWIFTVR_CHECKPOINT_DIR is required unless you want
@@ -169,8 +166,7 @@ selected checkpoint. **Balanced (BF16)** is the default choice; **Fast (FP16)**
 and **Quality (FP32)** remain selectable.
 The sampling presets also select the H3 text encoder: **Fast** uses
 **NVFP4 / AWQ**, **Balanced** uses **INT8 ConvRot**, and **Quality** uses
-**BF16** (51.5 GB). Balanced is the initial preset. The NVFP4/AWQ and INT8
-ConvRot (27.1 GB) checkpoints download on first selection. Fast and Balanced
+**BF16** (51.5 GB). Fast is the initial preset and its NVFP4/AWQ encoder is preloaded; INT8 ConvRot (27.1 GB) downloads on first selection. Fast and Balanced
 disable model offload by default while leaving the checkbox editable; Quality
 automatically enables and locks **Offload models
 between H3 stages**. After a fresh encode this keeps the text encoder, diffusion

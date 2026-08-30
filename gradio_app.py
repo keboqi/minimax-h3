@@ -448,8 +448,8 @@ UI_DEFAULTS = {
     "result_format": DEFAULT_RESULT_FORMAT,
     "image_vae": DEFAULT_IMAGE_VAE,
     "image_frames": DEFAULT_IMAGE_FRAMES,
-    "model_profile": "Original",
-    "text_encoder": SAMPLING_PRESET_TEXT_ENCODERS["Balanced"],
+    "model_profile": "Speed",
+    "text_encoder": SAMPLING_PRESET_TEXT_ENCODERS["Fast"],
     "stage_model_offload": False,
     "reuse_unchanged_inputs": True,
     "use_int8_vae": False,
@@ -462,10 +462,10 @@ UI_DEFAULTS = {
     "scheduler": "simple",
     "seed": -1,
     "attention_mode": "SLA",
-    "sla_preset": DEFAULT_SLA_PRESET,
-    "sol_tau": 1.0,
+    "sla_preset": "Fast",
+    "sol_tau": 1.2,
     "sol_thresh_type": "diag",
-    "sol_exact_mode": "exact_kv",
+    "sol_exact_mode": "off",
     "sol_dense_steps": 1,
     "cache_mode": DEFAULT_ACCELERATOR,
     "fbcache_preset": DEFAULT_FBCACHE_PRESET,
@@ -481,7 +481,7 @@ UI_DEFAULTS = {
     "ref_image_size": "match",
     "latent_upscale": True,
     "latent_upscaler_model": DEFAULT_H3_LATENT_UPSCALER_MODEL,
-    "latent_upscale_refine_steps": 2,
+    "latent_upscale_refine_steps": 1,
     "postprocess": "None",
     "seedvr2_model": DEFAULT_SEEDVR2_MODEL,
     "upscale_force_offload": False,
@@ -524,7 +524,7 @@ AUTO_RESOLUTION_MEGAPIXEL_PRESETS = {
     "4 MP": 4_000_000 - 1,
     "8 MP": 8_000_000 - 1,
 }
-DEFAULT_AUTO_RESOLUTION_MEGAPIXELS = "2 MP"
+DEFAULT_AUTO_RESOLUTION_MEGAPIXELS = "1 MP"
 AUTO_RESOLUTION_PIXEL_CAP = AUTO_RESOLUTION_MEGAPIXEL_PRESETS[
     DEFAULT_AUTO_RESOLUTION_MEGAPIXELS
 ]
@@ -590,7 +590,7 @@ SAMPLING_PRESETS: dict[str, tuple[Any, ...]] = {
         "exact_kv",
         1,
         "2 MP",
-        LIGHTX2V_4STEP_TURBO,
+        LARRY_TURBO,
         "SLA",
         "Balanced",
         2,
@@ -10362,7 +10362,7 @@ def selftest() -> None:
     )
     assert preset_values("Balanced")[6:11] == (
         "2 MP",
-        LIGHTX2V_4STEP_TURBO,
+        LARRY_TURBO,
         "SLA",
         "Balanced",
         2,
@@ -10381,7 +10381,7 @@ def selftest() -> None:
         assert offload_update["value"] is (encoder == "BF16")
         assert offload_update["interactive"] is (encoder != "BF16")
     assert preset_values("Fast", "Turbo")[0] == 4
-    assert preset_values("Balanced", "Turbo")[0] == 4
+    assert preset_values("Balanced", "Turbo")[0] == 6
     assert preset_values("Quality", "Turbo")[0] == 8
     assert preset_values("unknown") == preset_values("Balanced")
     assert UI_DEFAULTS["steps"] == turbo_steps_for(UI_DEFAULTS["turbo_variant"])
@@ -10518,7 +10518,7 @@ def selftest() -> None:
     api_kwargs = captured_api_call["kwargs"]
     assert api_kwargs["prompt"] == "API prompt"
     assert api_kwargs["mode"] == "Text to video"
-    assert api_kwargs["model_profile"] == "Original"
+    assert api_kwargs["model_profile"] == "Speed"
     assert api_kwargs["turbo_variant"] == DEFAULT_TURBO
     for key, expected in UI_DEFAULTS.items():
         assert api_kwargs[key] == expected
@@ -10673,7 +10673,7 @@ def selftest() -> None:
     ) == (896, 512)
     auto_landscape = resolution_for_aspect_ratio(4096, 2304)
     auto_portrait = resolution_for_aspect_ratio(2304, 4096)
-    assert resolution_for_aspect_ratio(1024, 1024) == (1024, 1024)
+    assert resolution_for_aspect_ratio(1024, 1024) == (992, 992)
     assert auto_landscape[0] % 32 == 0 and auto_landscape[1] % 32 == 0
     assert auto_portrait[0] % 32 == 0 and auto_portrait[1] % 32 == 0
     assert auto_landscape[0] * auto_landscape[1] < 4_000_000
@@ -10690,14 +10690,15 @@ def selftest() -> None:
     assert two_mp_landscape[0] * two_mp_landscape[1] < 2_000_000
     assert auto_resolution_pixel_cap("4 MP") == 4_000_000 - 1
     assert auto_resolution_pixel_cap("8 MP") == 8_000_000 - 1
-    assert UI_DEFAULTS["text_encoder"] == "INT8 ConvRot"
+    assert UI_DEFAULTS["model_profile"] == "Speed"
+    assert UI_DEFAULTS["text_encoder"] == "NVFP4 / AWQ"
     assert UI_DEFAULTS["stage_model_offload"] is False
-    balanced_defaults = preset_values("Balanced")
-    assert DEFAULT_AUTO_RESOLUTION_MEGAPIXELS == balanced_defaults[6]
-    assert UI_DEFAULTS["turbo_variant"] == balanced_defaults[7]
-    assert UI_DEFAULTS["attention_mode"] == balanced_defaults[8]
-    assert UI_DEFAULTS["sla_preset"] == balanced_defaults[9]
-    assert UI_DEFAULTS["latent_upscale_refine_steps"] == balanced_defaults[10]
+    fast_defaults = preset_values("Fast")
+    assert DEFAULT_AUTO_RESOLUTION_MEGAPIXELS == fast_defaults[6]
+    assert UI_DEFAULTS["turbo_variant"] == fast_defaults[7]
+    assert UI_DEFAULTS["attention_mode"] == fast_defaults[8]
+    assert UI_DEFAULTS["sla_preset"] == fast_defaults[9]
+    assert UI_DEFAULTS["latent_upscale_refine_steps"] == fast_defaults[10]
     assert resolution_for_aspect_ratio(4096, 2304, preserve_native=True) == (4096, 2304)
     assert resolution_for_aspect_ratio(
         4010, 2250, preserve_native=True, alignment=64

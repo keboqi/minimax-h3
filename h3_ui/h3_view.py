@@ -550,7 +550,7 @@ def build_h3_view(
                 )
                 preset = gr.Radio(
                     ["Quality", "Balanced", "Fast"],
-                    value="Balanced",
+                    value="Fast",
                     label="Sampling preset",
                     interactive=True,
                     info=(
