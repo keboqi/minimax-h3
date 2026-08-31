@@ -3219,7 +3219,7 @@ def model_profile_defaults(model_profile: str):
             gr.update(value=4, interactive=False),
             gr.update(value="simple", interactive=False),
             gr.update(value="Off", interactive=False),
-            gr.update(value="Comfy Kitchen", interactive=False),
+            gr.update(value="Kitchen", interactive=False),
         )
     return tuple(gr.update(interactive=True) for _ in range(5))
 

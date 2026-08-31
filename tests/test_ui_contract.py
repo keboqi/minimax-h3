@@ -214,7 +214,7 @@ class UiContractTests(unittest.TestCase):
         self.assertFalse(steps["interactive"])
         self.assertEqual(scheduler["value"], "simple")
         self.assertEqual(cache["value"], "Off")
-        self.assertEqual(attention["value"], "Comfy Kitchen")
+        self.assertEqual(attention["value"], "Kitchen")
         required = gradio_app.required_nodes_for(
             "Text to video",
             False,
