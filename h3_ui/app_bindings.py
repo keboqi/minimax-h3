@@ -177,6 +177,19 @@ def bind_app(
         queue=False,
         show_progress="hidden",
     )
+    components["model_profile"].change(
+        services["model_profile_defaults"],
+        inputs=components["model_profile"],
+        outputs=[
+            components["generation_mode"],
+            components["steps"],
+            components["scheduler"],
+            components["cache_mode"],
+            components["attention_mode"],
+        ],
+        queue=False,
+        show_progress="hidden",
+    )
     components["generation_mode"].change(
         services["generation_mode_defaults"],
         inputs=[components["generation_mode"], components["turbo_variant"]],

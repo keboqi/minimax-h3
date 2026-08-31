@@ -201,5 +201,27 @@ class UiContractTests(unittest.TestCase):
         self.assertNotIn(".gradio-container", H3_SETUP_CSS)
 
 
+
+    def test_fasth3_profile_is_normal_only_and_requires_vsa(self) -> None:
+        label = "FastH3 (4-step experimental)"
+        self.assertIn(label, gradio_app.MODEL_PROFILE_CHOICES)
+        generation, steps, scheduler, cache, attention = (
+            gradio_app.model_profile_defaults(label)
+        )
+        self.assertEqual(generation["value"], "Normal")
+        self.assertFalse(generation["interactive"])
+        self.assertEqual(steps["value"], 4)
+        self.assertFalse(steps["interactive"])
+        self.assertEqual(scheduler["value"], "simple")
+        self.assertEqual(cache["value"], "Off")
+        self.assertEqual(attention["value"], "Comfy Kitchen")
+        required = gradio_app.required_nodes_for(
+            "Text to video",
+            False,
+            "Off",
+            use_fast_h3=True,
+        )
+        self.assertIn(gradio_app.FASTH3_VSA_NODE, required)
+
 if __name__ == "__main__":
     unittest.main()

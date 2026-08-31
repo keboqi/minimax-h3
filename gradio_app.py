@@ -55,6 +55,7 @@ from h3_models import (
     DEFAULT_MUSIC3_MODEL,
     DEFAULT_LTX25_MODEL,
     DEFAULT_SEEDVR2_MODEL,
+    FASTH3_PROFILE_KEY,
     H3_LATENT_UPSCALER_MODEL_CHOICES,
     H3_TEXT_ENCODER_CHOICES,
     LTX25_MODEL_CHOICES,
@@ -64,6 +65,7 @@ from h3_models import (
     MODEL_SPECS,
     MUSIC3_MODEL_CHOICES,
     MUSIC3_SHARED_MODEL_KEYS,
+    PROFILE_MODEL_KEYS,
     PROFILE_LABELS,
     SEEDVR2_MODEL_CHOICES,
     resolve_hf_token,
@@ -342,6 +344,7 @@ H3_SINGLE_FRAME_VAE_LOADER_NODE = "H3SingleFrameVAELoader"
 H3_IMAGE_SLICES_NODE = "H3VideoLatentSlicesToBatch"
 H3_STAGE_OFFLOAD_NODE = "H3StageModelOffload"
 H3_CONDITIONING_CACHE_NODE = "H3ConditioningCache"
+FASTH3_VSA_NODE = "H3FastVideoVSA"
 H3_STAGE_OFFLOAD_POLICY_NODE = "H3StageOffloadPolicy"
 H3_NVENC_SAVE_NODE = "H3SaveVideoNVENC"
 H3_LATENT_UPSCALE_SCALE = 2.0
@@ -2017,7 +2020,7 @@ def ensure_profile_model(
     """Download a lazy profile checkpoint before submitting its workflow."""
     reference = str(mode).strip().lower() == "reference media"
     filename = profile.ref2va if reference else profile.fl2va
-    model_key = f"{profile_key}_{'ref2va' if reference else 'fl2va'}"
+    model_key = PROFILE_MODEL_KEYS[profile_key][1 if reference else 0]
     destination = COMFY_DIR / "models" / MODEL_SPECS[model_key].folder / filename
     manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
     if not stale_model_keys(
@@ -3207,6 +3210,21 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
     )
 
 
+def model_profile_defaults(model_profile: str):
+    """Lock FastH3 to the four-step non-LoRA contract it was distilled for."""
+    is_fast_h3 = str(model_profile).strip() == PROFILE_LABELS[FASTH3_PROFILE_KEY]
+    if is_fast_h3:
+        return (
+            gr.update(value="Normal", interactive=False),
+            gr.update(value=4, interactive=False),
+            gr.update(value="simple", interactive=False),
+            gr.update(value="Off", interactive=False),
+            gr.update(value="Comfy Kitchen", interactive=False),
+        )
+    return tuple(gr.update(interactive=True) for _ in range(5))
+
+
+
 def turbo_variant_defaults(turbo_variant: str, generation_mode: str):
     """Apply variant sampling defaults only while Turbo is selected."""
     if str(generation_mode).strip().lower() != "turbo":
@@ -3494,10 +3512,24 @@ def add_model_stack(
     use_sage: bool = False,
     use_sla: bool = False,
     sla_preset: str = DEFAULT_SLA_PRESET,
+    use_fast_h3: bool = False,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     unet = graph.add("UNETLoader", unet_name=model_name, weight_dtype="default")
     model_ref = Graph.out(unet)
 
+    if use_fast_h3:
+        if turbo_lora_name:
+            raise H3Error("FastH3 is already distilled and cannot use a Turbo LoRA.")
+        if FASTH3_VSA_NODE not in available_nodes:
+            raise H3Error(
+                "FastH3 requires Kijai's FastVideo VSA node. Re-run setup_h3.py "
+                "and restart ComfyUI."
+            )
+        vsa = graph.add(
+            FASTH3_VSA_NODE,
+            model=model_ref,
+        )
+        model_ref = Graph.out(vsa)
     if turbo_lora_name:
         model_ref = add_turbo_model_patch(
             graph,
@@ -4007,6 +4039,7 @@ def build_fl2va_graph(
     reuse_unchanged_inputs: bool = True,
     stage_model_offload: bool = False,
     smart_stage_offload: bool = False,
+    use_fast_h3: bool = False,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -4040,6 +4073,7 @@ def build_fl2va_graph(
         use_sage=use_sage,
         use_sla=use_sla,
         sla_preset=sla_preset,
+        use_fast_h3=use_fast_h3,
     )
     normalized_image_vae = normalize_image_vae(image_vae)
     single_frame_images = (
@@ -5100,6 +5134,7 @@ def required_nodes_for(
     image_vae: str = DEFAULT_IMAGE_VAE,
     stage_model_offload: bool = False,
     smart_stage_offload: bool = False,
+    use_fast_h3: bool = False,
 ) -> set[str]:
     result_format = normalize_result_format(result_format)
     common = {
@@ -5149,6 +5184,8 @@ def required_nodes_for(
         common.add(SAGE_ATTENTION_NODE)
     if use_sla:
         common.add(SLA_ATTENTION_NODE)
+    if use_fast_h3:
+        common.add(FASTH3_VSA_NODE)
     if latent_upscale:
         common |= {
             "SplitSigmas",
@@ -7276,6 +7313,19 @@ def generate(
             ltx25_model_keys(ltx25_model)
         profile_key = models.profile_key(model_profile)
         profile = models.profiles[profile_key]
+        use_fast_h3 = profile_key == FASTH3_PROFILE_KEY
+        requested_generation = str(generation_mode).strip().lower()
+        if use_fast_h3:
+            if mode != "Text to video":
+                raise H3Error(
+                    "FastH3 Preview v1 supports Text to video only; first/last-frame "
+                    "and reference-media variants have not been distilled."
+                )
+            if requested_generation != "normal":
+                raise H3Error(
+                    "FastH3 is already a four-step distilled model. Select Normal; "
+                    "Turbo LoRAs are not compatible."
+                )
 
         selected_model = profile.ref2va if mode == "Reference media" else profile.fl2va
         selected_path = COMFY_DIR / "models" / "diffusion_models" / selected_model
@@ -7290,7 +7340,6 @@ def generate(
             )
         ensure_profile_model(profile_key, profile, mode)
 
-        requested_generation = str(generation_mode).strip().lower()
         use_turbo = requested_generation == "turbo"
         selected_turbo = normalize_turbo_variant(turbo_variant)
         generation_note = (
@@ -7299,6 +7348,10 @@ def generate(
             if mode == "Reference media" and use_turbo
             else None
         )
+        if use_fast_h3:
+            generation_note = (
+                "FastH3 Preview v1 · T2VA-only · four-step VSA distilled checkpoint."
+            )
 
         if use_turbo:
             turbo_lora_name = models.turbo_lora_for(mode, selected_turbo)
@@ -7328,7 +7381,12 @@ def generate(
         effective_steps = int(steps)
         effective_scheduler = str(scheduler)
 
-        if use_turbo:
+        if use_fast_h3:
+            if effective_steps != 4:
+                raise H3Error("FastH3 requires exactly 4 sampling steps.")
+            # The released preview was distilled against the native 4-step ladder.
+            effective_scheduler = "simple"
+        elif use_turbo:
             if effective_steps < 4:
                 raise H3Error("Turbo requires at least 4 steps.")
         elif effective_steps < 10:
@@ -7405,6 +7463,11 @@ def generate(
             "sla attention",
             "sparse-linear",
         }
+        if use_fast_h3:
+            effective_sol = False
+            effective_sage = False
+            effective_sla = False
+            sol_reason = "FastH3 uses its checkpoint-trained FastVideo VSA path"
         if effective_sla:
             effective_sla_preset, effective_sla_inputs = resolve_sla_preset(sla_preset)
         else:
@@ -7414,6 +7477,11 @@ def generate(
         effective_cache_mode, cache_note = resolve_cache_policy(
             cache_mode, use_turbo=use_turbo
         )
+        if use_fast_h3:
+            effective_cache_mode = "Off"
+            cache_note = (
+                "Other attention and cache patches were disabled for FastH3 VSA."
+            )
         if latent_upscale and effective_cache_mode.lower() != "off":
             cache_note = (
                 f"{effective_cache_mode} was disabled because cache state is not "
@@ -7437,6 +7505,7 @@ def generate(
                 image_vae=selected_image_vae,
                 stage_model_offload=effective_stage_offload,
                 smart_stage_offload=smart_stage_offload,
+                use_fast_h3=use_fast_h3,
             )
             - available
         )
@@ -7575,6 +7644,7 @@ def generate(
                 reuse_unchanged_inputs=bool(reuse_unchanged_inputs),
                 stage_model_offload=effective_stage_offload,
                 smart_stage_offload=smart_stage_offload,
+                use_fast_h3=use_fast_h3,
             )
 
         client_id = str(uuid.uuid4())
@@ -7593,6 +7663,9 @@ def generate(
         timings.label = f"H3 job {prompt_id}"
         timings.transition("Waiting for ComfyUI")
         attention_status = (
+            "FastVideo VSA (10% video cubes, exact conditioning/audio)"
+            if use_fast_h3
+            else
             f"SLA {effective_sla_preset} "
             f"(sparsity={effective_sla_inputs['sparsity_ratio']:.2f}, "
             f"block={effective_sla_inputs['block_size']}, "
@@ -8940,6 +9013,7 @@ def build_ui() -> gr.Blocks:
                 "generate_with_ui_defaults": generate_with_ui_defaults,
                 "generation_mode_defaults": generation_mode_defaults,
                 "generation_preflight": generation_preflight,
+                "model_profile_defaults": model_profile_defaults,
                 "image_vae_frame_updates": image_vae_frame_updates,
                 "import_gallery_video": import_gallery_video,
                 "input_image_frame_preset_updates": input_image_frame_preset_updates,
@@ -8972,7 +9046,12 @@ def build_ui() -> gr.Blocks:
 
 
 def selftest() -> None:
-    assert MODEL_PROFILE_CHOICES == ["Speed", "Quality", "Original"]
+    assert MODEL_PROFILE_CHOICES == [
+        "Speed",
+        "Quality",
+        "Original",
+        "FastH3 (4-step experimental)",
+    ]
     assert GEMINI_PROMPT_MODELS == (
         "gemini-3.7-flash",
         "gemini-3.6-flash",

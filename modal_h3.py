@@ -31,10 +31,12 @@ PROMPT_ENHANCER = ROOT / "prompt.txt"
 PROMPT_MUSIC3 = ROOT / "prompt_music3.txt"
 PROMPT_LTX25 = ROOT / "prompt_ltx25.txt"
 ACCEL_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "__init__.py"
+FASTH3_VSA_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "fast_h3_vsa.py"
 
 LOCAL_UI = LOCAL / "gradio_app.py"
 LOCAL_UI_PACKAGE = LOCAL / "h3_ui"
 LOCAL_ACCEL = LOCAL / "custom_nodes" / "H3Acceleration" / "__init__.py"
+LOCAL_FASTH3_VSA = LOCAL / "custom_nodes" / "H3Acceleration" / "fast_h3_vsa.py"
 LOCAL_SHARED_MODELS = LOCAL / "h3_models.py"
 LOCAL_SHARED_REQUIREMENTS = LOCAL / "h3_requirements.py"
 LOCAL_NODE_PATCHES = LOCAL / "h3_node_patches.py"
@@ -55,7 +57,7 @@ MANIFEST = DATA / "h3_model_manifest.json"
 COMFY_PORT = 8188
 UI_PORT = 7860
 
-COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
+COMFY_REPO = "https://github.com/kijai/ComfyUI.git"
 SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
 SOL_REF = "930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf"  # v0.6.2, SM86 support
 SLA_REPO = "https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes.git"
@@ -126,6 +128,7 @@ _BUILD_LOCAL_MOUNTS = (
 _RUNTIME_LOCAL_MOUNTS = (
     (LOCAL_UI, UI),
     (LOCAL_ACCEL, ACCEL_DEST),
+    (LOCAL_FASTH3_VSA, FASTH3_VSA_DEST),
     (LOCAL_SHARED_MODELS, SHARED_MODELS),
     (LOCAL_ATTENTION_HELPER, ATTENTION_HELPER),
     (LOCAL_PROMPT_REWRITER, PROMPT_REWRITER),

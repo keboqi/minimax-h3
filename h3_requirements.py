@@ -26,9 +26,9 @@ KORNIA_VERSION = "0.8.1"
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
 # ComfyUI v0.34.0 includes the current MiniMax Music 3 and non-dynamic-VRAM fixes. Keep Comfy
 # Kitchen in lockstep even though the H3 launchers use dynamic model residency.
-COMFY_REF = "12d5279438bfefc058a269eae805ceab6047777f"
+COMFY_REF = "10febb01d7be73d1491cf5e5347b5ab8b6c2c09e"
 COMFY_KITCHEN_VERSION = "0.2.31"
-COMFY_FRONTEND_VERSION = "1.50.6"
+COMFY_FRONTEND_VERSION = "1.51.9"
 WSPROTO_VERSION = "1.2.0"
 SWIFTVR_REPO = "https://github.com/H-oliday/SwiftVR.git"
 SWIFTVR_REF = "5ca168cef6ca7200f135fdfea85e5e13d12c5b53"
@@ -248,9 +248,9 @@ def selftest() -> None:
     )
     assert KORNIA_VERSION == "0.8.1"
     assert KERNELS_VERSION == "0.16.0"
-    assert COMFY_REF == "12d5279438bfefc058a269eae805ceab6047777f"
+    assert COMFY_REF == "10febb01d7be73d1491cf5e5347b5ab8b6c2c09e"
     assert COMFY_KITCHEN_VERSION == "0.2.31"
-    assert COMFY_FRONTEND_VERSION == "1.50.6"
+    assert COMFY_FRONTEND_VERSION == "1.51.9"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 9
     with tempfile.TemporaryDirectory() as temp:

@@ -174,7 +174,8 @@ def build_h3_view(
                         "Speed uses the rebuilt single-pass NVFP4 files. "
                         "Quality uses the mixed NVFP4/FP8/INT8 ConvRot files. "
                         "Original uses the official BF16 files. Speed and Original "
-                        "download when first selected."
+                        "download when first selected. FastH3 is Kijai's experimental "
+                        "four-step VSA-distilled T2V model and locks Generation to Normal."
                     ),
                 )
                 generation_mode = gr.Radio(
@@ -184,7 +185,8 @@ def build_h3_view(
                     info=(
                         "Turbo uses the implementation selected in Generation settings. "
                         "Reference media temporarily uses the corresponding FL2VA-trained "
-                        "LoRA and is experimental."
+                        "LoRA and is experimental. FastH3 is already distilled and does "
+                        "not accept a Turbo LoRA."
                     ),
                 )
             with gr.Accordion(

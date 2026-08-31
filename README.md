@@ -22,6 +22,9 @@ bundled FirstBlockCache node.
 - Live queue position, workflow stage, node count, overall work, and sampling schedule
 - Resolution-aware thumbnail gallery that loads a video only after it is selected
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
+- Experimental Kijai FastH3 Preview v1 base-model profile: lazy-downloaded,
+  Text-to-video only, exactly four Normal-mode steps, and never combined with a
+  Turbo LoRA because the checkpoint is already distilled
 - Selectable official Qwen3-VL 32B NVFP4/AWQ, INT8 ConvRot, and BF16 text encoders
 - Optional model offload at every H3 stage boundary, automatically required for BF16
 - Default-on reuse of unchanged prompt and image/audio/video conditioning through
@@ -59,9 +62,18 @@ bundled FirstBlockCache node.
 - Hugging Face access to every configured model repository
 
 The installer pins the ABI-sensitive stack to Torch 2.11.0 + CUDA 13.0,
-NumPy 1.26.4, and SciPy 1.15.3. The pinned ComfyUI 0.32 stack supplies Comfy
+NumPy 1.26.4, and SciPy 1.15.3. The pinned Kijai ComfyUI revision supplies Comfy
 Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
 2.2.0 remains installed from the pinned prebuilt wheel for UI comparisons.
+
+FastH3 pins Kijai's draft ComfyUI VSA core commit
+10febb01d7be73d1491cf5e5347b5ab8b6c2c09e and bundles his temporary
+H3FastVideoVSA wrapper around his PR #117 implementation. Kernel support is merged and
+released in comfy-kitchen 0.2.31, but the ComfyUI core patch remains a draft,
+so the profile is explicitly experimental. The integration refuses to run when
+the checkpoint gate_compress layers or VSA kernel path are missing; it does not
+silently substitute dense attention.
+
 SLA is provided by the pinned PlagueKind node pack at
 `6ca3037bd16dc143b6d461c67c87a28ca8074063`. Selecting **SLA** exposes three
 quality presets: **Fast** uses validated 0.90 sparsity, **Balanced** uses the

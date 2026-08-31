@@ -1358,7 +1358,12 @@ class H3SaveVideoNVENC:
         }
 
 
+# Kijai's temporary FastVideo VSA implementation from comfy-kitchen PR #117.
+from .fast_h3_vsa import H3FastVideoVSA  # noqa: E402
+
+
 NODE_CLASS_MAPPINGS = {
+    "H3FastVideoVSA": H3FastVideoVSA,
     "H3FirstBlockCache": H3FirstBlockCache,
     "H3LightX2VBypassLoRA": H3LightX2VBypassLoRA,
     "H3SeparateAVLatent": H3SeparateAVLatent,
@@ -1372,6 +1377,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "H3FastVideoVSA": "MiniMax H3 FastVideo VSA (Kijai, experimental)",
     "H3FirstBlockCache": "MiniMax H3 FirstBlockCache",
     "H3LightX2VBypassLoRA": "MiniMax H3 LightX2V Bypass LoRA",
     "H3SeparateAVLatent": "MiniMax H3 Separate AV Latent",

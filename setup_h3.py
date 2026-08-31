@@ -34,7 +34,7 @@ from h3_requirements import (
 )
 
 
-COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
+COMFY_REPO = "https://github.com/kijai/ComfyUI.git"
 SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
 SOL_REF = "930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf"  # v0.6.2, SM86 support
 SLA_REPO = "https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes.git"
@@ -62,6 +62,9 @@ BUNDLED_ACCEL_NODE = (
     SCRIPT_DIR / "custom_nodes" / "H3Acceleration" / "__init__.py"
 )
 
+BUNDLED_FASTH3_VSA_NODE = (
+    SCRIPT_DIR / "custom_nodes" / "H3Acceleration" / "fast_h3_vsa.py"
+)
 _UV_CMD: list[str] | None = None
 
 
@@ -730,17 +733,17 @@ def sync_swiftvr_runtime(install_dir: Path) -> None:
 
 
 def install_bundled_nodes(comfy: Path) -> None:
-    if not BUNDLED_ACCEL_NODE.is_file():
-        raise RuntimeError(
-            f"Missing bundled H3 acceleration node: {BUNDLED_ACCEL_NODE}"
-        )
+    destination_dir = comfy / "custom_nodes" / "H3Acceleration"
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    for source in (BUNDLED_ACCEL_NODE, BUNDLED_FASTH3_VSA_NODE):
+        if not source.is_file():
+            raise RuntimeError(f"Missing bundled H3 acceleration node: {source}")
+        destination = destination_dir / source.name
+        shutil.copy2(source, destination)
+        print(f"[h3-setup] synced {destination}")
 
-    destination = (
-        comfy / "custom_nodes" / "H3Acceleration" / "__init__.py"
-    )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(BUNDLED_ACCEL_NODE, destination)
-    print(f"[h3-setup] synced {destination}")
+
+
 
 
 def sync_model_inventory(install_dir: Path, comfy: Path) -> None:

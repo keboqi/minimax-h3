@@ -22,6 +22,7 @@ ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
+FASTH3_PROFILE_KEY = "fasth3"
 SINGLE_FRAME_VAE_REPO = "iamkaikai/MiniMax-H3-Single-Frame-VAE-500K"
 TEXT_ENCODER_REPO = "Comfy-Org/MiniMax-H3"
 SEEDVR2_REPO = "Comfy-Org/SeedVR2"
@@ -102,6 +103,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "diffusion_models",
         "diffusion_models/minimax_h3_ref2va_pruned_bf16.safetensors",
         "Original · BF16",
+    ),
+    "fasth3_t2va": ModelSpec(
+        EXPERIMENTAL_MODEL_REPO,
+        "diffusion_models",
+        "minimax_h3_fastvideo_vsa_datafree_1300step_4step_int8_convrot.safetensors",
+        "FastH3 Preview v1 · VSA DataFree · 4-step INT8 ConvRot (experimental)",
     ),
     "text_encoder": ModelSpec(
         TEXT_ENCODER_REPO,
@@ -349,11 +356,13 @@ PROFILE_MODEL_KEYS = {
     "speed": ("speed_fl2va", "speed_ref2va"),
     "quality": ("quality_fl2va", "quality_ref2va"),
     "original": ("original_fl2va", "original_ref2va"),
+    FASTH3_PROFILE_KEY: ("fasth3_t2va", "fasth3_t2va"),
 }
 PROFILE_LABELS = {
     "speed": "Speed",
     "quality": "Quality",
     "original": "Original",
+    FASTH3_PROFILE_KEY: "FastH3 (4-step experimental)",
 }
 PRELOAD_PROFILES = ("speed",)
 PRELOAD_PROFILE_MODEL_KEYS = ("speed_fl2va",)
@@ -728,7 +737,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
     return {
-        "schema_version": 15,
+        "schema_version": 16,
         "default_profile": "speed",
         "profiles": {
             profile: _profile_config(profile)
@@ -776,7 +785,10 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
                 for key in LTX25_SHARED_MODEL_KEYS
             },
         },
-        "turbo_supported_profiles": list(PROFILE_MODEL_KEYS),
+        "turbo_supported_profiles": [
+            profile for profile in PROFILE_MODEL_KEYS
+            if profile != FASTH3_PROFILE_KEY
+        ],
         "turbo_supported_modes": ["fl2va", "ref2va"],
         "manifest": manifest_name,
     }
@@ -954,6 +966,7 @@ def selftest() -> None:
         "quality_ref2va",
         "original_fl2va",
         "original_ref2va",
+        "fasth3_t2va",
         "text_encoder",
         "text_encoder_int8",
         "text_encoder_bf16",
@@ -1012,7 +1025,7 @@ def selftest() -> None:
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
     assert "h3_latent_upscaler_3d_bf16" not in PRELOAD_MODEL_KEYS
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 15
+    assert cfg["schema_version"] == 16
     assert cfg["default_profile"] == "speed"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
