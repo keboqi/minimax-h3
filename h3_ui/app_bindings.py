@@ -40,6 +40,15 @@ def bind_app(
         components["result_format"],
         components["image_frames"],
         components["image_vae"],
+        components["latent_upscale_method"],
+        components["latent_split_tile_width"],
+        components["latent_split_tile_height"],
+        components["latent_split_overlap_ratio"],
+        components["latent_split_fade_ratio"],
+        components["latent_split_chunk_frames"],
+        components["latent_split_temporal_overlap_frames"],
+        components["latent_split_seam_denoise"],
+        components["latent_split_seam_polish"],
     ]
     preflight_inputs = [
         components["mode"],
@@ -148,6 +157,13 @@ def bind_app(
             components["height"],
             components["resolution_info"],
         ],
+    )
+    components["latent_upscale_method"].change(
+        services["latent_upscale_method_layout_update"],
+        inputs=components["latent_upscale_method"],
+        outputs=components["latent_split_settings"],
+        queue=False,
+        show_progress="hidden",
     )
     ltx25_event = services["bind_ltx_view"](
         components["ltx25_components"],
@@ -516,6 +532,15 @@ def bind_app(
             components["latent_upscale"],
             components["latent_upscaler_model"],
             components["latent_upscale_refine_steps"],
+            components["latent_upscale_method"],
+            components["latent_split_tile_width"],
+            components["latent_split_tile_height"],
+            components["latent_split_overlap_ratio"],
+            components["latent_split_fade_ratio"],
+            components["latent_split_chunk_frames"],
+            components["latent_split_temporal_overlap_frames"],
+            components["latent_split_seam_denoise"],
+            components["latent_split_seam_polish"],
             components["generation_force_offload"],
             components["generation_split_upscale"],
             components["generation_split_seconds"],

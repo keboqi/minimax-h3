@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import unittest
 from unittest import mock
 
@@ -148,6 +149,57 @@ class UiContractTests(unittest.TestCase):
         self.assertIn('role="alert"', blocked.html)
         self.assertIn("&lt;offline&gt;", backend_status_html("<offline>"))
 
+    def test_mmh3_split_upscale_controls_are_explicit_and_conditional(self) -> None:
+        labels = {
+            component.get("props", {}).get("label")
+            for component in self.config["components"]
+        }
+        for label in (
+            "High-resolution refinement method",
+            "Tile width (pixels)",
+            "Tile height (pixels)",
+            "Spatial overlap",
+            "Overlap fade",
+            "Temporal chunk length (frames)",
+            "Temporal overlap (frames)",
+            "Seam denoise cap",
+            "Seam polish",
+        ):
+            self.assertIn(label, labels)
+        method = next(
+            component
+            for component in self.config["components"]
+            if component.get("props", {}).get("label")
+            == "High-resolution refinement method"
+        )
+        choices = method["props"]["choices"]
+        self.assertIn(
+            (
+                gradio_app.H3_LATENT_UPSCALE_SPLIT,
+                gradio_app.H3_LATENT_UPSCALE_SPLIT,
+            ),
+            choices,
+        )
+        self.assertFalse(
+            gradio_app.latent_upscale_method_layout_update(
+                gradio_app.H3_LATENT_UPSCALE_STANDARD
+            )["visible"]
+        )
+        self.assertTrue(
+            gradio_app.latent_upscale_method_layout_update(
+                gradio_app.H3_LATENT_UPSCALE_SPLIT
+            )["visible"]
+        )
+        advanced = next(
+            dependency
+            for dependency in self.config["dependencies"]
+            if dependency.get("api_name") == "generate_video_advanced"
+        )
+        self.assertEqual(
+            len(advanced["inputs"]),
+            len(inspect.signature(gradio_app.generate).parameters),
+        )
+
     def test_settings_summary_is_compact_disclosure_with_escaped_values(self) -> None:
         summary = gradio_app.compact_settings_summary(
             "Text to video",
@@ -185,6 +237,43 @@ class UiContractTests(unittest.TestCase):
         self.assertIn("LightX2V v1.0 / 8-step 768p", summary)
         self.assertIn("Original &lt;unsafe&gt;", summary)
         self.assertNotIn("Original <unsafe>", summary)
+        split_summary = gradio_app.compact_settings_summary(
+            "Text to video",
+            "Original",
+            "BF16",
+            True,
+            True,
+            False,
+            "Normal",
+            gradio_app.LIGHTX2V_8STEP_TURBO,
+            5,
+            1024,
+            1024,
+            20,
+            "beta",
+            "SLA",
+            "Quality",
+            "Off",
+            True,
+            "Balanced (BF16)",
+            2,
+            "None",
+            "unused",
+            "unused",
+            False,
+            False,
+            5,
+            latent_upscale_method=gradio_app.H3_LATENT_UPSCALE_SPLIT,
+            latent_split_tile_width=512,
+            latent_split_tile_height=640,
+            latent_split_chunk_frames=73,
+            latent_split_temporal_overlap_frames=22,
+            latent_split_seam_polish="auto",
+        )
+        self.assertIn("MMH3 Split Upscale (experimental)", split_summary)
+        self.assertIn("512×640px tiles", split_summary)
+        self.assertIn("73f chunks+22f", split_summary)
+        self.assertIn("polish auto", split_summary)
 
     def test_scoped_setup_css_contract(self) -> None:
         for rule in (

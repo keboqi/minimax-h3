@@ -518,3 +518,36 @@ uses shifts 12/3, Euler, and four NFE. Previously only the 4-step v1.1 filename
 received the 6/3 shift and Euler override; the configured 8-step 768p adapter
 therefore incorrectly used the native RES multistep path without its trained
 shift.
+
+
+## v59 ComfyUI, acceleration nodes, and latent-upscaler refresh
+
+ComfyUI is advanced from v0.34.0 to the immutable v0.34.2 commit and its
+declared frontend 1.49.6, restoring the repository's lockstep policy. KJNodes is
+pinned to the minimal commit containing the newer-ComfyUI MiniMax H3 token
+counter fix. SLA advances to v1.4.2 and Spectrum to v0.2.23 without changing the
+app's existing SLA preset or Spectrum legacy-mode inputs.
+
+The learned H3 latent upscaler advances to the Aug 28 revision while retaining
+the normal 2x path. Its graph now uses the renamed 3D node and dynamic
+scale-by-multiplier contract, enables temporal chunking and 32-pixel alignment,
+and unloads the upscaler before high-resolution refinement. At the v59 stage,
+MMH3 Split Upscale remained deferred; v60 below adds it as a separate
+experimental feature.
+
+
+## v60 experimental MMH3 Split Upscale route
+
+The native H3 finishing controls now offer MMH3 Split Upscale as an explicit
+advanced method while retaining full-frame refinement as the default. Both
+methods first run the learned 2x latent upscaler. The split route then constructs
+the upstream temporal and spatial parameter nodes and passes their outputs,
+together with the final model, conditioning, noise, sampler, and refinement
+sigmas, to MMH3 Split Upscale.
+
+Tile dimensions, overlap/fade, temporal chunk length/overlap, seam-denoise cap,
+and seam-polish policy are conditionally exposed. Triple anchors, color
+matching, and the 256-pixel minimum tile policy use upstream defaults. CPU
+contract tests cover required-node preflight and exact graph wiring; seams,
+color drift, identity/reference continuity, audio continuity, peak VRAM, and
+runtime still require fixed-seed GPU validation.

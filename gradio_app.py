@@ -335,9 +335,12 @@ H3_SIGMA_SHIFT_NODE = "MiniMaxH3SigmaShift"
 LARRY_TURBO_LORA_NODE = "MiniMaxH3TurboLoRA"
 LARRY_TURBO_SAMPLER_NODE = "MiniMaxH3TurboSampler"
 LIGHTX2V_BYPASS_LORA_NODE = "H3LightX2VBypassLoRA"
-H3_LATENT_UPSCALER_NODE = "MinimaxH3LatentUpscalerNode3D"
+H3_LATENT_UPSCALER_NODE = "MinimaxH3LatentUpscaler3D"
 H3_SEPARATE_AV_LATENT_NODE = "H3SeparateAVLatent"
 H3_COMBINE_AV_LATENT_NODE = "H3CombineAVLatent"
+H3_SPLIT_TEMPORAL_PARAMS_NODE = "MMH3TemporalSplitParamsV10"
+H3_SPLIT_SPATIAL_PARAMS_NODE = "MMH3SpatialSplitParamsV10"
+H3_SPLIT_UPSCALE_NODE = "MMH3SplitUpscale"
 H3_SINGLE_FRAME_VAE_LOADER_NODE = "H3SingleFrameVAELoader"
 H3_IMAGE_SLICES_NODE = "H3VideoLatentSlicesToBatch"
 H3_STAGE_OFFLOAD_NODE = "H3StageModelOffload"
@@ -345,6 +348,12 @@ H3_CONDITIONING_CACHE_NODE = "H3ConditioningCache"
 H3_STAGE_OFFLOAD_POLICY_NODE = "H3StageOffloadPolicy"
 H3_NVENC_SAVE_NODE = "H3SaveVideoNVENC"
 H3_LATENT_UPSCALE_SCALE = 2.0
+H3_LATENT_UPSCALE_STANDARD = "Full-frame refinement"
+H3_LATENT_UPSCALE_SPLIT = "MMH3 Split Upscale (experimental)"
+H3_LATENT_UPSCALE_METHODS = (
+    H3_LATENT_UPSCALE_STANDARD,
+    H3_LATENT_UPSCALE_SPLIT,
+)
 SOL_ATTENTION_NODE = "MiniMaxH3MemoryEfficientSolAttentionPatch"
 SAGE_ATTENTION_NODE = "PathchSageAttentionKJ"
 SLA_ATTENTION_NODE = "H3SLAAttention"
@@ -482,6 +491,15 @@ UI_DEFAULTS = {
     "latent_upscale": True,
     "latent_upscaler_model": DEFAULT_H3_LATENT_UPSCALER_MODEL,
     "latent_upscale_refine_steps": 2,
+    "latent_upscale_method": H3_LATENT_UPSCALE_STANDARD,
+    "latent_split_tile_width": 512,
+    "latent_split_tile_height": 512,
+    "latent_split_overlap_ratio": 0.25,
+    "latent_split_fade_ratio": 0.50,
+    "latent_split_chunk_frames": 73,
+    "latent_split_temporal_overlap_frames": 22,
+    "latent_split_seam_denoise": 0.75,
+    "latent_split_seam_polish": "off",
     "postprocess": "None",
     "seedvr2_model": DEFAULT_SEEDVR2_MODEL,
     "upscale_force_offload": False,
@@ -1983,6 +2001,95 @@ def h3_latent_upscaler_settings(model_choice: str) -> tuple[str, str, str]:
     return key, MODEL_SPECS[key].local_name, precision
 
 
+@dataclass(frozen=True)
+class H3SplitUpscaleConfig:
+    tile_width: int
+    tile_height: int
+    overlap_ratio: float
+    fade_ratio: float
+    chunk_frames: int
+    temporal_overlap_frames: int
+    seam_denoise: float
+    seam_polish: str
+
+
+def resolve_h3_latent_upscale_method(value: str | None) -> str:
+    normalized = str(value or H3_LATENT_UPSCALE_STANDARD).strip().lower()
+    aliases = {
+        "full-frame": H3_LATENT_UPSCALE_STANDARD,
+        "full frame": H3_LATENT_UPSCALE_STANDARD,
+        "standard": H3_LATENT_UPSCALE_STANDARD,
+        H3_LATENT_UPSCALE_STANDARD.lower(): H3_LATENT_UPSCALE_STANDARD,
+        "split": H3_LATENT_UPSCALE_SPLIT,
+        "mmh3 split upscale": H3_LATENT_UPSCALE_SPLIT,
+        H3_LATENT_UPSCALE_SPLIT.lower(): H3_LATENT_UPSCALE_SPLIT,
+    }
+    try:
+        return aliases[normalized]
+    except KeyError as exc:
+        raise H3Error(
+            "Unknown H3 latent upscale method. Choose full-frame refinement or "
+            "MMH3 Split Upscale."
+        ) from exc
+
+
+def resolve_h3_split_upscale_config(
+    method: str | None,
+    *,
+    tile_width: int | float,
+    tile_height: int | float,
+    overlap_ratio: float,
+    fade_ratio: float,
+    chunk_frames: int | float,
+    temporal_overlap_frames: int | float,
+    seam_denoise: float,
+    seam_polish: str,
+) -> H3SplitUpscaleConfig | None:
+    if resolve_h3_latent_upscale_method(method) == H3_LATENT_UPSCALE_STANDARD:
+        return None
+
+    resolved_tile_width = int(tile_width)
+    resolved_tile_height = int(tile_height)
+    resolved_chunk_frames = int(chunk_frames)
+    resolved_temporal_overlap = int(temporal_overlap_frames)
+    resolved_overlap_ratio = float(overlap_ratio)
+    resolved_fade_ratio = float(fade_ratio)
+    resolved_seam_denoise = float(seam_denoise)
+    resolved_seam_polish = str(seam_polish).strip().lower()
+    if not 64 <= resolved_tile_width <= 16384 or resolved_tile_width % 32:
+        raise H3Error("MMH3 tile width must be a multiple of 32 from 64 to 16384.")
+    if not 64 <= resolved_tile_height <= 16384 or resolved_tile_height % 32:
+        raise H3Error("MMH3 tile height must be a multiple of 32 from 64 to 16384.")
+    if not 0.0 <= resolved_overlap_ratio <= 0.90:
+        raise H3Error("MMH3 spatial overlap must be between 0.0 and 0.90.")
+    if not 0.0 <= resolved_fade_ratio <= 1.0:
+        raise H3Error("MMH3 fade ratio must be between 0.0 and 1.0.")
+    if not 5 <= resolved_chunk_frames <= 100000:
+        raise H3Error(
+            "MMH3 temporal chunk length must be from 5 to 100000 frames."
+        )
+    if not 0 <= resolved_temporal_overlap <= 100000:
+        raise H3Error("MMH3 temporal overlap must be from 0 to 100000 frames.")
+    if resolved_temporal_overlap >= resolved_chunk_frames:
+        raise H3Error(
+            "MMH3 temporal overlap must be non-negative and smaller than the chunk."
+        )
+    if not 0.1 <= resolved_seam_denoise <= 1.0:
+        raise H3Error("MMH3 seam denoise must be between 0.1 and 1.0.")
+    if resolved_seam_polish not in {"off", "auto", "all"}:
+        raise H3Error("MMH3 seam polish must be off, auto, or all.")
+    return H3SplitUpscaleConfig(
+        tile_width=resolved_tile_width,
+        tile_height=resolved_tile_height,
+        overlap_ratio=resolved_overlap_ratio,
+        fade_ratio=resolved_fade_ratio,
+        chunk_frames=resolved_chunk_frames,
+        temporal_overlap_frames=resolved_temporal_overlap,
+        seam_denoise=resolved_seam_denoise,
+        seam_polish=resolved_seam_polish,
+    )
+
+
 def ensure_h3_latent_upscaler_model(model_choice: str) -> bool:
     """Download the selected native H3 latent upscaler on first use."""
     model_key, filename, _precision = h3_latent_upscaler_settings(model_choice)
@@ -3180,6 +3287,14 @@ def latent_upscale_layout_updates(
     )
 
 
+def latent_upscale_method_layout_update(method: str):
+    return gr.update(
+        visible=(
+            resolve_h3_latent_upscale_method(method) == H3_LATENT_UPSCALE_SPLIT
+        )
+    )
+
+
 def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
     """Normal/Turbo is independent from the selected base-model profile.
 
@@ -3748,6 +3863,7 @@ def finish_sampling(
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
+    latent_split_config: H3SplitUpscaleConfig | None = None,
     stage_model_offload: bool = False,
     smart_stage_offload: bool = False,
     conditioning_cache_key: str | None = None,
@@ -3842,9 +3958,14 @@ def finish_sampling(
             H3_LATENT_UPSCALER_NODE,
             latent=Graph.out(separated, 0),
             model_name=latent_upscale_model_name,
-            scale=H3_LATENT_UPSCALE_SCALE,
+            mode="scale by multiplier",
+            align=32,
+            enable_temporal_chunking=True,
+            force_unload=True,
             device="cuda",
             precision=latent_upscale_precision,
+            # ComfyUI's prompt API flattens DynamicCombo children with dotted keys.
+            **{"mode.scale": H3_LATENT_UPSCALE_SCALE},
         )
         combined = graph.add(
             H3_COMBINE_AV_LATENT_NODE,
@@ -3864,14 +3985,49 @@ def finish_sampling(
                 combined_ref,
                 enabled_ref=stage_offload_enabled_ref,
             )
-        sampled = graph.add(
-            "SamplerCustomAdvanced",
-            noise=Graph.out(noise),
-            guider=Graph.out(guider),
-            sampler=Graph.out(sampler),
-            sigmas=Graph.out(refine_sigmas, 1),
-            latent_image=combined_ref,
-        )
+        if latent_split_config is not None:
+            temporal_params = graph.add(
+                H3_SPLIT_TEMPORAL_PARAMS_NODE,
+                chunk_frames=latent_split_config.chunk_frames,
+                temporal_overlap_frames=(
+                    latent_split_config.temporal_overlap_frames
+                ),
+                anchor_strength=0.999,
+                motion_anchor_frames="22",
+                identity_anchor_frames=24,
+            )
+            spatial_params = graph.add(
+                H3_SPLIT_SPATIAL_PARAMS_NODE,
+                tile_width=latent_split_config.tile_width,
+                tile_height=latent_split_config.tile_height,
+                overlap_ratio=latent_split_config.overlap_ratio,
+                fade_ratio=latent_split_config.fade_ratio,
+                min_tile_size=256,
+                seam_denoise=latent_split_config.seam_denoise,
+            )
+            sampled = graph.add(
+                H3_SPLIT_UPSCALE_NODE,
+                model=model_ref,
+                conditioning=conditioning_ref,
+                latent=combined_ref,
+                noise=Graph.out(noise),
+                sampler=Graph.out(sampler),
+                sigmas=Graph.out(refine_sigmas, 1),
+                cfg=1.0,
+                temporal_split_param=Graph.out(temporal_params),
+                spatial_split_param=Graph.out(spatial_params),
+                seam_polish=latent_split_config.seam_polish,
+                color_match=True,
+            )
+        else:
+            sampled = graph.add(
+                "SamplerCustomAdvanced",
+                noise=Graph.out(noise),
+                guider=Graph.out(guider),
+                sampler=Graph.out(sampler),
+                sigmas=Graph.out(refine_sigmas, 1),
+                latent_image=combined_ref,
+            )
         audio_samples = initial_sampled_ref
     else:
         sampled = graph.add(
@@ -4000,6 +4156,7 @@ def build_fl2va_graph(
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
+    latent_split_config: H3SplitUpscaleConfig | None = None,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae: str = DEFAULT_IMAGE_VAE,
@@ -4151,6 +4308,7 @@ def build_fl2va_graph(
         latent_upscale_model_name=latent_upscale_model_name,
         latent_upscale_precision=latent_upscale_precision,
         latent_upscale_refine_steps=latent_upscale_refine_steps,
+        latent_split_config=latent_split_config,
         stage_model_offload=stage_model_offload,
         smart_stage_offload=smart_stage_offload,
         conditioning_cache_key=conditioning_cache_key,
@@ -4202,6 +4360,7 @@ def build_ref2va_graph(
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
+    latent_split_config: H3SplitUpscaleConfig | None = None,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae: str = DEFAULT_IMAGE_VAE,
@@ -4368,6 +4527,7 @@ def build_ref2va_graph(
         latent_upscale_model_name=latent_upscale_model_name,
         latent_upscale_precision=latent_upscale_precision,
         latent_upscale_refine_steps=latent_upscale_refine_steps,
+        latent_split_config=latent_split_config,
         stage_model_offload=stage_model_offload,
         smart_stage_offload=smart_stage_offload,
         conditioning_cache_key=conditioning_cache_key,
@@ -5096,6 +5256,7 @@ def required_nodes_for(
     use_sage: bool = False,
     use_sla: bool = False,
     latent_upscale: bool = False,
+    latent_upscale_method: str = H3_LATENT_UPSCALE_STANDARD,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_vae: str = DEFAULT_IMAGE_VAE,
     stage_model_offload: bool = False,
@@ -5156,6 +5317,15 @@ def required_nodes_for(
             H3_SEPARATE_AV_LATENT_NODE,
             H3_COMBINE_AV_LATENT_NODE,
         }
+        if (
+            resolve_h3_latent_upscale_method(latent_upscale_method)
+            == H3_LATENT_UPSCALE_SPLIT
+        ):
+            common |= {
+                H3_SPLIT_TEMPORAL_PARAMS_NODE,
+                H3_SPLIT_SPATIAL_PARAMS_NODE,
+                H3_SPLIT_UPSCALE_NODE,
+            }
     if stage_model_offload:
         common.add(H3_STAGE_OFFLOAD_NODE)
         if smart_stage_offload:
@@ -5271,6 +5441,10 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Upscaling H3 video latent 2x"
     if name == H3_COMBINE_AV_LATENT_NODE:
         return "Recombining H3 video and audio latents"
+    if name in {H3_SPLIT_TEMPORAL_PARAMS_NODE, H3_SPLIT_SPATIAL_PARAMS_NODE}:
+        return "Preparing MMH3 split-upscale tiles and chunks"
+    if name == H3_SPLIT_UPSCALE_NODE:
+        return "Refining MMH3 temporal chunks and spatial tiles"
     if name == "KSampler" and "MiniMaxMusic3TextEncode" in workflow_classes:
         return "Generating music"
     if name == "SamplerCustomAdvanced" or "Sampler" in name:
@@ -7164,6 +7338,15 @@ def generate(
     latent_upscale: bool = False,
     latent_upscaler_model: str = DEFAULT_H3_LATENT_UPSCALER_MODEL,
     latent_upscale_refine_steps: int = 2,
+    latent_upscale_method: str = H3_LATENT_UPSCALE_STANDARD,
+    latent_split_tile_width: int = 512,
+    latent_split_tile_height: int = 512,
+    latent_split_overlap_ratio: float = 0.25,
+    latent_split_fade_ratio: float = 0.50,
+    latent_split_chunk_frames: int = 73,
+    latent_split_temporal_overlap_frames: int = 22,
+    latent_split_seam_denoise: float = 0.75,
+    latent_split_seam_polish: str = "off",
     upscale_force_offload: bool = False,
     upscale_split_enabled: bool = False,
     upscale_split_seconds: float = 5.0,
@@ -7339,8 +7522,24 @@ def generate(
 
         latent_upscale_model_name: str | None = None
         latent_upscale_precision = "bf16"
+        resolved_latent_upscale_method = H3_LATENT_UPSCALE_STANDARD
+        latent_split_config: H3SplitUpscaleConfig | None = None
         latent_source_width, latent_source_height = resolved_width, resolved_height
         if latent_upscale:
+            resolved_latent_upscale_method = resolve_h3_latent_upscale_method(
+                latent_upscale_method
+            )
+            latent_split_config = resolve_h3_split_upscale_config(
+                resolved_latent_upscale_method,
+                tile_width=latent_split_tile_width,
+                tile_height=latent_split_tile_height,
+                overlap_ratio=latent_split_overlap_ratio,
+                fade_ratio=latent_split_fade_ratio,
+                chunk_frames=latent_split_chunk_frames,
+                temporal_overlap_frames=latent_split_temporal_overlap_frames,
+                seam_denoise=latent_split_seam_denoise,
+                seam_polish=latent_split_seam_polish,
+            )
             (
                 latent_source_width,
                 latent_source_height,
@@ -7433,6 +7632,7 @@ def generate(
                 model_filename=selected_model,
                 turbo_lora_filename=turbo_lora_name or "",
                 latent_upscale=bool(latent_upscale),
+                latent_upscale_method=resolved_latent_upscale_method,
                 result_format=result_format,
                 image_vae=selected_image_vae,
                 stage_model_offload=effective_stage_offload,
@@ -7521,6 +7721,7 @@ def generate(
                 latent_upscale_model_name=latent_upscale_model_name,
                 latent_upscale_precision=latent_upscale_precision,
                 latent_upscale_refine_steps=int(latent_upscale_refine_steps),
+                latent_split_config=latent_split_config,
                 text_encoder_name=selected_text_encoder,
                 reuse_unchanged_inputs=bool(reuse_unchanged_inputs),
                 stage_model_offload=effective_stage_offload,
@@ -7571,6 +7772,7 @@ def generate(
                 latent_upscale_model_name=latent_upscale_model_name,
                 latent_upscale_precision=latent_upscale_precision,
                 latent_upscale_refine_steps=int(latent_upscale_refine_steps),
+                latent_split_config=latent_split_config,
                 text_encoder_name=selected_text_encoder,
                 reuse_unchanged_inputs=bool(reuse_unchanged_inputs),
                 stage_model_offload=effective_stage_offload,
@@ -7646,8 +7848,19 @@ def generate(
                 f"full {effective_steps}-step generation at "
                 f"{latent_source_width}×{latent_source_height} → "
                 f"{resolved_width}×{resolved_height} · "
-                f"{int(latent_upscale_refine_steps)} low-denoise refinement steps."
+                f"{int(latent_upscale_refine_steps)} low-denoise refinement steps · "
+                f"{resolved_latent_upscale_method}."
             )
+            if latent_split_config is not None:
+                queued_status += (
+                    f"\n\nMMH3 split settings: "
+                    f"{latent_split_config.tile_width}×"
+                    f"{latent_split_config.tile_height}px tiles · "
+                    f"{latent_split_config.overlap_ratio:.0%} overlap · "
+                    f"{latent_split_config.chunk_frames}-frame chunks · "
+                    f"seam cap {latent_split_config.seam_denoise:.2f} · "
+                    f"polish {latent_split_config.seam_polish}."
+                )
         if cache_note:
             queued_status += f"\n\nAcceleration notice: {cache_note}"
         if generation_note:
@@ -8369,6 +8582,15 @@ def compact_settings_summary(
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae: str = DEFAULT_IMAGE_VAE,
+    latent_upscale_method: str = H3_LATENT_UPSCALE_STANDARD,
+    latent_split_tile_width: int = 512,
+    latent_split_tile_height: int = 512,
+    latent_split_overlap_ratio: float = 0.25,
+    latent_split_fade_ratio: float = 0.50,
+    latent_split_chunk_frames: int = 73,
+    latent_split_temporal_overlap_frames: int = 22,
+    latent_split_seam_denoise: float = 0.75,
+    latent_split_seam_polish: str = "off",
 ) -> str:
     stage_offload_note = "On" if stage_model_offload or text_encoder == "BF16" else "Off"
     vae_note = "INT8 ConvRot" if use_int8_vae else "FP16"
@@ -8417,10 +8639,22 @@ def compact_settings_summary(
             postprocess_note += f" / split: {float(split_seconds):g}s clips"
     latent_note = "Off"
     if latent_upscale:
+        resolved_method = resolve_h3_latent_upscale_method(latent_upscale_method)
         latent_note = (
             f"2x / {latent_upscaler_model} / "
-            f"{int(latent_upscale_refine_steps)} refinement steps"
+            f"{int(latent_upscale_refine_steps)} refinement steps / {resolved_method}"
         )
+        if resolved_method == H3_LATENT_UPSCALE_SPLIT:
+            latent_note += (
+                f" / {int(latent_split_tile_width)}×"
+                f"{int(latent_split_tile_height)}px tiles"
+                f" / {float(latent_split_overlap_ratio):.0%} overlap"
+                f" / fade {float(latent_split_fade_ratio):.0%}"
+                f" / {int(latent_split_chunk_frames)}f chunks"
+                f"+{int(latent_split_temporal_overlap_frames)}f"
+                f" / seam {float(latent_split_seam_denoise):.2f}"
+                f" / polish {str(latent_split_seam_polish).lower()}"
+            )
 
     def safe(value: object) -> str:
         return html.escape(str(value), quote=True)
@@ -8606,6 +8840,17 @@ def generate_with_ui_defaults(
         latent_upscale=defaults["latent_upscale"],
         latent_upscaler_model=defaults["latent_upscaler_model"],
         latent_upscale_refine_steps=defaults["latent_upscale_refine_steps"],
+        latent_upscale_method=defaults["latent_upscale_method"],
+        latent_split_tile_width=defaults["latent_split_tile_width"],
+        latent_split_tile_height=defaults["latent_split_tile_height"],
+        latent_split_overlap_ratio=defaults["latent_split_overlap_ratio"],
+        latent_split_fade_ratio=defaults["latent_split_fade_ratio"],
+        latent_split_chunk_frames=defaults["latent_split_chunk_frames"],
+        latent_split_temporal_overlap_frames=defaults[
+            "latent_split_temporal_overlap_frames"
+        ],
+        latent_split_seam_denoise=defaults["latent_split_seam_denoise"],
+        latent_split_seam_polish=defaults["latent_split_seam_polish"],
         seedvr2_model=defaults["seedvr2_model"],
         ltx25_model=DEFAULT_LTX25_MODEL,
         upscale_force_offload=defaults["upscale_force_offload"],
@@ -8833,6 +9078,8 @@ def build_ui() -> gr.Blocks:
                 "FAST_RESOLUTIONS": FAST_RESOLUTIONS,
                 "GEMINI_PROMPT_MODELS": GEMINI_PROMPT_MODELS,
                 "GENERATION_POSTPROCESS_OPTIONS": GENERATION_POSTPROCESS_OPTIONS,
+                "H3_LATENT_UPSCALE_METHODS": H3_LATENT_UPSCALE_METHODS,
+                "H3_LATENT_UPSCALE_SPLIT": H3_LATENT_UPSCALE_SPLIT,
                 "H3_LATENT_UPSCALER_MODEL_CHOICES": H3_LATENT_UPSCALER_MODEL_CHOICES,
                 "H3_TEXT_ENCODER_CHOICES": H3_TEXT_ENCODER_CHOICES,
                 "IMAGE_VAE_CHOICES": IMAGE_VAE_CHOICES,
@@ -8945,6 +9192,9 @@ def build_ui() -> gr.Blocks:
                 "input_image_frame_preset_updates": input_image_frame_preset_updates,
                 "interrupt": interrupt,
                 "latent_upscale_layout_updates": latent_upscale_layout_updates,
+                "latent_upscale_method_layout_update": (
+                    latent_upscale_method_layout_update
+                ),
                 "mode_layout_updates": mode_layout_updates,
                 "postprocess_selected_gallery_video": postprocess_selected_gallery_video,
                 "prepare_all_ltx25_official_models": prepare_all_ltx25_official_models,
@@ -9310,6 +9560,13 @@ def selftest() -> None:
         False,
         "Off",
         latent_upscale=True,
+    )
+    available |= required_nodes_for(
+        "Text to video",
+        False,
+        "Off",
+        latent_upscale=True,
+        latent_upscale_method=H3_LATENT_UPSCALE_SPLIT,
     )
     available.add("SpectrumApplyMiniMaxH3")
     available.add(CHUNK_FEED_FORWARD_NODE)
@@ -9825,9 +10082,13 @@ def selftest() -> None:
     assert latent_graph[upscaler_id]["inputs"] == {
         "latent": Graph.out(separate_id, 0),
         "model_name": "minimax_h3_latent_upscaler_3d_bf16.safetensors",
-        "scale": 2.0,
+        "mode": "scale by multiplier",
+        "align": 32,
+        "enable_temporal_chunking": True,
+        "force_unload": True,
         "device": "cuda",
         "precision": "bf16",
+        "mode.scale": 2.0,
     }
     assert latent_graph[combine_id]["inputs"]["video_latent"] == Graph.out(upscaler_id)
     assert latent_graph[combine_id]["inputs"]["audio_latent"] == Graph.out(
@@ -9847,6 +10108,139 @@ def selftest() -> None:
     assert initial_offload["inputs"]["latent"] == Graph.out(initial_sampler_id)
     assert h3_latent_upscale_dimensions(1024, 1024) == (512, 512, 1024, 1024)
     assert h3_latent_upscale_dimensions(864, 480) == (448, 256, 896, 512)
+    split_config = resolve_h3_split_upscale_config(
+        H3_LATENT_UPSCALE_SPLIT,
+        tile_width=512,
+        tile_height=640,
+        overlap_ratio=0.25,
+        fade_ratio=0.50,
+        chunk_frames=73,
+        temporal_overlap_frames=22,
+        seam_denoise=0.75,
+        seam_polish="auto",
+    )
+    assert split_config == H3SplitUpscaleConfig(
+        tile_width=512,
+        tile_height=640,
+        overlap_ratio=0.25,
+        fade_ratio=0.50,
+        chunk_frames=73,
+        temporal_overlap_frames=22,
+        seam_denoise=0.75,
+        seam_polish="auto",
+    )
+    assert resolve_h3_split_upscale_config(
+        H3_LATENT_UPSCALE_STANDARD,
+        tile_width=1,
+        tile_height=1,
+        overlap_ratio=2,
+        fade_ratio=2,
+        chunk_frames=1,
+        temporal_overlap_frames=2,
+        seam_denoise=2,
+        seam_polish="invalid",
+    ) is None
+    assert {
+        H3_SPLIT_TEMPORAL_PARAMS_NODE,
+        H3_SPLIT_SPATIAL_PARAMS_NODE,
+        H3_SPLIT_UPSCALE_NODE,
+    } <= required_nodes_for(
+        "Text to video",
+        False,
+        "Off",
+        latent_upscale=True,
+        latent_upscale_method=H3_LATENT_UPSCALE_SPLIT,
+    )
+    split_graph_builder = Graph()
+    finish_sampling(
+        split_graph_builder,
+        model_ref=["model", 0],
+        conditioning_ref=["target-conditioning", 0],
+        latent_ref=["target-latent", 0],
+        video_vae_ref=["video-vae", 0],
+        audio_vae_ref=["audio-vae", 0],
+        seed=11,
+        steps=8,
+        scheduler="beta",
+        turbo_variant=None,
+        filename_prefix="h3/split-selftest",
+        initial_conditioning_ref=["initial-conditioning", 0],
+        initial_latent_ref=["initial-latent", 0],
+        latent_upscale_model_name=(
+            "minimax_h3_latent_upscaler_3d_bf16.safetensors"
+        ),
+        latent_upscale_precision="bf16",
+        latent_upscale_refine_steps=2,
+        latent_split_config=split_config,
+    )
+    split_graph = split_graph_builder.nodes
+    split_temporal_id = next(
+        node_id
+        for node_id, node in split_graph.items()
+        if node["class_type"] == H3_SPLIT_TEMPORAL_PARAMS_NODE
+    )
+    split_spatial_id = next(
+        node_id
+        for node_id, node in split_graph.items()
+        if node["class_type"] == H3_SPLIT_SPATIAL_PARAMS_NODE
+    )
+    split_upscale_id = next(
+        node_id
+        for node_id, node in split_graph.items()
+        if node["class_type"] == H3_SPLIT_UPSCALE_NODE
+    )
+    split_sigmas_id = next(
+        node_id
+        for node_id, node in split_graph.items()
+        if node["class_type"] == "SplitSigmas"
+    )
+    split_noise_id = next(
+        node_id
+        for node_id, node in split_graph.items()
+        if node["class_type"] == "RandomNoise"
+    )
+    split_sampler_id = next(
+        node_id
+        for node_id, node in split_graph.items()
+        if node["class_type"] == CORE_SAMPLER_NODE
+    )
+    split_combine_id = next(
+        node_id
+        for node_id, node in split_graph.items()
+        if node["class_type"] == H3_COMBINE_AV_LATENT_NODE
+    )
+    assert sum(
+        node["class_type"] == "SamplerCustomAdvanced"
+        for node in split_graph.values()
+    ) == 1
+    assert split_graph[split_temporal_id]["inputs"] == {
+        "chunk_frames": 73,
+        "temporal_overlap_frames": 22,
+        "anchor_strength": 0.999,
+        "motion_anchor_frames": "22",
+        "identity_anchor_frames": 24,
+    }
+    assert split_graph[split_spatial_id]["inputs"] == {
+        "tile_width": 512,
+        "tile_height": 640,
+        "overlap_ratio": 0.25,
+        "fade_ratio": 0.5,
+        "min_tile_size": 256,
+        "seam_denoise": 0.75,
+    }
+    assert split_graph[split_upscale_id]["inputs"] == {
+        "model": ["model", 0],
+        "conditioning": ["target-conditioning", 0],
+        "latent": Graph.out(split_combine_id),
+        "noise": Graph.out(split_noise_id),
+        "sampler": Graph.out(split_sampler_id),
+        "sigmas": Graph.out(split_sigmas_id, 1),
+        "cfg": 1.0,
+        "temporal_split_param": Graph.out(split_temporal_id),
+        "spatial_split_param": Graph.out(split_spatial_id),
+        "seam_polish": "auto",
+        "color_match": True,
+    }
 
     sol_nodes = [
         node for node in graph.values() if node["class_type"] == SOL_ATTENTION_NODE
@@ -11200,7 +11594,8 @@ def selftest() -> None:
         f"Sol Auto/Turbo policy valid, Spectrum default + Sol/ConvRot order valid, "
         f"zero-copy Sol + FirstBlockCache composition valid, "
         f"LightX fused modulation + Larry compatibility + ConvRot FFN chunking valid, "
-        f"Spectrum v0.2.14 legacy Turbo composition + block-cache guard valid, "
+        f"Spectrum v0.2.23 legacy Turbo composition + block-cache guard valid, "
+        f"MMH3 Split Upscale controls + three-node graph contract valid, "
         f"selectable Larry/LightX2V Turbo on "
         f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, "
         f"video/image/audio result branches + image selection saving valid, "

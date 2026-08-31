@@ -38,19 +38,19 @@ COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
 SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
 SOL_REF = "930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf"  # v0.6.2, SM86 support
 SLA_REPO = "https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes.git"
-SLA_REF = "6ca3037bd16dc143b6d461c67c87a28ca8074063"
+SLA_REF = "01f186eefedbb607503a0b207d6f66aa8a5f4b5a"  # v1.4.2
 SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
-SPECTRUM_REF = "ac247efcc2c9b6324fa106b3bd8e148a583db4a9"  # v0.2.15
+SPECTRUM_REF = "987be556bb2a580ce20fab20c159a6e9ece4111b"  # v0.2.23
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
 LARRY_TURBO_REF = "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
 H3_LATENT_UPSCALER_NODE_REPO = (
     "https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler.git"
 )
-H3_LATENT_UPSCALER_NODE_REF = "59f399f63a9ff81c588521e405b391c0d6decb90"
+H3_LATENT_UPSCALER_NODE_REF = "d7c01b9011f2e8439493f6c02c29995a27df276f"
 LTXVIDEO_REPO = "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
 LTXVIDEO_REF = "ac4d99839020b983e956a8ab67ec38aec1b6e65a"
 KJNODES_REPO = "https://github.com/kijai/ComfyUI-KJNodes.git"
-KJNODES_REF = "6ab7e8130e449ed2c0037589bcf84146ceb7fc9c"
+KJNODES_REF = "3f20054214fec9f9234fd3841ae6f1e4287948f6"
 CONTROLNET_AUX_REPO = "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
 CONTROLNET_AUX_REF = "e8b689a513c3e6b63edc44066560ca5919c0576e"
 VIDEO_DEPTH_REPO = "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.git"

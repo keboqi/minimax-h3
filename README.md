@@ -44,7 +44,8 @@ bundled FirstBlockCache node.
   the official FP16 video VAE remains the default
 - Hardware-aware ComfyUI memory mode selection
 - One-click model unloading and VRAM cache release from the UI
-- Spectrum v0.2.15 in legacy mode as the normal-generation default and experimental Turbo option
+- Spectrum v0.2.23 in legacy mode as the normal-generation default and experimental Turbo option
+- Optional experimental MMH3 tiled/chunked latent refinement for constrained VRAM
 - FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
 - Version-aware, resumable Hugging Face model provisioning
@@ -59,11 +60,11 @@ bundled FirstBlockCache node.
 - Hugging Face access to every configured model repository
 
 The installer pins the ABI-sensitive stack to Torch 2.11.0 + CUDA 13.0,
-NumPy 1.26.4, and SciPy 1.15.3. The pinned ComfyUI 0.32 stack supplies Comfy
+NumPy 1.26.4, and SciPy 1.15.3. The pinned ComfyUI 0.34.2 stack supplies Comfy
 Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
 2.2.0 remains installed from the pinned prebuilt wheel for UI comparisons.
-SLA is provided by the pinned PlagueKind node pack at
-`6ca3037bd16dc143b6d461c67c87a28ca8074063`. Selecting **SLA** exposes three
+SLA v1.4.2 is provided by the pinned PlagueKind node pack at
+`01f186eefedbb607503a0b207d6f66aa8a5f4b5a`. Selecting **SLA** exposes three
 quality presets: **Fast** uses validated 0.90 sparsity, **Balanced** uses the
 LoRA-distilled 0.85 sparsity, and **Quality** uses 0.85 sparsity plus a dense
 final sampling step. In a two-stage latent-upscale workflow the Quality dense
@@ -84,17 +85,13 @@ patched fail-closed so its E-grid adapter derives the same rows as ComfyUI,
 including visual and audio reference-conditioning rows. Quality ConvRot models use
 bit-preserving two-way feed-forward chunking above 8K packed tokens.
 
-Spectrum is pinned to v0.2.15 and is applied after LoRA, Sol-Attn, and ConvRot
+Spectrum is pinned to v0.2.23 and is applied after LoRA, Sol-Attn, and ConvRot
 feed-forward patches. Its default uses system-RAM history and replay archives,
 degree-1 forecasting, offline smoothing replay, zero spectral audio blending,
-and explicit legacy (`model_aware_mode=off`) scheduling. v0.2.15 adds H3 Continuum
-actual-prefix interoperability and closes an ER-SDE solver-space edge case while
-preserving the existing scheduling behavior. v0.2.14 added a narrow
-native ER-SDE offline-replay guard that avoids KJ preview decode/copy work during
-the transformer-free replay while preserving the existing solver behavior. It
-also contains
-native ER-SDE support and its protected two-actual-step replay tail, while the
-current H3 graphs continue to use the reviewed Larry and RES sampler paths.
+and explicit legacy (`model_aware_mode=off`) scheduling. v0.2.23 retains that
+input contract while adding PDD-LoRA compatibility and newer SEEDS, SA-Solver,
+and reference-interoperability work. The current H3 graphs continue to use the
+reviewed Larry and RES sampler paths.
 Spectrum, FirstBlockCache, and EasyCache are mutually exclusive acceleration
 choices. Turbo defaults to Spectrum through the reviewed Larry Turbo and
 RES multistep sampler paths. EasyCache is also available as an experimental,
@@ -323,7 +320,20 @@ across the two samplers. Enabling it automatically rounds both final dimensions
 to the nearest multiple of 64 so the half-resolution pass remains on H3's
 32-pixel grid. The selected model is downloaded from
 [`LBH-123-AI/Minimax_h3_latent_Upscaler`](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)
-on first use.
+on first use. The pinned node keeps temporal chunking and 32-pixel output-grid
+alignment enabled and unloads the learned upscaler after inference before the
+high-resolution refinement pass.
+
+The **High-resolution refinement method** control keeps **Full-frame
+refinement** as the normal path. Selecting **MMH3 Split Upscale
+(experimental)** feeds the learned 2x AV latent into upstream's separate
+temporal-parameter, spatial-parameter, and tiled resampling nodes. Its controls
+appear only in that mode: tile width/height, spatial overlap and fade, temporal
+chunk length and overlap, seam-denoise cap, and seam-polish policy. The route
+uses triple temporal anchors and color matching with the upstream defaults.
+It lowers the memory needed by the target-resolution refinement pass by trading
+more sampling work and complexity; fixed-seed GPU comparisons should check
+seams, color, identity, reference media, and audio continuity.
 
 ### Input image upscale
 
@@ -419,9 +429,10 @@ different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`. To make a
 hosted prompt enhancer available without entering a key in the UI, also store
 `GEMINI_API_KEY` and/or `LIGHTNING_API_KEY` in that Modal Secret.
 
-The deployment pins the immutable ComfyUI v0.34.0 release, which includes
-native MiniMax Music 3, its non-dynamic-VRAM fix, LTX 2.5 INT8 support, and
-Comfy Kitchen attention.
+The deployment pins the immutable ComfyUI v0.34.2 release with its required
+frontend package 1.49.6. This includes the HEVC remux fix, refreshed workflow
+templates, native MiniMax Music 3, LTX 2.5 INT8 support, and Comfy Kitchen
+attention.
 Changing that pin invalidates the Modal image cache so ComfyUI and its matching
 `comfy-kitchen` dependency are rebuilt together.
 
