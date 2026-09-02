@@ -1784,9 +1784,7 @@ def is_lightx2v_turbo_lora(turbo_variant: str, lora_filename: str | None) -> boo
     }
 
 
-def lightx2v_uses_768p_schedule(
-    turbo_variant: str, lora_filename: str | None
-) -> bool:
+def lightx2v_uses_768p_schedule(turbo_variant: str, lora_filename: str | None) -> bool:
     """Official 768p FL2VA Turbo checkpoints use video/audio shifts 6/3."""
     return is_lightx2v_turbo_lora(turbo_variant, lora_filename) and (
         "768p" in Path(str(lora_filename)).name.lower()
@@ -2072,9 +2070,7 @@ def resolve_h3_split_upscale_config(
     if not 0.0 <= resolved_fade_ratio <= 1.0:
         raise H3Error("MMH3 fade ratio must be between 0.0 and 1.0.")
     if not 5 <= resolved_chunk_frames <= 100000:
-        raise H3Error(
-            "MMH3 temporal chunk length must be from 5 to 100000 frames."
-        )
+        raise H3Error("MMH3 temporal chunk length must be from 5 to 100000 frames.")
     if not 0 <= resolved_temporal_overlap <= 100000:
         raise H3Error("MMH3 temporal overlap must be from 0 to 100000 frames.")
     if resolved_temporal_overlap >= resolved_chunk_frames:
@@ -2218,7 +2214,11 @@ def ensure_int8_video_vae(models: ModelConfig) -> bool:
     return True
 
 
-def ensure_trt_video_vae(models: ModelConfig) -> bool:
+def ensure_trt_video_vae(
+    models: ModelConfig,
+    *,
+    require_engines: bool = True,
+) -> bool:
     """Provision ONNX sources and require locally compiled TensorRT engines."""
     if not models.video_vae_trt_encoder or not models.video_vae_trt_decoder:
         raise H3Error("TensorRT VAE is not configured. Re-run setup_h3.py.")
@@ -2246,10 +2246,11 @@ def ensure_trt_video_vae(models: ModelConfig) -> bool:
         models.video_vae_trt_decoder.replace(".onnx", ".engine"),
     )
     missing_engines = [
-        name for name in engine_names
+        name
+        for name in engine_names
         if not (COMFY_DIR / "models" / "vae" / name).is_file()
     ]
-    if missing_engines:
+    if require_engines and missing_engines:
         raise H3Error(
             "TensorRT VAE engines are not compiled yet. In ComfyUI, add the "
             "MiniMax-H3 TRT VAE Compiler node, select minimax_h3_vae_encoder.onnx "
@@ -2257,6 +2258,55 @@ def ensure_trt_video_vae(models: ModelConfig) -> bool:
             "ComfyUI model list and retry. Missing: " + ", ".join(missing_engines)
         )
     return True
+
+
+def compile_trt_video_vae(
+    progress=gr.Progress(track_tqdm=False),
+) -> str:
+    """Build local TensorRT engines for the MiniMax H3 video VAE."""
+    try:
+        models = load_model_config()
+        ensure_trt_video_vae(models, require_engines=False)
+        node_path = (
+            COMFY_DIR / "custom_nodes" / "ComfyUI-H3VAE_TRT" / "minimax_trt_node.py"
+        )
+        if not node_path.is_file():
+            raise H3Error(
+                "ComfyUI-H3VAE_TRT is not installed. Run setup_h3.py and restart."
+            )
+
+        import importlib.util
+
+        module_name = "_h3_trt_vae_node"
+        module = sys.modules.get(module_name)
+        if module is None:
+            comfy_path = str(COMFY_DIR)
+            if comfy_path not in sys.path:
+                sys.path.insert(0, comfy_path)
+            spec = importlib.util.spec_from_file_location(module_name, node_path)
+            if spec is None or spec.loader is None:
+                raise H3Error(f"Could not load TensorRT VAE compiler: {node_path}")
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+
+        if not module.HAS_TRT:
+            raise H3Error(
+                "TensorRT is not installed in the ComfyUI Python environment."
+            )
+        progress(0.1, desc="Preparing TensorRT VAE compilation")
+        compiler = module.MiniMaxH3TRTCompilerNode()
+        compiler.compile_models(
+            models.video_vae_trt_decoder,
+            models.video_vae_trt_encoder,
+            False,
+            str(uuid.uuid4()),
+        )
+        progress(1.0, desc="TensorRT VAE engines compiled")
+        ensure_trt_video_vae(models)
+        return "TensorRT VAE engines compiled and ready to use."
+    except Exception as exc:
+        return f"TensorRT VAE compilation failed: {exc}"
 
 
 def ensure_single_frame_image_vae(models: ModelConfig) -> bool:
@@ -3337,9 +3387,7 @@ def latent_upscale_layout_updates(
 
 def latent_upscale_method_layout_update(method: str):
     return gr.update(
-        visible=(
-            resolve_h3_latent_upscale_method(method) == H3_LATENT_UPSCALE_SPLIT
-        )
+        visible=(resolve_h3_latent_upscale_method(method) == H3_LATENT_UPSCALE_SPLIT)
     )
 
 
@@ -3811,9 +3859,7 @@ def add_model_stack(
         )
         model_ref = Graph.out(cache)
 
-    if turbo_lora_name and lightx2v_uses_768p_schedule(
-        turbo_variant, turbo_lora_name
-    ):
+    if turbo_lora_name and lightx2v_uses_768p_schedule(turbo_variant, turbo_lora_name):
         if H3_SIGMA_SHIFT_NODE not in available_nodes:
             raise H3Error(
                 "LightX2V 768p Turbo requires MiniMaxH3SigmaShift. "
@@ -3837,7 +3883,9 @@ def add_model_stack(
         raise H3Error("Select either INT8 ConvRot VAE or TensorRT VAE, not both.")
     if use_trt_vae:
         if "MiniMaxH3TRTVAELoader" not in available_nodes:
-            raise H3Error("TensorRT VAE is unavailable. Run setup_h3.py and restart ComfyUI.")
+            raise H3Error(
+                "TensorRT VAE is unavailable. Run setup_h3.py and restart ComfyUI."
+            )
         decoder = (models.video_vae_trt_decoder or "").replace(".onnx", ".engine")
         encoder = (models.video_vae_trt_encoder or "").replace(".onnx", ".engine")
         video_vae = graph.add("MiniMaxH3TRTVAELoader", decoder=decoder, encoder=encoder)
@@ -4044,9 +4092,7 @@ def finish_sampling(
             temporal_params = graph.add(
                 H3_SPLIT_TEMPORAL_PARAMS_NODE,
                 chunk_frames=latent_split_config.chunk_frames,
-                temporal_overlap_frames=(
-                    latent_split_config.temporal_overlap_frames
-                ),
+                temporal_overlap_frames=(latent_split_config.temporal_overlap_frames),
                 anchor_strength=0.999,
                 motion_anchor_frames="22",
                 identity_anchor_frames=24,
@@ -8658,8 +8704,12 @@ def compact_settings_summary(
     latent_split_seam_polish: str = "off",
     use_trt_vae: bool = False,
 ) -> str:
-    stage_offload_note = "On" if stage_model_offload or text_encoder == "BF16" else "Off"
-    vae_note = "TensorRT" if use_trt_vae else ("INT8 ConvRot" if use_int8_vae else "FP16")
+    stage_offload_note = (
+        "On" if stage_model_offload or text_encoder == "BF16" else "Off"
+    )
+    vae_note = (
+        "TensorRT" if use_trt_vae else ("INT8 ConvRot" if use_int8_vae else "FP16")
+    )
     generation_badge = generation_mode
     generation_description = "Standard sampling"
     if generation_mode == "Turbo":
@@ -8730,21 +8780,21 @@ def compact_settings_summary(
             f'<div class="h3-setup-metric h3-tone-{tone}">'
             f'<span class="h3-setup-metric-icon" aria-hidden="true">{safe(icon)}</span>'
             '<span class="h3-setup-metric-copy">'
-            f'<strong>{safe(value)}</strong><span>{safe(label)}</span></span></div>'
+            f"<strong>{safe(value)}</strong><span>{safe(label)}</span></span></div>"
         )
 
     def pill(label: str, value: object, tone: str) -> str:
         return (
             f'<span class="h3-setup-pill h3-tone-{tone}">'
-            f'<span>{safe(label)}</span><strong>{safe(value)}</strong></span>'
+            f"<span>{safe(label)}</span><strong>{safe(value)}</strong></span>"
         )
 
     def detail(label: str, value: object, tone: str = "neutral") -> str:
         return (
             '<div class="h3-setup-detail">'
-            f'<dt>{safe(label)}</dt>'
+            f"<dt>{safe(label)}</dt>"
             f'<dd><span class="h3-setup-value h3-tone-{tone}">{safe(value)}</span></dd>'
-            '</div>'
+            "</div>"
         )
 
     compact_metrics = "".join(
@@ -8774,9 +8824,15 @@ def compact_settings_summary(
         (
             detail("Original", model_profile, "purple"),
             detail("Text encoder", text_encoder, "blue"),
-            detail("Stage offload", stage_offload_note, "green" if stage_offload_note == "On" else "neutral"),
+            detail(
+                "Stage offload",
+                stage_offload_note,
+                "green" if stage_offload_note == "On" else "neutral",
+            ),
             detail("VAE", vae_note, "pink"),
-            detail("Image VAE", image_vae_note, "pink") if result_format == "Image" else "",
+            detail("Image VAE", image_vae_note, "pink")
+            if result_format == "Image"
+            else "",
         )
     )
     sampling_details = "".join(
@@ -8790,21 +8846,31 @@ def compact_settings_summary(
     optimization_details = "".join(
         (
             detail("Cache", cache_mode, "cyan"),
-            detail("Input reuse", "On" if reuse_unchanged_inputs else "Off", "green" if reuse_unchanged_inputs else "neutral"),
-            detail("Native latent", latent_note, "green" if latent_upscale else "neutral"),
-            detail("Post-process", postprocess_note, "neutral" if postprocess == "None" else "blue"),
+            detail(
+                "Input reuse",
+                "On" if reuse_unchanged_inputs else "Off",
+                "green" if reuse_unchanged_inputs else "neutral",
+            ),
+            detail(
+                "Native latent", latent_note, "green" if latent_upscale else "neutral"
+            ),
+            detail(
+                "Post-process",
+                postprocess_note,
+                "neutral" if postprocess == "None" else "blue",
+            ),
         )
     )
     return (
         '<section class="h3-setup-card" aria-label="Effective generation setup">'
         '<div class="h3-setup-heading">'
         '<div class="h3-setup-title"><span class="h3-setup-symbol" aria-hidden="true">▶</span>'
-        '<span><small>Ready to generate</small>'
-        f'<strong>{safe(mode)}</strong></span></div>'
+        "<span><small>Ready to generate</small>"
+        f"<strong>{safe(mode)}</strong></span></div>"
         f'<span class="h3-setup-result h3-tone-blue">{safe(result_format)}</span></div>'
         '<div class="h3-setup-profile">'
         f'<span class="h3-setup-profile-badge h3-tone-amber">{safe(generation_badge)}</span>'
-        f'<strong>{safe(generation_description)}</strong></div>'
+        f"<strong>{safe(generation_description)}</strong></div>"
         f'<div class="h3-setup-metrics">{compact_metrics}</div>'
         f'<div class="h3-setup-pills">{compact_pills}</div>'
         '<details class="h3-setup-disclosure"><summary>'
@@ -8816,7 +8882,7 @@ def compact_settings_summary(
         f'<div class="h3-setup-group"><h4><span aria-hidden="true">◈</span> Model</h4><dl>{model_details}</dl></div>'
         f'<div class="h3-setup-group"><h4><span aria-hidden="true">↗</span> Sampling</h4><dl>{sampling_details}</dl></div>'
         f'<div class="h3-setup-group"><h4><span aria-hidden="true">⚡</span> Optimization</h4><dl>{optimization_details}</dl></div>'
-        '</div></details></section>'
+        "</div></details></section>"
     )
 
 
@@ -9168,6 +9234,7 @@ def build_ui() -> gr.Blocks:
                 "TURBO_SETTINGS": TURBO_SETTINGS,
                 "UPSCALE_RESOLUTION_PRESETS": UPSCALE_RESOLUTION_PRESETS,
                 "compact_settings_summary": compact_settings_summary,
+                "compile_trt_video_vae": compile_trt_video_vae,
                 "generation_readiness_state": generation_readiness_state,
                 "mode_help": mode_help,
                 "reference_prompt_help": reference_prompt_help,
@@ -9241,6 +9308,7 @@ def build_ui() -> gr.Blocks:
                 "bind_preflight": bind_preflight,
                 "bind_summary": bind_summary,
                 "compact_settings_summary": compact_settings_summary,
+                "compile_trt_video_vae": compile_trt_video_vae,
                 "delete_selected_gallery_video": delete_selected_gallery_video,
                 "empty_generated_gallery": empty_generated_gallery,
                 "enhance_h3_prompt": enhance_h3_prompt,
@@ -10195,17 +10263,20 @@ def selftest() -> None:
         seam_denoise=0.75,
         seam_polish="auto",
     )
-    assert resolve_h3_split_upscale_config(
-        H3_LATENT_UPSCALE_STANDARD,
-        tile_width=1,
-        tile_height=1,
-        overlap_ratio=2,
-        fade_ratio=2,
-        chunk_frames=1,
-        temporal_overlap_frames=2,
-        seam_denoise=2,
-        seam_polish="invalid",
-    ) is None
+    assert (
+        resolve_h3_split_upscale_config(
+            H3_LATENT_UPSCALE_STANDARD,
+            tile_width=1,
+            tile_height=1,
+            overlap_ratio=2,
+            fade_ratio=2,
+            chunk_frames=1,
+            temporal_overlap_frames=2,
+            seam_denoise=2,
+            seam_polish="invalid",
+        )
+        is None
+    )
     assert {
         H3_SPLIT_TEMPORAL_PARAMS_NODE,
         H3_SPLIT_SPATIAL_PARAMS_NODE,
@@ -10232,9 +10303,7 @@ def selftest() -> None:
         filename_prefix="h3/split-selftest",
         initial_conditioning_ref=["initial-conditioning", 0],
         initial_latent_ref=["initial-latent", 0],
-        latent_upscale_model_name=(
-            "minimax_h3_latent_upscaler_3d_bf16.safetensors"
-        ),
+        latent_upscale_model_name=("minimax_h3_latent_upscaler_3d_bf16.safetensors"),
         latent_upscale_precision="bf16",
         latent_upscale_refine_steps=2,
         latent_split_config=split_config,
@@ -10275,10 +10344,13 @@ def selftest() -> None:
         for node_id, node in split_graph.items()
         if node["class_type"] == H3_COMBINE_AV_LATENT_NODE
     )
-    assert sum(
-        node["class_type"] == "SamplerCustomAdvanced"
-        for node in split_graph.values()
-    ) == 1
+    assert (
+        sum(
+            node["class_type"] == "SamplerCustomAdvanced"
+            for node in split_graph.values()
+        )
+        == 1
+    )
     assert split_graph[split_temporal_id]["inputs"] == {
         "chunk_frames": 73,
         "temporal_overlap_frames": 22,
@@ -11590,9 +11662,7 @@ def selftest() -> None:
                 assert shift_node["inputs"]["shift_video"] == 6.0
                 assert shift_node["inputs"]["shift_audio"] == 3.0
 
-    assert LIGHTX2V_BYPASS_LORA_NODE in turbo_required_nodes(
-        LIGHTX2V_4STEP_TURBO
-    )
+    assert LIGHTX2V_BYPASS_LORA_NODE in turbo_required_nodes(LIGHTX2V_4STEP_TURBO)
     assert CORE_LORA_LOADER_NODE not in turbo_required_nodes(LIGHTX2V_4STEP_TURBO)
 
     ref_turbo_graph = Graph()

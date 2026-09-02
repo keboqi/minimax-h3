@@ -147,7 +147,9 @@ H3_COMPONENT_ORDER = (
     "stop",
     "text_encoder",
     "turbo_variant",
+    "trt_vae_compile",
     "use_int8_vae",
+    "use_trt_vae",
     "width",
 )
 
@@ -238,11 +240,17 @@ def build_h3_view(
                         "encode/decode; switch off for the reviewed FP16 path."
                     ),
                 )
-                use_trt_vae = gr.Checkbox(
-                    value=defaults["use_trt_vae"],
-                    label="Experimental TensorRT video VAE",
-                    info="Downloads ONNX sources on first use; compile them with the MiniMax-H3 TRT VAE Compiler node before generation.",
-                )
+                with gr.Row():
+                    use_trt_vae = gr.Checkbox(
+                        value=defaults["use_trt_vae"],
+                        label="Experimental TensorRT video VAE",
+                        info="Uses locally compiled engines for H3 video encode/decode.",
+                        scale=2,
+                    )
+                    trt_vae_compile = gr.Button(
+                        "Compile TensorRT VAE engines",
+                        scale=1,
+                    )
                 image_vae = gr.Radio(
                     services["IMAGE_VAE_CHOICES"],
                     value=defaults["image_vae"],
@@ -962,9 +970,7 @@ def build_h3_view(
                             latent_split_temporal_overlap_frames = gr.Slider(
                                 0,
                                 240,
-                                value=defaults[
-                                    "latent_split_temporal_overlap_frames"
-                                ],
+                                value=defaults["latent_split_temporal_overlap_frames"],
                                 step=1,
                                 label="Temporal overlap (frames)",
                             )
@@ -1191,6 +1197,7 @@ def build_h3_view(
             "stop": stop,
             "text_encoder": text_encoder,
             "turbo_variant": turbo_variant,
+            "trt_vae_compile": trt_vae_compile,
             "use_int8_vae": use_int8_vae,
             "use_trt_vae": use_trt_vae,
             "width": width,

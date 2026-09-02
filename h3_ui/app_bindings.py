@@ -137,6 +137,11 @@ def bind_app(
         queue=False,
         show_progress="hidden",
     )
+    components["trt_vae_compile"].click(
+        services["compile_trt_video_vae"],
+        outputs=components["status"],
+        show_progress="full",
+    )
     components["image_vae"].change(
         services["image_vae_frame_updates"],
         inputs=components["image_vae"],
