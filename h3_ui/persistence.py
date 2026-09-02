@@ -20,7 +20,8 @@ CLIENT_SETTINGS_PERSISTENCE_JS = r"""() => {
     const controls = () => Array.from(document.querySelectorAll(
         ".gradio-container select, .gradio-container input[type='checkbox'], " +
         ".gradio-container input[type='radio'], .gradio-container input[type='range'], " +
-        ".gradio-container input[type='number']"));
+        ".gradio-container input[type='number'], .gradio-container input[aria-haspopup='listbox'], " +
+        ".gradio-container [role='combobox'], .gradio-container [role='radio']"));
     const write = () => {
         try { window.localStorage.setItem(storageKey, JSON.stringify(values)); }
         catch (_) { /* Private browsing or full storage must not break the UI. */ }
@@ -32,15 +33,24 @@ CLIENT_SETTINGS_PERSISTENCE_JS = r"""() => {
         if (!Object.prototype.hasOwnProperty.call(values, key)) return;
         const stored = values[key];
         if (control.type === "radio") control.checked = control.value === String(stored);
-        else if (control.type === "checkbox") control.checked = Boolean(stored);
+        else if (control.getAttribute("role") === "radio") {
+            if ((control.innerText.trim() || control.getAttribute("aria-label")) === String(stored)) control.click();
+        } else if (control.type === "checkbox") control.checked = Boolean(stored);
         else control.value = String(stored);
         control.dispatchEvent(new Event("input", { bubbles: true }));
         control.dispatchEvent(new Event("change", { bubbles: true }));
     };
     const remember = (event) => {
         const control = event.target;
-        if (!(control instanceof HTMLInputElement || control instanceof HTMLSelectElement)) return;
-        if (!["checkbox", "radio", "range", "number", "select-one", "select-multiple"].includes(control.type)) return;
+        const role = control.getAttribute("role");
+        if (!(control instanceof HTMLInputElement || control instanceof HTMLSelectElement || role === "combobox" || role === "radio")) return;
+        if (role === "radio") {
+            if (control.getAttribute("aria-checked") !== "true") return;
+            values[keyFor(control)] = control.innerText.trim() || control.getAttribute("aria-label") || "";
+            write();
+            return;
+        }
+        if (!["checkbox", "radio", "range", "number", "select-one", "select-multiple", "text"].includes(control.type) && role !== "combobox") return;
         if (control.type === "radio" && !control.checked) return;
         values[keyFor(control)] = control.type === "checkbox" ? control.checked : control.value;
         write();
