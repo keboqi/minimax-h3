@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Install/update local MiniMax H3 dependencies, custom nodes, and models."""
+
 from __future__ import annotations
 
 import argparse
@@ -42,7 +43,9 @@ SLA_REF = "01f186eefedbb607503a0b207d6f66aa8a5f4b5a"  # v1.4.2
 SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_REF = "987be556bb2a580ce20fab20c159a6e9ece4111b"  # v0.2.23
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
-LARRY_TURBO_REF = "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
+LARRY_TURBO_REF = (
+    "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
+)
 TRT_VAE_REPO = "https://github.com/lihaoyun6/ComfyUI-H3VAE_TRT.git"
 TRT_VAE_REF = "main"
 H3_LATENT_UPSCALER_NODE_REPO = (
@@ -59,10 +62,9 @@ VIDEO_DEPTH_REPO = "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.g
 VIDEO_DEPTH_REF = "a0db08e63d1ea571601c45cde4aaee0acdd0544d"
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
+TENSORRT_PACKAGE = "tensorrt-cu13>=11.2,<12"
 SCRIPT_DIR = Path(__file__).resolve().parent
-BUNDLED_ACCEL_NODE = (
-    SCRIPT_DIR / "custom_nodes" / "H3Acceleration" / "__init__.py"
-)
+BUNDLED_ACCEL_NODE = SCRIPT_DIR / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
 _UV_CMD: list[str] | None = None
 
@@ -110,11 +112,7 @@ def ensure_uv() -> list[str]:
             "uv>=0.8",
         )
         executable = shutil.which("uv")
-        _UV_CMD = (
-            [executable]
-            if executable
-            else [sys.executable, "-m", "uv"]
-        )
+        _UV_CMD = [executable] if executable else [sys.executable, "-m", "uv"]
     return _UV_CMD.copy()
 
 
@@ -144,18 +142,30 @@ def _fresh_git_checkout(url: str, dest: Path, ref: str | None) -> None:
     run("git", "init", dest, timeout=30)
     run("git", "-C", dest, "remote", "add", "origin", url, timeout=30)
     run(
-        "git", "-C", dest, "fetch", "--depth", "1",
-        "origin", ref or "HEAD",
+        "git",
+        "-C",
+        dest,
+        "fetch",
+        "--depth",
+        "1",
+        "origin",
+        ref or "HEAD",
         timeout=300,
     )
     run(
-        "git", "-C", dest, "checkout", "--detach", "FETCH_HEAD",
+        "git",
+        "-C",
+        dest,
+        "checkout",
+        "--detach",
+        "FETCH_HEAD",
         timeout=120,
     )
 
 
 def _remove_tree(path: Path) -> None:
     """Remove a tree, making copied read-only Git objects writable as needed."""
+
     def make_writable(function, failed_path, _error) -> None:
         mode = os.stat(failed_path, follow_symlinks=False).st_mode
         os.chmod(failed_path, mode | stat.S_IWUSR)
@@ -185,9 +195,7 @@ def _restore_tracked_files(
     ref: str | None,
 ) -> None:
     """Restore a full tracked tree while preserving untracked models/nodes."""
-    staging = Path(
-        tempfile.mkdtemp(prefix=f".{dest.name}.restore-", dir=dest.parent)
-    )
+    staging = Path(tempfile.mkdtemp(prefix=f".{dest.name}.restore-", dir=dest.parent))
     try:
         _fresh_git_checkout(url, staging, ref)
         git_metadata = dest / ".git"
@@ -231,30 +239,50 @@ def sync_git_repo(
     valid_worktree = _git_worktree_is_valid(dest)
     if valid_worktree and _requires_staged_git_update(dest):
         print(
-            f"[h3-setup] Using staged Git update for mounted checkout "
-            f"{dest.name}",
+            f"[h3-setup] Using staged Git update for mounted checkout {dest.name}",
             flush=True,
         )
         _restore_tracked_files(url, dest, ref)
     elif valid_worktree:
         try:
             run(
-                "git", "-C", dest, "remote", "set-url", "origin", url,
+                "git",
+                "-C",
+                dest,
+                "remote",
+                "set-url",
+                "origin",
+                url,
                 timeout=30,
             )
             run(
-                "git", "-C", dest, "fetch", "--depth", "1",
-                "origin", fetch_ref,
+                "git",
+                "-C",
+                dest,
+                "fetch",
+                "--depth",
+                "1",
+                "origin",
+                fetch_ref,
                 timeout=300,
             )
             # Mounted worktrees can have stale sparse/index metadata. Bound
             # both operations so network filesystems cannot block setup.
             run(
-                "git", "-C", dest, "sparse-checkout", "disable",
+                "git",
+                "-C",
+                dest,
+                "sparse-checkout",
+                "disable",
                 timeout=60,
             )
             run(
-                "git", "-C", dest, "reset", "--hard", "FETCH_HEAD",
+                "git",
+                "-C",
+                dest,
+                "reset",
+                "--hard",
+                "FETCH_HEAD",
                 timeout=90,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
@@ -329,6 +357,35 @@ def install_pinned_torch_stack() -> None:
         f"torchaudio=={TORCHAUDIO_VERSION}",
         index=TORCH_INDEX,
     )
+
+
+def tensorrt_importable() -> bool:
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import tensorrt as trt; assert hasattr(trt, 'Builder')",
+        ],
+        text=True,
+        capture_output=True,
+    )
+    return probe.returncode == 0
+
+
+def ensure_tensorrt() -> None:
+    """Install the CUDA 13 TensorRT builder bindings when TRT VAE needs them."""
+    if tensorrt_importable():
+        return
+
+    print(
+        "[h3-setup] Installing TensorRT CUDA 13 Python builder/runtime",
+        flush=True,
+    )
+    uv_pip(TENSORRT_PACKAGE)
+    if not tensorrt_importable():
+        raise RuntimeError(
+            "TensorRT installed but its Python builder bindings still do not import."
+        )
 
 
 def current_numpy_version() -> str | None:
@@ -475,8 +532,7 @@ def install_comfy_requirements(comfy: Path) -> None:
     if not numpy_stack_matches():
         found = current_numpy_version()
         print(
-            f"[h3-setup] NumPy drift detected ({found}); restoring "
-            f"{NUMPY_VERSION}",
+            f"[h3-setup] NumPy drift detected ({found}); restoring {NUMPY_VERSION}",
             flush=True,
         )
         install_pinned_numpy_stack()
@@ -513,8 +569,7 @@ def ensure_sageattention(install_dir: Path) -> bool:
         return True
 
     print(
-        f"[h3-setup] Installing prebuilt SageAttention wheel: "
-        f"{SAGE_WHEEL_NAME}",
+        f"[h3-setup] Installing prebuilt SageAttention wheel: {SAGE_WHEEL_NAME}",
         flush=True,
     )
     command = ensure_uv() + [
@@ -541,6 +596,7 @@ def ensure_sageattention(install_dir: Path) -> bool:
 
     print("[h3-setup] Prebuilt SageAttention wheel is ready", flush=True)
     return True
+
 
 def install_environment(comfy: Path) -> None:
     ensure_uv()
@@ -649,7 +705,12 @@ def sync_external_nodes(
         uv_pip("-r", str(spectrum / "requirements.txt"), no_deps=True)
 
     trt_vae = comfy / "custom_nodes" / "ComfyUI-H3VAE_TRT"
-    sync_git_repo(TRT_VAE_REPO, trt_vae, ref=TRT_VAE_REF, required_paths=("__init__.py", "minimax_trt_node.py"))
+    sync_git_repo(
+        TRT_VAE_REPO,
+        trt_vae,
+        ref=TRT_VAE_REF,
+        required_paths=("__init__.py", "minimax_trt_node.py"),
+    )
     if install_requirements and (trt_vae / "requirements.txt").is_file():
         uv_pip("-r", str(trt_vae / "requirements.txt"), no_deps=True)
 
@@ -681,8 +742,7 @@ def sync_external_nodes(
         required_paths = ("__init__.py",)
         if directory_name == "ComfyUI-LTXVideo":
             required_paths += (
-                "example_workflows/2.5/"
-                "LTX-2.5_T2A_Single_Stage_Distilled.json",
+                "example_workflows/2.5/LTX-2.5_T2A_Single_Stage_Distilled.json",
             )
         sync_git_repo(
             repo,
@@ -708,12 +768,8 @@ def sync_external_nodes(
     # export was removed after Kornia 0.8.1.
     uv_pip(f"kornia=={KORNIA_VERSION}", no_deps=True)
 
-    workflow_source = (
-        installed["ComfyUI-LTXVideo"] / "example_workflows" / "2.5"
-    )
-    workflow_destination = (
-        comfy / "user" / "default" / "workflows" / "LTX 2.5"
-    )
+    workflow_source = installed["ComfyUI-LTXVideo"] / "example_workflows" / "2.5"
+    workflow_destination = comfy / "user" / "default" / "workflows" / "LTX 2.5"
     workflows = sync_ltx25_workflows(workflow_source, workflow_destination)
     print(
         f"[h3-setup] synced {len(workflows)} official LTX 2.5 workflows "
@@ -742,9 +798,7 @@ def install_bundled_nodes(comfy: Path) -> None:
             f"Missing bundled H3 acceleration node: {BUNDLED_ACCEL_NODE}"
         )
 
-    destination = (
-        comfy / "custom_nodes" / "H3Acceleration" / "__init__.py"
-    )
+    destination = comfy / "custom_nodes" / "H3Acceleration" / "__init__.py"
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(BUNDLED_ACCEL_NODE, destination)
     print(f"[h3-setup] synced {destination}")
@@ -776,9 +830,7 @@ def main() -> None:
     if not args.skip_env:
         install_environment(comfy)
     elif not (comfy / "main.py").is_file():
-        raise RuntimeError(
-            "--skip-env requires an existing ComfyUI installation"
-        )
+        raise RuntimeError("--skip-env requires an existing ComfyUI installation")
     elif not torch_stack_matches():
         found = current_torch_version()
         print(
@@ -808,6 +860,7 @@ def main() -> None:
         install_pinned_torch_stack()
     if not numpy_stack_matches():
         install_pinned_numpy_stack()
+    ensure_tensorrt()
     install_bundled_nodes(comfy)
     sync_model_inventory(install_dir, comfy)
 

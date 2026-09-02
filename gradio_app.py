@@ -2292,7 +2292,8 @@ def compile_trt_video_vae(
 
         if not module.HAS_TRT:
             raise H3Error(
-                "TensorRT is not installed in the ComfyUI Python environment."
+                "TensorRT is not installed. Re-run setup_h3.py to install the "
+                "CUDA 13 TensorRT builder/runtime, then restart the app."
             )
         progress(0.1, desc="Preparing TensorRT VAE compilation")
         compiler = module.MiniMaxH3TRTCompilerNode()

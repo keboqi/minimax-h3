@@ -60,7 +60,8 @@ bundled FirstBlockCache node.
 - Hugging Face access to every configured model repository
 
 The installer pins the ABI-sensitive stack to Torch 2.11.0 + CUDA 13.0,
-NumPy 1.26.4, and SciPy 1.15.3. The pinned ComfyUI 0.34.2 stack supplies Comfy
+NumPy 1.26.4, and SciPy 1.15.3, and installs the CUDA 13 TensorRT Python
+builder/runtime used by the optional TensorRT VAE. The pinned ComfyUI 0.34.2 stack supplies Comfy
 Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
 2.2.0 remains installed from the pinned prebuilt wheel for UI comparisons.
 SLA v1.4.2 is provided by the pinned PlagueKind node pack at
