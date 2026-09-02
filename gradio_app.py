@@ -100,6 +100,7 @@ from h3_ui.bindings import (
 from h3_ui.app_bindings import bind_app
 from h3_ui.h3_view import build_h3_view
 from h3_ui.layout import create_app_views
+from h3_ui.persistence import CLIENT_SETTINGS_PERSISTENCE_JS
 from h3_ui.ltx_view import build_ltx_view
 from h3_ui.styles import H3_SETUP_CSS, H3_UI_CSS
 from h3_ui.views import build_api_view, build_gallery_view, build_music_view
@@ -962,6 +963,7 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
         allowed_paths=allowed_paths,
         show_error=True,
         css=H3_SETUP_CSS,
+        js=CLIENT_SETTINGS_PERSISTENCE_JS,
     )
 
 
