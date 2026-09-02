@@ -97,6 +97,37 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(mounted_css, H3_SETUP_CSS)
         self.assertNotIn(".gradio-container", mounted_css)
 
+    def test_generation_settings_use_native_browser_state(self) -> None:
+        state = next(
+            component
+            for component in self.config["components"]
+            if component["type"] == "browserstate"
+            and component.get("props", {}).get("storage_key")
+            == "minimax-h3:settings:v3"
+        )
+        controls = {
+            component.get("props", {}).get("label"): component
+            for component in self.config["components"]
+        }
+        base_model = controls["Base model"]
+        sampling_preset = controls["Sampling preset"]
+
+        restore = next(
+            dependency
+            for dependency in self.config["dependencies"]
+            if dependency["inputs"] == [state["id"]]
+            and base_model["id"] in dependency["outputs"]
+        )
+        self.assertIn(sampling_preset["id"], restore["outputs"])
+
+        save = next(
+            dependency
+            for dependency in self.config["dependencies"]
+            if dependency["outputs"] == [state["id"]]
+            and base_model["id"] in dependency["inputs"]
+        )
+        self.assertIn(sampling_preset["id"], save["inputs"])
+
     def test_h3_progressive_section_order(self) -> None:
         tabs = next(
             component
