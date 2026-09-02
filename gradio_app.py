@@ -2295,13 +2295,35 @@ def compile_trt_video_vae(
                 "TensorRT is not installed. Re-run setup_h3.py to install the "
                 "CUDA 13 TensorRT builder/runtime, then restart the app."
             )
+        engine_paths = (
+            COMFY_DIR
+            / "models"
+            / "vae"
+            / models.video_vae_trt_decoder.replace(".onnx", ".engine"),
+            COMFY_DIR
+            / "models"
+            / "vae"
+            / models.video_vae_trt_encoder.replace(".onnx", ".engine"),
+        )
+        if all(path.is_file() for path in engine_paths):
+            return "TensorRT VAE engines are already compiled and ready to use."
+
+        decoder_onnx = COMFY_DIR / "models" / "vae" / models.video_vae_trt_decoder
+        encoder_onnx = COMFY_DIR / "models" / "vae" / models.video_vae_trt_encoder
         progress(0.1, desc="Preparing TensorRT VAE compilation")
-        compiler = module.MiniMaxH3TRTCompilerNode()
-        compiler.compile_models(
-            models.video_vae_trt_decoder,
-            models.video_vae_trt_encoder,
-            False,
-            str(uuid.uuid4()),
+        module.mm.unload_all_models()
+        module.mm.soft_empty_cache()
+        module.torch.cuda.empty_cache()
+        module.MiniMaxH3TRTCompilerNode._build_engine(
+            str(decoder_onnx),
+            str(engine_paths[0]),
+            is_decoder=True,
+        )
+        progress(0.6, desc="Compiling TensorRT VAE encoder")
+        module.MiniMaxH3TRTCompilerNode._build_engine(
+            str(encoder_onnx),
+            str(engine_paths[1]),
+            is_decoder=False,
         )
         progress(1.0, desc="TensorRT VAE engines compiled")
         ensure_trt_video_vae(models)
