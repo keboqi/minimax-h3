@@ -13,7 +13,12 @@ import tempfile
 from pathlib import Path
 
 from h3_models import PRELOAD_MODEL_KEYS, sync_models, write_json_atomic
-from h3_node_patches import patch_larry_turbo_node, patch_trt_vae_node
+from h3_node_patches import (
+    TRT_VAE_NODE_REF,
+    TRT_VAE_NODE_REPO,
+    patch_larry_turbo_node,
+    patch_trt_vae_node,
+)
 from h3_requirements import (
     ABI_CONSTRAINTS,
     COMFY_FRONTEND_VERSION,
@@ -25,6 +30,7 @@ from h3_requirements import (
     TORCH_INDEX,
     TORCH_VERSION,
     TORCHAUDIO_VERSION,
+    TENSORRT_PACKAGE,
     TORCHVISION_VERSION,
     WSPROTO_VERSION,
     SWIFTVR_REF,
@@ -46,8 +52,6 @@ LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
 LARRY_TURBO_REF = (
     "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
 )
-TRT_VAE_REPO = "https://github.com/lihaoyun6/ComfyUI-H3VAE_TRT.git"
-TRT_VAE_REF = "7131a316160b2f299239b9bc40621be46d8ce62f"
 H3_LATENT_UPSCALER_NODE_REPO = (
     "https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler.git"
 )
@@ -62,7 +66,6 @@ VIDEO_DEPTH_REPO = "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.g
 VIDEO_DEPTH_REF = "a0db08e63d1ea571601c45cde4aaee0acdd0544d"
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
-TENSORRT_PACKAGE = "tensorrt-cu13>=11.2,<12"
 SCRIPT_DIR = Path(__file__).resolve().parent
 BUNDLED_ACCEL_NODE = SCRIPT_DIR / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
@@ -706,9 +709,9 @@ def sync_external_nodes(
 
     trt_vae = comfy / "custom_nodes" / "ComfyUI-H3VAE_TRT"
     sync_git_repo(
-        TRT_VAE_REPO,
+        TRT_VAE_NODE_REPO,
         trt_vae,
-        ref=TRT_VAE_REF,
+        ref=TRT_VAE_NODE_REF,
         required_paths=("__init__.py", "minimax_trt_node.py"),
     )
     patch_trt_vae_node(trt_vae)

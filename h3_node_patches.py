@@ -10,6 +10,8 @@ from pathlib import Path
 
 LARRY_TIMESTEP_PATCH_VERSION = 2
 TRT_VAE_PATCH_VERSION = 4
+TRT_VAE_NODE_REPO = "https://github.com/lihaoyun6/ComfyUI-H3VAE_TRT.git"
+TRT_VAE_NODE_REF = "7131a316160b2f299239b9bc40621be46d8ce62f"
 
 
 _LARRY_UNIQUE_T_ORIGINAL = """\

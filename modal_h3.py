@@ -107,6 +107,7 @@ from h3_requirements import (  # noqa: E402
     TORCH_INDEX,
     TORCH_VERSION,
     TORCHAUDIO_VERSION,
+    TENSORRT_PACKAGE,
     TORCHVISION_VERSION,
     WSPROTO_VERSION,
     SWIFTVR_REF,
@@ -117,7 +118,12 @@ from h3_requirements import (  # noqa: E402
     probe_comfy_workflow,
     sync_ltx25_workflows,
 )
-from h3_node_patches import patch_larry_turbo_node  # noqa: E402
+from h3_node_patches import (  # noqa: E402
+    TRT_VAE_NODE_REF,
+    TRT_VAE_NODE_REPO,
+    patch_larry_turbo_node,
+    patch_trt_vae_node,
+)
 
 _BUILD_LOCAL_MOUNTS = (
     (LOCAL_SHARED_REQUIREMENTS, SHARED_REQUIREMENTS),
@@ -228,6 +234,11 @@ def build(revision: str) -> None:
     )
     _clone(SPECTRUM_REPO, spectrum_dir, ref=SPECTRUM_REF)
     _print_git_revision(spectrum_dir)
+
+    trt_vae_dir = Path(COMFY) / "custom_nodes" / "ComfyUI-H3VAE_TRT"
+    _clone(TRT_VAE_NODE_REPO, trt_vae_dir, ref=TRT_VAE_NODE_REF)
+    patch_trt_vae_node(trt_vae_dir)
+    _print_git_revision(trt_vae_dir)
 
     larry_turbo_dir = (
         Path(COMFY) / "custom_nodes" / "ComfyUI-MiniMax-H3-Turbo"
@@ -369,6 +380,7 @@ def build(revision: str) -> None:
         "Pillow>=10",
         f"numpy=={NUMPY_VERSION}",
         f"scipy=={SCIPY_VERSION}",
+        TENSORRT_PACKAGE,
         "setuptools<82",
         "--constraint",
         abi_constraints,
@@ -525,6 +537,29 @@ def build(revision: str) -> None:
         "uv", "pip", "install", "--system", "--upgrade",
         f"numpy=={NUMPY_VERSION}",
         f"scipy=={SCIPY_VERSION}",
+    )
+    trt_import = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import tensorrt as trt; "
+                "assert hasattr(trt, 'Builder'); "
+                "print(trt.__version__)"
+            ),
+        ],
+        text=True,
+        capture_output=True,
+    )
+    if trt_import.returncode != 0:
+        raise RuntimeError(
+            "TensorRT builder failed fresh-process import: "
+            + (trt_import.stderr or trt_import.stdout).strip()
+        )
+    print(
+        "[modal-h3] TensorRT builder fresh-import OK: "
+        + trt_import.stdout.strip(),
+        flush=True,
     )
 
 image = (

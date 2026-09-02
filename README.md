@@ -157,7 +157,8 @@ to use an existing checkpoint directory. The experimental
 INT8 ConvRot video VAE
 is also lazy and downloads only when its default-off checkbox is enabled.
 The experimental **TensorRT video VAE** is available through a second default-off
-checkbox. Setup syncs the linked ComfyUI-H3VAE_TRT node. Use **Compile
+checkbox. Local and Modal setup install TensorRT and sync the pinned
+ComfyUI-H3VAE_TRT node. Use **Compile
 TensorRT VAE engine** next to the checkbox to download the decoder ONNX source
 and build its local engine. TensorRT engines are GPU-specific and are not
 downloaded by the app. The quality profile keeps decoder LayerNorm reductions

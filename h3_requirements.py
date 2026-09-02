@@ -16,6 +16,7 @@ TORCH_INDEX = "https://download.pytorch.org/whl/cu130"
 TORCH_VERSION = "2.11.0"
 TORCHVISION_VERSION = "0.26.0"
 TORCHAUDIO_VERSION = "2.11.0"
+TENSORRT_PACKAGE = "tensorrt-cu13>=11.2,<12"
 NUMPY_VERSION = "1.26.4"
 SCIPY_VERSION = "1.15.3"
 # Transformers' fine-grained FP8 loader requires this exact minor release.
