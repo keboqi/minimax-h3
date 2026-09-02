@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 LARRY_TIMESTEP_PATCH_VERSION = 2
-TRT_VAE_PATCH_VERSION = 3
+TRT_VAE_PATCH_VERSION = 4
 
 
 _LARRY_UNIQUE_T_ORIGINAL = """\
@@ -246,31 +246,79 @@ _TRT_FP32_NORMALIZATION_PATCHED = """\
     workspace_size = (4 if is_decoder else 8) * (1024**3)
 """
 
+_TRT_OPTIONAL_ENCODER_ORIGINAL = """\
+  def load_vae(self, decoder, encoder):
+    if encoder == "None":
+      raise RuntimeError("Encoder cannot be None!")
+    if decoder == "None":
+      raise RuntimeError("Decoder cannot be None!")
+
+    dec_path = folder_paths.get_full_path("vae", decoder)
+    enc_path = folder_paths.get_full_path("vae", encoder)
+"""
+
+_TRT_OPTIONAL_ENCODER_PATCHED = """\
+  def load_vae(self, decoder, encoder):
+    if decoder == "None":
+      raise RuntimeError("Decoder cannot be None!")
+
+    dec_path = folder_paths.get_full_path("vae", decoder)
+    enc_path = (
+        None if encoder == "None" else folder_paths.get_full_path("vae", encoder)
+    )
+"""
+
 _TRT_REPLACEMENTS = (
-    (_TRT_SINGLE_FRAME_ENCODE_ORIGINAL, _TRT_SINGLE_FRAME_ENCODE_PATCHED),
-    (_TRT_SINGLE_FRAME_DECODE_ORIGINAL, _TRT_SINGLE_FRAME_DECODE_PATCHED),
-    (_TRT_TEMPORAL_RETURN_ORIGINAL, _TRT_TEMPORAL_RETURN_PATCHED),
-    (_TRT_FP32_NORMALIZATION_ORIGINAL, _TRT_FP32_NORMALIZATION_PATCHED),
+    (
+        "single-frame encode",
+        _TRT_SINGLE_FRAME_ENCODE_ORIGINAL,
+        _TRT_SINGLE_FRAME_ENCODE_PATCHED,
+    ),
+    (
+        "single-frame decode",
+        _TRT_SINGLE_FRAME_DECODE_ORIGINAL,
+        _TRT_SINGLE_FRAME_DECODE_PATCHED,
+    ),
+    (
+        "temporal frame trimming",
+        _TRT_TEMPORAL_RETURN_ORIGINAL,
+        _TRT_TEMPORAL_RETURN_PATCHED,
+    ),
+    (
+        "FP32 normalization",
+        _TRT_FP32_NORMALIZATION_ORIGINAL,
+        _TRT_FP32_NORMALIZATION_PATCHED,
+    ),
+    (
+        "optional encoder",
+        _TRT_OPTIONAL_ENCODER_ORIGINAL,
+        _TRT_OPTIONAL_ENCODER_PATCHED,
+    ),
 )
 
 
 def _patch_trt_vae_source(source: str) -> tuple[str, bool]:
     """Synchronize TensorRT VAE behavior with the reference implementation."""
     changed = False
-    states = []
-    for original, patched in _TRT_REPLACEMENTS:
-        original_count = source.count(original)
-        patched_count = source.count(patched)
-        states.append((original_count, patched_count))
-        if original_count == 0 and patched_count == 1:
-            continue
-        if original_count != 1 or patched_count != 0:
-            raise RuntimeError(
-                "TensorRT VAE compatibility patch does not match the upstream "
-                f"node source (states={states})"
-            )
-        source = source.replace(original, patched, 1)
-        changed = True
+    states = {
+        name: (source.count(original), source.count(patched))
+        for name, original, patched in _TRT_REPLACEMENTS
+    }
+    invalid = {
+        name: state
+        for name, state in states.items()
+        if state not in ((1, 0), (0, 1))
+    }
+    if invalid:
+        raise RuntimeError(
+            "TensorRT VAE compatibility patch does not match the upstream "
+            f"node source (invalid={invalid}, states={states})"
+        )
+
+    for name, original, patched in _TRT_REPLACEMENTS:
+        if states[name] == (1, 0):
+            source = source.replace(original, patched, 1)
+            changed = True
     return source, changed
 
 
@@ -326,13 +374,20 @@ def selftest() -> None:
             + "  def decode_temporal(self, z):\n"
             + _TRT_TEMPORAL_RETURN_ORIGINAL
             + "    pass\n\n"
-            "def build():\n" + _TRT_FP32_NORMALIZATION_ORIGINAL,
+            "def build():\n"
+            + _TRT_FP32_NORMALIZATION_ORIGINAL
+            + "\nclass Loader:\n"
+            + _TRT_OPTIONAL_ENCODER_ORIGINAL,
             encoding="utf-8",
         )
         assert patch_trt_vae_node(Path(directory)) is True
         patched = target.read_text(encoding="utf-8")
-        assert all(original not in patched for original, _ in _TRT_REPLACEMENTS)
-        assert all(replacement in patched for _, replacement in _TRT_REPLACEMENTS)
+        assert all(
+            original not in patched for _, original, _ in _TRT_REPLACEMENTS
+        )
+        assert all(
+            replacement in patched for _, _, replacement in _TRT_REPLACEMENTS
+        )
         assert "network.add_cast" in patched
         assert "layer.precision" not in patched
         assert "layer.set_output_type" not in patched

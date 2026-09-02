@@ -47,7 +47,7 @@ LARRY_TURBO_REF = (
     "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
 )
 TRT_VAE_REPO = "https://github.com/lihaoyun6/ComfyUI-H3VAE_TRT.git"
-TRT_VAE_REF = "main"
+TRT_VAE_REF = "7131a316160b2f299239b9bc40621be46d8ce62f"
 H3_LATENT_UPSCALER_NODE_REPO = (
     "https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler.git"
 )

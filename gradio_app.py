@@ -66,6 +66,9 @@ from h3_models import (
     MUSIC3_SHARED_MODEL_KEYS,
     PROFILE_LABELS,
     SEEDVR2_MODEL_CHOICES,
+    TRT_VAE_ENGINE_BUILD_ID,
+    TRT_VAE_ENGINE_MARKER,
+    TRT_VAE_RUNTIME_MODEL_KEYS,
     resolve_hf_token,
     stale_model_keys,
     sync_models,
@@ -1932,6 +1935,29 @@ def model_file_is_ready(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > MIN_VALID_MODEL_BYTES
 
 
+def trt_vae_engine_name(onnx_name: str) -> str:
+    return str(Path(onnx_name).with_suffix(".engine"))
+
+
+def trt_vae_decoder_paths(models: ModelConfig) -> tuple[Path, Path, Path]:
+    if not models.video_vae_trt_decoder:
+        raise H3Error("TensorRT VAE is not configured. Re-run setup_h3.py.")
+    vae_dir = COMFY_DIR / "models" / "vae"
+    onnx_path = vae_dir / models.video_vae_trt_decoder
+    engine_path = vae_dir / trt_vae_engine_name(models.video_vae_trt_decoder)
+    return onnx_path, engine_path, vae_dir / TRT_VAE_ENGINE_MARKER
+
+
+def trt_vae_engine_is_current(models: ModelConfig) -> bool:
+    _, engine_path, marker_path = trt_vae_decoder_paths(models)
+    if not engine_path.is_file() or not marker_path.is_file():
+        return False
+    try:
+        return marker_path.read_text(encoding="utf-8").strip() == TRT_VAE_ENGINE_BUILD_ID
+    except OSError:
+        return False
+
+
 def h3_text_encoder_settings(
     models: ModelConfig,
     model_choice: str,
@@ -2217,61 +2243,69 @@ def ensure_int8_video_vae(models: ModelConfig) -> bool:
 def ensure_trt_video_vae(
     models: ModelConfig,
     *,
-    require_engines: bool = True,
+    require_engine: bool = True,
 ) -> bool:
-    """Provision ONNX sources and require locally compiled TensorRT engines."""
-    if not models.video_vae_trt_encoder or not models.video_vae_trt_decoder:
-        raise H3Error("TensorRT VAE is not configured. Re-run setup_h3.py.")
-    keys = (
-        "video_vae_trt_encoder",
-        "video_vae_trt_decoder",
-        "video_vae_trt_decoder_data",
-    )
+    """Provision the decoder ONNX source and require its local TensorRT engine."""
+    trt_vae_decoder_paths(models)
     manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
     if stale_model_keys(
         root=COMFY_DIR / "models",
         manifest_path=manifest_path,
-        model_keys=keys,
+        model_keys=TRT_VAE_RUNTIME_MODEL_KEYS,
     ):
         sync_models(
             root=COMFY_DIR / "models",
             manifest_path=manifest_path,
             token=resolve_hf_token(),
             log_prefix="[h3-trt-vae-on-demand]",
-            model_keys=keys,
+            model_keys=TRT_VAE_RUNTIME_MODEL_KEYS,
             download_workers=1,
         )
-    engine_names = (
-        models.video_vae_trt_encoder.replace(".onnx", ".engine"),
-        models.video_vae_trt_decoder.replace(".onnx", ".engine"),
-    )
-    missing_engines = [
-        name
-        for name in engine_names
-        if not (COMFY_DIR / "models" / "vae" / name).is_file()
-    ]
-    if require_engines and missing_engines:
+
+    if require_engine and not trt_vae_engine_is_current(models):
+        _, engine_path, _ = trt_vae_decoder_paths(models)
+        if not engine_path.is_file():
+            detail = f" Missing: {engine_path.name}."
+        else:
+            detail = " The existing engine uses an older quality profile."
         raise H3Error(
-            "TensorRT VAE engines are not compiled yet. Click Compile TensorRT "
-            "VAE engines once, then retry. Missing: " + ", ".join(missing_engines)
+            "TensorRT VAE decoder is not compiled for the current profile. "
+            "Click Compile TensorRT VAE engine once, then retry." + detail
         )
-    if require_engines and not missing_engines:
-        marker = COMFY_DIR / "models" / "vae" / ".h3-trt-vae-quality-v3"
-        if not marker.is_file():
-            raise H3Error(
-                "TensorRT VAE engines use the previous quality profile. Click "
-                "Compile TensorRT VAE engines once to rebuild them."
-            )
     return True
+
+
+def _load_trt_vae_compiler(node_path: Path) -> Any:
+    """Import the installed compiler afresh so setup patches take effect."""
+    import importlib.util
+
+    module_name = "_h3_trt_vae_node"
+    comfy_path = str(COMFY_DIR)
+    if comfy_path not in sys.path:
+        sys.path.insert(0, comfy_path)
+    sys.modules.pop(module_name, None)
+    spec = importlib.util.spec_from_file_location(module_name, node_path)
+    if spec is None or spec.loader is None:
+        raise H3Error(f"Could not load TensorRT VAE compiler: {node_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+    return module
 
 
 def compile_trt_video_vae(
     progress=gr.Progress(track_tqdm=False),
 ) -> str:
-    """Build local TensorRT engines for the MiniMax H3 video VAE."""
+    """Build the local TensorRT decoder engine without exposing partial output."""
+    temporary_engine: Path | None = None
+    temporary_marker: Path | None = None
     try:
         models = load_model_config()
-        ensure_trt_video_vae(models, require_engines=False)
+        ensure_trt_video_vae(models, require_engine=False)
         node_path = (
             COMFY_DIR / "custom_nodes" / "ComfyUI-H3VAE_TRT" / "minimax_trt_node.py"
         )
@@ -2280,64 +2314,51 @@ def compile_trt_video_vae(
                 "ComfyUI-H3VAE_TRT is not installed. Run setup_h3.py and restart."
             )
 
-        import importlib.util
-
-        module_name = "_h3_trt_vae_node"
-        module = sys.modules.get(module_name)
-        if module is None:
-            comfy_path = str(COMFY_DIR)
-            if comfy_path not in sys.path:
-                sys.path.insert(0, comfy_path)
-            spec = importlib.util.spec_from_file_location(module_name, node_path)
-            if spec is None or spec.loader is None:
-                raise H3Error(f"Could not load TensorRT VAE compiler: {node_path}")
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module
-            spec.loader.exec_module(module)
-
+        module = _load_trt_vae_compiler(node_path)
         if not module.HAS_TRT:
             raise H3Error(
                 "TensorRT is not installed. Re-run setup_h3.py to install the "
                 "CUDA 13 TensorRT builder/runtime, then restart the app."
             )
-        engine_paths = (
-            COMFY_DIR
-            / "models"
-            / "vae"
-            / models.video_vae_trt_decoder.replace(".onnx", ".engine"),
-            COMFY_DIR
-            / "models"
-            / "vae"
-            / models.video_vae_trt_encoder.replace(".onnx", ".engine"),
-        )
-        build_marker = COMFY_DIR / "models" / "vae" / ".h3-trt-vae-quality-v3"
-        if all(path.is_file() for path in engine_paths) and build_marker.is_file():
-            return "TensorRT VAE engines are already compiled and ready to use."
 
-        decoder_onnx = COMFY_DIR / "models" / "vae" / models.video_vae_trt_decoder
-        encoder_onnx = COMFY_DIR / "models" / "vae" / models.video_vae_trt_encoder
-        build_marker.unlink(missing_ok=True)
+        decoder_onnx, engine_path, marker_path = trt_vae_decoder_paths(models)
+        if trt_vae_engine_is_current(models):
+            return "TensorRT VAE decoder is already compiled and ready to use."
+
+        temporary_engine = engine_path.with_name(engine_path.name + ".h3-building")
+        temporary_marker = marker_path.with_name(marker_path.name + ".h3-building")
+        temporary_engine.unlink(missing_ok=True)
+        temporary_marker.unlink(missing_ok=True)
+
         progress(0.1, desc="Preparing TensorRT VAE compilation")
         module.mm.unload_all_models()
         module.mm.soft_empty_cache()
         module.torch.cuda.empty_cache()
         module.MiniMaxH3TRTCompilerNode._build_engine(
             str(decoder_onnx),
-            str(engine_paths[0]),
+            str(temporary_engine),
             is_decoder=True,
         )
-        progress(0.6, desc="Compiling TensorRT VAE encoder")
-        module.MiniMaxH3TRTCompilerNode._build_engine(
-            str(encoder_onnx),
-            str(engine_paths[1]),
-            is_decoder=False,
-        )
-        build_marker.write_text("mixed-fp32-normalization-v3\n", encoding="utf-8")
-        progress(1.0, desc="TensorRT VAE engines compiled")
+        if not model_file_is_ready(temporary_engine):
+            raise H3Error("TensorRT compiler did not produce a valid decoder engine.")
+
+        progress(0.9, desc="Finalizing TensorRT VAE decoder")
+        temporary_engine.replace(engine_path)
+        temporary_engine = None
+        temporary_marker.write_text(TRT_VAE_ENGINE_BUILD_ID + "\n", encoding="utf-8")
+        temporary_marker.replace(marker_path)
+        temporary_marker = None
+
         ensure_trt_video_vae(models)
-        return "TensorRT VAE engines compiled and ready to use."
+        progress(1.0, desc="TensorRT VAE decoder compiled")
+        return "TensorRT VAE decoder compiled and ready to use."
     except Exception as exc:
         return f"TensorRT VAE compilation failed: {exc}"
+    finally:
+        if temporary_engine is not None:
+            temporary_engine.unlink(missing_ok=True)
+        if temporary_marker is not None:
+            temporary_marker.unlink(missing_ok=True)
 
 
 def ensure_single_frame_image_vae(models: ModelConfig) -> bool:
@@ -3917,9 +3938,13 @@ def add_model_stack(
             raise H3Error(
                 "TensorRT VAE is unavailable. Run setup_h3.py and restart ComfyUI."
             )
-        decoder = (models.video_vae_trt_decoder or "").replace(".onnx", ".engine")
-        encoder = (models.video_vae_trt_encoder or "").replace(".onnx", ".engine")
-        video_vae = graph.add("MiniMaxH3TRTVAELoader", decoder=decoder, encoder=encoder)
+        if not models.video_vae_trt_decoder:
+            raise H3Error("TensorRT VAE is missing from the model catalog.")
+        video_vae = graph.add(
+            "MiniMaxH3TRTVAELoader",
+            decoder=trt_vae_engine_name(models.video_vae_trt_decoder),
+            encoder="None",
+        )
     else:
         if use_int8_vae:
             if not models.video_vae_int8:
@@ -8982,6 +9007,7 @@ def generate_with_ui_defaults(
         text_encoder=defaults["text_encoder"],
         stage_model_offload=defaults["stage_model_offload"],
         use_int8_vae=defaults["use_int8_vae"],
+        use_trt_vae=defaults["use_trt_vae"],
         image_vae=defaults["image_vae"],
         result_format=defaults["result_format"],
         image_frames=defaults["image_frames"],
@@ -9722,6 +9748,9 @@ def selftest() -> None:
         audio_vae="audio_vae.safetensors",
         video_vae_int8="video_vae_int8_convrot.safetensors",
         video_vae_int8_source="test",
+        video_vae_trt_encoder="minimax_h3_vae_encoder.onnx",
+        video_vae_trt_decoder="minimax_h3_vae_decoder.onnx",
+        video_vae_trt_source="test",
         image_vae_500k="minimax_h3_single_frame_decoder_500k.safetensors",
         image_vae_500k_source="test",
         turbo_lora="minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors",
@@ -9770,6 +9799,46 @@ def selftest() -> None:
     hybrid_loader = next(iter(hybrid_graph.nodes.values()))
     assert hybrid_loader["class_type"] == "VAELoader"
     assert hybrid_loader["inputs"] == {"vae_name": fake.video_vae}
+
+    trt_graph = Graph()
+    add_model_stack(
+        trt_graph,
+        fake.profile("speed").fl2va,
+        fake,
+        turbo_lora_name=None,
+        turbo_variant=LIGHTX2V_4STEP_TURBO,
+        turbo_strength=1.0,
+        use_sol=False,
+        sol_tau=1.0,
+        sol_thresh_type="diag",
+        sol_exact_mode="off",
+        sol_dense_steps=1,
+        sol_step_off=0.0,
+        sol_sink_tokens=0,
+        cache_mode="Off",
+        fbcache_preset="Fast",
+        fbcache_threshold=0.10,
+        fbcache_start=0.10,
+        fbcache_end=0.95,
+        fbcache_max_hits=2,
+        fbcache_temporal_guard=True,
+        easycache_threshold=0.10,
+        easycache_start=0.15,
+        easycache_end=0.85,
+        easycache_verbose=False,
+        available_nodes={"MiniMaxH3TRTVAELoader"},
+        use_trt_vae=True,
+    )
+    trt_loader = next(
+        node
+        for node in trt_graph.nodes.values()
+        if node["class_type"] == "MiniMaxH3TRTVAELoader"
+    )
+    assert trt_loader["inputs"] == {
+        "decoder": "minimax_h3_vae_decoder.engine",
+        "encoder": "None",
+    }
+
     available = required_nodes_for(
         "Text to video",
         True,

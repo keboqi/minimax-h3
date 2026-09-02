@@ -158,16 +158,17 @@ INT8 ConvRot video VAE
 is also lazy and downloads only when its default-off checkbox is enabled.
 The experimental **TensorRT video VAE** is available through a second default-off
 checkbox. Setup syncs the linked ComfyUI-H3VAE_TRT node. Use **Compile
-TensorRT VAE engines** next to the checkbox to download the ONNX sources and
-build the local engines. TensorRT engines are GPU-specific and are not
+TensorRT VAE engine** next to the checkbox to download the decoder ONNX source
+and build its local engine. TensorRT engines are GPU-specific and are not
 downloaded by the app. The quality profile keeps decoder LayerNorm reductions
 and powers in FP32 while retaining FP16 matrix operations. After upgrading from
-an older TensorRT VAE build, click the compile button once to rebuild both
-engines; the app rejects unversioned legacy engines.
+an older TensorRT VAE build, click the compile button once to rebuild it; the
+app rejects unversioned or stale engines.
 For first/last-frame and reference-media generation, visual conditioning is
-encoded with the regular FP16 VAE because repeating one image to the TensorRT
-encoder's fixed 17-frame shape changes the causal latent. TensorRT is still used
-for final video decoding, where most VAE runtime is spent.
+encoded with the regular FP16 VAE because the TensorRT encoder's fixed temporal
+profile changes causal conditioning latents. The optional TensorRT path is
+decoder-only and accelerates final video decoding, where most VAE runtime is
+spent.
 The experimental **Single-frame 500K** image VAE is a separate 9.69 GB lazy
 download. It is used only for Image results; Video continues to use the
 official H3 video VAE regardless of this image setting.

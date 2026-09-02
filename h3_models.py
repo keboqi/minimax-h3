@@ -37,6 +37,12 @@ MINIMAX_MUSIC3_REPO = "Comfy-Org/MiniMax-Music-3"
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
 MIN_VALID_MODEL_BYTES = 1024 * 1024
+TRT_VAE_ENGINE_BUILD_ID = "mixed-fp32-normalization-v3"
+TRT_VAE_ENGINE_MARKER = ".h3-trt-vae-quality-v3"
+TRT_VAE_RUNTIME_MODEL_KEYS = (
+    "video_vae_trt_decoder",
+    "video_vae_trt_decoder_data",
+)
 
 
 def resolve_hf_token(token: str | None = None) -> str | None:
@@ -134,9 +140,24 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "minimax_h3_video_vae_int8_convrot.safetensors",
         "Experimental INT8 ConvRot video VAE",
     ),
-    "video_vae_trt_encoder": ModelSpec(TRT_VAE_REPO, "vae", "minimax_h3_vae_encoder.onnx", "TensorRT video VAE encoder source"),
-    "video_vae_trt_decoder": ModelSpec(TRT_VAE_REPO, "vae", "minimax_h3_vae_decoder.onnx", "TensorRT video VAE decoder source"),
-    "video_vae_trt_decoder_data": ModelSpec(TRT_VAE_REPO, "vae", "minimax_h3_vae_decoder.onnx.data", "TensorRT video VAE decoder weights sidecar"),
+    "video_vae_trt_encoder": ModelSpec(
+        TRT_VAE_REPO,
+        "vae",
+        "minimax_h3_vae_encoder.onnx",
+        "TensorRT video VAE encoder source",
+    ),
+    "video_vae_trt_decoder": ModelSpec(
+        TRT_VAE_REPO,
+        "vae",
+        "minimax_h3_vae_decoder.onnx",
+        "TensorRT video VAE decoder source",
+    ),
+    "video_vae_trt_decoder_data": ModelSpec(
+        TRT_VAE_REPO,
+        "vae",
+        "minimax_h3_vae_decoder.onnx.data",
+        "TensorRT video VAE decoder weights sidecar",
+    ),
     "image_vae_500k": ModelSpec(
         SINGLE_FRAME_VAE_REPO,
         "vae",
