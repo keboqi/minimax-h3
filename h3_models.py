@@ -23,6 +23,7 @@ TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
 SINGLE_FRAME_VAE_REPO = "iamkaikai/MiniMax-H3-Single-Frame-VAE-500K"
+TRT_VAE_REPO = "lihaoyun6/MiniMax-H3-VAE-ONNX"
 TEXT_ENCODER_REPO = "Comfy-Org/MiniMax-H3"
 SEEDVR2_REPO = "Comfy-Org/SeedVR2"
 H3_LATENT_UPSCALER_REPO = "LBH-123-AI/Minimax_h3_latent_Upscaler"
@@ -133,6 +134,9 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "minimax_h3_video_vae_int8_convrot.safetensors",
         "Experimental INT8 ConvRot video VAE",
     ),
+    "video_vae_trt_encoder": ModelSpec(TRT_VAE_REPO, "vae", "minimax_h3_vae_encoder.onnx", "TensorRT video VAE encoder source"),
+    "video_vae_trt_decoder": ModelSpec(TRT_VAE_REPO, "vae", "minimax_h3_vae_decoder.onnx", "TensorRT video VAE decoder source"),
+    "video_vae_trt_decoder_data": ModelSpec(TRT_VAE_REPO, "vae", "minimax_h3_vae_decoder.onnx.data", "TensorRT video VAE decoder weights sidecar"),
     "image_vae_500k": ModelSpec(
         SINGLE_FRAME_VAE_REPO,
         "vae",
@@ -433,6 +437,9 @@ MUSIC3_MODEL_KEYS = (*MUSIC3_MODEL_CHOICES.values(), *MUSIC3_SHARED_MODEL_KEYS)
 LAZY_OPTIONAL_MODEL_KEYS = (
     *H3_OPTIONAL_TEXT_ENCODER_KEYS,
     "video_vae_int8",
+    "video_vae_trt_encoder",
+    "video_vae_trt_decoder",
+    "video_vae_trt_decoder_data",
     "image_vae_500k",
     "turbo_8step_lora",
     "larry_turbo_lora",
@@ -715,6 +722,8 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     text = MODEL_SPECS[DEFAULT_H3_TEXT_ENCODER_KEY]
     video_vae = MODEL_SPECS["video_vae"]
     video_vae_int8 = MODEL_SPECS["video_vae_int8"]
+    video_vae_trt_encoder = MODEL_SPECS["video_vae_trt_encoder"]
+    video_vae_trt_decoder = MODEL_SPECS["video_vae_trt_decoder"]
     image_vae_500k = MODEL_SPECS["image_vae_500k"]
     audio_vae = MODEL_SPECS["audio_vae"]
     turbo_lora = MODEL_SPECS["turbo_lora"]
@@ -742,6 +751,9 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         "video_vae": video_vae.local_name,
         "video_vae_int8": video_vae_int8.local_name,
         "video_vae_int8_source": video_vae_int8.source,
+        "video_vae_trt_encoder": video_vae_trt_encoder.local_name,
+        "video_vae_trt_decoder": video_vae_trt_decoder.local_name,
+        "video_vae_trt_source": video_vae_trt_encoder.source,
         "image_vae_500k": image_vae_500k.local_name,
         "image_vae_500k_source": image_vae_500k.source,
         "audio_vae": audio_vae.local_name,
@@ -959,6 +971,9 @@ def selftest() -> None:
         "text_encoder_bf16",
         "video_vae",
         "video_vae_int8",
+        "video_vae_trt_encoder",
+        "video_vae_trt_decoder",
+        "video_vae_trt_decoder_data",
         "image_vae_500k",
         "audio_vae",
         "turbo_lora",

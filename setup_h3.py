@@ -43,6 +43,8 @@ SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_REF = "987be556bb2a580ce20fab20c159a6e9ece4111b"  # v0.2.23
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
 LARRY_TURBO_REF = "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
+TRT_VAE_REPO = "https://github.com/lihaoyun6/ComfyUI-H3VAE_TRT.git"
+TRT_VAE_REF = "main"
 H3_LATENT_UPSCALER_NODE_REPO = (
     "https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler.git"
 )
@@ -645,6 +647,11 @@ def sync_external_nodes(
     )
     if install_requirements and (spectrum / "requirements.txt").is_file():
         uv_pip("-r", str(spectrum / "requirements.txt"), no_deps=True)
+
+    trt_vae = comfy / "custom_nodes" / "ComfyUI-H3VAE_TRT"
+    sync_git_repo(TRT_VAE_REPO, trt_vae, ref=TRT_VAE_REF, required_paths=("__init__.py", "minimax_trt_node.py"))
+    if install_requirements and (trt_vae / "requirements.txt").is_file():
+        uv_pip("-r", str(trt_vae / "requirements.txt"), no_deps=True)
 
     larry_turbo = comfy / "custom_nodes" / "ComfyUI-MiniMax-H3-Turbo"
     sync_git_repo(

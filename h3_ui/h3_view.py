@@ -238,6 +238,11 @@ def build_h3_view(
                         "encode/decode; switch off for the reviewed FP16 path."
                     ),
                 )
+                use_trt_vae = gr.Checkbox(
+                    value=defaults["use_trt_vae"],
+                    label="Experimental TensorRT video VAE",
+                    info="Downloads ONNX sources on first use; compile them with the MiniMax-H3 TRT VAE Compiler node before generation.",
+                )
                 image_vae = gr.Radio(
                     services["IMAGE_VAE_CHOICES"],
                     value=defaults["image_vae"],
@@ -498,6 +503,7 @@ def build_h3_view(
                     defaults["latent_split_temporal_overlap_frames"],
                     defaults["latent_split_seam_denoise"],
                     defaults["latent_split_seam_polish"],
+                    use_trt_vae=defaults["use_trt_vae"],
                 ),
                 elem_classes=["h3-settings-summary"],
             )
@@ -1186,6 +1192,7 @@ def build_h3_view(
             "text_encoder": text_encoder,
             "turbo_variant": turbo_variant,
             "use_int8_vae": use_int8_vae,
+            "use_trt_vae": use_trt_vae,
             "width": width,
         }
     )

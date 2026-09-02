@@ -49,6 +49,7 @@ def bind_app(
         components["latent_split_temporal_overlap_frames"],
         components["latent_split_seam_denoise"],
         components["latent_split_seam_polish"],
+        components["use_trt_vae"],
     ]
     preflight_inputs = [
         components["mode"],
@@ -548,6 +549,7 @@ def bind_app(
             components["generation_seedvr2_model"],
             components["ltx25_model"],
             components["use_int8_vae"],
+            components["use_trt_vae"],
             components["image_vae"],
             components["result_format"],
             components["image_frames"],

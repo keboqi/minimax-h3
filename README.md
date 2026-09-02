@@ -155,6 +155,12 @@ SwiftVR inference source; no SWIFTVR_CHECKPOINT_DIR is required unless you want
 to use an existing checkpoint directory. The experimental
 INT8 ConvRot video VAE
 is also lazy and downloads only when its default-off checkbox is enabled.
+The experimental **TensorRT video VAE** is available through a second default-off
+checkbox. Setup syncs the linked ComfyUI-H3VAE_TRT node and the ONNX sources
+download on first selection. Compile the encoder and decoder with the
+**MiniMax-H3 TRT VAE Compiler** node, then restart/refresh ComfyUI before
+generating. TensorRT engines are GPU-specific and are not downloaded by the
+app.
 The experimental **Single-frame 500K** image VAE is a separate 9.69 GB lazy
 download. It is used only for Image results; Video continues to use the
 official H3 video VAE regardless of this image setting.

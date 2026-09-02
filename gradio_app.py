@@ -462,6 +462,7 @@ UI_DEFAULTS = {
     "stage_model_offload": False,
     "reuse_unchanged_inputs": True,
     "use_int8_vae": False,
+    "use_trt_vae": False,
     "generation_mode": "Turbo",
     "turbo_variant": DEFAULT_TURBO,
     "duration": 5,
@@ -1820,6 +1821,9 @@ class ModelConfig:
     audio_vae: str
     text_encoders: dict[str, str] | None = None
     video_vae_int8: str | None = None
+    video_vae_trt_encoder: str | None = None
+    video_vae_trt_decoder: str | None = None
+    video_vae_trt_source: str = "unknown"
     video_vae_int8_source: str = "unknown"
     image_vae_500k: str | None = None
     image_vae_500k_source: str = "unknown"
@@ -1890,6 +1894,9 @@ def load_model_config() -> ModelConfig:
         video_vae=data["video_vae"],
         audio_vae=data["audio_vae"],
         video_vae_int8=data.get("video_vae_int8"),
+        video_vae_trt_encoder=data.get("video_vae_trt_encoder"),
+        video_vae_trt_decoder=data.get("video_vae_trt_decoder"),
+        video_vae_trt_source=data.get("video_vae_trt_source", "unknown"),
         video_vae_int8_source=data.get("video_vae_int8_source", "unknown"),
         image_vae_500k=data.get("image_vae_500k"),
         image_vae_500k_source=data.get("image_vae_500k_source", "unknown"),
@@ -2208,6 +2215,18 @@ def ensure_int8_video_vae(models: ModelConfig) -> bool:
     )
     if not model_file_is_ready(destination):
         raise H3Error(f"On-demand INT8 VAE download did not produce {filename}.")
+    return True
+
+
+def ensure_trt_video_vae(models: ModelConfig) -> bool:
+    if not models.video_vae_trt_encoder or not models.video_vae_trt_decoder:
+        raise H3Error("TensorRT VAE is not configured. Re-run setup_h3.py.")
+    keys = ("video_vae_trt_encoder", "video_vae_trt_decoder", "video_vae_trt_decoder_data")
+    manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
+    if stale_model_keys(root=COMFY_DIR / "models", manifest_path=manifest_path, model_keys=keys):
+        sync_models(root=COMFY_DIR / "models", manifest_path=manifest_path,
+                    token=resolve_hf_token(), log_prefix="[h3-trt-vae-on-demand]",
+                    model_keys=keys, download_workers=1)
     return True
 
 
@@ -3606,6 +3625,7 @@ def add_model_stack(
     available_nodes: set[str],
     text_encoder_name: str | None = None,
     use_int8_vae: bool = False,
+    use_trt_vae: bool = False,
     use_sage: bool = False,
     use_sla: bool = False,
     sla_preset: str = DEFAULT_SLA_PRESET,
@@ -3784,16 +3804,22 @@ def add_model_stack(
         type="minimax",
         device="default",
     )
-    if use_int8_vae:
-        if not models.video_vae_int8:
-            raise H3Error(
-                "INT8 video VAE was requested but is missing from the model catalog. "
-                "Re-run setup_h3.py."
-            )
-        video_vae_name = models.video_vae_int8
+    if use_int8_vae and use_trt_vae:
+        raise H3Error("Select either INT8 ConvRot VAE or TensorRT VAE, not both.")
+    if use_trt_vae:
+        if "MiniMaxH3TRTVAELoader" not in available_nodes:
+            raise H3Error("TensorRT VAE is unavailable. Run setup_h3.py and restart ComfyUI.")
+        decoder = (models.video_vae_trt_decoder or "").replace(".onnx", ".engine")
+        encoder = (models.video_vae_trt_encoder or "").replace(".onnx", ".engine")
+        video_vae = graph.add("MiniMaxH3TRTVAELoader", decoder=decoder, encoder=encoder)
     else:
-        video_vae_name = models.video_vae
-    video_vae = graph.add("VAELoader", vae_name=video_vae_name)
+        if use_int8_vae:
+            if not models.video_vae_int8:
+                raise H3Error("INT8 video VAE is missing from the model catalog.")
+            video_vae_name = models.video_vae_int8
+        else:
+            video_vae_name = models.video_vae
+        video_vae = graph.add("VAELoader", vae_name=video_vae_name)
     audio_vae = graph.add("VAELoader", vae_name=models.audio_vae)
     return model_ref, Graph.out(clip), Graph.out(video_vae), Graph.out(audio_vae)
 
@@ -4150,6 +4176,7 @@ def build_fl2va_graph(
     models: ModelConfig,
     available_nodes: set[str],
     use_int8_vae: bool = False,
+    use_trt_vae: bool = False,
     use_sage: bool = False,
     use_sla: bool = False,
     sla_preset: str = DEFAULT_SLA_PRESET,
@@ -4194,6 +4221,7 @@ def build_fl2va_graph(
         available_nodes=available_nodes,
         text_encoder_name=text_encoder_name,
         use_int8_vae=use_int8_vae,
+        use_trt_vae=use_trt_vae,
         use_sage=use_sage,
         use_sla=use_sla,
         sla_preset=sla_preset,
@@ -4354,6 +4382,7 @@ def build_ref2va_graph(
     models: ModelConfig,
     available_nodes: set[str],
     use_int8_vae: bool = False,
+    use_trt_vae: bool = False,
     use_sage: bool = False,
     use_sla: bool = False,
     sla_preset: str = DEFAULT_SLA_PRESET,
@@ -4398,6 +4427,7 @@ def build_ref2va_graph(
         available_nodes=available_nodes,
         text_encoder_name=text_encoder_name,
         use_int8_vae=use_int8_vae,
+        use_trt_vae=use_trt_vae,
         use_sage=use_sage,
         use_sla=use_sla,
         sla_preset=sla_preset,
@@ -7354,6 +7384,7 @@ def generate(
     seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
     ltx25_model: str = DEFAULT_LTX25_MODEL,
     use_int8_vae: bool = False,
+    use_trt_vae: bool = False,
     image_vae: str = DEFAULT_IMAGE_VAE,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
@@ -7439,6 +7470,9 @@ def generate(
         if use_int8_vae:
             progress(0, desc="Preparing INT8 video VAE")
             ensure_int8_video_vae(models)
+        if use_trt_vae:
+            progress(0, desc="Preparing TensorRT video VAE")
+            ensure_trt_video_vae(models)
         if result_format == "Image" and selected_image_vae == SINGLE_FRAME_IMAGE_VAE:
             decoder_ready = models.image_vae_500k and model_file_is_ready(
                 COMFY_DIR / "models" / "vae" / models.image_vae_500k
@@ -7718,6 +7752,7 @@ def generate(
                 models=models,
                 available_nodes=available,
                 use_int8_vae=bool(use_int8_vae),
+                use_trt_vae=bool(use_trt_vae),
                 latent_upscale_model_name=latent_upscale_model_name,
                 latent_upscale_precision=latent_upscale_precision,
                 latent_upscale_refine_steps=int(latent_upscale_refine_steps),
@@ -7769,6 +7804,7 @@ def generate(
                 models=models,
                 available_nodes=available,
                 use_int8_vae=bool(use_int8_vae),
+                use_trt_vae=bool(use_trt_vae),
                 latent_upscale_model_name=latent_upscale_model_name,
                 latent_upscale_precision=latent_upscale_precision,
                 latent_upscale_refine_steps=int(latent_upscale_refine_steps),
@@ -8591,9 +8627,10 @@ def compact_settings_summary(
     latent_split_temporal_overlap_frames: int = 22,
     latent_split_seam_denoise: float = 0.75,
     latent_split_seam_polish: str = "off",
+    use_trt_vae: bool = False,
 ) -> str:
     stage_offload_note = "On" if stage_model_offload or text_encoder == "BF16" else "Off"
-    vae_note = "INT8 ConvRot" if use_int8_vae else "FP16"
+    vae_note = "TensorRT" if use_trt_vae else ("INT8 ConvRot" if use_int8_vae else "FP16")
     generation_badge = generation_mode
     generation_description = "Standard sampling"
     if generation_mode == "Turbo":
