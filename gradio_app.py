@@ -2252,11 +2252,16 @@ def ensure_trt_video_vae(
     ]
     if require_engines and missing_engines:
         raise H3Error(
-            "TensorRT VAE engines are not compiled yet. In ComfyUI, add the "
-            "MiniMax-H3 TRT VAE Compiler node, select minimax_h3_vae_encoder.onnx "
-            "and minimax_h3_vae_decoder.onnx, run it once, then refresh the "
-            "ComfyUI model list and retry. Missing: " + ", ".join(missing_engines)
+            "TensorRT VAE engines are not compiled yet. Click Compile TensorRT "
+            "VAE engines once, then retry. Missing: " + ", ".join(missing_engines)
         )
+    if require_engines and not missing_engines:
+        marker = COMFY_DIR / "models" / "vae" / ".h3-trt-vae-quality-v2"
+        if not marker.is_file():
+            raise H3Error(
+                "TensorRT VAE engines use the previous quality profile. Click "
+                "Compile TensorRT VAE engines once to rebuild them."
+            )
     return True
 
 
@@ -2305,11 +2310,13 @@ def compile_trt_video_vae(
             / "vae"
             / models.video_vae_trt_encoder.replace(".onnx", ".engine"),
         )
-        if all(path.is_file() for path in engine_paths):
+        build_marker = COMFY_DIR / "models" / "vae" / ".h3-trt-vae-quality-v2"
+        if all(path.is_file() for path in engine_paths) and build_marker.is_file():
             return "TensorRT VAE engines are already compiled and ready to use."
 
         decoder_onnx = COMFY_DIR / "models" / "vae" / models.video_vae_trt_decoder
         encoder_onnx = COMFY_DIR / "models" / "vae" / models.video_vae_trt_encoder
+        build_marker.unlink(missing_ok=True)
         progress(0.1, desc="Preparing TensorRT VAE compilation")
         module.mm.unload_all_models()
         module.mm.soft_empty_cache()
@@ -2325,6 +2332,7 @@ def compile_trt_video_vae(
             str(engine_paths[1]),
             is_decoder=False,
         )
+        build_marker.write_text("mixed-fp32-normalization-v2\n", encoding="utf-8")
         progress(1.0, desc="TensorRT VAE engines compiled")
         ensure_trt_video_vae(models)
         return "TensorRT VAE engines compiled and ready to use."

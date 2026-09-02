@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 LARRY_TIMESTEP_PATCH_VERSION = 2
-TRT_VAE_SINGLE_FRAME_PATCH_VERSION = 1
+TRT_VAE_PATCH_VERSION = 2
 
 
 _LARRY_UNIQUE_T_ORIGINAL = """\
@@ -136,29 +136,126 @@ _TRT_SINGLE_FRAME_ENCODE_PATCHED = """\
         moments = self.encode_temporal(x)
 """
 
+_TRT_SINGLE_FRAME_DECODE_ORIGINAL = """\
+      if z.shape[2] == 1:
+        # 🌟 如果是单张图片 (T=1)，填充到 7 个 token 以满足 TRT 静态切片尺寸
+        z_pad = z.repeat(1, 1, 7, 1, 1)
+        return self._finalize_pixels(
+            self.tiled_decode(z_pad)[:, :, -1:, :, :]
+        )
+      return self.decode_temporal(z)
+"""
+
+_TRT_SINGLE_FRAME_DECODE_PATCHED = """\
+      if z.shape[2] == 1:
+        # A lone token is out-of-distribution for the ViT decoder. Decode it
+        # as the first token of a two-token clip, matching the reference VAE.
+        z_pair = torch.cat([z, z], dim=2)
+        return self.decode_temporal(z_pair)[:, :, :1]
+      return self.decode_temporal(z)
+"""
+
+_TRT_TEMPORAL_RETURN_ORIGINAL = """\
+    return torch.cat(dec_chunks, dim=2)
+
+  def encode_temporal(self, x):
+"""
+
+_TRT_TEMPORAL_RETURN_PATCHED = """\
+    dec = torch.cat(dec_chunks, dim=2)
+    if pad_tokens > 0:
+      # Remove pixel frames produced only by repeated tail tokens.
+      intra_tail = self.clip_length % self.vae_ratio_t
+      before_pad = z.shape[2] - pad_tokens
+      pad_frames = sum(
+          intra_tail
+          if intra_tail and (before_pad + k) % self.tokens_chunk_size == 0
+          else self.vae_ratio_t
+          for k in range(pad_tokens)
+      )
+      if pad_frames > 0:
+        dec = dec[:, :, :-pad_frames]
+    return dec
+
+  def encode_temporal(self, x):
+"""
+
+_TRT_FP32_NORMALIZATION_ORIGINAL = """\
+    if hasattr(trt.BuilderFlag, "FP16"):
+      config.set_flag(trt.BuilderFlag.FP16)
+
+    workspace_size = (4 if is_decoder else 8) * (1024**3)
+"""
+
+_TRT_FP32_NORMALIZATION_PATCHED = """\
+    if hasattr(trt.BuilderFlag, "FP16"):
+      config.set_flag(trt.BuilderFlag.FP16)
+    if is_decoder:
+      # TensorRT warns that FP16 LayerNorm Reduce/Pow operations after
+      # attention can overflow. Preserve FP32 for those operations while
+      # retaining FP16 for the expensive matrix multiplications.
+      constrained_layers = 0
+      for layer_index in range(network.num_layers):
+        layer = network.get_layer(layer_index)
+        is_reduce = layer.type == trt.LayerType.REDUCE
+        is_pow = (
+            layer.type == trt.LayerType.ELEMENTWISE
+            and getattr(layer, "op", None) == trt.ElementWiseOperation.POW
+        )
+        if not (is_reduce or is_pow):
+          continue
+        outputs = [layer.get_output(i) for i in range(layer.num_outputs)]
+        floating_types = {trt.float16, trt.float32}
+        if hasattr(trt, "bfloat16"):
+          floating_types.add(trt.bfloat16)
+        if not outputs or not all(output.dtype in floating_types for output in outputs):
+          continue
+        layer.precision = trt.float32
+        for output_index in range(layer.num_outputs):
+          layer.set_output_type(output_index, trt.float32)
+        constrained_layers += 1
+      constraint_flag = getattr(trt.BuilderFlag, "OBEY_PRECISION_CONSTRAINTS", None)
+      if constraint_flag is None:
+        constraint_flag = getattr(trt.BuilderFlag, "PREFER_PRECISION_CONSTRAINTS", None)
+      if constraint_flag is not None:
+        config.set_flag(constraint_flag)
+      logger.info(
+          f"Forced {constrained_layers} decoder Reduce/Pow layers to FP32 precision"
+      )
+
+    workspace_size = (4 if is_decoder else 8) * (1024**3)
+"""
+
+_TRT_REPLACEMENTS = (
+    (_TRT_SINGLE_FRAME_ENCODE_ORIGINAL, _TRT_SINGLE_FRAME_ENCODE_PATCHED),
+    (_TRT_SINGLE_FRAME_DECODE_ORIGINAL, _TRT_SINGLE_FRAME_DECODE_PATCHED),
+    (_TRT_TEMPORAL_RETURN_ORIGINAL, _TRT_TEMPORAL_RETURN_PATCHED),
+    (_TRT_FP32_NORMALIZATION_ORIGINAL, _TRT_FP32_NORMALIZATION_PATCHED),
+)
+
 
 def _patch_trt_vae_source(source: str) -> tuple[str, bool]:
-    """Pad single-frame TensorRT VAE encoder calls to its static profile."""
-    if _TRT_SINGLE_FRAME_ENCODE_PATCHED in source:
-        return source, False
-    count = source.count(_TRT_SINGLE_FRAME_ENCODE_ORIGINAL)
-    if count != 1:
-        raise RuntimeError(
-            "TensorRT VAE single-frame compatibility patch does not match the "
-            f"upstream node source (original={count})"
-        )
-    return (
-        source.replace(
-            _TRT_SINGLE_FRAME_ENCODE_ORIGINAL,
-            _TRT_SINGLE_FRAME_ENCODE_PATCHED,
-            1,
-        ),
-        True,
-    )
+    """Synchronize TensorRT VAE behavior with the reference implementation."""
+    changed = False
+    states = []
+    for original, patched in _TRT_REPLACEMENTS:
+        original_count = source.count(original)
+        patched_count = source.count(patched)
+        states.append((original_count, patched_count))
+        if original_count == 0 and patched_count == 1:
+            continue
+        if original_count != 1 or patched_count != 0:
+            raise RuntimeError(
+                "TensorRT VAE compatibility patch does not match the upstream "
+                f"node source (states={states})"
+            )
+        source = source.replace(original, patched, 1)
+        changed = True
+    return source, changed
 
 
 def patch_trt_vae_node(node_dir: Path) -> bool:
-    """Make the upstream fixed-shape TensorRT encoder safe for one frame."""
+    """Synchronize upstream TensorRT encode, decode, and build behavior."""
     target = Path(node_dir) / "minimax_trt_node.py"
     if not target.is_file():
         raise RuntimeError(f"TensorRT VAE node entry point is missing: {target}")
@@ -174,8 +271,8 @@ def patch_trt_vae_node(node_dir: Path) -> bool:
     finally:
         temporary.unlink(missing_ok=True)
     print(
-        f"[h3-node-patch v{TRT_VAE_SINGLE_FRAME_PATCH_VERSION}] padded "
-        f"single-frame TensorRT VAE encoder input in {target}"
+        f"[h3-node-patch v{TRT_VAE_PATCH_VERSION}] synchronized TensorRT VAE "
+        f"reference behavior and mixed precision in {target}"
     )
     return True
 
@@ -201,13 +298,21 @@ def selftest() -> None:
     with tempfile.TemporaryDirectory() as directory:
         target = Path(directory) / "minimax_trt_node.py"
         target.write_text(
-            "class Fixture:\n" + _TRT_SINGLE_FRAME_ENCODE_ORIGINAL,
+            "class Fixture:\n"
+            "  def encode(self, x):\n"
+            + _TRT_SINGLE_FRAME_ENCODE_ORIGINAL
+            + "  def decode(self, z):\n"
+            + _TRT_SINGLE_FRAME_DECODE_ORIGINAL
+            + "  def decode_temporal(self, z):\n"
+            + _TRT_TEMPORAL_RETURN_ORIGINAL
+            + "    pass\n\n"
+            "def build():\n" + _TRT_FP32_NORMALIZATION_ORIGINAL,
             encoding="utf-8",
         )
         assert patch_trt_vae_node(Path(directory)) is True
         patched = target.read_text(encoding="utf-8")
-        assert _TRT_SINGLE_FRAME_ENCODE_ORIGINAL not in patched
-        assert _TRT_SINGLE_FRAME_ENCODE_PATCHED in patched
+        assert all(original not in patched for original, _ in _TRT_REPLACEMENTS)
+        assert all(replacement in patched for _, replacement in _TRT_REPLACEMENTS)
         assert patch_trt_vae_node(Path(directory)) is False
 
         try:

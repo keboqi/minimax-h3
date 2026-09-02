@@ -160,7 +160,10 @@ The experimental **TensorRT video VAE** is available through a second default-of
 checkbox. Setup syncs the linked ComfyUI-H3VAE_TRT node. Use **Compile
 TensorRT VAE engines** next to the checkbox to download the ONNX sources and
 build the local engines. TensorRT engines are GPU-specific and are not
-downloaded by the app.
+downloaded by the app. The quality profile keeps decoder LayerNorm reductions
+and powers in FP32 while retaining FP16 matrix operations. After upgrading from
+an older TensorRT VAE build, click the compile button once to rebuild both
+engines; the app rejects unversioned legacy engines.
 The experimental **Single-frame 500K** image VAE is a separate 9.69 GB lazy
 download. It is used only for Image results; Video continues to use the
 official H3 video VAE regardless of this image setting.
