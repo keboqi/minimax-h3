@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 from h3_models import PRELOAD_MODEL_KEYS, sync_models, write_json_atomic
-from h3_node_patches import patch_larry_turbo_node
+from h3_node_patches import patch_larry_turbo_node, patch_trt_vae_node
 from h3_requirements import (
     ABI_CONSTRAINTS,
     COMFY_FRONTEND_VERSION,
@@ -711,6 +711,7 @@ def sync_external_nodes(
         ref=TRT_VAE_REF,
         required_paths=("__init__.py", "minimax_trt_node.py"),
     )
+    patch_trt_vae_node(trt_vae)
     if install_requirements and (trt_vae / "requirements.txt").is_file():
         uv_pip("-r", str(trt_vae / "requirements.txt"), no_deps=True)
 

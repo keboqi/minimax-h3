@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Fail-closed compatibility patches for pinned third-party ComfyUI nodes."""
+
 from __future__ import annotations
 
 import argparse
@@ -8,6 +9,7 @@ from pathlib import Path
 
 
 LARRY_TIMESTEP_PATCH_VERSION = 2
+TRT_VAE_SINGLE_FRAME_PATCH_VERSION = 1
 
 
 _LARRY_UNIQUE_T_ORIGINAL = """\
@@ -97,9 +99,7 @@ def patch_larry_turbo_node(node_dir: Path) -> bool:
     if not target.is_file():
         raise RuntimeError(f"Larry Turbo node entry point is missing: {target}")
 
-    patched_source, changed = _patch_larry_source(
-        target.read_text(encoding="utf-8")
-    )
+    patched_source, changed = _patch_larry_source(target.read_text(encoding="utf-8"))
     if not changed:
         return False
 
@@ -115,6 +115,67 @@ def patch_larry_turbo_node(node_dir: Path) -> bool:
     print(
         f"[h3-node-patch v{LARRY_TIMESTEP_PATCH_VERSION}] synchronized "
         f"Larry AdaLN timestep rows in {target}"
+    )
+    return True
+
+
+_TRT_SINGLE_FRAME_ENCODE_ORIGINAL = """\
+      if x.shape[2] == 1:
+        moments = self.tiled_encode(self._normalize_pixels(x))[:, :, -1:, :, :]
+      else:
+        moments = self.encode_temporal(x)
+"""
+
+_TRT_SINGLE_FRAME_ENCODE_PATCHED = """\
+      if x.shape[2] == 1:
+        # The TensorRT encoder has a fixed 17-frame profile. Mirror the
+        # temporal encoder's tail-padding behavior, then retain one latent.
+        x_pad = x.repeat(1, 1, self.clip_length, 1, 1)
+        moments = self.tiled_encode(self._normalize_pixels(x_pad))[:, :, -1:, :, :]
+      else:
+        moments = self.encode_temporal(x)
+"""
+
+
+def _patch_trt_vae_source(source: str) -> tuple[str, bool]:
+    """Pad single-frame TensorRT VAE encoder calls to its static profile."""
+    if _TRT_SINGLE_FRAME_ENCODE_PATCHED in source:
+        return source, False
+    count = source.count(_TRT_SINGLE_FRAME_ENCODE_ORIGINAL)
+    if count != 1:
+        raise RuntimeError(
+            "TensorRT VAE single-frame compatibility patch does not match the "
+            f"upstream node source (original={count})"
+        )
+    return (
+        source.replace(
+            _TRT_SINGLE_FRAME_ENCODE_ORIGINAL,
+            _TRT_SINGLE_FRAME_ENCODE_PATCHED,
+            1,
+        ),
+        True,
+    )
+
+
+def patch_trt_vae_node(node_dir: Path) -> bool:
+    """Make the upstream fixed-shape TensorRT encoder safe for one frame."""
+    target = Path(node_dir) / "minimax_trt_node.py"
+    if not target.is_file():
+        raise RuntimeError(f"TensorRT VAE node entry point is missing: {target}")
+
+    patched_source, changed = _patch_trt_vae_source(target.read_text(encoding="utf-8"))
+    if not changed:
+        return False
+    compile(patched_source, str(target), "exec")
+    temporary = target.with_name(target.name + ".h3-patch")
+    try:
+        temporary.write_text(patched_source, encoding="utf-8")
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    print(
+        f"[h3-node-patch v{TRT_VAE_SINGLE_FRAME_PATCH_VERSION}] padded "
+        f"single-frame TensorRT VAE encoder input in {target}"
     )
     return True
 
@@ -137,6 +198,24 @@ def selftest() -> None:
         except RuntimeError as exc:
             assert "does not match the pinned node source" in str(exc)
 
+    with tempfile.TemporaryDirectory() as directory:
+        target = Path(directory) / "minimax_trt_node.py"
+        target.write_text(
+            "class Fixture:\n" + _TRT_SINGLE_FRAME_ENCODE_ORIGINAL,
+            encoding="utf-8",
+        )
+        assert patch_trt_vae_node(Path(directory)) is True
+        patched = target.read_text(encoding="utf-8")
+        assert _TRT_SINGLE_FRAME_ENCODE_ORIGINAL not in patched
+        assert _TRT_SINGLE_FRAME_ENCODE_PATCHED in patched
+        assert patch_trt_vae_node(Path(directory)) is False
+
+        try:
+            _patch_trt_vae_source("unexpected upstream source")
+            raise AssertionError("unexpected TensorRT VAE source was accepted")
+        except RuntimeError as exc:
+            assert "does not match the upstream node source" in str(exc)
+
         class Scalar(float):
             def __truediv__(self, other):
                 return Scalar(super().__truediv__(other))
@@ -156,7 +235,8 @@ def selftest() -> None:
 
         namespace = {
             "_time_shift_sigma": lambda sigma, source, target: (
-                target * (sigma / (source + sigma * (1.0 - source)))
+                target
+                * (sigma / (source + sigma * (1.0 - source)))
                 / (1.0 + (target - 1.0) * (sigma / (source + sigma * (1.0 - source))))
             )
         }
