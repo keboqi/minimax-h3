@@ -2256,7 +2256,7 @@ def ensure_trt_video_vae(
             "VAE engines once, then retry. Missing: " + ", ".join(missing_engines)
         )
     if require_engines and not missing_engines:
-        marker = COMFY_DIR / "models" / "vae" / ".h3-trt-vae-quality-v2"
+        marker = COMFY_DIR / "models" / "vae" / ".h3-trt-vae-quality-v3"
         if not marker.is_file():
             raise H3Error(
                 "TensorRT VAE engines use the previous quality profile. Click "
@@ -2310,7 +2310,7 @@ def compile_trt_video_vae(
             / "vae"
             / models.video_vae_trt_encoder.replace(".onnx", ".engine"),
         )
-        build_marker = COMFY_DIR / "models" / "vae" / ".h3-trt-vae-quality-v2"
+        build_marker = COMFY_DIR / "models" / "vae" / ".h3-trt-vae-quality-v3"
         if all(path.is_file() for path in engine_paths) and build_marker.is_file():
             return "TensorRT VAE engines are already compiled and ready to use."
 
@@ -2332,7 +2332,7 @@ def compile_trt_video_vae(
             str(engine_paths[1]),
             is_decoder=False,
         )
-        build_marker.write_text("mixed-fp32-normalization-v2\n", encoding="utf-8")
+        build_marker.write_text("mixed-fp32-normalization-v3\n", encoding="utf-8")
         progress(1.0, desc="TensorRT VAE engines compiled")
         ensure_trt_video_vae(models)
         return "TensorRT VAE engines compiled and ready to use."

@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 LARRY_TIMESTEP_PATCH_VERSION = 2
-TRT_VAE_PATCH_VERSION = 2
+TRT_VAE_PATCH_VERSION = 3
 
 
 _LARRY_UNIQUE_T_ORIGINAL = """\
@@ -191,12 +191,11 @@ _TRT_FP32_NORMALIZATION_PATCHED = """\
     if hasattr(trt.BuilderFlag, "FP16"):
       config.set_flag(trt.BuilderFlag.FP16)
     if is_decoder:
-      # TensorRT warns that FP16 LayerNorm Reduce/Pow operations after
-      # attention can overflow. Preserve FP32 for those operations while
-      # retaining FP16 for the expensive matrix multiplications.
+      # TensorRT 11 is strongly typed. Surround normalization Reduce/Pow
+      # operations with explicit FP32 casts, then restore their output type.
+      original_layers = [network.get_layer(i) for i in range(network.num_layers)]
       constrained_layers = 0
-      for layer_index in range(network.num_layers):
-        layer = network.get_layer(layer_index)
+      for layer in original_layers:
         is_reduce = layer.type == trt.LayerType.REDUCE
         is_pow = (
             layer.type == trt.LayerType.ELEMENTWISE
@@ -204,23 +203,44 @@ _TRT_FP32_NORMALIZATION_PATCHED = """\
         )
         if not (is_reduce or is_pow):
           continue
-        outputs = [layer.get_output(i) for i in range(layer.num_outputs)]
         floating_types = {trt.float16, trt.float32}
         if hasattr(trt, "bfloat16"):
           floating_types.add(trt.bfloat16)
+        outputs = [layer.get_output(i) for i in range(layer.num_outputs)]
         if not outputs or not all(output.dtype in floating_types for output in outputs):
           continue
-        layer.precision = trt.float32
-        for output_index in range(layer.num_outputs):
-          layer.set_output_type(output_index, trt.float32)
+        output_state = []
+        for output_index, output in enumerate(outputs):
+          if not output.name:
+            output.name = f"{layer.name or 'layer'}_h3_output_{output_index}"
+          consumers = []
+          for consumer in original_layers:
+            if consumer is layer:
+              continue
+            for input_index in range(consumer.num_inputs):
+              candidate = consumer.get_input(input_index)
+              if candidate is not None and candidate.name == output.name:
+                consumers.append((consumer, input_index))
+          output_state.append((output, output.dtype, consumers))
+        for input_index in range(layer.num_inputs):
+          input_tensor = layer.get_input(input_index)
+          if input_tensor is None or input_tensor.dtype not in floating_types:
+            continue
+          if input_tensor.dtype != trt.float32:
+            cast_in = network.add_cast(input_tensor, trt.float32)
+            cast_in.name = f"{layer.name or 'layer'}_h3_fp32_input_{input_index}"
+            layer.set_input(input_index, cast_in.get_output(0))
+        for output_index, (output, original_dtype, consumers) in enumerate(output_state):
+          if original_dtype == trt.float32:
+            continue
+          cast_out = network.add_cast(output, original_dtype)
+          cast_out.name = f"{layer.name or 'layer'}_h3_restore_output_{output_index}"
+          restored = cast_out.get_output(0)
+          for consumer, input_index in consumers:
+            consumer.set_input(input_index, restored)
         constrained_layers += 1
-      constraint_flag = getattr(trt.BuilderFlag, "OBEY_PRECISION_CONSTRAINTS", None)
-      if constraint_flag is None:
-        constraint_flag = getattr(trt.BuilderFlag, "PREFER_PRECISION_CONSTRAINTS", None)
-      if constraint_flag is not None:
-        config.set_flag(constraint_flag)
       logger.info(
-          f"Forced {constrained_layers} decoder Reduce/Pow layers to FP32 precision"
+          f"Wrapped {constrained_layers} decoder Reduce/Pow layers in FP32 casts"
       )
 
     workspace_size = (4 if is_decoder else 8) * (1024**3)
@@ -313,6 +333,9 @@ def selftest() -> None:
         patched = target.read_text(encoding="utf-8")
         assert all(original not in patched for original, _ in _TRT_REPLACEMENTS)
         assert all(replacement in patched for _, replacement in _TRT_REPLACEMENTS)
+        assert "network.add_cast" in patched
+        assert "layer.precision" not in patched
+        assert "layer.set_output_type" not in patched
         assert patch_trt_vae_node(Path(directory)) is False
 
         try:
