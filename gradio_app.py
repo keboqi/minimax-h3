@@ -2219,14 +2219,43 @@ def ensure_int8_video_vae(models: ModelConfig) -> bool:
 
 
 def ensure_trt_video_vae(models: ModelConfig) -> bool:
+    """Provision ONNX sources and require locally compiled TensorRT engines."""
     if not models.video_vae_trt_encoder or not models.video_vae_trt_decoder:
         raise H3Error("TensorRT VAE is not configured. Re-run setup_h3.py.")
-    keys = ("video_vae_trt_encoder", "video_vae_trt_decoder", "video_vae_trt_decoder_data")
+    keys = (
+        "video_vae_trt_encoder",
+        "video_vae_trt_decoder",
+        "video_vae_trt_decoder_data",
+    )
     manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
-    if stale_model_keys(root=COMFY_DIR / "models", manifest_path=manifest_path, model_keys=keys):
-        sync_models(root=COMFY_DIR / "models", manifest_path=manifest_path,
-                    token=resolve_hf_token(), log_prefix="[h3-trt-vae-on-demand]",
-                    model_keys=keys, download_workers=1)
+    if stale_model_keys(
+        root=COMFY_DIR / "models",
+        manifest_path=manifest_path,
+        model_keys=keys,
+    ):
+        sync_models(
+            root=COMFY_DIR / "models",
+            manifest_path=manifest_path,
+            token=resolve_hf_token(),
+            log_prefix="[h3-trt-vae-on-demand]",
+            model_keys=keys,
+            download_workers=1,
+        )
+    engine_names = (
+        models.video_vae_trt_encoder.replace(".onnx", ".engine"),
+        models.video_vae_trt_decoder.replace(".onnx", ".engine"),
+    )
+    missing_engines = [
+        name for name in engine_names
+        if not (COMFY_DIR / "models" / "vae" / name).is_file()
+    ]
+    if missing_engines:
+        raise H3Error(
+            "TensorRT VAE engines are not compiled yet. In ComfyUI, add the "
+            "MiniMax-H3 TRT VAE Compiler node, select minimax_h3_vae_encoder.onnx "
+            "and minimax_h3_vae_decoder.onnx, run it once, then refresh the "
+            "ComfyUI model list and retry. Missing: " + ", ".join(missing_engines)
+        )
     return True
 
 
