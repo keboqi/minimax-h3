@@ -164,6 +164,10 @@ downloaded by the app. The quality profile keeps decoder LayerNorm reductions
 and powers in FP32 while retaining FP16 matrix operations. After upgrading from
 an older TensorRT VAE build, click the compile button once to rebuild both
 engines; the app rejects unversioned legacy engines.
+For first/last-frame and reference-media generation, visual conditioning is
+encoded with the regular FP16 VAE because repeating one image to the TensorRT
+encoder's fixed 17-frame shape changes the causal latent. TensorRT is still used
+for final video decoding, where most VAE runtime is spent.
 The experimental **Single-frame 500K** image VAE is a separate 9.69 GB lazy
 download. It is used only for Image results; Video continues to use the
 official H3 video VAE regardless of this image setting.

@@ -3932,6 +3932,25 @@ def add_model_stack(
     return model_ref, Graph.out(clip), Graph.out(video_vae), Graph.out(audio_vae)
 
 
+def h3_conditioning_video_vae(
+    graph: Graph,
+    models: ModelConfig,
+    decode_vae_ref: list[Any],
+    *,
+    use_trt_vae: bool,
+    has_visual_conditioning: bool,
+) -> list[Any]:
+    """Use the reference VAE encoder for visual conditioning.
+
+    Repeating one frame to satisfy the TensorRT encoder's fixed 17-frame
+    profile changes its causal latent. TensorRT remains the final decoder.
+    """
+    if not (use_trt_vae and has_visual_conditioning):
+        return decode_vae_ref
+    encoder_vae = graph.add("VAELoader", vae_name=models.video_vae)
+    return Graph.out(encoder_vae)
+
+
 def h3_conditioning_cache_key(
     mode: str,
     prompt: str,
@@ -4332,6 +4351,13 @@ def build_fl2va_graph(
         use_sla=use_sla,
         sla_preset=sla_preset,
     )
+    conditioning_vae_ref = h3_conditioning_video_vae(
+        graph,
+        models,
+        video_vae_ref,
+        use_trt_vae=use_trt_vae,
+        has_visual_conditioning=bool(first_image or last_image),
+    )
     normalized_image_vae = normalize_image_vae(image_vae)
     single_frame_images = (
         normalize_result_format(result_format) == "Image"
@@ -4358,7 +4384,7 @@ def build_fl2va_graph(
 
     conditioning_media: list[tuple[str, str]] = []
     inputs: dict[str, Any] = {
-        "vae": video_vae_ref,
+        "vae": conditioning_vae_ref,
         "prompt": prompt,
         "length": (
             selected_image_sampling_length(image_frames, normalized_image_vae)
@@ -4538,6 +4564,13 @@ def build_ref2va_graph(
         use_sla=use_sla,
         sla_preset=sla_preset,
     )
+    conditioning_vae_ref = h3_conditioning_video_vae(
+        graph,
+        models,
+        video_vae_ref,
+        use_trt_vae=use_trt_vae,
+        has_visual_conditioning=bool(reference_images or reference_videos),
+    )
     normalized_image_vae = normalize_image_vae(image_vae)
     single_frame_images = (
         normalize_result_format(result_format) == "Image"
@@ -4564,7 +4597,7 @@ def build_ref2va_graph(
 
     conditioning_media: list[tuple[str, str]] = []
     inputs: dict[str, Any] = {
-        "vae": video_vae_ref,
+        "vae": conditioning_vae_ref,
         "audio_vae": audio_vae_ref,
         "prompt": prompt,
         "length": (
@@ -9714,6 +9747,29 @@ def selftest() -> None:
         seedvr2_vae="seedvr2_ema_vae_fp16.safetensors",
         seedvr2_vae_source="test",
     )
+    hybrid_graph = Graph()
+    trt_decode_ref = ["trt-vae", 0]
+    assert (
+        h3_conditioning_video_vae(
+            hybrid_graph,
+            fake,
+            trt_decode_ref,
+            use_trt_vae=True,
+            has_visual_conditioning=False,
+        )
+        == trt_decode_ref
+    )
+    regular_encode_ref = h3_conditioning_video_vae(
+        hybrid_graph,
+        fake,
+        trt_decode_ref,
+        use_trt_vae=True,
+        has_visual_conditioning=True,
+    )
+    assert regular_encode_ref != trt_decode_ref
+    hybrid_loader = next(iter(hybrid_graph.nodes.values()))
+    assert hybrid_loader["class_type"] == "VAELoader"
+    assert hybrid_loader["inputs"] == {"vae_name": fake.video_vae}
     available = required_nodes_for(
         "Text to video",
         True,
