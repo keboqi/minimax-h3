@@ -306,6 +306,8 @@ def build(revision: str) -> None:
         "install",
         "--system",
         "--upgrade",
+        "--constraint",
+        abi_constraints,
         "-r",
         filtered_requirements,
     )

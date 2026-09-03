@@ -501,10 +501,25 @@ def install_comfy_requirements(comfy: Path) -> None:
         handle.write("\n".join(filtered) + "\n")
         filtered_path = Path(handle.name)
 
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        suffix=".txt",
+        delete=False,
+    ) as handle:
+        handle.write("\n".join(ABI_CONSTRAINTS) + "\n")
+        constraint_path = Path(handle.name)
+
     try:
-        uv_pip("-r", str(filtered_path))
+        uv_pip(
+            "-r",
+            str(filtered_path),
+            "--constraint",
+            str(constraint_path),
+        )
     finally:
         filtered_path.unlink(missing_ok=True)
+        constraint_path.unlink(missing_ok=True)
 
     if not comfy_frontend_package_is_ready():
         print(

@@ -14,8 +14,8 @@ bundled FirstBlockCache node.
 - Audio results decode the native H3 stereo soundtrack without creating a video
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
 - A dedicated MiniMax Music 3 tab for caption-and-lyrics song generation
-- All nine official LTX-2.5 ComfyUI workflows for two-stage generation,
-  text-to-audio, video editing, reference sheets, motion tracks,
+- All ten official LTX-2.5 ComfyUI workflows for two-stage generation,
+  audio-to-video, text-to-audio, video editing, reference sheets, motion tracks,
   in/outpainting, and pose/depth/canny control
 - LTX-2.5 image-to-video uses a visual start-image input plus optional custom
   middle/end keyframes
@@ -61,8 +61,8 @@ bundled FirstBlockCache node.
 
 The installer pins the ABI-sensitive stack to Torch 2.11.0 + CUDA 13.0,
 NumPy 1.26.4, and SciPy 1.15.3, and installs the CUDA 13 TensorRT Python
-builder/runtime used by the optional TensorRT VAE. The pinned ComfyUI 0.34.2 stack supplies Comfy
-Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
+builder/runtime used by the optional TensorRT VAE. The pinned ComfyUI stack
+supplies Comfy Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
 2.2.0 remains installed from the pinned prebuilt wheel for UI comparisons.
 SLA v1.4.4 is provided by the pinned PlagueKind node pack at
 `aaec055cd642b3292df18e69824c012d345ebfe8`. Selecting **SLA** exposes three
@@ -444,8 +444,8 @@ different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`. To make a
 hosted prompt enhancer available without entering a key in the UI, also store
 `GEMINI_API_KEY` and/or `LIGHTNING_API_KEY` in that Modal Secret.
 
-The deployment pins the immutable ComfyUI v0.34.2 release with its required
-frontend package 1.49.6. This includes the HEVC remux fix, refreshed workflow
+The deployment pins an immutable ComfyUI revision with its required
+frontend package 1.51.9. This includes the HEVC remux fix, refreshed workflow
 templates, native MiniMax Music 3, LTX 2.5 INT8 support, and Comfy Kitchen
 attention.
 Changing that pin invalidates the Modal image cache so ComfyUI and its matching

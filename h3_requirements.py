@@ -21,15 +21,15 @@ NUMPY_VERSION = "1.26.4"
 SCIPY_VERSION = "1.15.3"
 # Transformers' fine-grained FP8 loader requires this exact minor release.
 KERNELS_VERSION = "0.16.0"
-# ComfyUI-LTXVideo ac4d998 imports ``pad`` from Kornia's pyramid module.
+# ComfyUI-LTXVideo 15d09ab imports ``pad`` from Kornia's pyramid module.
 # Kornia 0.8.2+ removed that module-level compatibility export.
 KORNIA_VERSION = "0.8.1"
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
 # The pinned ComfyUI source includes the HEVC remux fix and refreshed workflow templates. Keep
-# its frontend and Comfy Kitchen requirements in lockstep with the tagged source.
+# its frontend and Comfy Kitchen requirements in lockstep with the pinned source.
 COMFY_REF = "567275141678c9fd65bafef6aa9dcb4ac9bd70e3"
 COMFY_KITCHEN_VERSION = "0.2.31"
-COMFY_FRONTEND_VERSION = "1.49.6"
+COMFY_FRONTEND_VERSION = "1.51.9"
 WSPROTO_VERSION = "1.2.0"
 SWIFTVR_REPO = "https://github.com/H-oliday/SwiftVR.git"
 SWIFTVR_REF = "5ca168cef6ca7200f135fdfea85e5e13d12c5b53"
@@ -37,6 +37,7 @@ SWIFTVR_HF_REPO = "H-oliday/SwiftVR"
 LTX25_WORKFLOW_FILENAMES = (
     "LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
     "LTX-2.5_T2V_I2V_Two_Stage_Distilled.json",
+    "LTX-2.5_A2V_Two_Stage_Distilled.json",
     "LTX-2.5_T2A_Single_Stage_Distilled.json",
     "LTX-2.5_ICLoRA_Ingredients_Single_Stage_Distilled.json",
     "LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled.json",
@@ -251,9 +252,9 @@ def selftest() -> None:
     assert KERNELS_VERSION == "0.16.0"
     assert COMFY_REF == "567275141678c9fd65bafef6aa9dcb4ac9bd70e3"
     assert COMFY_KITCHEN_VERSION == "0.2.31"
-    assert COMFY_FRONTEND_VERSION == "1.49.6"
+    assert COMFY_FRONTEND_VERSION == "1.51.9"
     assert WSPROTO_VERSION == "1.2.0"
-    assert len(LTX25_WORKFLOW_FILENAMES) == 9
+    assert len(LTX25_WORKFLOW_FILENAMES) == 10
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         source = root / "source"

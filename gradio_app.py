@@ -73,7 +73,7 @@ from h3_models import (
     stale_model_keys,
     sync_models,
 )
-from h3_requirements import SWIFTVR_HF_REPO
+from h3_requirements import LTX25_WORKFLOW_FILENAMES, SWIFTVR_HF_REPO
 from h3_prompt_rewriter import (
     BASE_MODEL_CHOICES as LOCAL_PROMPT_BASE_MODELS,
     DEFAULT_BASE_MODEL_LABEL as DEFAULT_LOCAL_PROMPT_BASE_MODEL,
@@ -263,6 +263,15 @@ LTX25_WORKFLOWS = {
         "filename": "LTX-2.5_T2V_I2V_Two_Stage_Distilled.json",
         "description": "Generates low resolution, then performs a 2x latent refinement pass.",
         "inputs": "Prompt and optional start image.",
+        "extra_models": ("ltx25_spatial_upscaler",),
+    },
+    "Audio to video — two stage": {
+        "id": "audio-to-video-two-stage",
+        "filename": "LTX-2.5_A2V_Two_Stage_Distilled.json",
+        "description": (
+            "Generates video synchronized to a trimmed source soundtrack."
+        ),
+        "inputs": "Audio, prompt, and optional first-frame image.",
         "extra_models": ("ltx25_spatial_upscaler",),
     },
     "Text to audio": {
@@ -10807,8 +10816,11 @@ def selftest() -> None:
     ltx25_save = next(node for node in ltx25_nodes if node["class_type"] == "SaveVideo")
     assert ltx25_save["inputs"]["filename_prefix"].startswith("ltx25/")
     assert ltx25_frame_length(5, 24) == 121
-    assert len(LTX25_WORKFLOWS) == 9
-    assert len({entry["id"] for entry in LTX25_WORKFLOWS.values()}) == 9
+    assert len(LTX25_WORKFLOWS) == 10
+    assert len({entry["id"] for entry in LTX25_WORKFLOWS.values()}) == 10
+    assert {
+        entry["filename"] for entry in LTX25_WORKFLOWS.values()
+    } == set(LTX25_WORKFLOW_FILENAMES)
     assert all(
         entry["filename"].startswith("LTX-2.5_") and entry["filename"].endswith(".json")
         for entry in LTX25_WORKFLOWS.values()
@@ -11919,7 +11931,7 @@ def selftest() -> None:
         f"video/image/audio result branches + image selection saving valid, "
         f"H3 NVENC save wiring valid, prompt API download URL valid, "
         f"gallery resolution/fallback/deletion guards + VRAM unload valid, "
-        f"9 official LTX-2.5 workflow mappings valid, MiniMax Music 3 graph valid, "
+        f"10 official LTX-2.5 workflow mappings valid, MiniMax Music 3 graph valid, "
         f"/comfyui proxy rewrites valid"
     )
 
