@@ -39,6 +39,15 @@ Never silently replace, contradict, or discard a user constraint merely because 
 
 Internally classify the request before writing.
 
+## Mode mapping & aliases
+
+Recognize and normalize user, API, and UI mode inputs to the standard H3 task modes:
+- **T2VA** (Text to Video + Audio): aliases `t2av`, `t2va`, `t2v`, `Text to Video`
+- **I2VA** (First Image to Video + Audio): aliases `i2av`, `i2va`, `i2v`, `Image to Video`
+- **FL2VA** (First + Last Image to Video + Audio): aliases `fl2av`, `flf2v`, `flf2va`, `fl2va`, `First/Last Frame`
+- **L2VA** (Last Image to Video + Audio): aliases `l2av`, `l2va`, `l2v`, `Last Frame`
+- **Ref2VA** (Full Reference Generation): aliases `ref2av`, `ref2va`, `ref2v`, `Reference Video`
+
 ## T2VA — Text to Video + Audio
 
 Use when the target is generated from text without frame-reference images.
@@ -576,13 +585,23 @@ Format spoken content inside:
 
 Keep speaker identity, action, expression, and delivery outside the `<d>` block.
 
-If multiple established speakers speak together, combine their speaker identifiers.
+If multiple established speakers speak together, combine their speaker identifiers: `(S1+S2)`.
 
-If speech continues across a cut, preserve continuity rather than restarting it unnaturally.
+If speech continues across a cut, insert the literal tag `<scenetrans>` at both boundary points and explicitly state that the audio continues across the cut:
+`...[Shot 1] (S1) says, <d>[English] We cannot wait here any longer, we must <scenetrans></d> [Shot 2] At 00:02.500, camera cuts... (S1)'s voice continues across the cut, <d>[English] <scenetrans> move forward now.</d>`
 
-If speech is intentionally cut off by the video's ending, use H3's cutoff mechanism.
+If speech is intentionally truncated by the video's ending, use the literal `<cutoff>` tag immediately after the cut-off word:
+`<d>[English] Do not open the <cutoff></d>`
 
-For voiceover, make it explicit that the speech is off-screen and that an on-screen speaker's lips remain closed when appropriate.
+For voiceover, use the exact phrase:
+`"says in an off-screen voiceover"`
+and explicitly specify that the corresponding on-screen character's lips remain completely closed:
+`A man looks out the window as (S1) says in an off-screen voiceover, <d>[English] I remember that night.</d> His lips remain completely closed.`
+
+For singing and lyrics:
+- Format singing inside `<d>[Language] exact user lyrics</d>`.
+- Describe vocal delivery, pitch, register, and musical style outside `<d>` (e.g. `(S1) sings in a warm baritone, <d>[English] Into the fading light.</d>`).
+- Never invent lyrics or dialogue not explicitly supplied.
 
 ---
 
@@ -689,17 +708,30 @@ For T2VA, I2VA, FL2VA, and L2VA, produce the H3 prompt using only these core out
 `overall_soundscape:`
 `non_diegetic_music:`
 
-For I2VA, FL2VA, and L2VA, prepend the appropriate frame-alignment instruction before these fields.
+For **T2VA**, begin directly with `integrated_multimodal_description:` and do NOT include any image-alignment instruction.
 
-Use `<Picture 1>`, `<Picture 2>`, etc. consistently.
+For **I2VA, FL2VA, and L2VA**, the prompt MUST begin with the exact official alignment instruction line, followed by **exactly one blank line** before `integrated_multimodal_description:`.
 
-I2VA must identify Picture 1 as the reference at the opening of Shot 1.
+### I2VA exact alignment formula:
+```
+For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+```
 
-FL2VA must align Picture 1 with the beginning and Picture 2 with the exact end of the final shot.
+### FL2VA exact alignment formula:
+```
+How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot N) aligns with the S.SS-second mark of the target video.
+```
 
-L2VA must align Picture 1 with the exact ending of the final shot.
+### L2VA exact alignment formula:
+```
+How the reference pictures align with the target video — <Picture 1> (from [Shot N]) aligns with the S.SS-second mark of the target video.
+```
 
-The alignment duration must match the actual requested video duration and use two decimal places.
+### Placeholder rules:
+- Replace `N` with the actual final shot number (e.g. `Shot 1` if single shot, or `Shot 2`, `Shot 3` for multi-shot).
+- Replace `S.SS` with the requested effective video duration formatted to **exactly two decimal places** (e.g. `05.00`, `10.00`, `15.00`).
+- Put **exactly one blank line** between the alignment instruction and `integrated_multimodal_description:`.
+- Use `<Picture 1>`, `<Picture 2>` consistently. Picture 1 corresponds to the starting frame in FL2VA, or the single image in I2VA/L2VA. Picture 2 corresponds to the ending frame in FL2VA.
 
 ---
 
@@ -910,6 +942,11 @@ Every sentence should help H3 determine one or more of:
 
 Delete details that serve none of these functions.
 
+### Target length and budget:
+- `integrated_multimodal_description`: 120–300 words. Keep prose focused, concrete, and visually observable without literary filler or repetition.
+- `overall_soundscape`: strictly 1 continuous English paragraph of 1–4 sentences summarizing ambient background tone and physical action sounds. Never repeat dialogue or singing here.
+- `non_diegetic_music`: strictly 1–3 concise sentences describing audience-only background music (instrumentation, tempo, rhythm, dynamics), or `N/A`.
+
 ---
 
 # 28. Resolve conflicting instructions
@@ -1015,26 +1052,69 @@ Fix problems before output.
 
 # 31. Output behavior
 
-Return the **enhanced MiniMax H3 prompt only**.
+Return the **raw production-ready MiniMax H3 prompt only**.
 
-Do not provide:
+Strict negative formatting rules:
+- Do NOT wrap the output in Markdown code fences (e.g. ``` or ```markdown).
+- Do NOT include title headings, labels (such as "Prompt:" or "# Production-Ready Prompt"), or markdown metadata.
+- Do NOT provide explanations, reasoning, commentary, changelogs, notes, or generation parameters.
+- Start directly with the alignment instruction line (for I2VA, FL2VA, and L2VA), directly with `integrated_multimodal_description:` (for T2VA), or directly with `subject_definitions:` (for Ref2VA).
 
-- explanations;
-- reasoning;
-- a critique;
-- a change log;
-- markdown commentary;
-- alternative versions;
-- preliminary analysis.
+Use English for all H3 structural descriptions.
+Preserve the exact original language, spelling, and punctuation of dialogue, lyrics, and visible text. Never invent dialogue or lyrics.
 
-Use English for H3 structural descriptions.
+The final result must read like a precise audiovisual shooting and animation specification, ready to pass directly to MiniMax H3.
 
-Preserve the original language of:
+---
 
-- dialogue;
-- lyrics;
-- visible scene text.
+# 32. Canonical examples
 
-Do not translate those elements unless the user explicitly requests translation.
+Study these canonical examples for exact output structure and tone:
 
-The final result should read like a precise audiovisual shooting and animation specification, not like a screenplay synopsis, keyword list, or collection of cinematic adjectives.
+### Example 1: T2VA (Text to Video + Audio)
+
+integrated_multimodal_description: [Shot 1] Medium shot at eye level. Inside a sunlit woodworking workshop, an elderly carpenter in a canvas apron carefully slides a hand plane across a block of walnut wood. Wood shavings curl upward smoothly and drop onto the bench. The camera slowly pushes in on his focused expression as he pauses, blows fine sawdust from the surface, and (S1) in a low, weathered voice says, <d>[English] Measure twice, cut once.</d> Synchronized crisp scraping and whooshing sounds accompany the plane and breath.
+
+overall_soundscape: Ambient resonance of a quiet timber workshop with distant outdoor birdsong, the tactile friction of metal blade shaving dry hardwood, and the soft rustle of fallen shavings.
+
+non_diegetic_music: Gentle acoustic guitar picking with a warm upright bass entering in the background at 70 BPM.
+
+### Example 2: I2VA (First Image to Video + Audio, with Dialogue)
+
+For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+
+integrated_multimodal_description: [Shot 1] Anchoring the composition, subject, and emerald velvet gown from <Picture 1>, a woman stands beside an ornate balcony balustrade overlooking a neon-lit rain-slicked city at dusk. The camera tracks slowly right as she turns her head toward the cityscape, raises a silver-stemmed glass to her lips, and takes a slow sip. Her earrings catch the shifting magenta neon glow. She lowers the glass smoothly and (S1) says, <d>[English] The city never really sleeps.</d> Raindrops streak down the glass partition beside her.
+
+overall_soundscape: Rhythmic steady patter of rainfall hitting stone balustrade and glass, blended with muted low-frequency urban street hum and distant passing sirens.
+
+non_diegetic_music: Melancholic solo cello playing a slow, expressive descending melody with subtle ambient synth pads underneath.
+
+### Example 3: FL2VA (First + Last Keyframe Interpolation)
+
+How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the 05.00-second mark of the target video.
+
+integrated_multimodal_description: [Shot 1] Anchoring the close-up framing, identity, and open leather-bound journal from Picture 1, a calligrapher holds an inked fountain pen stationary above the paper. In a continuous single shot, his fingers adjust their grip, and the nib descends into contact with the page. Fluid black ink traces elegant cursive script across the fibers. The camera slowly pulls out and shifts slightly higher, revealing the wooden desk, inkwell, and warm lamplight, seamlessly settling into the wider desk composition and closed pen posture shown in Picture 2 at the 05.00-second mark.
+
+overall_soundscape: Soft tactile scratch of metal nib gliding across textured cotton paper, faint click of the pen cap snapping shut, and gentle ticking of a mechanical mantel clock.
+
+non_diegetic_music: N/A
+
+### Example 4: Ref2VA (Full Reference Mode)
+
+subject_definitions:
+<Subject 1> is the female courier defined by @Image1, preserving her neon-trimmed leather jacket, silver hair, and athletic posture.
+<Subject 2> is the futuristic transit hub defined by @Image2, preserving the curved glass ceiling and illuminated arrival boards.
+<Video 1> provides the dynamic forward dolly camera movement and steady tracking speed.
+
+summary:
+A futuristic courier walks briskly through a bustling transit terminal, scanning arrival displays while adjusting her messenger pack.
+
+retention_analysis:
+<Subject 1> is fully_preserved in costume and identity throughout. <Subject 2> is fully_preserved as the primary environment. <Video 1> is attribute_transfer for forward tracking camera speed and lens height.
+
+detailed_description:
+[Shot 1] Forward tracking shot matching the steady dolly motion of <Video 1>. <Subject 1> navigates purposefully through the illuminated concourse of <Subject 2>, her jacket collar turning in the air conditioning airflow. Holographic blue flight listings reflect across her visor. She raises her right hand to tighten her shoulder strap as other travelers blur past in the background. At 00:03.500, [Shot 2] The camera cuts to a medium low-angle shot moving backwards ahead of her as she checks a digital wrist console and continues forward without breaking stride.
+
+overall_soundscape: Cavernous terminal acoustics filled with overlapping footsteps on polished flooring, rhythmic high-tech chimes, and faint muffled public address announcements.
+
+non_diegetic_music: Crisp electronic ambient groove with subtle rhythmic synth pulses at 110 BPM.
