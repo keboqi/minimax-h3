@@ -64,8 +64,8 @@ NumPy 1.26.4, and SciPy 1.15.3, and installs the CUDA 13 TensorRT Python
 builder/runtime used by the optional TensorRT VAE. The pinned ComfyUI 0.34.2 stack supplies Comfy
 Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
 2.2.0 remains installed from the pinned prebuilt wheel for UI comparisons.
-SLA v1.4.2 is provided by the pinned PlagueKind node pack at
-`01f186eefedbb607503a0b207d6f66aa8a5f4b5a`. Selecting **SLA** exposes three
+SLA v1.4.4 is provided by the pinned PlagueKind node pack at
+`aaec055cd642b3292df18e69824c012d345ebfe8`. Selecting **SLA** exposes three
 quality presets: **Fast** uses validated 0.90 sparsity, **Balanced** uses the
 LoRA-distilled 0.85 sparsity, and **Quality** uses 0.85 sparsity plus a dense
 final sampling step. In a two-stage latent-upscale workflow the Quality dense

@@ -25,9 +25,9 @@ KERNELS_VERSION = "0.16.0"
 # Kornia 0.8.2+ removed that module-level compatibility export.
 KORNIA_VERSION = "0.8.1"
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
-# ComfyUI v0.34.2 includes the HEVC remux fix and refreshed workflow templates. Keep
+# The pinned ComfyUI source includes the HEVC remux fix and refreshed workflow templates. Keep
 # its frontend and Comfy Kitchen requirements in lockstep with the tagged source.
-COMFY_REF = "169fcf35a2fc163fec31338b816503ddac0d3fcf"
+COMFY_REF = "567275141678c9fd65bafef6aa9dcb4ac9bd70e3"
 COMFY_KITCHEN_VERSION = "0.2.31"
 COMFY_FRONTEND_VERSION = "1.49.6"
 WSPROTO_VERSION = "1.2.0"
@@ -249,7 +249,7 @@ def selftest() -> None:
     )
     assert KORNIA_VERSION == "0.8.1"
     assert KERNELS_VERSION == "0.16.0"
-    assert COMFY_REF == "169fcf35a2fc163fec31338b816503ddac0d3fcf"
+    assert COMFY_REF == "567275141678c9fd65bafef6aa9dcb4ac9bd70e3"
     assert COMFY_KITCHEN_VERSION == "0.2.31"
     assert COMFY_FRONTEND_VERSION == "1.49.6"
     assert WSPROTO_VERSION == "1.2.0"
