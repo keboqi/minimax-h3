@@ -259,7 +259,7 @@ repository or local path with `H3_PROMPT_REWRITER_ADAPTER` when needed.
 
 Gemini combines the current text, active first/last-frame or reference
 image/video/audio inputs, duration, and resolution with the bundled `prompt.txt`
-system instruction. It supports `gemini-3.7-flash`, `gemini-3.6-flash`,
+system instruction. It supports `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`,
 `gemini-3.5-flash`, and `gemini-3.5-flash-lite`. Use Gemini for the separate
 Reference media mode, which is not one of the four tasks supported by the local
 adapter. Set `GEMINI_API_KEY` in the server environment, or enter a temporary

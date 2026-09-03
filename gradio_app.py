@@ -158,6 +158,7 @@ STAGED_INPUT_HASH_CHUNK_BYTES = 8 * 1024 * 1024
 REFERENCE_VIDEO_TRANSCODE_CACHE_VERSION = "video-v1"
 _STAGED_INPUT_LOCK = threading.Lock()
 GEMINI_PROMPT_MODELS = (
+    "gemini-3.8-flash",
     "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
@@ -9472,6 +9473,7 @@ def build_ui() -> gr.Blocks:
 def selftest() -> None:
     assert MODEL_PROFILE_CHOICES == ["Speed", "Quality", "Original"]
     assert GEMINI_PROMPT_MODELS == (
+        "gemini-3.8-flash",
         "gemini-3.7-flash",
         "gemini-3.6-flash",
         "gemini-3.5-flash",
