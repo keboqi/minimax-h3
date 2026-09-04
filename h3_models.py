@@ -176,10 +176,10 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     "turbo_lora": ModelSpec(
         TURBO_REPO,
         "loras",
-        "minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors",
-        "LightX2V Turbo 4-step v1.1 · official 768p ComfyUI BF16",
+        "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
+        "LightX2V Turbo 4-step v1.2 · official 768p ComfyUI BF16",
         expected_sha256=(
-            "449d80f301ac571622c72e28b8fd72a4b3681b7a8df8a92f17c8f6ec43f56558"
+            "e94ec14871c52909be39847273e2e5e260fd0a35b077d119ad747443b11a90b1"
         ),
     ),
     "turbo_ref_lora": ModelSpec(
@@ -1085,7 +1085,7 @@ def selftest() -> None:
         "minimax_h3_single_frame_decoder_500k.safetensors"
     )
     assert "image_vae_500k" not in PRELOAD_MODEL_KEYS
-    assert cfg["turbo_lora"] == "minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors"
+    assert cfg["turbo_lora"] == "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors"
     assert cfg["turbo_ref_lora"] == (
         "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
     )

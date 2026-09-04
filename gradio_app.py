@@ -7509,7 +7509,7 @@ def backend_status() -> str:
             )
         if models.turbo_lora:
             profile_lines.append(
-                f"**LightX2V Turbo / 4-step** · FL2VA v1.1 `{models.turbo_lora}` · "
+                f"**LightX2V Turbo / 4-step** · FL2VA v1.2 `{models.turbo_lora}` · "
                 f"Ref2VA v0.1 544p `{models.turbo_ref_lora}` · strength 1.0"
             )
         if models.turbo_8step_lora:
@@ -9834,7 +9834,7 @@ def selftest() -> None:
         video_vae_trt_source="test",
         image_vae_500k="minimax_h3_single_frame_decoder_500k.safetensors",
         image_vae_500k_source="test",
-        turbo_lora="minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors",
+        turbo_lora="minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
         turbo_source="test",
         turbo_ref_lora="minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
         turbo_ref_source="ref2v-test",
@@ -11649,7 +11649,7 @@ def selftest() -> None:
         steps=4,
         seed=2,
         scheduler="simple",
-        turbo_lora_name="minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors",
+        turbo_lora_name="minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
         turbo_variant=LIGHTX2V_4STEP_TURBO,
         turbo_strength=1.0,
         use_sol=False,
@@ -11697,7 +11697,7 @@ def selftest() -> None:
     assert len(turbo_nodes) == 1
     assert turbo_nodes[0]["inputs"]["strength"] == 1.0
     assert turbo_nodes[0]["inputs"]["lora_name"].endswith(
-        "v1.1_768p_comfyui_bf16.safetensors"
+        "v1.2_768p_comfyui_bf16.safetensors"
     )
     quality_fused_id = next(
         node_id

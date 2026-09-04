@@ -113,11 +113,11 @@ forecast before a completed native refresh, which limits both acceleration and
 trajectory error at four to eight steps. Compare the same prompt and seed with
 Acceleration Off before relying on it for quality-critical output.
 
-Turbo defaults to the LightX2V four-step adapter at strength 1.0 (FL2V v1.1
+Turbo defaults to the LightX2V four-step adapter at strength 1.0 (FL2V v1.2
 768p or the dedicated Ref2V 544p adapter). Larry v4-600 EMA remains available
 at six steps through its pinned custom node, which uses a quantization-aware
 bypass loader plus the adaptive H3 Turbo sampler. LightX2V also provides a
-mode-specific four-step option (FL2V v1.1 768p or Ref2V v0.1 544p) and
+mode-specific four-step option (FL2V v1.2 768p or Ref2V v0.1 544p) and
 mode-specific FL2V/Ref2V v1.0 eight-step 768p options, all at strength 1.0.
 The 768p workflows apply LightX2V's official video/audio sigma shifts of
 6/3 and use Euler sampling (four or eight NFE according to the selected LoRA)
