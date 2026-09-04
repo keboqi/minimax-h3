@@ -157,6 +157,7 @@ MAX_REFERENCE_AUDIOS = 3
 STAGED_INPUT_HASH_CHUNK_BYTES = 8 * 1024 * 1024
 REFERENCE_VIDEO_TRANSCODE_CACHE_VERSION = "video-v1"
 _STAGED_INPUT_LOCK = threading.Lock()
+_TRT_VAE_COMPILE_LOCK = threading.Lock()
 GEMINI_PROMPT_MODELS = (
     "gemini-3.8-flash",
     "gemini-3.7-flash",
@@ -476,7 +477,7 @@ UI_DEFAULTS = {
     "stage_model_offload": False,
     "reuse_unchanged_inputs": True,
     "use_int8_vae": False,
-    "use_trt_vae": False,
+    "use_trt_vae": True,
     "generation_mode": "Turbo",
     "turbo_variant": DEFAULT_TURBO,
     "duration": 5,
@@ -2308,15 +2309,14 @@ def _load_trt_vae_compiler(node_path: Path) -> Any:
     return module
 
 
-def compile_trt_video_vae(
-    progress=gr.Progress(track_tqdm=False),
-) -> str:
+def _build_trt_video_vae_engine(
+    models: ModelConfig,
+    progress: Any,
+) -> None:
     """Build the local TensorRT decoder engine without exposing partial output."""
     temporary_engine: Path | None = None
     temporary_marker: Path | None = None
     try:
-        models = load_model_config()
-        ensure_trt_video_vae(models, require_engine=False)
         node_path = (
             COMFY_DIR / "custom_nodes" / "ComfyUI-H3VAE_TRT" / "minimax_trt_node.py"
         )
@@ -2333,9 +2333,6 @@ def compile_trt_video_vae(
             )
 
         decoder_onnx, engine_path, marker_path = trt_vae_decoder_paths(models)
-        if trt_vae_engine_is_current(models):
-            return "TensorRT VAE decoder is already compiled and ready to use."
-
         temporary_engine = engine_path.with_name(engine_path.name + ".h3-building")
         temporary_marker = marker_path.with_name(marker_path.name + ".h3-building")
         temporary_engine.unlink(missing_ok=True)
@@ -2360,16 +2357,43 @@ def compile_trt_video_vae(
         temporary_marker.replace(marker_path)
         temporary_marker = None
 
-        ensure_trt_video_vae(models)
         progress(1.0, desc="TensorRT VAE decoder compiled")
-        return "TensorRT VAE decoder compiled and ready to use."
-    except Exception as exc:
-        return f"TensorRT VAE compilation failed: {exc}"
     finally:
         if temporary_engine is not None:
             temporary_engine.unlink(missing_ok=True)
         if temporary_marker is not None:
             temporary_marker.unlink(missing_ok=True)
+
+
+def ensure_trt_video_vae_engine(
+    models: ModelConfig,
+    *,
+    progress=gr.Progress(track_tqdm=False),
+) -> bool:
+    """Provision and compile the TensorRT decoder engine only when required."""
+    with _TRT_VAE_COMPILE_LOCK:
+        ensure_trt_video_vae(models, require_engine=False)
+        if trt_vae_engine_is_current(models):
+            return False
+        _build_trt_video_vae_engine(models, progress)
+        ensure_trt_video_vae(models)
+        return True
+
+
+def compile_trt_video_vae(
+    progress=gr.Progress(track_tqdm=False),
+) -> str:
+    """Build the local TensorRT decoder engine from the manual UI action."""
+    try:
+        compiled = ensure_trt_video_vae_engine(
+            load_model_config(),
+            progress=progress,
+        )
+        if not compiled:
+            return "TensorRT VAE decoder is already compiled and ready to use."
+        return "TensorRT VAE decoder compiled and ready to use."
+    except Exception as exc:
+        return f"TensorRT VAE compilation failed: {exc}"
 
 
 def ensure_single_frame_image_vae(models: ModelConfig) -> bool:
@@ -7664,7 +7688,7 @@ def generate(
             ensure_int8_video_vae(models)
         if use_trt_vae:
             progress(0, desc="Preparing TensorRT video VAE")
-            ensure_trt_video_vae(models)
+            ensure_trt_video_vae_engine(models, progress=progress)
         if result_format == "Image" and selected_image_vae == SINGLE_FRAME_IMAGE_VAE:
             decoder_ready = models.image_vae_500k and model_file_is_ready(
                 COMFY_DIR / "models" / "vae" / models.image_vae_500k

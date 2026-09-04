@@ -244,7 +244,10 @@ def build_h3_view(
                     use_trt_vae = gr.Checkbox(
                         value=defaults["use_trt_vae"],
                         label="Experimental TensorRT video VAE",
-                        info="Uses a local TensorRT engine for final H3 video decoding.",
+                        info=(
+                            "Default on. Uses a local TensorRT engine for final H3 "
+                            "video decoding and compiles it automatically when needed."
+                        ),
                         scale=2,
                     )
                     trt_vae_compile = gr.Button(

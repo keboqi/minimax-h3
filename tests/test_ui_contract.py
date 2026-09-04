@@ -160,6 +160,45 @@ class UiContractTests(unittest.TestCase):
         ]
         self.assertEqual(len(dependencies), 1)
 
+    def test_tensorrt_vae_defaults_on_and_compiles_only_when_needed(self) -> None:
+        trt_vae = next(
+            component
+            for component in self.config["components"]
+            if component.get("props", {}).get("label")
+            == "Experimental TensorRT video VAE"
+        )
+        self.assertTrue(trt_vae["props"]["value"])
+
+        models = mock.sentinel.models
+        progress = mock.sentinel.progress
+        with (
+            mock.patch.object(gradio_app, "ensure_trt_video_vae") as provision,
+            mock.patch.object(
+                gradio_app, "trt_vae_engine_is_current", return_value=False
+            ),
+            mock.patch.object(gradio_app, "_build_trt_video_vae_engine") as build,
+        ):
+            self.assertTrue(
+                gradio_app.ensure_trt_video_vae_engine(models, progress=progress)
+            )
+        provision.assert_has_calls(
+            [mock.call(models, require_engine=False), mock.call(models)]
+        )
+        build.assert_called_once_with(models, progress)
+
+        with (
+            mock.patch.object(gradio_app, "ensure_trt_video_vae") as provision,
+            mock.patch.object(
+                gradio_app, "trt_vae_engine_is_current", return_value=True
+            ),
+            mock.patch.object(gradio_app, "_build_trt_video_vae_engine") as build,
+        ):
+            self.assertFalse(
+                gradio_app.ensure_trt_video_vae_engine(models, progress=progress)
+            )
+        provision.assert_called_once_with(models, require_engine=False)
+        build.assert_not_called()
+
     def test_h3_progressive_section_order(self) -> None:
         tabs = next(
             component

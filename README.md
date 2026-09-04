@@ -155,15 +155,14 @@ SwiftVR inference source; no SWIFTVR_CHECKPOINT_DIR is required unless you want
 to use an existing checkpoint directory. The experimental
 INT8 ConvRot video VAE
 is also lazy and downloads only when its default-off checkbox is enabled.
-The experimental **TensorRT video VAE** is available through a second default-off
-checkbox. Local and Modal setup install TensorRT and sync the pinned
-ComfyUI-H3VAE_TRT node. Use **Compile
-TensorRT VAE engine** next to the checkbox to download the decoder ONNX source
-and build its local engine. TensorRT engines are GPU-specific and are not
-downloaded by the app. The quality profile keeps decoder LayerNorm reductions
-and powers in FP32 while retaining FP16 matrix operations. After upgrading from
-an older TensorRT VAE build, click the compile button once to rebuild it; the
-app rejects unversioned or stale engines.
+The experimental **TensorRT video VAE** is enabled by default. Local and Modal
+setup install TensorRT and sync the pinned ComfyUI-H3VAE_TRT node. On first use,
+the app downloads the decoder ONNX source and automatically builds its local
+engine; the adjacent **Compile TensorRT VAE engine** button remains available
+for an explicit build. TensorRT engines are GPU-specific and are not downloaded
+by the app. The quality profile keeps decoder LayerNorm reductions and powers in
+FP32 while retaining FP16 matrix operations. After an upgrade, an unversioned or
+stale engine is rebuilt automatically before generation.
 For first/last-frame and reference-media generation, visual conditioning is
 encoded with the regular FP16 VAE because the TensorRT encoder's fixed temporal
 profile changes causal conditioning latents. The optional TensorRT path is
