@@ -239,8 +239,14 @@ def bind_app(
         ],
     )
     draft_resolution_event = components["draft_resolution"].change(
-        lambda name: services["resolution_choice_values"](name, "draft"),
-        inputs=components["draft_resolution"],
+        lambda name, latent_upscale, result_format: services[
+            "resolution_choice_updates"
+        ](name, "draft", latent_upscale, result_format),
+        inputs=[
+            components["draft_resolution"],
+            components["latent_upscale"],
+            components["result_format"],
+        ],
         outputs=[
             components["width"],
             components["height"],
@@ -248,8 +254,14 @@ def bind_app(
         ],
     )
     fast_resolution_event = components["fast_resolution"].change(
-        lambda name: services["resolution_choice_values"](name, "fast"),
-        inputs=components["fast_resolution"],
+        lambda name, latent_upscale, result_format: services[
+            "resolution_choice_updates"
+        ](name, "fast", latent_upscale, result_format),
+        inputs=[
+            components["fast_resolution"],
+            components["latent_upscale"],
+            components["result_format"],
+        ],
         outputs=[
             components["width"],
             components["height"],
@@ -257,8 +269,14 @@ def bind_app(
         ],
     )
     large_resolution_event = components["large_resolution"].change(
-        lambda name: services["resolution_choice_values"](name, "large"),
-        inputs=components["large_resolution"],
+        lambda name, latent_upscale, result_format: services[
+            "resolution_choice_updates"
+        ](name, "large", latent_upscale, result_format),
+        inputs=[
+            components["large_resolution"],
+            components["latent_upscale"],
+            components["result_format"],
+        ],
         outputs=[
             components["width"],
             components["height"],
@@ -270,23 +288,7 @@ def bind_app(
         fast_resolution_event,
         large_resolution_event,
     ):
-        aligned_resolution_event = resolution_event.then(
-            services["resolution_control_updates"],
-            inputs=[
-                components["width"],
-                components["height"],
-                components["latent_upscale"],
-                components["result_format"],
-            ],
-            outputs=[
-                components["width"],
-                components["height"],
-                components["resolution_info"],
-            ],
-            queue=False,
-            show_progress="hidden",
-        )
-        aligned_resolution_event.then(
+        resolution_event.then(
             services["compact_settings_summary"],
             inputs=settings_inputs,
             outputs=components["settings_overview"],

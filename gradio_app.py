@@ -3170,6 +3170,22 @@ def resolution_choice_values(name: str, tier: str) -> tuple[int, int, str]:
     )
 
 
+def resolution_choice_updates(
+    name: str,
+    tier: str,
+    latent_upscale: bool,
+    result_format: str,
+) -> tuple[int | float, int | float, str]:
+    """Resolve and align a preset before updating its controls.
+
+    Keeping preset lookup and alignment in one callback prevents the UI from
+    briefly writing the raw preset dimensions before latent upscale snaps them
+    to its required 64-pixel grid.
+    """
+    width, height, _summary = resolution_choice_values(name, tier)
+    return resolution_control_updates(width, height, latent_upscale, result_format)
+
+
 def normalize_paths(value: Any) -> list[str]:
     if value is None:
         return []
@@ -9446,6 +9462,7 @@ def build_ui() -> gr.Blocks:
                 "render_ltx25_official_model_inventory": render_ltx25_official_model_inventory,
                 "render_ltx25_workflow_details": render_ltx25_workflow_details,
                 "resolution_choice_values": resolution_choice_values,
+                "resolution_choice_updates": resolution_choice_updates,
                 "resolution_control_updates": resolution_control_updates,
                 "resolution_info_preview": resolution_info_preview,
                 "result_format_layout_updates": result_format_layout_updates,

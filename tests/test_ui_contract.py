@@ -128,6 +128,38 @@ class UiContractTests(unittest.TestCase):
         )
         self.assertIn(sampling_preset["id"], save["inputs"])
 
+    def test_resolution_presets_apply_latent_alignment_atomically(self) -> None:
+        self.assertEqual(
+            gradio_app.resolution_choice_updates(
+                "16:9 · 864×480", "fast", True, "Video"
+            )[:2],
+            (896, 512),
+        )
+        self.assertEqual(
+            gradio_app.resolution_choice_updates(
+                "16:9 · 864×480", "fast", False, "Video"
+            )[:2],
+            (864, 480),
+        )
+
+        controls = {
+            component.get("props", {}).get("label"): component
+            for component in self.config["components"]
+        }
+        preset = controls["Recommended size"]
+        dependencies = [
+            dependency
+            for dependency in self.config["dependencies"]
+            if preset["id"] in dependency["inputs"]
+            and {"Width", "Height"}.issubset(
+                {
+                    self.components[output_id].get("props", {}).get("label")
+                    for output_id in dependency["outputs"]
+                }
+            )
+        ]
+        self.assertEqual(len(dependencies), 1)
+
     def test_h3_progressive_section_order(self) -> None:
         tabs = next(
             component
