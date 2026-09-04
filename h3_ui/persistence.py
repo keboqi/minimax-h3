@@ -64,8 +64,13 @@ def bind_browser_settings(
         show_progress="hidden",
         api_name=False,
     )
+    # ``change`` also fires for values returned by backend callbacks.  In
+    # particular, restoring BrowserState updates every persisted component at
+    # once, so listening to ``change`` feeds the restore back into the server
+    # as a large cascade of redundant save requests.  ``input`` is limited to
+    # user edits, which is exactly the boundary persistence needs.
     gr.on(
-        triggers=[component.change for component in controls],
+        triggers=[component.input for component in controls],
         fn=remember,
         inputs=controls,
         outputs=browser_state,

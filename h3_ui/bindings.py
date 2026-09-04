@@ -55,7 +55,14 @@ def bind_summary(
     for control in inputs:
         if control in skipped:
             continue
-        control.change(callback, inputs=inputs, outputs=output)
+        control.change(
+            callback,
+            inputs=inputs,
+            outputs=output,
+            queue=False,
+            show_progress="hidden",
+            api_name=False,
+        )
 
 
 def bind_interrupts(
