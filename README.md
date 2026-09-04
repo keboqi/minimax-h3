@@ -32,7 +32,7 @@ bundled FirstBlockCache node.
 - Optional generation-stage MiniMax H3 latent 2x upscale, with Balanced BF16,
   Fast FP16, and Quality FP32 model choices
 - Selectable Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
-  including the dedicated Ref2V 4-step adapter
+  including dedicated Ref2V adapters for both step counts
 - SageAttention 2 as the measured-fastest H3 default, with selectable Comfy
   Kitchen comparison, audio-safe SLA block-sparse attention, and optional
   H3-native zero-copy Sol v0.6.2 sparse attention
@@ -117,9 +117,9 @@ Turbo defaults to the LightX2V four-step adapter at strength 1.0 (FL2V v1.1
 768p or the dedicated Ref2V 544p adapter). Larry v4-600 EMA remains available
 at six steps through its pinned custom node, which uses a quantization-aware
 bypass loader plus the adaptive H3 Turbo sampler. LightX2V also provides a
-mode-specific four-step option (FL2V v1.1 768p or
-Ref2V v0.1 544p) and an FL2V v1.0 eight-step 768p option, all at strength 1.0.
-The 768p FL2V workflows apply LightX2V's official video/audio sigma shifts of
+mode-specific four-step option (FL2V v1.1 768p or Ref2V v0.1 544p) and
+mode-specific FL2V/Ref2V v1.0 eight-step 768p options, all at strength 1.0.
+The 768p workflows apply LightX2V's official video/audio sigma shifts of
 6/3 and use Euler sampling (four or eight NFE according to the selected LoRA)
 with the simple scheduler by default. The 544p Ref2V adapter uses its official
 12/3 shifts and four Euler NFE. Every base profile applies either Turbo LoRA
@@ -133,12 +133,11 @@ immediate mode/variant UI update before generation is queued. The resulting
 step control remains editable so users can increase any Turbo
 variant's count for clips that benefit from additional refinement.
 
-Reference mode automatically selects LightX2V's dedicated Ref2V v0.1 adapter
-for the four-step option. The LightX2V eight-step and Larry options still reuse
-their FL2VA-trained LoRAs in reference mode and remain experimental because no
-dedicated Ref2V counterparts are published. The generated model configuration
-keeps separate Ref2VA keys so those shared files can be replaced without
-changing workflow construction.
+Reference mode automatically selects LightX2V's dedicated Ref2V adapter for
+both the four-step and eight-step options. Larry still reuses its FL2VA-trained
+LoRA in reference mode and remains experimental because no dedicated Ref2V
+counterpart is published. The generated model configuration keeps separate
+Ref2VA keys so workflow construction remains mode-specific.
 
 ## Run locally
 

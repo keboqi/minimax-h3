@@ -2194,7 +2194,7 @@ def ensure_turbo_lora(models: ModelConfig, turbo_variant: str, mode: str) -> boo
         model_key = "larry_turbo_lora"
         filename = models.larry_turbo_ref_lora if reference else models.larry_turbo_lora
     elif variant == LIGHTX2V_8STEP_TURBO:
-        model_key = "turbo_8step_lora"
+        model_key = "turbo_8step_ref_lora" if reference else "turbo_8step_lora"
         filename = models.turbo_8step_ref_lora if reference else models.turbo_8step_lora
     else:
         return False
@@ -7474,8 +7474,9 @@ def backend_status() -> str:
             )
         if models.turbo_8step_lora:
             profile_lines.append(
-                f"**LightX2V Turbo v1.0 / 8-step 768p** · LoRA `{models.turbo_8step_lora}` · "
-                "8-step default · strength 1.0 · FL2VA and experimental Ref2VA"
+                f"**LightX2V Turbo v1.0 / 8-step 768p** · FL2VA `{models.turbo_8step_lora}` · "
+                f"Ref2VA `{models.turbo_8step_ref_lora}` · "
+                "8-step default · strength 1.0 · FL2VA and Ref2VA"
             )
         return (
             f"Connected · {gpu}{vram_text} · sparse: {SERVER_ATTENTION_BACKEND} · "
@@ -7688,7 +7689,11 @@ def generate(
         generation_note = (
             f"Reference Turbo is experimental and currently uses the "
             f"FL2VA-trained {selected_turbo} LoRA."
-            if mode == "Reference media" and use_turbo
+            if (
+                mode == "Reference media"
+                and use_turbo
+                and selected_turbo == LARRY_TURBO
+            )
             else None
         )
 
@@ -9794,8 +9799,8 @@ def selftest() -> None:
         turbo_ref_source="ref2v-test",
         turbo_8step_lora="minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
         turbo_8step_source="test",
-        turbo_8step_ref_lora="minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
-        turbo_8step_ref_source="shared-fl2va-test",
+        turbo_8step_ref_lora="minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+        turbo_8step_ref_source="ref2v-test",
         larry_turbo_lora="minimax_h3_turbo_v4_step600_ema.safetensors",
         larry_turbo_source="test",
         larry_turbo_ref_lora="minimax_h3_turbo_v4_step600_ema.safetensors",
@@ -9946,6 +9951,20 @@ def selftest() -> None:
     assert (
         fake.turbo_lora_for("Reference media", LIGHTX2V_8STEP_TURBO)
         == fake.turbo_8step_ref_lora
+    )
+    with unittest.mock.patch(
+        f"{__name__}.stale_model_keys", return_value=[]
+    ) as stale_turbo_models:
+        assert (
+            ensure_turbo_lora(
+                fake,
+                LIGHTX2V_8STEP_TURBO,
+                "Reference media",
+            )
+            is False
+        )
+    assert stale_turbo_models.call_args.kwargs["model_keys"] == (
+        "turbo_8step_ref_lora",
     )
     assert fake.turbo_lora_for("Text to video", LARRY_TURBO) == fake.larry_turbo_lora
     reference_updates = mode_layout_updates("Reference media")

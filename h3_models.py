@@ -194,6 +194,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
         "LightX2V Turbo 8-step v1.0 · official 768p ComfyUI BF16",
     ),
+    "turbo_8step_ref_lora": ModelSpec(
+        TURBO_REPO,
+        "loras",
+        "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+        "LightX2V Ref2V Turbo 8-step v1.0 · official 768p ComfyUI BF16",
+    ),
     "larry_turbo_lora": ModelSpec(
         LARRY_TURBO_REPO,
         "loras",
@@ -463,6 +469,7 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     "video_vae_trt_decoder_data",
     "image_vae_500k",
     "turbo_8step_lora",
+    "turbo_8step_ref_lora",
     "larry_turbo_lora",
     "h3_latent_upscaler_3d_bf16",
     "h3_latent_upscaler_3d_fp16",
@@ -750,6 +757,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     turbo_lora = MODEL_SPECS["turbo_lora"]
     turbo_ref_lora = MODEL_SPECS["turbo_ref_lora"]
     turbo_8step_lora = MODEL_SPECS["turbo_8step_lora"]
+    turbo_8step_ref_lora = MODEL_SPECS["turbo_8step_ref_lora"]
     larry_turbo_lora = MODEL_SPECS["larry_turbo_lora"]
     seedvr2_vae = MODEL_SPECS["seedvr2_vae"]
     seedvr2_models = {
@@ -758,7 +766,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
     return {
-        "schema_version": 15,
+        "schema_version": 16,
         "default_profile": "speed",
         "profiles": {
             profile: _profile_config(profile)
@@ -784,8 +792,8 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         "turbo_ref_source": turbo_ref_lora.source,
         "turbo_8step_lora": turbo_8step_lora.local_name,
         "turbo_8step_source": turbo_8step_lora.source,
-        "turbo_8step_ref_lora": turbo_8step_lora.local_name,
-        "turbo_8step_ref_source": turbo_8step_lora.source,
+        "turbo_8step_ref_lora": turbo_8step_ref_lora.local_name,
+        "turbo_8step_ref_source": turbo_8step_ref_lora.source,
         "larry_turbo_lora": larry_turbo_lora.local_name,
         "larry_turbo_source": larry_turbo_lora.source,
         # Larry's FL2VA-trained LoRA is also exposed for experimental Ref2VA.
@@ -1000,6 +1008,7 @@ def selftest() -> None:
         "turbo_lora",
         "turbo_ref_lora",
         "turbo_8step_lora",
+        "turbo_8step_ref_lora",
         "larry_turbo_lora",
         "seedvr2_3b_nvfp4",
         "seedvr2_3b_int8",
@@ -1048,7 +1057,7 @@ def selftest() -> None:
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
     assert "h3_latent_upscaler_3d_bf16" not in PRELOAD_MODEL_KEYS
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 15
+    assert cfg["schema_version"] == 16
     assert cfg["default_profile"] == "speed"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"
@@ -1081,11 +1090,14 @@ def selftest() -> None:
         "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
     )
     assert cfg["turbo_8step_lora"] == "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
-    assert cfg["turbo_8step_ref_lora"] == cfg["turbo_8step_lora"]
+    assert cfg["turbo_8step_ref_lora"] == (
+        "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
+    )
     assert {"turbo_lora", "turbo_ref_lora"}.issubset(
         PRELOAD_MODEL_KEYS
     )
     assert "turbo_8step_lora" not in PRELOAD_MODEL_KEYS
+    assert "turbo_8step_ref_lora" not in PRELOAD_MODEL_KEYS
     assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"
     assert cfg["larry_turbo_ref_lora"] == cfg["larry_turbo_lora"]
     assert "larry_turbo_lora" in PRELOAD_MODEL_KEYS
