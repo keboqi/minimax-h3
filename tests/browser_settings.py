@@ -64,18 +64,21 @@ def run():
                 page.goto(url, wait_until="domcontentloaded")
                 card = page.locator(".h3-setup-card")
                 page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for()
+                prompt = page.get_by_label("Prompt", exact=True)
+                generate = page.get_by_role("button", name="Generate video", exact=True)
+                expect(generate).to_be_disabled()
+                # One input event reproduces paste/autofill without another control edit.
+                prompt.fill("A quiet lake at sunrise")
+                expect(generate).to_be_enabled(timeout=15000)
+                prompt.fill("")
+                expect(generate).to_be_disabled(timeout=15000)
+                prompt.fill("A quiet lake at sunrise")
+                expect(generate).to_be_enabled(timeout=15000)
                 preset = page.locator(".h3-run-panel")
                 preset.get_by_label("Quality", exact=True).first.check()
                 expect(card).to_contain_text("Turbo · 8 steps")
                 expect(card).not_to_contain_text("Modified")
                 expect(card).to_contain_text("Base model: Speed")
-                page.get_by_label("Prompt", exact=True).press_sequentially(
-                    "A quiet lake at sunrise", delay=15
-                )
-                page.get_by_label("Prompt", exact=True).press("Tab")
-                expect(
-                    page.get_by_role("button", name="Generate video", exact=True)
-                ).to_be_enabled(timeout=15000)
                 page.get_by_text("Output essentials", exact=True).click()
                 steps = (
                     page.get_by_text("Steps", exact=True)

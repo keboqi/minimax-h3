@@ -252,6 +252,10 @@ class SettingsController:
             trigger = (
                 self.components[name].click
                 if name == "restore_preset"
+                # Textbox input can fire before its bound value has updated.
+                # Change observes the committed value, including enhancer results.
+                else self.components[name].change
+                if name == "prompt"
                 else self.components[name].input
             )
             self.events.append(
