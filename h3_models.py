@@ -179,7 +179,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
         "LightX2V Turbo 4-step v1.2 · official 768p ComfyUI BF16",
         expected_sha256=(
-            "e94ec14871c52909be39847273e2e5e260fd0a35b077d119ad747443b11a90b1"
+            "c8168ebc17bbacc4296103dda2fec1ba85b24392fa08cf2bfbcef0cff0dc3cc8"
         ),
     ),
     "turbo_ref_lora": ModelSpec(
