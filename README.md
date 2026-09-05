@@ -520,3 +520,7 @@ bash -n run_h3.sh
   workflow collection
 
 See [REVIEW.md](REVIEW.md) for review findings and refactor history.
+
+## Settings and execution architecture
+
+See [the settings refactor guide](docs/settings-refactor.md) for preset behavior, module boundaries, cancellation ownership, preference migration, result metadata, and test commands.

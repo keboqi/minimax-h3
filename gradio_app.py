@@ -35,7 +35,6 @@ import httpx
 import requests
 import uvicorn
 import websocket
-from openai import OpenAI, OpenAIError
 from fastapi import (
     FastAPI,
     HTTPException,
@@ -98,12 +97,25 @@ from h3_ui.bindings import (
     bind_summary,
 )
 from h3_ui.app_bindings import bind_app
-from h3_ui.h3_view import build_h3_view
+from h3_ui.contracts import AppComponents, AppServices
+from h3_ui.h3_view import build_h3_view, H3ViewServices
 from h3_ui.layout import create_app_views
 from h3_ui.persistence import bind_browser_settings
 from h3_ui.ltx_view import build_ltx_view
 from h3_ui.styles import H3_SETUP_CSS, H3_UI_CSS
 from h3_ui.views import build_api_view, build_gallery_view, build_music_view
+
+from dataclasses import asdict
+from h3_app.settings import (GenerationRequest, ResolutionContext, resolve_settings, preset_settings, PRESETS)
+from h3_app.contracts import GenerationArguments, GENERATION_FIELDS
+from h3_app import media as media_store
+from h3_app import server as server_routes
+from h3_app.server import _proxy_headers, _rewrite_comfy_text, _comfy_upstream_path, _append_set_cookies
+from h3_app.graph import Graph
+from h3_app.comfy import ComfyClient
+from h3_app.jobs import JOBS, CURRENT_JOB, check_cancelled, scoped_graph
+from h3_app.provenance import RUN_CONTEXT, write_snapshot, read_snapshot, render_snapshot, snapshot_path
+from h3_ui.settings_presentation import render_settings
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -602,47 +614,7 @@ RESOLUTION_TIERS: dict[str, dict[str, tuple[int, int]]] = {
     "large": LARGE_RESOLUTIONS,
 }
 
-SAMPLING_PRESETS: dict[str, tuple[Any, ...]] = {
-    "Quality": (
-        20,
-        0.8,
-        "exact",
-        "beta",
-        "exact_kv_and_rows",
-        1,
-        "4 MP",
-        LIGHTX2V_8STEP_TURBO,
-        "SLA",
-        "Quality",
-        2,
-    ),
-    "Balanced": (
-        18,
-        1.0,
-        "diag",
-        "simple",
-        "exact_kv",
-        1,
-        "2 MP",
-        LARRY_TURBO,
-        "SLA",
-        "Balanced",
-        2,
-    ),
-    "Fast": (
-        15,
-        1.2,
-        "diag",
-        "simple",
-        "off",
-        1,
-        "1 MP",
-        LIGHTX2V_4STEP_TURBO,
-        "SLA",
-        "Fast",
-        2,
-    ),
-}
+SAMPLING_PRESETS = {name: tuple(asdict(value).values())[:11] for name, value in PRESETS.items()}
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "60"))
 GENERATION_TIMEOUT = float(os.getenv("GENERATION_TIMEOUT", "10800"))
 POLL_SECONDS = float(os.getenv("POLL_SECONDS", "1"))
@@ -660,321 +632,11 @@ GALLERY_METADATA_CACHE_LIMIT = max(
 HTTP = requests.Session()
 _GALLERY_RESOLUTION_CACHE: dict[tuple[str, int, int], tuple[int, int] | None] = {}
 
-_HOP_BY_HOP_HEADERS = {
-    "connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-}
-_COMFY_REWRITE_TYPES = (
-    "text/html",
-    "text/css",
-)
-
-
-def _proxy_headers(headers: Any) -> dict[str, str]:
-    connection = next(
-        (value for key, value in headers.items() if key.lower() == "connection"),
-        "",
-    )
-    connection_tokens = {
-        token.strip().lower() for token in connection.split(",") if token.strip()
-    }
-    blocked = _HOP_BY_HOP_HEADERS | connection_tokens | {"host", "content-length"}
-    return {key: value for key, value in headers.items() if key.lower() not in blocked}
-
-
-def _rewrite_comfy_text(content: str, content_type: str) -> str:
-    """Keep ComfyUI's static browser assets inside the proxy prefix."""
-    prefix = COMFY_PROXY_PATH
-    if content_type.startswith("text/html"):
-        content = re.sub(
-            r"(?i)(\b(?:href|src|action)\s*=\s*[\"']?)/(?!/)",
-            rf"\1{prefix}/",
-            content,
-        )
-        if not re.search(r"(?i)<base(?:\s|>)", content):
-            content = re.sub(
-                r"(?i)(<head(?:\s[^>]*)?>)",
-                rf'\1<base href="{prefix}/">',
-                content,
-                count=1,
-            )
-    elif content_type.startswith("text/css"):
-        content = re.sub(
-            r"(?i)(url\(\s*[\"']?)/(?!/)",
-            rf"\1{prefix}/",
-            content,
-        )
-    return content
-
-
-def _comfy_upstream_path(path: str, raw_path: bytes | None) -> str:
-    """Preserve encoded userdata separators consumed by ASGI route matching."""
-    prefix = f"{COMFY_PROXY_PATH}/".encode("ascii")
-    if isinstance(raw_path, bytes) and raw_path.startswith(prefix):
-        try:
-            return raw_path[len(prefix) :].decode("ascii")
-        except UnicodeDecodeError:
-            pass
-    return quote(path, safe="/:@")
-
-
-async def _close_websocket(socket: WebSocket, code: int = 1000) -> None:
-    try:
-        await socket.close(code=code)
-    except (RuntimeError, WebSocketDisconnect):
-        # The browser may already have completed its side of the close handshake.
-        pass
-
-
-async def _relay_comfy_websocket(
-    socket: WebSocket,
-    upstream: aiohttp.ClientWebSocketResponse,
-) -> None:
-    async def browser_to_comfy() -> None:
-        while True:
-            message = await socket.receive()
-            if message["type"] == "websocket.disconnect":
-                return
-            payload = message.get("text")
-            if payload is not None:
-                await upstream.send_str(payload)
-            else:
-                await upstream.send_bytes(message.get("bytes", b""))
-
-    async def comfy_to_browser() -> None:
-        async for message in upstream:
-            if message.type == aiohttp.WSMsgType.TEXT:
-                await socket.send_text(message.data)
-            elif message.type == aiohttp.WSMsgType.BINARY:
-                await socket.send_bytes(message.data)
-            elif message.type == aiohttp.WSMsgType.ERROR:
-                raise RuntimeError(f"ComfyUI websocket failed: {upstream.exception()}")
-            elif message.type in {
-                aiohttp.WSMsgType.CLOSE,
-                aiohttp.WSMsgType.CLOSED,
-            }:
-                return
-
-    tasks = {
-        asyncio.create_task(browser_to_comfy()),
-        asyncio.create_task(comfy_to_browser()),
-    }
-    _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for result in results:
-        if isinstance(result, BaseException) and not isinstance(
-            result,
-            asyncio.CancelledError,
-        ):
-            raise result
-
-
-def _append_set_cookies(response: Response, headers: httpx.Headers) -> Response:
-    for cookie in headers.get_list("set-cookie"):
-        response.headers.append("set-cookie", cookie)
-    return response
-
-
 def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
-    client = httpx.AsyncClient(
-        timeout=httpx.Timeout(None, connect=30),
-        follow_redirects=False,
-        trust_env=False,
-    )
-
-    @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        try:
-            yield
-        finally:
-            await client.aclose()
-
-    app = FastAPI(lifespan=lifespan)
-
-    @app.get(
-        "/ltx25-workflows/{workflow_id}.json",
-        name="download_ltx25_workflow",
-        include_in_schema=False,
-    )
-    async def download_ltx25_workflow(workflow_id: str) -> FileResponse:
-        entry = next(
-            (
-                candidate
-                for candidate in LTX25_WORKFLOWS.values()
-                if candidate["id"] == workflow_id
-            ),
-            None,
-        )
-        if entry is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
-        root = LTX25_WORKFLOW_TEMPLATE_DIR.resolve()
-        candidate = (root / entry["filename"]).resolve()
-        if not candidate.is_relative_to(root) or not candidate.is_file():
-            raise HTTPException(
-                status_code=404,
-                detail="Workflow template is not installed; re-run setup_h3.py",
-            )
-        return FileResponse(
-            candidate,
-            filename=entry["filename"],
-            media_type="application/json",
-        )
-
-    @app.get(COMFY_PROXY_PATH, include_in_schema=False)
-    async def comfy_slash_redirect() -> RedirectResponse:
-        return RedirectResponse(f"{COMFY_PROXY_PATH}/", status_code=307)
-
-    @app.get(
-        "/downloads/{bucket}/{file_path:path}",
-        name="download_generated_video",
-        include_in_schema=False,
-    )
-    async def download_generated_video(
-        bucket: str,
-        file_path: str,
-        download: bool = False,
-    ) -> FileResponse:
-        roots = {
-            "comfy": OUTPUT_DIR.resolve(),
-            "gradio": OUTPUTS_DIR.resolve(),
-        }
-        root = roots.get(bucket)
-        if root is None:
-            raise HTTPException(status_code=404, detail="Video not found")
-        candidate = (root / file_path).resolve()
-        if (
-            not candidate.is_relative_to(root)
-            or candidate.suffix.lower() not in VIDEO_EXTENSIONS
-            or not candidate.is_file()
-        ):
-            raise HTTPException(status_code=404, detail="Video not found")
-        return FileResponse(
-            candidate,
-            filename=candidate.name if download else None,
-        )
-
-    @app.api_route(
-        f"{COMFY_PROXY_PATH}/{{path:path}}",
-        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-        include_in_schema=False,
-    )
-    async def comfy_http_proxy(path: str, request: Request) -> Response:
-        upstream_path = _comfy_upstream_path(
-            path,
-            request.scope.get("raw_path"),
-        )
-        target = f"{COMFY_URL}/{upstream_path}"
-        if request.url.query:
-            target += f"?{request.url.query}"
-        upstream_request = client.build_request(
-            request.method,
-            target,
-            headers=_proxy_headers(request.headers),
-            content=request.stream(),
-        )
-        try:
-            upstream = await client.send(upstream_request, stream=True)
-        except httpx.RequestError as exc:
-            print(f"[h3-ui] ComfyUI HTTP proxy error: {exc}", flush=True)
-            return PlainTextResponse(
-                "ComfyUI backend is unavailable",
-                status_code=502,
-            )
-        headers = _proxy_headers(upstream.headers)
-        headers.pop("set-cookie", None)
-        location = headers.get("location")
-        if location and location.startswith("/") and not location.startswith("//"):
-            headers["location"] = f"{COMFY_PROXY_PATH}{location}"
-
-        content_type = upstream.headers.get("content-type", "")
-        if any(content_type.startswith(kind) for kind in _COMFY_REWRITE_TYPES):
-            body = await upstream.aread()
-            await upstream.aclose()
-            encoding = upstream.encoding or "utf-8"
-            rewritten = _rewrite_comfy_text(
-                body.decode(encoding, errors="replace"),
-                content_type,
-            )
-            for name in ("content-encoding", "content-length", "etag"):
-                headers.pop(name, None)
-            response = Response(
-                content=rewritten.encode(encoding),
-                status_code=upstream.status_code,
-                headers=headers,
-                media_type=None,
-            )
-            return _append_set_cookies(response, upstream.headers)
-
-        async def stream_response() -> Any:
-            try:
-                async for chunk in upstream.aiter_raw():
-                    yield chunk
-            finally:
-                await upstream.aclose()
-
-        response = StreamingResponse(
-            stream_response(),
-            status_code=upstream.status_code,
-            headers=headers,
-            media_type=None,
-        )
-        return _append_set_cookies(response, upstream.headers)
-
-    @app.websocket(f"{COMFY_PROXY_PATH}/{{path:path}}")
-    async def comfy_websocket_proxy(socket: WebSocket, path: str) -> None:
-        query = f"?{socket.url.query}" if socket.url.query else ""
-        upstream_url = re.sub(r"^http", "ws", COMFY_URL, count=1)
-        upstream_path = _comfy_upstream_path(
-            path,
-            socket.scope.get("raw_path"),
-        )
-        upstream_url += f"/{upstream_path}{query}"
-        protocols = [
-            value.strip()
-            for value in socket.headers.get("sec-websocket-protocol", "").split(",")
-            if value.strip()
-        ]
-        try:
-            timeout = aiohttp.ClientTimeout(total=None, sock_connect=30)
-            async with aiohttp.ClientSession(
-                timeout=timeout,
-                trust_env=False,
-            ) as session:
-                async with session.ws_connect(
-                    upstream_url,
-                    protocols=protocols,
-                    max_msg_size=0,
-                    autoping=True,
-                ) as upstream:
-                    await socket.accept(subprotocol=upstream.protocol or None)
-                    await _relay_comfy_websocket(socket, upstream)
-                    await _close_websocket(socket, upstream.close_code or 1000)
-        except WebSocketDisconnect:
-            # The browser or an outer deployment proxy completed the close.
-            return
-        except Exception as exc:
-            print(
-                f"[h3-ui] ComfyUI websocket proxy error: {type(exc).__name__}: {exc!r}",
-                flush=True,
-            )
-            await _close_websocket(socket, code=1011)
-
-    return gr.mount_gradio_app(
-        app,
-        demo,
-        path="/",
-        allowed_paths=allowed_paths,
-        show_error=True,
-        css=H3_SETUP_CSS,
-    )
+    return server_routes.build_server(demo, allowed_paths, server_routes.ServerConfig(
+        COMFY_URL, OUTPUT_DIR, OUTPUTS_DIR, LTX25_WORKFLOWS,
+        LTX25_WORKFLOW_TEMPLATE_DIR, VIDEO_EXTENSIONS, H3_SETUP_CSS,
+    ))
 
 
 class H3Error(RuntimeError):
@@ -1512,6 +1174,7 @@ def _enhance_h3_prompt_with_lightning(
     image_frames: int = DEFAULT_IMAGE_FRAMES,
 ) -> tuple[str, str]:
     """Generate or enhance an H3 prompt through Lightning's OpenAI API."""
+    from openai import OpenAI, OpenAIError
     try:
         key = _lightning_api_key(temporary_api_key)
         if not PROMPT_ENHANCER_SYSTEM_PATH.is_file():
@@ -2761,15 +2424,11 @@ def ensure_music3_models(model_choice: str) -> bool:
 
 
 def api_get(path: str, **kwargs: Any) -> requests.Response:
-    response = HTTP.get(f"{COMFY_URL}{path}", timeout=REQUEST_TIMEOUT, **kwargs)
-    response.raise_for_status()
-    return response
+    return ComfyClient(COMFY_URL, REQUEST_TIMEOUT, HTTP).get(path, **kwargs)
 
 
 def api_post(path: str, **kwargs: Any) -> requests.Response:
-    response = HTTP.post(f"{COMFY_URL}{path}", timeout=REQUEST_TIMEOUT, **kwargs)
-    response.raise_for_status()
-    return response
+    return ComfyClient(COMFY_URL, REQUEST_TIMEOUT, HTTP).post(path, **kwargs)
 
 
 def object_info() -> dict[str, Any]:
@@ -3416,24 +3075,24 @@ def result_format_layout_updates(
         gr.update(visible=not is_image),
         gr.update(visible=is_image),
         gr.update(visible=is_image),
-        gr.update(visible=presentation.is_video, value=None),
-        gr.update(visible=False, value=None),
-        gr.update(visible=False, value=None),
-        gr.update(visible=False, value=None),
+        gr.update(visible=presentation.is_video),
+        gr.update(visible=False),
+        gr.update(visible=False),
+        gr.update(visible=False),
         (
             gr.update(visible=True)
             if presentation.is_video
-            else gr.update(value=DEFAULT_VIDEO_BATCH_COUNT, visible=False)
+            else gr.update(visible=False)
         ),
         gr.update(visible=is_image),
-        gr.update(visible=is_audio, value=None),
+        gr.update(visible=is_audio),
         (
             gr.update(interactive=True)
             if presentation.is_video
-            else gr.update(value="None", interactive=False)
+            else gr.update(interactive=False)
         ),
         (
-            gr.update(value=False, interactive=False)
+            gr.update(interactive=False)
             if is_audio
             else gr.update(interactive=True)
         ),
@@ -3449,16 +3108,8 @@ def result_format_layout_updates(
 
 
 def image_vae_frame_updates(image_vae: Any):
-    if normalize_image_vae(image_vae) == SINGLE_FRAME_IMAGE_VAE:
-        return gr.update(
-            value=1,
-            interactive=False,
-            info=("The 500K decoder supports one image from temporal latent slice 0."),
-        )
-    return gr.update(
-        interactive=True,
-        info="The official VAE returns 1–20 decoded video frames.",
-    )
+    single = normalize_image_vae(image_vae) != DEFAULT_IMAGE_VAE
+    return gr.update(interactive=not single, info="Effective output: one frame with the 500K decoder." if single else "Choose 1–20 decoded frames.")
 
 
 def latent_upscale_layout_updates(
@@ -3690,22 +3341,6 @@ def stage_file(
         materialize_staged_input(src, dst, transcode_video=transcode_video)
 
     return dst.relative_to(INPUT_DIR).as_posix()
-
-
-class Graph:
-    def __init__(self) -> None:
-        self.nodes: dict[str, dict[str, Any]] = {}
-        self._next = 1
-
-    def add(self, class_type: str, **inputs: Any) -> str:
-        node_id = str(self._next)
-        self._next += 1
-        self.nodes[node_id] = {"class_type": class_type, "inputs": inputs}
-        return node_id
-
-    @staticmethod
-    def out(node_id: str, slot: int = 0) -> list[Any]:
-        return [node_id, slot]
 
 
 def turbo_required_nodes(
@@ -5590,11 +5225,20 @@ def required_nodes_for(
 
 
 def submit_prompt(graph: dict[str, Any], client_id: str) -> str:
-    response = api_post("/prompt", json={"prompt": graph, "client_id": client_id})
-    payload = response.json()
-    if "prompt_id" not in payload:
-        raise H3Error(json.dumps(payload, indent=2))
-    return str(payload["prompt_id"])
+    with JOBS.lock:
+        check_cancelled()
+        job = CURRENT_JOB.get()
+        output_token = uuid.uuid4().hex
+        scoped_graph(graph, output_token)
+        if job:
+            job.output_token = output_token
+        response = api_post("/prompt", json={"prompt": graph, "client_id": client_id})
+        payload = response.json()
+        if "prompt_id" not in payload:
+            raise H3Error(json.dumps(payload, indent=2))
+        if job:
+            job.prompt_id = str(payload["prompt_id"])
+        return str(payload["prompt_id"])
 
 
 def websocket_url(client_id: str) -> str:
@@ -5824,6 +5468,7 @@ def stream_comfy_progress(
     ws.settimeout(max(0.25, min(POLL_SECONDS, 1.0)))
 
     while time.monotonic() < deadline:
+        check_cancelled()
         try:
             raw = ws.recv()
         except websocket.WebSocketTimeoutException:
@@ -5933,6 +5578,7 @@ def poll_comfy_progress(
     """Compatibility fallback for ComfyUI deployments without `/ws`."""
     deadline = time.monotonic() + GENERATION_TIMEOUT
     while time.monotonic() < deadline:
+        check_cancelled()
         payload = api_get(f"/history/{prompt_id}").json()
         item = payload.get(prompt_id)
         if item:
@@ -5956,6 +5602,7 @@ def poll_comfy_progress(
 def wait_for_history(prompt_id: str) -> dict[str, Any]:
     deadline = time.monotonic() + GENERATION_TIMEOUT
     while time.monotonic() < deadline:
+        check_cancelled()
         payload = api_get(f"/history/{prompt_id}").json()
         item = payload.get(prompt_id)
         if item:
@@ -5968,73 +5615,16 @@ def wait_for_history(prompt_id: str) -> dict[str, Any]:
     raise H3Error(f"Generation timed out after {GENERATION_TIMEOUT:.0f} seconds")
 
 
-def walk_saved_refs(value: Any) -> Iterable[dict[str, str]]:
-    if isinstance(value, dict):
-        if "filename" in value:
-            yield {
-                "filename": str(value["filename"]),
-                "subfolder": str(value.get("subfolder", "")),
-                "type": str(value.get("type", "output")),
-            }
-        for child in value.values():
-            yield from walk_saved_refs(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from walk_saved_refs(child)
+def walk_saved_refs(value):
+    yield from media_store.walk_saved_refs(value)
 
 
-def _history_output_candidates(
-    history: dict[str, Any],
-    extensions: frozenset[str],
-    *,
-    directory: Path | None = None,
-) -> list[Path]:
-    """Return existing history outputs contained by the requested directory."""
-    output_root = OUTPUT_DIR.resolve()
-    resolved_directory = (OUTPUT_DIR if directory is None else directory).resolve()
-    if not resolved_directory.is_relative_to(output_root):
-        raise ValueError("Output candidate directory must be inside OUTPUT_DIR")
-
-    candidates: list[Path] = []
-    for ref in walk_saved_refs(history.get("outputs", {})):
-        if ref["type"] != "output":
-            continue
-        try:
-            path = (OUTPUT_DIR / ref["subfolder"] / ref["filename"]).resolve()
-            if (
-                path.is_relative_to(resolved_directory)
-                and path.is_file()
-                and path.suffix.lower() in extensions
-            ):
-                candidates.append(path)
-        except OSError:
-            continue
-    return candidates
+def _history_output_candidates(history, extensions, *, directory=None):
+    return media_store.history_output_candidates(OUTPUT_DIR, history, extensions, directory=directory)
 
 
-def _recent_output_candidates(
-    directory: Path,
-    extensions: frozenset[str],
-    queued_at: float,
-) -> list[Path]:
-    """Return recent files without following outputs outside the scan root."""
-    if not directory.is_dir():
-        return []
-    resolved_directory = directory.resolve()
-    candidates: dict[Path, Path] = {}
-    for candidate in directory.rglob("*"):
-        try:
-            path = candidate.resolve()
-            if (
-                path.is_relative_to(resolved_directory)
-                and path.is_file()
-                and path.suffix.lower() in extensions
-                and path.stat().st_mtime >= queued_at - 2
-            ):
-                candidates[path] = path
-        except OSError:
-            continue
-    return list(candidates.values())
+def _recent_output_candidates(directory, extensions, queued_at):
+    return media_store.recent_output_candidates(directory, extensions, queued_at)
 
 
 def resolve_output(history: dict[str, Any], queued_at: float) -> Path:
@@ -6367,6 +5957,9 @@ def save_selected_image_frames(
     for index in selected_indices:
         target = destination / f"frame_{index + 1:03d}.png"
         shutil.copy2(paths[index], target)
+        metadata = read_snapshot(paths[index])
+        if metadata:
+            write_snapshot(target, {key: value for key, value in metadata.items() if key != "output"})
         saved.append(str(target))
     return saved, f"Saved {len(saved)} selected frame(s) to `{destination}`."
 
@@ -7424,6 +7017,7 @@ def delete_selected_gallery_video(
         thumbnail = gallery_thumbnail_path(video)
         name = video.name
         video.unlink()
+        snapshot_path(video).unlink(missing_ok=True)
         thumbnail.unlink(missing_ok=True)
         forget_gallery_metadata(video)
         return gallery_mutation_result(
@@ -7454,6 +7048,7 @@ def empty_generated_gallery(
             video = managed_video_path(candidate)
             gallery_thumbnail_path(video).unlink(missing_ok=True)
             video.unlink()
+            snapshot_path(video).unlink(missing_ok=True)
             deleted += 1
         except (H3Error, OSError):
             failed += 1
@@ -7606,6 +7201,8 @@ def generate(
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     progress=gr.Progress(track_tqdm=False),
 ):
+    requested_values = {key: value for key, value in locals().items() if key in GENERATION_FIELDS}
+    requested_values.update(RUN_CONTEXT.get())
     started = time.monotonic()
     timings = StageTimings("H3 generation", started, "Preparing request")
     queued_at = time.time()
@@ -7617,19 +7214,19 @@ def generate(
         unload_prompt_rewriter()
         progress(0, desc="Validating request")
         yield None, progress_status("Validating request", started=started)
-        result_format = normalize_result_format(result_format)
+        plan = resolve_request_settings(requested_values)
+        if plan.issues:
+            raise H3Error(" ".join(plan.issues))
+        effective = plan.effective
+        result_format = normalize_result_format(effective.output.result_format)
         selected_image_vae = normalize_image_vae(image_vae)
-        requested_image_frames = validate_image_frame_count(image_frames)
+        requested_image_frames = validate_image_frame_count(effective.output.image_frames)
         if postprocess not in GENERATION_POSTPROCESS_OPTIONS:
             raise H3Error("Unsupported post-processing method.")
         if not prompt.strip():
             raise H3Error("Prompt is required.")
-        if result_format != "Image" and not 2 <= float(duration) <= 15:
-            raise H3Error("Duration must be between 2 and 15 seconds.")
-        if result_format != "Video":
-            postprocess = "None"
-        if result_format == "Audio":
-            latent_upscale = False
+        postprocess = effective.finishing.postprocess
+        latent_upscale = effective.finishing.latent_upscale
         generation_frames = (
             selected_image_sampling_length(
                 requested_image_frames,
@@ -7639,20 +7236,13 @@ def generate(
             else frame_length(duration)
         )
         policy_duration = generation_frames / 24.0
-        resolved_width, resolved_height = generation_resolution(
-            width,
-            height,
-            result_format=result_format,
-            latent_upscale=bool(latent_upscale),
-            mode=mode,
-            first_image=first_image,
-        )
+        resolved_width, resolved_height = effective.output.width, effective.output.height
         actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
         models = load_model_config()
         text_encoder_key, selected_text_encoder, bf16_text_encoder = (
             h3_text_encoder_settings(models, text_encoder)
         )
-        effective_stage_offload = bool(stage_model_offload) or bf16_text_encoder
+        effective_stage_offload = effective.sampling.stage_model_offload
         smart_stage_offload = bf16_text_encoder and bool(reuse_unchanged_inputs)
         if effective_stage_offload and SERVER_MEMORY_PROFILE == "gpu-only":
             raise H3Error(
@@ -7865,7 +7455,7 @@ def generate(
                 DEFAULT_SLA_PRESET
             )
         effective_cache_mode, cache_note = resolve_cache_policy(
-            cache_mode, use_turbo=use_turbo
+            effective.cache_mode, use_turbo=use_turbo
         )
         if latent_upscale and effective_cache_mode.lower() != "off":
             cache_note = (
@@ -8048,6 +7638,23 @@ def generate(
                 f"({type(exc).__name__})."
             )
         prompt_id = submit_prompt(graph, client_id)
+        execution_snapshot = {
+            "job_id": prompt_id,
+            "preset": requested_values.get("preset", "Fast"),
+            "settings": {key: value for key, value in requested_values.items()
+                         if key in GENERATION_FIELDS and key not in {"prompt", "first_image", "last_image"}
+                         and not key.startswith("ref_")},
+            "changes_from_preset": plan.differences() if requested_values.get("preset") else {},
+            "adjustments": [asdict(item) for item in plan.adjustments],
+        }
+        execution_snapshot["settings"].update(
+            seed=actual_seed, width=resolved_width, height=resolved_height,
+            steps=effective_steps, scheduler=effective_scheduler, cache_mode=effective_cache_mode,
+            stage_model_offload=effective_stage_offload, postprocess=postprocess, latent_upscale=latent_upscale,
+            model_filename=selected_model, text_encoder_filename=selected_text_encoder,
+            attention_mode="SLA" if effective_sla else "Sage 2" if effective_sage else "Sol-Attn" if effective_sol else "Kitchen",
+            sampled_frames=generation_frames, image_frames=requested_image_frames,
+        )
         timings.label = f"H3 job {prompt_id}"
         timings.transition("Waiting for ComfyUI")
         attention_status = (
@@ -8169,6 +7776,8 @@ def generate(
         history = wait_for_history(prompt_id)
         if result_format == "Image":
             results = resolve_image_outputs(history, queued_at, requested_image_frames)
+            for path in results:
+                write_snapshot(path, execution_snapshot)
             finished_at = time.monotonic()
             elapsed = finished_at - started
             timing_summary = timings.summary(now=finished_at)
@@ -8183,6 +7792,7 @@ def generate(
             return
         if result_format == "Audio":
             result = resolve_audio_output(history, queued_at)
+            write_snapshot(result, execution_snapshot)
             finished_at = time.monotonic()
             elapsed = finished_at - started
             timing_summary = timings.summary(now=finished_at)
@@ -8199,6 +7809,7 @@ def generate(
             return
         source = resolve_output(history, queued_at)
         fallback_video = source
+        write_snapshot(source, {**execution_snapshot, "stage": "H3 output before post-processing"})
         if postprocess != "None":
             timings.transition(f"Post-processing: {postprocess}")
             progress(0, desc="Post-processing video")
@@ -8447,6 +8058,7 @@ def generate(
             if postprocess != "None":
                 timings.transition(f"Applying {postprocess}")
             result = postprocess_video(source, postprocess)
+        write_snapshot(result, execution_snapshot)
         finished_at = time.monotonic()
         elapsed = finished_at - started
         timing_summary = timings.summary(now=finished_at)
@@ -8498,6 +8110,8 @@ def generate_ltx25(
     progress=gr.Progress(track_tqdm=False),
 ):
     """Run an LTX-2.5 job through the same ComfyUI queue as H3."""
+    snapshot_values = {key: value for key, value in locals().items()
+                       if key not in {"prompt", "negative_prompt", "caption", "lyrics", "first_image", "middle_image", "end_image", "progress"}}
     started = time.monotonic()
     timings = StageTimings("LTX-2.5 generation", started, "Preparing request")
     queued_at = time.time()
@@ -8627,6 +8241,8 @@ def generate_ltx25(
         timings.transition("Locating generated output")
         history = wait_for_history(prompt_id)
         result = resolve_output(history, queued_at)
+        snapshot_values.update(seed=actual_seed, width=resolved_width, height=resolved_height)
+        write_snapshot(result, {"job_id": prompt_id, "family": "LTX 2.5", "settings": snapshot_values})
         finished_at = time.monotonic()
         elapsed = finished_at - started
         timing_summary = timings.summary(now=finished_at)
@@ -8663,6 +8279,8 @@ def generate_music3(
     progress=gr.Progress(track_tqdm=False),
 ):
     """Run MiniMax Music 3 through the same ComfyUI queue as video jobs."""
+    snapshot_values = {key: value for key, value in locals().items()
+                       if key not in {"prompt", "negative_prompt", "caption", "lyrics", "first_image", "middle_image", "end_image", "progress"}}
     started = time.monotonic()
     timings = StageTimings("Music 3 generation", started, "Preparing request")
     queued_at = time.time()
@@ -8758,6 +8376,8 @@ def generate_music3(
             )
         timings.transition("Locating generated output")
         result = resolve_audio_output(wait_for_history(prompt_id), queued_at)
+        snapshot_values.update(seed=actual_seed)
+        write_snapshot(result, {"job_id": prompt_id, "family": "Music 3", "settings": snapshot_values})
         finished_at = time.monotonic()
         elapsed = finished_at - started
         timing_summary = timings.summary(now=finished_at)
@@ -8780,33 +8400,16 @@ def generate_music3(
                 pass
 
 
-def interrupt() -> str:
+def interrupt(request: gr.Request, family: str = "h3") -> str:
     try:
-        api_post("/interrupt", json={})
-        return "Interrupt requested."
+        return JOBS.cancel(request.session_hash, family, api_get, api_post) if request.session_hash else "No session-owned job to cancel."
     except Exception as exc:
         return f"Interrupt failed: {exc}"
 
 
 def preset_values(name: str, generation_mode: str = "Normal"):
-    preset_name = str(name)
-    values = SAMPLING_PRESETS.get(preset_name, SAMPLING_PRESETS["Balanced"])
-    text_encoder = SAMPLING_PRESET_TEXT_ENCODERS.get(
-        preset_name, SAMPLING_PRESET_TEXT_ENCODERS["Balanced"]
-    )
-    if str(generation_mode).strip().lower() == "turbo":
-        turbo_variant = values[7]
-        values = (
-            turbo_steps_for(turbo_variant),
-            *values[1:3],
-            "simple",
-            *values[4:],
-        )
-    return (
-        *values,
-        text_encoder,
-        text_encoder_offload_update(text_encoder),
-    )
+    values = asdict(preset_settings(name, generation_mode))
+    return (*list(values.values())[:-1], text_encoder_offload_update(values["text_encoder"]))
 
 
 def compact_settings_summary(
@@ -8849,186 +8452,39 @@ def compact_settings_summary(
     latent_split_seam_polish: str = "off",
     use_trt_vae: bool = False,
 ) -> str:
-    stage_offload_note = (
-        "On" if stage_model_offload or text_encoder == "BF16" else "Off"
-    )
-    vae_note = (
-        "TensorRT" if use_trt_vae else ("INT8 ConvRot" if use_int8_vae else "FP16")
-    )
-    generation_badge = generation_mode
-    generation_description = "Standard sampling"
-    if generation_mode == "Turbo":
-        generation_description = turbo_variant
-        generation_mode = f"Turbo / {turbo_variant}"
-    result_format = normalize_result_format(result_format)
-    if result_format == "Image":
-        image_vae_note = normalize_image_vae(image_vae)
-        try:
-            timing = f"{validate_image_frame_count(image_frames)} image frames"
-        except H3Error:
-            timing = "— image frames"
-    else:
-        try:
-            timing = f"{float(duration):g}s"
-        except (TypeError, ValueError):
-            timing = "—s"
-    if result_format == "Audio":
-        resolution = "32×32 automatic canvas"
-    else:
-        try:
-            resolution = f"{int(width)}×{int(height)}"
-        except (TypeError, ValueError):
-            resolution = "—×—"
+    return describe_settings(locals())
+
+
+def result_settings_for_media(path):
+    if isinstance(path, (tuple, list)):
+        path = path[0] if path else None
+    if isinstance(path, dict):
+        path = path.get("path")
+    if path and not read_snapshot(path):
+        name = Path(path).name
+        if re.search(r"[0-9a-f]{32}", name):
+            candidates = [candidate for root in (OUTPUT_DIR, OUTPUTS_DIR)
+                          for candidate in root.rglob(name) if candidate.resolve().is_relative_to(root.resolve())
+                          and read_snapshot(candidate)]
+            if len(candidates) == 1:
+                path = candidates[0]
+    return render_snapshot(path)
+
+
+def resolve_request_settings(values: dict):
+    request = GenerationRequest.from_values(values)
+    dimensions = None
+    first = values.get("first_image", values.get("first"))
+    if request.output.result_format == "Image" and request.mode == "First / last frame" and first:
+        dimensions = start_frame_generation_resolution(first, alignment=64 if request.finishing.latent_upscale else 32)
+    return resolve_settings(request, ResolutionContext(dimensions, SERVER_MEMORY_PROFILE))
+
+
+def describe_settings(values: dict) -> str:
     try:
-        step_count = f"{int(steps)} steps"
-    except (TypeError, ValueError):
-        step_count = "— steps"
-    attention_note = attention_mode
-    if str(attention_mode).strip().lower() in {"sla", "sla attention", "sparse-linear"}:
-        resolved_sla_preset, _sla_inputs = resolve_sla_preset(sla_preset)
-        attention_note = f"{attention_mode} / {resolved_sla_preset}"
-    postprocess_note = postprocess
-    if postprocess == SEEDVR2_UPSCALE:
-        postprocess_note += (
-            f" / {seedvr2_model} / unload first: {'on' if force_offload else 'off'}"
-        )
-    elif postprocess == LTX25_UPSCALE:
-        postprocess_note += (
-            f" / {ltx25_model} / unload first: {'on' if force_offload else 'off'}"
-        )
-        if split_upscale:
-            postprocess_note += f" / split: {float(split_seconds):g}s clips"
-    latent_note = "Off"
-    if latent_upscale:
-        resolved_method = resolve_h3_latent_upscale_method(latent_upscale_method)
-        latent_note = (
-            f"2x / {latent_upscaler_model} / "
-            f"{int(latent_upscale_refine_steps)} refinement steps / {resolved_method}"
-        )
-        if resolved_method == H3_LATENT_UPSCALE_SPLIT:
-            latent_note += (
-                f" / {int(latent_split_tile_width)}×"
-                f"{int(latent_split_tile_height)}px tiles"
-                f" / {float(latent_split_overlap_ratio):.0%} overlap"
-                f" / fade {float(latent_split_fade_ratio):.0%}"
-                f" / {int(latent_split_chunk_frames)}f chunks"
-                f"+{int(latent_split_temporal_overlap_frames)}f"
-                f" / seam {float(latent_split_seam_denoise):.2f}"
-                f" / polish {str(latent_split_seam_polish).lower()}"
-            )
-
-    def safe(value: object) -> str:
-        return html.escape(str(value), quote=True)
-
-    def metric(icon: str, label: str, value: object, tone: str) -> str:
-        return (
-            f'<div class="h3-setup-metric h3-tone-{tone}">'
-            f'<span class="h3-setup-metric-icon" aria-hidden="true">{safe(icon)}</span>'
-            '<span class="h3-setup-metric-copy">'
-            f"<strong>{safe(value)}</strong><span>{safe(label)}</span></span></div>"
-        )
-
-    def pill(label: str, value: object, tone: str) -> str:
-        return (
-            f'<span class="h3-setup-pill h3-tone-{tone}">'
-            f"<span>{safe(label)}</span><strong>{safe(value)}</strong></span>"
-        )
-
-    def detail(label: str, value: object, tone: str = "neutral") -> str:
-        return (
-            '<div class="h3-setup-detail">'
-            f"<dt>{safe(label)}</dt>"
-            f'<dd><span class="h3-setup-value h3-tone-{tone}">{safe(value)}</span></dd>'
-            "</div>"
-        )
-
-    compact_metrics = "".join(
-        (
-            metric("▣", "Resolution", resolution, "cyan"),
-            metric("◷", "Duration", timing, "green"),
-            metric("↗", "Sampling steps", step_count, "amber"),
-        )
-    )
-    compact_pills = "".join(
-        (
-            pill("Original", model_profile, "purple"),
-            pill("Attention", attention_note, "purple"),
-            pill("Cache", cache_mode, "cyan"),
-            pill("Latent", latent_note, "green" if latent_upscale else "neutral"),
-        )
-    )
-    output_details = "".join(
-        (
-            detail("Mode", mode, "purple"),
-            detail("Result", result_format, "blue"),
-            detail("Resolution", resolution, "cyan"),
-            detail("Length", timing, "green"),
-        )
-    )
-    model_details = "".join(
-        (
-            detail("Original", model_profile, "purple"),
-            detail("Text encoder", text_encoder, "blue"),
-            detail(
-                "Stage offload",
-                stage_offload_note,
-                "green" if stage_offload_note == "On" else "neutral",
-            ),
-            detail("VAE", vae_note, "pink"),
-            detail("Image VAE", image_vae_note, "pink")
-            if result_format == "Image"
-            else "",
-        )
-    )
-    sampling_details = "".join(
-        (
-            detail("Generation", generation_mode, "amber"),
-            detail("Steps", step_count, "amber"),
-            detail("Scheduler", scheduler),
-            detail("Attention", attention_note, "purple"),
-        )
-    )
-    optimization_details = "".join(
-        (
-            detail("Cache", cache_mode, "cyan"),
-            detail(
-                "Input reuse",
-                "On" if reuse_unchanged_inputs else "Off",
-                "green" if reuse_unchanged_inputs else "neutral",
-            ),
-            detail(
-                "Native latent", latent_note, "green" if latent_upscale else "neutral"
-            ),
-            detail(
-                "Post-process",
-                postprocess_note,
-                "neutral" if postprocess == "None" else "blue",
-            ),
-        )
-    )
-    return (
-        '<section class="h3-setup-card" aria-label="Effective generation setup">'
-        '<div class="h3-setup-heading">'
-        '<div class="h3-setup-title"><span class="h3-setup-symbol" aria-hidden="true">▶</span>'
-        "<span><small>Ready to generate</small>"
-        f"<strong>{safe(mode)}</strong></span></div>"
-        f'<span class="h3-setup-result h3-tone-blue">{safe(result_format)}</span></div>'
-        '<div class="h3-setup-profile">'
-        f'<span class="h3-setup-profile-badge h3-tone-amber">{safe(generation_badge)}</span>'
-        f"<strong>{safe(generation_description)}</strong></div>"
-        f'<div class="h3-setup-metrics">{compact_metrics}</div>'
-        f'<div class="h3-setup-pills">{compact_pills}</div>'
-        '<details class="h3-setup-disclosure"><summary>'
-        '<span class="h3-setup-show">View all settings</span>'
-        '<span class="h3-setup-hide">Hide settings</span>'
-        '<span class="h3-setup-chevron" aria-hidden="true"></span>'
-        '</summary><div class="h3-setup-detail-grid">'
-        f'<div class="h3-setup-group"><h4><span aria-hidden="true">◆</span> Output</h4><dl>{output_details}</dl></div>'
-        f'<div class="h3-setup-group"><h4><span aria-hidden="true">◈</span> Model</h4><dl>{model_details}</dl></div>'
-        f'<div class="h3-setup-group"><h4><span aria-hidden="true">↗</span> Sampling</h4><dl>{sampling_details}</dl></div>'
-        f'<div class="h3-setup-group"><h4><span aria-hidden="true">⚡</span> Optimization</h4><dl>{optimization_details}</dl></div>'
-        "</div></details></section>"
-    )
+        return render_settings(resolve_request_settings(values), values)
+    except (ValueError, TypeError, H3Error) as exc:
+        return '<div role="alert">Check generation settings: ' + html.escape(str(exc)) + '</div>'
 
 
 def reference_prompt_help() -> str:
@@ -9159,22 +8615,15 @@ def video_batch_seeds(seed: int, batch_count: int) -> list[int]:
 
 def generate_for_ui(batch_count: int, *args: Any):
     """Adapt shared generation to UI outputs, including 1-4 video variants."""
-    if len(args) < 2:
-        raise H3Error("Missing result-format inputs.")
-    result_format = normalize_result_format(args[-2])
+    arguments = GenerationArguments.from_positional(args)
+    result_format = normalize_result_format(arguments.values["result_format"])
     count = int(batch_count) if result_format == "Video" else 1
-    seed_index: int | None = None
-    seeds: list[int | None] = [None]
-    if result_format == "Video":
-        seed_index = list(inspect.signature(generate).parameters).index("seed")
-        seeds = video_batch_seeds(int(args[seed_index]), count)
+    seeds = video_batch_seeds(int(arguments.values["seed"]), count) if result_format == "Video" else [int(arguments.values["seed"])]
     first_update = True
     for batch_index, batch_seed in enumerate(seeds):
-        batch_args = list(args)
-        if batch_seed is not None and seed_index is not None:
-            batch_args[seed_index] = batch_seed
+        batch_arguments = arguments.with_seed(batch_seed)
         prefix = f"Video {batch_index + 1}/{count} · " if count > 1 else ""
-        for result, status in generate(*batch_args):
+        for result, status in generate(**batch_arguments.values):
             status = prefix + status
             video_updates = [gr.update() for _ in range(MAX_VIDEO_BATCH_COUNT)]
             if first_update:
@@ -9341,51 +8790,50 @@ def build_ui() -> gr.Blocks:
         h3_components = build_h3_view(
             generation_view,
             defaults,
-            {
-                "AUTO_RESOLUTION_MEGAPIXEL_PRESETS": AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
-                "AUTO_SOL_TOKEN_THRESHOLD": AUTO_SOL_TOKEN_THRESHOLD,
-                "DEFAULT_AUTO_RESOLUTION_MEGAPIXELS": DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
-                "DEFAULT_GEMINI_PROMPT_MODEL": DEFAULT_GEMINI_PROMPT_MODEL,
-                "DEFAULT_INPUT_IMAGE_FRAME_PRESET": DEFAULT_INPUT_IMAGE_FRAME_PRESET,
-                "DEFAULT_LOCAL_PROMPT_BASE_MODEL": DEFAULT_LOCAL_PROMPT_BASE_MODEL,
-                "DEFAULT_LTX25_MODEL": DEFAULT_LTX25_MODEL,
-                "DEFAULT_PROMPT_WRITER_BACKEND": DEFAULT_PROMPT_WRITER_BACKEND,
-                "DEFAULT_UPSCALE_RESOLUTION": DEFAULT_UPSCALE_RESOLUTION,
-                "DEFAULT_VIDEO_BATCH_COUNT": DEFAULT_VIDEO_BATCH_COUNT,
-                "DRAFT_RESOLUTIONS": DRAFT_RESOLUTIONS,
-                "FAST_RESOLUTIONS": FAST_RESOLUTIONS,
-                "GEMINI_PROMPT_MODELS": GEMINI_PROMPT_MODELS,
-                "GENERATION_POSTPROCESS_OPTIONS": GENERATION_POSTPROCESS_OPTIONS,
-                "H3_LATENT_UPSCALE_METHODS": H3_LATENT_UPSCALE_METHODS,
-                "H3_LATENT_UPSCALE_SPLIT": H3_LATENT_UPSCALE_SPLIT,
-                "H3_LATENT_UPSCALER_MODEL_CHOICES": H3_LATENT_UPSCALER_MODEL_CHOICES,
-                "H3_TEXT_ENCODER_CHOICES": H3_TEXT_ENCODER_CHOICES,
-                "IMAGE_VAE_CHOICES": IMAGE_VAE_CHOICES,
-                "INPUT_IMAGE_FRAME_PRESETS": INPUT_IMAGE_FRAME_PRESETS,
-                "INPUT_IMAGE_UPSCALE_SLOTS": INPUT_IMAGE_UPSCALE_SLOTS,
-                "LARGE_RESOLUTIONS": LARGE_RESOLUTIONS,
-                "LIGHTNING_PROMPT_MODEL": LIGHTNING_PROMPT_MODEL,
-                "LOCAL_PROMPT_BASE_MODELS": LOCAL_PROMPT_BASE_MODELS,
-                "MAX_IMAGE_FRAMES": MAX_IMAGE_FRAMES,
-                "MAX_VIDEO_BATCH_COUNT": MAX_VIDEO_BATCH_COUNT,
-                "MIN_IMAGE_FRAMES": MIN_IMAGE_FRAMES,
-                "MIN_VIDEO_BATCH_COUNT": MIN_VIDEO_BATCH_COUNT,
-                "MODEL_PROFILE_CHOICES": MODEL_PROFILE_CHOICES,
-                "PROMPT_WRITER_BACKENDS": PROMPT_WRITER_BACKENDS,
-                "RESULT_FORMATS": RESULT_FORMATS,
-                "SEEDVR2_MODEL_CHOICES": SEEDVR2_MODEL_CHOICES,
-                "SERVER_ATTENTION_BACKEND": SERVER_ATTENTION_BACKEND,
-                "SERVER_DENSE_ATTENTION_BACKEND": SERVER_DENSE_ATTENTION_BACKEND,
-                "SLA_PRESET_INPUTS": SLA_PRESET_INPUTS,
-                "TURBO_SETTINGS": TURBO_SETTINGS,
-                "UPSCALE_RESOLUTION_PRESETS": UPSCALE_RESOLUTION_PRESETS,
-                "compact_settings_summary": compact_settings_summary,
-                "compile_trt_video_vae": compile_trt_video_vae,
-                "generation_readiness_state": generation_readiness_state,
-                "mode_help": mode_help,
-                "reference_prompt_help": reference_prompt_help,
-                "resolution_summary": resolution_summary,
-            },
+            H3ViewServices(
+                AUTO_RESOLUTION_MEGAPIXEL_PRESETS=AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
+                AUTO_SOL_TOKEN_THRESHOLD=AUTO_SOL_TOKEN_THRESHOLD,
+                DEFAULT_AUTO_RESOLUTION_MEGAPIXELS=DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
+                DEFAULT_GEMINI_PROMPT_MODEL=DEFAULT_GEMINI_PROMPT_MODEL,
+                DEFAULT_INPUT_IMAGE_FRAME_PRESET=DEFAULT_INPUT_IMAGE_FRAME_PRESET,
+                DEFAULT_LOCAL_PROMPT_BASE_MODEL=DEFAULT_LOCAL_PROMPT_BASE_MODEL,
+                DEFAULT_LTX25_MODEL=DEFAULT_LTX25_MODEL,
+                DEFAULT_PROMPT_WRITER_BACKEND=DEFAULT_PROMPT_WRITER_BACKEND,
+                DEFAULT_UPSCALE_RESOLUTION=DEFAULT_UPSCALE_RESOLUTION,
+                DEFAULT_VIDEO_BATCH_COUNT=DEFAULT_VIDEO_BATCH_COUNT,
+                DRAFT_RESOLUTIONS=DRAFT_RESOLUTIONS,
+                FAST_RESOLUTIONS=FAST_RESOLUTIONS,
+                GEMINI_PROMPT_MODELS=GEMINI_PROMPT_MODELS,
+                GENERATION_POSTPROCESS_OPTIONS=GENERATION_POSTPROCESS_OPTIONS,
+                H3_LATENT_UPSCALE_METHODS=H3_LATENT_UPSCALE_METHODS,
+                H3_LATENT_UPSCALE_SPLIT=H3_LATENT_UPSCALE_SPLIT,
+                H3_LATENT_UPSCALER_MODEL_CHOICES=H3_LATENT_UPSCALER_MODEL_CHOICES,
+                H3_TEXT_ENCODER_CHOICES=H3_TEXT_ENCODER_CHOICES,
+                IMAGE_VAE_CHOICES=IMAGE_VAE_CHOICES,
+                INPUT_IMAGE_FRAME_PRESETS=INPUT_IMAGE_FRAME_PRESETS,
+                INPUT_IMAGE_UPSCALE_SLOTS=INPUT_IMAGE_UPSCALE_SLOTS,
+                LARGE_RESOLUTIONS=LARGE_RESOLUTIONS,
+                LIGHTNING_PROMPT_MODEL=LIGHTNING_PROMPT_MODEL,
+                LOCAL_PROMPT_BASE_MODELS=LOCAL_PROMPT_BASE_MODELS,
+                MAX_IMAGE_FRAMES=MAX_IMAGE_FRAMES,
+                MAX_VIDEO_BATCH_COUNT=MAX_VIDEO_BATCH_COUNT,
+                MIN_IMAGE_FRAMES=MIN_IMAGE_FRAMES,
+                MIN_VIDEO_BATCH_COUNT=MIN_VIDEO_BATCH_COUNT,
+                MODEL_PROFILE_CHOICES=MODEL_PROFILE_CHOICES,
+                PROMPT_WRITER_BACKENDS=PROMPT_WRITER_BACKENDS,
+                RESULT_FORMATS=RESULT_FORMATS,
+                SEEDVR2_MODEL_CHOICES=SEEDVR2_MODEL_CHOICES,
+                SERVER_ATTENTION_BACKEND=SERVER_ATTENTION_BACKEND,
+                SERVER_DENSE_ATTENTION_BACKEND=SERVER_DENSE_ATTENTION_BACKEND,
+                SLA_PRESET_INPUTS=SLA_PRESET_INPUTS,
+                TURBO_SETTINGS=TURBO_SETTINGS,
+                UPSCALE_RESOLUTION_PRESETS=UPSCALE_RESOLUTION_PRESETS,
+                compact_settings_summary=compact_settings_summary,
+                generation_readiness_state=generation_readiness_state,
+                mode_help=mode_help,
+                reference_prompt_help=reference_prompt_help,
+                resolution_summary=resolution_summary,
+            ),
         )
 
         ltx25_components = build_ltx_view(
@@ -9416,6 +8864,15 @@ def build_ui() -> gr.Blocks:
             default_seedvr2=defaults["seedvr2_model"],
         )
 
+        with gallery_view:
+            gallery_settings_used = gr.HTML("Select an output to inspect its settings.")
+        gallery_components.selected.change(render_snapshot, inputs=gallery_components.selected,
+                                           outputs=gallery_settings_used, queue=False, api_name=False)
+        for root, view in ((ltx25_view, ltx25_components), (music3_view, music3_components)):
+            with root:
+                metadata_view = gr.HTML("Settings used will appear with the generated result.")
+            view.output.change(result_settings_for_media, inputs=view.output, outputs=metadata_view,
+                               queue=False, api_name=False, show_progress="hidden")
         api_components = build_api_view(api_view, api_guide())
         app_components = dict(h3_components.values)
         app_components.update(
@@ -9438,66 +8895,55 @@ def build_ui() -> gr.Blocks:
                 "unload_models": unload_models,
             }
         )
-        bind_app(
-            app_components,
-            {
-                "AI_POSTPROCESS_OPTIONS": AI_POSTPROCESS_OPTIONS,
-                "AUTO_RESOLUTION_JS": AUTO_RESOLUTION_JS,
-                "LTX25_UPSCALE": LTX25_UPSCALE,
-                "SEEDVR2_UPSCALE": SEEDVR2_UPSCALE,
-                "auto_resolution_from_start_frame": auto_resolution_from_start_frame,
-                "bind_api_view": bind_api_view,
-                "bind_gallery_view": bind_gallery_view,
-                "bind_interrupts": bind_interrupts,
-                "bind_ltx_view": bind_ltx_view,
-                "bind_music_view": bind_music_view,
-                "bind_preflight": bind_preflight,
-                "bind_summary": bind_summary,
-                "compact_settings_summary": compact_settings_summary,
-                "compile_trt_video_vae": compile_trt_video_vae,
-                "delete_selected_gallery_video": delete_selected_gallery_video,
-                "empty_generated_gallery": empty_generated_gallery,
-                "enhance_h3_prompt": enhance_h3_prompt,
-                "enhance_ltx25_prompt": enhance_ltx25_prompt,
-                "enhance_music3_prompt": enhance_music3_prompt,
-                "fbcache_preset_defaults": fbcache_preset_defaults,
-                "generate_for_ui": generate_for_ui,
-                "generate_ltx25": generate_ltx25,
-                "generate_music3": generate_music3,
-                "generate_with_ui_defaults": generate_with_ui_defaults,
-                "generation_mode_defaults": generation_mode_defaults,
-                "generation_preflight": generation_preflight,
-                "image_vae_frame_updates": image_vae_frame_updates,
-                "import_gallery_video": import_gallery_video,
-                "input_image_frame_preset_updates": input_image_frame_preset_updates,
-                "interrupt": interrupt,
-                "latent_upscale_layout_updates": latent_upscale_layout_updates,
-                "latent_upscale_method_layout_update": (
-                    latent_upscale_method_layout_update
-                ),
-                "mode_layout_updates": mode_layout_updates,
-                "postprocess_selected_gallery_video": postprocess_selected_gallery_video,
-                "prepare_all_ltx25_official_models": prepare_all_ltx25_official_models,
-                "prepare_ltx25_official_workflow": prepare_ltx25_official_workflow,
-                "preset_values": preset_values,
-                "prompt_writer_backend_visibility": prompt_writer_backend_visibility,
-                "refresh_backend_views": refresh_backend_views,
-                "refresh_gallery": refresh_gallery,
-                "render_ltx25_official_model_inventory": render_ltx25_official_model_inventory,
-                "render_ltx25_workflow_details": render_ltx25_workflow_details,
-                "resolution_choice_values": resolution_choice_values,
-                "resolution_choice_updates": resolution_choice_updates,
-                "resolution_control_updates": resolution_control_updates,
-                "resolution_info_preview": resolution_info_preview,
-                "result_format_layout_updates": result_format_layout_updates,
-                "save_selected_image_frames": save_selected_image_frames,
-                "select_all_image_frames": select_all_image_frames,
-                "select_gallery_video": select_gallery_video,
-                "text_encoder_offload_update": text_encoder_offload_update,
-                "turbo_variant_defaults": turbo_variant_defaults,
-                "unload_all_models": unload_all_models,
-                "upscale_selected_input_images": upscale_selected_input_images,
-            },
+        settings_controller = bind_app(
+            AppComponents.from_mapping(app_components),
+            AppServices(
+                resolve_request_settings=resolve_request_settings,
+                describe_settings=describe_settings,
+                AI_POSTPROCESS_OPTIONS=AI_POSTPROCESS_OPTIONS,
+                AUTO_RESOLUTION_JS=AUTO_RESOLUTION_JS,
+                LTX25_UPSCALE=LTX25_UPSCALE,
+                SEEDVR2_UPSCALE=SEEDVR2_UPSCALE,
+                auto_resolution_from_start_frame=auto_resolution_from_start_frame,
+                bind_api_view=bind_api_view,
+                bind_gallery_view=bind_gallery_view,
+                bind_ltx_view=bind_ltx_view,
+                bind_music_view=bind_music_view,
+                compile_trt_video_vae=compile_trt_video_vae,
+                delete_selected_gallery_video=delete_selected_gallery_video,
+                empty_generated_gallery=empty_generated_gallery,
+                enhance_h3_prompt=enhance_h3_prompt,
+                enhance_ltx25_prompt=enhance_ltx25_prompt,
+                enhance_music3_prompt=enhance_music3_prompt,
+                fbcache_preset_defaults=fbcache_preset_defaults,
+                generate_for_ui=generate_for_ui,
+                generate_ltx25=generate_ltx25,
+                generate_music3=generate_music3,
+                generate_with_ui_defaults=generate_with_ui_defaults,
+                image_vae_frame_updates=image_vae_frame_updates,
+                import_gallery_video=import_gallery_video,
+                input_image_frame_preset_updates=input_image_frame_preset_updates,
+                interrupt=interrupt,
+                latent_upscale_layout_updates=latent_upscale_layout_updates,
+                latent_upscale_method_layout_update=latent_upscale_method_layout_update,
+                mode_layout_updates=mode_layout_updates,
+                postprocess_selected_gallery_video=postprocess_selected_gallery_video,
+                prepare_all_ltx25_official_models=prepare_all_ltx25_official_models,
+                prepare_ltx25_official_workflow=prepare_ltx25_official_workflow,
+                prompt_writer_backend_visibility=prompt_writer_backend_visibility,
+                refresh_backend_views=refresh_backend_views,
+                refresh_gallery=refresh_gallery,
+                render_ltx25_official_model_inventory=render_ltx25_official_model_inventory,
+                render_ltx25_workflow_details=render_ltx25_workflow_details,
+                resolution_control_updates=resolution_control_updates,
+                resolution_info_preview=resolution_info_preview,
+                result_format_layout_updates=result_format_layout_updates,
+                save_selected_image_frames=save_selected_image_frames,
+                select_all_image_frames=select_all_image_frames,
+                select_gallery_video=select_gallery_video,
+                unload_all_models=unload_all_models,
+                upscale_selected_input_images=upscale_selected_input_images,
+            ),
         )
         browser_settings = {
             **{
@@ -9520,2480 +8966,16 @@ def build_ui() -> gr.Blocks:
         bind_browser_settings(
             demo,
             browser_settings,
-            exclude={"h3.image_selection", "gallery.confirm_delete"},
+            controller=settings_controller,
         )
     return demo
 
 
 def selftest() -> None:
-    assert MODEL_PROFILE_CHOICES == ["Speed", "Quality", "Original"]
-    assert GEMINI_PROMPT_MODELS == (
-        "gemini-3.8-flash",
-        "gemini-3.7-flash",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-    )
-    assert LIGHTNING_API_ROOT == "https://lightning.ai/api/v1/"
-    assert LIGHTNING_PROMPT_MODEL == "openai/gpt-5.6-luna"
-    assert PROMPT_WRITER_BACKENDS == (
-        "Local MiniMax-H3 8B",
-        "Gemini",
-        "Lightning AI",
-    )
-    with (
-        unittest.mock.patch.dict(
-            os.environ, {"LIGHTNING_API_KEY": "selftest-lightning-key"}
-        ),
-        unittest.mock.patch(f"{__name__}.OpenAI") as openai_client,
-    ):
-        completion = unittest.mock.Mock()
-        completion.choices = [
-            unittest.mock.Mock(
-                message=unittest.mock.Mock(content="Rewritten Lightning prompt")
-            )
-        ]
-        openai_client.return_value.chat.completions.create.return_value = completion
-        rewritten, lightning_status = _enhance_h3_prompt_with_lightning(
-            prompt="A moonlit tracking shot",
-            temporary_api_key="",
-            mode="Text to video",
-            first_image=None,
-            last_image=None,
-            ref_image_1=None,
-            ref_image_2=None,
-            ref_image_3=None,
-            ref_image_4=None,
-            ref_image_5=None,
-            ref_image_6=None,
-            ref_image_7=None,
-            ref_image_8=None,
-            ref_image_9=None,
-            ref_video_1=None,
-            ref_video_2=None,
-            ref_video_3=None,
-            ref_audio_1=None,
-            ref_audio_2=None,
-            ref_audio_3=None,
-            duration=6,
-            width=768,
-            height=512,
-        )
-        assert rewritten == "Rewritten Lightning prompt"
-        assert LIGHTNING_PROMPT_MODEL in lightning_status
-        openai_client.assert_called_once_with(
-            base_url=LIGHTNING_API_ROOT,
-            api_key="selftest-lightning-key",
-            timeout=600.0,
-        )
-        request = openai_client.return_value.chat.completions.create.call_args.kwargs
-        assert request["model"] == LIGHTNING_PROMPT_MODEL
-        assert request["messages"][0]["role"] == "system"
-        assert "A moonlit tracking shot" in request["messages"][1]["content"][0]["text"]
-    preflight_message, preflight_update = generation_preflight(
-        "Text to video", "", None, None
-    )
-    assert "write a prompt" in preflight_message
-    assert preflight_update["interactive"] is False
-    preflight_message, preflight_update = generation_preflight(
-        "First / last frame", "A tracking shot", "first.png", None
-    )
-    assert "Ready to generate" in preflight_message
-    assert preflight_update["interactive"] is True
-    preflight_message, preflight_update = generation_preflight(
-        "Reference media", "Match the subject", None, None, None
-    )
-    assert "add at least one reference" in preflight_message
-    assert preflight_update["interactive"] is False
-    escaped_readiness = generation_readiness_state(
-        "Text to video", "<script>prompt</script>", None, None
-    )
-    assert escaped_readiness.ready is True
-    assert "<script>" not in escaped_readiness.html
-    assert 'role="status"' in escaped_readiness.html
-    assert "&lt;script&gt;" not in escaped_readiness.html  # Prompt is never echoed.
-    escaped_backend = backend_status_html("<backend error>")
-    assert "<backend error>" not in escaped_backend
-    assert "&lt;backend error&gt;" in escaped_backend
-    assert 'role="alert"' in escaped_backend
-    assert "h3-action-dock" in H3_UI_CSS
-    assert "button:focus-visible" in H3_UI_CSS
-    assert "@media (max-width: 600px)" in H3_UI_CSS
-    with unittest.mock.patch(
-        f"{__name__}.backend_status", return_value="Connected self-test"
-    ):
-        ui_demo = build_ui()
-    ui_config = ui_demo.get_config_file()
-    components_by_id = {
-        component["id"]: component for component in ui_config["components"]
-    }
-    main_tabs = next(
-        component
-        for component in ui_config["components"]
-        if component["type"] == "tabs"
-        and component.get("props", {}).get("elem_id") == "h3-main-tabs"
-    )
-
-    def find_layout_node(
-        node: dict[str, Any], component_id: int
-    ) -> dict[str, Any] | None:
-        if node.get("id") == component_id:
-            return node
-        for child in node.get("children", []):
-            match = find_layout_node(child, component_id)
-            if match is not None:
-                return match
-        return None
-
-    tabs_layout = find_layout_node(ui_config["layout"], main_tabs["id"])
-    assert tabs_layout is not None
-    tab_nodes = tabs_layout["children"]
-    assert [components_by_id[node["id"]]["props"]["label"] for node in tab_nodes] == [
-        "MiniMax H3",
-        "LTX 2.5",
-        "MiniMax Music 3",
-        "Gallery",
-        "API",
-    ]
-    assert [
-        components_by_id[node["children"][0]["id"]]["type"] for node in tab_nodes
-    ] == ["row", "group", "group", "group", "group"]
-    with tempfile.TemporaryDirectory() as output_temp:
-        output_root = Path(output_temp)
-        staging_root = output_root / "h3" / "image_staging"
-        staging_root.mkdir(parents=True)
-        video_path = output_root / "video.mp4"
-        image_path = staging_root / "frame.png"
-        video_path.write_bytes(b"video")
-        image_path.write_bytes(b"image")
-        history = {
-            "outputs": {
-                "video": {"filename": "video.mp4", "type": "output"},
-                "image": {
-                    "filename": "frame.png",
-                    "subfolder": "h3/image_staging",
-                    "type": "output",
-                },
-                "escape": {
-                    "filename": "outside.mp4",
-                    "subfolder": "../",
-                    "type": "output",
-                },
-            }
-        }
-        with unittest.mock.patch(f"{__name__}.OUTPUT_DIR", output_root):
-            assert _history_output_candidates(history, VIDEO_EXTENSIONS) == [
-                video_path.resolve()
-            ]
-            assert _history_output_candidates(
-                history,
-                IMAGE_EXTENSIONS,
-                directory=staging_root,
-            ) == [image_path.resolve()]
-            assert _recent_output_candidates(
-                output_root,
-                VIDEO_EXTENSIONS,
-                time.time(),
-            ) == [video_path.resolve()]
-    with tempfile.TemporaryDirectory() as enhancer_temp:
-        enhancer_root = Path(enhancer_temp)
-        first_path = enhancer_root / "first.png"
-        last_path = enhancer_root / "last.png"
-        video_path = enhancer_root / "reference.mp4"
-        for path in (first_path, last_path, video_path):
-            path.write_bytes(b"test")
-        last_only = _active_prompt_media(
-            "First / last frame", None, str(last_path), (), (), ()
-        )
-        assert last_only == [("<Picture 1> (last frame)", last_path)]
-        both_frames = _active_prompt_media(
-            "First / last frame", str(first_path), str(last_path), (), (), ()
-        )
-        assert [label for label, _ in both_frames] == [
-            "<Picture 1> (first frame)",
-            "<Picture 2> (last frame)",
-        ]
-        references = _active_prompt_media(
-            "Reference media",
-            None,
-            None,
-            (None, str(first_path)),
-            (str(video_path),),
-            (),
-        )
-        assert [label for label, _ in references] == ["<Picture 2>", "<Video 1>"]
-    music_graph = build_music3_graph(
-        model_choice=DEFAULT_MUSIC3_MODEL,
-        caption="Global Metadata: test song",
-        lyrics="[Instrumental]",
-        max_duration=30,
-        seed=7,
-        steps=30,
-        cfg=1.7,
-        ar_cfg=1.7,
-        top_k=50,
-        tiled_decode=True,
-    )
-    music_classes = graph_class_types(music_graph)
-    assert required_music3_nodes(True) == music_classes
-    music_encode = next(
-        node
-        for node in music_graph.values()
-        if node["class_type"] == "MiniMaxMusic3TextEncode"
-    )
-    assert music_encode["inputs"]["max_duration"] == 30.0
-    assert music_encode["inputs"]["top_k"] == 50
-    music_save = next(
-        node for node in music_graph.values() if node["class_type"] == "SaveAudioMP3"
-    )
-    assert music_save["inputs"]["quality"] == "V0"
-    assert "format" not in music_save["inputs"]
-    rewritten_html = _rewrite_comfy_text(
-        (
-            '<html><head></head><body><script src="/assets/app.js">'
-            "</script></body></html>"
-        ),
-        "text/html; charset=utf-8",
-    )
-    assert '<base href="/comfyui/">' in rewritten_html
-    assert 'src="/comfyui/assets/app.js"' in rewritten_html
-    rewritten_css = _rewrite_comfy_text(
-        'src:url("/assets/font.woff2")',
-        "text/css",
-    )
-    assert 'url("/comfyui/assets/font.woff2")' in rewritten_css
-    assert _rewrite_comfy_text("const route = '/api';", "application/javascript") == (
-        "const route = '/api';"
-    )
-    assert (
-        _comfy_upstream_path(
-            "api/userdata/workflows/LTX 2.5/example.json",
-            (b"/comfyui/api/userdata/workflows%2FLTX%202.5%2Fexample.json"),
-        )
-        == "api/userdata/workflows%2FLTX%202.5%2Fexample.json"
-    )
-    assert (
-        _comfy_upstream_path(
-            "assets/app.js",
-            b"/comfyui/assets/app.js",
-        )
-        == "assets/app.js"
-    )
-    existing_base = _rewrite_comfy_text(
-        '<html><head><base href="/custom/"></head></html>',
-        "text/html",
-    )
-    assert existing_base.count("<base ") == 1
-    filtered_headers = _proxy_headers(
-        {
-            "Connection": "keep-alive, x-private",
-            "X-Private": "drop",
-            "X-Test": "ok",
-        }
-    )
-    assert filtered_headers == {"X-Test": "ok"}
-    cookie_response = _append_set_cookies(
-        Response(),
-        httpx.Headers(
-            [
-                ("set-cookie", "one=1; Path=/"),
-                ("set-cookie", "two=2; Path=/"),
-            ]
-        ),
-    )
-    assert cookie_response.headers.getlist("set-cookie") == [
-        "one=1; Path=/",
-        "two=2; Path=/",
-    ]
-    fake = ModelConfig(
-        profiles={
-            "speed": ModelProfile(
-                label="Speed",
-                fl2va="fl2va_speed.safetensors",
-                ref2va="ref2va_speed.safetensors",
-            ),
-            "quality": ModelProfile(
-                label="Quality",
-                fl2va="fl2va_quality_convrot.safetensors",
-                ref2va="ref2va_quality_convrot.safetensors",
-            ),
-            "original": ModelProfile(
-                label="Original",
-                fl2va="minimax_h3_fl2va_pruned_bf16.safetensors",
-                ref2va="minimax_h3_ref2va_pruned_bf16.safetensors",
-            ),
-        },
-        default_profile="speed",
-        text_encoder="text.safetensors",
-        video_vae="video_vae.safetensors",
-        audio_vae="audio_vae.safetensors",
-        video_vae_int8="video_vae_int8_convrot.safetensors",
-        video_vae_int8_source="test",
-        video_vae_trt_encoder="minimax_h3_vae_encoder.onnx",
-        video_vae_trt_decoder="minimax_h3_vae_decoder.onnx",
-        video_vae_trt_source="test",
-        image_vae_500k="minimax_h3_single_frame_decoder_500k.safetensors",
-        image_vae_500k_source="test",
-        turbo_lora="minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
-        turbo_source="test",
-        turbo_ref_lora="minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
-        turbo_ref_source="ref2v-test",
-        turbo_8step_lora="minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
-        turbo_8step_source="test",
-        turbo_8step_ref_lora="minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
-        turbo_8step_ref_source="ref2v-test",
-        larry_turbo_lora="minimax_h3_turbo_v4_step600_ema.safetensors",
-        larry_turbo_source="test",
-        larry_turbo_ref_lora="minimax_h3_turbo_v4_step600_ema.safetensors",
-        larry_turbo_ref_source="shared-fl2va-test",
-        seedvr2_dit="seedvr2_7b_nvfp4.safetensors",
-        seedvr2_dit_source="test",
-        seedvr2_models={
-            "3B NVFP4": "seedvr2_3b_nvfp4.safetensors",
-            "3B INT8": "seedvr2_3b_int8_convrot.safetensors",
-            "7B NVFP4": "seedvr2_7b_nvfp4.safetensors",
-            "7B Sharp NVFP4": "seedvr2_7b_sharp_nvfp4.safetensors",
-        },
-        seedvr2_vae="seedvr2_ema_vae_fp16.safetensors",
-        seedvr2_vae_source="test",
-    )
-    hybrid_graph = Graph()
-    trt_decode_ref = ["trt-vae", 0]
-    assert (
-        h3_conditioning_video_vae(
-            hybrid_graph,
-            fake,
-            trt_decode_ref,
-            use_trt_vae=True,
-            has_visual_conditioning=False,
-        )
-        == trt_decode_ref
-    )
-    regular_encode_ref = h3_conditioning_video_vae(
-        hybrid_graph,
-        fake,
-        trt_decode_ref,
-        use_trt_vae=True,
-        has_visual_conditioning=True,
-    )
-    assert regular_encode_ref != trt_decode_ref
-    hybrid_loader = next(iter(hybrid_graph.nodes.values()))
-    assert hybrid_loader["class_type"] == "VAELoader"
-    assert hybrid_loader["inputs"] == {"vae_name": fake.video_vae}
-
-    trt_graph = Graph()
-    add_model_stack(
-        trt_graph,
-        fake.profile("speed").fl2va,
-        fake,
-        turbo_lora_name=None,
-        turbo_variant=LIGHTX2V_4STEP_TURBO,
-        turbo_strength=1.0,
-        use_sol=False,
-        sol_tau=1.0,
-        sol_thresh_type="diag",
-        sol_exact_mode="off",
-        sol_dense_steps=1,
-        sol_step_off=0.0,
-        sol_sink_tokens=0,
-        cache_mode="Off",
-        fbcache_preset="Fast",
-        fbcache_threshold=0.10,
-        fbcache_start=0.10,
-        fbcache_end=0.95,
-        fbcache_max_hits=2,
-        fbcache_temporal_guard=True,
-        easycache_threshold=0.10,
-        easycache_start=0.15,
-        easycache_end=0.85,
-        easycache_verbose=False,
-        available_nodes={"MiniMaxH3TRTVAELoader"},
-        use_trt_vae=True,
-    )
-    trt_loader = next(
-        node
-        for node in trt_graph.nodes.values()
-        if node["class_type"] == "MiniMaxH3TRTVAELoader"
-    )
-    assert trt_loader["inputs"] == {
-        "decoder": "minimax_h3_vae_decoder.engine",
-        "encoder": "None",
-    }
-
-    available = required_nodes_for(
-        "Text to video",
-        True,
-        "FirstBlockCache",
-        use_turbo=True,
-    ) | required_nodes_for("Reference media", True, "EasyCache", True)
-    available |= required_nodes_for(
-        "Text to video",
-        False,
-        "Off",
-        latent_upscale=True,
-    )
-    available |= required_nodes_for(
-        "Text to video",
-        False,
-        "Off",
-        latent_upscale=True,
-        latent_upscale_method=H3_LATENT_UPSCALE_SPLIT,
-    )
-    available.add("SpectrumApplyMiniMaxH3")
-    available.add(CHUNK_FEED_FORWARD_NODE)
-    available.add(SAGE_ATTENTION_NODE)
-    available.add(SLA_ATTENTION_NODE)
-    available |= {
-        LARRY_TURBO_LORA_NODE,
-        LARRY_TURBO_SAMPLER_NODE,
-        LIGHTX2V_BYPASS_LORA_NODE,
-        H3_SIGMA_SHIFT_NODE,
-        H3_SINGLE_FRAME_VAE_LOADER_NODE,
-        H3_IMAGE_SLICES_NODE,
-        H3_STAGE_OFFLOAD_NODE,
-        H3_CONDITIONING_CACHE_NODE,
-        H3_STAGE_OFFLOAD_POLICY_NODE,
-    }
-    assert h3_text_encoder_settings(fake, "NVFP4 / AWQ") == (
-        "text_encoder",
-        "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
-        False,
-    )
-    assert h3_text_encoder_settings(fake, "BF16") == (
-        "text_encoder_bf16",
-        "qwen3vl_32b_minimax_h3_bf16.safetensors",
-        True,
-    )
-    assert text_encoder_offload_update("BF16")["value"] is True
-    assert text_encoder_offload_update("BF16")["interactive"] is False
-    assert H3_STAGE_OFFLOAD_NODE in required_nodes_for(
-        "Text to video", False, "Off", stage_model_offload=True
-    )
-    assert {
-        H3_STAGE_OFFLOAD_NODE,
-        H3_CONDITIONING_CACHE_NODE,
-        H3_STAGE_OFFLOAD_POLICY_NODE,
-    } <= required_nodes_for(
-        "Text to video",
-        False,
-        "Off",
-        stage_model_offload=True,
-        smart_stage_offload=True,
-    )
-    assert fake.turbo_lora_for("Text to video", LIGHTX2V_4STEP_TURBO) == fake.turbo_lora
-    assert (
-        fake.turbo_lora_for("Reference media", LIGHTX2V_4STEP_TURBO)
-        == fake.turbo_ref_lora
-    )
-    assert (
-        fake.turbo_lora_for("Text to video", LIGHTX2V_8STEP_TURBO)
-        == fake.turbo_8step_lora
-    )
-    assert (
-        fake.turbo_lora_for("Reference media", LIGHTX2V_8STEP_TURBO)
-        == fake.turbo_8step_ref_lora
-    )
-    with unittest.mock.patch(
-        f"{__name__}.stale_model_keys", return_value=[]
-    ) as stale_turbo_models:
-        assert (
-            ensure_turbo_lora(
-                fake,
-                LIGHTX2V_8STEP_TURBO,
-                "Reference media",
-            )
-            is False
-        )
-    assert stale_turbo_models.call_args.kwargs["model_keys"] == (
-        "turbo_8step_ref_lora",
-    )
-    assert fake.turbo_lora_for("Text to video", LARRY_TURBO) == fake.larry_turbo_lora
-    reference_updates = mode_layout_updates("Reference media")
-    assert reference_updates[3].get("interactive") is True
-    assert "value" not in reference_updates[3]
-    # Avoid staging files in selftest; build prompt-only T2V and check graph wiring.
-    graph = build_fl2va_graph(
-        prompt="test",
-        first_image=None,
-        last_image=None,
-        width=864,
-        height=480,
-        duration=5,
-        steps=18,
-        seed=1,
-        scheduler="simple",
-        turbo_lora_name="minimax_h3_turbo_4step_ema_ckpt850.safetensors",
-        turbo_variant=LIGHTX2V_4STEP_TURBO,
-        turbo_strength=1.0,
-        use_sol=True,
-        sol_tau=1.0,
-        sol_thresh_type="exact",
-        sol_exact_mode="exact_kv_and_rows",
-        sol_dense_steps=1,
-        sol_step_off=0.0,
-        sol_sink_tokens=0,
-        cache_mode="FirstBlockCache",
-        fbcache_preset="Fast",
-        fbcache_threshold=0.10,
-        fbcache_start=0.10,
-        fbcache_end=0.95,
-        fbcache_max_hits=2,
-        fbcache_temporal_guard=True,
-        easycache_threshold=0.10,
-        easycache_start=0.15,
-        easycache_end=0.85,
-        easycache_verbose=False,
-        model_name=fake.profile("speed").fl2va,
-        models=fake,
-        available_nodes=available,
-        text_encoder_name="qwen3vl_32b_minimax_h3_bf16.safetensors",
-        stage_model_offload=True,
-        smart_stage_offload=True,
-    )
-    classes = {node["class_type"] for node in graph.values()}
-    expected = {
-        "MiniMaxH3ImageToVideo",
-        "SamplerCustomAdvanced",
-        H3_NVENC_SAVE_NODE,
-        SOL_ATTENTION_NODE,
-        FUSED_MODULATION_NODE,
-        "H3FirstBlockCache",
-        LIGHTX2V_BYPASS_LORA_NODE,
-    }
-    missing = expected - classes
-    if missing:
-        raise SystemExit(f"Selftest failed; missing nodes: {missing}")
-    clip_loader = next(
-        node for node in graph.values() if node["class_type"] == "CLIPLoader"
-    )
-    assert clip_loader["inputs"]["clip_name"] == (
-        "qwen3vl_32b_minimax_h3_bf16.safetensors"
-    )
-    assert (
-        sum(node["class_type"] == H3_STAGE_OFFLOAD_NODE for node in graph.values()) == 1
-    )
-    cache_node = next(
-        node
-        for node in graph.values()
-        if node["class_type"] == H3_CONDITIONING_CACHE_NODE
-    )
-    expected_cache_key = h3_conditioning_cache_key(
-        "fl2va",
-        "test",
-        "qwen3vl_32b_minimax_h3_bf16.safetensors",
-        [],
-    )
-    assert cache_node["inputs"]["cache_key"] == expected_cache_key
-    policy_id, policy = next(
-        (node_id, node)
-        for node_id, node in graph.items()
-        if node["class_type"] == H3_STAGE_OFFLOAD_POLICY_NODE
-    )
-    assert policy["inputs"]["cache_key"] == expected_cache_key
-    assert expected_cache_key != h3_conditioning_cache_key(
-        "fl2va",
-        "changed",
-        "qwen3vl_32b_minimax_h3_bf16.safetensors",
-        [],
-    )
-    final_offload = next(
-        node for node in graph.values() if node["class_type"] == H3_STAGE_OFFLOAD_NODE
-    )
-    assert final_offload["inputs"]["enabled"] == [policy_id, 4]
-
-    image_graph = build_fl2va_graph(
-        prompt="image result test",
-        first_image=None,
-        last_image=None,
-        width=864,
-        height=480,
-        duration=5,
-        steps=4,
-        seed=2,
-        scheduler="simple",
-        turbo_lora_name=None,
-        turbo_variant=LIGHTX2V_4STEP_TURBO,
-        turbo_strength=1.0,
-        use_sol=False,
-        sol_tau=1.0,
-        sol_thresh_type="diag",
-        sol_exact_mode="off",
-        sol_dense_steps=0,
-        sol_step_off=0.0,
-        sol_sink_tokens=0,
-        cache_mode="Off",
-        fbcache_preset="Fast",
-        fbcache_threshold=0.10,
-        fbcache_start=0.10,
-        fbcache_end=0.95,
-        fbcache_max_hits=2,
-        fbcache_temporal_guard=True,
-        easycache_threshold=0.10,
-        easycache_start=0.15,
-        easycache_end=0.85,
-        easycache_verbose=False,
-        model_name=fake.profile("speed").fl2va,
-        models=fake,
-        available_nodes=available,
-        result_format="Image",
-        image_frames=20,
-    )
-    image_conditioning = next(
-        node
-        for node in image_graph.values()
-        if node["class_type"] == "MiniMaxH3ImageToVideo"
-    )
-    assert image_conditioning["inputs"]["length"] == 22
-    assert {"ImageFromBatch", "SaveImage"} <= {
-        node["class_type"] for node in image_graph.values()
-    }
-
-    assert normalize_result_format("image") == "Image"
-    assert image_sampling_length(1) == 5
-    assert image_sampling_length(5) == 5
-    assert image_sampling_length(6) == 22
-    assert image_sampling_length(20) == 22
-    assert single_frame_image_sampling_length(1) == 5
-    assert selected_image_sampling_length(20, OFFICIAL_IMAGE_VAE) == 22
-    try:
-        selected_image_sampling_length(2, SINGLE_FRAME_IMAGE_VAE)
-    except H3Error as exc:
-        assert "exactly one output image" in str(exc)
-    else:
-        raise AssertionError("Single-frame 500K accepted multiple output images")
-    single_frame_update = image_vae_frame_updates(SINGLE_FRAME_IMAGE_VAE)
-    assert single_frame_update["value"] == 1
-    assert single_frame_update["interactive"] is False
-    assert {"VAEDecode", "ImageFromBatch", "SaveImage"} <= required_nodes_for(
-        "Text to video", False, "Off", result_format="Image"
-    )
-    assert {"VAEDecodeAudio", "SaveAudioMP3"} <= required_nodes_for(
-        "Text to video", False, "Off", result_format="Audio"
-    )
-
-    single_frame_graph = build_fl2va_graph(
-        prompt="single-frame image result test",
-        first_image=None,
-        last_image=None,
-        width=864,
-        height=480,
-        duration=5,
-        steps=4,
-        seed=3,
-        scheduler="simple",
-        turbo_lora_name=None,
-        turbo_variant=LIGHTX2V_4STEP_TURBO,
-        turbo_strength=1.0,
-        use_sol=False,
-        sol_tau=1.0,
-        sol_thresh_type="diag",
-        sol_exact_mode="off",
-        sol_dense_steps=0,
-        sol_step_off=0.0,
-        sol_sink_tokens=0,
-        cache_mode="Off",
-        fbcache_preset="Fast",
-        fbcache_threshold=0.10,
-        fbcache_start=0.10,
-        fbcache_end=0.95,
-        fbcache_max_hits=2,
-        fbcache_temporal_guard=True,
-        easycache_threshold=0.10,
-        easycache_start=0.15,
-        easycache_end=0.85,
-        easycache_verbose=False,
-        model_name=fake.profile("speed").fl2va,
-        models=fake,
-        available_nodes=available,
-        result_format="Image",
-        image_frames=1,
-        image_vae=SINGLE_FRAME_IMAGE_VAE,
-    )
-    single_classes = {node["class_type"] for node in single_frame_graph.values()}
-    single_conditioning = next(
-        node
-        for node in single_frame_graph.values()
-        if node["class_type"] == "MiniMaxH3ImageToVideo"
-    )
-    assert single_conditioning["inputs"]["length"] == 5
-    assert {H3_SINGLE_FRAME_VAE_LOADER_NODE, H3_IMAGE_SLICES_NODE} <= single_classes
-    assert "ImageFromBatch" not in single_classes
-    single_loader = next(
-        node
-        for node in single_frame_graph.values()
-        if node["class_type"] == H3_SINGLE_FRAME_VAE_LOADER_NODE
-    )
-    assert single_loader["inputs"] == {
-        "base_vae_name": fake.video_vae,
-        "decoder_name": fake.image_vae_500k,
-    }
-    assert {H3_SINGLE_FRAME_VAE_LOADER_NODE, H3_IMAGE_SLICES_NODE} <= (
-        required_nodes_for(
-            "Text to video",
-            False,
-            "Off",
-            result_format="Image",
-            image_vae=SINGLE_FRAME_IMAGE_VAE,
-        )
-    )
-
-    image_result_graph = Graph()
-    finish_sampling(
-        image_result_graph,
-        model_ref=["model", 0],
-        conditioning_ref=["conditioning", 0],
-        latent_ref=["latent", 0],
-        video_vae_ref=["video_vae", 0],
-        audio_vae_ref=["audio_vae", 0],
-        seed=1,
-        steps=4,
-        scheduler="simple",
-        turbo_variant=None,
-        filename_prefix="h3/image_staging/selftest",
-        result_format="Image",
-        image_frames=3,
-    )
-    image_result_classes = {
-        node["class_type"] for node in image_result_graph.nodes.values()
-    }
-    assert {"VAEDecode", "ImageFromBatch", "SaveImage"} <= image_result_classes
-    assert not image_result_classes & {"VAEDecodeAudio", "CreateVideo", "SaveVideo"}
-    image_slice = next(
-        node
-        for node in image_result_graph.nodes.values()
-        if node["class_type"] == "ImageFromBatch"
-    )
-    assert image_slice["inputs"]["length"] == 3
-
-    audio_result_graph = Graph()
-    finish_sampling(
-        audio_result_graph,
-        model_ref=["model", 0],
-        conditioning_ref=["conditioning", 0],
-        latent_ref=["latent", 0],
-        video_vae_ref=["video_vae", 0],
-        audio_vae_ref=["audio_vae", 0],
-        seed=1,
-        steps=4,
-        scheduler="simple",
-        turbo_variant=None,
-        filename_prefix="audio/h3_selftest",
-        result_format="Audio",
-    )
-    audio_result_classes = {
-        node["class_type"] for node in audio_result_graph.nodes.values()
-    }
-    assert {"VAEDecodeAudio", "SaveAudioMP3"} <= audio_result_classes
-    assert not audio_result_classes & {"VAEDecode", "CreateVideo", "SaveVideo"}
-
-    original_image_output_dir = globals()["OUTPUT_DIR"]
-    with tempfile.TemporaryDirectory() as image_temp:
-        image_root = Path(image_temp)
-        staging = image_root / "h3" / "image_staging"
-        staging.mkdir(parents=True)
-        staged_paths = []
-        image_refs = []
-        for index in range(3):
-            staged = staging / f"packet_{index:05d}.png"
-            staged.write_bytes(f"frame-{index}".encode())
-            staged_paths.append(staged)
-            image_refs.append(
-                {
-                    "filename": staged.name,
-                    "subfolder": "h3/image_staging",
-                    "type": "output",
-                }
-            )
-        globals()["OUTPUT_DIR"] = image_root
-        try:
-            resolved_frames = resolve_image_outputs(
-                {"outputs": {"save": {"images": image_refs}}}, time.time(), 3
-            )
-            assert resolved_frames == staged_paths
-            saved_frames, _ = save_selected_image_frames(
-                resolved_frames, ["Frame 1", "Frame 3"]
-            )
-            assert [Path(path).name for path in saved_frames] == [
-                "frame_001.png",
-                "frame_003.png",
-            ]
-            assert all(Path(path).is_file() for path in saved_frames)
-        finally:
-            globals()["OUTPUT_DIR"] = original_image_output_dir
-
-    original_ui_generate = globals()["generate"]
-
-    def fake_image_generate(*_args: Any):
-        yield None, "working"
-        yield ["frame-a.png", "frame-b.png"], "complete"
-
-    globals()["generate"] = fake_image_generate
-    try:
-        ui_updates = list(generate_for_ui(1, "Image", 2))
-    finally:
-        globals()["generate"] = original_ui_generate
-    assert len(ui_updates) == 2
-    assert all(len(update) == 12 for update in ui_updates)
-    assert ui_updates[-1][7] == ["frame-a.png", "frame-b.png"]
-    assert video_batch_seeds(7, 1) == [7]
-
-    captured_batch_args: list[tuple[Any, ...]] = []
-    original_generate_signature = inspect.signature(original_ui_generate)
-
-    def fake_batch_generate(*batch_args: Any):
-        captured_batch_args.append(batch_args)
-        yield None, "working"
-        yield f"video-{len(captured_batch_args)}.mp4", "complete"
-
-    fake_batch_generate.__signature__ = original_generate_signature
-    generate_parameters = list(original_generate_signature.parameters)
-    batch_args = [None] * generate_parameters.index("progress")
-    seed_index = generate_parameters.index("seed")
-    reuse_index = generate_parameters.index("reuse_unchanged_inputs")
-    batch_args[seed_index] = 7
-    batch_args[reuse_index] = False
-    batch_args[-2] = "Video"
-    batch_args[-1] = 5
-    original_random_sample = random.sample
-    random.sample = lambda _population, count: list(range(101, 101 + count))
-    globals()["generate"] = fake_batch_generate
-    try:
-        assert video_batch_seeds(7, 4) == [101, 102, 103, 104]
-        batch_updates = list(generate_for_ui(3, *batch_args))
-    finally:
-        globals()["generate"] = original_ui_generate
-        random.sample = original_random_sample
-    assert [args[seed_index] for args in captured_batch_args] == [101, 102, 103]
-    assert all(args[reuse_index] is False for args in captured_batch_args)
-    assert len(batch_updates) == 6
-    assert all(len(update) == 12 for update in batch_updates)
-
-    latent_graph = build_fl2va_graph(
-        prompt="latent upscale test",
-        first_image=None,
-        last_image=None,
-        width=1024,
-        height=1024,
-        duration=5,
-        steps=8,
-        seed=2,
-        scheduler="beta",
-        turbo_lora_name=None,
-        turbo_variant=LIGHTX2V_8STEP_TURBO,
-        turbo_strength=1.0,
-        use_sol=False,
-        sol_tau=1.0,
-        sol_thresh_type="diag",
-        sol_exact_mode="off",
-        sol_dense_steps=0,
-        sol_step_off=0.0,
-        sol_sink_tokens=0,
-        cache_mode="Off",
-        fbcache_preset="Fast",
-        fbcache_threshold=0.10,
-        fbcache_start=0.10,
-        fbcache_end=0.95,
-        fbcache_max_hits=2,
-        fbcache_temporal_guard=True,
-        easycache_threshold=0.10,
-        easycache_start=0.15,
-        easycache_end=0.85,
-        easycache_verbose=False,
-        model_name=fake.profile("speed").fl2va,
-        models=fake,
-        available_nodes=available,
-        latent_upscale_model_name="minimax_h3_latent_upscaler_3d_bf16.safetensors",
-        latent_upscale_precision="bf16",
-        latent_upscale_refine_steps=2,
-        stage_model_offload=True,
-    )
-    latent_conditioning = [
-        node
-        for node in latent_graph.values()
-        if node["class_type"] == "MiniMaxH3ImageToVideo"
-    ]
-    assert {
-        (node["inputs"]["width"], node["inputs"]["height"])
-        for node in latent_conditioning
-    } == {(512, 512), (1024, 1024)}
-    latent_samplers = [
-        (node_id, node)
-        for node_id, node in latent_graph.items()
-        if node["class_type"] == "SamplerCustomAdvanced"
-    ]
-    assert len(latent_samplers) == 2
-    assert (
-        sum(
-            node["class_type"] == H3_STAGE_OFFLOAD_NODE
-            for node in latent_graph.values()
-        )
-        == 4
-    )
-    split_id = next(
-        node_id
-        for node_id, node in latent_graph.items()
-        if node["class_type"] == "SplitSigmas"
-    )
-    scheduler_id = next(
-        node_id
-        for node_id, node in latent_graph.items()
-        if node["class_type"] == "BasicScheduler"
-    )
-    noise_id = next(
-        node_id
-        for node_id, node in latent_graph.items()
-        if node["class_type"] == "RandomNoise"
-    )
-    assert latent_graph[split_id]["inputs"]["step"] == 6
-    assert latent_samplers[0][1]["inputs"]["sigmas"] == Graph.out(scheduler_id)
-    assert latent_samplers[1][1]["inputs"]["sigmas"] == Graph.out(split_id, 1)
-    assert latent_samplers[0][1]["inputs"]["noise"] == Graph.out(noise_id)
-    assert latent_samplers[1][1]["inputs"]["noise"] == Graph.out(noise_id)
-    separate_id = next(
-        node_id
-        for node_id, node in latent_graph.items()
-        if node["class_type"] == H3_SEPARATE_AV_LATENT_NODE
-    )
-    upscaler_id = next(
-        node_id
-        for node_id, node in latent_graph.items()
-        if node["class_type"] == H3_LATENT_UPSCALER_NODE
-    )
-    combine_id = next(
-        node_id
-        for node_id, node in latent_graph.items()
-        if node["class_type"] == H3_COMBINE_AV_LATENT_NODE
-    )
-    assert latent_graph[upscaler_id]["inputs"] == {
-        "latent": Graph.out(separate_id, 0),
-        "model_name": "minimax_h3_latent_upscaler_3d_bf16.safetensors",
-        "mode": "scale by multiplier",
-        "align": 32,
-        "enable_temporal_chunking": True,
-        "force_unload": True,
-        "device": "cuda",
-        "precision": "bf16",
-        "mode.scale": 2.0,
-    }
-    assert latent_graph[combine_id]["inputs"]["video_latent"] == Graph.out(upscaler_id)
-    assert latent_graph[combine_id]["inputs"]["audio_latent"] == Graph.out(
-        separate_id, 1
-    )
-    initial_sampler_id = latent_samplers[0][0]
-    audio_decode = next(
-        node for node in latent_graph.values() if node["class_type"] == "VAEDecodeAudio"
-    )
-    audio_offload_ref = audio_decode["inputs"]["samples"]
-    assert audio_offload_ref[1] == 3
-    audio_offload = latent_graph[audio_offload_ref[0]]
-    assert audio_offload["class_type"] == H3_STAGE_OFFLOAD_NODE
-    initial_offload_ref = audio_offload["inputs"]["additional_latent"]
-    initial_offload = latent_graph[initial_offload_ref[0]]
-    assert initial_offload["class_type"] == H3_STAGE_OFFLOAD_NODE
-    assert initial_offload["inputs"]["latent"] == Graph.out(initial_sampler_id)
-    assert h3_latent_upscale_dimensions(1024, 1024) == (512, 512, 1024, 1024)
-    assert h3_latent_upscale_dimensions(864, 480) == (448, 256, 896, 512)
-    split_config = resolve_h3_split_upscale_config(
-        H3_LATENT_UPSCALE_SPLIT,
-        tile_width=512,
-        tile_height=640,
-        overlap_ratio=0.25,
-        fade_ratio=0.50,
-        chunk_frames=73,
-        temporal_overlap_frames=22,
-        seam_denoise=0.75,
-        seam_polish="auto",
-    )
-    assert split_config == H3SplitUpscaleConfig(
-        tile_width=512,
-        tile_height=640,
-        overlap_ratio=0.25,
-        fade_ratio=0.50,
-        chunk_frames=73,
-        temporal_overlap_frames=22,
-        seam_denoise=0.75,
-        seam_polish="auto",
-    )
-    assert (
-        resolve_h3_split_upscale_config(
-            H3_LATENT_UPSCALE_STANDARD,
-            tile_width=1,
-            tile_height=1,
-            overlap_ratio=2,
-            fade_ratio=2,
-            chunk_frames=1,
-            temporal_overlap_frames=2,
-            seam_denoise=2,
-            seam_polish="invalid",
-        )
-        is None
-    )
-    assert {
-        H3_SPLIT_TEMPORAL_PARAMS_NODE,
-        H3_SPLIT_SPATIAL_PARAMS_NODE,
-        H3_SPLIT_UPSCALE_NODE,
-    } <= required_nodes_for(
-        "Text to video",
-        False,
-        "Off",
-        latent_upscale=True,
-        latent_upscale_method=H3_LATENT_UPSCALE_SPLIT,
-    )
-    split_graph_builder = Graph()
-    finish_sampling(
-        split_graph_builder,
-        model_ref=["model", 0],
-        conditioning_ref=["target-conditioning", 0],
-        latent_ref=["target-latent", 0],
-        video_vae_ref=["video-vae", 0],
-        audio_vae_ref=["audio-vae", 0],
-        seed=11,
-        steps=8,
-        scheduler="beta",
-        turbo_variant=None,
-        filename_prefix="h3/split-selftest",
-        initial_conditioning_ref=["initial-conditioning", 0],
-        initial_latent_ref=["initial-latent", 0],
-        latent_upscale_model_name=("minimax_h3_latent_upscaler_3d_bf16.safetensors"),
-        latent_upscale_precision="bf16",
-        latent_upscale_refine_steps=2,
-        latent_split_config=split_config,
-    )
-    split_graph = split_graph_builder.nodes
-    split_temporal_id = next(
-        node_id
-        for node_id, node in split_graph.items()
-        if node["class_type"] == H3_SPLIT_TEMPORAL_PARAMS_NODE
-    )
-    split_spatial_id = next(
-        node_id
-        for node_id, node in split_graph.items()
-        if node["class_type"] == H3_SPLIT_SPATIAL_PARAMS_NODE
-    )
-    split_upscale_id = next(
-        node_id
-        for node_id, node in split_graph.items()
-        if node["class_type"] == H3_SPLIT_UPSCALE_NODE
-    )
-    split_sigmas_id = next(
-        node_id
-        for node_id, node in split_graph.items()
-        if node["class_type"] == "SplitSigmas"
-    )
-    split_noise_id = next(
-        node_id
-        for node_id, node in split_graph.items()
-        if node["class_type"] == "RandomNoise"
-    )
-    split_sampler_id = next(
-        node_id
-        for node_id, node in split_graph.items()
-        if node["class_type"] == CORE_SAMPLER_NODE
-    )
-    split_combine_id = next(
-        node_id
-        for node_id, node in split_graph.items()
-        if node["class_type"] == H3_COMBINE_AV_LATENT_NODE
-    )
-    assert (
-        sum(
-            node["class_type"] == "SamplerCustomAdvanced"
-            for node in split_graph.values()
-        )
-        == 1
-    )
-    assert split_graph[split_temporal_id]["inputs"] == {
-        "chunk_frames": 73,
-        "temporal_overlap_frames": 22,
-        "anchor_strength": 0.999,
-        "motion_anchor_frames": "22",
-        "identity_anchor_frames": 24,
-    }
-    assert split_graph[split_spatial_id]["inputs"] == {
-        "tile_width": 512,
-        "tile_height": 640,
-        "overlap_ratio": 0.25,
-        "fade_ratio": 0.5,
-        "min_tile_size": 256,
-        "seam_denoise": 0.75,
-    }
-    assert split_graph[split_upscale_id]["inputs"] == {
-        "model": ["model", 0],
-        "conditioning": ["target-conditioning", 0],
-        "latent": Graph.out(split_combine_id),
-        "noise": Graph.out(split_noise_id),
-        "sampler": Graph.out(split_sampler_id),
-        "sigmas": Graph.out(split_sigmas_id, 1),
-        "cfg": 1.0,
-        "temporal_split_param": Graph.out(split_temporal_id),
-        "spatial_split_param": Graph.out(split_spatial_id),
-        "seam_polish": "auto",
-        "color_match": True,
-    }
-
-    sol_nodes = [
-        node for node in graph.values() if node["class_type"] == SOL_ATTENTION_NODE
-    ]
-    assert len(sol_nodes) == 1
-    assert sol_nodes[0]["inputs"]["thresh_type"] == "exact"
-    assert sol_nodes[0]["inputs"]["sink_conditioning"] == "exact_kv_and_rows"
-    assert sol_nodes[0]["inputs"]["dense_blocks"] == "-1"
-    assert sol_nodes[0]["inputs"]["min_tokens"] == AUTO_SOL_TOKEN_THRESHOLD
-    assert sol_nodes[0]["inputs"]["int8_qk"] is False
-
-    sage_graph = Graph()
-    add_model_stack(
-        sage_graph,
-        fake.profile("speed").fl2va,
-        fake,
-        turbo_lora_name=None,
-        turbo_variant=LIGHTX2V_4STEP_TURBO,
-        turbo_strength=1.0,
-        use_sol=False,
-        sol_tau=1.0,
-        sol_thresh_type="diag",
-        sol_exact_mode="off",
-        sol_dense_steps=1,
-        sol_step_off=0.0,
-        sol_sink_tokens=0,
-        cache_mode="Off",
-        fbcache_preset="Fast",
-        fbcache_threshold=0.10,
-        fbcache_start=0.10,
-        fbcache_end=0.95,
-        fbcache_max_hits=2,
-        fbcache_temporal_guard=True,
-        easycache_threshold=0.10,
-        easycache_start=0.15,
-        easycache_end=0.85,
-        easycache_verbose=False,
-        available_nodes=available,
-        use_sage=True,
-    )
-    sage_nodes = [
-        node
-        for node in sage_graph.nodes.values()
-        if node["class_type"] == SAGE_ATTENTION_NODE
-    ]
-    assert len(sage_nodes) == 1
-    assert sage_nodes[0]["inputs"]["sage_attention"] == "auto"
-    assert sage_nodes[0]["inputs"]["allow_compile"] is False
-    assert not any(
-        node["class_type"] == SOL_ATTENTION_NODE for node in sage_graph.nodes.values()
-    )
-
-    assert resolve_sla_preset("Fast") == ("Fast", SLA_PRESET_INPUTS["Fast"])
-    assert resolve_sla_preset("Balance") == ("Balanced", SLA_PRESET_INPUTS["Balanced"])
-    assert resolve_sla_preset("Quality") == ("Quality", SLA_PRESET_INPUTS["Quality"])
-
-    sla_graph = Graph()
-    add_model_stack(
-        sla_graph,
-        fake.profile("speed").fl2va,
-        fake,
-        turbo_lora_name=None,
-        turbo_variant=LIGHTX2V_4STEP_TURBO,
-        turbo_strength=1.0,
-        use_sol=False,
-        sol_tau=1.0,
-        sol_thresh_type="diag",
-        sol_exact_mode="off",
-        sol_dense_steps=1,
-        sol_step_off=0.0,
-        sol_sink_tokens=0,
-        cache_mode="Off",
-        fbcache_preset="Fast",
-        fbcache_threshold=0.10,
-        fbcache_start=0.10,
-        fbcache_end=0.95,
-        fbcache_max_hits=2,
-        fbcache_temporal_guard=True,
-        easycache_threshold=0.10,
-        easycache_start=0.15,
-        easycache_end=0.85,
-        easycache_verbose=False,
-        available_nodes=available,
-        use_sla=True,
-        sla_preset="Quality",
-    )
-    sla_nodes = [
-        node
-        for node in sla_graph.nodes.values()
-        if node["class_type"] == SLA_ATTENTION_NODE
-    ]
-    assert len(sla_nodes) == 1
-    assert sla_nodes[0]["inputs"] == {
-        "model": sla_nodes[0]["inputs"]["model"],
-        "sparsity_ratio": 0.85,
-        "block_size": "64",
-        "min_seq_len": 8192,
-        "dense_last_steps": 1,
-        "protect_audio": True,
-        "enabled": True,
-    }
-    assert not any(
-        node["class_type"] in {SOL_ATTENTION_NODE, SAGE_ATTENTION_NODE}
-        for node in sla_graph.nodes.values()
-    )
-
-    cache_nodes = [
-        node for node in graph.values() if node["class_type"] == "H3FirstBlockCache"
-    ]
-    assert len(cache_nodes) == 1
-    assert cache_nodes[0]["inputs"]["preset"] == "Fast"
-    assert cache_nodes[0]["inputs"]["residual_diff_threshold"] == 0.10
-    assert cache_nodes[0]["inputs"]["start_percent"] == 0.10
-    assert cache_nodes[0]["inputs"]["end_percent"] == 0.95
-    assert cache_nodes[0]["inputs"]["max_consecutive_cache_hits"] == 2
-    assert cache_nodes[0]["inputs"]["temporal_guard"] is True
-
-    # Turbo LoRA -> fused modulation -> FirstBlockCache -> Sol preserves every
-    # wrapper's execution boundary. The inverse cache/Sol ordering reproduces
-    # the runtime failure where Sol's executor.original() bypasses the cache.
-    turbo_id = next(
-        node_id
-        for node_id, node in graph.items()
-        if node["class_type"] == LIGHTX2V_BYPASS_LORA_NODE
-    )
-    fused_id = next(
-        node_id
-        for node_id, node in graph.items()
-        if node["class_type"] == FUSED_MODULATION_NODE
-    )
-    cache_id = next(
-        node_id
-        for node_id, node in graph.items()
-        if node["class_type"] == "H3FirstBlockCache"
-    )
-    sol_id = next(
-        node_id
-        for node_id, node in graph.items()
-        if node["class_type"] == SOL_ATTENTION_NODE
-    )
-    assert graph[fused_id]["inputs"]["model"] == [turbo_id, 0]
-    assert graph[fused_id]["inputs"]["enabled"] is True
-    assert graph[cache_id]["inputs"]["model"] == [fused_id, 0]
-    assert graph[sol_id]["inputs"]["model"] == [cache_id, 0]
-    assert graph[cache_id]["inputs"]["model"] != [sol_id, 0]
-
-    spectrum_graph = Graph()
-    add_model_stack(
-        spectrum_graph,
-        fake.profile("quality").fl2va,
-        fake,
-        turbo_lora_name=None,
-        turbo_variant=LIGHTX2V_4STEP_TURBO,
-        turbo_strength=1.0,
-        use_sol=True,
-        sol_tau=1.0,
-        sol_thresh_type="diag",
-        sol_exact_mode="off",
-        sol_dense_steps=1,
-        sol_step_off=0.0,
-        sol_sink_tokens=0,
-        cache_mode="Spectrum",
-        fbcache_preset="Fast",
-        fbcache_threshold=0.10,
-        fbcache_start=0.10,
-        fbcache_end=0.95,
-        fbcache_max_hits=2,
-        fbcache_temporal_guard=True,
-        easycache_threshold=0.10,
-        easycache_start=0.15,
-        easycache_end=0.85,
-        easycache_verbose=False,
-        available_nodes=available,
-    )
-    spectrum_id = next(
-        node_id
-        for node_id, node in spectrum_graph.nodes.items()
-        if node["class_type"] == "SpectrumApplyMiniMaxH3"
-    )
-    spectrum_sol_id = next(
-        node_id
-        for node_id, node in spectrum_graph.nodes.items()
-        if node["class_type"] == SOL_ATTENTION_NODE
-    )
-    spectrum_chunk_id = next(
-        node_id
-        for node_id, node in spectrum_graph.nodes.items()
-        if node["class_type"] == CHUNK_FEED_FORWARD_NODE
-    )
-    spectrum_inputs = spectrum_graph.nodes[spectrum_id]["inputs"]
-    assert spectrum_inputs["model"] == [spectrum_chunk_id, 0]
-    assert spectrum_graph.nodes[spectrum_chunk_id]["inputs"]["model"] == [
-        spectrum_sol_id,
-        0,
-    ]
-    assert spectrum_inputs["offline_smoothing_replay"] is True
-    assert spectrum_inputs["audio_blend_weight"] == 0.0
-    assert spectrum_inputs["offline_archive_storage"] == "system_ram"
-    assert spectrum_inputs["model_aware_mode"] == "off"
-    assert spectrum_inputs["model_aware_risk_threshold"] == 0.65
-    assert not any(
-        node["class_type"] == "H3FirstBlockCache"
-        for node in spectrum_graph.nodes.values()
-    )
-
-    save_nodes = [
-        node for node in graph.values() if node["class_type"] == H3_NVENC_SAVE_NODE
-    ]
-    assert len(save_nodes) == 1
-    assert save_nodes[0]["inputs"]["preset"] == "p4"
-    assert save_nodes[0]["inputs"]["constant_quality"] == 23
-
-    ltx25_graph = build_ltx25_graph(
-        prompt="a test shot",
-        negative_prompt="artifacts",
-        first_image=None,
-        width=960,
-        height=544,
-        duration=5,
-        fps=24,
-        seed=9,
-        cfg=1.0,
-        sampler_name="euler_ancestral",
-        image_strength=0.7,
-    )
-    ltx25_nodes = list(ltx25_graph.values())
-    ltx25_classes = {node["class_type"] for node in ltx25_nodes}
-    assert required_ltx25_nodes() <= ltx25_classes
-    assert not ({"LoadImage", "LTXVAddGuide"} & ltx25_classes)
-    ltx25_unet = next(
-        node for node in ltx25_nodes if node["class_type"] == "UNETLoader"
-    )
-    assert ltx25_unet["inputs"]["unet_name"] == (
-        "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
-    )
-    ltx25_video_latent = next(
-        node for node in ltx25_nodes if node["class_type"] == "EmptyLTXVLatentVideo"
-    )
-    assert ltx25_video_latent["inputs"]["length"] == 121
-    ltx25_sigmas = next(
-        node for node in ltx25_nodes if node["class_type"] == "ManualSigmas"
-    )
-    assert ltx25_sigmas["inputs"]["sigmas"] == LTX25_SIGMAS
-    ltx25_save = next(node for node in ltx25_nodes if node["class_type"] == "SaveVideo")
-    assert ltx25_save["inputs"]["filename_prefix"].startswith("ltx25/")
-    assert ltx25_frame_length(5, 24) == 121
-    assert len(LTX25_WORKFLOWS) == 10
-    assert len({entry["id"] for entry in LTX25_WORKFLOWS.values()}) == 10
-    assert {
-        entry["filename"] for entry in LTX25_WORKFLOWS.values()
-    } == set(LTX25_WORKFLOW_FILENAMES)
-    assert all(
-        entry["filename"].startswith("LTX-2.5_") and entry["filename"].endswith(".json")
-        for entry in LTX25_WORKFLOWS.values()
-    )
-    for label in LTX25_WORKFLOWS:
-        assert set(ltx25_workflow_model_keys(label)) <= set(MODEL_SPECS)
-        assert "/ltx25-workflows/" in render_ltx25_workflow_details(label)
-    audio_label = next(
-        label for label, entry in LTX25_WORKFLOWS.items() if entry.get("audio_only")
-    )
-    assert not {
-        "ltx25_video_vae",
-        "ltx25_video_vae_full",
-    } & set(ltx25_workflow_model_keys(audio_label))
-    video_label = next(
-        label for label, entry in LTX25_WORKFLOWS.items() if not entry.get("audio_only")
-    )
-    assert {
-        "ltx25_video_vae",
-        "ltx25_video_vae_full",
-    } <= set(ltx25_workflow_model_keys(video_label))
-    inventory = render_ltx25_official_model_inventory()
-    assert all(MODEL_SPECS[key].repo_id in inventory for key in LTX25_ICLORA_MODEL_KEYS)
-    assert set(LTX25_ICLORA_MODEL_KEYS) <= set(ltx25_official_inventory_keys())
-    original_stage_file = globals()["stage_file"]
-    try:
-        globals()["stage_file"] = lambda path, category: f"{category}/{Path(path).name}"
-        ltx25_keyframe_graph = build_ltx25_graph(
-            prompt="a guided test shot",
-            negative_prompt="artifacts",
-            first_image="start.png",
-            middle_image="middle.png",
-            middle_time=2.5,
-            end_image="end.png",
-            width=960,
-            height=544,
-            duration=5,
-            fps=24,
-            seed=10,
-            cfg=1.0,
-            sampler_name="euler_ancestral",
-            image_strength=0.8,
-            middle_strength=0.65,
-            end_strength=0.9,
-        )
-    finally:
-        globals()["stage_file"] = original_stage_file
-    keyframe_nodes = ltx25_keyframe_graph.values()
-    guides = [node for node in keyframe_nodes if node["class_type"] == "LTXVAddGuide"]
-    assert required_ltx25_nodes(image_to_video=True) <= {
-        node["class_type"] for node in keyframe_nodes
-    }
-    assert [node["inputs"]["frame_idx"] for node in guides] == [0, 60, -1]
-    assert [node["inputs"]["strength"] for node in guides] == [0.8, 0.65, 0.9]
-    guide_ids = [
-        node_id
-        for node_id, node in ltx25_keyframe_graph.items()
-        if node["class_type"] == "LTXVAddGuide"
-    ]
-    assert guides[1]["inputs"]["positive"] == Graph.out(guide_ids[0], 0)
-    assert guides[1]["inputs"]["negative"] == Graph.out(guide_ids[0], 1)
-    assert guides[1]["inputs"]["latent"] == Graph.out(guide_ids[0], 2)
-    assert guides[2]["inputs"]["positive"] == Graph.out(guide_ids[1], 0)
-    assert guides[2]["inputs"]["negative"] == Graph.out(guide_ids[1], 1)
-    assert guides[2]["inputs"]["latent"] == Graph.out(guide_ids[1], 2)
-    keyframe_guider = next(
-        node for node in keyframe_nodes if node["class_type"] == "CFGGuider"
-    )
-    assert keyframe_guider["inputs"]["positive"] == Graph.out(guide_ids[2], 0)
-    assert keyframe_guider["inputs"]["negative"] == Graph.out(guide_ids[2], 1)
-    keyframe_av_latent = next(
-        node for node in keyframe_nodes if node["class_type"] == "LTXVConcatAVLatent"
-    )
-    assert keyframe_av_latent["inputs"]["video_latent"] == Graph.out(guide_ids[2], 2)
-
-    seedvr2_graph = build_seedvr2_upscale_graph(
-        source_video="h3_gradio/seedvr2_upscale/source.mp4",
-        seed=7,
-        models=fake,
-        fps=48.0,
-    )
-    seedvr2_nodes = list(seedvr2_graph.values())
-    assert required_seedvr2_upscale_nodes() <= {
-        node["class_type"] for node in seedvr2_nodes
-    }
-    seedvr2_scale = next(
-        node for node in seedvr2_nodes if node["class_type"] == "ImageScaleBy"
-    )
-    assert seedvr2_scale["inputs"]["scale_by"] == 2.0
-    seedvr2_vae_nodes = [
-        node
-        for node in seedvr2_nodes
-        if node["class_type"] in {"VAEEncodeTiled", "VAEDecodeTiled"}
-    ]
-    assert len(seedvr2_vae_nodes) == 2
-    assert all(node["inputs"]["tile_size"] == 1024 for node in seedvr2_vae_nodes)
-    seedvr2_sampler = next(
-        node for node in seedvr2_nodes if node["class_type"] == "KSampler"
-    )
-    seedvr2_chunks = next(
-        node for node in seedvr2_nodes if node["class_type"] == "SeedVR2TemporalChunk"
-    )
-    assert seedvr2_chunks["inputs"]["chunking_mode"] == "auto"
-    assert node_stage("VAEEncodeTiled", graph_class_types(seedvr2_graph)) == (
-        "Encoding H3 video for SeedVR2"
-    )
-    assert node_stage("SeedVR2TemporalChunk", graph_class_types(seedvr2_graph)) == (
-        "Splitting SeedVR2 video into VRAM-safe chunks"
-    )
-    assert seedvr2_sampler["inputs"]["steps"] == 1
-    assert seedvr2_sampler["inputs"]["denoise"] == 1.0
-    seedvr2_video = next(
-        node for node in seedvr2_nodes if node["class_type"] == "CreateVideo"
-    )
-    assert seedvr2_video["inputs"]["fps"] == 48.0
-    for seedvr2_choice, expected_name in fake.seedvr2_models.items():
-        choice_graph = build_seedvr2_upscale_graph(
-            source_video="source.mp4",
-            seed=7,
-            models=fake,
-            model_choice=seedvr2_choice,
-        )
-        choice_loader = next(
-            node for node in choice_graph.values() if node["class_type"] == "UNETLoader"
-        )
-        assert choice_loader["inputs"]["unet_name"] == expected_name
-
-    seedvr2_image_graph = build_seedvr2_image_upscale_graph(
-        source_images=[
-            ("first", "h3_gradio/input_image_upscale/first.png", 2.5),
-            ("picture_2", "h3_gradio/input_image_upscale/picture.png", 1.25),
-        ],
-        seed=7,
-        models=fake,
-        model_choice=DEFAULT_SEEDVR2_MODEL,
-        output_token="inputtest",
-    )
-    seedvr2_image_nodes = list(seedvr2_image_graph.values())
-    assert required_seedvr2_image_upscale_nodes() <= {
-        node["class_type"] for node in seedvr2_image_nodes
-    }
-    assert sum(node["class_type"] == "VAELoader" for node in seedvr2_image_nodes) == 1
-    assert sum(node["class_type"] == "UNETLoader" for node in seedvr2_image_nodes) == 1
-    assert [
-        node["inputs"]["seed"]
-        for node in seedvr2_image_nodes
-        if node["class_type"] == "KSampler"
-    ] == [7, 8]
-    assert [
-        node["inputs"]["scale_by"]
-        for node in seedvr2_image_nodes
-        if node["class_type"] == "ImageScaleBy"
-    ] == [2.5, 1.25]
-    assert {
-        node["inputs"]["filename_prefix"]
-        for node in seedvr2_image_nodes
-        if node["class_type"] == "SaveImage"
-    } == {
-        "h3/input_upscale/inputtest_first",
-        "h3/input_upscale/inputtest_picture_2",
-    }
-    assert tuple(INPUT_IMAGE_UPSCALE_SLOTS[:3]) == (
-        "First frame",
-        "Last frame",
-        "Picture 1",
-    )
-    assert INPUT_IMAGE_FRAME_PRESETS["1920 × 1920"] == (1920, 1920)
-    assert input_image_frame_preset_updates("3840 × 3840", 1920, 1920) == (3840, 3840)
-    from PIL import Image
-
-    with tempfile.TemporaryDirectory() as upscale_dimensions_temp:
-        dimension_root = Path(upscale_dimensions_temp)
-        portrait = dimension_root / "portrait.png"
-        square = dimension_root / "square.png"
-        landscape = dimension_root / "landscape.png"
-        Image.new("RGB", (500, 700)).save(portrait)
-        Image.new("RGB", (2048, 2048)).save(square)
-        Image.new("RGB", (800, 400)).save(landscape)
-        assert input_image_upscale_dimensions(str(portrait), 1920, 1920)[:4] == (
-            500,
-            700,
-            1371,
-            1920,
-        )
-        assert input_image_upscale_dimensions(str(square), 1920, 1920) == (
-            2048,
-            2048,
-            2048,
-            2048,
-            1.0,
-        )
-        assert input_image_upscale_dimensions(str(landscape), 1920, 1920)[:4] == (
-            800,
-            400,
-            1920,
-            960,
-        )
-
-    ltx25_upscale_graph = build_ltx25_upscale_graph(
-        source_video="h3_gradio/ltx25_upscale/source.mp4",
-        seed=11,
-        model_choice="INT8 ConvRot",
-        prompt="a detailed test scene",
-        width=864,
-        height=480,
-        fps=24.0,
-    )
-    ltx25_upscale_nodes = list(ltx25_upscale_graph.values())
-    assert required_ltx25_upscale_nodes() <= {
-        node["class_type"] for node in ltx25_upscale_nodes
-    }
-    ltx25_upscale_loader = next(
-        node
-        for node in ltx25_upscale_nodes
-        if node["class_type"] == "LTXICLoRALoaderModelOnly"
-    )
-    assert ltx25_upscale_loader["inputs"]["lora_name"] == (
-        "ltx-2.5-22b-ic-lora-pixel-spatial-upscaler-x2-1.0.safetensors"
-    )
-    ltx25_upscale_unet = next(
-        node for node in ltx25_upscale_nodes if node["class_type"] == "UNETLoader"
-    )
-    assert ltx25_upscale_unet["inputs"]["unet_name"] == (
-        "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
-    )
-    ltx25_upscale_latent = next(
-        node
-        for node in ltx25_upscale_nodes
-        if node["class_type"] == "EmptyLTXVLatentVideo"
-    )
-    assert ltx25_upscale_latent["inputs"]["width"] == 1728
-    assert ltx25_upscale_latent["inputs"]["height"] == 960
-    assert any(node["class_type"] == "LTXVCropGuides" for node in ltx25_upscale_nodes)
-    assert COMFY_UPSCALE_OPTIONS == {SEEDVR2_UPSCALE, LTX25_UPSCALE}
-    assert UVICORN_WEBSOCKET_OPTIONS == {
-        "ws": "wsproto",
-        "ws_per_message_deflate": False,
-    }
-    assert POSTPROCESS_OPTIONS == [
-        SEEDVR2_UPSCALE,
-        LTX25_UPSCALE,
-        SWIFTVR_UPSCALE,
-        "48 fps interpolation",
-    ]
-    assert GENERATION_POSTPROCESS_OPTIONS == [
-        "None",
-        SEEDVR2_UPSCALE,
-        LTX25_UPSCALE,
-        SWIFTVR_UPSCALE,
-    ]
-
-    assert resolution_choice_values("9:16 · 768×1344", "large")[:2] == (768, 1344)
-    assert resolution_choice_values("1:1 · 1024×1024", "large")[:2] == (1024, 1024)
-    assert set(RESOLUTION_TIERS) == {"draft", "fast", "large"}
-    assert preset_values("Quality")[0] == 20
-    assert preset_values("Balanced")[0] == 18
-    assert preset_values("Fast")[0] == 15
-    assert all(len(values) == 11 for values in SAMPLING_PRESETS.values())
-    assert preset_values("Fast")[6:11] == (
-        "1 MP",
-        LIGHTX2V_4STEP_TURBO,
-        "SLA",
-        "Fast",
-        2,
-    )
-    assert preset_values("Balanced")[6:11] == (
-        "2 MP",
-        LARRY_TURBO,
-        "SLA",
-        "Balanced",
-        2,
-    )
-    assert preset_values("Quality")[6:11] == (
-        "4 MP",
-        LIGHTX2V_8STEP_TURBO,
-        "SLA",
-        "Quality",
-        2,
-    )
-    for preset_name, encoder in SAMPLING_PRESET_TEXT_ENCODERS.items():
-        preset_defaults = preset_values(preset_name)
-        assert preset_defaults[11] == encoder
-        offload_update = preset_defaults[12]
-        assert offload_update["value"] is (encoder == "BF16")
-        assert offload_update["interactive"] is (encoder != "BF16")
-    assert preset_values("Fast", "Turbo")[0] == 4
-    assert preset_values("Balanced", "Turbo")[0] == 6
-    assert preset_values("Quality", "Turbo")[0] == 8
-    assert preset_values("unknown") == preset_values("Balanced")
-    assert UI_DEFAULTS["steps"] == turbo_steps_for(UI_DEFAULTS["turbo_variant"])
-    assert UI_DEFAULTS["width"] == 864 and UI_DEFAULTS["height"] == 480
-    assert UI_DEFAULTS["reuse_unchanged_inputs"] is True
-    assert 'api_name="/generate_video"' in api_guide()
-
-    original_input_dir = globals()["INPUT_DIR"]
-    with tempfile.TemporaryDirectory() as staging_temp:
-        staging_root = Path(staging_temp)
-        staged_input_root = staging_root / "comfy-input"
-        source = staging_root / "reference.png"
-        source.write_bytes(b"same input bytes")
-        globals()["INPUT_DIR"] = staged_input_root
-        try:
-            with unittest.mock.patch("builtins.print") as cache_print:
-                cached_first = stage_file(str(source), "reference_images", reuse=True)
-                cached_second = stage_file(str(source), "reference_images", reuse=True)
-            assert cached_first == cached_second
-            assert cache_print.call_count == 2
-            assert "Stored" in cache_print.call_args_list[0].args[0]
-            assert "Reusing" in cache_print.call_args_list[1].args[0]
-            assert (
-                staged_input_root / cached_first
-            ).read_bytes() == b"same input bytes"
-
-            (staged_input_root / cached_first).write_bytes(b"")
-            with unittest.mock.patch("builtins.print") as repair_print:
-                repaired = stage_file(str(source), "reference_images", reuse=True)
-            assert repaired == cached_first
-            assert "Stored" in repair_print.call_args.args[0]
-            assert (staged_input_root / repaired).read_bytes() == b"same input bytes"
-
-            uncached_first = stage_file(str(source), "reference_images", reuse=False)
-            uncached_second = stage_file(str(source), "reference_images", reuse=False)
-            assert uncached_first != uncached_second
-
-            source.write_bytes(b"changed input bytes")
-            with unittest.mock.patch("builtins.print"):
-                changed = stage_file(str(source), "reference_images", reuse=True)
-            assert changed != cached_first
-
-            video_source = staging_root / "reference.mov"
-            video_source.write_bytes(b"video input bytes")
-
-            def fake_ffmpeg(command: list[str], **_kwargs: Any):
-                Path(command[-1]).write_bytes(b"transcoded video")
-                return unittest.mock.Mock(returncode=0, stderr="")
-
-            with (
-                unittest.mock.patch("subprocess.run", side_effect=fake_ffmpeg) as run,
-                unittest.mock.patch("builtins.print"),
-            ):
-                video_first = stage_file(
-                    str(video_source),
-                    "reference_videos",
-                    transcode_video=True,
-                    reuse=True,
-                )
-                video_second = stage_file(
-                    str(video_source),
-                    "reference_videos",
-                    transcode_video=True,
-                    reuse=True,
-                )
-            assert video_first == video_second
-            assert run.call_count == 1
-            assert (staged_input_root / video_first).read_bytes() == b"transcoded video"
-
-            failed_video = staging_root / "failed.mov"
-            failed_video.write_bytes(b"failed video bytes")
-            with unittest.mock.patch(
-                "subprocess.run", side_effect=OSError("ffmpeg unavailable")
-            ):
-                try:
-                    stage_file(
-                        str(failed_video),
-                        "reference_videos",
-                        transcode_video=True,
-                        reuse=True,
-                    )
-                except H3Error as exc:
-                    assert "Could not stage input file" in str(exc)
-                else:
-                    raise AssertionError("Expected failed video staging to raise")
-            video_cache_dir = staged_input_root / "h3_gradio" / "reference_videos"
-            assert not list(video_cache_dir.glob(".*.tmp.mp4"))
-        finally:
-            globals()["INPUT_DIR"] = original_input_dir
-    captured_free_call: dict[str, Any] = {}
-    original_api_post = globals()["api_post"]
-    original_backend_status = globals()["backend_status"]
-
-    def fake_api_post(path: str, **kwargs: Any) -> None:
-        captured_free_call["path"] = path
-        captured_free_call["kwargs"] = kwargs
-
-    globals()["api_post"] = fake_api_post
-    globals()["backend_status"] = lambda: "refreshed backend"
-    try:
-        unload_comfy_models()
-        unload_message, unload_status = unload_all_models()
-    finally:
-        globals()["api_post"] = original_api_post
-        globals()["backend_status"] = original_backend_status
-    assert captured_free_call == {
-        "path": "/free",
-        "kwargs": {"json": {"unload_models": True, "free_memory": True}},
-    }
-    assert unload_message == "All models unloaded and cached VRAM released."
-    assert unload_status == "refreshed backend"
-    captured_api_call: dict[str, Any] = {}
-    original_generate = globals()["generate"]
-    original_download_url = globals()["absolute_video_download_url"]
-
-    def fake_generate(*args: Any, **kwargs: Any):
-        captured_api_call["args"] = args
-        captured_api_call["kwargs"] = kwargs
-        yield "video.mp4", "complete"
-
-    def fake_download_url(video: str, _request: Any) -> str:
-        return f"https://example.test/downloads/{video}"
-
-    globals()["generate"] = fake_generate
-    globals()["absolute_video_download_url"] = fake_download_url
-    try:
-        assert list(generate_with_ui_defaults("API prompt", object())) == [
-            ("https://example.test/downloads/video.mp4", "complete")
-        ]
-    finally:
-        globals()["generate"] = original_generate
-        globals()["absolute_video_download_url"] = original_download_url
-    assert captured_api_call["args"] == ()
-    api_kwargs = captured_api_call["kwargs"]
-    assert api_kwargs["prompt"] == "API prompt"
-    assert api_kwargs["mode"] == "Text to video"
-    assert api_kwargs["model_profile"] == "Speed"
-    assert api_kwargs["turbo_variant"] == DEFAULT_TURBO
-    for key, expected in UI_DEFAULTS.items():
-        assert api_kwargs[key] == expected
-    assert all(api_kwargs[f"ref_image_{index}"] is None for index in range(1, 10))
-    assert all(api_kwargs[f"ref_video_{index}"] is None for index in range(1, 4))
-    assert all(api_kwargs[f"ref_audio_{index}"] is None for index in range(1, 4))
-    assert video_download_path(OUTPUT_DIR / "h3" / "result video.mp4") == (
-        "/downloads/comfy/h3/result%20video.mp4"
-    )
-    original_output_dir = globals()["OUTPUT_DIR"]
-    original_outputs_dir = globals()["OUTPUTS_DIR"]
-    original_thumbnails_dir = globals()["GALLERY_THUMBNAILS_DIR"]
-    original_gallery_thumbnail = globals()["gallery_thumbnail"]
-    original_gallery_video_resolution = globals()["gallery_video_resolution"]
-    with tempfile.TemporaryDirectory() as gallery_temp:
-        gallery_root = Path(gallery_temp)
-        comfy_test_output = gallery_root / "comfy"
-        gradio_test_output = gallery_root / "gradio"
-        comfy_test_output.mkdir()
-        gradio_test_output.mkdir()
-        fallback_video = comfy_test_output / "fallback.mp4"
-        fallback_video.write_bytes(b"test")
-        globals()["OUTPUT_DIR"] = comfy_test_output
-        globals()["OUTPUTS_DIR"] = gradio_test_output
-        globals()["GALLERY_THUMBNAILS_DIR"] = gradio_test_output / ".thumbs"
-        globals()["gallery_thumbnail"] = lambda _video: None
-        globals()["gallery_video_resolution"] = lambda _video: (864, 480)
-        try:
-            h3_video = comfy_test_output / "h3" / "minimax.mp4"
-            ltx25_video = comfy_test_output / "ltx25" / "ltx.mp4"
-            h3_video.parent.mkdir()
-            ltx25_video.parent.mkdir()
-            h3_video.write_bytes(b"h3")
-            ltx25_video.write_bytes(b"ltx25")
-            assert len(gallery_video_paths(limit=1)) == 1
-            assert len(gallery_video_paths(limit=None)) == 3
-            discovered_families = {
-                generated_video_family(video) for video in gallery_video_paths()
-            }
-            assert {"MiniMax H3", "LTX-2.5", "Post-processed"} <= discovered_families
-            h3_video.unlink()
-            ltx25_video.unlink()
-            gallery_items, gallery_paths, gallery_detail = refresh_gallery()
-
-            class FakeGalleryRequest:
-                class request:
-                    base_url = "https://example.test/"
-
-            class FakeSelectEvent:
-                index = 0
-
-            gallery_play_url, gallery_download_link, selected_video = (
-                select_gallery_video(
-                    gallery_paths,
-                    FakeGalleryRequest(),  # type: ignore[arg-type]
-                    FakeSelectEvent(),  # type: ignore[arg-type]
-                )
-            )
-            unconfirmed_delete = delete_selected_gallery_video(selected_video, False)
-            fallback_exists_after_unconfirmed = fallback_video.exists()
-            confirmed_delete = delete_selected_gallery_video(selected_video, True)
-            fallback_exists_after_delete = fallback_video.exists()
-
-            empty_video_1 = comfy_test_output / "empty-1.mp4"
-            empty_video_2 = gradio_test_output / "empty-2.mp4"
-            empty_video_1.write_bytes(b"test")
-            empty_video_2.write_bytes(b"test")
-            unconfirmed_empty = empty_generated_gallery(None, False)
-            empty_exists_after_unconfirmed = (
-                empty_video_1.exists() and empty_video_2.exists()
-            )
-            confirmed_empty = empty_generated_gallery(None, True)
-            empty_exists_after_delete = empty_video_1.exists() or empty_video_2.exists()
-            try:
-                managed_video_path(gallery_root / "outside.mp4", require_file=False)
-                raise AssertionError("Unmanaged gallery path was accepted")
-            except H3Error:
-                pass
-        finally:
-            globals()["OUTPUT_DIR"] = original_output_dir
-            globals()["OUTPUTS_DIR"] = original_outputs_dir
-            globals()["GALLERY_THUMBNAILS_DIR"] = original_thumbnails_dir
-            globals()["gallery_thumbnail"] = original_gallery_thumbnail
-            globals()["gallery_video_resolution"] = original_gallery_video_resolution
-        assert len(gallery_items) == 1
-        assert "864×480" in gallery_items[0][1]
-        assert gallery_paths == [str(fallback_video)]
-        assert gallery_play_url == str(fallback_video)
-        assert selected_video == str(fallback_video)
-        assert gallery_download_link.endswith(
-            "/downloads/comfy/fallback.mp4?download=1)"
-        )
-        assert "**Resolution:** 864×480" in gallery_download_link
-        assert "1 generated video" in gallery_detail
-        assert "1 thumbnail" in gallery_detail
-        assert fallback_exists_after_unconfirmed is True
-        assert "Confirm permanent deletion" in unconfirmed_delete[2]
-        assert fallback_exists_after_delete is False
-        assert "Deleted `fallback.mp4`" in confirmed_delete[2]
-        assert empty_exists_after_unconfirmed is True
-        assert "Confirm permanent deletion" in unconfirmed_empty[2]
-        assert empty_exists_after_delete is False
-        assert "Deleted 2 generated videos" in confirmed_empty[2]
-    assert (
-        estimate_packed_tokens("Text to video", 1344, 768, 5)
-        >= AUTO_SOL_TOKEN_THRESHOLD
-    )
-    kitchen_policy = resolve_sol_policy(
-        "Kitchen", "Text to video", 608, 352, 2, None, None
-    )
-    assert kitchen_policy[0] is False and kitchen_policy[2] == "forced Comfy Kitchen"
-    sage_policy = resolve_sol_policy("Sage 2", "Text to video", 608, 352, 2, None, None)
-    assert sage_policy[0] is False and sage_policy[2] == "forced Sage 2"
-    sla_policy = resolve_sol_policy("SLA", "Text to video", 608, 352, 2, None, None)
-    assert sla_policy[0] is False and sla_policy[2] == "forced SLA"
-    assert (
-        resolve_sol_policy("Auto", "Text to video", 608, 352, 2, None, None)[0] is False
-    )
-    assert (
-        resolve_sol_policy(
-            "Auto", "Text to video", 608, 352, 2, None, None, use_turbo=True
-        )[0]
-        is False
-    )
-    reference_turbo_sol = resolve_sol_policy(
-        "Auto", "Reference media", 608, 352, 2, None, None, use_turbo=True
-    )
-    assert reference_turbo_sol[0] is True
-    assert reference_turbo_sol[2] == "Auto Turbo: reference mode"
-    turbo_sol_enabled, _, turbo_sol_reason = resolve_sol_policy(
-        "Auto", "Text to video", 1344, 768, 5, None, None, use_turbo=True
-    )
-    assert turbo_sol_enabled is True
-    assert turbo_sol_reason.startswith("Auto Turbo:")
-    assert validate_resolution(865, 481) == (864, 480)
-    assert validate_resolution(2048, 2048) == (2048, 2048)
-    assert generation_resolution(
-        1344,
-        768,
-        result_format="Audio",
-        latent_upscale=False,
-        mode="Text to video",
-        first_image=None,
-    ) == (32, 32)
-    assert generation_resolution(
-        865,
-        481,
-        result_format="Video",
-        latent_upscale=True,
-        mode="Text to video",
-        first_image=None,
-    ) == (896, 512)
-    auto_landscape = resolution_for_aspect_ratio(4096, 2304)
-    auto_portrait = resolution_for_aspect_ratio(2304, 4096)
-    assert resolution_for_aspect_ratio(1024, 1024) == (992, 992)
-    assert auto_landscape[0] % 32 == 0 and auto_landscape[1] % 32 == 0
-    assert auto_portrait[0] % 32 == 0 and auto_portrait[1] % 32 == 0
-    assert auto_landscape[0] * auto_landscape[1] < 4_000_000
-    assert auto_portrait[0] * auto_portrait[1] < 4_000_000
-    assert abs(auto_landscape[0] / auto_landscape[1] - 16 / 9) < 0.1
-    assert abs(auto_portrait[0] / auto_portrait[1] - 9 / 16) < 0.1
-    one_mp_landscape = resolution_for_aspect_ratio(
-        4096, 2304, pixel_cap=auto_resolution_pixel_cap("1 MP")
-    )
-    two_mp_landscape = resolution_for_aspect_ratio(
-        4096, 2304, pixel_cap=auto_resolution_pixel_cap("2 MP")
-    )
-    assert one_mp_landscape[0] * one_mp_landscape[1] < 1_000_000
-    assert two_mp_landscape[0] * two_mp_landscape[1] < 2_000_000
-    assert auto_resolution_pixel_cap("4 MP") == 4_000_000 - 1
-    assert auto_resolution_pixel_cap("8 MP") == 8_000_000 - 1
-    assert UI_DEFAULTS["model_profile"] == "Speed"
-    assert UI_DEFAULTS["text_encoder"] == "NVFP4 / AWQ"
-    assert UI_DEFAULTS["stage_model_offload"] is False
-    fast_defaults = preset_values("Fast")
-    assert DEFAULT_AUTO_RESOLUTION_MEGAPIXELS == fast_defaults[6]
-    assert UI_DEFAULTS["turbo_variant"] == fast_defaults[7]
-    assert UI_DEFAULTS["attention_mode"] == fast_defaults[8]
-    assert UI_DEFAULTS["sla_preset"] == fast_defaults[9]
-    assert UI_DEFAULTS["latent_upscale_refine_steps"] == fast_defaults[10]
-    assert resolution_for_aspect_ratio(4096, 2304, preserve_native=True) == (4096, 2304)
-    assert resolution_for_aspect_ratio(
-        4010, 2250, preserve_native=True, alignment=64
-    ) == (4032, 2240)
-    assert resolution_control_updates(865, 481, True, "Video")[0:2] == (896, 512)
-    assert "32×32" in resolution_control_updates(1344, 768, False, "Audio")[2]
-    with tempfile.TemporaryDirectory() as resolution_temp:
-        from PIL import Image
-
-        native_start = Path(resolution_temp) / "native-start.png"
-        Image.new("RGB", (2048, 1152)).save(native_start)
-        assert generation_resolution(
-            864,
-            480,
-            result_format="Image",
-            latent_upscale=False,
-            mode="First / last frame",
-            first_image=str(native_start),
-        ) == (2048, 1152)
-        assert auto_resolution_from_start_frame(
-            str(native_start), 864, 480, "Image", False
-        )[:2] == (2048, 1152)
-        one_mp_auto = auto_resolution_from_start_frame(
-            str(native_start), 864, 480, "Video", False, "1 MP"
-        )[:2]
-        assert one_mp_auto[0] * one_mp_auto[1] < 1_000_000
-    unchanged = auto_resolution_from_start_frame(None, 640, 480)
-    assert unchanged[:2] == (640, 480)
-    assert frame_length(5) == 124
-    assert frame_length(15) == 362
-    assert websocket_url("client id").startswith("ws://")
-    assert "clientId=client%20id" in websocket_url("client id")
-    assert node_stage("SamplerCustomAdvanced") == "Generating video and audio"
-    assert node_stage("VAEDecode") == "Decoding output"
-    assert node_stage(H3_NVENC_SAVE_NODE) == "Saving video with NVENC"
-    rendered_progress = progress_status(
-        "Generating video and audio",
-        started=time.monotonic(),
-        completed_nodes=7,
-        total_nodes=12,
-        step=2,
-        step_total=4,
-        configured_steps=4,
-    )
-    assert "Sampler step 2/4 (50%)" in rendered_progress
-    assert "Workflow nodes 7/12" in rendered_progress
-    expanded_progress = progress_status(
-        "Generating video and audio",
-        started=time.monotonic(),
-        step=3,
-        step_total=12,
-        configured_steps=6,
-    )
-    assert "Overall generation progress 3/12 (25%)" in expanded_progress
-    assert "Sampling schedule 6 steps (UI setting)" in expanded_progress
-    assert "Sampler step 3/12" not in expanded_progress
-
-    with unittest.mock.patch("builtins.print") as timing_print:
-        stage_timings = StageTimings("test job", 100.0, "Preparing request")
-        stage_timings.transition("Loading models", now=102.0)
-        stage_timings.transition("Loading models", now=103.0)
-        timing_summary = stage_timings.summary(now=105.5)
-        stage_timings.finish(now=106.0)
-    assert stage_timings.durations == {
-        "Preparing request": 2.0,
-        "Loading models": 3.5,
-    }
-    assert timing_summary == (
-        "Step times: Preparing request 2.0s · Loading models 3.5s"
-    )
-    assert timing_print.call_count == 3
-
-    class FakeProgressSocket:
-        def __init__(self) -> None:
-            self.messages = iter(
-                [
-                    json.dumps(
-                        {
-                            "type": "executing",
-                            "data": {"prompt_id": "test-job", "node": "1"},
-                        }
-                    ),
-                    json.dumps(
-                        {
-                            "type": "progress",
-                            "data": {
-                                "prompt_id": "test-job",
-                                "node": "1",
-                                "value": 3,
-                                "max": 4,
-                            },
-                        }
-                    ),
-                    json.dumps(
-                        {
-                            "type": "executing",
-                            "data": {"prompt_id": "test-job", "node": None},
-                        }
-                    ),
-                ]
-            )
-
-        def settimeout(self, _timeout: float) -> None:
-            pass
-
-        def recv(self) -> str:
-            return next(self.messages)
-
-    live_updates = list(
-        stream_comfy_progress(
-            FakeProgressSocket(),  # type: ignore[arg-type]
-            "test-job",
-            {"1": {"class_type": "SamplerCustomAdvanced", "inputs": {}}},
-            time.monotonic(),
-        )
-    )
-    assert live_updates[0][0] == "Generating video and audio"
-    assert live_updates[1][3:] == (3, 4)
-    turbo_defaults = generation_mode_defaults("Turbo")
-    assert DEFAULT_TURBO == LIGHTX2V_4STEP_TURBO
-    assert turbo_defaults[1]["value"] == 4
-    assert turbo_defaults[1]["interactive"] is True
-    assert turbo_defaults[2:] == ("simple", "Spectrum", "SLA")
-    larry_defaults = generation_mode_defaults("Turbo", LARRY_TURBO)
-    assert larry_defaults[1]["value"] == 6
-    assert larry_defaults[1]["interactive"] is True
-    assert larry_defaults[2:] == ("simple", "Spectrum", "SLA")
-    lightx_defaults = generation_mode_defaults("Turbo", LIGHTX2V_4STEP_TURBO)
-    assert lightx_defaults[1]["value"] == 4
-    assert lightx_defaults[1]["interactive"] is True
-    assert lightx_defaults[2:] == ("simple", "Spectrum", "SLA")
-    lightx_8step_defaults = generation_mode_defaults("Turbo", LIGHTX2V_8STEP_TURBO)
-    assert lightx_8step_defaults[1]["value"] == 8
-    assert lightx_8step_defaults[1]["interactive"] is True
-    assert lightx_8step_defaults[2:] == ("simple", "Spectrum", "SLA")
-    normal_defaults = generation_mode_defaults("Normal")
-    assert normal_defaults[1]["value"] == 18
-    assert normal_defaults[1]["interactive"] is True
-    assert normal_defaults[2:] == ("simple", "Spectrum", "SLA")
-    assert resolve_cache_policy("Off", use_turbo=True) == ("Off", None)
-    turbo_spectrum, turbo_spectrum_note = resolve_cache_policy(
-        "Spectrum", use_turbo=True
-    )
-    assert turbo_spectrum == "Spectrum" and turbo_spectrum_note
-    turbo_easycache, turbo_easycache_note = resolve_cache_policy(
-        "EasyCache", use_turbo=True
-    )
-    assert turbo_easycache == "EasyCache" and turbo_easycache_note
-    turbo_firstblock, turbo_firstblock_note = resolve_cache_policy(
-        "FirstBlockCache", use_turbo=True
-    )
-    assert turbo_firstblock == "FirstBlockCache" and turbo_firstblock_note
-    assert SERVER_DENSE_ATTENTION_BACKEND == "comfy-kitchen"
-
-    quality_turbo_graph = build_fl2va_graph(
-        prompt="test",
-        first_image=None,
-        last_image=None,
-        width=864,
-        height=480,
-        duration=5,
-        steps=4,
-        seed=2,
-        scheduler="simple",
-        turbo_lora_name="minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
-        turbo_variant=LIGHTX2V_4STEP_TURBO,
-        turbo_strength=1.0,
-        use_sol=False,
-        sol_tau=1.0,
-        sol_thresh_type="diag",
-        sol_exact_mode="off",
-        sol_dense_steps=1,
-        sol_step_off=0.0,
-        sol_sink_tokens=0,
-        cache_mode="Spectrum",
-        fbcache_preset="Fast",
-        fbcache_threshold=0.10,
-        fbcache_start=0.10,
-        fbcache_end=0.95,
-        fbcache_max_hits=2,
-        fbcache_temporal_guard=True,
-        easycache_threshold=0.10,
-        easycache_start=0.15,
-        easycache_end=0.85,
-        easycache_verbose=False,
-        model_name=fake.profile("quality").fl2va,
-        models=fake,
-        available_nodes=available,
-        use_int8_vae=True,
-    )
-    quality_unets = [
-        node
-        for node in quality_turbo_graph.values()
-        if node["class_type"] == "UNETLoader"
-    ]
-    assert len(quality_unets) == 1
-    assert quality_unets[0]["inputs"]["unet_name"] == fake.profile("quality").fl2va
-    quality_video_vae = next(
-        node
-        for node in quality_turbo_graph.values()
-        if node["class_type"] == "VAELoader"
-        and node["inputs"]["vae_name"] == fake.video_vae_int8
-    )
-    assert quality_video_vae["inputs"]["vae_name"] == fake.video_vae_int8
-    turbo_nodes = [
-        node
-        for node in quality_turbo_graph.values()
-        if node["class_type"] == LIGHTX2V_BYPASS_LORA_NODE
-    ]
-    assert len(turbo_nodes) == 1
-    assert turbo_nodes[0]["inputs"]["strength"] == 1.0
-    assert turbo_nodes[0]["inputs"]["lora_name"].endswith(
-        "v1.2_768p_comfyui_bf16.safetensors"
-    )
-    quality_fused_id = next(
-        node_id
-        for node_id, node in quality_turbo_graph.items()
-        if node["class_type"] == FUSED_MODULATION_NODE
-    )
-    quality_turbo_id = next(
-        node_id
-        for node_id, node in quality_turbo_graph.items()
-        if node["class_type"] == LIGHTX2V_BYPASS_LORA_NODE
-    )
-    assert quality_turbo_graph[quality_fused_id]["inputs"]["model"] == [
-        quality_turbo_id,
-        0,
-    ]
-    chunk_nodes = [
-        node
-        for node in quality_turbo_graph.values()
-        if node["class_type"] == CHUNK_FEED_FORWARD_NODE
-    ]
-    assert len(chunk_nodes) == 1
-    assert chunk_nodes[0]["inputs"]["chunks"] == 2
-    assert chunk_nodes[0]["inputs"]["min_tokens"] == AUTO_SOL_TOKEN_THRESHOLD
-    lightx_spectrum_id = next(
-        node_id
-        for node_id, node in quality_turbo_graph.items()
-        if node["class_type"] == "SpectrumApplyMiniMaxH3"
-    )
-    lightx_chunk_id = next(
-        node_id
-        for node_id, node in quality_turbo_graph.items()
-        if node["class_type"] == CHUNK_FEED_FORWARD_NODE
-    )
-    assert quality_turbo_graph[lightx_spectrum_id]["inputs"]["model"] == [
-        lightx_chunk_id,
-        0,
-    ]
-    assert (
-        quality_turbo_graph[lightx_spectrum_id]["inputs"]["offline_archive_storage"]
-        == "system_ram"
-    )
-    shift_id = next(
-        node_id
-        for node_id, node in quality_turbo_graph.items()
-        if node["class_type"] == H3_SIGMA_SHIFT_NODE
-    )
-    assert quality_turbo_graph[shift_id]["inputs"] == {
-        "model": [lightx_spectrum_id, 0],
-        "shift_video": 6.0,
-        "shift_audio": 3.0,
-    }
-    quality_sampler = next(
-        node
-        for node in quality_turbo_graph.values()
-        if node["class_type"] == CORE_SAMPLER_NODE
-    )
-    assert quality_sampler["inputs"]["sampler_name"] == "euler"
-    assert not any(
-        node["class_type"] == LARRY_TURBO_SAMPLER_NODE
-        for node in quality_turbo_graph.values()
-    )
-
-    larry_graph = Graph()
-    larry_model, _, larry_video_vae, larry_audio_vae = add_model_stack(
-        larry_graph,
-        fake.profile("speed").fl2va,
-        fake,
-        turbo_lora_name=fake.larry_turbo_lora,
-        turbo_variant=LARRY_TURBO,
-        turbo_strength=1.0,
-        use_sol=False,
-        sol_tau=1.0,
-        sol_thresh_type="diag",
-        sol_exact_mode="off",
-        sol_dense_steps=1,
-        sol_step_off=0.0,
-        sol_sink_tokens=0,
-        cache_mode="Spectrum",
-        fbcache_preset="Fast",
-        fbcache_threshold=0.10,
-        fbcache_start=0.10,
-        fbcache_end=0.95,
-        fbcache_max_hits=2,
-        fbcache_temporal_guard=True,
-        easycache_threshold=0.10,
-        easycache_start=0.15,
-        easycache_end=0.85,
-        easycache_verbose=False,
-        available_nodes=available,
-    )
-    finish_sampling(
-        larry_graph,
-        model_ref=larry_model,
-        conditioning_ref=["conditioning", 0],
-        latent_ref=["latent", 0],
-        video_vae_ref=larry_video_vae,
-        audio_vae_ref=larry_audio_vae,
-        seed=3,
-        steps=6,
-        scheduler="simple",
-        turbo_variant=LARRY_TURBO,
-        filename_prefix="h3/larry_test",
-    )
-    larry_loader = next(
-        node
-        for node in larry_graph.nodes.values()
-        if node["class_type"] == LARRY_TURBO_LORA_NODE
-    )
-    assert larry_loader["inputs"]["strength"] == 1.0
-    assert larry_loader["inputs"]["low_vram"] is False
-    larry_loader_id = next(
-        node_id
-        for node_id, node in larry_graph.nodes.items()
-        if node["class_type"] == LARRY_TURBO_LORA_NODE
-    )
-    larry_spectrum_id = next(
-        node_id
-        for node_id, node in larry_graph.nodes.items()
-        if node["class_type"] == "SpectrumApplyMiniMaxH3"
-    )
-    assert larry_graph.nodes[larry_spectrum_id]["inputs"]["model"] == [
-        larry_loader_id,
-        0,
-    ]
-    assert larry_model == [larry_spectrum_id, 0]
-    assert (
-        larry_graph.nodes[larry_spectrum_id]["inputs"]["offline_archive_storage"]
-        == "system_ram"
-    )
-    assert FUSED_MODULATION_NODE not in {
-        node["class_type"] for node in larry_graph.nodes.values()
-    }
-    assert FUSED_MODULATION_NODE not in turbo_required_nodes(LARRY_TURBO)
-    assert FUSED_MODULATION_NODE in turbo_required_nodes(LIGHTX2V_4STEP_TURBO)
-    assert FUSED_MODULATION_NODE in turbo_required_nodes(LIGHTX2V_8STEP_TURBO)
-    assert H3_SIGMA_SHIFT_NODE in turbo_required_nodes(
-        LIGHTX2V_4STEP_TURBO, fake.turbo_lora
-    )
-    assert H3_SIGMA_SHIFT_NODE not in turbo_required_nodes(
-        LIGHTX2V_4STEP_TURBO, fake.turbo_ref_lora
-    )
-    assert H3_SIGMA_SHIFT_NODE in turbo_required_nodes(
-        LIGHTX2V_8STEP_TURBO, fake.turbo_8step_lora
-    )
-    assert turbo_sampler_name(LIGHTX2V_4STEP_TURBO, fake.turbo_lora) == "euler"
-    assert turbo_sampler_name(LIGHTX2V_4STEP_TURBO, fake.turbo_ref_lora) == "euler"
-    assert turbo_sampler_name(LIGHTX2V_8STEP_TURBO, fake.turbo_8step_lora) == "euler"
-    assert turbo_sampler_name(LIGHTX2V_8STEP_TURBO, None) == "res_multistep"
-    assert turbo_uses_custom_nodes(LARRY_TURBO) is True
-    assert turbo_uses_custom_nodes(LIGHTX2V_4STEP_TURBO) is False
-    assert turbo_uses_custom_nodes(LIGHTX2V_8STEP_TURBO) is False
-    assert any(
-        node["class_type"] == LARRY_TURBO_SAMPLER_NODE
-        for node in larry_graph.nodes.values()
-    )
-    assert not any(
-        node["class_type"] == CORE_SAMPLER_NODE for node in larry_graph.nodes.values()
-    )
-
-    def turbo_route_graph(profile_name: str, variant: str) -> Graph:
-        route_graph = Graph()
-        profile = fake.profile(profile_name)
-        add_model_stack(
-            route_graph,
-            profile.fl2va,
-            fake,
-            turbo_lora_name=fake.turbo_lora_for("Text to video", variant),
-            turbo_variant=variant,
-            turbo_strength=turbo_strength_for(variant),
-            use_sol=False,
-            sol_tau=1.0,
-            sol_thresh_type="diag",
-            sol_exact_mode="off",
-            sol_dense_steps=1,
-            sol_step_off=0.0,
-            sol_sink_tokens=0,
-            cache_mode="Off",
-            fbcache_preset="Fast",
-            fbcache_threshold=0.10,
-            fbcache_start=0.10,
-            fbcache_end=0.95,
-            fbcache_max_hits=2,
-            fbcache_temporal_guard=True,
-            easycache_threshold=0.10,
-            easycache_start=0.15,
-            easycache_end=0.85,
-            easycache_verbose=False,
-            available_nodes=available,
-        )
-        return route_graph
-
-    for profile_name in ("speed", "quality", "original"):
-        larry_route = turbo_route_graph(profile_name, LARRY_TURBO)
-        larry_route_loader = next(
-            node
-            for node in larry_route.nodes.values()
-            if node["class_type"] == LARRY_TURBO_LORA_NODE
-        )
-        assert larry_route_loader["inputs"]["low_vram"] is False
-
-        for lightx_variant in (
-            LIGHTX2V_4STEP_TURBO,
-            LIGHTX2V_8STEP_TURBO,
-        ):
-            lightx_route = turbo_route_graph(profile_name, lightx_variant)
-            route_classes = {node["class_type"] for node in lightx_route.nodes.values()}
-            assert LIGHTX2V_BYPASS_LORA_NODE in route_classes
-            assert CORE_LORA_LOADER_NODE not in route_classes
-            assert FUSED_MODULATION_NODE in route_classes
-            if lightx_variant == LIGHTX2V_8STEP_TURBO:
-                shift_node = next(
-                    node
-                    for node in lightx_route.nodes.values()
-                    if node["class_type"] == H3_SIGMA_SHIFT_NODE
-                )
-                assert shift_node["inputs"]["shift_video"] == 6.0
-                assert shift_node["inputs"]["shift_audio"] == 3.0
-
-    assert LIGHTX2V_BYPASS_LORA_NODE in turbo_required_nodes(LIGHTX2V_4STEP_TURBO)
-    assert CORE_LORA_LOADER_NODE not in turbo_required_nodes(LIGHTX2V_4STEP_TURBO)
-
-    ref_turbo_graph = Graph()
-    add_model_stack(
-        ref_turbo_graph,
-        fake.profile("quality").ref2va,
-        fake,
-        turbo_lora_name=fake.turbo_ref_lora,
-        turbo_variant=LIGHTX2V_4STEP_TURBO,
-        turbo_strength=1.0,
-        use_sol=False,
-        sol_tau=1.0,
-        sol_thresh_type="diag",
-        sol_exact_mode="off",
-        sol_dense_steps=1,
-        sol_step_off=0.0,
-        sol_sink_tokens=0,
-        cache_mode="EasyCache",
-        fbcache_preset="Fast",
-        fbcache_threshold=0.10,
-        fbcache_start=0.10,
-        fbcache_end=0.95,
-        fbcache_max_hits=2,
-        fbcache_temporal_guard=True,
-        easycache_threshold=0.10,
-        easycache_start=0.15,
-        easycache_end=0.85,
-        easycache_verbose=False,
-        available_nodes=available,
-    )
-    ref_unet = next(
-        node
-        for node in ref_turbo_graph.nodes.values()
-        if node["class_type"] == "UNETLoader"
-    )
-    ref_lora = next(
-        node
-        for node in ref_turbo_graph.nodes.values()
-        if node["class_type"] == LIGHTX2V_BYPASS_LORA_NODE
-    )
-    assert ref_unet["inputs"]["unet_name"] == fake.profile("quality").ref2va
-    assert ref_lora["inputs"]["lora_name"] == fake.turbo_ref_lora
-    assert ref_lora["inputs"]["strength"] == 1.0
-    assert H3_SIGMA_SHIFT_NODE not in {
-        node["class_type"] for node in ref_turbo_graph.nodes.values()
-    }
-    ref_easycache = next(
-        node
-        for node in ref_turbo_graph.nodes.values()
-        if node["class_type"] == "EasyCache"
-    )
-    assert ref_easycache["inputs"]["reuse_threshold"] == 0.10
-
-    sched_nodes = [
-        node
-        for node in quality_turbo_graph.values()
-        if node["class_type"] == "BasicScheduler"
-    ]
-    assert len(sched_nodes) == 1
-    assert sched_nodes[0]["inputs"]["steps"] == 4
-    assert sched_nodes[0]["inputs"]["scheduler"] == "simple"
-    print(
-        f"Selftest OK: {len(graph)} nodes, 5s=124 frames, "
-        f"15s=362 frames, tiered resolution presets valid, Sol exact valid, "
-        f"Sol Auto/Turbo policy valid, Spectrum default + Sol/ConvRot order valid, "
-        f"zero-copy Sol + FirstBlockCache composition valid, "
-        f"LightX fused modulation + Larry compatibility + ConvRot FFN chunking valid, "
-        f"Spectrum v0.2.23 legacy Turbo composition + block-cache guard valid, "
-        f"MMH3 Split Upscale controls + three-node graph contract valid, "
-        f"selectable Larry/LightX2V Turbo on "
-        f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, "
-        f"video/image/audio result branches + image selection saving valid, "
-        f"H3 NVENC save wiring valid, prompt API download URL valid, "
-        f"gallery resolution/fallback/deletion guards + VRAM unload valid, "
-        f"10 official LTX-2.5 workflow mappings valid, MiniMax Music 3 graph valid, "
-        f"/comfyui proxy rewrites valid"
-    )
+    # Alias __main__ so mocks target this exact application instance.
+    sys.modules.setdefault("gradio_app", sys.modules[__name__])
+    from tests.legacy_selftest import selftest as run_contracts
+    run_contracts()
 
 
 def main() -> None:

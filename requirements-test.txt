@@ -1,0 +1,7 @@
+# Lightweight UI, integration and browser test environment; no GPU packages.
+gradio==6.24.0
+aiohttp
+requests
+websocket-client
+openai==3.8.0
+playwright==1.62.0

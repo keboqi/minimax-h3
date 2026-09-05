@@ -110,7 +110,7 @@ class UiContractTests(unittest.TestCase):
             for component in self.config["components"]
         }
         base_model = controls["Base model"]
-        sampling_preset = controls["Sampling preset"]
+        sampling_preset = controls["Generation preset"]
 
         restore = next(
             dependency
@@ -127,29 +127,34 @@ class UiContractTests(unittest.TestCase):
             and base_model["id"] in dependency["inputs"]
         )
         self.assertIn(sampling_preset["id"], save["inputs"])
+        # Presets save after their atomic transition, never from a change cascade.
         self.assertTrue(
-            all(event_name == "input" for _component_id, event_name in save["targets"])
+            save["trigger_after"] is not None
+            or all(
+                event_name == "input" for _component_id, event_name in save["targets"]
+            )
         )
 
-    def test_settings_summary_updates_bypass_the_queue(self) -> None:
+    def test_settings_transition_owns_summary_and_bypasses_gpu_queue(self) -> None:
         controls = {
-            component.get("props", {}).get("label"): component
-            for component in self.config["components"]
+            c.get("props", {}).get("label"): c for c in self.config["components"]
         }
-        base_model = controls["Base model"]
-        settings_overview = next(
-            component
-            for component in self.config["components"]
-            if "h3-settings-summary"
-            in component.get("props", {}).get("elem_classes", [])
-        )
         summary = next(
-            dependency
-            for dependency in self.config["dependencies"]
-            if dependency["targets"] == [(base_model["id"], "change")]
-            and dependency["outputs"] == [settings_overview["id"]]
+            c
+            for c in self.config["components"]
+            if "h3-settings-summary" in c.get("props", {}).get("elem_classes", [])
         )
-        self.assertFalse(summary["queue"])
+        dependency = next(
+            d
+            for d in self.config["dependencies"]
+            if (controls["Base model"]["id"], "input") in d["targets"]
+        )
+        self.assertIn(summary["id"], dependency["outputs"])
+        self.assertNotIn(
+            (controls["Generation preset"]["id"], "change"), dependency["targets"]
+        )
+        fn = self.demo.fns[dependency["id"]]
+        self.assertEqual(fn.concurrency_id, "h3-settings")
 
     def test_resolution_presets_apply_latent_alignment_atomically(self) -> None:
         self.assertEqual(
@@ -255,7 +260,9 @@ class UiContractTests(unittest.TestCase):
         self.assertLess(performance, finishing)
         self.assertLess(finishing, summary)
         self.assertLess(summary, action)
-        self.assertFalse(direct_components[essentials].get("props", {}).get("open", True))
+        self.assertFalse(
+            direct_components[essentials].get("props", {}).get("open", True)
+        )
         html_values = [
             component.get("props", {}).get("value", "")
             for component in direct_components
@@ -355,10 +362,12 @@ class UiContractTests(unittest.TestCase):
         )
         self.assertIn('<details class="h3-setup-disclosure">', summary)
         self.assertNotIn("<details open", summary)
-        self.assertIn("View all settings", summary)
+        self.assertIn("Execution details", summary)
         self.assertIn('class="h3-setup-metrics"', summary)
         self.assertIn('class="h3-setup-pills"', summary)
-        self.assertIn("Ready to generate", summary)
+        self.assertIn("Next run", summary)
+        self.assertNotIn("Ready to generate", summary)
+        self.assertIn("Acceleration: Off", summary)
         self.assertIn("LightX2V v1.0 / 8-step 768p", summary)
         self.assertIn("Original &lt;unsafe&gt;", summary)
         self.assertNotIn("Original <unsafe>", summary)

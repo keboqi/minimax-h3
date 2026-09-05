@@ -3,17 +3,208 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, Callable, Sequence
 
 import gradio as gr
 
 
 @dataclass(frozen=True)
+class H3ViewServices:
+    RESULT_FORMATS: Sequence[str]
+    MODEL_PROFILE_CHOICES: Sequence[str]
+    H3_TEXT_ENCODER_CHOICES: Mapping[str, Any]
+    IMAGE_VAE_CHOICES: Sequence[str]
+    mode_help: Callable[..., Any]
+    PROMPT_WRITER_BACKENDS: Sequence[str]
+    DEFAULT_PROMPT_WRITER_BACKEND: str
+    LOCAL_PROMPT_BASE_MODELS: Mapping[str, Any]
+    DEFAULT_LOCAL_PROMPT_BASE_MODEL: str
+    GEMINI_PROMPT_MODELS: Sequence[str]
+    DEFAULT_GEMINI_PROMPT_MODEL: str
+    LIGHTNING_PROMPT_MODEL: str
+    reference_prompt_help: Callable[..., Any]
+    INPUT_IMAGE_UPSCALE_SLOTS: Sequence[str]
+    INPUT_IMAGE_FRAME_PRESETS: Mapping[str, Any]
+    DEFAULT_INPUT_IMAGE_FRAME_PRESET: str
+    SEEDVR2_MODEL_CHOICES: Mapping[str, Any]
+    compact_settings_summary: Callable[..., Any]
+    DEFAULT_LTX25_MODEL: str
+    generation_readiness_state: Callable[..., Any]
+    MIN_IMAGE_FRAMES: int
+    MAX_IMAGE_FRAMES: int
+    FAST_RESOLUTIONS: Mapping[str, Any]
+    DRAFT_RESOLUTIONS: Mapping[str, Any]
+    LARGE_RESOLUTIONS: Mapping[str, Any]
+    AUTO_RESOLUTION_MEGAPIXEL_PRESETS: Mapping[str, Any]
+    DEFAULT_AUTO_RESOLUTION_MEGAPIXELS: str
+    resolution_summary: Callable[..., Any]
+    MIN_VIDEO_BATCH_COUNT: int
+    MAX_VIDEO_BATCH_COUNT: int
+    DEFAULT_VIDEO_BATCH_COUNT: int
+    TURBO_SETTINGS: Mapping[str, Any]
+    SERVER_ATTENTION_BACKEND: str
+    AUTO_SOL_TOKEN_THRESHOLD: int
+    SERVER_DENSE_ATTENTION_BACKEND: str
+    SLA_PRESET_INPUTS: Mapping[str, Any]
+    H3_LATENT_UPSCALER_MODEL_CHOICES: Mapping[str, Any]
+    H3_LATENT_UPSCALE_METHODS: Sequence[str]
+    H3_LATENT_UPSCALE_SPLIT: str
+    GENERATION_POSTPROCESS_OPTIONS: Sequence[str]
+    UPSCALE_RESOLUTION_PRESETS: Mapping[str, Any]
+    DEFAULT_UPSCALE_RESOLUTION: str
+
+
+@dataclass(frozen=True)
 class H3View:
-    values: Mapping[str, Any]
+    settings_used: gr.HTML
+    restore_preset: gr.components.Component
+    sla_settings: gr.components.Component
+    sol_settings: gr.components.Component
+    sol_quality_settings: gr.components.Component
+    fbcache_settings: gr.components.Component
+    easycache_settings: gr.components.Component
+    finishing_section: gr.components.Component
+    attention_mode: gr.components.Component
+    audio_output: gr.components.Component
+    auto_megapixels: gr.components.Component
+    batch_count: gr.components.Component
+    cache_mode: gr.components.Component
+    draft_resolution: gr.components.Component
+    duration: gr.components.Component
+    easycache_end: gr.components.Component
+    easycache_start: gr.components.Component
+    easycache_threshold: gr.components.Component
+    easycache_verbose: gr.components.Component
+    enhance_prompt_button: gr.components.Component
+    enhance_prompt_status: gr.components.Component
+    fast_resolution: gr.components.Component
+    fbcache_end: gr.components.Component
+    fbcache_max_hits: gr.components.Component
+    fbcache_preset: gr.components.Component
+    fbcache_start: gr.components.Component
+    fbcache_temporal_guard: gr.components.Component
+    fbcache_threshold: gr.components.Component
+    first: gr.components.Component
+    frame_group: gr.components.Component
+    gemini_api_key: gr.components.Component
+    gemini_prompt_model: gr.components.Component
+    gemini_prompt_writer_group: gr.components.Component
+    generation_force_offload: gr.components.Component
+    generation_ltx25_note: gr.components.Component
+    generation_mode: gr.components.Component
+    generation_postprocess: gr.components.Component
+    generation_postprocess_settings: gr.components.Component
+    generation_readiness: gr.components.Component
+    generation_seedvr2_model: gr.components.Component
+    generation_split_seconds: gr.components.Component
+    generation_split_upscale: gr.components.Component
+    generation_upscale_resolution: gr.components.Component
+    height: gr.components.Component
+    help_text: gr.components.Component
+    image_clear_selection: gr.components.Component
+    image_frame_paths: gr.components.Component
+    image_frames: gr.components.Component
+    image_output: gr.components.Component
+    image_output_group: gr.components.Component
+    image_save_selected: gr.components.Component
+    image_save_status: gr.components.Component
+    image_saved_files: gr.components.Component
+    image_select_all: gr.components.Component
+    image_selection: gr.components.Component
+    image_vae: gr.components.Component
+    input_upscale_downloads: gr.components.Component
+    input_upscale_force_offload: gr.components.Component
+    input_upscale_frame_height: gr.components.Component
+    input_upscale_frame_preset: gr.components.Component
+    input_upscale_frame_width: gr.components.Component
+    input_upscale_model: gr.components.Component
+    input_upscale_run: gr.components.Component
+    input_upscale_seed: gr.components.Component
+    input_upscale_slots: gr.components.Component
+    input_upscale_status: gr.components.Component
+    large_resolution: gr.components.Component
+    last: gr.components.Component
+    latent_split_chunk_frames: gr.components.Component
+    latent_split_fade_ratio: gr.components.Component
+    latent_split_overlap_ratio: gr.components.Component
+    latent_split_seam_denoise: gr.components.Component
+    latent_split_seam_polish: gr.components.Component
+    latent_split_settings: gr.components.Component
+    latent_split_temporal_overlap_frames: gr.components.Component
+    latent_split_tile_height: gr.components.Component
+    latent_split_tile_width: gr.components.Component
+    latent_upscale: gr.components.Component
+    latent_upscale_method: gr.components.Component
+    latent_upscale_refine_steps: gr.components.Component
+    latent_upscale_settings: gr.components.Component
+    latent_upscaler_model: gr.components.Component
+    lightning_api_key: gr.components.Component
+    lightning_prompt_writer_group: gr.components.Component
+    local_prompt_base_model: gr.components.Component
+    local_prompt_greedy: gr.components.Component
+    local_prompt_max_tokens: gr.components.Component
+    local_prompt_seed: gr.components.Component
+    local_prompt_temperature: gr.components.Component
+    local_prompt_top_p: gr.components.Component
+    local_prompt_writer_group: gr.components.Component
+    mode: gr.components.Component
+    model_profile: gr.components.Component
+    output: gr.components.Component
+    output_2: gr.components.Component
+    output_3: gr.components.Component
+    output_4: gr.components.Component
+    preset: gr.components.Component
+    prompt: gr.components.Component
+    prompt_writer_backend: gr.components.Component
+    ref_audio_1: gr.components.Component
+    ref_audio_2: gr.components.Component
+    ref_audio_3: gr.components.Component
+    ref_image_1: gr.components.Component
+    ref_image_2: gr.components.Component
+    ref_image_3: gr.components.Component
+    ref_image_4: gr.components.Component
+    ref_image_5: gr.components.Component
+    ref_image_6: gr.components.Component
+    ref_image_7: gr.components.Component
+    ref_image_8: gr.components.Component
+    ref_image_9: gr.components.Component
+    ref_size: gr.components.Component
+    ref_video_1: gr.components.Component
+    ref_video_2: gr.components.Component
+    ref_video_3: gr.components.Component
+    reference_group: gr.components.Component
+    refresh: gr.components.Component
+    resolution_info: gr.components.Component
+    result_format: gr.components.Component
+    reuse_unchanged_inputs: gr.components.Component
+    run: gr.components.Component
+    scheduler: gr.components.Component
+    seed: gr.components.Component
+    settings_overview: gr.components.Component
+    sla_preset: gr.components.Component
+    sol_dense_steps: gr.components.Component
+    sol_exact_mode: gr.components.Component
+    sol_sink_tokens: gr.components.Component
+    sol_step_off: gr.components.Component
+    sol_tau: gr.components.Component
+    sol_thresh_type: gr.components.Component
+    stage_model_offload: gr.components.Component
+    status: gr.components.Component
+    steps: gr.components.Component
+    stop: gr.components.Component
+    text_encoder: gr.components.Component
+    turbo_variant: gr.components.Component
+    trt_vae_compile: gr.components.Component
+    use_int8_vae: gr.components.Component
+    use_trt_vae: gr.components.Component
+    width: gr.components.Component
+
+    @property
+    def values(self) -> Mapping[str, Any]:
+        return {name: getattr(self, name) for name in self.__dataclass_fields__}
 
     def unpack(self) -> tuple[Any, ...]:
-        return tuple(self.values[name] for name in H3_COMPONENT_ORDER)
+        return tuple(getattr(self, name) for name in H3_COMPONENT_ORDER)
 
 
 H3_COMPONENT_ORDER = (
@@ -157,7 +348,7 @@ H3_COMPONENT_ORDER = (
 def build_h3_view(
     generation_view: gr.Row,
     defaults: Mapping[str, Any],
-    services: Mapping[str, Any],
+    services: H3ViewServices,
 ) -> H3View:
     with generation_view:
         with gr.Column(scale=3, elem_classes=["h3-composer"]):
@@ -172,14 +363,14 @@ def build_h3_view(
                     label="Conditioning mode",
                 )
                 result_format = gr.Radio(
-                    services["RESULT_FORMATS"],
+                    services.RESULT_FORMATS,
                     value=defaults["result_format"],
                     label="Result format",
                     info="H3 always samples vision and audio; this selects what is decoded and shown.",
                 )
             with gr.Row():
                 model_profile = gr.Radio(
-                    services["MODEL_PROFILE_CHOICES"],
+                    services.MODEL_PROFILE_CHOICES,
                     value=defaults["model_profile"],
                     label="Base model",
                     info=(
@@ -194,9 +385,8 @@ def build_h3_view(
                     value=defaults["generation_mode"],
                     label="Generation",
                     info=(
-                        "Turbo uses the implementation selected in Generation settings. "
-                        "Reference media temporarily uses the corresponding FL2VA-trained "
-                        "LoRA and is experimental."
+                        "Turbo uses the implementation selected in Performance & sampling. "
+                        "LightX2V uses the matching reference adapter; Larry reference mode is experimental."
                     ),
                 )
             with gr.Accordion(
@@ -206,7 +396,7 @@ def build_h3_view(
             ):
                 with gr.Row():
                     text_encoder = gr.Dropdown(
-                        choices=list(services["H3_TEXT_ENCODER_CHOICES"]),
+                        choices=list(services.H3_TEXT_ENCODER_CHOICES),
                         value=defaults["text_encoder"],
                         label="Text encoder",
                         info=(
@@ -255,7 +445,7 @@ def build_h3_view(
                         scale=1,
                     )
                 image_vae = gr.Radio(
-                    services["IMAGE_VAE_CHOICES"],
+                    services.IMAGE_VAE_CHOICES,
                     value=defaults["image_vae"],
                     label="Image VAE",
                     visible=False,
@@ -265,7 +455,7 @@ def build_h3_view(
                         "and decodes one image from temporal latent slice 0."
                     ),
                 )
-            help_text = gr.Markdown(services["mode_help"]("Text to video"))
+            help_text = gr.Markdown(services.mode_help("Text to video"))
             prompt = gr.Textbox(
                 label="Prompt",
                 lines=12,
@@ -278,14 +468,14 @@ def build_h3_view(
                     "Lightning AI supports text and image enhancement."
                 )
                 prompt_writer_backend = gr.Radio(
-                    services["PROMPT_WRITER_BACKENDS"],
-                    value=services["DEFAULT_PROMPT_WRITER_BACKEND"],
+                    services.PROMPT_WRITER_BACKENDS,
+                    value=services.DEFAULT_PROMPT_WRITER_BACKEND,
                     label="Prompt writer",
                 )
                 with gr.Group(visible=False) as local_prompt_writer_group:
                     local_prompt_base_model = gr.Dropdown(
-                        choices=list(services["LOCAL_PROMPT_BASE_MODELS"]),
-                        value=services["DEFAULT_LOCAL_PROMPT_BASE_MODEL"],
+                        choices=list(services.LOCAL_PROMPT_BASE_MODELS),
+                        value=services.DEFAULT_LOCAL_PROMPT_BASE_MODEL,
                         label="Local base model",
                         info=(
                             "BF16 is the default full-precision checkpoint. FP8 is "
@@ -329,8 +519,8 @@ def build_h3_view(
                     )
                     with gr.Row():
                         gemini_prompt_model = gr.Dropdown(
-                            choices=list(services["GEMINI_PROMPT_MODELS"]),
-                            value=services["DEFAULT_GEMINI_PROMPT_MODEL"],
+                            choices=list(services.GEMINI_PROMPT_MODELS),
+                            value=services.DEFAULT_GEMINI_PROMPT_MODEL,
                             label="Gemini model",
                         )
                         gemini_api_key = gr.Textbox(
@@ -340,7 +530,7 @@ def build_h3_view(
                         )
                 with gr.Group(visible=False) as lightning_prompt_writer_group:
                     gr.Markdown(
-                        f"Uses `{services['LIGHTNING_PROMPT_MODEL']}` with the active text "
+                        f"Uses `{services.LIGHTNING_PROMPT_MODEL}` with the active text "
                         "and images plus `prompt.txt`. Video and audio references "
                         "require Gemini. Set `LIGHTNING_API_KEY` on the server or "
                         "enter a temporary key; the server does not store UI keys."
@@ -365,7 +555,7 @@ def build_h3_view(
                     last = gr.Image(type="filepath", label="Last frame")
             with gr.Group(visible=False) as reference_group:
                 gr.Markdown("### Reference media")
-                gr.Markdown(services["reference_prompt_help"]())
+                gr.Markdown(services.reference_prompt_help())
                 with gr.Accordion("Reference images · up to 9", open=True):
                     with gr.Row():
                         ref_image_1 = gr.Image(type="filepath", label="Picture 1")
@@ -406,13 +596,13 @@ def build_h3_view(
                     "frame are not downscaled."
                 )
                 input_upscale_slots = gr.CheckboxGroup(
-                    choices=list(services["INPUT_IMAGE_UPSCALE_SLOTS"]),
+                    choices=list(services.INPUT_IMAGE_UPSCALE_SLOTS),
                     value=[],
                     label="Images to upscale",
                 )
                 input_upscale_frame_preset = gr.Dropdown(
-                    choices=list(services["INPUT_IMAGE_FRAME_PRESETS"]),
-                    value=services["DEFAULT_INPUT_IMAGE_FRAME_PRESET"],
+                    choices=list(services.INPUT_IMAGE_FRAME_PRESETS),
+                    value=services.DEFAULT_INPUT_IMAGE_FRAME_PRESET,
                     label="Target frame preset",
                 )
                 with gr.Row():
@@ -428,7 +618,7 @@ def build_h3_view(
                     )
                 with gr.Row():
                     input_upscale_model = gr.Dropdown(
-                        choices=list(services["SEEDVR2_MODEL_CHOICES"]),
+                        choices=list(services.SEEDVR2_MODEL_CHOICES),
                         value=defaults["seedvr2_model"],
                         label="SeedVR2 model",
                     )
@@ -460,6 +650,17 @@ def build_h3_view(
                 '<div class="h3-section-intro"><h2>Output</h2>'
                 "<p>Start with a preset. Advanced controls stay collapsed.</p></div>"
             )
+            preset = gr.Radio(
+                ["Quality", "Balanced", "Fast"],
+                value="Fast",
+                label="Generation preset",
+                interactive=True,
+                info=(
+                    "Sets sampling, text encoding, memory, attention and refinement defaults. "
+                    "Keeps your base model, prompt, media and output size."
+                ),
+            )
+            restore_preset = gr.Button("Restore preset settings", size="sm")
             output_settings_section = gr.Accordion(
                 "Output essentials",
                 open=False,
@@ -476,7 +677,7 @@ def build_h3_view(
                 elem_classes=["h3-settings-section"],
             )
             settings_overview = gr.HTML(
-                services["compact_settings_summary"](
+                services.compact_settings_summary(
                     defaults["mode"],
                     defaults["model_profile"],
                     defaults["text_encoder"],
@@ -498,7 +699,7 @@ def build_h3_view(
                     defaults["latent_upscale_refine_steps"],
                     defaults["postprocess"],
                     defaults["seedvr2_model"],
-                    services["DEFAULT_LTX25_MODEL"],
+                    services.DEFAULT_LTX25_MODEL,
                     defaults["upscale_force_offload"],
                     defaults["upscale_split_enabled"],
                     defaults["upscale_split_seconds"],
@@ -520,7 +721,7 @@ def build_h3_view(
             )
             with gr.Group(elem_classes=["h3-action-dock"]):
                 generation_readiness = gr.HTML(
-                    services["generation_readiness_state"](
+                    services.generation_readiness_state(
                         defaults["mode"], "", None, None
                     ).html
                 )
@@ -580,27 +781,20 @@ def build_h3_view(
             audio_output = gr.Audio(
                 label="Generated audio", type="filepath", visible=False
             )
+            settings_used = gr.HTML(
+                "Settings used will appear with the generated result."
+            )
             with output_settings_section:
                 gr.Markdown(
                     "Choose the result length, quality target, canvas, and seed."
-                )
-                preset = gr.Radio(
-                    ["Quality", "Balanced", "Fast"],
-                    value="Fast",
-                    label="Sampling preset",
-                    interactive=True,
-                    info=(
-                        "Sets sampling, text encoder, model offload, start-frame cap, "
-                        "Turbo LoRA, attention, SLA, and high-resolution refinement defaults."
-                    ),
                 )
                 with gr.Row():
                     duration = gr.Slider(
                         2, 15, value=defaults["duration"], step=0.5, label="Seconds"
                     )
                     image_frames = gr.Slider(
-                        services["MIN_IMAGE_FRAMES"],
-                        services["MAX_IMAGE_FRAMES"],
+                        services.MIN_IMAGE_FRAMES,
+                        services.MAX_IMAGE_FRAMES,
                         value=defaults["image_frames"],
                         step=1,
                         label="Image frames",
@@ -624,7 +818,7 @@ def build_h3_view(
                         ),
                     )
                 fast_resolution = gr.Dropdown(
-                    choices=list(services["FAST_RESOLUTIONS"]),
+                    choices=list(services.FAST_RESOLUTIONS),
                     value="16:9 · 864×480",
                     label="Recommended size",
                     info="Recommended working resolutions by aspect ratio.",
@@ -632,13 +826,13 @@ def build_h3_view(
                 with gr.Accordion("More resolution presets", open=False):
                     with gr.Row():
                         draft_resolution = gr.Dropdown(
-                            choices=list(services["DRAFT_RESOLUTIONS"]),
+                            choices=list(services.DRAFT_RESOLUTIONS),
                             value=None,
                             label="Draft preview",
                             info="Small sizes for quick composition tests.",
                         )
                         large_resolution = gr.Dropdown(
-                            choices=list(services["LARGE_RESOLUTIONS"]),
+                            choices=list(services.LARGE_RESOLUTIONS),
                             value=None,
                             label="Large output",
                             info="Higher-resolution sizes that need more time and VRAM.",
@@ -651,8 +845,8 @@ def build_h3_view(
                         value=defaults["height"], precision=0, label="Height"
                     )
                     auto_megapixels = gr.Dropdown(
-                        choices=list(services["AUTO_RESOLUTION_MEGAPIXEL_PRESETS"]),
-                        value=services["DEFAULT_AUTO_RESOLUTION_MEGAPIXELS"],
+                        choices=list(services.AUTO_RESOLUTION_MEGAPIXEL_PRESETS),
+                        value=services.DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
                         label="Start-frame auto cap",
                         info=(
                             "Maximum automatic resolution from the first frame; "
@@ -660,9 +854,7 @@ def build_h3_view(
                         ),
                     )
                 resolution_info = gr.Markdown(
-                    services["resolution_summary"](
-                        defaults["width"], defaults["height"]
-                    )
+                    services.resolution_summary(defaults["width"], defaults["height"])
                 )
                 with gr.Row():
                     seed = gr.Number(
@@ -675,9 +867,9 @@ def build_h3_view(
                         ),
                     )
                     batch_count = gr.Slider(
-                        services["MIN_VIDEO_BATCH_COUNT"],
-                        services["MAX_VIDEO_BATCH_COUNT"],
-                        value=services["DEFAULT_VIDEO_BATCH_COUNT"],
+                        services.MIN_VIDEO_BATCH_COUNT,
+                        services.MAX_VIDEO_BATCH_COUNT,
+                        value=services.DEFAULT_VIDEO_BATCH_COUNT,
                         step=1,
                         label="Videos per batch",
                         info="Generate up to four random-seed variants in one run.",
@@ -687,14 +879,12 @@ def build_h3_view(
                     "Tune Turbo, attention, and caching. Defaults are recommended for most jobs."
                 )
                 turbo_variant = gr.Radio(
-                    list(services["TURBO_SETTINGS"]),
+                    list(services.TURBO_SETTINGS),
                     value=defaults["turbo_variant"],
                     label="Turbo implementation",
                     info=(
-                        "All base profiles use the sharper runtime LoRA path. Quality's "
-                        "fused INT8 FC2 projections use a post-dequantization weight-cast "
-                        "exception. "
-                        "Larry also uses its adaptive sampler; strength stays at 1.0."
+                        "Choose the Turbo adapter. Each variant supplies its trained step count; "
+                        "you can then adjust the number of steps."
                     ),
                 )
                 scheduler = gr.Radio(
@@ -707,22 +897,26 @@ def build_h3_view(
                     ["Sage 2", "Kitchen", "SLA", "Sol-Attn", "Auto"],
                     value=defaults["attention_mode"],
                     label="Attention",
-                    interactive=services["SERVER_ATTENTION_BACKEND"] == "sol",
+                    interactive=services.SERVER_ATTENTION_BACKEND == "sol",
                     info=(
                         f"Auto enables Sol-Attn for Reference mode or when estimated "
-                        f"packed target tokens reach {services['AUTO_SOL_TOKEN_THRESHOLD']:,}; "
+                        f"packed target tokens reach {services.AUTO_SOL_TOKEN_THRESHOLD:,}; "
                         "Sage 2 applies the pinned KJNodes model override. Kitchen "
                         "selects the global ComfyUI backend. SLA is the default, uses "
-                        "the Balanced audio-safe block-sparse preset, and automatically "
+                        "the selected audio-safe block-sparse preset, and automatically "
                         "keeps short sequences dense; it is intended for SLA-distilled "
                         "H3 LoRAs. Auto uses Kitchen for "
                         "smaller jobs. Sol "
-                        f"dense/fallback calls use {services['SERVER_DENSE_ATTENTION_BACKEND']}."
+                        f"dense/fallback calls use {services.SERVER_DENSE_ATTENTION_BACKEND}."
                     ),
                 )
-                with gr.Accordion("SLA quality controls", open=False):
+                with gr.Accordion(
+                    "SLA quality controls",
+                    open=False,
+                    visible=defaults["attention_mode"] == "SLA",
+                ) as sla_settings:
                     sla_preset = gr.Radio(
-                        list(services["SLA_PRESET_INPUTS"]),
+                        list(services.SLA_PRESET_INPUTS),
                         value=defaults["sla_preset"],
                         label="SLA preset",
                         info=(
@@ -734,7 +928,9 @@ def build_h3_view(
                         ),
                     )
 
-                with gr.Row():
+                with gr.Row(
+                    visible=defaults["attention_mode"] in {"Sol-Attn", "Auto"}
+                ) as sol_settings:
                     sol_tau = gr.Slider(
                         0.5,
                         1.5,
@@ -748,7 +944,11 @@ def build_h3_view(
                         label="Sol threshold",
                         info="diag is faster; exact calculates a more precise routing threshold.",
                     )
-                with gr.Accordion("Zero-copy Sol-Attn quality controls", open=False):
+                with gr.Accordion(
+                    "Sol-Attn quality controls",
+                    open=False,
+                    visible=defaults["attention_mode"] in {"Sol-Attn", "Auto"},
+                ) as sol_quality_settings:
                     sol_exact_mode = gr.Radio(
                         ["off", "exact_kv", "exact_kv_and_rows"],
                         value=defaults["sol_exact_mode"],
@@ -786,90 +986,92 @@ def build_h3_view(
                             "EasyCache and FirstBlockCache are opt-in experimental Turbo options."
                         ),
                     )
-                    fbcache_preset = gr.Radio(
-                        ["Safe", "Fast", "Aggressive", "Custom"],
-                        value=defaults["fbcache_preset"],
-                        label="FirstBlockCache preset",
-                        info=(
-                            "Fast is the recommended default. Named presets use "
-                            "a protected 10–95% denoising window and at most two "
-                            "consecutive cache hits."
-                        ),
-                    )
-                    with gr.Row():
-                        fbcache_threshold = gr.Slider(
+                    with gr.Group(visible=False) as fbcache_settings:
+                        fbcache_preset = gr.Radio(
+                            ["Safe", "Fast", "Aggressive", "Custom"],
+                            value=defaults["fbcache_preset"],
+                            label="FirstBlockCache preset",
+                            info=(
+                                "Fast is the recommended default. Named presets use "
+                                "a protected 10–95% denoising window and at most two "
+                                "consecutive cache hits."
+                            ),
+                        )
+                        with gr.Row():
+                            fbcache_threshold = gr.Slider(
+                                0.0,
+                                0.25,
+                                value=defaults["fbcache_threshold"],
+                                step=0.005,
+                                label="FirstBlock threshold",
+                                interactive=False,
+                            )
+                            fbcache_max_hits = gr.Slider(
+                                1,
+                                8,
+                                value=defaults["fbcache_max_hits"],
+                                step=1,
+                                label="Max consecutive cache hits",
+                                interactive=False,
+                            )
+                        with gr.Row():
+                            fbcache_start = gr.Slider(
+                                0.0,
+                                0.90,
+                                value=defaults["fbcache_start"],
+                                step=0.01,
+                                label="Cache start percent",
+                                interactive=False,
+                            )
+                            fbcache_end = gr.Slider(
+                                0.10,
+                                1.0,
+                                value=defaults["fbcache_end"],
+                                step=0.01,
+                                label="Cache end percent",
+                                interactive=False,
+                            )
+                        fbcache_temporal_guard = gr.Checkbox(
+                            value=defaults["fbcache_temporal_guard"],
+                            label="Temporal frame guard",
+                            info=(
+                                "Checks the most-changed target-video latent frame "
+                                "in addition to the global residual average."
+                            ),
+                        )
+                    with gr.Group(visible=False) as easycache_settings:
+                        gr.Markdown("**EasyCache fallback settings**")
+                        easycache_threshold = gr.Slider(
                             0.0,
-                            0.25,
-                            value=defaults["fbcache_threshold"],
-                            step=0.005,
-                            label="FirstBlock threshold",
-                            interactive=False,
-                        )
-                        fbcache_max_hits = gr.Slider(
-                            1,
-                            8,
-                            value=defaults["fbcache_max_hits"],
-                            step=1,
-                            label="Max consecutive cache hits",
-                            interactive=False,
-                        )
-                    with gr.Row():
-                        fbcache_start = gr.Slider(
-                            0.0,
-                            0.90,
-                            value=defaults["fbcache_start"],
+                            0.5,
+                            value=defaults["easycache_threshold"],
                             step=0.01,
-                            label="Cache start percent",
-                            interactive=False,
+                            label="Reuse threshold",
+                            info=(
+                                "Higher skips more steps. Start at 0.10 for H3; "
+                                "ComfyUI's generic default is 0.20."
+                            ),
                         )
-                        fbcache_end = gr.Slider(
-                            0.10,
-                            1.0,
-                            value=defaults["fbcache_end"],
-                            step=0.01,
-                            label="Cache end percent",
-                            interactive=False,
+                        with gr.Row():
+                            easycache_start = gr.Slider(
+                                0.0,
+                                0.9,
+                                value=defaults["easycache_start"],
+                                step=0.01,
+                                label="Start percent",
+                            )
+                            easycache_end = gr.Slider(
+                                0.1,
+                                1.0,
+                                value=defaults["easycache_end"],
+                                step=0.01,
+                                label="End percent",
+                            )
+                        easycache_verbose = gr.Checkbox(
+                            value=defaults["easycache_verbose"],
+                            label="Log EasyCache decisions",
+                            info="Logs skipped-step counts and estimated speedup in ComfyUI.",
                         )
-                    fbcache_temporal_guard = gr.Checkbox(
-                        value=defaults["fbcache_temporal_guard"],
-                        label="Temporal frame guard",
-                        info=(
-                            "Checks the most-changed target-video latent frame "
-                            "in addition to the global residual average."
-                        ),
-                    )
-                    gr.Markdown("**EasyCache fallback settings**")
-                    easycache_threshold = gr.Slider(
-                        0.0,
-                        0.5,
-                        value=defaults["easycache_threshold"],
-                        step=0.01,
-                        label="Reuse threshold",
-                        info=(
-                            "Higher skips more steps. Start at 0.10 for H3; "
-                            "ComfyUI's generic default is 0.20."
-                        ),
-                    )
-                    with gr.Row():
-                        easycache_start = gr.Slider(
-                            0.0,
-                            0.9,
-                            value=defaults["easycache_start"],
-                            step=0.01,
-                            label="Start percent",
-                        )
-                        easycache_end = gr.Slider(
-                            0.1,
-                            1.0,
-                            value=defaults["easycache_end"],
-                            step=0.01,
-                            label="End percent",
-                        )
-                    easycache_verbose = gr.Checkbox(
-                        value=defaults["easycache_verbose"],
-                        label="Log EasyCache decisions",
-                        info="Logs skipped-step counts and estimated speedup in ComfyUI.",
-                    )
 
             with finishing_section:
                 gr.Markdown(
@@ -881,14 +1083,14 @@ def build_h3_view(
                     label="Generate at half resolution, then latent upscale 2x",
                     info=(
                         "Runs inside H3 sampling, not after video generation. Width and "
-                        "height remain the final output resolution. Disabled by default."
+                        "height remain the H3 output resolution. Acceleration is disabled while this is enabled."
                     ),
                 )
                 with gr.Group(
                     visible=defaults["latent_upscale"]
                 ) as latent_upscale_settings:
                     latent_upscaler_model = gr.Dropdown(
-                        choices=list(services["H3_LATENT_UPSCALER_MODEL_CHOICES"]),
+                        choices=list(services.H3_LATENT_UPSCALER_MODEL_CHOICES),
                         value=defaults["latent_upscaler_model"],
                         label="Latent upscaler model",
                         info=(
@@ -909,7 +1111,7 @@ def build_h3_view(
                         ),
                     )
                     latent_upscale_method = gr.Dropdown(
-                        choices=list(services["H3_LATENT_UPSCALE_METHODS"]),
+                        choices=list(services.H3_LATENT_UPSCALE_METHODS),
                         value=defaults["latent_upscale_method"],
                         label="High-resolution refinement method",
                         info=(
@@ -921,7 +1123,7 @@ def build_h3_view(
                     with gr.Group(
                         visible=(
                             defaults["latent_upscale_method"]
-                            == services["H3_LATENT_UPSCALE_SPLIT"]
+                            == services.H3_LATENT_UPSCALE_SPLIT
                         )
                     ) as latent_split_settings:
                         gr.Markdown(
@@ -1006,7 +1208,7 @@ def build_h3_view(
 
                 gr.Markdown("**After generation**")
                 generation_postprocess = gr.Dropdown(
-                    choices=services["GENERATION_POSTPROCESS_OPTIONS"],
+                    choices=services.GENERATION_POSTPROCESS_OPTIONS,
                     value=defaults["postprocess"],
                     label="After generation",
                     info=(
@@ -1016,13 +1218,13 @@ def build_h3_view(
                 )
                 with gr.Group(visible=False) as generation_postprocess_settings:
                     generation_upscale_resolution = gr.Dropdown(
-                        choices=list(services["UPSCALE_RESOLUTION_PRESETS"]),
-                        value=services["DEFAULT_UPSCALE_RESOLUTION"],
+                        choices=list(services.UPSCALE_RESOLUTION_PRESETS),
+                        value=services.DEFAULT_UPSCALE_RESOLUTION,
                         label="Output resolution",
                         info="Fits the source inside the selected square while preserving aspect ratio.",
                     )
                     generation_seedvr2_model = gr.Dropdown(
-                        choices=list(services["SEEDVR2_MODEL_CHOICES"]),
+                        choices=list(services.SEEDVR2_MODEL_CHOICES),
                         value=defaults["seedvr2_model"],
                         label="SeedVR2 model",
                         info=(
@@ -1067,7 +1269,15 @@ def build_h3_view(
                     )
 
     return H3View(
-        {
+        **{
+            "settings_used": settings_used,
+            "restore_preset": restore_preset,
+            "sla_settings": sla_settings,
+            "sol_settings": sol_settings,
+            "sol_quality_settings": sol_quality_settings,
+            "fbcache_settings": fbcache_settings,
+            "easycache_settings": easycache_settings,
+            "finishing_section": finishing_section,
             "attention_mode": attention_mode,
             "audio_output": audio_output,
             "auto_megapixels": auto_megapixels,

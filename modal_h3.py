@@ -620,6 +620,9 @@ if IS_LOCAL:
         copy=False,
     )
 
+if IS_LOCAL:
+    image = image.add_local_dir(LOCAL / "h3_app", remote_path=(ROOT / "h3_app").as_posix(), copy=False)
+
 volume = modal.Volume.from_name(VOL, create_if_missing=True)
 app = modal.App(APP, image=image)
 hf_secret = modal.Secret.from_name(
