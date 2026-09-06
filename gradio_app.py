@@ -9005,6 +9005,7 @@ def build_ui() -> gr.Blocks:
                 render_ltx25_official_model_inventory=render_ltx25_official_model_inventory,
                 render_ltx25_workflow_details=render_ltx25_workflow_details,
                 resolution_control_updates=resolution_control_updates,
+                resolution_choice_updates=resolution_choice_updates,
                 resolution_info_preview=resolution_info_preview,
                 result_format_layout_updates=result_format_layout_updates,
                 save_selected_image_frames=save_selected_image_frames,

@@ -188,6 +188,26 @@ class UiContractTests(unittest.TestCase):
         ]
         self.assertEqual(len(dependencies), 1)
 
+    def test_registered_resolution_callbacks_apply_each_preset(self) -> None:
+        callbacks = [
+            fn for fn in self.demo.fns.values()
+            if inspect.isfunction(fn.fn)
+            and "resolution_choice_updates" in fn.fn.__code__.co_names
+        ]
+        self.assertEqual(len(callbacks), 3)
+        for callback in callbacks:
+            for choice in callback.inputs[0].choices:
+                name = choice[1] if isinstance(choice, (tuple, list)) else choice
+                for latent_upscale in (False, True):
+                    with self.subTest(name=name, latent_upscale=latent_upscale):
+                        width, height, info = callback.fn(name, latent_upscale, "Video")
+                        alignment = 64 if latent_upscale else 32
+                        self.assertGreater(width, 0)
+                        self.assertGreater(height, 0)
+                        self.assertEqual(width % alignment, 0)
+                        self.assertEqual(height % alignment, 0)
+                        self.assertTrue(info)
+
     def test_tensorrt_vae_defaults_on_and_compiles_only_when_needed(self) -> None:
         trt_vae = next(
             component

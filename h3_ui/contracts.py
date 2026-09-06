@@ -58,6 +58,7 @@ class AppServices:
     fbcache_preset_defaults: Callable[..., Any]
     resolution_info_preview: Callable[..., Any]
     resolution_control_updates: Callable[..., Any]
+    resolution_choice_updates: Callable[..., Any]
     input_image_frame_preset_updates: Callable[..., Any]
     upscale_selected_input_images: Callable[..., Any]
     generate_for_ui: Callable[..., Any]
