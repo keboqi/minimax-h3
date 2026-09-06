@@ -50,6 +50,28 @@ bundled FirstBlockCache node.
 - Matching local and Modal deployment paths
 - Version-aware, resumable Hugging Face model provisioning
 
+## Semantic Bridge (experimental)
+
+The H3 model settings include a default-off **Semantic Bridge** option for text
+and first/last-frame FL2VA generation. Start with strength **0.10**; **0.15** is a
+stronger comparison setting. Per-token magnitude matching is fixed. Strength zero
+bypasses the adapter without loading or downloading it.
+
+The pinned ~11 MB [v1 adapter](https://huggingface.co/speach1sdef178/MiniMax-H3-Semantic-Bridge)
+downloads on first use into `ComfyUI/models/semantic_bridge/`. No SenseNova model
+is required. The bundled H3Acceleration node ships through both local setup and
+Modal; existing deployments need updated provisioning and a ComfyUI restart.
+The adapter runs after native conditioning, preserves the raw encoder cache, and
+applies to both stages of latent upscaling. Output settings record its filename,
+SHA-256, strength, and magnitude-matching mode.
+
+Reference media (Ref2VA) always disables it, including requests made through the
+API. The author reports degraded reference-audio singing/lip-sync. Benefits on
+FL2VA are preliminary and may vary with prompt, text encoder, and Turbo preset;
+compare matched seeds before adopting it. Adapter weights retain the upstream
+[MiniMax H3 license](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE)
+and the author's [licensing notes](https://huggingface.co/speach1sdef178/MiniMax-H3-Semantic-Bridge/blob/main/LICENSE.md).
+
 ## Requirements
 
 - Linux or WSL2 with Bash

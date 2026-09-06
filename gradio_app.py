@@ -371,6 +371,7 @@ H3_SPLIT_UPSCALE_NODE = "MMH3SplitUpscale"
 H3_SINGLE_FRAME_VAE_LOADER_NODE = "H3SingleFrameVAELoader"
 H3_IMAGE_SLICES_NODE = "H3VideoLatentSlicesToBatch"
 H3_STAGE_OFFLOAD_NODE = "H3StageModelOffload"
+H3_SEMANTIC_BRIDGE_NODE = "H3SemanticBridge"
 H3_CONDITIONING_CACHE_NODE = "H3ConditioningCache"
 H3_STAGE_OFFLOAD_POLICY_NODE = "H3StageOffloadPolicy"
 H3_NVENC_SAVE_NODE = "H3SaveVideoNVENC"
@@ -487,6 +488,8 @@ UI_DEFAULTS = {
     "model_profile": "Speed",
     "text_encoder": SAMPLING_PRESET_TEXT_ENCODERS["Fast"],
     "stage_model_offload": False,
+    "semantic_bridge": False,
+    "semantic_bridge_alpha": 0.10,
     "reuse_unchanged_inputs": True,
     "use_int8_vae": False,
     "use_trt_vae": True,
@@ -1792,6 +1795,28 @@ def resolve_h3_split_upscale_config(
         seam_denoise=resolved_seam_denoise,
         seam_polish=resolved_seam_polish,
     )
+
+
+def ensure_h3_semantic_bridge() -> None:
+    """Fetch only the optional v1 adapter; never preload it with the base models."""
+    key = "semantic_bridge_v1"
+    manifest_path = MODELS_CONFIG.parent / "h3_model_manifest.json"
+    if stale_model_keys(
+        root=COMFY_DIR / "models", manifest_path=manifest_path, model_keys=(key,)
+    ):
+        sync_models(
+            root=COMFY_DIR / "models",
+            manifest_path=manifest_path,
+            token=resolve_hf_token(),
+            model_keys=(key,),
+            download_workers=1,
+            log_prefix="[h3-semantic-bridge-on-demand]",
+        )
+    spec = MODEL_SPECS[key]
+    if not model_file_is_ready(COMFY_DIR / "models" / spec.folder / spec.local_name):
+        raise H3Error(
+            "Semantic Bridge adapter download did not produce a valid model file."
+        )
 
 
 def ensure_h3_latent_upscaler_model(model_choice: str) -> bool:
@@ -4027,6 +4052,8 @@ def build_fl2va_graph(
     reuse_unchanged_inputs: bool = True,
     stage_model_offload: bool = False,
     smart_stage_offload: bool = False,
+    semantic_bridge: bool = False,
+    semantic_bridge_alpha: float = 0.10,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -4151,10 +4178,33 @@ def build_fl2va_graph(
             width=source_width,
             height=source_height,
         )
+    target_conditioning = Graph.out(target_h3, 0)
+    initial_conditioning = Graph.out(initial_h3, 0)
+    if semantic_bridge and semantic_bridge_alpha != 0:
+        if H3_SEMANTIC_BRIDGE_NODE not in available_nodes:
+            raise H3Error(
+                "Missing H3SemanticBridge node. Update provisioning and restart ComfyUI."
+            )
+
+        def bridge(conditioning):
+            return Graph.out(
+                graph.add(
+                    H3_SEMANTIC_BRIDGE_NODE,
+                    conditioning=conditioning,
+                    alpha=semantic_bridge_alpha,
+                )
+            )
+
+        target_conditioning = bridge(target_conditioning)
+        initial_conditioning = (
+            target_conditioning
+            if initial_h3 == target_h3
+            else bridge(initial_conditioning)
+        )
     finish_sampling(
         graph,
         model_ref=model_ref,
-        conditioning_ref=Graph.out(target_h3, 0),
+        conditioning_ref=target_conditioning,
         latent_ref=Graph.out(target_h3, 1),
         video_vae_ref=video_vae_ref,
         audio_vae_ref=audio_vae_ref,
@@ -4174,7 +4224,7 @@ def build_fl2va_graph(
         image_frames=image_frames,
         image_vae_ref=image_vae_ref,
         single_frame_images=single_frame_images,
-        initial_conditioning_ref=Graph.out(initial_h3, 0),
+        initial_conditioning_ref=initial_conditioning,
         initial_latent_ref=Graph.out(initial_h3, 1),
         latent_upscale_model_name=latent_upscale_model_name,
         latent_upscale_precision=latent_upscale_precision,
@@ -7199,6 +7249,8 @@ def generate(
     image_vae: str = DEFAULT_IMAGE_VAE,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
+    semantic_bridge: bool = False,
+    semantic_bridge_alpha: float = 0.10,
     progress=gr.Progress(track_tqdm=False),
 ):
     requested_values = {key: value for key, value in locals().items() if key in GENERATION_FIELDS}
@@ -7218,6 +7270,8 @@ def generate(
         if plan.issues:
             raise H3Error(" ".join(plan.issues))
         effective = plan.effective
+        semantic_bridge = effective.semantic_bridge and effective.semantic_bridge_alpha != 0
+        semantic_bridge_alpha = effective.semantic_bridge_alpha
         result_format = normalize_result_format(effective.output.result_format)
         selected_image_vae = normalize_image_vae(image_vae)
         requested_image_frames = validate_image_frame_count(effective.output.image_frames)
@@ -7420,6 +7474,12 @@ def generate(
 
         info = object_info()
         available = set(info)
+        if semantic_bridge:
+            if H3_SEMANTIC_BRIDGE_NODE not in available:
+                raise H3Error("Missing H3SemanticBridge node. Update provisioning and restart ComfyUI.")
+            progress(0, desc="Preparing Semantic Bridge v1")
+            yield None, progress_status("Preparing Semantic Bridge v1 (download on first use)", started=started)
+            ensure_h3_semantic_bridge()
         if postprocess in COMFY_UPSCALE_OPTIONS:
             missing_upscale_nodes = required_upscale_nodes(postprocess) - available
             if missing_upscale_nodes:
@@ -7574,6 +7634,8 @@ def generate(
             )
         else:
             graph = build_fl2va_graph(
+                semantic_bridge=semantic_bridge,
+                semantic_bridge_alpha=semantic_bridge_alpha,
                 prompt=prompt,
                 first_image=first_image,
                 last_image=last_image,
@@ -7653,6 +7715,11 @@ def generate(
             stage_model_offload=effective_stage_offload, postprocess=postprocess, latent_upscale=latent_upscale,
             model_filename=selected_model, text_encoder_filename=selected_text_encoder,
             attention_mode="SLA" if effective_sla else "Sage 2" if effective_sage else "Sol-Attn" if effective_sol else "Kitchen",
+            semantic_bridge=semantic_bridge,
+            semantic_bridge_alpha=semantic_bridge_alpha if semantic_bridge else 0.0,
+            semantic_bridge_adapter=MODEL_SPECS["semantic_bridge_v1"].local_name if semantic_bridge else None,
+            semantic_bridge_sha256=MODEL_SPECS["semantic_bridge_v1"].expected_sha256 if semantic_bridge else None,
+            semantic_bridge_magnitude_match="per_token" if semantic_bridge else None,
             sampled_frames=generation_frames, image_frames=requested_image_frames,
         )
         timings.label = f"H3 job {prompt_id}"
@@ -8570,6 +8637,8 @@ def generate_with_ui_defaults(
         easycache_verbose=defaults["easycache_verbose"],
         ref_image_size=defaults["ref_image_size"],
         postprocess=defaults["postprocess"],
+        semantic_bridge=defaults["semantic_bridge"],
+        semantic_bridge_alpha=defaults["semantic_bridge_alpha"],
         reuse_unchanged_inputs=defaults["reuse_unchanged_inputs"],
         latent_upscale=defaults["latent_upscale"],
         latent_upscaler_model=defaults["latent_upscaler_model"],

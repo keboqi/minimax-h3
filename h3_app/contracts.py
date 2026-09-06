@@ -79,6 +79,8 @@ GENERATION_FIELDS = (
     "image_vae",
     "result_format",
     "image_frames",
+    "semantic_bridge",
+    "semantic_bridge_alpha",
 )
 GENERATION_COMPONENTS = (
     "mode",
@@ -156,6 +158,8 @@ GENERATION_COMPONENTS = (
     "image_vae",
     "result_format",
     "image_frames",
+    "semantic_bridge",
+    "semantic_bridge_alpha",
 )
 
 
@@ -165,6 +169,9 @@ class GenerationArguments:
 
     @classmethod
     def from_positional(cls, args):
+        # Preserve callers using the positional contract before the optional bridge.
+        if len(args) == len(GENERATION_FIELDS) - 2:
+            args = (*args, False, 0.10)
         if len(args) != len(GENERATION_FIELDS):
             raise ValueError(
                 f"Expected {len(GENERATION_FIELDS)} generation inputs, received {len(args)}."

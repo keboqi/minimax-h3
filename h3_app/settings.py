@@ -98,6 +98,8 @@ class GenerationRequest:
     cache_mode: str = "Spectrum"
     use_trt_vae: bool = True
     use_int8_vae: bool = False
+    semantic_bridge: bool = False
+    semantic_bridge_alpha: float = 0.10
 
     @classmethod
     def from_values(cls, values: Mapping[str, Any]) -> GenerationRequest:
@@ -262,8 +264,34 @@ def resolve_settings(
         issues.append("Choose between 1 and 20 image frames.")
     if fmt == "Video" and not 1 <= output.batch_count <= 4:
         issues.append("Choose between 1 and 4 videos per batch.")
+    bridge = request.semantic_bridge
+    if request.mode == "Reference media":
+        adjusted(
+            "semantic_bridge",
+            bridge,
+            False,
+            "Semantic Bridge v1 supports FL2VA only; disabled for reference media.",
+        )
+        bridge = False
+        inactive.add("semantic_bridge")
+    if not bridge:
+        inactive.add("semantic_bridge_alpha")
+    elif (
+        isinstance(request.semantic_bridge_alpha, bool)
+        or not isinstance(request.semantic_bridge_alpha, (int, float))
+        or not math.isfinite(request.semantic_bridge_alpha)
+        or not 0 <= request.semantic_bridge_alpha <= 1
+    ):
+        issues.append(
+            "Semantic Bridge strength must be a finite number between 0 and 1."
+        )
     effective = replace(
-        request, sampling=sampling, output=output, finishing=finishing, cache_mode=cache
+        request,
+        sampling=sampling,
+        output=output,
+        finishing=finishing,
+        cache_mode=cache,
+        semantic_bridge=bridge,
     )
     return ResolvedSettings(
         request, effective, tuple(adjustments), frozenset(inactive), tuple(issues)

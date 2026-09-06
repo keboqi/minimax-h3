@@ -74,6 +74,13 @@ class ModelSpec:
 
 
 MODEL_SPECS: dict[str, ModelSpec] = {
+    "semantic_bridge_v1": ModelSpec(
+        "speach1sdef178/MiniMax-H3-Semantic-Bridge",
+        "semantic_bridge",
+        "MiniMaxH3_SemanticBridge_v1.safetensors",
+        "Semantic Bridge v1 · experimental FL2VA conditioning",
+        expected_sha256="ac0dc8ac05f545ebdee12e2fcebe4515b049f9cfd9558eb4887a9bf3fd6d562e",
+    ),
     "speed_fl2va": ModelSpec(
         MODEL_REPO,
         "diffusion_models",
@@ -462,6 +469,7 @@ DEFAULT_MUSIC3_MODEL = "INT8 ConvRot (lower VRAM)"
 MUSIC3_SHARED_MODEL_KEYS = ("music3_text_encoder", "music3_vae")
 MUSIC3_MODEL_KEYS = (*MUSIC3_MODEL_CHOICES.values(), *MUSIC3_SHARED_MODEL_KEYS)
 LAZY_OPTIONAL_MODEL_KEYS = (
+    "semantic_bridge_v1",
     *H3_OPTIONAL_TEXT_ENCODER_KEYS,
     "video_vae_int8",
     "video_vae_trt_encoder",

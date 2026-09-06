@@ -109,6 +109,26 @@ def run():
                 page.get_by_role("button", name="Restore preset settings").click()
                 expect(card).to_contain_text("Turbo · 8 steps")
                 expect(card).not_to_contain_text("Modified")
+                # Semantic Bridge is opt-in, FL2VA-only, and remembers its preference.
+                page.get_by_text("Model and memory (advanced)", exact=True).click()
+                bridge = page.get_by_label("Semantic Bridge (experimental)", exact=True)
+                expect(bridge).not_to_be_checked()
+                bridge.check()
+                strength = page.get_by_text("Semantic Bridge strength", exact=True).locator(
+                    'xpath=ancestor::div[contains(@class,"block")][1]'
+                ).locator('input[type="number"]')
+                expect(strength).to_be_visible()
+                strength.fill("0.15")
+                strength.press("Tab")
+                expect(card).to_contain_text("Experimental v1 · strength 0.15")
+                page.get_by_label("Reference media", exact=True).check()
+                expect(bridge).to_be_disabled()
+                expect(strength).not_to_be_visible()
+                expect(card).to_contain_text("disabled for reference media")
+                page.get_by_label("Text to video", exact=True).check()
+                expect(bridge).to_be_enabled()
+                expect(bridge).to_be_checked()
+                expect(strength).to_have_value("0.15")
                 # Persist a genuine override and verify another session starts clean.
                 steps.fill("11")
                 steps.press("Tab")
@@ -122,6 +142,7 @@ def run():
                 page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for()
                 expect(card).to_contain_text("Turbo · 11 steps")
                 expect(card).to_contain_text("Quality")
+                expect(card).to_contain_text("Experimental v1 · strength 0.15")
                 second = browser.new_context()
                 second_page = second.new_page()
                 second_page.goto(url, wait_until="domcontentloaded")
@@ -131,6 +152,8 @@ def run():
                 expect(second_page.locator(".h3-setup-card")).to_contain_text(
                     "Turbo · 4 steps"
                 )
+                second_page.get_by_text("Model and memory (advanced)", exact=True).click()
+                expect(second_page.get_by_label("Semantic Bridge (experimental)", exact=True)).not_to_be_checked()
                 second.close()
                 # Audio retains the native-refinement preference for the next video.
                 page.get_by_label("Audio", exact=True).check()

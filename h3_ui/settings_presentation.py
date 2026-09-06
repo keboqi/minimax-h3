@@ -6,6 +6,7 @@ from html import escape
 from h3_app.settings import ResolvedSettings
 
 LABELS = {
+    "semantic_bridge": "Semantic Bridge",
     "steps": "Base sampling steps",
     "text_encoder": "Text encoder",
     "stage_model_offload": "Stage offload",
@@ -119,6 +120,11 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
         ),
     )
     technical += detail("Scheduler", sampling.scheduler)
+    technical += detail(
+        "Semantic Bridge",
+        f"Experimental v1 · strength {effective.semantic_bridge_alpha:g} · per token"
+        if effective.semantic_bridge else "Off",
+    )
     technical += detail(
         "Attention",
         "Automatic · resolved during preparation"

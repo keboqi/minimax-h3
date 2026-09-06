@@ -28,6 +28,8 @@ SETTING_NAMES = tuple(
             "use_int8_vae",
             "use_trt_vae",
             "reuse_unchanged_inputs",
+            "semantic_bridge",
+            "semantic_bridge_alpha",
             "latent_upscale",
             "latent_upscaler_model",
             "latent_upscale_method",
@@ -194,6 +196,10 @@ class SettingsController:
                     if current["text_encoder"] == "BF16"
                     else "Unload models between generation stages.",
                 )
+            if name == "semantic_bridge":
+                props["interactive"] = current["mode"] != "Reference media"
+            if name == "semantic_bridge_alpha":
+                props["visible"] = bool(plan.effective.semantic_bridge)
             if name == "turbo_variant":
                 props["visible"] = current["generation_mode"] == "Turbo"
             if name in {"width", "height", "auto_megapixels"}:

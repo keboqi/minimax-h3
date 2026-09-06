@@ -176,6 +176,8 @@ class H3View:
     refresh: gr.components.Component
     resolution_info: gr.components.Component
     result_format: gr.components.Component
+    semantic_bridge: gr.components.Component
+    semantic_bridge_alpha: gr.components.Component
     reuse_unchanged_inputs: gr.components.Component
     run: gr.components.Component
     scheduler: gr.components.Component
@@ -320,6 +322,8 @@ H3_COMPONENT_ORDER = (
     "refresh",
     "resolution_info",
     "result_format",
+    "semantic_bridge",
+    "semantic_bridge_alpha",
     "reuse_unchanged_inputs",
     "run",
     "scheduler",
@@ -422,6 +426,19 @@ def build_h3_view(
                             "reruns when the seed changes."
                         ),
                     )
+                semantic_bridge = gr.Checkbox(
+                    value=defaults["semantic_bridge"],
+                    label="Semantic Bridge (experimental)",
+                    interactive=defaults["mode"] != "Reference media",
+                    info="May improve prompt adherence. Downloads an 11 MB adapter on first use. FL2VA only; disabled for reference media.",
+                )
+                semantic_bridge_alpha = gr.Slider(
+                    0.0, 1.0, step=0.01,
+                    value=defaults["semantic_bridge_alpha"],
+                    visible=defaults["semantic_bridge"] and defaults["mode"] != "Reference media",
+                    label="Semantic Bridge strength",
+                    info="Start at 0.10; try 0.15 for a stronger effect. Higher values can reduce quality. Uses per-token magnitude matching.",
+                )
                 use_int8_vae = gr.Checkbox(
                     value=defaults["use_int8_vae"],
                     label="Experimental INT8 ConvRot video VAE",
@@ -1392,6 +1409,8 @@ def build_h3_view(
             "refresh": refresh,
             "resolution_info": resolution_info,
             "result_format": result_format,
+            "semantic_bridge": semantic_bridge,
+            "semantic_bridge_alpha": semantic_bridge_alpha,
             "reuse_unchanged_inputs": reuse_unchanged_inputs,
             "run": run,
             "scheduler": scheduler,

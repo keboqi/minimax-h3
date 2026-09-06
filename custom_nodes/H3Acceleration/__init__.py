@@ -1358,7 +1358,135 @@ class H3SaveVideoNVENC:
         }
 
 
+class H3SemanticBridge:
+    """Standalone v1 FL2VA adapter; preserves cached native conditioning.
+
+    Architecture and normalization follow speach1sdef178's Semantic Bridge v1:
+    https://huggingface.co/speach1sdef178/MiniMax-H3-Semantic-Bridge
+    Weights retain their upstream MiniMax H3 Community License terms.
+    """
+
+    FILENAME = "MiniMaxH3_SemanticBridge_v1.safetensors"
+    SHA256 = "ac0dc8ac05f545ebdee12e2fcebe4515b049f9cfd9558eb4887a9bf3fd6d562e"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "conditioning": ("CONDITIONING",),
+                "alpha": (
+                    "FLOAT",
+                    {"default": 0.10, "min": 0.0, "max": 1.0, "step": 0.01},
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING",)
+    FUNCTION = "apply"
+    CATEGORY = "MiniMax H3/Semantic Bridge"
+    DESCRIPTION = (
+        "Experimental FL2VA-only prompt conditioning adapter. Do not use with Ref2VA."
+    )
+
+    @classmethod
+    def _load_weights(cls):
+        import hashlib
+        from safetensors.torch import load_file
+
+        path = os.path.join(folder_paths.models_dir, "semantic_bridge", cls.FILENAME)
+        # Verify the pinned release before loading. No pickle or remote code execution.
+        with open(path, "rb") as handle:
+            digest = hashlib.file_digest(handle, "sha256").hexdigest()
+        if digest != cls.SHA256:
+            raise RuntimeError(
+                "Semantic Bridge v1 checksum mismatch; re-download the adapter."
+            )
+        weights = load_file(path, device="cpu")
+        expected = {
+            "fc1.weight": (512, 5120),
+            "fc1.bias": (512,),
+            "fc2.weight": (512, 512),
+            "fc2.bias": (512,),
+            "fc3.weight": (5120, 512),
+            "fc3.bias": (5120,),
+        }
+        if set(weights) != set(expected):
+            raise RuntimeError("Unexpected Semantic Bridge v1 tensors.")
+        for name, shape in expected.items():
+            if (
+                tuple(weights[name].shape) != shape
+                or not torch.isfinite(weights[name]).all()
+            ):
+                raise RuntimeError(f"Invalid Semantic Bridge tensor: {name}")
+        return weights
+
+    def apply(self, conditioning, alpha=0.10):
+        if (
+            isinstance(alpha, bool)
+            or not isinstance(alpha, (int, float))
+            or not math.isfinite(alpha)
+            or not 0 <= alpha <= 1
+        ):
+            raise ValueError(
+                "Semantic Bridge strength must be finite and between 0 and 1."
+            )
+        if alpha == 0:
+            return (conditioning,)
+        for native, _metadata in conditioning:
+            if (
+                native.ndim != 3
+                or native.shape[-1] != 5120
+                or not native.is_floating_point()
+            ):
+                raise ValueError(
+                    "Semantic Bridge expects floating FL2VA conditioning [B,T,5120]."
+                )
+        weights = self._load_weights()
+        result = []
+        # Keep weights local to this execution: no GPU cache survives stage offload.
+        with torch.inference_mode():
+            for native, metadata in conditioning:
+                h = native.float()
+                projected = h / torch.sqrt(h.square().mean(dim=-1, keepdim=True) + 1e-6)
+                for layer in ("fc1", "fc2", "fc3"):
+                    projected = F.linear(
+                        projected,
+                        weights[layer + ".weight"].to(
+                            device=h.device, dtype=torch.float32
+                        ),
+                        weights[layer + ".bias"].to(
+                            device=h.device, dtype=torch.float32
+                        ),
+                    )
+                    if layer != "fc3":
+                        projected = F.silu(projected)
+                source_rms = torch.sqrt(
+                    projected.square().mean(dim=-1, keepdim=True) + 1e-8
+                )
+                target_rms = torch.sqrt(h.square().mean(dim=-1, keepdim=True) + 1e-8)
+                projected = projected * (target_rms / source_rms)
+                hybrid = (h + float(alpha) * (projected - h)).to(dtype=native.dtype)
+                if not torch.isfinite(hybrid).all():
+                    raise RuntimeError(
+                        "Semantic Bridge produced non-finite conditioning."
+                    )
+                result.append(
+                    [
+                        hybrid,
+                        {
+                            **metadata,
+                            "semantic_bridge_adapter": self.FILENAME,
+                            "semantic_bridge_sha256": self.SHA256,
+                            "semantic_bridge_alpha": float(alpha),
+                            "semantic_bridge_magnitude_match": "per_token",
+                        },
+                    ]
+                )
+        return (result,)
+
+
 NODE_CLASS_MAPPINGS = {
+    "H3SemanticBridge": H3SemanticBridge,
     "H3FirstBlockCache": H3FirstBlockCache,
     "H3LightX2VBypassLoRA": H3LightX2VBypassLoRA,
     "H3SeparateAVLatent": H3SeparateAVLatent,
@@ -1372,6 +1500,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "H3SemanticBridge": "MiniMax H3 Semantic Bridge (experimental)",
     "H3FirstBlockCache": "MiniMax H3 FirstBlockCache",
     "H3LightX2VBypassLoRA": "MiniMax H3 LightX2V Bypass LoRA",
     "H3SeparateAVLatent": "MiniMax H3 Separate AV Latent",
