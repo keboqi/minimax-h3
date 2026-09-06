@@ -59,7 +59,7 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
         for key, (before, after) in differences.items()
     )
     changes = (
-        f"<details><summary>{len(differences)} changes from {esc(effective.preset)}</summary><dl>{changes}</dl></details>"
+        f'<details class="h3-setup-disclosure"><summary>{len(differences)} changes from {esc(effective.preset)}</summary><dl class="h3-setup-changes">{changes}</dl></details>'
         if differences
         else ""
     )
@@ -72,7 +72,7 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
     ):
         adjustments += "<li><strong>Stage offload: On</strong> — Required by the BF16 text encoder.</li>"
     adjustments = (
-        f"<details><summary>Automatically adjusted / required</summary><ul>{adjustments}</ul></details>"
+        f'<details class="h3-setup-disclosure"><summary>Automatically adjusted / required</summary><ul>{adjustments}</ul></details>'
         if adjustments
         else ""
     )
@@ -157,9 +157,10 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
     return (
         f'<section class="h3-setup-card" aria-label="Next run" data-settings-ready="{str(bool(extras.get("_settings_ready"))).lower()}">'
         f'<div class="h3-setup-heading"><strong>Next run</strong><span>{esc(title)}</span></div>'
-        f'<div class="h3-setup-metrics"><dl>{metrics}</dl></div>'
-        f'<div class="h3-setup-pills">Base model: {esc(effective.model_profile)} · {esc(seed)}</div>'
-        + (f"<p>{esc(enhancement)}</p>" if fmt != "Audio" else "")
+        f'<dl class="h3-setup-metrics">{metrics}</dl>'
+        f'<div class="h3-setup-context"><span>Base model: {esc(effective.model_profile)}</span><span>{esc(seed)}</span>'
+        + (f"<span>{esc(enhancement)}</span>" if fmt != "Audio" else "")
+        + "</div>"
         + changes
         + adjustments
         + issues

@@ -364,7 +364,7 @@ class UiContractTests(unittest.TestCase):
         self.assertNotIn("<details open", summary)
         self.assertIn("Execution details", summary)
         self.assertIn('class="h3-setup-metrics"', summary)
-        self.assertIn('class="h3-setup-pills"', summary)
+        self.assertIn('class="h3-setup-context"', summary)
         self.assertIn("Next run", summary)
         self.assertNotIn("Ready to generate", summary)
         self.assertIn("Acceleration: Off", summary)
@@ -411,14 +411,13 @@ class UiContractTests(unittest.TestCase):
 
     def test_scoped_setup_css_contract(self) -> None:
         for rule in (
-            "prefers-reduced-motion",
-            "@container (max-width: 430px)",
+            "@container (max-width: 520px)",
             ".h3-settings-summary",
             ".h3-setup-disclosure",
             ".h3-setup-detail-grid",
-            ".h3-setup-metric-icon",
-            ".h3-setup-pill",
-            "linear-gradient(118deg",
+            ".h3-setup-metrics",
+            ".h3-setup-context",
+            "grid-template-columns: repeat(3, minmax(0, 1fr))",
         ):
             self.assertIn(rule, H3_SETUP_CSS)
         self.assertNotIn(".gradio-container", H3_SETUP_CSS)

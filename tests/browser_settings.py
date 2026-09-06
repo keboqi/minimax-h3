@@ -25,7 +25,7 @@ def run():
         "import gradio_app as app;"
         "app.backend_status=lambda:'Connected browser test fixture';"
         "app.build_ui().queue(default_concurrency_limit=1,max_size=8).launch("
-        f"server_name='127.0.0.1',server_port={port},inbrowser=False,ssr_mode=False,css=app.H3_UI_CSS)"
+        f"server_name='127.0.0.1',server_port={port},inbrowser=False,ssr_mode=False,css=app.H3_SETUP_CSS)"
     )
     with tempfile.TemporaryFile(mode="w+b") as log:
         process = subprocess.Popen(
@@ -74,6 +74,19 @@ def run():
                 expect(generate).to_be_disabled(timeout=15000)
                 prompt.fill("A quiet lake at sunrise")
                 expect(generate).to_be_enabled(timeout=15000)
+                # Metrics must occupy all three columns, not one nested grid cell.
+                metrics = card.locator(".h3-setup-metrics > .h3-setup-detail")
+                boxes = [metrics.nth(i).bounding_box() for i in range(3)]
+                assert max(b["y"] for b in boxes) - min(b["y"] for b in boxes) < 2
+                assert boxes[2]["x"] > boxes[0]["x"] + card.bounding_box()["width"] / 2
+                assert card.bounding_box()["height"] < 280, (
+                    "Summary should remain compact"
+                )
+                card.get_by_text("Execution details", exact=True).click()
+                expect(
+                    card.get_by_text("Generation canvas", exact=True)
+                ).to_be_visible()
+                card.get_by_text("Execution details", exact=True).click()
                 preset = page.locator(".h3-run-panel")
                 preset.get_by_label("Quality", exact=True).first.check()
                 expect(card).to_contain_text("Turbo · 8 steps")
