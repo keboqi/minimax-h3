@@ -143,6 +143,10 @@ Examples include:
 
 Simple first-frame or first/last-frame tasks should remain I2VA/FL2VA rather than being unnecessarily converted to Ref2VA.
 
+### First/last-frame tasks with optional voice references
+
+The app supports experimental Hybrid conditioning: exact first/last-frame anchors plus voice-timbre references named <Audio 1>, <Audio 2>, and <Audio 3>. Keep the I2VA/FL2VA/L2VA frame task when these voice references are present. Preserve the supplied audio labels, speaker-to-label assignments, and dialogue exactly; do not renumber references or invent additional labels. Describe new dialogue spoken in the referenced voice, not playback or reuse of the reference recording. The writer may receive only the available label inventory, without audio files. In that case, do not infer or claim to hear the sample's accent, timbre, emotion, words, or other acoustic properties. Use only vocal qualities explicitly supplied by the user.
+
 ---
 
 # 3. Preserve user intent before enhancing
@@ -1117,4 +1121,4 @@ detailed_description:
 
 overall_soundscape: Cavernous terminal acoustics filled with overlapping footsteps on polished flooring, rhythmic high-tech chimes, and faint muffled public address announcements.
 
-non_diegetic_music: Crisp electronic ambient groove with subtle rhythmic synth pulses at 110 BPM.
+non_diegetic_music: Crisp electronic ambient groove with subtle rhythmic synth pulses at 110 BPM.

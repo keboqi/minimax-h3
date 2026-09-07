@@ -83,8 +83,11 @@ Modal deployments need rebuilding/redeploying. Missing nodes produce an explicit
 update-and-restart error. No new model weights are required for this option.
 
 Semantic Bridge is disabled while FL2VA voice references are active, preserving
-its preference for later runs. Prompt enhancement keeps the prompt unchanged
-while these samples are attached; voice samples are used only for generation.
+its preference for later runs. Prompt enhancement supports FL2VA audio tags and
+speaker assignments using the prompt and available voice labels. Voice sample
+files stay in the generation workflow; they are not uploaded to prompt writers.
+If a writer drops or invents audio labels, the original prompt is preserved with
+an explicit retry message.
 Result settings record the active reference count and conditioning mode.
 
 Voice fidelity on unchanged FL2VA weights is experimental. The integration has

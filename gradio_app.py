@@ -1284,6 +1284,35 @@ def _enhance_h3_prompt_with_lightning(
         return str(prompt or ""), f"Lightning AI prompt enhancement failed: {exc}"
 
 
+def fl2va_prompt_voice_context(prompt: str, mode: str, *slots: Any):
+    """Describe voice labels to writers without exposing audio files or paths."""
+    if mode != "First / last frame":
+        return "", set(), set()
+    references = active_fl2va_voice_references(mode, *slots)
+    mentioned = set(re.findall(r"<Audio\s+(\d+)>", prompt, flags=re.IGNORECASE))
+    allowed = {str(i) for i in range(1, len(references) + 1)} if references else mentioned
+    if mentioned - allowed or any(not 1 <= int(i) <= MAX_REFERENCE_AUDIOS for i in mentioned):
+        raise H3Error("The prompt names a FL2VA audio tag without a matching voice slot.")
+    if not allowed:
+        return "", set(), set()
+    labels = ", ".join(f"<Audio {i}>" for i in sorted(allowed, key=int))
+    context = (
+        "FL2VA voice-reference context for this rewrite:\n"
+        f"Available voice labels: {labels}. "
+        "These are voice-timbre references for generation; their audio is not provided "
+        "to the prompt writer. Do not claim to have heard them or invent their vocal "
+        "qualities or transcript. Preserve every audio tag already in the user's "
+        "prompt, its exact speaker assignment, and all dialogue verbatim. "
+        "Do not renumber tags or introduce labels outside the available set. "
+        "For unused labels, assign a speaker only when the user's intent makes that "
+        "association clear. Retain exact first/last-frame anchoring and the "
+        "I2VA/FL2VA/L2VA task; audio references do not change it to Ref2VA. "
+        "Generate new dialogue in the referenced voice; do not request source "
+        "audio playback or reuse. Return only the enhanced prompt."
+    )
+    return context, allowed, mentioned
+
+
 def enhance_h3_prompt(
     prompt: str,
     backend: str,
@@ -1324,13 +1353,32 @@ def enhance_h3_prompt(
     fl2va_audio_3: Any = None,
 ) -> tuple[str, str]:
     """Dispatch H3 prompt enhancement to the selected prompt-writer backend."""
-    if mode == "First / last frame" and any((fl2va_audio_1, fl2va_audio_2, fl2va_audio_3)):
-        return str(prompt or ""), (
-            "Prompt kept unchanged: FL2VA voice references are used only for generation. "
-            "Assign each speaker with <Audio 1>, <Audio 2>, or <Audio 3> in your prompt."
+    original_prompt = str(prompt or "")
+    try:
+        voice_context, allowed_tags, required_tags = fl2va_prompt_voice_context(
+            original_prompt, mode, fl2va_audio_1, fl2va_audio_2, fl2va_audio_3
         )
+    except H3Error as exc:
+        return original_prompt, f"Prompt enhancement failed: {exc}"
+    if voice_context:
+        prompt = voice_context + "\n\nUser prompt:\n" + original_prompt
+
+    def finish(result):
+        enhanced, status = result
+        if not voice_context:
+            return result
+        if enhanced == prompt or "failed" in status.lower():
+            return original_prompt, status
+        actual_tags = set(re.findall(r"<Audio\s+(\d+)>", enhanced, flags=re.IGNORECASE))
+        if required_tags - actual_tags or actual_tags - allowed_tags:
+            return original_prompt, (
+                "Prompt enhancement failed: the writer changed the FL2VA audio labels. "
+                "Your original prompt was preserved; retry to keep speaker references intact."
+            )
+        return enhanced, status
+
     if backend == "Gemini":
-        return _enhance_h3_prompt_with_gemini(
+        return finish(_enhance_h3_prompt_with_gemini(
             prompt,
             gemini_model,
             gemini_api_key,
@@ -1357,9 +1405,9 @@ def enhance_h3_prompt(
             height,
             result_format,
             image_frames,
-        )
+        ))
     if backend == "Lightning AI":
-        return _enhance_h3_prompt_with_lightning(
+        return finish(_enhance_h3_prompt_with_lightning(
             prompt,
             lightning_api_key,
             mode,
@@ -1385,16 +1433,14 @@ def enhance_h3_prompt(
             height,
             result_format,
             image_frames,
-        )
+        ))
     if backend != "Local MiniMax-H3 8B":
-        return str(
-            prompt or ""
-        ), f"Prompt enhancement failed: unsupported backend {backend!r}."
+        return original_prompt, f"Prompt enhancement failed: unsupported backend {backend!r}."
     try:
         if normalize_result_format(result_format) != "Video":
             raise H3Error("The local 8B writer supports H3 audio-video prompts only.")
         rough_prompt = str(prompt or "").strip()
-        if not rough_prompt:
+        if not original_prompt.strip():
             raise H3Error("Enter a text prompt before enhancing locally.")
         numeric_duration = float(duration)
         if not numeric_duration.is_integer():
@@ -1404,7 +1450,7 @@ def enhance_h3_prompt(
             )
         task = local_prompt_task(mode, first_image, last_image)
         resolution = local_prompt_resolution(width, height, task)
-        return rewrite_local_h3_prompt(
+        return finish(rewrite_local_h3_prompt(
             prompt=rough_prompt,
             task=task,
             resolution=resolution,
@@ -1417,9 +1463,9 @@ def enhance_h3_prompt(
             top_p=float(local_top_p),
             greedy=bool(local_greedy),
             seed=int(local_seed),
-        )
+        ))
     except (H3Error, OSError, RuntimeError, ValueError) as exc:
-        return str(prompt or ""), f"Local prompt enhancement failed: {exc}"
+        return original_prompt, f"Local prompt enhancement failed: {exc}"
 
 
 def prompt_writer_backend_visibility(backend: str) -> tuple[Any, Any, Any]:

@@ -72,6 +72,7 @@ In integrated_multimodal_description:
 - Keep all actions physically plausible and paced to complete within the supplied duration.
 
 For speech and singing:
+- First/last-frame tasks may include voice-timbre references such as <Audio 1>. Preserve each supplied audio label and its speaker assignment without changing the frame task or inventing reference labels. Voice-label context is text only: do not claim to hear the sample or infer its acoustic properties. Generate the user's new dialogue in the referenced voice rather than requesting playback of the sample.
 - Assign stable speaker IDs such as (S1) and (S2) only to subjects who vocalize.
 - Identify each speaker sufficiently when first introduced.
 - Put only the exact spoken or sung content inside <d>, preceded by its language tag:

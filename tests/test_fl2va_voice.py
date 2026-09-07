@@ -104,14 +104,64 @@ class Fl2vaVoiceTests(unittest.TestCase):
         self.assertEqual(arguments.references["audio"][0], "ref2va.wav")
         self.assertEqual(arguments.with_seed(42).values["fl2va_audio_1"], "fl2va.wav")
 
-    def test_voice_prompt_is_preserved_without_external_enhancement(self):
+    def enhancer_args(self, backend="Gemini", **changes):
         args = {name: None for name, p in inspect.signature(app.enhance_h3_prompt).parameters.items() if p.default is inspect.Parameter.empty}
-        args.update(prompt="My dialogue <Audio 1>", backend="Gemini", mode="First / last frame", fl2va_audio_1="voice.wav")
-        with patch.object(app, "_enhance_h3_prompt_with_gemini") as remote:
+        args.update(
+            prompt='The woman uses <Audio 1> and says, "Hello."', backend=backend,
+            mode="First / last frame", fl2va_audio_1="private-voice.wav",
+            duration=5, width=864, height=480, first_image="start.png",
+            local_max_new_tokens=1024, local_temperature=0.6, local_top_p=0.9,
+            local_seed=7,
+        )
+        args.update(changes)
+        return args
+
+    def test_all_writers_receive_voice_labels_without_audio_files(self):
+        for backend, target in (
+            ("Gemini", "_enhance_h3_prompt_with_gemini"),
+            ("Lightning AI", "_enhance_h3_prompt_with_lightning"),
+            ("Local MiniMax-H3 8B", "rewrite_local_h3_prompt"),
+        ):
+            with self.subTest(backend=backend):
+                args = self.enhancer_args(backend)
+                enhanced = args["prompt"] + " The camera moves closer."
+                with patch.object(app, target, return_value=(enhanced, "Enhanced")) as writer:
+                    result = app.enhance_h3_prompt(**args)
+                self.assertEqual(result, (enhanced, "Enhanced"))
+                writer_prompt = writer.call_args.kwargs.get("prompt") if writer.call_args.kwargs else writer.call_args.args[0]
+                self.assertIn("Available voice labels: <Audio 1>", writer_prompt)
+                self.assertIn("exact speaker assignment", writer_prompt)
+                self.assertIn(args["prompt"], writer_prompt)
+                self.assertNotIn("private-voice.wav", str(writer.call_args))
+
+    def test_writer_cannot_drop_or_invent_voice_labels(self):
+        for enhanced in ("The woman says hello.", "A man uses <Audio 2>.", "Voice <Audio 1> plus <Audio 0>."):
+            with self.subTest(enhanced=enhanced):
+                args = self.enhancer_args()
+                with patch.object(app, "_enhance_h3_prompt_with_gemini", return_value=(enhanced, "Enhanced")):
+                    prompt, status = app.enhance_h3_prompt(**args)
+                self.assertEqual(prompt, args["prompt"])
+                self.assertIn("changed the FL2VA audio labels", status)
+
+    def test_provider_failure_never_returns_internal_voice_instructions(self):
+        args = self.enhancer_args()
+        with patch.object(app, "_enhance_h3_prompt_with_gemini", side_effect=lambda prompt, *a: (prompt, "Prompt enhancement failed: offline")):
             prompt, status = app.enhance_h3_prompt(**args)
-        remote.assert_not_called()
-        self.assertEqual(prompt, "My dialogue <Audio 1>")
-        self.assertIn("kept unchanged", status)
+        self.assertEqual(prompt, args["prompt"])
+        self.assertIn("offline", status)
+
+    def test_voice_context_supports_drafts_and_ignores_hidden_slots(self):
+        context, allowed, required = app.fl2va_prompt_voice_context("Voice <Audio 2>", "First / last frame")
+        self.assertIn("<Audio 2>", context)
+        self.assertEqual(allowed, {"2"})
+        self.assertEqual(required, {"2"})
+        for mode in ("Text to video", "Reference media"):
+            self.assertEqual(app.fl2va_prompt_voice_context("Voice <Audio 1>", mode, "hidden.wav"), ("", set(), set()))
+        with self.assertRaises(app.H3Error):
+            app.fl2va_prompt_voice_context("Voice <Audio 2>", "First / last frame", "only-one.wav")
+        context, allowed, required = app.fl2va_prompt_voice_context("Two speakers.", "First / last frame", "one.wav", "two.wav")
+        self.assertEqual(allowed, {"1", "2"})
+        self.assertEqual(required, set())
 
 
 if __name__ == "__main__":
