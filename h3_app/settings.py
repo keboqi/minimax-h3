@@ -279,13 +279,11 @@ def resolve_settings(
             elif empty_slot:
                 issues.append("Fill FL2VA voice slots in order, starting with voice 1.")
                 break
-    if request.mode == "Reference media" or has_voice_refs:
+    if request.mode == "Reference media":
         adjusted(
             "semantic_bridge",
             bridge,
             False,
-            "Semantic Bridge is disabled for FL2VA voice references."
-            if has_voice_refs else
             "Semantic Bridge v1 supports FL2VA only; disabled for reference media.",
         )
         bridge = False

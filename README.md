@@ -82,8 +82,8 @@ pip packages. Existing local installs refresh it on the next `run_h3.sh` startup
 Modal deployments need rebuilding/redeploying. Missing nodes produce an explicit
 update-and-restart error. No new model weights are required for this option.
 
-Semantic Bridge is disabled while FL2VA voice references are active, preserving
-its preference for later runs. Prompt enhancement supports FL2VA audio tags and
+Semantic Bridge can be enabled alongside FL2VA voice references for experimental
+testing; combined voice fidelity and lip-sync are not yet validated. Prompt enhancement supports FL2VA audio tags and
 speaker assignments using the prompt and available voice labels. Voice sample
 files stay in the generation workflow; they are not uploaded to prompt writers.
 If a writer drops or invents audio labels, the original prompt is preserved with

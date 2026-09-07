@@ -24,7 +24,7 @@ class Fl2vaVoiceTests(unittest.TestCase):
             first_image="start.png", last_image="end.png", width=864, height=480,
             duration=5, steps=4, seed=7,
             models=SimpleNamespace(text_encoder="encoder.safetensors"),
-            available_nodes={T8, "LoadAudio"} if available is None else available,
+            available_nodes={T8, "LoadAudio", app.H3_SEMANTIC_BRIDGE_NODE} if available is None else available,
             voice_reference_audios=list(voices),
             latent_upscale_model_name="upscaler.pth" if upscale else None,
             semantic_bridge=bool(voices),
@@ -52,9 +52,13 @@ class Fl2vaVoiceTests(unittest.TestCase):
             self.assertEqual(inputs["audio_vae"], ["audio", 0])
             for field in ("first_frame", "last_frame", "ref_audios.ref_audio_1", "ref_audios.ref_audio_2"):
                 self.assertIn(field, inputs)
-        self.assertFalse(any(n["class_type"] == app.H3_SEMANTIC_BRIDGE_NODE for n in graph.values()))
+        self.assertEqual(sum(n["class_type"] == app.H3_SEMANTIC_BRIDGE_NODE for n in graph.values()), 2)
         self.assertEqual(finish["model_ref"], ["model", 0])
-        for field in ("conditioning_ref", "initial_conditioning_ref", "latent_ref", "initial_latent_ref"):
+        for field in ("conditioning_ref", "initial_conditioning_ref"):
+            bridge = graph[finish[field][0]]
+            self.assertEqual(bridge["class_type"], app.H3_SEMANTIC_BRIDGE_NODE)
+            self.assertEqual(graph[bridge["inputs"]["conditioning"][0]]["class_type"], T8)
+        for field in ("latent_ref", "initial_latent_ref"):
             self.assertEqual(graph[finish[field][0]]["class_type"], T8)
         self.assertEqual(finish["latent_ref"][1], 1)
         self.assertEqual(finish["audio_vae_ref"], ["audio", 0])
@@ -86,7 +90,9 @@ class Fl2vaVoiceTests(unittest.TestCase):
     def test_bridge_preference_survives_mode_switches(self):
         values = dict(semantic_bridge=True, fl2va_audio_1="alice.wav")
         plan = resolve_settings(GenerationRequest(mode="First / last frame", **values))
-        self.assertFalse(plan.effective.semantic_bridge)
+        self.assertTrue(plan.effective.semantic_bridge)
+        self.assertNotIn("semantic_bridge", plan.inactive)
+        self.assertNotIn("semantic_bridge_alpha", plan.inactive)
         self.assertTrue(plan.requested.semantic_bridge)
         self.assertTrue(resolve_settings(GenerationRequest(mode="Text to video", **values)).effective.semantic_bridge)
         gap = resolve_settings(GenerationRequest(mode="First / last frame", fl2va_audio_2="bob.wav"))

@@ -89,7 +89,9 @@ def run():
                     {"name": "voice.wav", "mimeType": "audio/wav", "buffer": audio_bytes.getvalue()}
                 )
                 expect(card).to_contain_text("1 FL2VA voice reference(s)")
-                expect(bridge).to_be_disabled()
+                expect(bridge).to_be_enabled()
+                expect(bridge).to_be_checked()
+                expect(card).to_contain_text("Experimental v1")
                 # A voice sample alone never substitutes for the first/last frame.
                 expect(generate).to_be_disabled()
                 page.get_by_label("Reference media", exact=True).check()

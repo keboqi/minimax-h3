@@ -4254,7 +4254,6 @@ def build_fl2va_graph(
             conditioning_media.append((f"fl2va_audio_{index}", staged))
             loaded = graph.add("LoadAudio", audio=staged)
             inputs[f"ref_audios.ref_audio_{index}"] = Graph.out(loaded)
-        semantic_bridge = False
 
     # Tie the native H3 node's upstream CLIP identity to the actual
     # conditioning inputs. This forces changed prompts/media to execute while
