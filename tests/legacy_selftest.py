@@ -1613,8 +1613,8 @@ def selftest() -> None:
         app.SWIFTVR_UPSCALE,
     ]
 
-    assert app.resolution_choice_values("9:16 · 768×1344", "large")[:2] == (768, 1344)
-    assert app.resolution_choice_values("1:1 · 1024×1024", "large")[:2] == (1024, 1024)
+    assert app.resolution_choice_values("9:16 · 1440×2560", "large")[:2] == (1440, 2560)
+    assert app.resolution_choice_values("1:1 · 1440×1440", "large")[:2] == (1440, 1440)
     assert set(app.RESOLUTION_TIERS) == {"draft", "fast", "large"}
     assert app.preset_values("Quality")[0] == 20
     assert app.preset_values("Balanced")[0] == 18
@@ -1652,7 +1652,7 @@ def selftest() -> None:
     assert app.preset_values("Quality", "Turbo")[0] == 8
     assert app.preset_values("unknown") == app.preset_values("Balanced")
     assert app.UI_DEFAULTS["steps"] == app.turbo_steps_for(app.UI_DEFAULTS["turbo_variant"])
-    assert app.UI_DEFAULTS["width"] == 864 and app.UI_DEFAULTS["height"] == 480
+    assert app.UI_DEFAULTS["width"] == 1376 and app.UI_DEFAULTS["height"] == 768
     assert app.UI_DEFAULTS["reuse_unchanged_inputs"] is True
     assert 'api_name="/generate_video"' in app.api_guide()
 

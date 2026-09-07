@@ -496,8 +496,8 @@ UI_DEFAULTS = {
     "generation_mode": "Turbo",
     "turbo_variant": DEFAULT_TURBO,
     "duration": 5,
-    "width": 864,
-    "height": 480,
+    "width": 1376,
+    "height": 768,
     "steps": 4,
     "scheduler": "simple",
     "seed": -1,
@@ -577,38 +577,42 @@ DEFAULT_AUTO_RESOLUTION_MEGAPIXELS = "1 MP"
 AUTO_RESOLUTION_PIXEL_CAP = AUTO_RESOLUTION_MEGAPIXEL_PRESETS[
     DEFAULT_AUTO_RESOLUTION_MEGAPIXELS
 ]
-DRAFT_RESOLUTIONS: dict[str, tuple[int, int]] = {
-    "1:1 · 512×512": (512, 512),
-    "16:9 · 608×352": (608, 352),
-    "9:16 · 352×608": (352, 608),
-    "4:3 · 640×480": (640, 480),
-    "3:4 · 480×640": (480, 640),
-    "4:5 · 512×640": (512, 640),
-    "5:4 · 640×512": (640, 512),
-}
+# Preset dimensions use the model-required 32-pixel grid (1080p aligns to 1088).
 
-FAST_RESOLUTIONS: dict[str, tuple[int, int]] = {
+DRAFT_RESOLUTIONS: dict[str, tuple[int, int]] = {
     "1:1 · 768×768": (768, 768),
-    "16:9 · 864×480": (864, 480),
-    "9:16 · 480×864": (480, 864),
+    "16:9 · 1376×768": (1376, 768),
+    "9:16 · 768×1376": (768, 1376),
     "4:3 · 1024×768": (1024, 768),
     "3:4 · 768×1024": (768, 1024),
     "4:5 · 768×960": (768, 960),
     "5:4 · 960×768": (960, 768),
-    "21:9 · 1344×576": (1344, 576),
-    "9:21 · 576×1344": (576, 1344),
+    "21:9 · 1792×768": (1792, 768),
+    "9:21 · 768×1792": (768, 1792),
+}
+
+FAST_RESOLUTIONS: dict[str, tuple[int, int]] = {
+    "1:1 · 1088×1088": (1088, 1088),
+    "16:9 · 1920×1088": (1920, 1088),
+    "9:16 · 1088×1920": (1088, 1920),
+    "4:3 · 1440×1088": (1440, 1088),
+    "3:4 · 1088×1440": (1088, 1440),
+    "4:5 · 1088×1344": (1088, 1344),
+    "5:4 · 1344×1088": (1344, 1088),
+    "21:9 · 2528×1088": (2528, 1088),
+    "9:21 · 1088×2528": (1088, 2528),
 }
 
 LARGE_RESOLUTIONS: dict[str, tuple[int, int]] = {
-    "1:1 · 1024×1024": (1024, 1024),
-    "16:9 · 1344×768": (1344, 768),
-    "9:16 · 768×1344": (768, 1344),
-    "4:3 · 1536×1152": (1536, 1152),
-    "3:4 · 1152×1536": (1152, 1536),
-    "4:5 · 1024×1280": (1024, 1280),
-    "5:4 · 1280×1024": (1280, 1024),
-    "21:9 · 1536×672": (1536, 672),
-    "9:21 · 672×1536": (672, 1536),
+    "1:1 · 1440×1440": (1440, 1440),
+    "16:9 · 2560×1440": (2560, 1440),
+    "9:16 · 1440×2560": (1440, 2560),
+    "4:3 · 1920×1440": (1920, 1440),
+    "3:4 · 1440×1920": (1440, 1920),
+    "4:5 · 1440×1792": (1440, 1792),
+    "5:4 · 1792×1440": (1792, 1440),
+    "21:9 · 3360×1440": (3360, 1440),
+    "9:21 · 1440×3360": (1440, 3360),
 }
 
 RESOLUTION_TIERS: dict[str, dict[str, tuple[int, int]]] = {
@@ -2922,13 +2926,13 @@ def resolution_choice_values(name: str, tier: str) -> tuple[int, int, str]:
 
     table = RESOLUTION_TIERS[key]
     if name not in table:
-        name = "16:9 · 864×480" if key == "fast" else next(iter(table))
+        name = next(choice for choice in table if choice.startswith("16:9 ·"))
 
     width, height = table[name]
     return (
         width,
         height,
-        f"**{key.title()}** · " + resolution_summary(width, height),
+        f"**{dict(draft='768p', fast='1080p', large='2k')[key]}** · " + resolution_summary(width, height),
     )
 
 

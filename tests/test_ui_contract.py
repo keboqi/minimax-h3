@@ -181,22 +181,22 @@ class UiContractTests(unittest.TestCase):
     def test_resolution_presets_apply_latent_alignment_atomically(self) -> None:
         self.assertEqual(
             gradio_app.resolution_choice_updates(
-                "16:9 · 864×480", "fast", True, "Video"
+                "16:9 · 1920×1088", "fast", True, "Video"
             )[:2],
-            (896, 512),
+            (1920, 1088),
         )
         self.assertEqual(
             gradio_app.resolution_choice_updates(
-                "16:9 · 864×480", "fast", False, "Video"
+                "16:9 · 1920×1088", "fast", False, "Video"
             )[:2],
-            (864, 480),
+            (1920, 1088),
         )
 
         controls = {
             component.get("props", {}).get("label"): component
             for component in self.config["components"]
         }
-        preset = controls["Recommended size"]
+        preset = controls["1080p"]
         dependencies = [
             dependency
             for dependency in self.config["dependencies"]

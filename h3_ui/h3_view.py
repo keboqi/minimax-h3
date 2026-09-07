@@ -852,25 +852,25 @@ def build_h3_view(
                             "presets normally use 15–20."
                         ),
                     )
-                fast_resolution = gr.Dropdown(
-                    choices=list(services.FAST_RESOLUTIONS),
-                    value="16:9 · 864×480",
-                    label="Recommended size",
-                    info="Recommended working resolutions by aspect ratio.",
+                draft_resolution = gr.Dropdown(
+                    choices=list(services.DRAFT_RESOLUTIONS),
+                    value="16:9 · 1376×768",
+                    label="768p",
+                    info="768p sizes by aspect ratio.",
                 )
                 with gr.Accordion("More resolution presets", open=False):
                     with gr.Row():
-                        draft_resolution = gr.Dropdown(
-                            choices=list(services.DRAFT_RESOLUTIONS),
+                        fast_resolution = gr.Dropdown(
+                            choices=list(services.FAST_RESOLUTIONS),
                             value=None,
-                            label="Draft preview",
-                            info="Small sizes for quick composition tests.",
+                            label="1080p",
+                            info="1080p sizes by aspect ratio, aligned to 32 pixels.",
                         )
                         large_resolution = gr.Dropdown(
                             choices=list(services.LARGE_RESOLUTIONS),
                             value=None,
-                            label="Large output",
-                            info="Higher-resolution sizes that need more time and VRAM.",
+                            label="2k",
+                            info="1440p sizes by aspect ratio; needs more time and VRAM.",
                         )
                 with gr.Row():
                     width = gr.Number(
