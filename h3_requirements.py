@@ -27,6 +27,9 @@ KORNIA_VERSION = "0.8.1"
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
 # The pinned ComfyUI source includes the HEVC remux fix and refreshed workflow templates. Keep
 # its frontend and Comfy Kitchen requirements in lockstep with the pinned source.
+H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
+H3_AUDIO_T8_REF = "91c1b4e9b680d07a6eacee6a3aa6b449a4697554"
+
 COMFY_REF = "567275141678c9fd65bafef6aa9dcb4ac9bd70e3"
 COMFY_KITCHEN_VERSION = "0.2.31"
 COMFY_FRONTEND_VERSION = "1.51.9"

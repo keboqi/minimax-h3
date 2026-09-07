@@ -20,6 +20,8 @@ from h3_node_patches import (
     patch_trt_vae_node,
 )
 from h3_requirements import (
+    H3_AUDIO_T8_REPO,
+    H3_AUDIO_T8_REF,
     ABI_CONSTRAINTS,
     COMFY_FRONTEND_VERSION,
     COMFY_REF,
@@ -689,6 +691,14 @@ def sync_external_nodes(
     *,
     install_requirements: bool,
 ) -> None:
+    # Base T8 conditioning uses only ComfyUI dependencies.
+    sync_git_repo(
+        H3_AUDIO_T8_REPO,
+        comfy / "custom_nodes" / "minimax-h3-audio-T8",
+        ref=H3_AUDIO_T8_REF,
+        required_paths=("__init__.py", "nodes.py", "conditioning.py", "core.py"),
+    )
+
     sol = comfy / "custom_nodes" / "ComfyUI_sol-attn_Blackwell"
     sync_git_repo(
         SOL_REPO,

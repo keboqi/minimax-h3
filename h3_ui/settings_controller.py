@@ -68,6 +68,7 @@ MEDIA_NAMES = (
     *(f"ref_image_{i}" for i in range(1, 10)),
     *(f"ref_video_{i}" for i in range(1, 4)),
     *(f"ref_audio_{i}" for i in range(1, 4)),
+    *(f"fl2va_audio_{i}" for i in range(1, 4)),
 )
 ALIASES = dict(zip(GENERATION_COMPONENTS, GENERATION_FIELDS, strict=True))
 
@@ -197,7 +198,7 @@ class SettingsController:
                     else "Unload models between generation stages.",
                 )
             if name == "semantic_bridge":
-                props["interactive"] = current["mode"] != "Reference media"
+                props["interactive"] = "semantic_bridge" not in plan.inactive
             if name == "semantic_bridge_alpha":
                 props["visible"] = bool(plan.effective.semantic_bridge)
             if name == "turbo_variant":
@@ -220,7 +221,7 @@ class SettingsController:
             current["prompt"],
             current["first"],
             current["last"],
-            [current[n] for n in MEDIA_NAMES[3:]],
+            [current[n] for n in MEDIA_NAMES if n.startswith("ref_")],
         )
         visibility = (
             current["attention_mode"] == "SLA",

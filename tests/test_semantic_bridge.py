@@ -137,7 +137,7 @@ class SemanticBridgeTests(unittest.TestCase):
         parameters = list(inspect.signature(app.generate).parameters)
         self.assertEqual(parameters[:-1], list(GENERATION_FIELDS))
         legacy = GenerationArguments.from_positional(
-            [None] * (len(GENERATION_FIELDS) - 2)
+            [None] * (len(GENERATION_FIELDS) - 5)
         )
         self.assertFalse(legacy.values["semantic_bridge"])
         self.assertEqual(legacy.values["semantic_bridge_alpha"], 0.1)

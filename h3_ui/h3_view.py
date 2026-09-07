@@ -156,6 +156,9 @@ class H3View:
     preset: gr.components.Component
     prompt: gr.components.Component
     prompt_writer_backend: gr.components.Component
+    fl2va_audio_1: gr.components.Component
+    fl2va_audio_2: gr.components.Component
+    fl2va_audio_3: gr.components.Component
     ref_audio_1: gr.components.Component
     ref_audio_2: gr.components.Component
     ref_audio_3: gr.components.Component
@@ -302,6 +305,9 @@ H3_COMPONENT_ORDER = (
     "preset",
     "prompt",
     "prompt_writer_backend",
+    "fl2va_audio_1",
+    "fl2va_audio_2",
+    "fl2va_audio_3",
     "ref_audio_1",
     "ref_audio_2",
     "ref_audio_3",
@@ -570,6 +576,18 @@ def build_h3_view(
                         elem_id="first-frame-image",
                     )
                     last = gr.Image(type="filepath", label="Last frame")
+                with gr.Accordion("Optional voice references (experimental)", open=False):
+                    gr.Markdown(
+                        "Use short, clean voice samples for new dialogue with these frames. "
+                        "Start with 2–3 seconds per voice. Assign speakers in the prompt, "
+                        'for example: `The woman uses the voice timbre of <Audio 1> and says, "Hello."` '
+                        "Fill slots in order. These uploads apply only to First / last frame mode; "
+                        "Ref2VA has separate uploads. Voice fidelity is experimental."
+                    )
+                    with gr.Row():
+                        fl2va_audio_1 = gr.Audio(type="filepath", label="FL2VA voice 1 · <Audio 1>", elem_id="fl2va-voice-1")
+                        fl2va_audio_2 = gr.Audio(type="filepath", label="FL2VA voice 2 · <Audio 2>", elem_id="fl2va-voice-2")
+                        fl2va_audio_3 = gr.Audio(type="filepath", label="FL2VA voice 3 · <Audio 3>", elem_id="fl2va-voice-3")
             with gr.Group(visible=False) as reference_group:
                 gr.Markdown("### Reference media")
                 gr.Markdown(services.reference_prompt_help())
@@ -1389,6 +1407,9 @@ def build_h3_view(
             "preset": preset,
             "prompt": prompt,
             "prompt_writer_backend": prompt_writer_backend,
+            "fl2va_audio_1": fl2va_audio_1,
+            "fl2va_audio_2": fl2va_audio_2,
+            "fl2va_audio_3": fl2va_audio_3,
             "ref_audio_1": ref_audio_1,
             "ref_audio_2": ref_audio_2,
             "ref_audio_3": ref_audio_3,

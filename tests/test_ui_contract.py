@@ -63,6 +63,28 @@ class UiContractTests(unittest.TestCase):
 
         return visit(cls.config["layout"])
 
+    def test_fl2va_voice_inputs_live_under_frames_and_have_separate_api_fields(self):
+        controls = {c.get("props", {}).get("label"): c for c in self.config["components"]}
+        first_id = controls["First frame (auto resolution)"]["id"]
+        voice_ids = [controls[f"FL2VA voice {i} · <Audio {i}>"]["id"] for i in range(1, 4)]
+        ref_ids = [controls[f"Audio {i}"]["id"] for i in range(1, 4)]
+
+        def descendants(node):
+            return {node["id"]} | set().union(*(descendants(c) for c in node.get("children", [])))
+
+        groups = [self.find_layout_node(c["id"]) for c in self.config["components"] if c["type"] == "group"]
+        frame_group = min((descendants(g) for g in groups if g and first_id in descendants(g)), key=len)
+        self.assertTrue(set(voice_ids) <= frame_group)
+        self.assertFalse(set(ref_ids) & frame_group)
+        advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
+        self.assertEqual(advanced["inputs"][-3:], voice_ids)
+        self.assertTrue(set(ref_ids) <= set(advanced["inputs"]))
+        parameters = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"]
+        for parameter in parameters[-3:]:
+            self.assertTrue(parameter["parameter_has_default"])
+            self.assertIsNone(parameter["parameter_default"])
+
+
     def test_real_tabs_own_each_view(self) -> None:
         tabs = next(
             component

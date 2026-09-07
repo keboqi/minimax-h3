@@ -1319,8 +1319,16 @@ def enhance_h3_prompt(
     height: int,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
+    fl2va_audio_1: Any = None,
+    fl2va_audio_2: Any = None,
+    fl2va_audio_3: Any = None,
 ) -> tuple[str, str]:
     """Dispatch H3 prompt enhancement to the selected prompt-writer backend."""
+    if mode == "First / last frame" and any((fl2va_audio_1, fl2va_audio_2, fl2va_audio_3)):
+        return str(prompt or ""), (
+            "Prompt kept unchanged: FL2VA voice references are used only for generation. "
+            "Assign each speaker with <Audio 1>, <Audio 2>, or <Audio 3> in your prompt."
+        )
     if backend == "Gemini":
         return _enhance_h3_prompt_with_gemini(
             prompt,
@@ -4001,6 +4009,18 @@ def finish_sampling(
     )
 
 
+def active_fl2va_voice_references(mode: str, *slots: Any) -> list[str]:
+    if mode != "First / last frame":
+        return []
+    seen_empty = False
+    for value in slots:
+        if not value:
+            seen_empty = True
+        elif seen_empty:
+            raise H3Error("Fill FL2VA voice slots in order, starting with voice 1.")
+    return collect_reference_slots(*slots)
+
+
 def build_fl2va_graph(
     *,
     prompt: str,
@@ -4054,6 +4074,7 @@ def build_fl2va_graph(
     smart_stage_offload: bool = False,
     semantic_bridge: bool = False,
     semantic_bridge_alpha: float = 0.10,
+    voice_reference_audios: list[str] | None = None,
 ) -> dict[str, Any]:
     graph = Graph()
     model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
@@ -4147,6 +4168,38 @@ def build_fl2va_graph(
         )
         inputs["last_frame"] = Graph.out(loaded)
 
+    conditioning_node = "MiniMaxH3ImageToVideo"
+    if voice_reference_audios:
+        if not (first_image or last_image):
+            raise H3Error("FL2VA voice references require a first or last frame.")
+        if len(voice_reference_audios) > MAX_REFERENCE_AUDIOS:
+            raise H3Error("FL2VA supports up to three voice references.")
+        conditioning_node = "MiniMaxH3AudioConditioningT8"
+        missing = {conditioning_node, "LoadAudio"} - available_nodes
+        if missing:
+            raise H3Error(
+                "Missing FL2VA voice-reference nodes: " + ", ".join(sorted(missing))
+                + ". Update provisioning and restart ComfyUI."
+            )
+        inputs["video_vae"] = inputs.pop("vae")
+        inputs.update(
+            audio_vae=audio_vae_ref,
+            task_type="Hybrid",
+            audio_mode="native",
+            audio_denoise_strength=0.35,
+            add_source_as_reference=False,
+            prompt_primary_audio_ordinal=0,
+            strict_prompt_tags=True,
+            ref_image_size="match",
+            reference_video_policy="official_2_to_15s",
+        )
+        for index, path in enumerate(voice_reference_audios, 1):
+            staged = stage_file(path, "fl2va_voice_audios", reuse=reuse_unchanged_inputs)
+            conditioning_media.append((f"fl2va_audio_{index}", staged))
+            loaded = graph.add("LoadAudio", audio=staged)
+            inputs[f"ref_audios.ref_audio_{index}"] = Graph.out(loaded)
+        semantic_bridge = False
+
     # Tie the native H3 node's upstream CLIP identity to the actual
     # conditioning inputs. This forces changed prompts/media to execute while
     # unchanged conditioning can still reuse the encoded result.
@@ -4165,7 +4218,7 @@ def build_fl2va_graph(
     inputs["clip"] = clip_ref
 
     target_h3 = graph.add(
-        "MiniMaxH3ImageToVideo",
+        conditioning_node,
         **inputs,
         width=target_width,
         height=target_height,
@@ -4173,7 +4226,7 @@ def build_fl2va_graph(
     initial_h3 = target_h3
     if latent_upscale_model_name is not None:
         initial_h3 = graph.add(
-            "MiniMaxH3ImageToVideo",
+            conditioning_node,
             **inputs,
             width=source_width,
             height=source_height,
@@ -7251,6 +7304,9 @@ def generate(
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     semantic_bridge: bool = False,
     semantic_bridge_alpha: float = 0.10,
+    fl2va_audio_1: Any = None,
+    fl2va_audio_2: Any = None,
+    fl2va_audio_3: Any = None,
     progress=gr.Progress(track_tqdm=False),
 ):
     requested_values = {key: value for key, value in locals().items() if key in GENERATION_FIELDS}
@@ -7266,6 +7322,9 @@ def generate(
         unload_prompt_rewriter()
         progress(0, desc="Validating request")
         yield None, progress_status("Validating request", started=started)
+        voice_refs = active_fl2va_voice_references(
+            mode, fl2va_audio_1, fl2va_audio_2, fl2va_audio_3
+        )
         plan = resolve_request_settings(requested_values)
         if plan.issues:
             raise H3Error(" ".join(plan.issues))
@@ -7634,6 +7693,7 @@ def generate(
             )
         else:
             graph = build_fl2va_graph(
+                voice_reference_audios=voice_refs,
                 semantic_bridge=semantic_bridge,
                 semantic_bridge_alpha=semantic_bridge_alpha,
                 prompt=prompt,
@@ -7705,7 +7765,7 @@ def generate(
             "preset": requested_values.get("preset", "Fast"),
             "settings": {key: value for key, value in requested_values.items()
                          if key in GENERATION_FIELDS and key not in {"prompt", "first_image", "last_image"}
-                         and not key.startswith("ref_")},
+                         and not key.startswith(("ref_", "fl2va_audio_"))},
             "changes_from_preset": plan.differences() if requested_values.get("preset") else {},
             "adjustments": [asdict(item) for item in plan.adjustments],
         }
@@ -7715,6 +7775,8 @@ def generate(
             stage_model_offload=effective_stage_offload, postprocess=postprocess, latent_upscale=latent_upscale,
             model_filename=selected_model, text_encoder_filename=selected_text_encoder,
             attention_mode="SLA" if effective_sla else "Sage 2" if effective_sage else "Sol-Attn" if effective_sol else "Kitchen",
+            fl2va_voice_reference_count=len(voice_refs),
+            fl2va_voice_reference_mode="Hybrid/native" if voice_refs else None,
             semantic_bridge=semantic_bridge,
             semantic_bridge_alpha=semantic_bridge_alpha if semantic_bridge else 0.0,
             semantic_bridge_adapter=MODEL_SPECS["semantic_bridge_v1"].local_name if semantic_bridge else None,

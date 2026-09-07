@@ -97,6 +97,8 @@ sys.path.insert(0, str(_shared_import_path()))
 # Only build inputs may be imported while Modal constructs the image. Helpers
 # mounted after run_function() must be imported lazily inside runtime functions.
 from h3_requirements import (  # noqa: E402
+    H3_AUDIO_T8_REPO,
+    H3_AUDIO_T8_REF,
     ABI_CONSTRAINTS,
     COMFY_FRONTEND_VERSION,
     COMFY_REF,
@@ -220,6 +222,10 @@ def build(revision: str) -> None:
     swiftvr_dir = Path(ROOT) / "SwiftVR"
     _clone(SWIFTVR_REPO, swiftvr_dir, ref=SWIFTVR_REF)
     _print_git_revision(swiftvr_dir)
+
+    audio_t8_dir = Path(COMFY) / "custom_nodes" / "minimax-h3-audio-T8"
+    _clone(H3_AUDIO_T8_REPO, audio_t8_dir, ref=H3_AUDIO_T8_REF)
+    _print_git_revision(audio_t8_dir)
 
     sol_dir = Path(COMFY) / "custom_nodes" / "ComfyUI_sol-attn_Blackwell"
     _clone(SOL_REPO, sol_dir, ref=SOL_REF)

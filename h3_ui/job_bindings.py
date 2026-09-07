@@ -72,13 +72,23 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
                 if iterator is not None:
                     iterator.close()
 
+    # Gradio treats an empty upload as required unless the callback signature
+    # also supplies a default. Keep appended voice inputs optional for old clients.
+    optional_defaults = {
+        "fl2va_audio_1": None, "fl2va_audio_2": None, "fl2va_audio_3": None,
+        "preset": None,
+    } if family == "h3" else {}
     parameters = [
-        inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        inspect.Parameter(
+            name, inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=optional_defaults.get(name, inspect.Parameter.empty),
+        )
         for name in names
     ]
     parameters.append(
         inspect.Parameter(
-            "request", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=gr.Request
+            "request", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=gr.Request,
+            default=None
         )
     )
     run.__signature__ = inspect.Signature(parameters)

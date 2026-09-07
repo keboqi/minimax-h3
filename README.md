@@ -50,6 +50,47 @@ bundled FirstBlockCache node.
 - Matching local and Modal deployment paths
 - Version-aware, resumable Hugging Face model provisioning
 
+## FL2VA voice references (experimental)
+
+In **First / last frame**, expand **Optional voice references (experimental)**
+under the start/end images. Upload up to three short, clean voice samples, filling
+slots in order. Start with 2–3 seconds per voice. For example:
+
+```text
+The woman uses the voice timbre of <Audio 1> and says, "We should leave."
+The man uses the voice timbre of <Audio 2> and replies, "I am ready."
+```
+
+These inputs are separate from Ref2VA uploads. Switching modes keeps each set in
+its own section; FL2VA voice samples are ignored in Text to video and Reference
+media. A first frame, last frame, or both are still required. The advanced API
+appends optional `fl2va_audio_1`, `fl2va_audio_2`, and `fl2va_audio_3` fields;
+existing positional calls remain supported. Upload paths are not persisted as
+browser preferences.
+
+When samples are present, the graph uses
+[T8 Audio Conditioning](https://github.com/T8mars/comfyui-minimax-h3-audio-T8)
+with `Hybrid`, `audio_mode=native`, and standalone audio references. It keeps the
+selected FL2VA weights and FL2VA Turbo adapter, preserves the start/end keyframes,
+and generates a new soundtrack. Both latent-upscale stages receive references.
+Audio content participates in staging and conditioning cache identities.
+Without voice samples, the original FL2VA graph is used.
+
+Local setup and Modal pin T8 to
+`91c1b4e9b680d07a6eacee6a3aa6b449a4697554`. Its base nodes require no additional
+pip packages. Existing local installs refresh it on the next `run_h3.sh` startup;
+Modal deployments need rebuilding/redeploying. Missing nodes produce an explicit
+update-and-restart error. No new model weights are required for this option.
+
+Semantic Bridge is disabled while FL2VA voice references are active, preserving
+its preference for later runs. Prompt enhancement keeps the prompt unchanged
+while these samples are attached; voice samples are used only for generation.
+Result settings record the active reference count and conditioning mode.
+
+Voice fidelity on unchanged FL2VA weights is experimental. The integration has
+CPU graph/UI regression coverage; GPU voice-transfer quality, lip-sync, and speed
+still require matched-seed comparisons on the deployed checkpoints.
+
 ## Semantic Bridge (experimental)
 
 The H3 model settings include a default-off **Semantic Bridge** option for text
@@ -511,6 +552,9 @@ pins, is copied into an earlier image layer.
 ## Validation
 
 The fast checks do not download models or require a GPU:
+
+Voice-reference coverage: `python -m unittest discover -s tests -q` and
+`python tests/browser_voice_refs.py` (headless Chrome/Chromium).
 
 ```bash
 python3 -m py_compile \

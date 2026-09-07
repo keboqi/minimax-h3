@@ -100,6 +100,9 @@ class GenerationRequest:
     use_int8_vae: bool = False
     semantic_bridge: bool = False
     semantic_bridge_alpha: float = 0.10
+    fl2va_audio_1: Any = None
+    fl2va_audio_2: Any = None
+    fl2va_audio_3: Any = None
 
     @classmethod
     def from_values(cls, values: Mapping[str, Any]) -> GenerationRequest:
@@ -265,11 +268,24 @@ def resolve_settings(
     if fmt == "Video" and not 1 <= output.batch_count <= 4:
         issues.append("Choose between 1 and 4 videos per batch.")
     bridge = request.semantic_bridge
-    if request.mode == "Reference media":
+    has_voice_refs = request.mode == "First / last frame" and any(
+        getattr(request, f"fl2va_audio_{i}") for i in range(1, 4)
+    )
+    if has_voice_refs:
+        empty_slot = False
+        for i in range(1, 4):
+            if not getattr(request, f"fl2va_audio_{i}"):
+                empty_slot = True
+            elif empty_slot:
+                issues.append("Fill FL2VA voice slots in order, starting with voice 1.")
+                break
+    if request.mode == "Reference media" or has_voice_refs:
         adjusted(
             "semantic_bridge",
             bridge,
             False,
+            "Semantic Bridge is disabled for FL2VA voice references."
+            if has_voice_refs else
             "Semantic Bridge v1 supports FL2VA only; disabled for reference media.",
         )
         bridge = False

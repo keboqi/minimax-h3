@@ -44,6 +44,9 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
         else f"{output.duration:g} seconds"
     )
     dimensions = f"{output.width}×{output.height}"
+    voice_count = sum(bool(getattr(effective, f"fl2va_audio_{i}")) for i in range(1, 4))
+    if effective.mode == "First / last frame" and voice_count:
+        length += f" · {voice_count} FL2VA voice reference(s)"
     seed = (
         "Independent random seeds"
         if output.batch_count > 1
