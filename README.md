@@ -44,7 +44,7 @@ bundled FirstBlockCache node.
   the official FP16 video VAE remains the default
 - Hardware-aware ComfyUI memory mode selection
 - One-click model unloading and VRAM cache release from the UI
-- Spectrum v0.2.23 in legacy mode as the normal-generation default and experimental Turbo option
+- Spectrum v0.2.24 in legacy mode as the normal-generation default and experimental Turbo option
 - Optional experimental MMH3 tiled/chunked latent refinement for constrained VRAM
 - FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
@@ -130,14 +130,17 @@ NumPy 1.26.4, and SciPy 1.15.3, and installs the CUDA 13 TensorRT Python
 builder/runtime used by the optional TensorRT VAE. The pinned ComfyUI stack
 supplies Comfy Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
 2.2.0 remains installed from the pinned prebuilt wheel for UI comparisons.
-SLA v1.4.4 is provided by the pinned PlagueKind node pack at
-`aaec055cd642b3292df18e69824c012d345ebfe8`. Selecting **SLA** exposes three
+SLA v1.4.8 is provided by the pinned PlagueKind node pack at
+`59f54d359bbabff8bb813b1e3e381dd29843e720`. Selecting **SLA** exposes three
 quality presets: **Fast** uses validated 0.90 sparsity, **Balanced** uses the
 LoRA-distilled 0.85 sparsity, and **Quality** uses 0.85 sparsity plus a dense
 final sampling step. In a two-stage latent-upscale workflow the Quality dense
 tail applies independently to both sampling stages. Every preset uses 64-token
 blocks, protects the audio prefix, and leaves sequences shorter than 8192 tokens
-dense. Use SLA with an SLA-distilled H3 LoRA.
+dense. The graph explicitly keeps the Triton sparse engine, disables experimental
+INT8 QK and tail correction, and forces step zero dense. This preserves the
+previous route instead of inheriting v1.4.8's Kitchen sparse-engine defaults.
+Use SLA with an SLA-distilled H3 LoRA.
 
 The Sol-Attn integration is pinned to the reviewed v0.6.2 commit
 `930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf` so its ComfyUI node contract
@@ -152,12 +155,13 @@ patched fail-closed so its E-grid adapter derives the same rows as ComfyUI,
 including visual and audio reference-conditioning rows. Quality ConvRot models use
 bit-preserving two-way feed-forward chunking above 8K packed tokens.
 
-Spectrum is pinned to v0.2.23 and is applied after LoRA, Sol-Attn, and ConvRot
+Spectrum is pinned to v0.2.24 and is applied after LoRA, Sol-Attn, and ConvRot
 feed-forward patches. Its default uses system-RAM history and replay archives,
 degree-1 forecasting, offline smoothing replay, zero spectral audio blending,
-and explicit legacy (`model_aware_mode=off`) scheduling. v0.2.23 retains that
-input contract while adding PDD-LoRA compatibility and newer SEEDS, SA-Solver,
-and reference-interoperability work. The current H3 graphs continue to use the
+and explicit legacy (`model_aware_mode=off`) scheduling. v0.2.24 retains that
+input contract while removing the RES three-step tail floor and improving
+qualified terminal PECE transitions. Our one-step tail is now authoritative
+subject to Spectrum's remaining exact-evaluation safeguards. The current H3 graphs continue to use the
 reviewed Larry and RES sampler paths.
 Spectrum, FirstBlockCache, and EasyCache are mutually exclusive acceleration
 choices. Turbo defaults to Spectrum through the reviewed Larry Turbo and
@@ -509,9 +513,20 @@ hosted prompt enhancer available without entering a key in the UI, also store
 `GEMINI_API_KEY` and/or `LIGHTNING_API_KEY` in that Modal Secret.
 
 The deployment pins an immutable ComfyUI revision with its required
-frontend package 1.51.9. This includes the HEVC remux fix, refreshed workflow
-templates, native MiniMax Music 3, LTX 2.5 INT8 support, and Comfy Kitchen
-attention.
+frontend package 1.51.10, Comfy Kitchen 0.2.33 and upstream aimdo 0.5.2.
+The source also pins workflow templates 0.11.55 and embedded docs 0.5.11.
+This update includes native sparse attention, Comfy Compiler, optional H3
+reference VAEs and DiffSynth/ModelScope H3 LoRA support. KJNodes 1.5.1 includes
+the matching H3 low-memory attention callback fix.
+
+TensorRT VAE is pinned to `4360e00867eca86ab61b3899216c0ec281367b46`.
+Upstream now owns optional encoder loading and single-frame encoding. Our
+version-5 patch retains reference single-frame decoding, temporal tail trimming
+and explicit FP32 decoder normalization casts after ONNX parsing. Provisioning
+also installs ONNX for graph-based quantization detection in the compiler. The engine
+quality marker is version 4, so existing engines rebuild lazily on the next
+TensorRT decode. Model weights are reused. These source and CPU checks do not
+replace matched-seed video/audio and memory validation on the deployment GPU.
 Changing that pin invalidates the Modal image cache so ComfyUI and its matching
 `comfy-kitchen` dependency are rebuilt together.
 

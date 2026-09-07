@@ -47,9 +47,9 @@ COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
 SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
 SOL_REF = "930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf"  # v0.6.2, SM86 support
 SLA_REPO = "https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes.git"
-SLA_REF = "aaec055cd642b3292df18e69824c012d345ebfe8"  # v1.4.4
+SLA_REF = "59f54d359bbabff8bb813b1e3e381dd29843e720"  # v1.4.8
 SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
-SPECTRUM_REF = "beb32dd210ef9e95520453107f158241d4f2ecf3"
+SPECTRUM_REF = "a360f64fbfa54681ded100a64ded86a5713ddf17"
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
 LARRY_TURBO_REF = (
     "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
@@ -61,7 +61,7 @@ H3_LATENT_UPSCALER_NODE_REF = "d7c01b9011f2e8439493f6c02c29995a27df276f"
 LTXVIDEO_REPO = "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
 LTXVIDEO_REF = "15d09abb5a187a8dcaea2fc31fe51ee96e6c9d0d"
 KJNODES_REPO = "https://github.com/kijai/ComfyUI-KJNodes.git"
-KJNODES_REF = "e8e88f7c88e3f6205b122f5de87e69a09fbce5ac"
+KJNODES_REF = "c9869eade9920a1b949de07c4a197156006bcceb"
 CONTROLNET_AUX_REPO = "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
 CONTROLNET_AUX_REF = "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
 VIDEO_DEPTH_REPO = "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.git"
@@ -649,6 +649,7 @@ def install_environment(comfy: Path) -> None:
             "peft>=0.18",
             "safetensors>=0.7",
             "einops>=0.8.2",
+            "onnx>=1.19,<2",  # TensorRT compiler graph-based quantization detection
             "decord==0.6.0",
             "imageio>=2.37.2",
             "imageio-ffmpeg>=0.6",

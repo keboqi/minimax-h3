@@ -1210,6 +1210,10 @@ def selftest() -> None:
         "min_seq_len": 8192,
         "dense_last_steps": 1,
         "protect_audio": True,
+        "engine": "triton",
+        "use_int8_qk": False,
+        "tail_correction": False,
+        "dense_steps": "0",
         "enabled": True,
     }
     assert not any(
@@ -2465,7 +2469,7 @@ def selftest() -> None:
         f"Sol Auto/Turbo policy valid, Spectrum default + Sol/ConvRot order valid, "
         f"zero-copy Sol + FirstBlockCache composition valid, "
         f"LightX fused modulation + Larry compatibility + ConvRot FFN chunking valid, "
-        f"Spectrum v0.2.23 legacy Turbo composition + block-cache guard valid, "
+        f"Spectrum v0.2.24 legacy Turbo composition + block-cache guard valid, "
         f"MMH3 Split Upscale controls + three-node graph contract valid, "
         f"selectable Larry/LightX2V Turbo on "
         f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, "

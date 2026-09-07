@@ -37,8 +37,8 @@ MINIMAX_MUSIC3_REPO = "Comfy-Org/MiniMax-Music-3"
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
 MIN_VALID_MODEL_BYTES = 1024 * 1024
-TRT_VAE_ENGINE_BUILD_ID = "mixed-fp32-normalization-v3"
-TRT_VAE_ENGINE_MARKER = ".h3-trt-vae-quality-v3"
+TRT_VAE_ENGINE_BUILD_ID = "mixed-fp32-normalization-v4"
+TRT_VAE_ENGINE_MARKER = ".h3-trt-vae-quality-v4"
 TRT_VAE_RUNTIME_MODEL_KEYS = (
     "video_vae_trt_decoder",
     "video_vae_trt_decoder_data",
@@ -997,6 +997,7 @@ def selftest() -> None:
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert set(MODEL_SPECS) == {
+        "semantic_bridge_v1",
         "speed_fl2va",
         "speed_ref2va",
         "quality_fl2va",

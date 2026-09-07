@@ -9,9 +9,9 @@ from pathlib import Path
 
 
 LARRY_TIMESTEP_PATCH_VERSION = 2
-TRT_VAE_PATCH_VERSION = 4
+TRT_VAE_PATCH_VERSION = 5
 TRT_VAE_NODE_REPO = "https://github.com/lihaoyun6/ComfyUI-H3VAE_TRT.git"
-TRT_VAE_NODE_REF = "7131a316160b2f299239b9bc40621be46d8ce62f"
+TRT_VAE_NODE_REF = "4360e00867eca86ab61b3899216c0ec281367b46"
 
 
 _LARRY_UNIQUE_T_ORIGINAL = """\
@@ -121,41 +121,23 @@ def patch_larry_turbo_node(node_dir: Path) -> bool:
     return True
 
 
-_TRT_SINGLE_FRAME_ENCODE_ORIGINAL = """\
-      if x.shape[2] == 1:
-        moments = self.tiled_encode(self._normalize_pixels(x))[:, :, -1:, :, :]
-      else:
-        moments = self.encode_temporal(x)
-"""
-
-_TRT_SINGLE_FRAME_ENCODE_PATCHED = """\
-      if x.shape[2] == 1:
-        # The TensorRT encoder has a fixed 17-frame profile. Mirror the
-        # temporal encoder's tail-padding behavior, then retain one latent.
-        x_pad = x.repeat(1, 1, self.clip_length, 1, 1)
-        moments = self.tiled_encode(self._normalize_pixels(x_pad))[:, :, -1:, :, :]
-      else:
-        moments = self.encode_temporal(x)
-"""
-
+# Upstream now owns single-frame encoding and optional encoder loading.
+# Retain our established fixed-profile decoder workaround for single images.
 _TRT_SINGLE_FRAME_DECODE_ORIGINAL = """\
-      if z.shape[2] == 1:
-        # 🌟 如果是单张图片 (T=1)，填充到 7 个 token 以满足 TRT 静态切片尺寸
-        z_pad = z.repeat(1, 1, 7, 1, 1)
-        return self._finalize_pixels(
-            self.tiled_decode(z_pad)[:, :, -1:, :, :]
-        )
-      return self.decode_temporal(z)
+    if z.shape[2] == 1:
+      z_pad = z.repeat(1, 1, 7, 1, 1)
+      return self._finalize_pixels(self.tiled_decode(z_pad)[:, :, -1:, :, :])
+    return self.decode_temporal(z)
 """
 
 _TRT_SINGLE_FRAME_DECODE_PATCHED = """\
-      if z.shape[2] == 1:
-        # A lone token is out-of-distribution for the ViT decoder. Decode it
-        # as the first token of a two-token clip, matching the reference VAE.
-        z_pair = torch.cat([z, z], dim=2)
-        return self.decode_temporal(z_pair)[:, :, :1]
-      return self.decode_temporal(z)
+    if z.shape[2] == 1:
+      # Keep the first frame of a two-token clip for the fixed-profile engine.
+      z_pair = torch.cat([z, z], dim=2)
+      return self.decode_temporal(z_pair)[:, :, :1]
+    return self.decode_temporal(z)
 """
+
 
 _TRT_TEMPORAL_RETURN_ORIGINAL = """\
     return torch.cat(dec_chunks, dim=2)
@@ -183,15 +165,15 @@ _TRT_TEMPORAL_RETURN_PATCHED = """\
 """
 
 _TRT_FP32_NORMALIZATION_ORIGINAL = """\
-    if hasattr(trt.BuilderFlag, "FP16"):
-      config.set_flag(trt.BuilderFlag.FP16)
+      raise RuntimeError("Failed to parse ONNX:\\n" + "\\n".join(error_msgs))
 
     workspace_size = (4 if is_decoder else 8) * (1024**3)
 """
 
+
 _TRT_FP32_NORMALIZATION_PATCHED = """\
-    if hasattr(trt.BuilderFlag, "FP16"):
-      config.set_flag(trt.BuilderFlag.FP16)
+      raise RuntimeError("Failed to parse ONNX:\\n" + "\\n".join(error_msgs))
+
     if is_decoder:
       # TensorRT 11 is strongly typed. Surround normalization Reduce/Pow
       # operations with explicit FP32 casts, then restore their output type.
@@ -248,33 +230,23 @@ _TRT_FP32_NORMALIZATION_PATCHED = """\
     workspace_size = (4 if is_decoder else 8) * (1024**3)
 """
 
-_TRT_OPTIONAL_ENCODER_ORIGINAL = """\
-  def load_vae(self, decoder, encoder):
-    if encoder == "None":
-      raise RuntimeError("Encoder cannot be None!")
-    if decoder == "None":
-      raise RuntimeError("Decoder cannot be None!")
-
-    dec_path = folder_paths.get_full_path("vae", decoder)
-    enc_path = folder_paths.get_full_path("vae", encoder)
+_TRT_ONNX_IMPORT_ORIGINAL = """\
+    try:
+      model = onnx.load(onnx_path, load_external_data=False)
 """
 
-_TRT_OPTIONAL_ENCODER_PATCHED = """\
-  def load_vae(self, decoder, encoder):
-    if decoder == "None":
-      raise RuntimeError("Decoder cannot be None!")
-
-    dec_path = folder_paths.get_full_path("vae", decoder)
-    enc_path = (
-        None if encoder == "None" else folder_paths.get_full_path("vae", encoder)
-    )
+_TRT_ONNX_IMPORT_PATCHED = """\
+    try:
+      import onnx
+      model = onnx.load(onnx_path, load_external_data=False)
 """
+
 
 _TRT_REPLACEMENTS = (
     (
-        "single-frame encode",
-        _TRT_SINGLE_FRAME_ENCODE_ORIGINAL,
-        _TRT_SINGLE_FRAME_ENCODE_PATCHED,
+        "ONNX quantization inspection",
+        _TRT_ONNX_IMPORT_ORIGINAL,
+        _TRT_ONNX_IMPORT_PATCHED,
     ),
     (
         "single-frame decode",
@@ -290,11 +262,6 @@ _TRT_REPLACEMENTS = (
         "FP32 normalization",
         _TRT_FP32_NORMALIZATION_ORIGINAL,
         _TRT_FP32_NORMALIZATION_PATCHED,
-    ),
-    (
-        "optional encoder",
-        _TRT_OPTIONAL_ENCODER_ORIGINAL,
-        _TRT_OPTIONAL_ENCODER_PATCHED,
     ),
 )
 
@@ -369,17 +336,17 @@ def selftest() -> None:
         target = Path(directory) / "minimax_trt_node.py"
         target.write_text(
             "class Fixture:\n"
-            "  def encode(self, x):\n"
-            + _TRT_SINGLE_FRAME_ENCODE_ORIGINAL
-            + "  def decode(self, z):\n"
+            "  def decode(self, z):\n"
             + _TRT_SINGLE_FRAME_DECODE_ORIGINAL
             + "  def decode_temporal(self, z):\n"
             + _TRT_TEMPORAL_RETURN_ORIGINAL
             + "    pass\n\n"
             "def build():\n"
+            "    if parse_failed:\n"
             + _TRT_FP32_NORMALIZATION_ORIGINAL
-            + "\nclass Loader:\n"
-            + _TRT_OPTIONAL_ENCODER_ORIGINAL,
+            + "\ndef inspect_quantization():\n"
+            + _TRT_ONNX_IMPORT_ORIGINAL
+            + "    except Exception:\n      pass\n",
             encoding="utf-8",
         )
         assert patch_trt_vae_node(Path(directory)) is True

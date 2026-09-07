@@ -3573,6 +3573,12 @@ def add_model_stack(
             SLA_ATTENTION_NODE,
             model=model_ref,
             **sla_inputs,
+            # Preserve the pre-1.4.8 sparse path and first-step anchor.
+            # Kitchen's sparse engine cannot represent all audio/ref spans.
+            engine="triton",
+            use_int8_qk=False,
+            tail_correction=False,
+            dense_steps="0",
             enabled=True,
         )
         model_ref = Graph.out(sla)

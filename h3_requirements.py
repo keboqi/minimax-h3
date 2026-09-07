@@ -25,14 +25,14 @@ KERNELS_VERSION = "0.16.0"
 # Kornia 0.8.2+ removed that module-level compatibility export.
 KORNIA_VERSION = "0.8.1"
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
-# The pinned ComfyUI source includes the HEVC remux fix and refreshed workflow templates. Keep
-# its frontend and Comfy Kitchen requirements in lockstep with the pinned source.
+# The pinned source includes native sparse attention and Comfy Compiler.
+# Keep its frontend and Kitchen versions aligned with upstream requirements.
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "91c1b4e9b680d07a6eacee6a3aa6b449a4697554"
 
-COMFY_REF = "567275141678c9fd65bafef6aa9dcb4ac9bd70e3"
-COMFY_KITCHEN_VERSION = "0.2.31"
-COMFY_FRONTEND_VERSION = "1.51.9"
+COMFY_REF = "41db8f4fa1587d139e412a57b9b69394e3b13f95"
+COMFY_KITCHEN_VERSION = "0.2.33"
+COMFY_FRONTEND_VERSION = "1.51.10"
 WSPROTO_VERSION = "1.2.0"
 SWIFTVR_REPO = "https://github.com/H-oliday/SwiftVR.git"
 SWIFTVR_REF = "5ca168cef6ca7200f135fdfea85e5e13d12c5b53"
@@ -253,9 +253,9 @@ def selftest() -> None:
     )
     assert KORNIA_VERSION == "0.8.1"
     assert KERNELS_VERSION == "0.16.0"
-    assert COMFY_REF == "567275141678c9fd65bafef6aa9dcb4ac9bd70e3"
-    assert COMFY_KITCHEN_VERSION == "0.2.31"
-    assert COMFY_FRONTEND_VERSION == "1.51.9"
+    assert COMFY_REF == "41db8f4fa1587d139e412a57b9b69394e3b13f95"
+    assert COMFY_KITCHEN_VERSION == "0.2.33"
+    assert COMFY_FRONTEND_VERSION == "1.51.10"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 10
     with tempfile.TemporaryDirectory() as temp:
