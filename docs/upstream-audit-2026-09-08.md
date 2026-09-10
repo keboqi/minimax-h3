@@ -66,3 +66,21 @@ and Modal deployment have not been performed.
 The optional upstream tests use `H3_UPSTREAM_SOURCE_DIR` (default:
 `.cache/upstream-upgrade`) containing `minimax_trt_node.py` from the TRT pin and
 `comfy-requirements.txt` from the ComfyUI pin. They skip when sources are absent.
+
+## ComfyUI 0.35.0 upgrade — 2026-09-10
+
+Local and Modal provisioning now pin ComfyUI v0.35.0 at
+`40c4fcdf513a4523e39d54a9d391908af8df8171`, 15 commits after the September 8
+pin. This includes H3 denoise-mask velocity scaling fixes, memory compiler
+fixes, and LTX generated-keyframe/latent-guide nodes. Both installers consume
+the pinned upstream requirements: comfy-aimdo advances to 0.5.3 and workflow
+templates to 0.11.57; frontend 1.51.10 and Kitchen 0.2.33 remain aligned.
+The local launcher detects the changed source pin, and the shared requirements
+file invalidates the Modal build layer.
+
+Validation: 66 unittest cases ran, 63 passed and three CPU-PyTorch-dependent
+cases skipped. The upstream dependency contract used requirements downloaded
+from the exact release commit. All six documented dependency, model, patch,
+attention, prompt and app self-tests passed, as did Python compilation and
+Git whitespace checks. GPU inference, full CUDA dependency resolution and
+Modal deployment were not run.

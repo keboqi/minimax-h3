@@ -110,7 +110,7 @@ class ComfyRequirementsTests(unittest.TestCase):
         lines = (SOURCES / "comfy-requirements.txt").read_text().splitlines()
         self.assertIn(f"comfyui-frontend-package=={COMFY_FRONTEND_VERSION}", lines)
         self.assertIn(f"comfy-kitchen=={COMFY_KITCHEN_VERSION}", lines)
-        self.assertIn("comfy-aimdo==0.5.2", lines)
+        self.assertIn("comfy-aimdo==0.5.3", lines)
 
 
 if __name__ == "__main__":
