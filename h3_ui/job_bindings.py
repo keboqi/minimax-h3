@@ -76,6 +76,7 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
     # also supplies a default. Keep appended voice inputs optional for old clients.
     optional_defaults = {
         "fl2va_audio_1": None, "fl2va_audio_2": None, "fl2va_audio_3": None,
+        "qwen_sage": False, "qwen_compile": False,
         "preset": None,
     } if family == "h3" else {}
     parameters = [

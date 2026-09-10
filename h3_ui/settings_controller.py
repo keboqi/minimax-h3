@@ -28,6 +28,8 @@ SETTING_NAMES = tuple(
             "use_int8_vae",
             "use_trt_vae",
             "reuse_unchanged_inputs",
+            "qwen_sage",
+            "qwen_compile",
             "semantic_bridge",
             "semantic_bridge_alpha",
             "latent_upscale",

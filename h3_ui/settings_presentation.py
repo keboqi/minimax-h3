@@ -110,6 +110,8 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
     technical = detail("Base model", effective.model_profile) + detail(
         "Text encoder", sampling.text_encoder
     )
+    technical += detail("Qwen3-VL Sage", "On" if effective.qwen_sage else "Off")
+    technical += detail("Qwen3-VL compile", "On" if effective.qwen_compile else "Off")
     technical += detail(
         "Stage offload", "On" if sampling.stage_model_offload else "Off"
     )

@@ -77,10 +77,10 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(set(voice_ids) <= frame_group)
         self.assertFalse(set(ref_ids) & frame_group)
         advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
-        self.assertEqual(advanced["inputs"][-3:], voice_ids)
+        self.assertEqual(advanced["inputs"][-5:-2], voice_ids)
         self.assertTrue(set(ref_ids) <= set(advanced["inputs"]))
         parameters = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"]
-        for parameter in parameters[-3:]:
+        for parameter in parameters[-5:-2]:
             self.assertTrue(parameter["parameter_has_default"])
             self.assertIsNone(parameter["parameter_default"])
 

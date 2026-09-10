@@ -491,6 +491,8 @@ UI_DEFAULTS = {
     "semantic_bridge": False,
     "semantic_bridge_alpha": 0.10,
     "reuse_unchanged_inputs": True,
+    "qwen_sage": False,
+    "qwen_compile": False,
     "use_int8_vae": False,
     "use_trt_vae": True,
     "generation_mode": "Turbo",
@@ -4126,6 +4128,8 @@ def build_fl2va_graph(
     image_vae: str = DEFAULT_IMAGE_VAE,
     text_encoder_name: str | None = None,
     reuse_unchanged_inputs: bool = True,
+    qwen_sage: bool = False,
+    qwen_compile: bool = False,
     stage_model_offload: bool = False,
     smart_stage_offload: bool = False,
     semantic_bridge: bool = False,
@@ -4264,6 +4268,17 @@ def build_fl2va_graph(
         text_encoder_name or models.text_encoder,
         conditioning_media,
     )
+    if qwen_sage or qwen_compile:
+        if "H3QwenEncoderAcceleration" not in available_nodes:
+            raise H3Error("Missing H3QwenEncoderAcceleration node. Update provisioning and restart ComfyUI.")
+        conditioning_cache_key = hashlib.sha256(
+            f"{conditioning_cache_key}:qwen-v1:{bool(qwen_sage)}:{bool(qwen_compile)}".encode()
+        ).hexdigest()
+    if "H3QwenEncoderAcceleration" in available_nodes:
+        clip_ref = Graph.out(graph.add(
+            "H3QwenEncoderAcceleration", clip=clip_ref,
+            sage=bool(qwen_sage), compile_encoder=bool(qwen_compile),
+        ))
     cache_node = graph.add(
         H3_CONDITIONING_CACHE_NODE,
         clip=clip_ref,
@@ -4397,6 +4412,8 @@ def build_ref2va_graph(
     text_encoder_name: str | None = None,
     smart_stage_offload: bool = False,
     reuse_unchanged_inputs: bool = True,
+    qwen_sage: bool = False,
+    qwen_compile: bool = False,
     stage_model_offload: bool = False,
 ) -> dict[str, Any]:
     graph = Graph()
@@ -4515,6 +4532,17 @@ def build_ref2va_graph(
         conditioning_media,
         encoder_settings={"ref_image_size": ref_image_size},
     )
+    if qwen_sage or qwen_compile:
+        if "H3QwenEncoderAcceleration" not in available_nodes:
+            raise H3Error("Missing H3QwenEncoderAcceleration node. Update provisioning and restart ComfyUI.")
+        conditioning_cache_key = hashlib.sha256(
+            f"{conditioning_cache_key}:qwen-v1:{bool(qwen_sage)}:{bool(qwen_compile)}".encode()
+        ).hexdigest()
+    if "H3QwenEncoderAcceleration" in available_nodes:
+        clip_ref = Graph.out(graph.add(
+            "H3QwenEncoderAcceleration", clip=clip_ref,
+            sage=bool(qwen_sage), compile_encoder=bool(qwen_compile),
+        ))
     cache_node = graph.add(
         H3_CONDITIONING_CACHE_NODE,
         clip=clip_ref,
@@ -7362,6 +7390,8 @@ def generate(
     fl2va_audio_1: Any = None,
     fl2va_audio_2: Any = None,
     fl2va_audio_3: Any = None,
+    qwen_sage: bool = False,
+    qwen_compile: bool = False,
     progress=gr.Progress(track_tqdm=False),
 ):
     requested_values = {key: value for key, value in locals().items() if key in GENERATION_FIELDS}
@@ -7743,6 +7773,8 @@ def generate(
                 latent_split_config=latent_split_config,
                 text_encoder_name=selected_text_encoder,
                 reuse_unchanged_inputs=bool(reuse_unchanged_inputs),
+                qwen_sage=bool(qwen_sage),
+                qwen_compile=bool(qwen_compile),
                 stage_model_offload=effective_stage_offload,
                 smart_stage_offload=smart_stage_offload,
             )
@@ -7798,6 +7830,8 @@ def generate(
                 latent_split_config=latent_split_config,
                 text_encoder_name=selected_text_encoder,
                 reuse_unchanged_inputs=bool(reuse_unchanged_inputs),
+                qwen_sage=bool(qwen_sage),
+                qwen_compile=bool(qwen_compile),
                 stage_model_offload=effective_stage_offload,
                 smart_stage_offload=smart_stage_offload,
             )
@@ -8757,6 +8791,8 @@ def generate_with_ui_defaults(
         semantic_bridge=defaults["semantic_bridge"],
         semantic_bridge_alpha=defaults["semantic_bridge_alpha"],
         reuse_unchanged_inputs=defaults["reuse_unchanged_inputs"],
+        qwen_sage=defaults["qwen_sage"],
+        qwen_compile=defaults["qwen_compile"],
         latent_upscale=defaults["latent_upscale"],
         latent_upscaler_model=defaults["latent_upscaler_model"],
         latent_upscale_refine_steps=defaults["latent_upscale_refine_steps"],
