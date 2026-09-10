@@ -408,8 +408,8 @@ PROFILE_LABELS = {
     "original": "Original",
     "singularity": "Singularity",
 }
-PRELOAD_PROFILES = ("speed",)
-PRELOAD_PROFILE_MODEL_KEYS = ("speed_fl2va",)
+PRELOAD_PROFILES = ("singularity",)
+PRELOAD_PROFILE_MODEL_KEYS = ("singularity_fl2va",)
 PROFILE_MODEL_KEY_SET = frozenset(
     key for keys in PROFILE_MODEL_KEYS.values() for key in keys
 )
@@ -507,7 +507,7 @@ SHARED_MODEL_KEYS = tuple(
 )
 PRELOAD_MODEL_KEYS = (
     *PRELOAD_PROFILE_MODEL_KEYS,
-    # Keep provisioning aligned with the UI's initial Fast preset.
+    # Keep provisioning aligned with the UI's initial Singularity preset.
     "text_encoder",
     "larry_turbo_lora",
     "h3_latent_upscaler_3d_fp32",
@@ -968,7 +968,7 @@ def validate_config_files(
 
     ``h3_models.json`` keeps ``text_encoder`` as a legacy compatibility field
     pointing at the BF16 encoder. That checkpoint is intentionally lazy: the
-    default Fast UI preset uses the preloaded NVFP4/AWQ encoder instead. Do not
+    default Singularity UI preset uses the preloaded NVFP4/AWQ encoder instead. Do not
     validate every file named in the complete catalog here, or Modal will fail
     startup before the on-demand downloader can run.
     """
@@ -1068,16 +1068,17 @@ def selftest() -> None:
 
     cfg = _build_config("manifest.json")
     missing = validate_config_files(Path(tempfile.mkdtemp()), cfg)
-    assert "diffusion_models/" + cfg["profiles"]["speed"]["fl2va"] in missing
+    assert "diffusion_models/" + cfg["profiles"]["singularity"]["fl2va"] in missing
+    assert "speed_fl2va" not in PRELOAD_MODEL_KEYS
     assert "text_encoders/" + MODEL_SPECS["text_encoder"].local_name in missing
     assert (
         "text_encoders/" + MODEL_SPECS["text_encoder_bf16"].local_name not in missing
     )
     assert "diffusion_models/" + cfg["profiles"]["speed"]["ref2va"] not in missing
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["original"])
-    assert "speed_fl2va" in PRELOAD_MODEL_KEYS
-    assert PRELOAD_PROFILE_MODEL_KEYS == ("speed_fl2va",)
-    assert "speed_fl2va" in PRELOAD_MODEL_KEYS
+    assert "singularity_fl2va" in PRELOAD_MODEL_KEYS
+    assert PRELOAD_PROFILE_MODEL_KEYS == ("singularity_fl2va",)
+    assert MODEL_SPECS["singularity_fl2va"].local_name == MODEL_SPECS["singularity_ref2va"].local_name
     assert "speed_ref2va" not in PRELOAD_MODEL_KEYS
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS

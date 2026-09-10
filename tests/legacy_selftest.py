@@ -1789,7 +1789,7 @@ def selftest() -> None:
     api_kwargs = captured_api_call["kwargs"]
     assert api_kwargs["prompt"] == "API prompt"
     assert api_kwargs["mode"] == "Text to video"
-    assert api_kwargs["model_profile"] == "Speed"
+    assert api_kwargs["model_profile"] == "Singularity"
     assert api_kwargs["turbo_variant"] == app.DEFAULT_TURBO
     for key, expected in app.UI_DEFAULTS.items():
         assert api_kwargs[key] == expected
@@ -1961,7 +1961,7 @@ def selftest() -> None:
     assert two_mp_landscape[0] * two_mp_landscape[1] < 2_000_000
     assert app.auto_resolution_pixel_cap("4 MP") == 4_000_000 - 1
     assert app.auto_resolution_pixel_cap("8 MP") == 8_000_000 - 1
-    assert app.UI_DEFAULTS["model_profile"] == "Speed"
+    assert app.UI_DEFAULTS["model_profile"] == "Singularity"
     assert app.UI_DEFAULTS["text_encoder"] == "NVFP4 / AWQ"
     assert app.UI_DEFAULTS["stage_model_offload"] is False
     fast_defaults = app.preset_values("Fast")

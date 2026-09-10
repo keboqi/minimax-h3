@@ -16,7 +16,7 @@ class MigrationTests(unittest.TestCase):
     def components(self):
         return {
             "h3.preset": SimpleNamespace(
-                value="Fast", choices=[("Fast", "Fast"), ("Quality", "Quality")]
+                value="Singularity", choices=[("Singularity", "Singularity"), ("Fast", "Fast"), ("Quality", "Quality")]
             ),
             "h3.generation_mode": SimpleNamespace(
                 value="Turbo", choices=[("Turbo", "Turbo"), ("Normal", "Normal")]
@@ -46,7 +46,7 @@ class MigrationTests(unittest.TestCase):
             },
             self.components(),
         )
-        self.assertEqual(values["h3.preset"], "Fast")
+        self.assertEqual(values["h3.preset"], "Singularity")
         self.assertEqual(values["h3.steps"], 4)
         self.assertFalse(values["h3.stage_model_offload"])
 

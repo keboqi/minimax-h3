@@ -139,9 +139,9 @@ class SemanticBridgeTests(unittest.TestCase):
         legacy = GenerationArguments.from_positional(
             [None] * (len(GENERATION_FIELDS) - 5)
         )
-        self.assertFalse(legacy.values["semantic_bridge"])
+        self.assertTrue(legacy.values["semantic_bridge"])
         self.assertEqual(legacy.values["semantic_bridge_alpha"], 0.1)
-        self.assertFalse(app.UI_DEFAULTS["semantic_bridge"])
+        self.assertTrue(app.UI_DEFAULTS["semantic_bridge"])
         self.assertEqual(app.UI_DEFAULTS["semantic_bridge_alpha"], 0.1)
 
 

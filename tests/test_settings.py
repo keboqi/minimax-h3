@@ -13,6 +13,20 @@ from h3_app.contracts import GENERATION_FIELDS, GenerationArguments
 
 
 class SettingsTests(unittest.TestCase):
+    def test_singularity_default_matches_fast_and_selects_base(self):
+        self.assertEqual(GenerationRequest().preset, "Singularity")
+        self.assertEqual(GenerationRequest().model_profile, "Singularity")
+        self.assertTrue(GenerationRequest().semantic_bridge)
+        for mode in ("Normal", "Turbo"):
+            self.assertEqual(preset_settings("Singularity", mode), preset_settings("Fast", mode))
+            for action in ("preset", "restore"):
+                _, values = transition_modes(None, {"preset": "Singularity", "generation_mode": mode, "model_profile": "Speed", "prompt": "keep", "width": 864}, action)
+                self.assertEqual(values["model_profile"], "Singularity")
+                self.assertEqual(values["steps"], preset_settings("Fast", mode).steps)
+                self.assertEqual(values["prompt"], "keep")
+                self.assertEqual(values["width"], 864)
+
+
     def test_presets_preserve_trained_counts(self):
         self.assertEqual(
             [

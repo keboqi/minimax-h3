@@ -476,6 +476,7 @@ TURBO_SETTINGS = {
     ),
 }
 SAMPLING_PRESET_TEXT_ENCODERS = {
+    "Singularity": "NVFP4 / AWQ",
     "Fast": "NVFP4 / AWQ",
     "Balanced": "INT8 ConvRot",
     "Quality": "BF16",
@@ -485,10 +486,10 @@ UI_DEFAULTS = {
     "result_format": DEFAULT_RESULT_FORMAT,
     "image_vae": DEFAULT_IMAGE_VAE,
     "image_frames": DEFAULT_IMAGE_FRAMES,
-    "model_profile": "Speed",
+    "model_profile": "Singularity",
     "text_encoder": SAMPLING_PRESET_TEXT_ENCODERS["Fast"],
     "stage_model_offload": False,
-    "semantic_bridge": False,
+    "semantic_bridge": True,
     "semantic_bridge_alpha": 0.10,
     "reuse_unchanged_inputs": True,
     "use_int8_vae": False,
@@ -7388,7 +7389,7 @@ def generate(
     image_vae: str = DEFAULT_IMAGE_VAE,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
-    semantic_bridge: bool = False,
+    semantic_bridge: bool = True,
     semantic_bridge_alpha: float = 0.10,
     fl2va_audio_1: Any = None,
     fl2va_audio_2: Any = None,
@@ -7848,7 +7849,7 @@ def generate(
         prompt_id = submit_prompt(graph, client_id)
         execution_snapshot = {
             "job_id": prompt_id,
-            "preset": requested_values.get("preset", "Fast"),
+            "preset": requested_values.get("preset", "Singularity"),
             "settings": {key: value for key, value in requested_values.items()
                          if key in GENERATION_FIELDS and key not in {"prompt", "first_image", "last_image"}
                          and not key.startswith(("ref_", "fl2va_audio_"))},

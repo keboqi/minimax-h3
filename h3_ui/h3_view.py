@@ -688,13 +688,14 @@ def build_h3_view(
                 "<p>Start with a preset. Advanced controls stay collapsed.</p></div>"
             )
             preset = gr.Radio(
-                ["Quality", "Balanced", "Fast"],
-                value="Fast",
+                ["Singularity", "Quality", "Balanced", "Fast"],
+                value="Singularity",
                 label="Generation preset",
                 interactive=True,
                 info=(
                     "Sets sampling, text encoding, memory, attention and refinement defaults. "
-                    "Keeps your base model, prompt, media and output size."
+                    "Singularity selects its base model with Fast settings. Other presets keep your base model. "
+                    "Keeps your prompt, media and output size."
                 ),
             )
             restore_preset = gr.Button("Restore preset settings", size="sm")

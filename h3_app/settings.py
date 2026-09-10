@@ -34,6 +34,7 @@ class SamplingSettings:
 
 PRESET_FIELDS = tuple(SamplingSettings.__dataclass_fields__)
 PRESETS = {
+    "Singularity": SamplingSettings(steps=15),
     "Fast": SamplingSettings(steps=15),
     "Balanced": SamplingSettings(
         steps=18,
@@ -91,14 +92,14 @@ class GenerationRequest:
     sampling: SamplingSettings = field(default_factory=SamplingSettings)
     output: OutputSettings = field(default_factory=OutputSettings)
     finishing: FinishingSettings = field(default_factory=FinishingSettings)
-    preset: str = "Fast"
+    preset: str = "Singularity"
     generation_mode: str = "Turbo"
     mode: str = "Text to video"
-    model_profile: str = "Speed"
+    model_profile: str = "Singularity"
     cache_mode: str = "Spectrum"
     use_trt_vae: bool = True
     use_int8_vae: bool = False
-    semantic_bridge: bool = False
+    semantic_bridge: bool = True
     semantic_bridge_alpha: float = 0.10
     fl2va_audio_1: Any = None
     fl2va_audio_2: Any = None
@@ -330,10 +331,12 @@ def transition_modes(
     if action == "generation_mode" and mode != previous:
         current.update(
             modes.get(mode)
-            or asdict(preset_settings(current.get("preset", "Fast"), mode))
+            or asdict(preset_settings(current.get("preset", "Singularity"), mode))
         )
     elif action in {"preset", "restore"}:
-        current.update(asdict(preset_settings(current.get("preset", "Fast"), mode)))
+        current.update(asdict(preset_settings(current.get("preset", "Singularity"), mode)))
+        if current.get("preset") == "Singularity":
+            current["model_profile"] = "Singularity"
     elif action == "turbo_variant" and mode == "Turbo":
         current.update(
             steps=TURBO_STEPS.get(current["turbo_variant"], 4), scheduler="simple"

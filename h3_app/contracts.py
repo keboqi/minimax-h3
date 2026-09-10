@@ -177,7 +177,7 @@ class GenerationArguments:
     def from_positional(cls, args):
         # Preserve callers using the positional contract before the optional bridge.
         if len(args) == len(GENERATION_FIELDS) - 5:
-            args = (*args, False, 0.10)
+            args = (*args, True, 0.10)
         if len(args) == len(GENERATION_FIELDS) - 3:
             args = (*args, None, None, None)
         if len(args) != len(GENERATION_FIELDS):
