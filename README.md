@@ -44,7 +44,7 @@ bundled FirstBlockCache node.
   the official FP16 video VAE remains the default
 - Hardware-aware ComfyUI memory mode selection
 - One-click model unloading and VRAM cache release from the UI
-- Spectrum v0.2.24 in legacy mode as the normal-generation default and experimental Turbo option
+- Spectrum v0.2.26 in legacy mode as the normal-generation default and experimental Turbo option
 - Optional experimental MMH3 tiled/chunked latent refinement for constrained VRAM
 - FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
@@ -77,7 +77,7 @@ Audio content participates in staging and conditioning cache identities.
 Without voice samples, the original FL2VA graph is used.
 
 Local setup and Modal pin T8 to
-`91c1b4e9b680d07a6eacee6a3aa6b449a4697554`. Its base nodes require no additional
+`0eae2f22e6cb2115c9002ab6daa0c12c9636ccb1` (v1.77.0). Its base nodes require no additional
 pip packages. Existing local installs refresh it on the next `run_h3.sh` startup;
 Modal deployments need rebuilding/redeploying. Missing nodes produce an explicit
 update-and-restart error. No new model weights are required for this option.
@@ -160,13 +160,13 @@ patched fail-closed so its E-grid adapter derives the same rows as ComfyUI,
 including visual and audio reference-conditioning rows. Quality ConvRot models use
 bit-preserving two-way feed-forward chunking above 8K packed tokens.
 
-Spectrum is pinned to v0.2.24 and is applied after LoRA, Sol-Attn, and ConvRot
+Spectrum is pinned to v0.2.26 and is applied after LoRA, Sol-Attn, and ConvRot
 feed-forward patches. Its default uses system-RAM history and replay archives,
 degree-1 forecasting, offline smoothing replay, zero spectral audio blending,
-and explicit legacy (`model_aware_mode=off`) scheduling. v0.2.24 retains that
-input contract while removing the RES three-step tail floor and improving
-qualified terminal PECE transitions. Our one-step tail is now authoritative
-subject to Spectrum's remaining exact-evaluation safeguards. The current H3 graphs continue to use the
+and explicit legacy (`model_aware_mode=off`) scheduling. v0.2.26 retains that
+input contract, prevents Comfy Compiler malloc-graph capture during
+Spectrum-managed solver steps, and resets forecast history if the numerical attention backend changes. Our one-step tail remains authoritative
+subject to Spectrum's exact-evaluation safeguards. The current H3 graphs continue to use the
 reviewed Larry and RES sampler paths.
 Spectrum, FirstBlockCache, and EasyCache are mutually exclusive acceleration
 choices. Turbo defaults to Spectrum through the reviewed Larry Turbo and

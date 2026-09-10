@@ -28,7 +28,7 @@ KORNIA_VERSION = "0.8.1"
 # ComfyUI v0.35.0 includes H3 denoise-mask and memory compiler fixes.
 # Keep its frontend and Kitchen versions aligned with upstream requirements.
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
-H3_AUDIO_T8_REF = "91c1b4e9b680d07a6eacee6a3aa6b449a4697554"
+H3_AUDIO_T8_REF = "0eae2f22e6cb2115c9002ab6daa0c12c9636ccb1"
 
 COMFY_REF = "40c4fcdf513a4523e39d54a9d391908af8df8171"
 COMFY_KITCHEN_VERSION = "0.2.33"
