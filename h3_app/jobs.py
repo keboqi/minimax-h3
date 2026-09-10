@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from threading import RLock, Lock, Event
+from threading import Event, Lock, RLock
 from typing import Any, Callable
-import uuid
 
 
 class JobCancelled(RuntimeError):
@@ -22,6 +22,8 @@ class Job:
     prompt_id: str | None = None
     output_token: str | None = None
     cancelled: Event = field(default_factory=Event)
+    has_gpu: bool = False
+    submissions: list[Any] = field(default_factory=list)
 
     def check(self):
         if self.cancelled.is_set():
@@ -46,10 +48,37 @@ class JobCoordinator:
         try:
             with self.gpu:
                 job.check()
-                yield job
+                job.has_gpu = True
+                try:
+                    yield job
+                finally:
+                    for submission in job.submissions:
+                        submission.close()
+                    job.has_gpu = False
         finally:
             with self.lock:
                 self.active.pop(job.id, None)
+
+    @contextmanager
+    def maintenance(self, family: str):
+        """Own standalone GPU work; reuse a generation lease without relocking."""
+        current = CURRENT_JOB.get()
+        with self.lock:
+            owned = (
+                current is not None
+                and current.has_gpu
+                and self.active.get(current.id) is current
+            )
+        if owned:
+            current.check()
+            yield current
+            return
+        with self.run(uuid.uuid4().hex, family) as job:
+            token = CURRENT_JOB.set(job)
+            try:
+                yield job
+            finally:
+                CURRENT_JOB.reset(token)
 
     def cancel(self, owner: str, family: str, get: Callable, post: Callable) -> str:
         with self.lock:
@@ -105,3 +134,18 @@ def check_cancelled() -> None:
     job = CURRENT_JOB.get()
     if job:
         job.check()
+
+
+def gpu_maintenance(family: str):
+    """Keep synchronous local GPU callbacks serialized outside the UI too."""
+    from functools import wraps
+
+    def decorate(callback):
+        @wraps(callback)
+        def run(*args, **kwargs):
+            with JOBS.maintenance(family):
+                return callback(*args, **kwargs)
+
+        return run
+
+    return decorate

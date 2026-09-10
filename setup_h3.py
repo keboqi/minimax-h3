@@ -12,6 +12,29 @@ import sys
 import tempfile
 from pathlib import Path
 
+from h3_sources import (
+    COMFY_REPO,
+    CONTROLNET_AUX_REF,
+    CONTROLNET_AUX_REPO,
+    H3_LATENT_UPSCALER_NODE_REF,
+    H3_LATENT_UPSCALER_NODE_REPO,
+    KJNODES_REF,
+    KJNODES_REPO,
+    LARRY_TURBO_REF,
+    LARRY_TURBO_REPO,
+    LTXVIDEO_REF,
+    LTXVIDEO_REPO,
+    SAGE_WHEEL_NAME,
+    SAGE_WHEEL_URL,
+    SLA_REF,
+    SLA_REPO,
+    SOL_REF,
+    SOL_REPO,
+    SPECTRUM_REF,
+    SPECTRUM_REPO,
+    VIDEO_DEPTH_REF,
+    VIDEO_DEPTH_REPO,
+)
 from h3_models import PRELOAD_MODEL_KEYS, sync_models, write_json_atomic
 from h3_node_patches import (
     TRT_VAE_NODE_REF,
@@ -43,31 +66,6 @@ from h3_requirements import (
 )
 
 
-COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
-SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
-SOL_REF = "930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf"  # v0.6.2, SM86 support
-SLA_REPO = "https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes.git"
-SLA_REF = "59f54d359bbabff8bb813b1e3e381dd29843e720"  # v1.4.8
-SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
-SPECTRUM_REF = "be95adecec0b85c80d0c9fc5dd8d07386d50aaee"
-LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
-LARRY_TURBO_REF = (
-    "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
-)
-H3_LATENT_UPSCALER_NODE_REPO = (
-    "https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler.git"
-)
-H3_LATENT_UPSCALER_NODE_REF = "d7c01b9011f2e8439493f6c02c29995a27df276f"
-LTXVIDEO_REPO = "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
-LTXVIDEO_REF = "15d09abb5a187a8dcaea2fc31fe51ee96e6c9d0d"
-KJNODES_REPO = "https://github.com/kijai/ComfyUI-KJNodes.git"
-KJNODES_REF = "57105374f47d0fbb49c9c3926fb981702e0a4b5c"
-CONTROLNET_AUX_REPO = "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
-CONTROLNET_AUX_REF = "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
-VIDEO_DEPTH_REPO = "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.git"
-VIDEO_DEPTH_REF = "a0db08e63d1ea571601c45cde4aaee0acdd0544d"
-SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
-SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SCRIPT_DIR = Path(__file__).resolve().parent
 BUNDLED_ACCEL_NODE = SCRIPT_DIR / "custom_nodes" / "H3Acceleration" / "__init__.py"
 

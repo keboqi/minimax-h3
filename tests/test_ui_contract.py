@@ -243,26 +243,26 @@ class UiContractTests(unittest.TestCase):
         models = mock.sentinel.models
         progress = mock.sentinel.progress
         with (
-            mock.patch.object(gradio_app, "ensure_trt_video_vae") as provision,
+            mock.patch.object(gradio_app.model_service, "ensure_trt_video_vae") as provision,
             mock.patch.object(
-                gradio_app, "trt_vae_engine_is_current", return_value=False
+                gradio_app.model_service, "trt_vae_engine_is_current", return_value=False
             ),
-            mock.patch.object(gradio_app, "_build_trt_video_vae_engine") as build,
+            mock.patch.object(gradio_app.model_service, "_build_trt_video_vae_engine") as build,
         ):
             self.assertTrue(
                 gradio_app.ensure_trt_video_vae_engine(models, progress=progress)
             )
         provision.assert_has_calls(
-            [mock.call(models, require_engine=False), mock.call(models)]
+            [mock.call(models, require_engine=False, runtime=gradio_app._runtime_config()), mock.call(models, runtime=gradio_app._runtime_config())]
         )
-        build.assert_called_once_with(models, progress)
+        build.assert_called_once_with(models, progress, runtime=gradio_app._runtime_config(), release_backend=gradio_app.unload_comfy_models)
 
         with (
-            mock.patch.object(gradio_app, "ensure_trt_video_vae") as provision,
+            mock.patch.object(gradio_app.model_service, "ensure_trt_video_vae") as provision,
             mock.patch.object(
-                gradio_app, "trt_vae_engine_is_current", return_value=True
+                gradio_app.model_service, "trt_vae_engine_is_current", return_value=True
             ),
-            mock.patch.object(gradio_app, "_build_trt_video_vae_engine") as build,
+            mock.patch.object(gradio_app.model_service, "_build_trt_video_vae_engine") as build,
         ):
             self.assertFalse(
                 gradio_app.ensure_trt_video_vae_engine(models, progress=progress)
@@ -274,12 +274,12 @@ class UiContractTests(unittest.TestCase):
             )
         provision.assert_has_calls(
             [
-                mock.call(models, require_engine=False),
-                mock.call(models, require_engine=False),
-                mock.call(models),
+                mock.call(models, require_engine=False, runtime=gradio_app._runtime_config()),
+                mock.call(models, require_engine=False, runtime=gradio_app._runtime_config()),
+                mock.call(models, runtime=gradio_app._runtime_config()),
             ]
         )
-        build.assert_called_once_with(models, progress)
+        build.assert_called_once_with(models, progress, runtime=gradio_app._runtime_config(), release_backend=gradio_app.unload_comfy_models)
 
         with (
             mock.patch.object(gradio_app, "load_model_config", return_value=models),
@@ -295,7 +295,7 @@ class UiContractTests(unittest.TestCase):
         models = mock.sentinel.models
         with (
             mock.patch.object(
-                gradio_app,
+                gradio_app.model_service,
                 "trt_vae_decoder_paths",
                 return_value=(
                     Path("/fake/decoder.onnx"),
@@ -305,7 +305,7 @@ class UiContractTests(unittest.TestCase):
             ),
             mock.patch.object(Path, "is_file", return_value=True),
             mock.patch.object(
-                gradio_app, "trt_vae_runtime_fingerprint", return_value="v4:trt_10.9:sm_89"
+                gradio_app.model_service, "trt_vae_runtime_fingerprint", return_value="v4:trt_10.9:sm_89"
             ),
         ):
             # Mismatched marker (e.g. from an older TRT version 243)
@@ -315,16 +315,27 @@ class UiContractTests(unittest.TestCase):
             # Matching marker but deserialization fails (returns None)
             with (
                 mock.patch.object(Path, "read_text", return_value="v4:trt_10.9:sm_89"),
-                mock.patch.object(gradio_app, "is_trt_engine_loadable", return_value=False),
+                mock.patch.object(gradio_app.model_service, "is_trt_engine_loadable", return_value=False),
             ):
                 self.assertFalse(gradio_app.trt_vae_engine_is_current(models))
 
             # Matching marker and loadable engine
             with (
                 mock.patch.object(Path, "read_text", return_value="v4:trt_10.9:sm_89"),
-                mock.patch.object(gradio_app, "is_trt_engine_loadable", return_value=True),
+                mock.patch.object(gradio_app.model_service, "is_trt_engine_loadable", return_value=True),
             ):
                 self.assertTrue(gradio_app.trt_vae_engine_is_current(models))
+
+    def test_gpu_actions_share_the_application_queue(self):
+        expected = {"compile_trt_video_vae", "generate_for_ui", "generate_ltx25", "generate_music3", "enhance_h3_prompt", "unload_all_models"}
+        found = set()
+        for event in self.demo.fns.values():
+            name = getattr(event.fn, "__name__", "")
+            if name in expected:
+                found.add(name)
+                self.assertEqual(event.concurrency_id, "h3-gpu", name)
+                self.assertEqual(event.concurrency_limit, 1, name)
+        self.assertEqual(found, expected)
 
     def test_h3_progressive_section_order(self) -> None:
         tabs = next(

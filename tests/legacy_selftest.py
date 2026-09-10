@@ -471,7 +471,7 @@ def selftest() -> None:
         == fake.turbo_8step_ref_lora
     )
     with app.unittest.mock.patch(
-        f"{app.__name__}.stale_model_keys", return_value=[]
+        "h3_app.model_service.stale_model_keys", return_value=[]
     ) as stale_turbo_models:
         assert (
             app.ensure_turbo_lora(
@@ -1703,7 +1703,7 @@ def selftest() -> None:
                 return app.unittest.mock.Mock(returncode=0, stderr="")
 
             with (
-                app.unittest.mock.patch("subprocess.run", side_effect=fake_ffmpeg) as run,
+                app.unittest.mock.patch.object(app.staging, "run_media_process", side_effect=fake_ffmpeg) as run,
                 app.unittest.mock.patch("builtins.print"),
             ):
                 video_first = app.stage_file(
@@ -1725,7 +1725,7 @@ def selftest() -> None:
             failed_video = staging_root / "failed.mov"
             failed_video.write_bytes(b"failed video bytes")
             with app.unittest.mock.patch(
-                "subprocess.run", side_effect=OSError("ffmpeg unavailable")
+                "h3_app.staging.run_media_process", side_effect=OSError("ffmpeg unavailable")
             ):
                 try:
                     app.stage_file(
@@ -1803,7 +1803,7 @@ def selftest() -> None:
     original_outputs_dir = vars(app)["OUTPUTS_DIR"]
     original_thumbnails_dir = vars(app)["GALLERY_THUMBNAILS_DIR"]
     original_gallery_thumbnail = vars(app)["gallery_thumbnail"]
-    original_gallery_video_resolution = vars(app)["gallery_video_resolution"]
+    original_gallery_video_resolution = vars(app.gallery_store)["gallery_video_resolution"]
     with app.tempfile.TemporaryDirectory() as gallery_temp:
         gallery_root = app.Path(gallery_temp)
         comfy_test_output = gallery_root / "comfy"
@@ -1816,7 +1816,7 @@ def selftest() -> None:
         vars(app)["OUTPUTS_DIR"] = gradio_test_output
         vars(app)["GALLERY_THUMBNAILS_DIR"] = gradio_test_output / ".thumbs"
         vars(app)["gallery_thumbnail"] = lambda _video: None
-        vars(app)["gallery_video_resolution"] = lambda _video: (864, 480)
+        vars(app.gallery_store)["gallery_video_resolution"] = lambda _video, **_kwargs: (864, 480)
         try:
             h3_video = comfy_test_output / "h3" / "minimax.mp4"
             ltx25_video = comfy_test_output / "ltx25" / "ltx.mp4"
@@ -1873,7 +1873,7 @@ def selftest() -> None:
             vars(app)["OUTPUTS_DIR"] = original_outputs_dir
             vars(app)["GALLERY_THUMBNAILS_DIR"] = original_thumbnails_dir
             vars(app)["gallery_thumbnail"] = original_gallery_thumbnail
-            vars(app)["gallery_video_resolution"] = original_gallery_video_resolution
+            vars(app.gallery_store)["gallery_video_resolution"] = original_gallery_video_resolution
         assert len(gallery_items) == 1
         assert "864×480" in gallery_items[0][1]
         assert gallery_paths == [str(fallback_video)]

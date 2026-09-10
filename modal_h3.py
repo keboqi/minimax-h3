@@ -24,6 +24,7 @@ UI = ROOT / "gradio_app.py"
 UI_PACKAGE = ROOT / "h3_ui"
 SHARED_MODELS = ROOT / "h3_models.py"
 SHARED_REQUIREMENTS = ROOT / "h3_requirements.py"
+SHARED_SOURCES = ROOT / "h3_sources.py"
 NODE_PATCHES = ROOT / "h3_node_patches.py"
 ATTENTION_HELPER = ROOT / "h3_attention.py"
 PROMPT_REWRITER = ROOT / "h3_prompt_rewriter.py"
@@ -37,6 +38,7 @@ LOCAL_UI_PACKAGE = LOCAL / "h3_ui"
 LOCAL_ACCEL = LOCAL / "custom_nodes" / "H3Acceleration" / "__init__.py"
 LOCAL_SHARED_MODELS = LOCAL / "h3_models.py"
 LOCAL_SHARED_REQUIREMENTS = LOCAL / "h3_requirements.py"
+LOCAL_SHARED_SOURCES = LOCAL / "h3_sources.py"
 LOCAL_NODE_PATCHES = LOCAL / "h3_node_patches.py"
 LOCAL_ATTENTION_HELPER = LOCAL / "h3_attention.py"
 LOCAL_PROMPT_REWRITER = LOCAL / "h3_prompt_rewriter.py"
@@ -55,29 +57,6 @@ MANIFEST = DATA / "h3_model_manifest.json"
 COMFY_PORT = 8188
 UI_PORT = 7860
 
-COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
-SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
-SOL_REF = "930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf"  # v0.6.2, SM86 support
-SLA_REPO = "https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes.git"
-SLA_REF = "59f54d359bbabff8bb813b1e3e381dd29843e720"  # v1.4.8
-SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
-SPECTRUM_REF = "be95adecec0b85c80d0c9fc5dd8d07386d50aaee"
-LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
-LARRY_TURBO_REF = "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
-H3_LATENT_UPSCALER_NODE_REPO = (
-    "https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler.git"
-)
-H3_LATENT_UPSCALER_NODE_REF = "d7c01b9011f2e8439493f6c02c29995a27df276f"
-LTXVIDEO_REPO = "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
-LTXVIDEO_REF = "15d09abb5a187a8dcaea2fc31fe51ee96e6c9d0d"
-KJNODES_REPO = "https://github.com/kijai/ComfyUI-KJNodes.git"
-KJNODES_REF = "57105374f47d0fbb49c9c3926fb981702e0a4b5c"
-CONTROLNET_AUX_REPO = "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
-CONTROLNET_AUX_REF = "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
-VIDEO_DEPTH_REPO = "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.git"
-VIDEO_DEPTH_REF = "a0db08e63d1ea571601c45cde4aaee0acdd0544d"
-SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
-SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 APP = os.getenv("H3_MODAL_APP_NAME", "minimax-h3")
 VOL = os.getenv("H3_MODAL_VOLUME", "minimax-h3-data")
 GPU = "RTX-PRO-6000"
@@ -96,6 +75,29 @@ def _shared_import_path() -> Path:
 sys.path.insert(0, str(_shared_import_path()))
 # Only build inputs may be imported while Modal constructs the image. Helpers
 # mounted after run_function() must be imported lazily inside runtime functions.
+from h3_sources import (
+    COMFY_REPO,
+    CONTROLNET_AUX_REF,
+    CONTROLNET_AUX_REPO,
+    H3_LATENT_UPSCALER_NODE_REF,
+    H3_LATENT_UPSCALER_NODE_REPO,
+    KJNODES_REF,
+    KJNODES_REPO,
+    LARRY_TURBO_REF,
+    LARRY_TURBO_REPO,
+    LTXVIDEO_REF,
+    LTXVIDEO_REPO,
+    SAGE_WHEEL_NAME,
+    SAGE_WHEEL_URL,
+    SLA_REF,
+    SLA_REPO,
+    SOL_REF,
+    SOL_REPO,
+    SPECTRUM_REF,
+    SPECTRUM_REPO,
+    VIDEO_DEPTH_REF,
+    VIDEO_DEPTH_REPO,
+)
 from h3_requirements import (  # noqa: E402
     H3_AUDIO_T8_REPO,
     H3_AUDIO_T8_REF,
@@ -129,6 +131,7 @@ from h3_node_patches import (  # noqa: E402
 
 _BUILD_LOCAL_MOUNTS = (
     (LOCAL_SHARED_REQUIREMENTS, SHARED_REQUIREMENTS),
+    (LOCAL_SHARED_SOURCES, SHARED_SOURCES),
     (LOCAL_NODE_PATCHES, NODE_PATCHES),
 )
 _RUNTIME_LOCAL_MOUNTS = (
@@ -146,8 +149,9 @@ _RUNTIME_LOCAL_FILES = tuple(local for local, _ in _RUNTIME_LOCAL_MOUNTS)
 _REQUIRED_LOCAL_FILES = _BUILD_LOCAL_FILES + _RUNTIME_LOCAL_FILES
 if IS_LOCAL:
     missing = [str(path) for path in _REQUIRED_LOCAL_FILES if not path.is_file()]
-    if not LOCAL_UI_PACKAGE.is_dir():
-        missing.append(str(LOCAL_UI_PACKAGE))
+    for package in (LOCAL_UI_PACKAGE, LOCAL / "h3_app"):
+        if not package.is_dir():
+            missing.append(str(package))
     if missing:
         raise RuntimeError(
             "Keep these files beside modal_h3.py: " + ", ".join(missing)

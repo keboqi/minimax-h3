@@ -1,0 +1,3413 @@
+[
+  {
+    "function": "build_music3_graph",
+    "graph": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "minimax_music3_dit_int8_convrot.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+          "clip_name": "minimax_music3_text_encoder_pruned_int8_convrot.safetensors",
+          "type": "minimax",
+          "device": "default"
+        }
+      },
+      "3": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "minimax_music3_dav.safetensors"
+        }
+      },
+      "4": {
+        "class_type": "MiniMaxMusic3TextEncode",
+        "inputs": {
+          "clip": [
+            "2",
+            0
+          ],
+          "caption": "Global Metadata: test song",
+          "lyrics": "[Instrumental]",
+          "seed": 7,
+          "max_duration": 30.0,
+          "cfg_scale": 1.7,
+          "top_k": 50
+        }
+      },
+      "5": {
+        "class_type": "ConditioningZeroOut",
+        "inputs": {
+          "conditioning": [
+            "4",
+            0
+          ]
+        }
+      },
+      "6": {
+        "class_type": "EmptyMiniMaxMusic3LatentAudio",
+        "inputs": {
+          "seconds": [
+            "4",
+            1
+          ],
+          "batch_size": 1
+        }
+      },
+      "7": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "positive": [
+            "4",
+            0
+          ],
+          "negative": [
+            "5",
+            0
+          ],
+          "latent_image": [
+            "6",
+            0
+          ],
+          "seed": 7,
+          "steps": 30,
+          "cfg": 1.7,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "denoise": 1.0
+        }
+      },
+      "8": {
+        "class_type": "VAEDecodeAudioTiled",
+        "inputs": {
+          "samples": [
+            "7",
+            0
+          ],
+          "vae": [
+            "3",
+            0
+          ],
+          "tile_size": 1536,
+          "overlap": 64
+        }
+      },
+      "9": {
+        "class_type": "SaveAudioMP3",
+        "inputs": {
+          "audio": [
+            "8",
+            0
+          ],
+          "filename_prefix": "audio/minimax_music3",
+          "quality": "V0"
+        }
+      }
+    }
+  },
+  {
+    "function": "build_fl2va_graph",
+    "graph": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "fl2va_speed.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "H3LightX2VBypassLoRA",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "lora_name": "minimax_h3_turbo_4step_ema_ckpt850.safetensors",
+          "strength": 1.0
+        }
+      },
+      "3": {
+        "class_type": "MiniMaxH3FusedModulation",
+        "inputs": {
+          "model": [
+            "2",
+            0
+          ],
+          "enabled": true
+        }
+      },
+      "4": {
+        "class_type": "H3FirstBlockCache",
+        "inputs": {
+          "model": [
+            "3",
+            0
+          ],
+          "preset": "Fast",
+          "residual_diff_threshold": 0.1,
+          "start_percent": 0.1,
+          "end_percent": 0.95,
+          "max_consecutive_cache_hits": 2,
+          "temporal_guard": true
+        }
+      },
+      "5": {
+        "class_type": "MiniMaxH3MemoryEfficientSolAttentionPatch",
+        "inputs": {
+          "model": [
+            "4",
+            0
+          ],
+          "enabled": true,
+          "tau": 1.0,
+          "min_tokens": 8192,
+          "strict": false,
+          "thresh_type": "exact",
+          "int8_qk": false,
+          "int8_pv": false,
+          "sink_conditioning": "exact_kv_and_rows",
+          "dense_blocks": "-1"
+        }
+      },
+      "6": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+          "clip_name": "qwen3vl_32b_minimax_h3_bf16.safetensors",
+          "type": "minimax",
+          "device": "default"
+        }
+      },
+      "7": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "video_vae.safetensors"
+        }
+      },
+      "8": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "audio_vae.safetensors"
+        }
+      },
+      "9": {
+        "class_type": "H3ConditioningCache",
+        "inputs": {
+          "clip": [
+            "6",
+            0
+          ],
+          "cache_key": "e331df4d1ea93789fac054b53e426d612799eef8b55ebc4aa0c8d2f5198b6f53"
+        }
+      },
+      "10": {
+        "class_type": "MiniMaxH3ImageToVideo",
+        "inputs": {
+          "vae": [
+            "7",
+            0
+          ],
+          "prompt": "test",
+          "length": 124,
+          "clip": [
+            "9",
+            0
+          ],
+          "width": 864,
+          "height": 480
+        }
+      },
+      "11": {
+        "class_type": "H3StageOffloadPolicy",
+        "inputs": {
+          "conditioning": [
+            "10",
+            0
+          ],
+          "latent": [
+            "10",
+            1
+          ],
+          "additional_conditioning": [
+            "10",
+            0
+          ],
+          "additional_latent": [
+            "10",
+            1
+          ],
+          "cache_key": "e331df4d1ea93789fac054b53e426d612799eef8b55ebc4aa0c8d2f5198b6f53"
+        }
+      },
+      "12": {
+        "class_type": "RandomNoise",
+        "inputs": {
+          "noise_seed": 1
+        }
+      },
+      "13": {
+        "class_type": "BasicGuider",
+        "inputs": {
+          "model": [
+            "5",
+            0
+          ],
+          "conditioning": [
+            "11",
+            0
+          ]
+        }
+      },
+      "14": {
+        "class_type": "KSamplerSelect",
+        "inputs": {
+          "sampler_name": "euler"
+        }
+      },
+      "15": {
+        "class_type": "BasicScheduler",
+        "inputs": {
+          "model": [
+            "5",
+            0
+          ],
+          "scheduler": "simple",
+          "steps": 18,
+          "denoise": 1.0
+        }
+      },
+      "16": {
+        "class_type": "SamplerCustomAdvanced",
+        "inputs": {
+          "noise": [
+            "12",
+            0
+          ],
+          "guider": [
+            "13",
+            0
+          ],
+          "sampler": [
+            "14",
+            0
+          ],
+          "sigmas": [
+            "15",
+            0
+          ],
+          "latent_image": [
+            "11",
+            1
+          ]
+        }
+      },
+      "17": {
+        "class_type": "H3StageModelOffload",
+        "inputs": {
+          "conditioning": [
+            "11",
+            0
+          ],
+          "latent": [
+            "16",
+            0
+          ],
+          "additional_conditioning": [
+            "11",
+            0
+          ],
+          "additional_latent": [
+            "16",
+            0
+          ],
+          "enabled": [
+            "11",
+            4
+          ]
+        }
+      },
+      "18": {
+        "class_type": "VAEDecode",
+        "inputs": {
+          "samples": [
+            "17",
+            1
+          ],
+          "vae": [
+            "7",
+            0
+          ]
+        }
+      },
+      "19": {
+        "class_type": "VAEDecodeAudio",
+        "inputs": {
+          "samples": [
+            "17",
+            3
+          ],
+          "vae": [
+            "8",
+            0
+          ]
+        }
+      },
+      "20": {
+        "class_type": "CreateVideo",
+        "inputs": {
+          "images": [
+            "18",
+            0
+          ],
+          "audio": [
+            "19",
+            0
+          ],
+          "fps": 24.0,
+          "bit_depth": 8
+        }
+      },
+      "21": {
+        "class_type": "H3SaveVideoNVENC",
+        "inputs": {
+          "video": [
+            "20",
+            0
+          ],
+          "filename_prefix": "h3/fl2va_<submission>",
+          "preset": "p4",
+          "constant_quality": 23
+        }
+      }
+    }
+  },
+  {
+    "function": "build_fl2va_graph",
+    "graph": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "fl2va_speed.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+          "clip_name": "text.safetensors",
+          "type": "minimax",
+          "device": "default"
+        }
+      },
+      "3": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "video_vae.safetensors"
+        }
+      },
+      "4": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "audio_vae.safetensors"
+        }
+      },
+      "5": {
+        "class_type": "H3ConditioningCache",
+        "inputs": {
+          "clip": [
+            "2",
+            0
+          ],
+          "cache_key": "50e208e07b5f3336bd89d00c886a2c59fdc3365dc6e162a8f0b26e39087b1ccb"
+        }
+      },
+      "6": {
+        "class_type": "MiniMaxH3ImageToVideo",
+        "inputs": {
+          "vae": [
+            "3",
+            0
+          ],
+          "prompt": "image result test",
+          "length": 22,
+          "clip": [
+            "5",
+            0
+          ],
+          "width": 864,
+          "height": 480
+        }
+      },
+      "7": {
+        "class_type": "RandomNoise",
+        "inputs": {
+          "noise_seed": 2
+        }
+      },
+      "8": {
+        "class_type": "BasicGuider",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "conditioning": [
+            "6",
+            0
+          ]
+        }
+      },
+      "9": {
+        "class_type": "KSamplerSelect",
+        "inputs": {
+          "sampler_name": "res_multistep"
+        }
+      },
+      "10": {
+        "class_type": "BasicScheduler",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "scheduler": "simple",
+          "steps": 4,
+          "denoise": 1.0
+        }
+      },
+      "11": {
+        "class_type": "SamplerCustomAdvanced",
+        "inputs": {
+          "noise": [
+            "7",
+            0
+          ],
+          "guider": [
+            "8",
+            0
+          ],
+          "sampler": [
+            "9",
+            0
+          ],
+          "sigmas": [
+            "10",
+            0
+          ],
+          "latent_image": [
+            "6",
+            1
+          ]
+        }
+      },
+      "12": {
+        "class_type": "VAEDecode",
+        "inputs": {
+          "samples": [
+            "11",
+            0
+          ],
+          "vae": [
+            "3",
+            0
+          ]
+        }
+      },
+      "13": {
+        "class_type": "ImageFromBatch",
+        "inputs": {
+          "image": [
+            "12",
+            0
+          ],
+          "batch_index": 0,
+          "length": 20
+        }
+      },
+      "14": {
+        "class_type": "SaveImage",
+        "inputs": {
+          "images": [
+            "13",
+            0
+          ],
+          "filename_prefix": "h3/image_staging/fl2va_<submission>"
+        }
+      }
+    }
+  },
+  {
+    "function": "build_fl2va_graph",
+    "graph": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "fl2va_speed.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+          "clip_name": "text.safetensors",
+          "type": "minimax",
+          "device": "default"
+        }
+      },
+      "3": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "video_vae.safetensors"
+        }
+      },
+      "4": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "audio_vae.safetensors"
+        }
+      },
+      "5": {
+        "class_type": "H3SingleFrameVAELoader",
+        "inputs": {
+          "base_vae_name": "video_vae.safetensors",
+          "decoder_name": "minimax_h3_single_frame_decoder_500k.safetensors"
+        }
+      },
+      "6": {
+        "class_type": "H3ConditioningCache",
+        "inputs": {
+          "clip": [
+            "2",
+            0
+          ],
+          "cache_key": "d62c14def0dbd09e2667eb9bf14c88ab9cfe03700bba22cd96e4c8df148530a6"
+        }
+      },
+      "7": {
+        "class_type": "MiniMaxH3ImageToVideo",
+        "inputs": {
+          "vae": [
+            "3",
+            0
+          ],
+          "prompt": "single-frame image result test",
+          "length": 5,
+          "clip": [
+            "6",
+            0
+          ],
+          "width": 864,
+          "height": 480
+        }
+      },
+      "8": {
+        "class_type": "RandomNoise",
+        "inputs": {
+          "noise_seed": 3
+        }
+      },
+      "9": {
+        "class_type": "BasicGuider",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "conditioning": [
+            "7",
+            0
+          ]
+        }
+      },
+      "10": {
+        "class_type": "KSamplerSelect",
+        "inputs": {
+          "sampler_name": "res_multistep"
+        }
+      },
+      "11": {
+        "class_type": "BasicScheduler",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "scheduler": "simple",
+          "steps": 4,
+          "denoise": 1.0
+        }
+      },
+      "12": {
+        "class_type": "SamplerCustomAdvanced",
+        "inputs": {
+          "noise": [
+            "8",
+            0
+          ],
+          "guider": [
+            "9",
+            0
+          ],
+          "sampler": [
+            "10",
+            0
+          ],
+          "sigmas": [
+            "11",
+            0
+          ],
+          "latent_image": [
+            "7",
+            1
+          ]
+        }
+      },
+      "13": {
+        "class_type": "H3VideoLatentSlicesToBatch",
+        "inputs": {
+          "latent": [
+            "12",
+            0
+          ],
+          "frames": 1
+        }
+      },
+      "14": {
+        "class_type": "VAEDecode",
+        "inputs": {
+          "samples": [
+            "13",
+            0
+          ],
+          "vae": [
+            "5",
+            0
+          ]
+        }
+      },
+      "15": {
+        "class_type": "SaveImage",
+        "inputs": {
+          "images": [
+            "14",
+            0
+          ],
+          "filename_prefix": "h3/image_staging/fl2va_<submission>"
+        }
+      }
+    }
+  },
+  {
+    "function": "build_fl2va_graph",
+    "graph": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "fl2va_speed.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+          "clip_name": "text.safetensors",
+          "type": "minimax",
+          "device": "default"
+        }
+      },
+      "3": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "video_vae.safetensors"
+        }
+      },
+      "4": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "audio_vae.safetensors"
+        }
+      },
+      "5": {
+        "class_type": "H3ConditioningCache",
+        "inputs": {
+          "clip": [
+            "2",
+            0
+          ],
+          "cache_key": "45b90bb34b5ee621844a2b9a5e7e0ddd5b831b729e915915495a2aaaec9ffc2f"
+        }
+      },
+      "6": {
+        "class_type": "MiniMaxH3ImageToVideo",
+        "inputs": {
+          "vae": [
+            "3",
+            0
+          ],
+          "prompt": "latent upscale test",
+          "length": 124,
+          "clip": [
+            "5",
+            0
+          ],
+          "width": 1024,
+          "height": 1024
+        }
+      },
+      "7": {
+        "class_type": "MiniMaxH3ImageToVideo",
+        "inputs": {
+          "vae": [
+            "3",
+            0
+          ],
+          "prompt": "latent upscale test",
+          "length": 124,
+          "clip": [
+            "5",
+            0
+          ],
+          "width": 512,
+          "height": 512
+        }
+      },
+      "8": {
+        "class_type": "H3StageModelOffload",
+        "inputs": {
+          "conditioning": [
+            "6",
+            0
+          ],
+          "latent": [
+            "6",
+            1
+          ],
+          "additional_conditioning": [
+            "7",
+            0
+          ],
+          "additional_latent": [
+            "7",
+            1
+          ]
+        }
+      },
+      "9": {
+        "class_type": "RandomNoise",
+        "inputs": {
+          "noise_seed": 2
+        }
+      },
+      "10": {
+        "class_type": "BasicGuider",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "conditioning": [
+            "8",
+            0
+          ]
+        }
+      },
+      "11": {
+        "class_type": "KSamplerSelect",
+        "inputs": {
+          "sampler_name": "res_multistep"
+        }
+      },
+      "12": {
+        "class_type": "BasicScheduler",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "scheduler": "beta",
+          "steps": 8,
+          "denoise": 1.0
+        }
+      },
+      "13": {
+        "class_type": "SplitSigmas",
+        "inputs": {
+          "sigmas": [
+            "12",
+            0
+          ],
+          "step": 6
+        }
+      },
+      "14": {
+        "class_type": "BasicGuider",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "conditioning": [
+            "8",
+            2
+          ]
+        }
+      },
+      "15": {
+        "class_type": "SamplerCustomAdvanced",
+        "inputs": {
+          "noise": [
+            "9",
+            0
+          ],
+          "guider": [
+            "14",
+            0
+          ],
+          "sampler": [
+            "11",
+            0
+          ],
+          "sigmas": [
+            "12",
+            0
+          ],
+          "latent_image": [
+            "8",
+            3
+          ]
+        }
+      },
+      "16": {
+        "class_type": "H3StageModelOffload",
+        "inputs": {
+          "conditioning": [
+            "8",
+            0
+          ],
+          "latent": [
+            "15",
+            0
+          ],
+          "additional_conditioning": [
+            "8",
+            0
+          ],
+          "additional_latent": [
+            "15",
+            0
+          ]
+        }
+      },
+      "17": {
+        "class_type": "H3SeparateAVLatent",
+        "inputs": {
+          "latent": [
+            "16",
+            1
+          ]
+        }
+      },
+      "18": {
+        "class_type": "MinimaxH3LatentUpscaler3D",
+        "inputs": {
+          "latent": [
+            "17",
+            0
+          ],
+          "model_name": "minimax_h3_latent_upscaler_3d_bf16.safetensors",
+          "mode": "scale by multiplier",
+          "align": 32,
+          "enable_temporal_chunking": true,
+          "force_unload": true,
+          "device": "cuda",
+          "precision": "bf16",
+          "mode.scale": 2.0
+        }
+      },
+      "19": {
+        "class_type": "H3CombineAVLatent",
+        "inputs": {
+          "video_latent": [
+            "18",
+            0
+          ],
+          "audio_latent": [
+            "17",
+            1
+          ]
+        }
+      },
+      "20": {
+        "class_type": "H3StageModelOffload",
+        "inputs": {
+          "conditioning": [
+            "8",
+            0
+          ],
+          "latent": [
+            "19",
+            0
+          ],
+          "additional_conditioning": [
+            "8",
+            0
+          ],
+          "additional_latent": [
+            "19",
+            0
+          ]
+        }
+      },
+      "21": {
+        "class_type": "SamplerCustomAdvanced",
+        "inputs": {
+          "noise": [
+            "9",
+            0
+          ],
+          "guider": [
+            "10",
+            0
+          ],
+          "sampler": [
+            "11",
+            0
+          ],
+          "sigmas": [
+            "13",
+            1
+          ],
+          "latent_image": [
+            "20",
+            1
+          ]
+        }
+      },
+      "22": {
+        "class_type": "H3StageModelOffload",
+        "inputs": {
+          "conditioning": [
+            "8",
+            0
+          ],
+          "latent": [
+            "21",
+            0
+          ],
+          "additional_conditioning": [
+            "8",
+            0
+          ],
+          "additional_latent": [
+            "16",
+            1
+          ]
+        }
+      },
+      "23": {
+        "class_type": "VAEDecode",
+        "inputs": {
+          "samples": [
+            "22",
+            1
+          ],
+          "vae": [
+            "3",
+            0
+          ]
+        }
+      },
+      "24": {
+        "class_type": "VAEDecodeAudio",
+        "inputs": {
+          "samples": [
+            "22",
+            3
+          ],
+          "vae": [
+            "4",
+            0
+          ]
+        }
+      },
+      "25": {
+        "class_type": "CreateVideo",
+        "inputs": {
+          "images": [
+            "23",
+            0
+          ],
+          "audio": [
+            "24",
+            0
+          ],
+          "fps": 24.0,
+          "bit_depth": 8
+        }
+      },
+      "26": {
+        "class_type": "H3SaveVideoNVENC",
+        "inputs": {
+          "video": [
+            "25",
+            0
+          ],
+          "filename_prefix": "h3/fl2va_<submission>",
+          "preset": "p4",
+          "constant_quality": 23
+        }
+      }
+    }
+  },
+  {
+    "function": "build_ltx25_graph",
+    "graph": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+          "clip_name": "gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+          "type": "ltxv",
+          "device": "default"
+        }
+      },
+      "3": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "ltx-2.5-video-vae-conv-bf16.safetensors"
+        }
+      },
+      "4": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "ltx-2.5-audio-vae-bf16.safetensors"
+        }
+      },
+      "5": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "2",
+            0
+          ],
+          "text": "a test shot"
+        }
+      },
+      "6": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "2",
+            0
+          ],
+          "text": "artifacts"
+        }
+      },
+      "7": {
+        "class_type": "LTXVConditioning",
+        "inputs": {
+          "positive": [
+            "5",
+            0
+          ],
+          "negative": [
+            "6",
+            0
+          ],
+          "frame_rate": 24.0
+        }
+      },
+      "8": {
+        "class_type": "EmptyLTXVLatentVideo",
+        "inputs": {
+          "width": 960,
+          "height": 544,
+          "length": 121,
+          "batch_size": 1
+        }
+      },
+      "9": {
+        "class_type": "LTXVEmptyLatentAudio",
+        "inputs": {
+          "audio_vae": [
+            "4",
+            0
+          ],
+          "frames_number": 121,
+          "frame_rate": 24,
+          "batch_size": 1
+        }
+      },
+      "10": {
+        "class_type": "LTXVConcatAVLatent",
+        "inputs": {
+          "video_latent": [
+            "8",
+            0
+          ],
+          "audio_latent": [
+            "9",
+            0
+          ]
+        }
+      },
+      "11": {
+        "class_type": "RandomNoise",
+        "inputs": {
+          "noise_seed": 9
+        }
+      },
+      "12": {
+        "class_type": "CFGGuider",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "positive": [
+            "7",
+            0
+          ],
+          "negative": [
+            "7",
+            1
+          ],
+          "cfg": 1.0
+        }
+      },
+      "13": {
+        "class_type": "KSamplerSelect",
+        "inputs": {
+          "sampler_name": "euler_ancestral"
+        }
+      },
+      "14": {
+        "class_type": "ManualSigmas",
+        "inputs": {
+          "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+        }
+      },
+      "15": {
+        "class_type": "SamplerCustomAdvanced",
+        "inputs": {
+          "noise": [
+            "11",
+            0
+          ],
+          "guider": [
+            "12",
+            0
+          ],
+          "sampler": [
+            "13",
+            0
+          ],
+          "sigmas": [
+            "14",
+            0
+          ],
+          "latent_image": [
+            "10",
+            0
+          ]
+        }
+      },
+      "16": {
+        "class_type": "LTXVSeparateAVLatent",
+        "inputs": {
+          "av_latent": [
+            "15",
+            0
+          ]
+        }
+      },
+      "17": {
+        "class_type": "VAEDecodeTiled",
+        "inputs": {
+          "samples": [
+            "16",
+            0
+          ],
+          "vae": [
+            "3",
+            0
+          ],
+          "tile_size": 512,
+          "overlap": 64,
+          "temporal_size": 128,
+          "temporal_overlap": 32
+        }
+      },
+      "18": {
+        "class_type": "LTXVAudioVAEDecode",
+        "inputs": {
+          "samples": [
+            "16",
+            1
+          ],
+          "audio_vae": [
+            "4",
+            0
+          ]
+        }
+      },
+      "19": {
+        "class_type": "CreateVideo",
+        "inputs": {
+          "images": [
+            "17",
+            0
+          ],
+          "audio": [
+            "18",
+            0
+          ],
+          "fps": 24.0,
+          "bit_depth": 8
+        }
+      },
+      "20": {
+        "class_type": "SaveVideo",
+        "inputs": {
+          "video": [
+            "19",
+            0
+          ],
+          "filename_prefix": "ltx25/generation_<submission>",
+          "format": "auto",
+          "codec": "auto"
+        }
+      }
+    }
+  },
+  {
+    "function": "build_ltx25_graph",
+    "graph": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+          "clip_name": "gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+          "type": "ltxv",
+          "device": "default"
+        }
+      },
+      "3": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "ltx-2.5-video-vae-conv-bf16.safetensors"
+        }
+      },
+      "4": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "ltx-2.5-audio-vae-bf16.safetensors"
+        }
+      },
+      "5": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "2",
+            0
+          ],
+          "text": "a guided test shot"
+        }
+      },
+      "6": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "2",
+            0
+          ],
+          "text": "artifacts"
+        }
+      },
+      "7": {
+        "class_type": "LTXVConditioning",
+        "inputs": {
+          "positive": [
+            "5",
+            0
+          ],
+          "negative": [
+            "6",
+            0
+          ],
+          "frame_rate": 24.0
+        }
+      },
+      "8": {
+        "class_type": "EmptyLTXVLatentVideo",
+        "inputs": {
+          "width": 960,
+          "height": 544,
+          "length": 121,
+          "batch_size": 1
+        }
+      },
+      "9": {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": "ltx25_keyframes/start.png"
+        }
+      },
+      "10": {
+        "class_type": "LTXVAddGuide",
+        "inputs": {
+          "positive": [
+            "7",
+            0
+          ],
+          "negative": [
+            "7",
+            1
+          ],
+          "vae": [
+            "3",
+            0
+          ],
+          "latent": [
+            "8",
+            0
+          ],
+          "image": [
+            "9",
+            0
+          ],
+          "frame_idx": 0,
+          "strength": 0.8
+        }
+      },
+      "11": {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": "ltx25_keyframes/middle.png"
+        }
+      },
+      "12": {
+        "class_type": "LTXVAddGuide",
+        "inputs": {
+          "positive": [
+            "10",
+            0
+          ],
+          "negative": [
+            "10",
+            1
+          ],
+          "vae": [
+            "3",
+            0
+          ],
+          "latent": [
+            "10",
+            2
+          ],
+          "image": [
+            "11",
+            0
+          ],
+          "frame_idx": 60,
+          "strength": 0.65
+        }
+      },
+      "13": {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": "ltx25_keyframes/end.png"
+        }
+      },
+      "14": {
+        "class_type": "LTXVAddGuide",
+        "inputs": {
+          "positive": [
+            "12",
+            0
+          ],
+          "negative": [
+            "12",
+            1
+          ],
+          "vae": [
+            "3",
+            0
+          ],
+          "latent": [
+            "12",
+            2
+          ],
+          "image": [
+            "13",
+            0
+          ],
+          "frame_idx": -1,
+          "strength": 0.9
+        }
+      },
+      "15": {
+        "class_type": "LTXVEmptyLatentAudio",
+        "inputs": {
+          "audio_vae": [
+            "4",
+            0
+          ],
+          "frames_number": 121,
+          "frame_rate": 24,
+          "batch_size": 1
+        }
+      },
+      "16": {
+        "class_type": "LTXVConcatAVLatent",
+        "inputs": {
+          "video_latent": [
+            "14",
+            2
+          ],
+          "audio_latent": [
+            "15",
+            0
+          ]
+        }
+      },
+      "17": {
+        "class_type": "RandomNoise",
+        "inputs": {
+          "noise_seed": 10
+        }
+      },
+      "18": {
+        "class_type": "CFGGuider",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "positive": [
+            "14",
+            0
+          ],
+          "negative": [
+            "14",
+            1
+          ],
+          "cfg": 1.0
+        }
+      },
+      "19": {
+        "class_type": "KSamplerSelect",
+        "inputs": {
+          "sampler_name": "euler_ancestral"
+        }
+      },
+      "20": {
+        "class_type": "ManualSigmas",
+        "inputs": {
+          "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+        }
+      },
+      "21": {
+        "class_type": "SamplerCustomAdvanced",
+        "inputs": {
+          "noise": [
+            "17",
+            0
+          ],
+          "guider": [
+            "18",
+            0
+          ],
+          "sampler": [
+            "19",
+            0
+          ],
+          "sigmas": [
+            "20",
+            0
+          ],
+          "latent_image": [
+            "16",
+            0
+          ]
+        }
+      },
+      "22": {
+        "class_type": "LTXVSeparateAVLatent",
+        "inputs": {
+          "av_latent": [
+            "21",
+            0
+          ]
+        }
+      },
+      "23": {
+        "class_type": "VAEDecodeTiled",
+        "inputs": {
+          "samples": [
+            "22",
+            0
+          ],
+          "vae": [
+            "3",
+            0
+          ],
+          "tile_size": 512,
+          "overlap": 64,
+          "temporal_size": 128,
+          "temporal_overlap": 32
+        }
+      },
+      "24": {
+        "class_type": "LTXVAudioVAEDecode",
+        "inputs": {
+          "samples": [
+            "22",
+            1
+          ],
+          "audio_vae": [
+            "4",
+            0
+          ]
+        }
+      },
+      "25": {
+        "class_type": "CreateVideo",
+        "inputs": {
+          "images": [
+            "23",
+            0
+          ],
+          "audio": [
+            "24",
+            0
+          ],
+          "fps": 24.0,
+          "bit_depth": 8
+        }
+      },
+      "26": {
+        "class_type": "SaveVideo",
+        "inputs": {
+          "video": [
+            "25",
+            0
+          ],
+          "filename_prefix": "ltx25/generation_<submission>",
+          "format": "auto",
+          "codec": "auto"
+        }
+      }
+    }
+  },
+  {
+    "function": "build_seedvr2_upscale_graph",
+    "graph": {
+      "1": {
+        "class_type": "LoadVideo",
+        "inputs": {
+          "file": "h3_gradio/seedvr2_upscale/source.mp4"
+        }
+      },
+      "2": {
+        "class_type": "GetVideoComponents",
+        "inputs": {
+          "video": [
+            "1",
+            0
+          ]
+        }
+      },
+      "3": {
+        "class_type": "ImageScaleBy",
+        "inputs": {
+          "image": [
+            "2",
+            0
+          ],
+          "upscale_method": "lanczos",
+          "scale_by": 2.0
+        }
+      },
+      "4": {
+        "class_type": "SeedVR2Preprocess",
+        "inputs": {
+          "resized_images": [
+            "3",
+            0
+          ]
+        }
+      },
+      "5": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "seedvr2_ema_vae_fp16.safetensors"
+        }
+      },
+      "6": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "seedvr2_7b_nvfp4.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "7": {
+        "class_type": "VAEEncodeTiled",
+        "inputs": {
+          "pixels": [
+            "4",
+            0
+          ],
+          "vae": [
+            "5",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "8": {
+        "class_type": "SeedVR2TemporalChunk",
+        "inputs": {
+          "latent": [
+            "7",
+            0
+          ],
+          "temporal_overlap": 1,
+          "chunking_mode": "auto"
+        }
+      },
+      "9": {
+        "class_type": "SeedVR2Conditioning",
+        "inputs": {
+          "model": [
+            "6",
+            0
+          ],
+          "vae_conditioning": [
+            "8",
+            0
+          ]
+        }
+      },
+      "10": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "6",
+            0
+          ],
+          "seed": 7,
+          "steps": 1,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "positive": [
+            "9",
+            0
+          ],
+          "negative": [
+            "9",
+            1
+          ],
+          "latent_image": [
+            "8",
+            0
+          ],
+          "denoise": 1.0
+        }
+      },
+      "11": {
+        "class_type": "SeedVR2TemporalMerge",
+        "inputs": {
+          "latents": [
+            "10",
+            0
+          ],
+          "temporal_overlap": [
+            "8",
+            1
+          ]
+        }
+      },
+      "12": {
+        "class_type": "VAEDecodeTiled",
+        "inputs": {
+          "samples": [
+            "11",
+            0
+          ],
+          "vae": [
+            "5",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "13": {
+        "class_type": "SeedVR2PostProcessing",
+        "inputs": {
+          "images": [
+            "12",
+            0
+          ],
+          "original_resized_images": [
+            "3",
+            0
+          ],
+          "color_correction_method": "none"
+        }
+      },
+      "14": {
+        "class_type": "CreateVideo",
+        "inputs": {
+          "images": [
+            "13",
+            0
+          ],
+          "audio": [
+            "2",
+            1
+          ],
+          "fps": 48.0,
+          "bit_depth": 8
+        }
+      },
+      "15": {
+        "class_type": "SaveVideo",
+        "inputs": {
+          "video": [
+            "14",
+            0
+          ],
+          "filename_prefix": "seedvr2/upscale_<submission>",
+          "format": "auto",
+          "codec": "auto"
+        }
+      }
+    }
+  },
+  {
+    "function": "build_seedvr2_upscale_graph",
+    "graph": {
+      "1": {
+        "class_type": "LoadVideo",
+        "inputs": {
+          "file": "source.mp4"
+        }
+      },
+      "2": {
+        "class_type": "GetVideoComponents",
+        "inputs": {
+          "video": [
+            "1",
+            0
+          ]
+        }
+      },
+      "3": {
+        "class_type": "ImageScaleBy",
+        "inputs": {
+          "image": [
+            "2",
+            0
+          ],
+          "upscale_method": "lanczos",
+          "scale_by": 2.0
+        }
+      },
+      "4": {
+        "class_type": "SeedVR2Preprocess",
+        "inputs": {
+          "resized_images": [
+            "3",
+            0
+          ]
+        }
+      },
+      "5": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "seedvr2_ema_vae_fp16.safetensors"
+        }
+      },
+      "6": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "seedvr2_3b_nvfp4.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "7": {
+        "class_type": "VAEEncodeTiled",
+        "inputs": {
+          "pixels": [
+            "4",
+            0
+          ],
+          "vae": [
+            "5",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "8": {
+        "class_type": "SeedVR2TemporalChunk",
+        "inputs": {
+          "latent": [
+            "7",
+            0
+          ],
+          "temporal_overlap": 1,
+          "chunking_mode": "auto"
+        }
+      },
+      "9": {
+        "class_type": "SeedVR2Conditioning",
+        "inputs": {
+          "model": [
+            "6",
+            0
+          ],
+          "vae_conditioning": [
+            "8",
+            0
+          ]
+        }
+      },
+      "10": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "6",
+            0
+          ],
+          "seed": 7,
+          "steps": 1,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "positive": [
+            "9",
+            0
+          ],
+          "negative": [
+            "9",
+            1
+          ],
+          "latent_image": [
+            "8",
+            0
+          ],
+          "denoise": 1.0
+        }
+      },
+      "11": {
+        "class_type": "SeedVR2TemporalMerge",
+        "inputs": {
+          "latents": [
+            "10",
+            0
+          ],
+          "temporal_overlap": [
+            "8",
+            1
+          ]
+        }
+      },
+      "12": {
+        "class_type": "VAEDecodeTiled",
+        "inputs": {
+          "samples": [
+            "11",
+            0
+          ],
+          "vae": [
+            "5",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "13": {
+        "class_type": "SeedVR2PostProcessing",
+        "inputs": {
+          "images": [
+            "12",
+            0
+          ],
+          "original_resized_images": [
+            "3",
+            0
+          ],
+          "color_correction_method": "none"
+        }
+      },
+      "14": {
+        "class_type": "CreateVideo",
+        "inputs": {
+          "images": [
+            "13",
+            0
+          ],
+          "audio": [
+            "2",
+            1
+          ],
+          "fps": 24.0,
+          "bit_depth": 8
+        }
+      },
+      "15": {
+        "class_type": "SaveVideo",
+        "inputs": {
+          "video": [
+            "14",
+            0
+          ],
+          "filename_prefix": "seedvr2/upscale_<submission>",
+          "format": "auto",
+          "codec": "auto"
+        }
+      }
+    }
+  },
+  {
+    "function": "build_seedvr2_upscale_graph",
+    "graph": {
+      "1": {
+        "class_type": "LoadVideo",
+        "inputs": {
+          "file": "source.mp4"
+        }
+      },
+      "2": {
+        "class_type": "GetVideoComponents",
+        "inputs": {
+          "video": [
+            "1",
+            0
+          ]
+        }
+      },
+      "3": {
+        "class_type": "ImageScaleBy",
+        "inputs": {
+          "image": [
+            "2",
+            0
+          ],
+          "upscale_method": "lanczos",
+          "scale_by": 2.0
+        }
+      },
+      "4": {
+        "class_type": "SeedVR2Preprocess",
+        "inputs": {
+          "resized_images": [
+            "3",
+            0
+          ]
+        }
+      },
+      "5": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "seedvr2_ema_vae_fp16.safetensors"
+        }
+      },
+      "6": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "seedvr2_3b_int8_convrot.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "7": {
+        "class_type": "VAEEncodeTiled",
+        "inputs": {
+          "pixels": [
+            "4",
+            0
+          ],
+          "vae": [
+            "5",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "8": {
+        "class_type": "SeedVR2TemporalChunk",
+        "inputs": {
+          "latent": [
+            "7",
+            0
+          ],
+          "temporal_overlap": 1,
+          "chunking_mode": "auto"
+        }
+      },
+      "9": {
+        "class_type": "SeedVR2Conditioning",
+        "inputs": {
+          "model": [
+            "6",
+            0
+          ],
+          "vae_conditioning": [
+            "8",
+            0
+          ]
+        }
+      },
+      "10": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "6",
+            0
+          ],
+          "seed": 7,
+          "steps": 1,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "positive": [
+            "9",
+            0
+          ],
+          "negative": [
+            "9",
+            1
+          ],
+          "latent_image": [
+            "8",
+            0
+          ],
+          "denoise": 1.0
+        }
+      },
+      "11": {
+        "class_type": "SeedVR2TemporalMerge",
+        "inputs": {
+          "latents": [
+            "10",
+            0
+          ],
+          "temporal_overlap": [
+            "8",
+            1
+          ]
+        }
+      },
+      "12": {
+        "class_type": "VAEDecodeTiled",
+        "inputs": {
+          "samples": [
+            "11",
+            0
+          ],
+          "vae": [
+            "5",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "13": {
+        "class_type": "SeedVR2PostProcessing",
+        "inputs": {
+          "images": [
+            "12",
+            0
+          ],
+          "original_resized_images": [
+            "3",
+            0
+          ],
+          "color_correction_method": "none"
+        }
+      },
+      "14": {
+        "class_type": "CreateVideo",
+        "inputs": {
+          "images": [
+            "13",
+            0
+          ],
+          "audio": [
+            "2",
+            1
+          ],
+          "fps": 24.0,
+          "bit_depth": 8
+        }
+      },
+      "15": {
+        "class_type": "SaveVideo",
+        "inputs": {
+          "video": [
+            "14",
+            0
+          ],
+          "filename_prefix": "seedvr2/upscale_<submission>",
+          "format": "auto",
+          "codec": "auto"
+        }
+      }
+    }
+  },
+  {
+    "function": "build_seedvr2_upscale_graph",
+    "graph": {
+      "1": {
+        "class_type": "LoadVideo",
+        "inputs": {
+          "file": "source.mp4"
+        }
+      },
+      "2": {
+        "class_type": "GetVideoComponents",
+        "inputs": {
+          "video": [
+            "1",
+            0
+          ]
+        }
+      },
+      "3": {
+        "class_type": "ImageScaleBy",
+        "inputs": {
+          "image": [
+            "2",
+            0
+          ],
+          "upscale_method": "lanczos",
+          "scale_by": 2.0
+        }
+      },
+      "4": {
+        "class_type": "SeedVR2Preprocess",
+        "inputs": {
+          "resized_images": [
+            "3",
+            0
+          ]
+        }
+      },
+      "5": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "seedvr2_ema_vae_fp16.safetensors"
+        }
+      },
+      "6": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "seedvr2_7b_nvfp4.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "7": {
+        "class_type": "VAEEncodeTiled",
+        "inputs": {
+          "pixels": [
+            "4",
+            0
+          ],
+          "vae": [
+            "5",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "8": {
+        "class_type": "SeedVR2TemporalChunk",
+        "inputs": {
+          "latent": [
+            "7",
+            0
+          ],
+          "temporal_overlap": 1,
+          "chunking_mode": "auto"
+        }
+      },
+      "9": {
+        "class_type": "SeedVR2Conditioning",
+        "inputs": {
+          "model": [
+            "6",
+            0
+          ],
+          "vae_conditioning": [
+            "8",
+            0
+          ]
+        }
+      },
+      "10": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "6",
+            0
+          ],
+          "seed": 7,
+          "steps": 1,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "positive": [
+            "9",
+            0
+          ],
+          "negative": [
+            "9",
+            1
+          ],
+          "latent_image": [
+            "8",
+            0
+          ],
+          "denoise": 1.0
+        }
+      },
+      "11": {
+        "class_type": "SeedVR2TemporalMerge",
+        "inputs": {
+          "latents": [
+            "10",
+            0
+          ],
+          "temporal_overlap": [
+            "8",
+            1
+          ]
+        }
+      },
+      "12": {
+        "class_type": "VAEDecodeTiled",
+        "inputs": {
+          "samples": [
+            "11",
+            0
+          ],
+          "vae": [
+            "5",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "13": {
+        "class_type": "SeedVR2PostProcessing",
+        "inputs": {
+          "images": [
+            "12",
+            0
+          ],
+          "original_resized_images": [
+            "3",
+            0
+          ],
+          "color_correction_method": "none"
+        }
+      },
+      "14": {
+        "class_type": "CreateVideo",
+        "inputs": {
+          "images": [
+            "13",
+            0
+          ],
+          "audio": [
+            "2",
+            1
+          ],
+          "fps": 24.0,
+          "bit_depth": 8
+        }
+      },
+      "15": {
+        "class_type": "SaveVideo",
+        "inputs": {
+          "video": [
+            "14",
+            0
+          ],
+          "filename_prefix": "seedvr2/upscale_<submission>",
+          "format": "auto",
+          "codec": "auto"
+        }
+      }
+    }
+  },
+  {
+    "function": "build_seedvr2_upscale_graph",
+    "graph": {
+      "1": {
+        "class_type": "LoadVideo",
+        "inputs": {
+          "file": "source.mp4"
+        }
+      },
+      "2": {
+        "class_type": "GetVideoComponents",
+        "inputs": {
+          "video": [
+            "1",
+            0
+          ]
+        }
+      },
+      "3": {
+        "class_type": "ImageScaleBy",
+        "inputs": {
+          "image": [
+            "2",
+            0
+          ],
+          "upscale_method": "lanczos",
+          "scale_by": 2.0
+        }
+      },
+      "4": {
+        "class_type": "SeedVR2Preprocess",
+        "inputs": {
+          "resized_images": [
+            "3",
+            0
+          ]
+        }
+      },
+      "5": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "seedvr2_ema_vae_fp16.safetensors"
+        }
+      },
+      "6": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "seedvr2_7b_sharp_nvfp4.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "7": {
+        "class_type": "VAEEncodeTiled",
+        "inputs": {
+          "pixels": [
+            "4",
+            0
+          ],
+          "vae": [
+            "5",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "8": {
+        "class_type": "SeedVR2TemporalChunk",
+        "inputs": {
+          "latent": [
+            "7",
+            0
+          ],
+          "temporal_overlap": 1,
+          "chunking_mode": "auto"
+        }
+      },
+      "9": {
+        "class_type": "SeedVR2Conditioning",
+        "inputs": {
+          "model": [
+            "6",
+            0
+          ],
+          "vae_conditioning": [
+            "8",
+            0
+          ]
+        }
+      },
+      "10": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "6",
+            0
+          ],
+          "seed": 7,
+          "steps": 1,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "positive": [
+            "9",
+            0
+          ],
+          "negative": [
+            "9",
+            1
+          ],
+          "latent_image": [
+            "8",
+            0
+          ],
+          "denoise": 1.0
+        }
+      },
+      "11": {
+        "class_type": "SeedVR2TemporalMerge",
+        "inputs": {
+          "latents": [
+            "10",
+            0
+          ],
+          "temporal_overlap": [
+            "8",
+            1
+          ]
+        }
+      },
+      "12": {
+        "class_type": "VAEDecodeTiled",
+        "inputs": {
+          "samples": [
+            "11",
+            0
+          ],
+          "vae": [
+            "5",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "13": {
+        "class_type": "SeedVR2PostProcessing",
+        "inputs": {
+          "images": [
+            "12",
+            0
+          ],
+          "original_resized_images": [
+            "3",
+            0
+          ],
+          "color_correction_method": "none"
+        }
+      },
+      "14": {
+        "class_type": "CreateVideo",
+        "inputs": {
+          "images": [
+            "13",
+            0
+          ],
+          "audio": [
+            "2",
+            1
+          ],
+          "fps": 24.0,
+          "bit_depth": 8
+        }
+      },
+      "15": {
+        "class_type": "SaveVideo",
+        "inputs": {
+          "video": [
+            "14",
+            0
+          ],
+          "filename_prefix": "seedvr2/upscale_<submission>",
+          "format": "auto",
+          "codec": "auto"
+        }
+      }
+    }
+  },
+  {
+    "function": "build_seedvr2_image_upscale_graph",
+    "graph": {
+      "1": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "seedvr2_ema_vae_fp16.safetensors"
+        }
+      },
+      "2": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "seedvr2_7b_nvfp4.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "3": {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": "h3_gradio/input_image_upscale/first.png"
+        }
+      },
+      "4": {
+        "class_type": "ImageScaleBy",
+        "inputs": {
+          "image": [
+            "3",
+            0
+          ],
+          "upscale_method": "lanczos",
+          "scale_by": 2.5
+        }
+      },
+      "5": {
+        "class_type": "SeedVR2Preprocess",
+        "inputs": {
+          "resized_images": [
+            "4",
+            0
+          ]
+        }
+      },
+      "6": {
+        "class_type": "VAEEncodeTiled",
+        "inputs": {
+          "pixels": [
+            "5",
+            0
+          ],
+          "vae": [
+            "1",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "7": {
+        "class_type": "SeedVR2Conditioning",
+        "inputs": {
+          "model": [
+            "2",
+            0
+          ],
+          "vae_conditioning": [
+            "6",
+            0
+          ]
+        }
+      },
+      "8": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "2",
+            0
+          ],
+          "seed": 7,
+          "steps": 1,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "positive": [
+            "7",
+            0
+          ],
+          "negative": [
+            "7",
+            1
+          ],
+          "latent_image": [
+            "6",
+            0
+          ],
+          "denoise": 1.0
+        }
+      },
+      "9": {
+        "class_type": "VAEDecodeTiled",
+        "inputs": {
+          "samples": [
+            "8",
+            0
+          ],
+          "vae": [
+            "1",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "10": {
+        "class_type": "SeedVR2PostProcessing",
+        "inputs": {
+          "images": [
+            "9",
+            0
+          ],
+          "original_resized_images": [
+            "4",
+            0
+          ],
+          "color_correction_method": "none"
+        }
+      },
+      "11": {
+        "class_type": "SaveImage",
+        "inputs": {
+          "images": [
+            "10",
+            0
+          ],
+          "filename_prefix": "h3/input_upscale/inputtest_first"
+        }
+      },
+      "12": {
+        "class_type": "LoadImage",
+        "inputs": {
+          "image": "h3_gradio/input_image_upscale/picture.png"
+        }
+      },
+      "13": {
+        "class_type": "ImageScaleBy",
+        "inputs": {
+          "image": [
+            "12",
+            0
+          ],
+          "upscale_method": "lanczos",
+          "scale_by": 1.25
+        }
+      },
+      "14": {
+        "class_type": "SeedVR2Preprocess",
+        "inputs": {
+          "resized_images": [
+            "13",
+            0
+          ]
+        }
+      },
+      "15": {
+        "class_type": "VAEEncodeTiled",
+        "inputs": {
+          "pixels": [
+            "14",
+            0
+          ],
+          "vae": [
+            "1",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "16": {
+        "class_type": "SeedVR2Conditioning",
+        "inputs": {
+          "model": [
+            "2",
+            0
+          ],
+          "vae_conditioning": [
+            "15",
+            0
+          ]
+        }
+      },
+      "17": {
+        "class_type": "KSampler",
+        "inputs": {
+          "model": [
+            "2",
+            0
+          ],
+          "seed": 8,
+          "steps": 1,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "positive": [
+            "16",
+            0
+          ],
+          "negative": [
+            "16",
+            1
+          ],
+          "latent_image": [
+            "15",
+            0
+          ],
+          "denoise": 1.0
+        }
+      },
+      "18": {
+        "class_type": "VAEDecodeTiled",
+        "inputs": {
+          "samples": [
+            "17",
+            0
+          ],
+          "vae": [
+            "1",
+            0
+          ],
+          "tile_size": 1024,
+          "overlap": 128,
+          "temporal_size": 64,
+          "temporal_overlap": 8
+        }
+      },
+      "19": {
+        "class_type": "SeedVR2PostProcessing",
+        "inputs": {
+          "images": [
+            "18",
+            0
+          ],
+          "original_resized_images": [
+            "13",
+            0
+          ],
+          "color_correction_method": "none"
+        }
+      },
+      "20": {
+        "class_type": "SaveImage",
+        "inputs": {
+          "images": [
+            "19",
+            0
+          ],
+          "filename_prefix": "h3/input_upscale/inputtest_picture_<submission>"
+        }
+      }
+    }
+  },
+  {
+    "function": "build_ltx25_upscale_graph",
+    "graph": {
+      "1": {
+        "class_type": "LoadVideo",
+        "inputs": {
+          "file": "h3_gradio/ltx25_upscale/source.mp4"
+        }
+      },
+      "2": {
+        "class_type": "GetVideoComponents",
+        "inputs": {
+          "video": [
+            "1",
+            0
+          ]
+        }
+      },
+      "3": {
+        "class_type": "ImageScale",
+        "inputs": {
+          "image": [
+            "2",
+            0
+          ],
+          "upscale_method": "lanczos",
+          "width": 864,
+          "height": 480,
+          "crop": "disabled"
+        }
+      },
+      "4": {
+        "class_type": "GetImageSize",
+        "inputs": {
+          "image": [
+            "3",
+            0
+          ]
+        }
+      },
+      "5": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "6": {
+        "class_type": "LTXICLoRALoaderModelOnly",
+        "inputs": {
+          "model": [
+            "5",
+            0
+          ],
+          "lora_name": "ltx-2.5-22b-ic-lora-pixel-spatial-upscaler-x2-1.0.safetensors",
+          "strength_model": 1.0
+        }
+      },
+      "7": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+          "clip_name": "gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+          "type": "ltxv",
+          "device": "default"
+        }
+      },
+      "8": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "ltx-2.5-video-vae-conv-bf16.safetensors"
+        }
+      },
+      "9": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "ltx-2.5-audio-vae-bf16.safetensors"
+        }
+      },
+      "10": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "7",
+            0
+          ],
+          "text": "a detailed test scene"
+        }
+      },
+      "11": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+          "clip": [
+            "7",
+            0
+          ],
+          "text": ""
+        }
+      },
+      "12": {
+        "class_type": "LTXVConditioning",
+        "inputs": {
+          "positive": [
+            "10",
+            0
+          ],
+          "negative": [
+            "11",
+            0
+          ],
+          "frame_rate": 24.0
+        }
+      },
+      "13": {
+        "class_type": "EmptyLTXVLatentVideo",
+        "inputs": {
+          "width": 1728,
+          "height": 960,
+          "length": [
+            "4",
+            2
+          ],
+          "batch_size": 1
+        }
+      },
+      "14": {
+        "class_type": "LTXAddVideoICLoRAGuide",
+        "inputs": {
+          "positive": [
+            "12",
+            0
+          ],
+          "negative": [
+            "12",
+            1
+          ],
+          "vae": [
+            "8",
+            0
+          ],
+          "latent": [
+            "13",
+            0
+          ],
+          "image": [
+            "3",
+            0
+          ],
+          "frame_idx": 0,
+          "strength": 1.0,
+          "latent_downscale_factor": [
+            "6",
+            1
+          ],
+          "crop": "disabled",
+          "use_tiled_encode": true,
+          "tile_size": 512,
+          "tile_overlap": 64
+        }
+      },
+      "15": {
+        "class_type": "LTXVEmptyLatentAudio",
+        "inputs": {
+          "audio_vae": [
+            "9",
+            0
+          ],
+          "frames_number": [
+            "4",
+            2
+          ],
+          "frame_rate": 24,
+          "batch_size": 1
+        }
+      },
+      "16": {
+        "class_type": "LTXVConcatAVLatent",
+        "inputs": {
+          "video_latent": [
+            "14",
+            2
+          ],
+          "audio_latent": [
+            "15",
+            0
+          ]
+        }
+      },
+      "17": {
+        "class_type": "RandomNoise",
+        "inputs": {
+          "noise_seed": 11
+        }
+      },
+      "18": {
+        "class_type": "CFGGuider",
+        "inputs": {
+          "model": [
+            "6",
+            0
+          ],
+          "positive": [
+            "14",
+            0
+          ],
+          "negative": [
+            "14",
+            1
+          ],
+          "cfg": 1.0
+        }
+      },
+      "19": {
+        "class_type": "KSamplerSelect",
+        "inputs": {
+          "sampler_name": "euler_ancestral"
+        }
+      },
+      "20": {
+        "class_type": "ManualSigmas",
+        "inputs": {
+          "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+        }
+      },
+      "21": {
+        "class_type": "SamplerCustomAdvanced",
+        "inputs": {
+          "noise": [
+            "17",
+            0
+          ],
+          "guider": [
+            "18",
+            0
+          ],
+          "sampler": [
+            "19",
+            0
+          ],
+          "sigmas": [
+            "20",
+            0
+          ],
+          "latent_image": [
+            "16",
+            0
+          ]
+        }
+      },
+      "22": {
+        "class_type": "LTXVSeparateAVLatent",
+        "inputs": {
+          "av_latent": [
+            "21",
+            0
+          ]
+        }
+      },
+      "23": {
+        "class_type": "LTXVCropGuides",
+        "inputs": {
+          "positive": [
+            "14",
+            0
+          ],
+          "negative": [
+            "14",
+            1
+          ],
+          "latent": [
+            "22",
+            0
+          ]
+        }
+      },
+      "24": {
+        "class_type": "VAEDecodeTiled",
+        "inputs": {
+          "samples": [
+            "23",
+            2
+          ],
+          "vae": [
+            "8",
+            0
+          ],
+          "tile_size": 512,
+          "overlap": 64,
+          "temporal_size": 128,
+          "temporal_overlap": 32
+        }
+      },
+      "25": {
+        "class_type": "CreateVideo",
+        "inputs": {
+          "images": [
+            "24",
+            0
+          ],
+          "audio": [
+            "2",
+            1
+          ],
+          "fps": 24.0,
+          "bit_depth": 8
+        }
+      },
+      "26": {
+        "class_type": "SaveVideo",
+        "inputs": {
+          "video": [
+            "25",
+            0
+          ],
+          "filename_prefix": "ltx25/upscale_<submission>",
+          "format": "auto",
+          "codec": "auto"
+        }
+      }
+    }
+  },
+  {
+    "function": "build_fl2va_graph",
+    "graph": {
+      "1": {
+        "class_type": "UNETLoader",
+        "inputs": {
+          "unet_name": "fl2va_quality_convrot.safetensors",
+          "weight_dtype": "default"
+        }
+      },
+      "2": {
+        "class_type": "H3LightX2VBypassLoRA",
+        "inputs": {
+          "model": [
+            "1",
+            0
+          ],
+          "lora_name": "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
+          "strength": 1.0
+        }
+      },
+      "3": {
+        "class_type": "MiniMaxH3FusedModulation",
+        "inputs": {
+          "model": [
+            "2",
+            0
+          ],
+          "enabled": true
+        }
+      },
+      "4": {
+        "class_type": "MiniMaxH3ChunkFeedForward",
+        "inputs": {
+          "model": [
+            "3",
+            0
+          ],
+          "enabled": true,
+          "chunks": 2,
+          "min_tokens": 8192
+        }
+      },
+      "5": {
+        "class_type": "SpectrumApplyMiniMaxH3",
+        "inputs": {
+          "model": [
+            "4",
+            0
+          ],
+          "enabled": true,
+          "blend_weight": 0.5,
+          "degree": 1,
+          "ridge_lambda": 0.1,
+          "window_size": 2.0,
+          "flex_window": 0.75,
+          "warmup_steps": 1,
+          "tail_actual_steps": 1,
+          "max_history": 8,
+          "debug": false,
+          "history_storage": "system_ram",
+          "bootstrap_first_forecast": true,
+          "anchor_residual_feedback": false,
+          "selective_rollback_correction": false,
+          "offline_smoothing_replay": true,
+          "audio_blend_weight": 0.0,
+          "offline_archive_storage": "system_ram",
+          "model_aware_mode": "off",
+          "model_aware_risk_threshold": 0.65
+        }
+      },
+      "6": {
+        "class_type": "MiniMaxH3SigmaShift",
+        "inputs": {
+          "model": [
+            "5",
+            0
+          ],
+          "shift_video": 6.0,
+          "shift_audio": 3.0
+        }
+      },
+      "7": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+          "clip_name": "text.safetensors",
+          "type": "minimax",
+          "device": "default"
+        }
+      },
+      "8": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "video_vae_int8_convrot.safetensors"
+        }
+      },
+      "9": {
+        "class_type": "VAELoader",
+        "inputs": {
+          "vae_name": "audio_vae.safetensors"
+        }
+      },
+      "10": {
+        "class_type": "H3ConditioningCache",
+        "inputs": {
+          "clip": [
+            "7",
+            0
+          ],
+          "cache_key": "775c7019fbb915bcae66cd7940e8604679f056afea9bca3ec7cfa0102cc0ea2d"
+        }
+      },
+      "11": {
+        "class_type": "MiniMaxH3ImageToVideo",
+        "inputs": {
+          "vae": [
+            "8",
+            0
+          ],
+          "prompt": "test",
+          "length": 124,
+          "clip": [
+            "10",
+            0
+          ],
+          "width": 864,
+          "height": 480
+        }
+      },
+      "12": {
+        "class_type": "RandomNoise",
+        "inputs": {
+          "noise_seed": 2
+        }
+      },
+      "13": {
+        "class_type": "BasicGuider",
+        "inputs": {
+          "model": [
+            "6",
+            0
+          ],
+          "conditioning": [
+            "11",
+            0
+          ]
+        }
+      },
+      "14": {
+        "class_type": "KSamplerSelect",
+        "inputs": {
+          "sampler_name": "euler"
+        }
+      },
+      "15": {
+        "class_type": "BasicScheduler",
+        "inputs": {
+          "model": [
+            "6",
+            0
+          ],
+          "scheduler": "simple",
+          "steps": 4,
+          "denoise": 1.0
+        }
+      },
+      "16": {
+        "class_type": "SamplerCustomAdvanced",
+        "inputs": {
+          "noise": [
+            "12",
+            0
+          ],
+          "guider": [
+            "13",
+            0
+          ],
+          "sampler": [
+            "14",
+            0
+          ],
+          "sigmas": [
+            "15",
+            0
+          ],
+          "latent_image": [
+            "11",
+            1
+          ]
+        }
+      },
+      "17": {
+        "class_type": "VAEDecode",
+        "inputs": {
+          "samples": [
+            "16",
+            0
+          ],
+          "vae": [
+            "8",
+            0
+          ]
+        }
+      },
+      "18": {
+        "class_type": "VAEDecodeAudio",
+        "inputs": {
+          "samples": [
+            "16",
+            0
+          ],
+          "vae": [
+            "9",
+            0
+          ]
+        }
+      },
+      "19": {
+        "class_type": "CreateVideo",
+        "inputs": {
+          "images": [
+            "17",
+            0
+          ],
+          "audio": [
+            "18",
+            0
+          ],
+          "fps": 24.0,
+          "bit_depth": 8
+        }
+      },
+      "20": {
+        "class_type": "H3SaveVideoNVENC",
+        "inputs": {
+          "video": [
+            "19",
+            0
+          ],
+          "filename_prefix": "h3/fl2va_<submission>",
+          "preset": "p4",
+          "constant_quality": 23
+        }
+      }
+    }
+  }
+]

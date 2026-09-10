@@ -31,8 +31,8 @@ class Fl2vaVoiceTests(unittest.TestCase):
         )
         with (
             patch.object(app, "stage_file", side_effect=lambda path, *a, **kw: path),
-            patch.object(app, "add_model_stack", return_value=(["model", 0], ["clip", 0], ["vae", 0], ["audio", 0])),
-            patch.object(app, "finish_sampling") as finish,
+            patch.object(app.h3_workflow, "add_model_stack", return_value=(["model", 0], ["clip", 0], ["vae", 0], ["audio", 0])),
+            patch.object(app.h3_workflow, "finish_sampling") as finish,
         ):
             graph = app.build_fl2va_graph(**args)
         return graph, finish.call_args.kwargs
@@ -131,10 +131,10 @@ class Fl2vaVoiceTests(unittest.TestCase):
             with self.subTest(backend=backend):
                 args = self.enhancer_args(backend)
                 enhanced = args["prompt"] + " The camera moves closer."
-                with patch.object(app, target, return_value=(enhanced, "Enhanced")) as writer:
+                with patch.object(app.prompt_service, target, return_value=(enhanced, "Enhanced")) as writer:
                     result = app.enhance_h3_prompt(**args)
                 self.assertEqual(result, (enhanced, "Enhanced"))
-                writer_prompt = writer.call_args.kwargs.get("prompt") if writer.call_args.kwargs else writer.call_args.args[0]
+                writer_prompt = writer.call_args.kwargs.get("prompt", writer.call_args.args[0] if writer.call_args.args else None)
                 self.assertIn("Available voice labels: <Audio 1>", writer_prompt)
                 self.assertIn("exact speaker assignment", writer_prompt)
                 self.assertIn(args["prompt"], writer_prompt)
@@ -144,14 +144,14 @@ class Fl2vaVoiceTests(unittest.TestCase):
         for enhanced in ("The woman says hello.", "A man uses <Audio 2>.", "Voice <Audio 1> plus <Audio 0>."):
             with self.subTest(enhanced=enhanced):
                 args = self.enhancer_args()
-                with patch.object(app, "_enhance_h3_prompt_with_gemini", return_value=(enhanced, "Enhanced")):
+                with patch.object(app.prompt_service, "_enhance_h3_prompt_with_gemini", return_value=(enhanced, "Enhanced")):
                     prompt, status = app.enhance_h3_prompt(**args)
                 self.assertEqual(prompt, args["prompt"])
                 self.assertIn("changed the FL2VA audio labels", status)
 
     def test_provider_failure_never_returns_internal_voice_instructions(self):
         args = self.enhancer_args()
-        with patch.object(app, "_enhance_h3_prompt_with_gemini", side_effect=lambda prompt, *a: (prompt, "Prompt enhancement failed: offline")):
+        with patch.object(app.prompt_service, "_enhance_h3_prompt_with_gemini", side_effect=lambda prompt, *a, **kw: (prompt, "Prompt enhancement failed: offline")):
             prompt, status = app.enhance_h3_prompt(**args)
         self.assertEqual(prompt, args["prompt"])
         self.assertIn("offline", status)

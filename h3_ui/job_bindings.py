@@ -7,6 +7,13 @@ import gradio as gr
 from h3_app.jobs import JOBS, CURRENT_JOB
 from h3_app.provenance import RUN_CONTEXT, render_snapshot
 
+GPU_QUEUE = {"concurrency_id": "h3-gpu", "concurrency_limit": 1}
+
+
+def bind_gpu_action(trigger, callback=None, **options):
+    """Register generation or maintenance with the same GPU queue policy."""
+    return trigger(callback, **options, **GPU_QUEUE)
+
 
 def owned_generation(callback, family: str, input_names=None, *, metadata_output=False):
     """Advance under the job context even when Gradio switches worker threads."""
@@ -74,21 +81,30 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
 
     # Gradio treats an empty upload as required unless the callback signature
     # also supplies a default. Keep appended voice inputs optional for old clients.
-    optional_defaults = {
-        "fl2va_audio_1": None, "fl2va_audio_2": None, "fl2va_audio_3": None,
-        "preset": None,
-    } if family == "h3" else {}
+    optional_defaults = (
+        {
+            "fl2va_audio_1": None,
+            "fl2va_audio_2": None,
+            "fl2va_audio_3": None,
+            "preset": None,
+        }
+        if family == "h3"
+        else {}
+    )
     parameters = [
         inspect.Parameter(
-            name, inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            name,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
             default=optional_defaults.get(name, inspect.Parameter.empty),
         )
         for name in names
     ]
     parameters.append(
         inspect.Parameter(
-            "request", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=gr.Request,
-            default=None
+            "request",
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=gr.Request,
+            default=None,
         )
     )
     run.__signature__ = inspect.Signature(parameters)

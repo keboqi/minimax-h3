@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import os
+import uuid
 from contextvars import ContextVar
 from html import escape
 from pathlib import Path
 from typing import Any, Mapping
-import json
-import os
-import uuid
 
 RUN_CONTEXT: ContextVar[dict] = ContextVar("h3_run_context", default={})
 
@@ -60,3 +60,29 @@ def render_snapshot(paths: Any) -> str:
             f"<details><summary>Settings used · {escape(Path(path).name)}</summary><pre>{content}</pre></details>"
         )
     return "".join(sections) or "Settings used will appear with the generated result."
+
+
+def copy_snapshot(source: Path, destination: Path) -> None:
+    """Retain settings while recording the copied output's actual name."""
+    payload = read_snapshot(source)
+    if payload:
+        write_snapshot(
+            destination,
+            {key: value for key, value in payload.items() if key != "output"},
+        )
+
+
+def copy_media(source: Path, destination: Path) -> None:
+    """Publish a complete managed copy and preserve its execution settings."""
+    import shutil
+
+    from .jobs import check_cancelled
+
+    temporary = destination.with_name(destination.name + f".{uuid.uuid4().hex}.partial")
+    try:
+        shutil.copy2(source, temporary)
+        check_cancelled()
+        copy_snapshot(source, destination)
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)

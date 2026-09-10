@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, fields
 from typing import Any, Callable
+from h3_app.settings import ResolvedSettings
 import gradio as gr
 from .h3_view import H3View
 
@@ -35,8 +36,8 @@ class AppComponents(H3View):
 
 @dataclass(frozen=True)
 class AppServices:
-    resolve_request_settings: Callable[..., Any]
-    describe_settings: Callable[..., Any]
+    resolve_request_settings: Callable[[dict[str, Any]], ResolvedSettings]
+    describe_settings: Callable[[dict[str, Any]], str]
     mode_layout_updates: Callable[..., Any]
     result_format_layout_updates: Callable[..., Any]
     compile_trt_video_vae: Callable[..., Any]
@@ -44,16 +45,16 @@ class AppServices:
     latent_upscale_layout_updates: Callable[..., Any]
     latent_upscale_method_layout_update: Callable[..., Any]
     bind_ltx_view: Callable[..., Any]
-    render_ltx25_workflow_details: Callable[..., Any]
+    render_ltx25_workflow_details: Callable[[str], str]
     prepare_ltx25_official_workflow: Callable[..., Any]
     prepare_all_ltx25_official_models: Callable[..., Any]
-    render_ltx25_official_model_inventory: Callable[..., Any]
+    render_ltx25_official_model_inventory: Callable[[], str]
     enhance_ltx25_prompt: Callable[..., Any]
     generate_ltx25: Callable[..., Any]
-    AI_POSTPROCESS_OPTIONS: Any
-    SEEDVR2_UPSCALE: Any
-    LTX25_UPSCALE: Any
-    AUTO_RESOLUTION_JS: Any
+    AI_POSTPROCESS_OPTIONS: tuple[str, ...]
+    SEEDVR2_UPSCALE: str
+    LTX25_UPSCALE: str
+    AUTO_RESOLUTION_JS: str
     auto_resolution_from_start_frame: Callable[..., Any]
     fbcache_preset_defaults: Callable[..., Any]
     resolution_info_preview: Callable[..., Any]
@@ -62,8 +63,8 @@ class AppServices:
     input_image_frame_preset_updates: Callable[..., Any]
     upscale_selected_input_images: Callable[..., Any]
     generate_for_ui: Callable[..., Any]
-    select_all_image_frames: Callable[..., Any]
-    save_selected_image_frames: Callable[..., Any]
+    select_all_image_frames: Callable[[list[str]], list[str]]
+    save_selected_image_frames: Callable[[list[str], list[str]], tuple[list[str], str]]
     prompt_writer_backend_visibility: Callable[..., Any]
     enhance_h3_prompt: Callable[..., Any]
     bind_music_view: Callable[..., Any]
@@ -72,10 +73,10 @@ class AppServices:
     bind_api_view: Callable[..., Any]
     generate_with_ui_defaults: Callable[..., Any]
     interrupt: Callable[..., Any]
-    refresh_backend_views: Callable[..., Any]
-    unload_all_models: Callable[..., Any]
+    refresh_backend_views: Callable[[], tuple[str, str]]
+    unload_all_models: Callable[[], tuple[str, str]]
     bind_gallery_view: Callable[..., Any]
-    refresh_gallery: Callable[..., Any]
+    refresh_gallery: Callable[[], tuple[list[tuple[str, str]], list[str], str]]
     select_gallery_video: Callable[..., Any]
     import_gallery_video: Callable[..., Any]
     postprocess_selected_gallery_video: Callable[..., Any]

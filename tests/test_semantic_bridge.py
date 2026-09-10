@@ -59,11 +59,11 @@ class SemanticBridgeTests(unittest.TestCase):
         )
         with (
             patch.object(
-                app,
+                app.h3_workflow,
                 "add_model_stack",
                 return_value=(["model", 0], ["clip", 0], ["vae", 0], ["audio", 0]),
             ),
-            patch.object(app, "finish_sampling") as finish,
+            patch.object(app.h3_workflow, "finish_sampling") as finish,
         ):
             graph = app.build_fl2va_graph(**args)
         return graph, finish.call_args.kwargs
@@ -116,17 +116,17 @@ class SemanticBridgeTests(unittest.TestCase):
     def test_adapter_is_on_demand_and_download_is_skipped_when_ready(self):
         self.assertNotIn("semantic_bridge_v1", PRELOAD_MODEL_KEYS)
         with (
-            patch.object(app, "stale_model_keys", return_value=[]),
-            patch.object(app, "sync_models") as sync,
-            patch.object(app, "model_file_is_ready", return_value=True),
+            patch.object(app.model_service, "stale_model_keys", return_value=[]),
+            patch.object(app.model_service, "sync_models") as sync,
+            patch.object(app.model_service, "model_file_is_ready", return_value=True),
         ):
             app.ensure_h3_semantic_bridge()
             sync.assert_not_called()
         with (
-            patch.object(app, "stale_model_keys", return_value=["semantic_bridge_v1"]),
-            patch.object(app, "sync_models") as sync,
-            patch.object(app, "model_file_is_ready", return_value=True),
-            patch.object(app, "resolve_hf_token", return_value=None),
+            patch.object(app.model_service, "stale_model_keys", return_value=["semantic_bridge_v1"]),
+            patch.object(app.model_service, "sync_models") as sync,
+            patch.object(app.model_service, "model_file_is_ready", return_value=True),
+            patch.object(app.model_service, "resolve_hf_token", return_value=None),
         ):
             app.ensure_h3_semantic_bridge()
             self.assertEqual(

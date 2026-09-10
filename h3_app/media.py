@@ -2,7 +2,6 @@
 
 from pathlib import Path
 from typing import Any, Iterable
-from .jobs import CURRENT_JOB
 
 
 def walk_saved_refs(value: Any) -> Iterable[dict[str, str]]:
@@ -41,6 +40,7 @@ def history_output_candidates(
             path = (output_dir / ref["subfolder"] / ref["filename"]).resolve()
             if (
                 path.is_relative_to(resolved_directory)
+                and ".processing" not in path.parts
                 and path.is_file()
                 and path.suffix.lower() in extensions
             ):
@@ -54,9 +54,11 @@ def recent_output_candidates(
     directory: Path,
     extensions: frozenset[str],
     queued_at: float,
+    *,
+    output_token: str | None = None,
 ) -> list[Path]:
     """Return recent files without following outputs outside the scan root."""
-    if not directory.is_dir():
+    if not output_token or not directory.is_dir():
         return []
     resolved_directory = directory.resolve()
     candidates: dict[Path, Path] = {}
@@ -65,11 +67,10 @@ def recent_output_candidates(
             path = candidate.resolve()
             if (
                 path.is_relative_to(resolved_directory)
+                and ".processing" not in path.parts
                 and path.is_file()
                 and path.suffix.lower() in extensions
-                and CURRENT_JOB.get() is not None
-                and CURRENT_JOB.get().output_token is not None
-                and CURRENT_JOB.get().output_token in path.name
+                and output_token in path.name
                 and path.stat().st_mtime >= queued_at - 2
             ):
                 candidates[path] = path

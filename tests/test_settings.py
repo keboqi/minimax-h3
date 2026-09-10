@@ -191,7 +191,7 @@ class JobTests(unittest.TestCase):
             token = CURRENT_JOB.set(Job("a", "h3", output_token="ours"))
             try:
                 self.assertEqual(
-                    recent_output_candidates(root, frozenset({".mp4"}), 0),
+                    recent_output_candidates(root, frozenset({".mp4"}), 0, output_token="ours"),
                     [ours.resolve()],
                 )
             finally:

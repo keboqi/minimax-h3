@@ -91,7 +91,7 @@ def run():
                 preset.get_by_label("Quality", exact=True).first.check()
                 expect(card).to_contain_text("Turbo · 8 steps")
                 expect(card).not_to_contain_text("Modified")
-                expect(card).to_contain_text("Base model: Speed")
+                expect(card).to_contain_text("Base model: Singularity")
                 page.get_by_text("Output essentials", exact=True).click()
                 steps = (
                     page.get_by_text("Steps", exact=True)
@@ -109,9 +109,11 @@ def run():
                 page.get_by_role("button", name="Restore preset settings").click()
                 expect(card).to_contain_text("Turbo · 8 steps")
                 expect(card).not_to_contain_text("Modified")
-                # Semantic Bridge is opt-in, FL2VA-only, and remembers its preference.
+                # Semantic Bridge starts on, is FL2VA-only, and remembers its preference.
                 page.get_by_text("Model and memory (advanced)", exact=True).click()
                 bridge = page.get_by_label("Semantic Bridge (experimental)", exact=True)
+                expect(bridge).to_be_checked()
+                bridge.uncheck()
                 expect(bridge).not_to_be_checked()
                 bridge.check()
                 strength = page.get_by_text("Semantic Bridge strength", exact=True).locator(
@@ -153,7 +155,7 @@ def run():
                     "Turbo · 4 steps"
                 )
                 second_page.get_by_text("Model and memory (advanced)", exact=True).click()
-                expect(second_page.get_by_label("Semantic Bridge (experimental)", exact=True)).not_to_be_checked()
+                expect(second_page.get_by_label("Semantic Bridge (experimental)", exact=True)).to_be_checked()
                 second.close()
                 # Audio retains the native-refinement preference for the next video.
                 page.get_by_label("Audio", exact=True).check()

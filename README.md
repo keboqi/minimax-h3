@@ -33,15 +33,15 @@ bundled FirstBlockCache node.
   Fast FP16, and Quality FP32 model choices
 - Selectable Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
   including dedicated Ref2V adapters for both step counts
-- SageAttention 2 as the measured-fastest H3 default, with selectable Comfy
-  Kitchen comparison, audio-safe SLA block-sparse attention, and optional
+- Audio-safe SLA block-sparse attention by default, with selectable SageAttention 2,
+  Comfy Kitchen comparison, and optional
   H3-native zero-copy Sol v0.6.2 sparse attention
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Optional experimental INT8 ConvRot video VAE, lazy-downloaded on first use
 - H.264 NVENC hardware encoding for MiniMax H3 video outputs
 - Optional 500K single-frame image decoder, lazy-downloaded only when selected;
-  the official FP16 video VAE remains the default
+  visual conditioning retains the official FP16 path when TensorRT decoding is selected
 - Hardware-aware ComfyUI memory mode selection
 - One-click model unloading and VRAM cache release from the UI
 - Spectrum v0.2.26 in legacy mode as the normal-generation default and experimental Turbo option
@@ -173,7 +173,7 @@ choices. Turbo defaults to Spectrum through the reviewed Larry Turbo and
 RES multistep sampler paths. EasyCache is also available as an experimental,
 default-off Turbo option after ComfyUI's H3 audio-carry fix. FirstBlockCache is
 also available as a default-off experimental Turbo option. Attention defaults
-to **SLA with the Quality preset**, which uses audio-safe block-sparse attention
+to **SLA with the Fast preset**, which uses audio-safe block-sparse attention
 and a dense final sampling step. Sage 2 remains available through KJNodes'
 per-model override, and Kitchen remains ComfyUI's global backend and a selectable
 comparison/fallback. SLA also offers Fast and Balanced presets, while
@@ -246,9 +246,9 @@ spent.
 The experimental **Single-frame 500K** image VAE is a separate 9.69 GB lazy
 download. It is used only for Image results; Video continues to use the
 official H3 video VAE regardless of this image setting.
-The native H3 latent upscaler is also default-off and lazy-downloads only the
-selected checkpoint. **Balanced (BF16)** is the default choice; **Fast (FP16)**
-and **Quality (FP32)** remain selectable.
+The native H3 latent upscaler starts enabled for video and lazy-downloads the
+selected checkpoint. **Quality (FP32)** is the default choice; **Fast (FP16)**
+and **Balanced (BF16)** remain selectable.
 The sampling presets also select the H3 text encoder: **Fast** uses
 **NVFP4 / AWQ**, **Balanced** uses **INT8 ConvRot**, and **Quality** uses
 **BF16** (51.5 GB). Singularity is the initial preset: it selects the Singularity base model and otherwise uses Fast settings. Its NVFP4/AWQ text encoder is preloaded; INT8 ConvRot (27.1 GB) downloads on first selection. Fast and Balanced
@@ -402,7 +402,7 @@ finishes a 512×512 H3 generation, upscales its clean video latent 2x, then
 lightly re-noises and refines it at 1024×1024. The clean first-pass audio is
 preserved for the final output.
 
-This is not a gallery or post-processing option. It is disabled by default,
+This generation option starts enabled for video,
 defaults to two high-resolution refinement steps, and disables cache wrappers
 across the two samplers. Enabling it automatically rounds both final dimensions
 to the nearest multiple of 64 so the half-resolution pass remains on H3's
@@ -574,27 +574,29 @@ pins, is copied into an earlier image layer.
 
 ## Validation
 
-The fast checks do not download models or require a GPU:
-
-Voice-reference coverage: `python -m unittest discover -s tests -q` and
-`python tests/browser_voice_refs.py` (headless Chrome/Chromium).
+The consolidated checks run offline and do not require a GPU:
 
 ```bash
-python3 -m py_compile \
-  gradio_app.py h3_ui/*.py h3_attention.py h3_models.py h3_node_patches.py h3_prompt_rewriter.py h3_requirements.py \
-  modal_h3.py setup_h3.py custom_nodes/H3Acceleration/__init__.py
-python3 h3_requirements.py
-python3 h3_models.py
-python3 h3_node_patches.py --selftest
-python3 h3_attention.py --selftest
-python3 h3_prompt_rewriter.py
-python3 gradio_app.py --selftest
-bash -n run_h3.sh
+python -m tests
+python -m tests --browser
 ```
+
+The first command runs discovery, all standalone service self-tests and 15 baseline
+workflow fixtures. The second adds settings migration and voice-reference browser
+acceptance using headless Chrome/Chromium. `python gradio_app.py --selftest` remains
+available. CPU PyTorch numerical tests and cached upstream contract tests run when
+their optional dependencies are present. Supported GPU inference, TensorRT
+compilation and deployment remain separate checks.
+
+See [the architecture and validation guide](docs/settings-refactor.md) for setup,
+module ownership and cancellation boundaries.
 
 ## Repository layout
 
-- `gradio_app.py` — UI, workflow construction, and ComfyUI API client
+- `gradio_app.py` — launcher and temporary compatibility API
+- `h3_app/` — configuration, model services, workflows, generation, media and execution
+- `h3_ui/` — application composition, visible sections, events and UI adapters
+- `h3_sources.py` — shared local/Modal source pins
 - `h3_prompt_rewriter.py` — lazy local Qwen3-VL 8B + MiniMax-H3 LoRA writer
 - `setup_h3.py` — local environment and model provisioning
 - `modal_h3.py` — Modal image, volume, and service lifecycle

@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 import gradio as gr
-from .job_bindings import owned_generation, owned_interrupt
+from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 
 
 from .ltx_view import LtxView
@@ -101,19 +101,17 @@ def bind_ltx_view(
         queue=False,
         show_progress="hidden",
     )
-    view.prepare_workflow.click(
+    bind_gpu_action(
+        view.prepare_workflow.click,
         prepare_workflow,
         inputs=view.workflow,
         outputs=[view.workflow_status, view.model_inventory],
-        concurrency_id="h3-gpu",
-        concurrency_limit=1,
         show_progress="minimal",
     )
-    view.prepare_all_models.click(
+    bind_gpu_action(
+        view.prepare_all_models.click,
         prepare_all_models,
         outputs=[view.workflow_status, view.model_inventory],
-        concurrency_id="h3-gpu",
-        concurrency_limit=1,
         show_progress="minimal",
     )
     view.refresh_models.click(
@@ -122,7 +120,8 @@ def bind_ltx_view(
         queue=False,
         show_progress="hidden",
     )
-    view.enhance.click(
+    bind_gpu_action(
+        view.enhance.click,
         enhance_prompt,
         inputs=[
             view.prompt,
@@ -137,12 +136,11 @@ def bind_ltx_view(
             view.height,
         ],
         outputs=[view.prompt, view.enhance_status],
-        concurrency_id="h3-gpu",
-        concurrency_limit=1,
         show_progress="minimal",
         api_name="enhance_ltx25_prompt",
     )
-    return view.run.click(
+    return bind_gpu_action(
+        view.run.click,
         owned_generation(generate, "ltx"),
         inputs=[
             view.mode,
@@ -165,8 +163,6 @@ def bind_ltx_view(
             view.end_strength,
         ],
         outputs=[view.output, view.status],
-        concurrency_id="h3-gpu",
-        concurrency_limit=1,
         show_progress="minimal",
         api_name="generate_ltx25_video",
     )
@@ -178,7 +174,8 @@ def bind_music_view(
     enhance_prompt: Callable[..., Any],
     generate: Callable[..., Any],
 ) -> Any:
-    view.enhance.click(
+    bind_gpu_action(
+        view.enhance.click,
         enhance_prompt,
         inputs=[
             view.caption,
@@ -188,12 +185,11 @@ def bind_music_view(
             *view.reference_images,
         ],
         outputs=[view.caption, view.lyrics, view.enhance_status],
-        concurrency_id="h3-gpu",
-        concurrency_limit=1,
         show_progress="minimal",
         api_name="enhance_music3_prompt",
     )
-    return view.run.click(
+    return bind_gpu_action(
+        view.run.click,
         owned_generation(generate, "music"),
         inputs=[
             view.model,
@@ -208,20 +204,17 @@ def bind_music_view(
             view.tiled,
         ],
         outputs=[view.output, view.status],
-        concurrency_id="h3-gpu",
-        concurrency_limit=1,
         show_progress="minimal",
         api_name="generate_music3",
     )
 
 
 def bind_api_view(view: ApiView, *, generate: Callable[..., Any]) -> Any:
-    return view.run.click(
+    return bind_gpu_action(
+        view.run.click,
         owned_generation(generate, "api"),
         inputs=view.prompt,
         outputs=[view.download_url, view.status],
-        concurrency_id="h3-gpu",
-        concurrency_limit=1,
         show_progress="minimal",
         api_name="generate_video",
     )
@@ -271,19 +264,17 @@ def bind_gallery_view(
         outputs=[view.grid, view.paths, view.status],
         show_progress="hidden",
     )
-    view.refresh.click(
+    bind_gpu_action(
+        view.refresh.click,
         refresh,
         outputs=[view.grid, view.paths, view.status],
-        concurrency_id="h3-gpu",
-        concurrency_limit=1,
         show_progress="minimal",
     )
-    view.grid.select(
+    bind_gpu_action(
+        view.grid.select,
         select,
         inputs=view.paths,
         outputs=[view.player, view.download, view.selected],
-        concurrency_id="h3-gpu",
-        concurrency_limit=1,
         show_progress="minimal",
     )
     mutation_outputs = [
@@ -295,16 +286,16 @@ def bind_gallery_view(
         view.selected,
         view.confirm_delete,
     ]
-    view.import_video.click(
+    bind_gpu_action(
+        view.import_video.click,
         import_video,
         inputs=[view.upload_video],
         outputs=mutation_outputs,
-        concurrency_id="h3-gpu",
-        concurrency_limit=1,
         show_progress="minimal",
         api_name=False,
     )
-    post_event = view.post_run.click(
+    post_event = bind_gpu_action(
+        view.post_run.click,
         owned_generation(postprocess, "gallery"),
         inputs=[
             view.selected,
@@ -319,8 +310,6 @@ def bind_gallery_view(
             view.upscale_resolution,
         ],
         outputs=mutation_outputs + [view.post_status],
-        concurrency_id="h3-gpu",
-        concurrency_limit=1,
         show_progress="minimal",
         api_name=False,
     )
@@ -331,21 +320,19 @@ def bind_gallery_view(
         queue=False,
     )
     stopped.then(fn=None, cancels=[post_event], queue=False, api_name=False)
-    view.delete.click(
+    bind_gpu_action(
+        view.delete.click,
         delete,
         inputs=[view.selected, view.confirm_delete],
         outputs=mutation_outputs,
-        concurrency_id="h3-gpu",
-        concurrency_limit=1,
         show_progress="minimal",
         api_name=False,
     )
-    view.empty.click(
+    bind_gpu_action(
+        view.empty.click,
         empty,
         inputs=[view.selected, view.confirm_delete],
         outputs=mutation_outputs,
-        concurrency_id="h3-gpu",
-        concurrency_limit=1,
         show_progress="minimal",
         api_name=False,
     )

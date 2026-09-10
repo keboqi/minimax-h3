@@ -1,0 +1,188 @@
+"""LTX request orchestration."""
+
+from __future__ import annotations
+
+import random
+import time
+import uuid
+from dataclasses import asdict
+from typing import Iterator
+
+from h3_app.config import RuntimeConfig
+from h3_app.errors import H3Error
+from h3_app.policy import ltx25_frame_length, validate_resolution
+from h3_app.progress import ProgressCallback, no_progress
+from h3_app.provenance import write_snapshot
+from h3_app.status import StageTimings, progress_status
+from h3_app.workflows.ltx import required_ltx25_nodes
+
+from .requests import LtxRequest
+from .results import GenerationUpdate
+from .services import GenerationServices
+
+
+def generate_ltx25(
+    request: LtxRequest,
+    services: GenerationServices,
+    runtime: RuntimeConfig,
+    *,
+    progress: ProgressCallback = no_progress,
+) -> Iterator[GenerationUpdate]:
+    """Run an LTX-2.5 job through the same ComfyUI queue as H3."""
+    snapshot_values = {
+        key: value
+        for key, value in asdict(request).items()
+        if key
+        not in {
+            "prompt",
+            "negative_prompt",
+            "caption",
+            "lyrics",
+            "first_image",
+            "middle_image",
+            "end_image",
+        }
+    }
+    started = time.monotonic()
+    timings = StageTimings("LTX-2.5 generation", started, "Preparing request")
+    queued_at = time.time()
+    try:
+        services.models.unload_prompt_rewriter()
+        progress(0, desc="Validating LTX-2.5 request")
+        yield GenerationUpdate(
+            None, progress_status("Validating LTX-2.5 request", started=started)
+        )
+        if not str(request.prompt).strip():
+            raise H3Error("Prompt is required.")
+        if not 1 <= float(request.duration) <= 20:
+            raise H3Error("LTX-2.5 duration must be between 1 and 20 seconds.")
+        if not 1 <= float(request.fps) <= 60:
+            raise H3Error("Frame rate must be between 1 and 60 fps.")
+        resolved_width, resolved_height = validate_resolution(
+            request.width, request.height
+        )
+        actual_seed = (
+            random.randrange(0, 2**63 - 1)
+            if int(request.seed) < 0
+            else int(request.seed)
+        )
+        image_to_video = str(request.mode).strip().lower() == "image to video"
+        if image_to_video and not request.first_image:
+            raise H3Error("Image-to-video mode requires a start frame.")
+        keyframe_strengths = {
+            "Start image": request.image_strength,
+            "Middle image": request.middle_strength,
+            "End image": request.end_strength,
+        }
+        for label, strength in keyframe_strengths.items():
+            if not 0 <= float(strength) <= 1:
+                raise H3Error(f"{label} strength must be between 0 and 1.")
+        if (
+            image_to_video
+            and request.middle_image
+            and not 0 < float(request.middle_time) < float(request.duration)
+        ):
+            raise H3Error("Middle keyframe time must be inside the video duration.")
+
+        missing_files = services.models.missing_ltx25_model_names(request.model_choice)
+        if missing_files:
+            progress(0, desc="Downloading LTX-2.5 models")
+            yield GenerationUpdate(
+                None,
+                progress_status(
+                    "Downloading gated LTX-2.5 models on demand",
+                    started=started,
+                    detail=(
+                        "Accept the Hugging Face model license and authenticate "
+                        "with `hf auth login` or HF_TOKEN if required."
+                    ),
+                ),
+            )
+        services.models.ensure_ltx25_models(request.model_choice)
+
+        available = set(services.execution.object_info())
+        missing_nodes = required_ltx25_nodes(image_to_video=image_to_video) - available
+        if missing_nodes:
+            raise H3Error(
+                "LTX-2.5 requires a current ComfyUI with LTXVideo nodes: "
+                + ", ".join(sorted(missing_nodes))
+            )
+        progress(0, desc="Building LTX-2.5 workflow")
+        graph = services.workflows.build_ltx25_graph(
+            model_choice=request.model_choice,
+            prompt=str(request.prompt).strip(),
+            negative_prompt=str(request.negative_prompt or ""),
+            first_image=request.first_image if image_to_video else None,
+            width=resolved_width,
+            height=resolved_height,
+            duration=float(request.duration),
+            fps=float(request.fps),
+            seed=actual_seed,
+            cfg=float(request.cfg),
+            sampler_name=str(request.sampler_name),
+            image_strength=float(request.image_strength),
+            middle_image=request.middle_image if image_to_video else None,
+            middle_time=float(request.middle_time),
+            middle_strength=float(request.middle_strength),
+            end_image=request.end_image if image_to_video else None,
+            end_strength=float(request.end_strength),
+        )
+
+        client_id = str(uuid.uuid4())
+        prompt_id = services.execution.submit_prompt(graph, client_id)
+        timings.label = f"LTX-2.5 job {prompt_id}"
+        timings.transition("Waiting for ComfyUI")
+        frames = ltx25_frame_length(request.duration, request.fps)
+        yield GenerationUpdate(
+            None,
+            f"Queued LTX-2.5 job `{prompt_id}` 路 seed {actual_seed} 路 "
+            f"{resolved_width}×{resolved_height} 路 {frames} frames at {float(request.fps):g} fps 路 "
+            f"{request.model_choice} distilled 8-step model",
+        )
+
+        updates = services.execution.poll_comfy_progress(prompt_id, graph)
+        for stage, completed_nodes, total_nodes, step, step_total in updates:
+            timings.transition(stage)
+            if step is not None and step_total:
+                progress((step, step_total), desc=stage)
+            elif total_nodes:
+                progress((completed_nodes, total_nodes), desc=stage)
+            yield GenerationUpdate(
+                None,
+                progress_status(
+                    stage,
+                    started=started,
+                    completed_nodes=completed_nodes,
+                    total_nodes=total_nodes,
+                    step=step,
+                    step_total=step_total,
+                    configured_steps=8
+                    if stage == "Generating video and audio"
+                    else None,
+                    detail=f"LTX-2.5 job `{prompt_id}`",
+                ),
+            )
+
+        timings.transition("Locating generated output")
+        history = services.execution.wait_for_history(prompt_id)
+        result = services.media.resolve_output(history, queued_at)
+        snapshot_values.update(
+            seed=actual_seed, width=resolved_width, height=resolved_height
+        )
+        write_snapshot(
+            result,
+            {"job_id": prompt_id, "family": "LTX 2.5", "settings": snapshot_values},
+        )
+        finished_at = time.monotonic()
+        elapsed = finished_at - started
+        timing_summary = timings.summary(now=finished_at)
+        progress(1, desc="Complete")
+        yield GenerationUpdate(
+            str(result),
+            f"LTX-2.5 completed in {elapsed:.1f}s 路 output {result.name} 路 "
+            f"seed {actual_seed}\n\n{timing_summary}",
+        )
+    except Exception as exc:
+        yield GenerationUpdate(None, f"Error: {exc}\n\n{timings.summary()}")
+    finally:
+        timings.finish()

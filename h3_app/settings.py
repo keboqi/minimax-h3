@@ -5,9 +5,11 @@ No UI, provider SDK, filesystem or model downloads belong in this module.
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Mapping
-import math
+
+from .resources import resolve_decoders
 
 LIGHTX2V_4STEP = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
 LIGHTX2V_8STEP = "LightX2V v1.0 / 8-step 768p"
@@ -300,6 +302,18 @@ def resolve_settings(
         issues.append(
             "Semantic Bridge strength must be a finite number between 0 and 1."
         )
+    try:
+        decoders = resolve_decoders(
+            fmt,
+            output.image_vae,
+            use_trt_vae=request.use_trt_vae,
+            use_int8_vae=request.use_int8_vae,
+        )
+    except ValueError as exc:
+        issues.append(str(exc))
+        decoders = None
+    if decoders and decoders.video_decoder == "none":
+        inactive.update({"use_trt_vae", "use_int8_vae"})
     effective = replace(
         request,
         sampling=sampling,
@@ -307,6 +321,8 @@ def resolve_settings(
         finishing=finishing,
         cache_mode=cache,
         semantic_bridge=bridge,
+        use_trt_vae=decoders.use_trt_vae if decoders else request.use_trt_vae,
+        use_int8_vae=decoders.use_int8_vae if decoders else request.use_int8_vae,
     )
     return ResolvedSettings(
         request, effective, tuple(adjustments), frozenset(inactive), tuple(issues)
@@ -334,7 +350,9 @@ def transition_modes(
             or asdict(preset_settings(current.get("preset", "Singularity"), mode))
         )
     elif action in {"preset", "restore"}:
-        current.update(asdict(preset_settings(current.get("preset", "Singularity"), mode)))
+        current.update(
+            asdict(preset_settings(current.get("preset", "Singularity"), mode))
+        )
         if current.get("preset") == "Singularity":
             current["model_profile"] = "Singularity"
     elif action == "turbo_variant" and mode == "Turbo":

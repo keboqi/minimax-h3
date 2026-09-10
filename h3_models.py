@@ -5,10 +5,15 @@ This module is intentionally independent of Gradio, ComfyUI, and Modal so the
 local and Modal deployment paths use exactly the same model sources, manifest
 rules, parallel download behavior, and generated h3_models.json schema.
 """
+
 from __future__ import annotations
 
 import json
 import os
+import errno
+import uuid
+from contextlib import contextmanager
+from threading import RLock
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -29,9 +34,7 @@ TEXT_ENCODER_REPO = "Comfy-Org/MiniMax-H3"
 SEEDVR2_REPO = "Comfy-Org/SeedVR2"
 H3_LATENT_UPSCALER_REPO = "LBH-123-AI/Minimax_h3_latent_Upscaler"
 LTX25_REPO = "Lightricks/LTX-2.5"
-LTX25_PIXEL_UPSCALER_REPO = (
-    "Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler"
-)
+LTX25_PIXEL_UPSCALER_REPO = "Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler"
 LTX23_REPO = "Lightricks/LTX-2.3"
 MINIMAX_MUSIC3_REPO = "Comfy-Org/MiniMax-Music-3"
 
@@ -502,7 +505,8 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     *MUSIC3_MODEL_KEYS,
 )
 SHARED_MODEL_KEYS = tuple(
-    key for key in MODEL_SPECS
+    key
+    for key in MODEL_SPECS
     if key not in PROFILE_MODEL_KEY_SET and key not in LAZY_OPTIONAL_MODEL_KEYS
 )
 PRELOAD_MODEL_KEYS = (
@@ -513,6 +517,44 @@ PRELOAD_MODEL_KEYS = (
     "h3_latent_upscaler_3d_fp32",
     *SHARED_MODEL_KEYS,
 )
+
+
+_MANIFEST_THREAD_LOCK = RLock()
+
+
+@contextmanager
+def model_manifest_lock(path: Path):
+    """Coordinate installers and UI preparation across threads and processes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(path.name + ".lock")
+    with _MANIFEST_THREAD_LOCK, lock_path.open("a+b") as handle:
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            while True:
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                        raise
+                    time.sleep(0.1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def read_json(path: Path, default: Any):
@@ -526,12 +568,12 @@ def read_json(path: Path, default: Any):
 
 def write_json_atomic(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".partial")
-    tmp.write_text(
-        json.dumps(value, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    os.replace(tmp, path)
+    tmp = path.with_name(path.name + f".{uuid.uuid4().hex}.partial")
+    try:
+        tmp.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def model_manifest_key(spec: ModelSpec) -> str:
@@ -567,8 +609,7 @@ def model_file_matches_manifest(
         and isinstance(recorded_size, int)
         and recorded_size == size
         and (
-            spec.expected_sha256 is None
-            or entry.get("sha256") == spec.expected_sha256
+            spec.expected_sha256 is None or entry.get("sha256") == spec.expected_sha256
         )
     )
 
@@ -622,8 +663,7 @@ def _fetch_repositories(
     workers = max(1, min(metadata_workers, len(repo_ids)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(_fetch_repo, repo_id, token): repo_id
-            for repo_id in repo_ids
+            pool.submit(_fetch_repo, repo_id, token): repo_id for repo_id in repo_ids
         }
         for future in as_completed(futures):
             repo_id = futures[future]
@@ -672,9 +712,7 @@ def _plan_model(
     revision, files = repo_result
     sibling = files.get(spec.filename)
     if sibling is None:
-        raise FileNotFoundError(
-            f"{spec.repo_id}/{spec.filename} is not present"
-        )
+        raise FileNotFoundError(f"{spec.repo_id}/{spec.filename} is not present")
 
     lfs = getattr(sibling, "lfs", None)
     sha256 = metadata_value(lfs, "sha256")
@@ -792,8 +830,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         "schema_version": 16,
         "default_profile": "speed",
         "profiles": {
-            profile: _profile_config(profile)
-            for profile in PROFILE_MODEL_KEYS
+            profile: _profile_config(profile) for profile in PROFILE_MODEL_KEYS
         },
         "text_encoder": text.local_name,
         "text_encoders": {
@@ -857,106 +894,105 @@ def sync_models(
     model_keys: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Refresh selected model files and return the complete model catalog."""
-    token = resolve_hf_token(token)
-    root = Path(root)
-    manifest_path = Path(manifest_path)
-    manifest = read_json(
-        manifest_path,
-        {"schema_version": 1, "files": {}},
-    )
-    if not isinstance(manifest, dict):
-        manifest = {"schema_version": 1, "files": {}}
-    if not isinstance(manifest.get("files"), dict):
-        manifest["files"] = {}
-
-    selected_keys = tuple(MODEL_SPECS if model_keys is None else model_keys)
-    unknown = sorted(set(selected_keys) - set(MODEL_SPECS))
-    if unknown:
-        raise KeyError("Unknown model keys: " + ", ".join(unknown))
-    selected_specs = {key: MODEL_SPECS[key] for key in selected_keys}
-    repo_ids = sorted({spec.repo_id for spec in selected_specs.values()})
-    repo_results = _fetch_repositories(
-        repo_ids,
-        token,
-        metadata_workers,
-    )
-
-    plans = [
-        _plan_model(
-            root=root,
-            manifest=manifest,
-            repo_results=repo_results,
-            key=key,
-            spec=spec,
-            log_prefix=log_prefix,
+    with model_manifest_lock(Path(manifest_path)):
+        token = resolve_hf_token(token)
+        root = Path(root)
+        manifest_path = Path(manifest_path)
+        manifest = read_json(
+            manifest_path,
+            {"schema_version": 1, "files": {}},
         )
-        for key, spec in selected_specs.items()
-    ]
+        if not isinstance(manifest, dict):
+            manifest = {"schema_version": 1, "files": {}}
+        if not isinstance(manifest.get("files"), dict):
+            manifest["files"] = {}
 
-    stale = [plan for plan in plans if plan["needs_download"]]
-    downloaded_keys: set[str] = set()
-    download_failures: list[tuple[str, Exception]] = []
-    if stale:
-        workers = max(1, min(download_workers, len(stale)))
-        print(
-            f"{log_prefix} downloading {len(stale)} model files "
-            f"with {workers} parallel workers",
-            flush=True,
+        selected_keys = tuple(MODEL_SPECS if model_keys is None else model_keys)
+        unknown = sorted(set(selected_keys) - set(MODEL_SPECS))
+        if unknown:
+            raise KeyError("Unknown model keys: " + ", ".join(unknown))
+        selected_specs = {key: MODEL_SPECS[key] for key in selected_keys}
+        repo_ids = sorted({spec.repo_id for spec in selected_specs.values()})
+        repo_results = _fetch_repositories(
+            repo_ids,
+            token,
+            metadata_workers,
         )
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(_download_model, plan, token, log_prefix): plan
-                for plan in stale
+
+        plans = [
+            _plan_model(
+                root=root,
+                manifest=manifest,
+                repo_results=repo_results,
+                key=key,
+                spec=spec,
+                log_prefix=log_prefix,
+            )
+            for key, spec in selected_specs.items()
+        ]
+
+        stale = [plan for plan in plans if plan["needs_download"]]
+        downloaded_keys: set[str] = set()
+        download_failures: list[tuple[str, Exception]] = []
+        if stale:
+            workers = max(1, min(download_workers, len(stale)))
+            print(
+                f"{log_prefix} downloading {len(stale)} model files "
+                f"with {workers} parallel workers",
+                flush=True,
+            )
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(_download_model, plan, token, log_prefix): plan
+                    for plan in stale
+                }
+                for future in as_completed(futures):
+                    plan = futures[future]
+                    try:
+                        downloaded_keys.add(future.result())
+                    except Exception as exc:
+                        download_failures.append((plan["key"], exc))
+
+        files_manifest = manifest.setdefault("files", {})
+        for plan in plans:
+            if not plan["remote_ok"]:
+                continue
+            # Record successful workers even when a sibling worker failed. This
+            # prevents a completed multi-gigabyte file from being downloaded again
+            # merely because the parallel batch could not finish every model.
+            if plan["needs_download"] and plan["key"] not in downloaded_keys:
+                continue
+            spec: ModelSpec = plan["spec"]
+            dest: Path = plan["dest"]
+            files_manifest[plan["manifest_key"]] = {
+                "repo_id": spec.repo_id,
+                "filename": spec.filename,
+                "local_path": plan["manifest_key"],
+                "source": spec.source,
+                "repo_revision": plan["revision"],
+                "blob_id": plan["blob_id"],
+                "sha256": plan["sha256"],
+                "size": (
+                    plan["size"] if plan["size"] is not None else dest.stat().st_size
+                ),
+                "remote_identity": plan["identity"],
             }
-            for future in as_completed(futures):
-                plan = futures[future]
-                try:
-                    downloaded_keys.add(future.result())
-                except Exception as exc:
-                    download_failures.append((plan["key"], exc))
 
-    files_manifest = manifest.setdefault("files", {})
-    for plan in plans:
-        if not plan["remote_ok"]:
-            continue
-        # Record successful workers even when a sibling worker failed. This
-        # prevents a completed multi-gigabyte file from being downloaded again
-        # merely because the parallel batch could not finish every model.
-        if plan["needs_download"] and plan["key"] not in downloaded_keys:
-            continue
-        spec: ModelSpec = plan["spec"]
-        dest: Path = plan["dest"]
-        files_manifest[plan["manifest_key"]] = {
-            "repo_id": spec.repo_id,
-            "filename": spec.filename,
-            "local_path": plan["manifest_key"],
-            "source": spec.source,
-            "repo_revision": plan["revision"],
-            "blob_id": plan["blob_id"],
-            "sha256": plan["sha256"],
-            "size": (
-                plan["size"]
-                if plan["size"] is not None
-                else dest.stat().st_size
-            ),
-            "remote_identity": plan["identity"],
-        }
+        manifest["schema_version"] = 1
+        manifest["repo_id"] = MODEL_REPO
+        manifest["checked_at_unix"] = int(time.time())
+        write_json_atomic(manifest_path, manifest)
 
-    manifest["schema_version"] = 1
-    manifest["repo_id"] = MODEL_REPO
-    manifest["checked_at_unix"] = int(time.time())
-    write_json_atomic(manifest_path, manifest)
+        if download_failures:
+            details = "; ".join(
+                f"{key} ({MODEL_SPECS[key].repo_id}): {exc}"
+                for key, exc in download_failures
+            )
+            raise RuntimeError(
+                f"{len(download_failures)} model download(s) failed: {details}"
+            ) from download_failures[0][1]
 
-    if download_failures:
-        details = "; ".join(
-            f"{key} ({MODEL_SPECS[key].repo_id}): {exc}"
-            for key, exc in download_failures
-        )
-        raise RuntimeError(
-            f"{len(download_failures)} model download(s) failed: {details}"
-        ) from download_failures[0][1]
-
-    return _build_config(manifest_path.name)
+        return _build_config(manifest_path.name)
 
 
 def validate_config_files(
@@ -1071,14 +1107,15 @@ def selftest() -> None:
     assert "diffusion_models/" + cfg["profiles"]["singularity"]["fl2va"] in missing
     assert "speed_fl2va" not in PRELOAD_MODEL_KEYS
     assert "text_encoders/" + MODEL_SPECS["text_encoder"].local_name in missing
-    assert (
-        "text_encoders/" + MODEL_SPECS["text_encoder_bf16"].local_name not in missing
-    )
+    assert "text_encoders/" + MODEL_SPECS["text_encoder_bf16"].local_name not in missing
     assert "diffusion_models/" + cfg["profiles"]["speed"]["ref2va"] not in missing
     assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["original"])
     assert "singularity_fl2va" in PRELOAD_MODEL_KEYS
     assert PRELOAD_PROFILE_MODEL_KEYS == ("singularity_fl2va",)
-    assert MODEL_SPECS["singularity_fl2va"].local_name == MODEL_SPECS["singularity_ref2va"].local_name
+    assert (
+        MODEL_SPECS["singularity_fl2va"].local_name
+        == MODEL_SPECS["singularity_ref2va"].local_name
+    )
     assert "speed_ref2va" not in PRELOAD_MODEL_KEYS
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
@@ -1092,9 +1129,7 @@ def selftest() -> None:
     assert cfg["profiles"]["original"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_bf16.safetensors"
     )
-    assert cfg["text_encoder"] == (
-        "qwen3vl_32b_minimax_h3_bf16.safetensors"
-    )
+    assert cfg["text_encoder"] == ("qwen3vl_32b_minimax_h3_bf16.safetensors")
     assert cfg["text_encoders"] == {
         "NVFP4 / AWQ": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
         "INT8 ConvRot": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
@@ -1104,25 +1139,25 @@ def selftest() -> None:
         PRELOAD_MODEL_KEYS
     )
     assert "text_encoder" in PRELOAD_MODEL_KEYS
-    assert cfg["video_vae_int8"] == (
-        "minimax_h3_video_vae_int8_convrot.safetensors"
-    )
+    assert cfg["video_vae_int8"] == ("minimax_h3_video_vae_int8_convrot.safetensors")
     assert "video_vae_int8" not in PRELOAD_MODEL_KEYS
-    assert cfg["image_vae_500k"] == (
-        "minimax_h3_single_frame_decoder_500k.safetensors"
-    )
+    assert cfg["image_vae_500k"] == ("minimax_h3_single_frame_decoder_500k.safetensors")
     assert "image_vae_500k" not in PRELOAD_MODEL_KEYS
-    assert cfg["turbo_lora"] == "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors"
+    assert (
+        cfg["turbo_lora"]
+        == "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors"
+    )
     assert cfg["turbo_ref_lora"] == (
         "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
     )
-    assert cfg["turbo_8step_lora"] == "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
+    assert (
+        cfg["turbo_8step_lora"]
+        == "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
+    )
     assert cfg["turbo_8step_ref_lora"] == (
         "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
     )
-    assert {"turbo_lora", "turbo_ref_lora"}.issubset(
-        PRELOAD_MODEL_KEYS
-    )
+    assert {"turbo_lora", "turbo_ref_lora"}.issubset(PRELOAD_MODEL_KEYS)
     assert "turbo_8step_lora" not in PRELOAD_MODEL_KEYS
     assert "turbo_8step_ref_lora" not in PRELOAD_MODEL_KEYS
     assert cfg["larry_turbo_lora"] == "minimax_h3_turbo_v4_step600_ema.safetensors"
@@ -1131,9 +1166,7 @@ def selftest() -> None:
     h3_upscaler = MODEL_SPECS["h3_latent_upscaler_3d_bf16"]
     assert h3_upscaler.repo_id == H3_LATENT_UPSCALER_REPO
     assert h3_upscaler.folder == "latent_upscale_models"
-    assert h3_upscaler.local_name == (
-        "minimax_h3_latent_upscaler_3d_bf16.safetensors"
-    )
+    assert h3_upscaler.local_name == ("minimax_h3_latent_upscaler_3d_bf16.safetensors")
     assert DEFAULT_H3_LATENT_UPSCALER_MODEL == "Quality (FP32)"
     assert {
         label: MODEL_SPECS[key].local_name
@@ -1163,9 +1196,7 @@ def selftest() -> None:
         "audio_vae": "ltx-2.5-audio-vae-bf16.safetensors",
     }
     assert DEFAULT_LTX25_MODEL == "INT8 ConvRot"
-    assert MODEL_SPECS["ltx25_pixel_upscaler_x2"].repo_id == (
-        LTX25_PIXEL_UPSCALER_REPO
-    )
+    assert MODEL_SPECS["ltx25_pixel_upscaler_x2"].repo_id == (LTX25_PIXEL_UPSCALER_REPO)
     with tempfile.TemporaryDirectory() as model_temp:
         root = Path(model_temp)
         int8 = MODEL_SPECS["ltx25_distilled_int8"]
@@ -1192,10 +1223,13 @@ def selftest() -> None:
     assert DEFAULT_MUSIC3_MODEL == "INT8 ConvRot (lower VRAM)"
     assert len(LTX25_ICLORA_MODEL_KEYS) == 5
     assert all(MODEL_SPECS[key].folder == "loras" for key in LTX25_ICLORA_MODEL_KEYS)
-    assert set(LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS).isdisjoint(
-        PRELOAD_MODEL_KEYS
-    )
-    assert cfg["turbo_supported_profiles"] == ["speed", "quality", "original", "singularity"]
+    assert set(LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
+    assert cfg["turbo_supported_profiles"] == [
+        "speed",
+        "quality",
+        "original",
+        "singularity",
+    ]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]
     print("h3_models selftest OK")
 
