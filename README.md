@@ -135,10 +135,15 @@ SLA v1.4.8 is provided by the pinned PlagueKind node pack at
 quality presets: **Fast** uses validated 0.90 sparsity, **Balanced** uses the
 LoRA-distilled 0.85 sparsity, and **Quality** uses 0.85 sparsity plus a dense
 final sampling step. In a two-stage latent-upscale workflow the Quality dense
-tail applies independently to both sampling stages. Every preset uses 64-token
+tail applies independently to both sampling stages. The initial generation keeps
+its dense first step; low-noise refinement skips that first-step anchor because
+it starts from the generated latent. Two-step Quality refinement therefore runs
+sparse then dense; Fast and Balanced allow both refinement steps to run sparse.
+One-step Quality refinement remains dense. Short sequences and other native SLA
+compatibility guards still use the dense backend. Every preset uses 64-token
 blocks, protects the audio prefix, and leaves sequences shorter than 8192 tokens
 dense. The graph explicitly keeps the Triton sparse engine, disables experimental
-INT8 QK and tail correction, and forces step zero dense. This preserves the
+INT8 QK and tail correction, and forces step zero dense in the initial generation. This preserves the
 previous route instead of inheriting v1.4.8's Kitchen sparse-engine defaults.
 Use SLA with an SLA-distilled H3 LoRA.
 

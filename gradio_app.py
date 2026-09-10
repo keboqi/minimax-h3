@@ -3793,6 +3793,33 @@ def add_h3_stage_offload(
     return tuple(Graph.out(barrier, slot) for slot in range(4))  # type: ignore[return-value]
 
 
+def h3_refinement_attention_model(graph: Graph, model_ref: list[Any]) -> list[Any]:
+    """Branch the model patch chain so SLA's first-step anchor is base-stage only.
+
+    Refinement starts from the generated/upscaled latent at a late sigma, not
+    fresh noise. Preserve the selected SLA preset's dense tail and all later
+    model patches, but give the refinement sampler independent SLA/cache state.
+    Rebuild from SLA's unpatched input rather than stacking two SLA wrappers.
+    """
+    node = graph.nodes.get(model_ref[0])
+    if node is None:
+        return model_ref
+    inputs = node["inputs"]
+    if node["class_type"] == SLA_ATTENTION_NODE:
+        return Graph.out(graph.add(
+            SLA_ATTENTION_NODE, **{**inputs, "dense_steps": ""},
+        ), model_ref[1])
+    upstream = inputs.get("model")
+    if not isinstance(upstream, list) or len(upstream) != 2:
+        return model_ref
+    replacement = h3_refinement_attention_model(graph, upstream)
+    if replacement == upstream:
+        return model_ref
+    return Graph.out(graph.add(
+        node["class_type"], **{**inputs, "model": replacement},
+    ), model_ref[1])
+
+
 def finish_sampling(
     graph: Graph,
     *,
@@ -3853,7 +3880,11 @@ def finish_sampling(
                 initial_latent_ref,
             )
     noise = graph.add("RandomNoise", noise_seed=int(seed))
-    guider = graph.add("BasicGuider", model=model_ref, conditioning=conditioning_ref)
+    refinement_model_ref = (
+        h3_refinement_attention_model(graph, model_ref)
+        if latent_upscale_model_name is not None else model_ref
+    )
+    guider = graph.add("BasicGuider", model=refinement_model_ref, conditioning=conditioning_ref)
     use_larry_sampler = turbo_variant is not None and turbo_uses_custom_nodes(
         turbo_variant
     )
@@ -3958,7 +3989,7 @@ def finish_sampling(
             )
             sampled = graph.add(
                 H3_SPLIT_UPSCALE_NODE,
-                model=model_ref,
+                model=refinement_model_ref,
                 conditioning=conditioning_ref,
                 latent=combined_ref,
                 noise=Graph.out(noise),
