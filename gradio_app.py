@@ -1685,14 +1685,121 @@ def trt_vae_decoder_paths(models: ModelConfig) -> tuple[Path, Path, Path]:
     return onnx_path, engine_path, vae_dir / TRT_VAE_ENGINE_MARKER
 
 
+def _load_trt_vae_compiler(node_path: Path) -> Any:
+    """Import the installed compiler afresh so setup patches take effect."""
+    import importlib.util
+
+    module_name = "_h3_trt_vae_node"
+    comfy_path = str(COMFY_DIR)
+    if comfy_path not in sys.path:
+        sys.path.insert(0, comfy_path)
+    sys.modules.pop(module_name, None)
+    spec = importlib.util.spec_from_file_location(module_name, node_path)
+    if spec is None or spec.loader is None:
+        raise H3Error(f"Could not load TensorRT VAE compiler: {node_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+    return module
+
+
+def trt_vae_runtime_fingerprint(models: ModelConfig | None = None) -> str:
+    """Return an environment signature containing build profile, TRT version, and GPU arch."""
+    parts = [TRT_VAE_ENGINE_BUILD_ID]
+    trt_version = None
+    try:
+        import tensorrt as trt
+        trt_version = getattr(trt, "__version__", None)
+    except Exception:
+        pass
+
+    if trt_version is None:
+        try:
+            node_path = (
+                COMFY_DIR / "custom_nodes" / "ComfyUI-H3VAE_TRT" / "minimax_trt_node.py"
+            )
+            if node_path.is_file():
+                module = _load_trt_vae_compiler(node_path)
+                if getattr(module, "HAS_TRT", False):
+                    trt_version = getattr(module.trt, "__version__", None)
+        except Exception:
+            pass
+
+    if trt_version:
+        parts.append(f"trt_{trt_version}")
+
+    try:
+        import torch
+        if torch.cuda.is_available():
+            cap = torch.cuda.get_device_capability(0)
+            parts.append(f"sm_{cap[0]}{cap[1]}")
+    except Exception:
+        pass
+
+    return ":".join(parts)
+
+
+def is_trt_engine_loadable(engine_path: Path) -> bool:
+    """Verify that the engine file can be deserialized by the active TensorRT runtime."""
+    if not engine_path.is_file():
+        return False
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return True
+    except Exception:
+        return True
+
+    trt_mod = None
+    try:
+        import tensorrt as trt
+        trt_mod = trt
+    except Exception:
+        try:
+            node_path = (
+                COMFY_DIR / "custom_nodes" / "ComfyUI-H3VAE_TRT" / "minimax_trt_node.py"
+            )
+            if node_path.is_file():
+                module = _load_trt_vae_compiler(node_path)
+                if getattr(module, "HAS_TRT", False):
+                    trt_mod = module.trt
+        except Exception:
+            pass
+
+    if trt_mod is None:
+        return True
+
+    try:
+        logger = trt_mod.Logger(trt_mod.Logger.ERROR)
+        runtime = trt_mod.Runtime(logger)
+        with engine_path.open("rb") as f:
+            engine_bytes = f.read()
+        engine = runtime.deserialize_cuda_engine(engine_bytes)
+        if engine is None:
+            return False
+        del engine
+        del runtime
+        return True
+    except Exception:
+        return False
+
+
 def trt_vae_engine_is_current(models: ModelConfig) -> bool:
     _, engine_path, marker_path = trt_vae_decoder_paths(models)
     if not engine_path.is_file() or not marker_path.is_file():
         return False
     try:
-        return marker_path.read_text(encoding="utf-8").strip() == TRT_VAE_ENGINE_BUILD_ID
+        expected = trt_vae_runtime_fingerprint(models)
+        actual = marker_path.read_text(encoding="utf-8").strip()
+        if actual != expected:
+            return False
     except OSError:
         return False
+    return is_trt_engine_loadable(engine_path)
 
 
 def h3_text_encoder_settings(
@@ -2026,34 +2133,12 @@ def ensure_trt_video_vae(
         if not engine_path.is_file():
             detail = f" Missing: {engine_path.name}."
         else:
-            detail = " The existing engine uses an older quality profile."
+            detail = " The existing engine uses an older quality profile or runtime version."
         raise H3Error(
             "TensorRT VAE decoder is not compiled for the current profile. "
             "Click Compile TensorRT VAE engine once, then retry." + detail
         )
     return True
-
-
-def _load_trt_vae_compiler(node_path: Path) -> Any:
-    """Import the installed compiler afresh so setup patches take effect."""
-    import importlib.util
-
-    module_name = "_h3_trt_vae_node"
-    comfy_path = str(COMFY_DIR)
-    if comfy_path not in sys.path:
-        sys.path.insert(0, comfy_path)
-    sys.modules.pop(module_name, None)
-    spec = importlib.util.spec_from_file_location(module_name, node_path)
-    if spec is None or spec.loader is None:
-        raise H3Error(f"Could not load TensorRT VAE compiler: {node_path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    except Exception:
-        sys.modules.pop(module_name, None)
-        raise
-    return module
 
 
 def _build_trt_video_vae_engine(
@@ -2100,7 +2185,10 @@ def _build_trt_video_vae_engine(
         progress(0.9, desc="Finalizing TensorRT VAE decoder")
         temporary_engine.replace(engine_path)
         temporary_engine = None
-        temporary_marker.write_text(TRT_VAE_ENGINE_BUILD_ID + "\n", encoding="utf-8")
+        temporary_marker.write_text(
+            trt_vae_runtime_fingerprint(models) + "\n",
+            encoding="utf-8",
+        )
         temporary_marker.replace(marker_path)
         temporary_marker = None
 
@@ -2115,12 +2203,13 @@ def _build_trt_video_vae_engine(
 def ensure_trt_video_vae_engine(
     models: ModelConfig,
     *,
+    force: bool = False,
     progress=gr.Progress(track_tqdm=False),
 ) -> bool:
     """Provision and compile the TensorRT decoder engine only when required."""
     with _TRT_VAE_COMPILE_LOCK:
         ensure_trt_video_vae(models, require_engine=False)
-        if trt_vae_engine_is_current(models):
+        if not force and trt_vae_engine_is_current(models):
             return False
         _build_trt_video_vae_engine(models, progress)
         ensure_trt_video_vae(models)
@@ -2132,12 +2221,11 @@ def compile_trt_video_vae(
 ) -> str:
     """Build the local TensorRT decoder engine from the manual UI action."""
     try:
-        compiled = ensure_trt_video_vae_engine(
+        ensure_trt_video_vae_engine(
             load_model_config(),
+            force=True,
             progress=progress,
         )
-        if not compiled:
-            return "TensorRT VAE decoder is already compiled and ready to use."
         return "TensorRT VAE decoder compiled and ready to use."
     except Exception as exc:
         return f"TensorRT VAE compilation failed: {exc}"
@@ -8290,6 +8378,12 @@ def generate(
     except Exception as exc:
         fallback = str(fallback_video) if fallback_video is not None else None
         suffix = " The completed H3 video is still available." if fallback else ""
+        if "Failed to deserialize TensorRT engine" in str(exc) or "deserializeCudaEngine" in str(exc):
+            try:
+                _, _, marker_path = trt_vae_decoder_paths(load_model_config())
+                marker_path.unlink(missing_ok=True)
+            except Exception:
+                pass
         yield fallback, f"Error: {exc}{suffix}\n\n{timings.summary()}"
     finally:
         timings.finish()

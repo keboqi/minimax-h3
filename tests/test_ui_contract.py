@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from pathlib import Path
 import unittest
 from unittest import mock
 
@@ -266,8 +267,64 @@ class UiContractTests(unittest.TestCase):
             self.assertFalse(
                 gradio_app.ensure_trt_video_vae_engine(models, progress=progress)
             )
-        provision.assert_called_once_with(models, require_engine=False)
-        build.assert_not_called()
+            self.assertTrue(
+                gradio_app.ensure_trt_video_vae_engine(
+                    models, force=True, progress=progress
+                )
+            )
+        provision.assert_has_calls(
+            [
+                mock.call(models, require_engine=False),
+                mock.call(models, require_engine=False),
+                mock.call(models),
+            ]
+        )
+        build.assert_called_once_with(models, progress)
+
+        with (
+            mock.patch.object(gradio_app, "load_model_config", return_value=models),
+            mock.patch.object(
+                gradio_app, "ensure_trt_video_vae_engine", return_value=True
+            ) as ensure_engine,
+        ):
+            status = gradio_app.compile_trt_video_vae(progress=progress)
+            self.assertIn("compiled and ready to use", status)
+            ensure_engine.assert_called_once_with(models, force=True, progress=progress)
+
+    def test_tensorrt_vae_currency_checks_fingerprint_and_loadability(self) -> None:
+        models = mock.sentinel.models
+        with (
+            mock.patch.object(
+                gradio_app,
+                "trt_vae_decoder_paths",
+                return_value=(
+                    Path("/fake/decoder.onnx"),
+                    Path("/fake/decoder.engine"),
+                    Path("/fake/marker"),
+                ),
+            ),
+            mock.patch.object(Path, "is_file", return_value=True),
+            mock.patch.object(
+                gradio_app, "trt_vae_runtime_fingerprint", return_value="v4:trt_10.9:sm_89"
+            ),
+        ):
+            # Mismatched marker (e.g. from an older TRT version 243)
+            with mock.patch.object(Path, "read_text", return_value="v4:trt_10.8:sm_89"):
+                self.assertFalse(gradio_app.trt_vae_engine_is_current(models))
+
+            # Matching marker but deserialization fails (returns None)
+            with (
+                mock.patch.object(Path, "read_text", return_value="v4:trt_10.9:sm_89"),
+                mock.patch.object(gradio_app, "is_trt_engine_loadable", return_value=False),
+            ):
+                self.assertFalse(gradio_app.trt_vae_engine_is_current(models))
+
+            # Matching marker and loadable engine
+            with (
+                mock.patch.object(Path, "read_text", return_value="v4:trt_10.9:sm_89"),
+                mock.patch.object(gradio_app, "is_trt_engine_loadable", return_value=True),
+            ):
+                self.assertTrue(gradio_app.trt_vae_engine_is_current(models))
 
     def test_h3_progressive_section_order(self) -> None:
         tabs = next(

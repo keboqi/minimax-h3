@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 LARRY_TIMESTEP_PATCH_VERSION = 2
-TRT_VAE_PATCH_VERSION = 5
+TRT_VAE_PATCH_VERSION = 6
 TRT_VAE_NODE_REPO = "https://github.com/lihaoyun6/ComfyUI-H3VAE_TRT.git"
 TRT_VAE_NODE_REF = "4360e00867eca86ab61b3899216c0ec281367b46"
 
@@ -241,6 +241,50 @@ _TRT_ONNX_IMPORT_PATCHED = """\
       model = onnx.load(onnx_path, load_external_data=False)
 """
 
+_TRT_DESERIALIZE_FAILSAFE_ORIGINAL = """\
+    self.engine = self.runtime.deserialize_cuda_engine(self.engine_bytes)
+    if self.engine is None:
+      raise RuntimeError(
+          f"Failed to deserialize TensorRT engine:"
+          f" '{os.path.basename(self.model_path)}'.\\n"
+          f"Please re-compile the engine on this machine using the 'MiniMax-H3"
+          " TRT VAE Compiler' node."
+      )
+"""
+
+_TRT_DESERIALIZE_FAILSAFE_PATCHED = """\
+    self.engine = self.runtime.deserialize_cuda_engine(self.engine_bytes)
+    if self.engine is None:
+      onnx_path = os.path.splitext(self.model_path)[0] + ".onnx"
+      if os.path.isfile(onnx_path):
+        logger.warning(
+            f"Failed to deserialize TensorRT engine '{os.path.basename(self.model_path)}'. "
+            "Re-compiling engine on this machine..."
+        )
+        is_decoder = "decoder" in os.path.basename(self.model_path).lower()
+        try:
+          mm.unload_all_models()
+          mm.soft_empty_cache()
+        except Exception:
+          pass
+        torch.cuda.empty_cache()
+        MiniMaxH3TRTCompilerNode._build_engine(
+            onnx_path,
+            self.model_path,
+            is_decoder=is_decoder,
+        )
+        self.engine_bytes = None
+        self.load_to_ram()
+        self.engine = self.runtime.deserialize_cuda_engine(self.engine_bytes)
+      if self.engine is None:
+        raise RuntimeError(
+            f"Failed to deserialize TensorRT engine:"
+            f" '{os.path.basename(self.model_path)}'.\\n"
+            f"Please re-compile the engine on this machine using the 'MiniMax-H3"
+            " TRT VAE Compiler' node."
+        )
+"""
+
 
 _TRT_REPLACEMENTS = (
     (
@@ -262,6 +306,11 @@ _TRT_REPLACEMENTS = (
         "FP32 normalization",
         _TRT_FP32_NORMALIZATION_ORIGINAL,
         _TRT_FP32_NORMALIZATION_PATCHED,
+    ),
+    (
+        "deserialization failsafe auto-recompile",
+        _TRT_DESERIALIZE_FAILSAFE_ORIGINAL,
+        _TRT_DESERIALIZE_FAILSAFE_PATCHED,
     ),
 )
 
@@ -340,9 +389,11 @@ def selftest() -> None:
             + _TRT_SINGLE_FRAME_DECODE_ORIGINAL
             + "  def decode_temporal(self, z):\n"
             + _TRT_TEMPORAL_RETURN_ORIGINAL
-            + "    pass\n\n"
-            "def build():\n"
-            "    if parse_failed:\n"
+            + "    pass\n"
+            "  def load_to_gpu(self):\n"
+            + _TRT_DESERIALIZE_FAILSAFE_ORIGINAL
+            + "\ndef build():\n"
+            + "    if parse_failed:\n"
             + _TRT_FP32_NORMALIZATION_ORIGINAL
             + "\ndef inspect_quantization():\n"
             + _TRT_ONNX_IMPORT_ORIGINAL
