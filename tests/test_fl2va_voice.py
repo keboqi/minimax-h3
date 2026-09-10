@@ -99,8 +99,8 @@ class Fl2vaVoiceTests(unittest.TestCase):
         self.assertTrue(any("slots in order" in issue for issue in gap.issues))
 
     def test_old_api_contracts_default_to_no_voice_inputs(self):
-        for boundary in ("fl2va_audio_1", "semantic_bridge"):
-            values = GenerationArguments.from_positional([None] * GENERATION_FIELDS.index(boundary)).values
+        for omitted in (3, 5):
+            values = GenerationArguments.from_positional([None] * (len(GENERATION_FIELDS) - omitted)).values
             for i in range(1, 4):
                 self.assertIsNone(values[f"fl2va_audio_{i}"])
                 self.assertNotIn(f"h3.fl2va_audio_{i}", PERSISTED_NAMES)

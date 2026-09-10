@@ -84,8 +84,6 @@ GENERATION_FIELDS = (
     "fl2va_audio_1",
     "fl2va_audio_2",
     "fl2va_audio_3",
-    "qwen_sage",
-    "qwen_compile",
 )
 GENERATION_COMPONENTS = (
     "mode",
@@ -168,8 +166,6 @@ GENERATION_COMPONENTS = (
     "fl2va_audio_1",
     "fl2va_audio_2",
     "fl2va_audio_3",
-    "qwen_sage",
-    "qwen_compile",
 )
 
 
@@ -180,12 +176,10 @@ class GenerationArguments:
     @classmethod
     def from_positional(cls, args):
         # Preserve callers using the positional contract before the optional bridge.
-        if len(args) == len(GENERATION_FIELDS) - 7:
-            args = (*args, False, 0.10)
         if len(args) == len(GENERATION_FIELDS) - 5:
+            args = (*args, False, 0.10)
+        if len(args) == len(GENERATION_FIELDS) - 3:
             args = (*args, None, None, None)
-        if len(args) == len(GENERATION_FIELDS) - 2:
-            args = (*args, False, False)
         if len(args) != len(GENERATION_FIELDS):
             raise ValueError(
                 f"Expected {len(GENERATION_FIELDS)} generation inputs, received {len(args)}."

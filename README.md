@@ -266,27 +266,6 @@ encoder sizing performs a fresh encode and retains normal BF16 stage offloading.
 Disable reuse to stage fresh media copies and use unconditional BF16 offloading for
 that request.
 
-**Qwen3-VL encoder acceleration (experimental)** adds two independent, default-off
-controls under **Model and memory (advanced)**: **Qwen3-VL SageAttention** and
-**Qwen3-VL torch.compile**. Both apply to the native H3 32B encoder's language
-and vision blocks, separately from diffusion attention and sampling compilation.
-Sage preserves upstream masks and grouped-query handling through ComfyUI's Sage
-adapter; unsupported masks/kernels use its logged PyTorch fallback. Compilation
-uses Inductor with dynamic shapes and graph breaks allowed. Quantized encoder and
-dynamic VRAM compatibility must be tested on the deployed GPU; compile failures
-are surfaced rather than silently claiming acceleration. Disable Compile if it fails.
-
-The settings participate in conditioning cache identity and result settings.
-Switching between baseline, Sage, Compile, and both therefore cannot reuse a
-conditioning result from a different configuration. Unchanged inputs within one
-configuration still reuse cached conditioning. For warm encode comparisons, use a
-new prompt of similar length on each run; repeating the identical prompt measures
-cache reuse instead. Compare cold-start and warm timings separately and inspect
-outputs at matched seeds. Encoder logs report requested modes and host wall time,
-not isolated synchronized GPU timing. Temporary block overrides are restored after
-encoding, including on errors. Local setup and Modal ship the bundled node;
-update provisioning and restart ComfyUI (rebuild/redeploy on Modal) before use.
-
 **Videos per batch** generates one to four variants (one by default). Multi-video
 batches assign every video an independent random seed and show all completed videos
 in separate players for comparison. The videos run one after another through the

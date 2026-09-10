@@ -197,8 +197,6 @@ class H3View:
     status: gr.components.Component
     steps: gr.components.Component
     stop: gr.components.Component
-    qwen_sage: gr.components.Component
-    qwen_compile: gr.components.Component
     text_encoder: gr.components.Component
     turbo_variant: gr.components.Component
     trt_vae_compile: gr.components.Component
@@ -348,8 +346,6 @@ H3_COMPONENT_ORDER = (
     "status",
     "steps",
     "stop",
-    "qwen_sage",
-    "qwen_compile",
     "text_encoder",
     "turbo_variant",
     "trt_vae_compile",
@@ -437,17 +433,6 @@ def build_h3_view(
                             "unchanged loading and conditioning work. Sampling still "
                             "reruns when the seed changes."
                         ),
-                    )
-                with gr.Row():
-                    qwen_sage = gr.Checkbox(
-                        value=defaults["qwen_sage"],
-                        label="Qwen3-VL SageAttention (experimental)",
-                        info="Apply Sage to language and vision encoding. Unsupported kernels use ComfyUI's logged fallback.",
-                    )
-                    qwen_compile = gr.Checkbox(
-                        value=defaults["qwen_compile"],
-                        label="Qwen3-VL torch.compile (experimental)",
-                        info="Compile encoder blocks. First use is slower; changing input shapes may recompile. Disable if incompatible with your encoder.",
                     )
                 semantic_bridge = gr.Checkbox(
                     value=defaults["semantic_bridge"],
@@ -1465,8 +1450,6 @@ def build_h3_view(
             "status": status,
             "steps": steps,
             "stop": stop,
-            "qwen_sage": qwen_sage,
-            "qwen_compile": qwen_compile,
             "text_encoder": text_encoder,
             "turbo_variant": turbo_variant,
             "trt_vae_compile": trt_vae_compile,

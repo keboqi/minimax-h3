@@ -98,8 +98,6 @@ class GenerationRequest:
     cache_mode: str = "Spectrum"
     use_trt_vae: bool = True
     use_int8_vae: bool = False
-    qwen_sage: bool = False
-    qwen_compile: bool = False
     semantic_bridge: bool = False
     semantic_bridge_alpha: float = 0.10
     fl2va_audio_1: Any = None

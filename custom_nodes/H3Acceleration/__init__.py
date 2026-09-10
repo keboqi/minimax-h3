@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import inspect
-import time
 import logging
 import math
 import os
@@ -977,98 +975,6 @@ class H3VideoLatentSlicesToBatch:
         return (output,)
 
 
-# Serialize temporary instance-local patches: CLIP.clone shares its model.
-_H3_ENCODER_LOCK = threading.RLock()
-
-
-def _h3_encoder_forward(original, sage_attention):
-    position = list(inspect.signature(original).parameters).index("optimized_attention")
-
-    def forward(*args, **kwargs):
-        if len(args) > position:
-            args = list(args)
-            args[position] = sage_attention
-        else:
-            kwargs["optimized_attention"] = sage_attention
-        return original(*args, **kwargs)
-
-    return forward
-
-
-class _H3AcceleratedCLIPProxy:
-    def __init__(self, clip, sage=False, compile_encoder=False):
-        self._clip = clip
-        self._sage = bool(sage)
-        self._compile = bool(compile_encoder)
-
-    def __getattr__(self, name):
-        return getattr(self._clip, name)
-
-    def clone(self, *args, **kwargs):
-        return type(self)(self._clip.clone(*args, **kwargs), self._sage, self._compile)
-
-    def encode_from_tokens_scheduled(self, tokens, *args, **kwargs):
-        with _H3_ENCODER_LOCK:
-            if not (self._sage or self._compile):
-                return self._clip.encode_from_tokens_scheduled(tokens, *args, **kwargs)
-            model = getattr(getattr(self._clip.cond_stage_model, "qwen3vl_32b", None), "transformer", None)
-            if model is None or type(model).__name__ != "MiniMaxQwen3VL":
-                raise RuntimeError("H3 encoder acceleration requires the native MiniMax Qwen3-VL 32B encoder.")
-            blocks = list(model.model.layers) + list(model.visual.blocks)
-            # Validate all blocks before installing any overrides.
-            for block in blocks:
-                if "optimized_attention" not in inspect.signature(block.forward).parameters:
-                    raise RuntimeError("Unsupported Qwen3-VL block contract; disable encoder acceleration.")
-            attention = None
-            if self._sage:
-                from comfy.ldm.modules import attention as backend
-                if not backend.SAGE_ATTENTION_IS_AVAILABLE:
-                    raise RuntimeError("Qwen3-VL SageAttention is unavailable; install SageAttention or disable this option.")
-                attention = backend.attention_sage
-                if not backend.SAGE_ATTENTION_SUPPORTS_MASK:
-                    logging.warning("H3 Qwen3-VL: this Sage build cannot handle masks; language attention will fall back to PyTorch.")
-            saved = []
-            started = time.perf_counter()
-            try:
-                for block in blocks:
-                    original = block.forward
-                    had_forward = "forward" in block.__dict__
-                    # Keep compiled callables on the owning block, not in a global
-                    # cache that would retain unloaded model weights.
-                    variants = block.__dict__.setdefault("_h3_encoder_variants", {})
-                    key = (self._sage, self._compile)
-                    if key not in variants:
-                        forward = _h3_encoder_forward(original, attention) if self._sage else original
-                        if self._compile:
-                            forward = torch.compile(forward, backend="inductor", dynamic=True, fullgraph=False)
-                        variants[key] = forward
-                    saved.append((block, original, had_forward))
-                    block.forward = variants[key]
-                logging.info("H3 Qwen3-VL encode: sage=%s compile=%s language_blocks=%d vision_blocks=%d (first compiled call includes warmup)", self._sage, self._compile, len(model.model.layers), len(model.visual.blocks))
-                result = self._clip.encode_from_tokens_scheduled(tokens, *args, **kwargs)
-                logging.info("H3 Qwen3-VL encode returned in %.3fs (host wall time, not synchronized GPU timing)", time.perf_counter() - started)
-                return result
-            finally:
-                for block, original, had_forward in reversed(saved):
-                    if had_forward:
-                        block.forward = original
-                    else:
-                        del block.forward
-
-
-class H3QwenEncoderAcceleration:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {"required": {"clip": ("CLIP",), "sage": ("BOOLEAN", {"default": False}), "compile_encoder": ("BOOLEAN", {"default": False})}}
-
-    RETURN_TYPES = ("CLIP",)
-    FUNCTION = "wrap"
-    CATEGORY = "model/management/minimax"
-
-    def wrap(self, clip, sage=False, compile_encoder=False):
-        return (_H3AcceleratedCLIPProxy(clip, sage, compile_encoder),)
-
-
 class _H3ConditioningReuseCache:
     """Small process-local cache keyed only by encoder conditioning inputs."""
 
@@ -1580,7 +1486,6 @@ class H3SemanticBridge:
 
 
 NODE_CLASS_MAPPINGS = {
-    "H3QwenEncoderAcceleration": H3QwenEncoderAcceleration,
     "H3SemanticBridge": H3SemanticBridge,
     "H3FirstBlockCache": H3FirstBlockCache,
     "H3LightX2VBypassLoRA": H3LightX2VBypassLoRA,
@@ -1595,7 +1500,6 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "H3QwenEncoderAcceleration": "H3 Qwen3-VL Encoder Acceleration (experimental)",
     "H3SemanticBridge": "MiniMax H3 Semantic Bridge (experimental)",
     "H3FirstBlockCache": "MiniMax H3 FirstBlockCache",
     "H3LightX2VBypassLoRA": "MiniMax H3 LightX2V Bypass LoRA",
