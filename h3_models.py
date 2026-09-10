@@ -19,6 +19,7 @@ from typing import Any, Iterable
 
 MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
 ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
+SINGULARITY_MODEL_REPO = "WarmBloodAban/Minimax-h3_Singularity"
 TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
@@ -116,6 +117,18 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "diffusion_models",
         "diffusion_models/minimax_h3_ref2va_pruned_bf16.safetensors",
         "Original · BF16",
+    ),
+    "singularity_fl2va": ModelSpec(
+        SINGULARITY_MODEL_REPO,
+        "diffusion_models",
+        "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
+        "Singularity · pruned v1.3 INT8",
+    ),
+    "singularity_ref2va": ModelSpec(
+        SINGULARITY_MODEL_REPO,
+        "diffusion_models",
+        "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
+        "Singularity · pruned v1.3 INT8",
     ),
     "text_encoder": ModelSpec(
         TEXT_ENCODER_REPO,
@@ -387,11 +400,13 @@ PROFILE_MODEL_KEYS = {
     "speed": ("speed_fl2va", "speed_ref2va"),
     "quality": ("quality_fl2va", "quality_ref2va"),
     "original": ("original_fl2va", "original_ref2va"),
+    "singularity": ("singularity_fl2va", "singularity_ref2va"),
 }
 PROFILE_LABELS = {
     "speed": "Speed",
     "quality": "Quality",
     "original": "Original",
+    "singularity": "Singularity",
 }
 PRELOAD_PROFILES = ("speed",)
 PRELOAD_PROFILE_MODEL_KEYS = ("speed_fl2va",)
@@ -1004,6 +1019,8 @@ def selftest() -> None:
         "quality_ref2va",
         "original_fl2va",
         "original_ref2va",
+        "singularity_fl2va",
+        "singularity_ref2va",
         "text_encoder",
         "text_encoder_int8",
         "text_encoder_bf16",
@@ -1177,7 +1194,7 @@ def selftest() -> None:
     assert set(LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS).isdisjoint(
         PRELOAD_MODEL_KEYS
     )
-    assert cfg["turbo_supported_profiles"] == ["speed", "quality", "original"]
+    assert cfg["turbo_supported_profiles"] == ["speed", "quality", "original", "singularity"]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]
     print("h3_models selftest OK")
 

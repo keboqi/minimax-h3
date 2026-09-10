@@ -386,7 +386,9 @@ def build_h3_view(
                     info=(
                         "Speed uses the rebuilt single-pass NVFP4 files. "
                         "Quality uses the mixed NVFP4/FP8/INT8 ConvRot files. "
-                        "Original uses the official BF16 files. Speed and Original "
+                        "Original uses the official BF16 files. "
+                        "Singularity uses the fine-tuned pruned v1.3 INT8 checkpoint. "
+                        "Speed, Original and Singularity "
                         "download when first selected."
                     ),
                 )

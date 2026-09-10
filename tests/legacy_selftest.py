@@ -3,7 +3,7 @@ from __future__ import annotations
 import gradio_app as app
 
 def selftest() -> None:
-    assert app.MODEL_PROFILE_CHOICES == ["Speed", "Quality", "Original"]
+    assert app.MODEL_PROFILE_CHOICES == ["Speed", "Quality", "Original", "Singularity"]
     assert app.GEMINI_PROMPT_MODELS == (
         "gemini-3.8-flash",
         "gemini-3.7-flash",
@@ -2374,7 +2374,7 @@ def selftest() -> None:
         )
         return route_graph
 
-    for profile_name in ("speed", "quality", "original"):
+    for profile_name in ("speed", "quality", "original", "singularity"):
         larry_route = turbo_route_graph(profile_name, app.LARRY_TURBO)
         larry_route_loader = next(
             node
