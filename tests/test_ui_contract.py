@@ -231,6 +231,133 @@ class UiContractTests(unittest.TestCase):
                         self.assertEqual(height % alignment, 0)
                         self.assertTrue(info)
 
+    def test_first_frame_and_auto_megapixels_resolution_bindings(self) -> None:
+        controls = {
+            component.get("props", {}).get("label"): component
+            for component in self.config["components"]
+        }
+        first_frame = controls["First frame (auto resolution)"]
+        auto_cap = controls["Start-frame auto cap"]
+        summary = next(
+            c
+            for c in self.config["components"]
+            if "h3-settings-summary" in c.get("props", {}).get("elem_classes", [])
+        )
+
+        # 1. First frame upload has JS instant update, then server auto-resolution, then summary refresh
+        upload_dep = next(
+            d for d in self.config["dependencies"]
+            if (first_frame["id"], "upload") in d.get("targets", [])
+        )
+        self.assertTrue(upload_dep.get("js"))
+        h3_width_id = upload_dep["outputs"][0]
+        h3_height_id = upload_dep["outputs"][1]
+        self.assertEqual(self.components[h3_width_id].get("props", {}).get("label"), "Width")
+        self.assertEqual(self.components[h3_height_id].get("props", {}).get("label"), "Height")
+
+        server_auto_dep = next(
+            d for d in self.config["dependencies"]
+            if d.get("trigger_after") == upload_dep["id"]
+        )
+        self.assertIn(h3_width_id, server_auto_dep["outputs"])
+        self.assertIn(h3_height_id, server_auto_dep["outputs"])
+
+        upload_refresh_dep = next(
+            d for d in self.config["dependencies"]
+            if d.get("trigger_after") == server_auto_dep["id"]
+        )
+        self.assertIn(summary["id"], upload_refresh_dep["outputs"])
+
+        # 2. First frame clear refreshes summary
+        clear_dep = next(
+            d for d in self.config["dependencies"]
+            if (first_frame["id"], "clear") in d.get("targets", [])
+        )
+        self.assertIn(summary["id"], clear_dep["outputs"])
+
+        # 3. Start-frame auto cap triggers on .change (so preset changes trigger auto resolution),
+        # then refreshes summary
+        auto_cap_change_dep = next(
+            d for d in self.config["dependencies"]
+            if (auto_cap["id"], "change") in d.get("targets", [])
+            and h3_width_id in d.get("outputs", [])
+        )
+        self.assertIsNotNone(auto_cap_change_dep)
+        auto_cap_refresh_dep = next(
+            d for d in self.config["dependencies"]
+            if d.get("trigger_after") == auto_cap_change_dep["id"]
+        )
+        self.assertIn(summary["id"], auto_cap_refresh_dep["outputs"])
+
+    def test_auto_resolution_pipeline_updates_next_run_and_preset_change_applies_cap(self) -> None:
+        import os
+        import tempfile
+        from PIL import Image
+
+        temp_img = os.path.join(tempfile.gettempdir(), "test_ui_contract_768_1152.png")
+        im = Image.new("RGB", (768, 1152), color=(255, 0, 0))
+        im.save(temp_img)
+
+        # 1. auto_resolution_from_start_frame calculates 768x1152
+        w, h, info = gradio_app.auto_resolution_from_start_frame(
+            temp_img, 1408, 768, "Video", False, "1 MP"
+        )
+        self.assertEqual((w, h), (768, 1152))
+
+        # Find controller and run refresh with the new resolution
+        refresh_fn = next(
+            fn for fn in self.demo.fns.values()
+            if hasattr(fn.fn, "__self__") and type(fn.fn.__self__).__name__ == "SettingsController"
+        )
+        controller = refresh_fn.fn.__self__
+
+        memory = {"active": "Turbo", "modes": {}, "values": {name: getattr(controller.components[name], "value", None) for name in controller.names}}
+        memory["values"]["width"] = 1408
+        memory["values"]["height"] = 768
+
+        # Stale inputs produce 1408x768
+        input_values_stale = [
+            1408 if controller.ids.get(getattr(comp, "_id", None)) == "width"
+            else 768 if controller.ids.get(getattr(comp, "_id", None)) == "height"
+            else getattr(comp, "value", None)
+            for comp in controller.inputs
+        ]
+        out_stale = controller.refresh(memory, *input_values_stale)
+        summary_stale = out_stale[-3]
+        self.assertIn("1408×768", summary_stale)
+        self.assertNotIn("768×1152", summary_stale)
+
+        # Updated inputs (from upload/change pipeline) produce 768x1152
+        input_values_new = [
+            w if controller.ids.get(getattr(comp, "_id", None)) == "width"
+            else h if controller.ids.get(getattr(comp, "_id", None)) == "height"
+            else temp_img if controller.ids.get(getattr(comp, "_id", None)) == "first"
+            else getattr(comp, "value", None)
+            for comp in controller.inputs
+        ]
+        out_new = controller.refresh(memory, *input_values_new)
+        summary_new = out_new[-3]
+        self.assertIn("768×1152", summary_new)
+        self.assertNotIn("1408×768", summary_new)
+
+        # 2. When preset changes auto_megapixels cap (e.g. from 1 MP to 2 MP on a large image),
+        # auto_resolution_from_start_frame applies the new cap
+        large_img = os.path.join(tempfile.gettempdir(), "test_ui_contract_large.png")
+        im_large = Image.new("RGB", (3000, 2000), color=(0, 255, 0))
+        im_large.save(large_img)
+
+        w_1mp, h_1mp, _ = gradio_app.auto_resolution_from_start_frame(
+            large_img, 1408, 768, "Video", False, "1 MP"
+        )
+        w_2mp, h_2mp, _ = gradio_app.auto_resolution_from_start_frame(
+            large_img, w_1mp, h_1mp, "Video", False, "2 MP"
+        )
+        self.assertLess(w_1mp * h_1mp, 1_000_000)
+        self.assertGreater(w_2mp * h_2mp, w_1mp * h_1mp)
+        self.assertLess(w_2mp * h_2mp, 2_000_000)
+
+
+
     def test_tensorrt_vae_defaults_on_and_compiles_only_when_needed(self) -> None:
         trt_vae = next(
             component
