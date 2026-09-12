@@ -115,7 +115,11 @@ def run():
                 expect(bridge).to_be_checked()
                 bridge.uncheck()
                 expect(bridge).not_to_be_checked()
+                # Checkbox state changes before its queued settings update finishes.
+                # Wait for the server-rendered summary before the next edit.
+                expect(card).not_to_contain_text("Experimental v1")
                 bridge.check()
+                expect(card).to_contain_text("Experimental v1")
                 strength = page.get_by_text("Semantic Bridge strength", exact=True).locator(
                     'xpath=ancestor::div[contains(@class,"block")][1]'
                 ).locator('input[type="number"]')

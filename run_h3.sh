@@ -121,7 +121,14 @@ PY
 import sys
 
 sys.path.insert(0, sys.argv[1])
-from h3_requirements import comfy_frontend_package_is_ready
+from importlib.metadata import PackageNotFoundError, version
+from h3_requirements import GRADIO_VERSION, comfy_frontend_package_is_ready
+
+try:
+    if version("gradio") != GRADIO_VERSION:
+        raise SystemExit(1)
+except PackageNotFoundError:
+    raise SystemExit(1)
 
 raise SystemExit(0 if comfy_frontend_package_is_ready() else 1)
 PY
@@ -197,7 +204,7 @@ if [[ ! -f "$COMFY_DIR/main.py" || ! -f "$MODELS_CONFIG" ]]; then
   log "Installation or models are missing; running automatic setup"
   "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR"
 elif ! environment_is_current; then
-  log "ComfyUI environment or frontend assets are stale; refreshing the environment"
+  log "ComfyUI/Gradio environment or frontend assets are stale; refreshing the environment"
   "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR"
 else
   log "ComfyUI environment is current; checking Hugging Face model versions"

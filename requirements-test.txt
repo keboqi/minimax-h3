@@ -1,5 +1,5 @@
 # Lightweight UI, integration and browser test environment; no GPU packages.
-gradio==6.24.0
+gradio==6.27.0
 aiohttp
 requests
 websocket-client

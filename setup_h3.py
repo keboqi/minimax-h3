@@ -48,6 +48,7 @@ from h3_requirements import (
     ABI_CONSTRAINTS,
     COMFY_FRONTEND_VERSION,
     COMFY_REF,
+    GRADIO_VERSION,
     KERNELS_VERSION,
     KORNIA_VERSION,
     NUMPY_VERSION,
@@ -638,7 +639,7 @@ def install_environment(comfy: Path) -> None:
             handle.write("\n".join(ABI_CONSTRAINTS) + "\n")
             app_constraint_path = Path(handle.name)
         uv_pip(
-            "gradio>=5,<7",
+            f"gradio=={GRADIO_VERSION}",
             "huggingface_hub>=0.34",
             "transformers>=4.57.1",
             "diffusers>=0.36,<0.37",

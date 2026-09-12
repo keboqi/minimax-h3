@@ -2469,7 +2469,7 @@ def selftest() -> None:
         f"Sol Auto/Turbo policy valid, Spectrum default + Sol/ConvRot order valid, "
         f"zero-copy Sol + FirstBlockCache composition valid, "
         f"LightX fused modulation + Larry compatibility + ConvRot FFN chunking valid, "
-        f"Spectrum v0.2.26 legacy Turbo composition + block-cache guard valid, "
+        f"Spectrum v0.2.27 legacy Turbo composition + block-cache guard valid, "
         f"MMH3 Split Upscale controls + three-node graph contract valid, "
         f"selectable Larry/LightX2V Turbo on "
         f"FL2VA/Ref2VA + synchronized editable Turbo steps valid, "
