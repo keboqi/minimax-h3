@@ -1671,6 +1671,7 @@ def build_fl2va_graph(
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae: str = DEFAULT_IMAGE_VAE,
     text_encoder_name: str | None = None,
+    encoder_small_input: bool = True,
     reuse_unchanged_inputs: bool = True,
     stage_model_offload: bool = False,
     smart_stage_offload: bool = False,
@@ -1739,6 +1740,7 @@ def build_fl2va_graph(
         image_frames=image_frames,
         image_vae=image_vae,
         text_encoder_name=text_encoder_name,
+        encoder_small_input=encoder_small_input,
         reuse_unchanged_inputs=reuse_unchanged_inputs,
         stage_model_offload=stage_model_offload,
         smart_stage_offload=smart_stage_offload,
@@ -1800,6 +1802,7 @@ def build_ref2va_graph(
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae: str = DEFAULT_IMAGE_VAE,
     text_encoder_name: str | None = None,
+    encoder_small_input: bool = True,
     smart_stage_offload: bool = False,
     reuse_unchanged_inputs: bool = True,
     stage_model_offload: bool = False,
@@ -1867,6 +1870,7 @@ def build_ref2va_graph(
         image_frames=image_frames,
         image_vae=image_vae,
         text_encoder_name=text_encoder_name,
+        encoder_small_input=encoder_small_input,
         smart_stage_offload=smart_stage_offload,
         reuse_unchanged_inputs=reuse_unchanged_inputs,
         stage_model_offload=stage_model_offload,
@@ -3233,6 +3237,7 @@ def generate(
     fl2va_audio_1: Any = None,
     fl2va_audio_2: Any = None,
     fl2va_audio_3: Any = None,
+    encoder_small_input: bool = True,
     progress=gr.Progress(track_tqdm=False),
 ):
     request = generation_requests.H3Request.from_values(
@@ -3240,6 +3245,7 @@ def generate(
             "mode": mode,
             "model_profile": model_profile,
             "text_encoder": text_encoder,
+            "encoder_small_input": encoder_small_input,
             "stage_model_offload": stage_model_offload,
             "generation_mode": generation_mode,
             "turbo_variant": turbo_variant,
@@ -3422,8 +3428,9 @@ def interrupt(request: gr.Request, family: str = "h3") -> str:
 def preset_values(name: str, generation_mode: str = "Normal"):
     values = asdict(preset_settings(name, generation_mode))
     return (
-        *list(values.values())[:-1],
-        text_encoder_offload_update(values["text_encoder"]),
+        *(text_encoder_offload_update(values["text_encoder"])
+          if key == "stage_model_offload" else value
+          for key, value in values.items()),
     )
 
 
@@ -3548,6 +3555,7 @@ def generate_with_ui_defaults(
         mode=defaults["mode"],
         model_profile=defaults["model_profile"],
         text_encoder=defaults["text_encoder"],
+        encoder_small_input=defaults["encoder_small_input"],
         stage_model_offload=defaults["stage_model_offload"],
         use_int8_vae=defaults["use_int8_vae"],
         use_trt_vae=defaults["use_trt_vae"],

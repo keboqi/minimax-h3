@@ -796,6 +796,7 @@ def build_fl2va_graph(
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae: str = DEFAULT_IMAGE_VAE,
     text_encoder_name: str | None = None,
+    encoder_small_input: bool = True,
     reuse_unchanged_inputs: bool = True,
     stage_model_offload: bool = False,
     smart_stage_offload: bool = False,
@@ -937,11 +938,13 @@ def build_fl2va_graph(
         prompt,
         text_encoder_name or models.text_encoder,
         conditioning_media,
+        encoder_settings={"encoder_small_input": encoder_small_input},
     )
     cache_node = graph.add(
         H3_CONDITIONING_CACHE_NODE,
         clip=clip_ref,
         cache_key=conditioning_cache_key,
+        encoder_small_input=encoder_small_input,
     )
     clip_ref = Graph.out(cache_node)
     inputs["clip"] = clip_ref
@@ -1069,6 +1072,7 @@ def build_ref2va_graph(
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     image_vae: str = DEFAULT_IMAGE_VAE,
     text_encoder_name: str | None = None,
+    encoder_small_input: bool = True,
     smart_stage_offload: bool = False,
     reuse_unchanged_inputs: bool = True,
     stage_model_offload: bool = False,
@@ -1184,12 +1188,16 @@ def build_ref2va_graph(
         prompt,
         text_encoder_name or models.text_encoder,
         conditioning_media,
-        encoder_settings={"ref_image_size": ref_image_size},
+        encoder_settings={
+            "ref_image_size": ref_image_size,
+            "encoder_small_input": encoder_small_input,
+        },
     )
     cache_node = graph.add(
         H3_CONDITIONING_CACHE_NODE,
         clip=clip_ref,
         cache_key=conditioning_cache_key,
+        encoder_small_input=encoder_small_input,
     )
     clip_ref = Graph.out(cache_node)
     inputs["clip"] = clip_ref

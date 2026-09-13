@@ -78,13 +78,22 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(set(voice_ids) <= frame_group)
         self.assertFalse(set(ref_ids) & frame_group)
         advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
-        self.assertEqual(advanced["inputs"][-3:], voice_ids)
+        self.assertEqual(advanced["inputs"][-4:-1], voice_ids)
         self.assertTrue(set(ref_ids) <= set(advanced["inputs"]))
         parameters = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"]
-        for parameter in parameters[-3:]:
+        for parameter in parameters[-4:-1]:
             self.assertTrue(parameter["parameter_has_default"])
             self.assertIsNone(parameter["parameter_default"])
 
+
+    def test_encoder_attention_toggle_is_default_on_and_bound_to_api(self):
+        toggle = next(c for c in self.config["components"] if c.get("props", {}).get("label") == "Qwen small input attention")
+        self.assertTrue(toggle["props"]["value"])
+        advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
+        self.assertEqual(advanced["inputs"][-1], toggle["id"])
+        parameter = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"][-1]
+        self.assertTrue(parameter["parameter_has_default"])
+        self.assertTrue(parameter["parameter_default"])
 
     def test_gallery_restoration_controls(self) -> None:
         method = next(c for c in self.config["components"]

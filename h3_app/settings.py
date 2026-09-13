@@ -32,6 +32,7 @@ class SamplingSettings:
     latent_upscale_refine_steps: int = 2
     text_encoder: str = "NVFP4 / AWQ"
     stage_model_offload: bool = False
+    encoder_small_input: bool = True
 
 
 PRESET_FIELDS = tuple(SamplingSettings.__dataclass_fields__)

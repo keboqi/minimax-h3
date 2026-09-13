@@ -559,6 +559,7 @@ def selftest() -> None:
         "test",
         "qwen3vl_32b_minimax_h3_bf16.safetensors",
         [],
+        encoder_settings={"encoder_small_input": True},
     )
     assert cache_node["inputs"]["cache_key"] == expected_cache_key
     policy_id, policy = next(
@@ -572,6 +573,7 @@ def selftest() -> None:
         "changed",
         "qwen3vl_32b_minimax_h3_bf16.safetensors",
         [],
+        encoder_settings={"encoder_small_input": True},
     )
     final_offload = next(
         node for node in graph.values() if node["class_type"] == app.H3_STAGE_OFFLOAD_NODE

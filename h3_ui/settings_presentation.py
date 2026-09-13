@@ -9,6 +9,7 @@ LABELS = {
     "semantic_bridge": "Semantic Bridge",
     "steps": "Base sampling steps",
     "text_encoder": "Text encoder",
+    "encoder_small_input": "Qwen small input attention",
     "stage_model_offload": "Stage offload",
     "turbo_variant": "Turbo implementation",
     "attention_mode": "Attention",
@@ -109,6 +110,10 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
             )
     technical = detail("Base model", effective.model_profile) + detail(
         "Text encoder", sampling.text_encoder
+    )
+    technical += detail(
+        "Qwen attention",
+        "Small input (PyTorch/basic)" if sampling.encoder_small_input else "Server backend",
     )
     technical += detail(
         "Stage offload", "On" if sampling.stage_model_offload else "Off"

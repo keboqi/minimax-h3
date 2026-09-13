@@ -64,6 +64,7 @@ class H3SamplingInputs:
     easycache_verbose: bool
     semantic_bridge: bool
     semantic_bridge_alpha: float
+    encoder_small_input: bool = True
 
 
 @dataclass
@@ -116,7 +117,7 @@ class H3Request:
                 **{key: values[key] for key in H3MediaInputs.__dataclass_fields__}
             ),
             sampling=H3SamplingInputs(
-                **{key: values[key] for key in H3SamplingInputs.__dataclass_fields__}
+                **{key: values[key] for key in H3SamplingInputs.__dataclass_fields__ if key in values}
             ),
             output=H3OutputInputs(
                 **{key: values[key] for key in H3OutputInputs.__dataclass_fields__}

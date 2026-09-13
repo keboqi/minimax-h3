@@ -203,7 +203,8 @@
             "6",
             0
           ],
-          "cache_key": "e331df4d1ea93789fac054b53e426d612799eef8b55ebc4aa0c8d2f5198b6f53"
+          "cache_key": "d0946a79a75ce72a52e5dd9ce4aec85dd05fa10c20b7138878855ef926da2be0",
+          "encoder_small_input": true
         }
       },
       "10": {
@@ -242,7 +243,7 @@
             "10",
             1
           ],
-          "cache_key": "e331df4d1ea93789fac054b53e426d612799eef8b55ebc4aa0c8d2f5198b6f53"
+          "cache_key": "d0946a79a75ce72a52e5dd9ce4aec85dd05fa10c20b7138878855ef926da2be0"
         }
       },
       "12": {
@@ -424,7 +425,8 @@
             "2",
             0
           ],
-          "cache_key": "50e208e07b5f3336bd89d00c886a2c59fdc3365dc6e162a8f0b26e39087b1ccb"
+          "cache_key": "b8c9a624b32eb20f76b345de8f49aece14a735ff47fea28005ba497413cd7dfa",
+          "encoder_small_input": true
         }
       },
       "6": {
@@ -586,7 +588,8 @@
             "2",
             0
           ],
-          "cache_key": "d62c14def0dbd09e2667eb9bf14c88ab9cfe03700bba22cd96e4c8df148530a6"
+          "cache_key": "03f483f961130250673f1ec59ab79bdf20d233069e81e38a923996113091d56b",
+          "encoder_small_input": true
         }
       },
       "7": {
@@ -740,7 +743,8 @@
             "2",
             0
           ],
-          "cache_key": "45b90bb34b5ee621844a2b9a5e7e0ddd5b831b729e915915495a2aaaec9ffc2f"
+          "cache_key": "d68f7aed72acdfce7c5e08b217791305ed50dfbf03abdf7bbc5c67d6b0b31165",
+          "encoder_small_input": true
         }
       },
       "6": {
@@ -3273,7 +3277,8 @@
             "7",
             0
           ],
-          "cache_key": "775c7019fbb915bcae66cd7940e8604679f056afea9bca3ec7cfa0102cc0ea2d"
+          "cache_key": "3e9da474a1d9b0df7e71df017cdc20fbfa2bf255e7a54ed4169d5b3b782bb976",
+          "encoder_small_input": true
         }
       },
       "11": {

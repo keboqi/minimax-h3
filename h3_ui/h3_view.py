@@ -207,6 +207,7 @@ class H3View:
     steps: gr.components.Component
     stop: gr.components.Component
     text_encoder: gr.components.Component
+    encoder_small_input: gr.components.Component
     turbo_variant: gr.components.Component
     trt_vae_compile: gr.components.Component
     use_int8_vae: gr.components.Component
@@ -356,6 +357,7 @@ H3_COMPONENT_ORDER = (
     "steps",
     "stop",
     "text_encoder",
+    "encoder_small_input",
     "turbo_variant",
     "trt_vae_compile",
     "use_int8_vae",
@@ -616,6 +618,7 @@ def build_h3_view(
             "steps": output_section.steps,
             "stop": results_section.stop,
             "text_encoder": model_section.text_encoder,
+            "encoder_small_input": model_section.encoder_small_input,
             "turbo_variant": performance_controls.turbo_variant,
             "trt_vae_compile": model_section.trt_vae_compile,
             "use_int8_vae": model_section.use_int8_vae,

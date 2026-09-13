@@ -23,6 +23,7 @@ class ModelSection:
     semantic_bridge_alpha: gr.components.Component
     stage_model_offload: gr.components.Component
     text_encoder: gr.components.Component
+    encoder_small_input: gr.components.Component
     trt_vae_compile: gr.components.Component
     use_int8_vae: gr.components.Component
     use_trt_vae: gr.components.Component
@@ -99,6 +100,16 @@ def build_model_section(
                     "reruns when the seed changes."
                 ),
             )
+        encoder_small_input = gr.Checkbox(
+            value=defaults["encoder_small_input"],
+            label="Qwen small input attention",
+            info=(
+                "On: upstream PyTorch/basic attention. Off: the server attention "
+                "backend (Kitchen in this app). Applies to Qwen text and vision encoding. "
+                "Changing this rebuilds conditioning on the next generation. "
+                "The diffusion Sage 2 selection does not change the encoder backend."
+            ),
+        )
         semantic_bridge = gr.Checkbox(
             value=defaults["semantic_bridge"],
             label="Semantic Bridge (experimental)",
@@ -160,6 +171,7 @@ def build_model_section(
         semantic_bridge_alpha=semantic_bridge_alpha,
         stage_model_offload=stage_model_offload,
         text_encoder=text_encoder,
+        encoder_small_input=encoder_small_input,
         trt_vae_compile=trt_vae_compile,
         use_int8_vae=use_int8_vae,
         use_trt_vae=use_trt_vae,

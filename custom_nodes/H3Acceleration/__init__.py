@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import math
@@ -7,6 +8,9 @@ import os
 import re
 import threading
 from collections import OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import wraps
 from dataclasses import dataclass
 from fractions import Fraction
 
@@ -975,6 +979,45 @@ class H3VideoLatentSlicesToBatch:
         return (output,)
 
 
+# Upstream hardcodes small_input=True in both Qwen3-VL attention selectors.
+# Install context-aware dispatchers once; only this CLIP encoding context can
+# override that hint. Other models/threads retain their original dispatch.
+_H3_ENCODER_SMALL_INPUT = ContextVar("h3_encoder_small_input", default=None)
+_H3_ENCODER_ATTENTION_LOCK = threading.Lock()
+
+
+def _h3_encoder_attention_selector(original):
+    @wraps(original)
+    def select(device, mask=False, small_input=False):
+        override = _H3_ENCODER_SMALL_INPUT.get()
+        return original(
+            device, mask=mask,
+            small_input=small_input if override is None else override,
+        )
+
+    select._h3_encoder_dispatch = True
+    return select
+
+
+@contextmanager
+def _h3_encoder_attention(small_input):
+    with _H3_ENCODER_ATTENTION_LOCK:
+        for name in ("comfy.text_encoders.llama", "comfy.text_encoders.qwen35"):
+            module = importlib.import_module(name)
+            original = module.optimized_attention_for_device
+            if not getattr(original, "_h3_encoder_dispatch", False):
+                module.optimized_attention_for_device = _h3_encoder_attention_selector(original)
+    token = _H3_ENCODER_SMALL_INPUT.set(bool(small_input))
+    try:
+        logging.info(
+            "MiniMax H3 Qwen text/vision attention: %s",
+            "small input (PyTorch/basic)" if small_input else "configured server backend",
+        )
+        yield
+    finally:
+        _H3_ENCODER_SMALL_INPUT.reset(token)
+
+
 class _H3ConditioningReuseCache:
     """Small process-local cache keyed only by encoder conditioning inputs."""
 
@@ -982,10 +1025,23 @@ class _H3ConditioningReuseCache:
         self._entries: OrderedDict[str, object] = OrderedDict()
         self._fresh_since_policy: dict[str, bool] = {}
         self._max_entries = max_entries
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._encoder_small_input = None
+        self._attention_revision = 0
 
-    def encode(self, cache_key: str, encode):
+    def select_attention(self, small_input: bool) -> int:
         with self._lock:
+            if self._encoder_small_input != small_input:
+                self._entries.clear()
+                self._fresh_since_policy.clear()
+                self._encoder_small_input = small_input
+                self._attention_revision += 1
+                logging.info("MiniMax H3 invalidated conditioning for Qwen attention change")
+            return self._attention_revision
+
+    def encode(self, cache_key: str, encode, small_input: bool = True):
+        with self._lock:
+            revision = self.select_attention(small_input)
             if cache_key in self._entries:
                 conditioning = self._entries[cache_key]
                 self._entries.move_to_end(cache_key)
@@ -994,6 +1050,10 @@ class _H3ConditioningReuseCache:
 
         conditioning = encode()
         with self._lock:
+            # Do not publish a result from an older route if another execution
+            # changed policy while this encode was in flight.
+            if revision != self._attention_revision:
+                return conditioning
             self._entries[cache_key] = conditioning
             self._entries.move_to_end(cache_key)
             self._fresh_since_policy[cache_key] = True
@@ -1014,9 +1074,10 @@ _H3_CONDITIONING_REUSE_CACHE = _H3ConditioningReuseCache()
 
 
 class _H3CachedCLIPProxy:
-    def __init__(self, clip, cache_key: str) -> None:
+    def __init__(self, clip, cache_key: str, encoder_small_input: bool = True) -> None:
         self._clip = clip
         self._cache_key = cache_key
+        self._encoder_small_input = bool(encoder_small_input)
 
     def __getattr__(self, name):
         return getattr(self._clip, name)
@@ -1024,14 +1085,18 @@ class _H3CachedCLIPProxy:
     def clone(self, *args, **kwargs):
         # Native H3 nodes clone CLIP before encoding. Preserve the proxy so
         # both latent-upscale stages use the same prompt/media cache entry.
-        return type(self)(self._clip.clone(*args, **kwargs), self._cache_key)
+        return type(self)(
+            self._clip.clone(*args, **kwargs), self._cache_key,
+            self._encoder_small_input,
+        )
 
     def encode_from_tokens_scheduled(self, tokens, *args, **kwargs):
+        def encode():
+            with _h3_encoder_attention(self._encoder_small_input):
+                return self._clip.encode_from_tokens_scheduled(tokens, *args, **kwargs)
+
         return _H3_CONDITIONING_REUSE_CACHE.encode(
-            self._cache_key,
-            lambda: self._clip.encode_from_tokens_scheduled(
-                tokens, *args, **kwargs
-            ),
+            self._cache_key, encode, self._encoder_small_input,
         )
 
 
@@ -1044,7 +1109,10 @@ class H3ConditioningCache:
             "required": {
                 "clip": ("CLIP",),
                 "cache_key": ("STRING", {"default": ""}),
-            }
+            },
+            "optional": {
+                "encoder_small_input": ("BOOLEAN", {"default": True}),
+            },
         }
 
     RETURN_TYPES = ("CLIP",)
@@ -1055,8 +1123,15 @@ class H3ConditioningCache:
         "duration, seed, sampler, and other generation-only settings."
     )
 
-    def wrap(self, clip, cache_key):
-        return (_H3CachedCLIPProxy(clip, str(cache_key)),)
+    @classmethod
+    def IS_CHANGED(cls, clip, cache_key, encoder_small_input=True):
+        # Include the route revision in ComfyUI's own node cache signature so
+        # toggling A -> B -> A also re-encodes with an LRU/ram cache enabled.
+        return _H3_CONDITIONING_REUSE_CACHE.select_attention(bool(encoder_small_input))
+
+    def wrap(self, clip, cache_key, encoder_small_input=True):
+        _H3_CONDITIONING_REUSE_CACHE.select_attention(bool(encoder_small_input))
+        return (_H3CachedCLIPProxy(clip, str(cache_key), encoder_small_input),)
 
 
 def _offload_h3_models(label: str) -> None:

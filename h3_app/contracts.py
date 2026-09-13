@@ -84,6 +84,7 @@ GENERATION_FIELDS = (
     "fl2va_audio_1",
     "fl2va_audio_2",
     "fl2va_audio_3",
+    "encoder_small_input",
 )
 GENERATION_COMPONENTS = (
     "mode",
@@ -166,6 +167,7 @@ GENERATION_COMPONENTS = (
     "fl2va_audio_1",
     "fl2va_audio_2",
     "fl2va_audio_3",
+    "encoder_small_input",
 )
 
 
@@ -175,11 +177,13 @@ class GenerationArguments:
 
     @classmethod
     def from_positional(cls, args):
-        # Preserve callers using the positional contract before the optional bridge.
-        if len(args) == len(GENERATION_FIELDS) - 5:
+        # Preserve each published boundary as new optional fields are appended.
+        if len(args) == GENERATION_FIELDS.index("semantic_bridge"):
             args = (*args, True, 0.10)
-        if len(args) == len(GENERATION_FIELDS) - 3:
+        if len(args) == GENERATION_FIELDS.index("fl2va_audio_1"):
             args = (*args, None, None, None)
+        if len(args) == GENERATION_FIELDS.index("encoder_small_input"):
+            args = (*args, True)
         if len(args) != len(GENERATION_FIELDS):
             raise ValueError(
                 f"Expected {len(GENERATION_FIELDS)} generation inputs, received {len(args)}."

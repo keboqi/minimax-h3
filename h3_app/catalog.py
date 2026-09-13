@@ -499,6 +499,7 @@ UI_DEFAULTS = {
     "model_profile": "Singularity",
     "text_encoder": SAMPLING_PRESET_TEXT_ENCODERS["Fast"],
     "stage_model_offload": False,
+    "encoder_small_input": True,
     "semantic_bridge": True,
     "semantic_bridge_alpha": 0.10,
     "reuse_unchanged_inputs": True,

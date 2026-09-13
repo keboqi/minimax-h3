@@ -187,6 +187,19 @@ jobs) through Sol.
 Spectrum exposes one continuous capture-and-replay progress range to ComfyUI,
 so the Gradio live progress stream remains active during both passes.
 
+**Qwen small input attention** lives under **Model and memory (advanced)** and
+is on by default. On preserves the upstream PyTorch/basic attention selection
+for both Qwen3-VL 32B text and vision encoding. Turn it off to use the server's
+configured attention backend (Kitchen in the bundled launchers). The diffusion
+Sage 2 selector does not select Sage for Qwen. Changing this option invalidates
+both ComfyUI's conditioning-node cache and the process-local encoder cache;
+the next generation re-encodes, including when switching back to a previously
+used route. Keeping the option unchanged retains normal conditioning reuse.
+The preference is saved in the browser and recorded with generation settings.
+Compare the same prompt, reference media, resolution, and seed on your GPU;
+backend compatibility, speed, and conditioning quality depend on the inputs.
+Restart the UI and update/restart the bundled H3Acceleration node to use it.
+
 Turbo Spectrum remains approximate. Its conservative policy permits at most one
 forecast before a completed native refresh, which limits both acceleration and
 trajectory error at four to eight steps. Compare the same prompt and seed with
