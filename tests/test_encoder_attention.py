@@ -5,7 +5,9 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
+import hashlib
 import inspect
+import math
 import logging
 from pathlib import Path
 import threading
@@ -18,6 +20,12 @@ from h3_app.contracts import GENERATION_FIELDS, GenerationArguments
 from h3_app.generation.requests import H3Request
 from h3_app.settings import GenerationRequest, resolve_settings
 from h3_ui.persistence import restore_preferences
+
+
+class FakeTensor:
+    def __init__(self, shape, dtype="float32"):
+        self.shape = shape
+        self.dtype = dtype
 
 
 def load_encoder_nodes():
@@ -34,7 +42,8 @@ def load_encoder_nodes():
     }
     namespace = dict(OrderedDict=OrderedDict, contextmanager=contextmanager,
                      ContextVar=ContextVar, wraps=wraps, logging=logging,
-                     threading=threading,
+                     threading=threading, hashlib=hashlib,
+                     torch=SimpleNamespace(is_tensor=lambda value: isinstance(value, FakeTensor)),
                      importlib=SimpleNamespace(import_module=modules.__getitem__))
     exec(compile(ast.Module(body=tree.body[start:end + 1], type_ignores=[]), str(path), "exec"), namespace)
     return namespace, modules
@@ -87,6 +96,81 @@ class EncoderRuntimeTests(unittest.TestCase):
         self.assertTrue(node.INPUT_TYPES()["optional"]["encoder_small_input"][1]["default"])
         self.assertIsNone(self.ns["_H3_ENCODER_SMALL_INPUT"].get())
 
+    def test_four_combinations_across_resolutions_and_jobs(self):
+        for small_input in (True, False):
+            for reuse in (True, False):
+                with self.subTest(small_input=small_input, reuse=reuse):
+                    ns, modules = load_encoder_nodes()
+                    node = ns["H3ConditioningCache"]()
+                    calls = []
+                    def encode(tokens):
+                        calls.append(tuple(module.optimized_attention_for_device(
+                            "cuda", small_input=True)[-1] for module in modules.values()))
+                        return object()
+                    clip = SimpleNamespace(encode_from_tokens_scheduled=encode)
+                    clip.clone = lambda: clip
+                    results = []
+                    for _job in range(2):
+                        changed = node.IS_CHANGED(clip, "same-media", small_input, reuse)
+                        self.assertEqual(math.isnan(changed), not reuse)
+                        proxy = node.wrap(clip, "same-media", small_input, reuse)[0].clone()
+                        for shape in ((1, 352, 640, 3), (1, 704, 1280, 3)):
+                            tokens = {"qwen": [[(100, 1.0), ({"type": "image", "data": FakeTensor(shape)}, 1.0)]]}
+                            results.append(proxy.encode_from_tokens_scheduled(tokens))
+                    self.assertEqual(calls, [(small_input, small_input)] * (2 if reuse else 4))
+                    self.assertIsNot(results[0], results[1])
+                    if reuse:
+                        self.assertIs(results[0], results[2])
+                        self.assertIs(results[1], results[3])
+                    else:
+                        self.assertEqual(len({id(item) for item in results}), 4)
+
+    def test_text_only_bypass_has_no_dependency_on_staged_media(self):
+        for small_input in (True, False):
+            for reuse in (True, False):
+                ns, _ = load_encoder_nodes()
+                node = ns["H3ConditioningCache"]()
+                clip = SimpleNamespace(encode_from_tokens_scheduled=Mock(side_effect=lambda tokens: object()))
+                for _job in range(2):
+                    proxy = node.wrap(clip, "text-only", small_input, reuse)[0]
+                    proxy.encode_from_tokens_scheduled({"qwen": [[(10, 1.0)]]})
+                self.assertEqual(clip.encode_from_tokens_scheduled.call_count, 1 if reuse else 2)
+
+    def test_prompt_media_and_video_geometry_do_not_share_encodings(self):
+        ns = self.ns
+        encode = Mock(side_effect=lambda tokens: object())
+        clip = SimpleNamespace(encode_from_tokens_scheduled=encode)
+        node = ns["H3ConditioningCache"]()
+        first = node.wrap(clip, "source-a")[0]
+        second = node.wrap(clip, "source-b")[0]
+        for proxy, tokens in ((first, [1, FakeTensor((2, 352, 640, 3))]),
+                              (first, [2, FakeTensor((2, 352, 640, 3))]),
+                              (first, [2, FakeTensor((4, 352, 640, 3))]),
+                              (second, [2, FakeTensor((4, 352, 640, 3))])):
+            proxy.encode_from_tokens_scheduled(tokens)
+        self.assertEqual(encode.call_count, 4)
+        second.encode_from_tokens_scheduled([2, FakeTensor((4, 352, 640, 3))])
+        self.assertEqual(encode.call_count, 4)
+
+    def test_offload_policy_tracks_fresh_geometry_and_disabled_cache(self):
+        cache = self.ns["_H3_CONDITIONING_REUSE_CACHE"]
+        for signature in ("low", "high", "third"):
+            cache.encode("media", object, input_signature=signature)
+        self.assertFalse(cache.conditioning_was_reused("media"))
+        cache.encode("media", object, input_signature="high")
+        self.assertTrue(cache.conditioning_was_reused("media"))
+        cache.encode("media", object, reuse=False)
+        self.assertFalse(cache.conditioning_was_reused("media"))
+        self.assertEqual(len(cache._entries), 0)
+        self.assertEqual(len(cache._fresh_since_policy), 0)
+
+    def test_unsupported_token_objects_bypass_reuse(self):
+        clip = SimpleNamespace(encode_from_tokens_scheduled=Mock(side_effect=lambda tokens: object()))
+        proxy = self.ns["H3ConditioningCache"]().wrap(clip, "media")[0]
+        token = object()
+        self.assertIsNot(proxy.encode_from_tokens_scheduled(token), proxy.encode_from_tokens_scheduled(token))
+        self.assertEqual(clip.encode_from_tokens_scheduled.call_count, 2)
+
     def test_failed_encoding_is_not_cached(self):
         cache = self.ns["_H3_CONDITIONING_REUSE_CACHE"]
         encode = Mock(side_effect=[RuntimeError("failure"), "ok"])
@@ -107,15 +191,18 @@ class EncoderRuntimeTests(unittest.TestCase):
 
 
 class EncoderOptionTests(unittest.TestCase):
-    def graph(self, family, small_input, seed=7):
+    def graph(self, family, small_input, seed=7, reuse=True, voices=False):
         fn = getattr(app, "build_" + family + "_graph")
         args = {name: app.UI_DEFAULTS.get(name, 0) for name, p in inspect.signature(fn).parameters.items() if p.default is inspect.Parameter.empty}
         args.update(prompt="A quiet lake", width=864, height=480, duration=5,
                     steps=4, seed=seed, encoder_small_input=small_input,
+                    reuse_unchanged_inputs=reuse,
                     models=SimpleNamespace(text_encoder="encoder.safetensors"),
                     available_nodes=set(), latent_upscale_model_name="upscaler.pth")
         if family == "fl2va":
             args.update(first_image="start.png", last_image=None)
+            if voices:
+                args.update(voice_reference_audios=["voice.wav"], available_nodes={"MiniMaxH3AudioConditioningT8", "LoadAudio"})
         else:
             args.update(reference_images=["ref.png"], reference_videos=[], reference_audios=[], ref_image_size="match")
         with patch.object(app, "stage_file", side_effect=lambda path, *a, **kw: path), patch.object(app.h3_workflow, "add_model_stack", return_value=(["model", 0], ["clip", 0], ["vae", 0], ["audio", 0])), patch.object(app.h3_workflow, "finish_sampling"):
@@ -134,6 +221,17 @@ class EncoderOptionTests(unittest.TestCase):
                 self.assertTrue(all(n["inputs"]["clip"] == [cache_id, 0] for n in stages))
             self.assertNotEqual(keys[0], keys[1])
             self.assertEqual(keys[1], keys[2])
+
+    def test_reuse_switch_reaches_native_reference_and_t8_graphs(self):
+        for family, voices in (("fl2va", False), ("fl2va", True), ("ref2va", False)):
+            for small_input in (True, False):
+                for reuse in (True, False):
+                    graph = self.graph(family, small_input, reuse=reuse, voices=voices)
+                    cache = next(n for n in graph.values() if n["class_type"] == app.H3_CONDITIONING_CACHE_NODE)
+                    self.assertIs(cache["inputs"]["reuse_conditioning"], reuse)
+                    self.assertIs(cache["inputs"]["encoder_small_input"], small_input)
+                    if voices:
+                        self.assertEqual(sum(n["class_type"] == "MiniMaxH3AudioConditioningT8" for n in graph.values()), 2)
 
     def test_default_legacy_api_and_saved_false(self):
         self.assertTrue(app.UI_DEFAULTS["encoder_small_input"])

@@ -945,6 +945,7 @@ def build_fl2va_graph(
         clip=clip_ref,
         cache_key=conditioning_cache_key,
         encoder_small_input=encoder_small_input,
+        reuse_conditioning=reuse_unchanged_inputs,
     )
     clip_ref = Graph.out(cache_node)
     inputs["clip"] = clip_ref
@@ -1198,6 +1199,7 @@ def build_ref2va_graph(
         clip=clip_ref,
         cache_key=conditioning_cache_key,
         encoder_small_input=encoder_small_input,
+        reuse_conditioning=reuse_unchanged_inputs,
     )
     clip_ref = Graph.out(cache_node)
     inputs["clip"] = clip_ref

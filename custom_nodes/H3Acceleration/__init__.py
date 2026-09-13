@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import logging
@@ -1018,11 +1019,35 @@ def _h3_encoder_attention(small_input):
         _H3_ENCODER_SMALL_INPUT.reset(token)
 
 
+def _h3_encoder_input_signature(value):
+    """Describe the actual token sequence and vision geometry without hashing pixels.
+
+    The graph cache key already identifies source media (content-addressed when
+    reuse is on). Resizing/cropping and video truncation happen inside the native
+    node, so include the resulting token structure, tensor shapes and dtypes too.
+    Unknown input types disable reuse rather than risk an incomplete signature.
+    """
+    if torch.is_tensor(value):
+        return ("tensor", tuple(value.shape), str(value.dtype))
+    if isinstance(value, dict):
+        return ("dict", tuple(
+            (key, _h3_encoder_input_signature(item))
+            for key, item in sorted(value.items())
+        ))
+    if isinstance(value, (tuple, list)):
+        return (type(value).__name__, tuple(
+            _h3_encoder_input_signature(item) for item in value
+        ))
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    raise TypeError(f"Unsupported encoder cache input: {type(value).__name__}")
+
+
 class _H3ConditioningReuseCache:
-    """Small process-local cache keyed only by encoder conditioning inputs."""
+    """Bounded process-local cache of Qwen results, independent of VAE latents."""
 
     def __init__(self, max_entries: int = 2) -> None:
-        self._entries: OrderedDict[str, object] = OrderedDict()
+        self._entries: OrderedDict[tuple[str, str], object] = OrderedDict()
         self._fresh_since_policy: dict[str, bool] = {}
         self._max_entries = max_entries
         self._lock = threading.RLock()
@@ -1039,55 +1064,69 @@ class _H3ConditioningReuseCache:
                 logging.info("MiniMax H3 invalidated conditioning for Qwen attention change")
             return self._attention_revision
 
-    def encode(self, cache_key: str, encode, small_input: bool = True):
+    def encode(self, cache_key: str, encode, small_input: bool = True,
+               *, reuse: bool = True, input_signature: str = ""):
+        entry_key = (cache_key, input_signature)
         with self._lock:
             revision = self.select_attention(small_input)
-            if cache_key in self._entries:
-                conditioning = self._entries[cache_key]
-                self._entries.move_to_end(cache_key)
-                logging.info("MiniMax H3 reused cached text/media conditioning")
+            if reuse and entry_key in self._entries:
+                conditioning = self._entries[entry_key]
+                self._entries.move_to_end(entry_key)
+                logging.info(
+                    "MiniMax H3 Qwen cache hit [key=%s input=%s]; VAE conditioning is separate",
+                    cache_key[:12], input_signature[:12],
+                )
                 return conditioning
 
+        logging.info(
+            "MiniMax H3 Qwen cache %s [key=%s input=%s]; encoding fresh",
+            "miss" if reuse else "disabled", cache_key[:12], input_signature[:12],
+        )
         conditioning = encode()
         with self._lock:
             # Do not publish a result from an older route if another execution
             # changed policy while this encode was in flight.
             if revision != self._attention_revision:
                 return conditioning
-            self._entries[cache_key] = conditioning
-            self._entries.move_to_end(cache_key)
+            if not reuse:
+                for key in list(self._entries):
+                    if key[0] == cache_key:
+                        del self._entries[key]
+                self._fresh_since_policy.pop(cache_key, None)
+                return conditioning
             self._fresh_since_policy[cache_key] = True
+            self._entries[entry_key] = conditioning
+            self._entries.move_to_end(entry_key)
             while len(self._entries) > self._max_entries:
                 evicted_key, _value = self._entries.popitem(last=False)
-                self._fresh_since_policy.pop(evicted_key, None)
+                if not any(key[0] == evicted_key[0] for key in self._entries):
+                    self._fresh_since_policy.pop(evicted_key[0], None)
         return conditioning
 
     def conditioning_was_reused(self, cache_key: str) -> bool:
         with self._lock:
-            if cache_key not in self._entries:
-                return False
             fresh = self._fresh_since_policy.pop(cache_key, False)
-            return not fresh
+            return not fresh and any(key[0] == cache_key for key in self._entries)
 
 
 _H3_CONDITIONING_REUSE_CACHE = _H3ConditioningReuseCache()
 
 
 class _H3CachedCLIPProxy:
-    def __init__(self, clip, cache_key: str, encoder_small_input: bool = True) -> None:
+    def __init__(self, clip, cache_key: str, encoder_small_input: bool = True,
+                 reuse_conditioning: bool = True) -> None:
         self._clip = clip
         self._cache_key = cache_key
         self._encoder_small_input = bool(encoder_small_input)
+        self._reuse_conditioning = bool(reuse_conditioning)
 
     def __getattr__(self, name):
         return getattr(self._clip, name)
 
     def clone(self, *args, **kwargs):
-        # Native H3 nodes clone CLIP before encoding. Preserve the proxy so
-        # both latent-upscale stages use the same prompt/media cache entry.
         return type(self)(
             self._clip.clone(*args, **kwargs), self._cache_key,
-            self._encoder_small_input,
+            self._encoder_small_input, self._reuse_conditioning,
         )
 
     def encode_from_tokens_scheduled(self, tokens, *args, **kwargs):
@@ -1095,13 +1134,23 @@ class _H3CachedCLIPProxy:
             with _h3_encoder_attention(self._encoder_small_input):
                 return self._clip.encode_from_tokens_scheduled(tokens, *args, **kwargs)
 
+        reuse = self._reuse_conditioning
+        input_signature = ""
+        if reuse:
+            try:
+                signature = _h3_encoder_input_signature((tokens, args, kwargs))
+                input_signature = hashlib.sha256(repr(signature).encode("utf-8")).hexdigest()
+            except TypeError as exc:
+                logging.info("MiniMax H3 Qwen cache bypass: %s", exc)
+                reuse = False
         return _H3_CONDITIONING_REUSE_CACHE.encode(
             self._cache_key, encode, self._encoder_small_input,
+            reuse=reuse, input_signature=input_signature,
         )
 
 
 class H3ConditioningCache:
-    """Wrap H3 CLIP so unchanged prompt/media conditioning skips encoding."""
+    """Wrap H3 CLIP with scoped attention routing and optional encoding reuse."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1112,6 +1161,7 @@ class H3ConditioningCache:
             },
             "optional": {
                 "encoder_small_input": ("BOOLEAN", {"default": True}),
+                "reuse_conditioning": ("BOOLEAN", {"default": True}),
             },
         }
 
@@ -1119,19 +1169,22 @@ class H3ConditioningCache:
     FUNCTION = "wrap"
     CATEGORY = "model/management/minimax"
     DESCRIPTION = (
-        "Caches H3 text/media conditioning independently from resolution, "
-        "duration, seed, sampler, and other generation-only settings."
+        "Reuses matching Qwen token/vision inputs. VAE conditioning remains owned "
+        "by the conditioning node. Disabling reuse forces fresh encoding."
     )
 
     @classmethod
-    def IS_CHANGED(cls, clip, cache_key, encoder_small_input=True):
-        # Include the route revision in ComfyUI's own node cache signature so
-        # toggling A -> B -> A also re-encodes with an LRU/ram cache enabled.
-        return _H3_CONDITIONING_REUSE_CACHE.select_attention(bool(encoder_small_input))
+    def IS_CHANGED(cls, clip, cache_key, encoder_small_input=True, reuse_conditioning=True):
+        revision = _H3_CONDITIONING_REUSE_CACHE.select_attention(bool(encoder_small_input))
+        # Force dependent native/T8 conditioning nodes to run even for text-only
+        # requests, where there is no staged media filename to invalidate them.
+        return revision if reuse_conditioning else float("nan")
 
-    def wrap(self, clip, cache_key, encoder_small_input=True):
+    def wrap(self, clip, cache_key, encoder_small_input=True, reuse_conditioning=True):
         _H3_CONDITIONING_REUSE_CACHE.select_attention(bool(encoder_small_input))
-        return (_H3CachedCLIPProxy(clip, str(cache_key), encoder_small_input),)
+        return (_H3CachedCLIPProxy(
+            clip, str(cache_key), encoder_small_input, reuse_conditioning,
+        ),)
 
 
 def _offload_h3_models(label: str) -> None:

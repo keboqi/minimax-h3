@@ -168,9 +168,12 @@ class Submission:
             if event_type in {"execution_success", "execution_complete"}:
                 return
             if event_type == "execution_cached":
-                completed.update(str(node) for node in data.get("nodes", []))
+                cached = {str(node) for node in data.get("nodes", []) if str(node) in graph}
+                if not cached:
+                    continue
+                completed.update(cached)
                 yield (
-                    "Restoring cached workflow results",
+                    f"Reusing {len(cached)} cached workflow nodes",
                     len(completed),
                     total_nodes,
                     None,

@@ -78,6 +78,10 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Merging SeedVR2 chunks"
     if name == "SeedVR2PostProcessing":
         return "Restoring SeedVR2 output"
+    if name == "H3ConditioningCache":
+        return "Configuring Qwen attention and cache"
+    if name == "MiniMaxH3AudioConditioningT8":
+        return "Preparing prompt, keyframe and voice conditioning"
     if "ImageToVideo" in name or "ReferenceToVideo" in name:
         return "Encoding prompt and conditioning"
     if name in {

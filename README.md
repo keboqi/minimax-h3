@@ -282,16 +282,26 @@ unchanged BF16 conditioning is reused, the encoder never loads and all remaining
 stage offloads are skipped for that run. INT8 and NVFP4 keep the current all-VRAM
 path by default; stage offload can still be enabled manually for either one.
 **Reuse unchanged prompt and media** is enabled by default. Uploaded H3 inputs are
-staged under content-derived names, so repeating the same prompt and ordered media
-combination reuses the expensive text/media conditioning. The cache identity
-contains only the prompt, ordered image/audio/video content, selected text encoder,
-and reference-media encoder sizing. Generation-only changes such as seed, steps,
-sampler, attention/cache mode, duration, resolution, output format, or latent
-upscaling still rebuild the required latent/sampling graph but do not re-run the
-text encoder. A changed prompt, media file/order, text encoder, or reference-media
-encoder sizing performs a fresh encode and retains normal BF16 stage offloading.
-Disable reuse to stage fresh media copies and use unconditional BF16 offloading for
-that request.
+staged under content-derived names. Qwen reuse requires matching source media,
+prompt tokens, text encoder, attention route, and actual visual tensor geometry.
+Seed, steps, sampler, and diffusion attention changes can reuse matching encoding.
+Changing the canvas or reference-video duration re-encodes if it changes Qwen's
+visual inputs. In a two-stage image-conditioned workflow, the low-resolution and
+high-resolution stages therefore have separate entries; later matching jobs can
+reuse both. Text-only encoding can still be shared across resolutions.
+
+Disable reuse to force fresh Qwen and native/T8 conditioning on every execution,
+including refinement and text-only requests, and use unconditional BF16 stage
+offloading. The attention toggle independently selects the Qwen route in either
+reuse mode. Logs distinguish `Qwen cache disabled`, `Qwen cache miss`, and
+`Qwen cache hit`, with short cache/input identifiers for comparisons.
+
+A Qwen cache hit skips only the text/vision encoder. `MiniMaxH3AudioConditioningT8`
+may still run its image/audio VAE work, especially at a different resolution.
+ComfyUI can reuse the entire conditioning node when all its inputs and dependencies
+match and the result remains cached. Progress reports the actual number of cached
+workflow nodes and suppresses empty cache notifications; a few cached loaders do
+not imply that the encoder or the whole generation was cached.
 
 **Videos per batch** generates one to four variants (one by default). Multi-video
 batches assign every video an independent random seed and show all completed videos

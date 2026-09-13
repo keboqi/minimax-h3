@@ -203,6 +203,23 @@ class ProcessTests(unittest.TestCase):
 
 
 class ExecutionTests(unittest.TestCase):
+    def test_cached_progress_reports_only_actual_cached_nodes(self):
+        graph = {"1": {"class_type": "CLIPLoader"}, "2": {"class_type": "MiniMaxH3AudioConditioningT8"}}
+        for cached, expected_count in (([], 0), (["1"], 1), (["1", "2"], 2)):
+            socket = Mock()
+            socket.recv.side_effect = [
+                json.dumps({"type": "execution_cached", "data": {"prompt_id": "id", "nodes": cached}}),
+                json.dumps({"type": "executing", "data": {"prompt_id": "id", "node": "2"}}),
+                json.dumps({"type": "execution_success", "data": {"prompt_id": "id"}}),
+            ]
+            submission = Submission("id", graph, Mock(), 10, 10, 1, socket=socket, clock=lambda: 0)
+            updates = list(submission._stream(socket, "id", graph, 0))
+            self.assertEqual(len(updates), 2 if cached else 1)
+            if cached:
+                self.assertEqual(updates[0][0], f"Reusing {expected_count} cached workflow nodes")
+                self.assertEqual(updates[0][1], expected_count)
+            self.assertEqual(updates[-1][0], "Preparing prompt, keyframe and voice conditioning")
+
     def test_websocket_fallback_does_not_restart_deadline(self):
         now = [0.0]
         client = Mock(timeout=60)

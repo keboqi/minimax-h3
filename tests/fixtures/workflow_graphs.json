@@ -204,7 +204,8 @@
             0
           ],
           "cache_key": "d0946a79a75ce72a52e5dd9ce4aec85dd05fa10c20b7138878855ef926da2be0",
-          "encoder_small_input": true
+          "encoder_small_input": true,
+          "reuse_conditioning": true
         }
       },
       "10": {
@@ -426,7 +427,8 @@
             0
           ],
           "cache_key": "b8c9a624b32eb20f76b345de8f49aece14a735ff47fea28005ba497413cd7dfa",
-          "encoder_small_input": true
+          "encoder_small_input": true,
+          "reuse_conditioning": true
         }
       },
       "6": {
@@ -589,7 +591,8 @@
             0
           ],
           "cache_key": "03f483f961130250673f1ec59ab79bdf20d233069e81e38a923996113091d56b",
-          "encoder_small_input": true
+          "encoder_small_input": true,
+          "reuse_conditioning": true
         }
       },
       "7": {
@@ -744,7 +747,8 @@
             0
           ],
           "cache_key": "d68f7aed72acdfce7c5e08b217791305ed50dfbf03abdf7bbc5c67d6b0b31165",
-          "encoder_small_input": true
+          "encoder_small_input": true,
+          "reuse_conditioning": true
         }
       },
       "6": {
@@ -3278,7 +3282,8 @@
             0
           ],
           "cache_key": "3e9da474a1d9b0df7e71df017cdc20fbfa2bf255e7a54ed4169d5b3b782bb976",
-          "encoder_small_input": true
+          "encoder_small_input": true,
+          "reuse_conditioning": true
         }
       },
       "11": {

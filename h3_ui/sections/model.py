@@ -95,9 +95,9 @@ def build_model_section(
                 value=defaults["reuse_unchanged_inputs"],
                 label="Reuse unchanged prompt and media",
                 info=(
-                    "Use content-addressed staged inputs so ComfyUI can skip "
-                    "unchanged loading and conditioning work. Sampling still "
-                    "reruns when the seed changes."
+                    "Reuse matching prompt/media encoding and unchanged workflow nodes. "
+                    "Off forces fresh conditioning at every stage, including refinement. "
+                    "Sampling still reruns when the seed changes."
                 ),
             )
         encoder_small_input = gr.Checkbox(
