@@ -8,7 +8,12 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
 
-from h3_app.catalog import LARRY_TURBO, LIGHTX2V_8STEP_TURBO
+from h3_app.catalog import (
+    LARRY_TURBO,
+    LIGHTX2V_8STEP_TURBO,
+    LTX25_POSTPROCESS_MODELS,
+    LTX25_UPSCALE,
+)
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.jobs import JOBS, check_cancelled
@@ -683,11 +688,16 @@ def ensure_seedvr2_upscale_models(
 
 
 def ensure_ltx25_upscale_models(
-    model_choice: str = DEFAULT_LTX25_MODEL, *, runtime: RuntimeConfig
+    model_choice: str = DEFAULT_LTX25_MODEL,
+    *,
+    runtime: RuntimeConfig,
+    option: str = LTX25_UPSCALE,
 ) -> bool:
-    """Lazily install the selected LTX base set and the 2x upscaler IC-LoRA."""
+    """Lazily install the selected LTX base set and post-processing IC-LoRA."""
+    if option not in LTX25_POSTPROCESS_MODELS:
+        raise H3Error(f"Unknown LTX-2.5 post-processing method: {option}")
+    upscaler_key = LTX25_POSTPROCESS_MODELS[option]
     base_downloaded = ensure_ltx25_models(model_choice, runtime=runtime)
-    upscaler_key = "ltx25_pixel_upscaler_x2"
     manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
     if not stale_model_keys(
         root=runtime.comfy_dir / "models",
@@ -700,7 +710,7 @@ def ensure_ltx25_upscale_models(
         root=runtime.comfy_dir / "models",
         manifest_path=manifest_path,
         token=resolve_hf_token(),
-        log_prefix="[ltx25-upscale-on-demand]",
+        log_prefix="[ltx25-postprocess-on-demand]",
         model_keys=(upscaler_key,),
         download_workers=1,
     )
@@ -709,7 +719,7 @@ def ensure_ltx25_upscale_models(
         runtime.comfy_dir / "models" / spec.folder / spec.local_name
     ):
         raise H3Error(
-            f"On-demand LTX-2.5 upscaler download did not produce {spec.local_name}."
+            f"On-demand LTX-2.5 post-processing download did not produce {spec.local_name}."
         )
     return True
 

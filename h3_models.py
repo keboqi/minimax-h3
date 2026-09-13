@@ -343,6 +343,18 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "ltx-2.5-22b-ic-lora-pixel-spatial-upscaler-x2-1.0.safetensors",
         "LTX-2.5 22B IC-LoRA generative pixel-space 2x video upscaler",
     ),
+    "ltx25_decompression": ModelSpec(
+        "Lightricks/LTX-2.5-22b-IC-LoRA-Decompression",
+        "loras",
+        "ltx-2.5-22b-ic-lora-decompression-0.9.safetensors",
+        "LTX-2.5 IC-LoRA compression artifact removal",
+    ),
+    "ltx25_deblur": ModelSpec(
+        "Lightricks/LTX-2.5-22b-IC-LoRA-Deblur",
+        "loras",
+        "ltx-2.5-22b-ic-lora-deblur-0.9.safetensors",
+        "LTX-2.5 IC-LoRA defocus restoration",
+    ),
     "ltx25_iclora_ingredients": ModelSpec(
         "Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients",
         "loras",
@@ -430,6 +442,8 @@ SEEDVR2_UPSCALE_MODEL_KEYS = (
 LAZY_POSTPROCESS_MODEL_KEYS = (
     *SEEDVR2_UPSCALE_MODEL_KEYS,
     "ltx25_pixel_upscaler_x2",
+    "ltx25_decompression",
+    "ltx25_deblur",
 )
 H3_LATENT_UPSCALER_MODEL_CHOICES = {
     "Balanced (BF16)": "h3_latent_upscaler_3d_bf16",
@@ -1091,6 +1105,8 @@ def selftest() -> None:
         "ltx25_spatial_upscaler",
         "ltx25_temporal_upscaler",
         "ltx25_pixel_upscaler_x2",
+        "ltx25_decompression",
+        "ltx25_deblur",
         "ltx25_iclora_ingredients",
         "ltx25_iclora_in_outpaint",
         "ltx25_iclora_motion_track",

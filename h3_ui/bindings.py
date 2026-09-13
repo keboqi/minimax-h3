@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 import gradio as gr
+from h3_app.catalog import LTX25_DEBLUR, LTX25_RESTORATION_OPTIONS
 from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 
 
@@ -236,13 +237,28 @@ def bind_gallery_view(
     delete: Callable[..., Any],
     empty: Callable[..., Any],
 ) -> None:
+    ltx_options = {ltx_option} | LTX25_RESTORATION_OPTIONS
     view.postprocess.change(
         lambda value: (
             gr.update(visible=value in ai_options),
             gr.update(visible=value == seedvr_option),
-            gr.update(visible=value == ltx_option),
-            gr.update(visible=value == ltx_option),
-            gr.update(visible=value == ltx_option),
+            gr.update(
+                visible=value in ltx_options,
+                info=(
+                    "Describe the source scene; focus restoration instructions are added automatically. "
+                    "Preserves source resolution. Uses the model selected in the LTX 2.5 tab."
+                    if value == LTX25_DEBLUR
+                    else "Describe the source scene; compression artifact removal instructions are added automatically. "
+                    "Preserves source resolution. Uses the model selected in the LTX 2.5 tab."
+                    if value in LTX25_RESTORATION_OPTIONS
+                    else "Optional but recommended. Uses the transformer selected in the LTX 2.5 tab."
+                ),
+            ),
+            gr.update(visible=value in ltx_options),
+            gr.update(visible=value in ltx_options),
+            gr.update(
+                visible=value in ai_options and value not in LTX25_RESTORATION_OPTIONS
+            ),
         ),
         inputs=view.postprocess,
         outputs=[
@@ -251,6 +267,7 @@ def bind_gallery_view(
             view.ltx25_prompt,
             view.split_upscale,
             view.split_seconds,
+            view.upscale_resolution,
         ],
         queue=False,
         show_progress="hidden",

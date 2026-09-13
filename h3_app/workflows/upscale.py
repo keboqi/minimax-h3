@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from h3_app.catalog import LTX25_SIGMAS, LTX25_UPSCALE, SEEDVR2_UPSCALE
+from h3_app.catalog import (
+    LTX25_DEBLUR,
+    LTX25_DECOMPRESSION,
+    LTX25_POSTPROCESS_MODELS,
+    LTX25_RESTORATION_OPTIONS,
+    LTX25_SIGMAS,
+    LTX25_UPSCALE,
+    SEEDVR2_UPSCALE,
+)
 from h3_app.errors import H3Error
 from h3_app.graph import Graph
 from h3_app.model_types import (
@@ -266,6 +274,27 @@ def required_ltx25_upscale_nodes() -> set[str]:
     }
 
 
+def ltx25_postprocess_prompt(option: str, prompt: str) -> str:
+    """Add restoration instructions to the user's source-scene description."""
+    scene = prompt.strip().rstrip(".") or "the scene in the source video"
+    if option == LTX25_DECOMPRESSION:
+        return (
+            f"Reference shows {scene}, with compression artifacts. "
+            "Edited shows the same scene with clean edges and restored detail. "
+            f"ENHANCE QUALITY {scene}. Preserve subject identity, framing, and "
+            "background geometry; remove macroblocking, chroma bleed, ringing, "
+            "and banding without changing the scene."
+        )
+    if option == LTX25_DEBLUR:
+        return (
+            f"Reference shows {scene}, out of focus with defocused blur. "
+            "Edited shows the same scene in sharp focus with crisp detail. "
+            f"DEBLUR {scene}. Preserve subject identity, framing, and background "
+            "geometry; change only focus and sharpness."
+        )
+    return prompt.strip() or "high quality, detailed video"
+
+
 def build_ltx25_upscale_graph(
     *,
     source_video: str,
@@ -279,10 +308,18 @@ def build_ltx25_upscale_graph(
     fps: float = 24.0,
     output_stamp: str = "0",
     output_nonce: str = "",
+    option: str = LTX25_UPSCALE,
 ) -> dict[str, Any]:
-    """Build Lightricks' single-stage IC-LoRA generative 2x upscaler."""
+    """Build single-stage IC-LoRA upscaling or same-resolution restoration."""
+    if option not in LTX25_POSTPROCESS_MODELS:
+        raise H3Error(f"Unknown LTX-2.5 post-processing method: {option}")
     names = ltx25_model_names(model_choice)
-    if target_width is None or target_height is None:
+    restoration = option in LTX25_RESTORATION_OPTIONS
+    if restoration:
+        # The restoration adapters use a 1x reference, not the upscaler's 2x.
+        base_width = target_width = snap32(width)
+        base_height = target_height = snap32(height)
+    elif target_width is None or target_height is None:
         base_width = snap32(width)
         base_height = snap32(height)
         target_width = base_width * 2
@@ -312,7 +349,7 @@ def build_ltx25_upscale_graph(
     upscaler = graph.add(
         "LTXICLoRALoaderModelOnly",
         model=Graph.out(base_model),
-        lora_name=MODEL_SPECS["ltx25_pixel_upscaler_x2"].local_name,
+        lora_name=MODEL_SPECS[LTX25_POSTPROCESS_MODELS[option]].local_name,
         strength_model=1.0,
     )
     clip = graph.add(
@@ -323,7 +360,7 @@ def build_ltx25_upscale_graph(
     positive = graph.add(
         "CLIPTextEncode",
         clip=Graph.out(clip),
-        text=(prompt.strip() or "high quality, detailed video"),
+        text=ltx25_postprocess_prompt(option, prompt),
     )
     negative = graph.add("CLIPTextEncode", clip=Graph.out(clip), text="")
     conditioned = graph.add(
@@ -348,7 +385,7 @@ def build_ltx25_upscale_graph(
         image=Graph.out(guide),
         frame_idx=0,
         strength=1.0,
-        latent_downscale_factor=Graph.out(upscaler, 1),
+        latent_downscale_factor=1 if restoration else Graph.out(upscaler, 1),
         crop="disabled",
         use_tiled_encode=True,
         tile_size=512,
@@ -400,6 +437,15 @@ def build_ltx25_upscale_graph(
         temporal_size=128,
         temporal_overlap=32,
     )
+    if restoration and (target_width, target_height) != (width, height):
+        images = graph.add(
+            "ImageScale",
+            image=Graph.out(images),
+            upscale_method="lanczos",
+            width=width,
+            height=height,
+            crop="disabled",
+        )
     video = graph.add(
         "CreateVideo",
         images=Graph.out(images),
@@ -410,7 +456,11 @@ def build_ltx25_upscale_graph(
     graph.add(
         "SaveVideo",
         video=Graph.out(video),
-        filename_prefix=f"ltx25/upscale_{output_stamp}",
+        filename_prefix=(
+            f"ltx25/{LTX25_POSTPROCESS_MODELS[option].removeprefix('ltx25_')}_{output_stamp}"
+            if restoration
+            else f"ltx25/upscale_{output_stamp}"
+        ),
         format="auto",
         codec="auto",
     )
@@ -420,7 +470,7 @@ def build_ltx25_upscale_graph(
 def required_upscale_nodes(option: str) -> set[str]:
     if option == SEEDVR2_UPSCALE:
         return required_seedvr2_upscale_nodes()
-    if option == LTX25_UPSCALE:
+    if option in LTX25_POSTPROCESS_MODELS:
         return required_ltx25_upscale_nodes()
     raise H3Error(f"Unknown AI post-processing method: {option}")
 
@@ -442,7 +492,7 @@ def build_upscale_graph(
     output_stamp: str = "0",
     output_nonce: str = "",
 ) -> tuple[dict[str, Any], int]:
-    """Build one selected AI-upscale workflow and return its sampler steps."""
+    """Build one selected AI post-processing workflow and return its sampler steps."""
     if option == SEEDVR2_UPSCALE:
         return (
             build_seedvr2_upscale_graph(
@@ -458,11 +508,14 @@ def build_upscale_graph(
             ),
             1,
         )
-    if option == LTX25_UPSCALE:
+    if option in LTX25_POSTPROCESS_MODELS:
         if width is None or height is None:
-            raise H3Error("LTX-2.5 upscaling requires the source video dimensions.")
+            raise H3Error(
+                "LTX-2.5 post-processing requires the source video dimensions."
+            )
         return (
             build_ltx25_upscale_graph(
+                option=option,
                 source_video=source_video,
                 output_stamp=output_stamp,
                 output_nonce=output_nonce,

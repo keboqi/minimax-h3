@@ -26,7 +26,7 @@ bundled FirstBlockCache node.
 - Optional model offload at every H3 stage boundary, automatically required for BF16
 - Default-on reuse of unchanged prompt and image/audio/video conditioning through
   content-addressed ComfyUI input staging
-- Per-video SeedVR2 or LTX-2.5 IC-LoRA 2x upscale and frame interpolation
+- Per-video SeedVR2 or LTX-2.5 IC-LoRA 2x upscale, LTX-2.5 decompression/deblur, and frame interpolation
 - Selectable SeedVR2 target-frame preprocessing for start/end frames and reference
   images, with downloadable results and no forced downscaling
 - Optional generation-stage MiniMax H3 latent 2x upscale, with Balanced BF16,
@@ -233,7 +233,7 @@ bash run_h3.sh
 
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
 Singularity pruned v1.3 INT8 checkpoint plus the Fast NVFP4/AWQ text encoder, default FP32 latent-upscaler checkpoint, shared VAEs, and default 4-step Turbo LoRAs. The Speed, Quality and Original checkpoints plus the selectable 8-step Turbo LoRA download on demand when selected; the Balanced preset's 6-step Larry LoRA is preloaded. SeedVR2 models, the
-LTX-2.5 2x upscaler IC-LoRA, and SwiftVR checkpoints are lazy and download only
+LTX-2.5 upscaler and restoration IC-LoRAs, and SwiftVR checkpoints are lazy and download only
 when their post-processing option is first used. The installer pins the official
 SwiftVR inference source; no SWIFTVR_CHECKPOINT_DIR is required unless you want
 to use an existing checkpoint directory. The experimental
@@ -472,9 +472,22 @@ lower peak VRAM is more important than avoiding an H3 model reload on the next
 generation. **48 fps interpolation** remains available as a non-upscale option
 and requires FFmpeg on the server `PATH`.
 
+Gallery also offers **LTX-2.5 IC-LoRA Decompression** to remove compression
+artifacts and **LTX-2.5 IC-LoRA Deblur** to restore defocused footage. These
+options preserve the source resolution and audio; the target-resolution selector
+is hidden. Describe the source scene in **LTX-2.5 scene prompt**; the appropriate
+restoration instructions are added automatically. Both use a single-stage,
+1x-reference IC-LoRA workflow with the base model selected in the **LTX 2.5** tab.
+The adapters download on first use and require access to their separate gated
+[Decompression](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Decompression)
+and [Deblur](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Deblur)
+repositories. Deblur targets defocus, not motion blur. Use **Split source into
+clips before LTX processing** for restoration clips that exceed available VRAM.
+
 LTX-2.5 upscaling remains a single full-video pass by default. If a long or
 high-resolution source runs out of VRAM, enable **Split source into clips before
-LTX upscaling** in Gallery or the MiniMax H3 post-processing settings. The
+LTX processing** in Gallery, or **Split source into clips before LTX upscaling**
+in the MiniMax H3 post-processing settings. The
 default target is 5 seconds per clip; cuts are adjusted to LTX-compatible frame
 counts, clips are upscaled sequentially, and their video streams are joined
 without an additional video encode. The final file is trimmed to the original

@@ -1607,6 +1607,8 @@ def selftest() -> None:
     assert app.POSTPROCESS_OPTIONS == [
         app.SEEDVR2_UPSCALE,
         app.LTX25_UPSCALE,
+        app.LTX25_DECOMPRESSION,
+        app.LTX25_DEBLUR,
         app.SWIFTVR_UPSCALE,
         "48 fps interpolation",
     ]

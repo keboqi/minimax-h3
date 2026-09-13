@@ -155,6 +155,11 @@ from h3_app.catalog import (
     CHUNK_FEED_FORWARD_NODE,
     COMFY_PROXY_PATH,
     COMFY_UPSCALE_OPTIONS,
+    COMFY_POSTPROCESS_OPTIONS,
+    LTX25_DECOMPRESSION,
+    LTX25_DEBLUR,
+    LTX25_POSTPROCESS_MODELS,
+    LTX25_RESTORATION_OPTIONS,
     CORE_LORA_LOADER_NODE,
     CORE_SAMPLER_NODE,
     DEFAULT_ACCELERATOR,
@@ -1028,10 +1033,10 @@ def ensure_seedvr2_upscale_models(
 
 
 def ensure_ltx25_upscale_models(
-    model_choice: str = DEFAULT_LTX25_MODEL,
+    model_choice: str = DEFAULT_LTX25_MODEL, *, option: str = LTX25_UPSCALE,
 ) -> bool:
     return model_service.ensure_ltx25_upscale_models(
-        model_choice, runtime=_runtime_config()
+        model_choice, runtime=_runtime_config(), option=option,
     )
 
 
@@ -2755,7 +2760,7 @@ def postprocess_selected_gallery_video(
             )
             return
 
-        if option not in COMFY_UPSCALE_OPTIONS:
+        if option not in COMFY_POSTPROCESS_OPTIONS:
             result = postprocess_video(source, option)
             progress(1, desc="Complete")
             yield gallery_processed_result(
@@ -2778,18 +2783,25 @@ def postprocess_selected_gallery_video(
             downloaded = ensure_seedvr2_upscale_models(models, seedvr2_model)
             stage_bucket = "seedvr2_upscale"
         else:
-            model_status = f"LTX-2.5 {ltx25_model} and 2x IC-LoRA"
+            model_status = f"{option} with {ltx25_model}"
             yield gallery_progress_result(f"Checking {model_status} models")
-            downloaded = ensure_ltx25_upscale_models(ltx25_model)
-            stage_bucket = "ltx25_upscale"
+            downloaded = ensure_ltx25_upscale_models(ltx25_model, option=option)
+            stage_bucket = (
+                LTX25_POSTPROCESS_MODELS[option]
+                if option in LTX25_RESTORATION_OPTIONS else "ltx25_upscale"
+            )
 
         if downloaded:
             yield gallery_progress_result(f"{option} models downloaded")
         metadata = probe_video_metadata(source)
-        target_width, target_height = upscale_target_dimensions(
-            metadata.width, metadata.height, upscale_resolution
+        target_width, target_height = (
+            (metadata.width, metadata.height)
+            if option in LTX25_RESTORATION_OPTIONS
+            else upscale_target_dimensions(
+                metadata.width, metadata.height, upscale_resolution
+            )
         )
-        use_split = option == LTX25_UPSCALE and bool(split_upscale)
+        use_split = option in LTX25_POSTPROCESS_MODELS and bool(split_upscale)
         clip_batch = prepare_upscale_clip_batch(
             source,
             category=stage_bucket,
@@ -2859,7 +2871,7 @@ def postprocess_selected_gallery_video(
                 )
                 for stage, completed_nodes, total_nodes, step, step_total in updates:
                     if stage == "Generating video and audio":
-                        stage = f"Upscaling with {option}"
+                        stage = f"Processing with {option}"
                     if step is not None and step_total:
                         progress(
                             (clip_index * step_total + step, clip_count * step_total),
@@ -2891,7 +2903,7 @@ def postprocess_selected_gallery_video(
                     resolve_output(wait_for_history(prompt_id), queued_at)
                 )
             yield gallery_progress_result(
-                f"Concatenating {clip_count} upscaled clips and restoring source audio"
+                f"Concatenating {clip_count} processed clips and restoring source audio"
             )
             result = concat_upscaled_clips(
                 source,
@@ -2922,7 +2934,7 @@ def postprocess_selected_gallery_video(
         )
         for stage, completed_nodes, total_nodes, step, step_total in updates:
             if stage == "Generating video and audio":
-                stage = f"Upscaling with {option}"
+                stage = f"Processing with {option}"
             if step is not None and step_total:
                 progress((step, step_total), desc=stage)
             elif total_nodes:

@@ -86,6 +86,24 @@ class UiContractTests(unittest.TestCase):
             self.assertIsNone(parameter["parameter_default"])
 
 
+    def test_gallery_restoration_controls(self) -> None:
+        method = next(c for c in self.config["components"]
+                      if c.get("props", {}).get("label") == "Method")
+        choices = [choice[0] for choice in method["props"]["choices"]]
+        change = next(d for d in self.config["dependencies"]
+                      if any(t[0] == method["id"] and t[1] == "change" for t in d["targets"]))
+        callback = self.demo.fns[change["id"]].fn
+        for option in (gradio_app.LTX25_DECOMPRESSION, gradio_app.LTX25_DEBLUR):
+            self.assertIn(option, choices)
+            updates = callback(option)
+            self.assertEqual([u["visible"] for u in updates],
+                             [True, False, True, True, True, False])
+            self.assertIn("Preserves source resolution", updates[2]["info"])
+        self.assertEqual([u["visible"] for u in callback(gradio_app.LTX25_UPSCALE)],
+                         [True, False, True, True, True, True])
+        self.assertEqual([u["visible"] for u in callback(gradio_app.SEEDVR2_UPSCALE)],
+                         [True, True, False, False, False, True])
+
     def test_real_tabs_own_each_view(self) -> None:
         tabs = next(
             component

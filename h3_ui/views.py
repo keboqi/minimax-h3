@@ -330,7 +330,7 @@ def build_gallery_view(
                             ),
                         )
                         ltx25_prompt = gr.Textbox(
-                            label="LTX-2.5 upscale prompt",
+                            label="LTX-2.5 scene prompt",
                             placeholder="Describe the source scene and desired fine detail",
                             lines=3,
                             visible=False,
@@ -343,13 +343,13 @@ def build_gallery_view(
                             force_offload = gr.Checkbox(
                                 value=False,
                                 label="Unload resident models first",
-                                info="Can lower peak VRAM before AI upscaling starts.",
+                                info="Can lower peak VRAM before AI processing starts.",
                             )
                         split_upscale = gr.Checkbox(
                             value=False,
-                            label="Split source into clips before LTX upscaling",
+                            label="Split source into clips before LTX processing",
                             info=(
-                                "Opt in after an out-of-VRAM error. Upscales clips "
+                                "Opt in after an out-of-VRAM error. Processes clips "
                                 "independently, then concatenates them."
                             ),
                             visible=False,
