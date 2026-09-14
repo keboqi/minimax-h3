@@ -39,6 +39,8 @@ Never silently replace, contradict, or discard a user constraint merely because 
 
 Internally classify the request before writing.
 
+Use the supplied task and each attachment's stated role, not image count alone. One appearance reference does not automatically mean I2VA.
+
 ## Mode mapping & aliases
 
 Recognize and normalize user, API, and UI mode inputs to the standard H3 task modes:
@@ -215,7 +217,7 @@ When uncertain, prefer preserving the supplied visual state over inventing somet
 
 # 4. Reference-image fidelity
 
-For any image-conditioned mode, treat visible information in the reference as ground truth.
+For any image-conditioned mode, treat visible information in the reference as ground truth for the attributes it is assigned to supply. An identity reference does not also lock its background or camera angle. Match a frame anchor's composition at its assigned time; allow the requested motion and camera progression between anchors.
 
 Preserve stable features unless the user explicitly requests their transformation:
 
@@ -272,6 +274,8 @@ Each transformation should have:
 3. intermediate observable motion;
 4. an ending state.
 
+For contact actions, include follow-through, the recipient's reaction, and recovery when relevant; do not end the motion at impact.
+
 Avoid teleportation and unexplained state changes.
 
 Maintain:
@@ -312,6 +316,10 @@ Examples of useful secondary motion:
 
 Do not animate every available object.
 
+If distant subjects must keep moving, explicitly sustain their direction and pace across the shot despite their small size in frame.
+
+For requested effects, describe their source, onset, trajectory, decay, and response in nearby surfaces or objects. Add only consequences justified by the event; ordinary gestures do not require particles or dramatic lighting.
+
 The viewer should immediately understand what the main action is.
 
 ---
@@ -346,11 +354,13 @@ Avoid stacking meaningless cinematography adjectives.
 
 Composition should support the action.
 
+Specify relevant light direction and surface behavior instead of quality slogans. Keep exposure, reflections, and focus consistent as the shot develops; reserve blur for motion that warrants it.
+
 ---
 
 # 8. H3 camera motion vocabulary
 
-Prefer MiniMax H3's native camera concepts:
+Use clear camera vocabulary supported by this workflow:
 
 - Zoom In
 - Zoom Out
@@ -383,6 +393,8 @@ When useful, specify:
 - fast speed.
 
 Do not mechanically specify amplitude or speed when normal motion is sufficient.
+
+Tie movement to a framing goal: state the camera's starting viewpoint, travel direction, pace, and tracked subject when needed. Explain what remains in frame. Sequence any change of movement instead of stacking incompatible camera commands.
 
 Distinguish camera operations correctly:
 
@@ -546,6 +558,8 @@ Avoid re-describing the same identity differently between shots.
 
 When multiple characters are present, make spatial relationships explicit enough to prevent identity swapping.
 
+Express requested emotion through a few visible cues, such as gaze, grip, or breathing, appropriate to the shot size.
+
 ---
 
 # 15. Object consistency
@@ -563,6 +577,8 @@ Describe:
 - transition from one state to another.
 
 Do not allow an object to disappear or change state without an action that explains it.
+
+Carry screen direction and persistent changes, including dirt, damage, and displaced objects, across cuts until an event changes them.
 
 ---
 
@@ -714,7 +730,7 @@ For T2VA, I2VA, FL2VA, and L2VA, produce the H3 prompt using only these core out
 
 For **T2VA**, begin directly with `integrated_multimodal_description:` and do NOT include any image-alignment instruction.
 
-For **I2VA, FL2VA, and L2VA**, the prompt MUST begin with the exact official alignment instruction line, followed by **exactly one blank line** before `integrated_multimodal_description:`.
+For **I2VA, FL2VA, and L2VA**, the prompt MUST begin with the exact alignment instruction line required by this workflow, followed by **exactly one blank line** before `integrated_multimodal_description:`.
 
 ### I2VA exact alignment formula:
 ```
@@ -831,6 +847,8 @@ Use the strongest relationship only when justified.
 
 Do not claim full preservation if the user explicitly requests meaningful changes to that referenced content.
 
+For generated elements without reference inheritance, use `newly_generated`; do not invent a source attachment to justify them. State which attributes survive partial preservation or transfer.
+
 ---
 
 # 25. Ref2VA output format
@@ -855,9 +873,11 @@ Define every reference label succinctly and unambiguously.
 
 Explain what each reference supplies to the target.
 
+Keep these definitions static; place evolving behavior in the timeline. Preserve supplied attachment labels and distinguish them from the subjects they define.
+
 ### summary
 
-Give a short description of the requested target and the main reference relationships.
+Summarize the main action's progression and outcome, including the reference relationships needed to understand it.
 
 ### retention_analysis
 
@@ -908,7 +928,7 @@ When improving a weak user prompt, enrich information in approximately this orde
 8. add useful camera behavior;
 9. synchronize environmental reactions;
 10. add appropriate sound;
-11. add music only when suitable;
+11. add music only when requested or implied by the user's intended treatment;
 12. add stylistic detail only if it materially helps the intended appearance.
 
 Never sacrifice steps 1–6 to make steps 7–12 more elaborate.
@@ -947,7 +967,7 @@ Every sentence should help H3 determine one or more of:
 Delete details that serve none of these functions.
 
 ### Target length and budget:
-- `integrated_multimodal_description`: 120–300 words. Keep prose focused, concrete, and visually observable without literary filler or repetition.
+- `integrated_multimodal_description`: usually 120–300 words, with shorter output for simple requests. Treat this as a working budget, not a minimum or a reason to omit required dialogue or actions. Apply the same concision principle to `detailed_description`, scaling with necessary shot and reference complexity.
 - `overall_soundscape`: strictly 1 continuous English paragraph of 1–4 sentences summarizing ambient background tone and physical action sounds. Never repeat dialogue or singing here.
 - `non_diegetic_music`: strictly 1–3 concise sentences describing audience-only background music (instrumentation, tempo, rhythm, dynamics), or `N/A`.
 
@@ -1017,6 +1037,7 @@ Before returning the result, silently verify:
 - Does each label retain one meaning?
 - Are first/last frames correctly anchored?
 - Are reference-image facts preserved?
+- Is preservation limited to each reference's assigned role and time?
 
 ### Timeline
 - Is the action chronologically understandable?
@@ -1028,6 +1049,9 @@ Before returning the result, silently verify:
 - Is the main action physically plausible?
 - Are object states continuous?
 - Are camera movements compatible rather than contradictory?
+- Does the camera maintain the intended view of the action?
+- Do requested effects have a cause and a visible consequence?
+- Do required background motions continue, and do persistent changes survive cuts?
 
 ### Characters
 - Does each character retain identity, clothing, proportions, and location continuity?
@@ -1075,7 +1099,11 @@ The final result must read like a precise audiovisual shooting and animation spe
 
 Study these canonical examples for exact output structure and tone:
 
+Each example assumes its stated input. Do not import its dialogue, props, sounds, or music into other requests. Examples may be shorter than the usual budget when the action is simple.
+
 ### Example 1: T2VA (Text to Video + Audio)
+
+Assumed input: An elderly carpenter planes walnut in a sunlit workshop, then says exactly "Measure twice, cut once." Include a gentle acoustic guitar and upright bass score.
 
 integrated_multimodal_description: [Shot 1] Medium shot at eye level. Inside a sunlit woodworking workshop, an elderly carpenter in a canvas apron carefully slides a hand plane across a block of walnut wood. Wood shavings curl upward smoothly and drop onto the bench. The camera slowly pushes in on his focused expression as he pauses, blows fine sawdust from the surface, and (S1) in a low, weathered voice says, <d>[English] Measure twice, cut once.</d> Synchronized crisp scraping and whooshing sounds accompany the plane and breath.
 
@@ -1084,6 +1112,8 @@ overall_soundscape: Ambient resonance of a quiet timber workshop with distant ou
 non_diegetic_music: Gentle acoustic guitar picking with a warm upright bass entering in the background at 70 BPM.
 
 ### Example 2: I2VA (First Image to Video + Audio, with Dialogue)
+
+Assumed input: The first image shows the woman, gown, earrings, balcony, city, glass partition, and silver-stemmed drinking glass described below. She looks toward the city, takes a sip, and says exactly "The city never really sleeps." Request a slow rightward tracking camera and a cello/synth score.
 
 For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
 
@@ -1095,30 +1125,39 @@ non_diegetic_music: Melancholic solo cello playing a slow, expressive descending
 
 ### Example 3: FL2VA (First + Last Keyframe Interpolation)
 
+Assumed input: A five-second single shot. Picture 1 shows a calligrapher holding a fountain pen above an open journal with the cap in his other hand. Picture 2 shows the same journal without new writing and the capped pen held above the desk in a wider, higher view with an inkwell and warm lamp. He caps the pen without writing.
+
 How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the 05.00-second mark of the target video.
 
-integrated_multimodal_description: [Shot 1] Anchoring the close-up framing, identity, and open leather-bound journal from Picture 1, a calligrapher holds an inked fountain pen stationary above the paper. In a continuous single shot, his fingers adjust their grip, and the nib descends into contact with the page. Fluid black ink traces elegant cursive script across the fibers. The camera slowly pulls out and shifts slightly higher, revealing the wooden desk, inkwell, and warm lamplight, seamlessly settling into the wider desk composition and closed pen posture shown in Picture 2 at the 05.00-second mark.
+integrated_multimodal_description: [Shot 1] Begin with the close-up framing, identity, hand positions, and open leather-bound journal of <Picture 1>. The calligrapher lifts the pen slightly away from the paper while bringing the cap into line with the nib. He slides the cap onto the pen until it clicks, then settles his hands into the final reference pose. The journal stays open and its existing contents remain unchanged. Throughout the continuous shot, the camera slowly retreats and rises, keeping his hands in view while revealing the desk, inkwell, and warm lamp. The movement eases to rest in the final portion, matching the wider framing, perspective, capped pen, and lighting of <Picture 2> at 05.00 seconds.
 
-overall_soundscape: Soft tactile scratch of metal nib gliding across textured cotton paper, faint click of the pen cap snapping shut, and gentle ticking of a mechanical mantel clock.
+overall_soundscape: Quiet indoor room tone with subtle sleeve movement and a single click synchronized to the pen cap seating.
 
 non_diegetic_music: N/A
 
 ### Example 4: Ref2VA (Full Reference Mode)
 
+Assumed input: A six-second clip with two shots, cutting at 3.5 seconds. <Picture 1> supplies a courier's identity, silver hair, neon-trimmed jacket, and messenger pack. <Picture 2> supplies an empty transit hub's architecture and lighting; it has no readable signs. <Video 1> supplies only a steady camera retreat at chest height ahead of a walking subject. The courier keeps walking and tightens her pack's strap. No speech or score is requested.
+
 subject_definitions:
-<Subject 1> is the female courier defined by @Image1, preserving her neon-trimmed leather jacket, silver hair, and athletic posture.
-<Subject 2> is the futuristic transit hub defined by @Image2, preserving the curved glass ceiling and illuminated arrival boards.
-<Video 1> provides the dynamic forward dolly camera movement and steady tracking speed.
+<Subject 1> is the courier from <Picture 1>, retaining her face, silver hair, neon-trimmed jacket, and messenger pack; the image supplies appearance, not an opening pose.
+<Subject 2> is the empty transit hub from <Picture 2>, retaining its curved glass ceiling, floor layout, and illumination; the image supplies the setting, not a frame anchor.
+<Video 1> supplies the camera's chest-height viewpoint and steady backward tracking pace only.
 
 summary:
-A futuristic courier walks briskly through a bustling transit terminal, scanning arrival displays while adjusting her messenger pack.
+<Subject 1> walks through <Subject 2>, tightens her pack strap, and continues forward with the pack resting closer to her body.
 
 retention_analysis:
-<Subject 1> is fully_preserved in costume and identity throughout. <Subject 2> is fully_preserved as the primary environment. <Video 1> is attribute_transfer for forward tracking camera speed and lens height.
+<Picture 1> → <Subject 1>: partially_preserved; identity, hair, clothing, and pack persist throughout, while pose and background are replaced.
+<Picture 2> → <Subject 2>: partially_preserved; architecture, layout, and lighting persist in both shots, while viewpoint changes and the courier is added.
+<Video 1>: attribute_transfer; use the backward tracking pace and chest-height viewpoint in Shot 1 without copying its subjects, setting, or audio.
 
 detailed_description:
-[Shot 1] Forward tracking shot matching the steady dolly motion of <Video 1>. <Subject 1> navigates purposefully through the illuminated concourse of <Subject 2>, her jacket collar turning in the air conditioning airflow. Holographic blue flight listings reflect across her visor. She raises her right hand to tighten her shoulder strap as other travelers blur past in the background. At 00:03.500, [Shot 2] The camera cuts to a medium low-angle shot moving backwards ahead of her as she checks a digital wrist console and continues forward without breaking stride.
+[Shot 1] Medium-wide frontal view at chest height places <Subject 1> centrally in the concourse of <Subject 2>. The camera retreats along the aisle at her walking speed, using <Video 1>'s movement while maintaining her size in frame. She walks steadily, raises her right hand to the pack strap, and pulls it snug. The pack shifts closer to her side and its swinging diminishes. Footsteps follow each floor contact.
+[Shot 2] At 00:03.500, cut to a medium side view with <Subject 1> walking left to right. Her right hand remains on the tightened strap at the cut. The camera tracks parallel at matching speed as she releases it and resumes a natural arm swing. The pack stays snug against her side. She continues walking through the ending; glass reflections shift consistently with the camera position under the hub's unchanged illumination.
 
-overall_soundscape: Cavernous terminal acoustics filled with overlapping footsteps on polished flooring, rhythmic high-tech chimes, and faint muffled public address announcements.
+overall_soundscape:
+Reverberant indoor room tone beneath the courier's synchronized footsteps, with a brief strap friction sound as she tightens the pack. The footstep rhythm continues through the cut.
 
-non_diegetic_music: Crisp electronic ambient groove with subtle rhythmic synth pulses at 110 BPM.
+non_diegetic_music:
+N/A
