@@ -31,8 +31,8 @@ bundled FirstBlockCache node.
   images, with downloadable results and no forced downscaling
 - Optional generation-stage MiniMax H3 latent 2x upscale, with Balanced BF16,
   Fast FP16, and Quality FP32 model choices
-- Selectable Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
-  including dedicated Ref2V adapters for both step counts
+- Selectable TaoMate-H3 3-step, Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
+  including dedicated LightX2V Ref2V adapters for 4 and 8 steps
 - Audio-safe SLA block-sparse attention by default, with selectable SageAttention 2,
   Comfy Kitchen comparison, and optional
   H3-native zero-copy Sol v0.6.2 sparse attention
@@ -205,6 +205,13 @@ forecast before a completed native refresh, which limits both acceleration and
 trajectory error at four to eight steps. Compare the same prompt and seed with
 Acceleration Off before relying on it for quality-critical output.
 
+[TaoMate-H3 3-step](https://huggingface.co/CZMartin22/TaoMate-H3-3step-ComfyUI)
+is available under **Turbo implementation** and downloads its BF16 LoRA on first
+use. Selecting it sets 3 steps and the simple scheduler; generation uses Euler,
+LoRA strength 1.0, and the existing unguided sampler (CFG 1.0). It supports
+**Text to video** and **First / last frame** with the FL2VA base. The same adapter
+is also available for **Reference media** generation with Ref2VA.
+
 Turbo defaults to the LightX2V four-step adapter at strength 1.0 (FL2V v1.2
 768p or the dedicated Ref2V 544p adapter). Larry v4-600 EMA remains available
 at six steps through its pinned custom node, which uses a quantization-aware
@@ -245,7 +252,7 @@ bash run_h3.sh
 ```
 
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
-Singularity pruned v1.3 INT8 checkpoint plus the Fast NVFP4/AWQ text encoder, default FP32 latent-upscaler checkpoint, shared VAEs, and default 4-step Turbo LoRAs. The Speed, Quality and Original checkpoints plus the selectable 8-step Turbo LoRA download on demand when selected; the Balanced preset's 6-step Larry LoRA is preloaded. SeedVR2 models, the
+Singularity pruned v1.3 INT8 checkpoint plus the Fast NVFP4/AWQ text encoder, default FP32 latent-upscaler checkpoint, shared VAEs, and default 4-step Turbo LoRAs. The Speed, Quality and Original checkpoints plus the selectable 3-step and 8-step Turbo LoRAs download on demand when selected; the Balanced preset's 6-step Larry LoRA is preloaded. SeedVR2 models, the
 LTX-2.5 upscaler and restoration IC-LoRAs, and SwiftVR checkpoints are lazy and download only
 when their post-processing option is first used. The installer pins the official
 SwiftVR inference source; no SWIFTVR_CHECKPOINT_DIR is required unless you want

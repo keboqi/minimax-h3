@@ -69,6 +69,8 @@ class ModelConfig:
     seedvr2_models: dict[str, str] | None = None
     seedvr2_vae: str | None = None
     seedvr2_vae_source: str = "unknown"
+    taomate_turbo_lora: str | None = None
+    taomate_turbo_source: str = "unknown"
 
     def profile_key(self, name: str) -> str:
         key = str(name).strip().lower()

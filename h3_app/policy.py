@@ -27,6 +27,7 @@ from h3_app.catalog import (
     SINGLE_FRAME_IMAGE_VAE,
     SLA_PRESET_INPUTS,
     TURBO_SETTINGS,
+    TAOMATE_3STEP_TURBO,
     UPSCALE_RESOLUTION_PRESETS,
 )
 from h3_app.errors import H3Error
@@ -81,11 +82,15 @@ def lightx2v_uses_768p_schedule(turbo_variant: str, lora_filename: str | None) -
 
 
 def turbo_sampler_name(turbo_variant: str, lora_filename: str | None) -> str:
-    # ModelTC's official ComfyUI guide defaults every LightX2V Turbo LoRA to
-    # Euler. A missing LoRA means normal generation and keeps res_multistep.
+    # LightX2V and TaoMate recommend Euler. A missing LoRA means normal
+    # generation and keeps res_multistep.
     return (
         "euler"
         if is_lightx2v_turbo_lora(turbo_variant, lora_filename)
+        or (
+            lora_filename
+            and normalize_turbo_variant(turbo_variant) == TAOMATE_3STEP_TURBO
+        )
         else "res_multistep"
     )
 

@@ -14,7 +14,12 @@ from .resources import resolve_decoders
 LIGHTX2V_4STEP = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
 LIGHTX2V_8STEP = "LightX2V v1.0 / 8-step 768p"
 LARRY = "Larry v4-600 EMA"
-TURBO_STEPS = {LIGHTX2V_4STEP: 4, LIGHTX2V_8STEP: 8, LARRY: 6}
+TAOMATE_3STEP = "TaoMate-H3 / 3-step"
+TURBO_STEPS = {LIGHTX2V_4STEP: 4, LIGHTX2V_8STEP: 8, LARRY: 6, TAOMATE_3STEP: 3}
+
+
+def turbo_minimum_steps(variant: str) -> int:
+    return 3 if variant == TAOMATE_3STEP else 4
 
 
 @dataclass(frozen=True)
@@ -253,7 +258,11 @@ def resolve_settings(
         inactive.add("sla_preset")
     if request.mode != "First / last frame":
         inactive.add("auto_megapixels")
-    minimum = 4 if request.generation_mode == "Turbo" else 10
+    minimum = (
+        turbo_minimum_steps(sampling.turbo_variant)
+        if request.generation_mode == "Turbo"
+        else 10
+    )
     if sampling.steps < minimum:
         issues.append(
             f"{request.generation_mode} requires at least {minimum} sampling steps."

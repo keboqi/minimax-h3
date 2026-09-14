@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from h3_app.catalog import (
     LARRY_TURBO,
+    TAOMATE_3STEP_TURBO,
     LIGHTX2V_8STEP_TURBO,
     LTX25_POSTPROCESS_MODELS,
     LTX25_UPSCALE,
@@ -83,6 +84,12 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
         video_vae_int8_source=data.get("video_vae_int8_source", "unknown"),
         image_vae_500k=data.get("image_vae_500k"),
         image_vae_500k_source=data.get("image_vae_500k_source", "unknown"),
+        taomate_turbo_lora=data.get(
+            "taomate_turbo_lora", MODEL_SPECS["taomate_turbo_lora"].local_name
+        ),
+        taomate_turbo_source=data.get(
+            "taomate_turbo_source", MODEL_SPECS["taomate_turbo_lora"].source
+        ),
         turbo_lora=data.get("turbo_lora"),
         turbo_source=data.get("turbo_source", "unknown"),
         turbo_ref_lora=data.get("turbo_ref_lora", data.get("turbo_lora")),
@@ -374,7 +381,10 @@ def ensure_turbo_lora(
     """Download a non-default Turbo LoRA only when its variant is selected."""
     variant = normalize_turbo_variant(turbo_variant)
     reference = str(mode).strip().lower() == "reference media"
-    if variant == LARRY_TURBO:
+    if variant == TAOMATE_3STEP_TURBO:
+        model_key = "taomate_turbo_lora"
+        filename = models.taomate_turbo_lora
+    elif variant == LARRY_TURBO:
         model_key = "larry_turbo_lora"
         filename = models.larry_turbo_ref_lora if reference else models.larry_turbo_lora
     elif variant == LIGHTX2V_8STEP_TURBO:

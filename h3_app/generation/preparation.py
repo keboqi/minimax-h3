@@ -19,6 +19,7 @@ from h3_app.catalog import (
 )
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
+from h3_app.settings import turbo_minimum_steps
 from h3_app.model_types import (
     ModelConfig,
     ltx25_model_keys,
@@ -276,8 +277,9 @@ def prepare_h3(
     effective_scheduler = str(request.sampling.scheduler)
 
     if use_turbo:
-        if effective_steps < 4:
-            raise H3Error("Turbo requires at least 4 steps.")
+        minimum = turbo_minimum_steps(selected_turbo)
+        if effective_steps < minimum:
+            raise H3Error(f"Turbo requires at least {minimum} steps.")
     elif effective_steps < 10:
         raise H3Error(
             "Normal H3 generation requires at least 10 steps. "

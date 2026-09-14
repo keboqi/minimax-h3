@@ -3075,6 +3075,11 @@ def backend_status() -> str:
                 f"**{profile.label}** · FL2VA `{profile.fl2va}` · "
                 f"Ref2VA `{profile.ref2va}`"
             )
+        if models.taomate_turbo_lora:
+            profile_lines.append(
+                f"**TaoMate-H3 / 3-step** | LoRA `{models.taomate_turbo_lora}` | "
+                "FL2VA / Ref2VA | Euler/simple | strength 1.0 | downloads on first use"
+            )
         if models.larry_turbo_lora:
             profile_lines.append(
                 f"**Larry Turbo v4-600 EMA** | LoRA `{models.larry_turbo_lora}` | "

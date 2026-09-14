@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from h3_app.settings import PRESETS
+from h3_app.settings import PRESETS, TAOMATE_3STEP as TAOMATE_3STEP_TURBO
 from h3_models import (
     DEFAULT_H3_LATENT_UPSCALER_MODEL,
     DEFAULT_LTX25_MODEL,
@@ -461,6 +461,12 @@ class TurboSpec:
 
 
 TURBO_SETTINGS = {
+    TAOMATE_3STEP_TURBO: TurboSpec(
+        steps=3,
+        strength=1.0,
+        lora_attr="taomate_turbo_lora",
+        ref_lora_attr="taomate_turbo_lora",
+    ),
     LARRY_TURBO: TurboSpec(
         steps=6,
         strength=1.0,

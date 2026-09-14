@@ -51,13 +51,14 @@ def build_output_section(
                 ),
             )
             steps = gr.Slider(
-                4,
+                3,
                 30,
                 value=defaults["steps"],
                 step=1,
                 label="Steps",
                 info=(
-                    "LightX2V 4-step is the default Turbo variant; Larry and the "
+                    "TaoMate uses 3 steps. LightX2V 4-step is the default Turbo "
+                    "variant; Larry and the "
                     "8-step LightX2V variant keep their trained step counts. Increase Turbo "
                     "steps when a clip benefits from extra refinement; Normal H3 "
                     "presets normally use 15–20."
