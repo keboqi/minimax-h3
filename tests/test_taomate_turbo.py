@@ -90,6 +90,7 @@ class TaoMateTurboTests(unittest.TestCase):
                     sync.assert_not_called()
 
     def test_both_workflows_use_standard_lora_euler_and_three_step_schedule(self):
+        self.assertEqual(TURBO_SETTINGS[TAOMATE_3STEP_TURBO].strength, 0.7)
         for build in (app.build_fl2va_graph, app.build_ref2va_graph):
             with self.subTest(workflow=build.__name__):
                 args = {
@@ -101,7 +102,8 @@ class TaoMateTurboTests(unittest.TestCase):
                     prompt="A bird takes flight", width=864, height=480, duration=5,
                     steps=3, scheduler="simple", seed=7, model_name="base.safetensors",
                     models=self.models(), turbo_variant=TAOMATE_3STEP_TURBO,
-                    turbo_lora_name=self.models().taomate_turbo_lora, turbo_strength=1.0,
+                    turbo_lora_name=self.models().taomate_turbo_lora,
+                    turbo_strength=TURBO_SETTINGS[TAOMATE_3STEP_TURBO].strength,
                     use_sol=False, cache_mode="Off",
                     available_nodes=app.turbo_required_nodes(TAOMATE_3STEP_TURBO),
                 )
@@ -113,7 +115,7 @@ class TaoMateTurboTests(unittest.TestCase):
                 nodes = list(graph.values())
                 loader = next(n for n in nodes if n["class_type"] == "LoraLoaderModelOnly")
                 self.assertEqual(loader["inputs"]["lora_name"], self.models().taomate_turbo_lora)
-                self.assertEqual(loader["inputs"]["strength_model"], 1.0)
+                self.assertEqual(loader["inputs"]["strength_model"], 0.7)
                 sampler = next(n for n in nodes if n["class_type"] == "KSamplerSelect")
                 self.assertEqual(sampler["inputs"]["sampler_name"], "euler")
                 schedule = next(n for n in nodes if n["class_type"] == "BasicScheduler")

@@ -207,7 +207,7 @@ Acceleration Off before relying on it for quality-critical output.
 [TaoMate-H3 3-step](https://huggingface.co/CZMartin22/TaoMate-H3-3step-ComfyUI)
 is available under **Turbo implementation** and downloads its BF16 LoRA on first
 use. Selecting it sets 3 steps and the simple scheduler; generation uses Euler,
-LoRA strength 1.0, and the existing unguided sampler (CFG 1.0). It supports
+LoRA strength 0.7, and the existing unguided sampler (CFG 1.0). It supports
 **Text to video** and **First / last frame** with the FL2VA base. The same adapter
 is also available for **Reference media** generation with Ref2VA.
 

@@ -463,7 +463,7 @@ class TurboSpec:
 TURBO_SETTINGS = {
     TAOMATE_3STEP_TURBO: TurboSpec(
         steps=3,
-        strength=1.0,
+        strength=0.7,
         lora_attr="taomate_turbo_lora",
         ref_lora_attr="taomate_turbo_lora",
     ),
