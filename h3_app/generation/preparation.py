@@ -55,6 +55,26 @@ from .results import GenerationUpdate
 from .services import GenerationServices
 
 
+FASTH3_8STEP_PROFILE_KEY = "fasth3_8step_v2"
+
+
+def _validate_sampling_steps(
+    profile_key: str,
+    use_turbo: bool,
+    selected_turbo: str,
+    effective_steps: int,
+) -> None:
+    if use_turbo:
+        minimum = turbo_minimum_steps(selected_turbo)
+        if effective_steps < minimum:
+            raise H3Error(f"Turbo requires at least {minimum} steps.")
+    elif profile_key != FASTH3_8STEP_PROFILE_KEY and effective_steps < 10:
+        raise H3Error(
+            "Normal H3 generation requires at least 10 steps. "
+            "Use Generation=Turbo for lower-step generation."
+        )
+
+
 @dataclass(frozen=True)
 class PreparedH3:
     actual_seed: int
@@ -276,15 +296,12 @@ def prepare_h3(
     effective_steps = int(effective.sampling.steps)
     effective_scheduler = str(effective.sampling.scheduler)
 
-    if use_turbo:
-        minimum = turbo_minimum_steps(selected_turbo)
-        if effective_steps < minimum:
-            raise H3Error(f"Turbo requires at least {minimum} steps.")
-    elif effective_steps < 10:
-        raise H3Error(
-            "Normal H3 generation requires at least 10 steps. "
-            "Use Generation=Turbo for lower-step generation."
-        )
+    _validate_sampling_steps(
+        profile_key,
+        use_turbo,
+        selected_turbo,
+        effective_steps,
+    )
 
     latent_upscale_model_name: str | None = None
     latent_upscale_precision = "bf16"

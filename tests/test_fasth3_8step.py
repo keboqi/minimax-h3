@@ -7,6 +7,8 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 import h3_models
+from h3_app.errors import H3Error
+from h3_app.generation.preparation import _validate_sampling_steps
 from h3_app.model_service import load_model_config
 from h3_app.model_types import ModelConfig, ModelProfile
 
@@ -69,6 +71,13 @@ class FastH3ModelTests(unittest.TestCase):
             "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
         )
         self.assertEqual(models.profiles["speed"].fl2va, "speed-fl2va.safetensors")
+
+    def test_native_eight_step_schedule_passes_normal_generation_validation(self):
+        _validate_sampling_steps("fasth3_8step_v2", False, "Lightx2v 4-Step", 8)
+
+    def test_other_normal_profiles_still_require_ten_steps(self):
+        with self.assertRaisesRegex(H3Error, "requires at least 10 steps"):
+            _validate_sampling_steps("speed", False, "Lightx2v 4-Step", 8)
 
 
 if __name__ == "__main__":
