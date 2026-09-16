@@ -130,8 +130,8 @@ NumPy 1.26.4, and SciPy 1.15.3, and installs the CUDA 13 TensorRT Python
 builder/runtime used by the optional TensorRT VAE. The pinned ComfyUI stack
 supplies Comfy Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
 2.2.0 remains installed from the pinned prebuilt wheel for UI comparisons.
-SLA v1.4.8 is provided by the pinned PlagueKind node pack at
-`59f54d359bbabff8bb813b1e3e381dd29843e720`. Selecting **SLA** exposes three
+SLA v1.5.1 is provided by the pinned PlagueKind node pack at
+`e787ecf355f7d045732e42b78647925e39b13fd7`. Selecting **SLA** exposes three
 quality presets: **Fast** uses validated 0.90 sparsity, **Balanced** uses the
 LoRA-distilled 0.85 sparsity, and **Quality** uses 0.85 sparsity plus a dense
 final sampling step. In a two-stage latent-upscale workflow the Quality dense
@@ -144,7 +144,7 @@ compatibility guards still use the dense backend. Every preset uses 64-token
 blocks, protects the audio prefix, and leaves sequences shorter than 8192 tokens
 dense. The graph explicitly keeps the Triton sparse engine, disables experimental
 INT8 QK and tail correction, and forces step zero dense in the initial generation. This preserves the
-previous route instead of inheriting v1.4.8's Kitchen sparse-engine defaults.
+previous route instead of inheriting v1.5.1's Kitchen sparse-engine defaults.
 Use SLA with an SLA-distilled H3 LoRA.
 
 The Sol-Attn integration is pinned to the reviewed v0.6.2 commit
@@ -570,8 +570,8 @@ hosted prompt enhancer available without entering a key in the UI, also store
 `GEMINI_API_KEY` and/or `LIGHTNING_API_KEY` in that Modal Secret.
 
 The deployment pins an immutable ComfyUI revision with its required
-frontend package 1.51.10, Comfy Kitchen 0.2.33 and upstream aimdo 0.5.2.
-The source also pins workflow templates 0.11.55 and embedded docs 0.5.11.
+frontend package 1.52.7, Comfy Kitchen 0.2.34 and upstream aimdo 0.5.3.
+The source also pins workflow templates 0.11.62 and embedded docs 0.5.11.
 This update includes native sparse attention, Comfy Compiler, optional H3
 reference VAEs and DiffSynth/ModelScope H3 LoRA support. KJNodes 1.5.1 includes
 the matching H3 low-memory attention callback fix.

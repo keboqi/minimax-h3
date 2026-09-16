@@ -228,7 +228,7 @@ def add_model_stack(
             SLA_ATTENTION_NODE,
             model=model_ref,
             **sla_inputs,
-            # Preserve the pre-1.4.8 sparse path and first-step anchor.
+            # Preserve the audio-safe legacy sparse path and first-step anchor.
             # Kitchen's sparse engine cannot represent all audio/ref spans.
             engine="triton",
             use_int8_qk=False,
