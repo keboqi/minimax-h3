@@ -188,9 +188,8 @@ Spectrum exposes one continuous capture-and-replay progress range to ComfyUI,
 so the Gradio live progress stream remains active during both passes.
 
 **Qwen small input attention** lives under **Model and memory (advanced)** and
-is on by default. On preserves the upstream PyTorch/basic attention selection
-for both Qwen3-VL 32B text and vision encoding. Turn it off to use the server's
-configured attention backend (Kitchen in the bundled launchers). The diffusion
+is off by default. Off uses the server's configured attention backend (Kitchen in the bundled launchers); turn it on to select upstream PyTorch/basic attention
+for both Qwen3-VL 32B text and vision encoding. The diffusion
 Sage 2 selector does not select Sage for Qwen. Changing this option invalidates
 both ComfyUI's conditioning-node cache and the process-local encoder cache;
 the next generation re-encodes, including when switching back to a previously
@@ -259,7 +258,7 @@ SwiftVR inference source; no SWIFTVR_CHECKPOINT_DIR is required unless you want
 to use an existing checkpoint directory. The experimental
 INT8 ConvRot video VAE
 is also lazy and downloads only when its default-off checkbox is enabled.
-The experimental **TensorRT video VAE** is enabled by default. Local and Modal
+The experimental **TensorRT video VAE** is disabled by default. Local and Modal
 setup install TensorRT and sync the pinned ComfyUI-H3VAE_TRT node. On first use,
 the app downloads the decoder ONNX source and automatically builds its local
 engine; the adjacent **Compile TensorRT VAE engine** button remains available

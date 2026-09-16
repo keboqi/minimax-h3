@@ -234,17 +234,17 @@ class EncoderOptionTests(unittest.TestCase):
                         self.assertEqual(sum(n["class_type"] == "MiniMaxH3AudioConditioningT8" for n in graph.values()), 2)
 
     def test_default_legacy_api_and_saved_false(self):
-        self.assertTrue(app.UI_DEFAULTS["encoder_small_input"])
+        self.assertFalse(app.UI_DEFAULTS["encoder_small_input"])
         for boundary in ("semantic_bridge", "fl2va_audio_1", "encoder_small_input"):
             values = GenerationArguments.from_positional([None] * GENERATION_FIELDS.index(boundary)).values
-            self.assertTrue(values["encoder_small_input"])
+            self.assertFalse(values["encoder_small_input"])
         self.assertFalse(resolve_settings(GenerationRequest.from_values({"encoder_small_input": False})).effective.sampling.encoder_small_input)
         values = dict(app.UI_DEFAULTS)
         # Legacy named requests omit the new field and retain the default.
         for name in GENERATION_FIELDS:
             values.setdefault(name, None)
         values.pop("encoder_small_input")
-        self.assertTrue(H3Request.from_values(values).sampling.encoder_small_input)
+        self.assertFalse(H3Request.from_values(values).sampling.encoder_small_input)
         preferences, _ = restore_preferences({"values": {"h3.encoder_small_input": False}}, {"h3.encoder_small_input": SimpleNamespace(value=True)})
         self.assertIs(preferences["h3.encoder_small_input"], False)
 

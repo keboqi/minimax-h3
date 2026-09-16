@@ -139,7 +139,7 @@ def build_model_section(
                 value=defaults["use_trt_vae"],
                 label="Experimental TensorRT video VAE",
                 info=(
-                    "Default on. Uses a local TensorRT engine for final H3 "
+                    "Default off. Uses a local TensorRT engine for final H3 "
                     "video decoding and compiles it automatically when needed."
                 ),
                 scale=2,

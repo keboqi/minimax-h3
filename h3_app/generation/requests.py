@@ -64,7 +64,7 @@ class H3SamplingInputs:
     easycache_verbose: bool
     semantic_bridge: bool
     semantic_bridge_alpha: float
-    encoder_small_input: bool = True
+    encoder_small_input: bool = False
 
 
 @dataclass

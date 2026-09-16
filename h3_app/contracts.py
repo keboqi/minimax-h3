@@ -183,7 +183,7 @@ class GenerationArguments:
         if len(args) == GENERATION_FIELDS.index("fl2va_audio_1"):
             args = (*args, None, None, None)
         if len(args) == GENERATION_FIELDS.index("encoder_small_input"):
-            args = (*args, True)
+            args = (*args, False)
         if len(args) != len(GENERATION_FIELDS):
             raise ValueError(
                 f"Expected {len(GENERATION_FIELDS)} generation inputs, received {len(args)}."

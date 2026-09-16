@@ -37,7 +37,7 @@ class SamplingSettings:
     latent_upscale_refine_steps: int = 2
     text_encoder: str = "NVFP4 / AWQ"
     stage_model_offload: bool = False
-    encoder_small_input: bool = True
+    encoder_small_input: bool = False
 
 
 PRESET_FIELDS = tuple(SamplingSettings.__dataclass_fields__)
@@ -105,7 +105,7 @@ class GenerationRequest:
     mode: str = "Text to video"
     model_profile: str = "Singularity"
     cache_mode: str = "Spectrum"
-    use_trt_vae: bool = True
+    use_trt_vae: bool = False
     use_int8_vae: bool = False
     semantic_bridge: bool = True
     semantic_bridge_alpha: float = 0.10

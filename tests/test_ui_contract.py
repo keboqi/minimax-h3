@@ -86,14 +86,14 @@ class UiContractTests(unittest.TestCase):
             self.assertIsNone(parameter["parameter_default"])
 
 
-    def test_encoder_attention_toggle_is_default_on_and_bound_to_api(self):
+    def test_encoder_attention_toggle_is_default_off_and_bound_to_api(self):
         toggle = next(c for c in self.config["components"] if c.get("props", {}).get("label") == "Qwen small input attention")
-        self.assertTrue(toggle["props"]["value"])
+        self.assertFalse(toggle["props"]["value"])
         advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
         self.assertEqual(advanced["inputs"][-1], toggle["id"])
         parameter = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"][-1]
         self.assertTrue(parameter["parameter_has_default"])
-        self.assertTrue(parameter["parameter_default"])
+        self.assertFalse(parameter["parameter_default"])
 
     def test_gallery_restoration_controls(self) -> None:
         method = next(c for c in self.config["components"]
@@ -385,14 +385,14 @@ class UiContractTests(unittest.TestCase):
 
 
 
-    def test_tensorrt_vae_defaults_on_and_compiles_only_when_needed(self) -> None:
+    def test_tensorrt_vae_defaults_off_and_compiles_only_when_needed(self) -> None:
         trt_vae = next(
             component
             for component in self.config["components"]
             if component.get("props", {}).get("label")
             == "Experimental TensorRT video VAE"
         )
-        self.assertTrue(trt_vae["props"]["value"])
+        self.assertFalse(trt_vae["props"]["value"])
 
         models = mock.sentinel.models
         progress = mock.sentinel.progress
