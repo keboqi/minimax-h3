@@ -3,7 +3,13 @@ from __future__ import annotations
 import gradio_app as app
 
 def selftest() -> None:
-    assert app.MODEL_PROFILE_CHOICES == ["Speed", "Quality", "Original", "Singularity"]
+    assert app.MODEL_PROFILE_CHOICES == [
+        "Speed",
+        "Quality",
+        "Original",
+        "Singularity",
+        "FastH3 8-Step V2",
+    ]
     assert app.GEMINI_PROMPT_MODELS == (
         "gemini-3.8-flash",
         "gemini-3.7-flash",
@@ -524,6 +530,7 @@ def selftest() -> None:
         models=fake,
         available_nodes=available,
         text_encoder_name="qwen3vl_32b_minimax_h3_bf16.safetensors",
+        encoder_small_input=True,
         stage_model_offload=True,
         smart_stage_offload=True,
     )
@@ -614,6 +621,7 @@ def selftest() -> None:
         model_name=fake.profile("speed").fl2va,
         models=fake,
         available_nodes=available,
+        encoder_small_input=True,
         result_format="Image",
         image_frames=20,
     )
@@ -684,6 +692,7 @@ def selftest() -> None:
         model_name=fake.profile("speed").fl2va,
         models=fake,
         available_nodes=available,
+        encoder_small_input=True,
         result_format="Image",
         image_frames=1,
         image_vae=app.SINGLE_FRAME_IMAGE_VAE,
@@ -885,6 +894,7 @@ def selftest() -> None:
         model_name=fake.profile("speed").fl2va,
         models=fake,
         available_nodes=available,
+        encoder_small_input=True,
         latent_upscale_model_name="minimax_h3_latent_upscaler_3d_bf16.safetensors",
         latent_upscale_precision="bf16",
         latent_upscale_refine_steps=2,
@@ -2162,6 +2172,7 @@ def selftest() -> None:
         model_name=fake.profile("quality").fl2va,
         models=fake,
         available_nodes=available,
+        encoder_small_input=True,
         use_int8_vae=True,
     )
     quality_unets = [

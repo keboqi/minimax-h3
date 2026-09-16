@@ -25,6 +25,7 @@ from typing import Any, Iterable
 MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
 ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 SINGULARITY_MODEL_REPO = "WarmBloodAban/Minimax-h3_Singularity"
+FASTH3_MODEL_REPO = "FastVideo/FastVideo-FastH3-Comfy"
 TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
 TAOMATE_TURBO_REPO = "CZMartin22/TaoMate-H3-3step-ComfyUI"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
@@ -133,6 +134,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "diffusion_models",
         "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
         "Singularity · pruned v1.3 INT8",
+    ),
+    "fasth3_8step_v2": ModelSpec(
+        FASTH3_MODEL_REPO,
+        "diffusion_models",
+        "diffusion_models/fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
+        "FastH3 8-Step V2 · T2VA-only INT8 ConvRot",
     ),
     "text_encoder": ModelSpec(
         TEXT_ENCODER_REPO,
@@ -423,12 +430,16 @@ PROFILE_MODEL_KEYS = {
     "quality": ("quality_fl2va", "quality_ref2va"),
     "original": ("original_fl2va", "original_ref2va"),
     "singularity": ("singularity_fl2va", "singularity_ref2va"),
+    # The pair preserves the existing profile schema while referencing one
+    # physical file. Runtime policy allows only the T2VA route.
+    "fasth3_8step_v2": ("fasth3_8step_v2", "fasth3_8step_v2"),
 }
 PROFILE_LABELS = {
     "speed": "Speed",
     "quality": "Quality",
     "original": "Original",
     "singularity": "Singularity",
+    "fasth3_8step_v2": "FastH3 8-Step V2",
 }
 PRELOAD_PROFILES = ("singularity",)
 PRELOAD_PROFILE_MODEL_KEYS = ("singularity_fl2va",)
@@ -850,7 +861,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
     return {
-        "schema_version": 17,
+        "schema_version": 18,
         "default_profile": "speed",
         "profiles": {
             profile: _profile_config(profile) for profile in PROFILE_MODEL_KEYS
@@ -902,7 +913,9 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
                 for key in LTX25_SHARED_MODEL_KEYS
             },
         },
-        "turbo_supported_profiles": list(PROFILE_MODEL_KEYS),
+        "turbo_supported_profiles": [
+            profile for profile in PROFILE_MODEL_KEYS if profile != "fasth3_8step_v2"
+        ],
         "turbo_supported_modes": ["fl2va", "ref2va"],
         "manifest": manifest_name,
     }
@@ -1082,6 +1095,7 @@ def selftest() -> None:
         "original_ref2va",
         "singularity_fl2va",
         "singularity_ref2va",
+        "fasth3_8step_v2",
         "text_encoder",
         "text_encoder_int8",
         "text_encoder_bf16",
@@ -1149,7 +1163,11 @@ def selftest() -> None:
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
     assert "h3_latent_upscaler_3d_bf16" not in PRELOAD_MODEL_KEYS
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 17
+    assert cfg["schema_version"] == 18
+    assert "fasth3_8step_v2" not in PRELOAD_MODEL_KEYS
+    assert cfg["profiles"]["fasth3_8step_v2"]["fl2va"] == (
+        MODEL_SPECS["fasth3_8step_v2"].local_name
+    )
     assert cfg["default_profile"] == "speed"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"

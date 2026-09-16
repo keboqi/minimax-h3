@@ -75,7 +75,14 @@ class ModelConfig:
     def profile_key(self, name: str) -> str:
         key = str(name).strip().lower()
         if key not in self.profiles:
-            key = self.default_profile
+            key = next(
+                (
+                    profile_key
+                    for profile_key, profile in self.profiles.items()
+                    if profile.label.strip().lower() == key
+                ),
+                self.default_profile,
+            )
         if key not in self.profiles:
             raise H3Error(f"Unknown model profile: {name}")
         return key

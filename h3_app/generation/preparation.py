@@ -230,9 +230,9 @@ def prepare_h3(
         )
     services.models.ensure_profile_model(profile_key, profile, request.media.mode)
 
-    requested_generation = str(request.sampling.generation_mode).strip().lower()
+    requested_generation = str(effective.generation_mode).strip().lower()
     use_turbo = requested_generation == "turbo"
-    selected_turbo = normalize_turbo_variant(request.sampling.turbo_variant)
+    selected_turbo = normalize_turbo_variant(effective.sampling.turbo_variant)
     generation_note = (
         f"Reference Turbo is experimental and currently uses the "
         f"FL2VA-trained {selected_turbo} LoRA."
@@ -273,8 +273,8 @@ def prepare_h3(
 
     # Variant defaults update outside the generation queue, while this
     # request deliberately honors any subsequent manual step adjustment.
-    effective_steps = int(request.sampling.steps)
-    effective_scheduler = str(request.sampling.scheduler)
+    effective_steps = int(effective.sampling.steps)
+    effective_scheduler = str(effective.sampling.scheduler)
 
     if use_turbo:
         minimum = turbo_minimum_steps(selected_turbo)
@@ -368,7 +368,7 @@ def prepare_h3(
             )
 
     effective_sol, packed_tokens, sol_reason = services.policy.resolve_sol_policy(
-        request.sampling.attention_mode,
+        effective.sampling.attention_mode,
         request.media.mode,
         resolved_width,
         resolved_height,
@@ -377,12 +377,12 @@ def prepare_h3(
         request.media.last_image,
         use_turbo=use_turbo,
     )
-    effective_sage = str(request.sampling.attention_mode).strip().lower() in {
+    effective_sage = str(effective.sampling.attention_mode).strip().lower() in {
         "sage",
         "sage 2",
         "sage2",
     }
-    effective_sla = str(request.sampling.attention_mode).strip().lower() in {
+    effective_sla = str(effective.sampling.attention_mode).strip().lower() in {
         "sla",
         "sla attention",
         "sparse-linear",

@@ -54,7 +54,8 @@ def build_model_section(
                 "Quality uses the mixed NVFP4/FP8/INT8 ConvRot files. "
                 "Original uses the official BF16 files. "
                 "Singularity uses the fine-tuned pruned v1.3 INT8 checkpoint. "
-                "Speed, Original and Singularity "
+                "FastH3 8-Step V2 is a T2VA-only distilled INT8 checkpoint. "
+                "Speed, Original, Singularity and FastH3 "
                 "download when first selected."
             ),
         )

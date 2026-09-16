@@ -287,6 +287,14 @@ model, optional latent upscaler, and VAEs from remaining resident together. When
 unchanged BF16 conditioning is reused, the encoder never loads and all remaining
 stage offloads are skipped for that run. INT8 and NVFP4 keep the current all-VRAM
 path by default; stage offload can still be enabled manually for either one.
+
+**FastH3 8-Step V2** is available as a lazy base-model download using the official
+ComfyUI INT8 ConvRot checkpoint. It shares the selected Qwen3-VL text encoder,
+video VAE, audio VAE, decoders, finishing, and output pipeline with the other H3
+profiles. The checkpoint supports Text to video only. Selecting it locks the
+conditioning mode to Text to video and uses its trained Normal, 8-step,
+simple-scheduler path with native Kitchen attention; Turbo adapters are not
+applied on top of the distilled checkpoint.
 **Reuse unchanged prompt and media** is enabled by default. Uploaded H3 inputs are
 staged under content-derived names. Qwen reuse requires matching source media,
 prompt tokens, text encoder, attention route, and actual visual tensor geometry.

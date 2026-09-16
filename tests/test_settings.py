@@ -43,6 +43,38 @@ class SettingsTests(unittest.TestCase):
             [15, 18, 20],
         )
 
+    def test_fasth3_8step_profile_enforces_its_native_text_schedule(self):
+        request = GenerationRequest(
+            model_profile=FASTH3_8STEP_PROFILE,
+            mode="First / last frame",
+            generation_mode="Turbo",
+            sampling=replace(
+                SamplingSettings(), steps=4, scheduler="beta", attention_mode="SLA"
+            ),
+        )
+        plan = resolve_settings(request)
+        self.assertIn("FastH3 8-Step V2 supports Text to video only.", plan.issues)
+        self.assertEqual(plan.effective.generation_mode, "Normal")
+        self.assertEqual(plan.effective.sampling.steps, 8)
+        self.assertEqual(plan.effective.sampling.scheduler, "simple")
+        self.assertEqual(plan.effective.sampling.attention_mode, "Kitchen")
+
+        _, values = transition_modes(
+            None,
+            {
+                **asdict(SamplingSettings()),
+                "model_profile": FASTH3_8STEP_PROFILE,
+                "mode": "Reference media",
+                "generation_mode": "Turbo",
+            },
+            "model_profile",
+        )
+        self.assertEqual(values["mode"], TEXT_TO_VIDEO_MODE)
+        self.assertEqual(values["generation_mode"], "Normal")
+        self.assertEqual(values["steps"], 8)
+        self.assertEqual(values["scheduler"], "simple")
+        self.assertEqual(values["attention_mode"], "Kitchen")
+
     def test_manual_and_required_changes_are_distinct(self):
         r = GenerationRequest(
             sampling=replace(

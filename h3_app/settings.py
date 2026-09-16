@@ -15,7 +15,27 @@ LIGHTX2V_4STEP = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
 LIGHTX2V_8STEP = "LightX2V v1.0 / 8-step 768p"
 LARRY = "Larry v4-600 EMA"
 TAOMATE_3STEP = "TaoMate-H3 / 3-step"
+FASTH3_8STEP_PROFILE = "FastH3 8-Step V2"
+TEXT_TO_VIDEO_MODE = "Text to video"
 TURBO_STEPS = {LIGHTX2V_4STEP: 4, LIGHTX2V_8STEP: 8, LARRY: 6, TAOMATE_3STEP: 3}
+
+
+def is_fasth3_8step_profile(name: str) -> bool:
+    return str(name).strip().lower() == FASTH3_8STEP_PROFILE.lower()
+
+
+def apply_model_profile_constraints(values: Mapping[str, Any]) -> dict[str, Any]:
+    """Apply sampling controls intrinsic to distilled base checkpoints."""
+    current = dict(values)
+    if is_fasth3_8step_profile(current.get("model_profile", "")):
+        current.update(
+            mode=TEXT_TO_VIDEO_MODE,
+            generation_mode="Normal",
+            steps=8,
+            scheduler="simple",
+            attention_mode="Kitchen",
+        )
+    return current
 
 
 def turbo_minimum_steps(variant: str) -> int:
@@ -178,6 +198,8 @@ def resolve_settings(
     inactive: set[str] = set()
     issues: list[str] = []
     sampling, output, finishing = request.sampling, request.output, request.finishing
+    generation_mode = request.generation_mode
+    fasth3_8step = is_fasth3_8step_profile(request.model_profile)
 
     def adjusted(key, before, after, reason):
         if before != after:
@@ -248,7 +270,34 @@ def resolve_settings(
         )
     if not finishing.latent_upscale:
         inactive.add("latent_upscale_refine_steps")
-    if request.generation_mode != "Turbo":
+    if fasth3_8step:
+        if request.mode != TEXT_TO_VIDEO_MODE:
+            issues.append("FastH3 8-Step V2 supports Text to video only.")
+        generation_mode = adjusted(
+            "generation_mode",
+            generation_mode,
+            "Normal",
+            "FastH3 8-Step V2 is already distilled and does not use a Turbo LoRA.",
+        )
+        sampling = replace(
+            sampling,
+            steps=adjusted(
+                "steps", sampling.steps, 8, "FastH3 V2 uses its trained 8-step schedule."
+            ),
+            scheduler=adjusted(
+                "scheduler",
+                sampling.scheduler,
+                "simple",
+                "FastH3 V2 uses the simple scheduler.",
+            ),
+            attention_mode=adjusted(
+                "attention_mode",
+                sampling.attention_mode,
+                "Kitchen",
+                "FastH3 V2 uses ComfyUI's native Kitchen attention path.",
+            ),
+        )
+    if generation_mode != "Turbo":
         inactive.add("turbo_variant")
     if sampling.attention_mode not in {"Sol-Attn", "Auto"}:
         inactive.update(
@@ -258,14 +307,17 @@ def resolve_settings(
         inactive.add("sla_preset")
     if request.mode != "First / last frame":
         inactive.add("auto_megapixels")
-    minimum = (
-        turbo_minimum_steps(sampling.turbo_variant)
-        if request.generation_mode == "Turbo"
-        else 10
-    )
+    if fasth3_8step:
+        minimum = 8
+    else:
+        minimum = (
+            turbo_minimum_steps(sampling.turbo_variant)
+            if generation_mode == "Turbo"
+            else 10
+        )
     if sampling.steps < minimum:
         issues.append(
-            f"{request.generation_mode} requires at least {minimum} sampling steps."
+            f"{generation_mode} requires at least {minimum} sampling steps."
         )
     if (
         finishing.latent_upscale
@@ -329,6 +381,7 @@ def resolve_settings(
         sampling=sampling,
         output=output,
         finishing=finishing,
+        generation_mode=generation_mode,
         cache_mode=cache,
         semantic_bridge=bridge,
         use_trt_vae=decoders.use_trt_vae if decoders else request.use_trt_vae,
@@ -369,6 +422,8 @@ def transition_modes(
         current.update(
             steps=TURBO_STEPS.get(current["turbo_variant"], 4), scheduler="simple"
         )
+    current = apply_model_profile_constraints(current)
+    mode = current.get("generation_mode", mode)
     modes[mode] = {
         key: current[key]
         for key in (*PRESET_FIELDS, "preset", "cache_mode")

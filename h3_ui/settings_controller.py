@@ -4,7 +4,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 import gradio as gr
-from h3_app.settings import PRESET_FIELDS, transition_modes
+from h3_app.settings import (
+    PRESET_FIELDS,
+    TEXT_TO_VIDEO_MODE,
+    is_fasth3_8step_profile,
+    transition_modes,
+)
 from h3_app.contracts import GENERATION_COMPONENTS, GENERATION_FIELDS
 from .presentation import generation_readiness
 
@@ -101,6 +106,8 @@ class SettingsController:
             "easycache_settings",
             "finishing_section",
             "latent_upscale_settings",
+            "frame_group",
+            "reference_group",
         )
         self.outputs += [components[name] for name in self.groups]
         self.outputs += [
@@ -174,6 +181,7 @@ class SettingsController:
                 gr.update(interactive=False),
             )
         fmt = current["result_format"]
+        fasth3_8step = is_fasth3_8step_profile(current["model_profile"])
         updates = []
         for name in self.names:
             props = {
@@ -202,7 +210,18 @@ class SettingsController:
             if name == "semantic_bridge_alpha":
                 props["visible"] = bool(plan.effective.semantic_bridge)
             if name == "turbo_variant":
-                props["visible"] = current["generation_mode"] == "Turbo"
+                props["visible"] = (
+                    current["generation_mode"] == "Turbo" and not fasth3_8step
+                )
+            if name == "mode":
+                props.update(
+                    choices=[TEXT_TO_VIDEO_MODE]
+                    if fasth3_8step
+                    else ["Text to video", "First / last frame", "Reference media"],
+                    interactive=not fasth3_8step,
+                )
+            if name in {"generation_mode", "steps", "scheduler"}:
+                props["interactive"] = not fasth3_8step
             if name in {"width", "height", "auto_megapixels"}:
                 props["visible"] = fmt != "Audio"
             if name == "duration":
@@ -231,6 +250,8 @@ class SettingsController:
             plan.effective.cache_mode == "EasyCache",
             fmt != "Audio",
             current["latent_upscale"] and fmt != "Audio",
+            current["mode"] == "First / last frame",
+            current["mode"] == "Reference media",
         )
         return (
             *updates,

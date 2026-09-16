@@ -32,6 +32,8 @@ from h3_app.policy import h3_latent_upscaler_settings, normalize_turbo_variant
 from h3_models import (
     DEFAULT_LTX25_MODEL,
     MODEL_SPECS,
+    PROFILE_LABELS,
+    PROFILE_MODEL_KEYS,
     SEEDVR2_MODEL_CHOICES,
     TRT_VAE_ENGINE_BUILD_ID,
     TRT_VAE_ENGINE_MARKER,
@@ -69,6 +71,22 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
             for key, value in data["profiles"].items()
         }
         default_profile = str(data.get("default_profile", "speed")).lower()
+
+    # Older generated configs predate newly added lazy profiles. Merge only
+    # missing catalog entries in memory so upgrades can select and provision
+    # them immediately without replacing any user-configured filenames.
+    for profile_key, (fl2va_key, ref2va_key) in PROFILE_MODEL_KEYS.items():
+        if profile_key in profiles:
+            continue
+        fl2va = MODEL_SPECS[fl2va_key]
+        ref2va = MODEL_SPECS[ref2va_key]
+        profiles[profile_key] = ModelProfile(
+            label=PROFILE_LABELS[profile_key],
+            fl2va=fl2va.local_name,
+            ref2va=ref2va.local_name,
+            fl2va_source=fl2va.source,
+            ref2va_source=ref2va.source,
+        )
 
     return ModelConfig(
         profiles=profiles,
@@ -351,7 +369,7 @@ def ensure_profile_model(
     """Download a lazy profile checkpoint before submitting its workflow."""
     reference = str(mode).strip().lower() == "reference media"
     filename = profile.ref2va if reference else profile.fl2va
-    model_key = f"{profile_key}_{'ref2va' if reference else 'fl2va'}"
+    model_key = PROFILE_MODEL_KEYS[profile_key][1 if reference else 0]
     destination = (
         runtime.comfy_dir / "models" / MODEL_SPECS[model_key].folder / filename
     )
