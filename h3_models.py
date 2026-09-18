@@ -276,19 +276,19 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     "h3_latent_upscaler_3d_bf16": ModelSpec(
         H3_LATENT_UPSCALER_REPO,
         "latent_upscale_models",
-        "minimax_h3_latent_upscaler_3d_bf16.safetensors",
+        "minimax_h3_latent_upscaler_3d_conv_v1/minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors",
         "MiniMax H3 native 3D latent upscaler · Balanced BF16",
     ),
     "h3_latent_upscaler_3d_fp16": ModelSpec(
         H3_LATENT_UPSCALER_REPO,
         "latent_upscale_models",
-        "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+        "minimax_h3_latent_upscaler_3d_conv_v1/minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors",
         "MiniMax H3 native 3D latent upscaler · Fast FP16",
     ),
     "h3_latent_upscaler_3d_fp32": ModelSpec(
         H3_LATENT_UPSCALER_REPO,
         "latent_upscale_models",
-        "minimax_h3_latent_upscaler_3d_fp32.pth",
+        "minimax_h3_latent_upscaler_3d_conv_v1/minimax_h3_latent_upscaler_3d_conv_v1_fp32.pth",
         "MiniMax H3 native 3D latent upscaler · Quality FP32",
     ),
     "ltx25_distilled": ModelSpec(
@@ -1212,15 +1212,17 @@ def selftest() -> None:
     h3_upscaler = MODEL_SPECS["h3_latent_upscaler_3d_bf16"]
     assert h3_upscaler.repo_id == H3_LATENT_UPSCALER_REPO
     assert h3_upscaler.folder == "latent_upscale_models"
-    assert h3_upscaler.local_name == ("minimax_h3_latent_upscaler_3d_bf16.safetensors")
+    assert h3_upscaler.local_name == (
+        "minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors"
+    )
     assert DEFAULT_H3_LATENT_UPSCALER_MODEL == "Quality (FP32)"
     assert {
         label: MODEL_SPECS[key].local_name
         for label, key in H3_LATENT_UPSCALER_MODEL_CHOICES.items()
     } == {
-        "Balanced (BF16)": "minimax_h3_latent_upscaler_3d_bf16.safetensors",
-        "Fast (FP16)": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
-        "Quality (FP32)": "minimax_h3_latent_upscaler_3d_fp32.pth",
+        "Balanced (BF16)": "minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors",
+        "Fast (FP16)": "minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors",
+        "Quality (FP32)": "minimax_h3_latent_upscaler_3d_conv_v1_fp32.pth",
     }
     assert cfg["seedvr2_dit"] == "seedvr2_7b_nvfp4.safetensors"
     assert cfg["seedvr2_models"] == {
