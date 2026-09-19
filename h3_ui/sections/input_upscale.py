@@ -65,6 +65,10 @@ def build_input_upscale_section(
                 choices=list(services.SEEDVR2_MODEL_CHOICES),
                 value=defaults["seedvr2_model"],
                 label="SeedVR2 model",
+                info=(
+                    "7B INT8 is the default quality/VRAM balance. FP16 favors "
+                    "fidelity; MXFP8 and NVFP4 are experimental speed options."
+                ),
             )
             input_upscale_seed = gr.Number(
                 value=-1,

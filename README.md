@@ -535,9 +535,11 @@ without an additional video encode. The final file is trimmed to the original
 frame count and remuxed with the original source audio. Because clips are
 generated independently, a visible detail or motion change can occur at a cut.
 
-SeedVR2 offers **3B NVFP4**, **3B INT8**, **7B NVFP4 (default)**, and
-**7B Sharp NVFP4** model choices. Only the selected checkpoint downloads on first
-use; all choices share the same lazy FP16 SeedVR2 VAE. The native workflow uses
+SeedVR2 offers **7B FP16**, **7B INT8 (default)**, **3B FP16**, **3B INT8**,
+**7B Sharp FP16**, experimental **7B MXFP8**, and legacy fast/experimental
+**NVFP4** choices. Only the
+selected checkpoint downloads on first use; all choices share the same lazy FP16
+SeedVR2 VAE. The native workflow uses
 1024-pixel VAE encode/decode tiles for the RTX PRO 6000 target. SeedVR2 and main
 H3 generation run eagerly because full-model compile did not improve measured
 performance and conflicts with the active attention and cache optimizations.

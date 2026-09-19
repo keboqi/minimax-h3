@@ -195,8 +195,9 @@ def build_finishing_section(
                 value=defaults["seedvr2_model"],
                 label="SeedVR2 model",
                 info=(
-                    "Downloaded on first use. 7B Sharp favors stronger "
-                    "detail; NVFP4 variants are optimized for Blackwell GPUs."
+                    "Downloaded on first use. 7B INT8 is the default quality/VRAM "
+                    "balance; FP16 favors fidelity, 7B Sharp favors stronger detail, "
+                    "and MXFP8/NVFP4 are experimental speed options."
                 ),
             )
             generation_ltx25_note = gr.Markdown(

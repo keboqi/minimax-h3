@@ -325,8 +325,9 @@ def build_gallery_view(
                             label="SeedVR2 model",
                             visible=True,
                             info=(
-                                "Downloaded on first use. 7B Sharp favors stronger detail; "
-                                "NVFP4 variants are optimized for Blackwell GPUs."
+                                "Downloaded on first use. 7B INT8 is the default quality/VRAM "
+                                "balance; FP16 favors fidelity, 7B Sharp favors stronger detail, "
+                                "and MXFP8/NVFP4 are experimental speed options."
                             ),
                         )
                         ltx25_prompt = gr.Textbox(

@@ -15,7 +15,6 @@ from h3_app.errors import H3Error
 from h3_app.policy import normalize_turbo_variant
 from h3_models import (
     DEFAULT_LTX25_MODEL,
-    DEFAULT_SEEDVR2_MODEL,
     H3_TEXT_ENCODER_CHOICES,
     LTX25_ICLORA_MODEL_KEYS,
     LTX25_MODEL_CHOICES,
@@ -178,10 +177,9 @@ def seedvr2_upscale_model_names(
     choice = str(model_choice)
     if choice not in SEEDVR2_MODEL_CHOICES:
         raise H3Error(f"Unknown SeedVR2 model: {model_choice}")
+    selected_key = SEEDVR2_MODEL_CHOICES[choice]
     configured_models = models.seedvr2_models or {}
-    selected = configured_models.get(choice)
-    if selected is None and choice == DEFAULT_SEEDVR2_MODEL:
-        selected = models.seedvr2_dit
+    selected = configured_models.get(choice, MODEL_SPECS[selected_key].local_name)
     configured = {"seedvr2_dit": selected, "seedvr2_vae": models.seedvr2_vae}
     missing_config = [key for key, value in configured.items() if not value]
     if missing_config:

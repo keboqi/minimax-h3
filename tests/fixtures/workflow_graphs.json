@@ -1673,7 +1673,7 @@
       "6": {
         "class_type": "UNETLoader",
         "inputs": {
-          "unet_name": "seedvr2_7b_nvfp4.safetensors",
+          "unet_name": "seedvr2_7b_int8_convrot.safetensors",
           "weight_dtype": "default"
         }
       },
@@ -2598,7 +2598,7 @@
       "2": {
         "class_type": "UNETLoader",
         "inputs": {
-          "unet_name": "seedvr2_7b_nvfp4.safetensors",
+          "unet_name": "seedvr2_7b_int8_convrot.safetensors",
           "weight_dtype": "default"
         }
       },

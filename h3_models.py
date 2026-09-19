@@ -244,6 +244,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "minimax_h3_turbo_v4_step600_ema.safetensors",
         "Larry v4-600 EMA Turbo · recommended 6-step quality option",
     ),
+    "seedvr2_3b_fp16": ModelSpec(
+        SEEDVR2_REPO,
+        "diffusion_models",
+        "diffusion_models/seedvr2_3b_fp16.safetensors",
+        "SeedVR2 3B FP16 · lazy native 2x upscale model",
+    ),
     "seedvr2_3b_nvfp4": ModelSpec(
         SEEDVR2_REPO,
         "diffusion_models",
@@ -256,6 +262,24 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "diffusion_models/seedvr2_3b_int8_convrot.safetensors",
         "SeedVR2 3B INT8 ConvRot · lazy native 2x upscale model",
     ),
+    "seedvr2_7b_fp16": ModelSpec(
+        SEEDVR2_REPO,
+        "diffusion_models",
+        "diffusion_models/seedvr2_7b_fp16.safetensors",
+        "SeedVR2 7B FP16 · lazy native 2x upscale model",
+    ),
+    "seedvr2_7b_int8": ModelSpec(
+        SEEDVR2_REPO,
+        "diffusion_models",
+        "diffusion_models/seedvr2_7b_int8_convrot.safetensors",
+        "SeedVR2 7B INT8 ConvRot · lazy native 2x upscale model",
+    ),
+    "seedvr2_7b_mxfp8": ModelSpec(
+        SEEDVR2_REPO,
+        "diffusion_models",
+        "diffusion_models/seedvr2_7b_mxfp8.safetensors",
+        "SeedVR2 7B MXFP8 · lazy native 2x upscale model",
+    ),
     "seedvr2_7b_nvfp4": ModelSpec(
         SEEDVR2_REPO,
         "diffusion_models",
@@ -267,6 +291,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "diffusion_models",
         "diffusion_models/seedvr2_7b_sharp_nvfp4.safetensors",
         "SeedVR2 7B Sharp NVFP4 · lazy native 2x upscale model",
+    ),
+    "seedvr2_7b_sharp_fp16": ModelSpec(
+        SEEDVR2_REPO,
+        "diffusion_models",
+        "diffusion_models/seedvr2_7b_sharp_fp16.safetensors",
+        "SeedVR2 7B Sharp FP16 · lazy native 2x upscale model",
     ),
     "seedvr2_vae": ModelSpec(
         SEEDVR2_REPO,
@@ -454,12 +484,17 @@ PROFILE_MODEL_KEY_SET = frozenset(
     key for keys in PROFILE_MODEL_KEYS.values() for key in keys
 )
 SEEDVR2_MODEL_CHOICES = {
-    "3B NVFP4": "seedvr2_3b_nvfp4",
+    "7B FP16": "seedvr2_7b_fp16",
+    "7B INT8": "seedvr2_7b_int8",
+    "3B FP16": "seedvr2_3b_fp16",
     "3B INT8": "seedvr2_3b_int8",
+    "7B Sharp FP16": "seedvr2_7b_sharp_fp16",
+    "7B MXFP8": "seedvr2_7b_mxfp8",
+    "3B NVFP4": "seedvr2_3b_nvfp4",
     "7B NVFP4": "seedvr2_7b_nvfp4",
     "7B Sharp NVFP4": "seedvr2_7b_sharp_nvfp4",
 }
-DEFAULT_SEEDVR2_MODEL = "7B NVFP4"
+DEFAULT_SEEDVR2_MODEL = "7B INT8"
 SEEDVR2_UPSCALE_MODEL_KEYS = (
     *SEEDVR2_MODEL_CHOICES.values(),
     "seedvr2_vae",
@@ -869,7 +904,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
     return {
-        "schema_version": 18,
+        "schema_version": 19,
         "default_profile": "speed",
         "profiles": {
             profile: _profile_config(profile) for profile in PROFILE_MODEL_KEYS
@@ -1120,9 +1155,14 @@ def selftest() -> None:
         "turbo_8step_ref_lora",
         "taomate_turbo_lora",
         "larry_turbo_lora",
+        "seedvr2_3b_fp16",
         "seedvr2_3b_nvfp4",
         "seedvr2_3b_int8",
+        "seedvr2_7b_fp16",
+        "seedvr2_7b_int8",
+        "seedvr2_7b_mxfp8",
         "seedvr2_7b_nvfp4",
+        "seedvr2_7b_sharp_fp16",
         "seedvr2_7b_sharp_nvfp4",
         "seedvr2_vae",
         "h3_latent_upscaler_3d_bf16",
@@ -1172,7 +1212,7 @@ def selftest() -> None:
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
     assert "h3_latent_upscaler_3d_bf16" not in PRELOAD_MODEL_KEYS
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 18
+    assert cfg["schema_version"] == 19
     assert "fasth3_8step_v2" not in PRELOAD_MODEL_KEYS
     assert cfg["profiles"]["fasth3_8step_v2"]["fl2va"] == (
         MODEL_SPECS["fasth3_8step_v2"].local_name
@@ -1233,10 +1273,15 @@ def selftest() -> None:
         "Fast (FP16)": "minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors",
         "Quality (FP32)": "minimax_h3_latent_upscaler_3d_conv_v1_fp32.pth",
     }
-    assert cfg["seedvr2_dit"] == "seedvr2_7b_nvfp4.safetensors"
+    assert cfg["seedvr2_dit"] == "seedvr2_7b_int8_convrot.safetensors"
     assert cfg["seedvr2_models"] == {
-        "3B NVFP4": "seedvr2_3b_nvfp4.safetensors",
+        "7B FP16": "seedvr2_7b_fp16.safetensors",
+        "7B INT8": "seedvr2_7b_int8_convrot.safetensors",
+        "3B FP16": "seedvr2_3b_fp16.safetensors",
         "3B INT8": "seedvr2_3b_int8_convrot.safetensors",
+        "7B Sharp FP16": "seedvr2_7b_sharp_fp16.safetensors",
+        "7B MXFP8": "seedvr2_7b_mxfp8.safetensors",
+        "3B NVFP4": "seedvr2_3b_nvfp4.safetensors",
         "7B NVFP4": "seedvr2_7b_nvfp4.safetensors",
         "7B Sharp NVFP4": "seedvr2_7b_sharp_nvfp4.safetensors",
     }
