@@ -1,6 +1,7 @@
 """Gradio request injection and job lifetime, isolated from generation code."""
 
 from __future__ import annotations
+from collections.abc import Iterator
 import inspect
 import uuid
 import gradio as gr
@@ -49,7 +50,16 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
                                 if "request" in signature.parameters
                                 else {}
                             )
-                            iterator = iter(callback(*values, **kwargs))
+                            result = callback(*values, **kwargs)
+                            # Generation callbacks normally stream an iterator,
+                            # but short GPU actions may return one multi-output
+                            # tuple. Iterating that tuple would incorrectly send
+                            # each component as a separate Gradio response.
+                            iterator = (
+                                result
+                                if isinstance(result, Iterator)
+                                else iter((result,))
+                            )
                         update = next(iterator)
                     except StopIteration:
                         return
@@ -77,7 +87,9 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
                     yield update
             finally:
                 if iterator is not None:
-                    iterator.close()
+                    close = getattr(iterator, "close", None)
+                    if close is not None:
+                        close()
 
     # Gradio treats an empty upload as required unless the callback signature
     # also supplies a default. Keep appended voice inputs optional for old clients.

@@ -89,6 +89,14 @@ class JobBoundaryTests(unittest.TestCase):
         self.assertIs(args[-1], request)
         self.assertEqual(list(fn(*args)), ["test"])
 
+    def test_non_streaming_multi_output_is_returned_as_one_update(self):
+        def generate(prompt):
+            return prompt, "complete"
+
+        fn = owned_generation(generate, "h3-input")
+        updates = list(fn("image.png", gr.Request(session_hash="session")))
+        self.assertEqual(updates, [("image.png", "complete")])
+
     def test_context_is_scoped_to_each_generator_advance(self):
         seen = []
 
