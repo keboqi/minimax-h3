@@ -6,7 +6,11 @@ from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 import gradio as gr
-from h3_app.catalog import LTX25_DEBLUR, LTX25_RESTORATION_OPTIONS
+from h3_app.catalog import (
+    LTX25_CQ_ENHANCER,
+    LTX25_DEBLUR,
+    LTX25_RESTORATION_OPTIONS,
+)
 from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 
 
@@ -243,7 +247,7 @@ def bind_gallery_view(
             gr.update(visible=value in ai_options),
             gr.update(visible=value == seedvr_option),
             gr.update(
-                visible=value in ltx_options,
+                visible=value in ltx_options and value != LTX25_CQ_ENHANCER,
                 info=(
                     "Describe the source scene; focus restoration instructions are added automatically. "
                     "Preserves source resolution. Uses the model selected in the LTX 2.5 tab."

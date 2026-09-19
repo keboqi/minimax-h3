@@ -37,6 +37,7 @@ SEEDVR2_REPO = "Comfy-Org/SeedVR2"
 H3_LATENT_UPSCALER_REPO = "LBH-123-AI/Minimax_h3_latent_Upscaler"
 LTX25_REPO = "Lightricks/LTX-2.5"
 LTX25_PIXEL_UPSCALER_REPO = "Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler"
+LTX25_CQ_ENHANCER_REPO = "CQdesign/LTX-2.5-CQ-Video-and-Image-Enhancer-LoRAs"
 LTX23_REPO = "Lightricks/LTX-2.3"
 MINIMAX_MUSIC3_REPO = "Comfy-Org/MiniMax-Music-3"
 
@@ -369,6 +370,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "ltx-2.5-22b-ic-lora-deblur-0.9.safetensors",
         "LTX-2.5 IC-LoRA defocus restoration",
     ),
+    "ltx25_cq_video_enhancer_v2": ModelSpec(
+        LTX25_CQ_ENHANCER_REPO,
+        "loras",
+        "ltx2.5-CQ-enhancer-lora-V2.safetensors",
+        "LTX-2.5 CQ generative video quality enhancer V2",
+    ),
     "ltx25_iclora_ingredients": ModelSpec(
         "Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients",
         "loras",
@@ -462,6 +469,7 @@ LAZY_POSTPROCESS_MODEL_KEYS = (
     "ltx25_pixel_upscaler_x2",
     "ltx25_decompression",
     "ltx25_deblur",
+    "ltx25_cq_video_enhancer_v2",
 )
 H3_LATENT_UPSCALER_MODEL_CHOICES = {
     "Balanced (BF16)": "h3_latent_upscaler_3d_bf16",
@@ -1133,6 +1141,7 @@ def selftest() -> None:
         "ltx25_pixel_upscaler_x2",
         "ltx25_decompression",
         "ltx25_deblur",
+        "ltx25_cq_video_enhancer_v2",
         "ltx25_iclora_ingredients",
         "ltx25_iclora_in_outpaint",
         "ltx25_iclora_motion_track",

@@ -1621,6 +1621,7 @@ def selftest() -> None:
         app.LTX25_UPSCALE,
         app.LTX25_DECOMPRESSION,
         app.LTX25_DEBLUR,
+        app.LTX25_CQ_ENHANCER,
         app.SWIFTVR_UPSCALE,
         "48 fps interpolation",
     ]

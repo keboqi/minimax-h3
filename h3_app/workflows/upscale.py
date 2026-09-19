@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from h3_app.catalog import (
+    LTX25_CQ_ENHANCER,
     LTX25_DEBLUR,
     LTX25_DECOMPRESSION,
     LTX25_POSTPROCESS_MODELS,
@@ -276,6 +277,10 @@ def required_ltx25_upscale_nodes() -> set[str]:
 
 def ltx25_postprocess_prompt(option: str, prompt: str) -> str:
     """Add restoration instructions to the user's source-scene description."""
+    if option == LTX25_CQ_ENHANCER:
+        # CQ's V2 reference workflow intentionally uses empty conditioning; the
+        # adapter performs generative enhancement without a scene prompt.
+        return ""
     scene = prompt.strip().rstrip(".") or "the scene in the source video"
     if option == LTX25_DECOMPRESSION:
         return (

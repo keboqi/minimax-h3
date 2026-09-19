@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from h3_app import model_service
 from h3_app.catalog import (
     GENERATION_POSTPROCESS_OPTIONS,
+    LTX25_CQ_ENHANCER,
     LTX25_DECOMPRESSION,
     LTX25_POSTPROCESS_MODELS,
     LTX25_RESTORATION_OPTIONS,
@@ -86,13 +87,16 @@ class GalleryRestorationTests(unittest.TestCase):
                             )
                         self.assertEqual(node("CFGGuider")[1]["model"], [adapter_id, 0])
                         text = node("CLIPTextEncode")[1]["text"]
-                        self.assertIn("a rabbit", text)
-                        self.assertIn(
-                            "ENHANCE QUALITY"
-                            if option == LTX25_DECOMPRESSION
-                            else "DEBLUR",
-                            text,
-                        )
+                        if option == LTX25_CQ_ENHANCER:
+                            self.assertEqual(text, "")
+                        else:
+                            self.assertIn("a rabbit", text)
+                            self.assertIn(
+                                "ENHANCE QUALITY"
+                                if option == LTX25_DECOMPRESSION
+                                else "DEBLUR",
+                                text,
+                            )
                         self.assertIn(
                             key.removeprefix("ltx25_"),
                             node("SaveVideo")[1]["filename_prefix"],
@@ -108,6 +112,14 @@ class GalleryRestorationTests(unittest.TestCase):
     def test_downloads_only_selected_adapter_and_uses_cached_models(self):
         runtime = SimpleNamespace(
             models_config=Path("models/config.json"), comfy_dir=Path("comfy")
+        )
+        cq_spec = MODEL_SPECS[LTX25_POSTPROCESS_MODELS[LTX25_CQ_ENHANCER]]
+        self.assertEqual(
+            cq_spec.repo_id,
+            "CQdesign/LTX-2.5-CQ-Video-and-Image-Enhancer-LoRAs",
+        )
+        self.assertEqual(
+            cq_spec.local_name, "ltx2.5-CQ-enhancer-lora-V2.safetensors"
         )
         for option in LTX25_RESTORATION_OPTIONS:
             key = LTX25_POSTPROCESS_MODELS[option]

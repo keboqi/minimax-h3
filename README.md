@@ -515,6 +515,10 @@ options preserve the source resolution and audio; the target-resolution selector
 is hidden. Describe the source scene in **LTX-2.5 scene prompt**; the appropriate
 restoration instructions are added automatically. Both use a single-stage,
 1x-reference IC-LoRA workflow with the base model selected in the **LTX 2.5** tab.
+**LTX-2.5 CQ Video Enhancer V2** is also available for prompt-free generative
+quality enhancement of low-resolution or poor-quality video. It preserves the
+source resolution and audio and lazily downloads the V2 video LoRA from
+[CQdesign's enhancer repository](https://huggingface.co/CQdesign/LTX-2.5-CQ-Video-and-Image-Enhancer-LoRAs).
 The adapters download on first use and require access to their separate gated
 [Decompression](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Decompression)
 and [Deblur](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Deblur)

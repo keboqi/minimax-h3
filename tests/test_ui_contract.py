@@ -102,12 +102,20 @@ class UiContractTests(unittest.TestCase):
         change = next(d for d in self.config["dependencies"]
                       if any(t[0] == method["id"] and t[1] == "change" for t in d["targets"]))
         callback = self.demo.fns[change["id"]].fn
-        for option in (gradio_app.LTX25_DECOMPRESSION, gradio_app.LTX25_DEBLUR):
+        for option in (
+            gradio_app.LTX25_DECOMPRESSION,
+            gradio_app.LTX25_DEBLUR,
+            gradio_app.LTX25_CQ_ENHANCER,
+        ):
             self.assertIn(option, choices)
             updates = callback(option)
-            self.assertEqual([u["visible"] for u in updates],
-                             [True, False, True, True, True, False])
-            self.assertIn("Preserves source resolution", updates[2]["info"])
+            self.assertEqual(
+                [u["visible"] for u in updates],
+                [True, False, option != gradio_app.LTX25_CQ_ENHANCER,
+                 True, True, False],
+            )
+            if option != gradio_app.LTX25_CQ_ENHANCER:
+                self.assertIn("Preserves source resolution", updates[2]["info"])
         self.assertEqual([u["visible"] for u in callback(gradio_app.LTX25_UPSCALE)],
                          [True, False, True, True, True, True])
         self.assertEqual([u["visible"] for u in callback(gradio_app.SEEDVR2_UPSCALE)],
