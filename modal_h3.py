@@ -868,6 +868,10 @@ def serve():
         "--port",
         str(COMFY_PORT),
         "--use-ck-attention",
+        # Avoid a fatal CUDAMallocAsyncAllocator free across H3's
+        # base/upscaler/refinement stage-offload boundary. Dynamic VRAM and
+        # the Comfy model compiler stay enabled with the native allocator.
+        "--disable-cuda-malloc",
     ]
     print("[modal-h3] Dense/fallback attention: Comfy Kitchen", flush=True)
     comfy_args += ["--enable-cors-header", "*"]
