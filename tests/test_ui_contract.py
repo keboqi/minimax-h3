@@ -13,7 +13,7 @@ from h3_ui.presentation import (
     mode_presentation,
     result_format_presentation,
 )
-from h3_ui.styles import H3_SETUP_CSS, H3_UI_CSS
+from h3_ui.styles import H3_SETUP_CSS
 
 
 class UiContractTests(unittest.TestCase):
@@ -133,11 +133,19 @@ class UiContractTests(unittest.TestCase):
         tab_nodes = layout["children"]
         self.assertEqual(
             [self.components[node["id"]]["props"]["label"] for node in tab_nodes],
-            ["MiniMax H3", "LTX 2.5", "MiniMax Music 3", "YuE2", "Gallery", "API"],
+            [
+                "MiniMax H3",
+                "Qwen Image 2.1",
+                "LTX 2.5",
+                "MiniMax Music 3",
+                "YuE2",
+                "Gallery",
+                "API",
+            ],
         )
         self.assertEqual(
             [self.components[node["children"][0]["id"]]["type"] for node in tab_nodes],
-            ["row", "group", "group", "group", "group", "group"],
+            ["row", "group", "group", "group", "group", "group", "group"],
         )
 
     def test_custom_server_mount_receives_ui_styles(self) -> None:
@@ -489,7 +497,16 @@ class UiContractTests(unittest.TestCase):
                 self.assertTrue(gradio_app.trt_vae_engine_is_current(models))
 
     def test_gpu_actions_share_the_application_queue(self):
-        expected = {"compile_trt_video_vae", "generate_for_ui", "generate_ltx25", "generate_music3", "generate_yue2", "enhance_h3_prompt", "unload_all_models"}
+        expected = {
+            "compile_trt_video_vae",
+            "generate_for_ui",
+            "generate_ltx25",
+            "generate_music3",
+            "generate_qwen_image21",
+            "generate_yue2",
+            "enhance_h3_prompt",
+            "unload_all_models",
+        }
         found = set()
         for event in self.demo.fns.values():
             name = getattr(event.fn, "__name__", "")

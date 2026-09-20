@@ -30,6 +30,180 @@ class MusicView:
     ar_cfg: gr.Slider
     top_k: gr.Slider
 
+
+@dataclass(frozen=True)
+class QwenImage21View:
+    mode: gr.Dropdown
+    prompt: gr.Textbox
+    negative_prompt: gr.Textbox
+    reference_images: gr.File
+    output: gr.Image
+    run: gr.Button
+    stop: gr.Button
+    status: gr.Textbox
+    model: gr.Dropdown
+    text_encoder: gr.Dropdown
+    width: gr.Slider
+    height: gr.Slider
+    reference_resolution: gr.Dropdown
+    match_input_size: gr.Checkbox
+    seed: gr.Number
+    steps: gr.Slider
+    cfg: gr.Slider
+    sampler: gr.Dropdown
+    scheduler: gr.Dropdown
+    cache_device: gr.Dropdown
+    cache_dtype: gr.Dropdown
+
+
+def build_qwen_image21_view(
+    root: gr.Group,
+    *,
+    model_choices: Sequence[str],
+    text_encoder_choices: Sequence[str],
+    defaults: Mapping[str, Any],
+) -> QwenImage21View:
+    with root:
+        gr.Markdown(
+            "## Qwen Image 2.1\n"
+            "Generate images or edit and combine reference images with the native "
+            "ComfyUI workflow. In edit mode, the first image is the target; mention "
+            "references as `<image1>`, `<image2>`, and so on. Models download on "
+            "first use. [Model details](https://huggingface.co/Comfy-Org/Qwen-Image-2.1)"
+        )
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=3):
+                mode = gr.Dropdown(
+                    choices=["Text to image", "Image edit"],
+                    value=defaults["mode"],
+                    label="Mode",
+                )
+                prompt = gr.Textbox(
+                    label="Prompt / edit instruction",
+                    lines=10,
+                    placeholder=(
+                        "Describe the image to create, or explain precisely what "
+                        "to change while preserving the rest."
+                    ),
+                )
+                negative_prompt = gr.Textbox(
+                    label="Negative prompt",
+                    lines=3,
+                    info="Used only when CFG is greater than 1.",
+                )
+                reference_images = gr.File(
+                    label="Reference images",
+                    file_count="multiple",
+                    file_types=["image"],
+                    type="filepath",
+                )
+                gr.Markdown(
+                    "Image edit supports up to 16 files. **image1** is the edit "
+                    "target; later images are references."
+                )
+            with gr.Column(scale=2):
+                output = gr.Image(label="Generated image", type="filepath")
+                with gr.Row():
+                    run = gr.Button("Generate with Qwen Image 2.1", variant="primary")
+                    stop = gr.Button("Interrupt")
+                status = gr.Textbox(label="Status", lines=7)
+                model = gr.Dropdown(
+                    choices=list(model_choices),
+                    value=defaults["model"],
+                    label="Diffusion model",
+                )
+                text_encoder = gr.Dropdown(
+                    choices=list(text_encoder_choices),
+                    value=defaults["text_encoder"],
+                    label="Qwen3-VL text encoder",
+                )
+                with gr.Row():
+                    width = gr.Slider(
+                        256, 2048, value=defaults["width"], step=32, label="Width"
+                    )
+                    height = gr.Slider(
+                        256, 2048, value=defaults["height"], step=32, label="Height"
+                    )
+                match_input_size = gr.Checkbox(
+                    value=defaults["match_input_size"],
+                    label="Match first image size when editing",
+                    info="Recommended. Disable to use the width and height above.",
+                )
+                reference_resolution = gr.Dropdown(
+                    choices=[
+                        ("Keep each source size", 0),
+                        ("512 px pixel budget", 512),
+                        ("768 px pixel budget", 768),
+                        ("1024 px pixel budget", 1024),
+                        ("1536 px pixel budget", 1536),
+                        ("2048 px pixel budget", 2048),
+                    ],
+                    value=defaults["reference_resolution"],
+                    label="Reference resolution",
+                    info="0 keeps each source size (rounded to 32); 1024 normalizes pixel area.",
+                )
+                with gr.Row():
+                    seed = gr.Number(
+                        value=defaults["seed"], precision=0, label="Seed (-1 random)"
+                    )
+                    steps = gr.Slider(
+                        1, 100, value=defaults["steps"], step=1, label="Steps"
+                    )
+                    cfg = gr.Slider(
+                        0, 20, value=defaults["cfg"], step=0.1, label="CFG"
+                    )
+                with gr.Accordion("Advanced sampling and edit cache", open=False):
+                    with gr.Row():
+                        sampler = gr.Dropdown(
+                            choices=["euler", "euler_ancestral", "dpmpp_2m"],
+                            value=defaults["sampler"],
+                            label="Sampler",
+                        )
+                        scheduler = gr.Dropdown(
+                            choices=["simple", "normal", "beta"],
+                            value=defaults["scheduler"],
+                            label="Scheduler",
+                        )
+                    with gr.Row():
+                        cache_device = gr.Dropdown(
+                            choices=["auto", "gpu", "cpu", "off"],
+                            value=defaults["cache_device"],
+                            label="Edit KV cache device",
+                        )
+                        cache_dtype = gr.Dropdown(
+                            choices=["default", "int8", "int4"],
+                            value=defaults["cache_dtype"],
+                            label="Edit KV cache precision",
+                        )
+                gr.Markdown(
+                    "Qwen recommends CFG 1 (no guidance) and roughly 40–50 Euler "
+                    "steps; this app starts at 25 like the official Comfy template. "
+                    "Native output supports up to 2048×2048."
+                )
+    return QwenImage21View(
+        mode,
+        prompt,
+        negative_prompt,
+        reference_images,
+        output,
+        run,
+        stop,
+        status,
+        model,
+        text_encoder,
+        width,
+        height,
+        reference_resolution,
+        match_input_size,
+        seed,
+        steps,
+        cfg,
+        sampler,
+        scheduler,
+        cache_device,
+        cache_dtype,
+    )
+
 @dataclass(frozen=True)
 class YuE2View:
     style: gr.Textbox

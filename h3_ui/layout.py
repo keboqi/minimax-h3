@@ -16,6 +16,7 @@ import gradio as gr
 class AppViews:
     tabs: gr.Tabs
     generation: gr.Row
+    qwen_image21: gr.Group
     ltx25: gr.Group
     music3: gr.Group
     yue2: gr.Group
@@ -31,6 +32,8 @@ def create_app_views() -> AppViews:
     with tabs:
         with gr.Tab("MiniMax H3"):
             generation = gr.Row(elem_classes=["h3-generator-shell"])
+        with gr.Tab("Qwen Image 2.1"):
+            qwen_image21 = gr.Group()
         with gr.Tab("LTX 2.5"):
             ltx25 = gr.Group()
         with gr.Tab("MiniMax Music 3"):
@@ -41,4 +44,14 @@ def create_app_views() -> AppViews:
             gallery = gr.Group(elem_classes=["h3-gallery-shell"])
         with gr.Tab("API"):
             api = gr.Group()
-    return AppViews(tabs, generation, ltx25, music3, yue2, gallery, api, gallery_tab)
+    return AppViews(
+        tabs,
+        generation,
+        qwen_image21,
+        ltx25,
+        music3,
+        yue2,
+        gallery,
+        api,
+        gallery_tab,
+    )

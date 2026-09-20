@@ -35,6 +35,8 @@ from h3_models import (
     MODEL_SPECS,
     PROFILE_LABELS,
     PROFILE_MODEL_KEYS,
+    QWEN_IMAGE21_MODEL_CHOICES,
+    QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
     SEEDVR2_MODEL_CHOICES,
     TRT_VAE_ENGINE_BUILD_ID,
     TRT_VAE_ENGINE_MARKER,
@@ -780,6 +782,58 @@ def ensure_music3_models(model_choice: str, *, runtime: RuntimeConfig) -> bool:
         manifest_path=manifest_path,
         token=resolve_hf_token(),
         log_prefix="[music3-on-demand]",
+        model_keys=keys,
+        download_workers=len(keys),
+    )
+    return True
+
+
+def qwen_image21_model_keys(
+    model_choice: str, text_encoder_choice: str
+) -> tuple[str, str, str]:
+    try:
+        model_key = QWEN_IMAGE21_MODEL_CHOICES[str(model_choice)]
+        encoder_key = QWEN_IMAGE21_TEXT_ENCODER_CHOICES[str(text_encoder_choice)]
+    except KeyError as exc:
+        raise H3Error(f"Unknown Qwen Image 2.1 model choice: {exc.args[0]}") from exc
+    return model_key, encoder_key, "qwen_image21_vae"
+
+
+def missing_qwen_image21_model_names(
+    model_choice: str,
+    text_encoder_choice: str,
+    *,
+    runtime: RuntimeConfig,
+) -> list[str]:
+    missing = stale_model_keys(
+        root=runtime.comfy_dir / "models",
+        manifest_path=runtime.models_config.parent / "h3_model_manifest.json",
+        model_keys=qwen_image21_model_keys(model_choice, text_encoder_choice),
+    )
+    return [MODEL_SPECS[key].local_name for key in missing]
+
+
+def ensure_qwen_image21_models(
+    model_choice: str,
+    text_encoder_choice: str,
+    *,
+    runtime: RuntimeConfig,
+) -> bool:
+    """Lazily install the selected Qwen Image 2.1 DiT, encoder, and VAE."""
+    keys = qwen_image21_model_keys(model_choice, text_encoder_choice)
+    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
+    missing = stale_model_keys(
+        root=runtime.comfy_dir / "models",
+        manifest_path=manifest_path,
+        model_keys=keys,
+    )
+    if not missing:
+        return False
+    sync_models(
+        root=runtime.comfy_dir / "models",
+        manifest_path=manifest_path,
+        token=resolve_hf_token(),
+        log_prefix="[qwen-image21-on-demand]",
         model_keys=keys,
         download_workers=len(keys),
     )

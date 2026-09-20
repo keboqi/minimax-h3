@@ -9,6 +9,8 @@ from h3_models import (
     DEFAULT_H3_LATENT_UPSCALER_MODEL,
     DEFAULT_LTX25_MODEL,
     DEFAULT_MUSIC3_MODEL,
+    DEFAULT_QWEN_IMAGE21_MODEL,
+    DEFAULT_QWEN_IMAGE21_TEXT_ENCODER,
     DEFAULT_YUE2_MODEL,
     DEFAULT_SEEDVR2_MODEL,
     PROFILE_LABELS,
@@ -213,6 +215,22 @@ YUE2_DEFAULTS = {
     "abc_penalty_window": 100,
     "max_abc_tokens": 8192,
     "tiled_decode": True,
+}
+QWEN_IMAGE21_DEFAULTS = {
+    "mode": "Text to image",
+    "model": DEFAULT_QWEN_IMAGE21_MODEL,
+    "text_encoder": DEFAULT_QWEN_IMAGE21_TEXT_ENCODER,
+    "width": 1024,
+    "height": 1024,
+    "reference_resolution": 0,
+    "match_input_size": True,
+    "seed": -1,
+    "steps": 25,
+    "cfg": 1.0,
+    "sampler": "euler",
+    "scheduler": "simple",
+    "cache_device": "auto",
+    "cache_dtype": "default",
 }
 
 

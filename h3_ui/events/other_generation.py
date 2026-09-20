@@ -9,7 +9,12 @@ from ..contracts import AppComponents, AppServices
 
 def bind_other_generation(
     components: AppComponents, services: AppServices
-) -> tuple[gr.events.Dependency, gr.events.Dependency, gr.events.Dependency]:
+) -> tuple[
+    gr.events.Dependency,
+    gr.events.Dependency,
+    gr.events.Dependency,
+    gr.events.Dependency,
+]:
     music3_event = services.bind_music_view(
         components.music3_components,
         enhance_prompt=services.enhance_music3_prompt,
@@ -21,5 +26,9 @@ def bind_other_generation(
     yue2_event = services.bind_yue2_view(
         components.yue2_components, generate=services.generate_yue2
     )
+    qwen_event = services.bind_qwen_image21_view(
+        components.qwen_image21_components,
+        generate=services.generate_qwen_image21,
+    )
 
-    return music3_event, api_event, yue2_event
+    return music3_event, api_event, yue2_event, qwen_event

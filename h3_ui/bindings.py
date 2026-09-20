@@ -15,7 +15,7 @@ from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 
 
 from .ltx_view import LtxView
-from .views import ApiView, GalleryView, MusicView, YuE2View
+from .views import ApiView, GalleryView, MusicView, QwenImage21View, YuE2View
 
 
 def bind_preflight(
@@ -211,6 +211,37 @@ def bind_music_view(
         outputs=[view.output, view.status],
         show_progress="minimal",
         api_name="generate_music3",
+    )
+
+
+def bind_qwen_image21_view(
+    view: QwenImage21View, *, generate: Callable[..., Any]
+) -> Any:
+    return bind_gpu_action(
+        view.run.click,
+        owned_generation(generate, "qwen_image21"),
+        inputs=[
+            view.mode,
+            view.model,
+            view.text_encoder,
+            view.prompt,
+            view.negative_prompt,
+            view.reference_images,
+            view.width,
+            view.height,
+            view.reference_resolution,
+            view.match_input_size,
+            view.seed,
+            view.steps,
+            view.cfg,
+            view.sampler,
+            view.scheduler,
+            view.cache_device,
+            view.cache_dtype,
+        ],
+        outputs=[view.output, view.status],
+        show_progress="minimal",
+        api_name="generate_qwen_image21",
     )
 
 

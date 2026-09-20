@@ -133,14 +133,16 @@ def selftest() -> None:
     tab_nodes = tabs_layout["children"]
     assert [components_by_id[node["id"]]["props"]["label"] for node in tab_nodes] == [
         "MiniMax H3",
+        "Qwen Image 2.1",
         "LTX 2.5",
         "MiniMax Music 3",
+        "YuE2",
         "Gallery",
         "API",
     ]
     assert [
         components_by_id[node["children"][0]["id"]]["type"] for node in tab_nodes
-    ] == ["row", "group", "group", "group", "group"]
+    ] == ["row", "group", "group", "group", "group", "group", "group"]
     with app.tempfile.TemporaryDirectory() as output_temp:
         output_root = app.Path(output_temp)
         staging_root = output_root / "h3" / "image_staging"

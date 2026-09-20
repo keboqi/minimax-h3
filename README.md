@@ -12,6 +12,8 @@ bundled FirstBlockCache node.
 - Image results expose 1–20 decoded frames in a preview gallery and save only
   the frames selected by the user
 - Audio results decode the native H3 stereo soundtrack without creating a video
+- A dedicated Qwen Image 2.1 tab for native text-to-image generation and
+  multi-reference image editing
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
 - A dedicated MiniMax Music 3 tab for caption-and-lyrics song generation
 - A dedicated YuE2 tab for score-planned or direct lyrics-to-song generation
@@ -356,6 +358,14 @@ on first use. It supports tagged song sections and a maximum duration of five
 minutes, with tiled audio decoding enabled by default for lower peak VRAM.
 Later runs check remote metadata for the preloaded set and refresh only stale
 files; lazy checkpoints remain local and are fetched again if missing or incomplete.
+The **Qwen Image 2.1** tab uses ComfyUI's native `TextEncodeQwenImage21`
+workflow for both generation and editing. The INT8 ConvRot DiT and text encoder
+are selected by default; BF16 and W4A8 alternatives are available. The selected
+DiT, Qwen3-VL 8B encoder, and BF16 VAE download on first use from
+[Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1).
+Image edit accepts up to 16 inputs, treats `image1` as the edit target, and
+lets prompts refer to inputs as `<image1>`, `<image2>`, and so on. Generated
+images and their settings are saved with the other application outputs.
 The **YuE2** tab uses ComfyUI's native YuE2 nodes (ComfyUI v0.36.0 or newer).
 Its INT8 ConvRot checkpoint (about 4 GB) is selected by default; the BF16
 checkpoint is an optional alternative. The selected checkpoint downloads on
@@ -566,7 +576,8 @@ tab. It returns a public HTTP download URL instead of a client-local temporary
 file path. The `/generate_video_advanced` endpoint exposes every generation
 control; its current request schema is linked from the API tab.
 The LTX tab is also available as `/generate_ltx25_video` and shares the same
-single-job ComfyUI queue.
+single-job ComfyUI queue. Qwen Image 2.1 is available as
+`/generate_qwen_image21` and uses that queue as well.
 
 `run_h3.sh` binds Gradio to `0.0.0.0`, so use host firewall rules or a trusted
 network when the machine is reachable by other devices.
@@ -599,11 +610,12 @@ hosted prompt enhancer available without entering a key in the UI, also store
 `GEMINI_API_KEY` and/or `LIGHTNING_API_KEY` in that Modal Secret.
 
 The deployment pins an immutable ComfyUI revision with its required
-frontend package 1.52.7, Comfy Kitchen 0.2.34 and upstream aimdo 0.5.3.
+frontend package 1.53.6, Comfy Kitchen 0.2.35 and upstream aimdo 0.5.5.
 The source also pins workflow templates 0.11.62 and embedded docs 0.5.11.
-This update includes native sparse attention, Comfy Compiler, optional H3
-reference VAEs and DiffSynth/ModelScope H3 LoRA support. KJNodes 1.5.1 includes
-the matching H3 low-memory attention callback fix.
+This update includes native Qwen Image 2.1 generation/editing, sparse attention,
+Comfy Compiler, optional H3 reference VAEs and DiffSynth/ModelScope H3 LoRA
+support. KJNodes 1.5.1 includes the matching H3 low-memory attention callback
+fix.
 
 TensorRT VAE is pinned to `4360e00867eca86ab61b3899216c0ec281367b46`.
 Upstream now owns optional encoder loading and single-frame encoding. Our

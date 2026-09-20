@@ -261,6 +261,10 @@ class EnsureMusic3Models(Protocol):
     def __call__(self, model_choice: str) -> bool: ...
 
 
+class EnsureQwenImage21Models(Protocol):
+    def __call__(self, model_choice: str, text_encoder_choice: str) -> bool: ...
+
+
 class EnsureYuE2Models(Protocol):
     def __call__(self, model_choice: str) -> bool: ...
 
@@ -297,6 +301,12 @@ class MissingLtx25ModelNames(Protocol):
 
 class MissingMusic3ModelNames(Protocol):
     def __call__(self, model_choice: str) -> list[str]: ...
+
+
+class MissingQwenImage21ModelNames(Protocol):
+    def __call__(
+        self, model_choice: str, text_encoder_choice: str
+    ) -> list[str]: ...
 
 
 class MissingYuE2ModelNames(Protocol):
@@ -393,6 +403,7 @@ class ModelsServices:
     ensure_ltx25_models: EnsureLtx25Models
     ensure_ltx25_upscale_models: EnsureLtx25UpscaleModels
     ensure_music3_models: EnsureMusic3Models
+    ensure_qwen_image21_models: EnsureQwenImage21Models
     ensure_yue2_models: EnsureYuE2Models
     ensure_profile_model: EnsureProfileModel
     ensure_seedvr2_upscale_models: EnsureSeedvr2UpscaleModels
@@ -402,6 +413,7 @@ class ModelsServices:
     load_model_config: LoadModelConfig
     missing_ltx25_model_names: MissingLtx25ModelNames
     missing_music3_model_names: MissingMusic3ModelNames
+    missing_qwen_image21_model_names: MissingQwenImage21ModelNames
     missing_yue2_model_names: MissingYuE2ModelNames
     trt_vae_decoder_paths: TrtVaeDecoderPaths
     unload_comfy_models: UnloadComfyModels

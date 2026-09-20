@@ -181,6 +181,27 @@ class MusicRequest:
 
 
 @dataclass(frozen=True)
+class QwenImage21Request:
+    mode: str
+    model_choice: str
+    text_encoder_choice: str
+    prompt: str
+    negative_prompt: str
+    reference_images: tuple[str, ...]
+    width: int
+    height: int
+    reference_resolution: int
+    match_input_size: bool
+    seed: int
+    steps: int
+    cfg: float
+    sampler_name: str
+    scheduler: str
+    cache_device: str
+    cache_dtype: str
+
+
+@dataclass(frozen=True)
 class YuE2Request:
     model_choice: str
     style: str

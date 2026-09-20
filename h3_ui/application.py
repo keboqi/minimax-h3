@@ -64,6 +64,8 @@ from h3_models import (
     MIN_VALID_MODEL_BYTES,
     MODEL_SPECS,
     MUSIC3_MODEL_CHOICES,
+    QWEN_IMAGE21_MODEL_CHOICES,
+    QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
     MUSIC3_SHARED_MODEL_KEYS,
     YUE2_MODEL_CHOICES,
     PROFILE_LABELS,
@@ -96,6 +98,7 @@ from h3_ui.bindings import (
     bind_interrupts,
     bind_ltx_view,
     bind_music_view,
+    bind_qwen_image21_view,
     bind_yue2_view,
     bind_preflight,
     bind_summary,
@@ -107,7 +110,13 @@ from h3_ui.layout import create_app_views
 from h3_ui.persistence import bind_browser_settings
 from h3_ui.ltx_view import build_ltx_view
 from h3_ui.styles import H3_SETUP_CSS, H3_UI_CSS
-from h3_ui.views import build_api_view, build_gallery_view, build_music_view, build_yue2_view
+from h3_ui.views import (
+    build_api_view,
+    build_gallery_view,
+    build_music_view,
+    build_qwen_image21_view,
+    build_yue2_view,
+)
 
 from dataclasses import asdict
 from h3_app.settings import (
@@ -235,6 +244,7 @@ from h3_app.catalog import (
     MIN_VIDEO_BATCH_COUNT,
     MODEL_PROFILE_CHOICES,
     MUSIC3_DEFAULTS,
+    QWEN_IMAGE21_DEFAULTS,
     YUE2_DEFAULTS,
     NATIVE_PIXEL_CAP,
     OFFICIAL_IMAGE_VAE,
@@ -351,6 +361,7 @@ from h3_app.generation import (
     h3 as h3_generation,
     ltx as ltx_generation,
     music as music_generation,
+    qwen as qwen_generation,
     yue2 as yue2_generation,
 )
 
@@ -1054,6 +1065,22 @@ def missing_music3_model_names(model_choice: str) -> list[str]:
 
 def ensure_music3_models(model_choice: str) -> bool:
     return model_service.ensure_music3_models(model_choice, runtime=_runtime_config())
+
+
+def missing_qwen_image21_model_names(
+    model_choice: str, text_encoder_choice: str
+) -> list[str]:
+    return model_service.missing_qwen_image21_model_names(
+        model_choice, text_encoder_choice, runtime=_runtime_config()
+    )
+
+
+def ensure_qwen_image21_models(
+    model_choice: str, text_encoder_choice: str
+) -> bool:
+    return model_service.ensure_qwen_image21_models(
+        model_choice, text_encoder_choice, runtime=_runtime_config()
+    )
 
 
 def missing_yue2_model_names(model_choice: str) -> list[str]:
@@ -3147,6 +3174,7 @@ def _generation_services() -> generation_services.GenerationServices:
             ensure_ltx25_models=ensure_ltx25_models,
             ensure_ltx25_upscale_models=ensure_ltx25_upscale_models,
             ensure_music3_models=ensure_music3_models,
+            ensure_qwen_image21_models=ensure_qwen_image21_models,
             ensure_yue2_models=ensure_yue2_models,
             ensure_profile_model=ensure_profile_model,
             ensure_seedvr2_upscale_models=ensure_seedvr2_upscale_models,
@@ -3156,6 +3184,7 @@ def _generation_services() -> generation_services.GenerationServices:
             load_model_config=load_model_config,
             missing_ltx25_model_names=missing_ltx25_model_names,
             missing_music3_model_names=missing_music3_model_names,
+            missing_qwen_image21_model_names=missing_qwen_image21_model_names,
             missing_yue2_model_names=missing_yue2_model_names,
             trt_vae_decoder_paths=trt_vae_decoder_paths,
             unload_comfy_models=unload_comfy_models,
@@ -3431,6 +3460,57 @@ def generate_music3(
         }
     )
     yield from music_generation.generate_music3(
+        request, _generation_services(), _runtime_config(), progress=progress
+    )
+
+
+def generate_qwen_image21(
+    mode: str,
+    model_choice: str,
+    text_encoder_choice: str,
+    prompt: str,
+    negative_prompt: str,
+    reference_images: Any,
+    width: int,
+    height: int,
+    reference_resolution: int,
+    match_input_size: bool,
+    seed: int,
+    steps: int,
+    cfg: float,
+    sampler_name: str,
+    scheduler: str,
+    cache_device: str,
+    cache_dtype: str,
+    progress=gr.Progress(track_tqdm=False),
+):
+    uploaded = reference_images or []
+    if isinstance(uploaded, (str, Path)):
+        uploaded = [uploaded]
+    staged = tuple(
+        stage_file(str(path), "qwen_image21_references", reuse=True)
+        for path in uploaded
+    )
+    request = generation_requests.QwenImage21Request(
+        mode=mode,
+        model_choice=model_choice,
+        text_encoder_choice=text_encoder_choice,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        reference_images=staged,
+        width=width,
+        height=height,
+        reference_resolution=reference_resolution,
+        match_input_size=match_input_size,
+        seed=seed,
+        steps=steps,
+        cfg=cfg,
+        sampler_name=sampler_name,
+        scheduler=scheduler,
+        cache_device=cache_device,
+        cache_dtype=cache_dtype,
+    )
+    yield from qwen_generation.generate_qwen_image21(
         request, _generation_services(), _runtime_config(), progress=progress
     )
 
@@ -3898,6 +3978,7 @@ def build_ui() -> gr.Blocks:
             memory_status = gr.Markdown()
         app_views = create_app_views()
         generation_view = app_views.generation
+        qwen_image21_view = app_views.qwen_image21
         ltx25_view = app_views.ltx25
         music3_view = app_views.music3
         yue2_view = app_views.yue2
@@ -3972,6 +4053,12 @@ def build_ui() -> gr.Blocks:
             model_choices=MUSIC3_MODEL_CHOICES,
             defaults=MUSIC3_DEFAULTS,
         )
+        qwen_image21_components = build_qwen_image21_view(
+            qwen_image21_view,
+            model_choices=QWEN_IMAGE21_MODEL_CHOICES,
+            text_encoder_choices=QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
+            defaults=QWEN_IMAGE21_DEFAULTS,
+        )
         yue2_components = build_yue2_view(
             yue2_view,
             model_choices=YUE2_MODEL_CHOICES,
@@ -3998,6 +4085,7 @@ def build_ui() -> gr.Blocks:
         for root, view in (
             (ltx25_view, ltx25_components),
             (music3_view, music3_components),
+            (qwen_image21_view, qwen_image21_components),
             (yue2_view, yue2_components),
         ):
             with root:
@@ -4030,6 +4118,9 @@ def build_ui() -> gr.Blocks:
                 "music3_components": music3_components,
                 "music3_status": music3_components.status,
                 "music3_stop": music3_components.stop,
+                "qwen_image21_components": qwen_image21_components,
+                "qwen_image21_status": qwen_image21_components.status,
+                "qwen_image21_stop": qwen_image21_components.stop,
                 "yue2_components": yue2_components,
                 "yue2_status": yue2_components.status,
                 "yue2_stop": yue2_components.stop,
@@ -4051,6 +4142,7 @@ def build_ui() -> gr.Blocks:
                 bind_gallery_view=bind_gallery_view,
                 bind_ltx_view=bind_ltx_view,
                 bind_music_view=bind_music_view,
+                bind_qwen_image21_view=bind_qwen_image21_view,
                 bind_yue2_view=bind_yue2_view,
                 compile_trt_video_vae=compile_trt_video_vae,
                 delete_selected_gallery_video=delete_selected_gallery_video,
@@ -4062,6 +4154,7 @@ def build_ui() -> gr.Blocks:
                 generate_for_ui=generate_for_ui,
                 generate_ltx25=generate_ltx25,
                 generate_music3=generate_music3,
+                generate_qwen_image21=generate_qwen_image21,
                 generate_yue2=generate_yue2,
                 generate_with_ui_defaults=generate_with_ui_defaults,
                 image_vae_frame_updates=image_vae_frame_updates,
@@ -4102,6 +4195,10 @@ def build_ui() -> gr.Blocks:
             **{
                 f"music3.{name}": component
                 for name, component in vars(music3_components).items()
+            },
+            **{
+                f"qwen_image21.{name}": component
+                for name, component in vars(qwen_image21_components).items()
             },
             **{
                 f"yue2.{name}": component

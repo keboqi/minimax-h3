@@ -11,11 +11,14 @@ from .h3_view import H3View
 class AppComponents(H3View):
     ltx25_model: gr.components.Component
     ltx25_components: Any
+    qwen_image21_components: Any
     music3_components: Any
     yue2_components: Any
     api_components: Any
     ltx25_stop: gr.components.Component
     ltx25_status: gr.components.Component
+    qwen_image21_stop: gr.components.Component
+    qwen_image21_status: gr.components.Component
     music3_stop: gr.components.Component
     music3_status: gr.components.Component
     yue2_stop: gr.components.Component
@@ -71,9 +74,11 @@ class AppServices:
     prompt_writer_backend_visibility: Callable[..., Any]
     enhance_h3_prompt: Callable[..., Any]
     bind_music_view: Callable[..., Any]
+    bind_qwen_image21_view: Callable[..., Any]
     bind_yue2_view: Callable[..., Any]
     enhance_music3_prompt: Callable[..., Any]
     generate_music3: Callable[..., Any]
+    generate_qwen_image21: Callable[..., Any]
     generate_yue2: Callable[..., Any]
     bind_api_view: Callable[..., Any]
     generate_with_ui_defaults: Callable[..., Any]

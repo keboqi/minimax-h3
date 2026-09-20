@@ -41,6 +41,7 @@ LTX25_CQ_ENHANCER_REPO = "CQdesign/LTX-2.5-CQ-Video-and-Image-Enhancer-LoRAs"
 LTX23_REPO = "Lightricks/LTX-2.3"
 MINIMAX_MUSIC3_REPO = "Comfy-Org/MiniMax-Music-3"
 YUE2_REPO = "Comfy-Org/YuE2"
+QWEN_IMAGE21_REPO = "Comfy-Org/Qwen-Image-2.1"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -473,6 +474,42 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "checkpoints/yue2_3b_bf16.safetensors",
         "YuE2 3B BF16",
     ),
+    "qwen_image21_dit_int8": ModelSpec(
+        QWEN_IMAGE21_REPO,
+        "diffusion_models",
+        "diffusion_models/qwen_image_2.1_int8_convrot.safetensors",
+        "Qwen Image 2.1 DiT INT8 ConvRot",
+    ),
+    "qwen_image21_dit_bf16": ModelSpec(
+        QWEN_IMAGE21_REPO,
+        "diffusion_models",
+        "diffusion_models/qwen_image_2.1_bf16.safetensors",
+        "Qwen Image 2.1 DiT BF16",
+    ),
+    "qwen_image21_text_int8": ModelSpec(
+        QWEN_IMAGE21_REPO,
+        "text_encoders",
+        "text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+        "Qwen Image 2.1 Qwen3-VL 8B INT8 ConvRot encoder",
+    ),
+    "qwen_image21_text_w4a8": ModelSpec(
+        QWEN_IMAGE21_REPO,
+        "text_encoders",
+        "text_encoders/qwen3vl_8b_w4a8.safetensors",
+        "Qwen Image 2.1 Qwen3-VL 8B W4A8 encoder",
+    ),
+    "qwen_image21_text_bf16": ModelSpec(
+        QWEN_IMAGE21_REPO,
+        "text_encoders",
+        "text_encoders/qwen3vl_8b_bf16.safetensors",
+        "Qwen Image 2.1 Qwen3-VL 8B BF16 encoder",
+    ),
+    "qwen_image21_vae": ModelSpec(
+        QWEN_IMAGE21_REPO,
+        "vae",
+        "vae/qwen_image_2.1_vae_bf16.safetensors",
+        "Qwen Image 2.1 BF16 VAE",
+    ),
 }
 
 PROFILE_MODEL_KEYS = {
@@ -580,6 +617,22 @@ YUE2_MODEL_CHOICES = {
 }
 DEFAULT_YUE2_MODEL = "INT8 ConvRot (lower VRAM)"
 YUE2_MODEL_KEYS = tuple(YUE2_MODEL_CHOICES.values())
+QWEN_IMAGE21_MODEL_CHOICES = {
+    "INT8 ConvRot (lower VRAM)": "qwen_image21_dit_int8",
+    "BF16": "qwen_image21_dit_bf16",
+}
+DEFAULT_QWEN_IMAGE21_MODEL = "INT8 ConvRot (lower VRAM)"
+QWEN_IMAGE21_TEXT_ENCODER_CHOICES = {
+    "INT8 ConvRot (recommended)": "qwen_image21_text_int8",
+    "W4A8 (lowest VRAM)": "qwen_image21_text_w4a8",
+    "BF16": "qwen_image21_text_bf16",
+}
+DEFAULT_QWEN_IMAGE21_TEXT_ENCODER = "INT8 ConvRot (recommended)"
+QWEN_IMAGE21_MODEL_KEYS = (
+    *QWEN_IMAGE21_MODEL_CHOICES.values(),
+    *QWEN_IMAGE21_TEXT_ENCODER_CHOICES.values(),
+    "qwen_image21_vae",
+)
 LAZY_OPTIONAL_MODEL_KEYS = (
     "semantic_bridge_v1",
     *H3_OPTIONAL_TEXT_ENCODER_KEYS,
@@ -599,6 +652,7 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     *LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS,
     *MUSIC3_MODEL_KEYS,
     *YUE2_MODEL_KEYS,
+    *QWEN_IMAGE21_MODEL_KEYS,
 )
 SHARED_MODEL_KEYS = tuple(
     key
@@ -1211,6 +1265,14 @@ def selftest() -> None:
         "music3_dit_fp16",
         "music3_text_encoder",
         "music3_vae",
+        "yue2_int8",
+        "yue2_bf16",
+        "qwen_image21_dit_int8",
+        "qwen_image21_dit_bf16",
+        "qwen_image21_text_int8",
+        "qwen_image21_text_w4a8",
+        "qwen_image21_text_bf16",
+        "qwen_image21_vae",
     }
 
     cfg = _build_config("manifest.json")
