@@ -82,8 +82,7 @@ PRESETS = {
         auto_megapixels="4 MP",
         turbo_variant=LIGHTX2V_8STEP,
         sla_preset="Quality",
-        text_encoder="BF16",
-        stage_model_offload=True,
+        text_encoder="INT8 ConvRot",
     ),
 }
 

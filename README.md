@@ -279,15 +279,16 @@ The native H3 latent upscaler starts enabled for video and lazy-downloads the
 selected checkpoint. **Quality (FP32)** is the default choice; **Fast (FP16)**
 and **Balanced (BF16)** remain selectable.
 The sampling presets also select the H3 text encoder: **Fast** uses
-**NVFP4 / AWQ**, **Balanced** uses **INT8 ConvRot**, and **Quality** uses
-**BF16** (51.5 GB). Singularity is the initial preset: it selects the Singularity base model and otherwise uses Fast settings. Its NVFP4/AWQ text encoder is preloaded; INT8 ConvRot (27.1 GB) downloads on first selection. Fast and Balanced
-disable model offload by default while leaving the checkbox editable; Quality
-automatically enables and locks **Offload models
-between H3 stages**. After a fresh encode this keeps the text encoder, diffusion
-model, optional latent upscaler, and VAEs from remaining resident together. When
-unchanged BF16 conditioning is reused, the encoder never loads and all remaining
-stage offloads are skipped for that run. INT8 and NVFP4 keep the current all-VRAM
-path by default; stage offload can still be enabled manually for either one.
+**NVFP4 / AWQ**, while **Balanced** and **Quality** use **INT8 ConvRot**.
+Singularity is the initial preset: it selects the Singularity base model and
+otherwise uses Fast settings. Its NVFP4/AWQ text encoder is preloaded; INT8
+ConvRot (27.1 GB) downloads on first selection. All presets leave model offload
+disabled by default and editable. **BF16** (51.5 GB) is available only as a
+manual text-encoder selection; selecting it automatically enables and locks
+**Offload models between H3 stages**. When unchanged BF16 conditioning is
+reused, the encoder never loads and all remaining stage offloads are skipped
+for that run. INT8 and NVFP4 keep the current all-VRAM path by default; stage
+offload can still be enabled manually for either one.
 
 **FastH3 8-Step V2** is available as a lazy base-model download using the official
 ComfyUI INT8 ConvRot checkpoint. It shares the selected Qwen3-VL text encoder,

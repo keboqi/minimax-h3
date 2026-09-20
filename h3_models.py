@@ -531,8 +531,8 @@ H3_TEXT_ENCODER_CHOICES = {
     "INT8 ConvRot": "text_encoder_int8",
     "BF16": "text_encoder_bf16",
 }
-DEFAULT_H3_TEXT_ENCODER = "BF16"
-DEFAULT_H3_TEXT_ENCODER_KEY = "text_encoder_bf16"
+DEFAULT_H3_TEXT_ENCODER = "INT8 ConvRot"
+DEFAULT_H3_TEXT_ENCODER_KEY = "text_encoder_int8"
 H3_OPTIONAL_TEXT_ENCODER_KEYS = (
     "text_encoder",
     "text_encoder_int8",
@@ -1104,10 +1104,10 @@ def validate_config_files(
     """Return missing/invalid files from the startup preload inventory.
 
     ``h3_models.json`` keeps ``text_encoder`` as a legacy compatibility field
-    pointing at the BF16 encoder. That checkpoint is intentionally lazy: the
-    default Singularity UI preset uses the preloaded NVFP4/AWQ encoder instead. Do not
-    validate every file named in the complete catalog here, or Modal will fail
-    startup before the on-demand downloader can run.
+    pointing at the INT8 ConvRot encoder. That checkpoint is intentionally lazy:
+    the default Singularity UI preset uses the preloaded NVFP4/AWQ encoder
+    instead. Do not validate every file named in the complete catalog here, or
+    Modal will fail startup before the on-demand downloader can run.
     """
     root = Path(root)
     # ``config`` and ``profiles`` remain accepted for API compatibility with
@@ -1244,7 +1244,9 @@ def selftest() -> None:
     assert cfg["profiles"]["original"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_bf16.safetensors"
     )
-    assert cfg["text_encoder"] == ("qwen3vl_32b_minimax_h3_bf16.safetensors")
+    assert cfg["text_encoder"] == (
+        "qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
+    )
     assert cfg["text_encoders"] == {
         "NVFP4 / AWQ": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
         "INT8 ConvRot": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",

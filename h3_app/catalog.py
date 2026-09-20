@@ -523,7 +523,7 @@ SAMPLING_PRESET_TEXT_ENCODERS = {
     "Singularity": "NVFP4 / AWQ",
     "Fast": "NVFP4 / AWQ",
     "Balanced": "INT8 ConvRot",
-    "Quality": "BF16",
+    "Quality": "INT8 ConvRot",
 }
 
 

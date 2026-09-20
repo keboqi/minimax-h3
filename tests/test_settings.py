@@ -42,6 +42,8 @@ class SettingsTests(unittest.TestCase):
             ],
             [15, 18, 20],
         )
+        self.assertEqual(preset_settings("Quality", "Normal").text_encoder, "INT8 ConvRot")
+        self.assertFalse(preset_settings("Quality", "Normal").stage_model_offload)
 
     def test_fasth3_8step_profile_enforces_its_native_text_schedule(self):
         request = GenerationRequest(
