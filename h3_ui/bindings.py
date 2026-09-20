@@ -15,7 +15,7 @@ from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 
 
 from .ltx_view import LtxView
-from .views import ApiView, GalleryView, MusicView
+from .views import ApiView, GalleryView, MusicView, YuE2View
 
 
 def bind_preflight(
@@ -211,6 +211,23 @@ def bind_music_view(
         outputs=[view.output, view.status],
         show_progress="minimal",
         api_name="generate_music3",
+    )
+
+
+def bind_yue2_view(view: YuE2View, *, generate: Callable[..., Any]) -> Any:
+    return bind_gpu_action(
+        view.run.click,
+        owned_generation(generate, "yue2"),
+        inputs=[
+            view.model, view.style, view.lyrics, view.abc, view.mode, view.duration,
+            view.seed, view.steps, view.cfg, view.temperature, view.top_p, view.top_k,
+            view.repetition_penalty, view.max_abc_tokens, view.abc_temperature,
+            view.abc_top_p, view.abc_top_k, view.abc_repetition_penalty,
+            view.abc_penalty_window, view.tiled,
+        ],
+        outputs=[view.output, view.status],
+        show_progress="minimal",
+        api_name="generate_yue2",
     )
 
 

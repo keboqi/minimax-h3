@@ -65,6 +65,7 @@ from h3_models import (
     MODEL_SPECS,
     MUSIC3_MODEL_CHOICES,
     MUSIC3_SHARED_MODEL_KEYS,
+    YUE2_MODEL_CHOICES,
     PROFILE_LABELS,
     SEEDVR2_MODEL_CHOICES,
     TRT_VAE_ENGINE_BUILD_ID,
@@ -95,6 +96,7 @@ from h3_ui.bindings import (
     bind_interrupts,
     bind_ltx_view,
     bind_music_view,
+    bind_yue2_view,
     bind_preflight,
     bind_summary,
 )
@@ -105,7 +107,7 @@ from h3_ui.layout import create_app_views
 from h3_ui.persistence import bind_browser_settings
 from h3_ui.ltx_view import build_ltx_view
 from h3_ui.styles import H3_SETUP_CSS, H3_UI_CSS
-from h3_ui.views import build_api_view, build_gallery_view, build_music_view
+from h3_ui.views import build_api_view, build_gallery_view, build_music_view, build_yue2_view
 
 from dataclasses import asdict
 from h3_app.settings import (
@@ -232,6 +234,7 @@ from h3_app.catalog import (
     MIN_VIDEO_BATCH_COUNT,
     MODEL_PROFILE_CHOICES,
     MUSIC3_DEFAULTS,
+    YUE2_DEFAULTS,
     NATIVE_PIXEL_CAP,
     OFFICIAL_IMAGE_VAE,
     POSTPROCESS_OPTIONS,
@@ -347,6 +350,7 @@ from h3_app.generation import (
     h3 as h3_generation,
     ltx as ltx_generation,
     music as music_generation,
+    yue2 as yue2_generation,
 )
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
@@ -1049,6 +1053,14 @@ def missing_music3_model_names(model_choice: str) -> list[str]:
 
 def ensure_music3_models(model_choice: str) -> bool:
     return model_service.ensure_music3_models(model_choice, runtime=_runtime_config())
+
+
+def missing_yue2_model_names(model_choice: str) -> list[str]:
+    return model_service.missing_yue2_model_names(model_choice, runtime=_runtime_config())
+
+
+def ensure_yue2_models(model_choice: str) -> bool:
+    return model_service.ensure_yue2_models(model_choice, runtime=_runtime_config())
 
 
 def api_get(path: str, **kwargs: Any) -> requests.Response:
@@ -3134,6 +3146,7 @@ def _generation_services() -> generation_services.GenerationServices:
             ensure_ltx25_models=ensure_ltx25_models,
             ensure_ltx25_upscale_models=ensure_ltx25_upscale_models,
             ensure_music3_models=ensure_music3_models,
+            ensure_yue2_models=ensure_yue2_models,
             ensure_profile_model=ensure_profile_model,
             ensure_seedvr2_upscale_models=ensure_seedvr2_upscale_models,
             ensure_single_frame_image_vae=ensure_single_frame_image_vae,
@@ -3142,6 +3155,7 @@ def _generation_services() -> generation_services.GenerationServices:
             load_model_config=load_model_config,
             missing_ltx25_model_names=missing_ltx25_model_names,
             missing_music3_model_names=missing_music3_model_names,
+            missing_yue2_model_names=missing_yue2_model_names,
             trt_vae_decoder_paths=trt_vae_decoder_paths,
             unload_comfy_models=unload_comfy_models,
             h3_text_encoder_settings=h3_text_encoder_settings,
@@ -3416,6 +3430,56 @@ def generate_music3(
         }
     )
     yield from music_generation.generate_music3(
+        request, _generation_services(), _runtime_config(), progress=progress
+    )
+
+
+def generate_yue2(
+    model_choice: str,
+    style: str,
+    lyrics: str,
+    abc: str,
+    mode: str,
+    max_duration: float,
+    seed: int,
+    steps: int,
+    cfg: float,
+    temperature: float,
+    top_p: float,
+    top_k: int,
+    repetition_penalty: float,
+    max_abc_tokens: int,
+    abc_temperature: float,
+    abc_top_p: float,
+    abc_top_k: int,
+    abc_repetition_penalty: float,
+    abc_penalty_window: int,
+    tiled_decode: bool,
+    progress=gr.Progress(track_tqdm=False),
+):
+    request = generation_requests.YuE2Request(
+        model_choice=model_choice,
+        style=style,
+        lyrics=lyrics,
+        abc=abc,
+        mode=mode,
+        max_duration=max_duration,
+        seed=seed,
+        steps=steps,
+        cfg=cfg,
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        repetition_penalty=repetition_penalty,
+        max_abc_tokens=max_abc_tokens,
+        abc_temperature=abc_temperature,
+        abc_top_p=abc_top_p,
+        abc_top_k=abc_top_k,
+        abc_repetition_penalty=abc_repetition_penalty,
+        abc_penalty_window=abc_penalty_window,
+        tiled_decode=tiled_decode,
+    )
+    yield from yue2_generation.generate_yue2(
         request, _generation_services(), _runtime_config(), progress=progress
     )
 
@@ -3835,6 +3899,7 @@ def build_ui() -> gr.Blocks:
         generation_view = app_views.generation
         ltx25_view = app_views.ltx25
         music3_view = app_views.music3
+        yue2_view = app_views.yue2
         gallery_view = app_views.gallery
         api_view = app_views.api
         gallery_tab = app_views.gallery_tab
@@ -3906,6 +3971,11 @@ def build_ui() -> gr.Blocks:
             model_choices=MUSIC3_MODEL_CHOICES,
             defaults=MUSIC3_DEFAULTS,
         )
+        yue2_components = build_yue2_view(
+            yue2_view,
+            model_choices=YUE2_MODEL_CHOICES,
+            defaults=YUE2_DEFAULTS,
+        )
         gallery_components = build_gallery_view(
             gallery_view,
             postprocess_options=POSTPROCESS_OPTIONS,
@@ -3927,6 +3997,7 @@ def build_ui() -> gr.Blocks:
         for root, view in (
             (ltx25_view, ltx25_components),
             (music3_view, music3_components),
+            (yue2_view, yue2_components),
         ):
             with root:
                 metadata_view = gr.HTML(
@@ -3958,6 +4029,9 @@ def build_ui() -> gr.Blocks:
                 "music3_components": music3_components,
                 "music3_status": music3_components.status,
                 "music3_stop": music3_components.stop,
+                "yue2_components": yue2_components,
+                "yue2_status": yue2_components.status,
+                "yue2_stop": yue2_components.stop,
                 "system_summary": system_summary,
                 "unload_models": unload_models,
             }
@@ -3976,6 +4050,7 @@ def build_ui() -> gr.Blocks:
                 bind_gallery_view=bind_gallery_view,
                 bind_ltx_view=bind_ltx_view,
                 bind_music_view=bind_music_view,
+                bind_yue2_view=bind_yue2_view,
                 compile_trt_video_vae=compile_trt_video_vae,
                 delete_selected_gallery_video=delete_selected_gallery_video,
                 empty_generated_gallery=empty_generated_gallery,
@@ -3986,6 +4061,7 @@ def build_ui() -> gr.Blocks:
                 generate_for_ui=generate_for_ui,
                 generate_ltx25=generate_ltx25,
                 generate_music3=generate_music3,
+                generate_yue2=generate_yue2,
                 generate_with_ui_defaults=generate_with_ui_defaults,
                 image_vae_frame_updates=image_vae_frame_updates,
                 import_gallery_video=import_gallery_video,
@@ -4025,6 +4101,10 @@ def build_ui() -> gr.Blocks:
             **{
                 f"music3.{name}": component
                 for name, component in vars(music3_components).items()
+            },
+            **{
+                f"yue2.{name}": component
+                for name, component in vars(yue2_components).items()
             },
             **{
                 f"gallery.{name}": component

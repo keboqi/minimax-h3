@@ -10,7 +10,7 @@ from .settings_controller import SETTING_NAMES
 # Keep the transport key/secret so existing encrypted v3 values remain readable.
 _STORAGE_KEY = "minimax-h3:settings:v3"
 _BROWSER_STATE_SECRET = "minimax-h3-ui-settings-v3"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 EXTRA_FIELDS = {
     "h3": (
         "ref_size",
@@ -56,6 +56,25 @@ EXTRA_FIELDS = {
         "ar_cfg",
         "top_k",
         "prompt_model",
+    ),
+    "yue2": (
+        "model",
+        "mode",
+        "duration",
+        "seed",
+        "steps",
+        "cfg",
+        "temperature",
+        "top_p",
+        "top_k",
+        "repetition_penalty",
+        "max_abc_tokens",
+        "abc_temperature",
+        "abc_top_p",
+        "abc_top_k",
+        "abc_repetition_penalty",
+        "abc_penalty_window",
+        "tiled",
     ),
     "gallery": (
         "postprocess",

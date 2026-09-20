@@ -58,6 +58,12 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Composing song structure and acoustic conditioning"
     if name == "EmptyMiniMaxMusic3LatentAudio":
         return "Preparing Music 3 audio latents"
+    if name == "YuE2GenerateABC":
+        return "Composing melody and chord score"
+    if name == "YuE2GenerateMusic":
+        return "Generating acoustic conditioning"
+    if name == "EmptyYuE2LatentAudio":
+        return "Preparing YuE2 audio latents"
     if name in {
         "EmptyLTXVLatentVideo",
         "LTXVEmptyLatentAudio",
@@ -116,6 +122,8 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Refining MMH3 temporal chunks and spatial tiles"
     if name == "KSampler" and "MiniMaxMusic3TextEncode" in workflow_classes:
         return "Generating music"
+    if name == "KSampler" and "YuE2GenerateMusic" in workflow_classes:
+        return "Generating YuE2 audio"
     if name == "SamplerCustomAdvanced" or "Sampler" in name:
         return "Generating video and audio"
     if name in {

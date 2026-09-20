@@ -40,6 +40,7 @@ LTX25_PIXEL_UPSCALER_REPO = "Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscal
 LTX25_CQ_ENHANCER_REPO = "CQdesign/LTX-2.5-CQ-Video-and-Image-Enhancer-LoRAs"
 LTX23_REPO = "Lightricks/LTX-2.3"
 MINIMAX_MUSIC3_REPO = "Comfy-Org/MiniMax-Music-3"
+YUE2_REPO = "Comfy-Org/YuE2"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -460,6 +461,18 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "vae/minimax_music3_dav.safetensors",
         "MiniMax Music 3 stereo audio decoder",
     ),
+    "yue2_int8": ModelSpec(
+        YUE2_REPO,
+        "checkpoints",
+        "checkpoints/yue2_3b_int8_convrot.safetensors",
+        "YuE2 3B INT8 ConvRot",
+    ),
+    "yue2_bf16": ModelSpec(
+        YUE2_REPO,
+        "checkpoints",
+        "checkpoints/yue2_3b_bf16.safetensors",
+        "YuE2 3B BF16",
+    ),
 }
 
 PROFILE_MODEL_KEYS = {
@@ -561,6 +574,12 @@ MUSIC3_MODEL_CHOICES = {
 DEFAULT_MUSIC3_MODEL = "INT8 ConvRot (lower VRAM)"
 MUSIC3_SHARED_MODEL_KEYS = ("music3_text_encoder", "music3_vae")
 MUSIC3_MODEL_KEYS = (*MUSIC3_MODEL_CHOICES.values(), *MUSIC3_SHARED_MODEL_KEYS)
+YUE2_MODEL_CHOICES = {
+    "INT8 ConvRot (lower VRAM)": "yue2_int8",
+    "BF16": "yue2_bf16",
+}
+DEFAULT_YUE2_MODEL = "INT8 ConvRot (lower VRAM)"
+YUE2_MODEL_KEYS = tuple(YUE2_MODEL_CHOICES.values())
 LAZY_OPTIONAL_MODEL_KEYS = (
     "semantic_bridge_v1",
     *H3_OPTIONAL_TEXT_ENCODER_KEYS,
@@ -579,6 +598,7 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     *LTX25_MODEL_KEYS,
     *LTX25_OFFICIAL_WORKFLOW_MODEL_KEYS,
     *MUSIC3_MODEL_KEYS,
+    *YUE2_MODEL_KEYS,
 )
 SHARED_MODEL_KEYS = tuple(
     key
@@ -904,7 +924,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
     return {
-        "schema_version": 19,
+        "schema_version": 20,
         "default_profile": "speed",
         "profiles": {
             profile: _profile_config(profile) for profile in PROFILE_MODEL_KEYS
@@ -1212,7 +1232,7 @@ def selftest() -> None:
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
     assert "h3_latent_upscaler_3d_bf16" not in PRELOAD_MODEL_KEYS
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 19
+    assert cfg["schema_version"] == 20
     assert "fasth3_8step_v2" not in PRELOAD_MODEL_KEYS
     assert cfg["profiles"]["fasth3_8step_v2"]["fl2va"] == (
         MODEL_SPECS["fasth3_8step_v2"].local_name
@@ -1322,6 +1342,8 @@ def selftest() -> None:
         assert not model_file_matches_manifest(root, manifest, int8)
     assert set(LTX25_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert set(MUSIC3_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
+    assert set(YUE2_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
+    assert DEFAULT_YUE2_MODEL == "INT8 ConvRot (lower VRAM)"
     assert DEFAULT_MUSIC3_MODEL == "INT8 ConvRot (lower VRAM)"
     assert len(LTX25_ICLORA_MODEL_KEYS) == 5
     assert all(MODEL_SPECS[key].folder == "loras" for key in LTX25_ICLORA_MODEL_KEYS)

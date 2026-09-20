@@ -25,6 +25,7 @@ from h3_app.model_types import (
     ltx25_model_keys,
     model_file_is_ready,
     music3_model_keys,
+    yue2_model_keys,
     seedvr2_upscale_model_names,
     trt_vae_engine_name,
 )
@@ -781,5 +782,36 @@ def ensure_music3_models(model_choice: str, *, runtime: RuntimeConfig) -> bool:
         log_prefix="[music3-on-demand]",
         model_keys=keys,
         download_workers=len(keys),
+    )
+    return True
+
+
+def missing_yue2_model_names(model_choice: str, *, runtime: RuntimeConfig) -> list[str]:
+    missing = stale_model_keys(
+        root=runtime.comfy_dir / "models",
+        manifest_path=runtime.models_config.parent / "h3_model_manifest.json",
+        model_keys=yue2_model_keys(model_choice),
+    )
+    return [MODEL_SPECS[key].local_name for key in missing]
+
+
+def ensure_yue2_models(model_choice: str, *, runtime: RuntimeConfig) -> bool:
+    """Lazily install the selected YuE2 checkpoint from the official Comfy-Org repo."""
+    keys = yue2_model_keys(model_choice)
+    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
+    missing = stale_model_keys(
+        root=runtime.comfy_dir / "models",
+        manifest_path=manifest_path,
+        model_keys=keys,
+    )
+    if not missing:
+        return False
+    sync_models(
+        root=runtime.comfy_dir / "models",
+        manifest_path=manifest_path,
+        token=resolve_hf_token(),
+        log_prefix="[yue2-on-demand]",
+        model_keys=keys,
+        download_workers=1,
     )
     return True

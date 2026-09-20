@@ -9,6 +9,7 @@ from h3_models import (
     DEFAULT_H3_LATENT_UPSCALER_MODEL,
     DEFAULT_LTX25_MODEL,
     DEFAULT_MUSIC3_MODEL,
+    DEFAULT_YUE2_MODEL,
     DEFAULT_SEEDVR2_MODEL,
     PROFILE_LABELS,
 )
@@ -192,6 +193,25 @@ MUSIC3_DEFAULTS = {
     "cfg": 1.7,
     "ar_cfg": 1.7,
     "top_k": 50,
+    "tiled_decode": True,
+}
+YUE2_DEFAULTS = {
+    "model": DEFAULT_YUE2_MODEL,
+    "duration": 180,
+    "seed": -1,
+    "mode": "full",
+    "steps": 32,
+    "cfg": 1.0,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 100,
+    "repetition_penalty": 1.2,
+    "abc_temperature": 0.7,
+    "abc_top_p": 0.9,
+    "abc_top_k": 30,
+    "abc_repetition_penalty": 1.005,
+    "abc_penalty_window": 100,
+    "max_abc_tokens": 8192,
     "tiled_decode": True,
 }
 

@@ -178,3 +178,27 @@ class MusicRequest:
     ar_cfg: float
     top_k: int
     tiled_decode: bool
+
+
+@dataclass(frozen=True)
+class YuE2Request:
+    model_choice: str
+    style: str
+    lyrics: str
+    abc: str
+    mode: str
+    max_duration: float
+    seed: int
+    steps: int
+    cfg: float
+    temperature: float
+    top_p: float
+    top_k: int
+    repetition_penalty: float
+    max_abc_tokens: int
+    abc_temperature: float
+    abc_top_p: float
+    abc_top_k: int
+    abc_repetition_penalty: float
+    abc_penalty_window: int
+    tiled_decode: bool

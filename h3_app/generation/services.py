@@ -261,6 +261,10 @@ class EnsureMusic3Models(Protocol):
     def __call__(self, model_choice: str) -> bool: ...
 
 
+class EnsureYuE2Models(Protocol):
+    def __call__(self, model_choice: str) -> bool: ...
+
+
 class EnsureProfileModel(Protocol):
     def __call__(self, profile_key: str, profile: ModelProfile, mode: str) -> bool: ...
 
@@ -292,6 +296,10 @@ class MissingLtx25ModelNames(Protocol):
 
 
 class MissingMusic3ModelNames(Protocol):
+    def __call__(self, model_choice: str) -> list[str]: ...
+
+
+class MissingYuE2ModelNames(Protocol):
     def __call__(self, model_choice: str) -> list[str]: ...
 
 
@@ -385,6 +393,7 @@ class ModelsServices:
     ensure_ltx25_models: EnsureLtx25Models
     ensure_ltx25_upscale_models: EnsureLtx25UpscaleModels
     ensure_music3_models: EnsureMusic3Models
+    ensure_yue2_models: EnsureYuE2Models
     ensure_profile_model: EnsureProfileModel
     ensure_seedvr2_upscale_models: EnsureSeedvr2UpscaleModels
     ensure_single_frame_image_vae: EnsureSingleFrameImageVae
@@ -393,6 +402,7 @@ class ModelsServices:
     load_model_config: LoadModelConfig
     missing_ltx25_model_names: MissingLtx25ModelNames
     missing_music3_model_names: MissingMusic3ModelNames
+    missing_yue2_model_names: MissingYuE2ModelNames
     trt_vae_decoder_paths: TrtVaeDecoderPaths
     unload_comfy_models: UnloadComfyModels
     h3_text_encoder_settings: H3TextEncoderSettings

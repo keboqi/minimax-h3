@@ -14,6 +14,7 @@ bundled FirstBlockCache node.
 - Audio results decode the native H3 stereo soundtrack without creating a video
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
 - A dedicated MiniMax Music 3 tab for caption-and-lyrics song generation
+- A dedicated YuE2 tab for score-planned or direct lyrics-to-song generation
 - All ten official LTX-2.5 ComfyUI workflows for two-stage generation,
   audio-to-video, text-to-audio, video editing, reference sheets, motion tracks,
   in/outpainting, and pose/depth/canny control
@@ -354,6 +355,16 @@ on first use. It supports tagged song sections and a maximum duration of five
 minutes, with tiled audio decoding enabled by default for lower peak VRAM.
 Later runs check remote metadata for the preloaded set and refresh only stale
 files; lazy checkpoints remain local and are fetched again if missing or incomplete.
+The **YuE2** tab uses ComfyUI's native YuE2 nodes (ComfyUI v0.36.0 or newer).
+Its INT8 ConvRot checkpoint (about 4 GB) is selected by default; the BF16
+checkpoint is an optional alternative. The selected checkpoint downloads on
+first use into ComfyUI/models/checkpoints/. Use **Full score** to plan melody
+and chords, **Melody only** for a melody plan, or **Direct generation** to skip
+the score planner. Lyrics should use section tags such as [verse] and [chorus].
+Tiled audio decode is enabled by default for long songs. YuE2 weights from
+[Comfy-Org/YuE2](https://huggingface.co/Comfy-Org/YuE2) are licensed
+CC-BY-NC-4.0. Generation is exposed as /generate_yue2; style, lyrics, and an
+optional edited ABC score are accepted with the generation settings.
 On Debian/Ubuntu standalone hosts, `run_h3.sh` also installs the `ffmpeg` system
 package through `apt-get` (using `sudo` when needed) if `ffmpeg` or `ffprobe` is
 missing.

@@ -23,6 +23,7 @@ from h3_models import (
     MODEL_SPECS,
     MUSIC3_MODEL_CHOICES,
     MUSIC3_SHARED_MODEL_KEYS,
+    YUE2_MODEL_CHOICES,
     SEEDVR2_MODEL_CHOICES,
 )
 
@@ -196,3 +197,10 @@ def music3_model_keys(model_choice: str) -> tuple[str, ...]:
     if choice not in MUSIC3_MODEL_CHOICES:
         raise H3Error(f"Unknown MiniMax Music 3 model: {model_choice}")
     return (MUSIC3_MODEL_CHOICES[choice], *MUSIC3_SHARED_MODEL_KEYS)
+
+
+def yue2_model_keys(model_choice: str) -> tuple[str, ...]:
+    choice = str(model_choice)
+    if choice not in YUE2_MODEL_CHOICES:
+        raise H3Error(f"Unknown YuE2 model: {model_choice}")
+    return (YUE2_MODEL_CHOICES[choice],)

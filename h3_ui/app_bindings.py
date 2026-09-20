@@ -37,7 +37,7 @@ def bind_app(
     event, advanced_api_event = bind_generation(components, services)
     bind_image_results(components, services)
     bind_prompt(components, services)
-    music3_event, api_event = bind_other_generation(components, services)
+    music3_event, api_event, yue2_event = bind_other_generation(components, services)
     for button, status, family, events in (
         (
             components.stop,
@@ -47,6 +47,7 @@ def bind_app(
         ),
         (components.ltx25_stop, components.ltx25_status, "ltx", [ltx25_event]),
         (components.music3_stop, components.music3_status, "music", [music3_event]),
+        (components.yue2_stop, components.yue2_status, "yue2", [yue2_event]),
         (components.api_stop, components.api_status, "api", [api_event]),
     ):
         stopped = button.click(

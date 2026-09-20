@@ -18,6 +18,7 @@ class AppViews:
     generation: gr.Row
     ltx25: gr.Group
     music3: gr.Group
+    yue2: gr.Group
     gallery: gr.Group
     api: gr.Group
     gallery_tab: gr.Tab
@@ -34,8 +35,10 @@ def create_app_views() -> AppViews:
             ltx25 = gr.Group()
         with gr.Tab("MiniMax Music 3"):
             music3 = gr.Group()
+        with gr.Tab("YuE2"):
+            yue2 = gr.Group()
         with gr.Tab("Gallery") as gallery_tab:
             gallery = gr.Group(elem_classes=["h3-gallery-shell"])
         with gr.Tab("API"):
             api = gr.Group()
-    return AppViews(tabs, generation, ltx25, music3, gallery, api, gallery_tab)
+    return AppViews(tabs, generation, ltx25, music3, yue2, gallery, api, gallery_tab)
