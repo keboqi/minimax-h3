@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from ..contracts import AppComponents, AppServices
-from ..job_bindings import bind_gpu_action
 
 
 def bind_image_results(components: AppComponents, services: AppServices) -> None:
@@ -22,11 +21,11 @@ def bind_image_results(components: AppComponents, services: AppServices) -> None
         show_progress="hidden",
         api_name=False,
     )
-    bind_gpu_action(
-        components.image_save_selected.click,
+    components.image_save_selected.click(
         services.save_selected_image_frames,
         inputs=[components.image_frame_paths, components.image_selection],
         outputs=[components.image_saved_files, components.image_save_status],
+        queue=False,
         show_progress="minimal",
         api_name="save_h3_image_frames",
     )

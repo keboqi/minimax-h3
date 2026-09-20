@@ -499,6 +499,24 @@ class UiContractTests(unittest.TestCase):
                 self.assertEqual(event.concurrency_limit, 1, name)
         self.assertEqual(found, expected)
 
+    def test_non_gpu_media_actions_bypass_the_application_queue(self):
+        expected = {
+            "refresh_gallery",
+            "select_gallery_video",
+            "import_gallery_video",
+            "delete_selected_gallery_video",
+            "empty_generated_gallery",
+            "save_selected_image_frames",
+        }
+        found = set()
+        for event in self.demo.fns.values():
+            name = getattr(event.fn, "__name__", "")
+            if name in expected:
+                found.add(name)
+                self.assertFalse(event.queue, name)
+                self.assertNotEqual(event.concurrency_id, "h3-gpu", name)
+        self.assertEqual(found, expected)
+
     def test_h3_progressive_section_order(self) -> None:
         tabs = next(
             component

@@ -296,24 +296,27 @@ def bind_gallery_view(
     opened = tab.select(
         lambda: (None, "", None, False),
         outputs=[view.player, view.download, view.selected, view.confirm_delete],
+        queue=False,
+        show_progress="hidden",
     )
     opened.then(
         refresh,
         outputs=[view.grid, view.paths, view.status],
+        queue=False,
         show_progress="hidden",
     )
-    bind_gpu_action(
-        view.refresh.click,
+    view.refresh.click(
         refresh,
         outputs=[view.grid, view.paths, view.status],
-        show_progress="minimal",
+        queue=False,
+        show_progress="hidden",
     )
-    bind_gpu_action(
-        view.grid.select,
+    view.grid.select(
         select,
         inputs=view.paths,
         outputs=[view.player, view.download, view.selected],
-        show_progress="minimal",
+        queue=False,
+        show_progress="hidden",
     )
     mutation_outputs = [
         view.grid,
@@ -324,11 +327,11 @@ def bind_gallery_view(
         view.selected,
         view.confirm_delete,
     ]
-    bind_gpu_action(
-        view.import_video.click,
+    view.import_video.click(
         import_video,
         inputs=[view.upload_video],
         outputs=mutation_outputs,
+        queue=False,
         show_progress="minimal",
         api_name=False,
     )
@@ -358,19 +361,19 @@ def bind_gallery_view(
         queue=False,
     )
     stopped.then(fn=None, cancels=[post_event], queue=False, api_name=False)
-    bind_gpu_action(
-        view.delete.click,
+    view.delete.click(
         delete,
         inputs=[view.selected, view.confirm_delete],
         outputs=mutation_outputs,
+        queue=False,
         show_progress="minimal",
         api_name=False,
     )
-    bind_gpu_action(
-        view.empty.click,
+    view.empty.click(
         empty,
         inputs=[view.selected, view.confirm_delete],
         outputs=mutation_outputs,
+        queue=False,
         show_progress="minimal",
         api_name=False,
     )

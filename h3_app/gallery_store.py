@@ -7,6 +7,7 @@ import json
 import subprocess
 import uuid
 from pathlib import Path
+from threading import Lock
 from types import EllipsisType
 from urllib.parse import quote
 
@@ -16,6 +17,7 @@ from h3_app.errors import H3Error
 from h3_app.processes import run_media_process
 
 _GALLERY_RESOLUTION_CACHE = {}
+_GALLERY_RESOLUTION_CACHE_LOCK = Lock()
 
 
 def video_download_path(video: str | Path, *, runtime: RuntimeConfig) -> str:
@@ -148,8 +150,9 @@ def gallery_video_resolution(
     except OSError:
         return None
     cache_key = (str(resolved), stat.st_mtime_ns, stat.st_size)
-    if cache_key in _GALLERY_RESOLUTION_CACHE:
-        return _GALLERY_RESOLUTION_CACHE[cache_key]
+    with _GALLERY_RESOLUTION_CACHE_LOCK:
+        if cache_key in _GALLERY_RESOLUTION_CACHE:
+            return _GALLERY_RESOLUTION_CACHE[cache_key]
 
     cmd = [
         "ffprobe",
@@ -182,9 +185,10 @@ def gallery_video_resolution(
     ):
         pass
 
-    if len(_GALLERY_RESOLUTION_CACHE) >= runtime.gallery_metadata_cache_limit:
-        _GALLERY_RESOLUTION_CACHE.clear()
-    _GALLERY_RESOLUTION_CACHE[cache_key] = resolution
+    with _GALLERY_RESOLUTION_CACHE_LOCK:
+        if len(_GALLERY_RESOLUTION_CACHE) >= runtime.gallery_metadata_cache_limit:
+            _GALLERY_RESOLUTION_CACHE.clear()
+        _GALLERY_RESOLUTION_CACHE[cache_key] = resolution
     return resolution
 
 
@@ -210,9 +214,10 @@ def generated_video_family(video: str | Path, *, runtime: RuntimeConfig) -> str:
 
 
 def forget_gallery_metadata(video: str | Path | None = None) -> None:
-    if video is None:
-        _GALLERY_RESOLUTION_CACHE.clear()
-        return
-    resolved = str(Path(video).resolve())
-    for key in [key for key in _GALLERY_RESOLUTION_CACHE if key[0] == resolved]:
-        _GALLERY_RESOLUTION_CACHE.pop(key, None)
+    with _GALLERY_RESOLUTION_CACHE_LOCK:
+        if video is None:
+            _GALLERY_RESOLUTION_CACHE.clear()
+            return
+        resolved = str(Path(video).resolve())
+        for key in [key for key in _GALLERY_RESOLUTION_CACHE if key[0] == resolved]:
+            _GALLERY_RESOLUTION_CACHE.pop(key, None)
