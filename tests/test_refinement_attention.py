@@ -53,6 +53,11 @@ class RefinementAttentionTests(unittest.TestCase):
                 if split:
                     node = next(n for n in graph.nodes.values() if n['class_type'] == app.H3_SPLIT_UPSCALE_NODE)
                     self.assertEqual(node['inputs']['model'], target['model'])
+                    self.assertFalse(any(n['class_type'] == app.H3_REFINEMENT_COMPILER_GUARD_NODE for n in graph.nodes.values()))
+                else:
+                    guard_id, guard = next((node_id, n) for node_id, n in graph.nodes.items() if n['class_type'] == app.H3_REFINEMENT_COMPILER_GUARD_NODE)
+                    self.assertEqual(target['model'], [guard_id, 0])
+                    self.assertEqual(guard['inputs']['min_video_volume'], 1_500_000)
             else:
                 self.assertEqual(target['model'], model)
                 self.assertEqual(sum(n['class_type'] == app.SLA_ATTENTION_NODE for n in graph.nodes.values()), 1)

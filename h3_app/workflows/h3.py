@@ -25,6 +25,7 @@ from h3_app.catalog import (
     H3_LATENT_UPSCALE_STANDARD,
     H3_LATENT_UPSCALER_NODE,
     H3_NVENC_SAVE_NODE,
+    H3_REFINEMENT_COMPILER_GUARD_NODE,
     H3_SEMANTIC_BRIDGE_NODE,
     H3_SEPARATE_AV_LATENT_NODE,
     H3_SIGMA_SHIFT_NODE,
@@ -548,6 +549,13 @@ def finish_sampling(
         if latent_upscale_model_name is not None
         else model_ref
     )
+    if latent_upscale_model_name is not None and latent_split_config is None:
+        refinement_guard = graph.add(
+            H3_REFINEMENT_COMPILER_GUARD_NODE,
+            model=refinement_model_ref,
+            min_video_volume=1_500_000,
+        )
+        refinement_model_ref = Graph.out(refinement_guard)
     guider = graph.add(
         "BasicGuider", model=refinement_model_ref, conditioning=conditioning_ref
     )
@@ -1337,6 +1345,7 @@ def required_nodes_for(
         common |= {
             "SplitSigmas",
             H3_LATENT_UPSCALER_NODE,
+            H3_REFINEMENT_COMPILER_GUARD_NODE,
             H3_SEPARATE_AV_LATENT_NODE,
             H3_COMBINE_AV_LATENT_NODE,
         }

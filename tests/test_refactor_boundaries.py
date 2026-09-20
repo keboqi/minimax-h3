@@ -66,13 +66,14 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn('LOCAL / "h3_app"', modal)
         self.assertIn("LOCAL_UI_PACKAGE,", modal)
 
-    def test_launchers_disable_cuda_malloc_async(self):
+    def test_launchers_keep_cuda_allocator_and_compiler_enabled(self):
         root = Path(__file__).resolve().parents[1]
         local = (root / "run_h3.sh").read_text(encoding="utf-8")
         modal = (root / "modal_h3.py").read_text(encoding="utf-8")
-        self.assertIn("COMFY_ALLOCATOR_ARGS=(--disable-cuda-malloc)", local)
-        self.assertIn('"${COMFY_ALLOCATOR_ARGS[@]}"', local)
-        self.assertIn('"--disable-cuda-malloc",', modal)
+        self.assertNotIn("--disable-cuda-malloc", local)
+        self.assertNotIn("--disable-comfy-compiler", local)
+        self.assertNotIn('"--disable-cuda-malloc",', modal)
+        self.assertNotIn('"--disable-comfy-compiler",', modal)
 
 
 class ManifestTests(unittest.TestCase):

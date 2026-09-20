@@ -374,10 +374,11 @@ move models to system RAM. Without an offload barrier, ComfyUI smart memory can
 still retain the compact NVFP4/INT8 stack in VRAM. Do not launch with
 `--gpu-only` when using the 51.5 GB BF16 text encoder: under that mode ComfyUI
 sets each model's offload device to CUDA, so an unload request cannot release
-its VRAM residency. Both launchers use PyTorch's native CUDA allocator because
-`cudaMallocAsync` can abort while releasing tensors between the base,
-latent-upscaler, and high-resolution refinement stages; Dynamic VRAM and the
-Comfy model compiler remain enabled.
+its VRAM residency. CUDA allocation and the Comfy model compiler stay enabled
+globally. Only a standard latent-refinement pass whose video latent exceeds one
+and a half million spatiotemporal positions bypasses the compiler; this isolates an AIMDO
+malloc-graph incompatibility with SLA's high-resolution Triton specialization
+without slowing ordinary generation or tiled refinement.
 
 The **MiniMax H3** tab includes local, Gemini, and Lightning AI prompt writers.
 The local writer

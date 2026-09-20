@@ -19,6 +19,7 @@ import av
 import torch
 import torch.nn.functional as F
 import comfy.lora
+import comfy.cli_args
 import comfy.model_management
 import comfy.nested_tensor
 import comfy.patcher_extension
@@ -1307,6 +1308,76 @@ class H3StageModelOffload:
         return conditioning, latent, additional_conditioning, additional_latent
 
 
+_H3_REFINEMENT_COMPILER_LOCK = threading.RLock()
+
+
+def _h3_refinement_video_volume(value) -> int:
+    """Return T*H*W for an H3 video latent, or zero for unknown inputs."""
+    tensors = getattr(value, "tensors", None)
+    video = tensors[0] if isinstance(tensors, (list, tuple)) and tensors else value
+    shape = getattr(video, "shape", ())
+    if len(shape) < 5:
+        return 0
+    return math.prod(int(dimension) for dimension in shape[-3:])
+
+
+def _make_h3_refinement_compiler_wrapper(min_video_volume: int):
+    """Bypass AIMDO only for exceptionally large refinement model calls."""
+    state = {"logged": False}
+
+    def wrapper(executor, x, *args, **kwargs):
+        volume = _h3_refinement_video_volume(x)
+        if volume < min_video_volume:
+            return executor(x, *args, **kwargs)
+
+        with _H3_REFINEMENT_COMPILER_LOCK:
+            previous = bool(comfy.cli_args.args.disable_comfy_compiler)
+            comfy.cli_args.args.disable_comfy_compiler = True
+            try:
+                if not state["logged"]:
+                    logging.info(
+                        "MiniMax H3 refinement bypassing Comfy compiler for "
+                        "large video latent volume %d (threshold %d)",
+                        volume,
+                        min_video_volume,
+                    )
+                    state["logged"] = True
+                return executor(x, *args, **kwargs)
+            finally:
+                comfy.cli_args.args.disable_comfy_compiler = previous
+
+    return wrapper
+
+
+class H3RefinementCompilerGuard:
+    """Disable malloc-graph capture only for exceptionally large refinement."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "min_video_volume": (
+                    "INT",
+                    {"default": 1_500_000, "min": 1, "max": 100_000_000},
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "patch"
+    CATEGORY = "model/management/minimax"
+
+    def patch(self, model, min_video_volume=1_500_000):
+        patched = model.clone()
+        patched.add_wrapper_with_key(
+            comfy.patcher_extension.WrappersMP.APPLY_MODEL,
+            f"h3_refinement_compiler_guard_{id(patched)}",
+            _make_h3_refinement_compiler_wrapper(max(1, int(min_video_volume))),
+        )
+        return (patched,)
+
+
 class H3SaveVideoNVENC:
     """Encode an in-memory ComfyUI VIDEO with NVIDIA's H.264 hardware encoder."""
 
@@ -1624,6 +1695,7 @@ NODE_CLASS_MAPPINGS = {
     "H3ConditioningCache": H3ConditioningCache,
     "H3StageOffloadPolicy": H3StageOffloadPolicy,
     "H3StageModelOffload": H3StageModelOffload,
+    "H3RefinementCompilerGuard": H3RefinementCompilerGuard,
     "H3SaveVideoNVENC": H3SaveVideoNVENC,
 }
 
@@ -1638,5 +1710,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3ConditioningCache": "MiniMax H3 Conditioning Cache",
     "H3StageOffloadPolicy": "MiniMax H3 Stage Offload Policy",
     "H3StageModelOffload": "MiniMax H3 Stage Model Offload",
+    "H3RefinementCompilerGuard": "MiniMax H3 Refinement Compiler Guard",
     "H3SaveVideoNVENC": "MiniMax H3 Save Video (NVENC)",
 }

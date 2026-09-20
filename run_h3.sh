@@ -24,11 +24,6 @@ GRADIO_OUTPUT_DIR="$INSTALL_DIR/gradio_outputs"
 SERVER_ATTENTION_BACKEND="sol"
 SERVER_DENSE_ATTENTION_BACKEND="comfy-kitchen"
 COMFY_ATTENTION_ARGS=(--use-ck-attention)
-# cudaMallocAsync can abort in C++ while releasing tensors across H3's
-# low-resolution -> latent-upscaler -> refinement offload boundary. The native
-# allocator keeps that multi-stage lifetime safe; Dynamic VRAM and the Comfy
-# model compiler remain enabled.
-COMFY_ALLOCATOR_ARGS=(--disable-cuda-malloc)
 
 COMFY_PID=""
 GRADIO_PID=""
@@ -243,7 +238,6 @@ log "Memory profile: $COMFYUI_MEMORY_MODE"
     --port "$COMFY_PORT" \
     "${COMFY_MEMORY_ARGS[@]}" \
     "${COMFY_ATTENTION_ARGS[@]}" \
-    "${COMFY_ALLOCATOR_ARGS[@]}" \
     --enable-cors-header "*"
 ) &
 COMFY_PID=$!
