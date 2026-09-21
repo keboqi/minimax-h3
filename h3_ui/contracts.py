@@ -56,6 +56,8 @@ class AppServices:
     prepare_all_ltx25_official_models: Callable[..., Any]
     render_ltx25_official_model_inventory: Callable[[], str]
     enhance_ltx25_prompt: Callable[..., Any]
+    enhance_qwen_image21_prompt: Callable[..., Any]
+    enhance_yue2_prompt: Callable[..., Any]
     generate_ltx25: Callable[..., Any]
     AI_POSTPROCESS_OPTIONS: tuple[str, ...]
     SEEDVR2_UPSCALE: str

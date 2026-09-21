@@ -17,6 +17,7 @@ def selftest() -> None:
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
     )
+    assert app.DEFAULT_GEMINI_PROMPT_MODEL == "gemini-3.5-flash-lite"
     assert app.LIGHTNING_API_ROOT == "https://lightning.ai/api/v1/"
     assert app.LIGHTNING_PROMPT_MODEL == "openai/gpt-5.6-luna"
     assert app.PROMPT_WRITER_BACKENDS == (

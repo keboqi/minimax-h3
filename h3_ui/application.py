@@ -576,6 +576,46 @@ def enhance_ltx25_prompt(
     )
 
 
+def enhance_qwen_image21_prompt(
+    prompt: str,
+    model: str,
+    temporary_api_key: str,
+    mode: str,
+    reference_images: Any,
+    width: int,
+    height: int,
+) -> tuple[str, str]:
+    return prompt_service.enhance_qwen_image21_prompt(
+        prompt,
+        model,
+        temporary_api_key,
+        mode,
+        reference_images,
+        width,
+        height,
+        runtime=_runtime_config(),
+    )
+
+
+def enhance_yue2_prompt(
+    style: str,
+    model: str,
+    temporary_api_key: str,
+    lyrics: str,
+    mode: str,
+    duration: float,
+) -> tuple[str, str, str]:
+    return prompt_service.enhance_yue2_prompt(
+        style,
+        model,
+        temporary_api_key,
+        lyrics,
+        mode,
+        duration,
+        runtime=_runtime_config(),
+    )
+
+
 def _enhance_h3_prompt_with_gemini(
     prompt: str,
     model: str,
@@ -4539,10 +4579,14 @@ def build_ui() -> gr.Blocks:
             qwen_image21_view,
             model_choices=QWEN_IMAGE21_MODEL_CHOICES,
             text_encoder_choices=QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
+            prompt_models=GEMINI_PROMPT_MODELS,
+            default_prompt_model=DEFAULT_GEMINI_PROMPT_MODEL,
             defaults=QWEN_IMAGE21_DEFAULTS,
         )
         yue2_components = build_yue2_view(
             yue2_view,
+            prompt_models=GEMINI_PROMPT_MODELS,
+            default_prompt_model=DEFAULT_GEMINI_PROMPT_MODEL,
             model_choices=YUE2_MODEL_CHOICES,
             defaults=YUE2_DEFAULTS,
         )
@@ -4632,6 +4676,8 @@ def build_ui() -> gr.Blocks:
                 enhance_h3_prompt=enhance_h3_prompt,
                 enhance_ltx25_prompt=enhance_ltx25_prompt,
                 enhance_music3_prompt=enhance_music3_prompt,
+                enhance_qwen_image21_prompt=enhance_qwen_image21_prompt,
+                enhance_yue2_prompt=enhance_yue2_prompt,
                 fbcache_preset_defaults=fbcache_preset_defaults,
                 generate_for_ui=generate_for_ui,
                 generate_ltx25=generate_ltx25,

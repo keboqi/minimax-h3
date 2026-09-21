@@ -408,7 +408,8 @@ repository or local path with `H3_PROMPT_REWRITER_ADAPTER` when needed.
 Gemini combines the current text, active first/last-frame or reference
 image/video/audio inputs, duration, and resolution with the bundled `prompt.txt`
 system instruction. It supports `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`,
-`gemini-3.5-flash`, and `gemini-3.5-flash-lite`. Use Gemini for the separate
+`gemini-3.5-flash`, and `gemini-3.5-flash-lite`, with `gemini-3.5-flash-lite`
+selected by default. Use Gemini for the separate
 Reference media mode, which is not one of the four tasks supported by the local
 adapter. Set `GEMINI_API_KEY` in the server environment, or enter a temporary
 key in the enhancer panel; a key entered in the UI is passed only to enhancement
@@ -467,6 +468,13 @@ writers. They create or enhance prompts from text plus optional keyframe or
 visual-reference images, using `prompt_ltx25.txt` and `prompt_music3.txt`.
 Their UI/API operations are exposed as `/enhance_ltx25_prompt` and
 `/enhance_music3_prompt`.
+
+The **Qwen Image 2.1** tab also has a Gemini prompt writer that understands its
+text-to-image and image-edit modes, including the ordered `<image1>`,
+`<image2>`, ... references. The **YuE2** writer jointly creates or enhances
+the production style and sectioned lyrics. These writers share the same Gemini
+model list and default to `gemini-3.5-flash-lite`; their endpoints are
+`/enhance_qwen_image21_prompt` and `/enhance_yue2_prompt`.
 
 ### Native H3 latent upscale
 

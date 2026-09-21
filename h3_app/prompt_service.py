@@ -384,6 +384,78 @@ def enhance_ltx25_prompt(
     )
 
 
+def enhance_qwen_image21_prompt(
+    prompt: str,
+    model: str,
+    temporary_api_key: str,
+    mode: str,
+    reference_images: Any,
+    width: int,
+    height: int,
+    *,
+    runtime: RuntimeConfig,
+) -> tuple[str, str]:
+    references = reference_images or []
+    if isinstance(references, (str, Path, dict)):
+        references = [references]
+    return _enhance_prompt_from_media(
+        prompt=prompt,
+        model=model,
+        temporary_api_key=temporary_api_key,
+        target="Qwen Image 2.1",
+        system_path=runtime.prompt_systems["Qwen Image 2.1"],
+        media_values=tuple(
+            (f"<image{index}>", image)
+            for index, image in enumerate(references, 1)
+        ),
+        context=(
+            f"Mode: {mode}\nOutput: {int(width)}x{int(height)}\n"
+            "In Image edit mode, <image1> is the edit target and later images are references."
+        ),
+    )
+
+
+def enhance_yue2_prompt(
+    style: str,
+    model: str,
+    temporary_api_key: str,
+    lyrics: str,
+    mode: str,
+    duration: float,
+    *,
+    runtime: RuntimeConfig,
+) -> tuple[str, str, str]:
+    original_style = str(style or "").strip()
+    original_lyrics = str(lyrics or "").strip()
+    request_text = original_style
+    if not request_text and original_lyrics:
+        request_text = "Create a fitting production style for these lyrics."
+    generated, status = _enhance_prompt_from_media(
+        prompt=request_text,
+        model=model,
+        temporary_api_key=temporary_api_key,
+        target="YuE2",
+        system_path=runtime.prompt_systems["YuE2"],
+        media_values=(),
+        context=(
+            f"Score mode: {mode}\nMaximum duration: {float(duration):.0f} seconds\n"
+            f"Existing lyrics (preserve them unless formatting only):\n{lyrics or '(none)'}"
+        ),
+    )
+    if status.startswith("Prompt enhancement failed:"):
+        generated = original_style
+    generated_lyrics = original_lyrics
+    marker_match = re.search(
+        r"(?is)^\s*STYLE:\s*(.*?)\s*LYRICS:\s*(.*)\s*$", generated
+    )
+    if marker_match:
+        generated = marker_match.group(1).strip()
+        candidate_lyrics = marker_match.group(2).strip()
+        if candidate_lyrics.upper() != "N/A":
+            generated_lyrics = candidate_lyrics
+    return generated, generated_lyrics, status
+
+
 def _enhance_h3_prompt_with_gemini(
     prompt: str,
     model: str,

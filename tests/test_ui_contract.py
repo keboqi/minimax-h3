@@ -201,6 +201,26 @@ class UiContractTests(unittest.TestCase):
         for output in outputs:
             self.assertFalse(output["props"]["interactive"], output["props"]["label"])
 
+    def test_all_gemini_prompt_writers_default_to_flash_lite(self) -> None:
+        models = [
+            component
+            for component in self.config["components"]
+            if component.get("props", {}).get("label") == "Gemini model"
+        ]
+        self.assertEqual(len(models), 5)
+        for model in models:
+            self.assertEqual(model["props"]["value"], "gemini-3.5-flash-lite")
+
+    def test_qwen_and_yue2_prompt_writer_endpoints_are_bound(self) -> None:
+        endpoints = {
+            dependency.get("api_name"): dependency
+            for dependency in self.config["dependencies"]
+        }
+        self.assertIn("enhance_qwen_image21_prompt", endpoints)
+        self.assertIn("enhance_yue2_prompt", endpoints)
+        self.assertEqual(len(endpoints["enhance_qwen_image21_prompt"]["outputs"]), 2)
+        self.assertEqual(len(endpoints["enhance_yue2_prompt"]["outputs"]), 3)
+
     def test_custom_server_mount_receives_ui_styles(self) -> None:
         with (
             mock.patch.object(gradio_app.httpx, "AsyncClient"),

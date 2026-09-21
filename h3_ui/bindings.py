@@ -223,7 +223,10 @@ def bind_music_view(
 
 
 def bind_qwen_image21_view(
-    view: QwenImage21View, *, generate: Callable[..., Any]
+    view: QwenImage21View,
+    *,
+    enhance_prompt: Callable[..., Any],
+    generate: Callable[..., Any],
 ) -> Any:
     for preset in (
         view.square_resolution,
@@ -238,6 +241,22 @@ def bind_qwen_image21_view(
             show_progress="hidden",
             api_name=False,
         )
+    bind_gpu_action(
+        view.enhance.click,
+        enhance_prompt,
+        inputs=[
+            view.prompt,
+            view.prompt_model,
+            view.api_key,
+            view.mode,
+            view.reference_images,
+            view.width,
+            view.height,
+        ],
+        outputs=[view.prompt, view.enhance_status],
+        show_progress="minimal",
+        api_name="enhance_qwen_image21_prompt",
+    )
     return bind_gpu_action(
         view.run.click,
         owned_generation(generate, "qwen_image21"),
@@ -267,7 +286,27 @@ def bind_qwen_image21_view(
     )
 
 
-def bind_yue2_view(view: YuE2View, *, generate: Callable[..., Any]) -> Any:
+def bind_yue2_view(
+    view: YuE2View,
+    *,
+    enhance_prompt: Callable[..., Any],
+    generate: Callable[..., Any],
+) -> Any:
+    bind_gpu_action(
+        view.enhance.click,
+        enhance_prompt,
+        inputs=[
+            view.style,
+            view.prompt_model,
+            view.api_key,
+            view.lyrics,
+            view.mode,
+            view.duration,
+        ],
+        outputs=[view.style, view.lyrics, view.enhance_status],
+        show_progress="minimal",
+        api_name="enhance_yue2_prompt",
+    )
     return bind_gpu_action(
         view.run.click,
         owned_generation(generate, "yue2"),

@@ -37,6 +37,10 @@ class QwenImage21View:
     prompt: gr.Textbox
     negative_prompt: gr.Textbox
     reference_images: gr.File
+    prompt_model: gr.Dropdown
+    api_key: gr.Textbox
+    enhance: gr.Button
+    enhance_status: gr.Textbox
     output: gr.Image
     run: gr.Button
     stop: gr.Button
@@ -65,6 +69,8 @@ def build_qwen_image21_view(
     *,
     model_choices: Sequence[str],
     text_encoder_choices: Sequence[str],
+    prompt_models: Sequence[str],
+    default_prompt_model: str,
     defaults: Mapping[str, Any],
 ) -> QwenImage21View:
     with root:
@@ -105,6 +111,25 @@ def build_qwen_image21_view(
                     "Image edit supports up to 10 files. **image1** is the edit "
                     "target; later images are references."
                 )
+                with gr.Accordion("Prompt writer / enhancer", open=False):
+                    gr.Markdown(
+                        "Create or enhance the generation/edit prompt from text and the uploaded reference images."
+                    )
+                    with gr.Row():
+                        prompt_model = gr.Dropdown(
+                            choices=list(prompt_models),
+                            value=default_prompt_model,
+                            label="Gemini model",
+                        )
+                        api_key = gr.Textbox(
+                            label="Temporary Gemini API key",
+                            type="password",
+                            placeholder="Uses GEMINI_API_KEY when blank",
+                        )
+                    enhance = gr.Button("Generate / enhance Qwen prompt")
+                    enhance_status = gr.Textbox(
+                        label="Prompt writer status", lines=2, interactive=False
+                    )
             with gr.Column(scale=2):
                 output = gr.Image(
                     label="Generated image", type="filepath", interactive=False
@@ -250,6 +275,10 @@ def build_qwen_image21_view(
         prompt,
         negative_prompt,
         reference_images,
+        prompt_model,
+        api_key,
+        enhance,
+        enhance_status,
         output,
         run,
         stop,
@@ -278,6 +307,10 @@ class YuE2View:
     style: gr.Textbox
     lyrics: gr.Textbox
     abc: gr.Textbox
+    prompt_model: gr.Dropdown
+    api_key: gr.Textbox
+    enhance: gr.Button
+    enhance_status: gr.Textbox
     mode: gr.Dropdown
     output: gr.Audio
     run: gr.Button
@@ -300,7 +333,14 @@ class YuE2View:
     abc_penalty_window: gr.Slider
     tiled: gr.Checkbox
 
-def build_yue2_view(root: gr.Group, *, model_choices: Sequence[str], defaults: Mapping[str, Any]) -> YuE2View:
+def build_yue2_view(
+    root: gr.Group,
+    *,
+    prompt_models: Sequence[str],
+    default_prompt_model: str,
+    model_choices: Sequence[str],
+    defaults: Mapping[str, Any],
+) -> YuE2View:
     with root:
         gr.Markdown("## YuE2\nGenerate full songs from a style prompt and sectioned lyrics on the shared ComfyUI backend. Full and Melody modes plan a score first; Direct skips planning. The INT8 checkpoint downloads on first use. Model license: CC-BY-NC-4.0. [Model details](https://huggingface.co/Comfy-Org/YuE2)")
         with gr.Row(equal_height=False):
@@ -308,6 +348,25 @@ def build_yue2_view(root: gr.Group, *, model_choices: Sequence[str], defaults: M
                 style = gr.Textbox(label="Style prompt", lines=6, placeholder="Indie pop, warm female vocal, clean guitar, restrained drums...")
                 lyrics = gr.Textbox(label="Lyrics and song structure", lines=16, placeholder="[verse]\nLyrics here...\n\n[chorus]\n...")
                 abc = gr.Textbox(label="ABC score override (optional)", lines=7, placeholder="Leave blank to let YuE2 create the score.")
+                with gr.Accordion("Prompt writer / enhancer", open=False):
+                    gr.Markdown(
+                        "Create or enhance the style prompt and sectioned lyrics for YuE2."
+                    )
+                    with gr.Row():
+                        prompt_model = gr.Dropdown(
+                            choices=list(prompt_models),
+                            value=default_prompt_model,
+                            label="Gemini model",
+                        )
+                        api_key = gr.Textbox(
+                            label="Temporary Gemini API key",
+                            type="password",
+                            placeholder="Uses GEMINI_API_KEY when blank",
+                        )
+                    enhance = gr.Button("Generate / enhance YuE2 prompt")
+                    enhance_status = gr.Textbox(
+                        label="Prompt writer status", lines=2, interactive=False
+                    )
             with gr.Column(scale=2):
                 output = gr.Audio(
                     label="Generated song", type="filepath", interactive=False
@@ -339,7 +398,7 @@ def build_yue2_view(root: gr.Group, *, model_choices: Sequence[str], defaults: M
                         abc_top_k = gr.Slider(1, 32768, value=defaults["abc_top_k"], step=1, label="ABC top-k")
                         abc_repetition_penalty = gr.Slider(0.01, 10, value=defaults["abc_repetition_penalty"], step=0.005, label="ABC repetition penalty")
                         abc_penalty_window = gr.Slider(1, 20000, value=defaults["abc_penalty_window"], step=1, label="ABC penalty window")
-    return YuE2View(style, lyrics, abc, mode, output, run, stop, status, model, duration, seed, steps, cfg, temperature, top_p, top_k, repetition_penalty, max_abc_tokens, abc_temperature, abc_top_p, abc_top_k, abc_repetition_penalty, abc_penalty_window, tiled)
+    return YuE2View(style, lyrics, abc, prompt_model, api_key, enhance, enhance_status, mode, output, run, stop, status, model, duration, seed, steps, cfg, temperature, top_p, top_k, repetition_penalty, max_abc_tokens, abc_temperature, abc_top_p, abc_top_k, abc_repetition_penalty, abc_penalty_window, tiled)
 
 
 def build_music_view(

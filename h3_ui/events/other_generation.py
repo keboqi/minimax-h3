@@ -24,10 +24,13 @@ def bind_other_generation(
         components.api_components, generate=services.generate_with_ui_defaults
     )
     yue2_event = services.bind_yue2_view(
-        components.yue2_components, generate=services.generate_yue2
+        components.yue2_components,
+        enhance_prompt=services.enhance_yue2_prompt,
+        generate=services.generate_yue2,
     )
     qwen_event = services.bind_qwen_image21_view(
         components.qwen_image21_components,
+        enhance_prompt=services.enhance_qwen_image21_prompt,
         generate=services.generate_qwen_image21,
     )
 
