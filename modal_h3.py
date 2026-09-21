@@ -133,6 +133,7 @@ from h3_node_patches import (  # noqa: E402
     TRT_VAE_NODE_REF,
     TRT_VAE_NODE_REPO,
     patch_larry_turbo_node,
+    patch_qwen_spectrum_node,
     patch_trt_vae_node,
 )
 
@@ -258,6 +259,7 @@ def build(revision: str) -> None:
         Path(COMFY) / "custom_nodes" / "ComfyUI-Spectrum-Qwen-Proper"
     )
     _clone(SPECTRUM_QWEN_REPO, spectrum_qwen_dir, ref=SPECTRUM_QWEN_REF)
+    patch_qwen_spectrum_node(spectrum_qwen_dir)
     _print_git_revision(spectrum_qwen_dir)
 
     trt_vae_dir = Path(COMFY) / "custom_nodes" / "ComfyUI-H3VAE_TRT"

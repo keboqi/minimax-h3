@@ -42,6 +42,7 @@ from h3_node_patches import (
     TRT_VAE_NODE_REF,
     TRT_VAE_NODE_REPO,
     patch_larry_turbo_node,
+    patch_qwen_spectrum_node,
     patch_trt_vae_node,
 )
 from h3_requirements import (
@@ -741,6 +742,7 @@ def sync_external_nodes(
         ref=SPECTRUM_QWEN_REF,
         required_paths=("__init__.py", "nodes.py"),
     )
+    patch_qwen_spectrum_node(spectrum_qwen)
     if install_requirements and (spectrum_qwen / "requirements.txt").is_file():
         uv_pip("-r", str(spectrum_qwen / "requirements.txt"), no_deps=True)
 

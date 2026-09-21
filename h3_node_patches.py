@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 LARRY_TIMESTEP_PATCH_VERSION = 2
+QWEN_SPECTRUM_PATCH_VERSION = 1
 TRT_VAE_PATCH_VERSION = 6
 TRT_VAE_NODE_REPO = "https://github.com/lihaoyun6/ComfyUI-H3VAE_TRT.git"
 TRT_VAE_NODE_REF = "4360e00867eca86ab61b3899216c0ec281367b46"
@@ -117,6 +118,283 @@ def patch_larry_turbo_node(node_dir: Path) -> bool:
     print(
         f"[h3-node-patch v{LARRY_TIMESTEP_PATCH_VERSION}] synchronized "
         f"Larry AdaLN timestep rows in {target}"
+    )
+    return True
+
+
+# The upstream Qwen Spectrum node targets the older 20B MMDiT model. Qwen
+# Image 2.1 is a separate 7B single-stream architecture: text projection is
+# folded into txt_in, target tokens are normalized by LastLayer, and output is
+# reshaped directly instead of through process_img. Keep this compatibility
+# patch pinned and fail closed until upstream gains native Qwen 2.1 support.
+_QWEN_SPECTRUM_INTROSPECTION_ORIGINAL = """\
+def is_qwen_like_core(obj: Any) -> bool:
+    if obj is None:
+        return False
+    if not all(hasattr(obj, field) for field in SUPPORTED_FORWARD_FIELDS):
+        return False
+    type_name = type(obj).__name__.lower()
+    module_name = getattr(type(obj), "__module__", "").lower()
+    if "qwen" in type_name or "qwen" in module_name:
+        return True
+    return hasattr(obj, "transformer_blocks") and hasattr(obj, "txt_in") and hasattr(obj, "img_in")
+"""
+
+_QWEN_SPECTRUM_INTROSPECTION_PATCHED = """\
+QWEN_IMAGE21_FORWARD_FIELDS = {
+    "img_in",
+    "txt_in",
+    "transformer_blocks",
+    "norm_out",
+    "proj_out",
+    "time_text_embed",
+    "build_sequence",
+    "modulation",
+}
+
+
+def is_qwen_like_core(obj: Any) -> bool:
+    if obj is None:
+        return False
+    is_legacy_qwen = all(
+        hasattr(obj, field) for field in SUPPORTED_FORWARD_FIELDS
+    )
+    is_qwen_image21 = all(
+        hasattr(obj, field) for field in QWEN_IMAGE21_FORWARD_FIELDS
+    )
+    if not (is_legacy_qwen or is_qwen_image21):
+        return False
+    type_name = type(obj).__name__.lower()
+    module_name = getattr(type(obj), "__module__", "").lower()
+    if "qwen" in type_name or "qwen" in module_name:
+        return True
+    return (
+        hasattr(obj, "transformer_blocks")
+        and hasattr(obj, "txt_in")
+        and hasattr(obj, "img_in")
+    )
+"""
+
+_QWEN_SPECTRUM_FORWARD_ORIGINAL = """\
+def build_qwen_core_forward(
+    core: Any,
+    original_forward: Callable[..., Any],
+) -> Callable[..., Any]:
+    def spectrum_qwen_forward(
+"""
+
+_QWEN_SPECTRUM_FORWARD_PATCHED = """\
+def _is_qwen_image21_core(core: Any) -> bool:
+    return (
+        hasattr(core, "build_sequence")
+        and hasattr(core, "modulation")
+        and not hasattr(core, "txt_norm")
+    )
+
+
+def _run_qwen_image21_forecast_forward(
+    core: Any,
+    state: QwenSpectrumState,
+    runtime: QwenSpectrumRuntime,
+    model_input: torch.Tensor,
+    timestep: torch.Tensor,
+) -> Any:
+    if state.output_factory is None:
+        raise RuntimeError("output factory missing before forecast")
+    pred = state.forecaster.predict(runtime.current_time_coord)
+    target_dtype = state.model_feature_dtype or pred.dtype
+    pred = pred.to(device=model_input.device)
+    pred = _sanitize_forecast_feature(pred, target_dtype)
+
+    dtype = model_input.dtype
+    t = ((timestep * 1000).to(dtype) / 1000).to(dtype)
+    temb = core.time_text_embed(torch.cat([t, t.new_zeros(1)]), dtype)
+    out_sample = core.proj_out(core.norm_out(pred, temb[:-1]))
+
+    batch, _channels, height, width = model_input.shape
+    out_sample = out_sample.transpose(1, 2).reshape(
+        batch,
+        int(core.out_channels),
+        height,
+        width,
+    )
+    state.record_forecast()
+    log_debug(
+        runtime.config.debug,
+        (
+            f"Spectrum Qwen 2.1 step={runtime.current_step_index + 1}/"
+            f"{runtime.total_steps} branch={runtime.branch_key} "
+            f"mode=forecast history={len(state.history_features)}"
+        ),
+    )
+    return state.output_factory(out_sample, True)
+
+
+def _build_qwen_image21_core_forward(
+    core: Any,
+    original_forward: Callable[..., Any],
+) -> Callable[..., Any]:
+    def spectrum_qwen_image21_forward(
+        self: Any,
+        x: torch.Tensor,
+        timestep: torch.Tensor,
+        context: torch.Tensor | None = None,
+        ref_latents: Any = None,
+        image_slots: Any = None,
+        transformer_options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        call_kwargs = {
+            "timestep": timestep,
+            "context": context,
+            "ref_latents": ref_latents,
+            "image_slots": image_slots,
+            "transformer_options": transformer_options or {},
+            **kwargs,
+        }
+        runtime: QwenSpectrumRuntime | None = getattr(
+            self, "_spectrum_qwen_runtime", None
+        )
+        state: QwenSpectrumState | None = getattr(
+            self, "_spectrum_qwen_state", None
+        )
+        if runtime is None or state is None:
+            return original_forward(x, **call_kwargs)
+
+        if runtime.decision_actual:
+            return _run_actual_forward(
+                self,
+                state,
+                runtime,
+                original_forward,
+                x,
+                **call_kwargs,
+            )
+
+        try:
+            return _run_qwen_image21_forecast_forward(
+                self,
+                state,
+                runtime,
+                model_input=x,
+                timestep=timestep,
+            )
+        except Exception:
+            return _run_actual_forward(
+                self,
+                state,
+                runtime,
+                original_forward,
+                x,
+                **call_kwargs,
+            )
+
+    return spectrum_qwen_image21_forward
+
+
+def build_qwen_core_forward(
+    core: Any,
+    original_forward: Callable[..., Any],
+) -> Callable[..., Any]:
+    if _is_qwen_image21_core(core):
+        return _build_qwen_image21_core_forward(core, original_forward)
+
+    def spectrum_qwen_forward(
+"""
+
+
+def _patch_qwen_spectrum_sources(
+    introspection_source: str,
+    forward_source: str,
+) -> tuple[str, str, bool]:
+    states = {
+        "model introspection": (
+            introspection_source.count(_QWEN_SPECTRUM_INTROSPECTION_ORIGINAL),
+            introspection_source.count(_QWEN_SPECTRUM_INTROSPECTION_PATCHED),
+        ),
+        "forward adapter": (
+            forward_source.count(_QWEN_SPECTRUM_FORWARD_ORIGINAL),
+            forward_source.count(_QWEN_SPECTRUM_FORWARD_PATCHED),
+        ),
+    }
+    invalid = {
+        name: state
+        for name, state in states.items()
+        if state not in ((1, 0), (0, 1))
+    }
+    if invalid:
+        raise RuntimeError(
+            "Qwen Spectrum 2.1 compatibility patch does not match the pinned "
+            f"node source (invalid={invalid}, states={states})"
+        )
+
+    changed = False
+    if states["model introspection"] == (1, 0):
+        introspection_source = introspection_source.replace(
+            _QWEN_SPECTRUM_INTROSPECTION_ORIGINAL,
+            _QWEN_SPECTRUM_INTROSPECTION_PATCHED,
+            1,
+        )
+        changed = True
+    if states["forward adapter"] == (1, 0):
+        forward_source = forward_source.replace(
+            _QWEN_SPECTRUM_FORWARD_ORIGINAL,
+            _QWEN_SPECTRUM_FORWARD_PATCHED,
+            1,
+        )
+        changed = True
+    return introspection_source, forward_source, changed
+
+
+def patch_qwen_spectrum_node(node_dir: Path) -> bool:
+    """Add the native Qwen Image 2.1 core and forecast-tail implementation."""
+    node_dir = Path(node_dir)
+    targets = {
+        "model introspection": node_dir / "spectrum_qwen" / "model_introspection.py",
+        "forward adapter": node_dir / "spectrum_qwen" / "forward_qwen.py",
+    }
+    missing = [str(path) for path in targets.values() if not path.is_file()]
+    if missing:
+        raise RuntimeError(
+            "Qwen Spectrum node source is incomplete; missing: " + ", ".join(missing)
+        )
+
+    introspection_source = targets["model introspection"].read_text(encoding="utf-8")
+    forward_source = targets["forward adapter"].read_text(encoding="utf-8")
+    introspection_source, forward_source, changed = _patch_qwen_spectrum_sources(
+        introspection_source,
+        forward_source,
+    )
+    if not changed:
+        return False
+
+    compile(
+        introspection_source,
+        str(targets["model introspection"]),
+        "exec",
+    )
+    compile(forward_source, str(targets["forward adapter"]), "exec")
+
+    sources = {
+        targets["model introspection"]: introspection_source,
+        targets["forward adapter"]: forward_source,
+    }
+    temporaries = {
+        target: target.with_name(target.name + ".h3-patch")
+        for target in sources
+    }
+    try:
+        for target, source in sources.items():
+            temporaries[target].write_text(source, encoding="utf-8")
+        for target in sources:
+            temporaries[target].replace(target)
+    finally:
+        for temporary in temporaries.values():
+            temporary.unlink(missing_ok=True)
+
+    print(
+        f"[h3-node-patch v{QWEN_SPECTRUM_PATCH_VERSION}] added native "
+        f"Qwen Image 2.1 support in {node_dir}"
     )
     return True
 
@@ -364,6 +642,30 @@ def patch_trt_vae_node(node_dir: Path) -> bool:
 
 
 def selftest() -> None:
+    introspection, forward, changed = _patch_qwen_spectrum_sources(
+        _QWEN_SPECTRUM_INTROSPECTION_ORIGINAL,
+        _QWEN_SPECTRUM_FORWARD_ORIGINAL,
+    )
+    assert changed is True
+    assert "QWEN_IMAGE21_FORWARD_FIELDS" in introspection
+    assert "def _run_qwen_image21_forecast_forward" in forward
+    assert "temb[:-1]" in forward
+    assert ".reshape(" in forward
+
+    introspection, forward, changed = _patch_qwen_spectrum_sources(
+        introspection,
+        forward,
+    )
+    assert changed is False
+
+    try:
+        _patch_qwen_spectrum_sources(
+            "unexpected upstream source",
+            "unexpected upstream source",
+        )
+        raise AssertionError("unexpected Qwen Spectrum source was accepted")
+    except RuntimeError as exc:
+        assert "does not match the pinned node source" in str(exc)
     fixture = _LARRY_UNIQUE_T_ORIGINAL + "\ndef wrap():\n" + _LARRY_CALL_ORIGINAL
     with tempfile.TemporaryDirectory() as directory:
         target = Path(directory) / "__init__.py"
