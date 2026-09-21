@@ -64,26 +64,25 @@ def build_output_section(
                     "presets normally use 15–20."
                 ),
             )
-        draft_resolution = gr.Dropdown(
-            choices=list(services.DRAFT_RESOLUTIONS),
-            value="16:9 · 1376×768",
-            label="768p",
-            info="768p sizes by aspect ratio.",
-        )
-        with gr.Accordion("More resolution presets", open=False):
-            with gr.Row():
-                fast_resolution = gr.Dropdown(
-                    choices=list(services.FAST_RESOLUTIONS),
-                    value=None,
-                    label="1080p",
-                    info="1080p sizes by aspect ratio, aligned to 32 pixels.",
-                )
-                large_resolution = gr.Dropdown(
-                    choices=list(services.LARGE_RESOLUTIONS),
-                    value=None,
-                    label="2k",
-                    info="1440p sizes by aspect ratio; needs more time and VRAM.",
-                )
+        with gr.Row():
+            draft_resolution = gr.Dropdown(
+                choices=list(services.DRAFT_RESOLUTIONS),
+                value="16:9 · 1376×768",
+                label="768p",
+                info="768p sizes by aspect ratio.",
+            )
+            fast_resolution = gr.Dropdown(
+                choices=list(services.FAST_RESOLUTIONS),
+                value=None,
+                label="1080p",
+                info="1080p sizes by aspect ratio, aligned to 32 pixels.",
+            )
+            large_resolution = gr.Dropdown(
+                choices=list(services.LARGE_RESOLUTIONS),
+                value=None,
+                label="2k",
+                info="1440p sizes by aspect ratio; needs more time and VRAM.",
+            )
         with gr.Row():
             width = gr.Number(value=defaults["width"], precision=0, label="Width")
             height = gr.Number(value=defaults["height"], precision=0, label="Height")

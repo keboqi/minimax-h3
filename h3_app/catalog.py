@@ -225,12 +225,13 @@ QWEN_IMAGE21_DEFAULTS = {
     "reference_resolution": 0,
     "match_input_size": True,
     "seed": -1,
-    "steps": 25,
+    "steps": 40,
     "cfg": 1.0,
     "sampler": "euler",
     "scheduler": "simple",
     "cache_device": "auto",
     "cache_dtype": "default",
+    "attention_backend": "pytorch attention",
 }
 
 

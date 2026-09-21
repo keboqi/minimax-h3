@@ -25,8 +25,8 @@ from .services import GenerationServices
 
 def _image_dimension(value: int, label: str) -> int:
     resolved = int(value)
-    if not 256 <= resolved <= 2048 or resolved % 32:
-        raise H3Error(f"{label} must be a multiple of 32 between 256 and 2048.")
+    if not 256 <= resolved <= 2752 or resolved % 32:
+        raise H3Error(f"{label} must be a multiple of 32 between 256 and 2752.")
     return resolved
 
 
@@ -63,11 +63,16 @@ def generate_qwen_image21(
                 "Reference images are only used in Image edit mode. "
                 "Switch the mode or remove the uploaded images."
             )
-        if len(references) > 16:
-            raise H3Error("Qwen Image 2.1 supports at most 16 reference images.")
+        if len(references) > 10:
+            raise H3Error("Qwen Image 2.1 supports at most 10 reference images.")
 
         width = _image_dimension(request.width, "Width")
         height = _image_dimension(request.height, "Height")
+        if width * height > 4_400_000:
+            raise H3Error(
+                "Output resolution must stay within the model's native "
+                "approximately 4.3 MP canvas."
+            )
         reference_resolution = int(request.reference_resolution)
         if reference_resolution and (
             not 256 <= reference_resolution <= 2048
@@ -82,6 +87,12 @@ def generate_qwen_image21(
         cfg = float(request.cfg)
         if not 0 <= cfg <= 20:
             raise H3Error("CFG must be between 0 and 20.")
+        attention_backend = str(request.attention_backend)
+        if attention_backend not in {
+            "pytorch attention",
+            "comfy kitchen attention",
+        }:
+            raise H3Error("Unsupported Qwen attention backend.")
         actual_seed = (
             random.randrange(0, 2**63 - 1)
             if int(request.seed) < 0
@@ -105,7 +116,10 @@ def generate_qwen_image21(
         )
 
         available = set(services.execution.object_info())
-        missing_nodes = required_qwen_image21_nodes(editing=editing) - available
+        missing_nodes = required_qwen_image21_nodes(
+            editing=editing,
+            use_attention_backend=attention_backend != "pytorch attention",
+        ) - available
         if missing_nodes:
             raise H3Error(
                 "Qwen Image 2.1 requires the latest ComfyUI; missing nodes: "
@@ -128,6 +142,7 @@ def generate_qwen_image21(
             scheduler=request.scheduler,
             cache_device=request.cache_device,
             cache_dtype=request.cache_dtype,
+            attention_backend=attention_backend,
             output_stamp=str(int(time.time())),
             output_nonce=uuid.uuid4().hex[:8],
         )

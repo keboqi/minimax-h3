@@ -621,13 +621,13 @@ QWEN_IMAGE21_MODEL_CHOICES = {
     "INT8 ConvRot (lower VRAM)": "qwen_image21_dit_int8",
     "BF16": "qwen_image21_dit_bf16",
 }
-DEFAULT_QWEN_IMAGE21_MODEL = "INT8 ConvRot (lower VRAM)"
+DEFAULT_QWEN_IMAGE21_MODEL = "BF16"
 QWEN_IMAGE21_TEXT_ENCODER_CHOICES = {
     "INT8 ConvRot (recommended)": "qwen_image21_text_int8",
     "W4A8 (lowest VRAM)": "qwen_image21_text_w4a8",
     "BF16": "qwen_image21_text_bf16",
 }
-DEFAULT_QWEN_IMAGE21_TEXT_ENCODER = "INT8 ConvRot (recommended)"
+DEFAULT_QWEN_IMAGE21_TEXT_ENCODER = "BF16"
 QWEN_IMAGE21_MODEL_KEYS = (
     *QWEN_IMAGE21_MODEL_CHOICES.values(),
     *QWEN_IMAGE21_TEXT_ENCODER_CHOICES.values(),

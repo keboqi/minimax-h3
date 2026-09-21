@@ -199,6 +199,7 @@ class QwenImage21Request:
     scheduler: str
     cache_device: str
     cache_dtype: str
+    attention_backend: str
 
 
 @dataclass(frozen=True)

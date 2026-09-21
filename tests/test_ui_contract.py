@@ -274,6 +274,47 @@ class UiContractTests(unittest.TestCase):
                         self.assertEqual(height % alignment, 0)
                         self.assertTrue(info)
 
+    def test_resolution_quick_presets_share_single_rows(self) -> None:
+        controls = {
+            component.get("props", {}).get("label"): component
+            for component in self.config["components"]
+        }
+
+        def assert_same_row(labels):
+            ids = {controls[label]["id"] for label in labels}
+
+            def descendants(node):
+                return {node["id"]} | set().union(
+                    *(descendants(child) for child in node.get("children", []))
+                )
+
+            rows = (
+                self.find_layout_node(component["id"])
+                for component in self.config["components"]
+                if component["type"] == "row"
+            )
+            self.assertTrue(
+                any(row and ids <= descendants(row) for row in rows)
+            )
+
+        assert_same_row(("768p", "1080p", "2k"))
+        assert_same_row(("Square", "Landscape", "Portrait"))
+
+        for label, expected in (
+            ("Square", (2048, 2048)),
+            ("Landscape", (2400, 1792)),
+            ("Portrait", (1792, 2400)),
+        ):
+            preset = controls[label]
+            dependency = next(
+                item
+                for item in self.config["dependencies"]
+                if (preset["id"], "change") in item.get("targets", [])
+            )
+            callback = self.demo.fns[dependency["id"]]
+            choice = preset["props"]["choices"][0][1]
+            self.assertEqual(callback.fn(choice), expected)
+
     def test_first_frame_and_auto_megapixels_resolution_bindings(self) -> None:
         controls = {
             component.get("props", {}).get("label"): component

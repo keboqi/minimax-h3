@@ -43,6 +43,9 @@ class QwenImage21View:
     status: gr.Textbox
     model: gr.Dropdown
     text_encoder: gr.Dropdown
+    square_resolution: gr.Dropdown
+    landscape_resolution: gr.Dropdown
+    portrait_resolution: gr.Dropdown
     width: gr.Slider
     height: gr.Slider
     reference_resolution: gr.Dropdown
@@ -54,6 +57,7 @@ class QwenImage21View:
     scheduler: gr.Dropdown
     cache_device: gr.Dropdown
     cache_dtype: gr.Dropdown
+    attention_backend: gr.Dropdown
 
 
 def build_qwen_image21_view(
@@ -98,7 +102,7 @@ def build_qwen_image21_view(
                     type="filepath",
                 )
                 gr.Markdown(
-                    "Image edit supports up to 16 files. **image1** is the edit "
+                    "Image edit supports up to 10 files. **image1** is the edit "
                     "target; later images are references."
                 )
             with gr.Column(scale=2):
@@ -118,11 +122,38 @@ def build_qwen_image21_view(
                     label="Qwen3-VL text encoder",
                 )
                 with gr.Row():
+                    square_resolution = gr.Dropdown(
+                        choices=["1:1 · 2048×2048"],
+                        value=None,
+                        label="Square",
+                        info="Native square preset.",
+                    )
+                    landscape_resolution = gr.Dropdown(
+                        choices=[
+                            "4:3 · 2400×1792",
+                            "3:2 · 2528×1696",
+                            "16:9 · 2752×1536",
+                        ],
+                        value=None,
+                        label="Landscape",
+                        info="Native landscape presets.",
+                    )
+                    portrait_resolution = gr.Dropdown(
+                        choices=[
+                            "3:4 · 1792×2400",
+                            "2:3 · 1696×2528",
+                            "9:16 · 1536×2752",
+                        ],
+                        value=None,
+                        label="Portrait",
+                        info="Native portrait presets.",
+                    )
+                with gr.Row():
                     width = gr.Slider(
-                        256, 2048, value=defaults["width"], step=32, label="Width"
+                        256, 2752, value=defaults["width"], step=32, label="Width"
                     )
                     height = gr.Slider(
-                        256, 2048, value=defaults["height"], step=32, label="Height"
+                        256, 2752, value=defaults["height"], step=32, label="Height"
                     )
                 match_input_size = gr.Checkbox(
                     value=defaults["match_input_size"],
@@ -155,7 +186,14 @@ def build_qwen_image21_view(
                 with gr.Accordion("Advanced sampling and edit cache", open=False):
                     with gr.Row():
                         sampler = gr.Dropdown(
-                            choices=["euler", "euler_ancestral", "dpmpp_2m"],
+                            choices=[
+                                "euler",
+                                "euler_ancestral",
+                                "er_sde",
+                                "dpmpp_2m",
+                                "dpmpp_sde",
+                                "dpmpp_sde_gpu",
+                            ],
                             value=defaults["sampler"],
                             label="Sampler",
                         )
@@ -175,10 +213,26 @@ def build_qwen_image21_view(
                             value=defaults["cache_dtype"],
                             label="Edit KV cache precision",
                         )
+                    attention_backend = gr.Dropdown(
+                        choices=[
+                            ("PyTorch attention (official)", "pytorch attention"),
+                            (
+                                "Comfy Kitchen INT8 attention (experimental faster)",
+                                "comfy kitchen attention",
+                            ),
+                        ],
+                        value=defaults["attention_backend"],
+                        label="Model attention backend",
+                        info=(
+                            "Kitchen attention can improve speed on supported NVIDIA/"
+                            "AMD GPUs and falls back to PyTorch when unavailable."
+                        ),
+                    )
                 gr.Markdown(
-                    "Qwen recommends CFG 1 (no guidance) and roughly 40–50 Euler "
-                    "steps; this app starts at 25 like the official Comfy template. "
-                    "Native output supports up to 2048×2048."
+                    "Official defaults are CFG 1 and 40 Euler/simple steps. Native "
+                    "sizes include 2048×2048, 2400×1792, 1792×2400, 2528×1696, "
+                    "1696×2528, 2752×1536, and 1536×2752. For transparent PNGs, "
+                    "ask for an RGBA image with an alpha channel and transparent background."
                 )
     return QwenImage21View(
         mode,
@@ -191,6 +245,9 @@ def build_qwen_image21_view(
         status,
         model,
         text_encoder,
+        square_resolution,
+        landscape_resolution,
+        portrait_resolution,
         width,
         height,
         reference_resolution,
@@ -202,6 +259,7 @@ def build_qwen_image21_view(
         scheduler,
         cache_device,
         cache_dtype,
+        attention_backend,
     )
 
 @dataclass(frozen=True)

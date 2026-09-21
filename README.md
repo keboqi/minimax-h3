@@ -359,13 +359,16 @@ minutes, with tiled audio decoding enabled by default for lower peak VRAM.
 Later runs check remote metadata for the preloaded set and refresh only stale
 files; lazy checkpoints remain local and are fetched again if missing or incomplete.
 The **Qwen Image 2.1** tab uses ComfyUI's native `TextEncodeQwenImage21`
-workflow for both generation and editing. The INT8 ConvRot DiT and text encoder
-are selected by default; BF16 and W4A8 alternatives are available. The selected
+workflow for both generation and editing. The BF16 DiT and text encoder are
+selected by default; INT8 ConvRot and W4A8 alternatives are available. The selected
 DiT, Qwen3-VL 8B encoder, and BF16 VAE download on first use from
 [Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1).
-Image edit accepts up to 16 inputs, treats `image1` as the edit target, and
+Image edit accepts up to 10 inputs, treats `image1` as the edit target, and
 lets prompts refer to inputs as `<image1>`, `<image2>`, and so on. Generated
-images and their settings are saved with the other application outputs.
+images and their settings are saved with the other application outputs. The
+official 40-step Euler/simple path is the default, native ~4 MP aspect-ratio
+sizes are accepted, and Comfy Kitchen INT8 attention is available as an
+experimental opt-in speed setting.
 The **YuE2** tab uses ComfyUI's native YuE2 nodes (ComfyUI v0.36.0 or newer).
 Its INT8 ConvRot checkpoint (about 4 GB) is selected by default; the BF16
 checkpoint is an optional alternative. The selected checkpoint downloads on

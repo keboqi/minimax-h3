@@ -18,6 +18,14 @@ from .ltx_view import LtxView
 from .views import ApiView, GalleryView, MusicView, QwenImage21View, YuE2View
 
 
+def qwen_resolution_preset_values(name: str) -> tuple[int, int]:
+    """Extract the aligned width and height from a Qwen native-size preset."""
+
+    dimensions = str(name).rsplit("·", 1)[-1].strip()
+    width, height = dimensions.split("×", 1)
+    return int(width), int(height)
+
+
 def bind_preflight(
     controls: Sequence[gr.components.Component],
     *,
@@ -217,6 +225,19 @@ def bind_music_view(
 def bind_qwen_image21_view(
     view: QwenImage21View, *, generate: Callable[..., Any]
 ) -> Any:
+    for preset in (
+        view.square_resolution,
+        view.landscape_resolution,
+        view.portrait_resolution,
+    ):
+        preset.change(
+            qwen_resolution_preset_values,
+            inputs=preset,
+            outputs=[view.width, view.height],
+            queue=False,
+            show_progress="hidden",
+            api_name=False,
+        )
     return bind_gpu_action(
         view.run.click,
         owned_generation(generate, "qwen_image21"),
@@ -238,6 +259,7 @@ def bind_qwen_image21_view(
             view.scheduler,
             view.cache_device,
             view.cache_dtype,
+            view.attention_backend,
         ],
         outputs=[view.output, view.status],
         show_progress="minimal",

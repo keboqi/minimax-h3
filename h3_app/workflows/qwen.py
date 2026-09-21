@@ -12,7 +12,9 @@ from h3_models import (
 )
 
 
-def required_qwen_image21_nodes(*, editing: bool) -> set[str]:
+def required_qwen_image21_nodes(
+    *, editing: bool, use_attention_backend: bool = False
+) -> set[str]:
     nodes = {
         "UNETLoader",
         "CLIPLoader",
@@ -25,6 +27,8 @@ def required_qwen_image21_nodes(*, editing: bool) -> set[str]:
     }
     if editing:
         nodes |= {"LoadImage", "QwenImage21Cache"}
+    if use_attention_backend:
+        nodes.add("ModelAttentionBackend")
     return nodes
 
 
@@ -46,6 +50,7 @@ def build_qwen_image21_graph(
     scheduler: str,
     cache_device: str,
     cache_dtype: str,
+    attention_backend: str,
     output_stamp: str,
     output_nonce: str,
 ) -> dict[str, Any]:
@@ -100,6 +105,13 @@ def build_qwen_image21_graph(
         latent = Graph.out(empty)
 
     sampled_model = Graph.out(model)
+    if str(attention_backend) != "pytorch attention":
+        patched_model = graph.add(
+            "ModelAttentionBackend",
+            model=sampled_model,
+            attention=str(attention_backend),
+        )
+        sampled_model = Graph.out(patched_model)
     if editing:
         cached = graph.add(
             "QwenImage21Cache",
