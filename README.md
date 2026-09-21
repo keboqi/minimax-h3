@@ -23,7 +23,7 @@ bundled FirstBlockCache node.
 - LTX-2.5 image-to-video uses a visual start-image input plus optional custom
   middle/end keyframes
 - Live queue position, workflow stage, node count, overall work, and sampling schedule
-- Switchable video/image gallery with resolution-aware thumbnails and lazy previews
+- Switchable video/image/audio gallery with thumbnails and lazy previews
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
 - Selectable official Qwen3-VL 32B NVFP4/AWQ, INT8 ConvRot, and BF16 text encoders
 - Optional model offload at every H3 stage boundary, automatically required for BF16
@@ -515,12 +515,15 @@ The SeedVR2 model and VAE remain lazy-downloaded, and the optional resident-mode
 unload control can reduce peak VRAM before this preprocessing pass.
 
 Open **Gallery** to browse the video library (the default), or switch **Gallery
-type** to **Image** to browse generated Qwen/H3 stills and SeedVR2 results with
-the same thumbnail and preview layout. **Import local media** accepts a matching
-video or image for the active library. Image mode uses the existing one-step
+type** to **Image** or **Audio**. Image mode includes generated Qwen/H3 stills
+and SeedVR2 results; Audio mode includes MiniMax H3, MiniMax Music 3, and YuE2
+outputs. All three use the same card, preview, settings, import, and download
+layout. **Import local media** accepts a matching file for the active library.
+Image mode uses the existing one-step
 SeedVR2 workflow to upscale the selected still while preserving its aspect ratio;
 the processed image is added back to the image gallery with its settings and a
-download link. Video mode retains all existing enhancement methods. Each run
+download link. Audio mode provides playback and downloads. Video mode retains
+all existing enhancement methods. Each run
 preserves the source and adds a new processed output. Choose a target preset from
 **1280 × 1280**, **1920 × 1920**, **2560 × 2560**, or **3840 × 3840**; the source
 is fitted inside that square without cropping, so its original aspect ratio is

@@ -152,7 +152,9 @@ def build_ltx_view(
                                 label="End strength",
                             )
             with gr.Column(scale=2):
-                output = gr.Video(label="Generated LTX-2.5 video")
+                output = gr.Video(
+                    label="Generated LTX-2.5 video", interactive=False
+                )
                 with gr.Row():
                     run = gr.Button("Generate with LTX-2.5", variant="primary")
                     stop = gr.Button("Interrupt")

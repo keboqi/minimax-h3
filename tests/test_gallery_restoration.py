@@ -27,6 +27,57 @@ import h3_ui.application as app
 
 
 class GalleryRestorationTests(unittest.TestCase):
+    def test_video_gallery_dispatch_reserves_image_and_audio_preview_slots(self):
+        legacy_update = (
+            "grid",
+            "paths",
+            "status",
+            "video",
+            "download",
+            "selected",
+            False,
+            "complete",
+        )
+        with patch.object(
+            app,
+            "postprocess_selected_gallery_video",
+            return_value=iter([legacy_update]),
+        ):
+            updates = list(
+                app.postprocess_selected_gallery_media(
+                    "Video",
+                    "source.mp4",
+                    "method",
+                    1,
+                    "seedvr",
+                    "ltx",
+                    "prompt",
+                    False,
+                    False,
+                    5.0,
+                    "1920 × 1920",
+                    request=Mock(),
+                    progress=Mock(),
+                )
+            )
+        self.assertEqual(
+            updates,
+            [
+                (
+                    "grid",
+                    "paths",
+                    "status",
+                    "video",
+                    None,
+                    None,
+                    "download",
+                    "selected",
+                    False,
+                    "complete",
+                )
+            ],
+        )
+
     def test_gallery_image_upscale_reuses_seedvr2_still_workflow(self):
         source = Path("source.png")
         result = Path("upscaled.png")

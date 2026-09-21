@@ -11,7 +11,7 @@ from threading import Lock
 from types import EllipsisType
 from urllib.parse import quote
 
-from h3_app.catalog import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+from h3_app.catalog import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.processes import run_media_process
@@ -77,6 +77,35 @@ def managed_image_path(
         or (require_file and not resolved.is_file())
     ):
         raise H3Error("Image is not a managed generated output.")
+    return resolved
+
+
+def audio_download_path(audio: str | Path, *, runtime: RuntimeConfig) -> str:
+    """Return a safe, public route for a generated audio file on this server."""
+    resolved = managed_audio_path(audio, require_file=False, runtime=runtime)
+    for bucket, root in (
+        ("comfy", runtime.output_dir.resolve()),
+        ("gradio", runtime.outputs_dir.resolve()),
+    ):
+        if resolved.is_relative_to(root):
+            relative = resolved.relative_to(root).as_posix()
+            return f"/downloads/{bucket}/{quote(relative, safe='/')}"
+    raise H3Error("Generated audio is outside the configured output directories.")
+
+
+def managed_audio_path(
+    audio: str | Path, *, require_file: bool = True, runtime: RuntimeConfig
+) -> Path:
+    """Resolve audio only when it belongs to a managed output directory."""
+    resolved = Path(audio).resolve()
+    roots = (runtime.output_dir.resolve(), runtime.outputs_dir.resolve())
+    if (
+        resolved.suffix.lower() not in AUDIO_EXTENSIONS
+        or ".processing" in resolved.parts
+        or not any(resolved.is_relative_to(root) for root in roots)
+        or (require_file and not resolved.is_file())
+    ):
+        raise H3Error("Audio is not a managed generated output.")
     return resolved
 
 
@@ -152,6 +181,86 @@ def gallery_image_paths(
 
     ordered = sorted(images.values(), key=modified, reverse=True)
     return ordered if limit is None else ordered[: max(0, int(limit))]
+
+
+def gallery_audio_paths(
+    *, limit: int | None | EllipsisType = ..., runtime: RuntimeConfig
+) -> list[Path]:
+    """Return generated audio files, optionally limited to the newest entries."""
+    if limit is Ellipsis:
+        limit = runtime.gallery_limit
+    audio_files: dict[Path, Path] = {}
+    for root in (runtime.output_dir, runtime.outputs_dir):
+        if not root.is_dir():
+            continue
+        resolved_root = root.resolve()
+        for candidate in root.rglob("*"):
+            if (
+                not candidate.is_file()
+                or candidate.suffix.lower() not in AUDIO_EXTENSIONS
+                or ".processing" in candidate.parts
+            ):
+                continue
+            try:
+                resolved = candidate.resolve()
+                if resolved.is_relative_to(resolved_root):
+                    audio_files[resolved] = candidate
+            except OSError:
+                continue
+
+    def modified(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    ordered = sorted(audio_files.values(), key=modified, reverse=True)
+    return ordered if limit is None else ordered[: max(0, int(limit))]
+
+
+def gallery_audio_thumbnail(audio: Path, *, runtime: RuntimeConfig) -> Path | None:
+    """Create a cached visual card so audio entries fit the shared gallery grid."""
+    try:
+        from PIL import Image, ImageDraw
+
+        source_mtime = audio.stat().st_mtime
+        thumbnail = gallery_audio_thumbnail_path(audio, runtime=runtime)
+        if thumbnail.is_file() and thumbnail.stat().st_mtime >= source_mtime:
+            return thumbnail
+        runtime.gallery_thumbnails_dir.mkdir(parents=True, exist_ok=True)
+        canvas = Image.new("RGB", (480, 270), (18, 24, 38))
+        draw = ImageDraw.Draw(canvas)
+        digest = hashlib.sha256(str(audio.resolve()).encode("utf-8")).digest()
+        center_y = 132
+        for index in range(48):
+            height = 18 + digest[index % len(digest)] % 78
+            x = 28 + index * 9
+            color = (78, 170 + digest[index % len(digest)] % 60, 220)
+            draw.rounded_rectangle(
+                (x, center_y - height // 2, x + 5, center_y + height // 2),
+                radius=2,
+                fill=color,
+            )
+        draw.text((28, 28), "AUDIO", fill=(225, 235, 248))
+        display_name = audio.name if len(audio.name) <= 52 else f"{audio.name[:49]}..."
+        draw.text((28, 230), display_name, fill=(172, 188, 210))
+        temporary = thumbnail.with_name(
+            f"{thumbnail.stem}.{uuid.uuid4().hex}.tmp.png"
+        )
+        canvas.save(temporary, format="PNG")
+        temporary.replace(thumbnail)
+        return thumbnail
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def gallery_audio_thumbnail_path(
+    audio: str | Path, *, runtime: RuntimeConfig
+) -> Path:
+    cache_key = hashlib.sha256(str(Path(audio).resolve()).encode("utf-8")).hexdigest()[
+        :24
+    ]
+    return runtime.gallery_thumbnails_dir / f"audio-{cache_key}.png"
 
 
 def gallery_thumbnail(video: Path, *, runtime: RuntimeConfig) -> Path | None:
@@ -311,6 +420,24 @@ def generated_image_family(image: str | Path, *, runtime: RuntimeConfig) -> str:
         if relative.parts and relative.parts[0].lower() == "imports":
             return "Imported"
     return "Generated image"
+
+
+def generated_audio_family(audio: str | Path, *, runtime: RuntimeConfig) -> str:
+    """Identify generated audio families from their managed filename and path."""
+    resolved = Path(audio).resolve()
+    name = resolved.name.lower()
+    if "h3_fl2va" in name or "h3_ref2va" in name:
+        return "MiniMax H3"
+    if "minimax_music3" in name:
+        return "MiniMax Music 3"
+    if "yue2" in name:
+        return "YuE2"
+    outputs_root = runtime.outputs_dir.resolve()
+    if resolved.is_relative_to(outputs_root):
+        relative = resolved.relative_to(outputs_root)
+        if relative.parts and relative.parts[0].lower() == "imports":
+            return "Imported"
+    return "Generated audio"
 
 
 def generated_video_family(video: str | Path, *, runtime: RuntimeConfig) -> str:

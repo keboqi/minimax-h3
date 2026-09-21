@@ -447,6 +447,7 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
             LTX25_WORKFLOW_TEMPLATE_DIR,
             VIDEO_EXTENSIONS,
             IMAGE_EXTENSIONS,
+            AUDIO_EXTENSIONS,
             H3_SETUP_CSS,
         ),
     )
@@ -2618,9 +2619,28 @@ def gallery_image_resolution_text(image: Path) -> str:
     return gallery_store.gallery_image_resolution_text(image)
 
 
+def managed_gallery_audio_path(
+    audio: str | Path, *, require_file: bool = True
+) -> Path:
+    return gallery_store.managed_audio_path(
+        audio, require_file=require_file, runtime=_runtime_config()
+    )
+
+
+def gallery_audio_paths(*, limit: int | None = GALLERY_LIMIT) -> list[Path]:
+    return gallery_store.gallery_audio_paths(limit=limit, runtime=_runtime_config())
+
+
+def gallery_media_mode(mode: str) -> str:
+    return str(mode) if str(mode) in {"Video", "Image", "Audio"} else "Video"
+
+
 def gallery_media_download_path(media: str | Path, mode: str) -> str:
-    if str(mode) == "Image":
+    media_mode = gallery_media_mode(mode)
+    if media_mode == "Image":
         return gallery_store.image_download_path(media, runtime=_runtime_config())
+    if media_mode == "Audio":
+        return gallery_store.audio_download_path(media, runtime=_runtime_config())
     return video_download_path(media)
 
 
@@ -2633,7 +2653,7 @@ def absolute_gallery_media_download_url(
 
 
 def import_gallery_media(mode: str, uploaded_media: str | None):
-    media_mode = "Image" if str(mode) == "Image" else "Video"
+    media_mode = gallery_media_mode(mode)
     if not uploaded_media:
         return gallery_media_mutation_result(
             media_mode,
@@ -2641,7 +2661,11 @@ def import_gallery_media(mode: str, uploaded_media: str | None):
             clear_selection=False,
         )
     source = Path(uploaded_media).expanduser().resolve()
-    extensions = IMAGE_EXTENSIONS if media_mode == "Image" else VIDEO_EXTENSIONS
+    extensions = {
+        "Video": VIDEO_EXTENSIONS,
+        "Image": IMAGE_EXTENSIONS,
+        "Audio": AUDIO_EXTENSIONS,
+    }[media_mode]
     if not source.is_file() or source.suffix.lower() not in extensions:
         return gallery_media_mutation_result(
             media_mode,
@@ -2744,8 +2768,41 @@ def refresh_media_gallery(
     mode: str = "Video",
 ) -> tuple[list[tuple[str, str]], list[str], str]:
     """Refresh the active gallery, defaulting to the existing video library."""
-    if str(mode) != "Image":
+    media_mode = gallery_media_mode(mode)
+    if media_mode == "Video":
         return refresh_gallery()
+    if media_mode == "Audio":
+        audio_files = gallery_audio_paths()
+        items: list[tuple[str, str]] = []
+        selectable_paths: list[str] = []
+        failed = 0
+        for audio in audio_files:
+            thumbnail = gallery_store.gallery_audio_thumbnail(
+                audio, runtime=_runtime_config()
+            )
+            if thumbnail is None:
+                failed += 1
+                continue
+            try:
+                stat = audio.stat()
+            except OSError:
+                continue
+            timestamp = time.strftime(
+                "%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)
+            )
+            size_mb = stat.st_size / (1024 * 1024)
+            family = gallery_store.generated_audio_family(
+                audio, runtime=_runtime_config()
+            )
+            caption = (
+                f"{family} · {audio.name} · {timestamp} · {size_mb:.1f} MB"
+            )
+            items.append((str(thumbnail), caption))
+            selectable_paths.append(str(audio))
+        detail = f"{len(items)} generated audio file{'s' if len(items) != 1 else ''}"
+        if failed:
+            detail += f" · {failed} thumbnail{'s' if failed != 1 else ''} unavailable"
+        return items, selectable_paths, detail
     images = gallery_image_paths()
     items: list[tuple[str, str]] = []
     selectable_paths: list[str] = []
@@ -2772,15 +2829,15 @@ def select_gallery_media(
     paths: list[str],
     request: gr.Request,
     evt: gr.SelectData,
-) -> tuple[Any, Any, str, str | None]:
+) -> tuple[Any, Any, Any, str, str | None]:
     index = evt.index
     if isinstance(index, (tuple, list)):
         index = index[0]
     try:
         media = paths[int(index)]
     except (IndexError, TypeError, ValueError):
-        return None, None, "", None
-    media_mode = "Image" if str(mode) == "Image" else "Video"
+        return None, None, None, "", None
+    media_mode = gallery_media_mode(mode)
     if media_mode == "Image":
         resolved = managed_gallery_image_path(media)
         resolution = gallery_image_resolution_text(resolved)
@@ -2788,11 +2845,24 @@ def select_gallery_media(
         return (
             None,
             media,
+            None,
             f"**Resolution:** {resolution} · [Download image]({download_url})",
             media,
         )
+    if media_mode == "Audio":
+        resolved = managed_gallery_audio_path(media)
+        download_url = absolute_gallery_media_download_url(
+            resolved, media_mode, request
+        )
+        return (
+            None,
+            None,
+            media,
+            f"[Download audio]({download_url})",
+            media,
+        )
     video, download, selected = select_gallery_video(paths, request, evt)
-    return video, None, download, selected
+    return video, None, None, download, selected
 
 
 GalleryMutationResult = tuple[
@@ -2823,6 +2893,7 @@ GalleryMediaMutationResult = tuple[
     Any,
     Any,
     Any,
+    Any,
     str | None,
     bool,
 ]
@@ -2831,6 +2902,7 @@ GalleryMediaPostprocessResult = tuple[
     list[tuple[str, str]],
     list[str],
     str,
+    Any,
     Any,
     Any,
     Any,
@@ -2850,6 +2922,7 @@ def gallery_media_mutation_result(
     items, paths, detail = refresh_media_gallery(mode)
     video = None if clear_selection else gr.skip()
     image = None if clear_selection else gr.skip()
+    audio = None if clear_selection else gr.skip()
     download = "" if clear_selection else gr.skip()
     selected = None if clear_selection else selected_media
     return (
@@ -2858,6 +2931,7 @@ def gallery_media_mutation_result(
         f"{message} · {detail}",
         video,
         image,
+        audio,
         download,
         selected,
         False,
@@ -2869,6 +2943,7 @@ def gallery_media_progress_result(message: str) -> GalleryMediaPostprocessResult
         gr.skip(),
         gr.skip(),
         message,
+        gr.skip(),
         gr.skip(),
         gr.skip(),
         gr.skip(),
@@ -2889,16 +2964,17 @@ def gallery_media_processed_result(
     download_url = absolute_gallery_media_download_url(result, mode, request)
     if str(mode) == "Image":
         resolution = gallery_image_resolution_text(result)
-        video, image, noun = None, str(result), "image"
+        video, image, audio, noun = None, str(result), None, "image"
     else:
         resolution = gallery_resolution_text(result)
-        video, image, noun = str(result), None, "video"
+        video, image, audio, noun = str(result), None, None, "video"
     return (
         items,
         paths,
         f"Completed {option} in {elapsed:.1f}s · {detail}",
         video,
         image,
+        audio,
         f"**Resolution:** {resolution} · [Download processed {noun}]({download_url})",
         str(result),
         False,
@@ -3355,7 +3431,13 @@ def postprocess_selected_gallery_media(
     progress=gr.Progress(track_tqdm=False),
 ):
     """Dispatch gallery enhancement according to the active media library."""
-    if str(mode) == "Image":
+    media_mode = gallery_media_mode(mode)
+    if media_mode == "Audio":
+        yield gallery_media_progress_result(
+            "Audio gallery outputs are available for playback and download."
+        )
+        return
+    if media_mode == "Image":
         yield from postprocess_selected_gallery_image(
             selected_media,
             option,
@@ -3381,7 +3463,7 @@ def postprocess_selected_gallery_media(
         request,
         progress,
     ):
-        yield (*update[:4], None, *update[4:])
+        yield (*update[:4], None, None, *update[4:])
 
 
 def delete_selected_gallery_video(
@@ -3421,15 +3503,16 @@ def delete_selected_gallery_video(
 def delete_selected_gallery_media(
     mode: str, selected_media: str | None, confirmed: bool
 ) -> GalleryMediaMutationResult:
-    if str(mode) == "Image":
+    media_mode = gallery_media_mode(mode)
+    if media_mode != "Video":
         return gallery_media_mutation_result(
-            "Image",
-            "Image deletion is not enabled in this gallery.",
+            media_mode,
+            f"{media_mode} deletion is not enabled in this gallery.",
             selected_media=selected_media,
             clear_selection=False,
         )
     result = delete_selected_gallery_video(selected_media, confirmed)
-    return (*result[:4], None, *result[4:])
+    return (*result[:4], None, None, *result[4:])
 
 
 def empty_generated_gallery(
@@ -3470,15 +3553,16 @@ def empty_generated_gallery(
 def empty_generated_media_gallery(
     mode: str, selected_media: str | None, confirmed: bool
 ) -> GalleryMediaMutationResult:
-    if str(mode) == "Image":
+    media_mode = gallery_media_mode(mode)
+    if media_mode != "Video":
         return gallery_media_mutation_result(
-            "Image",
-            "Image library deletion is not enabled.",
+            media_mode,
+            f"{media_mode} library deletion is not enabled.",
             selected_media=selected_media,
             clear_selection=False,
         )
     result = empty_generated_gallery(selected_media, confirmed)
-    return (*result[:4], None, *result[4:])
+    return (*result[:4], None, None, *result[4:])
 
 
 def backend_status() -> str:

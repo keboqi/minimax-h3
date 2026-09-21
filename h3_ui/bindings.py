@@ -318,11 +318,12 @@ def bind_gallery_view(
     ]
     mode_changed = view.mode.change(
         lambda value: (
-            gr.update(visible=value != "Image", value=None),
+            gr.update(visible=value == "Video", value=None),
             gr.update(visible=value == "Image", value=None),
+            gr.update(visible=value == "Audio", value=None),
             None,
             "",
-            gr.update(visible=value != "Image"),
+            gr.update(visible=value == "Video"),
             gr.update(value=False),
             gr.update(
                 choices=(
@@ -339,17 +340,20 @@ def bind_gallery_view(
                     else "Enhance selected media"
                 )
             ),
+            gr.update(visible=value != "Audio"),
         ),
         inputs=view.mode,
         outputs=[
             view.player,
             view.image,
+            view.audio,
             view.selected,
             view.download,
             view.manage,
             view.confirm_delete,
             view.postprocess,
             view.post_run,
+            view.enhance,
         ],
         queue=False,
         show_progress="hidden",
@@ -396,10 +400,11 @@ def bind_gallery_view(
         show_progress="hidden",
     )
     opened = tab.select(
-        lambda: (None, None, "", None, False),
+        lambda: (None, None, None, "", None, False),
         outputs=[
             view.player,
             view.image,
+            view.audio,
             view.download,
             view.selected,
             view.confirm_delete,
@@ -424,7 +429,13 @@ def bind_gallery_view(
     view.grid.select(
         select,
         inputs=[view.mode, view.paths],
-        outputs=[view.player, view.image, view.download, view.selected],
+        outputs=[
+            view.player,
+            view.image,
+            view.audio,
+            view.download,
+            view.selected,
+        ],
         queue=False,
         show_progress="hidden",
     )
@@ -434,6 +445,7 @@ def bind_gallery_view(
         view.status,
         view.player,
         view.image,
+        view.audio,
         view.download,
         view.selected,
         view.confirm_delete,

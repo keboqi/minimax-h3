@@ -106,7 +106,9 @@ def build_qwen_image21_view(
                     "target; later images are references."
                 )
             with gr.Column(scale=2):
-                output = gr.Image(label="Generated image", type="filepath")
+                output = gr.Image(
+                    label="Generated image", type="filepath", interactive=False
+                )
                 with gr.Row():
                     run = gr.Button("Generate with Qwen Image 2.1", variant="primary")
                     stop = gr.Button("Interrupt")
@@ -307,7 +309,9 @@ def build_yue2_view(root: gr.Group, *, model_choices: Sequence[str], defaults: M
                 lyrics = gr.Textbox(label="Lyrics and song structure", lines=16, placeholder="[verse]\nLyrics here...\n\n[chorus]\n...")
                 abc = gr.Textbox(label="ABC score override (optional)", lines=7, placeholder="Leave blank to let YuE2 create the score.")
             with gr.Column(scale=2):
-                output = gr.Audio(label="Generated song", type="filepath")
+                output = gr.Audio(
+                    label="Generated song", type="filepath", interactive=False
+                )
                 with gr.Row():
                     run = gr.Button("Generate with YuE2", variant="primary")
                     stop = gr.Button("Interrupt")
@@ -401,7 +405,9 @@ def build_music_view(
                         label="Prompt writer status", lines=2, interactive=False
                     )
             with gr.Column(scale=2):
-                output = gr.Audio(label="Generated song", type="filepath")
+                output = gr.Audio(
+                    label="Generated song", type="filepath", interactive=False
+                )
                 with gr.Row():
                     run = gr.Button("Generate with Music 3", variant="primary")
                     stop = gr.Button("Interrupt")
@@ -502,7 +508,9 @@ class GalleryView:
     empty: gr.Button
     player: gr.Video
     image: gr.Image
+    audio: gr.Audio
     download: gr.Markdown
+    enhance: gr.Accordion
     postprocess: gr.Dropdown
     upscale_resolution: gr.Dropdown
     ai_settings: gr.Group
@@ -528,12 +536,12 @@ def build_gallery_view(
 ) -> GalleryView:
     with root:
         gr.Markdown(
-            "## Media gallery\nBrowse generated videos or images, import local media, and enhance the selected output.",
+            "## Media gallery\nBrowse generated videos, images, or audio and import local media. Video and image outputs can also be enhanced.",
             elem_classes=["h3-gallery-heading"],
         )
         with gr.Row(equal_height=True, elem_classes=["h3-gallery-toolbar"]):
             mode = gr.Radio(
-                choices=["Video", "Image"],
+                choices=["Video", "Image", "Audio"],
                 value="Video",
                 label="Gallery type",
                 scale=0,
@@ -552,14 +560,14 @@ def build_gallery_view(
             "Import local media", open=False, elem_classes=["h3-gallery-card"]
         ):
             gr.Markdown(
-                "Add an existing video or image to the active library so it can "
-                "be previewed and enhanced alongside generated outputs."
+                "Add an existing video, image, or audio file to the active library "
+                "so it can be previewed alongside generated outputs."
             )
             with gr.Row(equal_height=True, elem_classes=["h3-gallery-import"]):
                 upload_video = gr.File(
-                    label="Choose a video or image",
+                    label="Choose a video, image, or audio file",
                     file_count="single",
-                    file_types=["video", "image"],
+                    file_types=["video", "image", "audio"],
                     type="filepath",
                     height=90,
                     scale=4,
@@ -570,7 +578,7 @@ def build_gallery_view(
         with gr.Row(equal_height=False, elem_classes=["h3-gallery-workspace"]):
             with gr.Column(scale=3, min_width=320):
                 gr.Markdown(
-                    "### Library\nSelect a thumbnail to load the full video or image.",
+                    "### Library\nSelect an item to load the full video, image, or audio output.",
                     elem_classes=["h3-gallery-section-title"],
                 )
                 grid = gr.Gallery(
@@ -611,6 +619,7 @@ def build_gallery_view(
                 player = gr.Video(
                     label="Selected video",
                     height=420,
+                    interactive=False,
                     elem_classes=["h3-gallery-player"],
                 )
                 image = gr.Image(
@@ -618,6 +627,14 @@ def build_gallery_view(
                     type="filepath",
                     height=420,
                     visible=False,
+                    interactive=False,
+                    elem_classes=["h3-gallery-player"],
+                )
+                audio = gr.Audio(
+                    label="Selected audio",
+                    type="filepath",
+                    visible=False,
+                    interactive=False,
                     elem_classes=["h3-gallery-player"],
                 )
                 download = gr.Markdown(elem_classes=["h3-gallery-download"])
@@ -625,7 +642,7 @@ def build_gallery_view(
                     "Enhance selected media",
                     open=True,
                     elem_classes=["h3-gallery-card", "h3-gallery-enhance"],
-                ):
+                ) as enhance:
                     with gr.Row(equal_height=True):
                         postprocess = gr.Dropdown(
                             choices=list(postprocess_options),
@@ -709,7 +726,9 @@ def build_gallery_view(
         empty,
         player,
         image,
+        audio,
         download,
+        enhance,
         postprocess,
         upscale_resolution,
         ai_settings,

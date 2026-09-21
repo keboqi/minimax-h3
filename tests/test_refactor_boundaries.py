@@ -19,8 +19,13 @@ import h3_models
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.gallery_store import (
+    gallery_audio_paths,
+    gallery_audio_thumbnail,
     gallery_image_paths,
     gallery_video_paths,
+    generated_audio_family,
+    generated_image_family,
+    managed_audio_path,
     managed_image_path,
 )
 from h3_app.jobs import JobCancelled
@@ -161,6 +166,37 @@ class ManifestTests(unittest.TestCase):
 
 
 class MediaPublicationTests(unittest.TestCase):
+    def test_audio_gallery_discovers_and_classifies_generated_audio(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = replace(
+                RuntimeConfig.from_environment(root, {}),
+                output_root=root / "comfy-output",
+                outputs_dir=root / "gradio-output",
+                thumbnail_root=root / "gradio-output" / ".gallery-thumbnails",
+            )
+            files = {
+                config.output_dir / "audio" / "h3_fl2va_1.mp3": "MiniMax H3",
+                config.output_dir
+                / "audio"
+                / "minimax_music3_2.mp3": "MiniMax Music 3",
+                config.output_dir / "audio" / "yue2_3.mp3": "YuE2",
+                config.outputs_dir / "imports" / "reference.wav": "Imported",
+            }
+            for path in files:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture")
+
+            self.assertEqual(set(gallery_audio_paths(runtime=config)), set(files))
+            for path, family in files.items():
+                self.assertEqual(managed_audio_path(path, runtime=config), path)
+                self.assertEqual(
+                    generated_audio_family(path, runtime=config), family
+                )
+                thumbnail = gallery_audio_thumbnail(path, runtime=config)
+                self.assertIsNotNone(thumbnail)
+                self.assertTrue(thumbnail.is_file())
+
     def test_image_gallery_discovers_managed_images_but_not_video_thumbnails(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -181,6 +217,9 @@ class MediaPublicationTests(unittest.TestCase):
                 set(gallery_image_paths(runtime=config)), {generated, imported}
             )
             self.assertEqual(managed_image_path(generated, runtime=config), generated)
+            self.assertEqual(
+                generated_image_family(generated, runtime=config), "MiniMax H3"
+            )
             with self.assertRaises(H3Error):
                 managed_image_path(thumbnail, runtime=config)
 

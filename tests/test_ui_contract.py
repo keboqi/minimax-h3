@@ -130,10 +130,13 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(mode["props"]["value"], "Video")
         self.assertEqual(
             [choice[1] for choice in mode["props"]["choices"]],
-            ["Video", "Image"],
+            ["Video", "Image", "Audio"],
         )
         self.assertTrue(controls["Selected video"]["props"]["visible"])
         self.assertFalse(controls["Selected image"]["props"]["visible"])
+        self.assertFalse(controls["Selected audio"]["props"]["visible"])
+        for label in ("Selected video", "Selected image", "Selected audio"):
+            self.assertFalse(controls[label]["props"]["interactive"])
 
         dependency = next(
             item
@@ -144,8 +147,17 @@ class UiContractTests(unittest.TestCase):
         updates = self.demo.fns[dependency["id"]].fn("Image")
         self.assertFalse(updates[0]["visible"])
         self.assertTrue(updates[1]["visible"])
-        self.assertFalse(updates[4]["visible"])
-        self.assertEqual(updates[6]["choices"], [gradio_app.SEEDVR2_UPSCALE])
+        self.assertFalse(updates[2]["visible"])
+        self.assertFalse(updates[5]["visible"])
+        self.assertEqual(updates[7]["choices"], [gradio_app.SEEDVR2_UPSCALE])
+        self.assertTrue(updates[9]["visible"])
+
+        audio_updates = self.demo.fns[dependency["id"]].fn("Audio")
+        self.assertFalse(audio_updates[0]["visible"])
+        self.assertFalse(audio_updates[1]["visible"])
+        self.assertTrue(audio_updates[2]["visible"])
+        self.assertFalse(audio_updates[5]["visible"])
+        self.assertFalse(audio_updates[9]["visible"])
 
     def test_real_tabs_own_each_view(self) -> None:
         tabs = next(
@@ -173,6 +185,21 @@ class UiContractTests(unittest.TestCase):
             [self.components[node["children"][0]["id"]]["type"] for node in tab_nodes],
             ["row", "group", "group", "group", "group", "group", "group"],
         )
+
+    def test_non_h3_generated_media_outputs_are_display_only(self) -> None:
+        labels = {
+            "Generated image",
+            "Generated LTX-2.5 video",
+            "Generated song",
+        }
+        outputs = [
+            component
+            for component in self.config["components"]
+            if component.get("props", {}).get("label") in labels
+        ]
+        self.assertEqual(len(outputs), 4)
+        for output in outputs:
+            self.assertFalse(output["props"]["interactive"], output["props"]["label"])
 
     def test_custom_server_mount_receives_ui_styles(self) -> None:
         with (
