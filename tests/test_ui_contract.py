@@ -301,9 +301,9 @@ class UiContractTests(unittest.TestCase):
         assert_same_row(("Square", "Landscape", "Portrait"))
 
         for label, expected in (
-            ("Square", (2048, 2048)),
-            ("Landscape", (2400, 1792)),
-            ("Portrait", (1792, 2400)),
+            ("Square", (1024, 1024)),
+            ("Landscape", (1376, 1024)),
+            ("Portrait", (1024, 1376)),
         ):
             preset = controls[label]
             dependency = next(
@@ -314,6 +314,10 @@ class UiContractTests(unittest.TestCase):
             callback = self.demo.fns[dependency["id"]]
             choice = preset["props"]["choices"][0][1]
             self.assertEqual(callback.fn(choice), expected)
+
+        self.assertEqual(len(controls["Square"]["props"]["choices"]), 3)
+        self.assertEqual(len(controls["Landscape"]["props"]["choices"]), 9)
+        self.assertEqual(len(controls["Portrait"]["props"]["choices"]), 9)
 
     def test_first_frame_and_auto_megapixels_resolution_bindings(self) -> None:
         controls = {

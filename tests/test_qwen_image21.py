@@ -112,13 +112,16 @@ class QwenImage21WorkflowTests(unittest.TestCase):
 
     def test_native_resolution_presets(self):
         self.assertEqual(
-            qwen_resolution_preset_values("1:1 · 2048×2048"), (2048, 2048)
+            qwen_resolution_preset_values("1024 · 1:1 · 1024×1024"),
+            (1024, 1024),
         )
         self.assertEqual(
-            qwen_resolution_preset_values("16:9 · 2752×1536"), (2752, 1536)
+            qwen_resolution_preset_values("1080p · 16:9 · 1920×1088"),
+            (1920, 1088),
         )
         self.assertEqual(
-            qwen_resolution_preset_values("9:16 · 1536×2752"), (1536, 2752)
+            qwen_resolution_preset_values("2K · 9:16 · 1536×2752"),
+            (1536, 2752),
         )
 
     def test_optional_kitchen_attention_wraps_the_model(self):
