@@ -112,12 +112,12 @@ class QwenImage21WorkflowTests(unittest.TestCase):
 
     def test_native_resolution_presets(self):
         self.assertEqual(
-            qwen_resolution_preset_values("1024 · 1:1 · 1024×1024"),
+            qwen_resolution_preset_values("1K · 1:1 · 1024×1024"),
             (1024, 1024),
         )
         self.assertEqual(
-            qwen_resolution_preset_values("1080p · 16:9 · 1920×1088"),
-            (1920, 1088),
+            qwen_resolution_preset_values("1K · 16:9 · 1824×1024"),
+            (1824, 1024),
         )
         self.assertEqual(
             qwen_resolution_preset_values("2K · 9:16 · 1536×2752"),

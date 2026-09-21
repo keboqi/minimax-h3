@@ -124,45 +124,38 @@ def build_qwen_image21_view(
                 with gr.Row():
                     square_resolution = gr.Dropdown(
                         choices=[
-                            "1024 · 1:1 · 1024×1024",
-                            "1080p · 1:1 · 1088×1088",
+                            "1K · 1:1 · 1024×1024",
                             "2K · 1:1 · 2048×2048",
                         ],
                         value=None,
                         label="Square",
-                        info="Square presets from 1024 through native 2K.",
+                        info="Square presets at 1K and native 2K.",
                     )
                     landscape_resolution = gr.Dropdown(
                         choices=[
-                            "1024 · 4:3 · 1376×1024",
-                            "1024 · 3:2 · 1536×1024",
-                            "1024 · 16:9 · 1824×1024",
-                            "1080p · 4:3 · 1440×1088",
-                            "1080p · 3:2 · 1632×1088",
-                            "1080p · 16:9 · 1920×1088",
+                            "1K · 4:3 · 1376×1024",
+                            "1K · 3:2 · 1536×1024",
+                            "1K · 16:9 · 1824×1024",
                             "2K · 4:3 · 2400×1792",
                             "2K · 3:2 · 2528×1696",
                             "2K · 16:9 · 2752×1536",
                         ],
                         value=None,
                         label="Landscape",
-                        info="Landscape presets from 1024 through native 2K.",
+                        info="Landscape presets at 1K and native 2K.",
                     )
                     portrait_resolution = gr.Dropdown(
                         choices=[
-                            "1024 · 3:4 · 1024×1376",
-                            "1024 · 2:3 · 1024×1536",
-                            "1024 · 9:16 · 1024×1824",
-                            "1080p · 3:4 · 1088×1440",
-                            "1080p · 2:3 · 1088×1632",
-                            "1080p · 9:16 · 1088×1920",
+                            "1K · 3:4 · 1024×1376",
+                            "1K · 2:3 · 1024×1536",
+                            "1K · 9:16 · 1024×1824",
                             "2K · 3:4 · 1792×2400",
                             "2K · 2:3 · 1696×2528",
                             "2K · 9:16 · 1536×2752",
                         ],
                         value=None,
                         label="Portrait",
-                        info="Portrait presets from 1024 through native 2K.",
+                        info="Portrait presets at 1K and native 2K.",
                     )
                 with gr.Row():
                     width = gr.Slider(

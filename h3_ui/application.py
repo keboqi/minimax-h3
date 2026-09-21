@@ -3288,8 +3288,6 @@ def postprocess_selected_gallery_image(
             models=models,
             model_choice=seedvr2_model,
             output_token=output_token,
-            output_stamp=str(int(time.time())),
-            output_nonce=uuid.uuid4().hex[:8],
         )
         queued_at = time.time()
         prompt_id = submit_prompt(graph, str(uuid.uuid4()))

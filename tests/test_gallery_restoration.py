@@ -54,6 +54,7 @@ class GalleryRestorationTests(unittest.TestCase):
                 patch.object(
                     app,
                     "build_seedvr2_image_upscale_graph",
+                    autospec=True,
                     return_value={"save": {"class_type": "SaveImage", "inputs": {}}},
                 )
             )
@@ -80,6 +81,8 @@ class GalleryRestorationTests(unittest.TestCase):
                 [("gallery", "staged.png", 1.875)],
             )
             self.assertEqual(build.call_args.kwargs["seed"], 42)
+            self.assertNotIn("output_stamp", build.call_args.kwargs)
+            self.assertNotIn("output_nonce", build.call_args.kwargs)
 
     def test_restoration_uses_selected_adapter_and_same_resolution_reference(self):
         for option in LTX25_RESTORATION_OPTIONS:

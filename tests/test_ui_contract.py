@@ -341,9 +341,9 @@ class UiContractTests(unittest.TestCase):
             choice = preset["props"]["choices"][0][1]
             self.assertEqual(callback.fn(choice), expected)
 
-        self.assertEqual(len(controls["Square"]["props"]["choices"]), 3)
-        self.assertEqual(len(controls["Landscape"]["props"]["choices"]), 9)
-        self.assertEqual(len(controls["Portrait"]["props"]["choices"]), 9)
+        self.assertEqual(len(controls["Square"]["props"]["choices"]), 2)
+        self.assertEqual(len(controls["Landscape"]["props"]["choices"]), 6)
+        self.assertEqual(len(controls["Portrait"]["props"]["choices"]), 6)
 
     def test_first_frame_and_auto_megapixels_resolution_bindings(self) -> None:
         controls = {
