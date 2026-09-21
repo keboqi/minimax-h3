@@ -93,6 +93,9 @@ def generate_qwen_image21(
             "comfy kitchen attention",
         }:
             raise H3Error("Unsupported Qwen attention backend.")
+        accelerator = str(request.accelerator or "Off").strip()
+        if accelerator.lower() not in {"off", "spectrum"}:
+            raise H3Error("Unsupported Qwen accelerator. Choose Off or Spectrum.")
         actual_seed = (
             random.randrange(0, 2**63 - 1)
             if int(request.seed) < 0
@@ -119,6 +122,7 @@ def generate_qwen_image21(
         missing_nodes = required_qwen_image21_nodes(
             editing=editing,
             use_attention_backend=attention_backend != "pytorch attention",
+            use_spectrum=accelerator.lower() == "spectrum",
         ) - available
         if missing_nodes:
             raise H3Error(
@@ -143,6 +147,7 @@ def generate_qwen_image21(
             cache_device=request.cache_device,
             cache_dtype=request.cache_dtype,
             attention_backend=attention_backend,
+            accelerator=accelerator,
             output_stamp=str(int(time.time())),
             output_nonce=uuid.uuid4().hex[:8],
         )
@@ -154,7 +159,7 @@ def generate_qwen_image21(
             None,
             f"Queued Qwen Image 2.1 job `{prompt_id}` · seed {actual_seed} · "
             f"{'edit' if editing else f'{width}×{height} generation'} · "
-            f"{request.model_choice}",
+            f"{request.model_choice} · accelerator {accelerator}",
         )
         for stage, completed_nodes, total_nodes, step, step_total in (
             services.execution.poll_comfy_progress(prompt_id, graph)

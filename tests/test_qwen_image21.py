@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
+from h3_app import prompt_service
 from h3_app.workflows.qwen import (
     build_qwen_image21_graph,
     required_qwen_image21_nodes,
@@ -36,6 +40,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             cache_device="auto",
             cache_dtype="default",
             attention_backend="pytorch attention",
+            accelerator="Off",
             output_stamp="1234",
             output_nonce="abcd",
         )
@@ -143,6 +148,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             cache_device="auto",
             cache_dtype="default",
             attention_backend="comfy kitchen attention",
+            accelerator="Off",
             output_stamp="1234",
             output_nonce="abcd",
         )
@@ -152,6 +158,107 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         )
         sampler = self._by_type(graph, "KSampler")[0][1]
         self.assertEqual(sampler["inputs"]["model"], [backend_id, 0])
+
+    def test_optional_spectrum_wraps_the_final_patched_model(self):
+        graph = build_qwen_image21_graph(
+            model_choice="BF16",
+            text_encoder_choice="BF16",
+            prompt="Transparent glass sculpture",
+            negative_prompt="",
+            reference_images=("target.png",),
+            width=1024,
+            height=1024,
+            reference_resolution=0,
+            match_input_size=True,
+            seed=42,
+            steps=40,
+            cfg=1.0,
+            sampler_name="euler",
+            scheduler="simple",
+            cache_device="auto",
+            cache_dtype="default",
+            attention_backend="pytorch attention",
+            accelerator="Spectrum",
+            output_stamp="1234",
+            output_nonce="abcd",
+        )
+        cache_id, _cache = self._by_type(graph, "QwenImage21Cache")[0]
+        spectrum_id, spectrum = self._by_type(
+            graph, "QwenSpectrumModelPatcher"
+        )[0]
+        sampler = self._by_type(graph, "KSampler")[0][1]
+        self.assertEqual(spectrum["inputs"]["model"], [cache_id, 0])
+        self.assertEqual(spectrum["inputs"]["warmup_steps"], 5)
+        self.assertEqual(spectrum["inputs"]["max_consecutive_forecasts"], 1)
+        self.assertEqual(sampler["inputs"]["model"], [spectrum_id, 0])
+        self.assertIn(
+            "QwenSpectrumModelPatcher",
+            required_qwen_image21_nodes(editing=False, use_spectrum=True),
+        )
+
+    def test_prompt_writer_uses_natural_single_image_reference(self):
+        runtime = SimpleNamespace(
+            prompt_systems={"Qwen Image 2.1": Path("prompt_qwen_image21.txt")}
+        )
+        with patch.object(
+            prompt_service,
+            "_enhance_prompt_from_media",
+            return_value=("enhanced", "ok"),
+        ) as enhance:
+            result = prompt_service.enhance_qwen_image21_prompt(
+                "change the sky",
+                "gemini",
+                "",
+                "Image edit",
+                ["target.png"],
+                1024,
+                1024,
+                runtime=runtime,
+            )
+        self.assertEqual(result, ("enhanced", "ok"))
+        arguments = enhance.call_args.kwargs
+        self.assertEqual(
+            arguments["media_values"],
+            (("Input image (edit target)", "target.png"),),
+        )
+        self.assertIn("do not use an <image1> tag", arguments["context"])
+
+    def test_prompt_writer_tags_every_multi_image_input(self):
+        runtime = SimpleNamespace(
+            prompt_systems={"Qwen Image 2.1": Path("prompt_qwen_image21.txt")}
+        )
+        with patch.object(
+            prompt_service,
+            "_enhance_prompt_from_media",
+            return_value=("enhanced", "ok"),
+        ) as enhance:
+            prompt_service.enhance_qwen_image21_prompt(
+                "put the shirt on the person",
+                "gemini",
+                "",
+                "Image edit",
+                ["target.png", "shirt.png"],
+                1024,
+                1024,
+                runtime=runtime,
+            )
+        arguments = enhance.call_args.kwargs
+        self.assertEqual(
+            arguments["media_values"],
+            (("<image1>", "target.png"), ("<image2>", "shirt.png")),
+        )
+        self.assertIn("Use the numbered image tags verbatim", arguments["context"])
+
+    def test_prompt_rules_include_official_transparency_wrapper(self):
+        rules = (Path(__file__).resolve().parents[1] / "prompt_qwen_image21.txt").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("do not use an <image1> tag", rules)
+        self.assertIn(
+            "This is an RGBA image with transparency. <description>. "
+            "The image has alpha channel and the background is transparent.",
+            rules,
+        )
 
 
 if __name__ == "__main__":

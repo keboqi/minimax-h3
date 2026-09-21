@@ -200,6 +200,7 @@ class QwenImage21Request:
     cache_device: str
     cache_dtype: str
     attention_backend: str
+    accelerator: str = "Off"
 
 
 @dataclass(frozen=True)

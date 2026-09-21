@@ -4003,6 +4003,7 @@ def generate_qwen_image21(
     cache_device: str,
     cache_dtype: str,
     attention_backend: str = "pytorch attention",
+    accelerator: str = "Off",
     progress=gr.Progress(track_tqdm=False),
 ):
     uploaded = reference_images or []
@@ -4031,6 +4032,7 @@ def generate_qwen_image21(
         cache_device=cache_device,
         cache_dtype=cache_dtype,
         attention_backend=attention_backend,
+        accelerator=accelerator,
     )
     yield from qwen_generation.generate_qwen_image21(
         request, _generation_services(), _runtime_config(), progress=progress

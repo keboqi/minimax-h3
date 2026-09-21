@@ -23,5 +23,7 @@ SOL_REF = "930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf"
 SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
 SPECTRUM_REF = "120d72e2f48b781235b34149e39bbdf0f1317d82"  # v0.2.27
 SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
+SPECTRUM_QWEN_REF = "ddb5470f3a885fd912e2b01aa8e20f9768148e42"
+SPECTRUM_QWEN_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-Qwen-Proper.git"
 VIDEO_DEPTH_REF = "a0db08e63d1ea571601c45cde4aaee0acdd0544d"
 VIDEO_DEPTH_REPO = "https://github.com/yuvraj108c/ComfyUI-Video-Depth-Anything.git"

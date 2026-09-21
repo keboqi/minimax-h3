@@ -25,13 +25,14 @@ KERNELS_VERSION = "0.16.0"
 # Kornia 0.8.2+ removed that module-level compatibility export.
 KORNIA_VERSION = "0.8.1"
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
-# ComfyUI v0.36.0 includes native Qwen Image 2.1 generation/edit support,
-# MiniMax-H3 VAE optimizations, and lower VAE usage. Keep its frontend and
-# Kitchen versions aligned with upstream requirements.
+# ComfyUI v0.37.0 includes native Qwen Image 2.1 generation/edit support,
+# corrected KV-cache placement, compiled Qwen transformer blocks, MiniMax-H3
+# VAE optimizations, and lower VAE usage. Keep its frontend and Kitchen
+# versions aligned with upstream requirements.
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "0eae2f22e6cb2115c9002ab6daa0c12c9636ccb1"
 
-COMFY_REF = "6bfaacc67c2103481e5f0c84d75257cd0581d86a"
+COMFY_REF = "1d61dcc35c35541388c0001bacc7703db14e8bea"
 COMFY_KITCHEN_VERSION = "0.2.35"
 COMFY_FRONTEND_VERSION = "1.53.6"
 WSPROTO_VERSION = "1.2.0"
@@ -255,7 +256,7 @@ def selftest() -> None:
     )
     assert KORNIA_VERSION == "0.8.1"
     assert KERNELS_VERSION == "0.16.0"
-    assert COMFY_REF == "6bfaacc67c2103481e5f0c84d75257cd0581d86a"
+    assert COMFY_REF == "1d61dcc35c35541388c0001bacc7703db14e8bea"
     assert COMFY_KITCHEN_VERSION == "0.2.35"
     assert COMFY_FRONTEND_VERSION == "1.53.6"
     assert WSPROTO_VERSION == "1.2.0"

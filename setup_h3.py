@@ -32,6 +32,8 @@ from h3_sources import (
     SOL_REPO,
     SPECTRUM_REF,
     SPECTRUM_REPO,
+    SPECTRUM_QWEN_REF,
+    SPECTRUM_QWEN_REPO,
     VIDEO_DEPTH_REF,
     VIDEO_DEPTH_REPO,
 )
@@ -731,6 +733,16 @@ def sync_external_nodes(
     )
     if install_requirements and (spectrum / "requirements.txt").is_file():
         uv_pip("-r", str(spectrum / "requirements.txt"), no_deps=True)
+
+    spectrum_qwen = comfy / "custom_nodes" / "ComfyUI-Spectrum-Qwen-Proper"
+    sync_git_repo(
+        SPECTRUM_QWEN_REPO,
+        spectrum_qwen,
+        ref=SPECTRUM_QWEN_REF,
+        required_paths=("__init__.py", "nodes.py"),
+    )
+    if install_requirements and (spectrum_qwen / "requirements.txt").is_file():
+        uv_pip("-r", str(spectrum_qwen / "requirements.txt"), no_deps=True)
 
     trt_vae = comfy / "custom_nodes" / "ComfyUI-H3VAE_TRT"
     sync_git_repo(

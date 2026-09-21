@@ -363,12 +363,13 @@ workflow for both generation and editing. The BF16 DiT and text encoder are
 selected by default; INT8 ConvRot and W4A8 alternatives are available. The selected
 DiT, Qwen3-VL 8B encoder, and BF16 VAE download on first use from
 [Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1).
-Image edit accepts up to 10 inputs, treats `image1` as the edit target, and
-lets prompts refer to inputs as `<image1>`, `<image2>`, and so on. Generated
+Image edit accepts up to 10 inputs and treats `image1` as the edit target.
+Single-image prompts refer to the input naturally; multi-image prompts use
+`<image1>`, `<image2>`, and subsequent tags. Generated
 images and their settings are saved with the other application outputs. The
 official 40-step Euler/simple path is the default, native ~4 MP aspect-ratio
-sizes are accepted, and Comfy Kitchen INT8 attention is available as an
-experimental opt-in speed setting.
+sizes are accepted, and Comfy Kitchen INT8 attention plus Spectrum
+hidden-state forecasting are available as experimental opt-in speed settings.
 The **YuE2** tab uses ComfyUI's native YuE2 nodes (ComfyUI v0.36.0 or newer).
 Its INT8 ConvRot checkpoint (about 4 GB) is selected by default; the BF16
 checkpoint is an optional alternative. The selected checkpoint downloads on
@@ -470,8 +471,9 @@ Their UI/API operations are exposed as `/enhance_ltx25_prompt` and
 `/enhance_music3_prompt`.
 
 The **Qwen Image 2.1** tab also has a Gemini prompt writer that understands its
-text-to-image and image-edit modes, including the ordered `<image1>`,
-`<image2>`, ... references. The **YuE2** writer jointly creates or enhances
+text-to-image and image-edit modes. It refers to a single edit input naturally
+and uses ordered `<image1>`, `<image2>`, ... tags for multi-image edits. The
+**YuE2** writer jointly creates or enhances
 the production style and sectioned lyrics. These writers share the same Gemini
 model list and default to `gemini-3.5-flash-lite`; their endpoints are
 `/enhance_qwen_image21_prompt` and `/enhance_yue2_prompt`.
@@ -626,14 +628,16 @@ functions and requires it to contain `HF_TOKEN`. If your existing secret uses a
 different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`. To make a
 hosted prompt enhancer available without entering a key in the UI, also store
 `GEMINI_API_KEY` and/or `LIGHTNING_API_KEY` in that Modal Secret.
+The Modal runtime mounts every model-specific prompt instruction file, including
+the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
 The deployment pins an immutable ComfyUI revision with its required
 frontend package 1.53.6, Comfy Kitchen 0.2.35 and upstream aimdo 0.5.5.
-The source also pins workflow templates 0.11.62 and embedded docs 0.5.11.
-This update includes native Qwen Image 2.1 generation/editing, sparse attention,
-Comfy Compiler, optional H3 reference VAEs and DiffSynth/ModelScope H3 LoRA
-support. KJNodes 1.5.1 includes the matching H3 low-memory attention callback
-fix.
+The source also pins workflow templates 0.11.66 and embedded docs 0.5.12.
+This update includes native Qwen Image 2.1 generation/editing, corrected edit
+KV-cache placement, compiled Qwen transformer blocks, sparse attention, Comfy
+Compiler, optional H3 reference VAEs and DiffSynth/ModelScope H3 LoRA support.
+KJNodes 1.5.1 includes the matching H3 low-memory attention callback fix.
 
 TensorRT VAE is pinned to `4360e00867eca86ab61b3899216c0ec281367b46`.
 Upstream now owns optional encoder loading and single-frame encoding. Our

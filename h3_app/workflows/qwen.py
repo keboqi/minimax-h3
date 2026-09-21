@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from h3_app.catalog import QWEN_IMAGE21_SPECTRUM_INPUTS
 from h3_app.graph import Graph
 from h3_models import (
     MODEL_SPECS,
@@ -13,7 +14,10 @@ from h3_models import (
 
 
 def required_qwen_image21_nodes(
-    *, editing: bool, use_attention_backend: bool = False
+    *,
+    editing: bool,
+    use_attention_backend: bool = False,
+    use_spectrum: bool = False,
 ) -> set[str]:
     nodes = {
         "UNETLoader",
@@ -29,6 +33,8 @@ def required_qwen_image21_nodes(
         nodes |= {"LoadImage", "QwenImage21Cache"}
     if use_attention_backend:
         nodes.add("ModelAttentionBackend")
+    if use_spectrum:
+        nodes.add("QwenSpectrumModelPatcher")
     return nodes
 
 
@@ -51,6 +57,7 @@ def build_qwen_image21_graph(
     cache_device: str,
     cache_dtype: str,
     attention_backend: str,
+    accelerator: str,
     output_stamp: str,
     output_nonce: str,
 ) -> dict[str, Any]:
@@ -120,6 +127,13 @@ def build_qwen_image21_graph(
             dtype=str(cache_dtype),
         )
         sampled_model = Graph.out(cached)
+    if str(accelerator).strip().lower() == "spectrum":
+        spectrum = graph.add(
+            "QwenSpectrumModelPatcher",
+            model=sampled_model,
+            **QWEN_IMAGE21_SPECTRUM_INPUTS,
+        )
+        sampled_model = Graph.out(spectrum)
 
     sampled = graph.add(
         "KSampler",

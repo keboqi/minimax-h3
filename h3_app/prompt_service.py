@@ -398,19 +398,33 @@ def enhance_qwen_image21_prompt(
     references = reference_images or []
     if isinstance(references, (str, Path, dict)):
         references = [references]
+    reference_count = len(references)
+    if reference_count == 1:
+        media_values = (("Input image (edit target)", references[0]),)
+        edit_context = (
+            "In Image edit mode, the uploaded image is the edit target. "
+            "Refer to it naturally and do not use an <image1> tag."
+        )
+    else:
+        media_values = tuple(
+            (f"<image{index}>", image)
+            for index, image in enumerate(references, 1)
+        )
+        edit_context = (
+            "In Image edit mode with multiple inputs, <image1> is the edit "
+            "target and later images are references. Use the numbered image "
+            "tags verbatim."
+        )
     return _enhance_prompt_from_media(
         prompt=prompt,
         model=model,
         temporary_api_key=temporary_api_key,
         target="Qwen Image 2.1",
         system_path=runtime.prompt_systems["Qwen Image 2.1"],
-        media_values=tuple(
-            (f"<image{index}>", image)
-            for index, image in enumerate(references, 1)
-        ),
+        media_values=media_values,
         context=(
             f"Mode: {mode}\nOutput: {int(width)}x{int(height)}\n"
-            "In Image edit mode, <image1> is the edit target and later images are references."
+            f"{edit_context}"
         ),
     )
 

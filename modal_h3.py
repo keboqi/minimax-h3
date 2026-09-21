@@ -31,6 +31,8 @@ PROMPT_REWRITER = ROOT / "h3_prompt_rewriter.py"
 PROMPT_ENHANCER = ROOT / "prompt.txt"
 PROMPT_MUSIC3 = ROOT / "prompt_music3.txt"
 PROMPT_LTX25 = ROOT / "prompt_ltx25.txt"
+PROMPT_QWEN_IMAGE21 = ROOT / "prompt_qwen_image21.txt"
+PROMPT_YUE2 = ROOT / "prompt_yue2.txt"
 ACCEL_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
 LOCAL_UI = LOCAL / "gradio_app.py"
@@ -45,6 +47,8 @@ LOCAL_PROMPT_REWRITER = LOCAL / "h3_prompt_rewriter.py"
 LOCAL_PROMPT_ENHANCER = LOCAL / "prompt.txt"
 LOCAL_PROMPT_MUSIC3 = LOCAL / "prompt_music3.txt"
 LOCAL_PROMPT_LTX25 = LOCAL / "prompt_ltx25.txt"
+LOCAL_PROMPT_QWEN_IMAGE21 = LOCAL / "prompt_qwen_image21.txt"
+LOCAL_PROMPT_YUE2 = LOCAL / "prompt_yue2.txt"
 
 DATA = PurePosixPath("/data")
 MODELS = DATA / "models"
@@ -75,7 +79,7 @@ def _shared_import_path() -> Path:
 sys.path.insert(0, str(_shared_import_path()))
 # Only build inputs may be imported while Modal constructs the image. Helpers
 # mounted after run_function() must be imported lazily inside runtime functions.
-from h3_sources import (
+from h3_sources import (  # noqa: E402
     COMFY_REPO,
     CONTROLNET_AUX_REF,
     CONTROLNET_AUX_REPO,
@@ -95,6 +99,8 @@ from h3_sources import (
     SOL_REPO,
     SPECTRUM_REF,
     SPECTRUM_REPO,
+    SPECTRUM_QWEN_REF,
+    SPECTRUM_QWEN_REPO,
     VIDEO_DEPTH_REF,
     VIDEO_DEPTH_REPO,
 )
@@ -144,6 +150,8 @@ _RUNTIME_LOCAL_MOUNTS = (
     (LOCAL_PROMPT_ENHANCER, PROMPT_ENHANCER),
     (LOCAL_PROMPT_MUSIC3, PROMPT_MUSIC3),
     (LOCAL_PROMPT_LTX25, PROMPT_LTX25),
+    (LOCAL_PROMPT_QWEN_IMAGE21, PROMPT_QWEN_IMAGE21),
+    (LOCAL_PROMPT_YUE2, PROMPT_YUE2),
 )
 _BUILD_LOCAL_FILES = tuple(local for local, _ in _BUILD_LOCAL_MOUNTS)
 _RUNTIME_LOCAL_FILES = tuple(local for local, _ in _RUNTIME_LOCAL_MOUNTS)
@@ -245,6 +253,12 @@ def build(revision: str) -> None:
     )
     _clone(SPECTRUM_REPO, spectrum_dir, ref=SPECTRUM_REF)
     _print_git_revision(spectrum_dir)
+
+    spectrum_qwen_dir = (
+        Path(COMFY) / "custom_nodes" / "ComfyUI-Spectrum-Qwen-Proper"
+    )
+    _clone(SPECTRUM_QWEN_REPO, spectrum_qwen_dir, ref=SPECTRUM_QWEN_REF)
+    _print_git_revision(spectrum_qwen_dir)
 
     trt_vae_dir = Path(COMFY) / "custom_nodes" / "ComfyUI-H3VAE_TRT"
     _clone(TRT_VAE_NODE_REPO, trt_vae_dir, ref=TRT_VAE_NODE_REF)

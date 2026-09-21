@@ -232,6 +232,20 @@ QWEN_IMAGE21_DEFAULTS = {
     "cache_device": "auto",
     "cache_dtype": "default",
     "attention_backend": "pytorch attention",
+    "accelerator": "Off",
+}
+
+
+QWEN_IMAGE21_SPECTRUM_INPUTS = {
+    "warmup_steps": 5,
+    "tail_actual_steps": 2,
+    "history_points": 5,
+    "chebyshev_degree": 3,
+    "max_consecutive_forecasts": 1,
+    "ridge_lambda": 0.0001,
+    "cache_device": "main_device",
+    "force_actual_on_control": True,
+    "debug": False,
 }
 
 

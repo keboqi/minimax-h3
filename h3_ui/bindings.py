@@ -279,6 +279,7 @@ def bind_qwen_image21_view(
             view.cache_device,
             view.cache_dtype,
             view.attention_backend,
+            view.accelerator,
         ],
         outputs=[view.output, view.status],
         show_progress="minimal",

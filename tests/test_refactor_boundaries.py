@@ -61,7 +61,7 @@ class ConfigurationTests(unittest.TestCase):
             for target in node.targets
             if isinstance(target, ast.Name)
         }
-        self.assertEqual(len(names), 21)
+        self.assertEqual(len(names), 23)
         for filename in ("setup_h3.py", "modal_h3.py"):
             tree = ast.parse((root / filename).read_text(encoding="utf-8"))
             imports = {
@@ -75,6 +75,14 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn("(LOCAL_SHARED_SOURCES, SHARED_SOURCES)", modal)
         self.assertIn('LOCAL / "h3_app"', modal)
         self.assertIn("LOCAL_UI_PACKAGE,", modal)
+        for prompt_name in (
+            "prompt.txt",
+            "prompt_ltx25.txt",
+            "prompt_music3.txt",
+            "prompt_qwen_image21.txt",
+            "prompt_yue2.txt",
+        ):
+            self.assertIn(f'LOCAL / "{prompt_name}"', modal)
 
     def test_launchers_keep_cuda_allocator_and_compiler_enabled(self):
         root = Path(__file__).resolve().parents[1]

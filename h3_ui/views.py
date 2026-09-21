@@ -62,6 +62,7 @@ class QwenImage21View:
     cache_device: gr.Dropdown
     cache_dtype: gr.Dropdown
     attention_backend: gr.Dropdown
+    accelerator: gr.Dropdown
 
 
 def build_qwen_image21_view(
@@ -77,8 +78,9 @@ def build_qwen_image21_view(
         gr.Markdown(
             "## Qwen Image 2.1\n"
             "Generate images or edit and combine reference images with the native "
-            "ComfyUI workflow. In edit mode, the first image is the target; mention "
-            "references as `<image1>`, `<image2>`, and so on. Models download on "
+            "ComfyUI workflow. In edit mode, the first image is the target. For "
+            "multiple inputs, mention them as `<image1>`, `<image2>`, and so on; "
+            "refer to a single input naturally without a tag. Models download on "
             "first use. [Model details](https://huggingface.co/Comfy-Org/Qwen-Image-2.1)"
         )
         with gr.Row(equal_height=False):
@@ -109,7 +111,8 @@ def build_qwen_image21_view(
                 )
                 gr.Markdown(
                     "Image edit supports up to 10 files. **image1** is the edit "
-                    "target; later images are references."
+                    "target; later images are references. Numbered tags are required "
+                    "only when multiple files are supplied."
                 )
                 with gr.Accordion("Prompt writer / enhancer", open=False):
                     gr.Markdown(
@@ -264,6 +267,16 @@ def build_qwen_image21_view(
                             "AMD GPUs and falls back to PyTorch when unavailable."
                         ),
                     )
+                    accelerator = gr.Dropdown(
+                        choices=["Off", "Spectrum"],
+                        value=defaults["accelerator"],
+                        label="Diffusion accelerator",
+                        info=(
+                            "Spectrum is experimental and uses conservative "
+                            "hidden-state forecasting settings. Compare matched "
+                            "seeds before relying on it for final output."
+                        ),
+                    )
                 gr.Markdown(
                     "Official defaults are CFG 1 and 40 Euler/simple steps. Native "
                     "sizes include 2048×2048, 2400×1792, 1792×2400, 2528×1696, "
@@ -300,6 +313,7 @@ def build_qwen_image21_view(
         cache_device,
         cache_dtype,
         attention_backend,
+        accelerator,
     )
 
 @dataclass(frozen=True)
