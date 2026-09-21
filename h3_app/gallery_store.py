@@ -11,7 +11,7 @@ from threading import Lock
 from types import EllipsisType
 from urllib.parse import quote
 
-from h3_app.catalog import VIDEO_EXTENSIONS
+from h3_app.catalog import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.processes import run_media_process
@@ -49,6 +49,37 @@ def managed_video_path(
     return resolved
 
 
+def image_download_path(image: str | Path, *, runtime: RuntimeConfig) -> str:
+    """Return a safe, public route for a generated image on this server."""
+    resolved = managed_image_path(image, require_file=False, runtime=runtime)
+    for bucket, root in (
+        ("comfy", runtime.output_dir.resolve()),
+        ("gradio", runtime.outputs_dir.resolve()),
+    ):
+        if resolved.is_relative_to(root):
+            relative = resolved.relative_to(root).as_posix()
+            return f"/downloads/{bucket}/{quote(relative, safe='/')}"
+    raise H3Error("Generated image is outside the configured output directories.")
+
+
+def managed_image_path(
+    image: str | Path, *, require_file: bool = True, runtime: RuntimeConfig
+) -> Path:
+    """Resolve an image only when it belongs to a managed output directory."""
+    resolved = Path(image).resolve()
+    roots = (runtime.output_dir.resolve(), runtime.outputs_dir.resolve())
+    thumbnail_root = runtime.gallery_thumbnails_dir.resolve()
+    if (
+        resolved.suffix.lower() not in IMAGE_EXTENSIONS
+        or ".processing" in resolved.parts
+        or resolved.is_relative_to(thumbnail_root)
+        or not any(resolved.is_relative_to(root) for root in roots)
+        or (require_file and not resolved.is_file())
+    ):
+        raise H3Error("Image is not a managed generated output.")
+    return resolved
+
+
 def gallery_video_paths(
     *, limit: int | None | EllipsisType = ..., runtime: RuntimeConfig
 ) -> list[Path]:
@@ -81,6 +112,45 @@ def gallery_video_paths(
             return 0.0
 
     ordered = sorted(videos.values(), key=modified, reverse=True)
+    return ordered if limit is None else ordered[: max(0, int(limit))]
+
+
+def gallery_image_paths(
+    *, limit: int | None | EllipsisType = ..., runtime: RuntimeConfig
+) -> list[Path]:
+    """Return generated images, optionally limited to the newest entries."""
+    if limit is Ellipsis:
+        limit = runtime.gallery_limit
+    images: dict[Path, Path] = {}
+    thumbnail_root = runtime.gallery_thumbnails_dir.resolve()
+    for root in (runtime.output_dir, runtime.outputs_dir):
+        if not root.is_dir():
+            continue
+        resolved_root = root.resolve()
+        for candidate in root.rglob("*"):
+            if (
+                not candidate.is_file()
+                or candidate.suffix.lower() not in IMAGE_EXTENSIONS
+                or ".processing" in candidate.parts
+            ):
+                continue
+            try:
+                resolved = candidate.resolve()
+                if (
+                    resolved.is_relative_to(resolved_root)
+                    and not resolved.is_relative_to(thumbnail_root)
+                ):
+                    images[resolved] = candidate
+            except OSError:
+                continue
+
+    def modified(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    ordered = sorted(images.values(), key=modified, reverse=True)
     return ordered if limit is None else ordered[: max(0, int(limit))]
 
 
@@ -197,6 +267,50 @@ def gallery_resolution_text(video: Path, *, runtime: RuntimeConfig) -> str:
     return (
         f"{resolution[0]}×{resolution[1]}" if resolution else "resolution unavailable"
     )
+
+
+def gallery_image_resolution(image: Path) -> tuple[int, int] | None:
+    """Read an image's display dimensions, honoring EXIF orientation."""
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(image) as opened:
+            width, height = ImageOps.exif_transpose(opened).size
+        if width > 0 and height > 0:
+            return int(width), int(height)
+    except (OSError, TypeError, ValueError):
+        pass
+    return None
+
+
+def gallery_image_resolution_text(image: Path) -> str:
+    resolution = gallery_image_resolution(image)
+    return (
+        f"{resolution[0]}×{resolution[1]}"
+        if resolution
+        else "resolution unavailable"
+    )
+
+
+def generated_image_family(image: str | Path, *, runtime: RuntimeConfig) -> str:
+    """Identify common generated-image sources from their managed output path."""
+    resolved = Path(image).resolve()
+    output_root = runtime.output_dir.resolve()
+    outputs_root = runtime.outputs_dir.resolve()
+    if resolved.is_relative_to(output_root):
+        relative = resolved.relative_to(output_root)
+        lowered = "/".join(relative.parts).lower()
+        if "qwen_image21" in resolved.name.lower():
+            return "Qwen Image 2.1"
+        if "/input_upscale/" in f"/{lowered}/":
+            return "SeedVR2"
+        if relative.parts and relative.parts[0].lower() == "h3":
+            return "MiniMax H3"
+    if resolved.is_relative_to(outputs_root):
+        relative = resolved.relative_to(outputs_root)
+        if relative.parts and relative.parts[0].lower() == "imports":
+            return "Imported"
+    return "Generated image"
 
 
 def generated_video_family(video: str | Path, *, runtime: RuntimeConfig) -> str:

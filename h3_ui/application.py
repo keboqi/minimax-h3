@@ -446,6 +446,7 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
             LTX25_WORKFLOWS,
             LTX25_WORKFLOW_TEMPLATE_DIR,
             VIDEO_EXTENSIONS,
+            IMAGE_EXTENSIONS,
             H3_SETUP_CSS,
         ),
     )
@@ -2601,6 +2602,67 @@ def forget_gallery_metadata(video: str | Path | None = None) -> None:
     return gallery_store.forget_gallery_metadata(video)
 
 
+def managed_gallery_image_path(
+    image: str | Path, *, require_file: bool = True
+) -> Path:
+    return gallery_store.managed_image_path(
+        image, require_file=require_file, runtime=_runtime_config()
+    )
+
+
+def gallery_image_paths(*, limit: int | None = GALLERY_LIMIT) -> list[Path]:
+    return gallery_store.gallery_image_paths(limit=limit, runtime=_runtime_config())
+
+
+def gallery_image_resolution_text(image: Path) -> str:
+    return gallery_store.gallery_image_resolution_text(image)
+
+
+def gallery_media_download_path(media: str | Path, mode: str) -> str:
+    if str(mode) == "Image":
+        return gallery_store.image_download_path(media, runtime=_runtime_config())
+    return video_download_path(media)
+
+
+def absolute_gallery_media_download_url(
+    media: str | Path, mode: str, request: gr.Request
+) -> str:
+    relative_url = gallery_media_download_path(media, mode)
+    base_url = str(request.request.base_url).rstrip("/")
+    return f"{base_url}{relative_url}?download=1"
+
+
+def import_gallery_media(mode: str, uploaded_media: str | None):
+    media_mode = "Image" if str(mode) == "Image" else "Video"
+    if not uploaded_media:
+        return gallery_media_mutation_result(
+            media_mode,
+            f"Choose a local {media_mode.lower()} first.",
+            clear_selection=False,
+        )
+    source = Path(uploaded_media).expanduser().resolve()
+    extensions = IMAGE_EXTENSIONS if media_mode == "Image" else VIDEO_EXTENSIONS
+    if not source.is_file() or source.suffix.lower() not in extensions:
+        return gallery_media_mutation_result(
+            media_mode,
+            f"The selected file is not a supported {media_mode.lower()}.",
+            clear_selection=False,
+        )
+    destination_dir = OUTPUTS_DIR / "imports"
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination = (
+        destination_dir
+        / f"import_{int(time.time())}_{uuid.uuid4().hex[:8]}{source.suffix.lower()}"
+    )
+    copy_media(source, destination)
+    return gallery_media_mutation_result(
+        media_mode,
+        f"Imported `{source.name}`",
+        selected_media=str(destination),
+        clear_selection=False,
+    )
+
+
 def import_gallery_video(uploaded_video: str | None) -> GalleryMutationResult:
     if not uploaded_video:
         return gallery_mutation_result(
@@ -2678,6 +2740,61 @@ def select_gallery_video(
     )
 
 
+def refresh_media_gallery(
+    mode: str = "Video",
+) -> tuple[list[tuple[str, str]], list[str], str]:
+    """Refresh the active gallery, defaulting to the existing video library."""
+    if str(mode) != "Image":
+        return refresh_gallery()
+    images = gallery_image_paths()
+    items: list[tuple[str, str]] = []
+    selectable_paths: list[str] = []
+    for image in images:
+        try:
+            stat = image.stat()
+        except OSError:
+            continue
+        timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
+        size_mb = stat.st_size / (1024 * 1024)
+        resolution = gallery_image_resolution_text(image)
+        caption = (
+            f"{gallery_store.generated_image_family(image, runtime=_runtime_config())}"
+            f" · {image.name} · {resolution} · {timestamp} · {size_mb:.1f} MB"
+        )
+        items.append((str(image), caption))
+        selectable_paths.append(str(image))
+    detail = f"{len(items)} generated image{'s' if len(items) != 1 else ''}"
+    return items, selectable_paths, detail
+
+
+def select_gallery_media(
+    mode: str,
+    paths: list[str],
+    request: gr.Request,
+    evt: gr.SelectData,
+) -> tuple[Any, Any, str, str | None]:
+    index = evt.index
+    if isinstance(index, (tuple, list)):
+        index = index[0]
+    try:
+        media = paths[int(index)]
+    except (IndexError, TypeError, ValueError):
+        return None, None, "", None
+    media_mode = "Image" if str(mode) == "Image" else "Video"
+    if media_mode == "Image":
+        resolved = managed_gallery_image_path(media)
+        resolution = gallery_image_resolution_text(resolved)
+        download_url = absolute_gallery_media_download_url(media, media_mode, request)
+        return (
+            None,
+            media,
+            f"**Resolution:** {resolution} · [Download image]({download_url})",
+            media,
+        )
+    video, download, selected = select_gallery_video(paths, request, evt)
+    return video, None, download, selected
+
+
 GalleryMutationResult = tuple[
     list[tuple[str, str]],
     list[str],
@@ -2698,6 +2815,95 @@ GalleryPostprocessResult = tuple[
     bool,
     str,
 ]
+
+GalleryMediaMutationResult = tuple[
+    list[tuple[str, str]],
+    list[str],
+    str,
+    Any,
+    Any,
+    Any,
+    str | None,
+    bool,
+]
+
+GalleryMediaPostprocessResult = tuple[
+    list[tuple[str, str]],
+    list[str],
+    str,
+    Any,
+    Any,
+    Any,
+    str | None,
+    bool,
+    str,
+]
+
+
+def gallery_media_mutation_result(
+    mode: str,
+    message: str,
+    *,
+    selected_media: str | None = None,
+    clear_selection: bool,
+) -> GalleryMediaMutationResult:
+    items, paths, detail = refresh_media_gallery(mode)
+    video = None if clear_selection else gr.skip()
+    image = None if clear_selection else gr.skip()
+    download = "" if clear_selection else gr.skip()
+    selected = None if clear_selection else selected_media
+    return (
+        items,
+        paths,
+        f"{message} · {detail}",
+        video,
+        image,
+        download,
+        selected,
+        False,
+    )
+
+
+def gallery_media_progress_result(message: str) -> GalleryMediaPostprocessResult:
+    return (
+        gr.skip(),
+        gr.skip(),
+        message,
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        message,
+    )
+
+
+def gallery_media_processed_result(
+    mode: str,
+    result: Path,
+    option: str,
+    elapsed: float,
+    request: gr.Request,
+) -> GalleryMediaPostprocessResult:
+    items, paths, detail = refresh_media_gallery(mode)
+    download_url = absolute_gallery_media_download_url(result, mode, request)
+    if str(mode) == "Image":
+        resolution = gallery_image_resolution_text(result)
+        video, image, noun = None, str(result), "image"
+    else:
+        resolution = gallery_resolution_text(result)
+        video, image, noun = str(result), None, "video"
+    return (
+        items,
+        paths,
+        f"Completed {option} in {elapsed:.1f}s · {detail}",
+        video,
+        image,
+        f"**Resolution:** {resolution} · [Download processed {noun}]({download_url})",
+        str(result),
+        False,
+        f"Completed {option} in {elapsed:.1f}s",
+    )
 
 
 def gallery_mutation_result(
@@ -3016,6 +3222,170 @@ def postprocess_selected_gallery_video(
                 pass
 
 
+def postprocess_selected_gallery_image(
+    selected_image: str | None,
+    option: str,
+    seed: int,
+    seedvr2_model: str,
+    force_offload: bool,
+    upscale_resolution: str,
+    request: gr.Request,
+    progress=gr.Progress(track_tqdm=False),
+):
+    """Upscale one selected gallery still with the shared SeedVR2 workflow."""
+    started = time.monotonic()
+    try:
+        if not selected_image:
+            raise H3Error("Select a gallery image first.")
+        if option != SEEDVR2_UPSCALE:
+            raise H3Error("Image gallery enhancement currently uses SeedVR2.")
+        source = managed_gallery_image_path(selected_image)
+        try:
+            frame_width, frame_height = UPSCALE_RESOLUTION_PRESETS[
+                str(upscale_resolution)
+            ]
+        except KeyError as exc:
+            raise H3Error(
+                f"Unknown upscale resolution preset: {upscale_resolution}"
+            ) from exc
+        source_width, source_height, target_width, target_height, scale_by = (
+            input_image_upscale_dimensions(source, frame_width, frame_height)
+        )
+        if scale_by <= 1.0:
+            raise H3Error(
+                f"`{source.name}` is already {source_width}×{source_height}; "
+                "choose a larger target resolution."
+            )
+
+        actual_seed = (
+            random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
+        )
+        yield gallery_media_progress_result(
+            f"Preparing `{source.name}` for SeedVR2 image upscaling"
+        )
+        available = set(object_info())
+        missing = required_seedvr2_image_upscale_nodes() - available
+        if missing:
+            raise H3Error(
+                "SeedVR2 image upscaling requires current ComfyUI nodes: "
+                + ", ".join(sorted(missing))
+            )
+        models = load_model_config()
+        downloaded = ensure_seedvr2_upscale_models(models, seedvr2_model)
+        if downloaded:
+            yield gallery_media_progress_result("SeedVR2 models downloaded")
+        if force_offload:
+            yield gallery_media_progress_result(
+                "Unloading resident models before SeedVR2 image upscaling"
+            )
+            unload_comfy_models()
+
+        staged = stage_file(str(source), "gallery_image_upscale", reuse=True)
+        output_token = uuid.uuid4().hex
+        graph = build_seedvr2_image_upscale_graph(
+            source_images=[("gallery", staged, scale_by)],
+            seed=actual_seed,
+            models=models,
+            model_choice=seedvr2_model,
+            output_token=output_token,
+            output_stamp=str(int(time.time())),
+            output_nonce=uuid.uuid4().hex[:8],
+        )
+        queued_at = time.time()
+        prompt_id = submit_prompt(graph, str(uuid.uuid4()))
+        yield gallery_media_progress_result(
+            f"SeedVR2 image upscale queued · job `{prompt_id}` · seed {actual_seed}"
+        )
+        for stage, completed, total, step, step_total in poll_comfy_progress(
+            prompt_id, graph
+        ):
+            if step is not None and step_total:
+                progress((step, step_total), desc=stage)
+            elif total:
+                progress((completed, total), desc=stage)
+            yield gallery_media_progress_result(
+                progress_status(
+                    stage,
+                    started=started,
+                    completed_nodes=completed,
+                    total_nodes=total,
+                    step=step,
+                    step_total=step_total,
+                    configured_steps=1 if step is not None else None,
+                    detail=f"Image upscale job `{prompt_id}`",
+                )
+            )
+        history = wait_for_history(prompt_id)
+        result = resolve_seedvr2_input_upscale_outputs(
+            history, queued_at, output_token, ["gallery"]
+        )["gallery"]
+        write_snapshot(
+            result,
+            {
+                "job_id": prompt_id,
+                "family": "SeedVR2 image upscale",
+                "settings": {
+                    "source": source.name,
+                    "source_resolution": f"{source_width}×{source_height}",
+                    "target_resolution": f"{target_width}×{target_height}",
+                    "model": seedvr2_model,
+                    "seed": actual_seed,
+                },
+            },
+        )
+        progress(1, desc="Complete")
+        yield gallery_media_processed_result(
+            "Image", result, option, time.monotonic() - started, request
+        )
+    except Exception as exc:
+        yield gallery_media_progress_result(f"Image upscaling failed: {exc}")
+
+
+def postprocess_selected_gallery_media(
+    mode: str,
+    selected_media: str | None,
+    option: str,
+    seed: int,
+    seedvr2_model: str,
+    ltx25_model: str,
+    ltx25_prompt: str,
+    force_offload: bool,
+    split_upscale: bool,
+    split_seconds: float,
+    upscale_resolution: str,
+    request: gr.Request,
+    progress=gr.Progress(track_tqdm=False),
+):
+    """Dispatch gallery enhancement according to the active media library."""
+    if str(mode) == "Image":
+        yield from postprocess_selected_gallery_image(
+            selected_media,
+            option,
+            seed,
+            seedvr2_model,
+            force_offload,
+            upscale_resolution,
+            request,
+            progress,
+        )
+        return
+    for update in postprocess_selected_gallery_video(
+        selected_media,
+        option,
+        seed,
+        seedvr2_model,
+        ltx25_model,
+        ltx25_prompt,
+        force_offload,
+        split_upscale,
+        split_seconds,
+        upscale_resolution,
+        request,
+        progress,
+    ):
+        yield (*update[:4], None, *update[4:])
+
+
 def delete_selected_gallery_video(
     selected_video: str | None,
     confirmed: bool,
@@ -3048,6 +3418,20 @@ def delete_selected_gallery_video(
             f"Delete failed: {exc}",
             clear_selection=True,
         )
+
+
+def delete_selected_gallery_media(
+    mode: str, selected_media: str | None, confirmed: bool
+) -> GalleryMediaMutationResult:
+    if str(mode) == "Image":
+        return gallery_media_mutation_result(
+            "Image",
+            "Image deletion is not enabled in this gallery.",
+            selected_media=selected_media,
+            clear_selection=False,
+        )
+    result = delete_selected_gallery_video(selected_media, confirmed)
+    return (*result[:4], None, *result[4:])
 
 
 def empty_generated_gallery(
@@ -3083,6 +3467,20 @@ def empty_generated_gallery(
     if failed:
         result += f" {failed} file{'s' if failed != 1 else ''} could not be deleted."
     return gallery_mutation_result(result, clear_selection=True)
+
+
+def empty_generated_media_gallery(
+    mode: str, selected_media: str | None, confirmed: bool
+) -> GalleryMediaMutationResult:
+    if str(mode) == "Image":
+        return gallery_media_mutation_result(
+            "Image",
+            "Image library deletion is not enabled.",
+            selected_media=selected_media,
+            clear_selection=False,
+        )
+    result = empty_generated_gallery(selected_media, confirmed)
+    return (*result[:4], None, *result[4:])
 
 
 def backend_status() -> str:
@@ -4147,8 +4545,8 @@ def build_ui() -> gr.Blocks:
                 bind_qwen_image21_view=bind_qwen_image21_view,
                 bind_yue2_view=bind_yue2_view,
                 compile_trt_video_vae=compile_trt_video_vae,
-                delete_selected_gallery_video=delete_selected_gallery_video,
-                empty_generated_gallery=empty_generated_gallery,
+                delete_selected_gallery_media=delete_selected_gallery_media,
+                empty_generated_media_gallery=empty_generated_media_gallery,
                 enhance_h3_prompt=enhance_h3_prompt,
                 enhance_ltx25_prompt=enhance_ltx25_prompt,
                 enhance_music3_prompt=enhance_music3_prompt,
@@ -4160,18 +4558,18 @@ def build_ui() -> gr.Blocks:
                 generate_yue2=generate_yue2,
                 generate_with_ui_defaults=generate_with_ui_defaults,
                 image_vae_frame_updates=image_vae_frame_updates,
-                import_gallery_video=import_gallery_video,
+                import_gallery_media=import_gallery_media,
                 input_image_frame_preset_updates=input_image_frame_preset_updates,
                 interrupt=interrupt,
                 latent_upscale_layout_updates=latent_upscale_layout_updates,
                 latent_upscale_method_layout_update=latent_upscale_method_layout_update,
                 mode_layout_updates=mode_layout_updates,
-                postprocess_selected_gallery_video=postprocess_selected_gallery_video,
+                postprocess_selected_gallery_media=postprocess_selected_gallery_media,
                 prepare_all_ltx25_official_models=prepare_all_ltx25_official_models,
                 prepare_ltx25_official_workflow=prepare_ltx25_official_workflow,
                 prompt_writer_backend_visibility=prompt_writer_backend_visibility,
                 refresh_backend_views=refresh_backend_views,
-                refresh_gallery=refresh_gallery,
+                refresh_media_gallery=refresh_media_gallery,
                 render_ltx25_official_model_inventory=render_ltx25_official_model_inventory,
                 render_ltx25_workflow_details=render_ltx25_workflow_details,
                 resolution_control_updates=resolution_control_updates,
@@ -4180,7 +4578,7 @@ def build_ui() -> gr.Blocks:
                 result_format_layout_updates=result_format_layout_updates,
                 save_selected_image_frames=save_selected_image_frames,
                 select_all_image_frames=select_all_image_frames,
-                select_gallery_video=select_gallery_video,
+                select_gallery_media=select_gallery_media,
                 unload_all_models=unload_all_models,
                 upscale_selected_input_images=upscale_selected_input_images,
             ),

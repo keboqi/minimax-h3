@@ -495,6 +495,7 @@ def build_music_view(
 
 @dataclass(frozen=True)
 class GalleryView:
+    mode: gr.Radio
     refresh: gr.Button
     status: gr.Markdown
     paths: gr.State
@@ -502,10 +503,12 @@ class GalleryView:
     upload_video: gr.File
     import_video: gr.Button
     grid: gr.Gallery
+    manage: gr.Accordion
     confirm_delete: gr.Checkbox
     delete: gr.Button
     empty: gr.Button
     player: gr.Video
+    image: gr.Image
     download: gr.Markdown
     postprocess: gr.Dropdown
     upscale_resolution: gr.Dropdown
@@ -532,10 +535,17 @@ def build_gallery_view(
 ) -> GalleryView:
     with root:
         gr.Markdown(
-            "## Video gallery\nBrowse generated work, import a local clip, and enhance the selected video.",
+            "## Media gallery\nBrowse generated videos or images, import local media, and enhance the selected output.",
             elem_classes=["h3-gallery-heading"],
         )
         with gr.Row(equal_height=True, elem_classes=["h3-gallery-toolbar"]):
+            mode = gr.Radio(
+                choices=["Video", "Image"],
+                value="Video",
+                label="Gallery type",
+                scale=0,
+                min_width=180,
+            )
             refresh = gr.Button(
                 "Refresh library", variant="secondary", scale=0, min_width=150
             )
@@ -546,17 +556,17 @@ def build_gallery_view(
         paths = gr.State([])
         selected = gr.State(None)
         with gr.Accordion(
-            "Import a local video", open=False, elem_classes=["h3-gallery-card"]
+            "Import local media", open=False, elem_classes=["h3-gallery-card"]
         ):
             gr.Markdown(
-                "Add an existing video to this library so it can be previewed "
-                "and post-processed alongside generated clips."
+                "Add an existing video or image to the active library so it can "
+                "be previewed and enhanced alongside generated outputs."
             )
             with gr.Row(equal_height=True, elem_classes=["h3-gallery-import"]):
                 upload_video = gr.File(
-                    label="Choose a video",
+                    label="Choose a video or image",
                     file_count="single",
-                    file_types=["video"],
+                    file_types=["video", "image"],
                     type="filepath",
                     height=90,
                     scale=4,
@@ -567,12 +577,12 @@ def build_gallery_view(
         with gr.Row(equal_height=False, elem_classes=["h3-gallery-workspace"]):
             with gr.Column(scale=3, min_width=320):
                 gr.Markdown(
-                    "### Library\nSelect a thumbnail to load the full video.",
+                    "### Library\nSelect a thumbnail to load the full video or image.",
                     elem_classes=["h3-gallery-section-title"],
                 )
                 grid = gr.Gallery(
                     value=[],
-                    label="Video library",
+                    label="Media library",
                     columns=3,
                     height=620,
                     object_fit="cover",
@@ -585,12 +595,12 @@ def build_gallery_view(
                     "Manage library",
                     open=False,
                     elem_classes=["h3-gallery-card", "h3-gallery-danger"],
-                ):
+                ) as manage:
                     confirm_delete = gr.Checkbox(
                         value=False,
                         label="I understand deletion is permanent",
                         info=(
-                            "Required before deleting the selected video "
+                            "Required before deleting the selected item "
                             "or emptying the generated library."
                         ),
                     )
@@ -602,7 +612,7 @@ def build_gallery_view(
                         empty = gr.Button("Empty generated library", variant="stop")
             with gr.Column(scale=5, min_width=480):
                 gr.Markdown(
-                    "### Preview & enhance\nReview the selected clip, download it, or create an enhanced copy.",
+                    "### Preview & enhance\nReview the selected item, download it, or create an enhanced copy.",
                     elem_classes=["h3-gallery-section-title"],
                 )
                 player = gr.Video(
@@ -610,9 +620,16 @@ def build_gallery_view(
                     height=420,
                     elem_classes=["h3-gallery-player"],
                 )
+                image = gr.Image(
+                    label="Selected image",
+                    type="filepath",
+                    height=420,
+                    visible=False,
+                    elem_classes=["h3-gallery-player"],
+                )
                 download = gr.Markdown(elem_classes=["h3-gallery-download"])
                 with gr.Accordion(
-                    "Enhance selected video",
+                    "Enhance selected media",
                     open=True,
                     elem_classes=["h3-gallery-card", "h3-gallery-enhance"],
                 ):
@@ -680,11 +697,12 @@ def build_gallery_view(
                         )
                     with gr.Row(equal_height=True, elem_classes=["h3-gallery-actions"]):
                         post_run = gr.Button(
-                            "Enhance selected video", variant="primary", scale=3
+                            "Enhance selected media", variant="primary", scale=3
                         )
                         post_stop = gr.Button("Interrupt", scale=1)
                     post_status = gr.Markdown(elem_classes=["h3-gallery-post-status"])
     return GalleryView(
+        mode,
         refresh,
         status,
         paths,
@@ -692,10 +710,12 @@ def build_gallery_view(
         upload_video,
         import_video,
         grid,
+        manage,
         confirm_delete,
         delete,
         empty,
         player,
+        image,
         download,
         postprocess,
         upscale_resolution,

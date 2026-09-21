@@ -12,12 +12,17 @@ import sys
 from tempfile import TemporaryDirectory
 import time
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import gradio_app as app
 import h3_models
 from h3_app.config import RuntimeConfig
-from h3_app.gallery_store import gallery_video_paths
+from h3_app.errors import H3Error
+from h3_app.gallery_store import (
+    gallery_image_paths,
+    gallery_video_paths,
+    managed_image_path,
+)
 from h3_app.jobs import JobCancelled
 from h3_app.media_tools import postprocess_video
 from h3_app.provenance import copy_media, read_snapshot, write_snapshot
@@ -156,6 +161,29 @@ class ManifestTests(unittest.TestCase):
 
 
 class MediaPublicationTests(unittest.TestCase):
+    def test_image_gallery_discovers_managed_images_but_not_video_thumbnails(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = replace(
+                RuntimeConfig.from_environment(root, {}),
+                output_root=root / "comfy-output",
+                outputs_dir=root / "gradio-output",
+                thumbnail_root=root / "gradio-output" / ".gallery-thumbnails",
+            )
+            generated = config.output_dir / "h3" / "image_staging" / "result.png"
+            imported = config.outputs_dir / "imports" / "reference.webp"
+            thumbnail = config.gallery_thumbnails_dir / "poster.jpg"
+            for path in (generated, imported, thumbnail):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture")
+
+            self.assertEqual(
+                set(gallery_image_paths(runtime=config)), {generated, imported}
+            )
+            self.assertEqual(managed_image_path(generated, runtime=config), generated)
+            with self.assertRaises(H3Error):
+                managed_image_path(thumbnail, runtime=config)
+
     def test_processed_and_copied_media_retain_provenance(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

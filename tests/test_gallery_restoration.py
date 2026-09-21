@@ -27,6 +27,60 @@ import h3_ui.application as app
 
 
 class GalleryRestorationTests(unittest.TestCase):
+    def test_gallery_image_upscale_reuses_seedvr2_still_workflow(self):
+        source = Path("source.png")
+        result = Path("upscaled.png")
+        with ExitStack() as stack:
+            returns = {
+                "managed_gallery_image_path": source,
+                "input_image_upscale_dimensions": (1024, 768, 1920, 1440, 1.875),
+                "object_info": app.required_seedvr2_image_upscale_nodes(),
+                "load_model_config": Mock(),
+                "ensure_seedvr2_upscale_models": False,
+                "stage_file": "staged.png",
+                "submit_prompt": "image-job",
+                "poll_comfy_progress": [],
+                "wait_for_history": {},
+                "resolve_seedvr2_input_upscale_outputs": {"gallery": result},
+                "write_snapshot": None,
+                "unload_comfy_models": None,
+                "gallery_media_processed_result": "complete",
+            }
+            mocks = {
+                name: stack.enter_context(patch.object(app, name, return_value=value))
+                for name, value in returns.items()
+            }
+            build = stack.enter_context(
+                patch.object(
+                    app,
+                    "build_seedvr2_image_upscale_graph",
+                    return_value={"save": {"class_type": "SaveImage", "inputs": {}}},
+                )
+            )
+            updates = list(
+                app.postprocess_selected_gallery_image(
+                    str(source),
+                    app.SEEDVR2_UPSCALE,
+                    42,
+                    app.DEFAULT_SEEDVR2_MODEL,
+                    True,
+                    "1920 × 1920",
+                    request=Mock(),
+                    progress=Mock(),
+                )
+            )
+            self.assertEqual(updates[-1], "complete")
+            mocks["ensure_seedvr2_upscale_models"].assert_called_once()
+            mocks["stage_file"].assert_called_once_with(
+                str(source), "gallery_image_upscale", reuse=True
+            )
+            mocks["unload_comfy_models"].assert_called_once()
+            self.assertEqual(
+                build.call_args.kwargs["source_images"],
+                [("gallery", "staged.png", 1.875)],
+            )
+            self.assertEqual(build.call_args.kwargs["seed"], 42)
+
     def test_restoration_uses_selected_adapter_and_same_resolution_reference(self):
         for option in LTX25_RESTORATION_OPTIONS:
             for model in LTX25_MODEL_CHOICES:

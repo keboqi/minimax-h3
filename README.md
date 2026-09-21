@@ -23,7 +23,7 @@ bundled FirstBlockCache node.
 - LTX-2.5 image-to-video uses a visual start-image input plus optional custom
   middle/end keyframes
 - Live queue position, workflow stage, node count, overall work, and sampling schedule
-- Resolution-aware thumbnail gallery that loads a video only after it is selected
+- Switchable video/image gallery with resolution-aware thumbnails and lazy previews
 - Speed and quality NVFP4 profiles plus the official Original BF16 profile
 - Selectable official Qwen3-VL 32B NVFP4/AWQ, INT8 ConvRot, and BF16 text encoders
 - Optional model offload at every H3 stage boundary, automatically required for BF16
@@ -514,10 +514,14 @@ and exposes every selected result (including unchanged originals) for download.
 The SeedVR2 model and VAE remain lazy-downloaded, and the optional resident-model
 unload control can reduce peak VRAM before this preprocessing pass.
 
-Generate a video, open **Gallery**, or expand **Import a local video** and add
-an existing clip to the library. Select its thumbnail and choose a method under
-**Enhance selected video**. Each run preserves the source and adds a new
-processed video to the gallery. Choose an output-resolution preset from
+Open **Gallery** to browse the video library (the default), or switch **Gallery
+type** to **Image** to browse generated Qwen/H3 stills and SeedVR2 results with
+the same thumbnail and preview layout. **Import local media** accepts a matching
+video or image for the active library. Image mode uses the existing one-step
+SeedVR2 workflow to upscale the selected still while preserving its aspect ratio;
+the processed image is added back to the image gallery with its settings and a
+download link. Video mode retains all existing enhancement methods. Each run
+preserves the source and adds a new processed output. Choose a target preset from
 **1280 × 1280**, **1920 × 1920**, **2560 × 2560**, or **3840 × 3840**; the source
 is fitted inside that square without cropping, so its original aspect ratio is
 preserved. **SeedVR2 2x** uses ComfyUI's native one-step restoration workflow.

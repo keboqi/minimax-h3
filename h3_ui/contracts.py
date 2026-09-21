@@ -86,12 +86,12 @@ class AppServices:
     refresh_backend_views: Callable[[], tuple[str, str]]
     unload_all_models: Callable[[], tuple[str, str]]
     bind_gallery_view: Callable[..., Any]
-    refresh_gallery: Callable[[], tuple[list[tuple[str, str]], list[str], str]]
-    select_gallery_video: Callable[..., Any]
-    import_gallery_video: Callable[..., Any]
-    postprocess_selected_gallery_video: Callable[..., Any]
-    delete_selected_gallery_video: Callable[..., Any]
-    empty_generated_gallery: Callable[..., Any]
+    refresh_media_gallery: Callable[..., tuple[list[tuple[str, str]], list[str], str]]
+    select_gallery_media: Callable[..., Any]
+    import_gallery_media: Callable[..., Any]
+    postprocess_selected_gallery_media: Callable[..., Any]
+    delete_selected_gallery_media: Callable[..., Any]
+    empty_generated_media_gallery: Callable[..., Any]
 
     @classmethod
     def from_mapping(cls, values):

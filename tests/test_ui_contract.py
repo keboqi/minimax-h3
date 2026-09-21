@@ -121,6 +121,32 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual([u["visible"] for u in callback(gradio_app.SEEDVR2_UPSCALE)],
                          [True, True, False, False, False, True])
 
+    def test_gallery_defaults_to_video_and_can_switch_to_images(self) -> None:
+        controls = {
+            component.get("props", {}).get("label"): component
+            for component in self.config["components"]
+        }
+        mode = controls["Gallery type"]
+        self.assertEqual(mode["props"]["value"], "Video")
+        self.assertEqual(
+            [choice[1] for choice in mode["props"]["choices"]],
+            ["Video", "Image"],
+        )
+        self.assertTrue(controls["Selected video"]["props"]["visible"])
+        self.assertFalse(controls["Selected image"]["props"]["visible"])
+
+        dependency = next(
+            item
+            for item in self.config["dependencies"]
+            if (mode["id"], "change") in item.get("targets", [])
+            and controls["Selected image"]["id"] in item.get("outputs", [])
+        )
+        updates = self.demo.fns[dependency["id"]].fn("Image")
+        self.assertFalse(updates[0]["visible"])
+        self.assertTrue(updates[1]["visible"])
+        self.assertFalse(updates[4]["visible"])
+        self.assertEqual(updates[6]["choices"], [gradio_app.SEEDVR2_UPSCALE])
+
     def test_real_tabs_own_each_view(self) -> None:
         tabs = next(
             component
@@ -563,11 +589,11 @@ class UiContractTests(unittest.TestCase):
 
     def test_non_gpu_media_actions_bypass_the_application_queue(self):
         expected = {
-            "refresh_gallery",
-            "select_gallery_video",
-            "import_gallery_video",
-            "delete_selected_gallery_video",
-            "empty_generated_gallery",
+            "refresh_media_gallery",
+            "select_gallery_media",
+            "import_gallery_media",
+            "delete_selected_gallery_media",
+            "empty_generated_media_gallery",
             "save_selected_image_frames",
         }
         found = set()

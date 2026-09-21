@@ -312,6 +312,55 @@ def bind_gallery_view(
     empty: Callable[..., Any],
 ) -> None:
     ltx_options = {ltx_option} | LTX25_RESTORATION_OPTIONS
+    video_postprocess_options = [
+        choice[1] if isinstance(choice, (tuple, list)) else choice
+        for choice in view.postprocess.choices
+    ]
+    mode_changed = view.mode.change(
+        lambda value: (
+            gr.update(visible=value != "Image", value=None),
+            gr.update(visible=value == "Image", value=None),
+            None,
+            "",
+            gr.update(visible=value != "Image"),
+            gr.update(value=False),
+            gr.update(
+                choices=(
+                    [seedvr_option]
+                    if value == "Image"
+                    else video_postprocess_options
+                ),
+                value=seedvr_option,
+            ),
+            gr.update(
+                value=(
+                    "Upscale selected image"
+                    if value == "Image"
+                    else "Enhance selected media"
+                )
+            ),
+        ),
+        inputs=view.mode,
+        outputs=[
+            view.player,
+            view.image,
+            view.selected,
+            view.download,
+            view.manage,
+            view.confirm_delete,
+            view.postprocess,
+            view.post_run,
+        ],
+        queue=False,
+        show_progress="hidden",
+    )
+    mode_changed.then(
+        refresh,
+        inputs=view.mode,
+        outputs=[view.grid, view.paths, view.status],
+        queue=False,
+        show_progress="hidden",
+    )
     view.postprocess.change(
         lambda value: (
             gr.update(visible=value in ai_options),
@@ -347,27 +396,35 @@ def bind_gallery_view(
         show_progress="hidden",
     )
     opened = tab.select(
-        lambda: (None, "", None, False),
-        outputs=[view.player, view.download, view.selected, view.confirm_delete],
+        lambda: (None, None, "", None, False),
+        outputs=[
+            view.player,
+            view.image,
+            view.download,
+            view.selected,
+            view.confirm_delete,
+        ],
         queue=False,
         show_progress="hidden",
     )
     opened.then(
         refresh,
+        inputs=view.mode,
         outputs=[view.grid, view.paths, view.status],
         queue=False,
         show_progress="hidden",
     )
     view.refresh.click(
         refresh,
+        inputs=view.mode,
         outputs=[view.grid, view.paths, view.status],
         queue=False,
         show_progress="hidden",
     )
     view.grid.select(
         select,
-        inputs=view.paths,
-        outputs=[view.player, view.download, view.selected],
+        inputs=[view.mode, view.paths],
+        outputs=[view.player, view.image, view.download, view.selected],
         queue=False,
         show_progress="hidden",
     )
@@ -376,13 +433,14 @@ def bind_gallery_view(
         view.paths,
         view.status,
         view.player,
+        view.image,
         view.download,
         view.selected,
         view.confirm_delete,
     ]
     view.import_video.click(
         import_video,
-        inputs=[view.upload_video],
+        inputs=[view.mode, view.upload_video],
         outputs=mutation_outputs,
         queue=False,
         show_progress="minimal",
@@ -392,6 +450,7 @@ def bind_gallery_view(
         view.post_run.click,
         owned_generation(postprocess, "gallery"),
         inputs=[
+            view.mode,
             view.selected,
             view.postprocess,
             view.post_seed,
@@ -416,7 +475,7 @@ def bind_gallery_view(
     stopped.then(fn=None, cancels=[post_event], queue=False, api_name=False)
     view.delete.click(
         delete,
-        inputs=[view.selected, view.confirm_delete],
+        inputs=[view.mode, view.selected, view.confirm_delete],
         outputs=mutation_outputs,
         queue=False,
         show_progress="minimal",
@@ -424,7 +483,7 @@ def bind_gallery_view(
     )
     view.empty.click(
         empty,
-        inputs=[view.selected, view.confirm_delete],
+        inputs=[view.mode, view.selected, view.confirm_delete],
         outputs=mutation_outputs,
         queue=False,
         show_progress="minimal",
