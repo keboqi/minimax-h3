@@ -192,13 +192,70 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         )[0]
         sampler = self._by_type(graph, "KSampler")[0][1]
         self.assertEqual(spectrum["inputs"]["model"], [cache_id, 0])
-        self.assertEqual(spectrum["inputs"]["warmup_steps"], 5)
+        # The legacy value now resolves to the quality profile. Edits reserve
+        # two extra exact tail steps to preserve source texture and identity.
+        self.assertEqual(spectrum["inputs"]["warmup_steps"], 10)
+        self.assertEqual(spectrum["inputs"]["tail_actual_steps"], 10)
         self.assertEqual(spectrum["inputs"]["max_consecutive_forecasts"], 1)
         self.assertEqual(sampler["inputs"]["model"], [spectrum_id, 0])
         self.assertIn(
             "QwenSpectrumModelPatcher",
             required_qwen_image21_nodes(editing=False, use_spectrum=True),
         )
+
+    def test_spectrum_preview_retains_the_faster_schedule(self):
+        graph = build_qwen_image21_graph(
+            model_choice="BF16",
+            text_encoder_choice="BF16",
+            prompt="Transparent glass sculpture",
+            negative_prompt="",
+            reference_images=(),
+            width=1024,
+            height=1024,
+            reference_resolution=0,
+            match_input_size=True,
+            seed=42,
+            steps=40,
+            cfg=1.0,
+            sampler_name="euler",
+            scheduler="simple",
+            cache_device="auto",
+            cache_dtype="default",
+            attention_backend="pytorch attention",
+            accelerator="Spectrum (Preview)",
+            output_stamp="1234",
+            output_nonce="abcd",
+        )
+        spectrum = self._by_type(graph, "QwenSpectrumModelPatcher")[0][1]
+        self.assertEqual(spectrum["inputs"]["warmup_steps"], 5)
+        self.assertEqual(spectrum["inputs"]["tail_actual_steps"], 2)
+
+    def test_spectrum_quality_uses_conservative_generation_schedule(self):
+        graph = build_qwen_image21_graph(
+            model_choice="BF16",
+            text_encoder_choice="BF16",
+            prompt="Transparent glass sculpture",
+            negative_prompt="",
+            reference_images=(),
+            width=1024,
+            height=1024,
+            reference_resolution=0,
+            match_input_size=True,
+            seed=42,
+            steps=40,
+            cfg=1.0,
+            sampler_name="euler",
+            scheduler="simple",
+            cache_device="auto",
+            cache_dtype="default",
+            attention_backend="pytorch attention",
+            accelerator="Spectrum (Quality)",
+            output_stamp="1234",
+            output_nonce="abcd",
+        )
+        spectrum = self._by_type(graph, "QwenSpectrumModelPatcher")[0][1]
+        self.assertEqual(spectrum["inputs"]["warmup_steps"], 10)
+        self.assertEqual(spectrum["inputs"]["tail_actual_steps"], 8)
 
     def test_prompt_writer_uses_natural_single_image_reference(self):
         runtime = SimpleNamespace(

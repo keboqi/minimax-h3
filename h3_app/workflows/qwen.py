@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from h3_app.catalog import QWEN_IMAGE21_SPECTRUM_INPUTS
+from h3_app.catalog import (
+    QWEN_IMAGE21_SPECTRUM_EDIT_QUALITY_INPUTS,
+    QWEN_IMAGE21_SPECTRUM_PREVIEW_INPUTS,
+    QWEN_IMAGE21_SPECTRUM_QUALITY_INPUTS,
+)
 from h3_app.graph import Graph
 from h3_models import (
     MODEL_SPECS,
@@ -127,11 +131,18 @@ def build_qwen_image21_graph(
             dtype=str(cache_dtype),
         )
         sampled_model = Graph.out(cached)
-    if str(accelerator).strip().lower() == "spectrum":
+    accelerator_key = str(accelerator).strip().lower()
+    if accelerator_key != "off":
+        if accelerator_key == "spectrum (preview)":
+            spectrum_inputs = QWEN_IMAGE21_SPECTRUM_PREVIEW_INPUTS
+        elif editing:
+            spectrum_inputs = QWEN_IMAGE21_SPECTRUM_EDIT_QUALITY_INPUTS
+        else:
+            spectrum_inputs = QWEN_IMAGE21_SPECTRUM_QUALITY_INPUTS
         spectrum = graph.add(
             "QwenSpectrumModelPatcher",
             model=sampled_model,
-            **QWEN_IMAGE21_SPECTRUM_INPUTS,
+            **spectrum_inputs,
         )
         sampled_model = Graph.out(spectrum)
 

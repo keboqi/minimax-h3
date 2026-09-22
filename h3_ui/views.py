@@ -268,13 +268,17 @@ def build_qwen_image21_view(
                         ),
                     )
                     accelerator = gr.Dropdown(
-                        choices=["Off", "Spectrum"],
+                        choices=[
+                            "Off",
+                            "Spectrum (Quality)",
+                            "Spectrum (Preview)",
+                        ],
                         value=defaults["accelerator"],
                         label="Diffusion accelerator",
                         info=(
-                            "Spectrum is experimental and uses conservative "
-                            "hidden-state forecasting settings. Compare matched "
-                            "seeds before relying on it for final output."
+                            "Quality forecasts fewer middle steps and restores "
+                            "more late detail; Preview is faster but can soften "
+                            "outlines and fine texture. Spectrum remains experimental."
                         ),
                     )
                 gr.Markdown(

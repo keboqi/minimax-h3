@@ -236,7 +236,30 @@ QWEN_IMAGE21_DEFAULTS = {
 }
 
 
-QWEN_IMAGE21_SPECTRUM_INPUTS = {
+QWEN_IMAGE21_SPECTRUM_QUALITY_INPUTS = {
+    # Protect the early composition and late high-frequency detail. Community
+    # comparisons consistently show that Qwen 2.1 loses outlines, hair/skin
+    # texture, and other micro-detail when forecasting is used too close to
+    # either end of the denoising trajectory.
+    "warmup_steps": 10,
+    "tail_actual_steps": 8,
+    "history_points": 5,
+    "chebyshev_degree": 3,
+    "max_consecutive_forecasts": 1,
+    "ridge_lambda": 0.0001,
+    "cache_device": "main_device",
+    "force_actual_on_control": True,
+    "debug": False,
+}
+
+QWEN_IMAGE21_SPECTRUM_EDIT_QUALITY_INPUTS = {
+    **QWEN_IMAGE21_SPECTRUM_QUALITY_INPUTS,
+    # Reference-conditioned edits are especially sensitive to late forecast
+    # bias because it can smooth identity and source-image texture.
+    "tail_actual_steps": 10,
+}
+
+QWEN_IMAGE21_SPECTRUM_PREVIEW_INPUTS = {
     "warmup_steps": 5,
     "tail_actual_steps": 2,
     "history_points": 5,
@@ -247,6 +270,10 @@ QWEN_IMAGE21_SPECTRUM_INPUTS = {
     "force_actual_on_control": True,
     "debug": False,
 }
+
+# Backward-compatible name for callers that previously selected "Spectrum".
+# It now resolves to the quality-biased profile rather than the preview one.
+QWEN_IMAGE21_SPECTRUM_INPUTS = QWEN_IMAGE21_SPECTRUM_QUALITY_INPUTS
 
 
 LTX25_WORKFLOWS = {

@@ -94,8 +94,16 @@ def generate_qwen_image21(
         }:
             raise H3Error("Unsupported Qwen attention backend.")
         accelerator = str(request.accelerator or "Off").strip()
-        if accelerator.lower() not in {"off", "spectrum"}:
-            raise H3Error("Unsupported Qwen accelerator. Choose Off or Spectrum.")
+        if accelerator.lower() not in {
+            "off",
+            "spectrum",
+            "spectrum (quality)",
+            "spectrum (preview)",
+        }:
+            raise H3Error(
+                "Unsupported Qwen accelerator. Choose Off, Spectrum (Quality), "
+                "or Spectrum (Preview)."
+            )
         actual_seed = (
             random.randrange(0, 2**63 - 1)
             if int(request.seed) < 0
@@ -121,7 +129,7 @@ def generate_qwen_image21(
         available = set(services.execution.object_info())
         missing_nodes = required_qwen_image21_nodes(
             editing=editing,
-            use_spectrum=accelerator.lower() == "spectrum",
+            use_spectrum=accelerator.lower() != "off",
         ) - available
         if missing_nodes:
             raise H3Error(
