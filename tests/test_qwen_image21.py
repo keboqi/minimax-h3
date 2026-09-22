@@ -119,6 +119,14 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         self.assertEqual(DEFAULT_QWEN_IMAGE21_MODEL, "BF16")
         self.assertEqual(DEFAULT_QWEN_IMAGE21_TEXT_ENCODER, "BF16")
 
+    def test_spectrum_quality_is_the_default_accelerator(self):
+        from h3_app.catalog import QWEN_IMAGE21_DEFAULTS
+
+        self.assertEqual(
+            QWEN_IMAGE21_DEFAULTS["accelerator"],
+            "Spectrum (Quality)",
+        )
+
     def test_native_resolution_presets(self):
         self.assertEqual(
             qwen_resolution_preset_values("1K · 1:1 · 1024×1024"),

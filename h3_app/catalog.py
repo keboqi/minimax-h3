@@ -232,7 +232,7 @@ QWEN_IMAGE21_DEFAULTS = {
     "cache_device": "auto",
     "cache_dtype": "default",
     "attention_backend": "pytorch attention",
-    "accelerator": "Off",
+    "accelerator": "Spectrum (Quality)",
 }
 
 
