@@ -121,7 +121,6 @@ def generate_qwen_image21(
         available = set(services.execution.object_info())
         missing_nodes = required_qwen_image21_nodes(
             editing=editing,
-            use_attention_backend=attention_backend != "pytorch attention",
             use_spectrum=accelerator.lower() == "spectrum",
         ) - available
         if missing_nodes:

@@ -62,6 +62,9 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         latent_id, latent = self._by_type(graph, "EmptyLatentImage")[0]
         self.assertEqual((latent["inputs"]["width"], latent["inputs"]["height"]), (1024, 768))
         sampler = self._by_type(graph, "KSampler")[0][1]
+        backend_id, backend = self._by_type(graph, "ModelAttentionBackend")[0]
+        self.assertEqual(backend["inputs"]["attention"], "pytorch attention")
+        self.assertEqual(sampler["inputs"]["model"], [backend_id, 0])
         self.assertEqual(sampler["inputs"]["latent_image"], [latent_id, 0])
         self.assertEqual(sampler["inputs"]["cfg"], 1.0)
         saved = self._by_type(graph, "SaveImage")[0][1]
@@ -109,6 +112,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         edit = required_qwen_image21_nodes(editing=True)
         self.assertNotIn("LoadImage", generate)
         self.assertNotIn("QwenImage21Cache", generate)
+        self.assertIn("ModelAttentionBackend", generate)
         self.assertTrue({"LoadImage", "QwenImage21Cache"} <= edit)
 
     def test_bf16_is_the_quality_default(self):

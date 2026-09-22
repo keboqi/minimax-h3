@@ -813,10 +813,20 @@
         }
       },
       "10": {
-        "class_type": "BasicGuider",
+        "class_type": "H3RefinementCompilerGuard",
         "inputs": {
           "model": [
             "1",
+            0
+          ],
+          "min_video_volume": 1500000
+        }
+      },
+      "11": {
+        "class_type": "BasicGuider",
+        "inputs": {
+          "model": [
+            "10",
             0
           ],
           "conditioning": [
@@ -825,13 +835,13 @@
           ]
         }
       },
-      "11": {
+      "12": {
         "class_type": "KSamplerSelect",
         "inputs": {
           "sampler_name": "res_multistep"
         }
       },
-      "12": {
+      "13": {
         "class_type": "BasicScheduler",
         "inputs": {
           "model": [
@@ -843,17 +853,17 @@
           "denoise": 1.0
         }
       },
-      "13": {
+      "14": {
         "class_type": "SplitSigmas",
         "inputs": {
           "sigmas": [
-            "12",
+            "13",
             0
           ],
           "step": 6
         }
       },
-      "14": {
+      "15": {
         "class_type": "BasicGuider",
         "inputs": {
           "model": [
@@ -866,7 +876,7 @@
           ]
         }
       },
-      "15": {
+      "16": {
         "class_type": "SamplerCustomAdvanced",
         "inputs": {
           "noise": [
@@ -874,15 +884,15 @@
             0
           ],
           "guider": [
-            "14",
+            "15",
             0
           ],
           "sampler": [
-            "11",
+            "12",
             0
           ],
           "sigmas": [
-            "12",
+            "13",
             0
           ],
           "latent_image": [
@@ -891,7 +901,7 @@
           ]
         }
       },
-      "16": {
+      "17": {
         "class_type": "H3StageModelOffload",
         "inputs": {
           "conditioning": [
@@ -899,7 +909,7 @@
             0
           ],
           "latent": [
-            "15",
+            "16",
             0
           ],
           "additional_conditioning": [
@@ -907,25 +917,25 @@
             0
           ],
           "additional_latent": [
-            "15",
+            "16",
             0
           ]
         }
       },
-      "17": {
+      "18": {
         "class_type": "H3SeparateAVLatent",
         "inputs": {
           "latent": [
-            "16",
+            "17",
             1
           ]
         }
       },
-      "18": {
+      "19": {
         "class_type": "MinimaxH3LatentUpscaler3D",
         "inputs": {
           "latent": [
-            "17",
+            "18",
             0
           ],
           "model_name": "minimax_h3_latent_upscaler_3d_bf16.safetensors",
@@ -938,20 +948,20 @@
           "mode.scale": 2.0
         }
       },
-      "19": {
+      "20": {
         "class_type": "H3CombineAVLatent",
         "inputs": {
           "video_latent": [
-            "18",
+            "19",
             0
           ],
           "audio_latent": [
-            "17",
+            "18",
             1
           ]
         }
       },
-      "20": {
+      "21": {
         "class_type": "H3StageModelOffload",
         "inputs": {
           "conditioning": [
@@ -959,7 +969,7 @@
             0
           ],
           "latent": [
-            "19",
+            "20",
             0
           ],
           "additional_conditioning": [
@@ -967,12 +977,12 @@
             0
           ],
           "additional_latent": [
-            "19",
+            "20",
             0
           ]
         }
       },
-      "21": {
+      "22": {
         "class_type": "SamplerCustomAdvanced",
         "inputs": {
           "noise": [
@@ -980,24 +990,24 @@
             0
           ],
           "guider": [
-            "10",
-            0
-          ],
-          "sampler": [
             "11",
             0
           ],
+          "sampler": [
+            "12",
+            0
+          ],
           "sigmas": [
-            "13",
+            "14",
             1
           ],
           "latent_image": [
-            "20",
+            "21",
             1
           ]
         }
       },
-      "22": {
+      "23": {
         "class_type": "H3StageModelOffload",
         "inputs": {
           "conditioning": [
@@ -1005,7 +1015,7 @@
             0
           ],
           "latent": [
-            "21",
+            "22",
             0
           ],
           "additional_conditioning": [
@@ -1013,16 +1023,16 @@
             0
           ],
           "additional_latent": [
-            "16",
+            "17",
             1
           ]
         }
       },
-      "23": {
+      "24": {
         "class_type": "VAEDecode",
         "inputs": {
           "samples": [
-            "22",
+            "23",
             1
           ],
           "vae": [
@@ -1031,11 +1041,11 @@
           ]
         }
       },
-      "24": {
+      "25": {
         "class_type": "VAEDecodeAudio",
         "inputs": {
           "samples": [
-            "22",
+            "23",
             3
           ],
           "vae": [
@@ -1044,26 +1054,26 @@
           ]
         }
       },
-      "25": {
+      "26": {
         "class_type": "CreateVideo",
         "inputs": {
           "images": [
-            "23",
+            "24",
             0
           ],
           "audio": [
-            "24",
+            "25",
             0
           ],
           "fps": 24.0,
           "bit_depth": 8
         }
       },
-      "26": {
+      "27": {
         "class_type": "H3SaveVideoNVENC",
         "inputs": {
           "video": [
-            "25",
+            "26",
             0
           ],
           "filename_prefix": "h3/fl2va_<submission>",

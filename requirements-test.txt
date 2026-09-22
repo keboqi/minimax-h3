@@ -3,5 +3,5 @@ gradio==6.27.0
 aiohttp
 requests
 websocket-client
-openai==3.8.0
+openai==3.16.2
 playwright==1.62.0

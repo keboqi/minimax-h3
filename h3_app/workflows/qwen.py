@@ -16,7 +16,6 @@ from h3_models import (
 def required_qwen_image21_nodes(
     *,
     editing: bool,
-    use_attention_backend: bool = False,
     use_spectrum: bool = False,
 ) -> set[str]:
     nodes = {
@@ -28,11 +27,10 @@ def required_qwen_image21_nodes(
         "KSampler",
         "VAEDecode",
         "SaveImage",
+        "ModelAttentionBackend",
     }
     if editing:
         nodes |= {"LoadImage", "QwenImage21Cache"}
-    if use_attention_backend:
-        nodes.add("ModelAttentionBackend")
     if use_spectrum:
         nodes.add("QwenSpectrumModelPatcher")
     return nodes
@@ -111,14 +109,16 @@ def build_qwen_image21_graph(
         )
         latent = Graph.out(empty)
 
-    sampled_model = Graph.out(model)
-    if str(attention_backend) != "pytorch attention":
-        patched_model = graph.add(
-            "ModelAttentionBackend",
-            model=sampled_model,
-            attention=str(attention_backend),
-        )
-        sampled_model = Graph.out(patched_model)
+    # Always make the user's selection explicit. Newer ComfyUI checkpoints can
+    # embed a preferred attention implementation per transformer block; an
+    # explicit model override keeps "PyTorch attention" authoritative instead
+    # of silently inheriting checkpoint metadata.
+    patched_model = graph.add(
+        "ModelAttentionBackend",
+        model=Graph.out(model),
+        attention=str(attention_backend),
+    )
+    sampled_model = Graph.out(patched_model)
     if editing:
         cached = graph.add(
             "QwenImage21Cache",

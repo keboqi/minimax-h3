@@ -47,7 +47,7 @@ bundled FirstBlockCache node.
   visual conditioning retains the official FP16 path when TensorRT decoding is selected
 - Hardware-aware ComfyUI memory mode selection
 - One-click model unloading and VRAM cache release from the UI
-- Spectrum v0.2.27 in legacy mode as the normal-generation default and experimental Turbo option
+- Spectrum v0.2.28 in legacy mode as the normal-generation default and experimental Turbo option
 - Optional experimental MMH3 tiled/chunked latent refinement for constrained VRAM
 - FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
@@ -163,14 +163,16 @@ patched fail-closed so its E-grid adapter derives the same rows as ComfyUI,
 including visual and audio reference-conditioning rows. Quality ConvRot models use
 bit-preserving two-way feed-forward chunking above 8K packed tokens.
 
-Spectrum is pinned to v0.2.27 and is applied after LoRA, Sol-Attn, and ConvRot
+Spectrum is pinned to v0.2.28 and is applied after LoRA, Sol-Attn, and ConvRot
 feed-forward patches. Its default uses system-RAM history and replay archives,
 degree-1 forecasting, offline smoothing replay, zero spectral audio blending,
-and explicit legacy (`model_aware_mode=off`) scheduling. v0.2.27 retains that
+and explicit legacy (`model_aware_mode=off`) scheduling. v0.2.28 retains that
 input contract, fixes retained CUDA target tensors, and streams forecasts from
 system RAM through bounded GPU workspaces for supported FinalLayer implementations.
 Unknown FinalLayer wrappers retain one-shot projection. This reduces forecast
 memory pressure; it does not guarantee faster generation or bitwise-identical output.
+It also keeps reviewed-source auditing valid on Windows CRLF checkouts instead of
+conservatively falling back to all-actual execution.
 The compiler capture safeguards and attention-backend history checks remain active.
 Our one-step tail remains authoritative
 subject to Spectrum's exact-evaluation safeguards. The current H3 graphs continue to use the
