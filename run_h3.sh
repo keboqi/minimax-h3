@@ -142,15 +142,6 @@ import swiftvr
 PY
 }
 
-run_setup() (
-  # Public source repos must not inherit stale GitHub credentials or URL rewrites.
-  export GIT_CONFIG_GLOBAL=/dev/null
-  export GIT_CONFIG_NOSYSTEM=1
-  export GIT_TERMINAL_PROMPT=0
-  export GIT_ASKPASS=/bin/false
-  "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR" "$@"
-)
-
 free_port() {
   local port="$1"
   if command -v fuser >/dev/null 2>&1; then
@@ -211,13 +202,15 @@ command -v "$PYTHON_BIN" >/dev/null 2>&1 || die "python3 is required"
 
 if [[ ! -f "$COMFY_DIR/main.py" || ! -f "$MODELS_CONFIG" ]]; then
   log "Installation or models are missing; running automatic setup"
-  run_setup
+  "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR"
 elif ! environment_is_current; then
   log "ComfyUI/Gradio environment or frontend assets are stale; refreshing the environment"
-  run_setup
+  "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR"
 else
   log "ComfyUI environment is current; checking Hugging Face model versions"
-  run_setup --skip-env
+  "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" \
+    --install-dir "$INSTALL_DIR" \
+    --skip-env
 fi
 
 if ! "$PYTHON_BIN" -c 'import websocket' >/dev/null 2>&1; then
