@@ -20,7 +20,9 @@ SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwe
 SLA_REF = "d58d006a4ea32c25c06499f2ff104f0852a045a6"
 SLA_REPO = "https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes.git"
 SOL_REF = "930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf"
-SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"
+# The original Saganaki22 repository became unavailable. This public fork retains
+# the exact reviewed v0.6.2 commit, so the node code and graph contract stay fixed.
+SOL_REPO = "https://github.com/wildparky/ComfyUI-sol-attn.git"
 SPECTRUM_REF = "5161f0457bc8c52535212d6783eee73f439e1537"  # v0.2.28
 SPECTRUM_REPO = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git"
 SPECTRUM_QWEN_REF = "ddb5470f3a885fd912e2b01aa8e20f9768148e42"

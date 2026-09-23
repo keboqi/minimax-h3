@@ -152,7 +152,8 @@ Use SLA with an SLA-distilled H3 LoRA.
 
 The Sol-Attn integration is pinned to the reviewed v0.6.2 commit
 `930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf` so its ComfyUI node contract
-remains reproducible. v0.6.2 adds MiniMax H3 support for SM86 / RTX 30-series
+remains reproducible. The original repository is unavailable; both installers
+fetch that same commit from a public fork. v0.6.2 adds MiniMax H3 support for SM86 / RTX 30-series
 GPUs without changing the attention math or routing policy. Sol uses the zero-copy H3 path, keeps conditioning KV
 exact by default, and leaves its optional INT8 attention approximations
 disabled. LightX2V Turbo additionally uses v0.6.0's bit-exact fused modulation
