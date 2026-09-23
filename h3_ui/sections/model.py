@@ -131,8 +131,8 @@ def build_model_section(
             value=defaults["use_int8_vae"],
             label="INT8 ConvRot video VAE",
             info=(
-                "Default off. Downloads the official Comfy-Org checkpoint on first "
-                "use for faster H3 video decoding; switch off for the FP16 path."
+                "On for Fast and Singularity presets. Downloads the official "
+                "Comfy-Org checkpoint on first use for faster H3 video decoding."
             ),
         )
         with gr.Row():

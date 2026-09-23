@@ -1145,123 +1145,6 @@ def object_info() -> dict[str, Any]:
     return api_get("/object_info").json()
 
 
-# Gradio runs this in the browser when the file is selected. It deliberately
-# uses the local File/preview object, so reading dimensions does not add a
-# second server upload or require a Python callback.
-AUTO_RESOLUTION_JS = r"""async (_value, currentWidth, currentHeight, resultFormat, latentUpscale, autoMegapixels) => {
-    const root = document.getElementById("first-frame-image");
-    const input = root?.querySelector('input[type="file"]')
-        || document.querySelector('#first-frame-image input[type="file"]');
-    const file = input?.files?.[0];
-    const preview = root?.querySelector("img")
-        || document.querySelector('#first-frame-image img');
-    let imageWidth = 0;
-    let imageHeight = 0;
-
-    if (file) {
-        try {
-            const bitmap = await createImageBitmap(file);
-            imageWidth = bitmap.width;
-            imageHeight = bitmap.height;
-            bitmap.close();
-        } catch (_) {
-            const objectUrl = URL.createObjectURL(file);
-            try {
-                const image = new Image();
-                image.src = objectUrl;
-                await image.decode();
-                imageWidth = image.naturalWidth;
-                imageHeight = image.naturalHeight;
-            } finally {
-                URL.revokeObjectURL(objectUrl);
-            }
-        }
-    }
-
-    // The preview is a local-only fallback for browsers without bitmap APIs
-    // or when Gradio has already replaced the file input after upload.
-    if (!imageWidth || !imageHeight) {
-        imageWidth = preview?.naturalWidth || 0;
-        imageHeight = preview?.naturalHeight || 0;
-    }
-
-    // Gradio may clear the native input as soon as its upload completes. Do
-    // not overwrite valid controls with null in that race; the next change
-    // event can still apply the automatic size when a local preview exists.
-    if (!imageWidth || !imageHeight) {
-        return [
-            Number(currentWidth) || 864,
-            Number(currentHeight) || 480,
-            "Resolution unchanged: image dimensions were unavailable locally.",
-        ];
-    }
-
-    if (String(resultFormat).toLowerCase() === "audio") {
-        return [
-            Number(currentWidth) || 864,
-            Number(currentHeight) || 480,
-            "**Audio result** · resolution controls are ignored; H3 samples at 32×32.",
-        ];
-    }
-
-    const grid = latentUpscale ? 64 : 32;
-    const snap = (value) => Math.max(grid, Math.round(value / grid) * grid);
-    if (String(resultFormat).toLowerCase() === "image") {
-        const width = snap(imageWidth);
-        const height = snap(imageHeight);
-        const megapixels = (width * height / 1000000).toFixed(2);
-        const displayRatio = (width / height).toFixed(2);
-        return [
-            width,
-            height,
-            `**Image mode: start frame resolution** · **${width}×${height}** · ${megapixels} MP · ${displayRatio}:1 · ${grid}-pixel aligned`,
-        ];
-    }
-
-    const selectedMegapixels = Number.parseInt(String(autoMegapixels), 10) || 4;
-    const pixelLimit = selectedMegapixels * 1000000;
-    if (imageWidth * imageHeight < pixelLimit) {
-        const width = snap(imageWidth);
-        const height = snap(imageHeight);
-        const megapixels = (width * height / 1000000).toFixed(2);
-        const displayRatio = (width / height).toFixed(2);
-        return [
-            width,
-            height,
-            `**Start frame native resolution** · **${width}×${height}** · ${megapixels} MP · ${displayRatio}:1 · ${grid}-pixel aligned`,
-        ];
-    }
-
-    const maxPixels = pixelLimit - 1;
-    const ratio = imageWidth / imageHeight;
-    let width;
-    let height;
-    if (ratio >= 1) {
-        width = Math.max(grid, Math.floor(Math.sqrt(maxPixels * ratio) / grid) * grid);
-        height = Math.max(grid, Math.floor(width / ratio / grid) * grid);
-    } else {
-        height = Math.max(grid, Math.floor(Math.sqrt(maxPixels / ratio) / grid) * grid);
-        width = Math.max(grid, Math.floor(height * ratio / grid) * grid);
-    }
-    while (width * height >= pixelLimit) {
-        if (ratio >= 1) {
-            width = Math.max(grid, width - grid);
-            height = Math.max(grid, Math.floor(width / ratio / grid) * grid);
-        } else {
-            height = Math.max(grid, height - grid);
-            width = Math.max(grid, Math.floor(height * ratio / grid) * grid);
-        }
-    }
-    const megapixels = (width * height / 1000000).toFixed(2);
-    const displayRatio = (width / height).toFixed(2);
-    return [
-        width,
-        height,
-        `**Auto from start frame** · **${width}×${height}** · ${megapixels} MP · ${displayRatio}:1 · ${grid}-pixel aligned`,
-    ];
-}"""
-
-
 def resolution_control_updates(
     width: int | float | None,
     height: int | float | None,
@@ -4662,7 +4545,6 @@ def build_ui() -> gr.Blocks:
                 resolve_request_settings=resolve_request_settings,
                 describe_settings=describe_settings,
                 AI_POSTPROCESS_OPTIONS=AI_POSTPROCESS_OPTIONS,
-                AUTO_RESOLUTION_JS=AUTO_RESOLUTION_JS,
                 LTX25_UPSCALE=LTX25_UPSCALE,
                 SEEDVR2_UPSCALE=SEEDVR2_UPSCALE,
                 auto_resolution_from_start_frame=auto_resolution_from_start_frame,

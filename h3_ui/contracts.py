@@ -62,7 +62,6 @@ class AppServices:
     AI_POSTPROCESS_OPTIONS: tuple[str, ...]
     SEEDVR2_UPSCALE: str
     LTX25_UPSCALE: str
-    AUTO_RESOLUTION_JS: str
     auto_resolution_from_start_frame: Callable[..., Any]
     fbcache_preset_defaults: Callable[..., Any]
     resolution_info_preview: Callable[..., Any]

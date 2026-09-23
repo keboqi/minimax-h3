@@ -599,7 +599,7 @@ UI_DEFAULTS = {
     "semantic_bridge": True,
     "semantic_bridge_alpha": 0.10,
     "reuse_unchanged_inputs": True,
-    "use_int8_vae": False,
+    "use_int8_vae": True,
     "use_trt_vae": False,
     "generation_mode": "Turbo",
     "turbo_variant": DEFAULT_TURBO,

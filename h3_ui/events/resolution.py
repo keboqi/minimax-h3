@@ -87,57 +87,10 @@ def bind_resolution(
             queue=False,
             show_progress="hidden",
         )
-    first_upload_event = components.first.upload(
-        fn=None,
-        inputs=[
-            components.first,
-            components.width,
-            components.height,
-            components.result_format,
-            components.latent_upscale,
-            components.auto_megapixels,
-        ],
-        outputs=[
-            components.width,
-            components.height,
-            components.resolution_info,
-        ],
-        js=services.AUTO_RESOLUTION_JS,
-        queue=False,
-        show_progress="hidden",
-    )
-    first_upload_server_event = first_upload_event.then(
-        fn=services.auto_resolution_from_start_frame,
-        inputs=[
-            components.first,
-            components.width,
-            components.height,
-            components.result_format,
-            components.latent_upscale,
-            components.auto_megapixels,
-        ],
-        outputs=[
-            components.width,
-            components.height,
-            components.resolution_info,
-        ],
-        queue=False,
-        show_progress="hidden",
-    )
-    first_upload_server_event.then(
-        controller.refresh,
-        inputs=[controller.memory, *controller.inputs],
-        outputs=controller.outputs,
-        queue=False,
-        show_progress="hidden",
-    )
-    components.first.clear(
-        controller.refresh,
-        inputs=[controller.memory, *controller.inputs],
-        outputs=controller.outputs,
-        queue=False,
-        show_progress="hidden",
-    )
+    # One committed-value event handles uploads, clears, and programmatic
+    # replacements. Competing upload and input handlers could restore stale
+    # width/height after the automatic calculation, especially with the output
+    # accordion closed.
     first_change_event = components.first.change(
         fn=services.auto_resolution_from_start_frame,
         inputs=[
@@ -154,15 +107,19 @@ def bind_resolution(
             components.resolution_info,
         ],
         queue=False,
+        trigger_mode="always_last",
         show_progress="hidden",
     )
-    first_change_event.then(
+    first_refresh_event = first_change_event.then(
         controller.refresh,
         inputs=[controller.memory, *controller.inputs],
         outputs=controller.outputs,
         queue=False,
         show_progress="hidden",
     )
+    # Browser persistence saves controller events. Include this chained refresh
+    # so an automatically chosen size survives a page reload.
+    controller.events.append(first_refresh_event)
     auto_megapixels_change = components.auto_megapixels.change(
         fn=services.auto_resolution_from_start_frame,
         inputs=[

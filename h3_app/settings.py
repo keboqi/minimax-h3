@@ -412,11 +412,16 @@ def transition_modes(
             or asdict(preset_settings(current.get("preset", "Singularity"), mode))
         )
     elif action in {"preset", "restore"}:
-        current.update(
-            asdict(preset_settings(current.get("preset", "Singularity"), mode))
-        )
-        if current.get("preset") == "Singularity":
+        preset = current.get("preset", "Singularity")
+        current.update(asdict(preset_settings(preset, mode)))
+        current["use_int8_vae"] = preset in {"Singularity", "Fast"}
+        current["use_trt_vae"] = False
+        if preset == "Singularity":
             current["model_profile"] = "Singularity"
+    elif action == "use_trt_vae" and current.get("use_trt_vae"):
+        current["use_int8_vae"] = False
+    elif action == "use_int8_vae" and current.get("use_int8_vae"):
+        current["use_trt_vae"] = False
     elif action == "turbo_variant" and mode == "Turbo":
         current.update(
             steps=TURBO_STEPS.get(current["turbo_variant"], 4), scheduler="simple"

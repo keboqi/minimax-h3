@@ -276,7 +276,7 @@ class SettingsController:
 
             return dispatch
 
-        for name in (*self.names, *MEDIA_NAMES, "restore_preset"):
+        for name in (*self.names, *(n for n in MEDIA_NAMES if n != "first"), "restore_preset"):
             trigger = (
                 self.components[name].click
                 if name == "restore_preset"

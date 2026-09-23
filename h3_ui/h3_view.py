@@ -396,7 +396,8 @@ def build_h3_view(
                 label="Generation preset",
                 interactive=True,
                 info=(
-                    "Sets sampling, text encoding, memory, attention and refinement defaults. "
+                    "Sets sampling, text encoding, memory, attention, refinement, and video VAE defaults. "
+                    "Fast and Singularity use INT8 ConvRot; Balanced and Quality use FP16. "
                     "Singularity selects its base model with Fast settings. Other presets keep your base model. "
                     "Keeps your prompt, media and output size."
                 ),

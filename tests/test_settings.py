@@ -27,6 +27,43 @@ class SettingsTests(unittest.TestCase):
                 self.assertEqual(values["width"], 864)
 
 
+    def test_video_vae_preset_defaults_and_decoder_switches(self):
+        for mode in ("Normal", "Turbo"):
+            for preset in ("Singularity", "Fast", "Balanced", "Quality"):
+                values = {
+                    **asdict(preset_settings(preset, mode)),
+                    "preset": preset,
+                    "generation_mode": mode,
+                    "use_int8_vae": False,
+                    "use_trt_vae": True,
+                }
+                _, applied = transition_modes(None, values, "preset")
+                self.assertEqual(applied["use_int8_vae"], preset in {"Singularity", "Fast"})
+                self.assertFalse(applied["use_trt_vae"])
+
+        values = {
+            **asdict(preset_settings("Fast", "Turbo")),
+            "preset": "Fast",
+            "generation_mode": "Turbo",
+            "use_int8_vae": True,
+            "use_trt_vae": False,
+        }
+        memory, values = transition_modes(None, values, "edit")
+        values["use_trt_vae"] = True
+        memory, values = transition_modes(memory, values, "use_trt_vae")
+        self.assertTrue(values["use_trt_vae"])
+        self.assertFalse(values["use_int8_vae"])
+        values["use_int8_vae"] = True
+        memory, values = transition_modes(memory, values, "use_int8_vae")
+        self.assertTrue(values["use_int8_vae"])
+        self.assertFalse(values["use_trt_vae"])
+        values["use_int8_vae"] = False
+        memory, values = transition_modes(memory, values, "use_int8_vae")
+        self.assertFalse(values["use_int8_vae"])
+        memory, values = transition_modes(memory, values, "restore")
+        self.assertTrue(values["use_int8_vae"])
+        self.assertFalse(values["use_trt_vae"])
+
     def test_presets_preserve_trained_counts(self):
         self.assertEqual(
             [

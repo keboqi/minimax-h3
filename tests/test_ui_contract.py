@@ -274,6 +274,21 @@ class UiContractTests(unittest.TestCase):
             )
         )
 
+    def test_fast_and_singularity_default_to_int8_video_vae(self) -> None:
+        controls = {
+            c.get("props", {}).get("label"): c for c in self.config["components"]
+        }
+        self.assertTrue(controls["INT8 ConvRot video VAE"]["props"]["value"])
+        preset = controls["Generation preset"]
+        int8 = controls["INT8 ConvRot video VAE"]
+        trt = controls["Experimental TensorRT video VAE"]
+        transition = next(
+            d for d in self.config["dependencies"]
+            if (preset["id"], "input") in d.get("targets", [])
+        )
+        self.assertIn(int8["id"], transition["outputs"])
+        self.assertIn(trt["id"], transition["outputs"])
+
     def test_settings_transition_owns_summary_and_bypasses_gpu_queue(self) -> None:
         controls = {
             c.get("props", {}).get("label"): c for c in self.config["components"]
@@ -405,36 +420,27 @@ class UiContractTests(unittest.TestCase):
             if "h3-settings-summary" in c.get("props", {}).get("elem_classes", [])
         )
 
-        # 1. First frame upload has JS instant update, then server auto-resolution, then summary refresh
-        upload_dep = next(
+        # One committed-value path handles upload, clear, and replacements.
+        # A generic first-frame input handler must not race it with stale size.
+        first_deps = [
             d for d in self.config["dependencies"]
-            if (first_frame["id"], "upload") in d.get("targets", [])
-        )
-        self.assertTrue(upload_dep.get("js"))
-        h3_width_id = upload_dep["outputs"][0]
-        h3_height_id = upload_dep["outputs"][1]
+            if any(target[0] == first_frame["id"] for target in d.get("targets", []))
+        ]
+        self.assertEqual([d["targets"][0][1] for d in first_deps], ["change"])
+        first_change_dep = first_deps[0]
+        self.assertFalse(first_change_dep.get("js"))
+        h3_width_id = first_change_dep["outputs"][0]
+        h3_height_id = first_change_dep["outputs"][1]
         self.assertEqual(self.components[h3_width_id].get("props", {}).get("label"), "Width")
         self.assertEqual(self.components[h3_height_id].get("props", {}).get("label"), "Height")
 
-        server_auto_dep = next(
+        first_refresh_dep = next(
             d for d in self.config["dependencies"]
-            if d.get("trigger_after") == upload_dep["id"]
+            if d.get("trigger_after") == first_change_dep["id"]
         )
-        self.assertIn(h3_width_id, server_auto_dep["outputs"])
-        self.assertIn(h3_height_id, server_auto_dep["outputs"])
-
-        upload_refresh_dep = next(
-            d for d in self.config["dependencies"]
-            if d.get("trigger_after") == server_auto_dep["id"]
-        )
-        self.assertIn(summary["id"], upload_refresh_dep["outputs"])
-
-        # 2. First frame clear refreshes summary
-        clear_dep = next(
-            d for d in self.config["dependencies"]
-            if (first_frame["id"], "clear") in d.get("targets", [])
-        )
-        self.assertIn(summary["id"], clear_dep["outputs"])
+        self.assertIn(summary["id"], first_refresh_dep["outputs"])
+        output_accordion = controls["Output essentials"]
+        self.assertFalse(output_accordion["props"]["open"])
 
         # 3. Start-frame auto cap triggers on .change (so preset changes trigger auto resolution),
         # then refreshes summary

@@ -260,8 +260,9 @@ Singularity pruned v1.3 INT8 checkpoint plus the Fast NVFP4/AWQ text encoder, de
 LTX-2.5 upscaler and restoration IC-LoRAs, and SwiftVR checkpoints are lazy and download only
 when their post-processing option is first used. The installer pins the official
 SwiftVR inference source; no SWIFTVR_CHECKPOINT_DIR is required unless you want
-to use an existing checkpoint directory. The official INT8 ConvRot video VAE
-is also lazy and downloads only when its default-off checkbox is enabled. Both local and Modal launch ComfyUI with
+to use an existing checkpoint directory. The official INT8 ConvRot video VAE is selected by default for Fast and
+Singularity, and downloads on first use. Balanced and Quality select FP16.
+Both local and Modal launch ComfyUI with
 `--fast fp16_accumulation` for the faster H3 VAE encoder and decoder kernels.
 The experimental **TensorRT video VAE** is disabled by default. Local and Modal
 setup install TensorRT and sync the pinned ComfyUI-H3VAE_TRT node. On first use,
