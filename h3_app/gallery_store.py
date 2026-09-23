@@ -263,6 +263,67 @@ def gallery_audio_thumbnail_path(
     return runtime.gallery_thumbnails_dir / f"audio-{cache_key}.png"
 
 
+def gallery_image_thumbnail(image: Path, *, runtime: RuntimeConfig) -> Path | None:
+    """Create a cached, bounded JPEG preview without serving the source image."""
+    temporary: Path | None = None
+    try:
+        from PIL import Image, ImageOps
+
+        source_mtime = image.stat().st_mtime
+        thumbnail = gallery_image_thumbnail_path(image, runtime=runtime)
+        if thumbnail.is_file() and thumbnail.stat().st_mtime >= source_mtime:
+            return thumbnail
+        runtime.gallery_thumbnails_dir.mkdir(parents=True, exist_ok=True)
+        temporary = thumbnail.with_name(
+            f"{thumbnail.stem}.{uuid.uuid4().hex}.tmp.jpg"
+        )
+        with Image.open(image) as opened:
+            opened.draft("RGB", (480, 480))
+            preview = ImageOps.exif_transpose(opened)
+            preview.thumbnail((480, 480), Image.Resampling.LANCZOS)
+            if preview.mode != "RGB":
+                canvas = Image.new("RGB", preview.size, (18, 24, 38))
+                if "A" in preview.getbands():
+                    canvas.paste(preview, mask=preview.getchannel("A"))
+                else:
+                    canvas.paste(preview)
+                preview = canvas
+            preview.save(temporary, format="JPEG", quality=82)
+        temporary.replace(thumbnail)
+        return thumbnail
+    except (OSError, TypeError, ValueError):
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        return None
+
+
+def gallery_image_thumbnail_path(image: str | Path, *, runtime: RuntimeConfig) -> Path:
+    cache_key = hashlib.sha256(str(Path(image).resolve()).encode("utf-8")).hexdigest()[:24]
+    return runtime.gallery_thumbnails_dir / f"image-{cache_key}.jpg"
+
+
+def gallery_placeholder(media: Path, *, kind: str, runtime: RuntimeConfig) -> Path | None:
+    """Keep an unreadable item selectable without exposing its full media file."""
+    try:
+        from PIL import Image, ImageDraw
+
+        cache_key = hashlib.sha256(str(media.resolve()).encode("utf-8")).hexdigest()[:24]
+        thumbnail = runtime.gallery_thumbnails_dir / f"{kind.lower()}-{cache_key}-unavailable.png"
+        if thumbnail.is_file():
+            return thumbnail
+        runtime.gallery_thumbnails_dir.mkdir(parents=True, exist_ok=True)
+        canvas = Image.new("RGB", (480, 270), (18, 24, 38))
+        draw = ImageDraw.Draw(canvas)
+        draw.text((28, 28), kind.upper(), fill=(225, 235, 248))
+        draw.text((28, 230), "Preview unavailable", fill=(172, 188, 210))
+        temporary = thumbnail.with_name(f"{thumbnail.stem}.{uuid.uuid4().hex}.tmp.png")
+        canvas.save(temporary, format="PNG")
+        temporary.replace(thumbnail)
+        return thumbnail
+    except (OSError, TypeError, ValueError):
+        return None
+
+
 def gallery_thumbnail(video: Path, *, runtime: RuntimeConfig) -> Path | None:
     """Create a small cached poster image for a video."""
     temporary: Path | None = None

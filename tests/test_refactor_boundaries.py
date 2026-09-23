@@ -22,6 +22,7 @@ from h3_app.gallery_store import (
     gallery_audio_paths,
     gallery_audio_thumbnail,
     gallery_image_paths,
+    gallery_image_thumbnail,
     gallery_video_paths,
     generated_audio_family,
     generated_image_family,
@@ -230,6 +231,61 @@ class MediaPublicationTests(unittest.TestCase):
             )
             with self.assertRaises(H3Error):
                 managed_image_path(thumbnail, runtime=config)
+
+    def test_gallery_uses_small_image_thumbnail_and_keeps_full_source_for_selection(self):
+        from PIL import Image
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = replace(
+                RuntimeConfig.from_environment(root, {}),
+                output_root=root / "comfy-output",
+                outputs_dir=root / "gradio-output",
+                thumbnail_root=root / "gradio-output" / ".gallery-thumbnails",
+            )
+            source = config.output_dir / "h3" / "large.png"
+            source.parent.mkdir(parents=True)
+            Image.new("RGB", (2400, 1600), (120, 40, 10)).save(source)
+
+            thumbnail = gallery_image_thumbnail(source, runtime=config)
+            self.assertIsNotNone(thumbnail)
+            self.assertNotEqual(thumbnail, source)
+            self.assertEqual(thumbnail.suffix, ".jpg")
+            with Image.open(thumbnail) as preview:
+                self.assertLessEqual(max(preview.size), 480)
+            cached_mtime = thumbnail.stat().st_mtime_ns
+            self.assertEqual(gallery_image_thumbnail(source, runtime=config), thumbnail)
+            self.assertEqual(thumbnail.stat().st_mtime_ns, cached_mtime)
+
+            with patch.object(app, "gallery_image_paths", return_value=[source]), patch.object(
+                app, "_runtime_config", return_value=config
+            ):
+                items, paths, _detail = app.refresh_media_gallery("Image")
+            self.assertEqual(items[0][0], str(thumbnail))
+            self.assertEqual(paths, [str(source)])
+
+    def test_gallery_video_without_poster_does_not_load_video_in_grid(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = replace(
+                RuntimeConfig.from_environment(root, {}),
+                output_root=root / "comfy-output",
+                outputs_dir=root / "gradio-output",
+                thumbnail_root=root / "gradio-output" / ".gallery-thumbnails",
+            )
+            source = config.output_dir / "video.mp4"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"fixture")
+            with (
+                patch.object(app, "gallery_video_paths", return_value=[source]),
+                patch.object(app, "gallery_thumbnail", return_value=None),
+                patch.object(app, "gallery_resolution_text", return_value="unavailable"),
+                patch.object(app, "_runtime_config", return_value=config),
+            ):
+                items, paths, _detail = app.refresh_gallery()
+            self.assertEqual(paths, [str(source)])
+            self.assertNotEqual(items[0][0], str(source))
+            self.assertEqual(Path(items[0][0]).suffix, ".png")
 
     def test_processed_and_copied_media_retain_provenance(self):
         with TemporaryDirectory() as directory:

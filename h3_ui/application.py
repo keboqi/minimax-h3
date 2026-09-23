@@ -2664,6 +2664,11 @@ def refresh_gallery() -> tuple[list[tuple[str, str]], list[str], str]:
         thumbnail = gallery_thumbnail(video)
         if thumbnail is None:
             failed += 1
+            thumbnail = gallery_store.gallery_placeholder(
+                video, kind="Video", runtime=_runtime_config()
+            )
+        if thumbnail is None:
+            continue
         try:
             stat = video.stat()
         except OSError:
@@ -2675,9 +2680,7 @@ def refresh_gallery() -> tuple[list[tuple[str, str]], list[str], str]:
             f"{generated_video_family(video)} · {video.name} · {resolution} · "
             f"{timestamp} · {size_mb:.1f} MB"
         )
-        # Gradio Gallery accepts videos as well as images. Falling back to the
-        # video itself keeps the item selectable when FFmpeg cannot make a poster.
-        items.append((str(thumbnail or video), caption))
+        items.append((str(thumbnail), caption))
         selectable_paths.append(str(video))
     detail = f"{len(items)} generated video{'s' if len(items) != 1 else ''}"
     if failed:
@@ -2750,7 +2753,18 @@ def refresh_media_gallery(
     images = gallery_image_paths()
     items: list[tuple[str, str]] = []
     selectable_paths: list[str] = []
+    failed = 0
     for image in images:
+        thumbnail = gallery_store.gallery_image_thumbnail(
+            image, runtime=_runtime_config()
+        )
+        if thumbnail is None:
+            failed += 1
+            thumbnail = gallery_store.gallery_placeholder(
+                image, kind="Image", runtime=_runtime_config()
+            )
+        if thumbnail is None:
+            continue
         try:
             stat = image.stat()
         except OSError:
@@ -2762,9 +2776,11 @@ def refresh_media_gallery(
             f"{gallery_store.generated_image_family(image, runtime=_runtime_config())}"
             f" · {image.name} · {resolution} · {timestamp} · {size_mb:.1f} MB"
         )
-        items.append((str(image), caption))
+        items.append((str(thumbnail), caption))
         selectable_paths.append(str(image))
     detail = f"{len(items)} generated image{'s' if len(items) != 1 else ''}"
+    if failed:
+        detail += f" · {failed} thumbnail{'s' if failed != 1 else ''} unavailable"
     return items, selectable_paths, detail
 
 
