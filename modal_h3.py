@@ -883,6 +883,8 @@ def serve():
         "127.0.0.1",
         "--port",
         str(COMFY_PORT),
+        "--fast",
+        "fp16_accumulation",
         "--use-ck-attention",
     ]
     print("[modal-h3] Dense/fallback attention: Comfy Kitchen", flush=True)

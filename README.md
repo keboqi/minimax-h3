@@ -41,7 +41,7 @@ bundled FirstBlockCache node.
   H3-native zero-copy Sol v0.6.2 sparse attention
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
-- Optional experimental INT8 ConvRot video VAE, lazy-downloaded on first use
+- Optional official INT8 ConvRot video VAE, lazy-downloaded on first use
 - H.264 NVENC hardware encoding for MiniMax H3 video outputs
 - Optional 500K single-frame image decoder, lazy-downloaded only when selected;
   visual conditioning retains the official FP16 path when TensorRT decoding is selected
@@ -260,9 +260,9 @@ Singularity pruned v1.3 INT8 checkpoint plus the Fast NVFP4/AWQ text encoder, de
 LTX-2.5 upscaler and restoration IC-LoRAs, and SwiftVR checkpoints are lazy and download only
 when their post-processing option is first used. The installer pins the official
 SwiftVR inference source; no SWIFTVR_CHECKPOINT_DIR is required unless you want
-to use an existing checkpoint directory. The experimental
-INT8 ConvRot video VAE
-is also lazy and downloads only when its default-off checkbox is enabled.
+to use an existing checkpoint directory. The official INT8 ConvRot video VAE
+is also lazy and downloads only when its default-off checkbox is enabled. Both local and Modal launch ComfyUI with
+`--fast fp16_accumulation` for the faster H3 VAE encoder and decoder kernels.
 The experimental **TensorRT video VAE** is disabled by default. Local and Modal
 setup install TensorRT and sync the pinned ComfyUI-H3VAE_TRT node. On first use,
 the app downloads the decoder ONNX source and automatically builds its local

@@ -236,6 +236,7 @@ log "Memory profile: $COMFYUI_MEMORY_MODE"
   exec "$PYTHON_BIN" -u main.py \
     --listen "$COMFY_HOST" \
     --port "$COMFY_PORT" \
+    --fast fp16_accumulation \
     "${COMFY_MEMORY_ARGS[@]}" \
     "${COMFY_ATTENTION_ARGS[@]}" \
     --enable-cors-header "*"

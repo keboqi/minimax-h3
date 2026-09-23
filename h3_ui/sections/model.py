@@ -129,10 +129,10 @@ def build_model_section(
         )
         use_int8_vae = gr.Checkbox(
             value=defaults["use_int8_vae"],
-            label="Experimental INT8 ConvRot video VAE",
+            label="INT8 ConvRot video VAE",
             info=(
-                "Default off. Downloads on first use and accelerates H3 video "
-                "encode/decode; switch off for the reviewed FP16 path."
+                "Default off. Downloads the official Comfy-Org checkpoint on first "
+                "use for faster H3 video decoding; switch off for the FP16 path."
             ),
         )
         with gr.Row():

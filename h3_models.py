@@ -29,7 +29,6 @@ FASTH3_MODEL_REPO = "FastVideo/FastVideo-FastH3-Comfy"
 TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
 TAOMATE_TURBO_REPO = "CZMartin22/TaoMate-H3-3step-ComfyUI"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
-EXPERIMENTAL_MODEL_REPO = "Kijai/MiniMax-H3-experimental"
 SINGLE_FRAME_VAE_REPO = "iamkaikai/MiniMax-H3-Single-Frame-VAE-500K"
 TRT_VAE_REPO = "lihaoyun6/MiniMax-H3-VAE-ONNX"
 TEXT_ENCODER_REPO = "Comfy-Org/MiniMax-H3"
@@ -169,10 +168,11 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "FP16 video VAE",
     ),
     "video_vae_int8": ModelSpec(
-        EXPERIMENTAL_MODEL_REPO,
+        ORIGINAL_MODEL_REPO,
         "vae",
-        "minimax_h3_video_vae_int8_convrot.safetensors",
-        "Experimental INT8 ConvRot video VAE",
+        "vae/minimax_h3_video_vae_int8_convrot.safetensors",
+        "Official INT8 ConvRot video VAE",
+        expected_sha256="52a2c8c73583c86e4f41cdcce3a6ad0ea562987bc0bf3d60a0cef5f5c8e60c0e",
     ),
     "video_vae_trt_encoder": ModelSpec(
         TRT_VAE_REPO,
@@ -1319,6 +1319,13 @@ def selftest() -> None:
     )
     assert "text_encoder" in PRELOAD_MODEL_KEYS
     assert cfg["video_vae_int8"] == ("minimax_h3_video_vae_int8_convrot.safetensors")
+    assert MODEL_SPECS["video_vae_int8"].repo_id == ORIGINAL_MODEL_REPO
+    assert MODEL_SPECS["video_vae_int8"].filename == (
+        "vae/minimax_h3_video_vae_int8_convrot.safetensors"
+    )
+    assert MODEL_SPECS["video_vae_int8"].expected_sha256 == (
+        "52a2c8c73583c86e4f41cdcce3a6ad0ea562987bc0bf3d60a0cef5f5c8e60c0e"
+    )
     assert "video_vae_int8" not in PRELOAD_MODEL_KEYS
     assert cfg["image_vae_500k"] == ("minimax_h3_single_frame_decoder_500k.safetensors")
     assert "image_vae_500k" not in PRELOAD_MODEL_KEYS
