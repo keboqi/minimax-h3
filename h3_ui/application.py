@@ -24,7 +24,7 @@ import threading
 import time
 import unittest.mock
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
@@ -752,7 +752,6 @@ def fl2va_prompt_voice_context(prompt: str, mode: str, *slots: Any):
     return prompt_service.fl2va_prompt_voice_context(prompt, mode, *slots)
 
 
-@gpu_maintenance("prompt-enhance")
 def enhance_h3_prompt(
     prompt: str,
     backend: str,
@@ -792,46 +791,52 @@ def enhance_h3_prompt(
     fl2va_audio_2: Any = None,
     fl2va_audio_3: Any = None,
 ) -> tuple[str, str]:
-    return prompt_service.enhance_h3_prompt(
-        prompt,
-        backend,
-        local_base_model,
-        local_max_new_tokens,
-        local_temperature,
-        local_top_p,
-        local_greedy,
-        local_seed,
-        gemini_model,
-        gemini_api_key,
-        lightning_api_key,
-        mode,
-        first_image,
-        last_image,
-        ref_image_1,
-        ref_image_2,
-        ref_image_3,
-        ref_image_4,
-        ref_image_5,
-        ref_image_6,
-        ref_image_7,
-        ref_image_8,
-        ref_image_9,
-        ref_video_1,
-        ref_video_2,
-        ref_video_3,
-        ref_audio_1,
-        ref_audio_2,
-        ref_audio_3,
-        duration,
-        width,
-        height,
-        result_format,
-        image_frames,
-        fl2va_audio_1,
-        fl2va_audio_2,
-        fl2va_audio_3,
-        runtime=_runtime_config(),
+    lease = (
+        JOBS.maintenance("prompt-enhance")
+        if backend == "Local MiniMax-H3 8B"
+        else nullcontext()
     )
+    with lease:
+        return prompt_service.enhance_h3_prompt(
+            prompt,
+            backend,
+            local_base_model,
+            local_max_new_tokens,
+            local_temperature,
+            local_top_p,
+            local_greedy,
+            local_seed,
+            gemini_model,
+            gemini_api_key,
+            lightning_api_key,
+            mode,
+            first_image,
+            last_image,
+            ref_image_1,
+            ref_image_2,
+            ref_image_3,
+            ref_image_4,
+            ref_image_5,
+            ref_image_6,
+            ref_image_7,
+            ref_image_8,
+            ref_image_9,
+            ref_video_1,
+            ref_video_2,
+            ref_video_3,
+            ref_audio_1,
+            ref_audio_2,
+            ref_audio_3,
+            duration,
+            width,
+            height,
+            result_format,
+            image_frames,
+            fl2va_audio_1,
+            fl2va_audio_2,
+            fl2va_audio_3,
+            runtime=_runtime_config(),
+        )
 
 
 def prompt_writer_backend_visibility(backend: str) -> tuple[Any, Any, Any]:

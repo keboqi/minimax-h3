@@ -9,11 +9,17 @@ from h3_app.jobs import JOBS, CURRENT_JOB
 from h3_app.provenance import RUN_CONTEXT, render_snapshot
 
 GPU_QUEUE = {"concurrency_id": "h3-gpu", "concurrency_limit": 1}
+PROMPT_QUEUE = {"concurrency_id": "h3-prompt", "concurrency_limit": 4}
 
 
 def bind_gpu_action(trigger, callback=None, **options):
     """Register generation or maintenance with the same GPU queue policy."""
     return trigger(callback, **options, **GPU_QUEUE)
+
+
+def bind_prompt_action(trigger, callback=None, **options):
+    """Allow remote prompt requests while a GPU job prepares or downloads models."""
+    return trigger(callback, **options, **PROMPT_QUEUE)
 
 
 def owned_generation(callback, family: str, input_names=None, *, metadata_output=False):

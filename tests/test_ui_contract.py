@@ -656,7 +656,6 @@ class UiContractTests(unittest.TestCase):
             "generate_music3",
             "generate_qwen_image21",
             "generate_yue2",
-            "enhance_h3_prompt",
             "unload_all_models",
         }
         found = set()
@@ -667,6 +666,42 @@ class UiContractTests(unittest.TestCase):
                 self.assertEqual(event.concurrency_id, "h3-gpu", name)
                 self.assertEqual(event.concurrency_limit, 1, name)
         self.assertEqual(found, expected)
+
+    def test_prompt_writers_use_a_queue_separate_from_model_downloads(self):
+        expected = {
+            "enhance_h3_prompt",
+            "enhance_ltx25_prompt",
+            "enhance_music3_prompt",
+            "enhance_qwen_image21_prompt",
+            "enhance_yue2_prompt",
+        }
+        found = set()
+        for event in self.demo.fns.values():
+            name = getattr(event.fn, "__name__", "")
+            if name in expected:
+                found.add(name)
+                self.assertEqual(event.concurrency_id, "h3-prompt", name)
+                self.assertEqual(event.concurrency_limit, 4, name)
+        self.assertEqual(found, expected)
+
+    def test_only_local_h3_writer_uses_the_gpu_lease(self):
+        signature = inspect.signature(gradio_app.enhance_h3_prompt)
+        arguments = [
+            None if parameter.default is inspect.Parameter.empty else parameter.default
+            for parameter in signature.parameters.values()
+        ]
+        with (
+            mock.patch.object(gradio_app.JOBS, "maintenance") as maintenance,
+            mock.patch.object(gradio_app.prompt_service, "enhance_h3_prompt", return_value=("rewritten", "ok")),
+            mock.patch.object(gradio_app, "_runtime_config", return_value=mock.sentinel.runtime),
+        ):
+            for backend in ("Lightning AI", "Gemini"):
+                arguments[1] = backend
+                self.assertEqual(gradio_app.enhance_h3_prompt(*arguments), ("rewritten", "ok"))
+            maintenance.assert_not_called()
+            arguments[1] = "Local MiniMax-H3 8B"
+            self.assertEqual(gradio_app.enhance_h3_prompt(*arguments), ("rewritten", "ok"))
+            maintenance.assert_called_once_with("prompt-enhance")
 
     def test_non_gpu_media_actions_bypass_the_application_queue(self):
         expected = {

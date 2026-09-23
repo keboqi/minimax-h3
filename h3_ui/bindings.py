@@ -11,7 +11,7 @@ from h3_app.catalog import (
     LTX25_DEBLUR,
     LTX25_RESTORATION_OPTIONS,
 )
-from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
+from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
 
 
 from .ltx_view import LtxView
@@ -133,7 +133,7 @@ def bind_ltx_view(
         queue=False,
         show_progress="hidden",
     )
-    bind_gpu_action(
+    bind_prompt_action(
         view.enhance.click,
         enhance_prompt,
         inputs=[
@@ -189,7 +189,7 @@ def bind_music_view(
     enhance_prompt: Callable[..., Any],
     generate: Callable[..., Any],
 ) -> Any:
-    bind_gpu_action(
+    bind_prompt_action(
         view.enhance.click,
         enhance_prompt,
         inputs=[
@@ -245,7 +245,7 @@ def bind_qwen_image21_view(
             show_progress="hidden",
             api_name=False,
         )
-    bind_gpu_action(
+    bind_prompt_action(
         view.enhance.click,
         enhance_prompt,
         inputs=[
@@ -299,7 +299,7 @@ def bind_yue2_view(
     enhance_prompt: Callable[..., Any],
     generate: Callable[..., Any],
 ) -> Any:
-    bind_gpu_action(
+    bind_prompt_action(
         view.enhance.click,
         enhance_prompt,
         inputs=[

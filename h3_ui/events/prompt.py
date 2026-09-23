@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..contracts import AppComponents, AppServices
-from ..job_bindings import bind_gpu_action
+from ..job_bindings import bind_prompt_action
 
 
 def bind_prompt(components: AppComponents, services: AppServices) -> None:
@@ -19,7 +19,7 @@ def bind_prompt(components: AppComponents, services: AppServices) -> None:
         show_progress="hidden",
         api_name=False,
     )
-    bind_gpu_action(
+    bind_prompt_action(
         components.enhance_prompt_button.click,
         services.enhance_h3_prompt,
         inputs=[
