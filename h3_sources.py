@@ -13,11 +13,11 @@ LARRY_TURBO_REF = (
     "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
 )
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
-LTXVIDEO_REF = "15d09abb5a187a8dcaea2fc31fe51ee96e6c9d0d"
+LTXVIDEO_REF = "f8387c893de3f652c3a416052c82bba593edcf2b"
 LTXVIDEO_REPO = "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
 SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
-SLA_REF = "e787ecf355f7d045732e42b78647925e39b13fd7"
+SLA_REF = "d58d006a4ea32c25c06499f2ff104f0852a045a6"
 SLA_REPO = "https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes.git"
 SOL_REF = "930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf"
 SOL_REPO = "https://github.com/Saganaki22/ComfyUI-sol-attn.git"

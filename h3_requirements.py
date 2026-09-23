@@ -21,9 +21,13 @@ NUMPY_VERSION = "1.26.4"
 SCIPY_VERSION = "1.15.3"
 # Transformers' fine-grained FP8 loader requires this exact minor release.
 KERNELS_VERSION = "0.16.0"
-# ComfyUI-LTXVideo 15d09ab imports ``pad`` from Kornia's pyramid module.
-# Kornia 0.8.2+ removed that module-level compatibility export.
-KORNIA_VERSION = "0.8.1"
+# LTXVideo f8387c8 uses torch.nn.functional.pad instead of Kornia's removed
+# pyramid.pad export.
+KORNIA_VERSION = "0.8.3"
+KORNIA_RS_VERSION = "0.1.14"
+# New LTX HDR nodes require these packages. Later releases require NumPy 2,
+# so keep their versions compatible with the pinned NumPy 1.26/CUDA stack.
+LTX_HDR_REQUIREMENTS = ("colour-science==0.4.6", "openimageio==3.0.12.0")
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
 # ComfyUI v0.37.0 includes native Qwen Image 2.1 generation/edit support,
 # corrected KV-cache placement, compiled Qwen transformer blocks, MiniMax-H3
@@ -31,9 +35,9 @@ KORNIA_VERSION = "0.8.1"
 # attention. Keep its frontend and Kitchen versions aligned with upstream
 # requirements.
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
-H3_AUDIO_T8_REF = "0eae2f22e6cb2115c9002ab6daa0c12c9636ccb1"
+H3_AUDIO_T8_REF = "6063fafbd9c3b85c5ff40aef435ae11b2844e558"
 
-COMFY_REF = "b0f4b7b294ce482a2e071d9d762c133d38c7aa07"
+COMFY_REF = "b5cc8830279eae909a59de030af1e50761c36751"
 COMFY_KITCHEN_VERSION = "0.2.35"
 COMFY_FRONTEND_VERSION = "1.53.6"
 WSPROTO_VERSION = "1.2.0"
@@ -255,9 +259,13 @@ def selftest() -> None:
         "numpy==1.26.4",
         "scipy==1.15.3",
     )
-    assert KORNIA_VERSION == "0.8.1"
+    assert KORNIA_VERSION == "0.8.3"
+    assert KORNIA_RS_VERSION == "0.1.14"
+    assert LTX_HDR_REQUIREMENTS == (
+        "colour-science==0.4.6", "openimageio==3.0.12.0"
+    )
     assert KERNELS_VERSION == "0.16.0"
-    assert COMFY_REF == "b0f4b7b294ce482a2e071d9d762c133d38c7aa07"
+    assert COMFY_REF == "b5cc8830279eae909a59de030af1e50761c36751"
     assert COMFY_KITCHEN_VERSION == "0.2.35"
     assert COMFY_FRONTEND_VERSION == "1.53.6"
     assert WSPROTO_VERSION == "1.2.0"

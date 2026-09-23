@@ -80,7 +80,7 @@ Audio content participates in staging and conditioning cache identities.
 Without voice samples, the original FL2VA graph is used.
 
 Local setup and Modal pin T8 to
-`0eae2f22e6cb2115c9002ab6daa0c12c9636ccb1` (v1.77.0). Its base nodes require no additional
+`6063fafbd9c3b85c5ff40aef435ae11b2844e558` (v1.85.0 source). Its base nodes require no additional
 pip packages. Existing local installs refresh it on the next `run_h3.sh` startup;
 Modal deployments need rebuilding/redeploying. Missing nodes produce an explicit
 update-and-restart error. No new model weights are required for this option.
@@ -133,8 +133,8 @@ NumPy 1.26.4, and SciPy 1.15.3, and installs the CUDA 13 TensorRT Python
 builder/runtime used by the optional TensorRT VAE. The pinned ComfyUI stack
 supplies Comfy Kitchen attention through its matching `comfy-kitchen` dependency. SageAttention
 2.2.0 remains installed from the pinned prebuilt wheel for UI comparisons.
-SLA v1.5.1 is provided by the pinned PlagueKind node pack at
-`e787ecf355f7d045732e42b78647925e39b13fd7`. Selecting **SLA** exposes three
+SLA v1.5.6 is provided by the pinned PlagueKind node pack at
+`d58d006a4ea32c25c06499f2ff104f0852a045a6`. Selecting **SLA** exposes three
 quality presets: **Fast** uses validated 0.90 sparsity, **Balanced** uses the
 LoRA-distilled 0.85 sparsity, and **Quality** uses 0.85 sparsity plus a dense
 final sampling step. In a two-stage latent-upscale workflow the Quality dense
@@ -347,7 +347,9 @@ configurable; text-to-video does not load or apply image guides.
 The tab's **Official workflows and model downloads** section installs the upstream JSON
 templates under **Workflows → Browse → LTX 2.5** in the proxied ComfyUI editor.
 Modal re-synchronizes these image-local templates from the pinned LTXVideo node
-on every cold start before launching ComfyUI.
+on every cold start before launching ComfyUI. The LTXVideo HDR dependencies
+use NumPy 1.26-compatible Colour Science 0.4.6 and OpenImageIO 3.0.12;
+Kornia 0.8.3 works with the node's updated pyramid blending import.
 Its open **Official workflows and model downloads** panel shows live model
 availability and Hugging Face source/license links. It can download every model
 for the selected workflow or every missing model in the displayed inventory at
@@ -636,11 +638,13 @@ the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
 The deployment pins an immutable ComfyUI revision with its required
 frontend package 1.53.6, Comfy Kitchen 0.2.35 and upstream aimdo 0.5.5.
-The source also pins workflow templates 0.11.66 and embedded docs 0.5.12.
+The source also pins workflow templates 0.11.68 and embedded docs 0.5.12.
 This update includes native Qwen Image 2.1 generation/editing, corrected edit
 KV-cache placement, compiled Qwen transformer blocks, sparse attention, Comfy
 Compiler, optional H3 reference VAEs and DiffSynth/ModelScope H3 LoRA support.
 KJNodes 1.5.1 includes the matching H3 low-memory attention callback fix.
+This ComfyUI revision also fixes offloaded H3 VAE normalization and blends tiled
+VAE output against composited neighbours.
 
 TensorRT VAE is pinned to `4360e00867eca86ab61b3899216c0ec281367b46`.
 Upstream now owns optional encoder loading and single-frame encoding. Our

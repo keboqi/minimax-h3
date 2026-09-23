@@ -113,6 +113,8 @@ from h3_requirements import (  # noqa: E402
     GRADIO_VERSION,
     KERNELS_VERSION,
     KORNIA_VERSION,
+    KORNIA_RS_VERSION,
+    LTX_HDR_REQUIREMENTS,
     NUMPY_VERSION,
     SCIPY_VERSION,
     TORCH_INDEX,
@@ -506,13 +508,12 @@ def build(revision: str) -> None:
             "--no-deps",
             "-r",
             requirements,
+            *(LTX_HDR_REQUIREMENTS if requirements.parent.name == "ComfyUI-LTXVideo" else ()),
         )
-    # The pinned ComfyUI-LTXVideo revision imports a compatibility symbol that
-    # Kornia removed in 0.8.2. Its requirement is unbounded, so restore the
-    # known-compatible version after all custom-node requirements are applied.
+    # Restore the Kornia version checked with the pinned LTXVideo source.
     _run(
         "uv", "pip", "install", "--system", "--upgrade", "--no-deps",
-        f"kornia=={KORNIA_VERSION}",
+        f"kornia=={KORNIA_VERSION}", f"kornia-rs=={KORNIA_RS_VERSION}",
     )
     kornia_import = subprocess.run(
         [
@@ -520,7 +521,7 @@ def build(revision: str) -> None:
             "-c",
             (
                 "import kornia; "
-                "from kornia.geometry.transform.pyramid import pad; "
+                "from kornia.geometry.transform.pyramid import build_pyramid; "
                 "print(kornia.__version__)"
             ),
         ],

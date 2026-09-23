@@ -54,6 +54,8 @@ from h3_requirements import (
     GRADIO_VERSION,
     KERNELS_VERSION,
     KORNIA_VERSION,
+    KORNIA_RS_VERSION,
+    LTX_HDR_REQUIREMENTS,
     NUMPY_VERSION,
     SCIPY_VERSION,
     TORCH_INDEX,
@@ -699,7 +701,10 @@ def sync_external_nodes(
         H3_AUDIO_T8_REPO,
         comfy / "custom_nodes" / "minimax-h3-audio-T8",
         ref=H3_AUDIO_T8_REF,
-        required_paths=("__init__.py", "nodes.py", "conditioning.py", "core.py"),
+        required_paths=(
+            "__init__.py", "h3_t8/nodes.py", "h3_t8/conditioning.py",
+            "h3_t8/core.py",
+        ),
     )
 
     sol = comfy / "custom_nodes" / "ComfyUI_sol-attn_Blackwell"
@@ -799,6 +804,8 @@ def sync_external_nodes(
             if directory_name == "comfyui_controlnet_aux":
                 if install_requirements:
                     install_controlnet_aux_requirements(requirements)
+            elif directory_name == "ComfyUI-LTXVideo":
+                uv_pip("-r", str(requirements), *LTX_HDR_REQUIREMENTS, no_deps=True)
             else:
                 uv_pip("-r", str(requirements), no_deps=True)
     ensure_controlnet_aux_runtime_dependencies(
@@ -807,9 +814,12 @@ def sync_external_nodes(
     # --no-deps deliberately protects the pinned CUDA/Torch stack, so install
     # the one dependency expressed only through transformers' `timm` extra.
     uv_pip("timm>=0.9.16,<2", no_deps=True)
-    # ComfyUI-LTXVideo imports ``pad`` from the pyramid module; that compatibility
-    # export was removed after Kornia 0.8.1.
-    uv_pip(f"kornia=={KORNIA_VERSION}", no_deps=True)
+    # Keep Kornia on the version checked with the current LTXVideo source.
+    uv_pip(
+        f"kornia=={KORNIA_VERSION}",
+        f"kornia-rs=={KORNIA_RS_VERSION}",
+        no_deps=True,
+    )
 
     workflow_source = installed["ComfyUI-LTXVideo"] / "example_workflows" / "2.5"
     workflow_destination = comfy / "user" / "default" / "workflows" / "LTX 2.5"
