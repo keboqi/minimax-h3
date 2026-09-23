@@ -401,8 +401,8 @@ and a half million spatiotemporal positions bypasses the compiler; this isolates
 malloc-graph incompatibility with SLA's high-resolution Triton specialization
 without slowing ordinary generation or tiled refinement.
 
-The **MiniMax H3** tab includes local, Gemini, and Lightning AI prompt writers.
-The local writer
+The **MiniMax H3** tab includes local, Gemini, and Lightning AI prompt writers,
+with Lightning AI selected by default. The local writer
 uses `lightx2v/MiniMax-H3-Prompt-Rewriter-LoRA-8B` with
 `Qwen/Qwen3-VL-8B-Instruct-FP8` by default; the BF16
 `Qwen/Qwen3-VL-8B-Instruct` base is selectable. It supports the four tasks used
@@ -470,19 +470,21 @@ slice. This keeps official-versus-500K comparisons on the same denoising
 trajectory when both request one image. Use the official VAE for multi-image
 results.
 
-The **LTX-2.5** tab and **MiniMax Music 3** tab include their own Gemini prompt
-writers. They create or enhance prompts from text plus optional keyframe or
-visual-reference images, using `prompt_ltx25.txt` and `prompt_music3.txt`.
-Their UI/API operations are exposed as `/enhance_ltx25_prompt` and
-`/enhance_music3_prompt`.
+The **Qwen Image 2.1**, **LTX-2.5**, **MiniMax Music 3**, and **YuE2** tabs
+also offer Lightning AI and Gemini prompt writers, with Lightning AI selected
+by default. Lightning AI uses the same fixed model, server environment key,
+and temporary key behavior as the H3 writer. Gemini remains selectable and
+uses `gemini-3.5-flash-lite` by default. Each writer uses its own bundled
+system prompt: `prompt_qwen_image21.txt`, `prompt_ltx25.txt`,
+`prompt_music3.txt`, or `prompt_yue2.txt`.
 
-The **Qwen Image 2.1** tab also has a Gemini prompt writer that understands its
-text-to-image and image-edit modes. It refers to a single edit input naturally
-and uses ordered `<image1>`, `<image2>`, ... tags for multi-image edits. The
-**YuE2** writer jointly creates or enhances
-the production style and sectioned lyrics. These writers share the same Gemini
-model list and default to `gemini-3.5-flash-lite`; their endpoints are
-`/enhance_qwen_image21_prompt` and `/enhance_yue2_prompt`.
+LTX-2.5 and Music 3 can use optional keyframe or visual-reference images.
+Qwen Image 2.1 understands text-to-image and image-edit modes: it refers to a
+single edit input naturally and uses ordered `<image1>`, `<image2>`, ... tags
+for multi-image edits. YuE2 jointly creates or enhances the production style
+and sectioned lyrics. Their UI/API operations are `/enhance_ltx25_prompt`,
+`/enhance_music3_prompt`, `/enhance_qwen_image21_prompt`, and
+`/enhance_yue2_prompt`, respectively.
 
 ### Native H3 latent upscale
 

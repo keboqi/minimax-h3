@@ -7,6 +7,8 @@ from typing import Any, Mapping, Sequence
 
 import gradio as gr
 
+from .prompt_writer_controls import build_remote_prompt_writer_controls
+
 
 @dataclass(frozen=True)
 class MusicView:
@@ -14,6 +16,8 @@ class MusicView:
     lyrics: gr.Textbox
     prompt_model: gr.Dropdown
     api_key: gr.Textbox
+    prompt_backend: gr.Radio
+    lightning_api_key: gr.Textbox
     reference_images: tuple[gr.Image, gr.Image, gr.Image]
     enhance: gr.Button
     enhance_status: gr.Textbox
@@ -39,6 +43,8 @@ class QwenImage21View:
     reference_images: gr.File
     prompt_model: gr.Dropdown
     api_key: gr.Textbox
+    prompt_backend: gr.Radio
+    lightning_api_key: gr.Textbox
     enhance: gr.Button
     enhance_status: gr.Textbox
     output: gr.Image
@@ -118,17 +124,13 @@ def build_qwen_image21_view(
                     gr.Markdown(
                         "Create or enhance the generation/edit prompt from text and the uploaded reference images."
                     )
-                    with gr.Row():
-                        prompt_model = gr.Dropdown(
-                            choices=list(prompt_models),
-                            value=default_prompt_model,
-                            label="Gemini model",
-                        )
-                        api_key = gr.Textbox(
-                            label="Temporary Gemini API key",
-                            type="password",
-                            placeholder="Uses GEMINI_API_KEY when blank",
-                        )
+                    writer = build_remote_prompt_writer_controls(
+                        prompt_models, default_prompt_model
+                    )
+                    prompt_model = writer.model
+                    api_key = writer.gemini_api_key
+                    prompt_backend = writer.backend
+                    lightning_api_key = writer.lightning_api_key
                     enhance = gr.Button("Generate / enhance Qwen prompt")
                     enhance_status = gr.Textbox(
                         label="Prompt writer status", lines=2, interactive=False
@@ -294,6 +296,8 @@ def build_qwen_image21_view(
         reference_images,
         prompt_model,
         api_key,
+        prompt_backend,
+        lightning_api_key,
         enhance,
         enhance_status,
         output,
@@ -327,6 +331,8 @@ class YuE2View:
     abc: gr.Textbox
     prompt_model: gr.Dropdown
     api_key: gr.Textbox
+    prompt_backend: gr.Radio
+    lightning_api_key: gr.Textbox
     enhance: gr.Button
     enhance_status: gr.Textbox
     mode: gr.Dropdown
@@ -370,17 +376,13 @@ def build_yue2_view(
                     gr.Markdown(
                         "Create or enhance the style prompt and sectioned lyrics for YuE2."
                     )
-                    with gr.Row():
-                        prompt_model = gr.Dropdown(
-                            choices=list(prompt_models),
-                            value=default_prompt_model,
-                            label="Gemini model",
-                        )
-                        api_key = gr.Textbox(
-                            label="Temporary Gemini API key",
-                            type="password",
-                            placeholder="Uses GEMINI_API_KEY when blank",
-                        )
+                    writer = build_remote_prompt_writer_controls(
+                        prompt_models, default_prompt_model
+                    )
+                    prompt_model = writer.model
+                    api_key = writer.gemini_api_key
+                    prompt_backend = writer.backend
+                    lightning_api_key = writer.lightning_api_key
                     enhance = gr.Button("Generate / enhance YuE2 prompt")
                     enhance_status = gr.Textbox(
                         label="Prompt writer status", lines=2, interactive=False
@@ -416,7 +418,7 @@ def build_yue2_view(
                         abc_top_k = gr.Slider(1, 32768, value=defaults["abc_top_k"], step=1, label="ABC top-k")
                         abc_repetition_penalty = gr.Slider(0.01, 10, value=defaults["abc_repetition_penalty"], step=0.005, label="ABC repetition penalty")
                         abc_penalty_window = gr.Slider(1, 20000, value=defaults["abc_penalty_window"], step=1, label="ABC penalty window")
-    return YuE2View(style, lyrics, abc, prompt_model, api_key, enhance, enhance_status, mode, output, run, stop, status, model, duration, seed, steps, cfg, temperature, top_p, top_k, repetition_penalty, max_abc_tokens, abc_temperature, abc_top_p, abc_top_k, abc_repetition_penalty, abc_penalty_window, tiled)
+    return YuE2View(style, lyrics, abc, prompt_model, api_key, prompt_backend, lightning_api_key, enhance, enhance_status, mode, output, run, stop, status, model, duration, seed, steps, cfg, temperature, top_p, top_k, repetition_penalty, max_abc_tokens, abc_temperature, abc_top_p, abc_top_k, abc_repetition_penalty, abc_penalty_window, tiled)
 
 
 def build_music_view(
@@ -457,21 +459,17 @@ def build_music_view(
                     ),
                     info="For an instrumental, repeat [Instrumental] sections to guide length.",
                 )
-                with gr.Accordion("Gemini Music 3 prompt writer", open=False):
+                with gr.Accordion("Music 3 prompt writer", open=False):
                     gr.Markdown(
                         "Create or enhance the caption from text, lyrics, and optional visual reference images."
                     )
-                    with gr.Row():
-                        prompt_model = gr.Dropdown(
-                            choices=list(prompt_models),
-                            value=default_prompt_model,
-                            label="Gemini model",
-                        )
-                        api_key = gr.Textbox(
-                            label="Temporary Gemini API key",
-                            type="password",
-                            placeholder="Uses GEMINI_API_KEY when blank",
-                        )
+                    writer = build_remote_prompt_writer_controls(
+                        prompt_models, default_prompt_model
+                    )
+                    prompt_model = writer.model
+                    api_key = writer.gemini_api_key
+                    prompt_backend = writer.backend
+                    lightning_api_key = writer.lightning_api_key
                     with gr.Row():
                         references = tuple(
                             gr.Image(type="filepath", label=f"Reference image {index}")
@@ -551,6 +549,8 @@ def build_music_view(
         lyrics,
         prompt_model,
         api_key,
+        prompt_backend,
+        lightning_api_key,
         references,
         enhance,
         enhance_status,

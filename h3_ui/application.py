@@ -536,6 +536,8 @@ def enhance_music3_prompt(
     ref_image_1: Any,
     ref_image_2: Any,
     ref_image_3: Any,
+    backend: str = "Lightning AI",
+    lightning_api_key: str = "",
 ) -> tuple[str, str, str]:
     return prompt_service.enhance_music3_prompt(
         prompt,
@@ -545,6 +547,8 @@ def enhance_music3_prompt(
         ref_image_1,
         ref_image_2,
         ref_image_3,
+        backend=backend,
+        lightning_api_key=lightning_api_key,
         runtime=_runtime_config(),
     )
 
@@ -560,6 +564,8 @@ def enhance_ltx25_prompt(
     duration: float,
     width: int,
     height: int,
+    backend: str = "Lightning AI",
+    lightning_api_key: str = "",
 ) -> tuple[str, str]:
     return prompt_service.enhance_ltx25_prompt(
         prompt,
@@ -572,6 +578,8 @@ def enhance_ltx25_prompt(
         duration,
         width,
         height,
+        backend=backend,
+        lightning_api_key=lightning_api_key,
         runtime=_runtime_config(),
     )
 
@@ -584,6 +592,8 @@ def enhance_qwen_image21_prompt(
     reference_images: Any,
     width: int,
     height: int,
+    backend: str = "Lightning AI",
+    lightning_api_key: str = "",
 ) -> tuple[str, str]:
     return prompt_service.enhance_qwen_image21_prompt(
         prompt,
@@ -593,6 +603,8 @@ def enhance_qwen_image21_prompt(
         reference_images,
         width,
         height,
+        backend=backend,
+        lightning_api_key=lightning_api_key,
         runtime=_runtime_config(),
     )
 
@@ -604,6 +616,8 @@ def enhance_yue2_prompt(
     lyrics: str,
     mode: str,
     duration: float,
+    backend: str = "Lightning AI",
+    lightning_api_key: str = "",
 ) -> tuple[str, str, str]:
     return prompt_service.enhance_yue2_prompt(
         style,
@@ -612,6 +626,8 @@ def enhance_yue2_prompt(
         lyrics,
         mode,
         duration,
+        backend=backend,
+        lightning_api_key=lightning_api_key,
         runtime=_runtime_config(),
     )
 

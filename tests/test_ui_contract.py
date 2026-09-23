@@ -211,6 +211,34 @@ class UiContractTests(unittest.TestCase):
         for model in models:
             self.assertEqual(model["props"]["value"], "gemini-3.5-flash-lite")
 
+    def test_all_prompt_writers_default_to_lightning_and_bind_credentials(self) -> None:
+        writers = [
+            component
+            for component in self.config["components"]
+            if component.get("props", {}).get("label") == "Prompt writer"
+        ]
+        self.assertEqual(len(writers), 5)
+        for writer in writers:
+            self.assertEqual(writer["props"]["value"], "Lightning AI")
+
+        endpoints = {
+            dependency.get("api_name"): dependency
+            for dependency in self.config["dependencies"]
+        }
+        for endpoint in (
+            "enhance_qwen_image21_prompt",
+            "enhance_ltx25_prompt",
+            "enhance_music3_prompt",
+            "enhance_yue2_prompt",
+        ):
+            inputs = endpoints[endpoint]["inputs"]
+            self.assertEqual(
+                [self.components[id]["props"]["label"] for id in inputs[-2:]],
+                ["Prompt writer", "Temporary Lightning API key"],
+            )
+            parameters = self.demo.get_api_info()["named_endpoints"][f"/{endpoint}"]["parameters"]
+            self.assertEqual(parameters[-2]["parameter_default"], "Lightning AI")
+
     def test_qwen_and_yue2_prompt_writer_endpoints_are_bound(self) -> None:
         endpoints = {
             dependency.get("api_name"): dependency

@@ -52,7 +52,7 @@ def build_prompt_section(
             value=services.DEFAULT_PROMPT_WRITER_BACKEND,
             label="Prompt writer",
         )
-        with gr.Group(visible=False) as local_prompt_writer_group:
+        with gr.Group(visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "Local MiniMax-H3 8B") as local_prompt_writer_group:
             local_prompt_base_model = gr.Dropdown(
                 choices=list(services.LOCAL_PROMPT_BASE_MODELS),
                 value=services.DEFAULT_LOCAL_PROMPT_BASE_MODEL,
@@ -87,7 +87,7 @@ def build_prompt_section(
                         label="Top-p (sampling)",
                     )
                 local_prompt_seed = gr.Number(value=42, precision=0, label="Seed")
-        with gr.Group(visible=True) as gemini_prompt_writer_group:
+        with gr.Group(visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "Gemini") as gemini_prompt_writer_group:
             gr.Markdown(
                 "Uses the active inputs with `prompt.txt`. Set "
                 "`GEMINI_API_KEY` on the server or enter a temporary key; "
@@ -104,7 +104,7 @@ def build_prompt_section(
                     type="password",
                     placeholder="Uses GEMINI_API_KEY when blank",
                 )
-        with gr.Group(visible=False) as lightning_prompt_writer_group:
+        with gr.Group(visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "Lightning AI") as lightning_prompt_writer_group:
             gr.Markdown(
                 f"Uses `{services.LIGHTNING_PROMPT_MODEL}` with the active text "
                 "and images plus `prompt.txt`. Video and audio references "

@@ -217,8 +217,21 @@ def _enhance_prompt_from_media(
     system_path: Path,
     media_values: Iterable[tuple[str, Any]],
     context: str,
+    backend: str = "Lightning AI",
+    lightning_api_key: str = "",
 ) -> tuple[str, str]:
     """Generate a model-specific prompt from text and optional image inputs."""
+    if backend == "Lightning AI":
+        return _enhance_prompt_from_media_lightning(
+            prompt=prompt,
+            temporary_api_key=lightning_api_key,
+            target=target,
+            system_path=system_path,
+            media_values=media_values,
+            context=context,
+        )
+    if backend != "Gemini":
+        return str(prompt or ""), f"Prompt enhancement failed: unsupported backend {backend!r}."
     try:
         if model not in GEMINI_PROMPT_MODELS:
             raise H3Error(f"Unsupported Gemini prompt model: {model}")
@@ -318,6 +331,81 @@ def _enhance_prompt_from_media(
         return str(prompt or ""), f"Prompt enhancement failed: {exc}"
 
 
+def _enhance_prompt_from_media_lightning(
+    *,
+    prompt: str,
+    temporary_api_key: str,
+    target: str,
+    system_path: Path,
+    media_values: Iterable[tuple[str, Any]],
+    context: str,
+) -> tuple[str, str]:
+    """Use the H3 Lightning endpoint with a target-specific prompt and images."""
+    from openai import OpenAI, OpenAIError
+
+    try:
+        key = _lightning_api_key(temporary_api_key)
+        if not system_path.is_file():
+            raise H3Error(f"Missing {target} system prompt: {system_path}")
+        system_prompt = system_path.read_text(encoding="utf-8").strip()
+        if not system_prompt:
+            raise H3Error(f"{target} system prompt is empty.")
+        media: list[tuple[str, Path]] = []
+        for label, value in media_values:
+            if value is not None:
+                path = _uploaded_media_path(value)
+                if path is not None:
+                    if not _gemini_mime_type(path).startswith("image/"):
+                        raise H3Error("Lightning AI prompt enhancement supports images only.")
+                    media.append((label, path))
+        rough_prompt = str(prompt or "").strip()
+        if not rough_prompt and not media:
+            raise H3Error("Enter a prompt or upload an image before enhancing.")
+
+        content: list[dict[str, Any]] = [{
+            "type": "text",
+            "text": (
+                f"Create the final {target} prompt from the following user input.\n"
+                f"{context}\nUser text:\n"
+                f"{rough_prompt or '(No text supplied; infer only from the images.)'}"
+            ),
+        }]
+        for label, path in media:
+            mime_type = _gemini_mime_type(path)
+            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+            content.extend((
+                {"type": "text", "text": f"The next uploaded image is {label}."},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{encoded}",
+                        "detail": "high",
+                    },
+                },
+            ))
+        client = OpenAI(base_url=LIGHTNING_API_ROOT, api_key=key, timeout=600.0)
+        completion = client.chat.completions.create(
+            model=LIGHTNING_PROMPT_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": content},
+            ],
+        )
+        enhanced = str(completion.choices[0].message.content or "").strip()
+        if enhanced.startswith("```") and enhanced.endswith("```"):
+            enhanced = re.sub(r"^```[^\n]*\n?", "", enhanced)
+            enhanced = re.sub(r"\n?```$", "", enhanced).strip()
+        if not enhanced:
+            raise H3Error("Lightning AI returned no enhanced prompt.")
+        return (
+            enhanced,
+            f"Enhanced {target} prompt with {LIGHTNING_PROMPT_MODEL} "
+            f"using {len(media)} image(s).",
+        )
+    except (H3Error, OpenAIError, OSError, ValueError, IndexError) as exc:
+        return str(prompt or ""), f"Prompt enhancement failed: {exc}"
+
+
 def enhance_music3_prompt(
     prompt: str,
     model: str,
@@ -326,6 +414,8 @@ def enhance_music3_prompt(
     ref_image_1: Any,
     ref_image_2: Any,
     ref_image_3: Any,
+    backend: str = "Lightning AI",
+    lightning_api_key: str = "",
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str, str]:
@@ -335,6 +425,8 @@ def enhance_music3_prompt(
         temporary_api_key=temporary_api_key,
         target="MiniMax Music 3",
         system_path=runtime.prompt_systems["MiniMax Music 3"],
+        backend=backend,
+        lightning_api_key=lightning_api_key,
         media_values=(
             ("Music reference image 1", ref_image_1),
             ("Music reference image 2", ref_image_2),
@@ -366,6 +458,8 @@ def enhance_ltx25_prompt(
     duration: float,
     width: int,
     height: int,
+    backend: str = "Lightning AI",
+    lightning_api_key: str = "",
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str]:
@@ -375,6 +469,8 @@ def enhance_ltx25_prompt(
         temporary_api_key=temporary_api_key,
         target="LTX-2.5",
         system_path=runtime.prompt_systems["LTX-2.5"],
+        backend=backend,
+        lightning_api_key=lightning_api_key,
         media_values=(
             ("Start keyframe", start_image),
             ("Middle keyframe", middle_image),
@@ -392,6 +488,8 @@ def enhance_qwen_image21_prompt(
     reference_images: Any,
     width: int,
     height: int,
+    backend: str = "Lightning AI",
+    lightning_api_key: str = "",
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str]:
@@ -421,6 +519,8 @@ def enhance_qwen_image21_prompt(
         temporary_api_key=temporary_api_key,
         target="Qwen Image 2.1",
         system_path=runtime.prompt_systems["Qwen Image 2.1"],
+        backend=backend,
+        lightning_api_key=lightning_api_key,
         media_values=media_values,
         context=(
             f"Mode: {mode}\nOutput: {int(width)}x{int(height)}\n"
@@ -436,6 +536,8 @@ def enhance_yue2_prompt(
     lyrics: str,
     mode: str,
     duration: float,
+    backend: str = "Lightning AI",
+    lightning_api_key: str = "",
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str, str]:
@@ -450,6 +552,8 @@ def enhance_yue2_prompt(
         temporary_api_key=temporary_api_key,
         target="YuE2",
         system_path=runtime.prompt_systems["YuE2"],
+        backend=backend,
+        lightning_api_key=lightning_api_key,
         media_values=(),
         context=(
             f"Score mode: {mode}\nMaximum duration: {float(duration):.0f} seconds\n"

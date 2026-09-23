@@ -7,6 +7,8 @@ from typing import Any, Mapping, Sequence
 
 import gradio as gr
 
+from .prompt_writer_controls import build_remote_prompt_writer_controls
+
 
 @dataclass(frozen=True)
 class LtxView:
@@ -15,6 +17,8 @@ class LtxView:
     prompt: gr.Textbox
     prompt_model: gr.Dropdown
     api_key: gr.Textbox
+    prompt_backend: gr.Radio
+    lightning_api_key: gr.Textbox
     enhance: gr.Button
     enhance_status: gr.Textbox
     negative: gr.Textbox
@@ -87,19 +91,15 @@ def build_ltx_view(
                         "camera movement, lighting, dialogue, sound effects, and music."
                     ),
                 )
-                with gr.Accordion("Gemini LTX-2.5 prompt writer", open=False):
+                with gr.Accordion("LTX-2.5 prompt writer", open=False):
                     gr.Markdown("Create or enhance the prompt from text and keyframes.")
-                    with gr.Row():
-                        prompt_model = gr.Dropdown(
-                            choices=list(prompt_models),
-                            value=default_prompt_model,
-                            label="Gemini model",
-                        )
-                        api_key = gr.Textbox(
-                            label="Temporary Gemini API key",
-                            type="password",
-                            placeholder="Uses GEMINI_API_KEY when blank",
-                        )
+                    writer = build_remote_prompt_writer_controls(
+                        prompt_models, default_prompt_model
+                    )
+                    prompt_model = writer.model
+                    api_key = writer.gemini_api_key
+                    prompt_backend = writer.backend
+                    lightning_api_key = writer.lightning_api_key
                     enhance = gr.Button("Generate / enhance LTX-2.5 prompt")
                     enhance_status = gr.Textbox(
                         label="Prompt writer status", lines=2, interactive=False
@@ -218,6 +218,8 @@ def build_ltx_view(
         prompt,
         prompt_model,
         api_key,
+        prompt_backend,
+        lightning_api_key,
         enhance,
         enhance_status,
         negative,
