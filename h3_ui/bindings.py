@@ -226,12 +226,27 @@ def bind_music_view(
     )
 
 
+def qwen_turbo_defaults(variant: str):
+    """Set trained defaults while leaving Qwen's controls editable."""
+    if variant == "Viggle Turbo v0.2":
+        return 5, 1.0, "euler", "Off"
+    return 40, 1.0, "euler", "Spectrum (Quality)"
+
+
 def bind_qwen_image21_view(
     view: QwenImage21View,
     *,
     enhance_prompt: Callable[..., Any],
     generate: Callable[..., Any],
 ) -> Any:
+    view.turbo_variant.change(
+        qwen_turbo_defaults,
+        inputs=view.turbo_variant,
+        outputs=[view.steps, view.cfg, view.sampler, view.accelerator],
+        queue=False,
+        show_progress="hidden",
+        api_name=False,
+    )
     for preset in (
         view.square_resolution,
         view.landscape_resolution,
@@ -286,6 +301,7 @@ def bind_qwen_image21_view(
             view.cache_dtype,
             view.attention_backend,
             view.accelerator,
+            view.turbo_variant,
         ],
         outputs=[view.output, view.status],
         show_progress="minimal",

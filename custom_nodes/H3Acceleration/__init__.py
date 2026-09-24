@@ -1684,7 +1684,46 @@ class H3SemanticBridge:
         return (result,)
 
 
+class H3Qwen21TurboSigmas:
+    """Viggle v0.2 raw nodes with Qwen Image 2.1's dynamic time shift.
+
+    Comfy's Qwen model has a fixed shift at load time; the five-step adapter
+    needs the resolution-dependent shift used by its training pipeline.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "latent_image": ("LATENT",),
+            "steps": ("INT", {"default": 5, "min": 1, "max": 100}),
+        }}
+
+    RETURN_TYPES = ("SIGMAS",)
+    FUNCTION = "calculate"
+    CATEGORY = "sampling/custom_sampling/schedulers"
+
+    def calculate(self, latent_image, steps):
+        samples = latent_image["samples"]
+        # Qwen's packed image tokens are two latent pixels wide and high.
+        tokens = (int(samples.shape[-2]) // 2) * (int(samples.shape[-1]) // 2)
+        mu = 0.5 + 0.4 * (tokens - 256) / (8192 - 256)
+        count = int(steps)
+        raw = (
+            (1.0, 0.875, 0.75, 0.5, 0.25)
+            if count == 5
+            else tuple(1.0 - index / count for index in range(count))
+        )
+        exponent = math.exp(mu)
+        shifted = [
+            exponent / (exponent + (1.0 / value - 1.0))
+            for value in raw
+        ]
+        # Viggle's scheduler has shift_terminal=null; no terminal stretch.
+        return (torch.tensor([*shifted, 0.0], dtype=torch.float32),)
+
+
 NODE_CLASS_MAPPINGS = {
+    "H3Qwen21TurboSigmas": H3Qwen21TurboSigmas,
     "H3SemanticBridge": H3SemanticBridge,
     "H3FirstBlockCache": H3FirstBlockCache,
     "H3LightX2VBypassLoRA": H3LightX2VBypassLoRA,
@@ -1700,6 +1739,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "H3Qwen21TurboSigmas": "Qwen Image 2.1 Viggle Turbo Sigmas",
     "H3SemanticBridge": "MiniMax H3 Semantic Bridge (experimental)",
     "H3FirstBlockCache": "MiniMax H3 FirstBlockCache",
     "H3LightX2VBypassLoRA": "MiniMax H3 LightX2V Bypass LoRA",

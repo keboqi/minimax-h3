@@ -376,6 +376,17 @@ images and their settings are saved with the other application outputs. The
 official 40-step Euler/simple path is the default, native ~4 MP aspect-ratio
 sizes are accepted, and Comfy Kitchen INT8 attention plus Spectrum
 hidden-state forecasting are available as experimental opt-in speed settings.
+
+The Qwen tab also offers **Viggle Turbo v0.2** as an optional ComfyUI LoRA mode.
+Selecting it downloads the v0.2 rank-256 adapter on first use and sets five
+steps, Euler, CFG 1, and accelerator Off. The steps slider remains editable;
+other counts use evenly spaced Qwen sigma nodes and are experimental. At the
+recommended five steps, a bundled ComfyUI node applies Qwen's resolution-based
+time shift to Viggle's published `[1.0, 0.875, 0.75, 0.5, 0.25]` nodes without
+a terminal stretch. Turbo editing accepts up to three references. The base mode
+retains its existing controls and up to ten references. Viggle Turbo is a
+preview released under the Qwen Research License for non-commercial research
+or evaluation; commercial use requires a separate licence.
 The **YuE2** tab uses ComfyUI's native YuE2 nodes (ComfyUI v0.36.0 or newer).
 Its INT8 ConvRot checkpoint (about 4 GB) is selected by default; the BF16
 checkpoint is an optional alternative. The selected checkpoint downloads on

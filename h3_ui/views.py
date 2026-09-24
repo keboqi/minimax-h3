@@ -69,6 +69,7 @@ class QwenImage21View:
     cache_dtype: gr.Dropdown
     attention_backend: gr.Dropdown
     accelerator: gr.Dropdown
+    turbo_variant: gr.Dropdown
 
 
 def build_qwen_image21_view(
@@ -116,7 +117,7 @@ def build_qwen_image21_view(
                     type="filepath",
                 )
                 gr.Markdown(
-                    "Image edit supports up to 10 files. **image1** is the edit "
+                    "Base editing supports up to 10 files; Viggle Turbo supports up to 3. **image1** is the edit "
                     "target; later images are references. Numbered tags are required "
                     "only when multiple files are supplied."
                 )
@@ -147,6 +148,16 @@ def build_qwen_image21_view(
                     choices=list(model_choices),
                     value=defaults["model"],
                     label="Diffusion model",
+                )
+                turbo_variant = gr.Dropdown(
+                    choices=["Off", "Viggle Turbo v0.2"],
+                    value="Off",
+                    label="Turbo mode",
+                    info=(
+                        "Viggle v0.2 selects 5 steps, Euler and CFG 1. "
+                        "Steps remain editable; other counts are experimental. "
+                        "Research and evaluation use only."
+                    ),
                 )
                 text_encoder = gr.Dropdown(
                     choices=list(text_encoder_choices),
@@ -322,6 +333,7 @@ def build_qwen_image21_view(
         cache_dtype,
         attention_backend,
         accelerator,
+        turbo_variant,
     )
 
 @dataclass(frozen=True)

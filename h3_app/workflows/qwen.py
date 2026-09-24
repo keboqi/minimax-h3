@@ -21,6 +21,7 @@ def required_qwen_image21_nodes(
     *,
     editing: bool,
     use_spectrum: bool = False,
+    turbo: bool = False,
 ) -> set[str]:
     nodes = {
         "UNETLoader",
@@ -37,6 +38,15 @@ def required_qwen_image21_nodes(
         nodes |= {"LoadImage", "QwenImage21Cache"}
     if use_spectrum:
         nodes.add("QwenSpectrumModelPatcher")
+    if turbo:
+        nodes |= {
+            "LoraLoaderModelOnly",
+            "H3Qwen21TurboSigmas",
+            "RandomNoise",
+            "CFGGuider",
+            "KSamplerSelect",
+            "SamplerCustomAdvanced",
+        }
     return nodes
 
 
@@ -62,6 +72,7 @@ def build_qwen_image21_graph(
     accelerator: str,
     output_stamp: str,
     output_nonce: str,
+    turbo_variant: str = "Off",
 ) -> dict[str, Any]:
     """Build the official native Qwen Image 2.1 graph.
 
@@ -80,6 +91,17 @@ def build_qwen_image21_graph(
         unet_name=MODEL_SPECS[model_key].local_name,
         weight_dtype="default",
     )
+    turbo = turbo_variant == "Viggle Turbo v0.2"
+    if turbo:
+        lora = graph.add(
+            "LoraLoaderModelOnly",
+            model=Graph.out(model),
+            lora_name=MODEL_SPECS["qwen_image21_viggle_v02_lora"].local_name,
+            strength_model=1.0,
+        )
+        model = lora
+    elif turbo_variant != "Off":
+        raise ValueError(f"Unknown Qwen Image 2.1 Turbo variant: {turbo_variant}")
     clip = graph.add(
         "CLIPLoader",
         clip_name=MODEL_SPECS[encoder_key].local_name,
@@ -146,19 +168,41 @@ def build_qwen_image21_graph(
         )
         sampled_model = Graph.out(spectrum)
 
-    sampled = graph.add(
-        "KSampler",
-        model=sampled_model,
-        positive=Graph.out(conditioning),
-        negative=Graph.out(conditioning, 1),
-        latent_image=latent,
-        seed=int(seed),
-        steps=int(steps),
-        cfg=float(cfg),
-        sampler_name=str(sampler_name),
-        scheduler=str(scheduler),
-        denoise=1.0,
-    )
+    if turbo:
+        noise = graph.add("RandomNoise", noise_seed=int(seed))
+        guider = graph.add(
+            "CFGGuider",
+            model=sampled_model,
+            positive=Graph.out(conditioning),
+            negative=Graph.out(conditioning, 1),
+            cfg=float(cfg),
+        )
+        sampler = graph.add("KSamplerSelect", sampler_name=str(sampler_name))
+        sigmas = graph.add(
+            "H3Qwen21TurboSigmas", latent_image=latent, steps=int(steps)
+        )
+        sampled = graph.add(
+            "SamplerCustomAdvanced",
+            noise=Graph.out(noise),
+            guider=Graph.out(guider),
+            sampler=Graph.out(sampler),
+            sigmas=Graph.out(sigmas),
+            latent_image=latent,
+        )
+    else:
+        sampled = graph.add(
+            "KSampler",
+            model=sampled_model,
+            positive=Graph.out(conditioning),
+            negative=Graph.out(conditioning, 1),
+            latent_image=latent,
+            seed=int(seed),
+            steps=int(steps),
+            cfg=float(cfg),
+            sampler_name=str(sampler_name),
+            scheduler=str(scheduler),
+            denoise=1.0,
+        )
     decoded = graph.add(
         "VAEDecode",
         samples=Graph.out(sampled),

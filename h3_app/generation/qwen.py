@@ -63,8 +63,15 @@ def generate_qwen_image21(
                 "Reference images are only used in Image edit mode. "
                 "Switch the mode or remove the uploaded images."
             )
-        if len(references) > 10:
-            raise H3Error("Qwen Image 2.1 supports at most 10 reference images.")
+        turbo = request.turbo_variant == "Viggle Turbo v0.2"
+        if request.turbo_variant not in {"Off", "Viggle Turbo v0.2"}:
+            raise H3Error(f"Unknown Qwen Turbo variant: {request.turbo_variant}")
+        reference_limit = 3 if turbo else 10
+        if len(references) > reference_limit:
+            raise H3Error(
+                f"Qwen Image 2.1 {request.turbo_variant} supports at most "
+                f"{reference_limit} reference images."
+            )
 
         width = _image_dimension(request.width, "Width")
         height = _image_dimension(request.height, "Height")
@@ -104,6 +111,8 @@ def generate_qwen_image21(
                 "Unsupported Qwen accelerator. Choose Off, Spectrum (Quality), "
                 "or Spectrum (Preview)."
             )
+        if turbo and accelerator.lower() != "off":
+            raise H3Error("Spectrum acceleration is unavailable with Viggle Turbo.")
         actual_seed = (
             random.randrange(0, 2**63 - 1)
             if int(request.seed) < 0
@@ -111,7 +120,7 @@ def generate_qwen_image21(
         )
 
         missing_files = services.models.missing_qwen_image21_model_names(
-            request.model_choice, request.text_encoder_choice
+            request.model_choice, request.text_encoder_choice, request.turbo_variant
         )
         if missing_files:
             yield GenerationUpdate(
@@ -123,13 +132,14 @@ def generate_qwen_image21(
                 ),
             )
         services.models.ensure_qwen_image21_models(
-            request.model_choice, request.text_encoder_choice
+            request.model_choice, request.text_encoder_choice, request.turbo_variant
         )
 
         available = set(services.execution.object_info())
         missing_nodes = required_qwen_image21_nodes(
             editing=editing,
             use_spectrum=accelerator.lower() != "off",
+            turbo=turbo,
         ) - available
         if missing_nodes:
             raise H3Error(
@@ -157,6 +167,7 @@ def generate_qwen_image21(
             accelerator=accelerator,
             output_stamp=str(int(time.time())),
             output_nonce=uuid.uuid4().hex[:8],
+            turbo_variant=request.turbo_variant,
         )
         client_id = str(uuid.uuid4())
         prompt_id = services.execution.submit_prompt(graph, client_id)
@@ -166,7 +177,8 @@ def generate_qwen_image21(
             None,
             f"Queued Qwen Image 2.1 job `{prompt_id}` · seed {actual_seed} · "
             f"{'edit' if editing else f'{width}×{height} generation'} · "
-            f"{request.model_choice} · accelerator {accelerator}",
+            f"{request.model_choice} · {request.turbo_variant} · "
+            f"{steps} steps · accelerator {accelerator}",
         )
         for stage, completed_nodes, total_nodes, step, step_total in (
             services.execution.poll_comfy_progress(prompt_id, graph)

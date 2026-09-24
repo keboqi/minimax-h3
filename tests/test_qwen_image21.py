@@ -17,11 +17,11 @@ from h3_models import (
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
 )
-from h3_ui.bindings import qwen_resolution_preset_values
+from h3_ui.bindings import qwen_resolution_preset_values, qwen_turbo_defaults
 
 
 class QwenImage21WorkflowTests(unittest.TestCase):
-    def _build(self, references=(), match_input_size=True):
+    def _build(self, references=(), match_input_size=True, *, steps=25, turbo_variant="Off"):
         return build_qwen_image21_graph(
             model_choice="INT8 ConvRot (lower VRAM)",
             text_encoder_choice="INT8 ConvRot (recommended)",
@@ -33,7 +33,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             reference_resolution=0,
             match_input_size=match_input_size,
             seed=123,
-            steps=25,
+            steps=steps,
             cfg=1.0,
             sampler_name="euler",
             scheduler="simple",
@@ -43,6 +43,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             accelerator="Off",
             output_stamp="1234",
             output_nonce="abcd",
+            turbo_variant=turbo_variant,
         )
 
     @staticmethod
@@ -264,6 +265,65 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         spectrum = self._by_type(graph, "QwenSpectrumModelPatcher")[0][1]
         self.assertEqual(spectrum["inputs"]["warmup_steps"], 10)
         self.assertEqual(spectrum["inputs"]["tail_actual_steps"], 8)
+
+    def test_viggle_turbo_uses_lora_and_custom_sigmas(self):
+        graph = build_qwen_image21_graph(
+            model_choice="BF16",
+            text_encoder_choice="BF16",
+            prompt="A red fox reading a book",
+            negative_prompt="",
+            reference_images=(),
+            width=1024,
+            height=1024,
+            reference_resolution=0,
+            match_input_size=True,
+            seed=123,
+            steps=5,
+            cfg=1.0,
+            sampler_name="euler",
+            scheduler="simple",
+            cache_device="auto",
+            cache_dtype="default",
+            attention_backend="pytorch attention",
+            accelerator="Off",
+            output_stamp="1234",
+            output_nonce="abcd",
+            turbo_variant="Viggle Turbo v0.2",
+        )
+        self.assertFalse(self._by_type(graph, "KSampler"))
+        lora_id, lora = self._by_type(graph, "LoraLoaderModelOnly")[0]
+        self.assertEqual(
+            lora["inputs"]["lora_name"],
+            MODEL_SPECS["qwen_image21_viggle_v02_lora"].local_name,
+        )
+        self.assertEqual(lora["inputs"]["strength_model"], 1.0)
+        backend = self._by_type(graph, "ModelAttentionBackend")[0][1]
+        self.assertEqual(backend["inputs"]["model"], [lora_id, 0])
+        sigmas_id, sigmas = self._by_type(graph, "H3Qwen21TurboSigmas")[0]
+        self.assertEqual(sigmas["inputs"]["steps"], 5)
+        sampler = self._by_type(graph, "SamplerCustomAdvanced")[0][1]
+        self.assertEqual(sampler["inputs"]["sigmas"], [sigmas_id, 0])
+        self.assertTrue(
+            {"LoraLoaderModelOnly", "H3Qwen21TurboSigmas", "CFGGuider"}
+            <= required_qwen_image21_nodes(editing=False, turbo=True)
+        )
+
+    def test_turbo_steps_are_editable_and_model_download_is_optional(self):
+        from h3_app.model_service import qwen_image21_model_keys
+
+        self.assertEqual(qwen_turbo_defaults("Viggle Turbo v0.2")[0], 5)
+        self.assertEqual(qwen_turbo_defaults("Off")[0], 40)
+        custom_graph = self._build(steps=7, turbo_variant="Viggle Turbo v0.2")
+        custom_sigmas = self._by_type(custom_graph, "H3Qwen21TurboSigmas")[0][1]
+        self.assertEqual(custom_sigmas["inputs"]["steps"], 7)
+        base = qwen_image21_model_keys("BF16", "BF16")
+        turbo = qwen_image21_model_keys("BF16", "BF16", "Viggle Turbo v0.2")
+        self.assertEqual(turbo[:-1], base)
+        self.assertEqual(turbo[-1], "qwen_image21_viggle_v02_lora")
+        self.assertEqual(
+            MODEL_SPECS[turbo[-1]].repo_id,
+            "Viggle/Qwen-Image-2.1-viggle-turbo",
+        )
 
     def test_prompt_writer_uses_natural_single_image_reference(self):
         runtime = SimpleNamespace(

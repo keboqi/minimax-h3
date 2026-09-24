@@ -41,6 +41,7 @@ LTX23_REPO = "Lightricks/LTX-2.3"
 MINIMAX_MUSIC3_REPO = "Comfy-Org/MiniMax-Music-3"
 YUE2_REPO = "Comfy-Org/YuE2"
 QWEN_IMAGE21_REPO = "Comfy-Org/Qwen-Image-2.1"
+QWEN_IMAGE21_VIGGLE_REPO = "Viggle/Qwen-Image-2.1-viggle-turbo"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -510,6 +511,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "vae/qwen_image_2.1_vae_bf16.safetensors",
         "Qwen Image 2.1 BF16 VAE",
     ),
+    "qwen_image21_viggle_v02_lora": ModelSpec(
+        QWEN_IMAGE21_VIGGLE_REPO,
+        "loras",
+        "Qwen-Image-2.1-viggle-turbo-v0.2-5step-lora-r256.safetensors",
+        "Viggle Qwen Image 2.1 Turbo v0.2 LoRA",
+    ),
 }
 
 PROFILE_MODEL_KEYS = {
@@ -632,6 +639,7 @@ QWEN_IMAGE21_MODEL_KEYS = (
     *QWEN_IMAGE21_MODEL_CHOICES.values(),
     *QWEN_IMAGE21_TEXT_ENCODER_CHOICES.values(),
     "qwen_image21_vae",
+    "qwen_image21_viggle_v02_lora",
 )
 LAZY_OPTIONAL_MODEL_KEYS = (
     "semantic_bridge_v1",
@@ -1273,6 +1281,7 @@ def selftest() -> None:
         "qwen_image21_text_w4a8",
         "qwen_image21_text_bf16",
         "qwen_image21_vae",
+        "qwen_image21_viggle_v02_lora",
     }
 
     cfg = _build_config("manifest.json")

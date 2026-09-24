@@ -262,7 +262,7 @@ class EnsureMusic3Models(Protocol):
 
 
 class EnsureQwenImage21Models(Protocol):
-    def __call__(self, model_choice: str, text_encoder_choice: str) -> bool: ...
+    def __call__(self, model_choice: str, text_encoder_choice: str, turbo_variant: str = ...) -> bool: ...
 
 
 class EnsureYuE2Models(Protocol):
@@ -305,7 +305,7 @@ class MissingMusic3ModelNames(Protocol):
 
 class MissingQwenImage21ModelNames(Protocol):
     def __call__(
-        self, model_choice: str, text_encoder_choice: str
+        self, model_choice: str, text_encoder_choice: str, turbo_variant: str = ...
     ) -> list[str]: ...
 
 

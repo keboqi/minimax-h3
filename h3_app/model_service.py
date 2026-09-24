@@ -789,26 +789,32 @@ def ensure_music3_models(model_choice: str, *, runtime: RuntimeConfig) -> bool:
 
 
 def qwen_image21_model_keys(
-    model_choice: str, text_encoder_choice: str
-) -> tuple[str, str, str]:
+    model_choice: str, text_encoder_choice: str, turbo_variant: str = "Off"
+) -> tuple[str, ...]:
     try:
         model_key = QWEN_IMAGE21_MODEL_CHOICES[str(model_choice)]
         encoder_key = QWEN_IMAGE21_TEXT_ENCODER_CHOICES[str(text_encoder_choice)]
     except KeyError as exc:
         raise H3Error(f"Unknown Qwen Image 2.1 model choice: {exc.args[0]}") from exc
-    return model_key, encoder_key, "qwen_image21_vae"
+    keys = (model_key, encoder_key, "qwen_image21_vae")
+    if turbo_variant == "Viggle Turbo v0.2":
+        return (*keys, "qwen_image21_viggle_v02_lora")
+    if turbo_variant != "Off":
+        raise H3Error(f"Unknown Qwen Image 2.1 Turbo variant: {turbo_variant}")
+    return keys
 
 
 def missing_qwen_image21_model_names(
     model_choice: str,
     text_encoder_choice: str,
+    turbo_variant: str = "Off",
     *,
     runtime: RuntimeConfig,
 ) -> list[str]:
     missing = stale_model_keys(
         root=runtime.comfy_dir / "models",
         manifest_path=runtime.models_config.parent / "h3_model_manifest.json",
-        model_keys=qwen_image21_model_keys(model_choice, text_encoder_choice),
+        model_keys=qwen_image21_model_keys(model_choice, text_encoder_choice, turbo_variant),
     )
     return [MODEL_SPECS[key].local_name for key in missing]
 
@@ -816,11 +822,12 @@ def missing_qwen_image21_model_names(
 def ensure_qwen_image21_models(
     model_choice: str,
     text_encoder_choice: str,
+    turbo_variant: str = "Off",
     *,
     runtime: RuntimeConfig,
 ) -> bool:
     """Lazily install the selected Qwen Image 2.1 DiT, encoder, and VAE."""
-    keys = qwen_image21_model_keys(model_choice, text_encoder_choice)
+    keys = qwen_image21_model_keys(model_choice, text_encoder_choice, turbo_variant)
     manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
     missing = stale_model_keys(
         root=runtime.comfy_dir / "models",

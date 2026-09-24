@@ -1131,18 +1131,18 @@ def ensure_music3_models(model_choice: str) -> bool:
 
 
 def missing_qwen_image21_model_names(
-    model_choice: str, text_encoder_choice: str
+    model_choice: str, text_encoder_choice: str, turbo_variant: str = "Off"
 ) -> list[str]:
     return model_service.missing_qwen_image21_model_names(
-        model_choice, text_encoder_choice, runtime=_runtime_config()
+        model_choice, text_encoder_choice, turbo_variant, runtime=_runtime_config()
     )
 
 
 def ensure_qwen_image21_models(
-    model_choice: str, text_encoder_choice: str
+    model_choice: str, text_encoder_choice: str, turbo_variant: str = "Off"
 ) -> bool:
     return model_service.ensure_qwen_image21_models(
-        model_choice, text_encoder_choice, runtime=_runtime_config()
+        model_choice, text_encoder_choice, turbo_variant, runtime=_runtime_config()
     )
 
 
@@ -3924,6 +3924,7 @@ def generate_qwen_image21(
     cache_dtype: str,
     attention_backend: str = "pytorch attention",
     accelerator: str = "Off",
+    turbo_variant: str = "Off",
     progress=gr.Progress(track_tqdm=False),
 ):
     uploaded = reference_images or []
@@ -3953,6 +3954,7 @@ def generate_qwen_image21(
         cache_dtype=cache_dtype,
         attention_backend=attention_backend,
         accelerator=accelerator,
+        turbo_variant=turbo_variant,
     )
     yield from qwen_generation.generate_qwen_image21(
         request, _generation_services(), _runtime_config(), progress=progress
