@@ -7,6 +7,7 @@ import random
 import time
 import uuid
 from dataclasses import asdict
+from pathlib import Path
 from typing import Iterator
 
 from PIL import Image
@@ -67,9 +68,12 @@ def max_qwen_edit_dimensions(source_width: int, source_height: int) -> tuple[int
     return width, height
 
 
-def first_reference_dimensions(path: str) -> tuple[int, int]:
+def first_reference_dimensions(path: str, input_dir: Path | None = None) -> tuple[int, int]:
     try:
-        with Image.open(path) as image:
+        image_path = Path(path)
+        if not image_path.is_absolute() and input_dir is not None:
+            image_path = input_dir / image_path
+        with Image.open(image_path) as image:
             width, height = image.size
             if image.getexif().get(274) in {5, 6, 7, 8}:
                 width, height = height, width
@@ -79,12 +83,18 @@ def first_reference_dimensions(path: str) -> tuple[int, int]:
 
 
 def resolve_qwen_output_dimensions(
-    request: QwenImage21Request, references: tuple[str, ...], editing: bool
+    request: QwenImage21Request,
+    references: tuple[str, ...],
+    editing: bool,
+    *,
+    input_dir: Path | None = None,
 ) -> tuple[int, int, bool]:
     """Resolve edit sizing, with Max resolution taking priority."""
     max_edit_resolution = editing and bool(request.max_resolution)
     if max_edit_resolution:
-        source_width, source_height = first_reference_dimensions(references[0])
+        source_width, source_height = first_reference_dimensions(
+            references[0], input_dir
+        )
         width, height = max_qwen_edit_dimensions(source_width, source_height)
     else:
         width = _image_dimension(request.width, "Width")
@@ -142,7 +152,7 @@ def generate_qwen_image21(
             )
 
         width, height, match_input_size = resolve_qwen_output_dimensions(
-            request, references, editing
+            request, references, editing, input_dir=runtime.input_dir
         )
         max_edit_resolution = editing and bool(request.max_resolution)
         snapshot_values.update(
