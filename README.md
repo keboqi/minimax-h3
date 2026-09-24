@@ -381,6 +381,12 @@ image's aspect ratio toward 4 MP, rounds the output to multiples of 32, and
 keeps both sides within 2752 pixels. It overrides **Match first image size**
 and the manual width/height controls when selected.
 
+The Qwen tab offers three editable presets: **Fast** selects INT8 ConvRot,
+Viggle Turbo v0.2, five steps, and accelerator Off; **Normal** selects BF16,
+Turbo Off, 25 steps, and Spectrum (Quality); **Quality** selects BF16, Turbo
+Off, 40 steps, and Spectrum (Quality). Quality is selected initially. The text
+encoder and other controls retain their chosen values when switching presets.
+
 The Qwen tab also offers **Viggle Turbo v0.2** as an optional ComfyUI LoRA mode.
 Selecting it downloads the v0.2 rank-256 adapter on first use and sets five
 steps, Euler, CFG 1, and accelerator Off. The steps slider remains editable;

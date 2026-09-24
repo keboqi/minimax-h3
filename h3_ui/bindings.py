@@ -226,11 +226,24 @@ def bind_music_view(
     )
 
 
-def qwen_turbo_defaults(variant: str):
-    """Set trained defaults while leaving Qwen's controls editable."""
+QWEN_IMAGE21_PRESETS = {
+    "Fast": ("INT8 ConvRot (lower VRAM)", "Viggle Turbo v0.2", 5, "Off"),
+    "Normal": ("BF16", "Off", 25, "Spectrum (Quality)"),
+    "Quality": ("BF16", "Off", 40, "Spectrum (Quality)"),
+}
+
+
+def qwen_preset_values(preset: str):
+    """Apply a Qwen preset without locking its individual controls."""
+    return QWEN_IMAGE21_PRESETS[preset]
+
+
+def qwen_turbo_defaults(variant: str, preset: str = "Quality"):
+    """Set Turbo defaults, preserving the selected base preset's step count."""
     if variant == "Viggle Turbo v0.2":
         return 5, 1.0, "euler", "Off"
-    return 40, 1.0, "euler", "Spectrum (Quality)"
+    steps = 25 if preset == "Normal" else 40
+    return steps, 1.0, "euler", "Spectrum (Quality)"
 
 
 def bind_qwen_image21_view(
@@ -239,9 +252,17 @@ def bind_qwen_image21_view(
     enhance_prompt: Callable[..., Any],
     generate: Callable[..., Any],
 ) -> Any:
+    view.preset.change(
+        qwen_preset_values,
+        inputs=view.preset,
+        outputs=[view.model, view.turbo_variant, view.steps, view.accelerator],
+        queue=False,
+        show_progress="hidden",
+        api_name=False,
+    )
     view.turbo_variant.change(
         qwen_turbo_defaults,
-        inputs=view.turbo_variant,
+        inputs=[view.turbo_variant, view.preset],
         outputs=[view.steps, view.cfg, view.sampler, view.accelerator],
         queue=False,
         show_progress="hidden",

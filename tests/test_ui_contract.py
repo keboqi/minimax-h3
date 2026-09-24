@@ -64,6 +64,25 @@ class UiContractTests(unittest.TestCase):
 
         return visit(cls.config["layout"])
 
+    def test_qwen_preset_is_wired_to_generation_controls(self):
+        controls = {c.get("props", {}).get("label"): c for c in self.config["components"]}
+        preset = controls["Qwen preset"]
+        self.assertEqual(preset["props"]["value"], "Quality")
+        self.assertEqual(
+            [choice[0] for choice in preset["props"]["choices"]],
+            ["Fast", "Normal", "Quality"],
+        )
+        event = next(
+            d for d in self.config["dependencies"] if d["inputs"] == [preset["id"]]
+            and d["outputs"] == [
+                controls["Diffusion model"]["id"],
+                controls["Turbo mode"]["id"],
+                controls["Steps"]["id"],
+                controls["Diffusion accelerator"]["id"],
+            ]
+        )
+        self.assertIs(event["queue"], False)
+
     def test_fl2va_voice_inputs_live_under_frames_and_have_separate_api_fields(self):
         controls = {c.get("props", {}).get("label"): c for c in self.config["components"]}
         first_id = controls["First frame (auto resolution)"]["id"]

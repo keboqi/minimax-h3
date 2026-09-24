@@ -24,7 +24,11 @@ from h3_models import (
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
 )
-from h3_ui.bindings import qwen_resolution_preset_values, qwen_turbo_defaults
+from h3_ui.bindings import (
+    qwen_preset_values,
+    qwen_resolution_preset_values,
+    qwen_turbo_defaults,
+)
 
 
 class QwenImage21WorkflowTests(unittest.TestCase):
@@ -380,11 +384,26 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             <= required_qwen_image21_nodes(editing=False, turbo=True)
         )
 
+    def test_qwen_presets_select_the_requested_controls(self):
+        self.assertEqual(
+            qwen_preset_values("Fast"),
+            ("INT8 ConvRot (lower VRAM)", "Viggle Turbo v0.2", 5, "Off"),
+        )
+        self.assertEqual(
+            qwen_preset_values("Normal"),
+            ("BF16", "Off", 25, "Spectrum (Quality)"),
+        )
+        self.assertEqual(
+            qwen_preset_values("Quality"),
+            ("BF16", "Off", 40, "Spectrum (Quality)"),
+        )
+
     def test_turbo_steps_are_editable_and_model_download_is_optional(self):
         from h3_app.model_service import qwen_image21_model_keys
 
         self.assertEqual(qwen_turbo_defaults("Viggle Turbo v0.2")[0], 5)
-        self.assertEqual(qwen_turbo_defaults("Off")[0], 40)
+        self.assertEqual(qwen_turbo_defaults("Off", "Normal")[0], 25)
+        self.assertEqual(qwen_turbo_defaults("Off", "Quality")[0], 40)
         custom_graph = self._build(steps=7, turbo_variant="Viggle Turbo v0.2")
         custom_sigmas = self._by_type(custom_graph, "H3Qwen21TurboSigmas")[0][1]
         self.assertEqual(custom_sigmas["inputs"]["steps"], 7)

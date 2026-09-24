@@ -71,6 +71,7 @@ class QwenImage21View:
     accelerator: gr.Dropdown
     turbo_variant: gr.Dropdown
     max_resolution: gr.Checkbox
+    preset: gr.Radio
 
 
 def build_qwen_image21_view(
@@ -145,6 +146,12 @@ def build_qwen_image21_view(
                     run = gr.Button("Generate with Qwen Image 2.1", variant="primary")
                     stop = gr.Button("Interrupt")
                 status = gr.Textbox(label="Status", lines=7)
+                preset = gr.Radio(
+                    choices=["Fast", "Normal", "Quality"],
+                    value="Quality",
+                    label="Qwen preset",
+                    info="Sets the diffusion model, Turbo mode, steps, and accelerator. Controls remain editable.",
+                )
                 model = gr.Dropdown(
                     choices=list(model_choices),
                     value=defaults["model"],
@@ -345,6 +352,7 @@ def build_qwen_image21_view(
         accelerator,
         turbo_variant,
         max_resolution,
+        preset,
     )
 
 @dataclass(frozen=True)
