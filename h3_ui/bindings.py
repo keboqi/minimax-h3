@@ -242,6 +242,8 @@ def qwen_turbo_defaults(variant: str, preset: str = "Quality"):
     """Set Turbo defaults, preserving the selected base preset's step count."""
     if variant == "Viggle Turbo v0.2":
         return 5, 1.0, "euler", "Off"
+    if variant == "Alibaba PAI PDD 4-step":
+        return 4, 1.0, "euler", "Off"
     steps = 25 if preset == "Normal" else 40
     return steps, 1.0, "euler", "Spectrum (Quality)"
 

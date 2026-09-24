@@ -42,6 +42,7 @@ MINIMAX_MUSIC3_REPO = "Comfy-Org/MiniMax-Music-3"
 YUE2_REPO = "Comfy-Org/YuE2"
 QWEN_IMAGE21_REPO = "Comfy-Org/Qwen-Image-2.1"
 QWEN_IMAGE21_VIGGLE_REPO = "Viggle/Qwen-Image-2.1-viggle-turbo"
+QWEN_IMAGE21_PDD_REPO = "alibaba-pai/Qwen-Image-2.1-Fun-Acc-LoRAs"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -517,6 +518,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "Qwen-Image-2.1-viggle-turbo-v0.2-5step-lora-r256.safetensors",
         "Viggle Qwen Image 2.1 Turbo v0.2 LoRA",
     ),
+    "qwen_image21_pdd_4step_lora": ModelSpec(
+        QWEN_IMAGE21_PDD_REPO,
+        "loras",
+        "models/Qwen-Image-2.1-Fun-Acc-4Step.safetensors",
+        "Alibaba PAI Qwen Image 2.1 PDD 4-step LoRA",
+    ),
 }
 
 PROFILE_MODEL_KEYS = {
@@ -640,6 +647,7 @@ QWEN_IMAGE21_MODEL_KEYS = (
     *QWEN_IMAGE21_TEXT_ENCODER_CHOICES.values(),
     "qwen_image21_vae",
     "qwen_image21_viggle_v02_lora",
+    "qwen_image21_pdd_4step_lora",
 )
 LAZY_OPTIONAL_MODEL_KEYS = (
     "semantic_bridge_v1",

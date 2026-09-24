@@ -22,6 +22,7 @@ def required_qwen_image21_nodes(
     editing: bool,
     use_spectrum: bool = False,
     turbo: bool = False,
+    pdd: bool = False,
 ) -> set[str]:
     nodes = {
         "UNETLoader",
@@ -47,6 +48,10 @@ def required_qwen_image21_nodes(
             "KSamplerSelect",
             "SamplerCustomAdvanced",
         }
+    if pdd:
+        nodes.discard("LoraLoaderModelOnly")
+        nodes.discard("H3Qwen21TurboSigmas")
+        nodes |= {"H3Qwen21PDDLoader", "H3Qwen21PDDSigmas"}
     return nodes
 
 
@@ -91,15 +96,27 @@ def build_qwen_image21_graph(
         unet_name=MODEL_SPECS[model_key].local_name,
         weight_dtype="default",
     )
-    turbo = turbo_variant == "Viggle Turbo v0.2"
-    if turbo:
-        lora = graph.add(
+    viggle = turbo_variant == "Viggle Turbo v0.2"
+    pdd = turbo_variant == "Alibaba PAI PDD 4-step"
+    turbo = viggle or pdd
+    if pdd and (
+        int(steps) != 4 or float(cfg) != 1.0
+        or str(sampler_name).lower() != "euler"
+    ):
+        raise ValueError("Alibaba PAI PDD requires 4 steps, CFG 1, and Euler.")
+    if viggle:
+        model = graph.add(
             "LoraLoaderModelOnly",
             model=Graph.out(model),
             lora_name=MODEL_SPECS["qwen_image21_viggle_v02_lora"].local_name,
             strength_model=1.0,
         )
-        model = lora
+    elif pdd:
+        model = graph.add(
+            "H3Qwen21PDDLoader",
+            model=Graph.out(model),
+            lora_name=MODEL_SPECS["qwen_image21_pdd_4step_lora"].local_name,
+        )
     elif turbo_variant != "Off":
         raise ValueError(f"Unknown Qwen Image 2.1 Turbo variant: {turbo_variant}")
     clip = graph.add(
@@ -149,7 +166,7 @@ def build_qwen_image21_graph(
         cached = graph.add(
             "QwenImage21Cache",
             model=sampled_model,
-            device=str(cache_device),
+            device="off" if pdd else str(cache_device),
             dtype=str(cache_dtype),
         )
         sampled_model = Graph.out(cached)
@@ -178,9 +195,12 @@ def build_qwen_image21_graph(
             cfg=float(cfg),
         )
         sampler = graph.add("KSamplerSelect", sampler_name=str(sampler_name))
-        sigmas = graph.add(
-            "H3Qwen21TurboSigmas", latent_image=latent, steps=int(steps)
-        )
+        if pdd:
+            sigmas = graph.add("H3Qwen21PDDSigmas")
+        else:
+            sigmas = graph.add(
+                "H3Qwen21TurboSigmas", latent_image=latent, steps=int(steps)
+            )
         sampled = graph.add(
             "SamplerCustomAdvanced",
             noise=Graph.out(noise),

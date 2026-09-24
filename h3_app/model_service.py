@@ -799,6 +799,8 @@ def qwen_image21_model_keys(
     keys = (model_key, encoder_key, "qwen_image21_vae")
     if turbo_variant == "Viggle Turbo v0.2":
         return (*keys, "qwen_image21_viggle_v02_lora")
+    if turbo_variant == "Alibaba PAI PDD 4-step":
+        return (*keys, "qwen_image21_pdd_4step_lora")
     if turbo_variant != "Off":
         raise H3Error(f"Unknown Qwen Image 2.1 Turbo variant: {turbo_variant}")
     return keys

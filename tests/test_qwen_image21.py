@@ -454,6 +454,44 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             <= required_qwen_image21_nodes(editing=False, turbo=True)
         )
 
+    def test_alibaba_pdd_uses_dedicated_loader_and_fixed_sigmas(self):
+        from h3_app.model_service import qwen_image21_model_keys
+
+        variant = "Alibaba PAI PDD 4-step"
+        graph = self._build(("target.png",), steps=4, turbo_variant=variant)
+        self.assertFalse(self._by_type(graph, "KSampler"))
+        self.assertFalse(self._by_type(graph, "LoraLoaderModelOnly"))
+        self.assertFalse(self._by_type(graph, "H3Qwen21TurboSigmas"))
+        loader_id, loader = self._by_type(graph, "H3Qwen21PDDLoader")[0]
+        self.assertEqual(
+            loader["inputs"]["lora_name"],
+            MODEL_SPECS["qwen_image21_pdd_4step_lora"].local_name,
+        )
+        backend = self._by_type(graph, "ModelAttentionBackend")[0][1]
+        self.assertEqual(backend["inputs"]["model"], [loader_id, 0])
+        sigma_id, _ = self._by_type(graph, "H3Qwen21PDDSigmas")[0]
+        sampler = self._by_type(graph, "SamplerCustomAdvanced")[0][1]
+        self.assertEqual(sampler["inputs"]["sigmas"], [sigma_id, 0])
+        self.assertEqual(
+            self._by_type(graph, "QwenImage21Cache")[0][1]["inputs"]["device"],
+            "off",
+        )
+        self.assertEqual(qwen_turbo_defaults(variant), (4, 1.0, "euler", "Off"))
+        self.assertEqual(
+            qwen_image21_model_keys("BF16", "BF16", variant)[-1],
+            "qwen_image21_pdd_4step_lora",
+        )
+        self.assertEqual(
+            MODEL_SPECS["qwen_image21_pdd_4step_lora"].repo_id,
+            "alibaba-pai/Qwen-Image-2.1-Fun-Acc-LoRAs",
+        )
+        required = required_qwen_image21_nodes(
+            editing=True, turbo=True, pdd=True
+        )
+        self.assertIn("H3Qwen21PDDLoader", required)
+        self.assertIn("H3Qwen21PDDSigmas", required)
+        self.assertNotIn("H3Qwen21TurboSigmas", required)
+
     def test_qwen_presets_select_the_requested_controls(self):
         self.assertEqual(
             qwen_preset_values("Fast"),

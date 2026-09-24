@@ -124,7 +124,7 @@ def build_qwen_image21_view(
                     type="filepath",
                 )
                 gr.Markdown(
-                    "Base editing supports up to 10 files; Viggle Turbo supports up to 3. **image1** is the edit "
+                    "Base editing supports up to 10 files; Turbo modes support up to 3. **image1** is the edit "
                     "target; later images are references. Numbered tags are required "
                     "only when multiple files are supplied."
                 )
@@ -163,12 +163,12 @@ def build_qwen_image21_view(
                     label="Diffusion model",
                 )
                 turbo_variant = gr.Dropdown(
-                    choices=["Off", "Viggle Turbo v0.2"],
+                    choices=["Off", "Viggle Turbo v0.2", "Alibaba PAI PDD 4-step"],
                     value="Off",
                     label="Turbo mode",
                     info=(
-                        "Viggle v0.2 selects 5 steps, Euler and CFG 1. "
-                        "Steps remain editable; other counts are experimental. "
+                        "Viggle v0.2 selects 5 steps; Alibaba PAI PDD requires exactly "
+                        "4 steps. Both use Euler, CFG 1, and accelerator Off. "
                         "Research and evaluation use only."
                     ),
                 )

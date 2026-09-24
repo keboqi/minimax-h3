@@ -1722,8 +1722,194 @@ class H3Qwen21TurboSigmas:
         return (torch.tensor([*shifted, 0.0], dtype=torch.float32),)
 
 
+# Native PDD grid in alibaba-pai/Qwen-Image-2.1-Fun-Acc-LoRAs,
+# models/pdd_config.json. The export is already shifted and stretched.
+QWEN21_PDD_SIGMAS = (
+    1.0, 0.9169867038726807, 0.7861579060554504,
+    0.5494909882545471, 0.0,
+)
+_QWEN21_PDD_INDEX = ContextVar("qwen21_pdd_index", default=None)
+
+
+class _Qwen21PDDHead(torch.nn.Module):
+    """Select one of the four prefused PDD output projections per Euler call."""
+
+    def __init__(self, weights):
+        super().__init__()
+        self.register_buffer("weights", weights)
+
+    def forward(self, hidden_states):
+        index = _QWEN21_PDD_INDEX.get()
+        if index is None:
+            raise RuntimeError("Qwen PDD head called without its inference wrapper")
+        weight = self.weights[index].to(
+            device=hidden_states.device, dtype=hidden_states.dtype
+        )
+        return F.linear(hidden_states, weight)
+
+
+def _qwen21_pdd_wrapper(executor, *args, **kwargs):
+    if len(args) < 2:
+        raise RuntimeError("Qwen PDD requires a positional model timestep")
+    timestep = args[1]
+    sigma = float(timestep.flatten()[0])
+    index = min(range(4), key=lambda n: abs(sigma - QWEN21_PDD_SIGMAS[n]))
+    if abs(sigma - QWEN21_PDD_SIGMAS[index]) > 0.001:
+        raise ValueError(
+            f"Qwen PDD received sigma {sigma:.6f}; use its four-step sigma node"
+        )
+    token = _QWEN21_PDD_INDEX.set(index)
+    try:
+        native_args = list(args)
+        native_args[1] = torch.full_like(timestep, QWEN21_PDD_SIGMAS[index])
+        return executor(*native_args, **kwargs)
+    finally:
+        _QWEN21_PDD_INDEX.reset(token)
+
+
+class H3Qwen21PDDLoader:
+    """Load Alibaba PAI's prefused PDD heads, LoRA and trained norm weights."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "model": ("MODEL",),
+            "lora_name": (folder_paths.get_filename_list("loras"),),
+        }}
+
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "apply"
+    CATEGORY = "model/patch/qwen"
+
+    def apply(self, model, lora_name):
+        path = folder_paths.get_full_path("loras", lora_name)
+        if path is None:
+            raise FileNotFoundError(f"Qwen PDD LoRA is missing: {lora_name}")
+        diffusion = model.get_model_object("diffusion_model")
+        if diffusion.__class__.__name__ != "QwenImage21Transformer2DModel":
+            raise ValueError("Alibaba PAI PDD requires the native Qwen Image 2.1 model")
+        state = comfy.utils.load_torch_file(path, safe_load=True)
+        head_weights = state.pop("proj_out.weight", None)
+        original_head = diffusion.proj_out.weight
+        if (
+            head_weights is None or head_weights.ndim != 3
+            or head_weights.shape[0] != 4
+            or tuple(head_weights.shape[1:]) != _logical_weight_shape(original_head)
+        ):
+            raise ValueError("Qwen PDD checkpoint has an incompatible four-head projection")
+
+        model_sd = model.model.state_dict()
+        target_names = {
+            key[:-len(".lora_down")]
+            for key in state if key.endswith(".lora_down")
+        }
+        if len(target_names) != 231:
+            raise ValueError(
+                f"Qwen PDD checkpoint has {len(target_names)} LoRA targets; expected 231"
+            )
+        synthetic = {}
+        key_map = {}
+        used = set()
+        for name in sorted(target_names):
+            down_key, up_key = name + ".lora_down", name + ".lora_up"
+            if up_key not in state:
+                raise ValueError(f"Qwen PDD checkpoint is missing {up_key}")
+            if name.endswith((".img_mlp.gate_layer", ".img_mlp.proj")):
+                continue
+            native = f"diffusion_model.{name}.weight"
+            if native not in model_sd:
+                raise ValueError(f"Qwen PDD target is unavailable: {native}")
+            down, up = state[down_key], state[up_key]
+            if (
+                down.ndim != 2 or up.ndim != 2 or down.shape[0] != 64
+                or up.shape[1] != 64
+                or (up.shape[0], down.shape[1])
+                != _logical_weight_shape(model_sd[native])
+            ):
+                raise ValueError(f"Qwen PDD LoRA shape mismatch: {name}")
+            synthetic[name + ".lora_down.weight"] = down
+            synthetic[name + ".lora_up.weight"] = up
+            key_map[name] = native
+            used.update((down_key, up_key))
+
+        # Native ComfyUI fuses SwiGLU gate and up projections into gate_up.
+        for block in range(32):
+            base = f"transformer_blocks.{block}.img_mlp"
+            gate, proj = base + ".gate_layer", base + ".proj"
+            if gate not in target_names or proj not in target_names:
+                raise ValueError(f"Qwen PDD is missing the MLP pair in block {block}")
+            gate_down, gate_up = state[gate + ".lora_down"], state[gate + ".lora_up"]
+            proj_down, proj_up = state[proj + ".lora_down"], state[proj + ".lora_up"]
+            native = f"diffusion_model.{base}.gate_up.weight"
+            if native not in model_sd:
+                raise ValueError(f"Qwen PDD fused MLP target is unavailable: {native}")
+            up = torch.cat((
+                torch.cat((gate_up, torch.zeros_like(gate_up)), dim=1),
+                torch.cat((torch.zeros_like(proj_up), proj_up), dim=1),
+            ), dim=0)
+            down = torch.cat((gate_down, proj_down), dim=0)
+            if (up.shape[0], down.shape[1]) != _logical_weight_shape(model_sd[native]):
+                raise ValueError(f"Qwen PDD fused MLP shape mismatch in block {block}")
+            synthetic[base + ".gate_up.lora_down.weight"] = down
+            synthetic[base + ".gate_up.lora_up.weight"] = up
+            key_map[base + ".gate_up"] = native
+            used.update((
+                gate + ".lora_down", gate + ".lora_up",
+                proj + ".lora_down", proj + ".lora_up",
+            ))
+
+        patches = comfy.lora.load_lora(synthetic, key_map, log_missing=False)
+        if set(patches) != set(key_map.values()):
+            raise ValueError("Qwen PDD failed to load every LoRA adapter")
+        full_names = {
+            f"transformer_blocks.{block}.attn.norm_{axis}.weight"
+            for block in range(32) for axis in ("q", "k")
+        } | {"txt_in.text_norm.weight"}
+        for name in full_names:
+            native = "diffusion_model." + name
+            if name not in state or native not in model_sd:
+                raise ValueError(f"Qwen PDD full parameter is unavailable: {name}")
+            if state[name].shape != model_sd[native].shape:
+                raise ValueError(f"Qwen PDD full parameter shape mismatch: {name}")
+            patches[native] = ("set", (state[name],))
+            used.add(name)
+        if set(state) != used:
+            raise ValueError(
+                "Qwen PDD checkpoint has unexpected parameters: "
+                + ", ".join(sorted(set(state) - used)[:5])
+            )
+
+        patched = model.clone()
+        applied = set(patched.add_patches(patches))
+        if applied != set(patches):
+            raise ValueError("Qwen PDD could not apply every trained parameter")
+        patched.add_object_patch(
+            "diffusion_model.proj_out", _Qwen21PDDHead(head_weights)
+        )
+        patched.add_wrapper_with_key(
+            comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL,
+            "h3_qwen21_pdd_native_time", _qwen21_pdd_wrapper,
+        )
+        return (patched,)
+
+
+class H3Qwen21PDDSigmas:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {}}
+
+    RETURN_TYPES = ("SIGMAS",)
+    FUNCTION = "calculate"
+    CATEGORY = "sampling/custom_sampling/schedulers"
+
+    def calculate(self):
+        return (torch.tensor(QWEN21_PDD_SIGMAS, dtype=torch.float32),)
+
+
 NODE_CLASS_MAPPINGS = {
     "H3Qwen21TurboSigmas": H3Qwen21TurboSigmas,
+    "H3Qwen21PDDLoader": H3Qwen21PDDLoader,
+    "H3Qwen21PDDSigmas": H3Qwen21PDDSigmas,
     "H3SemanticBridge": H3SemanticBridge,
     "H3FirstBlockCache": H3FirstBlockCache,
     "H3LightX2VBypassLoRA": H3LightX2VBypassLoRA,
@@ -1740,6 +1926,8 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3Qwen21TurboSigmas": "Qwen Image 2.1 Viggle Turbo Sigmas",
+    "H3Qwen21PDDLoader": "Qwen Image 2.1 Alibaba PAI PDD Loader",
+    "H3Qwen21PDDSigmas": "Qwen Image 2.1 Alibaba PAI PDD Sigmas",
     "H3SemanticBridge": "MiniMax H3 Semantic Bridge (experimental)",
     "H3FirstBlockCache": "MiniMax H3 FirstBlockCache",
     "H3LightX2VBypassLoRA": "MiniMax H3 LightX2V Bypass LoRA",

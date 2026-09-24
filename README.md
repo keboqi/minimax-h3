@@ -398,6 +398,16 @@ a terminal stretch. Turbo editing accepts up to three references. The base mode
 retains its existing controls and up to ten references. Viggle Turbo is a
 preview released under the Qwen Research License for non-commercial research
 or evaluation; commercial use requires a separate licence.
+
+**Alibaba PAI PDD 4-step** is a second Turbo mode. Selecting it downloads
+[Qwen-Image-2.1-Fun-Acc-4Step.safetensors](https://huggingface.co/alibaba-pai/Qwen-Image-2.1-Fun-Acc-LoRAs)
+on first use and sets four steps, Euler, CFG 1, and accelerator Off. The
+bundled ComfyUI node loads its PDD output heads, backbone LoRA, and trained
+normalization weights and uses the checkpoint's stored sigma schedule.
+This mode requires exactly four steps. Image edits turn the Qwen prefix KV
+cache off, matching the published examples. Alibaba notes that small dense
+text may be less legible and some edits may be softer or darker than the
+40-step base model. The adapter inherits Qwen's research license.
 The **YuE2** tab uses ComfyUI's native YuE2 nodes (ComfyUI v0.36.0 or newer).
 Its INT8 ConvRot checkpoint (about 4 GB) is selected by default; the BF16
 checkpoint is an optional alternative. The selected checkpoint downloads on

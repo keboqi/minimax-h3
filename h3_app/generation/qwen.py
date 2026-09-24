@@ -141,8 +141,10 @@ def generate_qwen_image21(
                 "Reference images are only used in Image edit mode. "
                 "Switch the mode or remove the uploaded images."
             )
-        turbo = request.turbo_variant == "Viggle Turbo v0.2"
-        if request.turbo_variant not in {"Off", "Viggle Turbo v0.2"}:
+        turbo = request.turbo_variant != "Off"
+        if request.turbo_variant not in {
+            "Off", "Viggle Turbo v0.2", "Alibaba PAI PDD 4-step"
+        }:
             raise H3Error(f"Unknown Qwen Turbo variant: {request.turbo_variant}")
         reference_limit = 3 if turbo else 10
         if len(references) > reference_limit:
@@ -171,9 +173,16 @@ def generate_qwen_image21(
         steps = int(request.steps)
         if not 1 <= steps <= 100:
             raise H3Error("Sampling steps must be between 1 and 100.")
+        if request.turbo_variant == "Alibaba PAI PDD 4-step" and steps != 4:
+            raise H3Error("Alibaba PAI PDD requires exactly 4 sampling steps.")
         cfg = float(request.cfg)
         if not 0 <= cfg <= 20:
             raise H3Error("CFG must be between 0 and 20.")
+        if request.turbo_variant == "Alibaba PAI PDD 4-step":
+            if cfg != 1.0:
+                raise H3Error("Alibaba PAI PDD requires CFG 1.")
+            if str(request.sampler_name).lower() != "euler":
+                raise H3Error("Alibaba PAI PDD requires the Euler sampler.")
         attention_backend = str(request.attention_backend)
         if attention_backend not in {
             "pytorch attention",
@@ -192,7 +201,7 @@ def generate_qwen_image21(
                 "or Spectrum (Preview)."
             )
         if turbo and accelerator.lower() != "off":
-            raise H3Error("Spectrum acceleration is unavailable with Viggle Turbo.")
+            raise H3Error("Spectrum acceleration is unavailable with Qwen Turbo.")
         actual_seed = (
             random.randrange(0, 2**63 - 1)
             if int(request.seed) < 0
@@ -220,6 +229,7 @@ def generate_qwen_image21(
             editing=editing,
             use_spectrum=accelerator.lower() != "off",
             turbo=turbo,
+            pdd=request.turbo_variant == "Alibaba PAI PDD 4-step",
         ) - available
         if missing_nodes:
             raise H3Error(
