@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from PIL import Image
+
 from h3_app import prompt_service
+from h3_app.generation.qwen import (
+    max_qwen_edit_dimensions,
+    resolve_qwen_output_dimensions,
+)
 from h3_app.workflows.qwen import (
     build_qwen_image21_graph,
     required_qwen_image21_nodes,
@@ -93,6 +100,71 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         self.assertEqual(sampler["inputs"]["model"], [cache_id, 0])
         self.assertEqual(sampler["inputs"]["latent_image"], [conditioner_id, 2])
         self.assertEqual(cache["inputs"]["device"], "auto")
+
+    def test_max_edit_resolution_uses_custom_latent(self):
+        graph = self._build(("target.png",), match_input_size=False)
+        latent_id, latent = self._by_type(graph, "EmptyLatentImage")[0]
+        sampler = self._by_type(graph, "KSampler")[0][1]
+        self.assertEqual(sampler["inputs"]["latent_image"], [latent_id, 0])
+        self.assertEqual(
+            (latent["inputs"]["width"], latent["inputs"]["height"]),
+            (1024, 768),
+        )
+
+    def test_max_edit_resolution_stays_under_four_megapixels(self):
+        self.assertEqual(max_qwen_edit_dimensions(1024, 1024), (1984, 1984))
+        self.assertEqual(max_qwen_edit_dimensions(1920, 1080), (2656, 1504))
+        self.assertEqual(max_qwen_edit_dimensions(1080, 1920), (1504, 2656))
+        for source in ((1, 10000), (10000, 1), (640, 480), (8192, 8192)):
+            width, height = max_qwen_edit_dimensions(*source)
+            self.assertTrue(256 <= width <= 2752 and width % 32 == 0)
+            self.assertTrue(256 <= height <= 2752 and height % 32 == 0)
+            self.assertLessEqual(width * height, 4_000_000)
+
+    def test_prompt_writer_receives_max_edit_dimensions(self):
+        from h3_ui import application as ui_app
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "target.png"
+            Image.new("RGB", (1920, 1080)).save(source)
+            with (
+                patch.object(ui_app, "_runtime_config", return_value=object()),
+                patch.object(
+                    ui_app.prompt_service,
+                    "enhance_qwen_image21_prompt",
+                    return_value=("enhanced", "ok"),
+                ) as enhance,
+            ):
+                ui_app.enhance_qwen_image21_prompt(
+                    "Change the sky", "gemini", "", "Image edit",
+                    [str(source)], 1024, 768,
+                    max_resolution=True,
+                )
+            self.assertEqual(enhance.call_args.args[5:7], (2656, 1504))
+
+    def test_max_resolution_overrides_match_input_size_for_edits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "target.png"
+            Image.new("RGB", (1920, 1080)).save(source)
+            request = SimpleNamespace(
+                width=1024,
+                height=768,
+                match_input_size=True,
+                max_resolution=True,
+            )
+            self.assertEqual(
+                resolve_qwen_output_dimensions(request, (str(source),), True),
+                (2656, 1504, False),
+            )
+            self.assertEqual(
+                resolve_qwen_output_dimensions(request, (), False),
+                (1024, 768, True),
+            )
+            request.max_resolution = False
+            self.assertEqual(
+                resolve_qwen_output_dimensions(request, (str(source),), True),
+                (1024, 768, True),
+            )
 
     def test_model_registry_matches_published_repository_layout(self):
         selected = {

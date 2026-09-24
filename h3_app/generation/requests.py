@@ -202,6 +202,7 @@ class QwenImage21Request:
     attention_backend: str
     accelerator: str = "Off"
     turbo_variant: str = "Off"
+    max_resolution: bool = False
 
 
 @dataclass(frozen=True)

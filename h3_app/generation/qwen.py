@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import math
 import random
 import time
 import uuid
 from dataclasses import asdict
 from typing import Iterator
+
+from PIL import Image
 
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
@@ -28,6 +31,71 @@ def _image_dimension(value: int, label: str) -> int:
     if not 256 <= resolved <= 2752 or resolved % 32:
         raise H3Error(f"{label} must be a multiple of 32 between 256 and 2752.")
     return resolved
+
+
+def max_qwen_edit_dimensions(source_width: int, source_height: int) -> tuple[int, int]:
+    """Fit the source aspect ratio near 4 MP on Qwen's 32-pixel grid."""
+    source_width, source_height = int(source_width), int(source_height)
+    if source_width <= 0 or source_height <= 0:
+        raise H3Error("The first reference image has invalid dimensions.")
+    max_pixels, max_side, grid = 4_000_000, 2752, 32
+    scale = min(
+        math.sqrt(max_pixels / (source_width * source_height)),
+        max_side / source_width,
+        max_side / source_height,
+    )
+
+    def aligned(value: float) -> int:
+        return min(max_side, max(256, round(value / grid) * grid))
+
+    width = aligned(source_width * scale)
+    height = aligned(source_height * scale)
+    source_ratio = source_width / source_height
+    while width * height > max_pixels:
+        candidates = []
+        if width > 256:
+            candidates.append((width - grid, height))
+        if height > 256:
+            candidates.append((width, height - grid))
+        width, height = min(
+            candidates,
+            key=lambda size: (
+                abs(math.log((size[0] / size[1]) / source_ratio)),
+                -(size[0] * size[1]),
+            ),
+        )
+    return width, height
+
+
+def first_reference_dimensions(path: str) -> tuple[int, int]:
+    try:
+        with Image.open(path) as image:
+            width, height = image.size
+            if image.getexif().get(274) in {5, 6, 7, 8}:
+                width, height = height, width
+            return width, height
+    except (OSError, ValueError) as exc:
+        raise H3Error("Could not read the first reference image size.") from exc
+
+
+def resolve_qwen_output_dimensions(
+    request: QwenImage21Request, references: tuple[str, ...], editing: bool
+) -> tuple[int, int, bool]:
+    """Resolve edit sizing, with Max resolution taking priority."""
+    max_edit_resolution = editing and bool(request.max_resolution)
+    if max_edit_resolution:
+        source_width, source_height = first_reference_dimensions(references[0])
+        width, height = max_qwen_edit_dimensions(source_width, source_height)
+    else:
+        width = _image_dimension(request.width, "Width")
+        height = _image_dimension(request.height, "Height")
+    if width * height > 4_400_000:
+        raise H3Error(
+            "Output resolution must stay within the model's native "
+            "approximately 4.3 MP canvas."
+        )
+    match_input_size = bool(request.match_input_size) and not max_edit_resolution
+    return width, height, match_input_size
 
 
 def generate_qwen_image21(
@@ -73,13 +141,15 @@ def generate_qwen_image21(
                 f"{reference_limit} reference images."
             )
 
-        width = _image_dimension(request.width, "Width")
-        height = _image_dimension(request.height, "Height")
-        if width * height > 4_400_000:
-            raise H3Error(
-                "Output resolution must stay within the model's native "
-                "approximately 4.3 MP canvas."
-            )
+        width, height, match_input_size = resolve_qwen_output_dimensions(
+            request, references, editing
+        )
+        max_edit_resolution = editing and bool(request.max_resolution)
+        snapshot_values.update(
+            resolved_width=width,
+            resolved_height=height,
+            effective_match_input_size=match_input_size,
+        )
         reference_resolution = int(request.reference_resolution)
         if reference_resolution and (
             not 256 <= reference_resolution <= 2048
@@ -155,7 +225,7 @@ def generate_qwen_image21(
             width=width,
             height=height,
             reference_resolution=reference_resolution,
-            match_input_size=bool(request.match_input_size),
+            match_input_size=match_input_size,
             seed=actual_seed,
             steps=steps,
             cfg=cfg,
@@ -173,11 +243,15 @@ def generate_qwen_image21(
         prompt_id = services.execution.submit_prompt(graph, client_id)
         timings.label = f"Qwen Image 2.1 job {prompt_id}"
         timings.transition("Waiting for ComfyUI")
+        job_size = (
+            f"edit at {width}×{height}"
+            if max_edit_resolution
+            else "edit" if editing else f"{width}×{height} generation"
+        )
         yield GenerationUpdate(
             None,
             f"Queued Qwen Image 2.1 job `{prompt_id}` · seed {actual_seed} · "
-            f"{'edit' if editing else f'{width}×{height} generation'} · "
-            f"{request.model_choice} · {request.turbo_variant} · "
+            f"{job_size} · {request.model_choice} · {request.turbo_variant} · "
             f"{steps} steps · accelerator {accelerator}",
         )
         for stage, completed_nodes, total_nodes, step, step_total in (

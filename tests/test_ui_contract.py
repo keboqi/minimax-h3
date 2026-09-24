@@ -226,7 +226,6 @@ class UiContractTests(unittest.TestCase):
             for dependency in self.config["dependencies"]
         }
         for endpoint in (
-            "enhance_qwen_image21_prompt",
             "enhance_ltx25_prompt",
             "enhance_music3_prompt",
             "enhance_yue2_prompt",
@@ -238,6 +237,15 @@ class UiContractTests(unittest.TestCase):
             )
             parameters = self.demo.get_api_info()["named_endpoints"][f"/{endpoint}"]["parameters"]
             self.assertEqual(parameters[-2]["parameter_default"], "Lightning AI")
+
+        qwen_endpoint = "enhance_qwen_image21_prompt"
+        qwen_inputs = endpoints[qwen_endpoint]["inputs"]
+        self.assertEqual(
+            [self.components[id]["props"]["label"] for id in qwen_inputs[-3:]],
+            ["Prompt writer", "Temporary Lightning API key", "Max resolution when editing"],
+        )
+        qwen_parameters = self.demo.get_api_info()["named_endpoints"][f"/{qwen_endpoint}"]["parameters"]
+        self.assertEqual(qwen_parameters[-3]["parameter_default"], "Lightning AI")
 
     def test_qwen_and_yue2_prompt_writer_endpoints_are_bound(self) -> None:
         endpoints = {

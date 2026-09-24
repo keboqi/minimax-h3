@@ -594,7 +594,19 @@ def enhance_qwen_image21_prompt(
     height: int,
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
+    max_resolution: bool = False,
 ) -> tuple[str, str]:
+    if max_resolution and str(mode).strip().lower() == "image edit":
+        uploaded = reference_images or []
+        if isinstance(uploaded, (str, Path)):
+            uploaded = [uploaded]
+        if uploaded:
+            source_width, source_height = qwen_generation.first_reference_dimensions(
+                str(uploaded[0])
+            )
+            width, height = qwen_generation.max_qwen_edit_dimensions(
+                source_width, source_height
+            )
     return prompt_service.enhance_qwen_image21_prompt(
         prompt,
         model,
@@ -3925,6 +3937,7 @@ def generate_qwen_image21(
     attention_backend: str = "pytorch attention",
     accelerator: str = "Off",
     turbo_variant: str = "Off",
+    max_resolution: bool = False,
     progress=gr.Progress(track_tqdm=False),
 ):
     uploaded = reference_images or []
@@ -3955,6 +3968,7 @@ def generate_qwen_image21(
         attention_backend=attention_backend,
         accelerator=accelerator,
         turbo_variant=turbo_variant,
+        max_resolution=bool(max_resolution),
     )
     yield from qwen_generation.generate_qwen_image21(
         request, _generation_services(), _runtime_config(), progress=progress

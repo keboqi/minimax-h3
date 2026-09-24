@@ -70,6 +70,7 @@ class QwenImage21View:
     attention_backend: gr.Dropdown
     accelerator: gr.Dropdown
     turbo_variant: gr.Dropdown
+    max_resolution: gr.Checkbox
 
 
 def build_qwen_image21_view(
@@ -212,6 +213,15 @@ def build_qwen_image21_view(
                     label="Match first image size when editing",
                     info="Recommended. Disable to use the width and height above.",
                 )
+                max_resolution = gr.Checkbox(
+                    value=False,
+                    label="Max resolution when editing",
+                    info=(
+                        "Scale the first image's aspect ratio toward 4 MP, "
+                        "within 2752 × 2752. Overrides Match first image size "
+                        "and the width/height controls above."
+                    ),
+                )
                 reference_resolution = gr.Dropdown(
                     choices=[
                         ("Keep each source size", 0),
@@ -334,6 +344,7 @@ def build_qwen_image21_view(
         attention_backend,
         accelerator,
         turbo_variant,
+        max_resolution,
     )
 
 @dataclass(frozen=True)

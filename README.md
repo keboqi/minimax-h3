@@ -376,6 +376,10 @@ images and their settings are saved with the other application outputs. The
 official 40-step Euler/simple path is the default, native ~4 MP aspect-ratio
 sizes are accepted, and Comfy Kitchen INT8 attention plus Spectrum
 hidden-state forecasting are available as experimental opt-in speed settings.
+For image edits, **Max resolution when editing** scales the first reference
+image's aspect ratio toward 4 MP, rounds the output to multiples of 32, and
+keeps both sides within 2752 pixels. It overrides **Match first image size**
+and the manual width/height controls when selected.
 
 The Qwen tab also offers **Viggle Turbo v0.2** as an optional ComfyUI LoRA mode.
 Selecting it downloads the v0.2 rank-256 adapter on first use and sets five
