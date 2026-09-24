@@ -216,6 +216,11 @@ YUE2_DEFAULTS = {
     "max_abc_tokens": 8192,
     "tiled_decode": True,
 }
+QWEN_EDIT_SIZE_MATCH = "Match first image size"
+QWEN_EDIT_SIZE_MAX = "Max resolution (up to 4 MP)"
+QWEN_EDIT_SIZE_MANUAL = "Use width and height above"
+
+
 QWEN_IMAGE21_DEFAULTS = {
     "mode": "Text to image",
     "model": DEFAULT_QWEN_IMAGE21_MODEL,
@@ -223,7 +228,7 @@ QWEN_IMAGE21_DEFAULTS = {
     "width": 1024,
     "height": 1024,
     "reference_resolution": 0,
-    "match_input_size": True,
+    "edit_size": QWEN_EDIT_SIZE_MATCH,
     "seed": -1,
     "steps": 40,
     "cfg": 1.0,

@@ -245,6 +245,9 @@ from h3_app.catalog import (
     MODEL_PROFILE_CHOICES,
     MUSIC3_DEFAULTS,
     QWEN_IMAGE21_DEFAULTS,
+    QWEN_EDIT_SIZE_MATCH,
+    QWEN_EDIT_SIZE_MAX,
+    QWEN_EDIT_SIZE_MANUAL,
     YUE2_DEFAULTS,
     NATIVE_PIXEL_CAP,
     OFFICIAL_IMAGE_VAE,
@@ -584,6 +587,17 @@ def enhance_ltx25_prompt(
     )
 
 
+def qwen_edit_size_flags(edit_size: str) -> tuple[bool, bool]:
+    """Map the mutually exclusive UI choice onto the existing request fields."""
+    if edit_size not in {
+        QWEN_EDIT_SIZE_MATCH,
+        QWEN_EDIT_SIZE_MAX,
+        QWEN_EDIT_SIZE_MANUAL,
+    }:
+        raise H3Error("Choose a valid Qwen edit output size.")
+    return edit_size == QWEN_EDIT_SIZE_MATCH, edit_size == QWEN_EDIT_SIZE_MAX
+
+
 def enhance_qwen_image21_prompt(
     prompt: str,
     model: str,
@@ -594,9 +608,10 @@ def enhance_qwen_image21_prompt(
     height: int,
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
-    max_resolution: bool = False,
+    edit_size: str = QWEN_EDIT_SIZE_MATCH,
 ) -> tuple[str, str]:
-    if max_resolution and str(mode).strip().lower() == "image edit":
+    match_input_size, max_resolution = qwen_edit_size_flags(edit_size)
+    if (match_input_size or max_resolution) and str(mode).strip().lower() == "image edit":
         uploaded = reference_images or []
         if isinstance(uploaded, (str, Path)):
             uploaded = [uploaded]
@@ -604,8 +619,10 @@ def enhance_qwen_image21_prompt(
             source_width, source_height = qwen_generation.first_reference_dimensions(
                 str(uploaded[0])
             )
-            width, height = qwen_generation.max_qwen_edit_dimensions(
-                source_width, source_height
+            width, height = (
+                qwen_generation.max_qwen_edit_dimensions(source_width, source_height)
+                if max_resolution
+                else (source_width, source_height)
             )
     return prompt_service.enhance_qwen_image21_prompt(
         prompt,
@@ -3936,7 +3953,7 @@ def generate_qwen_image21(
     width: int,
     height: int,
     reference_resolution: int,
-    match_input_size: bool,
+    edit_size: str,
     seed: int,
     steps: int,
     cfg: float,
@@ -3947,9 +3964,9 @@ def generate_qwen_image21(
     attention_backend: str = "pytorch attention",
     accelerator: str = "Off",
     turbo_variant: str = "Off",
-    max_resolution: bool = False,
     progress=gr.Progress(track_tqdm=False),
 ):
+    match_input_size, max_resolution = qwen_edit_size_flags(edit_size)
     uploaded = reference_images or []
     if isinstance(uploaded, (str, Path)):
         uploaded = [uploaded]

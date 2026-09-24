@@ -275,10 +275,37 @@ class UiContractTests(unittest.TestCase):
         qwen_inputs = endpoints[qwen_endpoint]["inputs"]
         self.assertEqual(
             [self.components[id]["props"]["label"] for id in qwen_inputs[-3:]],
-            ["Prompt writer", "Temporary Lightning API key", "Max resolution when editing"],
+            ["Prompt writer", "Temporary Lightning API key", "Edit output size"],
         )
         qwen_parameters = self.demo.get_api_info()["named_endpoints"][f"/{qwen_endpoint}"]["parameters"]
         self.assertEqual(qwen_parameters[-3]["parameter_default"], "Lightning AI")
+
+    def test_qwen_edit_size_is_one_radio_input(self) -> None:
+        controls = {
+            component.get("props", {}).get("label"): component
+            for component in self.config["components"]
+        }
+        edit_size = controls["Edit output size"]
+        self.assertEqual(edit_size["type"], "radio")
+        self.assertEqual(
+            [choice[1] for choice in edit_size["props"]["choices"]],
+            [
+                "Match first image size",
+                "Max resolution (up to 4 MP)",
+                "Use width and height above",
+            ],
+        )
+        self.assertEqual(edit_size["props"]["value"], "Match first image size")
+        self.assertNotIn("Match first image size when editing", controls)
+        self.assertNotIn("Max resolution when editing", controls)
+        endpoints = {
+            dependency.get("api_name"): dependency
+            for dependency in self.config["dependencies"]
+        }
+        self.assertIn(edit_size["id"], endpoints["generate_qwen_image21"]["inputs"])
+        self.assertIn(
+            edit_size["id"], endpoints["enhance_qwen_image21_prompt"]["inputs"]
+        )
 
     def test_qwen_and_yue2_prompt_writer_endpoints_are_bound(self) -> None:
         endpoints = {

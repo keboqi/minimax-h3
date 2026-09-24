@@ -7,6 +7,12 @@ from typing import Any, Mapping, Sequence
 
 import gradio as gr
 
+from h3_app.catalog import (
+    QWEN_EDIT_SIZE_MATCH,
+    QWEN_EDIT_SIZE_MAX,
+    QWEN_EDIT_SIZE_MANUAL,
+)
+
 from .prompt_writer_controls import build_remote_prompt_writer_controls
 
 
@@ -59,7 +65,7 @@ class QwenImage21View:
     width: gr.Slider
     height: gr.Slider
     reference_resolution: gr.Dropdown
-    match_input_size: gr.Checkbox
+    edit_size: gr.Radio
     seed: gr.Number
     steps: gr.Slider
     cfg: gr.Slider
@@ -70,7 +76,6 @@ class QwenImage21View:
     attention_backend: gr.Dropdown
     accelerator: gr.Dropdown
     turbo_variant: gr.Dropdown
-    max_resolution: gr.Checkbox
     preset: gr.Radio
 
 
@@ -215,18 +220,18 @@ def build_qwen_image21_view(
                     height = gr.Slider(
                         256, 2752, value=defaults["height"], step=32, label="Height"
                     )
-                match_input_size = gr.Checkbox(
-                    value=defaults["match_input_size"],
-                    label="Match first image size when editing",
-                    info="Recommended. Disable to use the width and height above.",
-                )
-                max_resolution = gr.Checkbox(
-                    value=False,
-                    label="Max resolution when editing",
+                edit_size = gr.Radio(
+                    choices=[
+                        QWEN_EDIT_SIZE_MATCH,
+                        QWEN_EDIT_SIZE_MAX,
+                        QWEN_EDIT_SIZE_MANUAL,
+                    ],
+                    value=defaults["edit_size"],
+                    label="Edit output size",
                     info=(
-                        "Scale the first image's aspect ratio toward 4 MP, "
-                        "within 2752 × 2752. Overrides Match first image size "
-                        "and the width/height controls above."
+                        "Match the first image, scale its aspect ratio toward 4 MP "
+                        "within 2752 × 2752, or use the width and height above. "
+                        "Applies only to image editing."
                     ),
                 )
                 reference_resolution = gr.Dropdown(
@@ -340,7 +345,7 @@ def build_qwen_image21_view(
         width,
         height,
         reference_resolution,
-        match_input_size,
+        edit_size,
         seed,
         steps,
         cfg,
@@ -351,7 +356,6 @@ def build_qwen_image21_view(
         attention_backend,
         accelerator,
         turbo_variant,
-        max_resolution,
         preset,
     )
 

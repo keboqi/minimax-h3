@@ -9,6 +9,7 @@ from unittest.mock import patch
 from PIL import Image
 
 from h3_app import prompt_service
+from h3_app.errors import H3Error
 from h3_app.generation.qwen import (
     max_qwen_edit_dimensions,
     resolve_qwen_output_dimensions,
@@ -142,9 +143,78 @@ class QwenImage21WorkflowTests(unittest.TestCase):
                 ui_app.enhance_qwen_image21_prompt(
                     "Change the sky", "gemini", "", "Image edit",
                     [str(source)], 1024, 768,
-                    max_resolution=True,
+                    edit_size=ui_app.QWEN_EDIT_SIZE_MAX,
                 )
             self.assertEqual(enhance.call_args.args[5:7], (2656, 1504))
+
+    def test_edit_size_radio_maps_to_exclusive_backend_flags(self):
+        from h3_ui import application as ui_app
+
+        self.assertEqual(
+            ui_app.qwen_edit_size_flags(ui_app.QWEN_EDIT_SIZE_MATCH),
+            (True, False),
+        )
+        self.assertEqual(
+            ui_app.qwen_edit_size_flags(ui_app.QWEN_EDIT_SIZE_MAX),
+            (False, True),
+        )
+        self.assertEqual(
+            ui_app.qwen_edit_size_flags(ui_app.QWEN_EDIT_SIZE_MANUAL),
+            (False, False),
+        )
+        with self.assertRaises(H3Error):
+            ui_app.qwen_edit_size_flags("Invalid")
+
+    def test_generation_receives_radio_edit_size_flags(self):
+        from h3_ui import application as ui_app
+
+        for edit_size, expected in (
+            (ui_app.QWEN_EDIT_SIZE_MATCH, (True, False)),
+            (ui_app.QWEN_EDIT_SIZE_MAX, (False, True)),
+            (ui_app.QWEN_EDIT_SIZE_MANUAL, (False, False)),
+        ):
+            with self.subTest(edit_size=edit_size):
+                with (
+                    patch.object(ui_app, "_generation_services", return_value=object()),
+                    patch.object(ui_app, "_runtime_config", return_value=object()),
+                    patch.object(
+                        ui_app.qwen_generation,
+                        "generate_qwen_image21",
+                        return_value=iter(()),
+                    ) as generate,
+                ):
+                    list(
+                        ui_app.generate_qwen_image21(
+                            "Image edit", "BF16", "BF16", "Edit", "", (),
+                            1024, 768, 0, edit_size, -1, 40, 1.0, "euler",
+                            "simple", "auto", "default",
+                        )
+                    )
+                request = generate.call_args.args[0]
+                self.assertEqual(
+                    (request.match_input_size, request.max_resolution), expected
+                )
+
+    def test_prompt_writer_matches_first_edit_image_dimensions(self):
+        from h3_ui import application as ui_app
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "target.png"
+            Image.new("RGB", (1920, 1080)).save(source)
+            with (
+                patch.object(ui_app, "_runtime_config", return_value=object()),
+                patch.object(
+                    ui_app.prompt_service,
+                    "enhance_qwen_image21_prompt",
+                    return_value=("enhanced", "ok"),
+                ) as enhance,
+            ):
+                ui_app.enhance_qwen_image21_prompt(
+                    "Change the sky", "gemini", "", "Image edit",
+                    [str(source)], 1024, 768,
+                    edit_size=ui_app.QWEN_EDIT_SIZE_MATCH,
+                )
+            self.assertEqual(enhance.call_args.args[5:7], (1920, 1080))
 
     def test_max_resolution_overrides_match_input_size_for_edits(self):
         with tempfile.TemporaryDirectory() as directory:

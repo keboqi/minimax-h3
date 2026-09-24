@@ -376,10 +376,11 @@ images and their settings are saved with the other application outputs. The
 official 40-step Euler/simple path is the default, native ~4 MP aspect-ratio
 sizes are accepted, and Comfy Kitchen INT8 attention plus Spectrum
 hidden-state forecasting are available as experimental opt-in speed settings.
-For image edits, **Max resolution when editing** scales the first reference
+For image edits, **Edit output size** offers three exclusive choices:
+**Match first image size** (default), **Max resolution (up to 4 MP)**, or
+**Use width and height above**. Max resolution scales the first reference
 image's aspect ratio toward 4 MP, rounds the output to multiples of 32, and
-keeps both sides within 2752 pixels. It overrides **Match first image size**
-and the manual width/height controls when selected.
+keeps both sides within 2752 pixels.
 
 The Qwen tab offers three editable presets: **Fast** selects INT8 ConvRot,
 Viggle Turbo v0.2, five steps, and accelerator Off; **Normal** selects BF16,
