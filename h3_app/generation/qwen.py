@@ -143,7 +143,8 @@ def generate_qwen_image21(
             )
         turbo = request.turbo_variant != "Off"
         if request.turbo_variant not in {
-            "Off", "Viggle Turbo v0.2", "Alibaba PAI PDD 4-step"
+            "Off", "Viggle Turbo v0.2", "Alibaba PAI PDD 4-step",
+            "Pruna 8-step", "Pruna 5-step",
         }:
             raise H3Error(f"Unknown Qwen Turbo variant: {request.turbo_variant}")
         reference_limit = 3 if turbo else 10
@@ -175,6 +176,13 @@ def generate_qwen_image21(
             raise H3Error("Sampling steps must be between 1 and 100.")
         if request.turbo_variant == "Alibaba PAI PDD 4-step" and steps != 4:
             raise H3Error("Alibaba PAI PDD requires exactly 4 sampling steps.")
+        pruna_steps = {"Pruna 8-step": 8, "Pruna 5-step": 5}.get(
+            request.turbo_variant
+        )
+        if pruna_steps is not None and steps != pruna_steps:
+            raise H3Error(
+                f"{request.turbo_variant} requires exactly {pruna_steps} sampling steps."
+            )
         cfg = float(request.cfg)
         if not 0 <= cfg <= 20:
             raise H3Error("CFG must be between 0 and 20.")
@@ -183,6 +191,11 @@ def generate_qwen_image21(
                 raise H3Error("Alibaba PAI PDD requires CFG 1.")
             if str(request.sampler_name).lower() != "euler":
                 raise H3Error("Alibaba PAI PDD requires the Euler sampler.")
+        if pruna_steps is not None:
+            if cfg != 1.0:
+                raise H3Error(f"{request.turbo_variant} requires CFG 1.")
+            if str(request.sampler_name).lower() != "euler":
+                raise H3Error(f"{request.turbo_variant} requires the Euler sampler.")
         attention_backend = str(request.attention_backend)
         if attention_backend not in {
             "pytorch attention",
@@ -230,6 +243,7 @@ def generate_qwen_image21(
             use_spectrum=accelerator.lower() != "off",
             turbo=turbo,
             pdd=request.turbo_variant == "Alibaba PAI PDD 4-step",
+            pruna=pruna_steps is not None,
         ) - available
         if missing_nodes:
             raise H3Error(

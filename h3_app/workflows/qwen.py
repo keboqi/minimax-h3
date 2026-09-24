@@ -23,6 +23,7 @@ def required_qwen_image21_nodes(
     use_spectrum: bool = False,
     turbo: bool = False,
     pdd: bool = False,
+    pruna: bool = False,
 ) -> set[str]:
     nodes = {
         "UNETLoader",
@@ -52,6 +53,9 @@ def required_qwen_image21_nodes(
         nodes.discard("LoraLoaderModelOnly")
         nodes.discard("H3Qwen21TurboSigmas")
         nodes |= {"H3Qwen21PDDLoader", "H3Qwen21PDDSigmas"}
+    if pruna:
+        nodes.discard("H3Qwen21TurboSigmas")
+        nodes.add("H3Qwen21PrunaSigmas")
     return nodes
 
 
@@ -98,17 +102,34 @@ def build_qwen_image21_graph(
     )
     viggle = turbo_variant == "Viggle Turbo v0.2"
     pdd = turbo_variant == "Alibaba PAI PDD 4-step"
-    turbo = viggle or pdd
+    pruna_steps = {"Pruna 8-step": 8, "Pruna 5-step": 5}.get(turbo_variant)
+    turbo = viggle or pdd or pruna_steps is not None
     if pdd and (
         int(steps) != 4 or float(cfg) != 1.0
         or str(sampler_name).lower() != "euler"
     ):
         raise ValueError("Alibaba PAI PDD requires 4 steps, CFG 1, and Euler.")
+    if pruna_steps is not None and (
+        int(steps) != pruna_steps or float(cfg) != 1.0
+        or str(sampler_name).lower() != "euler"
+    ):
+        raise ValueError(
+            f"{turbo_variant} requires {pruna_steps} steps, CFG 1, and Euler."
+        )
     if viggle:
         model = graph.add(
             "LoraLoaderModelOnly",
             model=Graph.out(model),
             lora_name=MODEL_SPECS["qwen_image21_viggle_v02_lora"].local_name,
+            strength_model=1.0,
+        )
+    elif pruna_steps is not None:
+        model = graph.add(
+            "LoraLoaderModelOnly",
+            model=Graph.out(model),
+            lora_name=MODEL_SPECS[
+                f"qwen_image21_pruna_{pruna_steps}step_lora"
+            ].local_name,
             strength_model=1.0,
         )
     elif pdd:
@@ -197,6 +218,8 @@ def build_qwen_image21_graph(
         sampler = graph.add("KSamplerSelect", sampler_name=str(sampler_name))
         if pdd:
             sigmas = graph.add("H3Qwen21PDDSigmas")
+        elif pruna_steps is not None:
+            sigmas = graph.add("H3Qwen21PrunaSigmas", steps=pruna_steps)
         else:
             sigmas = graph.add(
                 "H3Qwen21TurboSigmas", latent_image=latent, steps=int(steps)

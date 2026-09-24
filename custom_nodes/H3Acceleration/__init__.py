@@ -1722,6 +1722,33 @@ class H3Qwen21TurboSigmas:
         return (torch.tensor([*shifted, 0.0], dtype=torch.float32),)
 
 
+class H3Qwen21PrunaSigmas:
+    """Pruna v0.1 adapter-specific sigma nodes, already shifted by its training schedule."""
+
+    SCHEDULES = {
+        5: (1.0, 0.94, 6 / 7, 2 / 3, 0.4, 0.0),
+        8: (1.0, 14 / 15, 6 / 7, 10 / 13, 2 / 3, 6 / 11, 0.4, 2 / 9, 0.0),
+    }
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "steps": ("INT", {"default": 8, "min": 5, "max": 8}),
+        }}
+
+    RETURN_TYPES = ("SIGMAS",)
+    FUNCTION = "calculate"
+    CATEGORY = "sampling/custom_sampling/schedulers"
+
+    def calculate(self, steps):
+        count = int(steps)
+        if count not in self.SCHEDULES:
+            raise ValueError("Pruna Qwen Image 2.1 supports only 5 or 8 steps.")
+        # Comfy's custom sampler consumes these values directly; do not apply
+        # the base model's resolution-dependent time shift a second time.
+        return (torch.tensor(self.SCHEDULES[count], dtype=torch.float32),)
+
+
 # Native PDD grid in alibaba-pai/Qwen-Image-2.1-Fun-Acc-LoRAs,
 # models/pdd_config.json. The export is already shifted and stretched.
 QWEN21_PDD_SIGMAS = (
@@ -1908,6 +1935,7 @@ class H3Qwen21PDDSigmas:
 
 NODE_CLASS_MAPPINGS = {
     "H3Qwen21TurboSigmas": H3Qwen21TurboSigmas,
+    "H3Qwen21PrunaSigmas": H3Qwen21PrunaSigmas,
     "H3Qwen21PDDLoader": H3Qwen21PDDLoader,
     "H3Qwen21PDDSigmas": H3Qwen21PDDSigmas,
     "H3SemanticBridge": H3SemanticBridge,
@@ -1926,6 +1954,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3Qwen21TurboSigmas": "Qwen Image 2.1 Viggle Turbo Sigmas",
+    "H3Qwen21PrunaSigmas": "Qwen Image 2.1 Pruna Sigmas",
     "H3Qwen21PDDLoader": "Qwen Image 2.1 Alibaba PAI PDD Loader",
     "H3Qwen21PDDSigmas": "Qwen Image 2.1 Alibaba PAI PDD Sigmas",
     "H3SemanticBridge": "MiniMax H3 Semantic Bridge (experimental)",

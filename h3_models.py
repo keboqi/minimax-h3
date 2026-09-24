@@ -43,6 +43,7 @@ YUE2_REPO = "Comfy-Org/YuE2"
 QWEN_IMAGE21_REPO = "Comfy-Org/Qwen-Image-2.1"
 QWEN_IMAGE21_VIGGLE_REPO = "Viggle/Qwen-Image-2.1-viggle-turbo"
 QWEN_IMAGE21_PDD_REPO = "alibaba-pai/Qwen-Image-2.1-Fun-Acc-LoRAs"
+QWEN_IMAGE21_PRUNA_REPO = "PrunaAI/Pruna-Qwen-Image-2.1"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -524,6 +525,18 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "models/Qwen-Image-2.1-Fun-Acc-4Step.safetensors",
         "Alibaba PAI Qwen Image 2.1 PDD 4-step LoRA",
     ),
+    "qwen_image21_pruna_8step_lora": ModelSpec(
+        QWEN_IMAGE21_PRUNA_REPO,
+        "loras",
+        "p_qwen_image_2.1_8step_v0.1.safetensors",
+        "Pruna Qwen Image 2.1 8-step LoRA",
+    ),
+    "qwen_image21_pruna_5step_lora": ModelSpec(
+        QWEN_IMAGE21_PRUNA_REPO,
+        "loras",
+        "p_qwen_image_2.1_5step_v0.1.safetensors",
+        "Pruna Qwen Image 2.1 5-step LoRA",
+    ),
 }
 
 PROFILE_MODEL_KEYS = {
@@ -648,6 +661,8 @@ QWEN_IMAGE21_MODEL_KEYS = (
     "qwen_image21_vae",
     "qwen_image21_viggle_v02_lora",
     "qwen_image21_pdd_4step_lora",
+    "qwen_image21_pruna_8step_lora",
+    "qwen_image21_pruna_5step_lora",
 )
 LAZY_OPTIONAL_MODEL_KEYS = (
     "semantic_bridge_v1",
@@ -1290,6 +1305,9 @@ def selftest() -> None:
         "qwen_image21_text_bf16",
         "qwen_image21_vae",
         "qwen_image21_viggle_v02_lora",
+        "qwen_image21_pdd_4step_lora",
+        "qwen_image21_pruna_8step_lora",
+        "qwen_image21_pruna_5step_lora",
     }
 
     cfg = _build_config("manifest.json")

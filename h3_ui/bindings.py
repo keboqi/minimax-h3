@@ -244,6 +244,10 @@ def qwen_turbo_defaults(variant: str, preset: str = "Quality"):
         return 5, 1.0, "euler", "Off"
     if variant == "Alibaba PAI PDD 4-step":
         return 4, 1.0, "euler", "Off"
+    if variant == "Pruna 8-step":
+        return 8, 1.0, "euler", "Off"
+    if variant == "Pruna 5-step":
+        return 5, 1.0, "euler", "Off"
     steps = 25 if preset == "Normal" else 40
     return steps, 1.0, "euler", "Spectrum (Quality)"
 

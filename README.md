@@ -408,6 +408,18 @@ This mode requires exactly four steps. Image edits turn the Qwen prefix KV
 cache off, matching the published examples. Alibaba notes that small dense
 text may be less legible and some edits may be softer or darker than the
 40-step base model. The adapter inherits Qwen's research license.
+
+**Pruna 8-step** and **Pruna 5-step** are additional Qwen Image 2.1 LoRA
+modes. Each downloads its v0.1 adapter on first use and uses the matching
+published sigma schedule through the same ComfyUI backend. Select 8 steps for
+higher quality or 5 for speed. These modes require their exact step count,
+Euler, CFG 1, and accelerator Off; editing accepts up to three references.
+Pruna recommends 1K output and detailed prompts. This first release is below
+the base model's visual quality, and the 5-step adapter has visibly lower
+quality than the 8-step adapter. See the
+[Pruna model card](https://huggingface.co/PrunaAI/Pruna-Qwen-Image-2.1)
+for the schedules and research license.
+
 The **YuE2** tab uses ComfyUI's native YuE2 nodes (ComfyUI v0.36.0 or newer).
 Its INT8 ConvRot checkpoint (about 4 GB) is selected by default; the BF16
 checkpoint is an optional alternative. The selected checkpoint downloads on

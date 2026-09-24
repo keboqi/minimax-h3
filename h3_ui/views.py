@@ -163,12 +163,16 @@ def build_qwen_image21_view(
                     label="Diffusion model",
                 )
                 turbo_variant = gr.Dropdown(
-                    choices=["Off", "Viggle Turbo v0.2", "Alibaba PAI PDD 4-step"],
+                    choices=[
+                        "Off", "Viggle Turbo v0.2", "Alibaba PAI PDD 4-step",
+                        "Pruna 8-step", "Pruna 5-step",
+                    ],
                     value="Off",
                     label="Turbo mode",
                     info=(
-                        "Viggle v0.2 selects 5 steps; Alibaba PAI PDD requires exactly "
-                        "4 steps. Both use Euler, CFG 1, and accelerator Off. "
+                        "Viggle v0.2 selects 5 steps; Alibaba PAI PDD requires 4; "
+                        "Pruna offers 8-step and 5-step adapters with fixed schedules. "
+                        "All use Euler, CFG 1, and accelerator Off. "
                         "Research and evaluation use only."
                     ),
                 )
