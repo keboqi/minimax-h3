@@ -171,6 +171,20 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(updates[7]["choices"], [gradio_app.SEEDVR2_UPSCALE])
         self.assertTrue(updates[9]["visible"])
 
+        tab_open = next(
+            item
+            for item in self.config["dependencies"]
+            if (mode["id"] in item.get("inputs", []))
+            and item.get("outputs", [])[:3] == [
+                controls["Selected video"]["id"],
+                controls["Selected image"]["id"],
+                controls["Selected audio"]["id"],
+            ]
+            and any(target[1] == "select" for target in item.get("targets", []))
+        )
+        opened = self.demo.fns[tab_open["id"]].fn("Image")
+        self.assertEqual([item["visible"] for item in opened[:3]], [False, True, False])
+
         audio_updates = self.demo.fns[dependency["id"]].fn("Audio")
         self.assertFalse(audio_updates[0]["visible"])
         self.assertFalse(audio_updates[1]["visible"])

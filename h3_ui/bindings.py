@@ -487,7 +487,15 @@ def bind_gallery_view(
         show_progress="hidden",
     )
     opened = tab.select(
-        lambda: (None, None, None, "", None, False),
+        lambda value: (
+            gr.update(value=None, visible=value == "Video"),
+            gr.update(value=None, visible=value == "Image"),
+            gr.update(value=None, visible=value == "Audio"),
+            "",
+            None,
+            False,
+        ),
+        inputs=view.mode,
         outputs=[
             view.player,
             view.image,

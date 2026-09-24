@@ -2796,6 +2796,22 @@ def refresh_media_gallery(
     return items, selectable_paths, detail
 
 
+def gallery_preview_updates(
+    mode: str,
+    *,
+    video: str | None = None,
+    image: str | None = None,
+    audio: str | None = None,
+) -> tuple[Any, Any, Any]:
+    """Always update all preview visibility flags with the selected media."""
+    media_mode = gallery_media_mode(mode)
+    return (
+        gr.update(value=video, visible=media_mode == "Video"),
+        gr.update(value=image, visible=media_mode == "Image"),
+        gr.update(value=audio, visible=media_mode == "Audio"),
+    )
+
+
 def select_gallery_media(
     mode: str,
     paths: list[str],
@@ -2808,16 +2824,14 @@ def select_gallery_media(
     try:
         media = paths[int(index)]
     except (IndexError, TypeError, ValueError):
-        return None, None, None, "", None
+        return (*gallery_preview_updates(mode), "", None)
     media_mode = gallery_media_mode(mode)
     if media_mode == "Image":
         resolved = managed_gallery_image_path(media)
         resolution = gallery_image_resolution_text(resolved)
         download_url = absolute_gallery_media_download_url(media, media_mode, request)
         return (
-            None,
-            media,
-            None,
+            *gallery_preview_updates(mode, image=media),
             f"**Resolution:** {resolution} · [Download image]({download_url})",
             media,
         )
@@ -2827,14 +2841,12 @@ def select_gallery_media(
             resolved, media_mode, request
         )
         return (
-            None,
-            None,
-            media,
+            *gallery_preview_updates(mode, audio=media),
             f"[Download audio]({download_url})",
             media,
         )
     video, download, selected = select_gallery_video(paths, request, evt)
-    return video, None, None, download, selected
+    return (*gallery_preview_updates(mode, video=video), download, selected)
 
 
 GalleryMutationResult = tuple[
@@ -2944,9 +2956,7 @@ def gallery_media_processed_result(
         items,
         paths,
         f"Completed {option} in {elapsed:.1f}s · {detail}",
-        video,
-        image,
-        audio,
+        *gallery_preview_updates(mode, video=video, image=image, audio=audio),
         f"**Resolution:** {resolution} · [Download processed {noun}]({download_url})",
         str(result),
         False,

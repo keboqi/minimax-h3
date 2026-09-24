@@ -27,6 +27,59 @@ import h3_ui.application as app
 
 
 class GalleryRestorationTests(unittest.TestCase):
+    def test_gallery_preview_updates_keep_only_active_media_visible(self):
+        for mode, expected in (
+            ("Video", [True, False, False]),
+            ("Image", [False, True, False]),
+            ("Audio", [False, False, True]),
+        ):
+            with self.subTest(mode=mode):
+                updates = app.gallery_preview_updates(
+                    mode, video="video.mp4", image="image.png", audio="audio.mp3"
+                )
+                self.assertEqual([item["visible"] for item in updates], expected)
+
+    def test_select_gallery_image_hides_video_preview(self):
+        with (
+            patch.object(
+                app, "managed_gallery_image_path", return_value=Path("image.png")
+            ),
+            patch.object(
+                app, "gallery_image_resolution_text", return_value="1024×1024"
+            ),
+            patch.object(
+                app, "absolute_gallery_media_download_url", return_value="/image"
+            ),
+        ):
+            updates = app.select_gallery_media(
+                "Image", ["image.png"], Mock(), SimpleNamespace(index=0)
+            )
+        self.assertEqual(
+            [item["visible"] for item in updates[:3]], [False, True, False]
+        )
+        self.assertEqual(
+            [item["value"] for item in updates[:3]], [None, "image.png", None]
+        )
+
+    def test_processed_image_hides_video_preview(self):
+        with (
+            patch.object(
+                app, "refresh_media_gallery", return_value=([], [], "1 image")
+            ),
+            patch.object(
+                app, "absolute_gallery_media_download_url", return_value="/image"
+            ),
+            patch.object(
+                app, "gallery_image_resolution_text", return_value="1024×1024"
+            ),
+        ):
+            updates = app.gallery_media_processed_result(
+                "Image", Path("image.png"), "Upscale", 1.0, Mock()
+            )
+        self.assertEqual(
+            [item["visible"] for item in updates[3:6]], [False, True, False]
+        )
+
     def test_video_gallery_dispatch_reserves_image_and_audio_preview_slots(self):
         legacy_update = (
             "grid",
