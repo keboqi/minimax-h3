@@ -424,7 +424,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             reference_resolution=0,
             match_input_size=True,
             seed=123,
-            steps=5,
+            steps=6,
             cfg=1.0,
             sampler_name="euler",
             scheduler="simple",
@@ -434,24 +434,23 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             accelerator="Off",
             output_stamp="1234",
             output_nonce="abcd",
-            turbo_variant="Viggle Turbo v0.2",
+            turbo_variant="Viggle Turbo v0.2.1 (6-step)",
         )
         self.assertFalse(self._by_type(graph, "KSampler"))
-        lora_id, lora = self._by_type(graph, "LoraLoaderModelOnly")[0]
+        lora_id, lora = self._by_type(graph, "H3Qwen21ViggleLora")[0]
         self.assertEqual(
             lora["inputs"]["lora_name"],
             MODEL_SPECS["qwen_image21_viggle_v02_lora"].local_name,
         )
-        self.assertEqual(lora["inputs"]["strength_model"], 1.0)
-        backend = self._by_type(graph, "ModelAttentionBackend")[0][1]
-        self.assertEqual(backend["inputs"]["model"], [lora_id, 0])
+        backend_id = self._by_type(graph, "ModelAttentionBackend")[0][0]
+        self.assertEqual(lora["inputs"]["model"], [backend_id, 0])
         sigmas_id, sigmas = self._by_type(graph, "H3Qwen21TurboSigmas")[0]
-        self.assertEqual(sigmas["inputs"]["steps"], 5)
+        self.assertEqual(sigmas["inputs"]["steps"], 6)
         sampler = self._by_type(graph, "SamplerCustomAdvanced")[0][1]
         self.assertEqual(sampler["inputs"]["sigmas"], [sigmas_id, 0])
         self.assertTrue(
-            {"LoraLoaderModelOnly", "H3Qwen21TurboSigmas", "CFGGuider"}
-            <= required_qwen_image21_nodes(editing=False, turbo=True)
+            {"H3Qwen21ViggleLora", "H3Qwen21TurboSigmas", "CFGGuider"}
+            <= required_qwen_image21_nodes(editing=False, turbo=True, viggle=True)
         )
 
     def test_alibaba_pdd_uses_dedicated_loader_and_fixed_sigmas(self):
@@ -533,7 +532,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
     def test_qwen_presets_select_the_requested_controls(self):
         self.assertEqual(
             qwen_preset_values("Fast"),
-            ("INT8 ConvRot (lower VRAM)", "Viggle Turbo v0.2", 5, "Off"),
+            ("INT8 ConvRot (lower VRAM)", "Viggle Turbo v0.2.1 (6-step)", 6, "Off"),
         )
         self.assertEqual(
             qwen_preset_values("Normal"),
@@ -544,17 +543,16 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             ("BF16", "Off", 40, "Spectrum (Quality)"),
         )
 
-    def test_turbo_steps_are_editable_and_model_download_is_optional(self):
+    def test_viggle_schedule_is_fixed_and_model_download_is_optional(self):
         from h3_app.model_service import qwen_image21_model_keys
 
-        self.assertEqual(qwen_turbo_defaults("Viggle Turbo v0.2")[0], 5)
+        self.assertEqual(qwen_turbo_defaults("Viggle Turbo v0.2.1 (6-step)")[0], 6)
         self.assertEqual(qwen_turbo_defaults("Off", "Normal")[0], 25)
         self.assertEqual(qwen_turbo_defaults("Off", "Quality")[0], 40)
-        custom_graph = self._build(steps=7, turbo_variant="Viggle Turbo v0.2")
-        custom_sigmas = self._by_type(custom_graph, "H3Qwen21TurboSigmas")[0][1]
-        self.assertEqual(custom_sigmas["inputs"]["steps"], 7)
+        with self.assertRaisesRegex(ValueError, "requires 6 steps"):
+            self._build(steps=7, turbo_variant="Viggle Turbo v0.2.1 (6-step)")
         base = qwen_image21_model_keys("BF16", "BF16")
-        turbo = qwen_image21_model_keys("BF16", "BF16", "Viggle Turbo v0.2")
+        turbo = qwen_image21_model_keys("BF16", "BF16", "Viggle Turbo v0.2.1 (6-step)")
         self.assertEqual(turbo[:-1], base)
         self.assertEqual(turbo[-1], "qwen_image21_viggle_v02_lora")
         self.assertEqual(

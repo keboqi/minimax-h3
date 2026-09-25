@@ -383,21 +383,24 @@ image's aspect ratio toward 4 MP, rounds the output to multiples of 32, and
 keeps both sides within 2752 pixels.
 
 The Qwen tab offers three editable presets: **Fast** selects INT8 ConvRot,
-Viggle Turbo v0.2, five steps, and accelerator Off; **Normal** selects BF16,
+Viggle Turbo v0.2.1, six steps, and accelerator Off; **Normal** selects BF16,
 Turbo Off, 25 steps, and Spectrum (Quality); **Quality** selects BF16, Turbo
 Off, 40 steps, and Spectrum (Quality). Quality is selected initially. The text
 encoder and other controls retain their chosen values when switching presets.
 
-The Qwen tab also offers **Viggle Turbo v0.2** as an optional ComfyUI LoRA mode.
-Selecting it downloads the v0.2 rank-256 adapter on first use and sets five
-steps, Euler, CFG 1, and accelerator Off. The steps slider remains editable;
-other counts use evenly spaced Qwen sigma nodes and are experimental. At the
-recommended five steps, a bundled ComfyUI node applies Qwen's resolution-based
-time shift to Viggle's published `[1.0, 0.875, 0.75, 0.5, 0.25]` nodes without
-a terminal stretch. Turbo editing accepts up to three references. The base mode
-retains its existing controls and up to ten references. Viggle Turbo is a
-preview released under the Qwen Research License for non-commercial research
-or evaluation; commercial use requires a separate licence.
+The Qwen tab offers **Viggle Turbo v0.2.1** as a six-step ComfyUI LoRA mode.
+It downloads the rank-256 adapter on first use and uses its published six-node
+schedule with Qwen's resolution-dependent time shift. A bundled custom loader
+applies the adapter without merging it into BF16/INT8 weights. The experimental
+**Viggle 3-pass (configurable)** option runs a base-model composition pass,
+then two six-step Viggle-LoRA refinements by default (6+6+6). Pass 2 denoise
+starts at 0.60 and pass 3 at 0.25; pass step counts and denoise values are
+editable. The refinements use standard Euler/simple KSampler scheduling and
+are an experimental adaptation of the community recipe, not Viggle's published
+single-pass sigma schedule. Turbo editing accepts up to three references. The
+base mode retains its existing controls and up to ten references. Viggle Turbo
+is released under the Qwen Research License for non-commercial research or
+evaluation; commercial use requires a separate licence.
 
 **Alibaba PAI PDD 4-step** is a second Turbo mode. Selecting it downloads
 [Qwen-Image-2.1-Fun-Acc-4Step.safetensors](https://huggingface.co/alibaba-pai/Qwen-Image-2.1-Fun-Acc-LoRAs)

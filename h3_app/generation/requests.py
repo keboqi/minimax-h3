@@ -203,6 +203,10 @@ class QwenImage21Request:
     accelerator: str = "Off"
     turbo_variant: str = "Off"
     max_resolution: bool = False
+    viggle_pass2_steps: int = 6
+    viggle_pass3_steps: int = 6
+    viggle_pass2_denoise: float = 0.6
+    viggle_pass3_denoise: float = 0.25
 
 
 @dataclass(frozen=True)

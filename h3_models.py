@@ -516,8 +516,8 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     "qwen_image21_viggle_v02_lora": ModelSpec(
         QWEN_IMAGE21_VIGGLE_REPO,
         "loras",
-        "Qwen-Image-2.1-viggle-turbo-v0.2-5step-lora-r256.safetensors",
-        "Viggle Qwen Image 2.1 Turbo v0.2 LoRA",
+        "Qwen-Image-2.1-viggle-turbo-v0.2.1-6step-lora-r256.safetensors",
+        "Viggle Qwen Image 2.1 Turbo v0.2.1 6-step LoRA",
     ),
     "qwen_image21_pdd_4step_lora": ModelSpec(
         QWEN_IMAGE21_PDD_REPO,

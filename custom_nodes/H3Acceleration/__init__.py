@@ -1685,17 +1685,17 @@ class H3SemanticBridge:
 
 
 class H3Qwen21TurboSigmas:
-    """Viggle v0.2 raw nodes with Qwen Image 2.1's dynamic time shift.
+    """Viggle v0.2.1 raw nodes with Qwen Image 2.1's dynamic time shift.
 
-    Comfy's Qwen model has a fixed shift at load time; the five-step adapter
-    needs the resolution-dependent shift used by its training pipeline.
+    Comfy's Qwen model has a fixed shift at load time; the adapter needs the
+    resolution-dependent shift used by its training pipeline.
     """
 
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {
             "latent_image": ("LATENT",),
-            "steps": ("INT", {"default": 5, "min": 1, "max": 100}),
+            "steps": ("INT", {"default": 6, "min": 1, "max": 100}),
         }}
 
     RETURN_TYPES = ("SIGMAS",)
@@ -1709,8 +1709,8 @@ class H3Qwen21TurboSigmas:
         mu = 0.5 + 0.4 * (tokens - 256) / (8192 - 256)
         count = int(steps)
         raw = (
-            (1.0, 0.875, 0.75, 0.5, 0.25)
-            if count == 5
+            (1.0, 0.9375, 0.875, 0.75, 0.5, 0.25)
+            if count == 6
             else tuple(1.0 - index / count for index in range(count))
         )
         exponent = math.exp(mu)
@@ -1720,6 +1720,109 @@ class H3Qwen21TurboSigmas:
         ]
         # Viggle's scheduler has shift_terminal=null; no terminal stretch.
         return (torch.tensor([*shifted, 0.0], dtype=torch.float32),)
+
+
+
+def _h3_viggle_lora_fwd(x, factors):
+    down, up = factors
+    if down.device != x.device or down.dtype != x.dtype:
+        down = down.to(device=x.device, dtype=x.dtype)
+    if up.device != x.device or up.dtype != x.dtype:
+        up = up.to(device=x.device, dtype=x.dtype)
+    return F.linear(F.linear(x, down), up)
+
+
+def _h3_viggle_mlp_hooks(mlp, gate, up, down):
+    saved = {}
+
+    def gate_up_hook(_module, inputs, output):
+        saved["gate_up"] = output + torch.cat((
+            _h3_viggle_lora_fwd(inputs[0], gate),
+            _h3_viggle_lora_fwd(inputs[0], up),
+        ), dim=-1)
+        return saved["gate_up"]
+
+    def mlp_hook(_module, inputs, output):
+        gate_values, up_values = saved.pop("gate_up").chunk(2, dim=-1)
+        return output + _h3_viggle_lora_fwd(
+            F.silu(gate_values) * up_values, down
+        )
+
+    return [
+        mlp.gate_up.register_forward_hook(gate_up_hook),
+        mlp.register_forward_hook(mlp_hook),
+    ]
+
+
+def _h3_run_viggle_lora(lora, executor, *args, **kwargs):
+    diffusion_model = executor.class_obj
+    hooks = []
+    try:
+        for name, factors in lora.items():
+            parent_name, _, leaf = name.rpartition(".")
+            parent = diffusion_model.get_submodule(parent_name)
+            if factors[0].device != args[0].device:
+                factors[0] = factors[0].to(args[0].device)
+                factors[1] = factors[1].to(args[0].device)
+            if getattr(parent, "fused", False):
+                if leaf == "out":
+                    hooks.extend(_h3_viggle_mlp_hooks(
+                        parent, lora[parent_name + ".gate_layer"],
+                        lora[parent_name + ".proj"], factors,
+                    ))
+                continue
+
+            def hook(_module, inputs, output, factors=factors):
+                return output + _h3_viggle_lora_fwd(inputs[0], factors)
+
+            hooks.append(diffusion_model.get_submodule(name).register_forward_hook(hook))
+        return executor(*args, **kwargs)
+    finally:
+        for hook in hooks:
+            hook.remove()
+
+
+class H3Qwen21ViggleLora:
+    """Apply the Viggle adapter at inference time without merging its weights."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "model": ("MODEL",),
+            "lora_name": (folder_paths.get_filename_list("loras"),),
+        }}
+
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "load"
+    CATEGORY = "loaders"
+
+    def load(self, model, lora_name):
+        state, metadata = comfy.utils.load_torch_file(
+            folder_paths.get_full_path_or_raise("loras", lora_name),
+            return_metadata=True,
+        )
+        adapter_config = json.loads(
+            (metadata or {}).get("lora_adapter_metadata", "{}")
+        )
+        scale = float(adapter_config.get("transformer.lora_alpha", 1)) / float(
+            adapter_config.get("transformer.r", 1)
+        )
+        lora = {
+            key.removeprefix("transformer.").removesuffix(".lora_A.weight"):
+                [state[key], state[key.replace("lora_A", "lora_B")] * scale]
+            for key in state if key.endswith(".lora_A.weight")
+        }
+        if not lora:
+            raise ValueError("No Viggle-format Qwen Image 2.1 LoRA weights found.")
+        patched = model.clone()
+        patched.add_wrapper_with_key(
+            comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL,
+            "h3_qwen21_viggle_lora",
+            lambda executor, *args, **kwargs: _h3_run_viggle_lora(
+                lora, executor, *args, **kwargs
+            ),
+        )
+        return (patched,)
 
 
 class H3Qwen21PrunaSigmas:
@@ -1935,6 +2038,7 @@ class H3Qwen21PDDSigmas:
 
 NODE_CLASS_MAPPINGS = {
     "H3Qwen21TurboSigmas": H3Qwen21TurboSigmas,
+    "H3Qwen21ViggleLora": H3Qwen21ViggleLora,
     "H3Qwen21PrunaSigmas": H3Qwen21PrunaSigmas,
     "H3Qwen21PDDLoader": H3Qwen21PDDLoader,
     "H3Qwen21PDDSigmas": H3Qwen21PDDSigmas,
@@ -1954,6 +2058,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3Qwen21TurboSigmas": "Qwen Image 2.1 Viggle Turbo Sigmas",
+    "H3Qwen21ViggleLora": "Qwen Image 2.1 Viggle Turbo LoRA (unmerged)",
     "H3Qwen21PrunaSigmas": "Qwen Image 2.1 Pruna Sigmas",
     "H3Qwen21PDDLoader": "Qwen Image 2.1 Alibaba PAI PDD Loader",
     "H3Qwen21PDDSigmas": "Qwen Image 2.1 Alibaba PAI PDD Sigmas",

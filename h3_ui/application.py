@@ -3964,6 +3964,10 @@ def generate_qwen_image21(
     attention_backend: str = "pytorch attention",
     accelerator: str = "Off",
     turbo_variant: str = "Off",
+    viggle_pass2_steps: int = 6,
+    viggle_pass3_steps: int = 6,
+    viggle_pass2_denoise: float = 0.6,
+    viggle_pass3_denoise: float = 0.25,
     progress=gr.Progress(track_tqdm=False),
 ):
     match_input_size, max_resolution = qwen_edit_size_flags(edit_size)
@@ -3996,6 +4000,10 @@ def generate_qwen_image21(
         accelerator=accelerator,
         turbo_variant=turbo_variant,
         max_resolution=bool(max_resolution),
+        viggle_pass2_steps=viggle_pass2_steps,
+        viggle_pass3_steps=viggle_pass3_steps,
+        viggle_pass2_denoise=viggle_pass2_denoise,
+        viggle_pass3_denoise=viggle_pass3_denoise,
     )
     yield from qwen_generation.generate_qwen_image21(
         request, _generation_services(), _runtime_config(), progress=progress

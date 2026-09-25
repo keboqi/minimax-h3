@@ -227,7 +227,7 @@ def bind_music_view(
 
 
 QWEN_IMAGE21_PRESETS = {
-    "Fast": ("INT8 ConvRot (lower VRAM)", "Viggle Turbo v0.2", 5, "Off"),
+    "Fast": ("INT8 ConvRot (lower VRAM)", "Viggle Turbo v0.2.1 (6-step)", 6, "Off"),
     "Normal": ("BF16", "Off", 25, "Spectrum (Quality)"),
     "Quality": ("BF16", "Off", 40, "Spectrum (Quality)"),
 }
@@ -240,8 +240,10 @@ def qwen_preset_values(preset: str):
 
 def qwen_turbo_defaults(variant: str, preset: str = "Quality"):
     """Set Turbo defaults, preserving the selected base preset's step count."""
-    if variant == "Viggle Turbo v0.2":
-        return 5, 1.0, "euler", "Off"
+    if variant == "Viggle Turbo v0.2.1 (6-step)":
+        return 6, 1.0, "euler", "Off"
+    if variant == "Viggle 3-pass (configurable)":
+        return 6, 1.0, "euler", "Off"
     if variant == "Alibaba PAI PDD 4-step":
         return 4, 1.0, "euler", "Off"
     if variant == "Pruna 8-step":
@@ -330,6 +332,10 @@ def bind_qwen_image21_view(
             view.attention_backend,
             view.accelerator,
             view.turbo_variant,
+            view.viggle_pass2_steps,
+            view.viggle_pass3_steps,
+            view.viggle_pass2_denoise,
+            view.viggle_pass3_denoise,
         ],
         outputs=[view.output, view.status],
         show_progress="minimal",

@@ -143,7 +143,8 @@ def generate_qwen_image21(
             )
         turbo = request.turbo_variant != "Off"
         if request.turbo_variant not in {
-            "Off", "Viggle Turbo v0.2", "Alibaba PAI PDD 4-step",
+            "Off", "Viggle Turbo v0.2.1 (6-step)",
+            "Viggle 3-pass (configurable)", "Alibaba PAI PDD 4-step",
             "Pruna 8-step", "Pruna 5-step",
         }:
             raise H3Error(f"Unknown Qwen Turbo variant: {request.turbo_variant}")
@@ -174,6 +175,21 @@ def generate_qwen_image21(
         steps = int(request.steps)
         if not 1 <= steps <= 100:
             raise H3Error("Sampling steps must be between 1 and 100.")
+        viggle = request.turbo_variant in {
+            "Viggle Turbo v0.2.1 (6-step)", "Viggle 3-pass (configurable)"
+        }
+        viggle_multistep = request.turbo_variant == "Viggle 3-pass (configurable)"
+        if request.turbo_variant == "Viggle Turbo v0.2.1 (6-step)" and steps != 6:
+            raise H3Error("Viggle Turbo v0.2.1 requires exactly 6 sampling steps.")
+        if viggle_multistep:
+            if not 1 <= steps <= 12:
+                raise H3Error("Viggle composition pass requires 1 to 12 steps.")
+            if not 1 <= int(request.viggle_pass2_steps) <= 12 or not 1 <= int(request.viggle_pass3_steps) <= 12:
+                raise H3Error("Viggle refinement passes require 1 to 12 steps each.")
+            if not 0.5 <= float(request.viggle_pass2_denoise) <= 0.7:
+                raise H3Error("Viggle pass 2 denoise must be between 0.5 and 0.7.")
+            if not 0.2 <= float(request.viggle_pass3_denoise) <= 0.3:
+                raise H3Error("Viggle pass 3 denoise must be between 0.2 and 0.3.")
         if request.turbo_variant == "Alibaba PAI PDD 4-step" and steps != 4:
             raise H3Error("Alibaba PAI PDD requires exactly 4 sampling steps.")
         pruna_steps = {"Pruna 8-step": 8, "Pruna 5-step": 5}.get(
@@ -244,6 +260,8 @@ def generate_qwen_image21(
             turbo=turbo,
             pdd=request.turbo_variant == "Alibaba PAI PDD 4-step",
             pruna=pruna_steps is not None,
+            viggle=viggle,
+            viggle_multistep=viggle_multistep,
         ) - available
         if missing_nodes:
             raise H3Error(
@@ -272,6 +290,10 @@ def generate_qwen_image21(
             output_stamp=str(int(time.time())),
             output_nonce=uuid.uuid4().hex[:8],
             turbo_variant=request.turbo_variant,
+            viggle_pass2_steps=request.viggle_pass2_steps,
+            viggle_pass3_steps=request.viggle_pass3_steps,
+            viggle_pass2_denoise=request.viggle_pass2_denoise,
+            viggle_pass3_denoise=request.viggle_pass3_denoise,
         )
         client_id = str(uuid.uuid4())
         prompt_id = services.execution.submit_prompt(graph, client_id)
@@ -286,7 +308,12 @@ def generate_qwen_image21(
             None,
             f"Queued Qwen Image 2.1 job `{prompt_id}` · seed {actual_seed} · "
             f"{job_size} · {request.model_choice} · {request.turbo_variant} · "
-            f"{steps} steps · accelerator {accelerator}",
+            (
+                f"{steps}+{request.viggle_pass2_steps}+{request.viggle_pass3_steps} "
+                f"steps · denoise {request.viggle_pass2_denoise:.2f}/"
+                f"{request.viggle_pass3_denoise:.2f} · accelerator {accelerator}"
+                if viggle_multistep else f"{steps} steps · accelerator {accelerator}"
+            ),
         )
         for stage, completed_nodes, total_nodes, step, step_total in (
             services.execution.poll_comfy_progress(prompt_id, graph)
