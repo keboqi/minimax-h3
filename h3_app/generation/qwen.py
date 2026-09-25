@@ -304,24 +304,27 @@ def generate_qwen_image21(
             if max_edit_resolution
             else "edit" if editing else f"{width}×{height} generation"
         )
+        if viggle_multistep:
+            sampling_detail = (
+                f"{steps}+{request.viggle_pass2_steps}+{request.viggle_pass3_steps} "
+                f"steps · denoise {request.viggle_pass2_denoise:.2f}/"
+                f"{request.viggle_pass3_denoise:.2f}"
+            )
+        else:
+            sampling_detail = f"{steps} steps"
         yield GenerationUpdate(
             None,
             f"Queued Qwen Image 2.1 job `{prompt_id}` · seed {actual_seed} · "
             f"{job_size} · {request.model_choice} · {request.turbo_variant} · "
-            (
-                f"{steps}+{request.viggle_pass2_steps}+{request.viggle_pass3_steps} "
-                f"steps · denoise {request.viggle_pass2_denoise:.2f}/"
-                f"{request.viggle_pass3_denoise:.2f} · accelerator {accelerator}"
-                if viggle_multistep else f"{steps} steps · accelerator {accelerator}"
-            ),
+            f"{sampling_detail} · accelerator {accelerator}",
         )
         for stage, completed_nodes, total_nodes, step, step_total in (
             services.execution.poll_comfy_progress(prompt_id, graph)
         ):
             timings.transition(stage)
-            if step is not None and step_total and callable(progress):
+            if step is not None and step_total:
                 progress((step, step_total), desc=stage)
-            elif total_nodes and callable(progress):
+            elif total_nodes:
                 progress((completed_nodes, total_nodes), desc=stage)
             yield GenerationUpdate(
                 None,
@@ -350,8 +353,7 @@ def generate_qwen_image21(
             },
         )
         elapsed = time.monotonic() - started
-        if callable(progress):
-            progress(1, desc="Complete")
+        progress(1, desc="Complete")
         yield GenerationUpdate(
             str(result),
             f"Qwen Image 2.1 completed in {elapsed:.1f}s · output {result.name} · "
