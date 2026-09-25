@@ -146,6 +146,10 @@ def build_qwen_image21_graph(
             ].local_name,
             strength_model=1.0,
         )
+    elif viggle:
+        # The Viggle adapter is attached after attention/cache patching below,
+        # using its custom unmerged loader to preserve adapter precision.
+        pass
     elif pdd:
         model = graph.add(
             "H3Qwen21PDDLoader",
