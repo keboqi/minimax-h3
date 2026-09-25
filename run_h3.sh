@@ -132,7 +132,7 @@ except PackageNotFoundError:
 
 raise SystemExit(0 if comfy_frontend_package_is_ready() else 1)
 PY
-  "$PYTHON_BIN" - "$INSTALL_DIR/SwiftVR" <<'PY' >/dev/null || return 1
+  "$PYTHON_BIN" - "$INSTALL_DIR/SwiftVR" <<'PY' >/dev/null 2>&1 || return 1
 import sys
 
 sys.path.insert(0, sys.argv[1])

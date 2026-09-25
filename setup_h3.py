@@ -692,6 +692,47 @@ def install_environment(comfy: Path) -> None:
     install_pinned_numpy_stack()
 
 
+def install_custom_node_requirements(
+    requirements: Path, *extra: str
+) -> None:
+    """Install custom-node extras without replacing protected runtime packages."""
+    filtered, skipped = filter_pinned_requirements(
+        requirements.read_text(encoding="utf-8").splitlines()
+    )
+    for package, requirement in skipped:
+        print(
+            f"[h3-setup] Keeping pinned {package}; "
+            f"skipping {requirements.parent.name} entry: {requirement}",
+            flush=True,
+        )
+    if not filtered and not extra:
+        return
+
+    requirement_path: Path | None = None
+    constraint_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".txt", dir=requirements.parent, delete=False
+        ) as handle:
+            handle.write("\n".join(filtered) + "\n")
+            requirement_path = Path(handle.name)
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", suffix=".txt", delete=False
+        ) as handle:
+            handle.write("\n".join(INSTALL_CONSTRAINTS) + "\n")
+            constraint_path = Path(handle.name)
+        uv_pip(
+            "-r", str(requirement_path), *extra,
+            "--constraint", str(constraint_path),
+            no_deps=True,
+        )
+    finally:
+        if requirement_path is not None:
+            requirement_path.unlink(missing_ok=True)
+        if constraint_path is not None:
+            constraint_path.unlink(missing_ok=True)
+
+
 def sync_external_nodes(
     comfy: Path,
     *,
@@ -716,7 +757,7 @@ def sync_external_nodes(
         required_paths=("__init__.py",),
     )
     if install_requirements and (sol / "requirements.txt").is_file():
-        uv_pip("-r", str(sol / "requirements.txt"), no_deps=True)
+        install_custom_node_requirements(sol / "requirements.txt")
 
     sla = comfy / "custom_nodes" / "ComfyUI-PlagueKind-Nodes"
     sync_git_repo(
@@ -729,7 +770,7 @@ def sync_external_nodes(
         ),
     )
     if install_requirements and (sla / "requirements.txt").is_file():
-        uv_pip("-r", str(sla / "requirements.txt"), no_deps=True)
+        install_custom_node_requirements(sla / "requirements.txt")
 
     spectrum = comfy / "custom_nodes" / "ComfyUI-Spectrum-MiniMax-H3"
     sync_git_repo(
@@ -739,7 +780,7 @@ def sync_external_nodes(
         required_paths=("__init__.py",),
     )
     if install_requirements and (spectrum / "requirements.txt").is_file():
-        uv_pip("-r", str(spectrum / "requirements.txt"), no_deps=True)
+        install_custom_node_requirements(spectrum / "requirements.txt")
 
     spectrum_qwen = comfy / "custom_nodes" / "ComfyUI-Spectrum-Qwen-Proper"
     sync_git_repo(
@@ -750,7 +791,7 @@ def sync_external_nodes(
     )
     patch_qwen_spectrum_node(spectrum_qwen)
     if install_requirements and (spectrum_qwen / "requirements.txt").is_file():
-        uv_pip("-r", str(spectrum_qwen / "requirements.txt"), no_deps=True)
+        install_custom_node_requirements(spectrum_qwen / "requirements.txt")
 
     trt_vae = comfy / "custom_nodes" / "ComfyUI-H3VAE_TRT"
     sync_git_repo(
@@ -761,7 +802,7 @@ def sync_external_nodes(
     )
     patch_trt_vae_node(trt_vae)
     if install_requirements and (trt_vae / "requirements.txt").is_file():
-        uv_pip("-r", str(trt_vae / "requirements.txt"), no_deps=True)
+        install_custom_node_requirements(trt_vae / "requirements.txt")
 
     larry_turbo = comfy / "custom_nodes" / "ComfyUI-MiniMax-H3-Turbo"
     sync_git_repo(
@@ -772,7 +813,7 @@ def sync_external_nodes(
     )
     patch_larry_turbo_node(larry_turbo)
     if install_requirements and (larry_turbo / "requirements.txt").is_file():
-        uv_pip("-r", str(larry_turbo / "requirements.txt"), no_deps=True)
+        install_custom_node_requirements(larry_turbo / "requirements.txt")
 
     official_nodes = (
         (
@@ -806,9 +847,9 @@ def sync_external_nodes(
                 if install_requirements:
                     install_controlnet_aux_requirements(requirements)
             elif directory_name == "ComfyUI-LTXVideo":
-                uv_pip("-r", str(requirements), *LTX_HDR_REQUIREMENTS, no_deps=True)
+                install_custom_node_requirements(requirements, *LTX_HDR_REQUIREMENTS)
             else:
-                uv_pip("-r", str(requirements), no_deps=True)
+                install_custom_node_requirements(requirements)
     ensure_controlnet_aux_runtime_dependencies(
         installed["comfyui_controlnet_aux"] / "requirements.txt"
     )
@@ -909,6 +950,8 @@ def main() -> None:
         comfy,
         install_requirements=not args.skip_env,
     )
+    if not args.skip_env:
+        uv_pip(HUGGINGFACE_HUB_REQUIREMENT, no_deps=True)
     sync_swiftvr_runtime(install_dir)
     if not torch_stack_matches():
         install_pinned_torch_stack()

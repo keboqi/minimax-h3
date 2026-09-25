@@ -70,7 +70,7 @@ ABI_CONSTRAINTS = (
 INSTALL_CONSTRAINTS = (*ABI_CONSTRAINTS, HUGGINGFACE_HUB_REQUIREMENT)
 
 PINNED_REQUIREMENTS = frozenset(
-    {"torch", "torchvision", "torchaudio", "numpy", "scipy"}
+    {"torch", "torchvision", "torchaudio", "numpy", "scipy", "huggingface-hub"}
 )
 
 
@@ -214,7 +214,7 @@ def requirement_name(line: str) -> str | None:
 def filter_pinned_requirements(
     lines: Iterable[str],
 ) -> tuple[list[str], list[tuple[str, str]]]:
-    """Remove ABI-sensitive packages and report the skipped entries."""
+    """Remove protected packages and report the skipped entries."""
     filtered: list[str] = []
     skipped: list[tuple[str, str]] = []
     for line in lines:
@@ -247,14 +247,17 @@ def selftest() -> None:
         "torch>=2.0",
         "NumPy==2.0; python_version >= '3.12'",
         "scipy[extra]~=1.14",
+        "huggingface_hub>=2.0",
         "requests>=2.32",
         "-r optional.txt",
         "# torch is intentionally pinned elsewhere",
         "",
     ]
     filtered, skipped = filter_pinned_requirements(source)
-    assert [package for package, _ in skipped] == ["torch", "numpy", "scipy"]
-    assert filtered == source[3:]
+    assert [package for package, _ in skipped] == [
+        "torch", "numpy", "scipy", "huggingface-hub"
+    ]
+    assert filtered == source[4:]
     assert ABI_CONSTRAINTS == (
         "torch==2.11.0",
         "torchvision==0.26.0",

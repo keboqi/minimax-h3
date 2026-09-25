@@ -478,39 +478,45 @@ def build(revision: str) -> None:
     for requirements in custom_requirements:
         if not requirements.is_file():
             continue
-        if requirements.parent.name == "comfyui_controlnet_aux":
-            filtered, skipped = filter_pinned_requirements(
-                requirements.read_text(encoding="utf-8").splitlines()
-            )
-            for package, requirement in skipped:
-                print(
-                    f"[modal-h3] Keeping pinned {package}; skipping "
-                    f"ControlNet Aux entry: {requirement}",
-                    flush=True,
-                )
-            filtered_controlnet = Path(
-                "/tmp/controlnet-aux-requirements-constrained.txt"
-            )
-            filtered_controlnet.write_text(
-                "\n".join(filtered) + "\n",
-                encoding="utf-8",
-            )
-            _run(
-                "uv", "pip", "install", "--system", "--upgrade",
-                "--constraint", install_constraints,
-                "-r", filtered_controlnet,
-            )
-            continue
-        _run(
-            "uv",
-            "pip",
-            "install",
-            "--system",
-            "--no-deps",
-            "-r",
-            requirements,
-            *(LTX_HDR_REQUIREMENTS if requirements.parent.name == "ComfyUI-LTXVideo" else ()),
+        filtered, skipped = filter_pinned_requirements(
+            requirements.read_text(encoding="utf-8").splitlines()
         )
+        for package, requirement in skipped:
+            print(
+                f"[modal-h3] Keeping pinned {package}; skipping "
+                f"{requirements.parent.name} entry: {requirement}",
+                flush=True,
+            )
+        filtered_path = requirements.with_name(".h3-filtered-requirements.txt")
+        filtered_path.write_text(
+            "\n".join(filtered) + "\n", encoding="utf-8"
+        )
+        try:
+            if requirements.parent.name == "comfyui_controlnet_aux":
+                _run(
+                    "uv", "pip", "install", "--system", "--upgrade",
+                    "--constraint", install_constraints,
+                    "-r", filtered_path,
+                )
+            else:
+                _run(
+                    "uv",
+                    "pip",
+                    "install",
+                    "--system",
+                    "--no-deps",
+                    "--constraint",
+                    install_constraints,
+                    "-r",
+                    filtered_path,
+                    *(LTX_HDR_REQUIREMENTS if requirements.parent.name == "ComfyUI-LTXVideo" else ()),
+                )
+        finally:
+            filtered_path.unlink(missing_ok=True)
+    _run(
+        "uv", "pip", "install", "--system", "--upgrade", "--no-deps",
+        HUGGINGFACE_HUB_REQUIREMENT,
+    )
     # Restore the Kornia version checked with the pinned LTXVideo source.
     _run(
         "uv", "pip", "install", "--system", "--upgrade", "--no-deps",
