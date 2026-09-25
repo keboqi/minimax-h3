@@ -139,6 +139,7 @@ sys.path.insert(0, sys.argv[1])
 import decord
 import diffusers
 import swiftvr
+from transformers import CLIPTokenizer
 PY
 }
 

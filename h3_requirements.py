@@ -19,6 +19,8 @@ TORCHAUDIO_VERSION = "2.11.0"
 TENSORRT_PACKAGE = "tensorrt-cu13>=11.2,<12"
 NUMPY_VERSION = "1.26.4"
 SCIPY_VERSION = "1.15.3"
+# Transformers rejects huggingface-hub 2.x at import time.
+HUGGINGFACE_HUB_REQUIREMENT = "huggingface-hub>=1.5,<2"
 # Transformers' fine-grained FP8 loader requires this exact minor release.
 KERNELS_VERSION = "0.16.0"
 # LTXVideo f8387c8 uses torch.nn.functional.pad instead of Kornia's removed
@@ -65,6 +67,7 @@ ABI_CONSTRAINTS = (
     f"numpy=={NUMPY_VERSION}",
     f"scipy=={SCIPY_VERSION}",
 )
+INSTALL_CONSTRAINTS = (*ABI_CONSTRAINTS, HUGGINGFACE_HUB_REQUIREMENT)
 
 PINNED_REQUIREMENTS = frozenset(
     {"torch", "torchvision", "torchaudio", "numpy", "scipy"}
@@ -259,6 +262,7 @@ def selftest() -> None:
         "numpy==1.26.4",
         "scipy==1.15.3",
     )
+    assert INSTALL_CONSTRAINTS == (*ABI_CONSTRAINTS, "huggingface-hub>=1.5,<2")
     assert KORNIA_VERSION == "0.8.3"
     assert KORNIA_RS_VERSION == "0.1.14"
     assert LTX_HDR_REQUIREMENTS == (

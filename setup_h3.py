@@ -48,10 +48,11 @@ from h3_node_patches import (
 from h3_requirements import (
     H3_AUDIO_T8_REPO,
     H3_AUDIO_T8_REF,
-    ABI_CONSTRAINTS,
     COMFY_FRONTEND_VERSION,
     COMFY_REF,
     GRADIO_VERSION,
+    HUGGINGFACE_HUB_REQUIREMENT,
+    INSTALL_CONSTRAINTS,
     KERNELS_VERSION,
     KORNIA_VERSION,
     KORNIA_RS_VERSION,
@@ -454,7 +455,7 @@ def install_controlnet_aux_requirements(requirements: Path) -> None:
         with tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", suffix=".txt", delete=False
         ) as handle:
-            handle.write("\n".join(ABI_CONSTRAINTS) + "\n")
+            handle.write("\n".join(INSTALL_CONSTRAINTS) + "\n")
             constraint_path = Path(handle.name)
         uv_pip(
             "-r",
@@ -513,7 +514,7 @@ def install_comfy_requirements(comfy: Path) -> None:
         suffix=".txt",
         delete=False,
     ) as handle:
-        handle.write("\n".join(ABI_CONSTRAINTS) + "\n")
+        handle.write("\n".join(INSTALL_CONSTRAINTS) + "\n")
         constraint_path = Path(handle.name)
 
     try:
@@ -641,11 +642,11 @@ def install_environment(comfy: Path) -> None:
         with tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", suffix=".txt", delete=False
         ) as handle:
-            handle.write("\n".join(ABI_CONSTRAINTS) + "\n")
+            handle.write("\n".join(INSTALL_CONSTRAINTS) + "\n")
             app_constraint_path = Path(handle.name)
         uv_pip(
             f"gradio=={GRADIO_VERSION}",
-            "huggingface_hub>=0.34",
+            HUGGINGFACE_HUB_REQUIREMENT,
             "transformers>=4.57.1",
             "diffusers>=0.36,<0.37",
             f"kernels=={KERNELS_VERSION}",

@@ -107,10 +107,11 @@ from h3_sources import (  # noqa: E402
 from h3_requirements import (  # noqa: E402
     H3_AUDIO_T8_REPO,
     H3_AUDIO_T8_REF,
-    ABI_CONSTRAINTS,
     COMFY_FRONTEND_VERSION,
     COMFY_REF,
     GRADIO_VERSION,
+    HUGGINGFACE_HUB_REQUIREMENT,
+    INSTALL_CONSTRAINTS,
     KERNELS_VERSION,
     KORNIA_VERSION,
     KORNIA_RS_VERSION,
@@ -324,9 +325,9 @@ def build(revision: str) -> None:
         "\n".join(filtered_lines) + "\n",
         encoding="utf-8",
     )
-    abi_constraints = Path("/tmp/h3-abi-constraints.txt")
-    abi_constraints.write_text(
-        "\n".join(ABI_CONSTRAINTS) + "\n",
+    install_constraints = Path("/tmp/h3-install-constraints.txt")
+    install_constraints.write_text(
+        "\n".join(INSTALL_CONSTRAINTS) + "\n",
         encoding="utf-8",
     )
     _run(
@@ -336,7 +337,7 @@ def build(revision: str) -> None:
         "--system",
         "--upgrade",
         "--constraint",
-        abi_constraints,
+        install_constraints,
         "-r",
         filtered_requirements,
     )
@@ -390,7 +391,7 @@ def build(revision: str) -> None:
         "--system",
         "--upgrade",
         f"gradio=={GRADIO_VERSION}",
-        "huggingface_hub>=0.34",
+        HUGGINGFACE_HUB_REQUIREMENT,
         "transformers>=4.57.1",
         "diffusers>=0.36,<0.37",
         f"kernels=={KERNELS_VERSION}",
@@ -415,7 +416,7 @@ def build(revision: str) -> None:
         TENSORRT_PACKAGE,
         "setuptools<82",
         "--constraint",
-        abi_constraints,
+        install_constraints,
     )
 
     import torch as _torch
@@ -496,7 +497,7 @@ def build(revision: str) -> None:
             )
             _run(
                 "uv", "pip", "install", "--system", "--upgrade",
-                "--constraint", abi_constraints,
+                "--constraint", install_constraints,
                 "-r", filtered_controlnet,
             )
             continue
