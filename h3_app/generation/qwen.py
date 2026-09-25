@@ -319,9 +319,9 @@ def generate_qwen_image21(
             services.execution.poll_comfy_progress(prompt_id, graph)
         ):
             timings.transition(stage)
-            if step is not None and step_total:
+            if step is not None and step_total and callable(progress):
                 progress((step, step_total), desc=stage)
-            elif total_nodes:
+            elif total_nodes and callable(progress):
                 progress((completed_nodes, total_nodes), desc=stage)
             yield GenerationUpdate(
                 None,
@@ -350,7 +350,8 @@ def generate_qwen_image21(
             },
         )
         elapsed = time.monotonic() - started
-        progress(1, desc="Complete")
+        if callable(progress):
+            progress(1, desc="Complete")
         yield GenerationUpdate(
             str(result),
             f"Qwen Image 2.1 completed in {elapsed:.1f}s · output {result.name} · "
