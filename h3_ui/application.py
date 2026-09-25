@@ -99,6 +99,7 @@ from h3_ui.bindings import (
     bind_ltx_view,
     bind_music_view,
     bind_qwen_image21_view,
+    qwen_resolution_preset_values,
     bind_yue2_view,
     bind_preflight,
     bind_summary,
@@ -3968,9 +3969,14 @@ def generate_qwen_image21(
     viggle_pass3_steps: int = 6,
     viggle_pass2_denoise: float = 0.6,
     viggle_pass3_denoise: float = 0.25,
+    output_resolution: str | None = None,
     progress=gr.Progress(track_tqdm=False),
 ):
     match_input_size, max_resolution = qwen_edit_size_flags(edit_size)
+    if output_resolution:
+        width, height = qwen_resolution_preset_values(output_resolution)
+        match_input_size = False
+        max_resolution = False
     uploaded = reference_images or []
     if isinstance(uploaded, (str, Path)):
         uploaded = [uploaded]

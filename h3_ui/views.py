@@ -59,9 +59,7 @@ class QwenImage21View:
     status: gr.Textbox
     model: gr.Dropdown
     text_encoder: gr.Dropdown
-    square_resolution: gr.Dropdown
-    landscape_resolution: gr.Dropdown
-    portrait_resolution: gr.Dropdown
+    output_resolution: gr.Dropdown
     width: gr.Slider
     height: gr.Slider
     reference_resolution: gr.Dropdown
@@ -209,42 +207,27 @@ def build_qwen_image21_view(
                     value=defaults["text_encoder"],
                     label="Qwen3-VL text encoder",
                 )
-                with gr.Row():
-                    square_resolution = gr.Dropdown(
-                        choices=[
-                            "1K · 1:1 · 1024×1024",
-                            "2K · 1:1 · 2048×2048",
-                        ],
-                        value=None,
-                        label="Square",
-                        info="Square presets at 1K and native 2K.",
-                    )
-                    landscape_resolution = gr.Dropdown(
-                        choices=[
-                            "1K · 4:3 · 1376×1024",
-                            "1K · 3:2 · 1536×1024",
-                            "1K · 16:9 · 1824×1024",
-                            "2K · 4:3 · 2400×1792",
-                            "2K · 3:2 · 2528×1696",
-                            "2K · 16:9 · 2752×1536",
-                        ],
-                        value=None,
-                        label="Landscape",
-                        info="Landscape presets at 1K and native 2K.",
-                    )
-                    portrait_resolution = gr.Dropdown(
-                        choices=[
-                            "1K · 3:4 · 1024×1376",
-                            "1K · 2:3 · 1024×1536",
-                            "1K · 9:16 · 1024×1824",
-                            "2K · 3:4 · 1792×2400",
-                            "2K · 2:3 · 1696×2528",
-                            "2K · 9:16 · 1536×2752",
-                        ],
-                        value=None,
-                        label="Portrait",
-                        info="Portrait presets at 1K and native 2K.",
-                    )
+                output_resolution = gr.Dropdown(
+                    choices=[
+                        "1K · 1:1 · 1024×1024",
+                        "1K · 4:3 · 1376×1024",
+                        "1K · 3:2 · 1536×1024",
+                        "1K · 16:9 · 1824×1024",
+                        "1K · 3:4 · 1024×1376",
+                        "1K · 2:3 · 1024×1536",
+                        "1K · 9:16 · 1024×1824",
+                        "2K · 1:1 · 2048×2048",
+                        "2K · 4:3 · 2400×1792",
+                        "2K · 3:2 · 2528×1696",
+                        "2K · 16:9 · 2752×1536",
+                        "2K · 3:4 · 1792×2400",
+                        "2K · 2:3 · 1696×2528",
+                        "2K · 9:16 · 1536×2752",
+                    ],
+                    value=None,
+                    label="Output resolution preset",
+                    info="The selected preset is used when generating. Adjust either slider below for a custom size.",
+                )
                 with gr.Row():
                     width = gr.Slider(
                         256, 2752, value=defaults["width"], step=32, label="Width"
@@ -263,7 +246,7 @@ def build_qwen_image21_view(
                     info=(
                         "Match the first image, scale its aspect ratio toward 4 MP "
                         "within 2752 × 2752, or use the width and height above. "
-                        "Applies only to image editing."
+                        "Applies only to image editing. An output resolution preset takes priority."
                     ),
                 )
                 reference_resolution = gr.Dropdown(
@@ -371,9 +354,7 @@ def build_qwen_image21_view(
         status,
         model,
         text_encoder,
-        square_resolution,
-        landscape_resolution,
-        portrait_resolution,
+        output_resolution,
         width,
         height,
         reference_resolution,
