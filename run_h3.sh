@@ -196,10 +196,39 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+ensure_gradio_entrypoint() {
+  if [[ -f "$SCRIPT_DIR/gradio_app.py" ]]; then
+    return 0
+  fi
+  log "Restoring missing gradio_app.py entrypoint"
+  if git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$SCRIPT_DIR" checkout HEAD -- gradio_app.py 2>/dev/null || true
+  fi
+  if [[ ! -f "$SCRIPT_DIR/gradio_app.py" ]]; then
+    cat <<'EOF' > "$SCRIPT_DIR/gradio_app.py"
+#!/usr/bin/env python3
+"""Launch H3, or expose its temporary compatibility API to existing callers."""
+
+from __future__ import annotations
+
+if __name__ == "__main__":
+    from h3_ui.application import main
+
+    main()
+else:
+    import sys
+    from h3_ui import application
+
+    sys.modules[__name__] = application
+EOF
+    chmod +x "$SCRIPT_DIR/gradio_app.py" 2>/dev/null || true
+  fi
+}
+
 ensure_ffmpeg
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || die "python3 is required"
 [[ -f "$SCRIPT_DIR/setup_h3.py" ]] || die "Missing setup_h3.py"
-[[ -f "$SCRIPT_DIR/gradio_app.py" ]] || die "Missing gradio_app.py"
+ensure_gradio_entrypoint
 
 if [[ ! -f "$COMFY_DIR/main.py" || ! -f "$MODELS_CONFIG" ]]; then
   log "Installation or models are missing; running automatic setup"
@@ -287,7 +316,12 @@ export GRADIO_SERVER_PORT="$GRADIO_SERVER_PORT"
 export AUTO_START_COMFYUI="0"
 
 log "Starting Gradio"
-"$PYTHON_BIN" -u "$SCRIPT_DIR/gradio_app.py" &
+ensure_gradio_entrypoint
+if [[ -f "$SCRIPT_DIR/gradio_app.py" ]]; then
+  PYTHONPATH="$SCRIPT_DIR:${PYTHONPATH:-}" "$PYTHON_BIN" -u "$SCRIPT_DIR/gradio_app.py" &
+else
+  PYTHONPATH="$SCRIPT_DIR:${PYTHONPATH:-}" "$PYTHON_BIN" -u -m h3_ui.application &
+fi
 GRADIO_PID=$!
 
 log "Waiting for the main Gradio UI"

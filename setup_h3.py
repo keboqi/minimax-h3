@@ -965,6 +965,46 @@ def sync_model_inventory(install_dir: Path, comfy: Path) -> None:
     write_json_atomic(config_path, config)
 
 
+def ensure_root_entrypoints() -> None:
+    entrypoint = SCRIPT_DIR / "gradio_app.py"
+    if entrypoint.is_file():
+        return
+
+    for git_args in (
+        ("checkout", "HEAD", "--", "gradio_app.py"),
+        ("fetch", "--depth", "1", "origin", "HEAD"),
+        ("checkout", "FETCH_HEAD", "--", "gradio_app.py"),
+        ("fetch", "--depth", "1", "https://github.com/keboqi/minimax-h3.git", "HEAD"),
+        ("checkout", "FETCH_HEAD", "--", "gradio_app.py"),
+    ):
+        try:
+            run("git", "-C", str(SCRIPT_DIR), *git_args, timeout=30)
+        except Exception:
+            pass
+        if entrypoint.is_file():
+            print(f"[h3-setup] restored gradio_app.py via git: {entrypoint}")
+            return
+
+    content = (
+        '#!/usr/bin/env python3\n'
+        '"""Launch H3, or expose its temporary compatibility API to existing callers."""\n\n'
+        'from __future__ import annotations\n\n'
+        'if __name__ == "__main__":\n'
+        '    from h3_ui.application import main\n\n'
+        '    main()\n'
+        'else:\n'
+        '    import sys\n'
+        '    from h3_ui import application\n\n'
+        '    sys.modules[__name__] = application\n'
+    )
+    try:
+        entrypoint.write_text(content, encoding="utf-8")
+        entrypoint.chmod(0o755)
+        print(f"[h3-setup] created gradio_app.py shim: {entrypoint}")
+    except Exception as exc:
+        print(f"[h3-setup] note: could not write gradio_app.py: {exc}", flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--install-dir", default="h3")
@@ -981,6 +1021,7 @@ def main() -> None:
         print(f"[h3-setup] Hugging Face cache pruned ({freed} bytes freed)")
         return
 
+    ensure_root_entrypoints()
     install_dir = Path(args.install_dir).expanduser().resolve()
     comfy = install_dir / "ComfyUI"
     install_dir.mkdir(parents=True, exist_ok=True)
