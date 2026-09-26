@@ -888,12 +888,31 @@ def sync_swiftvr_runtime(install_dir: Path) -> None:
 
 
 def install_bundled_nodes(comfy: Path) -> None:
+    destination = comfy / "custom_nodes" / "H3Acceleration" / "__init__.py"
+    if not BUNDLED_ACCEL_NODE.is_file():
+        # Attempt to restore missing bundled node files from Git
+        for git_args in (
+            ("checkout", "HEAD", "--", "custom_nodes"),
+            ("fetch", "--depth", "1", "origin", "main"),
+            ("checkout", "FETCH_HEAD", "--", "custom_nodes"),
+        ):
+            try:
+                run("git", "-C", str(SCRIPT_DIR), *git_args, timeout=30)
+            except Exception:
+                pass
+            if BUNDLED_ACCEL_NODE.is_file():
+                print(f"[h3-setup] restored bundled nodes via git: {BUNDLED_ACCEL_NODE}")
+                break
+
+    if not BUNDLED_ACCEL_NODE.is_file() and destination.is_file():
+        print(f"[h3-setup] using existing {destination}")
+        return
+
     if not BUNDLED_ACCEL_NODE.is_file():
         raise RuntimeError(
             f"Missing bundled H3 acceleration node: {BUNDLED_ACCEL_NODE}"
         )
 
-    destination = comfy / "custom_nodes" / "H3Acceleration" / "__init__.py"
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(BUNDLED_ACCEL_NODE, destination)
     print(f"[h3-setup] synced {destination}")
