@@ -3981,6 +3981,7 @@ def generate_qwen_image21(
     viggle_pass3_denoise: float = 0.25,
     output_resolution_1k: str | None = None,
     output_resolution_2k: str | None = None,
+    *,
     output_resolution: str | None = None,
     progress=gr.Progress(track_tqdm=False),
 ):
@@ -4809,6 +4810,8 @@ def main() -> None:
             host=host,
             port=port,
             log_level="info",
+            proxy_headers=True,
+            forwarded_allow_ips="*",
             **UVICORN_WEBSOCKET_OPTIONS,
         )
     )

@@ -26,7 +26,11 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
     """Advance under the job context even when Gradio switches worker threads."""
     signature = inspect.signature(callback)
     names = input_names or tuple(
-        name for name in signature.parameters if name not in {"request", "progress"}
+        name
+        for name, param in signature.parameters.items()
+        if name not in {"request", "progress"}
+        and param.kind
+        not in (inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.VAR_KEYWORD)
     )
 
     def run(*args):

@@ -26,7 +26,38 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
+from starlette.middleware.gzip import GZipMiddleware
+
 COMFY_PROXY_PATH = "/comfyui"
+
+
+class ReverseProxySchemeMiddleware:
+    """Ensure HTTPS/WSS scheme and forwarded headers are preserved when accessed via public tunnels/proxies."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] in ("http", "websocket"):
+            headers_dict = dict(scope.get("headers", []))
+            host = (
+                headers_dict.get(b"x-forwarded-host")
+                or headers_dict.get(b"host", b"")
+            ).decode("latin1", errors="replace").lower()
+            proto = headers_dict.get(b"x-forwarded-proto", b"").decode(
+                "latin1", errors="replace"
+            ).lower()
+            if (
+                proto == "https"
+                or host.endswith(".gradio.live")
+                or host.endswith(".trycloudflare.com")
+                or host.endswith(".modal.run")
+                or host.endswith(".hf.space")
+            ):
+                scope["scheme"] = "https" if scope["type"] == "http" else "wss"
+                headers_dict[b"x-forwarded-proto"] = b"https"
+                scope["headers"] = list(headers_dict.items())
+        await self.app(scope, receive, send)
 
 
 @dataclass(frozen=True)
@@ -182,6 +213,8 @@ def build_server(
             await client.aclose()
 
     app = FastAPI(lifespan=lifespan)
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
+    app.add_middleware(ReverseProxySchemeMiddleware)
 
     @app.get(
         "/ltx25-workflows/{workflow_id}.json",
