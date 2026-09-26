@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import uuid
 from pathlib import Path
@@ -60,6 +61,7 @@ def ensure_swiftvr_checkpoint(*, runtime: RuntimeConfig) -> tuple[Path, bool]:
                 "transformer/*.safetensors",
             ),
         )
+        shutil.rmtree(checkpoint / ".cache", ignore_errors=True)
     except Exception as exc:
         raise H3Error(
             "SwiftVR checkpoint download failed from "

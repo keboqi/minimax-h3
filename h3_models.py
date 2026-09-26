@@ -942,6 +942,214 @@ def _plan_model(
     }
 
 
+def _remove_hf_cache(
+    cached: Path,
+    plan: dict[str, Any] | None = None,
+    log_prefix: str = "[h3-cache]",
+) -> None:
+    """Remove redundant Hugging Face cache files and blobs after copying to dest.
+
+    On Linux (e.g. AWS EC2 g4 instance), hf_hub_download creates a symlink in
+    snapshots/ pointing to blobs/. On Windows, it creates a copy or hardlink.
+    This helper unlinks both the snapshot reference and the underlying storage blob
+    so model files are not duplicated on disk (essential for 237GB g4 instances).
+    """
+    try:
+        dest = plan.get("dest") if plan else None
+        if not cached.exists() and not cached.is_symlink():
+            return
+        # Safety guard: never delete the final destination model file
+        if dest and (cached.resolve() == dest.resolve() or cached == dest):
+            return
+
+        resolved = None
+        try:
+            resolved = cached.resolve()
+        except OSError:
+            pass
+
+        cached_ino = None
+        try:
+            cached_ino = cached.stat().st_ino
+        except OSError:
+            pass
+
+        # 1. Unlink the snapshot reference
+        try:
+            cached.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+        # 2. Unlink the resolved blob if separate from cached and dest
+        if (
+            resolved is not None
+            and resolved != cached
+            and (not dest or resolved != dest.resolve())
+        ):
+            try:
+                resolved.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        # 3. Locate repo directory in cache to check blobs and clean up
+        repo_dir = None
+        for parent in cached.parents:
+            if parent.name == "snapshots":
+                repo_dir = parent.parent
+                break
+            if parent.name.startswith("models--"):
+                repo_dir = parent
+                break
+
+        if repo_dir and repo_dir.is_dir():
+            blobs_dir = repo_dir / "blobs"
+            if blobs_dir.is_dir():
+                # Check for blob by sha256 or blob_id if provided
+                if plan:
+                    for id_key in ("sha256", "blob_id"):
+                        blob_val = plan.get(id_key)
+                        if blob_val and isinstance(blob_val, str):
+                            blob_file = blobs_dir / blob_val
+                            if blob_file.is_file():
+                                try:
+                                    blob_file.unlink(missing_ok=True)
+                                except OSError:
+                                    pass
+                # Check for blob by matching st_ino (hardlinks)
+                if cached_ino is not None:
+                    try:
+                        for entry in blobs_dir.iterdir():
+                            if entry.is_file():
+                                try:
+                                    if entry.stat().st_ino == cached_ino:
+                                        entry.unlink(missing_ok=True)
+                                except OSError:
+                                    pass
+                    except OSError:
+                        pass
+
+            # 4. Clean up empty parent directories up to repo_dir
+            curr = cached.parent
+            while curr != repo_dir and curr != curr.parent:
+                try:
+                    if curr.is_dir() and not any(curr.iterdir()):
+                        curr.rmdir()
+                    else:
+                        break
+                except OSError:
+                    break
+                curr = curr.parent
+
+            # Clean up snapshots, blobs, refs, and locks if empty
+            for sub_name in ("snapshots", "blobs", "refs"):
+                sub_path = repo_dir / sub_name
+                try:
+                    if sub_path.is_dir() and not any(sub_path.iterdir()):
+                        sub_path.rmdir()
+                except OSError:
+                    pass
+
+            locks_path = repo_dir / ".locks"
+            try:
+                if locks_path.is_dir():
+                    for lock_file in locks_path.iterdir():
+                        if lock_file.is_file() and lock_file.stat().st_size == 0:
+                            try:
+                                lock_file.unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                    if not any(locks_path.iterdir()):
+                        locks_path.rmdir()
+            except OSError:
+                pass
+
+            try:
+                if repo_dir.is_dir() and not any(repo_dir.iterdir()):
+                    repo_dir.rmdir()
+            except OSError:
+                pass
+    except Exception as exc:
+        print(
+            f"{log_prefix} note: cache cleanup skipped for {cached.name}: {exc}",
+            flush=True,
+        )
+
+
+def prune_hf_cache(
+    repo_ids: Iterable[str] | None = None,
+    log_prefix: str = "[h3-cache]",
+) -> int:
+    """Free disk space by deleting cached Hugging Face revisions and duplicate blobs.
+
+    Scans Hugging Face hub cache for repositories managed by MiniMax H3.
+    Since models are copied to ComfyUI/models/<folder>/, hub cache entries
+    are duplicates that consume disk space (crucial for 237GB g4 instances).
+    """
+    total_freed = 0
+    try:
+        from huggingface_hub import scan_cache_dir
+        from huggingface_hub.constants import HF_HUB_CACHE
+    except ImportError:
+        return 0
+
+    cache_dir = Path(HF_HUB_CACHE).expanduser().resolve()
+    if not cache_dir.exists() or not cache_dir.is_dir():
+        return 0
+
+    if repo_ids is None:
+        target_repos = {spec.repo_id for spec in MODEL_SPECS.values()}
+        try:
+            from h3_app.swiftvr import SWIFTVR_HF_REPO
+
+            target_repos.add(SWIFTVR_HF_REPO)
+        except ImportError:
+            pass
+    else:
+        target_repos = set(repo_ids)
+
+    # 1. First attempt programmatic revision deletion via scan_cache_dir
+    try:
+        cache_info = scan_cache_dir(cache_dir=cache_dir)
+        revisions_to_delete = []
+        for repo in cache_info.repos:
+            if repo.repo_id in target_repos:
+                for rev in repo.revisions:
+                    revisions_to_delete.append(rev.commit_hash)
+        if revisions_to_delete:
+            strategy = cache_info.delete_revisions(*revisions_to_delete)
+            freed = strategy.expected_freed_size
+            strategy.execute()
+            total_freed += freed
+            print(
+                f"{log_prefix} pruned {len(revisions_to_delete)} cached HF revision(s), "
+                f"freed {strategy.expected_freed_size_str}",
+                flush=True,
+            )
+    except Exception:
+        # scan_cache_dir can raise if cache contains corrupted files; continue with direct cleanup
+        pass
+
+    # 2. Direct cleanup of any remaining repo cache directories for target repos
+    for repo_id in target_repos:
+        folder_name = f"models--{repo_id.replace('/', '--')}"
+        repo_path = cache_dir / folder_name
+        if repo_path.is_dir():
+            try:
+                for root_dir, _, files in os.walk(repo_path):
+                    for f in files:
+                        try:
+                            fp = Path(root_dir) / f
+                            if fp.is_file() and not fp.is_symlink():
+                                total_freed += fp.stat().st_size
+                        except OSError:
+                            pass
+                shutil.rmtree(repo_path, ignore_errors=True)
+            except OSError:
+                pass
+
+    return total_freed
+
+
 def _download_model(
     plan: dict[str, Any],
     token: str | None,
@@ -971,6 +1179,7 @@ def _download_model(
     tmp = dest.with_suffix(dest.suffix + ".partial")
     shutil.copy2(cached, tmp)
     os.replace(tmp, dest)
+    _remove_hf_cache(cached, plan=plan, log_prefix=log_prefix)
     print(f"{log_prefix} ready {dest.name}", flush=True)
     return plan["key"]
 
@@ -1168,6 +1377,8 @@ def sync_models(
         manifest["repo_id"] = MODEL_REPO
         manifest["checked_at_unix"] = int(time.time())
         write_json_atomic(manifest_path, manifest)
+
+        prune_hf_cache(log_prefix=log_prefix)
 
         if download_failures:
             details = "; ".join(
@@ -1465,4 +1676,10 @@ def selftest() -> None:
 
 
 if __name__ == "__main__":
-    selftest()
+    import sys
+
+    if "--prune-cache" in sys.argv:
+        freed = prune_hf_cache()
+        print(f"Hugging Face cache pruned ({freed} bytes freed)")
+    else:
+        selftest()

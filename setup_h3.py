@@ -37,7 +37,7 @@ from h3_sources import (
     VIDEO_DEPTH_REF,
     VIDEO_DEPTH_REPO,
 )
-from h3_models import sync_models, write_json_atomic
+from h3_models import prune_hf_cache, sync_models, write_json_atomic
 from h3_node_patches import (
     TRT_VAE_NODE_REF,
     TRT_VAE_NODE_REPO,
@@ -917,7 +917,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--install-dir", default="h3")
     parser.add_argument("--skip-env", action="store_true")
+    parser.add_argument(
+        "--prune-cache",
+        action="store_true",
+        help="Prune cached Hugging Face model downloads to free disk space and exit",
+    )
     args = parser.parse_args()
+
+    if args.prune_cache:
+        freed = prune_hf_cache(log_prefix="[h3-setup]")
+        print(f"[h3-setup] Hugging Face cache pruned ({freed} bytes freed)")
+        return
 
     install_dir = Path(args.install_dir).expanduser().resolve()
     comfy = install_dir / "ComfyUI"

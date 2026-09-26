@@ -482,26 +482,24 @@ class UiContractTests(unittest.TestCase):
             )
 
         assert_same_row(("768p", "1080p", "2k"))
-        assert_same_row(("Square", "Landscape", "Portrait"))
+        assert_same_row(("1K resolution preset", "2K resolution preset"))
 
         for label, expected in (
-            ("Square", (1024, 1024)),
-            ("Landscape", (1376, 1024)),
-            ("Portrait", (1024, 1376)),
+            ("1K resolution preset", (1024, 1024, None)),
+            ("2K resolution preset", (2048, 2048, None)),
         ):
             preset = controls[label]
             dependency = next(
                 item
                 for item in self.config["dependencies"]
-                if (preset["id"], "change") in item.get("targets", [])
+                if (preset["id"], "input") in item.get("targets", [])
             )
             callback = self.demo.fns[dependency["id"]]
             choice = preset["props"]["choices"][0][1]
             self.assertEqual(callback.fn(choice), expected)
 
-        self.assertEqual(len(controls["Square"]["props"]["choices"]), 2)
-        self.assertEqual(len(controls["Landscape"]["props"]["choices"]), 6)
-        self.assertEqual(len(controls["Portrait"]["props"]["choices"]), 6)
+        self.assertEqual(len(controls["1K resolution preset"]["props"]["choices"]), 7)
+        self.assertEqual(len(controls["2K resolution preset"]["props"]["choices"]), 7)
 
     def test_first_frame_and_auto_megapixels_resolution_bindings(self) -> None:
         controls = {
