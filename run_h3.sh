@@ -9,7 +9,17 @@ INSTALL_DIR="$SCRIPT_DIR/h3"
 COMFY_DIR="$INSTALL_DIR/ComfyUI"
 MODELS_CONFIG="$INSTALL_DIR/h3_models.json"
 
-PYTHON_BIN="python3"
+if [[ -n "${VIRTUAL_ENV:-}" && -x "$VIRTUAL_ENV/bin/python3" ]]; then
+  PYTHON_BIN="$VIRTUAL_ENV/bin/python3"
+elif [[ -x "/content/venv_h3/bin/python3" ]]; then
+  PYTHON_BIN="/content/venv_h3/bin/python3"
+  export PATH="/content/venv_h3/bin:$PATH"
+  export VIRTUAL_ENV="/content/venv_h3"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+else
+  die "python3 is required"
+fi
 export PYTHONPATH="$SCRIPT_DIR:${PYTHONPATH:-}"
 
 COMFY_HOST="127.0.0.1"
