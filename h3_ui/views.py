@@ -41,6 +41,27 @@ class MusicView:
     top_k: gr.Slider
 
 
+QWEN_1K_RESOLUTION_PRESETS: tuple[str, ...] = (
+    "1K · 1:1 · 1024×1024",
+    "1K · 4:3 · 1376×1024",
+    "1K · 3:2 · 1536×1024",
+    "1K · 16:9 · 1824×1024",
+    "1K · 3:4 · 1024×1376",
+    "1K · 2:3 · 1024×1536",
+    "1K · 9:16 · 1024×1824",
+)
+
+QWEN_2K_RESOLUTION_PRESETS: tuple[str, ...] = (
+    "2K · 1:1 · 2048×2048",
+    "2K · 4:3 · 2400×1792",
+    "2K · 3:2 · 2528×1696",
+    "2K · 16:9 · 2752×1536",
+    "2K · 3:4 · 1792×2400",
+    "2K · 2:3 · 1696×2528",
+    "2K · 9:16 · 1536×2752",
+)
+
+
 @dataclass(frozen=True)
 class QwenImage21View:
     mode: gr.Dropdown
@@ -59,7 +80,8 @@ class QwenImage21View:
     status: gr.Textbox
     model: gr.Dropdown
     text_encoder: gr.Dropdown
-    output_resolution: gr.Dropdown
+    output_resolution_1k: gr.Dropdown
+    output_resolution_2k: gr.Dropdown
     width: gr.Slider
     height: gr.Slider
     reference_resolution: gr.Dropdown
@@ -79,6 +101,10 @@ class QwenImage21View:
     viggle_pass2_denoise: gr.Slider
     viggle_pass3_denoise: gr.Slider
     preset: gr.Radio
+
+    @property
+    def output_resolution(self) -> gr.Dropdown:
+        return self.output_resolution_1k
 
 
 def build_qwen_image21_view(
@@ -207,27 +233,19 @@ def build_qwen_image21_view(
                     value=defaults["text_encoder"],
                     label="Qwen3-VL text encoder",
                 )
-                output_resolution = gr.Dropdown(
-                    choices=[
-                        "1K · 1:1 · 1024×1024",
-                        "1K · 4:3 · 1376×1024",
-                        "1K · 3:2 · 1536×1024",
-                        "1K · 16:9 · 1824×1024",
-                        "1K · 3:4 · 1024×1376",
-                        "1K · 2:3 · 1024×1536",
-                        "1K · 9:16 · 1024×1824",
-                        "2K · 1:1 · 2048×2048",
-                        "2K · 4:3 · 2400×1792",
-                        "2K · 3:2 · 2528×1696",
-                        "2K · 16:9 · 2752×1536",
-                        "2K · 3:4 · 1792×2400",
-                        "2K · 2:3 · 1696×2528",
-                        "2K · 9:16 · 1536×2752",
-                    ],
-                    value=None,
-                    label="Output resolution preset",
-                    info="The selected preset is used when generating. Adjust either slider below for a custom size.",
-                )
+                with gr.Row():
+                    output_resolution_1k = gr.Dropdown(
+                        choices=list(QWEN_1K_RESOLUTION_PRESETS),
+                        value=None,
+                        label="1K resolution preset",
+                        info="Native 1K sizes.",
+                    )
+                    output_resolution_2k = gr.Dropdown(
+                        choices=list(QWEN_2K_RESOLUTION_PRESETS),
+                        value=None,
+                        label="2K resolution preset",
+                        info="Native 2K sizes.",
+                    )
                 with gr.Row():
                     width = gr.Slider(
                         256, 2752, value=defaults["width"], step=32, label="Width"
@@ -354,7 +372,8 @@ def build_qwen_image21_view(
         status,
         model,
         text_encoder,
-        output_resolution,
+        output_resolution_1k,
+        output_resolution_2k,
         width,
         height,
         reference_resolution,

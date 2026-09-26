@@ -950,6 +950,14 @@ def ensure_turbo_lora(models: ModelConfig, turbo_variant: str, mode: str) -> boo
     )
 
 
+def ensure_base_video_vae(models: ModelConfig) -> bool:
+    return model_service.ensure_base_video_vae(models, runtime=_runtime_config())
+
+
+def ensure_audio_vae(models: ModelConfig) -> bool:
+    return model_service.ensure_audio_vae(models, runtime=_runtime_config())
+
+
 def ensure_int8_video_vae(models: ModelConfig) -> bool:
     return model_service.ensure_int8_video_vae(models, runtime=_runtime_config())
 
@@ -3647,6 +3655,8 @@ def _generation_services() -> generation_services.GenerationServices:
             resolve_output=resolve_output,
         ),
         models=generation_services.ModelsServices(
+            ensure_audio_vae=ensure_audio_vae,
+            ensure_base_video_vae=ensure_base_video_vae,
             ensure_h3_latent_upscaler_model=ensure_h3_latent_upscaler_model,
             ensure_h3_semantic_bridge=ensure_h3_semantic_bridge,
             ensure_h3_text_encoder=ensure_h3_text_encoder,
@@ -3969,12 +3979,15 @@ def generate_qwen_image21(
     viggle_pass3_steps: int = 6,
     viggle_pass2_denoise: float = 0.6,
     viggle_pass3_denoise: float = 0.25,
+    output_resolution_1k: str | None = None,
+    output_resolution_2k: str | None = None,
     output_resolution: str | None = None,
     progress=gr.Progress(track_tqdm=False),
 ):
+    selected_preset = output_resolution_2k or output_resolution_1k or output_resolution
     match_input_size, max_resolution = qwen_edit_size_flags(edit_size)
-    if output_resolution:
-        width, height = qwen_resolution_preset_values(output_resolution)
+    if selected_preset:
+        width, height = qwen_resolution_preset_values(selected_preset)
         match_input_size = False
         max_resolution = False
     uploaded = reference_images or []

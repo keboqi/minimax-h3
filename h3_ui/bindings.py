@@ -276,21 +276,32 @@ def bind_qwen_image21_view(
         show_progress="hidden",
         api_name=False,
     )
-    view.output_resolution.input(
+    view.output_resolution_1k.input(
         lambda name: (
-            qwen_resolution_preset_values(name)
-            if name else (gr.update(), gr.update())
+            (*qwen_resolution_preset_values(name), None)
+            if name else (gr.update(), gr.update(), gr.update())
         ),
-        inputs=view.output_resolution,
-        outputs=[view.width, view.height],
+        inputs=view.output_resolution_1k,
+        outputs=[view.width, view.height, view.output_resolution_2k],
+        queue=False,
+        show_progress="hidden",
+        api_name=False,
+    )
+    view.output_resolution_2k.input(
+        lambda name: (
+            (*qwen_resolution_preset_values(name), None)
+            if name else (gr.update(), gr.update(), gr.update())
+        ),
+        inputs=view.output_resolution_2k,
+        outputs=[view.width, view.height, view.output_resolution_1k],
         queue=False,
         show_progress="hidden",
         api_name=False,
     )
     for dimension in (view.width, view.height):
         dimension.input(
-            lambda: None,
-            outputs=view.output_resolution,
+            lambda: (None, None),
+            outputs=[view.output_resolution_1k, view.output_resolution_2k],
             queue=False,
             show_progress="hidden",
             api_name=False,
@@ -342,7 +353,8 @@ def bind_qwen_image21_view(
             view.viggle_pass3_steps,
             view.viggle_pass2_denoise,
             view.viggle_pass3_denoise,
-            view.output_resolution,
+            view.output_resolution_1k,
+            view.output_resolution_2k,
         ],
         outputs=[view.output, view.status],
         show_progress="minimal",

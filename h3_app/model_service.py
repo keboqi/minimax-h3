@@ -12,6 +12,7 @@ from h3_app.catalog import (
     LARRY_TURBO,
     TAOMATE_3STEP_TURBO,
     LIGHTX2V_8STEP_TURBO,
+    LIGHTX2V_4STEP_TURBO,
     LTX25_POSTPROCESS_MODELS,
     LTX25_UPSCALE,
 )
@@ -411,6 +412,9 @@ def ensure_turbo_lora(
     elif variant == LIGHTX2V_8STEP_TURBO:
         model_key = "turbo_8step_ref_lora" if reference else "turbo_8step_lora"
         filename = models.turbo_8step_ref_lora if reference else models.turbo_8step_lora
+    elif variant == LIGHTX2V_4STEP_TURBO:
+        model_key = "turbo_ref_lora" if reference else "turbo_lora"
+        filename = models.turbo_ref_lora if reference else models.turbo_lora
     else:
         return False
     if not filename:
@@ -467,6 +471,64 @@ def ensure_int8_video_vae(models: ModelConfig, *, runtime: RuntimeConfig) -> boo
     )
     if not model_file_is_ready(destination):
         raise H3Error(f"On-demand INT8 VAE download did not produce {filename}.")
+    return True
+
+
+def ensure_base_video_vae(models: ModelConfig, *, runtime: RuntimeConfig) -> bool:
+    """Download the base video VAE on first use."""
+    filename = models.video_vae
+    destination = (
+        runtime.comfy_dir / "models" / MODEL_SPECS["video_vae"].folder / filename
+    )
+    if model_file_is_ready(destination):
+        return False
+    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
+    if not stale_model_keys(
+        root=runtime.comfy_dir / "models",
+        manifest_path=manifest_path,
+        model_keys=("video_vae",),
+    ):
+        return False
+
+    sync_models(
+        root=runtime.comfy_dir / "models",
+        manifest_path=manifest_path,
+        token=resolve_hf_token(),
+        log_prefix="[h3-video-vae-on-demand]",
+        model_keys=("video_vae",),
+        download_workers=1,
+    )
+    if not model_file_is_ready(destination):
+        raise H3Error(f"On-demand video VAE download did not produce {filename}.")
+    return True
+
+
+def ensure_audio_vae(models: ModelConfig, *, runtime: RuntimeConfig) -> bool:
+    """Download the audio VAE on first use."""
+    filename = models.audio_vae
+    destination = (
+        runtime.comfy_dir / "models" / MODEL_SPECS["audio_vae"].folder / filename
+    )
+    if model_file_is_ready(destination):
+        return False
+    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
+    if not stale_model_keys(
+        root=runtime.comfy_dir / "models",
+        manifest_path=manifest_path,
+        model_keys=("audio_vae",),
+    ):
+        return False
+
+    sync_models(
+        root=runtime.comfy_dir / "models",
+        manifest_path=manifest_path,
+        token=resolve_hf_token(),
+        log_prefix="[h3-audio-vae-on-demand]",
+        model_keys=("audio_vae",),
+        download_workers=1,
+    )
+    if not model_file_is_ready(destination):
+        raise H3Error(f"On-demand audio VAE download did not produce {filename}.")
     return True
 
 

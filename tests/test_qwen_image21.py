@@ -275,6 +275,21 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         )
 
     def test_native_resolution_presets(self):
+        from h3_ui.views import QWEN_1K_RESOLUTION_PRESETS, QWEN_2K_RESOLUTION_PRESETS
+
+        self.assertEqual(len(QWEN_1K_RESOLUTION_PRESETS), 7)
+        self.assertEqual(len(QWEN_2K_RESOLUTION_PRESETS), 7)
+        for preset in QWEN_1K_RESOLUTION_PRESETS:
+            self.assertTrue(preset.startswith("1K · "))
+            w, h = qwen_resolution_preset_values(preset)
+            self.assertGreater(w, 0)
+            self.assertGreater(h, 0)
+        for preset in QWEN_2K_RESOLUTION_PRESETS:
+            self.assertTrue(preset.startswith("2K · "))
+            w, h = qwen_resolution_preset_values(preset)
+            self.assertGreater(w, 0)
+            self.assertGreater(h, 0)
+
         self.assertEqual(
             qwen_resolution_preset_values("1K · 1:1 · 1024×1024"),
             (1024, 1024),
@@ -287,6 +302,44 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             qwen_resolution_preset_values("2K · 9:16 · 1536×2752"),
             (1536, 2752),
         )
+
+    def test_generate_qwen_image21_accepts_1k_and_2k_presets(self):
+        from h3_ui import application as ui_app
+
+        with (
+            patch.object(ui_app, "_generation_services", return_value=object()),
+            patch.object(ui_app, "_runtime_config", return_value=object()),
+            patch.object(
+                ui_app.qwen_generation,
+                "generate_qwen_image21",
+                return_value=iter(()),
+            ) as generate,
+        ):
+            # Test 1K preset
+            list(
+                ui_app.generate_qwen_image21(
+                    "Image edit", "BF16", "BF16", "Edit", "", (),
+                    512, 512, 0, ui_app.QWEN_EDIT_SIZE_MATCH, -1, 40, 1.0, "euler",
+                    "simple", "auto", "default",
+                    output_resolution_1k="1K · 16:9 · 1824×1024",
+                )
+            )
+            req = generate.call_args.args[0]
+            self.assertEqual((req.width, req.height), (1824, 1024))
+            self.assertFalse(req.match_input_size)
+
+            # Test 2K preset
+            list(
+                ui_app.generate_qwen_image21(
+                    "Image edit", "BF16", "BF16", "Edit", "", (),
+                    512, 512, 0, ui_app.QWEN_EDIT_SIZE_MATCH, -1, 40, 1.0, "euler",
+                    "simple", "auto", "default",
+                    output_resolution_2k="2K · 3:2 · 2528×1696",
+                )
+            )
+            req = generate.call_args.args[0]
+            self.assertEqual((req.width, req.height), (2528, 1696))
+            self.assertFalse(req.match_input_size)
 
     def test_optional_kitchen_attention_wraps_the_model(self):
         graph = build_qwen_image21_graph(

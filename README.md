@@ -669,6 +669,17 @@ To refresh an existing installation without reinstalling its environment:
 python3 setup_h3.py --install-dir ./h3 --skip-env
 ```
 
+## Deploy on Google Colab
+
+Run MiniMax H3 directly on Google Colab using [`minimax_h3_colab.ipynb`](./minimax_h3_colab.ipynb):
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/keboqi/minimax-h3/blob/main/minimax_h3_colab.ipynb)
+
+Features in the Colab notebook:
+- **Instant startup with Python 3.12**: Automatically provisions an isolated Python 3.12 environment with `uv` matching the pinned PyTorch 2.11 + CUDA 13 and SageAttention cp312 runtime requirements.
+- **On-demand model provisioning**: No heavy pre-downloads at startup. Checkpoints, text encoders, VAEs, and LoRAs download automatically on first use.
+- **Public access via Gradio Share & Cloudflare Tunnel**: Provides both a public `*.gradio.live` URL and a Cloudflare `*.trycloudflare.com` tunnel for reliable, high-bandwidth remote generation.
+
 ## Deploy with Modal
 
 Install and authenticate the Modal CLI, then run:

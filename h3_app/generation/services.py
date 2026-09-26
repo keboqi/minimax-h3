@@ -245,6 +245,14 @@ class EnsureH3TextEncoder(Protocol):
     def __call__(self, models: ModelConfig, model_choice: str) -> tuple[str, bool]: ...
 
 
+class EnsureBaseVideoVae(Protocol):
+    def __call__(self, models: ModelConfig) -> bool: ...
+
+
+class EnsureAudioVae(Protocol):
+    def __call__(self, models: ModelConfig) -> bool: ...
+
+
 class EnsureInt8VideoVae(Protocol):
     def __call__(self, models: ModelConfig) -> bool: ...
 
@@ -396,6 +404,8 @@ class MediaServices:
 
 @dataclass(frozen=True)
 class ModelsServices:
+    ensure_audio_vae: EnsureAudioVae
+    ensure_base_video_vae: EnsureBaseVideoVae
     ensure_h3_latent_upscaler_model: EnsureH3LatentUpscalerModel
     ensure_h3_semantic_bridge: EnsureH3SemanticBridge
     ensure_h3_text_encoder: EnsureH3TextEncoder

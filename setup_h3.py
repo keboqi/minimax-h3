@@ -37,7 +37,7 @@ from h3_sources import (
     VIDEO_DEPTH_REF,
     VIDEO_DEPTH_REPO,
 )
-from h3_models import PRELOAD_MODEL_KEYS, sync_models, write_json_atomic
+from h3_models import sync_models, write_json_atomic
 from h3_node_patches import (
     TRT_VAE_NODE_REF,
     TRT_VAE_NODE_REPO,
@@ -903,11 +903,12 @@ def sync_model_inventory(install_dir: Path, comfy: Path) -> None:
     manifest_path = install_dir / "h3_model_manifest.json"
     config_path = install_dir / "h3_models.json"
 
+    # All models download on demand on first use; do not preload models at startup.
     config = sync_models(
         root=comfy / "models",
         manifest_path=manifest_path,
         log_prefix="[h3-setup]",
-        model_keys=PRELOAD_MODEL_KEYS,
+        model_keys=(),
     )
     write_json_atomic(config_path, config)
 

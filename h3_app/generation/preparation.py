@@ -249,6 +249,43 @@ def prepare_h3(
             ),
         )
     services.models.ensure_profile_model(profile_key, profile, request.media.mode)
+    needs_video_vae = request.output.result_format == "Video" or (
+        request.output.result_format == "Image"
+        and selected_image_vae != SINGLE_FRAME_IMAGE_VAE
+    )
+    if needs_video_vae and not request.output.use_int8_vae and not request.output.use_trt_vae:
+        video_vae_path = (
+            runtime.comfy_dir
+            / "models"
+            / MODEL_SPECS["video_vae"].folder
+            / models.video_vae
+        )
+        if not services.models.model_file_is_ready(video_vae_path):
+            progress(0, desc="Downloading video VAE")
+            yield GenerationUpdate(
+                None,
+                progress_status(
+                    "Downloading video VAE on demand", started=started
+                ),
+            )
+            services.models.ensure_base_video_vae(models)
+
+    if request.output.result_format != "Image":
+        audio_vae_path = (
+            runtime.comfy_dir
+            / "models"
+            / MODEL_SPECS["audio_vae"].folder
+            / models.audio_vae
+        )
+        if not services.models.model_file_is_ready(audio_vae_path):
+            progress(0, desc="Downloading audio VAE")
+            yield GenerationUpdate(
+                None,
+                progress_status(
+                    "Downloading audio VAE on demand", started=started
+                ),
+            )
+            services.models.ensure_audio_vae(models)
 
     requested_generation = str(effective.generation_mode).strip().lower()
     use_turbo = requested_generation == "turbo"
