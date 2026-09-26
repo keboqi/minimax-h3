@@ -10,6 +10,7 @@ COMFY_DIR="$INSTALL_DIR/ComfyUI"
 MODELS_CONFIG="$INSTALL_DIR/h3_models.json"
 
 PYTHON_BIN="python3"
+export PYTHONPATH="$SCRIPT_DIR:${PYTHONPATH:-}"
 
 COMFY_HOST="127.0.0.1"
 COMFY_PORT="8188"
@@ -196,14 +197,49 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-ensure_gradio_entrypoint() {
-  if [[ -f "$SCRIPT_DIR/gradio_app.py" ]]; then
-    return 0
+ensure_repo_integrity() {
+  local needs_restore=0
+  if [[ ! -d "$SCRIPT_DIR/h3_ui" || ! -f "$SCRIPT_DIR/h3_ui/application.py" ]]; then
+    needs_restore=1
   fi
-  log "Restoring missing gradio_app.py entrypoint"
-  if git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git -C "$SCRIPT_DIR" checkout HEAD -- gradio_app.py 2>/dev/null || true
+  if [[ ! -f "$SCRIPT_DIR/gradio_app.py" ]]; then
+    needs_restore=1
   fi
+  if [[ ! -f "$SCRIPT_DIR/custom_nodes/H3Acceleration/__init__.py" ]]; then
+    needs_restore=1
+  fi
+
+  if (( needs_restore )) && [[ -d "$SCRIPT_DIR/minimax-h3/h3_ui" ]]; then
+    log "Found nested repository at $SCRIPT_DIR/minimax-h3; moving files to root"
+    cp -rn "$SCRIPT_DIR/minimax-h3"/* "$SCRIPT_DIR"/ 2>/dev/null || true
+    if [[ -d "$SCRIPT_DIR/h3_ui" && -f "$SCRIPT_DIR/h3_ui/application.py" ]]; then
+      needs_restore=0
+    fi
+  fi
+
+  if (( needs_restore )); then
+    log "Restoring missing repository modules (h3_ui, custom_nodes, gradio_app)"
+    if git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      git -C "$SCRIPT_DIR" checkout HEAD -- . 2>/dev/null || true
+    fi
+
+    if [[ ! -d "$SCRIPT_DIR/h3_ui" || ! -f "$SCRIPT_DIR/h3_ui/application.py" ]]; then
+      log "Fetching tracked repository modules from GitHub"
+      if git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        git -C "$SCRIPT_DIR" fetch --depth 1 https://github.com/keboqi/minimax-h3.git HEAD 2>/dev/null || true
+        git -C "$SCRIPT_DIR" checkout FETCH_HEAD -- . 2>/dev/null || true
+      else
+        local tmp_sync
+        tmp_sync="$(mktemp -d 2>/dev/null || echo "/tmp/h3_sync_$$")"
+        git clone --depth 1 https://github.com/keboqi/minimax-h3.git "$tmp_sync" 2>/dev/null || true
+        if [[ -d "$tmp_sync/h3_ui" ]]; then
+          cp -rn "$tmp_sync"/* "$SCRIPT_DIR"/ 2>/dev/null || true
+          rm -rf "$tmp_sync" 2>/dev/null || true
+        fi
+      fi
+    fi
+  fi
+
   if [[ ! -f "$SCRIPT_DIR/gradio_app.py" ]]; then
     cat <<'EOF' > "$SCRIPT_DIR/gradio_app.py"
 #!/usr/bin/env python3
@@ -211,14 +247,38 @@ ensure_gradio_entrypoint() {
 
 from __future__ import annotations
 
-if __name__ == "__main__":
-    from h3_ui.application import main
+import sys
+from pathlib import Path
 
-    main()
-else:
-    import sys
+_ROOT = Path(__file__).resolve().parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+_NESTED = _ROOT / "minimax-h3"
+if not (_ROOT / "h3_ui").is_dir() and (_NESTED / "h3_ui").is_dir() and str(_NESTED) not in sys.path:
+    sys.path.insert(0, str(_NESTED))
+
+try:
+    from h3_ui import application
+except ModuleNotFoundError:
+    try:
+        import subprocess
+        print("[h3-run] h3_ui missing; restoring repository from GitHub...", flush=True)
+        subprocess.run(
+            ["git", "-C", str(_ROOT), "fetch", "--depth", "1", "https://github.com/keboqi/minimax-h3.git", "HEAD"],
+            check=True, timeout=60, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(_ROOT), "checkout", "FETCH_HEAD", "--", "."],
+            check=True, timeout=60, capture_output=True,
+        )
+    except Exception as exc:
+        print(f"[h3-run] automatic Git recovery failed: {exc}", flush=True)
     from h3_ui import application
 
+if __name__ == "__main__":
+    application.main()
+else:
     sys.modules[__name__] = application
 EOF
     chmod +x "$SCRIPT_DIR/gradio_app.py" 2>/dev/null || true
@@ -228,7 +288,7 @@ EOF
 ensure_ffmpeg
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || die "python3 is required"
 [[ -f "$SCRIPT_DIR/setup_h3.py" ]] || die "Missing setup_h3.py"
-ensure_gradio_entrypoint
+ensure_repo_integrity
 
 if [[ ! -f "$COMFY_DIR/main.py" || ! -f "$MODELS_CONFIG" ]]; then
   log "Installation or models are missing; running automatic setup"
@@ -316,7 +376,7 @@ export GRADIO_SERVER_PORT="$GRADIO_SERVER_PORT"
 export AUTO_START_COMFYUI="0"
 
 log "Starting Gradio"
-ensure_gradio_entrypoint
+ensure_repo_integrity
 if [[ -f "$SCRIPT_DIR/gradio_app.py" ]]; then
   PYTHONPATH="$SCRIPT_DIR:${PYTHONPATH:-}" "$PYTHON_BIN" -u "$SCRIPT_DIR/gradio_app.py" &
 else

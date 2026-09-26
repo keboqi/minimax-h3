@@ -966,43 +966,85 @@ def sync_model_inventory(install_dir: Path, comfy: Path) -> None:
 
 
 def ensure_root_entrypoints() -> None:
-    entrypoint = SCRIPT_DIR / "gradio_app.py"
-    if entrypoint.is_file():
+    required_paths = [
+        SCRIPT_DIR / "gradio_app.py",
+        SCRIPT_DIR / "h3_ui" / "__init__.py",
+        SCRIPT_DIR / "h3_ui" / "application.py",
+        SCRIPT_DIR / "h3_app" / "__init__.py",
+        SCRIPT_DIR / "custom_nodes" / "H3Acceleration" / "__init__.py",
+    ]
+    if all(p.exists() for p in required_paths):
         return
 
+    # Check for nested repository
+    nested = SCRIPT_DIR / "minimax-h3"
+    if (nested / "h3_ui" / "application.py").is_file():
+        print(f"[h3-setup] found nested repository at {nested}; syncing modules", flush=True)
+        for item in nested.iterdir():
+            target = SCRIPT_DIR / item.name
+            if not target.exists():
+                try:
+                    if item.is_dir():
+                        shutil.copytree(item, target)
+                    else:
+                        shutil.copy2(item, target)
+                except Exception:
+                    pass
+
+    if all(p.exists() for p in required_paths):
+        return
+
+    print("[h3-setup] Restoring missing repository modules...", flush=True)
     for git_args in (
-        ("checkout", "HEAD", "--", "gradio_app.py"),
+        ("checkout", "HEAD", "--", "."),
         ("fetch", "--depth", "1", "origin", "HEAD"),
-        ("checkout", "FETCH_HEAD", "--", "gradio_app.py"),
+        ("checkout", "FETCH_HEAD", "--", "."),
         ("fetch", "--depth", "1", "https://github.com/keboqi/minimax-h3.git", "HEAD"),
-        ("checkout", "FETCH_HEAD", "--", "gradio_app.py"),
+        ("checkout", "FETCH_HEAD", "--", "."),
     ):
         try:
-            run("git", "-C", str(SCRIPT_DIR), *git_args, timeout=30)
+            run("git", "-C", str(SCRIPT_DIR), *git_args, timeout=60)
         except Exception:
             pass
-        if entrypoint.is_file():
-            print(f"[h3-setup] restored gradio_app.py via git: {entrypoint}")
+        if all(p.exists() for p in required_paths):
+            print("[h3-setup] restored repository files via git")
             return
 
-    content = (
-        '#!/usr/bin/env python3\n'
-        '"""Launch H3, or expose its temporary compatibility API to existing callers."""\n\n'
-        'from __future__ import annotations\n\n'
-        'if __name__ == "__main__":\n'
-        '    from h3_ui.application import main\n\n'
-        '    main()\n'
-        'else:\n'
-        '    import sys\n'
-        '    from h3_ui import application\n\n'
-        '    sys.modules[__name__] = application\n'
-    )
-    try:
-        entrypoint.write_text(content, encoding="utf-8")
-        entrypoint.chmod(0o755)
-        print(f"[h3-setup] created gradio_app.py shim: {entrypoint}")
-    except Exception as exc:
-        print(f"[h3-setup] note: could not write gradio_app.py: {exc}", flush=True)
+    entrypoint = SCRIPT_DIR / "gradio_app.py"
+    if not entrypoint.is_file():
+        content = (
+            '#!/usr/bin/env python3\n'
+            '"""Launch H3, or expose its temporary compatibility API to existing callers."""\n\n'
+            'from __future__ import annotations\n\n'
+            'import sys\n'
+            'from pathlib import Path\n\n'
+            '_ROOT = Path(__file__).resolve().parent\n'
+            'if str(_ROOT) not in sys.path:\n'
+            '    sys.path.insert(0, str(_ROOT))\n\n'
+            '_NESTED = _ROOT / "minimax-h3"\n'
+            'if not (_ROOT / "h3_ui").is_dir() and (_NESTED / "h3_ui").is_dir() and str(_NESTED) not in sys.path:\n'
+            '    sys.path.insert(0, str(_NESTED))\n\n'
+            'try:\n'
+            '    from h3_ui import application\n'
+            'except ModuleNotFoundError:\n'
+            '    try:\n'
+            '        import subprocess\n'
+            '        subprocess.run(["git", "-C", str(_ROOT), "fetch", "--depth", "1", "https://github.com/keboqi/minimax-h3.git", "HEAD"], check=True, timeout=60, capture_output=True)\n'
+            '        subprocess.run(["git", "-C", str(_ROOT), "checkout", "FETCH_HEAD", "--", "."], check=True, timeout=60, capture_output=True)\n'
+            '    except Exception:\n'
+            '        pass\n'
+            '    from h3_ui import application\n\n'
+            'if __name__ == "__main__":\n'
+            '    application.main()\n'
+            'else:\n'
+            '    sys.modules[__name__] = application\n'
+        )
+        try:
+            entrypoint.write_text(content, encoding="utf-8")
+            entrypoint.chmod(0o755)
+            print(f"[h3-setup] created gradio_app.py shim: {entrypoint}")
+        except Exception as exc:
+            print(f"[h3-setup] note: could not write gradio_app.py: {exc}", flush=True)
 
 
 def main() -> None:
