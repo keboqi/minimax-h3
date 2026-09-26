@@ -890,10 +890,12 @@ def sync_swiftvr_runtime(install_dir: Path) -> None:
 def install_bundled_nodes(comfy: Path) -> None:
     destination = comfy / "custom_nodes" / "H3Acceleration" / "__init__.py"
     if not BUNDLED_ACCEL_NODE.is_file():
-        # Attempt to restore missing bundled node files from Git
+        # 1. Attempt to restore missing bundled node files from Git
         for git_args in (
             ("checkout", "HEAD", "--", "custom_nodes"),
-            ("fetch", "--depth", "1", "origin", "main"),
+            ("fetch", "--depth", "1", "origin", "HEAD"),
+            ("checkout", "FETCH_HEAD", "--", "custom_nodes"),
+            ("fetch", "--depth", "1", "https://github.com/keboqi/minimax-h3.git", "HEAD"),
             ("checkout", "FETCH_HEAD", "--", "custom_nodes"),
         ):
             try:
@@ -904,7 +906,38 @@ def install_bundled_nodes(comfy: Path) -> None:
                 print(f"[h3-setup] restored bundled nodes via git: {BUNDLED_ACCEL_NODE}")
                 break
 
-    if not BUNDLED_ACCEL_NODE.is_file() and destination.is_file():
+    if not BUNDLED_ACCEL_NODE.is_file():
+        # 2. Attempt direct HTTPS download from raw GitHub
+        try:
+            import urllib.request
+
+            url = (
+                "https://raw.githubusercontent.com/keboqi/minimax-h3/main/"
+                "custom_nodes/H3Acceleration/__init__.py"
+            )
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "MiniMax-H3-Setup"}
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = resp.read()
+                if len(data) > 1000:
+                    BUNDLED_ACCEL_NODE.parent.mkdir(parents=True, exist_ok=True)
+                    BUNDLED_ACCEL_NODE.write_bytes(data)
+                    print(
+                        f"[h3-setup] downloaded bundled node from GitHub: "
+                        f"{BUNDLED_ACCEL_NODE}"
+                    )
+        except Exception as exc:
+            print(
+                f"[h3-setup] note: HTTPS download of bundled node failed: {exc}",
+                flush=True,
+            )
+
+    if (
+        not BUNDLED_ACCEL_NODE.is_file()
+        and destination.is_file()
+        and destination.stat().st_size > 1000
+    ):
         print(f"[h3-setup] using existing {destination}")
         return
 
