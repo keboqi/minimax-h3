@@ -185,13 +185,13 @@ def _remove_tree(path: Path) -> None:
 
 
 def _git_worktree_is_valid(dest: Path) -> bool:
-    """Return whether Git recognizes dest, not merely whether .git exists."""
+    """Return whether dest owns the worktree, rather than using a parent repo."""
     probe = subprocess.run(
-        ["git", "-C", str(dest), "rev-parse", "--is-inside-work-tree"],
+        ["git", "-C", str(dest), "rev-parse", "--show-toplevel"],
         text=True,
         capture_output=True,
     )
-    return probe.returncode == 0 and probe.stdout.strip() == "true"
+    return probe.returncode == 0 and Path(probe.stdout.strip()).resolve() == dest.resolve()
 
 
 def _requires_staged_git_update(dest: Path) -> bool:
