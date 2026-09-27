@@ -553,82 +553,6 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             <= required_qwen_image21_nodes(editing=False, turbo=True, viggle=True)
         )
 
-    def test_alibaba_pdd_uses_dedicated_loader_and_fixed_sigmas(self):
-        from h3_app.model_service import qwen_image21_model_keys
-
-        variant = "Alibaba PAI PDD 4-step"
-        graph = self._build(("target.png",), steps=4, turbo_variant=variant)
-        self.assertFalse(self._by_type(graph, "KSampler"))
-        self.assertFalse(self._by_type(graph, "LoraLoaderModelOnly"))
-        self.assertFalse(self._by_type(graph, "H3Qwen21TurboSigmas"))
-        loader_id, loader = self._by_type(graph, "H3Qwen21PDDLoader")[0]
-        self.assertEqual(
-            loader["inputs"]["lora_name"],
-            MODEL_SPECS["qwen_image21_pdd_4step_lora"].local_name,
-        )
-        backend = self._by_type(graph, "ModelAttentionBackend")[0][1]
-        self.assertEqual(backend["inputs"]["model"], [loader_id, 0])
-        sigma_id, _ = self._by_type(graph, "H3Qwen21PDDSigmas")[0]
-        sampler = self._by_type(graph, "SamplerCustomAdvanced")[0][1]
-        self.assertEqual(sampler["inputs"]["sigmas"], [sigma_id, 0])
-        self.assertEqual(
-            self._by_type(graph, "QwenImage21Cache")[0][1]["inputs"]["device"],
-            "off",
-        )
-        self.assertEqual(qwen_turbo_defaults(variant), (4, 1.0, "euler", "Off"))
-        self.assertEqual(
-            qwen_image21_model_keys("BF16", "BF16", variant)[-1],
-            "qwen_image21_pdd_4step_lora",
-        )
-        self.assertEqual(
-            MODEL_SPECS["qwen_image21_pdd_4step_lora"].repo_id,
-            "alibaba-pai/Qwen-Image-2.1-Fun-Acc-LoRAs",
-        )
-        required = required_qwen_image21_nodes(
-            editing=True, turbo=True, pdd=True
-        )
-        self.assertIn("H3Qwen21PDDLoader", required)
-        self.assertIn("H3Qwen21PDDSigmas", required)
-        self.assertNotIn("H3Qwen21TurboSigmas", required)
-
-    def test_pruna_variants_use_matching_lora_and_fixed_sigmas(self):
-        from h3_app.model_service import qwen_image21_model_keys
-
-        for count in (8, 5):
-            variant = f"Pruna {count}-step"
-            with self.subTest(variant=variant):
-                graph = self._build(("target.png",), steps=count, turbo_variant=variant)
-                lora_id, lora = self._by_type(graph, "LoraLoaderModelOnly")[0]
-                key = f"qwen_image21_pruna_{count}step_lora"
-                self.assertEqual(lora["inputs"]["lora_name"], MODEL_SPECS[key].local_name)
-                self.assertEqual(lora["inputs"]["strength_model"], 1.0)
-                self.assertEqual(
-                    MODEL_SPECS[key].repo_id, "PrunaAI/Pruna-Qwen-Image-2.1"
-                )
-                self.assertEqual(
-                    qwen_image21_model_keys("BF16", "BF16", variant)[-1], key
-                )
-                self.assertEqual(
-                    qwen_turbo_defaults(variant), (count, 1.0, "euler", "Off")
-                )
-                self.assertEqual(
-                    self._by_type(graph, "ModelAttentionBackend")[0][1]["inputs"]["model"],
-                    [lora_id, 0],
-                )
-                sigma_id, sigmas = self._by_type(graph, "H3Qwen21PrunaSigmas")[0]
-                self.assertEqual(sigmas["inputs"]["steps"], count)
-                sampler = self._by_type(graph, "SamplerCustomAdvanced")[0][1]
-                self.assertEqual(sampler["inputs"]["sigmas"], [sigma_id, 0])
-                self.assertFalse(self._by_type(graph, "H3Qwen21TurboSigmas"))
-                self.assertIn(
-                    "H3Qwen21PrunaSigmas",
-                    required_qwen_image21_nodes(
-                        editing=True, turbo=True, pruna=True
-                    ),
-                )
-                with self.assertRaisesRegex(ValueError, "requires"):
-                    self._build(steps=count + 1, turbo_variant=variant)
-
     def test_qwen_presets_select_the_requested_controls(self):
         self.assertEqual(
             qwen_preset_values("Fast"),
@@ -659,6 +583,21 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             MODEL_SPECS[turbo[-1]].repo_id,
             "Viggle/Qwen-Image-2.1-viggle-turbo",
         )
+
+    def test_retired_turbo_variants_are_unavailable(self):
+        from h3_app.model_service import qwen_image21_model_keys
+
+        for variant in (
+            "Viggle 3-pass (configurable)",
+            "Alibaba PAI PDD 4-step",
+            "Pruna 8-step",
+            "Pruna 5-step",
+        ):
+            with self.subTest(variant=variant):
+                with self.assertRaisesRegex(ValueError, "Unknown Qwen Image 2.1 Turbo"):
+                    self._build(turbo_variant=variant)
+                with self.assertRaisesRegex(H3Error, "Unknown Qwen Image 2.1 Turbo"):
+                    qwen_image21_model_keys("BF16", "BF16", variant)
 
     def test_prompt_writer_uses_natural_single_image_reference(self):
         runtime = SimpleNamespace(

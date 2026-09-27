@@ -394,37 +394,11 @@ encoder and other controls retain their chosen values when switching presets.
 The Qwen tab offers **Viggle Turbo v0.2.1** as a six-step ComfyUI LoRA mode.
 It downloads the rank-256 adapter on first use and uses its published six-node
 schedule with Qwen's resolution-dependent time shift. A bundled custom loader
-applies the adapter without merging it into BF16/INT8 weights. The experimental
-**Viggle 3-pass (configurable)** option runs a base-model composition pass,
-then two six-step Viggle-LoRA refinements by default (6+6+6). Pass 2 denoise
-starts at 0.60 and pass 3 at 0.25; pass step counts and denoise values are
-editable. The refinements use standard Euler/simple KSampler scheduling and
-are an experimental adaptation of the community recipe, not Viggle's published
-single-pass sigma schedule. Turbo editing accepts up to three references. The
+applies the adapter without merging it into BF16/INT8 weights. Turbo editing
+accepts up to three references. The
 base mode retains its existing controls and up to ten references. Viggle Turbo
 is released under the Qwen Research License for non-commercial research or
 evaluation; commercial use requires a separate licence.
-
-**Alibaba PAI PDD 4-step** is a second Turbo mode. Selecting it downloads
-[Qwen-Image-2.1-Fun-Acc-4Step.safetensors](https://huggingface.co/alibaba-pai/Qwen-Image-2.1-Fun-Acc-LoRAs)
-on first use and sets four steps, Euler, CFG 1, and accelerator Off. The
-bundled ComfyUI node loads its PDD output heads, backbone LoRA, and trained
-normalization weights and uses the checkpoint's stored sigma schedule.
-This mode requires exactly four steps. Image edits turn the Qwen prefix KV
-cache off, matching the published examples. Alibaba notes that small dense
-text may be less legible and some edits may be softer or darker than the
-40-step base model. The adapter inherits Qwen's research license.
-
-**Pruna 8-step** and **Pruna 5-step** are additional Qwen Image 2.1 LoRA
-modes. Each downloads its v0.1 adapter on first use and uses the matching
-published sigma schedule through the same ComfyUI backend. Select 8 steps for
-higher quality or 5 for speed. These modes require their exact step count,
-Euler, CFG 1, and accelerator Off; editing accepts up to three references.
-Pruna recommends 1K output and detailed prompts. This first release is below
-the base model's visual quality, and the 5-step adapter has visibly lower
-quality than the 8-step adapter. See the
-[Pruna model card](https://huggingface.co/PrunaAI/Pruna-Qwen-Image-2.1)
-for the schedules and research license.
 
 The **YuE2** tab uses ComfyUI's native YuE2 nodes (ComfyUI v0.36.0 or newer).
 Its INT8 ConvRot checkpoint (about 4 GB) is selected by default; the BF16

@@ -242,14 +242,6 @@ def qwen_turbo_defaults(variant: str, preset: str = "Quality"):
     """Set Turbo defaults, preserving the selected base preset's step count."""
     if variant == "Viggle Turbo v0.2.1 (6-step)":
         return 6, 1.0, "euler", "Off"
-    if variant == "Viggle 3-pass (configurable)":
-        return 6, 1.0, "euler", "Off"
-    if variant == "Alibaba PAI PDD 4-step":
-        return 4, 1.0, "euler", "Off"
-    if variant == "Pruna 8-step":
-        return 8, 1.0, "euler", "Off"
-    if variant == "Pruna 5-step":
-        return 5, 1.0, "euler", "Off"
     steps = 25 if preset == "Normal" else 40
     return steps, 1.0, "euler", "Spectrum (Quality)"
 
@@ -349,10 +341,6 @@ def bind_qwen_image21_view(
             view.attention_backend,
             view.accelerator,
             view.turbo_variant,
-            view.viggle_pass2_steps,
-            view.viggle_pass3_steps,
-            view.viggle_pass2_denoise,
-            view.viggle_pass3_denoise,
             view.output_resolution_1k,
             view.output_resolution_2k,
             view.batch_count,

@@ -859,16 +859,8 @@ def qwen_image21_model_keys(
     except KeyError as exc:
         raise H3Error(f"Unknown Qwen Image 2.1 model choice: {exc.args[0]}") from exc
     keys = (model_key, encoder_key, "qwen_image21_vae")
-    if turbo_variant in {
-        "Viggle Turbo v0.2.1 (6-step)", "Viggle 3-pass (configurable)"
-    }:
+    if turbo_variant == "Viggle Turbo v0.2.1 (6-step)":
         return (*keys, "qwen_image21_viggle_v02_lora")
-    if turbo_variant == "Alibaba PAI PDD 4-step":
-        return (*keys, "qwen_image21_pdd_4step_lora")
-    if turbo_variant == "Pruna 8-step":
-        return (*keys, "qwen_image21_pruna_8step_lora")
-    if turbo_variant == "Pruna 5-step":
-        return (*keys, "qwen_image21_pruna_5step_lora")
     if turbo_variant != "Off":
         raise H3Error(f"Unknown Qwen Image 2.1 Turbo variant: {turbo_variant}")
     return keys

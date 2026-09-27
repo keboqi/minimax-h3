@@ -97,10 +97,6 @@ class QwenImage21View:
     attention_backend: gr.Dropdown
     accelerator: gr.Dropdown
     turbo_variant: gr.Dropdown
-    viggle_pass2_steps: gr.Slider
-    viggle_pass3_steps: gr.Slider
-    viggle_pass2_denoise: gr.Slider
-    viggle_pass3_denoise: gr.Slider
     preset: gr.Radio
 
     @property
@@ -192,43 +188,15 @@ def build_qwen_image21_view(
                     label="Diffusion model",
                 )
                 turbo_variant = gr.Dropdown(
-                    choices=[
-                        "Off", "Viggle Turbo v0.2.1 (6-step)",
-                        "Viggle 3-pass (configurable)", "Alibaba PAI PDD 4-step",
-                        "Pruna 8-step", "Pruna 5-step",
-                    ],
+                    choices=["Off", "Viggle Turbo v0.2.1 (6-step)"],
                     value="Off",
                     label="Turbo mode",
                     info=(
-                        "Viggle v0.2.1 uses its official 6-step schedule. The "
-                        "configurable three-pass mode runs a base pass then two "
-                        "selected-LoRA refinements. PAI PDD and Pruna use fixed schedules. "
-                        "Turbo uses CFG 1 and accelerator Off. "
+                        "Viggle v0.2.1 uses its official 6-step schedule, "
+                        "CFG 1, and accelerator Off. "
                         "Research and evaluation use only."
                     ),
                 )
-                with gr.Accordion("Viggle three-pass settings", open=False):
-                    gr.Markdown(
-                        "Used by **Viggle 3-pass** only. Pass 1 uses the Steps control "
-                        "and the base model; passes 2 and 3 use the selected Viggle "
-                        "LoRA. Defaults produce 6+6+6 steps."
-                    )
-                    with gr.Row():
-                        viggle_pass2_steps = gr.Slider(
-                            1, 12, value=6, step=1, label="Pass 2 steps"
-                        )
-                        viggle_pass3_steps = gr.Slider(
-                            1, 12, value=6, step=1, label="Pass 3 steps"
-                        )
-                    with gr.Row():
-                        viggle_pass2_denoise = gr.Slider(
-                            0.5, 0.7, value=0.6, step=0.01,
-                            label="Pass 2 denoise",
-                        )
-                        viggle_pass3_denoise = gr.Slider(
-                            0.2, 0.3, value=0.25, step=0.01,
-                            label="Pass 3 denoise",
-                        )
                 text_encoder = gr.Dropdown(
                     choices=list(text_encoder_choices),
                     value=defaults["text_encoder"],
@@ -394,10 +362,6 @@ def build_qwen_image21_view(
         attention_backend,
         accelerator,
         turbo_variant,
-        viggle_pass2_steps,
-        viggle_pass3_steps,
-        viggle_pass2_denoise,
-        viggle_pass3_denoise,
         preset,
     )
 
