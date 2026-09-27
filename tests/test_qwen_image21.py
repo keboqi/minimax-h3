@@ -11,9 +11,11 @@ from PIL import Image
 from h3_app import prompt_service
 from h3_app.errors import H3Error
 from h3_app.generation.qwen import (
+    generate_qwen_image21,
     max_qwen_edit_dimensions,
     resolve_qwen_output_dimensions,
 )
+from h3_app.generation.requests import QwenImage21Request
 from h3_app.workflows.qwen import (
     build_qwen_image21_graph,
     required_qwen_image21_nodes,
@@ -33,6 +35,51 @@ from h3_ui.bindings import (
 
 
 class QwenImage21WorkflowTests(unittest.TestCase):
+    def test_batch_reuses_inputs_and_collects_each_image(self):
+        request = QwenImage21Request(
+            mode="Text to image", model_choice="BF16", text_encoder_choice="BF16",
+            prompt="A red fox", negative_prompt="blurry", reference_images=(),
+            width=1024, height=1024, reference_resolution=0,
+            match_input_size=False, seed=42, steps=40, cfg=1.0,
+            sampler_name="euler", scheduler="simple", cache_device="auto",
+            cache_dtype="default", attention_backend="pytorch attention",
+            batch_count=3,
+        )
+        graphs = []
+        snapshots = []
+        execution = SimpleNamespace(
+            object_info=lambda: required_qwen_image21_nodes(editing=False),
+            submit_prompt=lambda graph, client_id: (
+                graphs.append(graph) or f"job-{len(graphs)}"
+            ),
+            poll_comfy_progress=lambda prompt_id, graph: iter(()),
+            wait_for_history=lambda prompt_id: {},
+        )
+        services = SimpleNamespace(
+            models=SimpleNamespace(
+                unload_prompt_rewriter=lambda: None,
+                missing_qwen_image21_model_names=lambda *args: [],
+                ensure_qwen_image21_models=lambda *args: None,
+            ),
+            execution=execution,
+            media=SimpleNamespace(resolve_image_outputs=lambda history, queued_at, count: [
+                Path(f"image-{len(graphs)}.png")
+            ]),
+        )
+        with patch("h3_app.generation.qwen.write_snapshot", side_effect=lambda path, data: snapshots.append((path, data))):
+            updates = list(generate_qwen_image21(
+                request, services, SimpleNamespace(input_dir=Path("."))
+            ))
+        self.assertEqual(len(graphs), 3)
+        samplers = [self._by_type(graph, "KSampler")[0][1] for graph in graphs]
+        self.assertEqual([node["inputs"]["seed"] for node in samplers], [42, 43, 44])
+        self.assertEqual(
+            [snapshot[1]["settings"]["seed"] for snapshot in snapshots], [42, 43, 44]
+        )
+        self.assertEqual(updates[-1].output, [
+            "image-1.png", "image-2.png", "image-3.png"
+        ])
+
     def _build(self, references=(), match_input_size=True, *, steps=25, turbo_variant="Off"):
         return build_qwen_image21_graph(
             model_choice="INT8 ConvRot (lower VRAM)",

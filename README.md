@@ -373,6 +373,9 @@ Image edit accepts up to 10 inputs and treats `image1` as the edit target.
 Single-image prompts refer to the input naturally; multi-image prompts use
 `<image1>`, `<image2>`, and subsequent tags. Generated
 images and their settings are saved with the other application outputs. The
+**Images per batch** control generates one to four images from the same inputs.
+Each image uses a distinct seed (successive seeds when a seed is specified),
+appears in the gallery when complete, and keeps its own settings snapshot. The
 official 40-step Euler/simple path is the default, native ~4 MP aspect-ratio
 sizes are accepted, and Comfy Kitchen INT8 attention plus Spectrum
 hidden-state forecasting are available as experimental opt-in speed settings.

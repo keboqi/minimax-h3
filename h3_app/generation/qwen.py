@@ -118,7 +118,7 @@ def generate_qwen_image21(
     """Run Qwen Image 2.1 through the shared ComfyUI queue."""
     started = time.monotonic()
     timings = StageTimings("Qwen Image 2.1", started, "Preparing request")
-    queued_at = time.time()
+    outputs: list[str] = []
     snapshot_values = {
         key: value
         for key, value in asdict(request).items()
@@ -132,6 +132,9 @@ def generate_qwen_image21(
         prompt = str(request.prompt).strip()
         if not prompt:
             raise H3Error("Prompt or edit instruction is required.")
+        batch_count = int(request.batch_count)
+        if batch_count != request.batch_count or not 1 <= batch_count <= 4:
+            raise H3Error("Images per batch must be between 1 and 4.")
         editing = str(request.mode).strip().lower() == "image edit"
         references = tuple(path for path in request.reference_images if path)
         if editing and not references:
@@ -231,11 +234,9 @@ def generate_qwen_image21(
             )
         if turbo and accelerator.lower() != "off":
             raise H3Error("Spectrum acceleration is unavailable with Qwen Turbo.")
-        actual_seed = (
-            random.randrange(0, 2**63 - 1)
-            if int(request.seed) < 0
-            else int(request.seed)
-        )
+        base_seed = int(request.seed)
+        if base_seed >= 0 and base_seed + batch_count - 1 >= 2**63 - 1:
+            raise H3Error("Seed is too large for this batch count.")
 
         missing_files = services.models.missing_qwen_image21_model_names(
             request.model_choice, request.text_encoder_choice, request.turbo_variant
@@ -268,37 +269,6 @@ def generate_qwen_image21(
                 "Qwen Image 2.1 requires the latest ComfyUI; missing nodes: "
                 + ", ".join(sorted(missing_nodes))
             )
-        graph = build_qwen_image21_graph(
-            model_choice=request.model_choice,
-            text_encoder_choice=request.text_encoder_choice,
-            prompt=prompt,
-            negative_prompt=str(request.negative_prompt or ""),
-            reference_images=references,
-            width=width,
-            height=height,
-            reference_resolution=reference_resolution,
-            match_input_size=match_input_size,
-            seed=actual_seed,
-            steps=steps,
-            cfg=cfg,
-            sampler_name=request.sampler_name,
-            scheduler=request.scheduler,
-            cache_device=request.cache_device,
-            cache_dtype=request.cache_dtype,
-            attention_backend=attention_backend,
-            accelerator=accelerator,
-            output_stamp=str(int(time.time())),
-            output_nonce=uuid.uuid4().hex[:8],
-            turbo_variant=request.turbo_variant,
-            viggle_pass2_steps=request.viggle_pass2_steps,
-            viggle_pass3_steps=request.viggle_pass3_steps,
-            viggle_pass2_denoise=request.viggle_pass2_denoise,
-            viggle_pass3_denoise=request.viggle_pass3_denoise,
-        )
-        client_id = str(uuid.uuid4())
-        prompt_id = services.execution.submit_prompt(graph, client_id)
-        timings.label = f"Qwen Image 2.1 job {prompt_id}"
-        timings.transition("Waiting for ComfyUI")
         job_size = (
             f"edit at {width}×{height}"
             if max_edit_resolution
@@ -312,54 +282,93 @@ def generate_qwen_image21(
             )
         else:
             sampling_detail = f"{steps} steps"
-        yield GenerationUpdate(
-            None,
-            f"Queued Qwen Image 2.1 job `{prompt_id}` · seed {actual_seed} · "
-            f"{job_size} · {request.model_choice} · {request.turbo_variant} · "
-            f"{sampling_detail} · accelerator {accelerator}",
-        )
-        for stage, completed_nodes, total_nodes, step, step_total in (
-            services.execution.poll_comfy_progress(prompt_id, graph)
-        ):
-            timings.transition(stage)
-            if step is not None and step_total:
-                progress((step, step_total), desc=stage)
-            elif total_nodes:
-                progress((completed_nodes, total_nodes), desc=stage)
-            yield GenerationUpdate(
-                None,
-                progress_status(
-                    stage,
-                    started=started,
-                    completed_nodes=completed_nodes,
-                    total_nodes=total_nodes,
-                    step=step,
-                    step_total=step_total,
-                    configured_steps=steps,
-                    detail=f"Qwen Image 2.1 job `{prompt_id}`",
-                ),
+        for index in range(batch_count):
+            actual_seed = (
+                random.randrange(0, 2**63 - 1)
+                if base_seed < 0 else base_seed + index
             )
+            queued_at = time.time()
+            graph = build_qwen_image21_graph(
+                model_choice=request.model_choice,
+                text_encoder_choice=request.text_encoder_choice,
+                prompt=prompt,
+                negative_prompt=str(request.negative_prompt or ""),
+                reference_images=references,
+                width=width,
+                height=height,
+                reference_resolution=reference_resolution,
+                match_input_size=match_input_size,
+                seed=actual_seed,
+                steps=steps,
+                cfg=cfg,
+                sampler_name=request.sampler_name,
+                scheduler=request.scheduler,
+                cache_device=request.cache_device,
+                cache_dtype=request.cache_dtype,
+                attention_backend=attention_backend,
+                accelerator=accelerator,
+                output_stamp=str(int(queued_at)),
+                output_nonce=uuid.uuid4().hex[:8],
+                turbo_variant=request.turbo_variant,
+                viggle_pass2_steps=request.viggle_pass2_steps,
+                viggle_pass3_steps=request.viggle_pass3_steps,
+                viggle_pass2_denoise=request.viggle_pass2_denoise,
+                viggle_pass3_denoise=request.viggle_pass3_denoise,
+            )
+            client_id = str(uuid.uuid4())
+            prompt_id = services.execution.submit_prompt(graph, client_id)
+            timings.label = f"Qwen Image 2.1 job {prompt_id}"
+            timings.transition("Waiting for ComfyUI")
+            yield GenerationUpdate(
+                outputs.copy(),
+                f"Queued Qwen Image 2.1 image {index + 1}/{batch_count} · "
+                f"job `{prompt_id}` · seed {actual_seed} · {job_size} · "
+                f"{request.model_choice} · {request.turbo_variant} · "
+                f"{sampling_detail} · accelerator {accelerator}",
+            )
+            for stage, completed_nodes, total_nodes, step, step_total in (
+                services.execution.poll_comfy_progress(prompt_id, graph)
+            ):
+                timings.transition(stage)
+                if step is not None and step_total:
+                    progress((step, step_total), desc=stage)
+                elif total_nodes:
+                    progress((completed_nodes, total_nodes), desc=stage)
+                yield GenerationUpdate(
+                    outputs.copy(),
+                    progress_status(
+                        stage,
+                        started=started,
+                        completed_nodes=completed_nodes,
+                        total_nodes=total_nodes,
+                        step=step,
+                        step_total=step_total,
+                        configured_steps=steps,
+                        detail=f"Image {index + 1}/{batch_count} · Qwen job `{prompt_id}`",
+                    ),
+                )
 
-        timings.transition("Locating generated image")
-        history = services.execution.wait_for_history(prompt_id)
-        result = services.media.resolve_image_outputs(history, queued_at, 1)[0]
-        snapshot_values.update(seed=actual_seed, editing=editing)
-        write_snapshot(
-            result,
-            {
-                "job_id": prompt_id,
-                "family": "Qwen Image 2.1",
-                "settings": snapshot_values,
-            },
-        )
-        elapsed = time.monotonic() - started
+            timings.transition("Locating generated image")
+            history = services.execution.wait_for_history(prompt_id)
+            result = services.media.resolve_image_outputs(history, queued_at, 1)[0]
+            write_snapshot(
+                result,
+                {
+                    "job_id": prompt_id,
+                    "family": "Qwen Image 2.1",
+                    "settings": {**snapshot_values, "seed": actual_seed, "editing": editing},
+                },
+            )
+            outputs.append(str(result))
+            elapsed = time.monotonic() - started
+            yield GenerationUpdate(
+                outputs.copy(),
+                f"Qwen Image 2.1 image {index + 1}/{batch_count} completed in "
+                f"{elapsed:.1f}s · output {result.name} · seed {actual_seed}\n\n"
+                f"{timings.summary()}",
+            )
         progress(1, desc="Complete")
-        yield GenerationUpdate(
-            str(result),
-            f"Qwen Image 2.1 completed in {elapsed:.1f}s · output {result.name} · "
-            f"seed {actual_seed}\n\n{timings.summary()}",
-        )
     except Exception as exc:
-        yield GenerationUpdate(None, f"Error: {exc}\n\n{timings.summary()}")
+        yield GenerationUpdate(outputs.copy(), f"Error: {exc}\n\n{timings.summary()}")
     finally:
         timings.finish()

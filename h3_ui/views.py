@@ -74,7 +74,7 @@ class QwenImage21View:
     lightning_api_key: gr.Textbox
     enhance: gr.Button
     enhance_status: gr.Textbox
-    output: gr.Image
+    output: gr.Gallery
     run: gr.Button
     stop: gr.Button
     status: gr.Textbox
@@ -87,6 +87,7 @@ class QwenImage21View:
     reference_resolution: gr.Dropdown
     edit_size: gr.Radio
     seed: gr.Number
+    batch_count: gr.Slider
     steps: gr.Slider
     cfg: gr.Slider
     sampler: gr.Dropdown
@@ -172,8 +173,8 @@ def build_qwen_image21_view(
                         label="Prompt writer status", lines=2, interactive=False
                     )
             with gr.Column(scale=2):
-                output = gr.Image(
-                    label="Generated image", type="filepath", interactive=False
+                output = gr.Gallery(
+                    label="Generated images", columns=2, height=500, interactive=False
                 )
                 with gr.Row():
                     run = gr.Button("Generate with Qwen Image 2.1", variant="primary")
@@ -284,6 +285,10 @@ def build_qwen_image21_view(
                     seed = gr.Number(
                         value=defaults["seed"], precision=0, label="Seed (-1 random)"
                     )
+                    batch_count = gr.Slider(
+                        1, 4, value=1, step=1, label="Images per batch",
+                        info="Uses the same inputs and a different seed for each image.",
+                    )
                     steps = gr.Slider(
                         1, 100, value=defaults["steps"], step=1, label="Steps"
                     )
@@ -379,6 +384,7 @@ def build_qwen_image21_view(
         reference_resolution,
         edit_size,
         seed,
+        batch_count,
         steps,
         cfg,
         sampler,

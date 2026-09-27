@@ -222,6 +222,7 @@ class UiContractTests(unittest.TestCase):
     def test_non_h3_generated_media_outputs_are_display_only(self) -> None:
         labels = {
             "Generated image",
+            "Generated images",
             "Generated LTX-2.5 video",
             "Generated song",
         }
