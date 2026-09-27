@@ -995,18 +995,25 @@ def ensure_root_entrypoints() -> None:
         return
 
     print("[h3-setup] Restoring missing repository modules...", flush=True)
-    for git_args in (
-        ("checkout", "HEAD", "--", "."),
-        ("fetch", "--depth", "1", "origin", "HEAD"),
-        ("checkout", "FETCH_HEAD", "--", "."),
-        ("fetch", "--depth", "1", "https://github.com/keboqi/minimax-h3.git", "HEAD"),
-        ("checkout", "FETCH_HEAD", "--", "."),
-    ):
+
+    def missing_paths() -> list[str]:
+        return [str(path.relative_to(SCRIPT_DIR)) for path in required_paths if not path.is_file()]
+
+    try:
+        run("git", "-C", str(SCRIPT_DIR), "checkout", "HEAD", "--", *missing_paths(), timeout=60)
+    except Exception:
+        pass
+    if not missing_paths():
+        print("[h3-setup] restored repository files via git")
+        return
+
+    for remote in ("origin", "https://github.com/keboqi/minimax-h3.git"):
         try:
-            run("git", "-C", str(SCRIPT_DIR), *git_args, timeout=60)
+            run("git", "-C", str(SCRIPT_DIR), "fetch", "--depth", "1", remote, "HEAD", timeout=60)
+            run("git", "-C", str(SCRIPT_DIR), "checkout", "FETCH_HEAD", "--", *missing_paths(), timeout=60)
         except Exception:
             pass
-        if all(p.exists() for p in required_paths):
+        if not missing_paths():
             print("[h3-setup] restored repository files via git")
             return
 
@@ -1027,10 +1034,12 @@ def ensure_root_entrypoints() -> None:
             'try:\n'
             '    from h3_ui import application\n'
             'except ModuleNotFoundError:\n'
+            '    if (_ROOT / "h3_ui" / "application.py").is_file():\n'
+            '        raise\n'
             '    try:\n'
             '        import subprocess\n'
             '        subprocess.run(["git", "-C", str(_ROOT), "fetch", "--depth", "1", "https://github.com/keboqi/minimax-h3.git", "HEAD"], check=True, timeout=60, capture_output=True)\n'
-            '        subprocess.run(["git", "-C", str(_ROOT), "checkout", "FETCH_HEAD", "--", "."], check=True, timeout=60, capture_output=True)\n'
+            '        subprocess.run(["git", "-C", str(_ROOT), "checkout", "FETCH_HEAD", "--", "h3_ui/application.py"], check=True, timeout=60, capture_output=True)\n'
             '    except Exception:\n'
             '        pass\n'
             '    from h3_ui import application\n\n'

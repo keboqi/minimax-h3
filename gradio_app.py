@@ -18,6 +18,8 @@ if not (_ROOT / "h3_ui").is_dir() and (_NESTED / "h3_ui").is_dir() and str(_NEST
 try:
     from h3_ui import application
 except ModuleNotFoundError:
+    if (_ROOT / "h3_ui" / "application.py").is_file():
+        raise
     # Attempt automatic recovery from Git if h3_ui is missing from the working tree
     try:
         import subprocess
@@ -46,7 +48,7 @@ except ModuleNotFoundError:
                 "checkout",
                 "FETCH_HEAD",
                 "--",
-                ".",
+                "h3_ui/application.py",
             ],
             check=True,
             timeout=60,

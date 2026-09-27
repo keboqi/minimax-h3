@@ -951,8 +951,8 @@ def _remove_hf_cache(
 
     On Linux (e.g. AWS EC2 g4 instance), hf_hub_download creates a symlink in
     snapshots/ pointing to blobs/. On Windows, it creates a copy or hardlink.
-    This helper unlinks both the snapshot reference and the underlying storage blob
-    so model files are not duplicated on disk (essential for 237GB g4 instances).
+    This helper unlinks the snapshot reference and removes its blob only when no
+    other snapshot still references it.
     """
     try:
         dest = plan.get("dest") if plan else None
@@ -980,18 +980,7 @@ def _remove_hf_cache(
         except OSError:
             pass
 
-        # 2. Unlink the resolved blob if separate from cached and dest
-        if (
-            resolved is not None
-            and resolved != cached
-            and (not dest or resolved != dest.resolve())
-        ):
-            try:
-                resolved.unlink(missing_ok=True)
-            except OSError:
-                pass
-
-        # 3. Locate repo directory in cache to check blobs and clean up
+        # Locate the cache repository before considering any blob deletion.
         repo_dir = None
         for parent in cached.parents:
             if parent.name == "snapshots":
@@ -1004,27 +993,45 @@ def _remove_hf_cache(
         if repo_dir and repo_dir.is_dir():
             blobs_dir = repo_dir / "blobs"
             if blobs_dir.is_dir():
-                # Check for blob by sha256 or blob_id if provided
+                blob_candidates = set()
+                if resolved is not None and resolved.parent == blobs_dir:
+                    blob_candidates.add(resolved)
                 if plan:
                     for id_key in ("sha256", "blob_id"):
                         blob_val = plan.get(id_key)
                         if blob_val and isinstance(blob_val, str):
                             blob_file = blobs_dir / blob_val
-                            if blob_file.is_file():
+                            if blob_file.is_file() and cached_ino is not None:
                                 try:
-                                    blob_file.unlink(missing_ok=True)
+                                    if blob_file.stat().st_ino == cached_ino:
+                                        blob_candidates.add(blob_file)
                                 except OSError:
                                     pass
-                # Check for blob by matching st_ino (hardlinks)
                 if cached_ino is not None:
                     try:
                         for entry in blobs_dir.iterdir():
                             if entry.is_file():
                                 try:
                                     if entry.stat().st_ino == cached_ino:
-                                        entry.unlink(missing_ok=True)
+                                        blob_candidates.add(entry)
                                 except OSError:
                                     pass
+                    except OSError:
+                        pass
+
+                snapshots_dir = repo_dir / "snapshots"
+                for blob_file in blob_candidates:
+                    try:
+                        # Hard links still in use have more than one directory entry.
+                        if blob_file.stat().st_nlink > 1:
+                            continue
+                        # Symlinks do not increase st_nlink; check every snapshot.
+                        if snapshots_dir.is_dir() and any(
+                            snapshot.is_symlink() and snapshot.resolve() == blob_file
+                            for snapshot in snapshots_dir.rglob("*")
+                        ):
+                            continue
+                        blob_file.unlink(missing_ok=True)
                     except OSError:
                         pass
 
@@ -1377,8 +1384,6 @@ def sync_models(
         manifest["repo_id"] = MODEL_REPO
         manifest["checked_at_unix"] = int(time.time())
         write_json_atomic(manifest_path, manifest)
-
-        prune_hf_cache(log_prefix=log_prefix)
 
         if download_failures:
             details = "; ".join(

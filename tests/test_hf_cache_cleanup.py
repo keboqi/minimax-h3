@@ -92,6 +92,34 @@ class HfCacheCleanupTests(unittest.TestCase):
             # Cached file must have been removed immediately
             self.assertFalse(cached_file.exists())
 
+    def test_remove_hf_cache_preserves_blob_used_by_another_snapshot(self):
+        with TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            repo = temp / "hub" / "models--org--repo"
+            blob = repo / "blobs" / "shared"
+            blob.parent.mkdir(parents=True)
+            blob.write_bytes(b"shared weights")
+            first = repo / "snapshots" / "rev1" / "weights.bin"
+            second = repo / "snapshots" / "rev2" / "weights.bin"
+            first.parent.mkdir(parents=True)
+            second.parent.mkdir(parents=True)
+            try:
+                first.symlink_to(blob)
+                second.symlink_to(blob)
+            except OSError:
+                os.link(blob, first)
+                os.link(blob, second)
+
+            dest = temp / "models" / "weights.bin"
+            dest.parent.mkdir()
+            shutil.copy2(first, dest)
+            h3_models._remove_hf_cache(first, plan={"dest": dest, "blob_id": "shared"})
+
+            self.assertFalse(first.exists())
+            self.assertTrue(second.exists())
+            self.assertEqual(second.read_bytes(), b"shared weights")
+            self.assertTrue(blob.exists())
+
     def test_prune_hf_cache_cleans_target_repos(self):
         with TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)

@@ -18,7 +18,8 @@ elif [[ -x "/content/venv_h3/bin/python3" ]]; then
 elif command -v python3 >/dev/null 2>&1; then
   PYTHON_BIN="python3"
 else
-  die "python3 is required"
+  printf '[h3-run error] python3 is required\n' >&2
+  exit 1
 fi
 export PYTHONPATH="$SCRIPT_DIR:${PYTHONPATH:-}"
 
@@ -208,36 +209,44 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 ensure_repo_integrity() {
-  local needs_restore=0
-  if [[ ! -d "$SCRIPT_DIR/h3_ui" || ! -f "$SCRIPT_DIR/h3_ui/application.py" ]]; then
-    needs_restore=1
-  fi
-  if [[ ! -f "$SCRIPT_DIR/gradio_app.py" ]]; then
-    needs_restore=1
-  fi
-  if [[ ! -f "$SCRIPT_DIR/custom_nodes/H3Acceleration/__init__.py" ]]; then
-    needs_restore=1
-  fi
+  local -a required_paths=(
+    gradio_app.py
+    h3_ui/__init__.py
+    h3_ui/application.py
+    h3_app/__init__.py
+    custom_nodes/H3Acceleration/__init__.py
+  )
+  local -a missing_paths=()
+  local path
+  for path in "${required_paths[@]}"; do
+    [[ -f "$SCRIPT_DIR/$path" ]] || missing_paths+=("$path")
+  done
 
-  if (( needs_restore )) && [[ -d "$SCRIPT_DIR/minimax-h3/h3_ui" ]]; then
+  if (( ${#missing_paths[@]} )) && [[ -d "$SCRIPT_DIR/minimax-h3/h3_ui" ]]; then
     log "Found nested repository at $SCRIPT_DIR/minimax-h3; moving files to root"
     cp -rn "$SCRIPT_DIR/minimax-h3"/* "$SCRIPT_DIR"/ 2>/dev/null || true
-    if [[ -d "$SCRIPT_DIR/h3_ui" && -f "$SCRIPT_DIR/h3_ui/application.py" ]]; then
-      needs_restore=0
-    fi
   fi
 
-  if (( needs_restore )); then
+  missing_paths=()
+  for path in "${required_paths[@]}"; do
+    [[ -f "$SCRIPT_DIR/$path" ]] || missing_paths+=("$path")
+  done
+  if (( ${#missing_paths[@]} )); then
     log "Restoring missing repository modules (h3_ui, custom_nodes, gradio_app)"
     if git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-      git -C "$SCRIPT_DIR" checkout HEAD -- . 2>/dev/null || true
+      git -C "$SCRIPT_DIR" checkout HEAD -- "${missing_paths[@]}" 2>/dev/null || true
     fi
 
-    if [[ ! -d "$SCRIPT_DIR/h3_ui" || ! -f "$SCRIPT_DIR/h3_ui/application.py" ]]; then
+    missing_paths=()
+    for path in "${required_paths[@]}"; do
+      [[ -f "$SCRIPT_DIR/$path" ]] || missing_paths+=("$path")
+    done
+    if (( ${#missing_paths[@]} )); then
       log "Fetching tracked repository modules from GitHub"
       if git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        git -C "$SCRIPT_DIR" fetch --depth 1 https://github.com/keboqi/minimax-h3.git HEAD 2>/dev/null || true
-        git -C "$SCRIPT_DIR" checkout FETCH_HEAD -- . 2>/dev/null || true
+        if git -C "$SCRIPT_DIR" fetch --depth 1 https://github.com/keboqi/minimax-h3.git HEAD 2>/dev/null; then
+          git -C "$SCRIPT_DIR" checkout FETCH_HEAD -- "${missing_paths[@]}" 2>/dev/null || true
+        fi
       else
         local tmp_sync
         tmp_sync="$(mktemp -d 2>/dev/null || echo "/tmp/h3_sync_$$")"
@@ -271,6 +280,8 @@ if not (_ROOT / "h3_ui").is_dir() and (_NESTED / "h3_ui").is_dir() and str(_NEST
 try:
     from h3_ui import application
 except ModuleNotFoundError:
+    if (_ROOT / "h3_ui" / "application.py").is_file():
+        raise
     try:
         import subprocess
         print("[h3-run] h3_ui missing; restoring repository from GitHub...", flush=True)
@@ -279,7 +290,7 @@ except ModuleNotFoundError:
             check=True, timeout=60, capture_output=True,
         )
         subprocess.run(
-            ["git", "-C", str(_ROOT), "checkout", "FETCH_HEAD", "--", "."],
+            ["git", "-C", str(_ROOT), "checkout", "FETCH_HEAD", "--", "h3_ui/application.py"],
             check=True, timeout=60, capture_output=True,
         )
     except Exception as exc:
