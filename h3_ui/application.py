@@ -4145,24 +4145,34 @@ def compact_settings_summary(
     return describe_settings(locals())
 
 
-def result_settings_for_media(path):
-    if isinstance(path, (tuple, list)):
-        path = path[0] if path else None
-    if isinstance(path, dict):
-        path = path.get("path")
-    if path and not read_snapshot(path):
-        name = Path(path).name
-        if re.search(r"[0-9a-f]{32}", name):
-            candidates = [
-                candidate
-                for root in (OUTPUT_DIR, OUTPUTS_DIR)
-                for candidate in root.rglob(name)
-                if candidate.resolve().is_relative_to(root.resolve())
-                and read_snapshot(candidate)
-            ]
-            if len(candidates) == 1:
-                path = candidates[0]
-    return render_snapshot(path)
+def result_settings_for_media(value):
+    def media_path(item):
+        if isinstance(item, dict):
+            return media_path(item.get("path") or item.get("name") or item.get("image"))
+        if isinstance(item, (tuple, list)):
+            return media_path(item[0]) if item else None
+        return item if isinstance(item, (str, Path)) else None
+
+    paths = []
+    items = value if isinstance(value, list) else [value]
+    for item in items:
+        path = media_path(item)
+        if not path:
+            continue
+        if not read_snapshot(path):
+            name = Path(path).name
+            if re.search(r"[0-9a-f]{32}", name):
+                candidates = [
+                    candidate
+                    for root in (OUTPUT_DIR, OUTPUTS_DIR)
+                    for candidate in root.rglob(name)
+                    if candidate.resolve().is_relative_to(root.resolve())
+                    and read_snapshot(candidate)
+                ]
+                if len(candidates) == 1:
+                    path = candidates[0]
+        paths.append(path)
+    return render_snapshot(paths)
 
 
 def resolve_request_settings(values: dict):
