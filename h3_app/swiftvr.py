@@ -37,6 +37,8 @@ def ensure_swiftvr_checkpoint(*, runtime: RuntimeConfig) -> tuple[Path, bool]:
         checkpoint / "transformer" / "diffusion_pytorch_model.safetensors",
     )
     if all(path.is_file() for path in required):
+        if not configured:
+            shutil.rmtree(checkpoint / ".cache", ignore_errors=True)
         return checkpoint, False
     if configured:
         missing = ", ".join(
@@ -61,7 +63,6 @@ def ensure_swiftvr_checkpoint(*, runtime: RuntimeConfig) -> tuple[Path, bool]:
                 "transformer/*.safetensors",
             ),
         )
-        shutil.rmtree(checkpoint / ".cache", ignore_errors=True)
     except Exception as exc:
         raise H3Error(
             "SwiftVR checkpoint download failed from "
@@ -75,6 +76,7 @@ def ensure_swiftvr_checkpoint(*, runtime: RuntimeConfig) -> tuple[Path, bool]:
             "SwiftVR download completed without the required files: "
             + ", ".join(str(path.relative_to(checkpoint)) for path in missing)
         )
+    shutil.rmtree(checkpoint / ".cache", ignore_errors=True)
     return checkpoint, True
 
 

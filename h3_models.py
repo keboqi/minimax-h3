@@ -962,6 +962,16 @@ def _remove_hf_cache(
         if dest and (cached.resolve() == dest.resolve() or cached == dest):
             return
 
+        # Only remove a Hub snapshot file. An unexpected download path must not
+        # cause us to delete a model supplied directly from another directory.
+        snapshot_root = next(
+            (parent for parent in cached.parents if parent.name == "snapshots"),
+            None,
+        )
+        if snapshot_root is None or not snapshot_root.parent.name.startswith("models--"):
+            return
+        repo_dir = snapshot_root.parent
+
         resolved = None
         try:
             resolved = cached.resolve()
@@ -980,17 +990,7 @@ def _remove_hf_cache(
         except OSError:
             pass
 
-        # Locate the cache repository before considering any blob deletion.
-        repo_dir = None
-        for parent in cached.parents:
-            if parent.name == "snapshots":
-                repo_dir = parent.parent
-                break
-            if parent.name.startswith("models--"):
-                repo_dir = parent
-                break
-
-        if repo_dir and repo_dir.is_dir():
+        if repo_dir.is_dir():
             blobs_dir = repo_dir / "blobs"
             if blobs_dir.is_dir():
                 blob_candidates = set()
@@ -1047,14 +1047,22 @@ def _remove_hf_cache(
                     break
                 curr = curr.parent
 
-            # Clean up snapshots, blobs, refs, and locks if empty
+            # Clean up empty cache directories. Refs and negative lookup entries
+            # are useful only while a snapshot or blob remains in this repository.
             for sub_name in ("snapshots", "blobs", "refs"):
                 sub_path = repo_dir / sub_name
                 try:
+                    if sub_name == "refs" and not any(
+                        (repo_dir / name).exists() for name in ("snapshots", "blobs")
+                    ):
+                        shutil.rmtree(sub_path)
                     if sub_path.is_dir() and not any(sub_path.iterdir()):
                         sub_path.rmdir()
                 except OSError:
                     pass
+
+            if not any((repo_dir / name).exists() for name in ("snapshots", "blobs")):
+                shutil.rmtree(repo_dir / ".no_exist", ignore_errors=True)
 
             locks_path = repo_dir / ".locks"
             try:
@@ -1184,8 +1192,13 @@ def _download_model(
         )
 
     tmp = dest.with_suffix(dest.suffix + ".partial")
-    shutil.copy2(cached, tmp)
-    os.replace(tmp, dest)
+    try:
+        shutil.copy2(cached, tmp)
+        if tmp.stat().st_size != cached.stat().st_size:
+            raise RuntimeError(f"Copied size mismatch for {spec.filename}")
+        os.replace(tmp, dest)
+    finally:
+        tmp.unlink(missing_ok=True)
     _remove_hf_cache(cached, plan=plan, log_prefix=log_prefix)
     print(f"{log_prefix} ready {dest.name}", flush=True)
     return plan["key"]

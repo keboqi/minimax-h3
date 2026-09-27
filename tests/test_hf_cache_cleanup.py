@@ -3,9 +3,11 @@ import shutil
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import h3_models
+from h3_app.swiftvr import ensure_swiftvr_checkpoint
 
 
 class HfCacheCleanupTests(unittest.TestCase):
@@ -18,6 +20,10 @@ class HfCacheCleanupTests(unittest.TestCase):
             snapshots_dir = repo_dir / "snapshots" / "commit123"
             blobs_dir.mkdir(parents=True)
             snapshots_dir.mkdir(parents=True)
+            (repo_dir / "refs").mkdir()
+            (repo_dir / "refs" / "main").write_text("commit123")
+            (repo_dir / ".no_exist" / "commit123").mkdir(parents=True)
+            (repo_dir / ".no_exist" / "commit123" / "missing.bin").touch()
 
             blob_sha = "aabbccddeeff11223344"
             blob_file = blobs_dir / blob_sha
@@ -92,6 +98,37 @@ class HfCacheCleanupTests(unittest.TestCase):
             # Cached file must have been removed immediately
             self.assertFalse(cached_file.exists())
 
+    def test_failed_copy_keeps_download_for_retry_and_removes_partial(self):
+        with TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            cached = temp / "hub" / "models--org--repo" / "snapshots" / "rev1" / "weights.bin"
+            cached.parent.mkdir(parents=True)
+            cached.write_bytes(b"complete download")
+            dest = temp / "comfy" / "weights.bin"
+            dest.parent.mkdir()
+            spec = h3_models.ModelSpec(
+                repo_id="org/repo", folder="test", filename="weights.bin", source="test"
+            )
+            plan = {
+                "key": "test_key", "spec": spec, "dest": dest,
+                "revision": "rev1", "size": cached.stat().st_size,
+            }
+
+            def fail_copy(_source, target):
+                Path(target).write_bytes(b"partial")
+                raise OSError("disk full")
+
+            with (
+                patch("huggingface_hub.hf_hub_download", return_value=str(cached)),
+                patch.object(h3_models.shutil, "copy2", side_effect=fail_copy),
+            ):
+                with self.assertRaisesRegex(OSError, "disk full"):
+                    h3_models._download_model(plan, token=None, log_prefix="[test]")
+
+            self.assertTrue(cached.exists())
+            self.assertFalse(dest.exists())
+            self.assertFalse(dest.with_suffix(".bin.partial").exists())
+
     def test_remove_hf_cache_preserves_blob_used_by_another_snapshot(self):
         with TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)
@@ -139,6 +176,43 @@ class HfCacheCleanupTests(unittest.TestCase):
             self.assertGreater(freed, 0)
             self.assertFalse(target_folder.exists())
             self.assertTrue(other_folder.exists())
+
+    def test_swiftvr_clears_local_cache_only_after_checkpoint_is_complete(self):
+        with TemporaryDirectory() as temp_dir:
+            checkpoint = Path(temp_dir) / "ComfyUI" / "models" / "swiftvr"
+            runtime = SimpleNamespace(comfy_dir=checkpoint.parents[1])
+
+            def incomplete_download(**kwargs):
+                local = Path(kwargs["local_dir"])
+                (local / ".cache" / "huggingface").mkdir(parents=True)
+                (local / "reae.safetensors").write_bytes(b"model")
+
+            with patch("huggingface_hub.snapshot_download", side_effect=incomplete_download):
+                with self.assertRaisesRegex(Exception, "required files"):
+                    ensure_swiftvr_checkpoint(runtime=runtime)
+            self.assertTrue((checkpoint / ".cache").exists())
+
+            def complete_download(**kwargs):
+                local = Path(kwargs["local_dir"])
+                for relative in (
+                    "prompt_embedding.safetensors", "transformer/config.json",
+                    "transformer/diffusion_pytorch_model.safetensors",
+                ):
+                    path = local / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"model")
+
+            with patch("huggingface_hub.snapshot_download", side_effect=complete_download):
+                actual, downloaded = ensure_swiftvr_checkpoint(runtime=runtime)
+            self.assertEqual(actual, checkpoint)
+            self.assertTrue(downloaded)
+            self.assertFalse((checkpoint / ".cache").exists())
+
+            (checkpoint / ".cache" / "huggingface").mkdir(parents=True)
+            actual, downloaded = ensure_swiftvr_checkpoint(runtime=runtime)
+            self.assertEqual(actual, checkpoint)
+            self.assertFalse(downloaded)
+            self.assertFalse((checkpoint / ".cache").exists())
 
 
 if __name__ == "__main__":
