@@ -429,7 +429,14 @@ def controlnet_aux_dependencies_importable() -> bool:
         text=True,
         capture_output=True,
     )
-    return probe.returncode == 0
+    if probe.returncode != 0:
+        detail = (probe.stderr or probe.stdout).strip()
+        print(
+            f"[h3-setup] ControlNet Aux fresh-import failed:\n{detail}",
+            flush=True,
+        )
+        return False
+    return True
 
 
 def install_controlnet_aux_requirements(requirements: Path) -> None:
@@ -483,7 +490,7 @@ def ensure_controlnet_aux_runtime_dependencies(requirements: Path) -> None:
     if not controlnet_aux_dependencies_importable():
         raise RuntimeError(
             "ControlNet Aux dependencies installed but matplotlib/scikit-image "
-            "still fail to import"
+            "still fail to import; inspect the fresh-import traceback above"
         )
 
 
