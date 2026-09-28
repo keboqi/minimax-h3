@@ -676,13 +676,14 @@ the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
 The deployment pins an immutable ComfyUI revision with its required
 frontend package 1.53.6, Comfy Kitchen 0.2.35 and upstream aimdo 0.5.5.
-The source also pins workflow templates 0.11.68 and embedded docs 0.5.12.
+The source also pins workflow templates 0.11.70 and embedded docs 0.5.12.
 This update includes native Qwen Image 2.1 generation/editing, corrected edit
 KV-cache placement, compiled Qwen transformer blocks, sparse attention, Comfy
 Compiler, optional H3 reference VAEs and DiffSynth/ModelScope H3 LoRA support.
 KJNodes 1.5.1 includes the matching H3 low-memory attention callback fix.
 This ComfyUI revision also fixes offloaded H3 VAE normalization and blends tiled
-VAE output against composited neighbours.
+VAE output against composited neighbours. It handles RGBA Qwen-VL reference
+images and clamps Qwen Image 2.1 FP16 activations in place.
 
 TensorRT VAE is pinned to `4360e00867eca86ab61b3899216c0ec281367b46`.
 Upstream now owns optional encoder loading and single-frame encoding. Our

@@ -632,6 +632,8 @@ class GalleryView:
     upload_video: gr.File
     import_video: gr.Button
     grid: gr.Gallery
+    shown: gr.State
+    show_more: gr.Button
     manage: gr.Accordion
     confirm_delete: gr.Checkbox
     delete: gr.Button
@@ -722,6 +724,8 @@ def build_gallery_view(
                     elem_id="generated-video-gallery",
                     elem_classes=["h3-gallery-grid"],
                 )
+                shown = gr.State(48)
+                show_more = gr.Button("Show more", interactive=False)
                 with gr.Accordion(
                     "Manage library",
                     open=False,
@@ -850,6 +854,8 @@ def build_gallery_view(
         upload_video,
         import_video,
         grid,
+        shown,
+        show_more,
         manage,
         confirm_delete,
         delete,

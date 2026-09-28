@@ -418,6 +418,32 @@ def bind_gallery_view(
     delete: Callable[..., Any],
     empty: Callable[..., Any],
 ) -> None:
+    page_size = 48
+
+    def total_from_status(status: str) -> int | None:
+        try:
+            count = status.rsplit("Showing ", 1)[1]
+            return int(count.split(" generated", 1)[0].split(" of ", 1)[1])
+        except (IndexError, ValueError):
+            return None
+
+    def refresh_page(mode: str, limit: int = page_size):
+        items, paths, status = refresh(mode, limit)
+        total = total_from_status(status)
+        return (
+            items,
+            paths,
+            status,
+            limit,
+            gr.update(interactive=total is not None and limit < total),
+        )
+
+    def sync_more(paths: list[str], status: str):
+        total = total_from_status(status)
+        if total is None:
+            return gr.skip(), gr.skip()
+        return page_size, gr.update(interactive=len(paths) < total)
+
     ltx_options = {ltx_option} | LTX25_RESTORATION_OPTIONS
     video_postprocess_options = [
         choice[1] if isinstance(choice, (tuple, list)) else choice
@@ -466,9 +492,9 @@ def bind_gallery_view(
         show_progress="hidden",
     )
     mode_changed.then(
-        refresh,
+        refresh_page,
         inputs=view.mode,
-        outputs=[view.grid, view.paths, view.status],
+        outputs=[view.grid, view.paths, view.status, view.shown, view.show_more],
         queue=False,
         show_progress="hidden",
     )
@@ -528,16 +554,23 @@ def bind_gallery_view(
         show_progress="hidden",
     )
     opened.then(
-        refresh,
+        refresh_page,
         inputs=view.mode,
-        outputs=[view.grid, view.paths, view.status],
+        outputs=[view.grid, view.paths, view.status, view.shown, view.show_more],
         queue=False,
         show_progress="hidden",
     )
     view.refresh.click(
-        refresh,
+        refresh_page,
         inputs=view.mode,
-        outputs=[view.grid, view.paths, view.status],
+        outputs=[view.grid, view.paths, view.status, view.shown, view.show_more],
+        queue=False,
+        show_progress="hidden",
+    )
+    view.show_more.click(
+        lambda mode, shown: refresh_page(mode, shown + page_size),
+        inputs=[view.mode, view.shown],
+        outputs=[view.grid, view.paths, view.status, view.shown, view.show_more],
         queue=False,
         show_progress="hidden",
     )
@@ -565,13 +598,20 @@ def bind_gallery_view(
         view.selected,
         view.confirm_delete,
     ]
-    view.import_video.click(
+    imported = view.import_video.click(
         import_video,
         inputs=[view.mode, view.upload_video],
         outputs=mutation_outputs,
         queue=False,
         show_progress="minimal",
         api_name=False,
+    )
+    imported.then(
+        sync_more,
+        inputs=[view.paths, view.status],
+        outputs=[view.shown, view.show_more],
+        queue=False,
+        show_progress="hidden",
     )
     post_event = bind_gpu_action(
         view.post_run.click,
@@ -593,6 +633,13 @@ def bind_gallery_view(
         show_progress="minimal",
         api_name=False,
     )
+    post_event.then(
+        sync_more,
+        inputs=[view.paths, view.status],
+        outputs=[view.shown, view.show_more],
+        queue=False,
+        show_progress="hidden",
+    )
     stopped = view.post_stop.click(
         owned_interrupt(interrupt, "gallery"),
         outputs=view.post_status,
@@ -600,7 +647,7 @@ def bind_gallery_view(
         queue=False,
     )
     stopped.then(fn=None, cancels=[post_event], queue=False, api_name=False)
-    view.delete.click(
+    deleted = view.delete.click(
         delete,
         inputs=[view.mode, view.selected, view.confirm_delete],
         outputs=mutation_outputs,
@@ -608,11 +655,25 @@ def bind_gallery_view(
         show_progress="minimal",
         api_name=False,
     )
-    view.empty.click(
+    deleted.then(
+        sync_more,
+        inputs=[view.paths, view.status],
+        outputs=[view.shown, view.show_more],
+        queue=False,
+        show_progress="hidden",
+    )
+    emptied = view.empty.click(
         empty,
         inputs=[view.mode, view.selected, view.confirm_delete],
         outputs=mutation_outputs,
         queue=False,
         show_progress="minimal",
         api_name=False,
+    )
+    emptied.then(
+        sync_more,
+        inputs=[view.paths, view.status],
+        outputs=[view.shown, view.show_more],
+        queue=False,
+        show_progress="hidden",
     )

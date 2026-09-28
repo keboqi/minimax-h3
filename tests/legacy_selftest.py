@@ -1893,7 +1893,8 @@ def selftest() -> None:
             vars(app)["gallery_thumbnail"] = original_gallery_thumbnail
             vars(app.gallery_store)["gallery_video_resolution"] = original_gallery_video_resolution
         assert len(gallery_items) == 1
-        assert "864×480" in gallery_items[0][1]
+        assert "fallback.mp4" in gallery_items[0][1]
+        assert "864×480" not in gallery_items[0][1]
         assert gallery_paths == [str(fallback_video)]
         assert gallery_play_url == str(fallback_video)
         assert selected_video == str(fallback_video)
@@ -1901,7 +1902,7 @@ def selftest() -> None:
             "/downloads/comfy/fallback.mp4?download=1)"
         )
         assert "**Resolution:** 864×480" in gallery_download_link
-        assert "1 generated video" in gallery_detail
+        assert "Showing 1 of 1 generated videos" in gallery_detail
         assert "1 thumbnail" in gallery_detail
         assert fallback_exists_after_unconfirmed is True
         assert "Confirm permanent deletion" in unconfirmed_delete[2]

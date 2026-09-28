@@ -287,6 +287,44 @@ class MediaPublicationTests(unittest.TestCase):
             self.assertNotEqual(items[0][0], str(source))
             self.assertEqual(Path(items[0][0]).suffix, ".png")
 
+    def test_large_gallery_only_prepares_visible_cards_and_defers_resolution(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = replace(
+                RuntimeConfig.from_environment(root, {}),
+                output_root=root / "comfy-output",
+                outputs_dir=root / "gradio-output",
+            )
+            config.output_dir.mkdir(parents=True)
+            videos = [config.output_dir / f"video-{index}.mp4" for index in range(120)]
+            images = [config.output_dir / f"image-{index}.png" for index in range(120)]
+            for source in videos + images:
+                source.write_bytes(b"fixture")
+
+            with (
+                patch.object(app, "gallery_video_paths", return_value=videos),
+                patch.object(app, "gallery_thumbnail", return_value=root / "poster.jpg") as poster,
+                patch.object(app, "gallery_resolution_text") as video_resolution,
+                patch.object(app, "_runtime_config", return_value=config),
+            ):
+                items, paths, status = app.refresh_gallery()
+                self.assertEqual((len(items), len(paths)), (48, 48))
+                self.assertIn("48 of 120", status)
+                self.assertEqual(poster.call_count, 48)
+                video_resolution.assert_not_called()
+
+            with (
+                patch.object(app, "gallery_image_paths", return_value=images),
+                patch.object(app.gallery_store, "gallery_image_thumbnail", return_value=root / "poster.jpg") as poster,
+                patch.object(app, "gallery_image_resolution_text") as image_resolution,
+                patch.object(app, "_runtime_config", return_value=config),
+            ):
+                items, paths, status = app.refresh_media_gallery("Image", 96)
+                self.assertEqual((len(items), len(paths)), (96, 96))
+                self.assertIn("96 of 120", status)
+                self.assertEqual(poster.call_count, 96)
+                image_resolution.assert_not_called()
+
     def test_processed_and_copied_media_retain_provenance(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

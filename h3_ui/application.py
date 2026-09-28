@@ -2693,12 +2693,18 @@ def import_gallery_video(uploaded_video: str | None) -> GalleryMutationResult:
     )
 
 
-def refresh_gallery() -> tuple[list[tuple[str, str]], list[str], str]:
-    videos = gallery_video_paths()
+GALLERY_PAGE_SIZE = 48
+
+
+def refresh_gallery(
+    limit: int = GALLERY_PAGE_SIZE,
+) -> tuple[list[tuple[str, str]], list[str], str]:
+    videos = gallery_video_paths(limit=None)
+    shown_videos = videos[: max(0, limit)]
     items: list[tuple[str, str]] = []
     selectable_paths: list[str] = []
     failed = 0
-    for video in videos:
+    for video in shown_videos:
         thumbnail = gallery_thumbnail(video)
         if thumbnail is None:
             failed += 1
@@ -2713,14 +2719,13 @@ def refresh_gallery() -> tuple[list[tuple[str, str]], list[str], str]:
             continue
         timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
         size_mb = stat.st_size / (1024 * 1024)
-        resolution = gallery_resolution_text(video)
         caption = (
-            f"{generated_video_family(video)} · {video.name} · {resolution} · "
+            f"{generated_video_family(video)} · {video.name} · "
             f"{timestamp} · {size_mb:.1f} MB"
         )
         items.append((str(thumbnail), caption))
         selectable_paths.append(str(video))
-    detail = f"{len(items)} generated video{'s' if len(items) != 1 else ''}"
+    detail = f"Showing {len(items)} of {len(videos)} generated videos"
     if failed:
         detail += f" · {failed} thumbnail{'s' if failed != 1 else ''} unavailable"
     return items, selectable_paths, detail
@@ -2751,13 +2756,15 @@ def select_gallery_video(
 
 def refresh_media_gallery(
     mode: str = "Video",
+    limit: int = GALLERY_PAGE_SIZE,
 ) -> tuple[list[tuple[str, str]], list[str], str]:
     """Refresh the active gallery, defaulting to the existing video library."""
     media_mode = gallery_media_mode(mode)
     if media_mode == "Video":
-        return refresh_gallery()
+        return refresh_gallery(limit)
     if media_mode == "Audio":
-        audio_files = gallery_audio_paths()
+        all_audio_files = gallery_audio_paths(limit=None)
+        audio_files = all_audio_files[: max(0, limit)]
         items: list[tuple[str, str]] = []
         selectable_paths: list[str] = []
         failed = 0
@@ -2784,11 +2791,12 @@ def refresh_media_gallery(
             )
             items.append((str(thumbnail), caption))
             selectable_paths.append(str(audio))
-        detail = f"{len(items)} generated audio file{'s' if len(items) != 1 else ''}"
+        detail = f"Showing {len(items)} of {len(all_audio_files)} generated audio files"
         if failed:
             detail += f" · {failed} thumbnail{'s' if failed != 1 else ''} unavailable"
         return items, selectable_paths, detail
-    images = gallery_image_paths()
+    all_images = gallery_image_paths(limit=None)
+    images = all_images[: max(0, limit)]
     items: list[tuple[str, str]] = []
     selectable_paths: list[str] = []
     failed = 0
@@ -2809,14 +2817,13 @@ def refresh_media_gallery(
             continue
         timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
         size_mb = stat.st_size / (1024 * 1024)
-        resolution = gallery_image_resolution_text(image)
         caption = (
             f"{gallery_store.generated_image_family(image, runtime=_runtime_config())}"
-            f" · {image.name} · {resolution} · {timestamp} · {size_mb:.1f} MB"
+            f" · {image.name} · {timestamp} · {size_mb:.1f} MB"
         )
         items.append((str(thumbnail), caption))
         selectable_paths.append(str(image))
-    detail = f"{len(items)} generated image{'s' if len(items) != 1 else ''}"
+    detail = f"Showing {len(items)} of {len(all_images)} generated images"
     if failed:
         detail += f" · {failed} thumbnail{'s' if failed != 1 else ''} unavailable"
     return items, selectable_paths, detail

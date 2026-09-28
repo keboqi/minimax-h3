@@ -778,7 +778,7 @@ class UiContractTests(unittest.TestCase):
 
     def test_non_gpu_media_actions_bypass_the_application_queue(self):
         expected = {
-            "refresh_media_gallery",
+            "refresh_page",
             "select_gallery_media",
             "import_gallery_media",
             "delete_selected_gallery_media",
