@@ -46,26 +46,26 @@ def max_qwen_edit_dimensions(source_width: int, source_height: int) -> tuple[int
         max_side / source_height,
     )
 
-    def aligned(value: float) -> int:
-        return min(max_side, max(256, round(value / grid) * grid))
-
-    width = aligned(source_width * scale)
-    height = aligned(source_height * scale)
+    target_width = min(max_side, max(256, source_width * scale))
+    target_height = min(max_side, max(256, source_height * scale))
+    target_area = target_width * target_height
     source_ratio = source_width / source_height
-    while width * height > max_pixels:
-        candidates = []
-        if width > 256:
-            candidates.append((width - grid, height))
-        if height > 256:
-            candidates.append((width, height - grid))
-        width, height = min(
-            candidates,
-            key=lambda size: (
-                abs(math.log((size[0] / size[1]) / source_ratio)),
-                -(size[0] * size[1]),
-            ),
-        )
-    return width, height
+    # Search the grid jointly: rounding the two sides independently can distort
+    # common ratios such as 16:9 even when an exact aligned size is available.
+    candidates = (
+        (width, height)
+        for width in range(256, max_side + 1, grid)
+        for height in range(256, max_side + 1, grid)
+        if width * height <= max_pixels
+        and width * height >= target_area * 0.85
+    )
+    return min(
+        candidates,
+        key=lambda size: (
+            abs(math.log((size[0] / size[1]) / source_ratio)),
+            -(size[0] * size[1]),
+        ),
+    )
 
 
 def first_reference_dimensions(path: str, input_dir: Path | None = None) -> tuple[int, int]:

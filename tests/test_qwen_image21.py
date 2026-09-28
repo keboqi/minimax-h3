@@ -165,8 +165,9 @@ class QwenImage21WorkflowTests(unittest.TestCase):
 
     def test_max_edit_resolution_stays_under_four_megapixels(self):
         self.assertEqual(max_qwen_edit_dimensions(1024, 1024), (1984, 1984))
-        self.assertEqual(max_qwen_edit_dimensions(1920, 1080), (2656, 1504))
-        self.assertEqual(max_qwen_edit_dimensions(1080, 1920), (1504, 2656))
+        self.assertEqual(max_qwen_edit_dimensions(1920, 1080), (2560, 1440))
+        self.assertEqual(max_qwen_edit_dimensions(1080, 1920), (1440, 2560))
+        self.assertEqual(max_qwen_edit_dimensions(640, 480), (2304, 1728))
         for source in ((1, 10000), (10000, 1), (640, 480), (8192, 8192)):
             width, height = max_qwen_edit_dimensions(*source)
             self.assertTrue(256 <= width <= 2752 and width % 32 == 0)
@@ -192,7 +193,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
                     [str(source)], 1024, 768,
                     edit_size=ui_app.QWEN_EDIT_SIZE_MAX,
                 )
-            self.assertEqual(enhance.call_args.args[5:7], (2656, 1504))
+            self.assertEqual(enhance.call_args.args[5:7], (2560, 1440))
 
     def test_edit_size_radio_maps_to_exclusive_backend_flags(self):
         from h3_ui import application as ui_app
@@ -275,7 +276,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             )
             self.assertEqual(
                 resolve_qwen_output_dimensions(request, (str(source),), True),
-                (2656, 1504, False),
+                (2560, 1440, False),
             )
             self.assertEqual(
                 resolve_qwen_output_dimensions(request, (), False),
