@@ -201,6 +201,7 @@ class QwenImage21Request:
     cache_dtype: str
     attention_backend: str
     batch_count: int = 1
+    batch_edit_inputs: bool = False
     accelerator: str = "Off"
     turbo_variant: str = "Off"
     max_resolution: bool = False

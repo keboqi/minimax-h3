@@ -150,21 +150,25 @@ def generate_qwen_image21(
         }:
             raise H3Error(f"Unknown Qwen Turbo variant: {request.turbo_variant}")
         reference_limit = 3 if turbo else 10
-        if len(references) > reference_limit:
+        separate_inputs = editing and bool(request.batch_edit_inputs)
+        if not separate_inputs and len(references) > reference_limit:
             raise H3Error(
                 f"Qwen Image 2.1 {request.turbo_variant} supports at most "
                 f"{reference_limit} reference images."
             )
 
-        width, height, match_input_size = resolve_qwen_output_dimensions(
-            request, references, editing, input_dir=runtime.input_dir
+        input_groups = (
+            tuple((reference,) for reference in references)
+            if separate_inputs else (references,)
         )
+        dimensions = tuple(
+            resolve_qwen_output_dimensions(
+                request, group, editing, input_dir=runtime.input_dir
+            )
+            for group in input_groups
+        )
+        total_jobs = len(input_groups) * batch_count
         max_edit_resolution = editing and bool(request.max_resolution)
-        snapshot_values.update(
-            resolved_width=width,
-            resolved_height=height,
-            effective_match_input_size=match_input_size,
-        )
         reference_resolution = int(request.reference_resolution)
         if reference_resolution and (
             not 256 <= reference_resolution <= 2048
@@ -202,7 +206,7 @@ def generate_qwen_image21(
         if turbo and accelerator.lower() != "off":
             raise H3Error("Spectrum acceleration is unavailable with Qwen Turbo.")
         base_seed = int(request.seed)
-        if base_seed >= 0 and base_seed + batch_count - 1 >= 2**63 - 1:
+        if base_seed >= 0 and base_seed + total_jobs - 1 >= 2**63 - 1:
             raise H3Error("Seed is too large for this batch count.")
 
         missing_files = services.models.missing_qwen_image21_model_names(
@@ -233,13 +237,16 @@ def generate_qwen_image21(
                 "Qwen Image 2.1 requires the latest ComfyUI; missing nodes: "
                 + ", ".join(sorted(missing_nodes))
             )
-        job_size = (
-            f"edit at {width}×{height}"
-            if max_edit_resolution
-            else "edit" if editing else f"{width}×{height} generation"
-        )
         sampling_detail = f"{steps} steps"
-        for index in range(batch_count):
+        for index in range(total_jobs):
+            input_index, _ = divmod(index, batch_count)
+            job_references = input_groups[input_index]
+            width, height, match_input_size = dimensions[input_index]
+            job_size = (
+                f"edit at {width}×{height}"
+                if max_edit_resolution
+                else "edit" if editing else f"{width}×{height} generation"
+            )
             actual_seed = (
                 random.randrange(0, 2**63 - 1)
                 if base_seed < 0 else base_seed + index
@@ -250,7 +257,7 @@ def generate_qwen_image21(
                 text_encoder_choice=request.text_encoder_choice,
                 prompt=prompt,
                 negative_prompt=str(request.negative_prompt or ""),
-                reference_images=references,
+                reference_images=job_references,
                 width=width,
                 height=height,
                 reference_resolution=reference_resolution,
@@ -274,7 +281,7 @@ def generate_qwen_image21(
             timings.transition("Waiting for ComfyUI")
             yield GenerationUpdate(
                 outputs.copy(),
-                f"Queued Qwen Image 2.1 image {index + 1}/{batch_count} · "
+                f"Queued Qwen Image 2.1 image {index + 1}/{total_jobs} · "
                 f"job `{prompt_id}` · seed {actual_seed} · {job_size} · "
                 f"{request.model_choice} · {request.turbo_variant} · "
                 f"{sampling_detail} · accelerator {accelerator}",
@@ -297,7 +304,7 @@ def generate_qwen_image21(
                         step=step,
                         step_total=step_total,
                         configured_steps=steps,
-                        detail=f"Image {index + 1}/{batch_count} · Qwen job `{prompt_id}`",
+                        detail=f"Image {index + 1}/{total_jobs} · Qwen job `{prompt_id}`",
                     ),
                 )
 
@@ -309,14 +316,22 @@ def generate_qwen_image21(
                 {
                     "job_id": prompt_id,
                     "family": "Qwen Image 2.1",
-                    "settings": {**snapshot_values, "seed": actual_seed, "editing": editing},
+                    "settings": {
+                        **snapshot_values,
+                        "seed": actual_seed,
+                        "editing": editing,
+                        "resolved_width": width,
+                        "resolved_height": height,
+                        "effective_match_input_size": match_input_size,
+                        "input_index": input_index + 1 if separate_inputs else None,
+                    },
                 },
             )
             outputs.append(str(result))
             elapsed = time.monotonic() - started
             yield GenerationUpdate(
                 outputs.copy(),
-                f"Qwen Image 2.1 image {index + 1}/{batch_count} completed in "
+                f"Qwen Image 2.1 image {index + 1}/{total_jobs} completed in "
                 f"{elapsed:.1f}s · output {result.name} · seed {actual_seed}\n\n"
                 f"{timings.summary()}",
             )

@@ -304,6 +304,12 @@ class UiContractTests(unittest.TestCase):
             for dependency in self.config["dependencies"]
         }
         self.assertIn(edit_size["id"], endpoints["generate_qwen_image21"]["inputs"])
+        separate_inputs = controls["Edit each uploaded image separately"]
+        self.assertEqual(separate_inputs["type"], "checkbox")
+        self.assertFalse(separate_inputs["props"]["value"])
+        self.assertIn(
+            separate_inputs["id"], endpoints["generate_qwen_image21"]["inputs"]
+        )
         self.assertIn(
             edit_size["id"], endpoints["enhance_qwen_image21_prompt"]["inputs"]
         )

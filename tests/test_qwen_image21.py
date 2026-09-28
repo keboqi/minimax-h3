@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -35,6 +36,83 @@ from h3_ui.bindings import (
 
 
 class QwenImage21WorkflowTests(unittest.TestCase):
+    def test_separate_edit_inputs_generate_per_image_with_individual_size(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sources = [Path(directory) / f"source-{index}.png" for index in range(3)]
+            source_sizes = [(640, 480), (800, 800), (1024, 512)]
+            for source, size in zip(sources, source_sizes):
+                Image.new("RGB", size).save(source)
+            request = QwenImage21Request(
+                mode="Image edit", model_choice="BF16", text_encoder_choice="BF16",
+                prompt="Make it blue", negative_prompt="",
+                reference_images=tuple(map(str, sources)),
+                width=1024, height=1024, reference_resolution=0,
+                match_input_size=False, seed=42, steps=40, cfg=1.0,
+                sampler_name="euler", scheduler="simple", cache_device="auto",
+                cache_dtype="default", attention_backend="pytorch attention",
+                batch_count=2, batch_edit_inputs=True, max_resolution=True,
+            )
+            graphs = []
+            execution = SimpleNamespace(
+                object_info=lambda: required_qwen_image21_nodes(editing=True),
+                submit_prompt=lambda graph, client_id: (
+                    graphs.append(graph) or f"job-{len(graphs)}"
+                ),
+                poll_comfy_progress=lambda prompt_id, graph: iter(()),
+                wait_for_history=lambda prompt_id: {},
+            )
+            services = SimpleNamespace(
+                models=SimpleNamespace(
+                    unload_prompt_rewriter=lambda: None,
+                    missing_qwen_image21_model_names=lambda *args: [],
+                    ensure_qwen_image21_models=lambda *args: None,
+                ),
+                execution=execution,
+                media=SimpleNamespace(resolve_image_outputs=lambda *args: [
+                    Path(f"image-{len(graphs)}.png")
+                ]),
+            )
+            with patch("h3_app.generation.qwen.write_snapshot") as snapshot:
+                updates = list(generate_qwen_image21(
+                    request, services, SimpleNamespace(input_dir=Path(directory))
+                ))
+            self.assertEqual(len(graphs), 6)
+            self.assertEqual(
+                [self._by_type(graph, "LoadImage")[0][1]["inputs"]["image"] for graph in graphs],
+                [str(source) for source in sources for _ in range(2)],
+            )
+            self.assertTrue(
+                all(len(self._by_type(graph, "LoadImage")) == 1 for graph in graphs)
+            )
+            self.assertEqual(
+                [self._by_type(graph, "KSampler")[0][1]["inputs"]["seed"] for graph in graphs],
+                [42, 43, 44, 45, 46, 47],
+            )
+            self.assertEqual(
+                [
+                    (call.args[1]["settings"]["resolved_width"],
+                     call.args[1]["settings"]["resolved_height"])
+                    for call in snapshot.call_args_list
+                ],
+                [
+                    max_qwen_edit_dimensions(*size)
+                    for size in source_sizes for _ in range(2)
+                ],
+            )
+            self.assertEqual(len(updates[-1].output), 6)
+
+            graphs.clear()
+            with patch("h3_app.generation.qwen.write_snapshot"):
+                updates = list(generate_qwen_image21(
+                    replace(request, batch_edit_inputs=False), services,
+                    SimpleNamespace(input_dir=Path(directory)),
+                ))
+            self.assertEqual(len(graphs), 2)
+            self.assertTrue(
+                all(len(self._by_type(graph, "LoadImage")) == 3 for graph in graphs)
+            )
+            self.assertEqual(len(updates[-1].output), 2)
+
     def test_batch_reuses_inputs_and_collects_each_image(self):
         request = QwenImage21Request(
             mode="Text to image", model_choice="BF16", text_encoder_choice="BF16",

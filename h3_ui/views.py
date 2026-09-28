@@ -68,6 +68,7 @@ class QwenImage21View:
     prompt: gr.Textbox
     negative_prompt: gr.Textbox
     reference_images: gr.File
+    batch_edit_inputs: gr.Checkbox
     prompt_model: gr.Dropdown
     api_key: gr.Textbox
     prompt_backend: gr.Radio
@@ -117,8 +118,9 @@ def build_qwen_image21_view(
         gr.Markdown(
             "## Qwen Image 2.1\n"
             "Generate images or edit and combine reference images with the native "
-            "ComfyUI workflow. In edit mode, the first image is the target. For "
-            "multiple inputs, mention them as `<image1>`, `<image2>`, and so on; "
+            "ComfyUI workflow. With separate editing off, the first image is the "
+            "target. For multiple reference inputs, mention them as `<image1>`, "
+            "`<image2>`, and so on; "
             "refer to a single input naturally without a tag. Models download on "
             "first use. [Model details](https://huggingface.co/Comfy-Org/Qwen-Image-2.1)"
         )
@@ -143,15 +145,24 @@ def build_qwen_image21_view(
                     info="Used only when CFG is greater than 1.",
                 )
                 reference_images = gr.File(
-                    label="Reference images",
+                    label="Input / reference images",
                     file_count="multiple",
                     file_types=["image"],
                     type="filepath",
                 )
+                batch_edit_inputs = gr.Checkbox(
+                    label="Edit each uploaded image separately",
+                    value=False,
+                    info=(
+                        "Apply the same prompt and settings to each image on its own. "
+                        "Outputs = uploaded images × Images per batch."
+                    ),
+                )
                 gr.Markdown(
-                    "Base editing supports up to 10 files; Turbo modes support up to 3. **image1** is the edit "
-                    "target; later images are references. Numbered tags are required "
-                    "only when multiple files are supplied."
+                    "With separate editing off, base editing supports up to 10 references "
+                    "and Turbo supports up to 3. **image1** is the edit target; later "
+                    "images are references. Numbered tags are required only when "
+                    "multiple references are supplied."
                 )
                 with gr.Accordion("Prompt writer / enhancer", open=False):
                     gr.Markdown(
@@ -231,7 +242,7 @@ def build_qwen_image21_view(
                     value=defaults["edit_size"],
                     label="Edit output size",
                     info=(
-                        "Match the first image, scale its aspect ratio toward 4 MP "
+                        "Match the edit target, scale its aspect ratio toward 4 MP "
                         "within 2752 × 2752, or use the width and height above. "
                         "Applies only to image editing. An output resolution preset takes priority."
                     ),
@@ -333,6 +344,7 @@ def build_qwen_image21_view(
         prompt,
         negative_prompt,
         reference_images,
+        batch_edit_inputs,
         prompt_model,
         api_key,
         prompt_backend,

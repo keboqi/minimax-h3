@@ -344,6 +344,7 @@ def bind_qwen_image21_view(
             view.output_resolution_1k,
             view.output_resolution_2k,
             view.batch_count,
+            view.batch_edit_inputs,
         ],
         outputs=[view.output, view.status],
         show_progress="minimal",
