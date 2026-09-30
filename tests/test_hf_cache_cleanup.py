@@ -7,10 +7,80 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import h3_models
+from h3_app import model_service
 from h3_app.swiftvr import ensure_swiftvr_checkpoint
 
 
 class HfCacheCleanupTests(unittest.TestCase):
+    def test_batch_defers_cache_cleanup_until_all_downloads_finish(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            finished = set()
+            cleaned = []
+            keys = ("ltx25_video_vae", "ltx25_audio_vae")
+
+            def plan_model(**kwargs):
+                key = kwargs["key"]
+                return {
+                    "key": key,
+                    "spec": kwargs["spec"],
+                    "dest": root / key,
+                    "manifest_key": key,
+                    "remote_ok": True,
+                    "revision": "rev",
+                    "sha256": None,
+                    "size": 4,
+                    "blob_id": key,
+                    "identity": key,
+                    "needs_download": True,
+                }
+
+            def download(plan, _token, _log_prefix, cleanup_cache):
+                self.assertFalse(cleanup_cache)
+                plan["dest"].write_bytes(b"data")
+                plan["cached_path"] = root / "cache" / plan["key"]
+                finished.add(plan["key"])
+                return plan["key"]
+
+            def cleanup(_cached, plan, log_prefix):
+                self.assertEqual(log_prefix, "[h3-models]")
+                self.assertEqual(finished, set(keys))
+                cleaned.append(plan["key"])
+
+            with (
+                patch.object(h3_models, "_fetch_repositories", return_value={}),
+                patch.object(h3_models, "_plan_model", side_effect=plan_model),
+                patch.object(h3_models, "_download_model", side_effect=download),
+                patch.object(h3_models, "_remove_hf_cache", side_effect=cleanup),
+                patch.object(h3_models, "_build_config", return_value={}),
+            ):
+                h3_models.sync_models(
+                    root=root,
+                    manifest_path=root / "manifest.json",
+                    model_keys=keys,
+                    download_workers=2,
+                )
+            self.assertEqual(set(cleaned), set(keys))
+
+    def test_ltx_cache_failure_does_not_claim_authentication_failed(self):
+        runtime = SimpleNamespace(
+            comfy_dir=Path("comfy"), models_config=Path("models/config.json")
+        )
+
+        def fail_sync(**_kwargs):
+            try:
+                raise FileNotFoundError("snapshot directory disappeared")
+            except FileNotFoundError as exc:
+                raise RuntimeError("one model download failed") from exc
+
+        with (
+            patch.object(model_service, "missing_ltx25_model_names", return_value=["vae"]),
+            patch.object(model_service, "resolve_hf_token", return_value="token"),
+            patch.object(model_service, "sync_models", side_effect=fail_sync),
+        ):
+            with self.assertRaisesRegex(model_service.H3Error, "cache path disappeared"):
+                model_service.ensure_ltx25_models(runtime=runtime)
+
     def test_remove_hf_cache_cleans_snapshot_and_blob_without_touching_dest(self):
         with TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)

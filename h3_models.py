@@ -1160,6 +1160,7 @@ def _download_model(
     plan: dict[str, Any],
     token: str | None,
     log_prefix: str,
+    cleanup_cache: bool = True,
 ) -> str:
     from huggingface_hub import hf_hub_download
 
@@ -1190,7 +1191,11 @@ def _download_model(
         os.replace(tmp, dest)
     finally:
         tmp.unlink(missing_ok=True)
-    _remove_hf_cache(cached, plan=plan, log_prefix=log_prefix)
+    # Concurrent downloads from this repository may still be creating snapshot
+    # links. The batch caller defers cleanup until every worker has finished.
+    plan["cached_path"] = cached
+    if cleanup_cache:
+        _remove_hf_cache(cached, plan=plan, log_prefix=log_prefix)
     print(f"{log_prefix} ready {dest.name}", flush=True)
     return plan["key"]
 
@@ -1349,7 +1354,7 @@ def sync_models(
             )
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {
-                    pool.submit(_download_model, plan, token, log_prefix): plan
+                    pool.submit(_download_model, plan, token, log_prefix, False): plan
                     for plan in stale
                 }
                 for future in as_completed(futures):
@@ -1358,6 +1363,15 @@ def sync_models(
                         downloaded_keys.add(future.result())
                     except Exception as exc:
                         download_failures.append((plan["key"], exc))
+
+            # Hub snapshot directories are shared by files in a repository.
+            # Removing them while another worker is linking its blob can raise
+            # FileNotFoundError inside hf_hub_download.
+            for plan in stale:
+                if plan["key"] in downloaded_keys:
+                    _remove_hf_cache(
+                        plan["cached_path"], plan=plan, log_prefix=log_prefix
+                    )
 
         files_manifest = manifest.setdefault("files", {})
         for plan in plans:

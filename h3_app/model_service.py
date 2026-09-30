@@ -728,10 +728,17 @@ def ensure_ltx25_models(
             download_workers=len(required_keys),
         )
     except Exception as exc:
+        if isinstance(exc.__cause__, FileNotFoundError):
+            raise H3Error(
+                "LTX-2.5 download failed because a Hugging Face cache path "
+                "disappeared during download. Retry; if it persists, check for "
+                "another process pruning the shared Hugging Face cache. "
+                f"Details: {exc}"
+            ) from exc
         raise H3Error(
-            "LTX-2.5 model download failed. Accept the Lightricks/LTX-2.5 "
-            "Hugging Face license and authenticate with `hf auth login` or "
-            "HF_TOKEN, then retry. "
+            "LTX-2.5 model download failed. If the details show HTTP 401 or "
+            "403, check the model license and Hugging Face credentials; "
+            "otherwise check the cache, disk space, and network before retrying. "
             f"Details: {exc}"
         ) from exc
     for key in required_keys:
