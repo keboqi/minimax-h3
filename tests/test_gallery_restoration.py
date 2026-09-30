@@ -11,6 +11,8 @@ from h3_app.catalog import (
     GENERATION_POSTPROCESS_OPTIONS,
     LTX25_CQ_ENHANCER,
     LTX25_DECOMPRESSION,
+    LTX25_REFINE_DETAILS,
+    LTX25_RESTORE,
     LTX25_POSTPROCESS_MODELS,
     LTX25_RESTORATION_OPTIONS,
 )
@@ -252,12 +254,10 @@ class GalleryRestorationTests(unittest.TestCase):
                             self.assertEqual(text, "")
                         else:
                             self.assertIn("a rabbit", text)
-                            self.assertIn(
-                                "ENHANCE QUALITY"
-                                if option == LTX25_DECOMPRESSION
-                                else "DEBLUR",
-                                text,
-                            )
+                            if option == LTX25_DECOMPRESSION:
+                                self.assertIn("ENHANCE QUALITY", text)
+                            elif option not in {LTX25_REFINE_DETAILS, LTX25_RESTORE}:
+                                self.assertIn("DEBLUR", text)
                         self.assertIn(
                             key.removeprefix("ltx25_"),
                             node("SaveVideo")[1]["filename_prefix"],

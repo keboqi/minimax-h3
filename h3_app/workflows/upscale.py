@@ -8,6 +8,8 @@ from h3_app.catalog import (
     LTX25_CQ_ENHANCER,
     LTX25_DEBLUR,
     LTX25_DECOMPRESSION,
+    LTX25_REFINE_DETAILS,
+    LTX25_RESTORE,
     LTX25_POSTPROCESS_MODELS,
     LTX25_RESTORATION_OPTIONS,
     LTX25_SIGMAS,
@@ -281,6 +283,10 @@ def ltx25_postprocess_prompt(option: str, prompt: str) -> str:
         # CQ's V2 reference workflow intentionally uses empty conditioning; the
         # adapter performs generative enhancement without a scene prompt.
         return ""
+    if option == LTX25_REFINE_DETAILS:
+        return prompt.strip() or "Natural fine texture, crisp edges, subtle grain, consistent lighting and color."
+    if option == LTX25_RESTORE:
+        return prompt.strip() or "Restore damaged footage with clean detail and natural, plausible color."
     scene = prompt.strip().rstrip(".") or "the scene in the source video"
     if option == LTX25_DECOMPRESSION:
         return (

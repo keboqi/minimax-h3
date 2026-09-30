@@ -169,6 +169,8 @@ from h3_app.catalog import (
     COMFY_UPSCALE_OPTIONS,
     COMFY_POSTPROCESS_OPTIONS,
     LTX25_CQ_ENHANCER,
+    LTX25_REFINE_DETAILS,
+    LTX25_RESTORE,
     LTX25_DECOMPRESSION,
     LTX25_DEBLUR,
     LTX25_POSTPROCESS_MODELS,
@@ -1025,6 +1027,10 @@ def missing_ltx25_model_names(model_choice: str = DEFAULT_LTX25_MODEL) -> list[s
 
 def ensure_ltx25_models(model_choice: str = DEFAULT_LTX25_MODEL) -> bool:
     return model_service.ensure_ltx25_models(model_choice, runtime=_runtime_config())
+
+
+def ensure_ltx25_ingredients_model() -> bool:
+    return model_service.ensure_ltx25_ingredients_model(runtime=_runtime_config())
 
 
 def render_ltx25_official_model_inventory() -> str:
@@ -1926,10 +1932,33 @@ def build_ltx25_graph(
     middle_strength: float = LTX25_DEFAULTS["middle_strength"],
     end_image: str | None = None,
     end_strength: float = LTX25_DEFAULTS["end_strength"],
+    reference_images: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     first_image = stage_file(first_image, "ltx25_keyframes") if first_image else None
     middle_image = stage_file(middle_image, "ltx25_keyframes") if middle_image else None
     end_image = stage_file(end_image, "ltx25_keyframes") if end_image else None
+    reference_sheet = None
+    if reference_images:
+        from PIL import Image, ImageOps
+
+        count = len(reference_images)
+        columns = min(3, count)
+        rows = math.ceil(count / columns)
+        panel_width, panel_height = width // columns, height // rows
+        with tempfile.TemporaryDirectory() as temporary:
+            sheet = Image.new("RGB", (width, height), "black")
+            for index, path in enumerate(reference_images):
+                with Image.open(path) as source:
+                    panel = ImageOps.contain(
+                        ImageOps.exif_transpose(source).convert("RGB"),
+                        (panel_width - 8, panel_height - 8),
+                    )
+                x = (index % columns) * panel_width + (panel_width - panel.width) // 2
+                y = (index // columns) * panel_height + (panel_height - panel.height) // 2
+                sheet.paste(panel, (x, y))
+            sheet_path = Path(temporary) / "reference_sheet.png"
+            sheet.save(sheet_path)
+            reference_sheet = stage_file(str(sheet_path), "ltx25_references")
     return ltx_workflow.build_ltx25_graph(
         model_choice=model_choice,
         prompt=prompt,
@@ -1948,6 +1977,7 @@ def build_ltx25_graph(
         middle_strength=middle_strength,
         end_image=end_image,
         end_strength=end_strength,
+        reference_sheet=reference_sheet,
         output_stamp=str(int(time.time())),
         output_nonce=uuid.uuid4().hex[:8],
     )
@@ -3669,6 +3699,7 @@ def _generation_services() -> generation_services.GenerationServices:
             ensure_h3_text_encoder=ensure_h3_text_encoder,
             ensure_int8_video_vae=ensure_int8_video_vae,
             ensure_ltx25_models=ensure_ltx25_models,
+            ensure_ltx25_ingredients_model=ensure_ltx25_ingredients_model,
             ensure_ltx25_upscale_models=ensure_ltx25_upscale_models,
             ensure_music3_models=ensure_music3_models,
             ensure_qwen_image21_models=ensure_qwen_image21_models,
@@ -3900,6 +3931,7 @@ def generate_ltx25(
     middle_strength: float = LTX25_DEFAULTS["middle_strength"],
     end_image: str | None = None,
     end_strength: float = LTX25_DEFAULTS["end_strength"],
+    reference_images: list[str] | None = None,
     progress=gr.Progress(track_tqdm=False),
 ):
     request = generation_requests.LtxRequest(
@@ -3922,6 +3954,7 @@ def generate_ltx25(
             "middle_strength": middle_strength,
             "end_image": end_image,
             "end_strength": end_strength,
+            "reference_images": tuple(reference_images or ()),
         }
     )
     yield from ltx_generation.generate_ltx25(

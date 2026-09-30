@@ -817,6 +817,30 @@ def ensure_ltx25_upscale_models(
     return True
 
 
+def ensure_ltx25_ingredients_model(*, runtime: RuntimeConfig) -> bool:
+    """Install the Ingredients adapter after the selected base model is ready."""
+    key = "ltx25_iclora_ingredients"
+    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
+    if not stale_model_keys(
+        root=runtime.comfy_dir / "models",
+        manifest_path=manifest_path,
+        model_keys=(key,),
+    ):
+        return False
+    sync_models(
+        root=runtime.comfy_dir / "models",
+        manifest_path=manifest_path,
+        token=resolve_hf_token(),
+        log_prefix="[ltx25-ingredients-on-demand]",
+        model_keys=(key,),
+        download_workers=1,
+    )
+    spec = MODEL_SPECS[key]
+    if not model_file_is_ready(runtime.comfy_dir / "models" / spec.folder / spec.local_name):
+        raise H3Error(f"Ingredients download did not produce {spec.local_name}.")
+    return True
+
+
 def missing_music3_model_names(
     model_choice: str, *, runtime: RuntimeConfig
 ) -> list[str]:

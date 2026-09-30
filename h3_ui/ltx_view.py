@@ -23,6 +23,8 @@ class LtxView:
     enhance_status: gr.Textbox
     negative: gr.Textbox
     image_group: gr.Group
+    reference_group: gr.Group
+    reference_images: gr.File
     image: gr.Image
     image_strength: gr.Slider
     middle_image: gr.Image
@@ -79,7 +81,7 @@ def build_ltx_view(
                     info="INT8 ConvRot is the default lower-memory option.",
                 )
                 mode = gr.Radio(
-                    ["Text to video", "Image to video"],
+                    ["Text to video", "Image to video", "Reference images"],
                     value=defaults["mode"],
                     label="Mode",
                 )
@@ -151,6 +153,19 @@ def build_ltx_view(
                                 step=0.05,
                                 label="End strength",
                             )
+                with gr.Group(visible=False) as reference_group:
+                    gr.Markdown(
+                        "Upload reference images for characters, props, and settings. "
+                        "They become panels on one reference sheet. Use a prompt with "
+                        "`Reference sheet: ...` and `Generated video: ...` sections. "
+                        "Use 768×448, 121 frames (5 seconds at 24 fps)."
+                    )
+                    reference_images = gr.File(
+                        label="Reference images",
+                        file_count="multiple",
+                        type="filepath",
+                        file_types=["image"],
+                    )
             with gr.Column(scale=2):
                 output = gr.Video(
                     label="Generated LTX-2.5 video", interactive=False
@@ -224,6 +239,8 @@ def build_ltx_view(
         enhance_status,
         negative,
         image_group,
+        reference_group,
+        reference_images,
         image,
         image_strength,
         middle_image,

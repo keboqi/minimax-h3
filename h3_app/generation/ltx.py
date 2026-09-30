@@ -41,6 +41,7 @@ def generate_ltx25(
             "first_image",
             "middle_image",
             "end_image",
+            "reference_images",
         }
     }
     started = time.monotonic()
@@ -67,8 +68,23 @@ def generate_ltx25(
             else int(request.seed)
         )
         image_to_video = str(request.mode).strip().lower() == "image to video"
+        reference_mode = str(request.mode).strip().lower() == "reference images"
         if image_to_video and not request.first_image:
             raise H3Error("Image-to-video mode requires a start frame.")
+        if reference_mode:
+            if not request.reference_images:
+                raise H3Error("Reference images mode requires at least one image.")
+            if len(request.reference_images) > 9:
+                raise H3Error("Reference images mode supports up to nine images.")
+            if (
+                (resolved_width, resolved_height) != (768, 448)
+                or float(request.fps) != 24
+                or ltx25_frame_length(request.duration, request.fps) != 121
+            ):
+                raise H3Error(
+                    "Ingredients is trained for 768×448, 121 frames at 24 fps. "
+                    "Set width 768, height 448, duration 5 seconds, and FPS 24."
+                )
         keyframe_strengths = {
             "Start image": request.image_strength,
             "Middle image": request.middle_strength,
@@ -99,9 +115,13 @@ def generate_ltx25(
                 ),
             )
         services.models.ensure_ltx25_models(request.model_choice)
+        if reference_mode:
+            services.models.ensure_ltx25_ingredients_model()
 
         available = set(services.execution.object_info())
-        missing_nodes = required_ltx25_nodes(image_to_video=image_to_video) - available
+        missing_nodes = required_ltx25_nodes(
+            image_to_video=image_to_video, reference_images=reference_mode
+        ) - available
         if missing_nodes:
             raise H3Error(
                 "LTX-2.5 requires a current ComfyUI with LTXVideo nodes: "
@@ -126,6 +146,7 @@ def generate_ltx25(
             middle_strength=float(request.middle_strength),
             end_image=request.end_image if image_to_video else None,
             end_strength=float(request.end_strength),
+            reference_images=request.reference_images if reference_mode else (),
         )
 
         client_id = str(uuid.uuid4())

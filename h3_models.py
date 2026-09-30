@@ -410,10 +410,22 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "LTX-2.5 CQ generative video quality enhancer V2",
     ),
     "ltx25_iclora_ingredients": ModelSpec(
-        "Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients",
+        "Lightricks/LTX-2.5-22b-IC-LoRA-Ingredients",
         "loras",
-        "ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors",
+        "ltx-2.5-22b-ic-lora-ingredients-0.9.safetensors",
         "LTX IC-LoRA ingredients/reference-sheet control",
+    ),
+    "ltx25_refine_details": ModelSpec(
+        "Lightricks/LTX-2.5-22b-IC-LoRA-Refine-Details",
+        "loras",
+        "ltx-2.5-22b-ic-lora-refine-details-1.0.safetensors",
+        "LTX-2.5 IC-LoRA detail refinement",
+    ),
+    "ltx25_restore": ModelSpec(
+        "Lightricks/LTX-2.5-22b-IC-LoRA-Restore",
+        "loras",
+        "ltx-2.5-22b-ic-lora-restore-1.0.safetensors",
+        "LTX-2.5 IC-LoRA archive footage restoration",
     ),
     "ltx25_iclora_in_outpaint": ModelSpec(
         "Lightricks/LTX-2.3-22b-IC-LoRA-In-Outpainting",
@@ -562,6 +574,8 @@ LAZY_POSTPROCESS_MODEL_KEYS = (
     "ltx25_decompression",
     "ltx25_deblur",
     "ltx25_cq_video_enhancer_v2",
+    "ltx25_refine_details",
+    "ltx25_restore",
 )
 H3_LATENT_UPSCALER_MODEL_CHOICES = {
     "Balanced (BF16)": "h3_latent_upscaler_3d_bf16",
@@ -1493,6 +1507,8 @@ def selftest() -> None:
         "ltx25_decompression",
         "ltx25_deblur",
         "ltx25_cq_video_enhancer_v2",
+        "ltx25_refine_details",
+        "ltx25_restore",
         "ltx25_iclora_ingredients",
         "ltx25_iclora_in_outpaint",
         "ltx25_iclora_motion_track",

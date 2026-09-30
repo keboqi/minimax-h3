@@ -8,10 +8,12 @@ from h3_app.catalog import LTX25_DEFAULTS, LTX25_SIGMAS
 from h3_app.graph import Graph
 from h3_app.model_types import ltx25_model_names
 from h3_app.policy import ltx25_frame_length
-from h3_models import DEFAULT_LTX25_MODEL
+from h3_models import DEFAULT_LTX25_MODEL, MODEL_SPECS
 
 
-def required_ltx25_nodes(*, image_to_video: bool = False) -> set[str]:
+def required_ltx25_nodes(
+    *, image_to_video: bool = False, reference_images: bool = False
+) -> set[str]:
     required = {
         "UNETLoader",
         "CLIPLoader",
@@ -34,6 +36,14 @@ def required_ltx25_nodes(*, image_to_video: bool = False) -> set[str]:
     }
     if image_to_video:
         required |= {"LoadImage", "LTXVAddGuide"}
+    if reference_images:
+        required |= {
+            "LoadImage",
+            "RepeatImageBatch",
+            "LTXICLoRALoaderModelOnly",
+            "LTXAddVideoICLoRAGuide",
+            "LTXVCropGuides",
+        }
     return required
 
 
@@ -56,6 +66,7 @@ def build_ltx25_graph(
     middle_strength: float = LTX25_DEFAULTS["middle_strength"],
     end_image: str | None = None,
     end_strength: float = LTX25_DEFAULTS["end_strength"],
+    reference_sheet: str | None = None,
     output_stamp: str = "0",
     output_nonce: str = "",
 ) -> dict[str, Any]:
@@ -65,6 +76,13 @@ def build_ltx25_graph(
     model = graph.add(
         "UNETLoader", unet_name=names["distilled"], weight_dtype="default"
     )
+    if reference_sheet:
+        model = graph.add(
+            "LTXICLoRALoaderModelOnly",
+            model=Graph.out(model),
+            lora_name=MODEL_SPECS["ltx25_iclora_ingredients"].local_name,
+            strength_model=1.0,
+        )
     clip = graph.add(
         "CLIPLoader", clip_name=names["text_encoder"], type="ltxv", device="default"
     )
@@ -117,6 +135,30 @@ def build_ltx25_graph(
         negative_ref = Graph.out(guide, 1)
         video_latent_ref = Graph.out(guide, 2)
 
+    if reference_sheet:
+        loaded_sheet = graph.add("LoadImage", image=reference_sheet)
+        repeated_sheet = graph.add(
+            "RepeatImageBatch", image=Graph.out(loaded_sheet), amount=max(121, frames)
+        )
+        reference_guide = graph.add(
+            "LTXAddVideoICLoRAGuide",
+            positive=positive_ref,
+            negative=negative_ref,
+            vae=Graph.out(video_vae),
+            latent=video_latent_ref,
+            image=Graph.out(repeated_sheet),
+            frame_idx=0,
+            strength=1.0,
+            latent_downscale_factor=Graph.out(model, 1),
+            crop="disabled",
+            use_tiled_encode=True,
+            tile_size=512,
+            tile_overlap=64,
+        )
+        positive_ref = Graph.out(reference_guide, 0)
+        negative_ref = Graph.out(reference_guide, 1)
+        video_latent_ref = Graph.out(reference_guide, 2)
+
     audio_latent = graph.add(
         "LTXVEmptyLatentAudio",
         audio_vae=Graph.out(audio_vae),
@@ -148,9 +190,18 @@ def build_ltx25_graph(
         latent_image=Graph.out(av_latent),
     )
     separated = graph.add("LTXVSeparateAVLatent", av_latent=Graph.out(sampled))
+    decoded_video = Graph.out(separated, 0)
+    if reference_sheet:
+        cropped = graph.add(
+            "LTXVCropGuides",
+            positive=positive_ref,
+            negative=negative_ref,
+            latent=decoded_video,
+        )
+        decoded_video = Graph.out(cropped, 2)
     images = graph.add(
         "VAEDecodeTiled",
-        samples=Graph.out(separated, 0),
+        samples=decoded_video,
         vae=Graph.out(video_vae),
         tile_size=512,
         overlap=64,

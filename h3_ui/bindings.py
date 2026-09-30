@@ -107,6 +107,22 @@ def bind_ltx_view(
         queue=False,
         show_progress="hidden",
     )
+    view.mode.change(
+        lambda value: gr.update(visible=value == "Reference images"),
+        inputs=view.mode,
+        outputs=view.reference_group,
+        queue=False,
+        show_progress="hidden",
+    )
+    view.mode.change(
+        lambda value: (768, 448, 5, 24)
+        if value == "Reference images"
+        else (gr.skip(),) * 4,
+        inputs=view.mode,
+        outputs=[view.width, view.height, view.duration, view.fps],
+        queue=False,
+        show_progress="hidden",
+    )
     view.workflow.change(
         render_workflow,
         inputs=view.workflow,
@@ -176,6 +192,7 @@ def bind_ltx_view(
             view.middle_strength,
             view.end_image,
             view.end_strength,
+            view.reference_images,
         ],
         outputs=[view.output, view.status],
         show_progress="minimal",

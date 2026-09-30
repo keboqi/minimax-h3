@@ -164,6 +164,7 @@ class LtxRequest:
     middle_strength: float
     end_image: str | None
     end_strength: float
+    reference_images: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

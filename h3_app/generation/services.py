@@ -261,6 +261,10 @@ class EnsureLtx25Models(Protocol):
     def __call__(self, model_choice: str = ...) -> bool: ...
 
 
+class EnsureLtx25IngredientsModel(Protocol):
+    def __call__(self) -> bool: ...
+
+
 class EnsureLtx25UpscaleModels(Protocol):
     def __call__(self, model_choice: str = ...) -> bool: ...
 
@@ -411,6 +415,7 @@ class ModelsServices:
     ensure_h3_text_encoder: EnsureH3TextEncoder
     ensure_int8_video_vae: EnsureInt8VideoVae
     ensure_ltx25_models: EnsureLtx25Models
+    ensure_ltx25_ingredients_model: EnsureLtx25IngredientsModel
     ensure_ltx25_upscale_models: EnsureLtx25UpscaleModels
     ensure_music3_models: EnsureMusic3Models
     ensure_qwen_image21_models: EnsureQwenImage21Models
