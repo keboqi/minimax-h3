@@ -31,14 +31,14 @@ KORNIA_RS_VERSION = "0.1.14"
 # so keep their versions compatible with the pinned NumPy 1.26/CUDA stack.
 LTX_HDR_REQUIREMENTS = ("colour-science==0.4.6", "openimageio==3.0.12.0")
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
-# This post-v0.37.0 revision also fixes Qwen-VL preprocessing of RGBA reference
-# images and a Qwen Image 2.1 FP16 memory-compiler failure. Keep its frontend
-# and Kitchen versions aligned with upstream requirements.
+# ComfyUI v0.38.0 adds SeedVR2 and YuE2 optimizations and Qwen Image 2.1
+# Union ControlNet support. Keep its frontend and Kitchen versions aligned
+# with upstream requirements.
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "6063fafbd9c3b85c5ff40aef435ae11b2844e558"
 
-COMFY_REF = "8d534945ebd53cff61e8def81757c6a6c1b9cf2d"
-COMFY_KITCHEN_VERSION = "0.2.35"
+COMFY_REF = "6b747c0428c343e1417219641db93a4fb7cb69ae"
+COMFY_KITCHEN_VERSION = "0.2.36"
 COMFY_FRONTEND_VERSION = "1.53.6"
 WSPROTO_VERSION = "1.2.0"
 GRADIO_VERSION = "6.27.0"
@@ -270,8 +270,8 @@ def selftest() -> None:
         "colour-science==0.4.6", "openimageio==3.0.12.0"
     )
     assert KERNELS_VERSION == "0.16.0"
-    assert COMFY_REF == "8d534945ebd53cff61e8def81757c6a6c1b9cf2d"
-    assert COMFY_KITCHEN_VERSION == "0.2.35"
+    assert COMFY_REF == "6b747c0428c343e1417219641db93a4fb7cb69ae"
+    assert COMFY_KITCHEN_VERSION == "0.2.36"
     assert COMFY_FRONTEND_VERSION == "1.53.6"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 10
