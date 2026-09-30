@@ -556,6 +556,34 @@ class UiContractTests(unittest.TestCase):
             if d.get("trigger_after") == auto_cap_change_dep["id"]
         )
         self.assertIn(summary["id"], auto_cap_refresh_dep["outputs"])
+        self.assertNotIn(auto_cap["id"], auto_cap_refresh_dep["outputs"])
+
+    def test_programmatic_change_and_chained_callbacks_have_no_feedback_cycles(self):
+        dependencies = self.config["dependencies"]
+        edges = {
+            event["id"]: [
+                other["id"]
+                for other in dependencies
+                if other.get("trigger_after") == event["id"]
+                or any(
+                    kind == "change" and component in event["outputs"]
+                    for component, kind in other["targets"]
+                )
+            ]
+            for event in dependencies
+        }
+        visited = set()
+
+        def visit(event_id, active):
+            self.assertNotIn(event_id, active, f"Callback feedback cycle: {active + [event_id]}")
+            if event_id in visited:
+                return
+            for downstream in edges[event_id]:
+                visit(downstream, active + [event_id])
+            visited.add(event_id)
+
+        for event_id in edges:
+            visit(event_id, [])
 
     def test_auto_resolution_pipeline_updates_next_run_and_preset_change_applies_cap(self) -> None:
         import os

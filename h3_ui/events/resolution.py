@@ -138,10 +138,21 @@ def bind_resolution(
         queue=False,
         show_progress="hidden",
     )
+    # The cap's .change also responds to preset updates. Writing the cap back
+    # from this chained refresh would retrigger it indefinitely in Gradio.
+    cap_index = controller.outputs.index(components.auto_megapixels)
+
+    def refresh_after_auto_cap(memory, *values):
+        updates = controller.refresh(memory, *values)
+        return (*updates[:cap_index], *updates[cap_index + 1:])
+
     auto_megapixels_change.then(
-        controller.refresh,
+        refresh_after_auto_cap,
         inputs=[controller.memory, *controller.inputs],
-        outputs=controller.outputs,
+        outputs=[
+            component for component in controller.outputs
+            if component is not components.auto_megapixels
+        ],
         queue=False,
         show_progress="hidden",
     )
