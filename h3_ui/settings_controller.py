@@ -31,6 +31,7 @@ SETTING_NAMES = tuple(
             "image_frames",
             "image_vae",
             "use_int8_vae",
+            "use_lynnreal_vae",
             "use_trt_vae",
             "reuse_unchanged_inputs",
             "semantic_bridge",

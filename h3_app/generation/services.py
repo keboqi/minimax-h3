@@ -50,6 +50,7 @@ class BuildFl2VaGraph(Protocol):
         model_name: str,
         models: ModelConfig,
         available_nodes: set[str],
+        use_lynnreal_vae: bool = ...,
         use_int8_vae: bool = ...,
         use_trt_vae: bool = ...,
         use_sage: bool = ...,
@@ -136,6 +137,7 @@ class BuildRef2VaGraph(Protocol):
         model_name: str,
         models: ModelConfig,
         available_nodes: set[str],
+        use_lynnreal_vae: bool = ...,
         use_int8_vae: bool = ...,
         use_trt_vae: bool = ...,
         use_sage: bool = ...,
@@ -254,7 +256,7 @@ class EnsureAudioVae(Protocol):
 
 
 class EnsureInt8VideoVae(Protocol):
-    def __call__(self, models: ModelConfig) -> bool: ...
+    def __call__(self, models: ModelConfig, *, lynnreal: bool = ...) -> bool: ...
 
 
 class EnsureLtx25Models(Protocol):

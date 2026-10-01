@@ -126,6 +126,7 @@ class GenerationRequest:
     cache_mode: str = "Spectrum"
     use_trt_vae: bool = False
     use_int8_vae: bool = False
+    use_lynnreal_vae: bool = False
     semantic_bridge: bool = True
     semantic_bridge_alpha: float = 0.10
     fl2va_audio_1: Any = None
@@ -369,12 +370,13 @@ def resolve_settings(
             output.image_vae,
             use_trt_vae=request.use_trt_vae,
             use_int8_vae=request.use_int8_vae,
+            use_lynnreal_vae=request.use_lynnreal_vae,
         )
     except ValueError as exc:
         issues.append(str(exc))
         decoders = None
     if decoders and decoders.video_decoder == "none":
-        inactive.update({"use_trt_vae", "use_int8_vae"})
+        inactive.update({"use_trt_vae", "use_int8_vae", "use_lynnreal_vae"})
     effective = replace(
         request,
         sampling=sampling,
@@ -385,6 +387,7 @@ def resolve_settings(
         semantic_bridge=bridge,
         use_trt_vae=decoders.use_trt_vae if decoders else request.use_trt_vae,
         use_int8_vae=decoders.use_int8_vae if decoders else request.use_int8_vae,
+        use_lynnreal_vae=decoders.use_lynnreal_vae if decoders else request.use_lynnreal_vae,
     )
     return ResolvedSettings(
         request, effective, tuple(adjustments), frozenset(inactive), tuple(issues)
@@ -416,11 +419,17 @@ def transition_modes(
         current.update(asdict(preset_settings(preset, mode)))
         current["use_int8_vae"] = preset in {"Singularity", "Fast"}
         current["use_trt_vae"] = False
+        current["use_lynnreal_vae"] = False
         if preset == "Singularity":
             current["model_profile"] = "Singularity"
     elif action == "use_trt_vae" and current.get("use_trt_vae"):
         current["use_int8_vae"] = False
+        current["use_lynnreal_vae"] = False
     elif action == "use_int8_vae" and current.get("use_int8_vae"):
+        current["use_trt_vae"] = False
+        current["use_lynnreal_vae"] = False
+    elif action == "use_lynnreal_vae" and current.get("use_lynnreal_vae"):
+        current["use_int8_vae"] = False
         current["use_trt_vae"] = False
     elif action == "turbo_variant" and mode == "Turbo":
         current.update(

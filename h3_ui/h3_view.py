@@ -211,6 +211,7 @@ class H3View:
     turbo_variant: gr.components.Component
     trt_vae_compile: gr.components.Component
     use_int8_vae: gr.components.Component
+    use_lynnreal_vae: gr.components.Component
     use_trt_vae: gr.components.Component
     width: gr.components.Component
 
@@ -361,6 +362,7 @@ H3_COMPONENT_ORDER = (
     "turbo_variant",
     "trt_vae_compile",
     "use_int8_vae",
+    "use_lynnreal_vae",
     "use_trt_vae",
     "width",
 )
@@ -458,6 +460,7 @@ def build_h3_view(
                     defaults["latent_split_seam_denoise"],
                     defaults["latent_split_seam_polish"],
                     use_trt_vae=defaults["use_trt_vae"],
+                    use_lynnreal_vae=defaults["use_lynnreal_vae"],
                 ),
                 elem_classes=["h3-settings-summary"],
             )
@@ -623,6 +626,7 @@ def build_h3_view(
             "turbo_variant": performance_controls.turbo_variant,
             "trt_vae_compile": model_section.trt_vae_compile,
             "use_int8_vae": model_section.use_int8_vae,
+            "use_lynnreal_vae": model_section.use_lynnreal_vae,
             "use_trt_vae": model_section.use_trt_vae,
             "width": output_section.width,
         }

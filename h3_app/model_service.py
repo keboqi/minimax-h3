@@ -14,11 +14,12 @@ from h3_app.catalog import (
     LIGHTX2V_8STEP_TURBO,
     LIGHTX2V_4STEP_TURBO,
     LTX25_POSTPROCESS_MODELS,
+    LTX25_SDR_TO_HDR,
     LTX25_UPSCALE,
 )
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
-from h3_app.jobs import JOBS, check_cancelled
+from h3_app.jobs import JOBS, JobCancelled, check_cancelled
 from h3_app.model_types import (
     ModelConfig,
     ModelProfile,
@@ -100,6 +101,12 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
         video_vae=data["video_vae"],
         audio_vae=data["audio_vae"],
         video_vae_int8=data.get("video_vae_int8"),
+        video_vae_lynnreal_int8=data.get(
+            "video_vae_lynnreal_int8", MODEL_SPECS["video_vae_lynnreal_int8"].local_name
+        ),
+        video_vae_lynnreal_int8_source=data.get(
+            "video_vae_lynnreal_int8_source", MODEL_SPECS["video_vae_lynnreal_int8"].source
+        ),
         video_vae_trt_encoder=data.get("video_vae_trt_encoder"),
         video_vae_trt_decoder=data.get("video_vae_trt_decoder"),
         video_vae_trt_source=data.get("video_vae_trt_source", "unknown"),
@@ -442,22 +449,25 @@ def ensure_turbo_lora(
     return True
 
 
-def ensure_int8_video_vae(models: ModelConfig, *, runtime: RuntimeConfig) -> bool:
-    """Download the optional INT8 ConvRot video VAE on first use."""
-    filename = models.video_vae_int8
+def ensure_int8_video_vae(
+    models: ModelConfig, *, runtime: RuntimeConfig, lynnreal: bool = False
+) -> bool:
+    """Download the selected standard or LynnReal INT8 VAE on first use."""
+    model_key = "video_vae_lynnreal_int8" if lynnreal else "video_vae_int8"
+    filename = getattr(models, model_key)
     if not filename:
         raise H3Error(
             "The model configuration predates INT8 video VAE support. "
             "Re-run setup_h3.py before enabling it."
         )
     destination = (
-        runtime.comfy_dir / "models" / MODEL_SPECS["video_vae_int8"].folder / filename
+        runtime.comfy_dir / "models" / MODEL_SPECS[model_key].folder / filename
     )
     manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
     if not stale_model_keys(
         root=runtime.comfy_dir / "models",
         manifest_path=manifest_path,
-        model_keys=("video_vae_int8",),
+        model_keys=(model_key,),
     ):
         return False
 
@@ -466,7 +476,7 @@ def ensure_int8_video_vae(models: ModelConfig, *, runtime: RuntimeConfig) -> boo
         manifest_path=manifest_path,
         token=resolve_hf_token(),
         log_prefix="[h3-int8-vae-on-demand]",
-        model_keys=("video_vae_int8",),
+        model_keys=(model_key,),
         download_workers=1,
     )
     if not model_file_is_ready(destination):
@@ -796,6 +806,42 @@ def ensure_ltx25_upscale_models(
     """Lazily install the selected LTX base set and post-processing IC-LoRA."""
     if option not in LTX25_POSTPROCESS_MODELS:
         raise H3Error(f"Unknown LTX-2.5 post-processing method: {option}")
+    if option == LTX25_SDR_TO_HDR:
+        # HDR uses fixed conditioning and the full float32-capable DiffVAE;
+        # no Gemma text encoder or audio generator is needed.
+        keys = (
+            ltx25_model_keys(model_choice)["distilled"],
+            "ltx25_video_vae_full",
+            "ltx25_sdr_to_hdr",
+            "ltx25_sdr_to_hdr_conditioning",
+        )
+        manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
+        stale = stale_model_keys(
+            root=runtime.comfy_dir / "models", manifest_path=manifest_path,
+            model_keys=keys,
+        )
+        if not stale:
+            return False
+        try:
+            sync_models(
+                root=runtime.comfy_dir / "models", manifest_path=manifest_path,
+                token=resolve_hf_token(), log_prefix="[ltx25-hdr-on-demand]",
+                model_keys=keys, download_workers=2,
+            )
+        except JobCancelled:
+            raise
+        except Exception as exc:
+            raise H3Error(
+                "SDR-to-HDR model download failed. For HTTP 401/403, accept access "
+                "to Lightricks/LTX-2.5-22b-IC-LoRA-SDR-To-HDR and Lightricks/LTX-2.5 "
+                "on Hugging Face, then authenticate with hf auth login or HF_TOKEN. "
+                f"Details: {exc}"
+            ) from exc
+        for key in keys:
+            spec = MODEL_SPECS[key]
+            if not model_file_is_ready(runtime.comfy_dir / "models" / spec.folder / spec.local_name):
+                raise H3Error(f"On-demand HDR download did not produce {spec.local_name}.")
+        return True
     upscaler_key = LTX25_POSTPROCESS_MODELS[option]
     base_downloaded = ensure_ltx25_models(model_choice, runtime=runtime)
     manifest_path = runtime.models_config.parent / "h3_model_manifest.json"

@@ -1627,6 +1627,7 @@ def selftest() -> None:
         app.LTX25_CQ_ENHANCER,
         app.LTX25_REFINE_DETAILS,
         app.LTX25_RESTORE,
+        app.LTX25_SDR_TO_HDR,
         app.SWIFTVR_UPSCALE,
         "48 fps interpolation",
     ]

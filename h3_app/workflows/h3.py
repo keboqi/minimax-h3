@@ -178,6 +178,7 @@ def add_model_stack(
     easycache_verbose: bool,
     available_nodes: set[str],
     text_encoder_name: str | None = None,
+    use_lynnreal_vae: bool = False,
     use_int8_vae: bool = False,
     use_trt_vae: bool = False,
     use_sage: bool = False,
@@ -362,8 +363,8 @@ def add_model_stack(
         type="minimax",
         device="default",
     )
-    if use_int8_vae and use_trt_vae:
-        raise H3Error("Select either INT8 ConvRot VAE or TensorRT VAE, not both.")
+    if sum((use_int8_vae, use_trt_vae, use_lynnreal_vae)) > 1:
+        raise H3Error("Select only one video VAE: INT8 ConvRot, LynnReal Light INT8, or TensorRT.")
     if use_trt_vae:
         if "MiniMaxH3TRTVAELoader" not in available_nodes:
             raise H3Error(
@@ -377,7 +378,11 @@ def add_model_stack(
             encoder="None",
         )
     else:
-        if use_int8_vae:
+        if use_lynnreal_vae:
+            if not models.video_vae_lynnreal_int8:
+                raise H3Error("LynnReal Light INT8 VAE is not configured. Re-run setup_h3.py.")
+            video_vae_name = models.video_vae_lynnreal_int8
+        elif use_int8_vae:
             if not models.video_vae_int8:
                 raise H3Error("INT8 video VAE is missing from the model catalog.")
             video_vae_name = models.video_vae_int8
@@ -805,6 +810,7 @@ def build_fl2va_graph(
     model_name: str,
     models: ModelConfig,
     available_nodes: set[str],
+    use_lynnreal_vae: bool = False,
     use_int8_vae: bool = False,
     use_trt_vae: bool = False,
     use_sage: bool = False,
@@ -856,6 +862,7 @@ def build_fl2va_graph(
         easycache_verbose=easycache_verbose,
         available_nodes=available_nodes,
         text_encoder_name=text_encoder_name,
+        use_lynnreal_vae=use_lynnreal_vae,
         use_int8_vae=use_int8_vae,
         use_trt_vae=use_trt_vae,
         use_sage=use_sage,
@@ -1082,6 +1089,7 @@ def build_ref2va_graph(
     model_name: str,
     models: ModelConfig,
     available_nodes: set[str],
+    use_lynnreal_vae: bool = False,
     use_int8_vae: bool = False,
     use_trt_vae: bool = False,
     use_sage: bool = False,
@@ -1130,6 +1138,7 @@ def build_ref2va_graph(
         easycache_verbose=easycache_verbose,
         available_nodes=available_nodes,
         text_encoder_name=text_encoder_name,
+        use_lynnreal_vae=use_lynnreal_vae,
         use_int8_vae=use_int8_vae,
         use_trt_vae=use_trt_vae,
         use_sage=use_sage,

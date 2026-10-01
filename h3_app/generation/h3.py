@@ -112,6 +112,7 @@ def generate(
             image_frames=prepared.requested_image_frames,
             use_trt_vae=request.output.use_trt_vae,
             use_int8_vae=request.output.use_int8_vae,
+            use_lynnreal_vae=request.output.use_lynnreal_vae,
         )
         timings.label = f"H3 job {prompt_id}"
         timings.transition("Waiting for ComfyUI")

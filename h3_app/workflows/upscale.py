@@ -12,6 +12,7 @@ from h3_app.catalog import (
     LTX25_RESTORE,
     LTX25_POSTPROCESS_MODELS,
     LTX25_RESTORATION_OPTIONS,
+    LTX25_SDR_TO_HDR,
     LTX25_SIGMAS,
     LTX25_UPSCALE,
     SEEDVR2_UPSCALE,
@@ -324,6 +325,12 @@ def build_ltx25_upscale_graph(
     """Build single-stage IC-LoRA upscaling or same-resolution restoration."""
     if option not in LTX25_POSTPROCESS_MODELS:
         raise H3Error(f"Unknown LTX-2.5 post-processing method: {option}")
+    if option == LTX25_SDR_TO_HDR:
+        return build_ltx25_hdr_graph(
+            source_video=source_video, seed=seed, model_choice=model_choice,
+            width=width, height=height, fps=fps,
+            output_stamp=output_stamp, output_nonce=output_nonce,
+        )
     names = ltx25_model_names(model_choice)
     restoration = option in LTX25_RESTORATION_OPTIONS
     if restoration:
@@ -481,9 +488,105 @@ def build_ltx25_upscale_graph(
 def required_upscale_nodes(option: str) -> set[str]:
     if option == SEEDVR2_UPSCALE:
         return required_seedvr2_upscale_nodes()
+    if option == LTX25_SDR_TO_HDR:
+        return required_ltx25_hdr_nodes()
     if option in LTX25_POSTPROCESS_MODELS:
         return required_ltx25_upscale_nodes()
     raise H3Error(f"Unknown AI post-processing method: {option}")
+
+
+def required_ltx25_hdr_nodes() -> set[str]:
+    return {
+        "LoadVideo", "GetVideoComponents", "LTXVSDRToHDRWorkingSpace",
+        "ImageScale", "GetImageSize", "UNETLoader", "LTXICLoRALoaderModelOnly",
+        "VAELoader", "LTXVVAEForceFloat32", "H3LTXHDRConditioning",
+        "LTXVConditioning", "EmptyLTXVLatentVideo", "LTXAddVideoICLoRAGuide",
+        "RandomNoise", "CFGGuider", "KSamplerSelect", "ManualSigmas",
+        "SamplerCustomAdvanced", "LTXVCropGuides", "VAEDecodeTiled",
+        "LTXVHDRDecodePostprocess", "LTXVSaveHLG",
+    }
+
+
+def build_ltx25_hdr_graph(
+    *, source_video: str, seed: int, model_choice: str,
+    width: int, height: int, fps: float,
+    output_stamp: str, output_nonce: str,
+) -> dict[str, Any]:
+    """Plain video-only HDR IC-LoRA: ACEScct ingest and 10-bit HLG delivery."""
+    names = ltx25_model_names(model_choice)
+    graph = Graph()
+    loaded = graph.add("LoadVideo", file=source_video)
+    components = graph.add("GetVideoComponents", video=Graph.out(loaded))
+    working = graph.add(
+        "LTXVSDRToHDRWorkingSpace", image=Graph.out(components, 0),
+        color_space="srgb_gamma",
+    )
+    # Apply the source EOTF before spatial filtering, as upstream requires.
+    guide = graph.add(
+        "ImageScale", image=Graph.out(working), upscale_method="lanczos",
+        width=snap32(width), height=snap32(height), crop="disabled",
+    )
+    size = graph.add("GetImageSize", image=Graph.out(guide))
+    base = graph.add("UNETLoader", unet_name=names["distilled"], weight_dtype="default")
+    model = graph.add(
+        "LTXICLoRALoaderModelOnly", model=Graph.out(base),
+        lora_name=MODEL_SPECS["ltx25_sdr_to_hdr"].local_name, strength_model=1.0,
+    )
+    vae = graph.add("VAELoader", vae_name=MODEL_SPECS["ltx25_video_vae_full"].local_name)
+    vae = graph.add("LTXVVAEForceFloat32", vae=Graph.out(vae))
+    context = graph.add(
+        "H3LTXHDRConditioning",
+        file_name=MODEL_SPECS["ltx25_sdr_to_hdr_conditioning"].local_name,
+    )
+    conditioning = graph.add(
+        "LTXVConditioning", positive=Graph.out(context), negative=Graph.out(context),
+        frame_rate=min(float(fps), 30.0),
+    )
+    latent = graph.add(
+        "EmptyLTXVLatentVideo", width=snap32(width), height=snap32(height),
+        length=Graph.out(size, 2), batch_size=1,
+    )
+    guided = graph.add(
+        "LTXAddVideoICLoRAGuide", positive=Graph.out(conditioning, 0),
+        negative=Graph.out(conditioning, 1), vae=Graph.out(vae), latent=Graph.out(latent),
+        image=Graph.out(guide), frame_idx=0, strength=1.0,
+        latent_downscale_factor=1, crop="disabled", use_tiled_encode=True,
+        tile_size=512, tile_overlap=64,
+    )
+    noise = graph.add("RandomNoise", noise_seed=int(seed))
+    guider = graph.add(
+        "CFGGuider", model=Graph.out(model), positive=Graph.out(guided, 0),
+        negative=Graph.out(guided, 1), cfg=1.0,
+    )
+    sampler = graph.add("KSamplerSelect", sampler_name="euler")
+    sigmas = graph.add("ManualSigmas", sigmas=LTX25_SIGMAS)
+    sampled = graph.add(
+        "SamplerCustomAdvanced", noise=Graph.out(noise), guider=Graph.out(guider),
+        sampler=Graph.out(sampler), sigmas=Graph.out(sigmas), latent_image=Graph.out(guided, 2),
+    )
+    cropped = graph.add(
+        "LTXVCropGuides", positive=Graph.out(guided, 0), negative=Graph.out(guided, 1),
+        latent=Graph.out(sampled),
+    )
+    images = graph.add(
+        "VAEDecodeTiled", samples=Graph.out(cropped, 2), vae=Graph.out(vae),
+        tile_size=512, overlap=64, temporal_size=128, temporal_overlap=32,
+    )
+    if (snap32(width), snap32(height)) != (width, height):
+        images = graph.add(
+            "ImageScale", image=Graph.out(images), upscale_method="lanczos",
+            width=width, height=height, crop="disabled",
+        )
+    hdr = graph.add(
+        "LTXVHDRDecodePostprocess", image=Graph.out(images), transfer="acescct",
+        exposure=0.0, save_exr=False,
+    )
+    graph.add(
+        "LTXVSaveHLG", hdr_linear=Graph.out(hdr, 1), frame_rate=float(fps),
+        linear_primaries="acescg", audio=Graph.out(components, 1),
+        filename_prefix=f"ltx25/sdr_to_hdr_{output_stamp}_{output_nonce}",
+    )
+    return graph.nodes
 
 
 def build_upscale_graph(

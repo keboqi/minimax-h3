@@ -10,6 +10,8 @@ from h3_app.catalog import (
     LTX25_CQ_ENHANCER,
     LTX25_DEBLUR,
     LTX25_RESTORATION_OPTIONS,
+    LTX25_SAME_RESOLUTION_OPTIONS,
+    LTX25_SDR_TO_HDR,
 )
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
 
@@ -461,7 +463,7 @@ def bind_gallery_view(
             return gr.skip(), gr.skip()
         return page_size, gr.update(interactive=len(paths) < total)
 
-    ltx_options = {ltx_option} | LTX25_RESTORATION_OPTIONS
+    ltx_options = {ltx_option} | LTX25_SAME_RESOLUTION_OPTIONS
     video_postprocess_options = [
         choice[1] if isinstance(choice, (tuple, list)) else choice
         for choice in view.postprocess.choices
@@ -520,7 +522,7 @@ def bind_gallery_view(
             gr.update(visible=value in ai_options),
             gr.update(visible=value == seedvr_option),
             gr.update(
-                visible=value in ltx_options and value != LTX25_CQ_ENHANCER,
+                visible=value in ltx_options and value not in {LTX25_CQ_ENHANCER, LTX25_SDR_TO_HDR},
                 info=(
                     "Describe the source scene; focus restoration instructions are added automatically. "
                     "Preserves source resolution. Uses the model selected in the LTX 2.5 tab."
@@ -534,7 +536,7 @@ def bind_gallery_view(
             gr.update(visible=value in ltx_options),
             gr.update(visible=value in ltx_options),
             gr.update(
-                visible=value in ai_options and value not in LTX25_RESTORATION_OPTIONS
+                visible=value in ai_options and value not in LTX25_SAME_RESOLUTION_OPTIONS
             ),
         ),
         inputs=view.postprocess,

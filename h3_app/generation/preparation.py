@@ -138,6 +138,7 @@ def prepare_h3(
     effective = plan.effective
     request.output.use_trt_vae = effective.use_trt_vae
     request.output.use_int8_vae = effective.use_int8_vae
+    request.output.use_lynnreal_vae = effective.use_lynnreal_vae
     request.sampling.semantic_bridge = (
         effective.semantic_bridge and effective.semantic_bridge_alpha != 0
     )
@@ -208,6 +209,9 @@ def prepare_h3(
     if request.output.use_int8_vae:
         progress(0, desc="Preparing INT8 video VAE")
         services.models.ensure_int8_video_vae(models)
+    if request.output.use_lynnreal_vae:
+        progress(0, desc="Preparing LynnReal Light INT8 video VAE")
+        services.models.ensure_int8_video_vae(models, lynnreal=True)
     if request.output.use_trt_vae:
         progress(0, desc="Preparing TensorRT video VAE")
         services.models.ensure_trt_video_vae_engine(models, progress=progress)
@@ -253,7 +257,11 @@ def prepare_h3(
         request.output.result_format == "Image"
         and selected_image_vae != SINGLE_FRAME_IMAGE_VAE
     )
-    if needs_video_vae and not request.output.use_int8_vae and not request.output.use_trt_vae:
+    if needs_video_vae and not any((
+        request.output.use_int8_vae,
+        request.output.use_trt_vae,
+        request.output.use_lynnreal_vae,
+    )):
         video_vae_path = (
             runtime.comfy_dir
             / "models"
@@ -319,7 +327,9 @@ def prepare_h3(
         turbo_lora_name = None
         turbo_strength = 1.0
     selected_label += (
-        " · INT8 ConvRot VAE" if request.output.use_int8_vae else " · FP16 VAE"
+        " · LynnReal Light INT8 VAE" if request.output.use_lynnreal_vae
+        else " · INT8 ConvRot VAE" if request.output.use_int8_vae
+        else " · FP16 VAE"
     )
     selected_label += (
         f" · text encoder {request.sampling.text_encoder} · stage offload "

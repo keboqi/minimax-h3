@@ -782,6 +782,7 @@ def build_gallery_view(
                             choices=list(postprocess_options),
                             value=postprocess_options[0],
                             label="Method",
+                            info="SDR to HDR saves a 10-bit HLG/HEVC video; playback needs an HDR-capable player.",
                             scale=2,
                         )
                         upscale_resolution = gr.Dropdown(

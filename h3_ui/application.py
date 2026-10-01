@@ -175,6 +175,8 @@ from h3_app.catalog import (
     LTX25_DEBLUR,
     LTX25_POSTPROCESS_MODELS,
     LTX25_RESTORATION_OPTIONS,
+    LTX25_SAME_RESOLUTION_OPTIONS,
+    LTX25_SDR_TO_HDR,
     CORE_LORA_LOADER_NODE,
     CORE_SAMPLER_NODE,
     DEFAULT_ACCELERATOR,
@@ -960,8 +962,10 @@ def ensure_audio_vae(models: ModelConfig) -> bool:
     return model_service.ensure_audio_vae(models, runtime=_runtime_config())
 
 
-def ensure_int8_video_vae(models: ModelConfig) -> bool:
-    return model_service.ensure_int8_video_vae(models, runtime=_runtime_config())
+def ensure_int8_video_vae(models: ModelConfig, *, lynnreal: bool = False) -> bool:
+    return model_service.ensure_int8_video_vae(
+        models, runtime=_runtime_config(), lynnreal=lynnreal
+    )
 
 
 def ensure_trt_video_vae(
@@ -1689,6 +1693,7 @@ def build_fl2va_graph(
     model_name: str,
     models: ModelConfig,
     available_nodes: set[str],
+    use_lynnreal_vae: bool = False,
     use_int8_vae: bool = False,
     use_trt_vae: bool = False,
     use_sage: bool = False,
@@ -1759,6 +1764,7 @@ def build_fl2va_graph(
         models=models,
         available_nodes=available_nodes,
         use_int8_vae=use_int8_vae,
+        use_lynnreal_vae=use_lynnreal_vae,
         use_trt_vae=use_trt_vae,
         use_sage=use_sage,
         use_sla=use_sla,
@@ -1820,6 +1826,7 @@ def build_ref2va_graph(
     model_name: str,
     models: ModelConfig,
     available_nodes: set[str],
+    use_lynnreal_vae: bool = False,
     use_int8_vae: bool = False,
     use_trt_vae: bool = False,
     use_sage: bool = False,
@@ -1889,6 +1896,7 @@ def build_ref2va_graph(
         models=models,
         available_nodes=available_nodes,
         use_int8_vae=use_int8_vae,
+        use_lynnreal_vae=use_lynnreal_vae,
         use_trt_vae=use_trt_vae,
         use_sage=use_sage,
         use_sla=use_sla,
@@ -3160,7 +3168,7 @@ def postprocess_selected_gallery_video(
             downloaded = ensure_ltx25_upscale_models(ltx25_model, option=option)
             stage_bucket = (
                 LTX25_POSTPROCESS_MODELS[option]
-                if option in LTX25_RESTORATION_OPTIONS else "ltx25_upscale"
+                if option in LTX25_SAME_RESOLUTION_OPTIONS else "ltx25_upscale"
             )
 
         if downloaded:
@@ -3168,7 +3176,7 @@ def postprocess_selected_gallery_video(
         metadata = probe_video_metadata(source)
         target_width, target_height = (
             (metadata.width, metadata.height)
-            if option in LTX25_RESTORATION_OPTIONS
+            if option in LTX25_SAME_RESOLUTION_OPTIONS
             else upscale_target_dimensions(
                 metadata.width, metadata.height, upscale_resolution
             )
@@ -3816,6 +3824,7 @@ def generate(
     fl2va_audio_2: Any = None,
     fl2va_audio_3: Any = None,
     encoder_small_input: bool = False,
+    use_lynnreal_vae: bool = False,
     progress=gr.Progress(track_tqdm=False),
 ):
     request = generation_requests.H3Request.from_values(
@@ -3892,6 +3901,7 @@ def generate(
             "seedvr2_model": seedvr2_model,
             "ltx25_model": ltx25_model,
             "use_int8_vae": use_int8_vae,
+            "use_lynnreal_vae": use_lynnreal_vae,
             "use_trt_vae": use_trt_vae,
             "image_vae": image_vae,
             "result_format": result_format,
@@ -4175,6 +4185,7 @@ def compact_settings_summary(
     latent_split_seam_denoise: float = 0.75,
     latent_split_seam_polish: str = "off",
     use_trt_vae: bool = False,
+    use_lynnreal_vae: bool = False,
 ) -> str:
     return describe_settings(locals())
 
@@ -4270,6 +4281,7 @@ def generate_with_ui_defaults(
         encoder_small_input=defaults["encoder_small_input"],
         stage_model_offload=defaults["stage_model_offload"],
         use_int8_vae=defaults["use_int8_vae"],
+        use_lynnreal_vae=defaults["use_lynnreal_vae"],
         use_trt_vae=defaults["use_trt_vae"],
         image_vae=defaults["image_vae"],
         result_format=defaults["result_format"],

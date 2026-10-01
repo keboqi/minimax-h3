@@ -78,6 +78,7 @@ class H3OutputInputs:
     image_vae: str
     result_format: str
     image_frames: int
+    use_lynnreal_vae: bool = False
 
 
 @dataclass
@@ -120,7 +121,7 @@ class H3Request:
                 **{key: values[key] for key in H3SamplingInputs.__dataclass_fields__ if key in values}
             ),
             output=H3OutputInputs(
-                **{key: values[key] for key in H3OutputInputs.__dataclass_fields__}
+                **{key: values[key] for key in H3OutputInputs.__dataclass_fields__ if key in values}
             ),
             finishing=H3FinishingInputs(
                 **{key: values[key] for key in H3FinishingInputs.__dataclass_fields__}

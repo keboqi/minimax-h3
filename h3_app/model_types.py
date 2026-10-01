@@ -46,6 +46,8 @@ class ModelConfig:
     audio_vae: str
     text_encoders: dict[str, str] | None = None
     video_vae_int8: str | None = None
+    video_vae_lynnreal_int8: str | None = None
+    video_vae_lynnreal_int8_source: str = "unknown"
     video_vae_trt_encoder: str | None = None
     video_vae_trt_decoder: str | None = None
     video_vae_trt_source: str = "unknown"

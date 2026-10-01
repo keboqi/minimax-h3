@@ -97,16 +97,25 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(set(voice_ids) <= frame_group)
         self.assertFalse(set(ref_ids) & frame_group)
         advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
-        self.assertEqual(advanced["inputs"][-4:-1], voice_ids)
+        self.assertEqual(advanced["inputs"][-5:-2], voice_ids)
         self.assertTrue(set(ref_ids) <= set(advanced["inputs"]))
         parameters = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"]
-        for parameter in parameters[-4:-1]:
+        for parameter in parameters[-5:-2]:
             self.assertTrue(parameter["parameter_has_default"])
             self.assertIsNone(parameter["parameter_default"])
 
 
     def test_encoder_attention_toggle_is_default_off_and_bound_to_api(self):
         toggle = next(c for c in self.config["components"] if c.get("props", {}).get("label") == "Qwen small input attention")
+        self.assertFalse(toggle["props"]["value"])
+        advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
+        self.assertEqual(advanced["inputs"][-2], toggle["id"])
+        parameter = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"][-2]
+        self.assertTrue(parameter["parameter_has_default"])
+        self.assertFalse(parameter["parameter_default"])
+
+    def test_lynnreal_vae_is_default_off_and_appended_to_api(self):
+        toggle = next(c for c in self.config["components"] if c.get("props", {}).get("label") == "LynnReal Light INT8 video VAE")
         self.assertFalse(toggle["props"]["value"])
         advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
         self.assertEqual(advanced["inputs"][-1], toggle["id"])
@@ -139,6 +148,9 @@ class UiContractTests(unittest.TestCase):
                          [True, False, True, True, True, True])
         self.assertEqual([u["visible"] for u in callback(gradio_app.SEEDVR2_UPSCALE)],
                          [True, True, False, False, False, True])
+        self.assertIn(gradio_app.LTX25_SDR_TO_HDR, choices)
+        self.assertEqual([u["visible"] for u in callback(gradio_app.LTX25_SDR_TO_HDR)],
+                         [True, False, False, True, True, False])
 
     def test_gallery_defaults_to_video_and_can_switch_to_images(self) -> None:
         controls = {

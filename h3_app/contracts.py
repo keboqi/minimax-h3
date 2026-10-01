@@ -85,6 +85,7 @@ GENERATION_FIELDS = (
     "fl2va_audio_2",
     "fl2va_audio_3",
     "encoder_small_input",
+    "use_lynnreal_vae",
 )
 GENERATION_COMPONENTS = (
     "mode",
@@ -168,6 +169,7 @@ GENERATION_COMPONENTS = (
     "fl2va_audio_2",
     "fl2va_audio_3",
     "encoder_small_input",
+    "use_lynnreal_vae",
 )
 
 
@@ -183,6 +185,8 @@ class GenerationArguments:
         if len(args) == GENERATION_FIELDS.index("fl2va_audio_1"):
             args = (*args, None, None, None)
         if len(args) == GENERATION_FIELDS.index("encoder_small_input"):
+            args = (*args, False)
+        if len(args) == GENERATION_FIELDS.index("use_lynnreal_vae"):
             args = (*args, False)
         if len(args) != len(GENERATION_FIELDS):
             raise ValueError(

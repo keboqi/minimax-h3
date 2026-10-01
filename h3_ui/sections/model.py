@@ -26,6 +26,7 @@ class ModelSection:
     encoder_small_input: gr.components.Component
     trt_vae_compile: gr.components.Component
     use_int8_vae: gr.components.Component
+    use_lynnreal_vae: gr.components.Component
     use_trt_vae: gr.components.Component
 
 
@@ -135,6 +136,11 @@ def build_model_section(
                 "Comfy-Org checkpoint on first use for faster H3 video decoding."
             ),
         )
+        use_lynnreal_vae = gr.Checkbox(
+            value=defaults["use_lynnreal_vae"],
+            label="LynnReal Light INT8 video VAE",
+            info="Experimental distilled decoder. Downloads 2.14 GB on first use; may change fine detail.",
+        )
         with gr.Row():
             use_trt_vae = gr.Checkbox(
                 value=defaults["use_trt_vae"],
@@ -175,5 +181,6 @@ def build_model_section(
         encoder_small_input=encoder_small_input,
         trt_vae_compile=trt_vae_compile,
         use_int8_vae=use_int8_vae,
+        use_lynnreal_vae=use_lynnreal_vae,
         use_trt_vae=use_trt_vae,
     )

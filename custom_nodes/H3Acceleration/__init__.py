@@ -1825,7 +1825,49 @@ class H3Qwen21ViggleLora:
         return (patched,)
 
 
+class H3LTXHDRConditioning:
+    """Load fixed HDR video context with a neutral, unused AV audio context."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"file_name": (folder_paths.get_filename_list("embeddings"),)}}
+
+    RETURN_TYPES = ("CONDITIONING",)
+    FUNCTION = "load"
+    CATEGORY = "H3/LTX"
+
+    def load(self, file_name):
+        path = folder_paths.get_full_path_or_raise("embeddings", file_name)
+        state = comfy.utils.load_torch_file(path, safe_load=True)
+        video = next((state[key] for key in ("video_context", "video_prompt_embeds") if key in state), None)
+        if video is None:
+            raise ValueError("HDR scene embeddings must contain video_context or video_prompt_embeds.")
+        if video.ndim == 2:
+            video = video.unsqueeze(0)
+        if video.ndim != 3 or video.shape[-1] not in (4096, 6144):
+            raise ValueError("HDR video context must have shape [B,T,4096] or [B,T,6144].")
+        if video.shape[-1] == 4096:
+            # Native Comfy LTX-AV splits video/audio context even when the
+            # sampled latent is video-only. No audio tokens are generated.
+            audio = next((state[key] for key in ("audio_context", "audio_prompt_embeds") if key in state), None)
+            if audio is None:
+                audio = video.new_zeros((*video.shape[:-1], 2048))
+            elif audio.ndim == 2:
+                audio = audio.unsqueeze(0)
+            if audio.shape != (*video.shape[:-1], 2048):
+                raise ValueError("HDR audio context must match the video's batch/token dimensions.")
+            video = torch.cat((video, audio.to(video)), dim=-1)
+        return ([[video, {}]],)
+
+    @classmethod
+    def IS_CHANGED(cls, file_name):
+        path = folder_paths.get_full_path_or_raise("embeddings", file_name)
+        with open(path, "rb") as stream:
+            return hashlib.sha256(stream.read()).hexdigest()
+
+
 NODE_CLASS_MAPPINGS = {
+    "H3LTXHDRConditioning": H3LTXHDRConditioning,
     "H3Qwen21TurboSigmas": H3Qwen21TurboSigmas,
     "H3Qwen21ViggleLora": H3Qwen21ViggleLora,
     "H3SemanticBridge": H3SemanticBridge,

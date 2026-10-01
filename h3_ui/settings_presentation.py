@@ -148,6 +148,8 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
         if fmt == "Image"
         else "TensorRT"
         if effective.use_trt_vae
+        else "LynnReal Light INT8"
+        if effective.use_lynnreal_vae
         else "INT8 ConvRot"
         if effective.use_int8_vae
         else "FP16",

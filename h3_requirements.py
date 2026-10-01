@@ -33,11 +33,12 @@ LTX_HDR_REQUIREMENTS = ("colour-science==0.4.6", "openimageio==3.0.12.0")
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
 # ComfyUI v0.38.0 adds SeedVR2 and YuE2 optimizations and Qwen Image 2.1
 # Union ControlNet support. Keep its frontend and Kitchen versions aligned
-# with upstream requirements.
+# with upstream requirements. The pinned post-v0.38.0 revision also detects
+# the distilled LynnReal light VAE decoder depth.
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "6063fafbd9c3b85c5ff40aef435ae11b2844e558"
 
-COMFY_REF = "6b747c0428c343e1417219641db93a4fb7cb69ae"
+COMFY_REF = "986c4d154ef8c288382ac87d956b52a2b640c8b3"
 COMFY_KITCHEN_VERSION = "0.2.36"
 COMFY_FRONTEND_VERSION = "1.53.6"
 WSPROTO_VERSION = "1.2.0"
@@ -270,7 +271,7 @@ def selftest() -> None:
         "colour-science==0.4.6", "openimageio==3.0.12.0"
     )
     assert KERNELS_VERSION == "0.16.0"
-    assert COMFY_REF == "6b747c0428c343e1417219641db93a4fb7cb69ae"
+    assert COMFY_REF == "986c4d154ef8c288382ac87d956b52a2b640c8b3"
     assert COMFY_KITCHEN_VERSION == "0.2.36"
     assert COMFY_FRONTEND_VERSION == "1.53.6"
     assert WSPROTO_VERSION == "1.2.0"

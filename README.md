@@ -42,6 +42,7 @@ bundled FirstBlockCache node.
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Optional official INT8 ConvRot video VAE, lazy-downloaded on first use
+- Optional LynnReal Light INT8 video VAE, lazy-downloaded on first use
 - H.264 NVENC hardware encoding for MiniMax H3 video outputs
 - Optional 500K single-frame image decoder, lazy-downloaded only when selected;
   visual conditioning retains the official FP16 path when TensorRT decoding is selected
@@ -263,6 +264,12 @@ when their post-processing option is first used. The installer pins the official
 SwiftVR inference source; no SWIFTVR_CHECKPOINT_DIR is required unless you want
 to use an existing checkpoint directory. The official INT8 ConvRot video VAE is selected by default for Fast and
 Singularity, and downloads on first use. Balanced and Quality select FP16.
+The separate **LynnReal Light INT8 video VAE** option downloads Kijai's 2.14 GB
+distilled INT8 ConvRot decoder on first use. It is disabled by default and is
+mutually exclusive with the official INT8 and TensorRT options. Kijai reports
+about 1.3× faster decoding than the standard INT8 VAE; reconstruction and fine
+detail may differ. Re-run setup and restart ComfyUI when upgrading so the pinned
+native loader can detect its shorter decoder.
 Both local and Modal launch ComfyUI with
 `--fast fp16_accumulation` for the faster H3 VAE encoder and decoder kernels.
 The experimental **TensorRT video VAE** is disabled by default. Local and Modal
@@ -603,6 +610,18 @@ and [Deblur](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Deblur)
 repositories. Deblur targets defocus, not motion blur. Use **Split source into
 clips before LTX processing** for restoration clips that exceed available VRAM.
 
+**LTX-2.5 IC-LoRA SDR to HDR** converts an SDR gallery video into a 10-bit
+BT.2020/HLG HEVC MP4 while preserving source resolution, frame rate, and audio.
+It uses the LTX base selected in the **LTX 2.5** tab, precomputed scene embeddings
+(no prompt or runtime text encoder), ACEScct input conversion, and the full
+LTX video VAE in float32. The adapter, embeddings, and required base/VAE weights
+download on first use. Accept access to the separate gated
+[SDR-to-HDR repository](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-SDR-To-HDR)
+and authenticate with `hf auth login` or `HF_TOKEN`. HDR playback requires an
+HLG/HEVC-capable player and display. Optional split processing joins HDR streams
+without re-encoding them. This uses plain IC-LoRA conditioning; the upstream
+pipeline's optional seam-keyframe/high-quality mode and EXR export are not enabled.
+
 LTX-2.5 upscaling remains a single full-video pass by default. If a long or
 high-resolution source runs out of VRAM, enable **Split source into clips before
 LTX processing** in Gallery, or **Split source into clips before LTX upscaling**
@@ -674,8 +693,8 @@ hosted prompt enhancer available without entering a key in the UI, also store
 The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
-The deployment pins ComfyUI v0.38.0 at immutable revision
-`6b747c0428c343e1417219641db93a4fb7cb69ae` with its required
+The deployment pins ComfyUI post-v0.38.0 at immutable revision
+`986c4d154ef8c288382ac87d956b52a2b640c8b3` (native LynnReal light VAE support) with its required
 frontend package 1.53.6, Comfy Kitchen 0.2.36 and upstream aimdo 0.5.5.
 The source also pins workflow templates 0.11.70 and embedded docs 0.5.12.
 This update includes native Qwen Image 2.1 generation/editing, corrected edit
