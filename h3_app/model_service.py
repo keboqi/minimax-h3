@@ -39,6 +39,7 @@ from h3_models import (
     PROFILE_MODEL_KEYS,
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
+    QWEN_IMAGE21_TURBO_MODES,
     SEEDVR2_MODEL_CHOICES,
     TRT_VAE_ENGINE_BUILD_ID,
     TRT_VAE_ENGINE_MARKER,
@@ -936,8 +937,8 @@ def qwen_image21_model_keys(
     except KeyError as exc:
         raise H3Error(f"Unknown Qwen Image 2.1 model choice: {exc.args[0]}") from exc
     keys = (model_key, encoder_key, "qwen_image21_vae")
-    if turbo_variant == "Viggle Turbo v0.2.1 (6-step)":
-        return (*keys, "qwen_image21_viggle_v02_lora")
+    if turbo_variant in QWEN_IMAGE21_TURBO_MODES:
+        return (*keys, QWEN_IMAGE21_TURBO_MODES[turbo_variant][0])
     if turbo_variant != "Off":
         raise H3Error(f"Unknown Qwen Image 2.1 Turbo variant: {turbo_variant}")
     return keys

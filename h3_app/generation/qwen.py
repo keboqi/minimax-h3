@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterator
 
 from PIL import Image
+from h3_models import QWEN_IMAGE21_TURBO_MODES
 
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
@@ -145,9 +146,7 @@ def generate_qwen_image21(
                 "Switch the mode or remove the uploaded images."
             )
         turbo = request.turbo_variant != "Off"
-        if request.turbo_variant not in {
-            "Off", "Viggle Turbo v0.2.1 (6-step)",
-        }:
+        if request.turbo_variant != "Off" and request.turbo_variant not in QWEN_IMAGE21_TURBO_MODES:
             raise H3Error(f"Unknown Qwen Turbo variant: {request.turbo_variant}")
         reference_limit = 3 if turbo else 10
         separate_inputs = editing and bool(request.batch_edit_inputs)
@@ -180,12 +179,20 @@ def generate_qwen_image21(
         steps = int(request.steps)
         if not 1 <= steps <= 100:
             raise H3Error("Sampling steps must be between 1 and 100.")
-        viggle = request.turbo_variant == "Viggle Turbo v0.2.1 (6-step)"
-        if viggle and steps != 6:
-            raise H3Error("Viggle Turbo v0.2.1 requires exactly 6 sampling steps.")
+        viggle = request.turbo_variant in QWEN_IMAGE21_TURBO_MODES
+        nine_step = viggle and QWEN_IMAGE21_TURBO_MODES[request.turbo_variant][1] == 9
+        if viggle and steps != QWEN_IMAGE21_TURBO_MODES[request.turbo_variant][1]:
+            raise H3Error(
+                f"{request.turbo_variant} requires exactly "
+                f"{QWEN_IMAGE21_TURBO_MODES[request.turbo_variant][1]} sampling steps."
+            )
         cfg = float(request.cfg)
         if not 0 <= cfg <= 20:
             raise H3Error("CFG must be between 0 and 20.")
+        if viggle and cfg != 1.0:
+            raise H3Error("Viggle Turbo requires CFG 1.")
+        if nine_step and request.sampler_name != "euler":
+            raise H3Error("Viggle nine-step mode requires Euler sampling.")
         attention_backend = str(request.attention_backend)
         if attention_backend not in {
             "pytorch attention",
@@ -231,6 +238,7 @@ def generate_qwen_image21(
             use_spectrum=accelerator.lower() != "off",
             turbo=turbo,
             viggle=viggle,
+            nine_step=nine_step,
         ) - available
         if missing_nodes:
             raise H3Error(

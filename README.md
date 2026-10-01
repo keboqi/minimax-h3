@@ -408,6 +408,16 @@ base mode retains its existing controls and up to ten references. Viggle Turbo
 is released under the Qwen Research License for non-commercial research or
 evaluation; commercial use requires a separate licence.
 
+**Viggle Turbo v0.3 (9-step)** is an optional hybrid mode: seven Euler steps
+with the unmerged v0.3 rank-256 adapter, then two steps with the base model.
+It uses the published nine-step sigma schedule, CFG 1, and accelerator Off.
+The base phase continues the intermediate noisy latent without adding noise;
+ComfyUI resets its text/reference KV cache between the two sampling runs.
+The adapter downloads on first use; no second base checkpoint is required.
+Viggle reports finer detail and improved small text at about 1.4–1.5 times
+the six-step runtime, though results and timing depend on the request and
+hardware. The Fast, Normal, and Quality presets retain their existing settings.
+
 The **YuE2** tab uses ComfyUI's native YuE2 nodes (ComfyUI v0.36.0 or newer).
 Its INT8 ConvRot checkpoint (about 4 GB) is selected by default; the BF16
 checkpoint is an optional alternative. The selected checkpoint downloads on

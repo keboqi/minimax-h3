@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 import gradio as gr
+from h3_models import QWEN_IMAGE21_TURBO_MODES
 
 from h3_app.catalog import (
     QWEN_EDIT_SIZE_MATCH,
@@ -199,12 +200,12 @@ def build_qwen_image21_view(
                     label="Diffusion model",
                 )
                 turbo_variant = gr.Dropdown(
-                    choices=["Off", "Viggle Turbo v0.2.1 (6-step)"],
+                    choices=["Off", *QWEN_IMAGE21_TURBO_MODES],
                     value="Off",
                     label="Turbo mode",
                     info=(
-                        "Viggle v0.2.1 uses its official 6-step schedule, "
-                        "CFG 1, and accelerator Off. "
+                        "v0.2.1: 6 turbo steps. v0.3: 7 turbo steps + 2 base steps "
+                        "for finer detail. Use Euler, CFG 1, and accelerator Off. "
                         "Research and evaluation use only."
                     ),
                 )

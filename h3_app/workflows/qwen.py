@@ -14,6 +14,7 @@ from h3_models import (
     MODEL_SPECS,
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
+    QWEN_IMAGE21_TURBO_MODES,
 )
 
 
@@ -23,6 +24,7 @@ def required_qwen_image21_nodes(
     use_spectrum: bool = False,
     turbo: bool = False,
     viggle: bool = False,
+    nine_step: bool = False,
 ) -> set[str]:
     nodes = {
         "UNETLoader",
@@ -50,6 +52,8 @@ def required_qwen_image21_nodes(
             nodes.add("H3Qwen21TurboSigmas")
     if viggle:
         nodes.add("H3Qwen21ViggleLora")
+    if nine_step:
+        nodes |= {"SplitSigmas", "DisableNoise"}
     return nodes
 
 
@@ -94,10 +98,15 @@ def build_qwen_image21_graph(
         unet_name=MODEL_SPECS[model_key].local_name,
         weight_dtype="default",
     )
-    viggle = turbo_variant == "Viggle Turbo v0.2.1 (6-step)"
+    viggle = turbo_variant in QWEN_IMAGE21_TURBO_MODES
+    nine_step = viggle and QWEN_IMAGE21_TURBO_MODES[turbo_variant][1] == 9
     turbo = viggle
-    if viggle and (int(steps) != 6 or float(cfg) != 1.0):
-        raise ValueError("Viggle Turbo v0.2.1 requires 6 steps and CFG 1.")
+    if viggle:
+        lora_key, expected_steps = QWEN_IMAGE21_TURBO_MODES[turbo_variant]
+        if int(steps) != expected_steps or float(cfg) != 1.0:
+            raise ValueError(f"{turbo_variant} requires {expected_steps} steps and CFG 1.")
+        if nine_step and (sampler_name != "euler" or accelerator.lower() != "off"):
+            raise ValueError("Viggle nine-step mode requires Euler and accelerator Off.")
     if not viggle and turbo_variant != "Off":
         raise ValueError(f"Unknown Qwen Image 2.1 Turbo variant: {turbo_variant}")
     clip = graph.add(
@@ -151,11 +160,14 @@ def build_qwen_image21_graph(
             dtype=str(cache_dtype),
         )
         sampled_model = Graph.out(cached)
+    # Keep the base branch free of the runtime adapter. Separate sampling runs
+    # reset Qwen's prefix KV cache through ComfyUI's pre_run/cleanup lifecycle.
+    base_model = sampled_model
     if viggle:
         viggle_model = graph.add(
             "H3Qwen21ViggleLora",
             model=sampled_model,
-            lora_name=MODEL_SPECS["qwen_image21_viggle_v02_lora"].local_name,
+            lora_name=MODEL_SPECS[lora_key].local_name,
         )
         sampled_model = Graph.out(viggle_model)
     accelerator_key = str(accelerator).strip().lower()
@@ -186,14 +198,32 @@ def build_qwen_image21_graph(
         sigmas = graph.add(
             "H3Qwen21TurboSigmas", latent_image=latent, steps=int(steps)
         )
+        turbo_sigmas = Graph.out(sigmas)
+        if nine_step:
+            split = graph.add("SplitSigmas", sigmas=turbo_sigmas, step=7)
+            turbo_sigmas = Graph.out(split)
         sampled = graph.add(
             "SamplerCustomAdvanced",
             noise=Graph.out(noise),
             guider=Graph.out(guider),
             sampler=Graph.out(sampler),
-            sigmas=Graph.out(sigmas),
+            sigmas=turbo_sigmas,
             latent_image=latent,
         )
+        if nine_step:
+            base_guider = graph.add(
+                "CFGGuider", model=base_model,
+                positive=Graph.out(conditioning),
+                negative=Graph.out(conditioning, 1), cfg=1.0,
+            )
+            no_noise = graph.add("DisableNoise")
+            # Output 0 retains the noisy latent at the shared boundary sigma;
+            # output 1 is a denoised prediction and cannot continue this path.
+            sampled = graph.add(
+                "SamplerCustomAdvanced", noise=Graph.out(no_noise),
+                guider=Graph.out(base_guider), sampler=Graph.out(sampler),
+                sigmas=Graph.out(split, 1), latent_image=Graph.out(sampled),
+            )
     else:
         sampled = graph.add(
             "KSampler",

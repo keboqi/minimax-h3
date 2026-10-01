@@ -1685,7 +1685,7 @@ class H3SemanticBridge:
 
 
 class H3Qwen21TurboSigmas:
-    """Viggle v0.2.1 raw nodes with Qwen Image 2.1's dynamic time shift.
+    """Viggle six-step / nine-step raw nodes with Qwen 2.1's dynamic shift.
 
     Comfy's Qwen model has a fixed shift at load time; the adapter needs the
     resolution-dependent shift used by its training pipeline.
@@ -1708,11 +1708,12 @@ class H3Qwen21TurboSigmas:
         tokens = (int(samples.shape[-2]) // 2) * (int(samples.shape[-1]) // 2)
         mu = 0.5 + 0.4 * (tokens - 256) / (8192 - 256)
         count = int(steps)
-        raw = (
-            (1.0, 0.9375, 0.875, 0.75, 0.5, 0.25)
-            if count == 6
-            else tuple(1.0 - index / count for index in range(count))
-        )
+        if count == 6:
+            raw = (1.0, 0.9375, 0.875, 0.75, 0.5, 0.25)
+        elif count == 9:
+            raw = (1.0, 0.9583, 0.9167, 0.875, 0.75, 0.5, 0.25, 1 / 6, 1 / 12)
+        else:
+            raise ValueError("Viggle Turbo requires 6 or 9 steps.")
         exponent = math.exp(mu)
         shifted = [
             exponent / (exponent + (1.0 / value - 1.0))

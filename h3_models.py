@@ -548,6 +548,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "Qwen-Image-2.1-viggle-turbo-v0.2.1-6step-lora-r256.safetensors",
         "Viggle Qwen Image 2.1 Turbo v0.2.1 6-step LoRA",
     ),
+    "qwen_image21_viggle_v03_lora": ModelSpec(
+        QWEN_IMAGE21_VIGGLE_REPO,
+        "loras",
+        "Qwen-Image-2.1-viggle-turbo-v0.3-6step-lora-r256.safetensors",
+        "Viggle Qwen Image 2.1 Turbo v0.3 LoRA (9-step hybrid)",
+    ),
 }
 
 PROFILE_MODEL_KEYS = {
@@ -670,11 +676,16 @@ QWEN_IMAGE21_TEXT_ENCODER_CHOICES = {
     "BF16": "qwen_image21_text_bf16",
 }
 DEFAULT_QWEN_IMAGE21_TEXT_ENCODER = "BF16"
+QWEN_IMAGE21_TURBO_MODES = {
+    "Viggle Turbo v0.2.1 (6-step)": ("qwen_image21_viggle_v02_lora", 6),
+    "Viggle Turbo v0.3 (9-step)": ("qwen_image21_viggle_v03_lora", 9),
+}
 QWEN_IMAGE21_MODEL_KEYS = (
     *QWEN_IMAGE21_MODEL_CHOICES.values(),
     *QWEN_IMAGE21_TEXT_ENCODER_CHOICES.values(),
     "qwen_image21_vae",
     "qwen_image21_viggle_v02_lora",
+    "qwen_image21_viggle_v03_lora",
 )
 LAZY_OPTIONAL_MODEL_KEYS = (
     "semantic_bridge_v1",
@@ -1568,6 +1579,7 @@ def selftest() -> None:
         "qwen_image21_text_bf16",
         "qwen_image21_vae",
         "qwen_image21_viggle_v02_lora",
+        "qwen_image21_viggle_v03_lora",
     }
 
     cfg = _build_config("manifest.json")

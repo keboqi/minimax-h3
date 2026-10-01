@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import tempfile
+import ast
+import math
 import unittest
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from PIL import Image
 
@@ -645,6 +647,140 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             qwen_preset_values("Quality"),
             ("BF16", "Off", 40, "Spectrum (Quality)"),
         )
+
+    def test_nine_step_handoff_uses_base_model_and_preserves_noisy_output(self):
+        for references in ((), ("subject.png", "style.png")):
+            with self.subTest(references=references):
+                graph = self._build(
+                    references=references, steps=9,
+                    turbo_variant="Viggle Turbo v0.3 (9-step)",
+                )
+                lora_id, lora = self._by_type(graph, "H3Qwen21ViggleLora")[0]
+                self.assertEqual(lora["inputs"]["lora_name"],
+                                 MODEL_SPECS["qwen_image21_viggle_v03_lora"].local_name)
+                split_id, split = self._by_type(graph, "SplitSigmas")[0]
+                self.assertEqual(split["inputs"]["step"], 7)
+                sigma_id, sigma = self._by_type(graph, "H3Qwen21TurboSigmas")[0]
+                self.assertEqual(sigma["inputs"]["steps"], 9)
+                self.assertEqual(split["inputs"]["sigmas"], [sigma_id, 0])
+                (first_id, first), (tail_id, tail) = self._by_type(graph, "SamplerCustomAdvanced")
+                self.assertEqual(first["inputs"]["sigmas"], [split_id, 0])
+                self.assertEqual(tail["inputs"]["sigmas"], [split_id, 1])
+                self.assertEqual(tail["inputs"]["latent_image"], [first_id, 0])
+                self.assertEqual(tail["inputs"]["sampler"], first["inputs"]["sampler"])
+                noise_id = self._by_type(graph, "DisableNoise")[0][0]
+                self.assertEqual(tail["inputs"]["noise"], [noise_id, 0])
+                guiders = self._by_type(graph, "CFGGuider")
+                self.assertEqual(guiders[0][1]["inputs"]["model"], [lora_id, 0])
+                self.assertEqual(guiders[1][1]["inputs"]["model"], lora["inputs"]["model"])
+                self.assertEqual(guiders[1][1]["inputs"]["cfg"], 1.0)
+                self.assertEqual(self._by_type(graph, "VAEDecode")[0][1]["inputs"]["samples"],
+                                 [tail_id, 0])
+                if references:
+                    cache_id = self._by_type(graph, "QwenImage21Cache")[0][0]
+                    self.assertEqual(lora["inputs"]["model"], [cache_id, 0])
+                available = required_qwen_image21_nodes(
+                    editing=bool(references), turbo=True, viggle=True, nine_step=True,
+                )
+                self.assertTrue({node["class_type"] for node in graph.values()} <= available)
+
+    def test_nine_step_download_defaults_and_validation(self):
+        from h3_app.model_service import qwen_image21_model_keys
+        from h3_models import LAZY_OPTIONAL_MODEL_KEYS, PRELOAD_MODEL_KEYS
+
+        variant = "Viggle Turbo v0.3 (9-step)"
+        self.assertEqual(qwen_turbo_defaults(variant), (9, 1.0, "euler", "Off"))
+        keys = qwen_image21_model_keys("BF16", "BF16", variant)
+        self.assertEqual(keys[:-1], qwen_image21_model_keys("BF16", "BF16"))
+        self.assertEqual(keys[-1], "qwen_image21_viggle_v03_lora")
+        self.assertIn(keys[-1], LAZY_OPTIONAL_MODEL_KEYS)
+        self.assertNotIn(keys[-1], PRELOAD_MODEL_KEYS)
+        with self.assertRaisesRegex(ValueError, "requires 9 steps"):
+            self._build(steps=6, turbo_variant=variant)
+
+    def test_published_sigmas_and_flow_handoff_are_continuous(self):
+        # Load only the scheduler class; these tests need no ComfyUI/GPU runtime.
+        path = Path(__file__).resolve().parents[1] / "custom_nodes/H3Acceleration/__init__.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        node = next(n for n in tree.body if isinstance(n, ast.ClassDef)
+                    and n.name == "H3Qwen21TurboSigmas")
+        namespace = {"math": math, "torch": SimpleNamespace(
+            tensor=lambda values, dtype: values, float32="float32",
+        )}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
+        scheduler = namespace["H3Qwen21TurboSigmas"]()
+        for height, width in ((64, 64), (48, 64), (128, 128)):
+            latent = {"samples": SimpleNamespace(shape=(1, 64, height, width))}
+            sigmas = scheduler.calculate(latent, 9)[0]
+            raw = [1, .9583, .9167, .875, .75, .5, .25, 1 / 6, 1 / 12]
+            mu = .5 + .4 * ((height // 2) * (width // 2) - 256) / (8192 - 256)
+            expected = [math.exp(mu) / (math.exp(mu) + 1 / s - 1) for s in raw] + [0]
+            for actual, target in zip(sigmas, expected):
+                self.assertAlmostEqual(actual, target, places=14)
+            self.assertEqual(len(sigmas[:8]) - 1, 7)
+            self.assertEqual(len(sigmas[7:]) - 1, 2)
+            # Comfy flow inverse_noise_scaling at stage end and noise_scaling
+            # with zero fresh noise at the next start must cancel exactly.
+            boundary = sigmas[7]
+            noisy = 0.42
+            exported = noisy / (1 - boundary)
+            resumed = (1 - boundary) * exported
+            self.assertAlmostEqual(resumed, noisy)
+            six = scheduler.calculate(latent, 6)[0]
+            self.assertEqual(len(six), 7)
+            self.assertEqual(six[-1], 0)
+        with self.assertRaisesRegex(ValueError, "6 or 9"):
+            scheduler.calculate(latent, 8)
+
+    def test_nine_step_requests_execute_and_reject_invalid_settings_before_download(self):
+        request = QwenImage21Request(
+            mode="Text to image", model_choice="BF16", text_encoder_choice="BF16",
+            prompt="A sign reading OPEN", negative_prompt="", reference_images=(),
+            width=1024, height=1024, reference_resolution=0, match_input_size=False,
+            seed=42, steps=9, cfg=1.0, sampler_name="euler", scheduler="simple",
+            cache_device="auto", cache_dtype="default", attention_backend="pytorch attention",
+            turbo_variant="Viggle Turbo v0.3 (9-step)",
+        )
+        graphs = []
+        models = SimpleNamespace(
+            unload_prompt_rewriter=Mock(),
+            missing_qwen_image21_model_names=Mock(return_value=[]),
+            ensure_qwen_image21_models=Mock(),
+        )
+        services = SimpleNamespace(
+            models=models,
+            execution=SimpleNamespace(
+                object_info=lambda: required_qwen_image21_nodes(
+                    editing=False, turbo=True, viggle=True, nine_step=True,
+                ),
+                submit_prompt=lambda graph, client_id: (graphs.append(graph) or "job-9"),
+                poll_comfy_progress=lambda prompt_id, graph: iter(()),
+                wait_for_history=lambda prompt_id: {},
+            ),
+            media=SimpleNamespace(resolve_image_outputs=lambda *args: [Path("nine.png")]),
+        )
+        runtime = SimpleNamespace(input_dir=Path("."))
+        with patch("h3_app.generation.qwen.write_snapshot"):
+            updates = list(generate_qwen_image21(request, services, runtime))
+        self.assertEqual(updates[-1].output, ["nine.png"])
+        self.assertEqual(len(self._by_type(graphs[0], "SamplerCustomAdvanced")), 2)
+        models.ensure_qwen_image21_models.assert_called_once_with(
+            "BF16", "BF16", request.turbo_variant,
+        )
+        for settings, message in (
+            ({"steps": 6}, "exactly 9"),
+            ({"cfg": 2}, "CFG 1"),
+            ({"sampler_name": "heun"}, "Euler"),
+            ({"accelerator": "Spectrum (Quality)"}, "unavailable"),
+        ):
+            with self.subTest(settings=settings):
+                models.ensure_qwen_image21_models.reset_mock()
+                updates = list(generate_qwen_image21(
+                    replace(request, **settings), services, runtime,
+                ))
+                self.assertIn("Error:", updates[-1].status)
+                self.assertIn(message, updates[-1].status)
+                models.ensure_qwen_image21_models.assert_not_called()
 
     def test_viggle_schedule_is_fixed_and_model_download_is_optional(self):
         from h3_app.model_service import qwen_image21_model_keys

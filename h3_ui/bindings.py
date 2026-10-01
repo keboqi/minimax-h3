@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 import gradio as gr
+from h3_models import QWEN_IMAGE21_TURBO_MODES
 from h3_app.catalog import (
     LTX25_CQ_ENHANCER,
     LTX25_DEBLUR,
@@ -259,8 +260,8 @@ def qwen_preset_values(preset: str):
 
 def qwen_turbo_defaults(variant: str, preset: str = "Quality"):
     """Set Turbo defaults, preserving the selected base preset's step count."""
-    if variant == "Viggle Turbo v0.2.1 (6-step)":
-        return 6, 1.0, "euler", "Off"
+    if variant in QWEN_IMAGE21_TURBO_MODES:
+        return QWEN_IMAGE21_TURBO_MODES[variant][1], 1.0, "euler", "Off"
     steps = 25 if preset == "Normal" else 40
     return steps, 1.0, "euler", "Spectrum (Quality)"
 
