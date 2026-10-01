@@ -38,7 +38,8 @@ class SettingsTests(unittest.TestCase):
                     "use_trt_vae": True,
                 }
                 _, applied = transition_modes(None, values, "preset")
-                self.assertEqual(applied["use_int8_vae"], preset in {"Singularity", "Fast"})
+                self.assertEqual(applied["use_int8_vae"], preset in {"Balanced", "Quality"})
+                self.assertEqual(applied["use_lynnreal_vae"], preset in {"Singularity", "Fast"})
                 self.assertFalse(applied["use_trt_vae"])
 
         values = {
@@ -61,7 +62,8 @@ class SettingsTests(unittest.TestCase):
         memory, values = transition_modes(memory, values, "use_int8_vae")
         self.assertFalse(values["use_int8_vae"])
         memory, values = transition_modes(memory, values, "restore")
-        self.assertTrue(values["use_int8_vae"])
+        self.assertFalse(values["use_int8_vae"])
+        self.assertTrue(values["use_lynnreal_vae"])
         self.assertFalse(values["use_trt_vae"])
 
     def test_presets_preserve_trained_counts(self):

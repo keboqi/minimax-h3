@@ -114,14 +114,14 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(parameter["parameter_has_default"])
         self.assertFalse(parameter["parameter_default"])
 
-    def test_lynnreal_vae_is_default_off_and_appended_to_api(self):
+    def test_lynnreal_vae_is_default_on_and_appended_to_api(self):
         toggle = next(c for c in self.config["components"] if c.get("props", {}).get("label") == "LynnReal Light INT8 video VAE")
-        self.assertFalse(toggle["props"]["value"])
+        self.assertTrue(toggle["props"]["value"])
         advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
         self.assertEqual(advanced["inputs"][-1], toggle["id"])
         parameter = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"][-1]
         self.assertTrue(parameter["parameter_has_default"])
-        self.assertFalse(parameter["parameter_default"])
+        self.assertTrue(parameter["parameter_default"])
 
     def test_gallery_restoration_controls(self) -> None:
         method = next(c for c in self.config["components"]
@@ -389,19 +389,22 @@ class UiContractTests(unittest.TestCase):
             )
         )
 
-    def test_fast_and_singularity_default_to_int8_video_vae(self) -> None:
+    def test_fast_and_singularity_default_to_lynnreal_video_vae(self) -> None:
         controls = {
             c.get("props", {}).get("label"): c for c in self.config["components"]
         }
-        self.assertTrue(controls["INT8 ConvRot video VAE"]["props"]["value"])
+        self.assertFalse(controls["INT8 ConvRot video VAE"]["props"]["value"])
+        self.assertTrue(controls["LynnReal Light INT8 video VAE"]["props"]["value"])
         preset = controls["Generation preset"]
         int8 = controls["INT8 ConvRot video VAE"]
+        lynnreal = controls["LynnReal Light INT8 video VAE"]
         trt = controls["Experimental TensorRT video VAE"]
         transition = next(
             d for d in self.config["dependencies"]
             if (preset["id"], "input") in d.get("targets", [])
         )
         self.assertIn(int8["id"], transition["outputs"])
+        self.assertIn(lynnreal["id"], transition["outputs"])
         self.assertIn(trt["id"], transition["outputs"])
 
     def test_settings_transition_owns_summary_and_bypasses_gpu_queue(self) -> None:

@@ -132,14 +132,14 @@ def build_model_section(
             value=defaults["use_int8_vae"],
             label="INT8 ConvRot video VAE",
             info=(
-                "On for Fast and Singularity presets. Downloads the official "
+                "On for Balanced and Quality presets. Downloads the official "
                 "Comfy-Org checkpoint on first use for faster H3 video decoding."
             ),
         )
         use_lynnreal_vae = gr.Checkbox(
             value=defaults["use_lynnreal_vae"],
             label="LynnReal Light INT8 video VAE",
-            info="Experimental distilled decoder. Downloads 2.14 GB on first use; may change fine detail.",
+            info="On for Fast and Singularity presets. Experimental distilled decoder; downloads 2.14 GB on first use and may change fine detail.",
         )
         with gr.Row():
             use_trt_vae = gr.Checkbox(

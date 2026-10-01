@@ -262,10 +262,11 @@ Singularity pruned v1.3 INT8 checkpoint plus the Fast NVFP4/AWQ text encoder, de
 LTX-2.5 upscaler and restoration IC-LoRAs, and SwiftVR checkpoints are lazy and download only
 when their post-processing option is first used. The installer pins the official
 SwiftVR inference source; no SWIFTVR_CHECKPOINT_DIR is required unless you want
-to use an existing checkpoint directory. The official INT8 ConvRot video VAE is selected by default for Fast and
-Singularity, and downloads on first use. Balanced and Quality select FP16.
+to use an existing checkpoint directory. Fast and Singularity select LynnReal Light
+INT8 video VAE by default; Balanced and Quality select the official INT8 ConvRot
+video VAE. Both download on first use.
 The separate **LynnReal Light INT8 video VAE** option downloads Kijai's 2.14 GB
-distilled INT8 ConvRot decoder on first use. It is disabled by default and is
+distilled INT8 ConvRot decoder on first use. It is selected by Fast and Singularity and is
 mutually exclusive with the official INT8 and TensorRT options. Kijai reports
 about 1.3× faster decoding than the standard INT8 VAE; reconstruction and fine
 detail may differ. Re-run setup and restart ComfyUI when upgrading so the pinned
