@@ -204,8 +204,9 @@ def build_qwen_image21_view(
                     value="Off",
                     label="Turbo mode",
                     info=(
-                        "v0.2.1: 6 turbo steps. v0.3: 7 turbo steps + 2 base steps "
-                        "for finer detail. Use Euler, CFG 1, and accelerator Off. "
+                        "v0.2.1 and v0.3 offer 6 turbo steps. v0.3 also offers "
+                        "7 turbo steps + 2 base steps for finer detail. "
+                        "Use Euler, CFG 1, and accelerator Off. "
                         "Research and evaluation use only."
                     ),
                 )

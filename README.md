@@ -408,6 +408,11 @@ base mode retains its existing controls and up to ten references. Viggle Turbo
 is released under the Qwen Research License for non-commercial research or
 evaluation; commercial use requires a separate licence.
 
+**Viggle Turbo v0.3 (6-step)** uses the unmerged v0.3 rank-256 adapter for
+all six steps with the published six-step schedule. Compared with v0.2.1,
+Viggle reports cleaner surfaces and less grain, with slightly softer fine
+texture. It shares the adapter download with the nine-step mode.
+
 **Viggle Turbo v0.3 (9-step)** is an optional hybrid mode: seven Euler steps
 with the unmerged v0.3 rank-256 adapter, then two steps with the base model.
 It uses the published nine-step sigma schedule, CFG 1, and accelerator Off.

@@ -648,6 +648,33 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             ("BF16", "Off", 40, "Spectrum (Quality)"),
         )
 
+    def test_v03_six_step_uses_shared_adapter_without_base_tail(self):
+        from h3_app.model_service import qwen_image21_model_keys
+
+        variant = "Viggle Turbo v0.3 (6-step)"
+        self.assertEqual(qwen_turbo_defaults(variant), (6, 1.0, "euler", "Off"))
+        self.assertEqual(
+            qwen_image21_model_keys("BF16", "BF16", variant),
+            qwen_image21_model_keys("BF16", "BF16", "Viggle Turbo v0.3 (9-step)"),
+        )
+        for references in ((), ("subject.png",)):
+            with self.subTest(references=references):
+                graph = self._build(references=references, steps=6, turbo_variant=variant)
+                lora_id, lora = self._by_type(graph, "H3Qwen21ViggleLora")[0]
+                self.assertEqual(lora["inputs"]["lora_name"],
+                                 MODEL_SPECS["qwen_image21_viggle_v03_lora"].local_name)
+                self.assertEqual(len(self._by_type(graph, "SamplerCustomAdvanced")), 1)
+                self.assertFalse(self._by_type(graph, "SplitSigmas"))
+                self.assertFalse(self._by_type(graph, "DisableNoise"))
+                guider = self._by_type(graph, "CFGGuider")[0][1]
+                self.assertEqual(guider["inputs"]["model"], [lora_id, 0])
+                sigma_id, sigma = self._by_type(graph, "H3Qwen21TurboSigmas")[0]
+                self.assertEqual(sigma["inputs"]["steps"], 6)
+                sampler = self._by_type(graph, "SamplerCustomAdvanced")[0][1]
+                self.assertEqual(sampler["inputs"]["sigmas"], [sigma_id, 0])
+        with self.assertRaisesRegex(ValueError, "requires 6 steps"):
+            self._build(steps=9, turbo_variant=variant)
+
     def test_nine_step_handoff_uses_base_model_and_preserves_noisy_output(self):
         for references in ((), ("subject.png", "style.png")):
             with self.subTest(references=references):

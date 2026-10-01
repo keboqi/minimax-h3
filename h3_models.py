@@ -552,7 +552,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         QWEN_IMAGE21_VIGGLE_REPO,
         "loras",
         "Qwen-Image-2.1-viggle-turbo-v0.3-6step-lora-r256.safetensors",
-        "Viggle Qwen Image 2.1 Turbo v0.3 LoRA (9-step hybrid)",
+        "Viggle Qwen Image 2.1 Turbo v0.3 LoRA (6-step or 9-step hybrid)",
     ),
 }
 
@@ -678,6 +678,7 @@ QWEN_IMAGE21_TEXT_ENCODER_CHOICES = {
 DEFAULT_QWEN_IMAGE21_TEXT_ENCODER = "BF16"
 QWEN_IMAGE21_TURBO_MODES = {
     "Viggle Turbo v0.2.1 (6-step)": ("qwen_image21_viggle_v02_lora", 6),
+    "Viggle Turbo v0.3 (6-step)": ("qwen_image21_viggle_v03_lora", 6),
     "Viggle Turbo v0.3 (9-step)": ("qwen_image21_viggle_v03_lora", 9),
 }
 QWEN_IMAGE21_MODEL_KEYS = (
