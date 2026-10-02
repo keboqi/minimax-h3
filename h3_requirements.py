@@ -34,13 +34,14 @@ LTX_HDR_REQUIREMENTS = ("colour-science==0.4.6", "openimageio==3.0.12.0")
 # ComfyUI v0.38.0 adds SeedVR2 and YuE2 optimizations and Qwen Image 2.1
 # Union ControlNet support. Keep its frontend and Kitchen versions aligned
 # with upstream requirements. The pinned post-v0.38.0 revision also detects
-# the distilled LynnReal light VAE decoder depth.
+# the distilled LynnReal light VAE decoder depth, fixes native H3 VAE offloading,
+# and releases temporary H3 embeddings before later stages allocate memory.
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "6063fafbd9c3b85c5ff40aef435ae11b2844e558"
 
-COMFY_REF = "986c4d154ef8c288382ac87d956b52a2b640c8b3"
+COMFY_REF = "65787d668397d230bf5839d69a0a7239e2dad378"
 COMFY_KITCHEN_VERSION = "0.2.36"
-COMFY_FRONTEND_VERSION = "1.53.6"
+COMFY_FRONTEND_VERSION = "1.53.10"
 WSPROTO_VERSION = "1.2.0"
 GRADIO_VERSION = "6.27.0"
 SWIFTVR_REPO = "https://github.com/H-oliday/SwiftVR.git"
@@ -271,9 +272,9 @@ def selftest() -> None:
         "colour-science==0.4.6", "openimageio==3.0.12.0"
     )
     assert KERNELS_VERSION == "0.16.0"
-    assert COMFY_REF == "986c4d154ef8c288382ac87d956b52a2b640c8b3"
+    assert COMFY_REF == "65787d668397d230bf5839d69a0a7239e2dad378"
     assert COMFY_KITCHEN_VERSION == "0.2.36"
-    assert COMFY_FRONTEND_VERSION == "1.53.6"
+    assert COMFY_FRONTEND_VERSION == "1.53.10"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 10
     with tempfile.TemporaryDirectory() as temp:

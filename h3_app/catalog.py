@@ -224,6 +224,9 @@ QWEN_EDIT_SIZE_MAX = "Max resolution (up to 4 MP)"
 QWEN_EDIT_SIZE_MANUAL = "Use width and height above"
 
 
+QWEN_IMAGE21_DYNAMIC_SCHEDULER = "qwen_image21"
+
+
 QWEN_IMAGE21_DEFAULTS = {
     "mode": "Text to image",
     "model": DEFAULT_QWEN_IMAGE21_MODEL,
@@ -236,7 +239,7 @@ QWEN_IMAGE21_DEFAULTS = {
     "steps": 40,
     "cfg": 1.0,
     "sampler": "euler",
-    "scheduler": "simple",
+    "scheduler": QWEN_IMAGE21_DYNAMIC_SCHEDULER,
     "cache_device": "auto",
     "cache_dtype": "default",
     "attention_backend": "pytorch attention",

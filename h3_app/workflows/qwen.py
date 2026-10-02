@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from h3_app.catalog import (
+    QWEN_IMAGE21_DYNAMIC_SCHEDULER,
     QWEN_IMAGE21_SPECTRUM_EDIT_QUALITY_INPUTS,
     QWEN_IMAGE21_SPECTRUM_PREVIEW_INPUTS,
     QWEN_IMAGE21_SPECTRUM_QUALITY_INPUTS,
@@ -25,6 +26,7 @@ def required_qwen_image21_nodes(
     turbo: bool = False,
     viggle: bool = False,
     nine_step: bool = False,
+    scheduler: str = QWEN_IMAGE21_DYNAMIC_SCHEDULER,
 ) -> set[str]:
     nodes = {
         "UNETLoader",
@@ -38,10 +40,10 @@ def required_qwen_image21_nodes(
         "ModelAttentionBackend",
     }
     if editing:
-        nodes |= {"LoadImage", "QwenImage21Cache"}
+        nodes |= {"LoadImage", "JoinImageWithAlpha", "QwenImage21Cache"}
     if use_spectrum:
         nodes.add("QwenSpectrumModelPatcher")
-    if turbo:
+    if turbo or scheduler == QWEN_IMAGE21_DYNAMIC_SCHEDULER:
         nodes |= {
             "RandomNoise",
             "CFGGuider",
@@ -50,6 +52,8 @@ def required_qwen_image21_nodes(
         }
         if viggle:
             nodes.add("H3Qwen21TurboSigmas")
+        if not turbo:
+            nodes.add("H3Qwen21Sigmas")
     if viggle:
         nodes.add("H3Qwen21ViggleLora")
     if nine_step:
@@ -128,7 +132,13 @@ def build_qwen_image21_graph(
         conditioning_inputs["vae"] = Graph.out(vae)
         for index, image in enumerate(reference_images, start=1):
             loaded = graph.add("LoadImage", image=str(image))
-            conditioning_inputs[f"images.image_{index}"] = Graph.out(loaded)
+            # LoadImage separates RGB and inverse alpha. The native join node
+            # restores straight RGBA for Qwen's alpha-aware reference VAE.
+            rgba = graph.add(
+                "JoinImageWithAlpha", image=Graph.out(loaded),
+                alpha=Graph.out(loaded, 1),
+            )
+            conditioning_inputs[f"images.image_{index}"] = Graph.out(rgba)
     conditioning = graph.add("TextEncodeQwenImage21", **conditioning_inputs)
 
     if editing and bool(match_input_size):
@@ -185,7 +195,7 @@ def build_qwen_image21_graph(
         )
         sampled_model = Graph.out(spectrum)
 
-    if turbo:
+    if turbo or scheduler == QWEN_IMAGE21_DYNAMIC_SCHEDULER:
         noise = graph.add("RandomNoise", noise_seed=int(seed))
         guider = graph.add(
             "CFGGuider",
@@ -196,18 +206,19 @@ def build_qwen_image21_graph(
         )
         sampler = graph.add("KSamplerSelect", sampler_name=str(sampler_name))
         sigmas = graph.add(
-            "H3Qwen21TurboSigmas", latent_image=latent, steps=int(steps)
+            "H3Qwen21TurboSigmas" if turbo else "H3Qwen21Sigmas",
+            latent_image=latent, steps=int(steps),
         )
-        turbo_sigmas = Graph.out(sigmas)
+        sampling_sigmas = Graph.out(sigmas)
         if nine_step:
-            split = graph.add("SplitSigmas", sigmas=turbo_sigmas, step=7)
-            turbo_sigmas = Graph.out(split)
+            split = graph.add("SplitSigmas", sigmas=sampling_sigmas, step=7)
+            sampling_sigmas = Graph.out(split)
         sampled = graph.add(
             "SamplerCustomAdvanced",
             noise=Graph.out(noise),
             guider=Graph.out(guider),
             sampler=Graph.out(sampler),
-            sigmas=turbo_sigmas,
+            sigmas=sampling_sigmas,
             latent_image=latent,
         )
         if nine_step:

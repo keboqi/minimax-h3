@@ -239,6 +239,7 @@ def generate_qwen_image21(
             turbo=turbo,
             viggle=viggle,
             nine_step=nine_step,
+            scheduler=request.scheduler,
         ) - available
         if missing_nodes:
             raise H3Error(

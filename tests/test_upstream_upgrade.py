@@ -1,7 +1,8 @@
 """CPU contract tests against downloaded, pinned upstream source.
 
 Set H3_UPSTREAM_SOURCE_DIR to a directory containing minimax_trt_node.py and
-comfy-requirements.txt from the pins in h3_node_patches/h3_requirements.
+comfy-requirements.txt from the pins in h3_node_patches/h3_requirements, and
+optionally comfy-compositing.py for the native reference-alpha contract.
 The audit cache is used by default. No upstream module or GPU code is imported.
 """
 import ast
@@ -32,18 +33,22 @@ class Tensor(np.ndarray):
     def to(self, other):
         return self
 
+    def unsqueeze(self, dim):
+        return np.expand_dims(self, dim).view(Tensor)
+
 
 def tensor(value):
     return np.asarray(value, dtype=np.float32).view(Tensor)
 
 
-def extracted_class(source, name, methods):
+def extracted_class(source, name, methods, extra_namespace=None):
     original = next(n for n in ast.parse(source).body if isinstance(n, ast.ClassDef) and n.name == name)
     node = ast.ClassDef(name=name, bases=[], keywords=[], decorator_list=[],
                         body=[n for n in original.body if isinstance(n, ast.FunctionDef) and n.name in methods])
     tree = ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[]))
     namespace = {"torch": SimpleNamespace(cat=lambda arrays, dim: np.concatenate(arrays, axis=dim).view(Tensor)),
                  "math": math, "os": os, "logger": SimpleNamespace(warning=lambda *a: None)}
+    namespace.update(extra_namespace or {})
     exec(compile(tree, "<upstream contract>", "exec"), namespace)
     return namespace[name]
 
@@ -111,6 +116,33 @@ class ComfyRequirementsTests(unittest.TestCase):
         self.assertIn(f"comfyui-frontend-package=={COMFY_FRONTEND_VERSION}", lines)
         self.assertIn(f"comfy-kitchen=={COMFY_KITCHEN_VERSION}", lines)
         self.assertIn("comfy-aimdo==0.5.5", lines)
+
+
+@unittest.skipUnless((SOURCES / "comfy-compositing.py").is_file(), "pinned native alpha node not downloaded")
+class QwenReferenceAlphaContractTests(unittest.TestCase):
+    def test_native_join_restores_soft_alpha_and_leaves_opaque_rgb_opaque(self):
+        source = (SOURCES / "comfy-compositing.py").read_text(encoding="utf-8")
+        def resize_mask(mask, shape):
+            if mask.shape[1:] == shape[:2]:
+                return mask
+            # LoadImage returns a constant 64x64 zero mask for opaque inputs.
+            self.assertTrue(np.all(mask == mask.flat[0]))
+            return tensor(np.full((len(mask), *shape[:2]), mask.flat[0]))
+
+        cls = extracted_class(source, "JoinImageWithAlpha", {"execute"}, {
+            "torch": SimpleNamespace(Tensor=Tensor, cat=lambda arrays, dim: tensor(np.concatenate(arrays, axis=dim))),
+            "io": SimpleNamespace(NodeOutput=lambda value: (value,)),
+            "resize_mask": resize_mask,
+            "comfy": SimpleNamespace(utils=SimpleNamespace(repeat_to_batch_size=lambda value, size: value)),
+        })
+        rgb = tensor([[[[.2, .4, .6], [.8, .1, .3], [.4, .5, .9]]]])
+        alpha = tensor([[[0., 128 / 255, 1.]]])
+        joined = cls.execute(rgb, 1. - alpha)[0]
+        np.testing.assert_array_equal(joined[..., :3], rgb)
+        np.testing.assert_allclose(joined[..., 3], alpha, atol=1e-7, rtol=0)
+        opaque = cls.execute(rgb, tensor(np.zeros((1, 64, 64))))[0]
+        np.testing.assert_array_equal(opaque[..., :3], rgb)
+        np.testing.assert_array_equal(opaque[..., 3], np.ones((1, 1, 3)))
 
 
 if __name__ == "__main__":

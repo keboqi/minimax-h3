@@ -1684,6 +1684,55 @@ class H3SemanticBridge:
         return (result,)
 
 
+def _qwen21_target_tokens(latent_image):
+    """Count native 16x Qwen 2.1 pixels, including Comfy's empty-latent resize.
+
+    EmptyLatentImage uses an 8x grid and declares its downscale ratio. Edit
+    conditioning already returns a native 16x grid. Qwen 2.1 packs one token
+    per native latent pixel, unlike the 2x2 packing used by earlier Qwen models.
+    """
+    samples = latent_image["samples"]
+    ratio = float(latent_image.get("downscale_ratio_spacial", 16)) / 16
+    height = round(int(samples.shape[-2]) * ratio)
+    width = round(int(samples.shape[-1]) * ratio)
+    if height < 1 or width < 1:
+        raise ValueError("Qwen Image 2.1 requires a nonempty spatial latent.")
+    return height * width
+
+
+class H3Qwen21Sigmas:
+    """Official base flow schedule: dynamic resolution shift and 0.02 terminal."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "latent_image": ("LATENT",),
+            "steps": ("INT", {"default": 40, "min": 1, "max": 100}),
+        }}
+
+    RETURN_TYPES = ("SIGMAS",)
+    FUNCTION = "calculate"
+    CATEGORY = "sampling/custom_sampling/schedulers"
+
+    def calculate(self, latent_image, steps):
+        count = int(steps)
+        if not 1 <= count <= 100:
+            raise ValueError("Qwen Image 2.1 requires between 1 and 100 steps.")
+        tokens = _qwen21_target_tokens(latent_image)
+        mu = 0.5 + 0.4 * (tokens - 256) / (8192 - 256)
+        exponent = math.exp(mu)
+        shifted = [
+            exponent / (exponent + (1.0 / (1.0 - i / count) - 1.0))
+            for i in range(count)
+        ]
+        # A single step starts at full noise; the upstream terminal stretch
+        # is undefined for this degenerate schedule.
+        if count > 1:
+            scale = (1.0 - shifted[-1]) / (1.0 - 0.02)
+            shifted = [1.0 - (1.0 - value) / scale for value in shifted]
+        return (torch.tensor([*shifted, 0.0], dtype=torch.float32),)
+
+
 class H3Qwen21TurboSigmas:
     """Viggle six-step / nine-step raw nodes with Qwen 2.1's dynamic shift.
 
@@ -1703,9 +1752,7 @@ class H3Qwen21TurboSigmas:
     CATEGORY = "sampling/custom_sampling/schedulers"
 
     def calculate(self, latent_image, steps):
-        samples = latent_image["samples"]
-        # Qwen's packed image tokens are two latent pixels wide and high.
-        tokens = (int(samples.shape[-2]) // 2) * (int(samples.shape[-1]) // 2)
+        tokens = _qwen21_target_tokens(latent_image)
         mu = 0.5 + 0.4 * (tokens - 256) / (8192 - 256)
         count = int(steps)
         if count == 6:
@@ -1868,6 +1915,7 @@ class H3LTXHDRConditioning:
 
 
 NODE_CLASS_MAPPINGS = {
+    "H3Qwen21Sigmas": H3Qwen21Sigmas,
     "H3LTXHDRConditioning": H3LTXHDRConditioning,
     "H3Qwen21TurboSigmas": H3Qwen21TurboSigmas,
     "H3Qwen21ViggleLora": H3Qwen21ViggleLora,
@@ -1886,6 +1934,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "H3Qwen21Sigmas": "Qwen Image 2.1 Resolution-Aware Sigmas",
     "H3Qwen21TurboSigmas": "Qwen Image 2.1 Viggle Turbo Sigmas",
     "H3Qwen21ViggleLora": "Qwen Image 2.1 Viggle Turbo LoRA (unmerged)",
     "H3SemanticBridge": "MiniMax H3 Semantic Bridge (experimental)",

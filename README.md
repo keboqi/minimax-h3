@@ -384,7 +384,9 @@ images and their settings are saved with the other application outputs. The
 **Images per batch** control generates one to four images from the same inputs.
 Each image uses a distinct seed (successive seeds when a seed is specified),
 appears in the gallery when complete, and keeps its own settings snapshot. The
-official 40-step Euler/simple path is the default, native ~4 MP aspect-ratio
+40-step Euler path with **Qwen 2.1 (resolution-aware)** scheduling is the default.
+It follows the official dynamic shift and 0.02 terminal setting; `simple`,
+`normal`, and `beta` remain selectable. Native ~4 MP aspect-ratio
 sizes are accepted, and Comfy Kitchen INT8 attention plus Spectrum
 hidden-state forecasting are available as experimental opt-in speed settings.
 For image edits, **Edit output size** offers three exclusive choices:
@@ -392,6 +394,10 @@ For image edits, **Edit output size** offers three exclusive choices:
 **Use width and height above**. Max resolution scales the first reference
 image's aspect ratio toward 4 MP, rounds the output to multiples of 32, and
 keeps both sides within 2752 pixels.
+
+Reference PNGs retain their alpha channels through native RGBA reconstruction
+before Qwen encoding. The scheduler counts the output latent's native 16× grid
+for both editing and text-to-image; reference token counts do not affect it.
 
 The Qwen tab offers three editable presets: **Fast** selects INT8 ConvRot,
 Viggle Turbo v0.2.1, six steps, and accelerator Off; **Normal** selects BF16,
@@ -734,9 +740,10 @@ The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
 The deployment pins ComfyUI post-v0.38.0 at immutable revision
-`986c4d154ef8c288382ac87d956b52a2b640c8b3` (native LynnReal light VAE support) with its required
-frontend package 1.53.6, Comfy Kitchen 0.2.36 and upstream aimdo 0.5.5.
-The source also pins workflow templates 0.11.70 and embedded docs 0.5.12.
+`65787d668397d230bf5839d69a0a7239e2dad378` (native H3 VAE offloading and
+embedding memory fixes, including LynnReal light VAE support) with its required
+frontend package 1.53.10, Comfy Kitchen 0.2.36 and upstream aimdo 0.5.5.
+The source also pins workflow templates 0.11.74 and embedded docs 0.5.13.
 This update includes native Qwen Image 2.1 generation/editing, corrected edit
 KV-cache placement, compiled Qwen transformer blocks, sparse attention, Comfy
 Compiler, optional H3 reference VAEs and DiffSynth/ModelScope H3 LoRA support.

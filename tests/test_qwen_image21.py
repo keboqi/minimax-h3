@@ -160,7 +160,28 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             "image-1.png", "image-2.png", "image-3.png"
         ])
 
-    def _build(self, references=(), match_input_size=True, *, steps=25, turbo_variant="Off"):
+        # Exercise the new default through validation, batching and provenance.
+        from h3_app.catalog import QWEN_IMAGE21_DYNAMIC_SCHEDULER
+        graphs.clear()
+        snapshots.clear()
+        dynamic_request = replace(request, scheduler=QWEN_IMAGE21_DYNAMIC_SCHEDULER)
+        with patch("h3_app.generation.qwen.write_snapshot", side_effect=lambda path, data: snapshots.append((path, data))):
+            updates = list(generate_qwen_image21(dynamic_request, services, SimpleNamespace(input_dir=Path("."))))
+        self.assertEqual(len(graphs), 3)
+        self.assertEqual([
+            self._by_type(graph, "RandomNoise")[0][1]["inputs"]["noise_seed"] for graph in graphs
+        ], [42, 43, 44])
+        self.assertTrue(all(snapshot[1]["settings"]["scheduler"] == QWEN_IMAGE21_DYNAMIC_SCHEDULER
+                            for snapshot in snapshots))
+        self.assertEqual(len(updates[-1].output), 3)
+        graphs.clear()
+        execution.object_info = lambda: required_qwen_image21_nodes(editing=False) - {"H3Qwen21Sigmas"}
+        updates = list(generate_qwen_image21(dynamic_request, services, SimpleNamespace(input_dir=Path("."))))
+        self.assertFalse(graphs)
+        self.assertIn("H3Qwen21Sigmas", updates[-1].status)
+
+    def _build(self, references=(), match_input_size=True, *, steps=25, turbo_variant="Off",
+               scheduler="simple"):
         return build_qwen_image21_graph(
             model_choice="INT8 ConvRot (lower VRAM)",
             text_encoder_choice="INT8 ConvRot (recommended)",
@@ -175,7 +196,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             steps=steps,
             cfg=1.0,
             sampler_name="euler",
-            scheduler="simple",
+            scheduler=scheduler,
             cache_device="auto",
             cache_dtype="default",
             attention_backend="pytorch attention",
@@ -225,8 +246,11 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             graph, "TextEncodeQwenImage21"
         )[0]
         self.assertIn("vae", conditioner["inputs"])
-        self.assertEqual(conditioner["inputs"]["images.image_1"], [loads[0][0], 0])
-        self.assertEqual(conditioner["inputs"]["images.image_2"], [loads[1][0], 0])
+        joins = self._by_type(graph, "JoinImageWithAlpha")
+        self.assertEqual(len(joins), len(loads))
+        for index, ((loaded_id, _), (join_id, join)) in enumerate(zip(loads, joins), 1):
+            self.assertEqual(join["inputs"], {"image": [loaded_id, 0], "alpha": [loaded_id, 1]})
+            self.assertEqual(conditioner["inputs"][f"images.image_{index}"], [join_id, 0])
         cache_id, cache = self._by_type(graph, "QwenImage21Cache")[0]
         sampler = self._by_type(graph, "KSampler")[0][1]
         self.assertEqual(sampler["inputs"]["model"], [cache_id, 0])
@@ -242,6 +266,37 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             (latent["inputs"]["width"], latent["inputs"]["height"]),
             (1024, 768),
         )
+
+    def test_resolution_aware_base_sampling_uses_actual_output_latent(self):
+        from h3_app.catalog import QWEN_IMAGE21_DEFAULTS, QWEN_IMAGE21_DYNAMIC_SCHEDULER
+
+        self.assertEqual(QWEN_IMAGE21_DEFAULTS["scheduler"], QWEN_IMAGE21_DYNAMIC_SCHEDULER)
+        for references, match in (((), False), (("rgba.png",), True), (("rgba.png",), False)):
+            with self.subTest(references=references, match=match):
+                graph = self._build(references, match, scheduler=QWEN_IMAGE21_DYNAMIC_SCHEDULER)
+                self.assertFalse(self._by_type(graph, "KSampler"))
+                self.assertFalse(self._by_type(graph, "H3Qwen21TurboSigmas"))
+                sigma_id, sigma = self._by_type(graph, "H3Qwen21Sigmas")[0]
+                sampler_id, sampler = self._by_type(graph, "SamplerCustomAdvanced")[0]
+                expected_latent = (
+                    [self._by_type(graph, "TextEncodeQwenImage21")[0][0], 2]
+                    if references and match else [self._by_type(graph, "EmptyLatentImage")[0][0], 0]
+                )
+                self.assertEqual(sigma["inputs"], {"latent_image": expected_latent, "steps": 25})
+                self.assertEqual(sampler["inputs"]["latent_image"], expected_latent)
+                self.assertEqual(sampler["inputs"]["sigmas"], [sigma_id, 0])
+                self.assertEqual(self._by_type(graph, "VAEDecode")[0][1]["inputs"]["samples"], [sampler_id, 0])
+                guider = self._by_type(graph, "CFGGuider")[0][1]["inputs"]
+                conditioner_id = self._by_type(graph, "TextEncodeQwenImage21")[0][0]
+                self.assertEqual(guider["positive"], [conditioner_id, 0])
+                self.assertEqual(guider["negative"], [conditioner_id, 1])
+                self.assertEqual(self._by_type(graph, "RandomNoise")[0][1]["inputs"]["noise_seed"], 123)
+                self.assertTrue({n["class_type"] for n in graph.values()} <= required_qwen_image21_nodes(
+                    editing=bool(references), scheduler=QWEN_IMAGE21_DYNAMIC_SCHEDULER,
+                ))
+        legacy = required_qwen_image21_nodes(editing=False, scheduler="simple")
+        self.assertNotIn("H3Qwen21Sigmas", legacy)
+        self.assertNotIn("SamplerCustomAdvanced", legacy)
 
     def test_max_edit_resolution_stays_under_four_megapixels(self):
         self.assertEqual(max_qwen_edit_dimensions(1024, 1024), (1984, 1984))
@@ -729,18 +784,19 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         # Load only the scheduler class; these tests need no ComfyUI/GPU runtime.
         path = Path(__file__).resolve().parents[1] / "custom_nodes/H3Acceleration/__init__.py"
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        node = next(n for n in tree.body if isinstance(n, ast.ClassDef)
-                    and n.name == "H3Qwen21TurboSigmas")
+        nodes = [n for n in tree.body if isinstance(n, (ast.ClassDef, ast.FunctionDef))
+                 and n.name in {"H3Qwen21TurboSigmas", "_qwen21_target_tokens"}]
         namespace = {"math": math, "torch": SimpleNamespace(
             tensor=lambda values, dtype: values, float32="float32",
         )}
-        exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), "exec"), namespace)
         scheduler = namespace["H3Qwen21TurboSigmas"]()
-        for height, width in ((64, 64), (48, 64), (128, 128)):
+        for height, width, mu in ((64, 64, .6935483870967742),
+                                  (48, 64, .6419354838709678),
+                                  (128, 128, 1.3129032258064517)):
             latent = {"samples": SimpleNamespace(shape=(1, 64, height, width))}
             sigmas = scheduler.calculate(latent, 9)[0]
             raw = [1, .9583, .9167, .875, .75, .5, .25, 1 / 6, 1 / 12]
-            mu = .5 + .4 * ((height // 2) * (width // 2) - 256) / (8192 - 256)
             expected = [math.exp(mu) / (math.exp(mu) + 1 / s - 1) for s in raw] + [0]
             for actual, target in zip(sigmas, expected):
                 self.assertAlmostEqual(actual, target, places=14)
@@ -756,6 +812,14 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             six = scheduler.calculate(latent, 6)[0]
             self.assertEqual(len(six), 7)
             self.assertEqual(six[-1], 0)
+            expected_six = [math.exp(mu) / (math.exp(mu) + 1 / s - 1)
+                            for s in (1, .9375, .875, .75, .5, .25)] + [0]
+            for actual, target in zip(six, expected_six):
+                self.assertAlmostEqual(actual, target, places=14)
+            empty = {"samples": SimpleNamespace(shape=(1, 4, height * 2, width * 2)),
+                     "downscale_ratio_spacial": 8}
+            self.assertEqual(scheduler.calculate(empty, 9)[0], sigmas)
+            self.assertEqual(scheduler.calculate(empty, 6)[0], six)
         with self.assertRaisesRegex(ValueError, "6 or 9"):
             scheduler.calculate(latent, 8)
 

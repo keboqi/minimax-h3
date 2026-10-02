@@ -12,6 +12,7 @@ from h3_app.catalog import (
     QWEN_EDIT_SIZE_MATCH,
     QWEN_EDIT_SIZE_MAX,
     QWEN_EDIT_SIZE_MANUAL,
+    QWEN_IMAGE21_DYNAMIC_SCHEDULER,
 )
 
 from .prompt_writer_controls import build_remote_prompt_writer_controls
@@ -291,7 +292,10 @@ def build_qwen_image21_view(
                             label="Sampler",
                         )
                         scheduler = gr.Dropdown(
-                            choices=["simple", "normal", "beta"],
+                            choices=[
+                                ("Qwen 2.1 (resolution-aware)", QWEN_IMAGE21_DYNAMIC_SCHEDULER),
+                                "simple", "normal", "beta",
+                            ],
                             value=defaults["scheduler"],
                             label="Scheduler",
                         )
@@ -336,10 +340,12 @@ def build_qwen_image21_view(
                         ),
                     )
                 gr.Markdown(
-                    "Official defaults are CFG 1 and 40 Euler/simple steps. Native "
+                    "Base defaults are CFG 1 and 40 Euler steps with resolution-aware "
+                    "scheduling. Native "
                     "sizes include 2048×2048, 2400×1792, 1792×2400, 2528×1696, "
                     "1696×2528, 2752×1536, and 1536×2752. For transparent PNGs, "
-                    "ask for an RGBA image with an alpha channel and transparent background."
+                    "ask for an RGBA image with an alpha channel and transparent background. "
+                    "Reference images retain their alpha channels."
                 )
     return QwenImage21View(
         mode,
