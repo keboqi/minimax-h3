@@ -567,6 +567,15 @@ refinement pass. Compare fixed seeds to assess quality; the lower-step adapter
 is not guaranteed to improve refinement. FastH3's distilled base uses
 **Same as generation**.
 
+The experimental **PDMD / 2-step** and **PDMD / 4-step** adapters are also
+selectable under **Turbo implementation** for the generation pass. Selection
+sets 2 or 4 generation steps with the simple scheduler and Euler sampler at
+LoRA strength 1.0, using the base H3 sigma shift. Both adapters download on
+first use and share their weights across conditioning modes. Selecting PDMD
+2-step sets latent refinement to one step so it uses a low-denoise tail of
+the two-step generation schedule. The refinement LoRA remains independently
+selectable, with **Same as generation** as its default.
+
 The **High-resolution refinement method** control keeps **Full-frame
 refinement** as the normal path. Selecting **MMH3 Split Upscale
 (experimental)** feeds the learned 2x AV latent into upstream's separate

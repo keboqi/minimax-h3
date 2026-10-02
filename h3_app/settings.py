@@ -15,9 +15,14 @@ LIGHTX2V_4STEP = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
 LIGHTX2V_8STEP = "LightX2V v1.0 / 8-step 768p"
 LARRY = "Larry v4-600 EMA"
 TAOMATE_3STEP = "TaoMate-H3 / 3-step"
+PDMD_2STEP = "PDMD / 2-step"
+PDMD_4STEP = "PDMD / 4-step"
 FASTH3_8STEP_PROFILE = "FastH3 8-Step V2"
 TEXT_TO_VIDEO_MODE = "Text to video"
-TURBO_STEPS = {LIGHTX2V_4STEP: 4, LIGHTX2V_8STEP: 8, LARRY: 6, TAOMATE_3STEP: 3}
+TURBO_STEPS = {
+    LIGHTX2V_4STEP: 4, LIGHTX2V_8STEP: 8, LARRY: 6, TAOMATE_3STEP: 3,
+    PDMD_2STEP: 2, PDMD_4STEP: 4,
+}
 
 
 def is_fasth3_8step_profile(name: str) -> bool:
@@ -39,6 +44,8 @@ def apply_model_profile_constraints(values: Mapping[str, Any]) -> dict[str, Any]
 
 
 def turbo_minimum_steps(variant: str) -> int:
+    if variant == PDMD_2STEP:
+        return 2
     return 3 if variant == TAOMATE_3STEP else 4
 
 
@@ -438,6 +445,13 @@ def transition_modes(
         current.update(
             steps=TURBO_STEPS.get(current["turbo_variant"], 4), scheduler="simple"
         )
+    if (
+        mode == "Turbo"
+        and current.get("turbo_variant") == PDMD_2STEP
+        and current.get("steps") == 2
+        and action in {"turbo_variant", "generation_mode", "preset", "steps"}
+    ):
+        current["latent_upscale_refine_steps"] = 1
     current = apply_model_profile_constraints(current)
     mode = current.get("generation_mode", mode)
     modes[mode] = {

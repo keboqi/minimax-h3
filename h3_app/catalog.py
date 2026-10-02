@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from h3_app.settings import PRESETS, TAOMATE_3STEP as TAOMATE_3STEP_TURBO
+from h3_app.settings import (
+    PRESETS, TAOMATE_3STEP as TAOMATE_3STEP_TURBO,
+    PDMD_2STEP as PDMD_2STEP_LORA, PDMD_4STEP as PDMD_4STEP_LORA,
+)
 from h3_models import (
     DEFAULT_H3_LATENT_UPSCALER_MODEL,
     DEFAULT_LTX25_MODEL,
@@ -597,12 +600,11 @@ TURBO_SETTINGS = {
 
 
 SAME_REFINEMENT_LORA = "Same as generation"
-PDMD_2STEP_LORA = "PDMD / 2-step"
-PDMD_4STEP_LORA = "PDMD / 4-step"
 PDMD_REFINEMENT_SETTINGS = {
     PDMD_2STEP_LORA: TurboSpec(2, 1.0, "pdmd_2step_lora", "pdmd_2step_lora"),
     PDMD_4STEP_LORA: TurboSpec(4, 1.0, "pdmd_4step_lora", "pdmd_4step_lora"),
 }
+TURBO_SETTINGS.update(PDMD_REFINEMENT_SETTINGS)
 REFINEMENT_LORA_SETTINGS = {**TURBO_SETTINGS, **PDMD_REFINEMENT_SETTINGS}
 REFINEMENT_LORA_CHOICES = (SAME_REFINEMENT_LORA, *REFINEMENT_LORA_SETTINGS)
 

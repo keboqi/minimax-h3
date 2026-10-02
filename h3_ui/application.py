@@ -3657,6 +3657,15 @@ def backend_status() -> str:
                 f"**{profile.label}** · FL2VA `{profile.fl2va}` · "
                 f"Ref2VA `{profile.ref2va}`"
             )
+        for label, filename in (
+            ("PDMD / 2-step", models.pdmd_2step_lora),
+            ("PDMD / 4-step", models.pdmd_4step_lora),
+        ):
+            if filename:
+                profile_lines.append(
+                    f"**{label} (experimental)** | LoRA `{filename}` | "
+                    "FL2VA / Ref2VA | Euler/simple | strength 1.0 | downloads on first use"
+                )
         if models.taomate_turbo_lora:
             profile_lines.append(
                 f"**TaoMate-H3 / 3-step** | LoRA `{models.taomate_turbo_lora}` | "

@@ -57,8 +57,8 @@ def build_performance_section(
             info=(
                 "Choose the Turbo adapter. Each variant supplies its trained step count; "
                 "you can then adjust the number of steps. "
-                "TaoMate 3-step downloads on first use and uses the same adapter "
-                "for all conditioning modes."
+                "TaoMate and experimental PDMD 2-/4-step download on first use "
+                "and use the same adapter for all conditioning modes."
             ),
         )
         scheduler = gr.Radio(
