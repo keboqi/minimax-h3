@@ -596,6 +596,17 @@ TURBO_SETTINGS = {
 }
 
 
+SAME_REFINEMENT_LORA = "Same as generation"
+PDMD_2STEP_LORA = "PDMD / 2-step"
+PDMD_4STEP_LORA = "PDMD / 4-step"
+PDMD_REFINEMENT_SETTINGS = {
+    PDMD_2STEP_LORA: TurboSpec(2, 1.0, "pdmd_2step_lora", "pdmd_2step_lora"),
+    PDMD_4STEP_LORA: TurboSpec(4, 1.0, "pdmd_4step_lora", "pdmd_4step_lora"),
+}
+REFINEMENT_LORA_SETTINGS = {**TURBO_SETTINGS, **PDMD_REFINEMENT_SETTINGS}
+REFINEMENT_LORA_CHOICES = (SAME_REFINEMENT_LORA, *REFINEMENT_LORA_SETTINGS)
+
+
 SAMPLING_PRESET_TEXT_ENCODERS = {
     "Singularity": "NVFP4 / AWQ",
     "Fast": "NVFP4 / AWQ",
@@ -648,6 +659,7 @@ UI_DEFAULTS = {
     "latent_upscale": True,
     "latent_upscaler_model": DEFAULT_H3_LATENT_UPSCALER_MODEL,
     "latent_upscale_refine_steps": 2,
+    "latent_upscale_refine_lora": SAME_REFINEMENT_LORA,
     "latent_upscale_method": H3_LATENT_UPSCALE_STANDARD,
     "latent_split_tile_width": 512,
     "latent_split_tile_height": 512,

@@ -47,6 +47,8 @@ from h3_app.catalog import (
     SLA_ATTENTION_NODE,
     SOL_ATTENTION_NODE,
     SPECTRUM_DEFAULT_INPUTS,
+    PDMD_REFINEMENT_SETTINGS,
+    REFINEMENT_LORA_SETTINGS,
 )
 from h3_app.errors import H3Error
 from h3_app.graph import Graph
@@ -75,7 +77,10 @@ def turbo_required_nodes(
     lora_filename: str = "",
 ) -> set[str]:
     """Return the external node contract for one normalized Turbo variant."""
-    if normalize_turbo_variant(turbo_variant) == TAOMATE_3STEP_TURBO:
+    if (
+        turbo_variant in PDMD_REFINEMENT_SETTINGS
+        or normalize_turbo_variant(turbo_variant) == TAOMATE_3STEP_TURBO
+    ):
         return {CORE_LORA_LOADER_NODE, CORE_SAMPLER_NODE}
     if turbo_uses_custom_nodes(turbo_variant):
         return {LARRY_TURBO_LORA_NODE, LARRY_TURBO_SAMPLER_NODE}
@@ -99,7 +104,10 @@ def add_turbo_model_patch(
     available_nodes: set[str],
 ) -> list[Any]:
     """Apply a Turbo LoRA and compatible model-level optimizations."""
-    variant = normalize_turbo_variant(turbo_variant)
+    variant = (
+        turbo_variant if turbo_variant in PDMD_REFINEMENT_SETTINGS
+        else normalize_turbo_variant(turbo_variant)
+    )
     required = turbo_required_nodes(variant, lora_name)
     missing = required - available_nodes
     if missing:
@@ -109,7 +117,7 @@ def add_turbo_model_patch(
             "Re-run setup_h3.py and restart ComfyUI."
         )
 
-    if variant == TAOMATE_3STEP_TURBO:
+    if variant in PDMD_REFINEMENT_SETTINGS or variant == TAOMATE_3STEP_TURBO:
         # The ComfyUI conversion embeds alpha tensors for the standard loader.
         turbo = graph.add(
             CORE_LORA_LOADER_NODE,
@@ -489,6 +497,57 @@ def h3_refinement_attention_model(graph: Graph, model_ref: list[Any]) -> list[An
     )
 
 
+def h3_refinement_lora_model(
+    graph: Graph, model_ref: list[Any], *, lora_name: str,
+    variant: str, available_nodes: set[str],
+) -> list[Any]:
+    """Rebuild the model branch with one refinement LoRA on the same base."""
+    if variant not in REFINEMENT_LORA_SETTINGS:
+        raise H3Error(f"Unknown refinement LoRA: {variant}")
+    node = graph.nodes[model_ref[0]]
+    inputs = node["inputs"]
+    if node["class_type"] == "UNETLoader":
+        return add_turbo_model_patch(
+            graph, model_ref, lora_name=lora_name, turbo_variant=variant,
+            strength=REFINEMENT_LORA_SETTINGS[variant].strength,
+            available_nodes=available_nodes,
+        )
+    upstream = inputs.get("model")
+    if not isinstance(upstream, list) or len(upstream) != 2:
+        raise H3Error("Cannot locate the base model for the refinement LoRA.")
+    replacement = h3_refinement_lora_model(
+        graph, upstream, lora_name=lora_name, variant=variant,
+        available_nodes=available_nodes,
+    )
+    # These belong to the old LoRA. The replacement adds its own loader,
+    # modulation patch, and (below) sigma shift as appropriate.
+    if node["class_type"] in {
+        CORE_LORA_LOADER_NODE, LARRY_TURBO_LORA_NODE,
+        LIGHTX2V_BYPASS_LORA_NODE, FUSED_MODULATION_NODE, H3_SIGMA_SHIFT_NODE,
+    }:
+        return replacement
+    return Graph.out(graph.add(node["class_type"], **{**inputs, "model": replacement}), model_ref[1])
+
+
+def add_refinement_model(
+    graph: Graph, model_ref: list[Any], *, lora_name: str | None,
+    variant: str | None, available_nodes: set[str],
+) -> list[Any] | None:
+    if lora_name is None:
+        return None
+    if variant is None:
+        raise H3Error("A refinement LoRA requires its variant.")
+    model = h3_refinement_lora_model(
+        graph, model_ref, lora_name=lora_name, variant=variant,
+        available_nodes=available_nodes,
+    )
+    if lightx2v_uses_768p_schedule(variant, lora_name):
+        model = Graph.out(graph.add(
+            H3_SIGMA_SHIFT_NODE, model=model, shift_video=6.0, shift_audio=3.0,
+        ))
+    return model
+
+
 def finish_sampling(
     graph: Graph,
     *,
@@ -512,6 +571,9 @@ def finish_sampling(
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
+    refinement_lora_name: str | None = None,
+    refinement_variant: str | None = None,
+    refinement_model_ref: list[Any] | None = None,
     latent_split_config: H3SplitUpscaleConfig | None = None,
     stage_model_offload: bool = False,
     smart_stage_offload: bool = False,
@@ -550,7 +612,7 @@ def finish_sampling(
             )
     noise = graph.add("RandomNoise", noise_seed=int(seed))
     refinement_model_ref = (
-        h3_refinement_attention_model(graph, model_ref)
+        h3_refinement_attention_model(graph, refinement_model_ref or model_ref)
         if latent_upscale_model_name is not None
         else model_ref
     )
@@ -584,9 +646,25 @@ def finish_sampling(
             raise H3Error("H3 latent upscaling requires a low-resolution H3 stage.")
         refine_sigmas = graph.add(
             "SplitSigmas",
+            # Changing the adapter keeps the same low-denoise intervals so
+            # it does not turn refinement into a fresh high-noise generation.
             sigmas=Graph.out(sigmas),
             step=int(steps) - int(latent_upscale_refine_steps),
         )
+        refinement_sampler = sampler
+        if refinement_lora_name is not None:
+            refinement_sampler = (
+                graph.add(LARRY_TURBO_SAMPLER_NODE)
+                if refinement_variant not in PDMD_REFINEMENT_SETTINGS
+                and turbo_uses_custom_nodes(refinement_variant)
+                else graph.add(
+                    CORE_SAMPLER_NODE,
+                    sampler_name=(
+                        "euler" if refinement_variant in PDMD_REFINEMENT_SETTINGS
+                        else turbo_sampler_name(refinement_variant, refinement_lora_name)
+                    ),
+                )
+            )
         initial_guider = graph.add(
             "BasicGuider",
             model=model_ref,
@@ -672,7 +750,7 @@ def finish_sampling(
                 conditioning=conditioning_ref,
                 latent=combined_ref,
                 noise=Graph.out(noise),
-                sampler=Graph.out(sampler),
+                sampler=Graph.out(refinement_sampler),
                 sigmas=Graph.out(refine_sigmas, 1),
                 cfg=1.0,
                 temporal_split_param=Graph.out(temporal_params),
@@ -685,7 +763,7 @@ def finish_sampling(
                 "SamplerCustomAdvanced",
                 noise=Graph.out(noise),
                 guider=Graph.out(guider),
-                sampler=Graph.out(sampler),
+                sampler=Graph.out(refinement_sampler),
                 sigmas=Graph.out(refine_sigmas, 1),
                 latent_image=combined_ref,
             )
@@ -819,6 +897,8 @@ def build_fl2va_graph(
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
+    refinement_lora_name: str | None = None,
+    refinement_variant: str | None = None,
     latent_split_config: H3SplitUpscaleConfig | None = None,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
@@ -1044,6 +1124,14 @@ def build_fl2va_graph(
         latent_upscale_model_name=latent_upscale_model_name,
         latent_upscale_precision=latent_upscale_precision,
         latent_upscale_refine_steps=latent_upscale_refine_steps,
+        refinement_lora_name=refinement_lora_name,
+        refinement_variant=refinement_variant,
+        refinement_model_ref=(
+            add_refinement_model(
+                graph, model_ref, lora_name=refinement_lora_name,
+                variant=refinement_variant, available_nodes=available_nodes,
+            ) if latent_upscale_model_name is not None else None
+        ),
         latent_split_config=latent_split_config,
         stage_model_offload=stage_model_offload,
         smart_stage_offload=smart_stage_offload,
@@ -1098,6 +1186,8 @@ def build_ref2va_graph(
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
     latent_upscale_refine_steps: int = 2,
+    refinement_lora_name: str | None = None,
+    refinement_variant: str | None = None,
     latent_split_config: H3SplitUpscaleConfig | None = None,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
@@ -1277,6 +1367,14 @@ def build_ref2va_graph(
         latent_upscale_model_name=latent_upscale_model_name,
         latent_upscale_precision=latent_upscale_precision,
         latent_upscale_refine_steps=latent_upscale_refine_steps,
+        refinement_lora_name=refinement_lora_name,
+        refinement_variant=refinement_variant,
+        refinement_model_ref=(
+            add_refinement_model(
+                graph, model_ref, lora_name=refinement_lora_name,
+                variant=refinement_variant, available_nodes=available_nodes,
+            ) if latent_upscale_model_name is not None else None
+        ),
         latent_split_config=latent_split_config,
         stage_model_offload=stage_model_offload,
         smart_stage_offload=smart_stage_offload,

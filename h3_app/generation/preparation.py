@@ -13,6 +13,8 @@ from h3_app.catalog import (
     H3_LATENT_UPSCALE_STANDARD,
     H3_SEMANTIC_BRIDGE_NODE,
     LARRY_TURBO,
+    REFINEMENT_LORA_SETTINGS,
+    SAME_REFINEMENT_LORA,
     LTX25_UPSCALE,
     SEEDVR2_UPSCALE,
     SINGLE_FRAME_IMAGE_VAE,
@@ -46,7 +48,7 @@ from h3_app.policy import (
 from h3_app.progress import ProgressCallback
 from h3_app.settings import ResolvedSettings
 from h3_app.status import progress_status
-from h3_app.workflows.h3 import required_nodes_for
+from h3_app.workflows.h3 import required_nodes_for, turbo_required_nodes
 from h3_app.workflows.upscale import required_upscale_nodes
 from h3_models import MODEL_SPECS
 
@@ -77,6 +79,8 @@ def _validate_sampling_steps(
 
 @dataclass(frozen=True)
 class PreparedH3:
+    refinement_lora_name: str | None
+    refinement_variant: str | None
     actual_seed: int
     available: set[str]
     cache_note: str | None
@@ -350,12 +354,26 @@ def prepare_h3(
         effective_steps,
     )
 
+    refinement_lora_name = None
+    refinement_variant = None
     latent_upscale_model_name: str | None = None
     latent_upscale_precision = "bf16"
     resolved_latent_upscale_method = H3_LATENT_UPSCALE_STANDARD
     latent_split_config: H3SplitUpscaleConfig | None = None
     latent_source_width, latent_source_height = resolved_width, resolved_height
     if request.finishing.latent_upscale:
+        refine_choice = request.finishing.latent_upscale_refine_lora
+        if refine_choice != SAME_REFINEMENT_LORA:
+            if refine_choice not in REFINEMENT_LORA_SETTINGS:
+                raise H3Error(f"Unknown refinement LoRA: {refine_choice}")
+            if profile_key == FASTH3_8STEP_PROFILE_KEY:
+                raise H3Error("FastH3 uses a distilled base; select Same as generation for refinement.")
+            refinement_variant = refine_choice
+            refinement_lora_name = models.turbo_lora_for(request.media.mode, refine_choice)
+            if not refinement_lora_name:
+                raise H3Error(f"{refine_choice} refinement LoRA is not configured.")
+            progress(0, desc=f"Preparing {refine_choice} refinement LoRA")
+            services.models.ensure_turbo_lora(models, refine_choice, request.media.mode)
         resolved_latent_upscale_method = resolve_h3_latent_upscale_method(
             request.finishing.latent_upscale_method
         )
@@ -489,6 +507,8 @@ def prepare_h3(
         )
         - available
     )
+    if refinement_variant:
+        missing |= turbo_required_nodes(refinement_variant, refinement_lora_name or "") - available
     if missing:
         raise H3Error("Missing ComfyUI nodes: " + ", ".join(sorted(missing)))
 
@@ -523,6 +543,8 @@ def prepare_h3(
             )
 
     return PreparedH3(
+        refinement_lora_name=refinement_lora_name,
+        refinement_variant=refinement_variant,
         actual_seed=actual_seed,
         available=available,
         cache_note=cache_note,

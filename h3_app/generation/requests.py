@@ -102,6 +102,7 @@ class H3FinishingInputs:
     upscale_resolution: str
     seedvr2_model: str
     ltx25_model: str
+    latent_upscale_refine_lora: str = "Same as generation"
 
 
 @dataclass
@@ -124,7 +125,7 @@ class H3Request:
                 **{key: values[key] for key in H3OutputInputs.__dataclass_fields__ if key in values}
             ),
             finishing=H3FinishingInputs(
-                **{key: values[key] for key in H3FinishingInputs.__dataclass_fields__}
+                **{key: values[key] for key in H3FinishingInputs.__dataclass_fields__ if key in values}
             ),
         )
 

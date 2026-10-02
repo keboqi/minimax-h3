@@ -144,6 +144,7 @@ class H3View:
     latent_split_tile_width: gr.components.Component
     latent_upscale: gr.components.Component
     latent_upscale_method: gr.components.Component
+    latent_upscale_refine_lora: gr.components.Component
     latent_upscale_refine_steps: gr.components.Component
     latent_upscale_settings: gr.components.Component
     latent_upscaler_model: gr.components.Component
@@ -295,6 +296,7 @@ H3_COMPONENT_ORDER = (
     "latent_split_tile_width",
     "latent_upscale",
     "latent_upscale_method",
+    "latent_upscale_refine_lora",
     "latent_upscale_refine_steps",
     "latent_upscale_settings",
     "latent_upscaler_model",
@@ -560,6 +562,7 @@ def build_h3_view(
             "latent_upscale": finishing_controls.latent_upscale,
             "latent_upscale_method": finishing_controls.latent_upscale_method,
             "latent_upscale_refine_steps": finishing_controls.latent_upscale_refine_steps,
+            "latent_upscale_refine_lora": finishing_controls.latent_upscale_refine_lora,
             "latent_upscale_settings": finishing_controls.latent_upscale_settings,
             "latent_upscaler_model": finishing_controls.latent_upscaler_model,
             "lightning_api_key": prompt_section.lightning_api_key,

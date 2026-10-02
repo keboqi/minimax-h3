@@ -16,6 +16,7 @@ LABELS = {
     "sla_preset": "SLA preset",
     "scheduler": "Scheduler",
     "latent_upscale_refine_steps": "Refinement steps",
+    "latent_upscale_refine_lora": "Refinement LoRA",
     "auto_megapixels": "Start-frame cap",
     "sol_tau": "Sol tau",
     "sol_thresh_type": "Sol threshold",
@@ -94,6 +95,7 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
     )
     enhancement = (
         f"Native 2× refinement · {sampling.latent_upscale_refine_steps} refinement steps"
+        f" · LoRA {finishing.latent_upscale_refine_lora}"
         if finishing.latent_upscale
         else "Native refinement off"
     )

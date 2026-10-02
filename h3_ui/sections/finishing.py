@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
 import gradio as gr
+from h3_app.catalog import REFINEMENT_LORA_CHOICES
 
 if TYPE_CHECKING:
     from ..h3_view import H3ViewServices
@@ -32,6 +33,7 @@ class FinishingSection:
     latent_split_tile_width: gr.components.Component
     latent_upscale: gr.components.Component
     latent_upscale_method: gr.components.Component
+    latent_upscale_refine_lora: gr.components.Component
     latent_upscale_refine_steps: gr.components.Component
     latent_upscale_settings: gr.components.Component
     latent_upscaler_model: gr.components.Component
@@ -75,6 +77,17 @@ def build_finishing_section(
                     "H3 first finishes all generation steps at half resolution. "
                     "The clean 2x latent is then lightly re-noised and refined. "
                     "Two expensive high-resolution steps is the default."
+                ),
+            )
+            latent_upscale_refine_lora = gr.Dropdown(
+                choices=list(REFINEMENT_LORA_CHOICES),
+                value=defaults["latent_upscale_refine_lora"],
+                label="High-resolution refinement LoRA",
+                info=(
+                    "Same as generation preserves the generation LoRA. Choose a different "
+                    "LoRA for just the high-resolution pass; downloaded on first use. "
+                    "LoRA step labels describe training, not the number of refinement steps. "
+                    "PDMD is experimental."
                 ),
             )
             latent_upscale_method = gr.Dropdown(
@@ -257,6 +270,7 @@ def build_finishing_section(
         latent_upscale=latent_upscale,
         latent_upscale_method=latent_upscale_method,
         latent_upscale_refine_steps=latent_upscale_refine_steps,
+        latent_upscale_refine_lora=latent_upscale_refine_lora,
         latent_upscale_settings=latent_upscale_settings,
         latent_upscaler_model=latent_upscaler_model,
     )

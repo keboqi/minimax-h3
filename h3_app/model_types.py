@@ -10,6 +10,7 @@ from h3_app.catalog import (
     LTX25_WORKFLOW_COMMON_MODEL_KEYS,
     LTX25_WORKFLOWS,
     TURBO_SETTINGS,
+    REFINEMENT_LORA_SETTINGS,
 )
 from h3_app.errors import H3Error
 from h3_app.policy import normalize_turbo_variant
@@ -73,6 +74,8 @@ class ModelConfig:
     seedvr2_vae_source: str = "unknown"
     taomate_turbo_lora: str | None = None
     taomate_turbo_source: str = "unknown"
+    pdmd_2step_lora: str | None = None
+    pdmd_4step_lora: str | None = None
 
     def profile_key(self, name: str) -> str:
         key = str(name).strip().lower()
@@ -94,7 +97,10 @@ class ModelConfig:
 
     def turbo_lora_for(self, mode: str, turbo_variant: str) -> str | None:
         reference = str(mode).strip().lower() == "reference media"
-        spec = TURBO_SETTINGS[normalize_turbo_variant(turbo_variant)]
+        spec = (
+            REFINEMENT_LORA_SETTINGS.get(turbo_variant)
+            or TURBO_SETTINGS[normalize_turbo_variant(turbo_variant)]
+        )
         return getattr(self, spec.ref_lora_attr if reference else spec.lora_attr)
 
 

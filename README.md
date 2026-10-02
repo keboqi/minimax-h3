@@ -552,6 +552,21 @@ on first use. The pinned node keeps temporal chunking and 32-pixel output-grid
 alignment enabled and unloads the learned upscaler after inference before the
 high-resolution refinement pass.
 
+**High-resolution refinement LoRA** defaults to **Same as generation**, preserving
+the generation adapter (or no adapter in Normal mode). Choose an existing
+TaoMate 3-step, LightX2V 4-/8-step, or Larry 6-step adapter, or the experimental
+[PDMD 2-/4-step BF16 conversions](https://huggingface.co/Kijai/MiniMax-H3-experimental/tree/main/loras),
+to replace the adapter only for the high-resolution pass. The selected adapter
+downloads on first use and applies to both full-frame and split refinement.
+LightX2V uses its matching FL2VA/Ref2VA adapter; PDMD uses the same experimental
+adapter for both modes. The LoRA's training step label is independent of
+**High-resolution refinement steps**: the latter controls the actual pass length,
+using the tail of the generation sigma schedule to retain low-denoise refinement.
+For example, an 8-step generation can use PDMD 2-step or Larry for a two-step
+refinement pass. Compare fixed seeds to assess quality; the lower-step adapter
+is not guaranteed to improve refinement. FastH3's distilled base uses
+**Same as generation**.
+
 The **High-resolution refinement method** control keeps **Full-frame
 refinement** as the normal path. Selecting **MMH3 Split Upscale
 (experimental)** feeds the learned 2x AV latent into upstream's separate

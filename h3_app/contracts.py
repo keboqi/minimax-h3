@@ -86,6 +86,7 @@ GENERATION_FIELDS = (
     "fl2va_audio_3",
     "encoder_small_input",
     "use_lynnreal_vae",
+    "latent_upscale_refine_lora",
 )
 GENERATION_COMPONENTS = (
     "mode",
@@ -170,6 +171,7 @@ GENERATION_COMPONENTS = (
     "fl2va_audio_3",
     "encoder_small_input",
     "use_lynnreal_vae",
+    "latent_upscale_refine_lora",
 )
 
 
@@ -188,6 +190,8 @@ class GenerationArguments:
             args = (*args, False)
         if len(args) == GENERATION_FIELDS.index("use_lynnreal_vae"):
             args = (*args, False)
+        if len(args) == GENERATION_FIELDS.index("latent_upscale_refine_lora"):
+            args = (*args, "Same as generation")
         if len(args) != len(GENERATION_FIELDS):
             raise ValueError(
                 f"Expected {len(GENERATION_FIELDS)} generation inputs, received {len(args)}."

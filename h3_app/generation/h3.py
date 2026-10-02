@@ -171,6 +171,7 @@ def generate(
                 f"{prepared.latent_source_width}×{prepared.latent_source_height} → "
                 f"{prepared.resolved_width}×{prepared.resolved_height} · "
                 f"{int(request.finishing.latent_upscale_refine_steps)} low-denoise refinement steps · "
+                f"LoRA {request.finishing.latent_upscale_refine_lora} · "
                 f"{prepared.resolved_latent_upscale_method}."
             )
             if prepared.latent_split_config is not None:

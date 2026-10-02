@@ -38,6 +38,7 @@ SETTING_NAMES = tuple(
             "semantic_bridge_alpha",
             "latent_upscale",
             "latent_upscaler_model",
+            "latent_upscale_refine_lora",
             "latent_upscale_method",
             "latent_split_tile_width",
             "latent_split_tile_height",

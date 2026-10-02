@@ -97,10 +97,10 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(set(voice_ids) <= frame_group)
         self.assertFalse(set(ref_ids) & frame_group)
         advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
-        self.assertEqual(advanced["inputs"][-5:-2], voice_ids)
+        self.assertEqual(advanced["inputs"][-6:-3], voice_ids)
         self.assertTrue(set(ref_ids) <= set(advanced["inputs"]))
         parameters = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"]
-        for parameter in parameters[-5:-2]:
+        for parameter in parameters[-6:-3]:
             self.assertTrue(parameter["parameter_has_default"])
             self.assertIsNone(parameter["parameter_default"])
 
@@ -109,8 +109,8 @@ class UiContractTests(unittest.TestCase):
         toggle = next(c for c in self.config["components"] if c.get("props", {}).get("label") == "Qwen small input attention")
         self.assertFalse(toggle["props"]["value"])
         advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
-        self.assertEqual(advanced["inputs"][-2], toggle["id"])
-        parameter = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"][-2]
+        self.assertEqual(advanced["inputs"][-3], toggle["id"])
+        parameter = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"][-3]
         self.assertTrue(parameter["parameter_has_default"])
         self.assertFalse(parameter["parameter_default"])
 
@@ -118,10 +118,22 @@ class UiContractTests(unittest.TestCase):
         toggle = next(c for c in self.config["components"] if c.get("props", {}).get("label") == "LynnReal Light INT8 video VAE")
         self.assertTrue(toggle["props"]["value"])
         advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
-        self.assertEqual(advanced["inputs"][-1], toggle["id"])
-        parameter = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"][-1]
+        self.assertEqual(advanced["inputs"][-2], toggle["id"])
+        parameter = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"][-2]
         self.assertTrue(parameter["parameter_has_default"])
         self.assertTrue(parameter["parameter_default"])
+
+    def test_refinement_lora_defaults_to_same_and_is_appended_to_api(self):
+        from h3_app.catalog import REFINEMENT_LORA_CHOICES, SAME_REFINEMENT_LORA
+        control = next(c for c in self.config["components"]
+                       if c.get("props", {}).get("label") == "High-resolution refinement LoRA")
+        self.assertEqual(control["props"]["value"], SAME_REFINEMENT_LORA)
+        self.assertEqual([c[0] for c in control["props"]["choices"]], list(REFINEMENT_LORA_CHOICES))
+        advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
+        self.assertEqual(advanced["inputs"][-1], control["id"])
+        parameter = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"][-1]
+        self.assertTrue(parameter["parameter_has_default"])
+        self.assertEqual(parameter["parameter_default"], SAME_REFINEMENT_LORA)
 
     def test_gallery_restoration_controls(self) -> None:
         method = next(c for c in self.config["components"]

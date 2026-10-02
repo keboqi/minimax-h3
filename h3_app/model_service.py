@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from h3_app.catalog import (
     LARRY_TURBO,
+    PDMD_REFINEMENT_SETTINGS,
     TAOMATE_3STEP_TURBO,
     LIGHTX2V_8STEP_TURBO,
     LIGHTX2V_4STEP_TURBO,
@@ -114,6 +115,12 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
         video_vae_int8_source=data.get("video_vae_int8_source", "unknown"),
         image_vae_500k=data.get("image_vae_500k"),
         image_vae_500k_source=data.get("image_vae_500k_source", "unknown"),
+        pdmd_2step_lora=data.get(
+            "pdmd_2step_lora", MODEL_SPECS["pdmd_2step_lora"].local_name
+        ),
+        pdmd_4step_lora=data.get(
+            "pdmd_4step_lora", MODEL_SPECS["pdmd_4step_lora"].local_name
+        ),
         taomate_turbo_lora=data.get(
             "taomate_turbo_lora", MODEL_SPECS["taomate_turbo_lora"].local_name
         ),
@@ -409,9 +416,15 @@ def ensure_turbo_lora(
     models: ModelConfig, turbo_variant: str, mode: str, *, runtime: RuntimeConfig
 ) -> bool:
     """Download a non-default Turbo LoRA only when its variant is selected."""
-    variant = normalize_turbo_variant(turbo_variant)
+    variant = (
+        turbo_variant if turbo_variant in PDMD_REFINEMENT_SETTINGS
+        else normalize_turbo_variant(turbo_variant)
+    )
     reference = str(mode).strip().lower() == "reference media"
-    if variant == TAOMATE_3STEP_TURBO:
+    if variant in PDMD_REFINEMENT_SETTINGS:
+        model_key = PDMD_REFINEMENT_SETTINGS[variant].lora_attr
+        filename = getattr(models, model_key)
+    elif variant == TAOMATE_3STEP_TURBO:
         model_key = "taomate_turbo_lora"
         filename = models.taomate_turbo_lora
     elif variant == LARRY_TURBO:

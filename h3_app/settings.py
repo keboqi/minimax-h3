@@ -112,6 +112,7 @@ class OutputSettings:
 class FinishingSettings:
     latent_upscale: bool = True
     postprocess: str = "None"
+    latent_upscale_refine_lora: str = "Same as generation"
 
 
 @dataclass(frozen=True)
@@ -269,8 +270,10 @@ def resolve_settings(
             "Native refinement uses two samplers; acceleration cannot share cache state across them.",
         )
     if not finishing.latent_upscale:
-        inactive.add("latent_upscale_refine_steps")
+        inactive.update({"latent_upscale_refine_steps", "latent_upscale_refine_lora"})
     if fasth3_8step:
+        if finishing.latent_upscale and finishing.latent_upscale_refine_lora != "Same as generation":
+            issues.append("FastH3 uses a distilled base; select Same as generation for refinement.")
         if request.mode != TEXT_TO_VIDEO_MODE:
             issues.append("FastH3 8-Step V2 supports Text to video only.")
         generation_mode = adjusted(
