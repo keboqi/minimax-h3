@@ -42,7 +42,9 @@ class PromptSection:
 def build_prompt_section(
     defaults: Mapping[str, Any], services: H3ViewServices
 ) -> PromptSection:
-    help_text = gr.Markdown(services.mode_help("Text to video"))
+    help_text = gr.Markdown(
+        services.mode_help("Text to video"), visible=not workspace_enabled()
+    )
     prompt = gr.Textbox(
         label="Prompt",
         lines=5 if workspace_enabled() else 12,

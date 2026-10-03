@@ -111,8 +111,17 @@ def run():
                     str(first)
                 )
                 expect(page.locator(".h3-setup-card")).to_contain_text("768×1152")
-                expect(h3.get_by_label("Aspect ratio", exact=True)).to_be_disabled()
-                expect(h3.get_by_label("Size", exact=True)).to_be_disabled()
+                page.locator("#h3-output-settings").get_by_text(
+                    "Output & recipe", exact=True
+                ).click()
+                output_settings = page.locator("#h3-output-settings")
+                expect(
+                    output_settings.get_by_label("Aspect ratio", exact=True)
+                ).to_be_disabled()
+                expect(
+                    output_settings.get_by_label("Size", exact=True)
+                ).to_be_disabled()
+                output_settings.get_by_text("Output & recipe", exact=True).click()
                 page.locator(".h3-task-picker").get_by_label(
                     "Video", exact=True
                 ).check()
@@ -132,19 +141,57 @@ def run():
                     "replaced: confirm before using this tag"
                 )
                 h3.get_by_label("Text to video", exact=True).check()
-                expect(page.locator('#h3-engine-tabs [role="tablist"]')).to_be_hidden()
+                expect(
+                    h3.get_by_text("Model & generation (advanced)", exact=True)
+                ).to_have_count(0)
+                expect(h3.get_by_label("Seconds", exact=True)).to_have_count(0)
+                page.locator("#h3-advanced-settings").get_by_text(
+                    "Advanced settings", exact=True
+                ).click()
+                expect(
+                    page.locator("#h3-advanced-settings").get_by_text(
+                        "Base model", exact=True
+                    )
+                ).to_be_visible()
+                page.locator("#h3-advanced-settings").get_by_role(
+                    "tab", name="Sampling & performance", exact=True
+                ).click()
+                expect(
+                    page.locator("#h3-advanced-settings").get_by_text(
+                        "Attention", exact=True
+                    )
+                ).to_be_visible()
+                page.locator("#h3-advanced-settings").get_by_text(
+                    "Advanced settings", exact=True
+                ).click()
+                expect(
+                    page.locator('#h3-engine-tabs > div > [role="tablist"]')
+                ).to_be_hidden()
                 (ARTIFACTS / "engine-dom.html").write_text(
                     page.locator("#h3-engine-tabs").evaluate("(el)=>el.outerHTML"),
                     encoding="utf-8",
                 )
                 for width in (390, 768, 1280, 1440):
                     page.set_viewport_size({"width": width, "height": 1000})
+                    page.evaluate("window.scrollTo(0, 0)")
                     page.screenshot(
                         path=str(ARTIFACTS / f"h3-{width}.png"), full_page=True
                     )
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= innerWidth + 2"
                     ), f"Horizontal overflow at {width}"
+                    if width >= 1280:
+                        assert (
+                            h3.get_by_label("Prompt", exact=True).bounding_box()["y"]
+                            < 500
+                        )
+                        assert (
+                            abs(
+                                h3.bounding_box()["y"]
+                                - page.locator("#h3-preview").bounding_box()["y"]
+                            )
+                            < 8
+                        )
                 prompt = h3.get_by_label("Prompt", exact=True)
                 generate = h3.get_by_role("button", name="Generate video", exact=True)
                 prompt.focus()

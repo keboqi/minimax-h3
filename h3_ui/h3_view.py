@@ -391,8 +391,10 @@ def build_h3_view(
     generation_view: gr.Row,
     defaults: Mapping[str, Any],
     services: H3ViewServices,
+    *,
+    advanced_root=None,
+    output_root=None,
 ) -> H3View:
-    builder = _build_workspace_h3 if workspace_enabled() else _build_legacy_h3
     (
         model_section,
         prompt_section,
@@ -406,7 +408,17 @@ def build_h3_view(
         performance_controls,
         finishing_controls,
         finishing_section,
-    ) = builder(generation_view, defaults, services)
+    ) = (
+        _build_workspace_h3(
+            generation_view,
+            defaults,
+            services,
+            advanced_root=advanced_root,
+            output_root=output_root,
+        )
+        if workspace_enabled()
+        else _build_legacy_h3(generation_view, defaults, services)
+    )
 
     return H3View(
         **{
@@ -701,35 +713,46 @@ def _build_legacy_h3(generation_view, defaults, services):
     )
 
 
-def _build_workspace_h3(generation_view, defaults, services):
+def _build_workspace_h3(
+    generation_view, defaults, services, *, advanced_root=None, output_root=None
+):
+    # Keep expert controls outside the composition/result row.
+    if advanced_root is None:
+        raise ValueError("Workspace composition requires an advanced settings root.")
+    if output_root is None:
+        raise ValueError("Workspace composition requires an output settings root.")
+    with advanced_root:
+        with gr.Tabs():
+            with gr.Tab("Model & memory"):
+                model_root = gr.Group()
+            with gr.Tab("Sampling & performance"):
+                performance_section = gr.Group()
+            with gr.Tab("Upscaling & finishing"):
+                finishing_section = gr.Group()
+            with gr.Tab("Input images"):
+                input_root = gr.Group()
     with generation_view:
         with gr.Column(
-            scale=7,
+            scale=6,
             min_width=320,
             elem_id="h3-composer",
             elem_classes=["h3-composer", "h3-run-panel"],
         ):
             gr.Markdown("### Compose")
-            model_section = build_model_section(defaults, services)
-            prompt_section = build_prompt_section(defaults, services)
-            references_section = build_references_section(defaults, services)
-            preset = gr.Radio(
-                ["Singularity", "Quality", "Balanced", "Fast"],
-                value="Singularity",
-                label="Recipe",
-                interactive=True,
-                info="Applies generation defaults. Keeps your prompt, media and output size.",
+            model_section = build_model_section(
+                defaults, services, advanced_parent=model_root
             )
-            with gr.Accordion("Changes these settings", open=False):
-                gr.Markdown(
-                    "Recipes change sampling, text encoding, memory, attention, refinement and decoding. "
-                    "Singularity also selects its checkpoint; other recipes keep the selected checkpoint. "
-                    "Prompt, media and output intent are preserved. Explicit edits appear in the next-run summary."
-                )
-            restore_preset = gr.Button("Restore preset settings", size="sm")
-            output_settings_section = gr.Group(elem_classes=["h3-essentials"])
-            output_section = build_output_section(
-                defaults, services, output_settings_section
+            references_section = build_references_section(defaults, services)
+            prompt_section = build_prompt_section(defaults, services)
+            action_root = gr.Group()
+        with gr.Column(
+            scale=6,
+            min_width=320,
+            elem_id="h3-preview",
+            elem_classes=["h3-preview-panel"],
+        ):
+            results_section = build_results_section(
+                defaults, services, action_root=action_root
             )
             settings_overview = gr.HTML(
                 services.compact_settings_summary(
@@ -775,29 +798,31 @@ def _build_workspace_h3(generation_view, defaults, services):
                 ),
                 elem_classes=["h3-settings-summary"],
             )
-            action_root = gr.Group()
-            performance_section = gr.Accordion(
-                "Performance & sampling (advanced)", open=False
+    with output_root:
+        preset = gr.Radio(
+            ["Singularity", "Quality", "Balanced", "Fast"],
+            value="Singularity",
+            label="Recipe",
+            interactive=True,
+            info="Applies generation defaults. Keeps your prompt, media and output size.",
+        )
+        with gr.Accordion("Changes these settings", open=False):
+            gr.Markdown(
+                "Recipes change sampling, text encoding, memory, attention, refinement and decoding. "
+                "Singularity also selects its checkpoint; other recipes keep the selected checkpoint. "
+                "Prompt, media and output intent are preserved. Explicit edits appear in the next-run summary."
             )
-            finishing_section = gr.Accordion(
-                "Upscaling & finishing (advanced)", open=False
-            )
-            performance_controls = build_performance_section(
-                defaults, services, performance_section
-            )
-            finishing_controls = build_finishing_section(
-                defaults, services, finishing_section
-            )
-            input_upscale_section = build_input_upscale_section(defaults, services)
-        with gr.Column(
-            scale=5,
-            min_width=320,
-            elem_id="h3-preview",
-            elem_classes=["h3-preview-panel"],
-        ):
-            results_section = build_results_section(
-                defaults, services, action_root=action_root
-            )
+        restore_preset = gr.Button("Restore preset settings", size="sm")
+        output_settings_section = gr.Group(elem_classes=["h3-essentials"])
+        output_section = build_output_section(
+            defaults, services, output_settings_section
+        )
+    performance_controls = build_performance_section(
+        defaults, services, performance_section
+    )
+    finishing_controls = build_finishing_section(defaults, services, finishing_section)
+    with input_root:
+        input_upscale_section = build_input_upscale_section(defaults, services)
     return (
         model_section,
         prompt_section,

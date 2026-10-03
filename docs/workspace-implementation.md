@@ -33,7 +33,7 @@ to these sidecars. Existing filenames, records and legacy APIs remain usable.
 | Area | Behavior |
 |---|---|
 | Shell | Create, Media, Jobs, System and API/workflows; task-filtered engine choices and remembered per-task engine selection |
-| H3 composer | Separate result preview; collapsed expert controls; output essentials; recipe changes/reset; exclusive decoder selection; mobile Compose/Preview links |
+| H3 composer | Compact header; inputs, prompt and generation actions on the left; result preview and next-run summary on the right; full-width collapsed Output/recipe and tabbed Advanced settings below; mobile Compose/Preview links |
 | Canvas | Aspect/size presets reuse existing resolution policy; exact dimensions remain available; conditioned Image output keeps the first frame's aligned native size |
 | References | Stable slot bindings, visible tag insertion, sparse-to-dense translation shared by enhancement and generation, explicit repair after replacement/removal, bounded local metadata inspection |
 | Prompt writers | Preview, Accept, Keep and Undo across H3, LTX, Qwen, Music and YuE2; late suggestions reject changes to the draft or conditioning context |
@@ -107,6 +107,9 @@ cover input-derived Image canvas locking and sparse reference replacement/repair
 Evidence is generated under `.cache/ui-redesign/`: `final-tests.log`,
 `default-workspace-tests.log`, baseline
 screenshots, workspace screenshots, `workspace/results.json`, and server logs.
+The compact layout checks additionally produce `compact-layout-tests.log` and
+`compact-workspace-final.log`; they verify that expert controls live outside the
+composer and that the desktop prompt is reached without the previous blank gap.
 These local artifacts are ignored by Git. Browser timing includes Playwright
 round trips and server updates; it is not an inference or production benchmark.
 The latest synthetic run became ready in approximately 1.74 seconds. Ten

@@ -8,6 +8,7 @@ the large set of generation callbacks.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import nullcontext
 from typing import Callable
 
 import gradio as gr
@@ -33,6 +34,8 @@ class AppViews:
     engine_tabs: gr.Tabs | None = None
     engine_help: gr.Markdown | None = None
     jobs_count: gr.HTML | None = None
+    generation_settings: gr.Accordion | None = None
+    generation_output_settings: gr.Accordion | None = None
 
 
 @dataclass(frozen=True)
@@ -42,11 +45,11 @@ class NavigationBindings:
     outputs: tuple
 
 
-def create_app_views() -> AppViews:
+def create_app_views(*, summary_root=None) -> AppViews:
     """Create the application navigation and empty tab-owned view roots."""
 
     if workspace_enabled():
-        return create_workspace_views()
+        return create_workspace_views(summary_root=summary_root)
     tabs = gr.Tabs(elem_id="h3-main-tabs")
     with tabs:
         with gr.Tab("MiniMax H3"):
@@ -76,10 +79,12 @@ def create_app_views() -> AppViews:
     )
 
 
-def create_workspace_views() -> AppViews:
-    jobs_count = gr.HTML(
-        '<p class="h3-system-status" role="status">No active jobs in this session.</p>'
-    )
+def create_workspace_views(*, summary_root=None) -> AppViews:
+    with summary_root if summary_root is not None else nullcontext():
+        jobs_count = gr.HTML(
+            '<p class="h3-system-status" role="status">No active jobs in this session.</p>',
+            elem_classes=["h3-jobs-summary"],
+        )
     tabs = gr.Tabs(elem_id="h3-main-tabs", selected="create")
     with tabs:
         with gr.Tab("Create", id="create"):
@@ -99,9 +104,16 @@ def create_workspace_views() -> AppViews:
                 with gr.Tab("MiniMax H3", id="h3"):
                     gr.HTML(
                         '<nav class="h3-mobile-nav" aria-label="Workspace sections">'
-                        '<a href="#h3-composer">Compose</a><a href="#h3-preview">Preview</a></nav>'
+                        '<a href="#h3-composer">Compose</a><a href="#h3-preview">Preview</a></nav>',
+                        elem_classes=["h3-mobile-nav-container"],
                     )
                     generation = gr.Row(elem_classes=["h3-generator-shell"])
+                    generation_output_settings = gr.Accordion(
+                        "Output & recipe", open=False, elem_id="h3-output-settings"
+                    )
+                    generation_settings = gr.Accordion(
+                        "Advanced settings", open=False, elem_id="h3-advanced-settings"
+                    )
                 with gr.Tab("LTX 2.5", id="ltx"):
                     ltx25 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Qwen Image 2.1", id="qwen"):
@@ -135,6 +147,8 @@ def create_workspace_views() -> AppViews:
         engine_tabs,
         engine_help,
         jobs_count,
+        generation_settings,
+        generation_output_settings,
     )
 
 

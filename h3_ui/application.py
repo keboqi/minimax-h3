@@ -4558,6 +4558,8 @@ For every control exposed by the MiniMax H3 tab, including **Image** and **Audio
 
 def compact_backend_status(detail: str) -> str:
     """Render a calm, glanceable status while retaining diagnostics separately."""
+    if workspace_enabled() and detail.startswith("Connected"):
+        detail = "Connected · ComfyUI"
     return backend_status_html(detail)
 
 

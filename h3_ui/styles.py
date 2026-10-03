@@ -310,6 +310,7 @@ H3_SETUP_CSS = """
 # mounted with the workspace flag; the stale H3_UI_CSS remains inactive.
 H3_WORKSPACE_CSS = """
 .h3-workspace {
+  --layout-gap: 10px;
   --body-text-color-subdued: #475569;
   --input-placeholder-color: #64748b;
   --h3-surface: var(--block-background-fill, #ffffff);
@@ -329,19 +330,23 @@ H3_WORKSPACE_CSS = """
   --body-text-color-subdued: #cbd5e1;
   --input-placeholder-color: #94a3b8;
 }
-.h3-workspace .h3-hero { padding: 8px 0 16px; }
+.h3-workspace .h3-hero { padding: 0; }
 .h3-workspace .h3-hero h1 { font-size: 26px; letter-spacing: -.02em; margin: 0 0 8px; }
 .h3-workspace .h3-hero p { color: var(--h3-muted); margin: 0; }
+.h3-workspace .h3-workspace-header { align-items: center; gap: 16px; }
+.h3-workspace .h3-header-status { gap: 0; min-width: 280px; }
+.h3-workspace .h3-header-status :is(.h3-system-ready, .h3-system-warning, .h3-system-status) { padding: 0; margin: 0; }
+.h3-workspace .h3-mobile-nav-container { display: none; }
 .h3-workspace .h3-task-picker { padding: 12px; background: var(--h3-muted-surface); border-radius: 12px; }
-.h3-workspace #h3-engine-tabs [role="tablist"] { display: none; }
-.h3-workspace #h3-engine-tabs button[aria-label="More tabs"] { display: none; }
-.h3-workspace .h3-generator-shell { gap: 24px; align-items: flex-start; }
+.h3-workspace #h3-engine-tabs > div:has(> [role="tablist"]) { display: none; }
+.h3-workspace .h3-generator-shell { gap: 16px; align-items: flex-start; }
 .h3-workspace .h3-composer, .h3-workspace .h3-preview-panel { min-width: 0; }
-.h3-workspace .h3-preview-panel { border: 1px solid var(--h3-border); border-radius: 12px; padding: 16px; background: var(--h3-surface); }
+.h3-workspace .h3-preview-panel { border: 1px solid var(--h3-border); border-radius: 12px; padding: 12px; background: var(--h3-surface); }
 .h3-workspace .h3-essentials { border: 1px solid var(--h3-border); border-radius: 12px; padding: 12px; background: var(--h3-surface); }
 .h3-workspace .h3-action-dock { padding: 12px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-surface); }
 .h3-workspace .h3-action-dock .h3-status { margin-top: 8px; }
-.h3-workspace .h3-section-intro { padding: 0 0 12px; }
+.h3-workspace .h3-section-intro { padding: 0; }
+.h3-workspace .h3-section-intro :is(h3, p) { margin: 0 0 6px; }
 .h3-workspace .h3-section-intro p { color: var(--h3-muted); }
 .h3-workspace .h3-system-status { display: flex; gap: 8px; align-items: center; }
 .h3-workspace :is(.h3-system-ready, .h3-system-warning) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding: 8px 0; }
@@ -365,6 +370,8 @@ H3_WORKSPACE_CSS = """
   .h3-workspace .h3-composer, .h3-workspace .h3-preview-panel { width: 100%; }
 }
 @media (max-width: 767px) {
+  .h3-workspace .h3-workspace-header { flex-direction: column; gap: 0; align-items: stretch; }
+  .h3-workspace .h3-mobile-nav-container { display: block; }
   .h3-workspace .h3-mobile-nav { display: flex; gap: 8px; }
   .h3-workspace .h3-mode-row { flex-direction: column; }
   .h3-workspace .h3-task-picker { padding: 8px; }

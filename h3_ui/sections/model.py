@@ -35,7 +35,7 @@ class ModelSection:
 
 
 def build_model_section(
-    defaults: Mapping[str, Any], services: H3ViewServices
+    defaults: Mapping[str, Any], services: H3ViewServices, *, advanced_parent=None
 ) -> ModelSection:
     workspace = workspace_enabled()
     with gr.Row(elem_classes=["h3-mode-row"]):
@@ -51,8 +51,8 @@ def build_model_section(
             info="H3 always samples vision and audio; this selects what is decoded and shown.",
             visible=not workspace,
         )
-    with (
-        gr.Accordion("Model & generation (advanced)", open=False)
+    with advanced_parent if advanced_parent is not None else nullcontext(), (
+        gr.Accordion("Model & generation (advanced)", open=advanced_parent is not None)
         if workspace
         else nullcontext()
     ), gr.Row():
@@ -79,9 +79,11 @@ def build_model_section(
                 "LightX2V uses the matching reference adapter; Larry reference mode is experimental."
             ),
         )
-    with gr.Accordion(
+    with (
+        advanced_parent if advanced_parent is not None else nullcontext()
+    ), gr.Accordion(
         "Model and memory (advanced)",
-        open=False,
+        open=advanced_parent is not None,
         elem_classes=["h3-advanced-block"],
     ):
         with gr.Row():

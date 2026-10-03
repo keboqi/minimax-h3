@@ -154,14 +154,32 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         if workspace_enabled()
         else nullcontext()
     ):
-        gr.HTML(
-            '<section class="h3-hero"><h1>MiniMax H3 Local</h1>'
-            "<p>Create video, images, audio, and music on the shared ComfyUI backend · "
-            '<a href="/comfyui/" target="_blank" rel="noopener noreferrer">'
-            "Open ComfyUI ↗</a></p></section>"
+        with (
+            gr.Row(elem_classes=["h3-workspace-header"])
+            if workspace_enabled()
+            else nullcontext()
+        ):
+            gr.HTML(
+                '<section class="h3-hero"><h1>MiniMax H3 Local</h1>'
+                "<p>Create video, images, audio, and music on the shared ComfyUI backend · "
+                '<a href="/comfyui/" target="_blank" rel="noopener noreferrer">'
+                "Open ComfyUI ↗</a></p></section>",
+                scale=3,
+            )
+            if workspace_enabled():
+                summary_root = gr.Column(scale=2, elem_classes=["h3-header-status"])
+                with summary_root:
+                    system_summary = gr.HTML(
+                        services.compact_backend_status(initial_backend)
+                    )
+            else:
+                summary_root = None
+                system_summary = gr.HTML(
+                    services.compact_backend_status(initial_backend)
+                )
+        app_views = (
+            create_app_views(summary_root=summary_root) if workspace_enabled() else None
         )
-        system_summary = gr.HTML(services.compact_backend_status(initial_backend))
-        app_views = create_app_views() if workspace_enabled() else None
         with app_views.system if app_views is not None else nullcontext():
             with gr.Accordion("System details and VRAM", open=False):
                 with gr.Row(equal_height=True):
@@ -228,6 +246,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 reference_prompt_help=services.reference_prompt_help,
                 resolution_summary=services.resolution_summary,
             ),
+            advanced_root=app_views.generation_settings,
+            output_root=app_views.generation_output_settings,
         )
 
         ltx25_components = build_ltx_view(
