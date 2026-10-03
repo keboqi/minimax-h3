@@ -88,7 +88,6 @@ def run():
                     card.get_by_text("Generation canvas", exact=True)
                 ).to_be_visible()
                 card.get_by_text("Execution details", exact=True).click()
-                page.get_by_text("Output & recipe", exact=True).click()
                 page.get_by_text("Advanced settings", exact=True).click()
                 preset = page.locator("#h3-output-settings")
                 preset.get_by_label("Quality", exact=True).first.check()

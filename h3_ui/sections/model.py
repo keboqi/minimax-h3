@@ -32,9 +32,15 @@ class ModelSection:
 
 
 def build_model_section(
-    defaults: Mapping[str, Any], services: H3ViewServices, *, advanced_parent=None
+    defaults: Mapping[str, Any],
+    services: H3ViewServices,
+    *,
+    advanced_parent=None,
+    conditioning_parent=None,
 ) -> ModelSection:
-    with gr.Row(elem_classes=["h3-mode-row"]):
+    with (
+        conditioning_parent if conditioning_parent is not None else nullcontext()
+    ), gr.Row(elem_classes=["h3-mode-row"]):
         mode = gr.Radio(
             ["Text to video", "First / last frame", "Reference media"],
             value=defaults["mode"],
@@ -47,17 +53,18 @@ def build_model_section(
             info="H3 always samples vision and audio; this selects what is decoded and shown.",
             visible=False,
         )
-    with (
-        advanced_parent if advanced_parent is not None else nullcontext()
-    ), gr.Accordion(
-        "Model & generation (advanced)", open=advanced_parent is not None
-    ), gr.Row():
+    with gr.Row():
         model_profile = gr.Radio(
             services.MODEL_PROFILE_CHOICES,
             value=defaults["model_profile"],
             label="Base model",
             info="Speed uses the rebuilt single-pass NVFP4 files. Quality uses the mixed NVFP4/FP8/INT8 ConvRot files. Original uses the official BF16 files. Singularity uses the fine-tuned pruned v1.3 INT8 checkpoint. FastH3 8-Step V2 is a T2VA-only distilled INT8 checkpoint. Speed, Original, Singularity and FastH3 download when first selected.",
         )
+    with (
+        advanced_parent if advanced_parent is not None else nullcontext()
+    ), gr.Accordion(
+        "Model & generation (advanced)", open=advanced_parent is not None
+    ), gr.Row():
         generation_mode = gr.Radio(
             ["Normal", "Turbo"],
             value=defaults["generation_mode"],

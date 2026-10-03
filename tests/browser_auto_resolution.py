@@ -67,7 +67,6 @@ def run():
                     page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for()
                     decoder = card.locator(".h3-setup-detail").filter(has_text="Decoder")
                     expect(decoder).to_contain_text("LynnReal Light INT8")
-                    page.get_by_text("Output & recipe", exact=True).click()
                     presets = page.locator("fieldset").filter(
                         has=page.get_by_text("Recipe", exact=True)
                     )
@@ -78,7 +77,7 @@ def run():
                     presets.get_by_label("Singularity", exact=True).check()
                     expect(decoder).to_contain_text("LynnReal Light INT8")
                     page.get_by_label("First / last frame", exact=True).check()
-                    output = page.get_by_text("Output & recipe", exact=True)
+                    output = page.locator("#h3-output-settings")
                     expect(output).to_be_visible()
                     file_input = page.locator('#first-frame-image input[type="file"]')
                     file_input.set_input_files(str(first))

@@ -32,7 +32,6 @@ class AppViews:
     engine_help: gr.Markdown | None = None
     jobs_count: gr.HTML | None = None
     generation_settings: gr.Accordion | None = None
-    generation_output_settings: gr.Accordion | None = None
 
 
 @dataclass(frozen=True)
@@ -75,9 +74,6 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
                         elem_classes=["h3-mobile-nav-container"],
                     )
                     generation = gr.Row(elem_classes=["h3-generator-shell"])
-                    generation_output_settings = gr.Accordion(
-                        "Output & recipe", open=False, elem_id="h3-output-settings"
-                    )
                     generation_settings = gr.Accordion(
                         "Advanced settings", open=False, elem_id="h3-advanced-settings"
                     )
@@ -115,7 +111,6 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
         engine_help,
         jobs_count,
         generation_settings,
-        generation_output_settings,
     )
 
 

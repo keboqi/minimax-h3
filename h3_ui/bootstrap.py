@@ -222,7 +222,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 resolution_summary=services.resolution_summary,
             ),
             advanced_root=app_views.generation_settings,
-            output_root=app_views.generation_output_settings,
         )
         ltx25_components = build_ltx_view(
             ltx25_view,

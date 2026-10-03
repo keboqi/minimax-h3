@@ -389,7 +389,6 @@ def build_h3_view(
     services: H3ViewServices,
     *,
     advanced_root=None,
-    output_root=None,
 ) -> H3View:
     (
         model_section,
@@ -409,7 +408,6 @@ def build_h3_view(
         defaults,
         services,
         advanced_root=advanced_root,
-        output_root=output_root,
     )
     results_section.run.h3_canvas = output_section.canvas_controls
     from .canvas_controls import bind_image_canvas_preview
@@ -591,13 +589,9 @@ def build_h3_view(
     )
 
 
-def _build_workspace_h3(
-    generation_view, defaults, services, *, advanced_root=None, output_root=None
-):
+def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=None):
     if advanced_root is None:
         raise ValueError("Workspace composition requires an advanced settings root.")
-    if output_root is None:
-        raise ValueError("Workspace composition requires an output settings root.")
     with advanced_root:
         with gr.Tabs():
             with gr.Tab("Model & memory"):
@@ -616,21 +610,39 @@ def _build_workspace_h3(
             elem_classes=["h3-composer", "h3-run-panel"],
         ):
             gr.Markdown("### Compose")
-            model_section = build_model_section(
-                defaults, services, advanced_parent=model_root
-            )
+            conditioning_root = gr.Group()
             references_section = build_references_section(defaults, services)
             prompt_section = build_prompt_section(defaults, services)
-            action_root = gr.Group()
+            with gr.Group(elem_id="h3-output-settings"):
+                preset = gr.Radio(
+                    ["Singularity", "Quality", "Balanced", "Fast"],
+                    value="Singularity",
+                    label="Recipe",
+                    interactive=True,
+                    info="Applies generation defaults. Keeps your prompt, media and output size.",
+                )
+                with gr.Accordion("Changes these settings", open=False):
+                    gr.Markdown(
+                        "Recipes change sampling, text encoding, memory, attention, refinement and decoding. Singularity also selects its checkpoint; other recipes keep the selected checkpoint. Prompt, media and output intent are preserved. Explicit edits appear in the next-run summary."
+                    )
+                restore_preset = gr.Button("Restore preset settings", size="sm")
+                model_section = build_model_section(
+                    defaults,
+                    services,
+                    advanced_parent=model_root,
+                    conditioning_parent=conditioning_root,
+                )
+                output_settings_section = gr.Group(elem_classes=["h3-essentials"])
+                output_section = build_output_section(
+                    defaults, services, output_settings_section
+                )
         with gr.Column(
             scale=6,
             min_width=320,
             elem_id="h3-preview",
             elem_classes=["h3-preview-panel"],
         ):
-            results_section = build_results_section(
-                defaults, services, action_root=action_root
-            )
+            results_root = gr.Group()
             settings_overview = gr.HTML(
                 services.compact_settings_summary(
                     defaults["mode"],
@@ -675,23 +687,11 @@ def _build_workspace_h3(
                 ),
                 elem_classes=["h3-settings-summary"],
             )
-    with output_root:
-        preset = gr.Radio(
-            ["Singularity", "Quality", "Balanced", "Fast"],
-            value="Singularity",
-            label="Recipe",
-            interactive=True,
-            info="Applies generation defaults. Keeps your prompt, media and output size.",
-        )
-        with gr.Accordion("Changes these settings", open=False):
-            gr.Markdown(
-                "Recipes change sampling, text encoding, memory, attention, refinement and decoding. Singularity also selects its checkpoint; other recipes keep the selected checkpoint. Prompt, media and output intent are preserved. Explicit edits appear in the next-run summary."
-            )
-        restore_preset = gr.Button("Restore preset settings", size="sm")
-        output_settings_section = gr.Group(elem_classes=["h3-essentials"])
-        output_section = build_output_section(
-            defaults, services, output_settings_section
-        )
+            action_root = gr.Group()
+            with results_root:
+                results_section = build_results_section(
+                    defaults, services, action_root=action_root
+                )
     performance_controls = build_performance_section(
         defaults, services, performance_section
     )

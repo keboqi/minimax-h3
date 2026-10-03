@@ -693,8 +693,8 @@ class UiContractTests(unittest.TestCase):
             if d.get("trigger_after") == first_change_dep["id"]
         )
         self.assertIn(summary["id"], first_refresh_dep["outputs"])
-        output_accordion = controls["Output & recipe"]
-        self.assertFalse(output_accordion["props"]["open"])
+        dimensions_accordion = controls["Exact dimensions, seed & image frames"]
+        self.assertFalse(dimensions_accordion["props"]["open"])
 
         # 3. Start-frame auto cap triggers on .change (so preset changes trigger auto resolution),
         # then refreshes summary
@@ -1068,11 +1068,45 @@ class UiContractTests(unittest.TestCase):
             for i in descendants(composer)
         }
         self.assertIn("Prompt", labels)
-        self.assertNotIn("Base model", labels)
-        self.assertNotIn("Steps", labels)
+        self.assertIn("Recipe", labels)
+        self.assertIn("Base model", labels)
+        self.assertIn("Seconds", labels)
+        self.assertNotIn("Generation progress", labels)
+        preview_labels = {
+            self.components[i].get("props", {}).get("label")
+            for i in descendants(preview)
+        }
+        self.assertIn("Generation progress", preview_labels)
+        composer_children = [
+            self.components[node["id"]] for node in composer["children"]
+        ]
+        enhancer_index = next(
+            i
+            for i, c in enumerate(composer_children)
+            if c.get("props", {}).get("label") == "Prompt writer / enhancer"
+        )
+        self.assertEqual(
+            composer_children[enhancer_index + 1]["props"]["elem_id"],
+            "h3-output-settings",
+        )
+        preview_children = [
+            self.components[node["id"]] for node in preview["children"]
+        ]
+        summary_index = next(
+            i
+            for i, c in enumerate(preview_children)
+            if "h3-settings-summary" in c.get("props", {}).get("elem_classes", [])
+        )
+        action = self.find_layout_node(preview_children[summary_index + 1]["id"])
+        self.assertTrue(
+            any(
+                self.components[i].get("props", {}).get("label") == "Generation progress"
+                for i in descendants(action)
+            )
+        )
         self.assertTrue(descendants(composer).isdisjoint(descendants(advanced)))
         self.assertTrue(descendants(composer).isdisjoint(descendants(preview)))
-        self.assertFalse(by_id["h3-output-settings"]["props"]["open"])
+        self.assertEqual(by_id["h3-output-settings"]["type"], "group")
         self.assertFalse(by_id["h3-advanced-settings"]["props"]["open"])
 
     def test_presentation_state_is_pure_and_semantic(self) -> None:

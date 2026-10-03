@@ -118,9 +118,6 @@ def run():
                     str(first)
                 )
                 expect(page.locator(".h3-setup-card")).to_contain_text("768×1152")
-                page.locator("#h3-output-settings").get_by_text(
-                    "Output & recipe", exact=True
-                ).click()
                 output_settings = page.locator("#h3-output-settings")
                 expect(
                     output_settings.get_by_label("Aspect ratio", exact=True)
@@ -128,7 +125,6 @@ def run():
                 expect(
                     output_settings.get_by_label("Size", exact=True)
                 ).to_be_disabled()
-                output_settings.get_by_text("Output & recipe", exact=True).click()
                 page.locator(".h3-task-picker").get_by_label(
                     "Video", exact=True
                 ).check()
@@ -151,13 +147,16 @@ def run():
                 expect(
                     h3.get_by_text("Model & generation (advanced)", exact=True)
                 ).to_have_count(0)
-                expect(h3.get_by_label("Seconds", exact=True)).to_have_count(0)
+                expect(
+                    h3.get_by_role("slider", name="range slider for Seconds", exact=True)
+                ).to_be_visible()
+                expect(h3.get_by_text("Base model", exact=True)).to_be_visible()
                 page.locator("#h3-advanced-settings").get_by_text(
                     "Advanced settings", exact=True
                 ).click()
                 expect(
                     page.locator("#h3-advanced-settings").get_by_text(
-                        "Base model", exact=True
+                        "Generation", exact=True
                     )
                 ).to_be_visible()
                 page.locator("#h3-advanced-settings").get_by_role(
@@ -200,7 +199,9 @@ def run():
                             < 8
                         )
                 prompt = h3.get_by_label("Prompt", exact=True)
-                generate = h3.get_by_role("button", name="Generate video", exact=True)
+                generate = page.locator("#h3-preview").get_by_role(
+                    "button", name="Generate video", exact=True
+                )
                 prompt.focus()
                 page.keyboard.press("Tab")
                 focused = page.locator(":focus")
