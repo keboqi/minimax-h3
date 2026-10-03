@@ -606,6 +606,7 @@ image = (
         add_python="3.12",
     )
     .entrypoint([])
+    .env({"H3_UI_LAYOUT": os.getenv("H3_UI_LAYOUT", "legacy")})
     .apt_install(
         "build-essential",
         "ca-certificates",

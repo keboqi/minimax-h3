@@ -10,7 +10,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 - Required adjustments are separate from manual differences. Native refinement forces acceleration Off; BF16 requires stage offload; the 500K decoder produces one frame.
 - Inactive preferences remain stored when switching output formats or attention implementations. They do not affect execution or the active modification count.
 - Readiness and execution details use the shared resolved settings. Prompt and conditioning requirements are checked separately.
-- Browser preferences use schema version 4 inside the original v3 BrowserState transport key and secret, allowing existing encrypted preferences to migrate in place. Each field is validated; presets are not reapplied during restoration.
+- Browser preferences use schema version 6 inside the original v3 BrowserState transport key and secret, allowing existing encrypted preferences to migrate in place. Each field is validated; presets are not reapplied during restoration. Qwen technical settings, independent finishing models and workspace task/engine selection are included.
 - Prompts, uploaded paths, credentials, outputs and transient confirmations are excluded from browser preferences.
 - Existing public generation API names and positional contracts remain available. H3 UI preset context is carried through a separate internal adapter.
 
@@ -24,7 +24,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/contracts.py | Stable positional API ordering |
 | h3_app/model_types.py, model_service.py | Model selection, lazy provisioning and TensorRT engine lifecycle |
 | h3_models.py | Model inventory and manifest transactions locked across threads and processes |
-| h3_app/jobs.py | Session/tab ownership, cancellation and the application GPU lease |
+| h3_app/jobs.py | Bounded process-local acceptance, immutable requests, input leases, execution ledgers, exact retries, session ownership, cancellation and the application GPU lease |
 | h3_app/comfy.py, execution.py | HTTP transport and one submission lifecycle, deadline and websocket owner |
 | h3_app/workflows/ | Pure H3, LTX, Music and upscale graph builders with staged input identities |
 | h3_app/generation/ | Named requests and typed services; preparation, graph construction, execution and finishing |
@@ -33,9 +33,13 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/provenance.py | Atomic sidecars, copied-media provenance and escaped metadata rendering |
 | h3_app/prompt_service.py | Local, Gemini and Lightning writer adapters with transient credentials |
 | h3_app/server.py | Configured FastAPI routes and HTTP/WebSocket proxy |
-| h3_ui/application.py | Application composition and temporary public/UI compatibility adapters |
+| h3_ui/application.py | Runtime service wiring and temporary public/UI compatibility adapters |
+| h3_ui/bootstrap.py | UI composition with explicit catalog and service records |
+| h3_ui/*_view.py, *_bindings.py | Feature-owned views and event bindings; views.py and bindings.py retain compatibility exports |
 | h3_ui/sections/, events/ | Existing visible sections and event registration, preserving component order |
-| h3_ui/job_bindings.py | Gradio request injection and shared GPU-action binding |
+| h3_ui/job_bindings.py, job_admission.py, jobs_view.py | Gradio request injection, acceptance before queueing, shared GPU binding and session-scoped job presentation |
+| h3_app/reference_bindings.py, h3_ui/prompt_preview.py, prompt_review.py | Stable reference translation and guarded accept/keep/undo prompt previews |
+| h3_ui/media_actions.py | Selection- and file-specific deletion confirmation |
 | h3_ui/settings_controller.py, settings_presentation.py | Serialized settings actions and resolved-plan rendering |
 | h3_ui/persistence.py | Explicit browser preference allowlist and migration |
 | gradio_app.py | Launcher and temporary import compatibility shim |
@@ -88,9 +92,9 @@ uv pip install --python .venv/Scripts/python.exe -r requirements-test.txt
 .venv/Scripts/python.exe -m tests --browser
 ```
 
-The consolidated command runs discovery, all remaining standalone service self-tests and the legacy workflow contracts, with offline Hugging Face mode. The gradio_app.py --selftest entry point remains available. CPU PyTorch numerical tests run only when PyTorch is installed; pinned upstream contract tests run only when their .cache/upstream-upgrade sources exist. Neither gate fetches dependencies. The --browser option adds settings and voice-reference acceptance.
+The consolidated command runs discovery, all remaining standalone service self-tests and the legacy workflow contracts, with offline Hugging Face mode. The gradio_app.py --selftest entry point remains available. CPU PyTorch numerical tests run only when PyTorch is installed; pinned upstream contract tests run only when their .cache/upstream-upgrade sources exist. Neither gate fetches dependencies. The --browser option adds settings, voice-reference, first-frame resolution and workspace acceptance.
 
-On Linux use .venv/bin/python. Browser checks use installed Chrome on Windows, or Playwright Chromium elsewhere; H3_BROWSER_EXECUTABLE can select a Chromium executable. The browser fixture mocks only backend health and never loads models or generates media.
+On Linux use .venv/bin/python. Browser checks use installed Chrome on Windows, or Playwright Chromium elsewhere; H3_BROWSER_EXECUTABLE can select a Chromium executable. Fixtures mock backend health and never load models. Workspace job checks use a synthetic generation callback and test-only queue controls; they do not measure inference.
 
 Browser checks cover preset application, overrides/reset, mode memory, reload, session isolation, conditional controls and horizontal overflow at a narrow viewport. Screenshots are written to .cache/ui-review.
 

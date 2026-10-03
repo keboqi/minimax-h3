@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 from collections.abc import Iterator
+from contextlib import nullcontext
 import inspect
 import uuid
 import gradio as gr
 from h3_app.jobs import JOBS, CURRENT_JOB
 from h3_app.provenance import RUN_CONTEXT, render_snapshot
+from .workspace_mode import workspace_enabled
 
 GPU_QUEUE = {"concurrency_id": "h3-gpu", "concurrency_limit": 1}
 PROMPT_QUEUE = {"concurrency_id": "h3-prompt", "concurrency_limit": 4}
@@ -14,11 +16,34 @@ PROMPT_QUEUE = {"concurrency_id": "h3-prompt", "concurrency_limit": 4}
 
 def bind_gpu_action(trigger, callback=None, **options):
     """Register generation or maintenance with the same GPU queue policy."""
+    reference_map = options.pop("reference_map", None)
+    resolver = options.pop("resolver", None)
+    component = getattr(trigger, "__self__", None)
+    if (
+        workspace_enabled()
+        and getattr(callback, "job_family", None)
+        and getattr(component, "visible", True) is not False
+    ):
+        from .job_admission import bind_accepted_action
+
+        return bind_accepted_action(
+            trigger,
+            callback,
+            options,
+            GPU_QUEUE,
+            reference_map=reference_map,
+            resolver=resolver,
+        )
     return trigger(callback, **options, **GPU_QUEUE)
 
 
 def bind_prompt_action(trigger, callback=None, **options):
     """Allow remote prompt requests while a GPU job prepares or downloads models."""
+    review = getattr(getattr(trigger, "__self__", None), "h3_review", None)
+    if workspace_enabled() and review is not None:
+        from .prompt_review import bind_review_action
+
+        return bind_review_action(trigger, callback, options, review, PROMPT_QUEUE)
     return trigger(callback, **options, **PROMPT_QUEUE)
 
 
@@ -47,7 +72,16 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
                 values = values[:-1]
         iterator = None
         result_paths = {}
-        with JOBS.run(owner, family) as job:
+        current = CURRENT_JOB.get()
+        scope = (
+            nullcontext(current)
+            if current is not None
+            and current.owner == owner
+            and current.family == family
+            and current.has_gpu
+            else JOBS.run(owner, family)
+        )
+        with scope as job:
             try:
                 while True:
                     job_token = CURRENT_JOB.set(job)
@@ -86,9 +120,7 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
                             result_paths[index] = (
                                 value
                                 if isinstance(value, list)
-                                else [value]
-                                if value
-                                else []
+                                else [value] if value else []
                             )
                         paths = [
                             path for values in result_paths.values() for path in values
@@ -135,6 +167,8 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
     run.__signature__ = inspect.Signature(parameters)
     run.__annotations__ = {"request": gr.Request}
     run.__name__ = callback.__name__
+    run.job_family = family
+    run.job_input_names = names
     return run
 
 

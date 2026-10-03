@@ -13,7 +13,7 @@ def main():
     parser.add_argument(
         "--browser",
         action="store_true",
-        help="Also run settings and voice-reference browser checks",
+        help="Also run settings, references, resolution and workspace browser checks",
     )
     args = parser.parse_args()
     os.environ["HF_HUB_OFFLINE"] = "1"
@@ -26,9 +26,14 @@ def main():
     if not result.wasSuccessful():
         return 1
     if args.browser:
-        for script in ("browser_settings.py", "browser_voice_refs.py"):
+        for script in (
+            "browser_settings.py",
+            "browser_voice_refs.py",
+            "browser_auto_resolution.py",
+            "browser_workspace.py",
+        ):
             subprocess.run(
-                [sys.executable, str(root / "tests" / script)],
+                [sys.executable, "-m", "tests." + Path(script).stem],
                 cwd=root,
                 check=True,
                 timeout=300,

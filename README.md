@@ -5,6 +5,27 @@ generation on NVIDIA Blackwell GPUs. It provisions ComfyUI, the required H3
 models, SLA, Sol-Attn, Comfy Kitchen attention, SageAttention 2, Spectrum, and a
 bundled FirstBlockCache node.
 
+## Workspace preview
+
+The redesigned interface is available with `H3_UI_LAYOUT=workspace`, or by
+launching `python gradio_app.py --ui-layout workspace`. It provides task and
+engine selection, a composer and result preview, Media, session-owned Jobs,
+System readiness, and API/workflows. H3 uses compact output controls and an
+exclusive video decoder selector. Prompt suggestions require acceptance.
+
+Jobs capture the request before entering the existing GPU queue. Failed variants
+can be retried with their recorded seeds while inputs remain available; optional
+H3 finishing can be retried from its completed source. Unsaved requests expire
+after 30 minutes, may be evicted earlier at capacity, and end on process restart.
+Generated media and technical settings sidecars remain in the existing library.
+
+The legacy interface remains the default while supported-GPU inference,
+deployment, performance and accessibility release gates are pending. Set
+`H3_UI_LAYOUT=legacy` or pass `--ui-layout legacy` to switch back. For Modal,
+set the environment variable when deploying so the image receives the selection.
+See [implementation status and validation](docs/workspace-implementation.md) and
+the [revised plan](docs/ui-ux-redesign-plan-2026-10-03.md).
+
 ## What is included
 
 - Unified H3 video, image-frame, and audio result formats across text,

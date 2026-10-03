@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class FinishingSection:
+    ltx25_model: gr.components.Component
     generation_force_offload: gr.components.Component
     generation_ltx25_note: gr.components.Component
     generation_postprocess: gr.components.Component
@@ -213,8 +214,15 @@ def build_finishing_section(
                     "and MXFP8/NVFP4 are experimental speed options."
                 ),
             )
+            ltx25_model = gr.Dropdown(
+                choices=list(services.LTX25_MODEL_CHOICES),
+                value=services.DEFAULT_LTX25_MODEL,
+                label="Generation finishing LTX model",
+                visible=False,
+                info="Used for H3 finishing independently of the LTX generation workspace.",
+            )
             generation_ltx25_note = gr.Markdown(
-                "Uses the transformer selected in the **LTX 2.5** tab and "
+                "Uses the finishing model selected here and "
                 "the H3 generation prompt. The gated 2x IC-LoRA downloads "
                 "on first use.",
                 visible=False,
@@ -250,6 +258,7 @@ def build_finishing_section(
             )
 
     return FinishingSection(
+        ltx25_model=ltx25_model,
         generation_force_offload=generation_force_offload,
         generation_ltx25_note=generation_ltx25_note,
         generation_postprocess=generation_postprocess,

@@ -396,4 +396,5 @@ def build_server(
         allowed_paths=allowed_paths,
         show_error=True,
         css=config.css,
+        theme=gr.themes.Default(primary_hue="blue", secondary_hue="slate") if getattr(demo, "h3_workspace", False) is True else None,
     )

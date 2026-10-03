@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from h3_app.jobs import CURRENT_JOB, record_failure
+
 import time
 import uuid
 from dataclasses import asdict
@@ -16,7 +18,7 @@ from h3_app.status import StageTimings, progress_status
 from h3_models import MODEL_SPECS
 
 from .construct_graph import construct_graph
-from .finish_video import finish_video
+from .finish_video import finish_video, make_finishing_retry
 from .preparation import prepare_h3
 from .requests import H3Request
 from .results import GenerationUpdate
@@ -69,9 +71,9 @@ def generate(
                 and key not in {"prompt", "first_image", "last_image"}
                 and not key.startswith(("ref_", "fl2va_audio_"))
             },
-            "changes_from_preset": prepared.plan.differences()
-            if requested_values.get("preset")
-            else {},
+            "changes_from_preset": (
+                prepared.plan.differences() if requested_values.get("preset") else {}
+            ),
             "adjustments": [asdict(item) for item in prepared.plan.adjustments],
         }
         execution_snapshot["settings"].update(
@@ -86,28 +88,36 @@ def generate(
             latent_upscale=request.finishing.latent_upscale,
             model_filename=prepared.selected_model,
             text_encoder_filename=prepared.selected_text_encoder,
-            attention_mode="SLA"
-            if prepared.effective_sla
-            else "Sage 2"
-            if prepared.effective_sage
-            else "Sol-Attn"
-            if prepared.effective_sol
-            else "Kitchen",
+            attention_mode=(
+                "SLA"
+                if prepared.effective_sla
+                else (
+                    "Sage 2"
+                    if prepared.effective_sage
+                    else "Sol-Attn" if prepared.effective_sol else "Kitchen"
+                )
+            ),
             fl2va_voice_reference_count=len(prepared.voice_refs),
             fl2va_voice_reference_mode="Hybrid/native" if prepared.voice_refs else None,
             semantic_bridge=request.sampling.semantic_bridge,
-            semantic_bridge_alpha=request.sampling.semantic_bridge_alpha
-            if request.sampling.semantic_bridge
-            else 0.0,
-            semantic_bridge_adapter=MODEL_SPECS["semantic_bridge_v1"].local_name
-            if request.sampling.semantic_bridge
-            else None,
-            semantic_bridge_sha256=MODEL_SPECS["semantic_bridge_v1"].expected_sha256
-            if request.sampling.semantic_bridge
-            else None,
-            semantic_bridge_magnitude_match="per_token"
-            if request.sampling.semantic_bridge
-            else None,
+            semantic_bridge_alpha=(
+                request.sampling.semantic_bridge_alpha
+                if request.sampling.semantic_bridge
+                else 0.0
+            ),
+            semantic_bridge_adapter=(
+                MODEL_SPECS["semantic_bridge_v1"].local_name
+                if request.sampling.semantic_bridge
+                else None
+            ),
+            semantic_bridge_sha256=(
+                MODEL_SPECS["semantic_bridge_v1"].expected_sha256
+                if request.sampling.semantic_bridge
+                else None
+            ),
+            semantic_bridge_magnitude_match=(
+                "per_token" if request.sampling.semantic_bridge else None
+            ),
             sampled_frames=prepared.generation_frames,
             image_frames=prepared.requested_image_frames,
             use_trt_vae=request.output.use_trt_vae,
@@ -122,12 +132,16 @@ def generate(
             f"block={prepared.effective_sla_inputs['block_size']}, "
             f"dense-last={prepared.effective_sla_inputs['dense_last_steps']}, audio protected)"
             if prepared.effective_sla
-            else "Sage 2"
-            if prepared.effective_sage
-            else f"zero-copy on ({request.sampling.sol_thresh_type}, τ={float(request.sampling.sol_tau):.1f}, "
-            f"{request.sampling.sol_exact_mode}, dense-tail-blocks={int(request.sampling.sol_dense_steps)})"
-            if prepared.effective_sol
-            else "Comfy Kitchen"
+            else (
+                "Sage 2"
+                if prepared.effective_sage
+                else (
+                    f"zero-copy on ({request.sampling.sol_thresh_type}, τ={float(request.sampling.sol_tau):.1f}, "
+                    f"{request.sampling.sol_exact_mode}, dense-tail-blocks={int(request.sampling.sol_dense_steps)})"
+                    if prepared.effective_sol
+                    else "Comfy Kitchen"
+                )
+            )
         )
         if prepared.effective_cache_mode.lower() == "firstblockcache":
             cache_status = (
@@ -263,10 +277,21 @@ def generate(
             return
         source = services.media.resolve_output(history, queued_at)
         fallback_video = source
+        job = CURRENT_JOB.get()
+        if job is not None and request.finishing.postprocess != "None":
+            # Retain only process-local policy objects, never model weights.
+            # The callback starts directly at finishing with the same seed.
+            job.recoverable_sources[job.variant] = str(source)
+            job.finishing_callbacks[job.variant] = make_finishing_retry(request, prepared, services, execution_snapshot)
+            job.finishing_offsets[job.variant] = sum(entry["variant"] == job.variant for entry in job.ledger)
+            job.recoverable_source = str(source)
         write_snapshot(
             source, {**execution_snapshot, "stage": "H3 output before post-processing"}
         )
         if request.finishing.postprocess != "None":
+            if job is not None:
+                job.state = "finishing"
+                job.stage = f"Finishing: {request.finishing.postprocess}"
             timings.transition(f"Post-processing: {request.finishing.postprocess}")
             progress(0, desc="Post-processing video")
             yield GenerationUpdate(
@@ -290,6 +315,7 @@ def generate(
             f"\n\n{timing_summary}",
         )
     except Exception as exc:
+        record_failure(exc)
         fallback = str(fallback_video) if fallback_video is not None else None
         suffix = " The completed H3 video is still available." if fallback else ""
         if "Failed to deserialize TensorRT engine" in str(

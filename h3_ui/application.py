@@ -107,10 +107,11 @@ from h3_ui.bindings import (
 from h3_ui.app_bindings import bind_app
 from h3_ui.contracts import AppComponents, AppServices
 from h3_ui.h3_view import build_h3_view, H3ViewServices
-from h3_ui.layout import create_app_views
+from h3_ui.layout import create_app_views, bind_workspace_navigation
+from h3_ui.workspace_mode import workspace_enabled
 from h3_ui.persistence import bind_browser_settings
 from h3_ui.ltx_view import build_ltx_view
-from h3_ui.styles import H3_SETUP_CSS, H3_UI_CSS
+from h3_ui.styles import H3_SETUP_CSS, H3_UI_CSS, H3_WORKSPACE_CSS
 from h3_ui.views import (
     build_api_view,
     build_gallery_view,
@@ -444,6 +445,9 @@ def _runtime_config() -> RuntimeConfig:
 
 
 def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
+    css = getattr(demo, "h3_css", None)
+    if not isinstance(css, str):
+        css = H3_SETUP_CSS
     return server_routes.build_server(
         demo,
         allowed_paths,
@@ -456,7 +460,7 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
             VIDEO_EXTENSIONS,
             IMAGE_EXTENSIONS,
             AUDIO_EXTENSIONS,
-            H3_SETUP_CSS,
+            css,
         ),
     )
 
@@ -2742,9 +2746,9 @@ def import_gallery_video(uploaded_video: str | None) -> GalleryMutationResult:
 GALLERY_PAGE_SIZE = 48
 
 
-def refresh_gallery(
+def refresh_gallery_page(
     limit: int = GALLERY_PAGE_SIZE,
-) -> tuple[list[tuple[str, str]], list[str], str]:
+) -> gallery_store.AssetPage:
     videos = gallery_video_paths(limit=None)
     shown_videos = videos[: max(0, limit)]
     items: list[tuple[str, str]] = []
@@ -2771,10 +2775,14 @@ def refresh_gallery(
         )
         items.append((str(thumbnail), caption))
         selectable_paths.append(str(video))
-    detail = f"Showing {len(items)} of {len(videos)} generated videos"
-    if failed:
-        detail += f" · {failed} thumbnail{'s' if failed != 1 else ''} unavailable"
-    return items, selectable_paths, detail
+    return gallery_store.AssetPage.from_scan(
+        items, selectable_paths, len(videos), limit, "videos", failed
+    )
+
+
+def refresh_gallery(limit: int = GALLERY_PAGE_SIZE):
+    """Compatibility adapter for existing gallery callers."""
+    return refresh_gallery_page(limit).legacy()
 
 
 def select_gallery_video(
@@ -2800,14 +2808,18 @@ def select_gallery_video(
     )
 
 
-def refresh_media_gallery(
+def list_media_paths(mode):
+    return {"Video": gallery_video_paths, "Image": gallery_image_paths, "Audio": gallery_audio_paths}[gallery_media_mode(mode)](limit=None)
+
+
+def refresh_media_page(
     mode: str = "Video",
     limit: int = GALLERY_PAGE_SIZE,
-) -> tuple[list[tuple[str, str]], list[str], str]:
+) -> gallery_store.AssetPage:
     """Refresh the active gallery, defaulting to the existing video library."""
     media_mode = gallery_media_mode(mode)
     if media_mode == "Video":
-        return refresh_gallery(limit)
+        return refresh_gallery_page(limit)
     if media_mode == "Audio":
         all_audio_files = gallery_audio_paths(limit=None)
         audio_files = all_audio_files[: max(0, limit)]
@@ -2837,10 +2849,9 @@ def refresh_media_gallery(
             )
             items.append((str(thumbnail), caption))
             selectable_paths.append(str(audio))
-        detail = f"Showing {len(items)} of {len(all_audio_files)} generated audio files"
-        if failed:
-            detail += f" · {failed} thumbnail{'s' if failed != 1 else ''} unavailable"
-        return items, selectable_paths, detail
+        return gallery_store.AssetPage.from_scan(
+            items, selectable_paths, len(all_audio_files), limit, "audio files", failed
+        )
     all_images = gallery_image_paths(limit=None)
     images = all_images[: max(0, limit)]
     items: list[tuple[str, str]] = []
@@ -2869,10 +2880,15 @@ def refresh_media_gallery(
         )
         items.append((str(thumbnail), caption))
         selectable_paths.append(str(image))
-    detail = f"Showing {len(items)} of {len(all_images)} generated images"
-    if failed:
-        detail += f" · {failed} thumbnail{'s' if failed != 1 else ''} unavailable"
-    return items, selectable_paths, detail
+    return gallery_store.AssetPage.from_scan(
+        items, selectable_paths, len(all_images), limit, "images", failed
+    )
+
+
+def refresh_media_gallery(mode: str = "Video", limit: int = GALLERY_PAGE_SIZE):
+    """Preserve the public tuple contract while the UI consumes typed pages."""
+    return refresh_media_page(mode, limit).legacy()
+
 
 
 def gallery_preview_updates(
@@ -4403,13 +4419,27 @@ def generate_for_ui(batch_count: int, *args: Any):
     arguments = GenerationArguments.from_positional(args)
     result_format = normalize_result_format(arguments.values["result_format"])
     count = int(batch_count) if result_format == "Video" else 1
+    job = CURRENT_JOB.get()
     seeds = (
+        list(job.replay_seeds) if job is not None and job.replay_seeds else
         video_batch_seeds(int(arguments.values["seed"]), count)
         if result_format == "Video"
         else [int(arguments.values["seed"])]
     )
+    indices = list(range(count))
+    if job is not None:
+        if job.replay_seeds:
+            seeds = list(job.replay_seeds)
+            indices = list(job.replay_indices)
+            count = len(seeds)
+        else:
+            seeds = [random.randrange(0, 2**63 - 1) if seed < 0 else seed for seed in seeds]
+            job.variant_seeds.update(enumerate(seeds))
     first_update = True
     for batch_index, batch_seed in enumerate(seeds):
+        if job is not None:
+            job.variant = indices[batch_index]
+            job.check()
         batch_arguments = arguments.with_seed(batch_seed)
         prefix = f"Video {batch_index + 1}/{count} · " if count > 1 else ""
         for result, status in generate(**batch_arguments.values):
@@ -4551,268 +4581,123 @@ def generation_preflight(
 
 
 def build_ui() -> gr.Blocks:
-    defaults = UI_DEFAULTS
-    initial_backend = backend_status()
-    with gr.Blocks(title="MiniMax H3 Local") as demo:
-        gr.HTML(
-            '<section class="h3-hero"><h1>MiniMax H3 Local</h1>'
-            "<p>Create video, images, audio, and music on the shared ComfyUI backend · "
-            '<a href="/comfyui/" target="_blank" rel="noopener noreferrer">'
-            "Open ComfyUI ↗</a></p></section>"
-        )
-        system_summary = gr.HTML(compact_backend_status(initial_backend))
-        with gr.Accordion("System details and VRAM", open=False):
-            with gr.Row(equal_height=True):
-                health = gr.Markdown(initial_backend)
-                unload_models = gr.Button(
-                    "Unload all models / free VRAM",
-                    scale=0,
-                )
-            memory_status = gr.Markdown()
-        app_views = create_app_views()
-        generation_view = app_views.generation
-        qwen_image21_view = app_views.qwen_image21
-        ltx25_view = app_views.ltx25
-        music3_view = app_views.music3
-        yue2_view = app_views.yue2
-        gallery_view = app_views.gallery
-        api_view = app_views.api
-        gallery_tab = app_views.gallery_tab
-        h3_components = build_h3_view(
-            generation_view,
-            defaults,
-            H3ViewServices(
-                AUTO_RESOLUTION_MEGAPIXEL_PRESETS=AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
-                AUTO_SOL_TOKEN_THRESHOLD=AUTO_SOL_TOKEN_THRESHOLD,
-                DEFAULT_AUTO_RESOLUTION_MEGAPIXELS=DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
-                DEFAULT_GEMINI_PROMPT_MODEL=DEFAULT_GEMINI_PROMPT_MODEL,
-                DEFAULT_INPUT_IMAGE_FRAME_PRESET=DEFAULT_INPUT_IMAGE_FRAME_PRESET,
-                DEFAULT_LOCAL_PROMPT_BASE_MODEL=DEFAULT_LOCAL_PROMPT_BASE_MODEL,
-                DEFAULT_LTX25_MODEL=DEFAULT_LTX25_MODEL,
-                DEFAULT_PROMPT_WRITER_BACKEND=DEFAULT_PROMPT_WRITER_BACKEND,
-                DEFAULT_UPSCALE_RESOLUTION=DEFAULT_UPSCALE_RESOLUTION,
-                DEFAULT_VIDEO_BATCH_COUNT=DEFAULT_VIDEO_BATCH_COUNT,
-                DRAFT_RESOLUTIONS=DRAFT_RESOLUTIONS,
-                FAST_RESOLUTIONS=FAST_RESOLUTIONS,
-                GEMINI_PROMPT_MODELS=GEMINI_PROMPT_MODELS,
-                GENERATION_POSTPROCESS_OPTIONS=GENERATION_POSTPROCESS_OPTIONS,
-                H3_LATENT_UPSCALE_METHODS=H3_LATENT_UPSCALE_METHODS,
-                H3_LATENT_UPSCALE_SPLIT=H3_LATENT_UPSCALE_SPLIT,
-                H3_LATENT_UPSCALER_MODEL_CHOICES=H3_LATENT_UPSCALER_MODEL_CHOICES,
-                H3_TEXT_ENCODER_CHOICES=H3_TEXT_ENCODER_CHOICES,
-                IMAGE_VAE_CHOICES=IMAGE_VAE_CHOICES,
-                INPUT_IMAGE_FRAME_PRESETS=INPUT_IMAGE_FRAME_PRESETS,
-                INPUT_IMAGE_UPSCALE_SLOTS=INPUT_IMAGE_UPSCALE_SLOTS,
-                LARGE_RESOLUTIONS=LARGE_RESOLUTIONS,
-                LIGHTNING_PROMPT_MODEL=LIGHTNING_PROMPT_MODEL,
-                LOCAL_PROMPT_BASE_MODELS=LOCAL_PROMPT_BASE_MODELS,
-                MAX_IMAGE_FRAMES=MAX_IMAGE_FRAMES,
-                MAX_VIDEO_BATCH_COUNT=MAX_VIDEO_BATCH_COUNT,
-                MIN_IMAGE_FRAMES=MIN_IMAGE_FRAMES,
-                MIN_VIDEO_BATCH_COUNT=MIN_VIDEO_BATCH_COUNT,
-                MODEL_PROFILE_CHOICES=MODEL_PROFILE_CHOICES,
-                PROMPT_WRITER_BACKENDS=PROMPT_WRITER_BACKENDS,
-                RESULT_FORMATS=RESULT_FORMATS,
-                SEEDVR2_MODEL_CHOICES=SEEDVR2_MODEL_CHOICES,
-                SERVER_ATTENTION_BACKEND=SERVER_ATTENTION_BACKEND,
-                SERVER_DENSE_ATTENTION_BACKEND=SERVER_DENSE_ATTENTION_BACKEND,
-                SLA_PRESET_INPUTS=SLA_PRESET_INPUTS,
-                TURBO_SETTINGS=TURBO_SETTINGS,
-                UPSCALE_RESOLUTION_PRESETS=UPSCALE_RESOLUTION_PRESETS,
-                compact_settings_summary=compact_settings_summary,
-                generation_readiness_state=generation_readiness_state,
-                mode_help=mode_help,
-                reference_prompt_help=reference_prompt_help,
-                resolution_summary=resolution_summary,
-            ),
-        )
-
-        ltx25_components = build_ltx_view(
-            ltx25_view,
-            model_choices=LTX25_MODEL_CHOICES,
-            defaults=LTX25_DEFAULTS,
-            prompt_models=GEMINI_PROMPT_MODELS,
-            default_prompt_model=DEFAULT_GEMINI_PROMPT_MODEL,
-            workflows=tuple(LTX25_WORKFLOWS),
-            initial_workflow_details=render_ltx25_workflow_details(
-                next(iter(LTX25_WORKFLOWS))
-            ),
-            model_inventory_text=render_ltx25_official_model_inventory(),
-        )
-        music3_components = build_music_view(
-            music3_view,
-            prompt_models=GEMINI_PROMPT_MODELS,
-            default_prompt_model=DEFAULT_GEMINI_PROMPT_MODEL,
-            model_choices=MUSIC3_MODEL_CHOICES,
-            defaults=MUSIC3_DEFAULTS,
-        )
-        qwen_image21_components = build_qwen_image21_view(
-            qwen_image21_view,
-            model_choices=QWEN_IMAGE21_MODEL_CHOICES,
-            text_encoder_choices=QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
-            prompt_models=GEMINI_PROMPT_MODELS,
-            default_prompt_model=DEFAULT_GEMINI_PROMPT_MODEL,
-            defaults=QWEN_IMAGE21_DEFAULTS,
-        )
-        yue2_components = build_yue2_view(
-            yue2_view,
-            prompt_models=GEMINI_PROMPT_MODELS,
-            default_prompt_model=DEFAULT_GEMINI_PROMPT_MODEL,
-            model_choices=YUE2_MODEL_CHOICES,
-            defaults=YUE2_DEFAULTS,
-        )
-        gallery_components = build_gallery_view(
-            gallery_view,
-            postprocess_options=POSTPROCESS_OPTIONS,
-            resolution_choices=tuple(UPSCALE_RESOLUTION_PRESETS),
-            default_resolution=DEFAULT_UPSCALE_RESOLUTION,
-            seedvr2_choices=SEEDVR2_MODEL_CHOICES,
-            default_seedvr2=defaults["seedvr2_model"],
-        )
-
-        with gallery_view:
-            gallery_settings_used = gr.HTML("Select an output to inspect its settings.")
-        gallery_components.selected.change(
-            render_snapshot,
-            inputs=gallery_components.selected,
-            outputs=gallery_settings_used,
-            queue=False,
-            api_name=False,
-        )
-        for root, view in (
-            (ltx25_view, ltx25_components),
-            (music3_view, music3_components),
-            (qwen_image21_view, qwen_image21_components),
-            (yue2_view, yue2_components),
-        ):
-            with root:
-                metadata_view = gr.HTML(
-                    "Settings used will appear with the generated result."
-                )
-            view.output.change(
-                result_settings_for_media,
-                inputs=view.output,
-                outputs=metadata_view,
-                queue=False,
-                api_name=False,
-                show_progress="hidden",
-            )
-        api_components = build_api_view(api_view, api_guide())
-        app_components = dict(h3_components.values)
-        app_components.update(
-            {
-                "api_components": api_components,
-                "api_status": api_components.status,
-                "api_stop": api_components.stop,
-                "gallery_components": gallery_components,
-                "gallery_tab": gallery_tab,
-                "health": health,
-                "ltx25_components": ltx25_components,
-                "ltx25_model": ltx25_components.model,
-                "ltx25_status": ltx25_components.status,
-                "ltx25_stop": ltx25_components.stop,
-                "memory_status": memory_status,
-                "music3_components": music3_components,
-                "music3_status": music3_components.status,
-                "music3_stop": music3_components.stop,
-                "qwen_image21_components": qwen_image21_components,
-                "qwen_image21_status": qwen_image21_components.status,
-                "qwen_image21_stop": qwen_image21_components.stop,
-                "yue2_components": yue2_components,
-                "yue2_status": yue2_components.status,
-                "yue2_stop": yue2_components.stop,
-                "system_summary": system_summary,
-                "unload_models": unload_models,
-            }
-        )
-        settings_controller = bind_app(
-            AppComponents.from_mapping(app_components),
-            AppServices(
-                resolve_request_settings=resolve_request_settings,
-                describe_settings=describe_settings,
-                AI_POSTPROCESS_OPTIONS=AI_POSTPROCESS_OPTIONS,
-                LTX25_UPSCALE=LTX25_UPSCALE,
-                SEEDVR2_UPSCALE=SEEDVR2_UPSCALE,
-                auto_resolution_from_start_frame=auto_resolution_from_start_frame,
-                bind_api_view=bind_api_view,
-                bind_gallery_view=bind_gallery_view,
-                bind_ltx_view=bind_ltx_view,
-                bind_music_view=bind_music_view,
-                bind_qwen_image21_view=bind_qwen_image21_view,
-                bind_yue2_view=bind_yue2_view,
-                compile_trt_video_vae=compile_trt_video_vae,
-                delete_selected_gallery_media=delete_selected_gallery_media,
-                empty_generated_media_gallery=empty_generated_media_gallery,
-                enhance_h3_prompt=enhance_h3_prompt,
-                enhance_ltx25_prompt=enhance_ltx25_prompt,
-                enhance_music3_prompt=enhance_music3_prompt,
-                enhance_qwen_image21_prompt=enhance_qwen_image21_prompt,
-                enhance_yue2_prompt=enhance_yue2_prompt,
-                fbcache_preset_defaults=fbcache_preset_defaults,
-                generate_for_ui=generate_for_ui,
-                generate_ltx25=generate_ltx25,
-                generate_music3=generate_music3,
-                generate_qwen_image21=generate_qwen_image21,
-                generate_yue2=generate_yue2,
-                generate_with_ui_defaults=generate_with_ui_defaults,
-                image_vae_frame_updates=image_vae_frame_updates,
-                import_gallery_media=import_gallery_media,
-                input_image_frame_preset_updates=input_image_frame_preset_updates,
-                interrupt=interrupt,
-                latent_upscale_layout_updates=latent_upscale_layout_updates,
-                latent_upscale_method_layout_update=latent_upscale_method_layout_update,
-                mode_layout_updates=mode_layout_updates,
-                postprocess_selected_gallery_media=postprocess_selected_gallery_media,
-                prepare_all_ltx25_official_models=prepare_all_ltx25_official_models,
-                prepare_ltx25_official_workflow=prepare_ltx25_official_workflow,
-                prompt_writer_backend_visibility=prompt_writer_backend_visibility,
-                refresh_backend_views=refresh_backend_views,
-                refresh_media_gallery=refresh_media_gallery,
-                render_ltx25_official_model_inventory=render_ltx25_official_model_inventory,
-                render_ltx25_workflow_details=render_ltx25_workflow_details,
-                resolution_control_updates=resolution_control_updates,
-                resolution_choice_updates=resolution_choice_updates,
-                resolution_info_preview=resolution_info_preview,
-                result_format_layout_updates=result_format_layout_updates,
-                save_selected_image_frames=save_selected_image_frames,
-                select_all_image_frames=select_all_image_frames,
-                select_gallery_media=select_gallery_media,
-                unload_all_models=unload_all_models,
-                upscale_selected_input_images=upscale_selected_input_images,
-            ),
-        )
-        browser_settings = {
-            **{
-                f"h3.{name}": component
-                for name, component in h3_components.values.items()
-            },
-            **{
-                f"ltx25.{name}": component
-                for name, component in vars(ltx25_components).items()
-            },
-            **{
-                f"music3.{name}": component
-                for name, component in vars(music3_components).items()
-            },
-            **{
-                f"qwen_image21.{name}": component
-                for name, component in vars(qwen_image21_components).items()
-            },
-            **{
-                f"yue2.{name}": component
-                for name, component in vars(yue2_components).items()
-            },
-            **{
-                f"gallery.{name}": component
-                for name, component in vars(gallery_components).items()
-            },
-        }
-        bind_browser_settings(
-            demo,
-            browser_settings,
-            controller=settings_controller,
-        )
-    return demo
+    """Legacy composition entry point; captures patched callbacks explicitly."""
+    from .bootstrap import BootstrapCatalog, BootstrapServices, build_ui as compose_ui
+    return compose_ui(
+        BootstrapCatalog(
+            AI_POSTPROCESS_OPTIONS=AI_POSTPROCESS_OPTIONS,
+            AUTO_RESOLUTION_MEGAPIXEL_PRESETS=AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
+            AUTO_SOL_TOKEN_THRESHOLD=AUTO_SOL_TOKEN_THRESHOLD,
+            COMFY_DIR=COMFY_DIR,
+            DEFAULT_AUTO_RESOLUTION_MEGAPIXELS=DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
+            DEFAULT_GEMINI_PROMPT_MODEL=DEFAULT_GEMINI_PROMPT_MODEL,
+            DEFAULT_INPUT_IMAGE_FRAME_PRESET=DEFAULT_INPUT_IMAGE_FRAME_PRESET,
+            DEFAULT_LOCAL_PROMPT_BASE_MODEL=DEFAULT_LOCAL_PROMPT_BASE_MODEL,
+            DEFAULT_LTX25_MODEL=DEFAULT_LTX25_MODEL,
+            DEFAULT_PROMPT_WRITER_BACKEND=DEFAULT_PROMPT_WRITER_BACKEND,
+            DEFAULT_UPSCALE_RESOLUTION=DEFAULT_UPSCALE_RESOLUTION,
+            DEFAULT_VIDEO_BATCH_COUNT=DEFAULT_VIDEO_BATCH_COUNT,
+            DRAFT_RESOLUTIONS=DRAFT_RESOLUTIONS,
+            FAST_RESOLUTIONS=FAST_RESOLUTIONS,
+            GEMINI_PROMPT_MODELS=GEMINI_PROMPT_MODELS,
+            GENERATION_POSTPROCESS_OPTIONS=GENERATION_POSTPROCESS_OPTIONS,
+            H3_LATENT_UPSCALER_MODEL_CHOICES=H3_LATENT_UPSCALER_MODEL_CHOICES,
+            H3_LATENT_UPSCALE_METHODS=H3_LATENT_UPSCALE_METHODS,
+            H3_LATENT_UPSCALE_SPLIT=H3_LATENT_UPSCALE_SPLIT,
+            H3_TEXT_ENCODER_CHOICES=H3_TEXT_ENCODER_CHOICES,
+            IMAGE_VAE_CHOICES=IMAGE_VAE_CHOICES,
+            INPUT_IMAGE_FRAME_PRESETS=INPUT_IMAGE_FRAME_PRESETS,
+            INPUT_IMAGE_UPSCALE_SLOTS=INPUT_IMAGE_UPSCALE_SLOTS,
+            LARGE_RESOLUTIONS=LARGE_RESOLUTIONS,
+            LIGHTNING_PROMPT_MODEL=LIGHTNING_PROMPT_MODEL,
+            LOCAL_PROMPT_BASE_MODELS=LOCAL_PROMPT_BASE_MODELS,
+            LTX25_DEFAULTS=LTX25_DEFAULTS,
+            LTX25_MODEL_CHOICES=LTX25_MODEL_CHOICES,
+            LTX25_UPSCALE=LTX25_UPSCALE,
+            LTX25_WORKFLOWS=LTX25_WORKFLOWS,
+            MAX_IMAGE_FRAMES=MAX_IMAGE_FRAMES,
+            MAX_VIDEO_BATCH_COUNT=MAX_VIDEO_BATCH_COUNT,
+            MIN_IMAGE_FRAMES=MIN_IMAGE_FRAMES,
+            MIN_VIDEO_BATCH_COUNT=MIN_VIDEO_BATCH_COUNT,
+            MODEL_PROFILE_CHOICES=MODEL_PROFILE_CHOICES,
+            MUSIC3_DEFAULTS=MUSIC3_DEFAULTS,
+            MUSIC3_MODEL_CHOICES=MUSIC3_MODEL_CHOICES,
+            POSTPROCESS_OPTIONS=POSTPROCESS_OPTIONS,
+            PROMPT_WRITER_BACKENDS=PROMPT_WRITER_BACKENDS,
+            QWEN_IMAGE21_DEFAULTS=QWEN_IMAGE21_DEFAULTS,
+            QWEN_IMAGE21_MODEL_CHOICES=QWEN_IMAGE21_MODEL_CHOICES,
+            QWEN_IMAGE21_TEXT_ENCODER_CHOICES=QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
+            RESULT_FORMATS=RESULT_FORMATS,
+            SEEDVR2_MODEL_CHOICES=SEEDVR2_MODEL_CHOICES,
+            SEEDVR2_UPSCALE=SEEDVR2_UPSCALE,
+            SERVER_ATTENTION_BACKEND=SERVER_ATTENTION_BACKEND,
+            SERVER_DENSE_ATTENTION_BACKEND=SERVER_DENSE_ATTENTION_BACKEND,
+            SLA_PRESET_INPUTS=SLA_PRESET_INPUTS,
+            TURBO_SETTINGS=TURBO_SETTINGS,
+            UI_DEFAULTS=UI_DEFAULTS,
+            UPSCALE_RESOLUTION_PRESETS=UPSCALE_RESOLUTION_PRESETS,
+            YUE2_DEFAULTS=YUE2_DEFAULTS,
+            YUE2_MODEL_CHOICES=YUE2_MODEL_CHOICES,
+        ),
+        BootstrapServices(
+            api_get=api_get,
+            api_guide=api_guide,
+            api_post=api_post,
+            auto_resolution_from_start_frame=auto_resolution_from_start_frame,
+            backend_status=backend_status,
+            compact_backend_status=compact_backend_status,
+            compact_settings_summary=compact_settings_summary,
+            compile_trt_video_vae=compile_trt_video_vae,
+            delete_selected_gallery_media=delete_selected_gallery_media,
+            describe_settings=describe_settings,
+            empty_generated_media_gallery=empty_generated_media_gallery,
+            enhance_h3_prompt=enhance_h3_prompt,
+            enhance_ltx25_prompt=enhance_ltx25_prompt,
+            enhance_music3_prompt=enhance_music3_prompt,
+            enhance_qwen_image21_prompt=enhance_qwen_image21_prompt,
+            enhance_yue2_prompt=enhance_yue2_prompt,
+            fbcache_preset_defaults=fbcache_preset_defaults,
+            generate_for_ui=generate_for_ui,
+            generate_ltx25=generate_ltx25,
+            generate_music3=generate_music3,
+            generate_qwen_image21=generate_qwen_image21,
+            generate_with_ui_defaults=generate_with_ui_defaults,
+            generate_yue2=generate_yue2,
+            generation_readiness_state=generation_readiness_state,
+            image_vae_frame_updates=image_vae_frame_updates,
+            import_gallery_media=import_gallery_media,
+            input_image_frame_preset_updates=input_image_frame_preset_updates,
+            interrupt=interrupt,
+            latent_upscale_layout_updates=latent_upscale_layout_updates,
+            latent_upscale_method_layout_update=latent_upscale_method_layout_update,
+            list_media_paths=list_media_paths,
+            mode_help=mode_help,
+            mode_layout_updates=mode_layout_updates,
+            postprocess_selected_gallery_media=postprocess_selected_gallery_media,
+            prepare_all_ltx25_official_models=prepare_all_ltx25_official_models,
+            prepare_ltx25_official_workflow=prepare_ltx25_official_workflow,
+            prompt_writer_backend_visibility=prompt_writer_backend_visibility,
+            reference_prompt_help=reference_prompt_help,
+            refresh_backend_views=refresh_backend_views,
+            refresh_media_gallery=refresh_media_gallery,
+            refresh_media_page=refresh_media_page,
+            render_ltx25_official_model_inventory=render_ltx25_official_model_inventory,
+            render_ltx25_workflow_details=render_ltx25_workflow_details,
+            render_snapshot=render_snapshot,
+            resolution_choice_updates=resolution_choice_updates,
+            resolution_control_updates=resolution_control_updates,
+            resolution_info_preview=resolution_info_preview,
+            resolution_summary=resolution_summary,
+            resolve_request_settings=resolve_request_settings,
+            result_format_layout_updates=result_format_layout_updates,
+            result_settings_for_media=result_settings_for_media,
+            save_selected_image_frames=save_selected_image_frames,
+            select_all_image_frames=select_all_image_frames,
+            select_gallery_media=select_gallery_media,
+            unload_all_models=unload_all_models,
+            upscale_selected_input_images=upscale_selected_input_images,
+        ),
+    )
 
 
 def selftest() -> None:
@@ -4826,7 +4711,10 @@ def selftest() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--selftest", action="store_true")
+    parser.add_argument("--ui-layout", choices=["legacy", "workspace"], default=None)
     args = parser.parse_args()
+    if args.ui_layout:
+        os.environ["H3_UI_LAYOUT"] = args.ui_layout
     if args.selftest:
         selftest()
         return

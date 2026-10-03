@@ -15,10 +15,12 @@ from .sections.performance import build_performance_section
 from .sections.prompt import build_prompt_section
 from .sections.references import build_references_section
 from .sections.results import build_results_section
+from .workspace_mode import workspace_enabled
 
 
 @dataclass(frozen=True)
 class H3ViewServices:
+    LTX25_MODEL_CHOICES: Mapping[str, Any]
     RESULT_FORMATS: Sequence[str]
     MODEL_PROFILE_CHOICES: Sequence[str]
     H3_TEXT_ENCODER_CHOICES: Mapping[str, Any]
@@ -65,6 +67,21 @@ class H3ViewServices:
 
 @dataclass(frozen=True)
 class H3View:
+    aspect_ratio: gr.components.Component | None
+    size_tier: gr.components.Component | None
+    prompt_preview: gr.components.Component
+    prompt_proposal: gr.components.Component
+    prompt_previous: gr.components.Component
+    accept_prompt: gr.components.Component
+    keep_prompt: gr.components.Component
+    undo_prompt: gr.components.Component
+    reference_map: gr.components.Component
+    reference_status: gr.components.Component
+    repair_references: gr.components.Component
+    reference_tag: gr.components.Component
+    insert_reference_tag: gr.components.Component
+    ltx25_model: gr.components.Component
+    video_decoder: gr.components.Component
     settings_used: gr.HTML
     restore_preset: gr.components.Component
     sla_settings: gr.components.Component
@@ -375,111 +392,39 @@ def build_h3_view(
     defaults: Mapping[str, Any],
     services: H3ViewServices,
 ) -> H3View:
-    with generation_view:
-        with gr.Column(scale=3, elem_classes=["h3-composer"]):
-            gr.HTML(
-                '<div class="h3-section-intro"><h2>Create</h2>'
-                "<p>Choose the output, describe the result, then add media only when needed.</p></div>"
-            )
-            model_section = build_model_section(defaults, services)
-            prompt_section = build_prompt_section(defaults, services)
-            references_section = build_references_section(defaults, services)
-            input_upscale_section = build_input_upscale_section(defaults, services)
-        with gr.Column(
-            scale=2,
-            min_width=420,
-            elem_classes=["h3-settings-panel", "h3-run-panel"],
-        ):
-            gr.HTML(
-                '<div class="h3-section-intro"><h2>Output</h2>'
-                "<p>Start with a preset. Advanced controls stay collapsed.</p></div>"
-            )
-            preset = gr.Radio(
-                ["Singularity", "Quality", "Balanced", "Fast"],
-                value="Singularity",
-                label="Generation preset",
-                interactive=True,
-                info=(
-                    "Sets sampling, text encoding, memory, attention, refinement, and video VAE defaults. "
-                    "Fast and Singularity use INT8 ConvRot; Balanced and Quality use FP16. "
-                    "Singularity selects its base model with Fast settings. Other presets keep your base model. "
-                    "Keeps your prompt, media and output size."
-                ),
-            )
-            restore_preset = gr.Button("Restore preset settings", size="sm")
-            output_settings_section = gr.Accordion(
-                "Output essentials",
-                open=False,
-                elem_classes=["h3-settings-section"],
-            )
-            performance_section = gr.Accordion(
-                "Performance & sampling (advanced)",
-                open=False,
-                elem_classes=["h3-settings-section"],
-            )
-            finishing_section = gr.Accordion(
-                "Upscaling & finishing (advanced)",
-                open=False,
-                elem_classes=["h3-settings-section"],
-            )
-            settings_overview = gr.HTML(
-                services.compact_settings_summary(
-                    defaults["mode"],
-                    defaults["model_profile"],
-                    defaults["text_encoder"],
-                    defaults["stage_model_offload"],
-                    defaults["reuse_unchanged_inputs"],
-                    defaults["use_int8_vae"],
-                    defaults["generation_mode"],
-                    defaults["turbo_variant"],
-                    defaults["duration"],
-                    defaults["width"],
-                    defaults["height"],
-                    defaults["steps"],
-                    defaults["scheduler"],
-                    defaults["attention_mode"],
-                    defaults["sla_preset"],
-                    defaults["cache_mode"],
-                    defaults["latent_upscale"],
-                    defaults["latent_upscaler_model"],
-                    defaults["latent_upscale_refine_steps"],
-                    defaults["postprocess"],
-                    defaults["seedvr2_model"],
-                    services.DEFAULT_LTX25_MODEL,
-                    defaults["upscale_force_offload"],
-                    defaults["upscale_split_enabled"],
-                    defaults["upscale_split_seconds"],
-                    defaults["result_format"],
-                    defaults["image_frames"],
-                    defaults["image_vae"],
-                    defaults["latent_upscale_method"],
-                    defaults["latent_split_tile_width"],
-                    defaults["latent_split_tile_height"],
-                    defaults["latent_split_overlap_ratio"],
-                    defaults["latent_split_fade_ratio"],
-                    defaults["latent_split_chunk_frames"],
-                    defaults["latent_split_temporal_overlap_frames"],
-                    defaults["latent_split_seam_denoise"],
-                    defaults["latent_split_seam_polish"],
-                    use_trt_vae=defaults["use_trt_vae"],
-                    use_lynnreal_vae=defaults["use_lynnreal_vae"],
-                ),
-                elem_classes=["h3-settings-summary"],
-            )
-            results_section = build_results_section(defaults, services)
-            output_section = build_output_section(
-                defaults, services, output_settings_section
-            )
-            performance_controls = build_performance_section(
-                defaults, services, performance_section
-            )
-
-            finishing_controls = build_finishing_section(
-                defaults, services, finishing_section
-            )
+    builder = _build_workspace_h3 if workspace_enabled() else _build_legacy_h3
+    (
+        model_section,
+        prompt_section,
+        references_section,
+        input_upscale_section,
+        preset,
+        restore_preset,
+        settings_overview,
+        results_section,
+        output_section,
+        performance_controls,
+        finishing_controls,
+        finishing_section,
+    ) = builder(generation_view, defaults, services)
 
     return H3View(
         **{
+            "aspect_ratio": output_section.aspect_ratio,
+            "size_tier": output_section.size_tier,
+            "prompt_preview": prompt_section.prompt_preview,
+            "prompt_proposal": prompt_section.prompt_proposal,
+            "prompt_previous": prompt_section.prompt_previous,
+            "accept_prompt": prompt_section.accept_prompt,
+            "keep_prompt": prompt_section.keep_prompt,
+            "undo_prompt": prompt_section.undo_prompt,
+            "reference_map": references_section.reference_map,
+            "reference_status": references_section.reference_status,
+            "repair_references": references_section.repair_references,
+            "reference_tag": references_section.reference_tag,
+            "insert_reference_tag": references_section.insert_reference_tag,
+            "ltx25_model": finishing_controls.ltx25_model,
+            "video_decoder": model_section.video_decoder,
             "settings_used": results_section.settings_used,
             "restore_preset": restore_preset,
             "sla_settings": performance_controls.sla_settings,
@@ -633,4 +578,237 @@ def build_h3_view(
             "use_trt_vae": model_section.use_trt_vae,
             "width": output_section.width,
         }
+    )
+
+
+def _build_legacy_h3(generation_view, defaults, services):
+    with generation_view:
+        with gr.Column(scale=3, elem_classes=["h3-composer"]):
+            gr.HTML(
+                '<div class="h3-section-intro"><h2>Create</h2>'
+                "<p>Choose the output, describe the result, then add media only when needed.</p></div>"
+            )
+            model_section = build_model_section(defaults, services)
+            prompt_section = build_prompt_section(defaults, services)
+            references_section = build_references_section(defaults, services)
+            input_upscale_section = build_input_upscale_section(defaults, services)
+        with gr.Column(
+            scale=2,
+            min_width=420,
+            elem_classes=["h3-settings-panel", "h3-run-panel"],
+        ):
+            gr.HTML(
+                '<div class="h3-section-intro"><h2>Output</h2>'
+                "<p>Start with a preset. Advanced controls stay collapsed.</p></div>"
+            )
+            preset = gr.Radio(
+                ["Singularity", "Quality", "Balanced", "Fast"],
+                value="Singularity",
+                label="Generation preset",
+                interactive=True,
+                info=(
+                    "Sets sampling, text encoding, memory, attention, refinement, and video VAE defaults. "
+                    "Fast and Singularity use INT8 ConvRot; Balanced and Quality use FP16. "
+                    "Singularity selects its base model with Fast settings. Other presets keep your base model. "
+                    "Keeps your prompt, media and output size."
+                ),
+            )
+            restore_preset = gr.Button("Restore preset settings", size="sm")
+            output_settings_section = gr.Accordion(
+                "Output essentials",
+                open=False,
+                elem_classes=["h3-settings-section"],
+            )
+            performance_section = gr.Accordion(
+                "Performance & sampling (advanced)",
+                open=False,
+                elem_classes=["h3-settings-section"],
+            )
+            finishing_section = gr.Accordion(
+                "Upscaling & finishing (advanced)",
+                open=False,
+                elem_classes=["h3-settings-section"],
+            )
+            settings_overview = gr.HTML(
+                services.compact_settings_summary(
+                    defaults["mode"],
+                    defaults["model_profile"],
+                    defaults["text_encoder"],
+                    defaults["stage_model_offload"],
+                    defaults["reuse_unchanged_inputs"],
+                    defaults["use_int8_vae"],
+                    defaults["generation_mode"],
+                    defaults["turbo_variant"],
+                    defaults["duration"],
+                    defaults["width"],
+                    defaults["height"],
+                    defaults["steps"],
+                    defaults["scheduler"],
+                    defaults["attention_mode"],
+                    defaults["sla_preset"],
+                    defaults["cache_mode"],
+                    defaults["latent_upscale"],
+                    defaults["latent_upscaler_model"],
+                    defaults["latent_upscale_refine_steps"],
+                    defaults["postprocess"],
+                    defaults["seedvr2_model"],
+                    services.DEFAULT_LTX25_MODEL,
+                    defaults["upscale_force_offload"],
+                    defaults["upscale_split_enabled"],
+                    defaults["upscale_split_seconds"],
+                    defaults["result_format"],
+                    defaults["image_frames"],
+                    defaults["image_vae"],
+                    defaults["latent_upscale_method"],
+                    defaults["latent_split_tile_width"],
+                    defaults["latent_split_tile_height"],
+                    defaults["latent_split_overlap_ratio"],
+                    defaults["latent_split_fade_ratio"],
+                    defaults["latent_split_chunk_frames"],
+                    defaults["latent_split_temporal_overlap_frames"],
+                    defaults["latent_split_seam_denoise"],
+                    defaults["latent_split_seam_polish"],
+                    use_trt_vae=defaults["use_trt_vae"],
+                    use_lynnreal_vae=defaults["use_lynnreal_vae"],
+                ),
+                elem_classes=["h3-settings-summary"],
+            )
+            results_section = build_results_section(defaults, services)
+            output_section = build_output_section(
+                defaults, services, output_settings_section
+            )
+            performance_controls = build_performance_section(
+                defaults, services, performance_section
+            )
+
+            finishing_controls = build_finishing_section(
+                defaults, services, finishing_section
+            )
+
+    return (
+        model_section,
+        prompt_section,
+        references_section,
+        input_upscale_section,
+        preset,
+        restore_preset,
+        settings_overview,
+        results_section,
+        output_section,
+        performance_controls,
+        finishing_controls,
+        finishing_section,
+    )
+
+
+def _build_workspace_h3(generation_view, defaults, services):
+    with generation_view:
+        with gr.Column(
+            scale=7,
+            min_width=320,
+            elem_id="h3-composer",
+            elem_classes=["h3-composer", "h3-run-panel"],
+        ):
+            gr.Markdown("### Compose")
+            model_section = build_model_section(defaults, services)
+            prompt_section = build_prompt_section(defaults, services)
+            references_section = build_references_section(defaults, services)
+            preset = gr.Radio(
+                ["Singularity", "Quality", "Balanced", "Fast"],
+                value="Singularity",
+                label="Recipe",
+                interactive=True,
+                info="Applies generation defaults. Keeps your prompt, media and output size.",
+            )
+            with gr.Accordion("Changes these settings", open=False):
+                gr.Markdown(
+                    "Recipes change sampling, text encoding, memory, attention, refinement and decoding. "
+                    "Singularity also selects its checkpoint; other recipes keep the selected checkpoint. "
+                    "Prompt, media and output intent are preserved. Explicit edits appear in the next-run summary."
+                )
+            restore_preset = gr.Button("Restore preset settings", size="sm")
+            output_settings_section = gr.Group(elem_classes=["h3-essentials"])
+            output_section = build_output_section(
+                defaults, services, output_settings_section
+            )
+            settings_overview = gr.HTML(
+                services.compact_settings_summary(
+                    defaults["mode"],
+                    defaults["model_profile"],
+                    defaults["text_encoder"],
+                    defaults["stage_model_offload"],
+                    defaults["reuse_unchanged_inputs"],
+                    defaults["use_int8_vae"],
+                    defaults["generation_mode"],
+                    defaults["turbo_variant"],
+                    defaults["duration"],
+                    defaults["width"],
+                    defaults["height"],
+                    defaults["steps"],
+                    defaults["scheduler"],
+                    defaults["attention_mode"],
+                    defaults["sla_preset"],
+                    defaults["cache_mode"],
+                    defaults["latent_upscale"],
+                    defaults["latent_upscaler_model"],
+                    defaults["latent_upscale_refine_steps"],
+                    defaults["postprocess"],
+                    defaults["seedvr2_model"],
+                    services.DEFAULT_LTX25_MODEL,
+                    defaults["upscale_force_offload"],
+                    defaults["upscale_split_enabled"],
+                    defaults["upscale_split_seconds"],
+                    defaults["result_format"],
+                    defaults["image_frames"],
+                    defaults["image_vae"],
+                    defaults["latent_upscale_method"],
+                    defaults["latent_split_tile_width"],
+                    defaults["latent_split_tile_height"],
+                    defaults["latent_split_overlap_ratio"],
+                    defaults["latent_split_fade_ratio"],
+                    defaults["latent_split_chunk_frames"],
+                    defaults["latent_split_temporal_overlap_frames"],
+                    defaults["latent_split_seam_denoise"],
+                    defaults["latent_split_seam_polish"],
+                    use_trt_vae=defaults["use_trt_vae"],
+                    use_lynnreal_vae=defaults["use_lynnreal_vae"],
+                ),
+                elem_classes=["h3-settings-summary"],
+            )
+            action_root = gr.Group()
+            performance_section = gr.Accordion(
+                "Performance & sampling (advanced)", open=False
+            )
+            finishing_section = gr.Accordion(
+                "Upscaling & finishing (advanced)", open=False
+            )
+            performance_controls = build_performance_section(
+                defaults, services, performance_section
+            )
+            finishing_controls = build_finishing_section(
+                defaults, services, finishing_section
+            )
+            input_upscale_section = build_input_upscale_section(defaults, services)
+        with gr.Column(
+            scale=5,
+            min_width=320,
+            elem_id="h3-preview",
+            elem_classes=["h3-preview-panel"],
+        ):
+            results_section = build_results_section(
+                defaults, services, action_root=action_root
+            )
+    return (
+        model_section,
+        prompt_section,
+        references_section,
+        input_upscale_section,
+        preset,
+        restore_preset,
+        settings_overview,
+        results_section,
+        output_section,
+        performance_controls,
+        finishing_controls,
+        finishing_section,
     )

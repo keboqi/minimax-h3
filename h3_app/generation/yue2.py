@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from h3_app.jobs import CURRENT_JOB, record_failure, variant_seed
+
 import random
 import time
 import uuid
@@ -53,15 +55,23 @@ def generate_yue2(
             raise H3Error("Sampling steps must be between 1 and 100.")
         if not 0 <= float(request.cfg) <= 20:
             raise H3Error("Diffusion CFG must be between 0 and 20.")
-        if not 0 <= float(request.temperature) <= 5 or not 0 < float(request.top_p) <= 1:
-            raise H3Error("Acoustic temperature must be 0–5 and top-p must be in (0, 1].")
+        if (
+            not 0 <= float(request.temperature) <= 5
+            or not 0 < float(request.top_p) <= 1
+        ):
+            raise H3Error(
+                "Acoustic temperature must be 0–5 and top-p must be in (0, 1]."
+            )
         if not 1 <= int(request.top_k) <= 32768:
             raise H3Error("Acoustic top-k must be between 1 and 32768.")
         if not 0.01 <= float(request.repetition_penalty) <= 10:
             raise H3Error("Acoustic repetition penalty must be between 0.01 and 10.")
         if not 1 <= int(request.max_abc_tokens) <= 20000:
             raise H3Error("Maximum ABC tokens must be between 1 and 20000.")
-        if not 0 <= float(request.abc_temperature) <= 5 or not 0.01 <= float(request.abc_top_p) <= 1:
+        if (
+            not 0 <= float(request.abc_temperature) <= 5
+            or not 0.01 <= float(request.abc_top_p) <= 1
+        ):
             raise H3Error("ABC temperature must be 0–5 and top-p must be in [0.01, 1].")
         if not 1 <= int(request.abc_top_k) <= 32768:
             raise H3Error("ABC top-k must be between 1 and 32768.")
@@ -69,10 +79,13 @@ def generate_yue2(
             raise H3Error("ABC repetition penalty must be between 0.01 and 10.")
         if not 1 <= int(request.abc_penalty_window) <= 20000:
             raise H3Error("ABC penalty window must be between 1 and 20000.")
-        actual_seed = (
-            random.randrange(0, 2**63 - 1)
-            if int(request.seed) < 0
-            else int(request.seed)
+        actual_seed = variant_seed(
+            (CURRENT_JOB.get().variant if CURRENT_JOB.get() else 0),
+            lambda: (
+                random.randrange(0, 2**63 - 1)
+                if int(request.seed) < 0
+                else int(request.seed)
+            ),
         )
 
         missing_files = services.models.missing_yue2_model_names(request.model_choice)
@@ -86,13 +99,16 @@ def generate_yue2(
                 ),
             )
         services.models.ensure_yue2_models(request.model_choice)
-        generate_abc = request.mode in {"full", "melody"} and not str(
-            request.abc or ""
-        ).strip()
+        generate_abc = (
+            request.mode in {"full", "melody"} and not str(request.abc or "").strip()
+        )
         available = set(services.execution.object_info())
-        missing_nodes = required_yue2_nodes(
-            tiled_decode=bool(request.tiled_decode), generate_abc=generate_abc
-        ) - available
+        missing_nodes = (
+            required_yue2_nodes(
+                tiled_decode=bool(request.tiled_decode), generate_abc=generate_abc
+            )
+            - available
+        )
         if missing_nodes:
             raise H3Error(
                 "YuE2 requires ComfyUI v0.36.0 or newer; missing nodes: "
@@ -128,9 +144,13 @@ def generate_yue2(
             f"Queued YuE2 job {prompt_id} · seed {actual_seed} · "
             f"up to {float(request.max_duration):g}s · {request.model_choice}",
         )
-        for stage, completed_nodes, total_nodes, step, step_total in (
-            services.execution.poll_comfy_progress(prompt_id, graph)
-        ):
+        for (
+            stage,
+            completed_nodes,
+            total_nodes,
+            step,
+            step_total,
+        ) in services.execution.poll_comfy_progress(prompt_id, graph):
             timings.transition(stage)
             if step is not None and step_total:
                 progress((step, step_total), desc=stage)
@@ -170,6 +190,7 @@ def generate_yue2(
             f"seed {actual_seed}\n\n{timing_summary}",
         )
     except Exception as exc:
+        record_failure(exc)
         yield GenerationUpdate(None, f"Error: {exc}\n\n{timings.summary()}")
     finally:
         timings.finish()

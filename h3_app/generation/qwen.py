@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from h3_app.jobs import record_failure, variant_seed, variant_indices
+
 import math
 import random
 import time
@@ -57,8 +59,7 @@ def max_qwen_edit_dimensions(source_width: int, source_height: int) -> tuple[int
         (width, height)
         for width in range(256, max_side + 1, grid)
         for height in range(256, max_side + 1, grid)
-        if width * height <= max_pixels
-        and width * height >= target_area * 0.85
+        if width * height <= max_pixels and width * height >= target_area * 0.85
     )
     return min(
         candidates,
@@ -69,7 +70,9 @@ def max_qwen_edit_dimensions(source_width: int, source_height: int) -> tuple[int
     )
 
 
-def first_reference_dimensions(path: str, input_dir: Path | None = None) -> tuple[int, int]:
+def first_reference_dimensions(
+    path: str, input_dir: Path | None = None
+) -> tuple[int, int]:
     try:
         image_path = Path(path)
         if not image_path.is_absolute() and input_dir is not None:
@@ -146,7 +149,10 @@ def generate_qwen_image21(
                 "Switch the mode or remove the uploaded images."
             )
         turbo = request.turbo_variant != "Off"
-        if request.turbo_variant != "Off" and request.turbo_variant not in QWEN_IMAGE21_TURBO_MODES:
+        if (
+            request.turbo_variant != "Off"
+            and request.turbo_variant not in QWEN_IMAGE21_TURBO_MODES
+        ):
             raise H3Error(f"Unknown Qwen Turbo variant: {request.turbo_variant}")
         reference_limit = 3 if turbo else 10
         separate_inputs = editing and bool(request.batch_edit_inputs)
@@ -158,7 +164,8 @@ def generate_qwen_image21(
 
         input_groups = (
             tuple((reference,) for reference in references)
-            if separate_inputs else (references,)
+            if separate_inputs
+            else (references,)
         )
         dimensions = tuple(
             resolve_qwen_output_dimensions(
@@ -170,8 +177,7 @@ def generate_qwen_image21(
         max_edit_resolution = editing and bool(request.max_resolution)
         reference_resolution = int(request.reference_resolution)
         if reference_resolution and (
-            not 256 <= reference_resolution <= 2048
-            or reference_resolution % 32
+            not 256 <= reference_resolution <= 2048 or reference_resolution % 32
         ):
             raise H3Error(
                 "Reference resolution must be 0 or a multiple of 32 from 256 to 2048."
@@ -233,21 +239,24 @@ def generate_qwen_image21(
         )
 
         available = set(services.execution.object_info())
-        missing_nodes = required_qwen_image21_nodes(
-            editing=editing,
-            use_spectrum=accelerator.lower() != "off",
-            turbo=turbo,
-            viggle=viggle,
-            nine_step=nine_step,
-            scheduler=request.scheduler,
-        ) - available
+        missing_nodes = (
+            required_qwen_image21_nodes(
+                editing=editing,
+                use_spectrum=accelerator.lower() != "off",
+                turbo=turbo,
+                viggle=viggle,
+                nine_step=nine_step,
+                scheduler=request.scheduler,
+            )
+            - available
+        )
         if missing_nodes:
             raise H3Error(
                 "Qwen Image 2.1 requires the latest ComfyUI; missing nodes: "
                 + ", ".join(sorted(missing_nodes))
             )
         sampling_detail = f"{steps} steps"
-        for index in range(total_jobs):
+        for index in variant_indices(total_jobs):
             input_index, _ = divmod(index, batch_count)
             job_references = input_groups[input_index]
             width, height, match_input_size = dimensions[input_index]
@@ -256,9 +265,13 @@ def generate_qwen_image21(
                 if max_edit_resolution
                 else "edit" if editing else f"{width}×{height} generation"
             )
-            actual_seed = (
-                random.randrange(0, 2**63 - 1)
-                if base_seed < 0 else base_seed + index
+            actual_seed = variant_seed(
+                index,
+                lambda: (
+                    random.randrange(0, 2**63 - 1)
+                    if base_seed < 0
+                    else base_seed + index
+                ),
             )
             queued_at = time.time()
             graph = build_qwen_image21_graph(
@@ -295,9 +308,13 @@ def generate_qwen_image21(
                 f"{request.model_choice} · {request.turbo_variant} · "
                 f"{sampling_detail} · accelerator {accelerator}",
             )
-            for stage, completed_nodes, total_nodes, step, step_total in (
-                services.execution.poll_comfy_progress(prompt_id, graph)
-            ):
+            for (
+                stage,
+                completed_nodes,
+                total_nodes,
+                step,
+                step_total,
+            ) in services.execution.poll_comfy_progress(prompt_id, graph):
                 timings.transition(stage)
                 if step is not None and step_total:
                     progress((step, step_total), desc=stage)
@@ -346,6 +363,7 @@ def generate_qwen_image21(
             )
         progress(1, desc="Complete")
     except Exception as exc:
+        record_failure(exc)
         yield GenerationUpdate(outputs.copy(), f"Error: {exc}\n\n{timings.summary()}")
     finally:
         timings.finish()

@@ -43,6 +43,8 @@ def bind_generation(
         outputs=[*generation_outputs, components.settings_used],
         show_progress="minimal",
         api_name=False,
+        reference_map=components.reference_map,
+        resolver=services.resolve_request_settings,
     )
     advanced_api_event = bind_gpu_action(
         gr.Button(visible=False).click,

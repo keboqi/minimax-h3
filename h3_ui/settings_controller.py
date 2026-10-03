@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 import gradio as gr
+from h3_app.decoder_intent import VideoDecoder
 from h3_app.settings import (
     PRESET_FIELDS,
     TEXT_TO_VIDEO_MODE,
@@ -137,6 +138,10 @@ class SettingsController:
                 **memory["values"],
                 **{name: before[name] for name in (*MEDIA_NAMES, "width", "height")},
             }
+        if action.startswith("decoder:"):
+            incoming.update(
+                VideoDecoder(action.removeprefix("decoder:")).legacy_flags()
+            )
         new_memory, current = transition_modes(memory, incoming, action)
         if action == "text_encoder":
             if incoming["text_encoder"] == "BF16":
@@ -203,9 +208,11 @@ class SettingsController:
             if name == "stage_model_offload":
                 props.update(
                     interactive=current["text_encoder"] != "BF16",
-                    info="Required by the BF16 encoder; effective offload is On."
-                    if current["text_encoder"] == "BF16"
-                    else "Unload models between generation stages.",
+                    info=(
+                        "Required by the BF16 encoder; effective offload is On."
+                        if current["text_encoder"] == "BF16"
+                        else "Unload models between generation stages."
+                    ),
                 )
             if name == "semantic_bridge":
                 props["interactive"] = "semantic_bridge" not in plan.inactive
@@ -217,15 +224,26 @@ class SettingsController:
                 )
             if name == "mode":
                 props.update(
-                    choices=[TEXT_TO_VIDEO_MODE]
-                    if fasth3_8step
-                    else ["Text to video", "First / last frame", "Reference media"],
+                    choices=(
+                        [TEXT_TO_VIDEO_MODE]
+                        if fasth3_8step
+                        else ["Text to video", "First / last frame", "Reference media"]
+                    ),
                     interactive=not fasth3_8step,
                 )
             if name in {"generation_mode", "steps", "scheduler"}:
                 props["interactive"] = not fasth3_8step
             if name in {"width", "height", "auto_megapixels"}:
                 props["visible"] = fmt != "Audio"
+            if (
+                name in {"width", "height"}
+                and self.components.get("aspect_ratio") is not None
+            ):
+                props["interactive"] = not (
+                    fmt == "Image"
+                    and current["mode"] == "First / last frame"
+                    and bool(current["first"])
+                )
             if name == "duration":
                 props["visible"] = fmt != "Image"
             if name in {"image_frames", "image_vae"}:
@@ -272,21 +290,64 @@ class SettingsController:
         # Generic EventData from a multi-trigger gr.on can have no target.
         self.events = []
 
+        def select_decoder(value, memory, *values):
+            return self.update(memory, *values, action="decoder:" + value)
+
+        self.events.append(
+            self.components["video_decoder"].input(
+                select_decoder,
+                inputs=[self.components["video_decoder"], self.memory, *self.inputs],
+                outputs=self.outputs,
+                queue=True,
+                concurrency_id="h3-settings",
+                concurrency_limit=1,
+                trigger_mode="always_last",
+                show_progress="hidden",
+                api_name=False,
+            )
+        )
+        decoder_flags = [
+            self.components[name]
+            for name in ("use_int8_vae", "use_lynnreal_vae", "use_trt_vae")
+        ]
+
+        def sync_decoder(official, lynnreal, trt):
+            try:
+                return VideoDecoder.from_flags(official, lynnreal, trt).value
+            except ValueError:
+                return gr.skip()
+
+        gr.on(
+            triggers=[component.change for component in decoder_flags],
+            fn=sync_decoder,
+            inputs=decoder_flags,
+            outputs=self.components["video_decoder"],
+            queue=False,
+            api_name=False,
+            show_progress="hidden",
+        )
+
         def handler(action):
             def dispatch(memory, *values):
                 return self.update(memory, *values, action=action)
 
             return dispatch
 
-        for name in (*self.names, *(n for n in MEDIA_NAMES if n != "first"), "restore_preset"):
+        for name in (
+            *self.names,
+            *(n for n in MEDIA_NAMES if n != "first"),
+            "restore_preset",
+        ):
             trigger = (
                 self.components[name].click
                 if name == "restore_preset"
                 # Textbox input can fire before its bound value has updated.
                 # Change observes the committed value, including enhancer results.
-                else self.components[name].change
-                if name == "prompt"
-                else self.components[name].input
+                else (
+                    self.components[name].change
+                    if name == "prompt"
+                    else self.components[name].input
+                )
             )
             self.events.append(
                 trigger(

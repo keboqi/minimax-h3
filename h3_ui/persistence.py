@@ -10,8 +10,32 @@ from .settings_controller import SETTING_NAMES
 # Keep the transport key/secret so existing encrypted v3 values remain readable.
 _STORAGE_KEY = "minimax-h3:settings:v3"
 _BROWSER_STATE_SECRET = "minimax-h3-ui-settings-v3"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 EXTRA_FIELDS = {
+    "workspace": ("task", "engine"),
+    "qwen_image21": (
+        "mode",
+        "model",
+        "text_encoder",
+        "width",
+        "height",
+        "reference_resolution",
+        "edit_size",
+        "seed",
+        "batch_count",
+        "steps",
+        "cfg",
+        "sampler",
+        "scheduler",
+        "cache_device",
+        "cache_dtype",
+        "attention_backend",
+        "accelerator",
+        "turbo_variant",
+        "preset",
+        "prompt_model",
+        "prompt_backend",
+    ),
     "h3": (
         "ref_size",
         "local_prompt_base_model",
@@ -77,6 +101,7 @@ EXTRA_FIELDS = {
         "tiled",
     ),
     "gallery": (
+        "ltx25_model",
         "postprocess",
         "upscale_resolution",
         "seedvr2_model",
@@ -126,6 +151,14 @@ def restore_preferences(saved, components):
         for name, component in components.items()
         if name in PERSISTED_NAMES
     }
+    if "workspace.task" in restored and "workspace.engine" in restored:
+        from h3_app.capabilities import engines_for_task
+
+        choices = engines_for_task(restored["workspace.task"])
+        restored["workspace.engine"] = next(
+            (item.id for item in choices if item.id == values.get("workspace.engine")),
+            choices[0].id,
+        )
     old_memory = payload.get("mode_memory", {})
     modes = {}
     if isinstance(old_memory, Mapping) and isinstance(old_memory.get("modes"), Mapping):
@@ -165,7 +198,16 @@ def bind_browser_settings(demo, components, *, controller):
 
     def restore(saved):
         restored, memory = restore_preferences(saved, selected)
-        return (*[restored[name] for name in names], memory)
+        updates = [restored[name] for name in names]
+        if "workspace.engine" in names:
+            from h3_app.capabilities import engines_for_task
+
+            choices = engines_for_task(restored["workspace.task"])
+            updates[names.index("workspace.engine")] = gr.update(
+                choices=[(item.label, item.id) for item in choices],
+                value=restored["workspace.engine"],
+            )
+        return (*updates, memory)
 
     def remember(memory, *values):
         return {
@@ -182,7 +224,7 @@ def bind_browser_settings(demo, components, *, controller):
         show_progress="hidden",
         api_name=False,
     )
-    restored.then(
+    refreshed = restored.success(
         controller.refresh,
         inputs=[controller.memory, *controller.inputs],
         outputs=controller.outputs,
@@ -214,4 +256,5 @@ def bind_browser_settings(demo, components, *, controller):
         api_name=False,
         trigger_mode="always_last",
     )
+    browser_state.h3_restore_event = refreshed
     return browser_state

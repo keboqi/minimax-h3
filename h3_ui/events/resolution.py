@@ -18,6 +18,7 @@ def bind_resolution(
             gr.update(visible=value == services.LTX25_UPSCALE),
             gr.update(visible=value == services.LTX25_UPSCALE),
             gr.update(visible=value == services.LTX25_UPSCALE),
+            gr.update(visible=value == services.LTX25_UPSCALE),
         ),
         inputs=components.generation_postprocess,
         outputs=[
@@ -26,6 +27,7 @@ def bind_resolution(
             components.generation_ltx25_note,
             components.generation_split_upscale,
             components.generation_split_seconds,
+            components.ltx25_model,
         ],
         queue=False,
         show_progress="hidden",

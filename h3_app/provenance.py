@@ -19,9 +19,13 @@ def snapshot_path(path: str | Path) -> Path:
 
 
 def write_snapshot(path: str | Path, settings: Mapping[str, Any]) -> None:
+    from .jobs import CURRENT_JOB
     destination = snapshot_path(path)
     temporary = destination.with_name(destination.name + f".{uuid.uuid4().hex}.tmp")
     payload = {"schema_version": 1, "output": Path(path).name, **settings}
+    job = CURRENT_JOB.get()
+    if job is not None:
+        payload.update(application_job_id=job.id, variant=job.variant, retry_of=job.retry_of)
     try:
         temporary.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"

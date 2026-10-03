@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from h3_app.jobs import CURRENT_JOB, record_failure, variant_seed
+
 import random
 import time
 import uuid
@@ -60,10 +62,13 @@ def generate_music3(
             raise H3Error("CFG values must be between 0 and 100.")
         if not 1 <= int(request.top_k) <= 8192:
             raise H3Error("Top K must be between 1 and 8192.")
-        actual_seed = (
-            random.randrange(0, 2**63 - 1)
-            if int(request.seed) < 0
-            else int(request.seed)
+        actual_seed = variant_seed(
+            (CURRENT_JOB.get().variant if CURRENT_JOB.get() else 0),
+            lambda: (
+                random.randrange(0, 2**63 - 1)
+                if int(request.seed) < 0
+                else int(request.seed)
+            ),
         )
 
         missing_files = services.models.missing_music3_model_names(request.model_choice)
@@ -121,9 +126,9 @@ def generate_music3(
                     total_nodes=total_nodes,
                     step=step,
                     step_total=step_total,
-                    configured_steps=int(request.steps)
-                    if stage == "Generating music"
-                    else None,
+                    configured_steps=(
+                        int(request.steps) if stage == "Generating music" else None
+                    ),
                     detail=f"Music 3 job `{prompt_id}`",
                 ),
             )
@@ -146,6 +151,7 @@ def generate_music3(
             f"seed {actual_seed}\n\n{timing_summary}",
         )
     except Exception as exc:
+        record_failure(exc)
         yield GenerationUpdate(None, f"Error: {exc}\n\n{timings.summary()}")
     finally:
         timings.finish()

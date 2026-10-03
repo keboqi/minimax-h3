@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
 import gradio as gr
+from h3_app.reference_bindings import ReferenceMap, KINDS
+from h3_app.reference_metadata import describe_reference
+from html import escape
+from ..workspace_mode import workspace_enabled
 
 if TYPE_CHECKING:
     from ..h3_view import H3ViewServices
@@ -13,6 +17,11 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ReferencesSection:
+    reference_map: gr.components.Component
+    reference_status: gr.components.Component
+    repair_references: gr.components.Component
+    reference_tag: gr.components.Component
+    insert_reference_tag: gr.components.Component
     first: gr.components.Component
     fl2va_audio_1: gr.components.Component
     fl2va_audio_2: gr.components.Component
@@ -41,6 +50,8 @@ class ReferencesSection:
 def build_references_section(
     defaults: Mapping[str, Any], services: H3ViewServices
 ) -> ReferencesSection:
+    workspace = workspace_enabled()
+    reference_map = gr.State(ReferenceMap())
     with gr.Group(visible=False) as frame_group:
         gr.Markdown("### First / last frame inputs")
         with gr.Row():
@@ -80,16 +91,34 @@ def build_references_section(
         with gr.Accordion("Reference images · up to 9", open=True):
             with gr.Row():
                 ref_image_1 = gr.Image(type="filepath", label="Picture 1")
-                ref_image_2 = gr.Image(type="filepath", label="Picture 2")
-                ref_image_3 = gr.Image(type="filepath", label="Picture 3")
+                ref_image_2 = gr.Image(
+                    type="filepath", label="Picture 2", visible=not workspace
+                )
+                ref_image_3 = gr.Image(
+                    type="filepath", label="Picture 3", visible=not workspace
+                )
             with gr.Row():
-                ref_image_4 = gr.Image(type="filepath", label="Picture 4")
-                ref_image_5 = gr.Image(type="filepath", label="Picture 5")
-                ref_image_6 = gr.Image(type="filepath", label="Picture 6")
+                ref_image_4 = gr.Image(
+                    type="filepath", label="Picture 4", visible=not workspace
+                )
+                ref_image_5 = gr.Image(
+                    type="filepath", label="Picture 5", visible=not workspace
+                )
+                ref_image_6 = gr.Image(
+                    type="filepath", label="Picture 6", visible=not workspace
+                )
             with gr.Row():
-                ref_image_7 = gr.Image(type="filepath", label="Picture 7")
-                ref_image_8 = gr.Image(type="filepath", label="Picture 8")
-                ref_image_9 = gr.Image(type="filepath", label="Picture 9")
+                ref_image_7 = gr.Image(
+                    type="filepath", label="Picture 7", visible=not workspace
+                )
+                ref_image_8 = gr.Image(
+                    type="filepath", label="Picture 8", visible=not workspace
+                )
+                ref_image_9 = gr.Image(
+                    type="filepath", label="Picture 9", visible=not workspace
+                )
+            shown = gr.State(1)
+            add_reference = gr.Button("Add image reference", visible=workspace)
         with gr.Accordion("Reference videos · up to 3", open=False):
             with gr.Row():
                 ref_video_1 = gr.Video(label="Video 1")
@@ -105,8 +134,103 @@ def build_references_section(
             value=defaults["ref_image_size"],
             label="Reference image size",
         )
+        reference_status = gr.HTML(visible=workspace)
+        with gr.Row(visible=workspace):
+            reference_tag = gr.Dropdown(choices=[], label="Prompt tag", value=None)
+            insert_reference_tag = gr.Button("Add tag to prompt")
+            repair_references = gr.Button("Confirm replaced references")
+
+    if workspace:
+        controls = [
+            ref_image_1,
+            ref_image_2,
+            ref_image_3,
+            ref_image_4,
+            ref_image_5,
+            ref_image_6,
+            ref_image_7,
+            ref_image_8,
+            ref_image_9,
+            ref_video_1,
+            ref_video_2,
+            ref_video_3,
+            ref_audio_1,
+            ref_audio_2,
+            ref_audio_3,
+        ]
+        names = [
+            f"{prefix}_{slot}"
+            for _, prefix, limit in KINDS
+            for slot in range(1, limit + 1)
+        ]
+
+        def reveal(count):
+            count = min(9, count + 1)
+            return (
+                count,
+                *(gr.update(visible=i < count) for i in range(9)),
+                gr.update(interactive=count < 9),
+            )
+
+        add_reference.click(
+            reveal,
+            inputs=shown,
+            outputs=[shown, *controls[:9], add_reference],
+            queue=False,
+            api_name=False,
+            show_progress="hidden",
+        )
+
+        def update_map(mapping, *values, repair=False):
+            mapping = (mapping or ReferenceMap()).update(
+                dict(zip(names, values, strict=True)), repair=repair
+            )
+            active = [b for b in mapping.bindings if b.engine_ordinal]
+            lines = [
+                f"{escape(b.tag)} → engine {escape(b.engine_tag)}"
+                + f" · {escape(describe_reference(b.path, b.kind))}"
+                + (" · replaced: confirm before using this tag" if b.unresolved else "")
+                for b in active
+            ]
+            body = (
+                "<br>".join(lines) or "Add media, then insert its tag into your prompt."
+            )
+            return (
+                mapping,
+                body,
+                gr.update(
+                    choices=[b.tag for b in active if not b.unresolved], value=None
+                ),
+            )
+
+        gr.on(
+            triggers=[c.change for c in controls],
+            fn=update_map,
+            inputs=[reference_map, *controls],
+            outputs=[reference_map, reference_status, reference_tag],
+            queue=True,
+            concurrency_id="h3-settings",
+            concurrency_limit=1,
+            api_name=False,
+            show_progress="hidden",
+        )
+        repair_references.click(
+            lambda mapping, *values: update_map(mapping, *values, repair=True),
+            inputs=[reference_map, *controls],
+            outputs=[reference_map, reference_status, reference_tag],
+            queue=True,
+            concurrency_id="h3-settings",
+            concurrency_limit=1,
+            api_name=False,
+            show_progress="hidden",
+        )
 
     return ReferencesSection(
+        reference_map=reference_map,
+        reference_status=reference_status,
+        repair_references=repair_references,
+        reference_tag=reference_tag,
+        insert_reference_tag=insert_reference_tag,
         first=first,
         fl2va_audio_1=fl2va_audio_1,
         fl2va_audio_2=fl2va_audio_2,

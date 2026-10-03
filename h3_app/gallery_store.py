@@ -6,6 +6,7 @@ import hashlib
 import json
 import subprocess
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from types import EllipsisType
@@ -18,6 +19,47 @@ from h3_app.processes import run_media_process
 
 _GALLERY_RESOLUTION_CACHE = {}
 _GALLERY_RESOLUTION_CACHE_LOCK = Lock()
+
+
+@dataclass(frozen=True)
+class AssetPage:
+    """A bounded gallery scan; presentation text never controls pagination.
+
+    The cursor counts scanned files, including unavailable thumbnails. This
+    prevents missing previews from trapping the UI on the same page.
+    """
+
+    items: tuple[tuple[str, str], ...]
+    paths: tuple[str, ...]
+    total: int
+    next_cursor: int | None
+    kind: str
+    unavailable: int = 0
+
+    def __post_init__(self):
+        if len(self.items) != len(self.paths):
+            raise ValueError("Gallery previews and selectable paths must align.")
+        if self.total < len(self.paths) or self.total < 0:
+            raise ValueError("Invalid gallery total.")
+        if self.next_cursor is not None and not 0 <= self.next_cursor < self.total:
+            raise ValueError("Invalid gallery cursor.")
+
+    @property
+    def status(self) -> str:
+        detail = f"Showing {len(self.items)} of {self.total} generated {self.kind}"
+        if self.unavailable:
+            plural = "s" if self.unavailable != 1 else ""
+            detail += f" · {self.unavailable} thumbnail{plural} unavailable"
+        return detail
+
+    def legacy(self) -> tuple[list[tuple[str, str]], list[str], str]:
+        return list(self.items), list(self.paths), self.status
+
+    @classmethod
+    def from_scan(cls, items, paths, total, limit, kind, unavailable=0):
+        scanned = min(max(0, int(limit)), total)
+        return cls(tuple(items), tuple(paths), total,
+                   scanned if scanned < total else None, kind, unavailable)
 
 
 def video_download_path(video: str | Path, *, runtime: RuntimeConfig) -> str:

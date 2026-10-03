@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from h3_app.jobs import CURRENT_JOB, variant_seed
+
 import random
 from dataclasses import dataclass
 from typing import Any, Generator
@@ -168,10 +170,13 @@ def prepare_h3(
     )
     policy_duration = generation_frames / 24.0
     resolved_width, resolved_height = effective.output.width, effective.output.height
-    actual_seed = (
-        random.randrange(0, 2**63 - 1)
-        if int(request.output.seed) < 0
-        else int(request.output.seed)
+    actual_seed = variant_seed(
+        (CURRENT_JOB.get().variant if CURRENT_JOB.get() else 0),
+        lambda: (
+            random.randrange(0, 2**63 - 1)
+            if int(request.output.seed) < 0
+            else int(request.output.seed)
+        ),
     )
     models = services.models.load_model_config()
     text_encoder_key, selected_text_encoder, bf16_text_encoder = (
@@ -261,11 +266,13 @@ def prepare_h3(
         request.output.result_format == "Image"
         and selected_image_vae != SINGLE_FRAME_IMAGE_VAE
     )
-    if needs_video_vae and not any((
-        request.output.use_int8_vae,
-        request.output.use_trt_vae,
-        request.output.use_lynnreal_vae,
-    )):
+    if needs_video_vae and not any(
+        (
+            request.output.use_int8_vae,
+            request.output.use_trt_vae,
+            request.output.use_lynnreal_vae,
+        )
+    ):
         video_vae_path = (
             runtime.comfy_dir
             / "models"
@@ -276,9 +283,7 @@ def prepare_h3(
             progress(0, desc="Downloading video VAE")
             yield GenerationUpdate(
                 None,
-                progress_status(
-                    "Downloading video VAE on demand", started=started
-                ),
+                progress_status("Downloading video VAE on demand", started=started),
             )
             services.models.ensure_base_video_vae(models)
 
@@ -293,9 +298,7 @@ def prepare_h3(
             progress(0, desc="Downloading audio VAE")
             yield GenerationUpdate(
                 None,
-                progress_status(
-                    "Downloading audio VAE on demand", started=started
-                ),
+                progress_status("Downloading audio VAE on demand", started=started),
             )
             services.models.ensure_audio_vae(models)
 
@@ -331,9 +334,9 @@ def prepare_h3(
         turbo_lora_name = None
         turbo_strength = 1.0
     selected_label += (
-        " · LynnReal Light INT8 VAE" if request.output.use_lynnreal_vae
-        else " · INT8 ConvRot VAE" if request.output.use_int8_vae
-        else " · FP16 VAE"
+        " · LynnReal Light INT8 VAE"
+        if request.output.use_lynnreal_vae
+        else " · INT8 ConvRot VAE" if request.output.use_int8_vae else " · FP16 VAE"
     )
     selected_label += (
         f" · text encoder {request.sampling.text_encoder} · stage offload "
@@ -367,9 +370,13 @@ def prepare_h3(
             if refine_choice not in REFINEMENT_LORA_SETTINGS:
                 raise H3Error(f"Unknown refinement LoRA: {refine_choice}")
             if profile_key == FASTH3_8STEP_PROFILE_KEY:
-                raise H3Error("FastH3 uses a distilled base; select Same as generation for refinement.")
+                raise H3Error(
+                    "FastH3 uses a distilled base; select Same as generation for refinement."
+                )
             refinement_variant = refine_choice
-            refinement_lora_name = models.turbo_lora_for(request.media.mode, refine_choice)
+            refinement_lora_name = models.turbo_lora_for(
+                request.media.mode, refine_choice
+            )
             if not refinement_lora_name:
                 raise H3Error(f"{refine_choice} refinement LoRA is not configured.")
             progress(0, desc=f"Preparing {refine_choice} refinement LoRA")
@@ -508,7 +515,10 @@ def prepare_h3(
         - available
     )
     if refinement_variant:
-        missing |= turbo_required_nodes(refinement_variant, refinement_lora_name or "") - available
+        missing |= (
+            turbo_required_nodes(refinement_variant, refinement_lora_name or "")
+            - available
+        )
     if missing:
         raise H3Error("Missing ComfyUI nodes: " + ", ".join(sorted(missing)))
 

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Mapping
 
 import gradio as gr
+from h3_app.decoder_intent import VideoDecoder
+from ..workspace_mode import workspace_enabled
 
 if TYPE_CHECKING:
     from ..h3_view import H3ViewServices
@@ -13,6 +16,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ModelSection:
+    video_decoder: gr.components.Component
     generation_mode: gr.components.Component
     image_vae: gr.components.Component
     mode: gr.components.Component
@@ -33,6 +37,7 @@ class ModelSection:
 def build_model_section(
     defaults: Mapping[str, Any], services: H3ViewServices
 ) -> ModelSection:
+    workspace = workspace_enabled()
     with gr.Row(elem_classes=["h3-mode-row"]):
         mode = gr.Radio(
             ["Text to video", "First / last frame", "Reference media"],
@@ -44,8 +49,13 @@ def build_model_section(
             value=defaults["result_format"],
             label="Result format",
             info="H3 always samples vision and audio; this selects what is decoded and shown.",
+            visible=not workspace,
         )
-    with gr.Row():
+    with (
+        gr.Accordion("Model & generation (advanced)", open=False)
+        if workspace
+        else nullcontext()
+    ), gr.Row():
         model_profile = gr.Radio(
             services.MODEL_PROFILE_CHOICES,
             value=defaults["model_profile"],
@@ -128,7 +138,19 @@ def build_model_section(
             label="Semantic Bridge strength",
             info="Start at 0.10; try 0.15 for a stronger effect. Higher values can reduce quality. Uses per-token magnitude matching.",
         )
+        video_decoder = gr.Dropdown(
+            choices=[item.value for item in VideoDecoder],
+            value=VideoDecoder.from_flags(
+                defaults["use_int8_vae"],
+                defaults["use_lynnreal_vae"],
+                defaults["use_trt_vae"],
+            ).value,
+            label="Video decoder",
+            visible=workspace,
+            info="One decoder per run. Image decoding is configured separately. TensorRT prepares a local engine when needed.",
+        )
         use_int8_vae = gr.Checkbox(
+            visible=not workspace,
             value=defaults["use_int8_vae"],
             label="INT8 ConvRot video VAE",
             info=(
@@ -137,12 +159,14 @@ def build_model_section(
             ),
         )
         use_lynnreal_vae = gr.Checkbox(
+            visible=not workspace,
             value=defaults["use_lynnreal_vae"],
             label="LynnReal Light INT8 video VAE",
             info="On for Fast and Singularity presets. Experimental distilled decoder; downloads 2.14 GB on first use and may change fine detail.",
         )
         with gr.Row():
             use_trt_vae = gr.Checkbox(
+                visible=not workspace,
                 value=defaults["use_trt_vae"],
                 label="Experimental TensorRT video VAE",
                 info=(
@@ -168,6 +192,7 @@ def build_model_section(
         )
 
     return ModelSection(
+        video_decoder=video_decoder,
         generation_mode=generation_mode,
         image_vae=image_vae,
         mode=mode,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from pathlib import Path
 from typing import Generator
 
@@ -15,12 +16,56 @@ from h3_app.catalog import (
 from h3_app.media_types import UpscaleClipBatch
 from h3_app.policy import upscale_target_dimensions
 from h3_app.progress import ProgressCallback
+from h3_app.jobs import CURRENT_JOB, record_failure
+from h3_app.provenance import write_snapshot
 from h3_app.status import StageTimings, progress_status
 
 from .preparation import PreparedH3
 from .requests import H3Request
 from .results import GenerationUpdate
 from .services import GenerationServices
+
+
+def make_finishing_retry(request, prepared, services, execution_snapshot):
+    """Start at finishing using the retained source and resolved model policy."""
+    saved_request = request.copy()
+
+    def finish_again(retained_source, _request):
+        job = CURRENT_JOB.get()
+        if job is not None:
+            job.state = "finishing"
+            job.stage = "Finishing retained H3 source"
+            job.variant_seeds[job.variant] = prepared.actual_seed
+        started = time.monotonic()
+        timings = StageTimings(
+            "H3 finishing retry", started, "Finishing retained source"
+        )
+        source = Path(retained_source)
+        try:
+            result = yield from finish_video(
+                saved_request,
+                prepared,
+                services,
+                source,
+                uuid.uuid4().hex,
+                started,
+                timings,
+                lambda *args, **kwargs: None,
+            )
+            write_snapshot(result, execution_snapshot)
+            yield GenerationUpdate(
+                str(result), "Finishing completed from retained H3 source."
+            )
+        except Exception as exc:
+            record_failure(exc)
+            yield GenerationUpdate(
+                str(source),
+                f"Finishing failed: {exc}. The H3 source remains available.",
+            )
+        finally:
+            timings.finish()
+
+    return finish_again
 
 
 def finish_video(
@@ -179,9 +224,9 @@ def finish_video(
                         total_nodes=total_nodes,
                         step=step,
                         step_total=step_total,
-                        configured_steps=configured_upscale_steps
-                        if step is not None
-                        else None,
+                        configured_steps=(
+                            configured_upscale_steps if step is not None else None
+                        ),
                         detail=f"Upscale job `{upscale_prompt_id}`",
                     ),
                 )

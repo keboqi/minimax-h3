@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from h3_app.jobs import CURRENT_JOB, record_failure, variant_seed
+
 import random
 import time
 import uuid
@@ -62,10 +64,13 @@ def generate_ltx25(
         resolved_width, resolved_height = validate_resolution(
             request.width, request.height
         )
-        actual_seed = (
-            random.randrange(0, 2**63 - 1)
-            if int(request.seed) < 0
-            else int(request.seed)
+        actual_seed = variant_seed(
+            (CURRENT_JOB.get().variant if CURRENT_JOB.get() else 0),
+            lambda: (
+                random.randrange(0, 2**63 - 1)
+                if int(request.seed) < 0
+                else int(request.seed)
+            ),
         )
         image_to_video = str(request.mode).strip().lower() == "image to video"
         reference_mode = str(request.mode).strip().lower() == "reference images"
@@ -119,9 +124,12 @@ def generate_ltx25(
             services.models.ensure_ltx25_ingredients_model()
 
         available = set(services.execution.object_info())
-        missing_nodes = required_ltx25_nodes(
-            image_to_video=image_to_video, reference_images=reference_mode
-        ) - available
+        missing_nodes = (
+            required_ltx25_nodes(
+                image_to_video=image_to_video, reference_images=reference_mode
+            )
+            - available
+        )
         if missing_nodes:
             raise H3Error(
                 "LTX-2.5 requires a current ComfyUI with LTXVideo nodes: "
@@ -177,9 +185,9 @@ def generate_ltx25(
                     total_nodes=total_nodes,
                     step=step,
                     step_total=step_total,
-                    configured_steps=8
-                    if stage == "Generating video and audio"
-                    else None,
+                    configured_steps=(
+                        8 if stage == "Generating video and audio" else None
+                    ),
                     detail=f"LTX-2.5 job `{prompt_id}`",
                 ),
             )
@@ -204,6 +212,7 @@ def generate_ltx25(
             f"seed {actual_seed}\n\n{timing_summary}",
         )
     except Exception as exc:
+        record_failure(exc)
         yield GenerationUpdate(None, f"Error: {exc}\n\n{timings.summary()}")
     finally:
         timings.finish()

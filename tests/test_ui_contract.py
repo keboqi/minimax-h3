@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -83,6 +84,36 @@ class UiContractTests(unittest.TestCase):
         )
         self.assertIs(event["queue"], False)
 
+    def test_workspace_preserves_published_api_parameters_and_returns(self):
+        with mock.patch.dict(os.environ, {"H3_UI_LAYOUT": "workspace"}), mock.patch.object(
+            gradio_app, "backend_status", return_value="Connected contract fixture"
+        ):
+            workspace = gradio_app.build_ui()
+        try:
+            legacy = self.demo.get_api_info()["named_endpoints"]
+            redesigned = workspace.get_api_info()["named_endpoints"]
+            published = (
+                "generate_video", "generate_video_advanced", "enhance_prompt",
+                "save_h3_image_frames", "upscale_h3_input_images",
+                "generate_ltx25_video", "enhance_ltx25_prompt",
+                "generate_qwen_image21", "enhance_qwen_image21_prompt",
+                "generate_music3", "enhance_music3_prompt",
+                "generate_yue2", "enhance_yue2_prompt",
+            )
+            for name in published:
+                with self.subTest(endpoint=name):
+                    before, after = legacy["/" + name], redesigned["/" + name]
+                    for key, fields in (
+                        ("parameters", ("parameter_name", "parameter_has_default", "parameter_default", "type")),
+                        ("returns", ("type", "component")),
+                    ):
+                        self.assertEqual(
+                            [tuple(item.get(field) for field in fields) for item in before[key]],
+                            [tuple(item.get(field) for field in fields) for item in after[key]],
+                        )
+        finally:
+            workspace.close()
+
     def test_fl2va_voice_inputs_live_under_frames_and_have_separate_api_fields(self):
         controls = {c.get("props", {}).get("label"): c for c in self.config["components"]}
         first_id = controls["First frame (auto resolution)"]["id"]
@@ -163,17 +194,17 @@ class UiContractTests(unittest.TestCase):
             self.assertEqual(
                 [u["visible"] for u in updates],
                 [True, False, option != gradio_app.LTX25_CQ_ENHANCER,
-                 True, True, False],
+                 True, True, False, True],
             )
             if option != gradio_app.LTX25_CQ_ENHANCER:
                 self.assertIn("Preserves source resolution", updates[2]["info"])
         self.assertEqual([u["visible"] for u in callback(gradio_app.LTX25_UPSCALE)],
-                         [True, False, True, True, True, True])
+                         [True, False, True, True, True, True, True])
         self.assertEqual([u["visible"] for u in callback(gradio_app.SEEDVR2_UPSCALE)],
-                         [True, True, False, False, False, True])
+                         [True, True, False, False, False, True, False])
         self.assertIn(gradio_app.LTX25_SDR_TO_HDR, choices)
         self.assertEqual([u["visible"] for u in callback(gradio_app.LTX25_SDR_TO_HDR)],
-                         [True, False, False, True, True, False])
+                         [True, False, False, True, True, False, True])
 
     def test_gallery_defaults_to_video_and_can_switch_to_images(self) -> None:
         controls = {

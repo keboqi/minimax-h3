@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Mapping
 
 import gradio as gr
@@ -36,9 +37,9 @@ class ResultsSection:
 
 
 def build_results_section(
-    defaults: Mapping[str, Any], services: H3ViewServices
+    defaults: Mapping[str, Any], services: H3ViewServices, *, action_root=None
 ) -> ResultsSection:
-    with gr.Group(elem_classes=["h3-action-dock"]):
+    with (action_root if action_root is not None else nullcontext()), gr.Group(elem_classes=["h3-action-dock"]):
         generation_readiness = gr.HTML(
             services.generation_readiness_state(defaults["mode"], "", None, None).html
         )

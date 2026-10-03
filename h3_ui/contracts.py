@@ -9,7 +9,6 @@ from .h3_view import H3View
 
 @dataclass(frozen=True)
 class AppComponents(H3View):
-    ltx25_model: gr.components.Component
     ltx25_components: Any
     qwen_image21_components: Any
     music3_components: Any
@@ -88,6 +87,8 @@ class AppServices:
     unload_all_models: Callable[[], tuple[str, str]]
     bind_gallery_view: Callable[..., Any]
     refresh_media_gallery: Callable[..., tuple[list[tuple[str, str]], list[str], str]]
+    refresh_media_page: Callable[..., Any]
+    list_media_paths: Callable[..., Any]
     select_gallery_media: Callable[..., Any]
     import_gallery_media: Callable[..., Any]
     postprocess_selected_gallery_media: Callable[..., Any]

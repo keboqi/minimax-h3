@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+import copy
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -16,6 +17,52 @@ from .errors import H3Error
 from .jobs import Job, JobCoordinator, scoped_graph
 from .progress import ProgressUpdate, no_progress
 from .status import graph_class_types, node_stage
+
+
+def replay_stage(graph, job):
+    """Reuse stage seeds and reject policy/model drift in retained retries."""
+    if not job.replay_ledger:
+        return
+    entries = [entry for entry in job.replay_ledger if entry["variant"] == job.variant]
+    index = job.replay_counts.get(job.variant, 0)
+    job.replay_counts[job.variant] = index + 1
+    if index >= len(entries):
+        return  # This stage was never submitted in the failed attempt.
+    entry = entries[index]
+    for key, seed in entry["seeds"].items():
+        node_id, field = key.rsplit(".", 1)
+        if node_id not in graph or field not in graph[node_id].get("inputs", {}):
+            raise H3Error(
+                "The workflow changed since this job. Submit a new request explicitly."
+            )
+        graph[node_id]["inputs"][field] = seed
+
+    def comparable(source):
+        normalized = copy.deepcopy(source)
+        for node in normalized.values():
+            inputs = node.get("inputs", {})
+            if "filename_prefix" in inputs:
+                inputs["filename_prefix"] = inputs["filename_prefix"].rsplit("/", 1)[0] if "/" in inputs["filename_prefix"] else "<output>"
+            for field in (
+                "image",
+                "video",
+                "audio",
+                "path",
+                "file",
+                "video_path",
+                "audio_path",
+                "image_path",
+            ):
+                if isinstance(inputs.get(field), str) and "Load" in node.get(
+                    "class_type", ""
+                ):
+                    inputs[field] = "<pinned-input>"
+        return normalized
+
+    if comparable(graph) != comparable(json.loads(entry["graph_json"])):
+        raise H3Error(
+            "Model selection or workflow settings changed since this job. Submit a new request explicitly."
+        )
 
 
 @dataclass
@@ -59,6 +106,9 @@ class Submission:
                 else self._poll(self.prompt_id, self.graph)
             )
             for update in updates:
+                if self.job:
+                    self.job.state = "running"
+                    self.job.stage = update[0]
                 yield ProgressUpdate(*update)
         finally:
             self.close()
@@ -68,6 +118,10 @@ class Submission:
             self._completed_history = self._wait_history(self.prompt_id)
             if self.job and self.job.prompt_id == self.prompt_id:
                 self.job.prompt_id = None
+            if self.job:
+                for entry in self.job.ledger:
+                    if entry["prompt_id"] == self.prompt_id:
+                        entry["state"] = "completed"
         return self._completed_history
 
     def close(self):
@@ -168,7 +222,9 @@ class Submission:
             if event_type in {"execution_success", "execution_complete"}:
                 return
             if event_type == "execution_cached":
-                cached = {str(node) for node in data.get("nodes", []) if str(node) in graph}
+                cached = {
+                    str(node) for node in data.get("nodes", []) if str(node) in graph
+                }
                 if not cached:
                     continue
                 completed.update(cached)
@@ -287,9 +343,12 @@ class ExecutionRunner:
     def submit(self, graph: dict, client_id: str, job: Job | None = None) -> PromptId:
         check = job.check if job else no_progress
         check()
+        if job:
+            replay_stage(graph, job)
         deadline = self.clock() + self.config.generation_timeout
         socket = None
         notice = None
+        intent = None
         try:
             socket = self.connect(
                 self.client.websocket_url(client_id),
@@ -312,16 +371,22 @@ class ExecutionRunner:
                 remaining = deadline - self.clock()
                 if remaining <= 0:
                     raise H3Error("Generation timed out during connection setup")
+                if job:
+                    intent = job.observe_submission(None, token, graph)
                 payload = self.client.post(
                     "/prompt",
                     json={"prompt": graph, "client_id": client_id},
                     timeout=min(self.client.timeout, remaining),
                 ).json()
                 if "prompt_id" not in payload:
+                    if intent is not None:
+                        intent["state"] = "rejected"
                     raise H3Error(json.dumps(payload, indent=2))
                 prompt_id = str(payload["prompt_id"])
                 if job:
                     job.prompt_id = prompt_id
+                    job.state = "submitted"
+                    intent.update(prompt_id=prompt_id, state="submitted")
             submission = Submission(
                 prompt_id,
                 graph,
@@ -341,6 +406,8 @@ class ExecutionRunner:
                 job.submissions.append(submission)
             return PromptId(submission)
         except BaseException:
+            if intent is not None and intent["state"] == "submitting":
+                intent["state"] = "submission_unknown"
             if socket is not None:
                 try:
                     socket.close()

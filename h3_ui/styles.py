@@ -188,7 +188,7 @@ H3_UI_CSS = """
 }
 """
 
-# This is the only stylesheet mounted by the Gradio 6 application. Keep it
+# This is the baseline stylesheet mounted by the Gradio 6 application. Keep it
 # strictly scoped to the generated setup summary so it cannot alter Gradio's
 # accordions, tabs, forms, or page layout.
 H3_SETUP_CSS = """
@@ -303,5 +303,76 @@ H3_SETUP_CSS = """
   .h3-setup-metrics .h3-setup-detail { flex-direction: row; justify-content: space-between; align-items: baseline; border: 0; padding: 0; gap: 12px; }
   .h3-setup-metrics .h3-setup-detail dd { text-align: right; font-size: 13px; }
   .h3-setup-card .h3-setup-detail-grid { grid-template-columns: 1fr; gap: 0; }
+}
+"""
+
+# Workspace rules target only owned classes/IDs and semantic roles. They are
+# mounted with the workspace flag; the stale H3_UI_CSS remains inactive.
+H3_WORKSPACE_CSS = """
+.h3-workspace {
+  --body-text-color-subdued: #475569;
+  --input-placeholder-color: #64748b;
+  --h3-surface: var(--block-background-fill, #ffffff);
+  --h3-muted-surface: var(--background-fill-secondary, #f4f6f8);
+  --h3-text: var(--body-text-color, #202b38);
+  --h3-muted: var(--body-text-color-subdued, #546171);
+  --h3-border: var(--block-border-color, #d9e0e7);
+  --h3-accent: #2563eb;
+  --h3-focus: #2563eb;
+  --button-primary-background-fill: #2563eb;
+  --button-primary-background-fill-hover: #1d4ed8;
+  --button-primary-text-color: #fff;
+  color: var(--h3-text);
+}
+.dark .h3-workspace {
+  --h3-accent: #93c5fd; --h3-focus: #93c5fd;
+  --body-text-color-subdued: #cbd5e1;
+  --input-placeholder-color: #94a3b8;
+}
+.h3-workspace .h3-hero { padding: 8px 0 16px; }
+.h3-workspace .h3-hero h1 { font-size: 26px; letter-spacing: -.02em; margin: 0 0 8px; }
+.h3-workspace .h3-hero p { color: var(--h3-muted); margin: 0; }
+.h3-workspace .h3-task-picker { padding: 12px; background: var(--h3-muted-surface); border-radius: 12px; }
+.h3-workspace #h3-engine-tabs [role="tablist"] { display: none; }
+.h3-workspace #h3-engine-tabs button[aria-label="More tabs"] { display: none; }
+.h3-workspace .h3-generator-shell { gap: 24px; align-items: flex-start; }
+.h3-workspace .h3-composer, .h3-workspace .h3-preview-panel { min-width: 0; }
+.h3-workspace .h3-preview-panel { border: 1px solid var(--h3-border); border-radius: 12px; padding: 16px; background: var(--h3-surface); }
+.h3-workspace .h3-essentials { border: 1px solid var(--h3-border); border-radius: 12px; padding: 12px; background: var(--h3-surface); }
+.h3-workspace .h3-action-dock { padding: 12px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-surface); }
+.h3-workspace .h3-action-dock .h3-status { margin-top: 8px; }
+.h3-workspace .h3-section-intro { padding: 0 0 12px; }
+.h3-workspace .h3-section-intro p { color: var(--h3-muted); }
+.h3-workspace .h3-system-status { display: flex; gap: 8px; align-items: center; }
+.h3-workspace :is(.h3-system-ready, .h3-system-warning) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding: 8px 0; }
+.h3-workspace .h3-mobile-nav a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; }
+.h3-workspace .h3-readiness { display: flex; gap: 6px; padding: 8px 0; }
+.h3-workspace .h3-setup-card { color: var(--h3-text); background: var(--h3-surface); border-color: var(--h3-border); font-size: 14px; }
+.h3-workspace .h3-setup-card .h3-setup-heading { background: var(--h3-muted-surface); border-color: var(--h3-border); }
+.h3-workspace .h3-setup-heading > strong, .h3-workspace .h3-setup-card dd { color: var(--h3-text); }
+.h3-workspace .h3-setup-heading > span { color: var(--h3-accent); background: var(--h3-surface); border-color: var(--h3-border); }
+.h3-workspace .h3-setup-card dt, .h3-workspace .h3-setup-context, .h3-workspace .h3-setup-card ul { color: var(--h3-muted); font-size: 13px; }
+.h3-workspace .h3-setup-card .h3-setup-disclosure, .h3-workspace .h3-setup-metrics .h3-setup-detail, .h3-workspace .h3-setup-detail-grid .h3-setup-detail, .h3-workspace .h3-setup-changes .h3-setup-detail { border-color: var(--h3-border); }
+.h3-workspace .h3-setup-card .h3-setup-disclosure summary { color: var(--h3-text); font-size: 13px; }
+.h3-workspace .h3-setup-card .h3-setup-disclosure summary:hover { color: var(--h3-accent); background: var(--h3-muted-surface); }
+.h3-workspace :is(button, input, textarea, select, summary, a):focus-visible { outline: 2px solid var(--h3-focus); outline-offset: 3px; scroll-margin: 100px 0; }
+.h3-workspace .h3-job-table { overflow-x: auto; }
+.h3-workspace .h3-job-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.h3-workspace .h3-job-table :is(th, td) { text-align: left; padding: 10px; border-bottom: 1px solid var(--h3-border); }
+.h3-workspace .h3-mobile-nav { display: none; }
+@media (max-width: 1199px) {
+  .h3-workspace .h3-generator-shell { flex-direction: column; }
+  .h3-workspace .h3-composer, .h3-workspace .h3-preview-panel { width: 100%; }
+}
+@media (max-width: 767px) {
+  .h3-workspace .h3-mobile-nav { display: flex; gap: 8px; }
+  .h3-workspace .h3-mode-row { flex-direction: column; }
+  .h3-workspace .h3-task-picker { padding: 8px; }
+  .h3-workspace .h3-preview-panel { padding: 8px; }
+  .h3-workspace .h3-action-dock { position: sticky; bottom: env(safe-area-inset-bottom, 0px); z-index: 2; }
+  .h3-workspace .h3-setup-metrics { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .h3-workspace *, .h3-workspace *::before, .h3-workspace *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
 """

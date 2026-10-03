@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
 import gradio as gr
+from ..workspace_mode import workspace_enabled
 
 if TYPE_CHECKING:
     from ..h3_view import H3ViewServices
@@ -13,6 +14,12 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class PromptSection:
+    prompt_preview: gr.components.Component
+    prompt_proposal: gr.components.Component
+    prompt_previous: gr.components.Component
+    accept_prompt: gr.components.Component
+    keep_prompt: gr.components.Component
+    undo_prompt: gr.components.Component
     enhance_prompt_button: gr.components.Component
     enhance_prompt_status: gr.components.Component
     gemini_api_key: gr.components.Component
@@ -38,7 +45,8 @@ def build_prompt_section(
     help_text = gr.Markdown(services.mode_help("Text to video"))
     prompt = gr.Textbox(
         label="Prompt",
-        lines=12,
+        lines=5 if workspace_enabled() else 12,
+        max_lines=24,
         placeholder="Describe shots, camera motion, dialogue, sound effects, ambience, music, and any tagged references.",
     )
     with gr.Accordion("Prompt writer / enhancer", open=False):
@@ -52,7 +60,9 @@ def build_prompt_section(
             value=services.DEFAULT_PROMPT_WRITER_BACKEND,
             label="Prompt writer",
         )
-        with gr.Group(visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "Local MiniMax-H3 8B") as local_prompt_writer_group:
+        with gr.Group(
+            visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "Local MiniMax-H3 8B"
+        ) as local_prompt_writer_group:
             local_prompt_base_model = gr.Dropdown(
                 choices=list(services.LOCAL_PROMPT_BASE_MODELS),
                 value=services.DEFAULT_LOCAL_PROMPT_BASE_MODEL,
@@ -87,7 +97,9 @@ def build_prompt_section(
                         label="Top-p (sampling)",
                     )
                 local_prompt_seed = gr.Number(value=42, precision=0, label="Seed")
-        with gr.Group(visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "Gemini") as gemini_prompt_writer_group:
+        with gr.Group(
+            visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "Gemini"
+        ) as gemini_prompt_writer_group:
             gr.Markdown(
                 "Uses the active inputs with `prompt.txt`. Set "
                 "`GEMINI_API_KEY` on the server or enter a temporary key; "
@@ -104,7 +116,9 @@ def build_prompt_section(
                     type="password",
                     placeholder="Uses GEMINI_API_KEY when blank",
                 )
-        with gr.Group(visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "Lightning AI") as lightning_prompt_writer_group:
+        with gr.Group(
+            visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "Lightning AI"
+        ) as lightning_prompt_writer_group:
             gr.Markdown(
                 f"Uses `{services.LIGHTNING_PROMPT_MODEL}` with the active text "
                 "and images plus `prompt.txt`. Video and audio references "
@@ -120,8 +134,24 @@ def build_prompt_section(
         enhance_prompt_status = gr.Textbox(
             label="Prompt enhancer status", lines=2, interactive=False
         )
+        with gr.Group(visible=workspace_enabled()):
+            prompt_preview = gr.Textbox(
+                label="Suggested prompt", lines=5, interactive=False
+            )
+            prompt_proposal = gr.State(None)
+            prompt_previous = gr.State(None)
+            with gr.Row():
+                accept_prompt = gr.Button("Accept suggested prompt")
+                keep_prompt = gr.Button("Keep original")
+                undo_prompt = gr.Button("Undo accepted prompt")
 
     return PromptSection(
+        prompt_preview=prompt_preview,
+        prompt_proposal=prompt_proposal,
+        prompt_previous=prompt_previous,
+        accept_prompt=accept_prompt,
+        keep_prompt=keep_prompt,
+        undo_prompt=undo_prompt,
         enhance_prompt_button=enhance_prompt_button,
         enhance_prompt_status=enhance_prompt_status,
         gemini_api_key=gemini_api_key,

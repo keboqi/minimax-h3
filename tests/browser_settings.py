@@ -136,8 +136,7 @@ def run():
                 expect(bridge).to_be_checked()
                 expect(strength).to_have_value("0.15")
                 encoder_attention = page.get_by_label("Qwen small input attention", exact=True)
-                expect(encoder_attention).to_be_checked()
-                encoder_attention.uncheck()
+                expect(encoder_attention).not_to_be_checked()
                 expect(card).to_contain_text("Server backend")
                 encoder_attention.check()
                 expect(card).to_contain_text("Small input (PyTorch/basic)")
@@ -171,7 +170,7 @@ def run():
                 )
                 second_page.get_by_text("Model and memory (advanced)", exact=True).click()
                 expect(second_page.get_by_label("Semantic Bridge (experimental)", exact=True)).to_be_checked()
-                expect(second_page.get_by_label("Qwen small input attention", exact=True)).to_be_checked()
+                expect(second_page.get_by_label("Qwen small input attention", exact=True)).not_to_be_checked()
                 second.close()
                 # Audio retains the native-refinement preference for the next video.
                 page.get_by_label("Audio", exact=True).check()
