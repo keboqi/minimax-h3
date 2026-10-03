@@ -9,7 +9,6 @@ def selftest() -> None:
         "Quality",
         "Original",
         "Singularity",
-        "FastH3 8-Step V2",
     ]
     assert app.GEMINI_PROMPT_MODELS == (
         "gemini-3.8-flash",

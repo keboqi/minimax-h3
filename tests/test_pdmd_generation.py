@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import unittest
 
 from h3_ui import application as app
-from h3_app.catalog import PDMD_2STEP_LORA, PDMD_4STEP_LORA, TURBO_SETTINGS
+from h3_app.catalog import PDMD_4STEP_LORA, TURBO_SETTINGS
 from h3_app.generation.preparation import _validate_sampling_steps
 from h3_app.policy import normalize_turbo_variant, turbo_sampler_name, turbo_steps_for
 from h3_app.settings import GenerationRequest, SamplingSettings, resolve_settings, transition_modes
@@ -15,7 +15,7 @@ from tests import test_refinement_lora as refinement_tests
 
 class PdmdGenerationTests(unittest.TestCase):
     def test_defaults_validation_and_preferences(self):
-        for variant, steps in ((PDMD_2STEP_LORA, 2), (PDMD_4STEP_LORA, 4)):
+        for variant, steps in ((PDMD_4STEP_LORA, 4),):
             with self.subTest(variant=variant):
                 self.assertEqual(normalize_turbo_variant(variant), variant)
                 self.assertEqual(turbo_steps_for(variant), steps)
@@ -26,7 +26,7 @@ class PdmdGenerationTests(unittest.TestCase):
                     'steps': 8, 'scheduler': 'beta', 'latent_upscale_refine_steps': 2,
                 }, 'turbo_variant')
                 self.assertEqual((values['steps'], values['scheduler']), (steps, 'simple'))
-                self.assertEqual(values['latent_upscale_refine_steps'], 1 if steps == 2 else 2)
+                self.assertEqual(values['latent_upscale_refine_steps'], 2)
                 self.assertEqual(resolve_settings(GenerationRequest.from_values(values)).issues, ())
                 _validate_sampling_steps('speed', True, variant, steps)
                 with self.assertRaises(app.H3Error):
@@ -37,7 +37,7 @@ class PdmdGenerationTests(unittest.TestCase):
                 self.assertTrue(resolve_settings(replace(request, sampling=replace(request.sampling, steps=steps - 1))).issues)
                 restored, _ = restore_preferences(
                     {'h3.steps': steps, 'h3.turbo_variant': variant},
-                    {'h3.steps': SimpleNamespace(value=4, minimum=2, maximum=30),
+                    {'h3.steps': SimpleNamespace(value=4, minimum=4, maximum=30),
                      'h3.turbo_variant': SimpleNamespace(value=app.DEFAULT_TURBO, choices=list(TURBO_SETTINGS))},
                 )
                 self.assertEqual(restored['h3.steps'], steps)
@@ -46,7 +46,7 @@ class PdmdGenerationTests(unittest.TestCase):
     def test_both_workflows_use_pdmd_for_generation_and_optional_refinement(self):
         models = refinement_tests.RefinementLoraTests().models()
         for build in (app.build_fl2va_graph, app.build_ref2va_graph):
-            for variant, steps in ((PDMD_2STEP_LORA, 2), (PDMD_4STEP_LORA, 4)):
+            for variant, steps in ((PDMD_4STEP_LORA, 4),):
                 for refine_variant in (None, PDMD_4STEP_LORA):
                     with self.subTest(build=build.__name__, variant=variant, refinement=refine_variant):
                         args = {

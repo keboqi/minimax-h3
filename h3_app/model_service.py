@@ -11,7 +11,6 @@ from typing import Any, Callable
 from h3_app.catalog import (
     LARRY_TURBO,
     PDMD_REFINEMENT_SETTINGS,
-    TAOMATE_3STEP_TURBO,
     LIGHTX2V_8STEP_TURBO,
     LIGHTX2V_4STEP_TURBO,
     LTX25_POSTPROCESS_MODELS,
@@ -76,6 +75,8 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
         profiles = {
             key.lower(): ModelProfile(**value)
             for key, value in data["profiles"].items()
+            if key.lower() != "fasth3_8step_v2"
+            and str(value.get("label", "")).strip().lower() != "fasth3 8-step v2"
         }
         default_profile = str(data.get("default_profile", "speed")).lower()
 
@@ -94,6 +95,9 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
             fl2va_source=fl2va.source,
             ref2va_source=ref2va.source,
         )
+
+    if default_profile not in profiles:
+        default_profile = "singularity"
 
     return ModelConfig(
         profiles=profiles,
@@ -115,17 +119,8 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
         video_vae_int8_source=data.get("video_vae_int8_source", "unknown"),
         image_vae_500k=data.get("image_vae_500k"),
         image_vae_500k_source=data.get("image_vae_500k_source", "unknown"),
-        pdmd_2step_lora=data.get(
-            "pdmd_2step_lora", MODEL_SPECS["pdmd_2step_lora"].local_name
-        ),
         pdmd_4step_lora=data.get(
             "pdmd_4step_lora", MODEL_SPECS["pdmd_4step_lora"].local_name
-        ),
-        taomate_turbo_lora=data.get(
-            "taomate_turbo_lora", MODEL_SPECS["taomate_turbo_lora"].local_name
-        ),
-        taomate_turbo_source=data.get(
-            "taomate_turbo_source", MODEL_SPECS["taomate_turbo_lora"].source
         ),
         turbo_lora=data.get("turbo_lora"),
         turbo_source=data.get("turbo_source", "unknown"),
@@ -424,9 +419,6 @@ def ensure_turbo_lora(
     if variant in PDMD_REFINEMENT_SETTINGS:
         model_key = PDMD_REFINEMENT_SETTINGS[variant].lora_attr
         filename = getattr(models, model_key)
-    elif variant == TAOMATE_3STEP_TURBO:
-        model_key = "taomate_turbo_lora"
-        filename = models.taomate_turbo_lora
     elif variant == LARRY_TURBO:
         model_key = "larry_turbo_lora"
         filename = models.larry_turbo_ref_lora if reference else models.larry_turbo_lora

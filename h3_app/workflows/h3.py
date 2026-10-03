@@ -11,7 +11,6 @@ from h3_app.catalog import (
     CHUNK_FEED_FORWARD_NODE,
     CORE_SAMPLER_NODE,
     CORE_LORA_LOADER_NODE,
-    TAOMATE_3STEP_TURBO,
     DEFAULT_IMAGE_FRAMES,
     DEFAULT_IMAGE_VAE,
     DEFAULT_RESULT_FORMAT,
@@ -77,10 +76,7 @@ def turbo_required_nodes(
     lora_filename: str = "",
 ) -> set[str]:
     """Return the external node contract for one normalized Turbo variant."""
-    if (
-        turbo_variant in PDMD_REFINEMENT_SETTINGS
-        or normalize_turbo_variant(turbo_variant) == TAOMATE_3STEP_TURBO
-    ):
+    if turbo_variant in PDMD_REFINEMENT_SETTINGS:
         return {CORE_LORA_LOADER_NODE, CORE_SAMPLER_NODE}
     if turbo_uses_custom_nodes(turbo_variant):
         return {LARRY_TURBO_LORA_NODE, LARRY_TURBO_SAMPLER_NODE}
@@ -117,7 +113,7 @@ def add_turbo_model_patch(
             "Re-run setup_h3.py and restart ComfyUI."
         )
 
-    if variant in PDMD_REFINEMENT_SETTINGS or variant == TAOMATE_3STEP_TURBO:
+    if variant in PDMD_REFINEMENT_SETTINGS:
         # The ComfyUI conversion embeds alpha tensors for the standard loader.
         turbo = graph.add(
             CORE_LORA_LOADER_NODE,

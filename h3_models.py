@@ -25,9 +25,7 @@ from typing import Any, Iterable
 MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
 ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 SINGULARITY_MODEL_REPO = "WarmBloodAban/Minimax-h3_Singularity"
-FASTH3_MODEL_REPO = "FastVideo/FastVideo-FastH3-Comfy"
 TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
-TAOMATE_TURBO_REPO = "CZMartin22/TaoMate-H3-3step-ComfyUI"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 SINGLE_FRAME_VAE_REPO = "iamkaikai/MiniMax-H3-Single-Frame-VAE-500K"
 TRT_VAE_REPO = "lihaoyun6/MiniMax-H3-VAE-ONNX"
@@ -138,12 +136,6 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
         "Singularity · pruned v1.3 INT8",
     ),
-    "fasth3_8step_v2": ModelSpec(
-        FASTH3_MODEL_REPO,
-        "diffusion_models",
-        "diffusion_models/fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
-        "FastH3 8-Step V2 · T2VA-only INT8 ConvRot",
-    ),
     "text_encoder": ModelSpec(
         TEXT_ENCODER_REPO,
         "text_encoders",
@@ -242,22 +234,10 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
         "LightX2V Ref2V Turbo 8-step v1.0 · official 768p ComfyUI BF16",
     ),
-    "pdmd_2step_lora": ModelSpec(
-        "Kijai/MiniMax-H3-experimental", "loras",
-        "loras/minimax_h3_pdmd_2step_lora_avg_rank_38_bf16.safetensors",
-        "Experimental PDMD 2-step LoRA · rank reduced BF16",
-        expected_sha256="a17f3eb45ab16be56fce79a522604a8ec1ce41d732022ad398c5908b230eec55",
-    ),
     "pdmd_4step_lora": ModelSpec(
         "Kijai/MiniMax-H3-experimental", "loras",
         "loras/minimax_h3_pdmd_4step_lora_avg_rank_57_bf16.safetensors",
         "Experimental PDMD 4-step LoRA · rank reduced BF16",
-    ),
-    "taomate_turbo_lora": ModelSpec(
-        TAOMATE_TURBO_REPO,
-        "loras",
-        "TaoMate-H3-3step-ComfyUI.safetensors",
-        "TaoMate-H3 3-step FL2VA · ComfyUI BF16 conversion",
     ),
     "larry_turbo_lora": ModelSpec(
         LARRY_TURBO_REPO,
@@ -572,16 +552,12 @@ PROFILE_MODEL_KEYS = {
     "quality": ("quality_fl2va", "quality_ref2va"),
     "original": ("original_fl2va", "original_ref2va"),
     "singularity": ("singularity_fl2va", "singularity_ref2va"),
-    # The pair preserves the existing profile schema while referencing one
-    # physical file. Runtime policy allows only the T2VA route.
-    "fasth3_8step_v2": ("fasth3_8step_v2", "fasth3_8step_v2"),
 }
 PROFILE_LABELS = {
     "speed": "Speed",
     "quality": "Quality",
     "original": "Original",
     "singularity": "Singularity",
-    "fasth3_8step_v2": "FastH3 8-Step V2",
 }
 PRELOAD_PROFILES = ("singularity",)
 PRELOAD_PROFILE_MODEL_KEYS = ("singularity_fl2va",)
@@ -708,8 +684,6 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     "video_vae_trt_decoder",
     "video_vae_trt_decoder_data",
     "image_vae_500k",
-    "taomate_turbo_lora",
-    "pdmd_2step_lora",
     "pdmd_4step_lora",
     "turbo_8step_lora",
     "turbo_8step_ref_lora",
@@ -1272,7 +1246,6 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     turbo_ref_lora = MODEL_SPECS["turbo_ref_lora"]
     turbo_8step_lora = MODEL_SPECS["turbo_8step_lora"]
     turbo_8step_ref_lora = MODEL_SPECS["turbo_8step_ref_lora"]
-    taomate_turbo_lora = MODEL_SPECS["taomate_turbo_lora"]
     larry_turbo_lora = MODEL_SPECS["larry_turbo_lora"]
     seedvr2_vae = MODEL_SPECS["seedvr2_vae"]
     seedvr2_models = {
@@ -1281,7 +1254,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
     return {
-        "schema_version": 20,
+        "schema_version": 21,
         "default_profile": "speed",
         "profiles": {
             profile: _profile_config(profile) for profile in PROFILE_MODEL_KEYS
@@ -1310,10 +1283,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         "turbo_8step_source": turbo_8step_lora.source,
         "turbo_8step_ref_lora": turbo_8step_ref_lora.local_name,
         "turbo_8step_ref_source": turbo_8step_ref_lora.source,
-        "pdmd_2step_lora": MODEL_SPECS["pdmd_2step_lora"].local_name,
         "pdmd_4step_lora": MODEL_SPECS["pdmd_4step_lora"].local_name,
-        "taomate_turbo_lora": taomate_turbo_lora.local_name,
-        "taomate_turbo_source": taomate_turbo_lora.source,
         "larry_turbo_lora": larry_turbo_lora.local_name,
         "larry_turbo_source": larry_turbo_lora.source,
         # Larry's FL2VA-trained LoRA is also exposed for experimental Ref2VA.
@@ -1337,9 +1307,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
                 for key in LTX25_SHARED_MODEL_KEYS
             },
         },
-        "turbo_supported_profiles": [
-            profile for profile in PROFILE_MODEL_KEYS if profile != "fasth3_8step_v2"
-        ],
+        "turbo_supported_profiles": list(PROFILE_MODEL_KEYS),
         "turbo_supported_modes": ["fl2va", "ref2va"],
         "manifest": manifest_name,
     }
@@ -1528,7 +1496,6 @@ def selftest() -> None:
         "original_ref2va",
         "singularity_fl2va",
         "singularity_ref2va",
-        "fasth3_8step_v2",
         "text_encoder",
         "text_encoder_int8",
         "text_encoder_bf16",
@@ -1544,8 +1511,6 @@ def selftest() -> None:
         "turbo_ref_lora",
         "turbo_8step_lora",
         "turbo_8step_ref_lora",
-        "taomate_turbo_lora",
-        "pdmd_2step_lora",
         "pdmd_4step_lora",
         "larry_turbo_lora",
         "seedvr2_3b_fp16",
@@ -1619,11 +1584,7 @@ def selftest() -> None:
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
     assert "h3_latent_upscaler_3d_bf16" not in PRELOAD_MODEL_KEYS
     assert tuple(cfg["profiles"]) == tuple(PROFILE_MODEL_KEYS)
-    assert cfg["schema_version"] == 20
-    assert "fasth3_8step_v2" not in PRELOAD_MODEL_KEYS
-    assert cfg["profiles"]["fasth3_8step_v2"]["fl2va"] == (
-        MODEL_SPECS["fasth3_8step_v2"].local_name
-    )
+    assert cfg["schema_version"] == 21
     assert cfg["default_profile"] == "speed"
     assert cfg["profiles"]["quality"]["fl2va"] == (
         "minimax_h3_fl2va_pruned_nvfp4_convrot_int8.safetensors"

@@ -14,39 +14,10 @@ from .resources import resolve_decoders
 LIGHTX2V_4STEP = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
 LIGHTX2V_8STEP = "LightX2V v1.0 / 8-step 768p"
 LARRY = "Larry v4-600 EMA"
-TAOMATE_3STEP = "TaoMate-H3 / 3-step"
-PDMD_2STEP = "PDMD / 2-step"
 PDMD_4STEP = "PDMD / 4-step"
-FASTH3_8STEP_PROFILE = "FastH3 8-Step V2"
-TEXT_TO_VIDEO_MODE = "Text to video"
 TURBO_STEPS = {
-    LIGHTX2V_4STEP: 4, LIGHTX2V_8STEP: 8, LARRY: 6, TAOMATE_3STEP: 3,
-    PDMD_2STEP: 2, PDMD_4STEP: 4,
+    LIGHTX2V_4STEP: 4, LIGHTX2V_8STEP: 8, LARRY: 6, PDMD_4STEP: 4,
 }
-
-
-def is_fasth3_8step_profile(name: str) -> bool:
-    return str(name).strip().lower() == FASTH3_8STEP_PROFILE.lower()
-
-
-def apply_model_profile_constraints(values: Mapping[str, Any]) -> dict[str, Any]:
-    """Apply sampling controls intrinsic to distilled base checkpoints."""
-    current = dict(values)
-    if is_fasth3_8step_profile(current.get("model_profile", "")):
-        current.update(
-            mode=TEXT_TO_VIDEO_MODE,
-            generation_mode="Normal",
-            steps=8,
-            scheduler="simple",
-            attention_mode="Kitchen",
-        )
-    return current
-
-
-def turbo_minimum_steps(variant: str) -> int:
-    if variant == PDMD_2STEP:
-        return 2
-    return 3 if variant == TAOMATE_3STEP else 4
 
 
 @dataclass(frozen=True)
@@ -207,7 +178,6 @@ def resolve_settings(
     issues: list[str] = []
     sampling, output, finishing = request.sampling, request.output, request.finishing
     generation_mode = request.generation_mode
-    fasth3_8step = is_fasth3_8step_profile(request.model_profile)
 
     def adjusted(key, before, after, reason):
         if before != after:
@@ -278,35 +248,6 @@ def resolve_settings(
         )
     if not finishing.latent_upscale:
         inactive.update({"latent_upscale_refine_steps", "latent_upscale_refine_lora"})
-    if fasth3_8step:
-        if finishing.latent_upscale and finishing.latent_upscale_refine_lora != "Same as generation":
-            issues.append("FastH3 uses a distilled base; select Same as generation for refinement.")
-        if request.mode != TEXT_TO_VIDEO_MODE:
-            issues.append("FastH3 8-Step V2 supports Text to video only.")
-        generation_mode = adjusted(
-            "generation_mode",
-            generation_mode,
-            "Normal",
-            "FastH3 8-Step V2 is already distilled and does not use a Turbo LoRA.",
-        )
-        sampling = replace(
-            sampling,
-            steps=adjusted(
-                "steps", sampling.steps, 8, "FastH3 V2 uses its trained 8-step schedule."
-            ),
-            scheduler=adjusted(
-                "scheduler",
-                sampling.scheduler,
-                "simple",
-                "FastH3 V2 uses the simple scheduler.",
-            ),
-            attention_mode=adjusted(
-                "attention_mode",
-                sampling.attention_mode,
-                "Kitchen",
-                "FastH3 V2 uses ComfyUI's native Kitchen attention path.",
-            ),
-        )
     if generation_mode != "Turbo":
         inactive.add("turbo_variant")
     if sampling.attention_mode not in {"Sol-Attn", "Auto"}:
@@ -317,14 +258,7 @@ def resolve_settings(
         inactive.add("sla_preset")
     if request.mode != "First / last frame":
         inactive.add("auto_megapixels")
-    if fasth3_8step:
-        minimum = 8
-    else:
-        minimum = (
-            turbo_minimum_steps(sampling.turbo_variant)
-            if generation_mode == "Turbo"
-            else 10
-        )
+    minimum = 4 if generation_mode == "Turbo" else 10
     if sampling.steps < minimum:
         issues.append(
             f"{generation_mode} requires at least {minimum} sampling steps."
@@ -445,14 +379,6 @@ def transition_modes(
         current.update(
             steps=TURBO_STEPS.get(current["turbo_variant"], 4), scheduler="simple"
         )
-    if (
-        mode == "Turbo"
-        and current.get("turbo_variant") == PDMD_2STEP
-        and current.get("steps") == 2
-        and action in {"turbo_variant", "generation_mode", "preset", "steps"}
-    ):
-        current["latent_upscale_refine_steps"] = 1
-    current = apply_model_profile_constraints(current)
     mode = current.get("generation_mode", mode)
     modes[mode] = {
         key: current[key]

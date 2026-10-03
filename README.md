@@ -58,7 +58,7 @@ deployment and production performance remain unmeasured.
   images, with downloadable results and no forced downscaling
 - Optional generation-stage MiniMax H3 latent 2x upscale, with Balanced BF16,
   Fast FP16, and Quality FP32 model choices
-- Selectable TaoMate-H3 3-step, Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
+- Selectable Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
   including dedicated LightX2V Ref2V adapters for 4 and 8 steps
 - Audio-safe SLA block-sparse attention by default, with selectable SageAttention 2,
   Comfy Kitchen comparison, and optional
@@ -235,13 +235,6 @@ forecast before a completed native refresh, which limits both acceleration and
 trajectory error at four to eight steps. Compare the same prompt and seed with
 Acceleration Off before relying on it for quality-critical output.
 
-[TaoMate-H3 3-step](https://huggingface.co/CZMartin22/TaoMate-H3-3step-ComfyUI)
-is available under **Turbo implementation** and downloads its BF16 LoRA on first
-use. Selecting it sets 3 steps and the simple scheduler; generation uses Euler,
-LoRA strength 0.7, and the existing unguided sampler (CFG 1.0). It supports
-**Text to video** and **First / last frame** with the FL2VA base. The same adapter
-is also available for **Reference media** generation with Ref2VA.
-
 Turbo defaults to the LightX2V four-step adapter at strength 1.0 (FL2V v1.2
 768p or the dedicated Ref2V 544p adapter). Larry v4-600 EMA remains available
 at six steps through its pinned custom node, which uses a quantization-aware
@@ -282,7 +275,7 @@ bash run_h3.sh
 ```
 
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
-Singularity pruned v1.3 INT8 checkpoint plus the Fast NVFP4/AWQ text encoder, default FP32 latent-upscaler checkpoint, shared VAEs, and default 4-step Turbo LoRAs. The Speed, Quality and Original checkpoints plus the selectable 3-step and 8-step Turbo LoRAs download on demand when selected; the Balanced preset's 6-step Larry LoRA is preloaded. SeedVR2 models, the
+Singularity pruned v1.3 INT8 checkpoint plus the Fast NVFP4/AWQ text encoder, default FP32 latent-upscaler checkpoint, shared VAEs, and default 4-step Turbo LoRAs. The Speed, Quality and Original checkpoints plus the selectable PDMD 4-step and LightX2V 8-step Turbo LoRAs download on demand when selected; the Balanced preset's 6-step Larry LoRA is preloaded. SeedVR2 models, the
 LTX-2.5 upscaler and restoration IC-LoRAs, and SwiftVR checkpoints are lazy and download only
 when their post-processing option is first used. The installer pins the official
 SwiftVR inference source; no SWIFTVR_CHECKPOINT_DIR is required unless you want
@@ -328,13 +321,6 @@ reused, the encoder never loads and all remaining stage offloads are skipped
 for that run. INT8 and NVFP4 keep the current all-VRAM path by default; stage
 offload can still be enabled manually for either one.
 
-**FastH3 8-Step V2** is available as a lazy base-model download using the official
-ComfyUI INT8 ConvRot checkpoint. It shares the selected Qwen3-VL text encoder,
-video VAE, audio VAE, decoders, finishing, and output pipeline with the other H3
-profiles. The checkpoint supports Text to video only. Selecting it locks the
-conditioning mode to Text to video and uses its trained Normal, 8-step,
-simple-scheduler path with native Kitchen attention; Turbo adapters are not
-applied on top of the distilled checkpoint.
 **Reuse unchanged prompt and media** is enabled by default. Uploaded H3 inputs are
 staged under content-derived names. Qwen reuse requires matching source media,
 prompt tokens, text encoder, attention route, and actual visual tensor geometry.
@@ -584,26 +570,23 @@ high-resolution refinement pass.
 
 **High-resolution refinement LoRA** defaults to **Same as generation**, preserving
 the generation adapter (or no adapter in Normal mode). Choose an existing
-TaoMate 3-step, LightX2V 4-/8-step, or Larry 6-step adapter, or the experimental
-[PDMD 2-/4-step BF16 conversions](https://huggingface.co/Kijai/MiniMax-H3-experimental/tree/main/loras),
+LightX2V 4-/8-step or Larry 6-step adapter, or the experimental
+[PDMD 4-step BF16 conversion](https://huggingface.co/Kijai/MiniMax-H3-experimental/tree/main/loras),
 to replace the adapter only for the high-resolution pass. The selected adapter
 downloads on first use and applies to both full-frame and split refinement.
 LightX2V uses its matching FL2VA/Ref2VA adapter; PDMD uses the same experimental
 adapter for both modes. The LoRA's training step label is independent of
 **High-resolution refinement steps**: the latter controls the actual pass length,
 using the tail of the generation sigma schedule to retain low-denoise refinement.
-For example, an 8-step generation can use PDMD 2-step or Larry for a two-step
+For example, an 8-step generation can use PDMD 4-step or Larry for a two-step
 refinement pass. Compare fixed seeds to assess quality; the lower-step adapter
-is not guaranteed to improve refinement. FastH3's distilled base uses
-**Same as generation**.
+is not guaranteed to improve refinement.
 
-The experimental **PDMD / 2-step** and **PDMD / 4-step** adapters are also
-selectable under **Turbo implementation** for the generation pass. Selection
-sets 2 or 4 generation steps with the simple scheduler and Euler sampler at
-LoRA strength 1.0, using the base H3 sigma shift. Both adapters download on
-first use and share their weights across conditioning modes. Selecting PDMD
-2-step sets latent refinement to one step so it uses a low-denoise tail of
-the two-step generation schedule. The refinement LoRA remains independently
+The experimental **PDMD / 4-step** adapter is also selectable under
+**Turbo implementation** for the generation pass. Selection sets 4 generation
+steps with the simple scheduler and Euler sampler at LoRA strength 1.0, using
+the base H3 sigma shift. The adapter downloads on first use and shares its
+weights across conditioning modes. The refinement LoRA remains independently
 selectable, with **Same as generation** as its default.
 
 The **High-resolution refinement method** control keeps **Full-frame

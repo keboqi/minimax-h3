@@ -189,15 +189,23 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(parameter["parameter_has_default"])
         self.assertTrue(parameter["parameter_default"])
 
-    def test_pdmd_is_selectable_for_generation_at_two_steps(self):
-        from h3_app.catalog import PDMD_2STEP_LORA, PDMD_4STEP_LORA
+    def test_only_supported_model_and_turbo_options_are_selectable(self):
+        from h3_app.catalog import PDMD_4STEP_LORA
 
         controls = {
             c.get("props", {}).get("label"): c for c in self.config["components"]
         }
         choices = [c[0] for c in controls["Turbo implementation"]["props"]["choices"]]
-        self.assertIn(PDMD_2STEP_LORA, choices)
+        self.assertNotIn("PDMD / 2-step", choices)
+        self.assertNotIn("TaoMate-H3 / 3-step", choices)
         self.assertIn(PDMD_4STEP_LORA, choices)
+        profiles = [c[0] for c in controls["Base model"]["props"]["choices"]]
+        self.assertNotIn("FastH3 8-Step V2", profiles)
+        refinements = [
+            c[0] for c in controls["High-resolution refinement LoRA"]["props"]["choices"]
+        ]
+        self.assertNotIn("PDMD / 2-step", refinements)
+        self.assertNotIn("TaoMate-H3 / 3-step", refinements)
         from h3_app.contracts import GENERATION_FIELDS
 
         advanced = next(
@@ -208,7 +216,7 @@ class UiContractTests(unittest.TestCase):
         steps = self.components[
             advanced["inputs"][GENERATION_FIELDS.index("steps") + 1]
         ]
-        self.assertEqual(steps["props"]["minimum"], 2)
+        self.assertEqual(steps["props"]["minimum"], 4)
 
     def test_refinement_lora_defaults_to_same_and_is_appended_to_api(self):
         from h3_app.catalog import REFINEMENT_LORA_CHOICES, SAME_REFINEMENT_LORA

@@ -399,8 +399,7 @@
         "Speed",
         "Quality",
         "Original",
-        "Singularity",
-        "FastH3 8-Step V2"
+        "Singularity"
       ],
       "title": "Radio",
       "type": "string"
@@ -426,11 +425,9 @@
     },
     "type_8": {
       "enum": [
-        "TaoMate-H3 / 3-step",
         "Larry v4-600 EMA",
         "LightX2V / 4-step (FL2V 768p · Ref2V 544p)",
         "LightX2V v1.0 / 8-step 768p",
-        "PDMD / 2-step",
         "PDMD / 4-step"
       ],
       "title": "Radio",
@@ -617,7 +614,7 @@
     },
     "type_13": {
       "type": "number",
-      "description": "numeric value between 2 and 30"
+      "description": "numeric value between 4 and 30"
     },
     "type_14": {
       "enum": [
@@ -832,11 +829,9 @@
       "type": "string",
       "enum": [
         "Same as generation",
-        "TaoMate-H3 / 3-step",
         "Larry v4-600 EMA",
         "LightX2V / 4-step (FL2V 768p · Ref2V 544p)",
         "LightX2V v1.0 / 8-step 768p",
-        "PDMD / 2-step",
         "PDMD / 4-step"
       ]
     },

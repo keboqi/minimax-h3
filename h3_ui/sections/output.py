@@ -123,7 +123,7 @@ def build_workspace_output(defaults, services, root):
             )
             canvas_status = gr.Markdown()
         with gr.Accordion("Sampling steps (advanced)", open=False):
-            steps = gr.Slider(2, 30, value=defaults["steps"], step=1, label="Steps")
+            steps = gr.Slider(4, 30, value=defaults["steps"], step=1, label="Steps")
         draft_resolution = gr.Dropdown(
             list(services.DRAFT_RESOLUTIONS), value=None, label="768p", visible=False
         )

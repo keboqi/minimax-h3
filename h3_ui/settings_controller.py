@@ -7,8 +7,6 @@ import gradio as gr
 from h3_app.decoder_intent import VideoDecoder
 from h3_app.settings import (
     PRESET_FIELDS,
-    TEXT_TO_VIDEO_MODE,
-    is_fasth3_8step_profile,
     transition_modes,
 )
 from h3_app.contracts import GENERATION_COMPONENTS, GENERATION_FIELDS
@@ -188,7 +186,6 @@ class SettingsController:
                 gr.update(interactive=False),
             )
         fmt = current["result_format"]
-        fasth3_8step = is_fasth3_8step_profile(current["model_profile"])
         updates = []
         previous_presentation = (memory or {}).get("presentation", {})
         presentation = {}
@@ -222,19 +219,15 @@ class SettingsController:
                 props["visible"] = bool(plan.effective.semantic_bridge)
             if name == "turbo_variant":
                 props["visible"] = (
-                    current["generation_mode"] == "Turbo" and not fasth3_8step
+                    current["generation_mode"] == "Turbo"
                 )
             if name == "mode":
                 props.update(
-                    choices=(
-                        [TEXT_TO_VIDEO_MODE]
-                        if fasth3_8step
-                        else ["Text to video", "First / last frame", "Reference media"]
-                    ),
-                    interactive=not fasth3_8step,
+                    choices=["Text to video", "First / last frame", "Reference media"],
+                    interactive=True,
                 )
             if name in {"generation_mode", "steps", "scheduler"}:
-                props["interactive"] = not fasth3_8step
+                props["interactive"] = True
             if name in {"width", "height", "auto_megapixels"}:
                 props["visible"] = fmt != "Audio"
             if (

@@ -5,8 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 from h3_app.settings import (
-    PRESETS, TAOMATE_3STEP as TAOMATE_3STEP_TURBO,
-    PDMD_2STEP as PDMD_2STEP_LORA, PDMD_4STEP as PDMD_4STEP_LORA,
+    PRESETS, PDMD_4STEP as PDMD_4STEP_LORA,
 )
 from h3_models import (
     DEFAULT_H3_LATENT_UPSCALER_MODEL,
@@ -574,12 +573,6 @@ class TurboSpec:
 
 
 TURBO_SETTINGS = {
-    TAOMATE_3STEP_TURBO: TurboSpec(
-        steps=3,
-        strength=0.7,
-        lora_attr="taomate_turbo_lora",
-        ref_lora_attr="taomate_turbo_lora",
-    ),
     LARRY_TURBO: TurboSpec(
         steps=6,
         strength=1.0,
@@ -604,7 +597,6 @@ TURBO_SETTINGS = {
 
 SAME_REFINEMENT_LORA = "Same as generation"
 PDMD_REFINEMENT_SETTINGS = {
-    PDMD_2STEP_LORA: TurboSpec(2, 1.0, "pdmd_2step_lora", "pdmd_2step_lora"),
     PDMD_4STEP_LORA: TurboSpec(4, 1.0, "pdmd_4step_lora", "pdmd_4step_lora"),
 }
 TURBO_SETTINGS.update(PDMD_REFINEMENT_SETTINGS)

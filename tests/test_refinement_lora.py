@@ -10,7 +10,7 @@ from h3_ui import application as app
 import h3_models
 from h3_app import model_service
 from h3_app.catalog import (
-    LARRY_TURBO, LIGHTX2V_8STEP_TURBO, PDMD_2STEP_LORA, PDMD_4STEP_LORA,
+    LARRY_TURBO, LIGHTX2V_8STEP_TURBO, PDMD_4STEP_LORA,
     REFINEMENT_LORA_SETTINGS, SAME_REFINEMENT_LORA,
 )
 from h3_app.config import RuntimeConfig
@@ -28,7 +28,6 @@ class RefinementLoraTests(unittest.TestCase):
             {}, 'speed', 'text.safetensors', 'video.safetensors', 'audio.safetensors',
             turbo_8step_lora='generation_8step_768p.safetensors',
             turbo_8step_ref_lora='reference_8step_768p.safetensors',
-            pdmd_2step_lora=h3_models.MODEL_SPECS['pdmd_2step_lora'].local_name,
             pdmd_4step_lora=h3_models.MODEL_SPECS['pdmd_4step_lora'].local_name,
         )
 
@@ -42,7 +41,7 @@ class RefinementLoraTests(unittest.TestCase):
 
     def test_both_workflows_replace_lora_only_on_refinement_branch(self):
         for build in (app.build_fl2va_graph, app.build_ref2va_graph):
-            for variant in (PDMD_2STEP_LORA, PDMD_4STEP_LORA, LARRY_TURBO):
+            for variant in (PDMD_4STEP_LORA, LARRY_TURBO):
                 for split in (False, True):
                     with self.subTest(build=build.__name__, variant=variant, split=split):
                         args = {
@@ -109,13 +108,13 @@ class RefinementLoraTests(unittest.TestCase):
     def test_selection_survives_restore_and_is_in_effective_settings(self):
         field = 'h3.latent_upscale_refine_lora'
         restored, _ = restore_preferences(
-            {field: PDMD_2STEP_LORA},
+            {field: PDMD_4STEP_LORA},
             {field: SimpleNamespace(value=SAME_REFINEMENT_LORA, choices=[SAME_REFINEMENT_LORA, *REFINEMENT_LORA_SETTINGS])},
         )
-        self.assertEqual(restored[field], PDMD_2STEP_LORA)
-        plan = resolve_settings(GenerationRequest.from_values({'latent_upscale_refine_lora': PDMD_2STEP_LORA}))
-        self.assertEqual(plan.effective.finishing.latent_upscale_refine_lora, PDMD_2STEP_LORA)
-        disabled = resolve_settings(GenerationRequest.from_values({'latent_upscale': False, 'latent_upscale_refine_lora': PDMD_2STEP_LORA}))
+        self.assertEqual(restored[field], PDMD_4STEP_LORA)
+        plan = resolve_settings(GenerationRequest.from_values({'latent_upscale_refine_lora': PDMD_4STEP_LORA}))
+        self.assertEqual(plan.effective.finishing.latent_upscale_refine_lora, PDMD_4STEP_LORA)
+        disabled = resolve_settings(GenerationRequest.from_values({'latent_upscale': False, 'latent_upscale_refine_lora': PDMD_4STEP_LORA}))
         self.assertIn('latent_upscale_refine_lora', disabled.inactive)
 
     def test_pdmd_is_lazy_and_old_model_config_gets_filenames(self):
@@ -123,12 +122,12 @@ class RefinementLoraTests(unittest.TestCase):
             root = Path(directory)
             runtime = RuntimeConfig(root, 'http://fixture', root / 'ComfyUI', root / 'models.json', root / 'outputs')
             config = h3_models._build_config('manifest.json')
-            for key in ('pdmd_2step_lora', 'pdmd_4step_lora'):
+            for key in ('pdmd_4step_lora',):
                 config.pop(key)
                 self.assertNotIn(key, h3_models.PRELOAD_MODEL_KEYS)
             runtime.models_config.write_text(json.dumps(config), encoding='utf-8')
             models = model_service.load_model_config(runtime=runtime)
-            for variant, spec in ((PDMD_2STEP_LORA, 'pdmd_2step_lora'), (PDMD_4STEP_LORA, 'pdmd_4step_lora')):
+            for variant, spec in ((PDMD_4STEP_LORA, 'pdmd_4step_lora'),):
                 for mode in ('Text to video', 'Reference media'):
                     self.assertEqual(models.turbo_lora_for(mode, variant), h3_models.MODEL_SPECS[spec].local_name)
                     with (patch.object(model_service, 'stale_model_keys', return_value=[spec]),

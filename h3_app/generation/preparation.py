@@ -23,7 +23,6 @@ from h3_app.catalog import (
 )
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
-from h3_app.settings import turbo_minimum_steps
 from h3_app.model_types import (
     ModelConfig,
     ltx25_model_keys,
@@ -59,9 +58,6 @@ from .results import GenerationUpdate
 from .services import GenerationServices
 
 
-FASTH3_8STEP_PROFILE_KEY = "fasth3_8step_v2"
-
-
 def _validate_sampling_steps(
     profile_key: str,
     use_turbo: bool,
@@ -69,10 +65,10 @@ def _validate_sampling_steps(
     effective_steps: int,
 ) -> None:
     if use_turbo:
-        minimum = turbo_minimum_steps(selected_turbo)
+        minimum = 4
         if effective_steps < minimum:
             raise H3Error(f"Turbo requires at least {minimum} steps.")
-    elif profile_key != FASTH3_8STEP_PROFILE_KEY and effective_steps < 10:
+    elif effective_steps < 10:
         raise H3Error(
             "Normal H3 generation requires at least 10 steps. "
             "Use Generation=Turbo for lower-step generation."
@@ -369,10 +365,6 @@ def prepare_h3(
         if refine_choice != SAME_REFINEMENT_LORA:
             if refine_choice not in REFINEMENT_LORA_SETTINGS:
                 raise H3Error(f"Unknown refinement LoRA: {refine_choice}")
-            if profile_key == FASTH3_8STEP_PROFILE_KEY:
-                raise H3Error(
-                    "FastH3 uses a distilled base; select Same as generation for refinement."
-                )
             refinement_variant = refine_choice
             refinement_lora_name = models.turbo_lora_for(
                 request.media.mode, refine_choice

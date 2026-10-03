@@ -81,7 +81,7 @@ Native prefix KV caching, INT8 ConvRot/BF16 model choices, W4A8/INT8/BF16 encode
 | [LanPaint AV inpainting](https://github.com/scraed/LanPaint) | Masked H3 video/audio editing | Promising separate editing workflow. Requires per-frame masks/audio intervals and nested AV latents. Test bounded clip lengths and latency; leave stacking with distilled models and our accelerator combinations unproven. |
 | [T8 1.88.1](https://github.com/T8mars/comfyui-minimax-h3-audio-T8) | HyperVAE examples, semantic bridge composition, Veda/separated sampling and split-audio fixes | Optional feature work. Exact old/new `h3_t8/conditioning.py` bytes match, so no upgrade is needed for our current voice-conditioning implementation. Adopt only with the corresponding workflow/model/runtime contract. |
 
-Already integrated: FastH3 profiles including eight-step V2, PDMD 2-/4-step adapters, LightX2V/Larry/TaoMate choices, learned latent upscale/refinement, native optimized video VAE, LynnReal Light INT8, TRT VAE, conditioning cache, Spectrum and sparse attention options. These should not be presented as missing community upgrades.
+Currently integrated: PDMD 4-step adapters, LightX2V/Larry choices, learned latent upscale/refinement, native optimized video VAE, LynnReal Light INT8, TRT VAE, conditioning cache, Spectrum and sparse attention options. FastH3 eight-step V2, TaoMate three-step, and PDMD two-step support was removed on 2026-10-03 after quality testing. These should not be presented as supported community upgrades.
 
 ## Other component decisions
 

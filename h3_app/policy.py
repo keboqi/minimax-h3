@@ -27,8 +27,6 @@ from h3_app.catalog import (
     SINGLE_FRAME_IMAGE_VAE,
     SLA_PRESET_INPUTS,
     TURBO_SETTINGS,
-    TAOMATE_3STEP_TURBO,
-    PDMD_2STEP_LORA,
     PDMD_4STEP_LORA,
     UPSCALE_RESOLUTION_PRESETS,
 )
@@ -84,7 +82,7 @@ def lightx2v_uses_768p_schedule(turbo_variant: str, lora_filename: str | None) -
 
 
 def turbo_sampler_name(turbo_variant: str, lora_filename: str | None) -> str:
-    # LightX2V, TaoMate, and PDMD use Euler. A missing LoRA means normal
+    # LightX2V and PDMD use Euler. A missing LoRA means normal
     # generation and keeps res_multistep.
     return (
         "euler"
@@ -92,7 +90,7 @@ def turbo_sampler_name(turbo_variant: str, lora_filename: str | None) -> str:
         or (
             lora_filename
             and normalize_turbo_variant(turbo_variant) in {
-                TAOMATE_3STEP_TURBO, PDMD_2STEP_LORA, PDMD_4STEP_LORA,
+                PDMD_4STEP_LORA,
             }
         )
         else "res_multistep"
