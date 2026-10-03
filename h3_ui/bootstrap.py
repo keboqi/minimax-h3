@@ -8,25 +8,20 @@ from .app_bindings import bind_app
 from .contracts import AppComponents, AppServices
 from .h3_view import build_h3_view, H3ViewServices
 from .layout import create_app_views, bind_workspace_navigation
-from .workspace_mode import workspace_enabled
 from .persistence import bind_browser_settings
 from .ltx_view import build_ltx_view
 from .styles import H3_SETUP_CSS, H3_WORKSPACE_CSS
-from .views import (
-    build_api_view,
-    build_gallery_view,
-    build_music_view,
-    build_qwen_image21_view,
-    build_yue2_view,
-)
-from .bindings import (
-    bind_api_view,
-    bind_gallery_view,
-    bind_music_view,
-    bind_ltx_view,
-    bind_qwen_image21_view,
-    bind_yue2_view,
-)
+from .api_view import build_api_view
+from .media_view import build_gallery_view
+from .music_view import build_music_view
+from .qwen_view import build_qwen_image21_view
+from .yue2_view import build_yue2_view
+from .api_bindings import bind_api_view
+from .media_bindings import bind_gallery_view
+from .music_bindings import bind_music_view
+from .ltx_bindings import bind_ltx_view
+from .qwen_bindings import bind_qwen_image21_view
+from .yue2_bindings import bind_yue2_view
 
 
 @dataclass(frozen=True)
@@ -149,45 +144,25 @@ class BootstrapServices:
 def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Blocks:
     defaults = catalog.UI_DEFAULTS
     initial_backend = services.backend_status()
-    with gr.Blocks(title="MiniMax H3 Local") as demo, (
-        gr.Column(elem_classes=["h3-workspace"])
-        if workspace_enabled()
-        else nullcontext()
+    with gr.Blocks(title="MiniMax H3 Local") as demo, gr.Column(
+        elem_classes=["h3-workspace"]
     ):
-        with (
-            gr.Row(elem_classes=["h3-workspace-header"])
-            if workspace_enabled()
-            else nullcontext()
-        ):
+        with gr.Row(elem_classes=["h3-workspace-header"]):
             gr.HTML(
-                '<section class="h3-hero"><h1>MiniMax H3 Local</h1>'
-                "<p>Create video, images, audio, and music on the shared ComfyUI backend · "
-                '<a href="/comfyui/" target="_blank" rel="noopener noreferrer">'
-                "Open ComfyUI ↗</a></p></section>",
+                '<section class="h3-hero"><h1>MiniMax H3 Local</h1><p>Create video, images, audio, and music on the shared ComfyUI backend · <a href="/comfyui/" target="_blank" rel="noopener noreferrer">Open ComfyUI ↗</a></p></section>',
                 scale=3,
             )
-            if workspace_enabled():
-                summary_root = gr.Column(scale=2, elem_classes=["h3-header-status"])
-                with summary_root:
-                    system_summary = gr.HTML(
-                        services.compact_backend_status(initial_backend)
-                    )
-            else:
-                summary_root = None
+            summary_root = gr.Column(scale=2, elem_classes=["h3-header-status"])
+            with summary_root:
                 system_summary = gr.HTML(
                     services.compact_backend_status(initial_backend)
                 )
-        app_views = (
-            create_app_views(summary_root=summary_root) if workspace_enabled() else None
-        )
+        app_views = create_app_views(summary_root=summary_root)
         with app_views.system if app_views is not None else nullcontext():
             with gr.Accordion("System details and VRAM", open=False):
                 with gr.Row(equal_height=True):
                     health = gr.Markdown(initial_backend)
-                    unload_models = gr.Button(
-                        "Unload all models / free VRAM",
-                        scale=0,
-                    )
+                    unload_models = gr.Button("Unload all models / free VRAM", scale=0)
                 memory_status = gr.Markdown()
         app_views = app_views or create_app_views()
         generation_view = app_views.generation
@@ -249,7 +224,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             advanced_root=app_views.generation_settings,
             output_root=app_views.generation_output_settings,
         )
-
         ltx25_components = build_ltx_view(
             ltx25_view,
             model_choices=catalog.LTX25_MODEL_CHOICES,
@@ -294,9 +268,11 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             ltx25_choices=tuple(catalog.LTX25_MODEL_CHOICES),
             default_ltx25=catalog.DEFAULT_LTX25_MODEL,
         )
-
         with gallery_view:
             gallery_settings_used = gr.HTML("Select an output to inspect its settings.")
+        from .library_tools import build_library_tools
+
+        build_library_tools(gallery_view, services.list_media_paths)
         gallery_components.selected.change(
             services.render_snapshot,
             inputs=gallery_components.selected,
@@ -467,12 +443,13 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         }
         if app_views.task is not None:
             browser_settings.update(
-                {"workspace.task": app_views.task, "workspace.engine": app_views.engine}
+                {
+                    "workspace.task": app_views.task,
+                    "workspace.engine": navigation.engine_value,
+                }
             )
         preferences = bind_browser_settings(
-            demo,
-            browser_settings,
-            controller=settings_controller,
+            demo, browser_settings, controller=settings_controller
         )
         if navigation is not None:
             preferences.h3_restore_event.success(
@@ -485,6 +462,5 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 api_name=False,
                 show_progress="hidden",
             )
-    demo.h3_css = H3_SETUP_CSS + (H3_WORKSPACE_CSS if workspace_enabled() else "")
-    demo.h3_workspace = workspace_enabled()
+    demo.h3_css = H3_SETUP_CSS + H3_WORKSPACE_CSS
     return demo

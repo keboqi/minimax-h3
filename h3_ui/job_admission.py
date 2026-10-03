@@ -14,9 +14,12 @@ from h3_app.errors import H3Error
 
 
 def require_owner(request):
-    if request is None or not request.session_hash:
-        raise gr.Error("A live session is required for this job action.")
-    return request.session_hash
+    from h3_app.workspace_store import request_owner
+
+    try:
+        return request_owner(request, JOBS.store)
+    except ValueError as exc:
+        raise gr.Error(str(exc)) from exc
 
 
 def dispatch_failed(job_id, request: gr.Request):
@@ -30,6 +33,7 @@ def dispatch_failed(job_id, request: gr.Request):
             )
             job.finished_at = time.time()
             JOBS.active.pop(job.id, None)
+            job.persist()
 
 
 def _output_paths(value):
@@ -52,6 +56,9 @@ def execute_accepted(job_id: str, request: gr.Request):
     try:
         with JOBS.run(owner, job.family, accepted=job):
             values = job.values()
+            from h3_app.image_canvas import apply_job_canvas
+
+            values = apply_job_canvas(job, values)
             while True:
                 token = CURRENT_JOB.set(job)
                 try:
@@ -67,6 +74,7 @@ def execute_accepted(job_id: str, request: gr.Request):
                             for path in _output_paths(update[index]):
                                 if path not in job.outputs:
                                     job.outputs.append(path)
+                    job.persist()
                 except StopIteration:
                     return
                 finally:
@@ -91,10 +99,13 @@ def bind_accepted_action(
     if api_name:
         gr.Button(visible=False).click(callback, **options, **gpu_queue)
     names = tuple(callback.job_input_names)
+    JOBS.register_callback(callback.job_family, callback)
     media_types = (gr.Image, gr.Video, gr.Audio, gr.File)
     media_indices = tuple(
         i for i, component in enumerate(inputs) if isinstance(component, media_types)
     )
+    if callback.job_family == "gallery":
+        media_indices = (names.index("selected_media"),)
     output_indices = tuple(
         i
         for i, component in enumerate(outputs)
@@ -104,11 +115,30 @@ def bind_accepted_action(
     # gr.State would be read at execution and could hold a later ticket.
     ticket = gr.Textbox(visible=False)
     request_key = gr.Textbox(visible=False)
+    canvas_controls = getattr(getattr(trigger, "__self__", None), "h3_canvas", ())
 
     def capture(*args):
         request = args[-1]
         values = list(args[:-1])
         client_key = uuid.UUID(values.pop()).hex
+        canvas = None
+        if canvas_controls:
+            canvas_mode, canvas_width, canvas_height = values[-3:]
+            del values[-3:]
+            canvas = {
+                "mode": canvas_mode,
+                "width": int(canvas_width),
+                "height": int(canvas_height),
+            }
+            if canvas_mode != "Input-derived" and (
+                not 256 <= int(canvas_width) <= 4096
+                or not 256 <= int(canvas_height) <= 4096
+                or int(canvas_width) % 32
+                or int(canvas_height) % 32
+            ):
+                raise ValueError(
+                    "Canvas dimensions must be 256–4096 pixels, aligned to 32 pixels."
+                )
         mapping = values.pop() if reference_map is not None else None
         captured = dict(zip(names, values, strict=True))
         active_media = media_indices
@@ -154,6 +184,8 @@ def bind_accepted_action(
             output_indices=output_indices,
             key=client_key,
         )
+        job.canvas_request = canvas
+        job.persist()
         return job.id
 
     def accept(*args):
@@ -168,6 +200,11 @@ def bind_accepted_action(
         for name in (
             *names,
             *(("reference_map",) if reference_map is not None else ()),
+            *(
+                ("canvas_mode", "canvas_width", "canvas_height")
+                if canvas_controls
+                else ()
+            ),
             "client_request_id",
         )
     ]
@@ -186,6 +223,7 @@ def bind_accepted_action(
         inputs=[
             *inputs,
             *((reference_map,) if reference_map is not None else ()),
+            *canvas_controls,
             request_key,
         ],
         outputs=ticket,

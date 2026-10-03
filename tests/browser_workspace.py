@@ -1,6 +1,7 @@
 """Workspace browser acceptance without a GPU or model downloads."""
 
 import json
+import re
 import os
 from pathlib import Path
 import socket
@@ -24,6 +25,12 @@ def run():
         port = sock.getsockname()[1]
     env = {key: value for key, value in os.environ.items() if key != "H3_UI_LAYOUT"}
     env["HF_HUB_OFFLINE"] = "1"
+    import tempfile
+
+    state = tempfile.TemporaryDirectory()
+    env["H3_WORKSPACE_DIR"] = state.name
+    env["GRADIO_OUTPUT_DIR"] = str(Path(state.name) / "media")
+    env["COMFY_DIR"] = str(Path(state.name) / "comfy")
     with (ARTIFACTS / "server.log").open("wb") as log:
         process = subprocess.Popen(
             [sys.executable, "-u", "-m", "tests.workspace_fixture", str(port)],
@@ -244,11 +251,15 @@ def run():
                 for index in range(5):
                     changed_at = time.perf_counter()
                     prompt.fill("")
-                    expect(generate).to_be_disabled()
+                    page.wait_for_function(
+                        "document.querySelector('.h3-primary-action').disabled"
+                    )
                     response_times.append(time.perf_counter() - changed_at)
                     changed_at = time.perf_counter()
                     prompt.fill(f"Latency sample {index}")
-                    expect(generate).to_be_enabled()
+                    page.wait_for_function(
+                        "!document.querySelector('.h3-primary-action').disabled"
+                    )
                     response_times.append(time.perf_counter() - changed_at)
                 prompt.fill("Request A")
                 expect(generate).to_be_enabled()
@@ -268,6 +279,7 @@ def run():
                     "Request A",
                     "Request B fail",
                 ], captured
+                requests.post(url + "/test/release-a", timeout=2).raise_for_status()
                 # The second request remains its own snapshot after the form edit.
                 expect(page.locator(".h3-job-table")).to_contain_text(
                     "failed", timeout=20000
@@ -314,14 +326,161 @@ def run():
                 outsider.goto(url, wait_until="domcontentloaded")
                 outsider.get_by_role("tab", name="Jobs", exact=True).click()
                 expect(
-                    outsider.get_by_text("No jobs in this session yet.", exact=True)
+                    outsider.get_by_text("No jobs for this browser owner yet.", exact=True)
                 ).to_be_visible()
                 expect(outsider.locator(".h3-job-table")).to_have_count(0)
                 other.close()
+                # Explicit project saving retains content, while recovery keys
+                # reconnect a new browser owner without sharing other owners.
+                page.get_by_text("Saved projects", exact=True).click()
+                page.get_by_label("Project name", exact=True).fill("Browser project")
+                page.get_by_role(
+                    "button", name="Save prompt, settings & sources", exact=True
+                ).click()
+                expect(page.get_by_label("Saved project", exact=True)).to_have_value(
+                    "Browser project"
+                )
+                page.get_by_text("Browser ownership and recovery", exact=True).click()
+                page.get_by_role(
+                    "button", name="Show my recovery key", exact=True
+                ).click()
+                key_field = page.get_by_label("Browser recovery key", exact=True)
+                expect(key_field).not_to_be_empty()
+                recovery_key = key_field.input_value()
+                restored_context = browser.new_context()
+                restore_response = restored_context.request.post(
+                    url + "/workspace/owner/recover", data={"key": recovery_key}
+                )
+                assert restore_response.ok, restore_response.text()
+                recovered_page = restored_context.new_page()
+                recovered_page.goto(url, wait_until="domcontentloaded")
+                recovered_page.get_by_role("tab", name="Jobs", exact=True).click()
+                expect(recovered_page.locator(".h3-job-table")).to_contain_text(
+                    failed["id"][:8]
+                )
+                recovered_page.get_by_text("Saved projects", exact=True).click()
+                recovered_page.get_by_role(
+                    "button", name="Refresh projects", exact=True
+                ).click()
+                recovered_page.get_by_label("Saved project", exact=True).click()
+                expect(
+                    recovered_page.get_by_role(
+                        "option", name="Browser project", exact=True
+                    )
+                ).to_be_visible()
+                restored_context.close()
+                # Every engine accepts an owned immutable request without a GPU.
+                for task, label, field, action in (
+                    ("Video", "LTX 2.5", "Positive prompt", "Generate with LTX-2.5"),
+                    (
+                        "Image",
+                        "Qwen Image 2.1",
+                        "Prompt / edit instruction",
+                        "Generate with Qwen Image 2.1",
+                    ),
+                    (
+                        "Audio / Music",
+                        "MiniMax Music 3",
+                        "Music caption",
+                        "Generate with Music 3",
+                    ),
+                    ("Audio / Music", "YuE2", "Style prompt", "Generate with YuE2"),
+                ):
+                    page.get_by_role("tab", name="Create", exact=True).click()
+                    page.locator(".h3-task-picker").get_by_label(
+                        task, exact=True
+                    ).check()
+                    page.get_by_label("Engine", exact=True).click()
+                    page.get_by_role("option", name=label, exact=True).click()
+                    form = page.locator('#h3-engine-tabs > [role="tabpanel"]:visible')
+                    form.get_by_label(field, exact=True).fill("Fixture request")
+                    form.get_by_role("button", name=action, exact=True).click()
+                    expect(form.get_by_label("Status", exact=True)).to_have_value(
+                        re.compile("Fixture .* completed"), timeout=15000
+                    )
+                assert {
+                    job["family"]
+                    for job in requests.get(url + "/test/jobs", timeout=2).json()
+                } == {"h3", "ltx", "qwen_image21", "music", "yue2"}
+                # Bounded indexing, shared annotations and image/video comparison.
+                page.get_by_role("tab", name="Media", exact=True).click()
+                page.get_by_text("Search, tags, lineage & compare", exact=True).click()
+                page.get_by_role(
+                    "button", name="Index next 200 files", exact=True
+                ).click()
+                expect(page.locator("body")).to_contain_text("Indexed 4 of 4 files")
+                page.get_by_role("button", name="Search library", exact=True).click()
+                page.get_by_label("Indexed asset", exact=True).click()
+                page.get_by_role("option", name="alpha.png", exact=False).click()
+                page.get_by_label("Tags (comma separated)", exact=True).fill(
+                    "browser-test"
+                )
+                page.get_by_label("Favorite", exact=True).check()
+                page.get_by_role(
+                    "button", name="Save asset annotations", exact=True
+                ).click()
+                expect(page.locator("body")).to_contain_text("Asset annotations saved.")
+                page.get_by_label("Search media", exact=True).fill("browser-test")
+                page.get_by_label("Favorites only", exact=True).check()
+                page.get_by_role("button", name="Search library", exact=True).click()
+                expect(page.locator("body")).to_contain_text("1 matching assets")
+                page.get_by_label("Search media", exact=True).fill("")
+                page.get_by_label("Favorites only", exact=True).uncheck()
+                page.get_by_role("button", name="Search library", exact=True).click()
+                page.get_by_text("Compare two outputs", exact=True).click()
+                for component, name in (
+                    ("Comparison A", "alpha.png"),
+                    ("Comparison B", "beta.png"),
+                ):
+                    control = page.get_by_label(component, exact=True)
+                    control.click()
+                    control.locator(
+                        "xpath=ancestor::*[contains(concat(' ',normalize-space(@class),' '),' block ')][1]"
+                    ).get_by_role("option", name=name, exact=False).click()
+                    expect(control).to_have_value(re.compile(re.escape(name)))
+                    page.keyboard.press("Escape")
+                page.get_by_role(
+                    "button", name="Compare selected outputs", exact=True
+                ).click()
+                expect(
+                    page.get_by_text("Image comparison A / B", exact=True)
+                ).to_be_visible()
+                for component, name in (
+                    ("Comparison A", "alpha.mp4"),
+                    ("Comparison B", "beta.mp4"),
+                ):
+                    control = page.get_by_label(component, exact=True)
+                    control.click()
+                    control.locator(
+                        "xpath=ancestor::*[contains(concat(' ',normalize-space(@class),' '),' block ')][1]"
+                    ).get_by_role("option", name=name, exact=False).click()
+                    expect(control).to_have_value(re.compile(re.escape(name)))
+                    page.keyboard.press("Escape")
+                page.get_by_role(
+                    "button", name="Compare selected outputs", exact=True
+                ).click()
+                expect(page.locator("[data-state]")).to_contain_text(
+                    "Shared timeline: 1.00 seconds"
+                )
+                assert page.locator("[data-video-a]").evaluate("v => v.muted")
+                assert page.locator("[data-video-b]").evaluate("v => v.muted")
+                page.get_by_role("button", name="Play both", exact=True).click()
+                expect(
+                    page.get_by_role("button", name="Pause both", exact=True)
+                ).to_be_visible()
+                page.get_by_role("button", name="Pause both", exact=True).click()
                 page.screenshot(path=str(ARTIFACTS / "jobs.png"), full_page=True)
                 page.emulate_media(color_scheme="dark", reduced_motion="reduce")
                 page.goto(url + "/?__theme=dark", wait_until="domcontentloaded")
-                page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for()
+                page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for(
+                    state="attached"
+                )
+                page.locator(".h3-task-picker").get_by_label(
+                    "Video", exact=True
+                ).check()
+                page.get_by_label("Engine", exact=True).click()
+                page.get_by_role("option", name="MiniMax H3", exact=True).click()
+                expect(page.locator("#h3-composer")).to_be_visible()
                 for width in (390, 1440):
                     page.set_viewport_size({"width": width, "height": 1000})
                     page.screenshot(
@@ -330,6 +489,20 @@ def run():
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= innerWidth + 2"
                     )
+                page.set_viewport_size({"width": 1280, "height": 1000})
+                page.evaluate("document.documentElement.style.zoom = '2'")
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= innerWidth + 2"
+                ), "Overflow at 200% zoom"
+                page.screenshot(
+                    path=str(ARTIFACTS / "h3-200-percent.png"), full_page=True
+                )
+                page.evaluate("document.documentElement.style.zoom = '1'")
+                page.get_by_role("tab", name="Create", exact=True).focus()
+                page.keyboard.press("Tab")
+                assert page.evaluate("document.activeElement !== document.body")
+                assert page.locator('[role="status"]').count() > 0
+                assert sorted(response_times)[-1] < 0.25, response_times
                 assert not errors, errors
                 browser.close()
                 (ARTIFACTS / "results.json").write_text(

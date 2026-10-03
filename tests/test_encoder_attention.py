@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-import gradio_app as app
+from h3_ui import application as app
 from h3_app.contracts import GENERATION_FIELDS, GenerationArguments
 from h3_app.generation.requests import H3Request
 from h3_app.settings import GenerationRequest, resolve_settings

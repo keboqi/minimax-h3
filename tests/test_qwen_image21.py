@@ -30,11 +30,7 @@ from h3_models import (
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
 )
-from h3_ui.bindings import (
-    qwen_preset_values,
-    qwen_resolution_preset_values,
-    qwen_turbo_defaults,
-)
+from h3_ui.qwen_bindings import qwen_preset_values, qwen_resolution_preset_values, qwen_turbo_defaults
 
 
 class QwenImage21WorkflowTests(unittest.TestCase):
@@ -458,7 +454,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         )
 
     def test_native_resolution_presets(self):
-        from h3_ui.views import QWEN_1K_RESOLUTION_PRESETS, QWEN_2K_RESOLUTION_PRESETS
+        from h3_ui.qwen_view import QWEN_1K_RESOLUTION_PRESETS, QWEN_2K_RESOLUTION_PRESETS
 
         self.assertEqual(len(QWEN_1K_RESOLUTION_PRESETS), 7)
         self.assertEqual(len(QWEN_2K_RESOLUTION_PRESETS), 7)

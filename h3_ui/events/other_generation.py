@@ -7,9 +7,7 @@ import gradio as gr
 from ..contracts import AppComponents, AppServices
 
 
-def bind_other_generation(
-    components: AppComponents, services: AppServices
-) -> tuple[
+def bind_other_generation(components: AppComponents, services: AppServices) -> tuple[
     gr.events.Dependency,
     gr.events.Dependency,
     gr.events.Dependency,

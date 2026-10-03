@@ -140,7 +140,7 @@ class SettingsController:
             }
         if action.startswith("decoder:"):
             incoming.update(
-                VideoDecoder(action.removeprefix("decoder:")).legacy_flags()
+                VideoDecoder(action.removeprefix("decoder:")).workflow_flags()
             )
         new_memory, current = transition_modes(memory, incoming, action)
         if action == "text_encoder":
@@ -190,6 +190,8 @@ class SettingsController:
         fmt = current["result_format"]
         fasth3_8step = is_fasth3_8step_profile(current["model_profile"])
         updates = []
+        previous_presentation = (memory or {}).get("presentation", {})
+        presentation = {}
         for name in self.names:
             props = {
                 key: value
@@ -254,6 +256,15 @@ class SettingsController:
                 props["interactive"] = fmt != "Audio"
             if name == "generation_postprocess":
                 props["interactive"] = fmt == "Video"
+            presentation[name] = {
+                key: value for key, value in props.items() if key != "value"
+            }
+            props = {
+                key: value
+                for key, value in props.items()
+                if key == "value"
+                or previous_presentation.get(name, {}).get(key) != value
+            }
             updates.append(gr.update(**props))
         readiness = generation_readiness(
             current["mode"],
@@ -273,10 +284,20 @@ class SettingsController:
             current["mode"] == "First / last frame",
             current["mode"] == "Reference media",
         )
+        new_memory["presentation"] = presentation
+        new_memory["visibility"] = visibility
+        old_visibility = (memory or {}).get("visibility", ())
         return (
             *updates,
             new_memory,
-            *(gr.update(visible=v) for v in visibility),
+            *(
+                (
+                    gr.update(visible=v)
+                    if i >= len(old_visibility) or old_visibility[i] != v
+                    else gr.skip()
+                )
+                for i, v in enumerate(visibility)
+            ),
             self.services.describe(request_values),
             readiness.html if not plan.issues else "",
             gr.update(
@@ -289,6 +310,37 @@ class SettingsController:
         # Explicit action closures work for ordinary inputs and API invocation.
         # Generic EventData from a multi-trigger gr.on can have no target.
         self.events = []
+
+        def prompt_readiness(memory, *values):
+            # A draft edit does not change model policy. Keep its readiness
+            # response small and avoid rewriting all settings components.
+            current = dict(zip((*self.names, *MEDIA_NAMES), values, strict=True))
+            current.update((memory or {}).get("values", {}))
+            request_values = {
+                ALIASES.get(key, key): value for key, value in current.items()
+            }
+            plan = self.services.resolve(request_values)
+            readiness = generation_readiness(
+                current["mode"],
+                current["prompt"],
+                current["first"],
+                current["last"],
+                [current[n] for n in MEDIA_NAMES if n.startswith("ref_")],
+            )
+            return (
+                readiness.html if not plan.issues else "",
+                gr.update(interactive=readiness.ready and not plan.issues),
+            )
+
+        self.components["prompt"].change(
+            prompt_readiness,
+            inputs=[self.memory, *self.inputs],
+            outputs=[self.components["generation_readiness"], self.components["run"]],
+            queue=False,
+            trigger_mode="always_last",
+            show_progress="hidden",
+            api_name=False,
+        )
 
         def select_decoder(value, memory, *values):
             return self.update(memory, *values, action="decoder:" + value)
@@ -335,7 +387,7 @@ class SettingsController:
 
         for name in (
             *self.names,
-            *(n for n in MEDIA_NAMES if n != "first"),
+            *(n for n in MEDIA_NAMES if n not in {"first", "prompt"}),
             "restore_preset",
         ):
             trigger = (

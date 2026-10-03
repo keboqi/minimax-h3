@@ -59,6 +59,4 @@ def build_remote_prompt_writer_controls(
         show_progress="hidden",
         api_name=False,
     )
-    return RemotePromptWriterControls(
-        backend, model, gemini_api_key, lightning_api_key
-    )
+    return RemotePromptWriterControls(backend, model, gemini_api_key, lightning_api_key)

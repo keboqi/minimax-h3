@@ -6,14 +6,11 @@ the large set of generation callbacks.
 """
 
 from __future__ import annotations
-
 from dataclasses import dataclass
 from contextlib import nullcontext
 from typing import Callable
-
 import gradio as gr
 from h3_app.capabilities import engines_for_task, TASKS
-from .workspace_mode import workspace_enabled
 
 
 @dataclass(frozen=True)
@@ -43,40 +40,11 @@ class NavigationBindings:
     restore: Callable
     inputs: tuple
     outputs: tuple
+    engine_value: gr.Textbox
 
 
 def create_app_views(*, summary_root=None) -> AppViews:
-    """Create the application navigation and empty tab-owned view roots."""
-
-    if workspace_enabled():
-        return create_workspace_views(summary_root=summary_root)
-    tabs = gr.Tabs(elem_id="h3-main-tabs")
-    with tabs:
-        with gr.Tab("MiniMax H3"):
-            generation = gr.Row(elem_classes=["h3-generator-shell"])
-        with gr.Tab("Qwen Image 2.1"):
-            qwen_image21 = gr.Group()
-        with gr.Tab("LTX 2.5"):
-            ltx25 = gr.Group()
-        with gr.Tab("MiniMax Music 3"):
-            music3 = gr.Group()
-        with gr.Tab("YuE2"):
-            yue2 = gr.Group()
-        with gr.Tab("Gallery") as gallery_tab:
-            gallery = gr.Group(elem_classes=["h3-gallery-shell"])
-        with gr.Tab("API"):
-            api = gr.Group()
-    return AppViews(
-        tabs,
-        generation,
-        qwen_image21,
-        ltx25,
-        music3,
-        yue2,
-        gallery,
-        api,
-        gallery_tab,
-    )
+    return create_workspace_views(summary_root=summary_root)
 
 
 def create_workspace_views(*, summary_root=None) -> AppViews:
@@ -103,8 +71,7 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
             with gr.Tabs(selected="h3", elem_id="h3-engine-tabs") as engine_tabs:
                 with gr.Tab("MiniMax H3", id="h3"):
                     gr.HTML(
-                        '<nav class="h3-mobile-nav" aria-label="Workspace sections">'
-                        '<a href="#h3-composer">Compose</a><a href="#h3-preview">Preview</a></nav>',
+                        '<nav class="h3-mobile-nav" aria-label="Workspace sections"><a href="#h3-composer">Compose</a><a href="#h3-preview">Preview</a></nav>',
                         elem_classes=["h3-mobile-nav-container"],
                     )
                     generation = gr.Row(elem_classes=["h3-generator-shell"])
@@ -158,6 +125,7 @@ def bind_workspace_navigation(
     if views.task is None:
         return
     memory = gr.State({})
+    engine_value = gr.Textbox(value="h3", visible=False)
     restoring = gr.Checkbox(value=True, visible=False)
 
     def output_intent(task, settings_memory, values):
@@ -172,20 +140,21 @@ def bind_workspace_navigation(
         return updates
 
     def select_task(
-        task, engine, remembered, pending_restore, settings_memory, *settings_values
+        task, remembered, pending_restore, settings_memory, *settings_values
     ):
         if pending_restore:
-            return (gr.skip(),) * (3 + len(controller.outputs))
+            return (gr.skip(),) * (4 + len(controller.outputs))
         choices = engines_for_task(task)
         available = {e.id for e in choices}
-        selected = (remembered or {}).get(task, engine)
+        selected = (remembered or {}).get(task)
         if selected not in available:
             selected = choices[0].id
-        detail = next(e.description for e in choices if e.id == selected)
+        detail = next((e.description for e in choices if e.id == selected))
         return (
             gr.update(choices=[(e.label, e.id) for e in choices], value=selected),
             gr.update(selected=selected),
             detail,
+            selected,
             *output_intent(task, settings_memory, settings_values),
         )
 
@@ -193,7 +162,6 @@ def bind_workspace_navigation(
         select_task,
         inputs=[
             views.task,
-            views.engine,
             memory,
             restoring,
             controller.memory,
@@ -203,6 +171,7 @@ def bind_workspace_navigation(
             views.engine,
             views.engine_tabs,
             views.engine_help,
+            engine_value,
             *controller.outputs,
         ],
         queue=True,
@@ -214,16 +183,21 @@ def bind_workspace_navigation(
 
     def select_engine(task, engine, remembered, pending_restore):
         if pending_restore:
-            return (gr.skip(),) * 3
+            return (gr.skip(),) * 4
         choices = engines_for_task(task)
         selected = next((e for e in choices if e.id == engine), choices[0])
         remembered = {**(remembered or {}), task: selected.id}
-        return gr.update(selected=selected.id), selected.description, remembered
+        return (
+            gr.update(selected=selected.id),
+            selected.description,
+            remembered,
+            selected.id,
+        )
 
-    views.engine.change(
+    views.engine.input(
         select_engine,
         inputs=[views.task, views.engine, memory, restoring],
-        outputs=[views.engine_tabs, views.engine_help, memory],
+        outputs=[views.engine_tabs, views.engine_help, memory, engine_value],
         queue=False,
         api_name=False,
         show_progress="hidden",
@@ -248,7 +222,7 @@ def bind_workspace_navigation(
 
     return NavigationBindings(
         finish_restore,
-        (views.task, views.engine, controller.memory, *controller.inputs),
+        (views.task, engine_value, controller.memory, *controller.inputs),
         (
             views.engine,
             views.engine_tabs,
@@ -258,4 +232,5 @@ def bind_workspace_navigation(
             views.task,
             memory,
         ),
+        engine_value,
     )

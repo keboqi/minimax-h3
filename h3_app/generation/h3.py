@@ -18,7 +18,7 @@ from h3_app.status import StageTimings, progress_status
 from h3_models import MODEL_SPECS
 
 from .construct_graph import construct_graph
-from .finish_video import finish_video, make_finishing_retry
+from .finish_video import finish_video, make_finishing_retry, retain_finishing
 from .preparation import prepare_h3
 from .requests import H3Request
 from .results import GenerationUpdate
@@ -282,9 +282,14 @@ def generate(
             # Retain only process-local policy objects, never model weights.
             # The callback starts directly at finishing with the same seed.
             job.recoverable_sources[job.variant] = str(source)
-            job.finishing_callbacks[job.variant] = make_finishing_retry(request, prepared, services, execution_snapshot)
-            job.finishing_offsets[job.variant] = sum(entry["variant"] == job.variant for entry in job.ledger)
+            job.finishing_callbacks[job.variant] = make_finishing_retry(
+                request, prepared, services, execution_snapshot
+            )
+            job.finishing_offsets[job.variant] = sum(
+                entry["variant"] == job.variant for entry in job.ledger
+            )
             job.recoverable_source = str(source)
+            retain_finishing(job, request, prepared, execution_snapshot)
         write_snapshot(
             source, {**execution_snapshot, "stage": "H3 output before post-processing"}
         )

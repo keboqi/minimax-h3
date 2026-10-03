@@ -1,139 +1,178 @@
-# Workspace implementation status
+# Workspace implementation and operating guide
 
-Updated 3 October 2026 against the [revised UI/UX plan](ui-ux-redesign-plan-2026-10-03.md).
+Updated 3 October 2026 against the [revised plan](ui-ux-redesign-plan-2026-10-03.md).
+The workspace is the sole UI. Milestone A and B application features are
+implemented. The user excluded real GPU inference from this work. The checks
+below validate CPU contracts and simulated browser execution; they do not
+establish inference quality or production throughput.
 
-The first-release workspace features are implemented behind a server selection
-flag. Workspace is the default at the user's request on 3 October 2026. This remains a preview implementation;
-Milestone A5 release acceptance is incomplete.
+## Running and storage
 
-## Running and rollback
+Start `bash run_h3.sh`, or `python gradio_app.py` in the provisioned environment.
+Modal builds the same interface. `H3_UI_LAYOUT`, `--ui-layout`, the old UI builder,
+legacy styles and the `gradio_app` import shim have been removed. Rollback now
+requires checking out a prior code version; there is no runtime layout switch.
+Public named generation APIs retain their parameter ordering and return shape.
+Workflow scheduling modes that happen to be called legacy remain supported.
 
-Start the existing local launcher with `bash run_h3.sh`, or run
-`python gradio_app.py` in the provisioned environment. Both default to workspace.
-Modal also defaults to workspace; the image captures the deployment environment's
-`H3_UI_LAYOUT` override. Use `H3_UI_LAYOUT=legacy bash run_h3.sh`,
-`python gradio_app.py --ui-layout legacy`, or redeploy Modal with
-`H3_UI_LAYOUT=legacy` to return to the old layout.
-An invalid value fails explicitly. Switching the layout does not migrate media
-directories or replace the inference stack.
+Workspace state is `<GRADIO_OUTPUT_DIR parent>/h3-workspace` by default.
+`H3_WORKSPACE_DIR` overrides it. Modal places it at `/data/h3-workspace` on the
+persisted data volume. SQLite schema 1 stores ownership, jobs, projects, assets
+and annotations. A newer schema is rejected rather than overwritten. Generated
+media and schema-1 technical sidecars stay in their existing directories.
 
-Browser preferences use schema 6 in the original v3 transport key and secret.
-Existing preferences migrate through field validation. Prompts, paths, credentials,
-job tickets and confirmations remain excluded. The old allowlist ignores new
-fields on rollback. Workspace task selection is authoritative for H3 output
-format and commits through the serialized settings reducer after restoration.
-
-Technical sidecars remain schema 1. Optional `application_job_id`, `variant` and
-`retry_of` fields add process-local linkage; the existing `job_id` continues to
-mean the backend Comfy prompt ID. No request prompt or replay graph is written
-to these sidecars. Existing filenames, records and legacy APIs remain usable.
+Browser preferences use schema 6 inside the existing v3 transport key. Values
+migrate through field validation. Prompts, uploaded paths, provider credentials,
+job tickets and confirmations are excluded. Task/engine navigation restores
+through a validated engine value, including engines outside the initial task.
 
 ## Implemented behavior
 
 | Area | Behavior |
 |---|---|
-| Shell | Create, Media, Jobs, System and API/workflows; task-filtered engine choices and remembered per-task engine selection |
-| H3 composer | Compact header; inputs, prompt and generation actions on the left; result preview and next-run summary on the right; full-width collapsed Output/recipe and tabbed Advanced settings below; mobile Compose/Preview links |
-| Canvas | Aspect/size presets reuse existing resolution policy; exact dimensions remain available; conditioned Image output keeps the first frame's aligned native size |
-| References | Stable slot bindings, visible tag insertion, sparse-to-dense translation shared by enhancement and generation, explicit repair after replacement/removal, bounded local metadata inspection |
-| Prompt writers | Preview, Accept, Keep and Undo across H3, LTX, Qwen, Music and YuE2; late suggestions reject changes to the draft or conditioning context |
-| Jobs | Request capture and owner-scoped idempotency before the existing GPU queue; copied inputs; stable IDs; progress/stage ledger; owner-scoped inspect/cancel/download |
-| Recovery | Failed-variant selection with original seeds, model/workflow drift rejection, indeterminate submission rejection, separate finishing-only retry from preserved H3 sources |
-| Media | Typed pagination advances past missing thumbnails; finishing models are independent of hidden engine settings; deletion names the scope and revalidates selection and file identity |
-| Preferences | Qwen technical settings and separate generation/gallery finishing models; validated migration; private composition and credentials excluded |
-| System | Cached local model-file inventory and capabilities; execution retains authoritative node/model/TensorRT checks |
-| Refactor | Explicit bootstrap catalog/services; feature-owned views/bindings; compatibility exports and wrappers preserve existing callers |
+| Shell | Create, Media, Jobs, System and API/workflows; task-filtered choices and remembered engines |
+| H3 | Compact composer/results; collapsed Output & recipe and tabbed Advanced settings; mobile Compose/Preview links |
+| Engines | H3, LTX, Qwen, Music and YuE2 share the shell, ownership, GPU queue and guarded prompt review |
+| References | Stable slots/tags, shared sparse-to-dense translation, repair after replacement/removal |
+| Prompt review | Preview, Accept, Keep and Undo; stale suggestions reject changed drafts or conditioning |
+| Jobs | Immutable UI acceptance, owner-scoped idempotency, pinned sources, bounded admission, stage/seed ledger, inspect/cancel/download |
+| Retry | Failed subsets reuse recorded seeds/configuration; unknown submission outcomes block replay; H3 finishing retries use completed raw sources |
+| Recovery | Signed browser ownership and recovery keys; technical records survive restart; reconnect observes exact backend history/queue and collects existing outputs without automatic replay |
+| Projects | Explicit save of private prompts/settings and source copies; inspect, run a saved request, delete retained content; saved finishing state supports restart recovery |
+| Media | Typed pagination, search by filename/tags/technical settings, tags/favorites, stable IDs and lineage; bounded index batches; safe scoped deletion |
+| Comparison | Image reveal slider; two videos on elapsed time at native frame rates; shorter-duration timeline, drift correction, buffering pause, mute/A/B audio |
+| Canvas | Existing input-derived default; optional H3 conditioned Image fit/pad or fill/crop, effective dimensions and preview; transforms derived copies |
+| System | Cached local model inventory/readiness; execution retains model/node/TensorRT checks |
+| Refactor | Explicit bootstrap services and prompt/model/media controllers; launcher only starts the application |
 
-`application.py` still contains legacy compatibility and media service wrappers.
-They remain available for callers that patch those names. Durable project storage,
-cross-restart identity/reconciliation, asset search/index/lineage, comparisons and
-custom conditioned-image canvas policy are the separately scoped Milestone B.
+## Ownership and retention
 
-## Process-local retention and privacy
+The server issues an HttpOnly, SameSite=Lax signed browser cookie. Its validity
+is 30 days, with renewal near expiry. It survives page reloads and process
+restart when workspace state is retained. Jobs and projects are scoped to this
+owner. A recovery key restores access in a different browser; it is a bearer
+secret and should be kept privately. API session identities occupy a separate
+namespace and cannot claim a cookie owner's records by supplying its session ID.
+This ownership mechanism does not provide login or protect the server's shared
+Media library from other people with server access.
 
-Each accepted request has an immutable in-memory JSON snapshot. Media inputs are
-copied into a unique OS temporary directory before queueing; edits and Gradio
-cache expiry cannot change a waiting request. Jobs are authorized by the live
-Gradio session hash. This is not durable authentication or cross-session recovery.
-Reloading into a different session does not grant access to earlier jobs.
+Unsaved prompts, private replay graphs and request snapshots stay in memory.
+Technical SQLite records omit prompt/graph text, credentials and backend error
+or progress messages. Normal generation sidecars also omit prompts. Only the
+explicit Save project action writes full request content, replay graphs and
+copied sources to durable storage. Project deletion removes that content and
+invalidates loaded snapshots pointing into its source directory. Generated
+outputs retain the existing shared-library policy. Tags/favorites are shared
+library metadata, while projects and Jobs are private to their browser owner.
 
-Limits are eight nonterminal jobs per owner, at most 128 process-wide records,
-2 MiB per request snapshot, and 8 GiB of retained copied inputs by default.
-`H3_JOB_MAX_INPUT_BYTES` changes the process-wide input-copy limit in bytes.
-Admission rejects excess capacity without creating a phantom job. Expired
-terminal jobs and their input copies are pruned every 30 seconds; finished jobs
-can be evicted earlier to admit new work. Waiting/active inputs do not expire.
-The retry window is 30 minutes from completion, subject to capacity eviction.
-Normal process shutdown removes leases. Each retry takes its own source copy.
+Admission allows eight nonterminal jobs per owner, 128 process-local records,
+2 MiB per request and 8 GiB of retained temporary inputs by default.
+`H3_JOB_MAX_INPUT_BYTES` changes the temporary-copy quota. Expired terminal
+requests are pruned every 30 seconds, 30 minutes after completion, and can be
+evicted earlier at capacity. Waiting/active sources do not expire. Explicit saved
+projects remain until deletion and are outside the temporary input quota.
+Technical database history remains durable; the displayed working set is bounded.
 
-Prompts and private replay graphs are held in process memory for this window,
-and copied input bytes are temporary local files. Credentials are not generation
-inputs and are not captured in accepted jobs. There is no automatic saved project.
-Generated outputs and their technical sidecars retain the existing library policy.
-An abnormal process kill can leave `h3-job-*` directories in the OS temporary
-directory; these are not replayable after restart. Automatic cleanup of such
-orphaned directories is not implemented. Inspect and remove confirmed stale
-directories through normal host maintenance after the process has stopped.
+File copies happen under a separate admission lock, leaving monitoring and
+cancellation accessible. Copies reject sources that changed during copying.
+Temporary leases use cross-process file locks. Normal shutdown releases them;
+startup removes verified orphan leases while preserving another live process's
+copies. Each retry takes its own copy. Multiple application processes still need
+a shared scheduler before sharing a GPU/backend. ComfyUI's global interrupt is
+checked against owned prompt IDs; external clients remain outside this scheduler.
 
-Acceptance copies files while holding the registry admission lock. Large uploads
-can delay concurrent admission/inspection; measure this on the deployment storage
-before promotion. Multiple application processes must not share a GPU/backend
-without a shared coordinator. External Comfy clients remain outside the local
-lease; backend-wide interrupt is guarded by an owned active prompt check but
-cannot be atomic with unrelated remote submissions.
+After restart, unfinished jobs are marked Recovering. Reconnect to backend
+history checks recorded prompt IDs. Pending work stays observed; interrupted
+application delivery/finishing is exposed for explicit recovery. A submission
+without a confirmed ID requires manual review. Nothing is automatically
+resubmitted. Exact replay after restart requires an explicitly saved project;
+technical history alone cannot reconstruct a private request. Missing sources
+and changed models/workflows reject replay.
 
-## Validation and remaining release gates
+## Backup, restore and rollback
 
-Run `python -m tests --browser` with `requirements-test.txt` installed. Tests run
-offline and include existing workflow fixtures and service self-tests. The
-workspace fixture simulates generation and queue rejection without loading
-models. Its `/test/*` routes exist only in the test fixture.
+Back up state separately from generated media:
 
-Coverage includes immutable concurrent acceptance, idempotency, source pinning
-and expiry, ownership, failed subsets with actual recorded seeds, submission
-ambiguity, graph/model drift, finishing-only recovery and schema-1 sidecars.
-Both layouts preserve all 13 explicitly published API contracts. Browser checks
-exercise presets, mode memory, preference reload and isolation, first-frame
-resolution, voice conditioning, stale suggestion rejection, accept/undo, queue
-handoff rejection and job isolation. Workspace screenshots cover 390, 768, 1280
-and 1440 pixels, light/dark themes and reduced motion; basic keyboard focus and
-horizontal overflow are checked.
+```bash
+python -m h3_app.workspace_admin --state /path/to/h3-workspace backup /backups/h3-state.zip
+```
 
-On this host, discovery ran 244 tests successfully with three optional PyTorch
-tests skipped. All four browser suites passed. Undefined-name checks, Python
-compilation and `git diff --check` passed. The final workspace upload checks also
-cover input-derived Image canvas locking and sparse reference replacement/repair.
+The command uses a consistent SQLite snapshot and includes explicitly saved
+project sources. Write the archive outside the state directory. It contains
+private project content and ownership signing state. Generated outputs, models
+and ComfyUI inputs are not included; back them up separately.
 
-Evidence is generated under `.cache/ui-redesign/`: `final-tests.log`,
-`default-workspace-tests.log`, baseline
-screenshots, workspace screenshots, `workspace/results.json`, and server logs.
-The compact layout checks additionally produce `compact-layout-tests.log` and
-`compact-workspace-final.log`; they verify that expert controls live outside the
-composer and that the desktop prompt is reached without the previous blank gap.
-These local artifacts are ignored by Git. Browser timing includes Playwright
-round trips and server updates; it is not an inference or production benchmark.
-The latest synthetic run became ready in approximately 1.74 seconds. Ten
-individual prompt/readiness updates took approximately 0.23–0.53 seconds; this
-does not satisfy the plan's 200 ms target. Baseline comparison and tuning remain
-release work.
+Stop H3, then restore into an empty directory:
 
-Remaining validation gates (the default switch does not imply these passed):
+```bash
+python -m h3_app.workspace_admin --state /path/to/restored-state restore /backups/h3-state.zip
+```
 
-1. Provisioned supported-GPU inference for H3 Text/Frames/References, all outputs,
-   other engines, partial batches, finishing and interruption. The checked host
-   has an RTX 3080 Ti; ComfyUI at `127.0.0.1:8188` was unreachable. No GPU smoke
-   test or quality/performance claim is made.
-2. Local and Modal deployment smoke and rollback rehearsal, including model/node
-   readiness and shared finishing model selection. Modal configuration wiring is
-   implemented, but no deployment was performed.
-3. Full keyboard/screen-reader, contrast, focus, zoom and error-announcement audit,
-   with fixes from real user testing. Basic browser checks do not certify WCAG.
-4. Matched baseline/workspace performance measurements on deployment hardware,
-   especially the plan's 200 ms settings-response target, large-file admission,
-   cold startup, gallery size and GPU queue responsiveness.
-5. Broad reference replacement/removal and rapid mode/settings browser scenarios
-   with real uploaded media across engines; pure policy tests cover the core map.
+Set `H3_WORKSPACE_DIR` to that directory before restarting. Restore relocates
+saved project source paths and preserves ownership/recovery keys. Generated
+output paths require the original media paths or a separate media relocation.
+Unsafe archive paths, incompatible schemas and corrupt databases are rejected.
 
-The user requested the workspace default before these acceptance gates were
-completed. The explicit legacy override remains available. Milestone B is not
-delivered by this change.
+Index rebuild marks unavailable files and refreshes derived technical metadata;
+it preserves identities, annotations, projects, ownership and idempotency.
+Schema-1 sidecars accept missing optional asset/job/lineage fields from old files.
+Rolling back application code must preserve the state directory and media.
+Older code can leave new SQLite state dormant. Back up before a future schema
+migration; never replace authoritative state with a media rescan.
+
+## Canvas and comparison limits
+
+Custom canvas applies only to H3 Image output with First / last frame
+conditioning and a supplied first frame. Width/height are 256–4096, aligned to
+32 pixels. Fit/pad centers the source on black; fill/crop centers the crop.
+Both use EXIF orientation and Lanczos RGB resampling, including upscaling.
+The first and optional last frame become derived PNGs in the job input lease;
+the saved/original inputs remain intact. Video, Reference media and the default
+Input-derived mode retain their previous behavior.
+
+Video comparison uses browser codec support and corrects drift above 80 ms.
+It compares elapsed seconds, not matched frame indices, and is not frame-accurate
+editing. Playback uses the shorter duration and one audio source at a time.
+
+## Validation
+
+Install `requirements-test.txt`, then run:
+
+```bash
+python -m tests
+python -m tests --browser
+python gradio_app.py --selftest
+```
+
+Tests use offline Hugging Face mode. Fixtures start the production server with
+mock backend health and generation callbacks; test-only routes exist only in
+fixtures. CPU FFmpeg creates comparison clips with different frame rates and
+durations. Coverage includes settings/default graph contracts, request pinning,
+idempotency across restart/eviction, ownership/recovery, source retention and
+orphan cleanup, saved replay, ambiguous submissions, interrupted finishing,
+backup/restore, schema guards, annotation-preserving rebuild and custom canvas.
+Browser suites cover settings, voice references, first-frame resolution, all five
+engine actions, prompt review, queued snapshots, project recovery, annotations,
+image/video comparison, narrow widths, dark theme, keyboard focus and 200% zoom.
+
+Final verification on this host: 260 tests passed with three optional PyTorch
+checks skipped; all four browser suites passed. The 13 published API contracts
+match a fixed baseline from commit `2dbf18d`, and the 15 normalized workflow
+fixtures remain unchanged. Standalone self-test, lint, Python compilation,
+launcher Bash syntax and Git whitespace checks passed. Storage/privacy regression
+checks were rerun after the final project-deletion correction.
+
+Local evidence is written under ignored `.cache/ui-redesign/`, including
+`final-acceptance2.log`, `final-storage-check.log`, `final-selftest.log`,
+`workspace/results.json` and screenshots. The latest mock workspace became ready
+in 1.91 seconds; ten prompt readiness updates took
+142–171 ms, satisfying the local 250 ms p95 gate for that path.
+Browser timing includes Playwright round trips. Other technical-setting actions
+remain serialized and were not separately benchmarked. These measurements are
+not inference or production benchmarks. Basic automated accessibility checks
+are not a full WCAG certification.
+
+Real GPU inference was deliberately excluded. Actual Modal deployment, a full
+screen-reader/usability audit and production storage/performance measurements
+were not performed on this host. Modal environment/volume wiring and local HTTP
+startup are covered by CPU checks, with inference graphs preserved by fixtures.

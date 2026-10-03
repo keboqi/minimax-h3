@@ -1,10 +1,8 @@
 """Bind prompt actions."""
 
 from __future__ import annotations
-
 from ..contracts import AppComponents, AppServices
 from ..job_bindings import bind_prompt_action
-from ..workspace_mode import workspace_enabled
 from ..prompt_preview import bind_prompt_preview
 import gradio as gr
 
@@ -61,11 +59,7 @@ def bind_prompt(components: AppComponents, services: AppServices) -> None:
         components.fl2va_audio_2,
         components.fl2va_audio_3,
     ]
-    api_trigger = (
-        gr.Button(visible=False).click
-        if workspace_enabled()
-        else components.enhance_prompt_button.click
-    )
+    api_trigger = gr.Button(visible=False).click
     bind_prompt_action(
         api_trigger,
         services.enhance_h3_prompt,
@@ -74,49 +68,47 @@ def bind_prompt(components: AppComponents, services: AppServices) -> None:
         show_progress="minimal",
         api_name="enhance_prompt",
     )
-
-    if workspace_enabled():
-        bind_prompt_preview(
-            components,
-            services.enhance_h3_prompt,
-            [
-                "prompt",
-                "prompt_writer_backend",
-                "local_prompt_base_model",
-                "local_prompt_max_tokens",
-                "local_prompt_temperature",
-                "local_prompt_top_p",
-                "local_prompt_greedy",
-                "local_prompt_seed",
-                "gemini_prompt_model",
-                "gemini_api_key",
-                "lightning_api_key",
-                "mode",
-                "first",
-                "last",
-                "ref_image_1",
-                "ref_image_2",
-                "ref_image_3",
-                "ref_image_4",
-                "ref_image_5",
-                "ref_image_6",
-                "ref_image_7",
-                "ref_image_8",
-                "ref_image_9",
-                "ref_video_1",
-                "ref_video_2",
-                "ref_video_3",
-                "ref_audio_1",
-                "ref_audio_2",
-                "ref_audio_3",
-                "duration",
-                "width",
-                "height",
-                "result_format",
-                "image_frames",
-                "fl2va_audio_1",
-                "fl2va_audio_2",
-                "fl2va_audio_3",
-            ],
-            inputs,
-        )
+    bind_prompt_preview(
+        components,
+        services.enhance_h3_prompt,
+        [
+            "prompt",
+            "prompt_writer_backend",
+            "local_prompt_base_model",
+            "local_prompt_max_tokens",
+            "local_prompt_temperature",
+            "local_prompt_top_p",
+            "local_prompt_greedy",
+            "local_prompt_seed",
+            "gemini_prompt_model",
+            "gemini_api_key",
+            "lightning_api_key",
+            "mode",
+            "first",
+            "last",
+            "ref_image_1",
+            "ref_image_2",
+            "ref_image_3",
+            "ref_image_4",
+            "ref_image_5",
+            "ref_image_6",
+            "ref_image_7",
+            "ref_image_8",
+            "ref_image_9",
+            "ref_video_1",
+            "ref_video_2",
+            "ref_video_3",
+            "ref_audio_1",
+            "ref_audio_2",
+            "ref_audio_3",
+            "duration",
+            "width",
+            "height",
+            "result_format",
+            "image_frames",
+            "fl2va_audio_1",
+            "fl2va_audio_2",
+            "fl2va_audio_3",
+        ],
+        inputs,
+    )

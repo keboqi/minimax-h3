@@ -4,10 +4,13 @@ Original review date: 2 October 2026
 
 Revision date: 3 October 2026
 
-Implementation update, 3 October 2026: the user requested workspace as the
-default for local and Modal launches. The explicit legacy override remains.
-This overrides the initial opt-in rollout sequencing; outstanding release
-validation is recorded in [implementation status](workspace-implementation.md).
+Implementation update, 3 October 2026: the user requested the workspace as the
+sole local/Modal interface, the remaining implementation, and removal of the
+legacy UI and its code. Milestone A/B features are implemented; the runtime
+selection flag and old UI are removed. Real GPU inference is excluded at the
+user's request. CPU/browser evidence and operational limits are recorded in
+[implementation status](workspace-implementation.md). The design/review below
+is historical planning context; its initial opt-in rollout is superseded.
 
 Repository: [keboqi/minimax-h3](https://github.com/keboqi/minimax-h3)
 
@@ -376,13 +379,13 @@ Milestone B uses separate PRs for ownership/retention, durable records/reconcili
 
 ## 13. Rollout, risks, and deferred work
 
-Ship behind a UI selection flag with the same domain layer and execution queue/lease underneath. Keep the legacy UI temporarily available and roll out Milestone A independently of Milestone B.
+Superseded by the user’s implementation request: ship the workspace as the sole interface with the existing domain layer and execution queue/lease. Rollback uses a previous code version; the runtime UI selection flag has been removed.
 
 During the rollback window, retain sidecar schema_version 1 and add optional lineage/job fields without changing existing field meanings. The reviewed reader rejects other versions, so do not bump that sidecar version merely to add lineage. New readers must accept old records with missing optional fields. A future incompatible representation requires a separate file or an explicitly tested dual-format adapter. Test new-write → reviewed-reader and old-write → new-reader behavior before rollout.
 
 Preference migrations preserve the existing BrowserState transport and validate old payloads. Test old/new UI round trips: an old writer can drop unknown fields, so checkpoint the pre-migration payload and define how new-only preferences survive rollback or reset visibly. Never claim additive fields alone make writer rollback lossless.
 
-Database migrations are additive/versioned with a verified backup of authoritative records. A file rescan restores derived indexes only; it cannot restore lost job ownership, idempotency, saved projects or user annotations. On rollback, disable new durable writers before restoring compatible code/storage; legacy UI must leave authoritative metadata intact. If older code cannot read it, keep that metadata dormant rather than deleting or rebuilding it. Rehearse forward migration, old-UI rollback and roll-forward before each milestone's default switch.
+Database migrations are additive/versioned with a verified backup of authoritative records. A file rescan restores derived indexes only; it cannot restore lost job ownership, idempotency, saved projects or user annotations. On rollback, disable new durable writers before restoring compatible code/storage; older application code must leave authoritative metadata intact. If older code cannot read it, keep that metadata dormant rather than deleting or rebuilding it. Use the tested state backup/restore path before future migrations and preserve authoritative state during code-version rollback.
 
 The highest migration risks are positional API drift, settings race regressions, lost inactive preferences, reference-tag reassignment, cancellation ownership, and subtly changed graph inputs. Test these before visual polish is declared complete.
 

@@ -606,7 +606,6 @@ image = (
         add_python="3.12",
     )
     .entrypoint([])
-    .env({"H3_UI_LAYOUT": os.getenv("H3_UI_LAYOUT", "workspace")})
     .apt_install(
         "build-essential",
         "ca-certificates",
@@ -751,6 +750,7 @@ def service_env() -> dict[str, str]:
             "COMFY_URL": f"http://127.0.0.1:{COMFY_PORT}",
             "MODELS_CONFIG": CONFIG.as_posix(),
             "GRADIO_OUTPUT_DIR": OUTPUT.as_posix(),
+            "H3_WORKSPACE_DIR": (DATA / "h3-workspace").as_posix(),
             "SERVER_ATTENTION_BACKEND": "sol",
             "SERVER_DENSE_ATTENTION_BACKEND": "comfy-kitchen",
             # Modal already provides the public endpoint. Avoid asking Gradio

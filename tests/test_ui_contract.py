@@ -7,7 +7,7 @@ from pathlib import Path
 import unittest
 from unittest import mock
 
-import gradio_app
+from h3_ui import application as gradio_app
 from h3_ui.presentation import (
     backend_status_html,
     generation_readiness,
@@ -30,7 +30,6 @@ class UiContractTests(unittest.TestCase):
             return loop
 
         with (
-            mock.patch.dict(os.environ, {"H3_UI_LAYOUT": "legacy"}),
             mock.patch.object(
                 gradio_app, "backend_status", return_value="Connected UI test"
             ),
@@ -67,7 +66,9 @@ class UiContractTests(unittest.TestCase):
         return visit(cls.config["layout"])
 
     def test_qwen_preset_is_wired_to_generation_controls(self):
-        controls = {c.get("props", {}).get("label"): c for c in self.config["components"]}
+        controls = {
+            c.get("props", {}).get("label"): c for c in self.config["components"]
+        }
         preset = controls["Qwen preset"]
         self.assertEqual(preset["props"]["value"], "Quality")
         self.assertEqual(
@@ -75,8 +76,11 @@ class UiContractTests(unittest.TestCase):
             ["Fast", "Normal", "Quality"],
         )
         event = next(
-            d for d in self.config["dependencies"] if d["inputs"] == [preset["id"]]
-            and d["outputs"] == [
+            d
+            for d in self.config["dependencies"]
+            if d["inputs"] == [preset["id"]]
+            and d["outputs"]
+            == [
                 controls["Diffusion model"]["id"],
                 controls["Turbo mode"]["id"],
                 controls["Steps"]["id"],
@@ -86,104 +90,162 @@ class UiContractTests(unittest.TestCase):
         self.assertIs(event["queue"], False)
 
     def test_workspace_preserves_published_api_parameters_and_returns(self):
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
-            gradio_app, "backend_status", return_value="Connected contract fixture"
-        ):
-            workspace = gradio_app.build_ui()
-        try:
-            legacy = self.demo.get_api_info()["named_endpoints"]
-            redesigned = workspace.get_api_info()["named_endpoints"]
-            published = (
-                "generate_video", "generate_video_advanced", "enhance_prompt",
-                "save_h3_image_frames", "upscale_h3_input_images",
-                "generate_ltx25_video", "enhance_ltx25_prompt",
-                "generate_qwen_image21", "enhance_qwen_image21_prompt",
-                "generate_music3", "enhance_music3_prompt",
-                "generate_yue2", "enhance_yue2_prompt",
+        import json
+
+        fixture = json.loads(
+            (Path(__file__).parent / "fixtures/published_api.json").read_text(
+                encoding="utf-8"
             )
-            for name in published:
-                with self.subTest(endpoint=name):
-                    before, after = legacy["/" + name], redesigned["/" + name]
-                    for key, fields in (
-                        ("parameters", ("parameter_name", "parameter_has_default", "parameter_default", "type")),
-                        ("returns", ("type", "component")),
-                    ):
-                        self.assertEqual(
-                            [tuple(item.get(field) for field in fields) for item in before[key]],
-                            [tuple(item.get(field) for field in fields) for item in after[key]],
-                        )
-        finally:
-            workspace.close()
+        )
+        actual = self.demo.get_api_info()["named_endpoints"]
+        for name, expected in fixture["endpoints"].items():
+            with self.subTest(endpoint=name):
+                for key, rows in expected.items():
+                    rows = [{**row, "type": fixture["types"][row["type"]]} for row in rows]
+                    fields = tuple(rows[0]) if rows else ()
+                    self.assertEqual(
+                        rows,
+                        [
+                            {field: item.get(field) for field in fields}
+                            for item in actual[name][key]
+                        ],
+                    )
 
     def test_fl2va_voice_inputs_live_under_frames_and_have_separate_api_fields(self):
-        controls = {c.get("props", {}).get("label"): c for c in self.config["components"]}
+        controls = {
+            c.get("props", {}).get("label"): c for c in self.config["components"]
+        }
         first_id = controls["First frame (auto resolution)"]["id"]
-        voice_ids = [controls[f"FL2VA voice {i} · <Audio {i}>"]["id"] for i in range(1, 4)]
+        voice_ids = [
+            controls[f"FL2VA voice {i} · <Audio {i}>"]["id"] for i in range(1, 4)
+        ]
         ref_ids = [controls[f"Audio {i}"]["id"] for i in range(1, 4)]
 
         def descendants(node):
-            return {node["id"]} | set().union(*(descendants(c) for c in node.get("children", [])))
+            return {node["id"]} | set().union(
+                *(descendants(c) for c in node.get("children", []))
+            )
 
-        groups = [self.find_layout_node(c["id"]) for c in self.config["components"] if c["type"] == "group"]
-        frame_group = min((descendants(g) for g in groups if g and first_id in descendants(g)), key=len)
+        groups = [
+            self.find_layout_node(c["id"])
+            for c in self.config["components"]
+            if c["type"] == "group"
+        ]
+        frame_group = min(
+            (descendants(g) for g in groups if g and first_id in descendants(g)),
+            key=len,
+        )
         self.assertTrue(set(voice_ids) <= frame_group)
         self.assertFalse(set(ref_ids) & frame_group)
-        advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
+        advanced = next(
+            d
+            for d in self.config["dependencies"]
+            if d.get("api_name") == "generate_video_advanced"
+        )
         self.assertEqual(advanced["inputs"][-6:-3], voice_ids)
         self.assertTrue(set(ref_ids) <= set(advanced["inputs"]))
-        parameters = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"]
+        parameters = self.demo.get_api_info()["named_endpoints"][
+            "/generate_video_advanced"
+        ]["parameters"]
         for parameter in parameters[-6:-3]:
             self.assertTrue(parameter["parameter_has_default"])
             self.assertIsNone(parameter["parameter_default"])
 
-
     def test_encoder_attention_toggle_is_default_off_and_bound_to_api(self):
-        toggle = next(c for c in self.config["components"] if c.get("props", {}).get("label") == "Qwen small input attention")
+        toggle = next(
+            c
+            for c in self.config["components"]
+            if c.get("props", {}).get("label") == "Qwen small input attention"
+        )
         self.assertFalse(toggle["props"]["value"])
-        advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
+        advanced = next(
+            d
+            for d in self.config["dependencies"]
+            if d.get("api_name") == "generate_video_advanced"
+        )
         self.assertEqual(advanced["inputs"][-3], toggle["id"])
-        parameter = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"][-3]
+        parameter = self.demo.get_api_info()["named_endpoints"][
+            "/generate_video_advanced"
+        ]["parameters"][-3]
         self.assertTrue(parameter["parameter_has_default"])
         self.assertFalse(parameter["parameter_default"])
 
     def test_lynnreal_vae_is_default_on_and_appended_to_api(self):
-        toggle = next(c for c in self.config["components"] if c.get("props", {}).get("label") == "LynnReal Light INT8 video VAE")
+        toggle = next(
+            c
+            for c in self.config["components"]
+            if c.get("props", {}).get("label") == "LynnReal Light INT8 video VAE"
+        )
         self.assertTrue(toggle["props"]["value"])
-        advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
+        advanced = next(
+            d
+            for d in self.config["dependencies"]
+            if d.get("api_name") == "generate_video_advanced"
+        )
         self.assertEqual(advanced["inputs"][-2], toggle["id"])
-        parameter = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"][-2]
+        parameter = self.demo.get_api_info()["named_endpoints"][
+            "/generate_video_advanced"
+        ]["parameters"][-2]
         self.assertTrue(parameter["parameter_has_default"])
         self.assertTrue(parameter["parameter_default"])
 
     def test_pdmd_is_selectable_for_generation_at_two_steps(self):
         from h3_app.catalog import PDMD_2STEP_LORA, PDMD_4STEP_LORA
-        controls = {c.get("props", {}).get("label"): c for c in self.config["components"]}
+
+        controls = {
+            c.get("props", {}).get("label"): c for c in self.config["components"]
+        }
         choices = [c[0] for c in controls["Turbo implementation"]["props"]["choices"]]
         self.assertIn(PDMD_2STEP_LORA, choices)
         self.assertIn(PDMD_4STEP_LORA, choices)
         from h3_app.contracts import GENERATION_FIELDS
-        advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
-        steps = self.components[advanced["inputs"][GENERATION_FIELDS.index("steps") + 1]]
+
+        advanced = next(
+            d
+            for d in self.config["dependencies"]
+            if d.get("api_name") == "generate_video_advanced"
+        )
+        steps = self.components[
+            advanced["inputs"][GENERATION_FIELDS.index("steps") + 1]
+        ]
         self.assertEqual(steps["props"]["minimum"], 2)
 
     def test_refinement_lora_defaults_to_same_and_is_appended_to_api(self):
         from h3_app.catalog import REFINEMENT_LORA_CHOICES, SAME_REFINEMENT_LORA
-        control = next(c for c in self.config["components"]
-                       if c.get("props", {}).get("label") == "High-resolution refinement LoRA")
+
+        control = next(
+            c
+            for c in self.config["components"]
+            if c.get("props", {}).get("label") == "High-resolution refinement LoRA"
+        )
         self.assertEqual(control["props"]["value"], SAME_REFINEMENT_LORA)
-        self.assertEqual([c[0] for c in control["props"]["choices"]], list(REFINEMENT_LORA_CHOICES))
-        advanced = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_video_advanced")
+        self.assertEqual(
+            [c[0] for c in control["props"]["choices"]], list(REFINEMENT_LORA_CHOICES)
+        )
+        advanced = next(
+            d
+            for d in self.config["dependencies"]
+            if d.get("api_name") == "generate_video_advanced"
+        )
         self.assertEqual(advanced["inputs"][-1], control["id"])
-        parameter = self.demo.get_api_info()["named_endpoints"]["/generate_video_advanced"]["parameters"][-1]
+        parameter = self.demo.get_api_info()["named_endpoints"][
+            "/generate_video_advanced"
+        ]["parameters"][-1]
         self.assertTrue(parameter["parameter_has_default"])
         self.assertEqual(parameter["parameter_default"], SAME_REFINEMENT_LORA)
 
     def test_gallery_restoration_controls(self) -> None:
-        method = next(c for c in self.config["components"]
-                      if c.get("props", {}).get("label") == "Method")
+        method = next(
+            c
+            for c in self.config["components"]
+            if c.get("props", {}).get("label") == "Method"
+        )
         choices = [choice[0] for choice in method["props"]["choices"]]
-        change = next(d for d in self.config["dependencies"]
-                      if any(t[0] == method["id"] and t[1] == "change" for t in d["targets"]))
+        change = next(
+            d
+            for d in self.config["dependencies"]
+            if any(t[0] == method["id"] and t[1] == "change" for t in d["targets"])
+        )
         callback = self.demo.fns[change["id"]].fn
         for option in (
             gradio_app.LTX25_DECOMPRESSION,
@@ -194,18 +256,31 @@ class UiContractTests(unittest.TestCase):
             updates = callback(option)
             self.assertEqual(
                 [u["visible"] for u in updates],
-                [True, False, option != gradio_app.LTX25_CQ_ENHANCER,
-                 True, True, False, True],
+                [
+                    True,
+                    False,
+                    option != gradio_app.LTX25_CQ_ENHANCER,
+                    True,
+                    True,
+                    False,
+                    True,
+                ],
             )
             if option != gradio_app.LTX25_CQ_ENHANCER:
                 self.assertIn("Preserves source resolution", updates[2]["info"])
-        self.assertEqual([u["visible"] for u in callback(gradio_app.LTX25_UPSCALE)],
-                         [True, False, True, True, True, True, True])
-        self.assertEqual([u["visible"] for u in callback(gradio_app.SEEDVR2_UPSCALE)],
-                         [True, True, False, False, False, True, False])
+        self.assertEqual(
+            [u["visible"] for u in callback(gradio_app.LTX25_UPSCALE)],
+            [True, False, True, True, True, True, True],
+        )
+        self.assertEqual(
+            [u["visible"] for u in callback(gradio_app.SEEDVR2_UPSCALE)],
+            [True, True, False, False, False, True, False],
+        )
         self.assertIn(gradio_app.LTX25_SDR_TO_HDR, choices)
-        self.assertEqual([u["visible"] for u in callback(gradio_app.LTX25_SDR_TO_HDR)],
-                         [True, False, False, True, True, False, True])
+        self.assertEqual(
+            [u["visible"] for u in callback(gradio_app.LTX25_SDR_TO_HDR)],
+            [True, False, False, True, True, False, True],
+        )
 
     def test_gallery_defaults_to_video_and_can_switch_to_images(self) -> None:
         controls = {
@@ -234,7 +309,7 @@ class UiContractTests(unittest.TestCase):
         self.assertFalse(updates[0]["visible"])
         self.assertTrue(updates[1]["visible"])
         self.assertFalse(updates[2]["visible"])
-        self.assertFalse(updates[5]["visible"])
+        self.assertTrue(updates[5]["visible"])
         self.assertEqual(updates[7]["choices"], [gradio_app.SEEDVR2_UPSCALE])
         self.assertTrue(updates[9]["visible"])
 
@@ -242,7 +317,8 @@ class UiContractTests(unittest.TestCase):
             item
             for item in self.config["dependencies"]
             if (mode["id"] in item.get("inputs", []))
-            and item.get("outputs", [])[:3] == [
+            and item.get("outputs", [])[:3]
+            == [
                 controls["Selected video"]["id"],
                 controls["Selected image"]["id"],
                 controls["Selected audio"]["id"],
@@ -256,7 +332,7 @@ class UiContractTests(unittest.TestCase):
         self.assertFalse(audio_updates[0]["visible"])
         self.assertFalse(audio_updates[1]["visible"])
         self.assertTrue(audio_updates[2]["visible"])
-        self.assertFalse(audio_updates[5]["visible"])
+        self.assertTrue(audio_updates[5]["visible"])
         self.assertFalse(audio_updates[9]["visible"])
 
     def test_real_tabs_own_each_view(self) -> None:
@@ -271,19 +347,17 @@ class UiContractTests(unittest.TestCase):
         tab_nodes = layout["children"]
         self.assertEqual(
             [self.components[node["id"]]["props"]["label"] for node in tab_nodes],
-            [
-                "MiniMax H3",
-                "Qwen Image 2.1",
-                "LTX 2.5",
-                "MiniMax Music 3",
-                "YuE2",
-                "Gallery",
-                "API",
-            ],
+            ["Create", "Media", "Jobs", "System", "API & workflows"],
         )
+        engine_tabs = next(
+            c
+            for c in self.config["components"]
+            if c.get("props", {}).get("elem_id") == "h3-engine-tabs"
+        )
+        children = self.find_layout_node(engine_tabs["id"])["children"]
         self.assertEqual(
-            [self.components[node["children"][0]["id"]]["type"] for node in tab_nodes],
-            ["row", "group", "group", "group", "group", "group", "group"],
+            [self.components[n["id"]]["props"]["label"] for n in children],
+            ["MiniMax H3", "LTX 2.5", "Qwen Image 2.1", "MiniMax Music 3", "YuE2"],
         )
 
     def test_non_h3_generated_media_outputs_are_display_only(self) -> None:
@@ -336,7 +410,9 @@ class UiContractTests(unittest.TestCase):
                 [self.components[id]["props"]["label"] for id in inputs[-2:]],
                 ["Prompt writer", "Temporary Lightning API key"],
             )
-            parameters = self.demo.get_api_info()["named_endpoints"][f"/{endpoint}"]["parameters"]
+            parameters = self.demo.get_api_info()["named_endpoints"][f"/{endpoint}"][
+                "parameters"
+            ]
             self.assertEqual(parameters[-2]["parameter_default"], "Lightning AI")
 
         qwen_endpoint = "enhance_qwen_image21_prompt"
@@ -345,7 +421,9 @@ class UiContractTests(unittest.TestCase):
             [self.components[id]["props"]["label"] for id in qwen_inputs[-3:]],
             ["Prompt writer", "Temporary Lightning API key", "Edit output size"],
         )
-        qwen_parameters = self.demo.get_api_info()["named_endpoints"][f"/{qwen_endpoint}"]["parameters"]
+        qwen_parameters = self.demo.get_api_info()["named_endpoints"][
+            f"/{qwen_endpoint}"
+        ]["parameters"]
         self.assertEqual(qwen_parameters[-3]["parameter_default"], "Lightning AI")
 
     def test_qwen_edit_size_is_one_radio_input(self) -> None:
@@ -419,7 +497,7 @@ class UiContractTests(unittest.TestCase):
             for component in self.config["components"]
         }
         base_model = controls["Base model"]
-        sampling_preset = controls["Generation preset"]
+        sampling_preset = controls["Recipe"]
 
         restore = next(
             dependency
@@ -450,12 +528,13 @@ class UiContractTests(unittest.TestCase):
         }
         self.assertFalse(controls["INT8 ConvRot video VAE"]["props"]["value"])
         self.assertTrue(controls["LynnReal Light INT8 video VAE"]["props"]["value"])
-        preset = controls["Generation preset"]
+        preset = controls["Recipe"]
         int8 = controls["INT8 ConvRot video VAE"]
         lynnreal = controls["LynnReal Light INT8 video VAE"]
         trt = controls["Experimental TensorRT video VAE"]
         transition = next(
-            d for d in self.config["dependencies"]
+            d
+            for d in self.config["dependencies"]
             if (preset["id"], "input") in d.get("targets", [])
         )
         self.assertIn(int8["id"], transition["outputs"])
@@ -477,9 +556,7 @@ class UiContractTests(unittest.TestCase):
             if (controls["Base model"]["id"], "input") in d["targets"]
         )
         self.assertIn(summary["id"], dependency["outputs"])
-        self.assertNotIn(
-            (controls["Generation preset"]["id"], "change"), dependency["targets"]
-        )
+        self.assertNotIn((controls["Recipe"]["id"], "change"), dependency["targets"])
         fn = self.demo.fns[dependency["id"]]
         self.assertEqual(fn.concurrency_id, "h3-settings")
 
@@ -517,7 +594,8 @@ class UiContractTests(unittest.TestCase):
 
     def test_registered_resolution_callbacks_apply_each_preset(self) -> None:
         callbacks = [
-            fn for fn in self.demo.fns.values()
+            fn
+            for fn in self.demo.fns.values()
             if inspect.isfunction(fn.fn)
             and "resolution_choice_updates" in fn.fn.__code__.co_names
         ]
@@ -554,11 +632,9 @@ class UiContractTests(unittest.TestCase):
                 for component in self.config["components"]
                 if component["type"] == "row"
             )
-            self.assertTrue(
-                any(row and ids <= descendants(row) for row in rows)
-            )
+            self.assertTrue(any(row and ids <= descendants(row) for row in rows))
 
-        assert_same_row(("768p", "1080p", "2k"))
+        assert_same_row(("Aspect ratio", "Size"))
         assert_same_row(("1K resolution preset", "2K resolution preset"))
 
         for label, expected in (
@@ -594,35 +670,44 @@ class UiContractTests(unittest.TestCase):
         # One committed-value path handles upload, clear, and replacements.
         # A generic first-frame input handler must not race it with stale size.
         first_deps = [
-            d for d in self.config["dependencies"]
+            d
+            for d in self.config["dependencies"]
             if any(target[0] == first_frame["id"] for target in d.get("targets", []))
+            and len(d.get("targets", [])) == 1
         ]
         self.assertEqual([d["targets"][0][1] for d in first_deps], ["change"])
         first_change_dep = first_deps[0]
         self.assertFalse(first_change_dep.get("js"))
         h3_width_id = first_change_dep["outputs"][0]
         h3_height_id = first_change_dep["outputs"][1]
-        self.assertEqual(self.components[h3_width_id].get("props", {}).get("label"), "Width")
-        self.assertEqual(self.components[h3_height_id].get("props", {}).get("label"), "Height")
+        self.assertEqual(
+            self.components[h3_width_id].get("props", {}).get("label"), "Width"
+        )
+        self.assertEqual(
+            self.components[h3_height_id].get("props", {}).get("label"), "Height"
+        )
 
         first_refresh_dep = next(
-            d for d in self.config["dependencies"]
+            d
+            for d in self.config["dependencies"]
             if d.get("trigger_after") == first_change_dep["id"]
         )
         self.assertIn(summary["id"], first_refresh_dep["outputs"])
-        output_accordion = controls["Output essentials"]
+        output_accordion = controls["Output & recipe"]
         self.assertFalse(output_accordion["props"]["open"])
 
         # 3. Start-frame auto cap triggers on .change (so preset changes trigger auto resolution),
         # then refreshes summary
         auto_cap_change_dep = next(
-            d for d in self.config["dependencies"]
+            d
+            for d in self.config["dependencies"]
             if (auto_cap["id"], "change") in d.get("targets", [])
             and h3_width_id in d.get("outputs", [])
         )
         self.assertIsNotNone(auto_cap_change_dep)
         auto_cap_refresh_dep = next(
-            d for d in self.config["dependencies"]
+            d
+            for d in self.config["dependencies"]
             if d.get("trigger_after") == auto_cap_change_dep["id"]
         )
         self.assertIn(summary["id"], auto_cap_refresh_dep["outputs"])
@@ -645,7 +730,9 @@ class UiContractTests(unittest.TestCase):
         visited = set()
 
         def visit(event_id, active):
-            self.assertNotIn(event_id, active, f"Callback feedback cycle: {active + [event_id]}")
+            self.assertNotIn(
+                event_id, active, f"Callback feedback cycle: {active + [event_id]}"
+            )
             if event_id in visited:
                 return
             for downstream in edges[event_id]:
@@ -655,8 +742,9 @@ class UiContractTests(unittest.TestCase):
         for event_id in edges:
             visit(event_id, [])
 
-    def test_auto_resolution_pipeline_updates_next_run_and_preset_change_applies_cap(self) -> None:
-        import os
+    def test_auto_resolution_pipeline_updates_next_run_and_preset_change_applies_cap(
+        self,
+    ) -> None:
         import tempfile
         from PIL import Image
 
@@ -672,20 +760,35 @@ class UiContractTests(unittest.TestCase):
 
         # Find controller and run refresh with the new resolution
         refresh_fn = next(
-            fn for fn in self.demo.fns.values()
-            if hasattr(fn.fn, "__self__") and type(fn.fn.__self__).__name__ == "SettingsController"
+            fn
+            for fn in self.demo.fns.values()
+            if hasattr(fn.fn, "__self__")
+            and type(fn.fn.__self__).__name__ == "SettingsController"
         )
         controller = refresh_fn.fn.__self__
 
-        memory = {"active": "Turbo", "modes": {}, "values": {name: getattr(controller.components[name], "value", None) for name in controller.names}}
+        memory = {
+            "active": "Turbo",
+            "modes": {},
+            "values": {
+                name: getattr(controller.components[name], "value", None)
+                for name in controller.names
+            },
+        }
         memory["values"]["width"] = 1408
         memory["values"]["height"] = 768
 
         # Stale inputs produce 1408x768
         input_values_stale = [
-            1408 if controller.ids.get(getattr(comp, "_id", None)) == "width"
-            else 768 if controller.ids.get(getattr(comp, "_id", None)) == "height"
-            else getattr(comp, "value", None)
+            (
+                1408
+                if controller.ids.get(getattr(comp, "_id", None)) == "width"
+                else (
+                    768
+                    if controller.ids.get(getattr(comp, "_id", None)) == "height"
+                    else getattr(comp, "value", None)
+                )
+            )
             for comp in controller.inputs
         ]
         out_stale = controller.refresh(memory, *input_values_stale)
@@ -695,10 +798,19 @@ class UiContractTests(unittest.TestCase):
 
         # Updated inputs (from upload/change pipeline) produce 768x1152
         input_values_new = [
-            w if controller.ids.get(getattr(comp, "_id", None)) == "width"
-            else h if controller.ids.get(getattr(comp, "_id", None)) == "height"
-            else temp_img if controller.ids.get(getattr(comp, "_id", None)) == "first"
-            else getattr(comp, "value", None)
+            (
+                w
+                if controller.ids.get(getattr(comp, "_id", None)) == "width"
+                else (
+                    h
+                    if controller.ids.get(getattr(comp, "_id", None)) == "height"
+                    else (
+                        temp_img
+                        if controller.ids.get(getattr(comp, "_id", None)) == "first"
+                        else getattr(comp, "value", None)
+                    )
+                )
+            )
             for comp in controller.inputs
         ]
         out_new = controller.refresh(memory, *input_values_new)
@@ -722,8 +834,6 @@ class UiContractTests(unittest.TestCase):
         self.assertGreater(w_2mp * h_2mp, w_1mp * h_1mp)
         self.assertLess(w_2mp * h_2mp, 2_000_000)
 
-
-
     def test_tensorrt_vae_defaults_off_and_compiles_only_when_needed(self) -> None:
         trt_vae = next(
             component
@@ -736,26 +846,46 @@ class UiContractTests(unittest.TestCase):
         models = mock.sentinel.models
         progress = mock.sentinel.progress
         with (
-            mock.patch.object(gradio_app.model_service, "ensure_trt_video_vae") as provision,
             mock.patch.object(
-                gradio_app.model_service, "trt_vae_engine_is_current", return_value=False
+                gradio_app.model_service, "ensure_trt_video_vae"
+            ) as provision,
+            mock.patch.object(
+                gradio_app.model_service,
+                "trt_vae_engine_is_current",
+                return_value=False,
             ),
-            mock.patch.object(gradio_app.model_service, "_build_trt_video_vae_engine") as build,
+            mock.patch.object(
+                gradio_app.model_service, "_build_trt_video_vae_engine"
+            ) as build,
         ):
             self.assertTrue(
                 gradio_app.ensure_trt_video_vae_engine(models, progress=progress)
             )
         provision.assert_has_calls(
-            [mock.call(models, require_engine=False, runtime=gradio_app._runtime_config()), mock.call(models, runtime=gradio_app._runtime_config())]
+            [
+                mock.call(
+                    models, require_engine=False, runtime=gradio_app._runtime_config()
+                ),
+                mock.call(models, runtime=gradio_app._runtime_config()),
+            ]
         )
-        build.assert_called_once_with(models, progress, runtime=gradio_app._runtime_config(), release_backend=gradio_app.unload_comfy_models)
+        build.assert_called_once_with(
+            models,
+            progress,
+            runtime=gradio_app._runtime_config(),
+            release_backend=gradio_app.unload_comfy_models,
+        )
 
         with (
-            mock.patch.object(gradio_app.model_service, "ensure_trt_video_vae") as provision,
+            mock.patch.object(
+                gradio_app.model_service, "ensure_trt_video_vae"
+            ) as provision,
             mock.patch.object(
                 gradio_app.model_service, "trt_vae_engine_is_current", return_value=True
             ),
-            mock.patch.object(gradio_app.model_service, "_build_trt_video_vae_engine") as build,
+            mock.patch.object(
+                gradio_app.model_service, "_build_trt_video_vae_engine"
+            ) as build,
         ):
             self.assertFalse(
                 gradio_app.ensure_trt_video_vae_engine(models, progress=progress)
@@ -767,12 +897,21 @@ class UiContractTests(unittest.TestCase):
             )
         provision.assert_has_calls(
             [
-                mock.call(models, require_engine=False, runtime=gradio_app._runtime_config()),
-                mock.call(models, require_engine=False, runtime=gradio_app._runtime_config()),
+                mock.call(
+                    models, require_engine=False, runtime=gradio_app._runtime_config()
+                ),
+                mock.call(
+                    models, require_engine=False, runtime=gradio_app._runtime_config()
+                ),
                 mock.call(models, runtime=gradio_app._runtime_config()),
             ]
         )
-        build.assert_called_once_with(models, progress, runtime=gradio_app._runtime_config(), release_backend=gradio_app.unload_comfy_models)
+        build.assert_called_once_with(
+            models,
+            progress,
+            runtime=gradio_app._runtime_config(),
+            release_backend=gradio_app.unload_comfy_models,
+        )
 
         with (
             mock.patch.object(gradio_app, "load_model_config", return_value=models),
@@ -798,7 +937,9 @@ class UiContractTests(unittest.TestCase):
             ),
             mock.patch.object(Path, "is_file", return_value=True),
             mock.patch.object(
-                gradio_app.model_service, "trt_vae_runtime_fingerprint", return_value="v4:trt_10.9:sm_89"
+                gradio_app.model_service,
+                "trt_vae_runtime_fingerprint",
+                return_value="v4:trt_10.9:sm_89",
             ),
         ):
             # Mismatched marker (e.g. from an older TRT version 243)
@@ -808,14 +949,22 @@ class UiContractTests(unittest.TestCase):
             # Matching marker but deserialization fails (returns None)
             with (
                 mock.patch.object(Path, "read_text", return_value="v4:trt_10.9:sm_89"),
-                mock.patch.object(gradio_app.model_service, "is_trt_engine_loadable", return_value=False),
+                mock.patch.object(
+                    gradio_app.model_service,
+                    "is_trt_engine_loadable",
+                    return_value=False,
+                ),
             ):
                 self.assertFalse(gradio_app.trt_vae_engine_is_current(models))
 
             # Matching marker and loadable engine
             with (
                 mock.patch.object(Path, "read_text", return_value="v4:trt_10.9:sm_89"),
-                mock.patch.object(gradio_app.model_service, "is_trt_engine_loadable", return_value=True),
+                mock.patch.object(
+                    gradio_app.model_service,
+                    "is_trt_engine_loadable",
+                    return_value=True,
+                ),
             ):
                 self.assertTrue(gradio_app.trt_vae_engine_is_current(models))
 
@@ -863,15 +1012,25 @@ class UiContractTests(unittest.TestCase):
         ]
         with (
             mock.patch.object(gradio_app.JOBS, "maintenance") as maintenance,
-            mock.patch.object(gradio_app.prompt_service, "enhance_h3_prompt", return_value=("rewritten", "ok")),
-            mock.patch.object(gradio_app, "_runtime_config", return_value=mock.sentinel.runtime),
+            mock.patch.object(
+                gradio_app.prompt_service,
+                "enhance_h3_prompt",
+                return_value=("rewritten", "ok"),
+            ),
+            mock.patch.object(
+                gradio_app, "_runtime_config", return_value=mock.sentinel.runtime
+            ),
         ):
             for backend in ("Lightning AI", "Gemini"):
                 arguments[1] = backend
-                self.assertEqual(gradio_app.enhance_h3_prompt(*arguments), ("rewritten", "ok"))
+                self.assertEqual(
+                    gradio_app.enhance_h3_prompt(*arguments), ("rewritten", "ok")
+                )
             maintenance.assert_not_called()
             arguments[1] = "Local MiniMax-H3 8B"
-            self.assertEqual(gradio_app.enhance_h3_prompt(*arguments), ("rewritten", "ok"))
+            self.assertEqual(
+                gradio_app.enhance_h3_prompt(*arguments), ("rewritten", "ok")
+            )
             maintenance.assert_called_once_with("prompt-enhance")
 
     def test_non_gpu_media_actions_bypass_the_application_queue(self):
@@ -879,8 +1038,7 @@ class UiContractTests(unittest.TestCase):
             "refresh_page",
             "select_gallery_media",
             "import_gallery_media",
-            "delete_selected_gallery_media",
-            "empty_generated_media_gallery",
+            "confirm",
             "save_selected_image_frames",
         }
         found = set()
@@ -893,47 +1051,29 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(found, expected)
 
     def test_h3_progressive_section_order(self) -> None:
-        tabs = next(
-            component
-            for component in self.config["components"]
-            if component.get("props", {}).get("elem_id") == "h3-main-tabs"
-        )
-        tabs_layout = self.find_layout_node(tabs["id"])
-        h3_row = tabs_layout["children"][0]["children"][0]
-        right_column = h3_row["children"][1]
-        direct_components = [
-            self.components[node["id"]] for node in right_column["children"]
-        ]
-        labels = [
-            component.get("props", {}).get("label") for component in direct_components
-        ]
-        essentials = labels.index("Output essentials")
-        performance = labels.index("Performance & sampling (advanced)")
-        finishing = labels.index("Upscaling & finishing (advanced)")
-        summary = next(
-            index
-            for index, component in enumerate(direct_components)
-            if "h3-settings-summary"
-            in component.get("props", {}).get("elem_classes", [])
-        )
-        action = next(
-            index
-            for index, component in enumerate(direct_components)
-            if "h3-action-dock" in component.get("props", {}).get("elem_classes", [])
-        )
-        self.assertLess(essentials, performance)
-        self.assertLess(performance, finishing)
-        self.assertLess(finishing, summary)
-        self.assertLess(summary, action)
-        self.assertFalse(
-            direct_components[essentials].get("props", {}).get("open", True)
-        )
-        html_values = [
-            component.get("props", {}).get("value", "")
-            for component in direct_components
-            if component.get("type") == "html"
-        ]
-        self.assertFalse(any("Review & run" in val for val in html_values))
+        by_id = {
+            c.get("props", {}).get("elem_id"): c for c in self.config["components"]
+        }
+        composer = self.find_layout_node(by_id["h3-composer"]["id"])
+        preview = self.find_layout_node(by_id["h3-preview"]["id"])
+        advanced = self.find_layout_node(by_id["h3-advanced-settings"]["id"])
+
+        def descendants(node):
+            return {node["id"]} | set().union(
+                *(descendants(n) for n in node.get("children", []))
+            )
+
+        labels = {
+            self.components[i].get("props", {}).get("label")
+            for i in descendants(composer)
+        }
+        self.assertIn("Prompt", labels)
+        self.assertNotIn("Base model", labels)
+        self.assertNotIn("Steps", labels)
+        self.assertTrue(descendants(composer).isdisjoint(descendants(advanced)))
+        self.assertTrue(descendants(composer).isdisjoint(descendants(preview)))
+        self.assertFalse(by_id["h3-output-settings"]["props"]["open"])
+        self.assertFalse(by_id["h3-advanced-settings"]["props"]["open"])
 
     def test_presentation_state_is_pure_and_semantic(self) -> None:
         self.assertTrue(mode_presentation("First / last frame").show_frames)

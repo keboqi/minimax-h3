@@ -53,7 +53,7 @@ class DecoderTests(unittest.TestCase):
             resolve_decoders("Video", "", use_trt_vae=True, use_int8_vae=True)
 
     def test_generation_does_not_prepare_unused_video_decoder(self):
-        import gradio_app as app
+        from h3_ui import application as app
 
         for fmt in ("Audio", "Image"):
             kwargs = {

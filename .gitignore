@@ -16,3 +16,6 @@ gradio_outputs/
 !.env.example
 .idea/
 .vscode/
+
+# Private workspace database, saved prompts and retained source media
+h3-workspace/

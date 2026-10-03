@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 from collections.abc import Mapping
-from typing import Any
 import gradio as gr
 from h3_app.settings import valid_preference, PRESET_FIELDS
 from .settings_controller import SETTING_NAMES
@@ -199,7 +198,9 @@ def bind_browser_settings(demo, components, *, controller):
     def restore(saved):
         restored, memory = restore_preferences(saved, selected)
         updates = [restored[name] for name in names]
-        if "workspace.engine" in names:
+        if "workspace.engine" in names and isinstance(
+            selected["workspace.engine"], gr.Dropdown
+        ):
             from h3_app.capabilities import engines_for_task
 
             choices = engines_for_task(restored["workspace.task"])
@@ -242,7 +243,7 @@ def bind_browser_settings(demo, components, *, controller):
             api_name=False,
         )
     others = [
-        component.input
+        (component.change if name == "workspace.engine" else component.input)
         for name, component in selected.items()
         if name not in {"h3." + n for n in SETTING_NAMES}
     ]

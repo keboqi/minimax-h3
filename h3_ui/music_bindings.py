@@ -8,7 +8,7 @@ from typing import Any
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation
 
 
-from .views import MusicView
+from .music_view import MusicView
 
 
 def bind_music_view(

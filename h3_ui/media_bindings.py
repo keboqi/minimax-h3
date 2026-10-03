@@ -1,10 +1,8 @@
 """Reusable Gradio event-binding helpers."""
 
 from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Any
-
 import gradio as gr
 from h3_app.catalog import (
     LTX25_CQ_ENHANCER,
@@ -14,10 +12,7 @@ from h3_app.catalog import (
     LTX25_SDR_TO_HDR,
 )
 from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
-from .workspace_mode import workspace_enabled
-
-
-from .views import GalleryView
+from .media_view import GalleryView
 
 
 def bind_gallery_view(
@@ -37,7 +32,6 @@ def bind_gallery_view(
     empty: Callable[..., Any],
     list_paths: Callable[..., Any] | None = None,
 ) -> None:
-    workspace = workspace_enabled()
     page_size = 48
 
     def refresh_page(mode: str, limit: int = page_size):
@@ -52,8 +46,9 @@ def bind_gallery_view(
 
     def sync_more(mode: str):
         page = refresh(mode, page_size)
-        return min(page_size, page.total), gr.update(
-            interactive=page.next_cursor is not None
+        return (
+            min(page_size, page.total),
+            gr.update(interactive=page.next_cursor is not None),
         )
 
     ltx_options = {ltx_option} | LTX25_SAME_RESOLUTION_OPTIONS
@@ -68,7 +63,7 @@ def bind_gallery_view(
             gr.update(visible=value == "Audio", value=None),
             None,
             "",
-            gr.update(visible=value == "Video" or workspace),
+            gr.update(visible=value == "Video" or True),
             gr.update(value=False),
             gr.update(
                 choices=(
@@ -116,12 +111,10 @@ def bind_gallery_view(
                 visible=value in ltx_options
                 and value not in {LTX25_CQ_ENHANCER, LTX25_SDR_TO_HDR},
                 info=(
-                    "Describe the source scene; focus restoration instructions are added automatically. "
-                    "Preserves source resolution. Uses the finishing model selected here."
+                    "Describe the source scene; focus restoration instructions are added automatically. Preserves source resolution. Uses the finishing model selected here."
                     if value == LTX25_DEBLUR
                     else (
-                        "Describe the source scene; compression artifact removal instructions are added automatically. "
-                        "Preserves source resolution. Uses the finishing model selected here."
+                        "Describe the source scene; compression artifact removal instructions are added automatically. Preserves source resolution. Uses the finishing model selected here."
                         if value in LTX25_RESTORATION_OPTIONS
                         else "Optional but recommended. Uses the finishing model selected here."
                     )
@@ -193,13 +186,7 @@ def bind_gallery_view(
     view.grid.select(
         select,
         inputs=[view.mode, view.paths],
-        outputs=[
-            view.player,
-            view.image,
-            view.audio,
-            view.download,
-            view.selected,
-        ],
+        outputs=[view.player, view.image, view.audio, view.download, view.selected],
         queue=False,
         show_progress="hidden",
     )
@@ -263,45 +250,13 @@ def bind_gallery_view(
         queue=False,
     )
     stopped.then(fn=None, cancels=[post_event], queue=False, api_name=False)
-    if workspace:
-        from .media_actions import bind_safe_deletion
+    from .media_actions import bind_safe_deletion
 
-        bind_safe_deletion(
-            view,
-            list_paths=list_paths,
-            delete=delete,
-            empty=empty,
-            mutation_outputs=mutation_outputs,
-            sync_more=sync_more,
-        )
-        return
-    deleted = view.delete.click(
-        delete,
-        inputs=[view.mode, view.selected, view.confirm_delete],
-        outputs=mutation_outputs,
-        queue=False,
-        show_progress="minimal",
-        api_name=False,
-    )
-    deleted.then(
-        sync_more,
-        inputs=view.mode,
-        outputs=[view.shown, view.show_more],
-        queue=False,
-        show_progress="hidden",
-    )
-    emptied = view.empty.click(
-        empty,
-        inputs=[view.mode, view.selected, view.confirm_delete],
-        outputs=mutation_outputs,
-        queue=False,
-        show_progress="minimal",
-        api_name=False,
-    )
-    emptied.then(
-        sync_more,
-        inputs=view.mode,
-        outputs=[view.shown, view.show_more],
-        queue=False,
-        show_progress="hidden",
+    bind_safe_deletion(
+        view,
+        list_paths=list_paths,
+        delete=delete,
+        empty=empty,
+        mutation_outputs=mutation_outputs,
+        sync_more=sync_more,
     )

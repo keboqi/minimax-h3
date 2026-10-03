@@ -4,11 +4,9 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import nullcontext
 import inspect
-import uuid
 import gradio as gr
 from h3_app.jobs import JOBS, CURRENT_JOB
 from h3_app.provenance import RUN_CONTEXT, render_snapshot
-from .workspace_mode import workspace_enabled
 
 GPU_QUEUE = {"concurrency_id": "h3-gpu", "concurrency_limit": 1}
 PROMPT_QUEUE = {"concurrency_id": "h3-prompt", "concurrency_limit": 4}
@@ -19,10 +17,8 @@ def bind_gpu_action(trigger, callback=None, **options):
     reference_map = options.pop("reference_map", None)
     resolver = options.pop("resolver", None)
     component = getattr(trigger, "__self__", None)
-    if (
-        workspace_enabled()
-        and getattr(callback, "job_family", None)
-        and getattr(component, "visible", True) is not False
+    if getattr(callback, "job_family", None) and (
+        getattr(component, "visible", True) is not False
     ):
         from .job_admission import bind_accepted_action
 
@@ -40,7 +36,7 @@ def bind_gpu_action(trigger, callback=None, **options):
 def bind_prompt_action(trigger, callback=None, **options):
     """Allow remote prompt requests while a GPU job prepares or downloads models."""
     review = getattr(getattr(trigger, "__self__", None), "h3_review", None)
-    if workspace_enabled() and review is not None:
+    if review is not None:
         from .prompt_review import bind_review_action
 
         return bind_review_action(trigger, callback, options, review, PROMPT_QUEUE)
@@ -51,16 +47,20 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
     """Advance under the job context even when Gradio switches worker threads."""
     signature = inspect.signature(callback)
     names = input_names or tuple(
-        name
-        for name, param in signature.parameters.items()
-        if name not in {"request", "progress"}
-        and param.kind
-        not in (inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.VAR_KEYWORD)
+        (
+            name
+            for name, param in signature.parameters.items()
+            if name not in {"request", "progress"}
+            and param.kind
+            not in (inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.VAR_KEYWORD)
+        )
     )
 
     def run(*args):
-        values, request = args[:-1], args[-1]
-        owner = request.session_hash or uuid.uuid4().hex
+        values, request = (args[:-1], args[-1])
+        from .job_admission import require_owner
+
+        owner = require_owner(request)
         context = {}
         if family == "h3":
             has_preset = names[-1] == "preset"
@@ -77,7 +77,7 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
             nullcontext(current)
             if current is not None
             and current.owner == owner
-            and current.family == family
+            and (current.family == family)
             and current.has_gpu
             else JOBS.run(owner, family)
         )
@@ -95,10 +95,6 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
                                 else {}
                             )
                             result = callback(*values, **kwargs)
-                            # Generation callbacks normally stream an iterator,
-                            # but short GPU actions may return one multi-output
-                            # tuple. Iterating that tuple would incorrectly send
-                            # each component as a separate Gradio response.
                             iterator = (
                                 result
                                 if isinstance(result, Iterator)
@@ -133,8 +129,6 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
                     if close is not None:
                         close()
 
-    # Gradio treats an empty upload as required unless the callback signature
-    # also supplies a default. Keep appended voice inputs optional for old clients.
     optional_defaults = (
         {
             "fl2va_audio_1": None,
@@ -173,6 +167,7 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
 
 
 def owned_interrupt(callback, family):
+
     def stop(request: gr.Request):
         return callback(request, family=family)
 

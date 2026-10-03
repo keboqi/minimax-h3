@@ -22,16 +22,16 @@ def run():
         socket_.bind(("127.0.0.1", 0))
         port = socket_.getsockname()[1]
     source = (
-        "import gradio_app as app;"
+        "from h3_ui import application as app;from h3_ui.styles import H3_SETUP_CSS,H3_WORKSPACE_CSS;"
         "app.backend_status=lambda:'Connected browser test fixture';"
         "app.build_ui().queue(default_concurrency_limit=1,max_size=8).launch("
-        f"server_name='127.0.0.1',server_port={port},inbrowser=False,ssr_mode=False,css=app.H3_SETUP_CSS)"
+        f"server_name='127.0.0.1',server_port={port},inbrowser=False,ssr_mode=False,css=H3_SETUP_CSS+H3_WORKSPACE_CSS)"
     )
     with tempfile.TemporaryFile(mode="w+b") as log:
         process = subprocess.Popen(
             [sys.executable, "-u", "-c", source],
             cwd=ROOT,
-            env={**os.environ, "H3_UI_LAYOUT": "legacy"},
+            env={**os.environ, "H3_WORKSPACE_DIR": str(ROOT / ".cache/ui-redesign" / "voice_refs-state")},
             stdout=log,
             stderr=log,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
@@ -69,7 +69,8 @@ def run():
                 prompt = page.get_by_label("Prompt", exact=True)
                 prompt.fill('The woman uses the voice timbre of <Audio 1> and says, "Hello."')
                 generate = page.get_by_role("button", name="Generate video", exact=True)
-                page.get_by_text("Model and memory (advanced)", exact=True).click()
+                page.get_by_text("Advanced settings", exact=True).click()
+                page.get_by_role("tab", name="Model & memory", exact=True).click()
                 bridge = page.get_by_label("Semantic Bridge (experimental)", exact=True)
                 bridge.check()
                 expect(card).to_contain_text("Experimental v1")

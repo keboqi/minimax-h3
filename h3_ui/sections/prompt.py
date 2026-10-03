@@ -1,12 +1,9 @@
 """Build the prompt section in its existing parent container."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
-
 import gradio as gr
-from ..workspace_mode import workspace_enabled
 
 if TYPE_CHECKING:
     from ..h3_view import H3ViewServices
@@ -42,20 +39,16 @@ class PromptSection:
 def build_prompt_section(
     defaults: Mapping[str, Any], services: H3ViewServices
 ) -> PromptSection:
-    help_text = gr.Markdown(
-        services.mode_help("Text to video"), visible=not workspace_enabled()
-    )
+    help_text = gr.Markdown(services.mode_help("Text to video"), visible=False)
     prompt = gr.Textbox(
         label="Prompt",
-        lines=5 if workspace_enabled() else 12,
+        lines=5,
         max_lines=24,
         placeholder="Describe shots, camera motion, dialogue, sound effects, ambience, music, and any tagged references.",
     )
     with gr.Accordion("Prompt writer / enhancer", open=False):
         gr.Markdown(
-            "The local MiniMax-H3 8B writer supports T2VA, I2VA, "
-            "L2VA, and FL2VA. Gemini supports all Reference media; "
-            "Lightning AI supports text and image enhancement."
+            "The local MiniMax-H3 8B writer supports T2VA, I2VA, L2VA, and FL2VA. Gemini supports all Reference media; Lightning AI supports text and image enhancement."
         )
         prompt_writer_backend = gr.Radio(
             services.PROMPT_WRITER_BACKENDS,
@@ -69,43 +62,26 @@ def build_prompt_section(
                 choices=list(services.LOCAL_PROMPT_BASE_MODELS),
                 value=services.DEFAULT_LOCAL_PROMPT_BASE_MODEL,
                 label="Local base model",
-                info=(
-                    "BF16 is the default full-precision checkpoint. FP8 is "
-                    "available as the lower-memory alternative."
-                ),
+                info="BF16 is the default full-precision checkpoint. FP8 is available as the lower-memory alternative.",
             )
             with gr.Accordion("Local decoding settings", open=False):
                 local_prompt_greedy = gr.Checkbox(value=True, label="Greedy decoding")
                 local_prompt_max_tokens = gr.Slider(
-                    256,
-                    8192,
-                    value=4096,
-                    step=256,
-                    label="Max new tokens",
+                    256, 8192, value=4096, step=256, label="Max new tokens"
                 )
                 with gr.Row():
                     local_prompt_temperature = gr.Slider(
-                        0.1,
-                        2.0,
-                        value=0.7,
-                        step=0.1,
-                        label="Temperature (sampling)",
+                        0.1, 2.0, value=0.7, step=0.1, label="Temperature (sampling)"
                     )
                     local_prompt_top_p = gr.Slider(
-                        0.05,
-                        1.0,
-                        value=0.8,
-                        step=0.05,
-                        label="Top-p (sampling)",
+                        0.05, 1.0, value=0.8, step=0.05, label="Top-p (sampling)"
                     )
                 local_prompt_seed = gr.Number(value=42, precision=0, label="Seed")
         with gr.Group(
             visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "Gemini"
         ) as gemini_prompt_writer_group:
             gr.Markdown(
-                "Uses the active inputs with `prompt.txt`. Set "
-                "`GEMINI_API_KEY` on the server or enter a temporary key; "
-                "the server does not store UI keys."
+                "Uses the active inputs with `prompt.txt`. Set `GEMINI_API_KEY` on the server or enter a temporary key; the server does not store UI keys."
             )
             with gr.Row():
                 gemini_prompt_model = gr.Dropdown(
@@ -122,10 +98,7 @@ def build_prompt_section(
             visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "Lightning AI"
         ) as lightning_prompt_writer_group:
             gr.Markdown(
-                f"Uses `{services.LIGHTNING_PROMPT_MODEL}` with the active text "
-                "and images plus `prompt.txt`. Video and audio references "
-                "require Gemini. Set `LIGHTNING_API_KEY` on the server or "
-                "enter a temporary key; the server does not store UI keys."
+                f"Uses `{services.LIGHTNING_PROMPT_MODEL}` with the active text and images plus `prompt.txt`. Video and audio references require Gemini. Set `LIGHTNING_API_KEY` on the server or enter a temporary key; the server does not store UI keys."
             )
             lightning_api_key = gr.Textbox(
                 label="Temporary Lightning API key",
@@ -136,7 +109,7 @@ def build_prompt_section(
         enhance_prompt_status = gr.Textbox(
             label="Prompt enhancer status", lines=2, interactive=False
         )
-        with gr.Group(visible=workspace_enabled()):
+        with gr.Group(visible=True):
             prompt_preview = gr.Textbox(
                 label="Suggested prompt", lines=5, interactive=False
             )
@@ -146,7 +119,6 @@ def build_prompt_section(
                 accept_prompt = gr.Button("Accept suggested prompt")
                 keep_prompt = gr.Button("Keep original")
                 undo_prompt = gr.Button("Undo accepted prompt")
-
     return PromptSection(
         prompt_preview=prompt_preview,
         prompt_proposal=prompt_proposal,

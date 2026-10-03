@@ -8,7 +8,7 @@ from typing import Any
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation
 
 
-from .views import YuE2View
+from .yue2_view import YuE2View
 
 
 def bind_yue2_view(

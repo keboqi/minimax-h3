@@ -3,6 +3,54 @@
 import gradio as gr
 
 
+def bind_image_canvas_preview(output, first, result_format, conditioning):
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+    from PIL import Image
+    from h3_app.image_canvas import transform_canvas
+
+    def preview(path, result, mode, canvas_mode, width, height):
+        if (
+            result != "Image"
+            or mode != "First / last frame"
+            or not path
+            or canvas_mode == "Input-derived"
+        ):
+            return (
+                gr.update(value=None, visible=False),
+                "Input-derived is the default. Fit/pad or fill/crop applies only to a conditioned Image request.",
+            )
+        try:
+            with TemporaryDirectory(prefix="h3-canvas-preview-") as directory:
+                derived = transform_canvas(
+                    path, Path(directory) / "preview.png", canvas_mode, width, height
+                )
+                with Image.open(derived) as image:
+                    display = image.copy()
+            return (
+                gr.update(value=display, visible=True),
+                f"{canvas_mode} · {int(width)}×{int(height)}. The original upload is preserved.",
+            )
+        except (ValueError, OSError) as exc:
+            return gr.update(value=None, visible=False), str(exc)
+
+    gr.on(
+        triggers=[
+            first.change,
+            result_format.change,
+            conditioning.change,
+            *(c.input for c in output.canvas_controls),
+        ],
+        fn=preview,
+        inputs=[first, result_format, conditioning, *output.canvas_controls],
+        outputs=[output.canvas_preview, output.canvas_status],
+        queue=False,
+        api_name=False,
+        show_progress="hidden",
+        trigger_mode="always_last",
+    )
+
+
 def bind_canvas_controls(components, resolve_dimensions, controller, presets):
     if components.aspect_ratio is None:
         return

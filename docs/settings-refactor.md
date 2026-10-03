@@ -24,7 +24,9 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/contracts.py | Stable positional API ordering |
 | h3_app/model_types.py, model_service.py | Model selection, lazy provisioning and TensorRT engine lifecycle |
 | h3_models.py | Model inventory and manifest transactions locked across threads and processes |
-| h3_app/jobs.py | Bounded process-local acceptance, immutable requests, input leases, execution ledgers, exact retries, session ownership, cancellation and the application GPU lease |
+| h3_app/jobs.py | Bounded admission, immutable requests, input leases, durable technical ledgers, exact retries, browser ownership, cancellation and the application GPU lease |
+| h3_app/workspace_store.py, workspace_admin.py | SQLite ownership, technical history, explicit projects, asset annotations, backup/restore |
+| h3_ui/prompt_controller.py, model_controller.py, media_controller.py | Feature behavior through explicit service dependencies |
 | h3_app/comfy.py, execution.py | HTTP transport and one submission lifecycle, deadline and websocket owner |
 | h3_app/workflows/ | Pure H3, LTX, Music and upscale graph builders with staged input identities |
 | h3_app/generation/ | Named requests and typed services; preparation, graph construction, execution and finishing |
@@ -33,17 +35,17 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/provenance.py | Atomic sidecars, copied-media provenance and escaped metadata rendering |
 | h3_app/prompt_service.py | Local, Gemini and Lightning writer adapters with transient credentials |
 | h3_app/server.py | Configured FastAPI routes and HTTP/WebSocket proxy |
-| h3_ui/application.py | Runtime service wiring and temporary public/UI compatibility adapters |
+| h3_ui/application.py | Runtime service wiring and signature-preserving public API adapters |
 | h3_ui/bootstrap.py | UI composition with explicit catalog and service records |
-| h3_ui/*_view.py, *_bindings.py | Feature-owned views and event bindings; views.py and bindings.py retain compatibility exports |
+| h3_ui/*_view.py, *_bindings.py | Feature-owned views and event bindings; shared binding helpers |
 | h3_ui/sections/, events/ | Existing visible sections and event registration, preserving component order |
-| h3_ui/job_bindings.py, job_admission.py, jobs_view.py | Gradio request injection, acceptance before queueing, shared GPU binding and session-scoped job presentation |
+| h3_ui/job_bindings.py, job_admission.py, jobs_view.py | Gradio request injection, acceptance before queueing, shared GPU binding and owner-scoped job presentation |
 | h3_app/reference_bindings.py, h3_ui/prompt_preview.py, prompt_review.py | Stable reference translation and guarded accept/keep/undo prompt previews |
 | h3_ui/media_actions.py | Selection- and file-specific deletion confirmation |
 | h3_ui/settings_controller.py, settings_presentation.py | Serialized settings actions and resolved-plan rendering |
 | h3_ui/persistence.py | Explicit browser preference allowlist and migration |
-| gradio_app.py | Launcher and temporary import compatibility shim |
-| tests/__main__.py, test_legacy_services.py, test_workflow_fixtures.py | Consolidated validation, legacy suites and 15 baseline graph fixtures |
+| gradio_app.py | Workspace launcher |
+| tests/__main__.py, test_service_contracts.py, test_workflow_fixtures.py | Consolidated validation, service suites and 15 baseline graph fixtures |
 
 The H3/LTX/Music graph algorithms and model patch ordering remain intact. This refactor does not replace the inference stack or introduce a plugin framework.
 
@@ -69,7 +71,7 @@ H3 metadata is attached before Gradio copies media into its cache. Gallery metad
 
 ## Compatibility and deployment
 
-Importing gradio_app resolves to the composition module during migration, preserving existing names, signatures and callback patching. New domain code imports h3_app modules and receives runtime configuration and named services explicitly. H3Request groups conditioning, sampling, output and finishing inputs. Resolved settings remain the policy authority; capability and model checks take place during preparation.
+gradio_app is a launcher only. Prompt, model and media controllers receive explicit service records; the workspace is the only UI. New domain code imports h3_app modules and receives runtime configuration and named services explicitly. H3Request groups conditioning, sampling, output and finishing inputs. Resolved settings remain the policy authority; capability and model checks take place during preparation.
 
 Graph builders accept staged paths and explicit output naming tokens. Importing them or generation, media and model services does not construct Gradio components, contact a backend or download models. Graph fixture normalization changes only volatile save-prefix timestamp/UUID suffixes.
 
@@ -92,7 +94,7 @@ uv pip install --python .venv/Scripts/python.exe -r requirements-test.txt
 .venv/Scripts/python.exe -m tests --browser
 ```
 
-The consolidated command runs discovery, all remaining standalone service self-tests and the legacy workflow contracts, with offline Hugging Face mode. The gradio_app.py --selftest entry point remains available. CPU PyTorch numerical tests run only when PyTorch is installed; pinned upstream contract tests run only when their .cache/upstream-upgrade sources exist. Neither gate fetches dependencies. The --browser option adds settings, voice-reference, first-frame resolution and workspace acceptance.
+The consolidated command runs discovery, all standalone service self-tests and baseline workflow contracts, with offline Hugging Face mode. The gradio_app.py --selftest entry point remains available. CPU PyTorch numerical tests run only when PyTorch is installed; pinned upstream contract tests run only when their .cache/upstream-upgrade sources exist. Neither gate fetches dependencies. The --browser option adds settings, voice-reference, first-frame resolution and workspace acceptance.
 
 On Linux use .venv/bin/python. Browser checks use installed Chrome on Windows, or Playwright Chromium elsewhere; H3_BROWSER_EXECUTABLE can select a Chromium executable. Fixtures mock backend health and never load models. Workspace job checks use a synthetic generation callback and test-only queue controls; they do not measure inference.
 

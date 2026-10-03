@@ -1,4 +1,4 @@
-"""Session-owned Comfy jobs and process-wide GPU preparation coordination."""
+"""Owner-scoped Comfy jobs and process-wide GPU preparation coordination."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ import json
 import os
 from pathlib import Path
 import shutil
-import tempfile
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from threading import Event, Lock, RLock, Thread
 from typing import Any, Callable
+from .input_leases import cleanup_orphans, create_lease, release_lease
 
 
 class JobCancelled(RuntimeError):
@@ -55,6 +55,7 @@ class Job:
     media_indices: tuple[int, ...] = ()
     output_indices: tuple[int, ...] = ()
     input_lease: str | None = None
+    lease_lock: Any = field(default=None, repr=False)
     input_bytes: int = 0
     claimed: bool = False
     recoverable_source: str | None = None
@@ -62,6 +63,15 @@ class Job:
     finishing_callbacks: dict[int, Any] = field(default_factory=dict, repr=False)
     finishing_offsets: dict[int, int] = field(default_factory=dict)
     recoverable_sources: dict[int, str] = field(default_factory=dict)
+    checkpoint: Any = field(default=None, repr=False)
+    canvas_request: dict | None = None
+    source_asset_ids: list[str] = field(default_factory=list)
+    recovered: bool = False
+    project_id: str | None = None
+
+    def persist(self):
+        if self.checkpoint is not None:
+            self.checkpoint(self)
 
     def retry_finishing(self, index):
         callback = self.finishing_callbacks.get(index)
@@ -95,6 +105,7 @@ class Job:
                 entry["state"] = self.state
                 entry["error"] = str(error)
                 break
+        self.persist()
 
     def observe_submission(self, prompt_id, token, graph):
         seeds = {
@@ -115,6 +126,7 @@ class Job:
                 "submitted_at": time.time(),
             }
         )
+        self.persist()  # Write intent before sending anything to ComfyUI.
         return self.ledger[-1]
 
 
@@ -134,6 +146,7 @@ def variant_seed(index, resolve):
     if seed is None:
         seed = resolve()
         job.variant_seeds[index] = seed
+        job.persist()
     return seed
 
 
@@ -149,7 +162,9 @@ CURRENT_JOB: ContextVar[Job | None] = ContextVar("h3_job", default=None)
 
 class JobCoordinator:
     def __init__(self):
+        cleanup_orphans()
         self.gpu = Lock()
+        self.admission = Lock()
         self.lock = RLock()
         self.active: dict[str, Job] = {}
         self.records: dict[str, Job] = {}
@@ -158,6 +173,124 @@ class JobCoordinator:
         self.max_records = 128
         self._stopped = Event()
         self._reaper = None
+        self.store = None
+        self.callbacks = {}
+        self.finishing_factory = None
+        self.history_outputs = None
+
+    def configure(self, store):
+        """Restore technical records; never dispatch work during recovery."""
+        with self.lock:
+            if self.store is not None:
+                return
+            self.store = store
+            for payload in store.jobs():
+                job = self._restore(payload)
+                self.records.setdefault(job.id, job)
+                if job.idempotency_key:
+                    self.idempotency[(job.owner, job.idempotency_key)] = job.id
+
+    def _restore(self, payload):
+        payload = dict(payload)
+        for field_name in ("variant_seeds", "recoverable_sources", "finishing_offsets"):
+            payload[field_name] = {
+                int(k): v for k, v in payload.get(field_name, {}).items()
+            }
+        payload["failed_variants"] = set(payload.get("failed_variants", []))
+        job = Job(**payload, checkpoint=self.store.save_job)
+        job.claimed = True
+        job.recovered = True
+        if job.state == "cancel_requested":
+            job.cancelled.set()
+        if job.finished_at is None:
+            job.state = "recovering"
+            job.stage = "Reconnect to recorded ComfyUI submissions; no automatic replay"
+            for entry in job.ledger:
+                if entry["state"] == "submitting":
+                    entry["state"] = "submission_unknown"
+            job.claimed = True
+            self.active[job.id] = job
+        self._restore_project(job)
+        return job
+
+    def register_callback(self, family, callback):
+        self.callbacks[family] = callback
+        for job in self.records.values():
+            if job.family == family:
+                self._restore_project(job)
+
+    def _restore_project(self, job):
+        if self.store is None:
+            return
+        project = self.store.project_for_job(job.owner, job.id)
+        if project:
+            job.project_id = project["id"]
+            job.snapshot_json = json.dumps(project["values"])
+            job.callback = self.callbacks.get(job.family)
+            job.ledger = project["ledger"]
+            job.finishing_request = project.get("finishing")
+            if self.finishing_factory and job.finishing_request:
+                self.finishing_factory(job)
+
+    def reconcile(self, owner, get):
+        """Observe history/queue only. Missing/ambiguous submissions require review."""
+        recovering = [
+            job
+            for job in self.list_owned(owner)
+            if job.recovered and job.state in {"recovering", "cancel_requested"}
+        ]
+        if not recovering:
+            return
+        queue = get("/queue").json()
+        pending = {
+            str(item[1])
+            for key in ("queue_pending", "queue_running")
+            for item in queue.get(key, [])
+            if len(item) > 1
+        }
+        for job in recovering[:8]:
+            waiting = False
+            uncertain = False
+            for entry in job.ledger:
+                prompt_id = entry.get("prompt_id")
+                if not prompt_id:
+                    if entry["state"] == "submitting":
+                        entry["state"] = "submission_unknown"
+                    uncertain |= entry["state"] in {"submitting", "submission_unknown"}
+                    continue
+                if prompt_id in pending:
+                    waiting = True
+                    continue
+                history = get(f"/history/{prompt_id}").json().get(prompt_id)
+                if history and (
+                    history.get("status", {}).get("completed") or history.get("outputs")
+                ):
+                    entry["state"] = (
+                        "completed"
+                        if history.get("status", {}).get("status_str") != "error"
+                        else "failed"
+                    )
+                    job.failed_variants.add(entry["variant"])
+                    if self.history_outputs and entry["state"] == "completed":
+                        recovered = self.history_outputs(history, entry)
+                        job.outputs = list(dict.fromkeys([*job.outputs, *recovered]))
+                        entry["recovered_outputs"] = recovered
+                    # Finishing/delivery was interrupted even if this backend stage completed.
+                elif entry["state"] != "completed":
+                    entry["state"] = "submission_unknown"
+                    uncertain = True
+            if waiting:
+                job.stage = "Recorded workflow remains in ComfyUI; reconnect to observe"
+            else:
+                job.state = (
+                    "cancelled"
+                    if job.cancelled.is_set()
+                    else ("needs_review" if uncertain else "interrupted")
+                )
+                job.stage = "Recovery requires explicit action; no work was replayed"
+                job.finished_at = time.time()
+                self.active.pop(job.id, None)
+            job.persist()
 
     def close(self):
         """Release temporary input copies at normal process shutdown."""
@@ -165,7 +298,7 @@ class JobCoordinator:
         with self.lock:
             for job in self.records.values():
                 if job.input_lease:
-                    shutil.rmtree(job.input_lease, ignore_errors=True)
+                    release_lease(job.input_lease, job.lease_lock)
             self.records.clear()
             self.active.clear()
             self.idempotency.clear()
@@ -206,9 +339,15 @@ class JobCoordinator:
             if job.idempotency_key:
                 self.idempotency.pop((job.owner, job.idempotency_key), None)
             if job.input_lease:
-                shutil.rmtree(job.input_lease, ignore_errors=True)
+                release_lease(job.input_lease, job.lease_lock)
 
-    def accept(
+    def accept(self, owner, family, values, **options):
+        # Serial admission protects the input quota and idempotency reservation;
+        # unlike the registry lock it never blocks monitoring or cancellation.
+        with self.admission:
+            return self._accept(owner, family, values, **options)
+
+    def _accept(
         self,
         owner,
         family,
@@ -232,9 +371,15 @@ class JobCoordinator:
                 raise ValueError("The job registry is shutting down.")
             self._start_retention_cleanup()
             self._prune()
+            if key and self.store and (owner, key) not in self.idempotency:
+                saved = self.store.job_for_key(owner, key)
+                if saved:
+                    old = self._restore(saved)
+                    self.records[old.id] = old
+                    self.idempotency[(owner, key)] = old.id
             if key and (owner, key) in self.idempotency:
                 old = self.records[self.idempotency[(owner, key)]]
-                if old.request_digest != digest:
+                if old.request_digest != digest or old.family != family:
                     raise ValueError(
                         "Idempotency key already belongs to another request."
                     )
@@ -263,66 +408,118 @@ class JobCoordinator:
                 idempotency_key=key,
                 request_digest=digest,
             )
-            pinned = copy.deepcopy(list(values))
-            sources = {}
-            size = 0
-            max_bytes = int(os.getenv("H3_JOB_MAX_INPUT_BYTES", str(8 * 1024**3)))
+        pinned = copy.deepcopy(list(values))
+        sources = {}
+        size = 0
+        max_bytes = int(os.getenv("H3_JOB_MAX_INPUT_BYTES", str(8 * 1024**3)))
+        with self.lock:
+            retained_bytes = sum(item.input_bytes for item in self.records.values())
 
-            def pin(value):
-                nonlocal size
-                if value is None:
-                    return None
-                if isinstance(value, (tuple, list)):
-                    return [pin(item) for item in value]
-                if isinstance(value, dict):
-                    result = dict(value)
-                    for name in ("path", "name", "video", "audio"):
-                        if result.get(name):
-                            result[name] = pin(result[name])
-                    return result
-                source = Path(value)
-                if not source.is_file():
+        def pin(value):
+            nonlocal size
+            if value is None:
+                return None
+            if isinstance(value, (tuple, list)):
+                return [pin(item) for item in value]
+            if isinstance(value, dict):
+                result = dict(value)
+                for name in ("path", "name", "video", "audio"):
+                    if result.get(name):
+                        result[name] = pin(result[name])
+                return result
+            source = Path(value)
+            if not source.is_file():
+                raise ValueError(
+                    "An input file is missing. Upload it again before submitting."
+                )
+            if str(source) not in sources:
+                job.source_asset_ids.append(
+                    uuid.uuid5(uuid.NAMESPACE_URL, source.resolve().as_uri()).hex
+                )
+                size += source.stat().st_size
+                if size + retained_bytes > max_bytes:
+                    raise ValueError("Queued inputs exceed H3_JOB_MAX_INPUT_BYTES.")
+                if job.input_lease is None:
+                    job.input_lease, job.lease_lock = create_lease()
+                destination = Path(job.input_lease) / (uuid.uuid4().hex + source.suffix)
+                before = (source.stat().st_size, source.stat().st_mtime_ns)
+                shutil.copy2(source, destination)
+                if before != (source.stat().st_size, source.stat().st_mtime_ns):
                     raise ValueError(
-                        "An input file is missing. Upload it again before submitting."
+                        "An input changed during acceptance. Upload it again."
                     )
-                if str(source) not in sources:
-                    size += source.stat().st_size
-                    if (
-                        size + sum(item.input_bytes for item in self.records.values())
-                        > max_bytes
-                    ):
-                        raise ValueError("Queued inputs exceed H3_JOB_MAX_INPUT_BYTES.")
-                    if job.input_lease is None:
-                        job.input_lease = tempfile.mkdtemp(prefix="h3-job-")
-                    destination = Path(job.input_lease) / (
-                        uuid.uuid4().hex + source.suffix
-                    )
-                    shutil.copy2(source, destination)
-                    sources[str(source)] = str(destination)
-                return sources[str(source)]
+                sources[str(source)] = str(destination)
+            return sources[str(source)]
 
-            try:
-                for index in media_indices:
-                    pinned[index] = pin(pinned[index])
-                job.snapshot_json = json.dumps(pinned)
-                job.input_bytes = size
-            except BaseException:
-                if job.input_lease:
-                    shutil.rmtree(job.input_lease, ignore_errors=True)
-                raise
+        try:
+            for index in media_indices:
+                pinned[index] = pin(pinned[index])
+            job.snapshot_json = json.dumps(pinned)
+            job.input_bytes = size
+        except BaseException:
+            if job.input_lease:
+                release_lease(job.input_lease, job.lease_lock)
+            raise
+        job.checkpoint = self.store.save_job if self.store else None
+        job.persist()
+        with self.lock:
             self.records[job.id] = job
             self.active[job.id] = job
             if key:
                 self.idempotency[(owner, key)] = job.id
-            return job
+        return job
 
     def owned(self, owner, job_id):
         with self.lock:
             self._prune()
             job = self.records.get(job_id)
+            if job is None and self.store:
+                job = self._restore(self.store.job(owner, job_id))
+                self.records[job.id] = job
             if job is None or job.owner != owner:
                 raise ValueError("This job is unavailable in the current session.")
             return job
+
+    def forget_project(self, owner, project_id):
+        """Clear private replay state loaded from a deleted saved project."""
+        root = (self.store.root / "projects" / project_id).resolve()
+
+        def contains(value):
+            if isinstance(value, dict):
+                return any(contains(item) for item in value.values())
+            if isinstance(value, (tuple, list)):
+                return any(contains(item) for item in value)
+            if isinstance(value, str):
+                try:
+                    return Path(value).is_absolute() and Path(
+                        value
+                    ).resolve().is_relative_to(root)
+                except (ValueError, OSError):
+                    return False
+            return False
+
+        with self.lock:
+            for job in self.records.values():
+                if job.owner == owner and (
+                    job.project_id == project_id
+                    or job.retry_of == project_id
+                    or job.snapshot_json
+                    and contains(job.values())
+                ):
+                    job.snapshot_json = None
+                    job.callback = None
+                    job.project_id = None
+                    job.finishing_callbacks.clear()
+                    job.finishing_request = None
+                    job.replay_ledger.clear()
+                    job.ledger = [
+                        {
+                            key: value
+                            for key, value in entry.items()
+                            if key not in {"graph_json", "error", "stage"}
+                        }
+                        for entry in job.ledger
+                    ]
 
     def references_path(self, path):
         """Protect managed sources used by accepted maintenance requests."""
@@ -349,6 +546,10 @@ class JobCoordinator:
     def list_owned(self, owner):
         with self.lock:
             self._prune()
+            if self.store:
+                for payload in self.store.jobs(owner):
+                    if payload["id"] not in self.records:
+                        self.records[payload["id"]] = self._restore(payload)
             return tuple(
                 sorted(
                     (job for job in self.records.values() if job.owner == owner),
@@ -359,7 +560,10 @@ class JobCoordinator:
 
     def retry(self, owner, job_id, *, variants=None):
         source = self.owned(owner, job_id)
-        if any(entry["state"] == "submission_unknown" for entry in source.ledger):
+        if any(
+            entry["state"] in {"submitting", "submission_unknown"}
+            for entry in source.ledger
+        ):
             raise ValueError(
                 "A backend submission has an unknown outcome. Inspect the ComfyUI queue before explicitly submitting new work."
             )
@@ -398,6 +602,9 @@ class JobCoordinator:
         job.replay_ledger = copy.deepcopy(
             [entry for entry in source.ledger if entry["variant"] in selected]
         )
+        job.canvas_request = source.canvas_request
+        job.source_asset_ids = source.source_asset_ids
+        job.persist()
         return job
 
     @contextmanager
@@ -410,6 +617,8 @@ class JobCoordinator:
             if job.claimed:
                 raise ValueError("This job has already been claimed.")
             job.claimed = True
+            job.checkpoint = self.store.save_job if self.store else None
+            job.persist()
             self.active[job.id] = job
             self.records[job.id] = job
 
@@ -439,6 +648,7 @@ class JobCoordinator:
                     job.state = "completed"
                 job.finished_at = time.time()
                 self.active.pop(job.id, None)
+                job.persist()
 
     @contextmanager
     def maintenance(self, family: str):
@@ -479,6 +689,7 @@ class JobCoordinator:
                     job.state = "cancelled"
                     job.finished_at = time.time()
                     self.active.pop(job.id, None)
+                job.persist()
             prompt_ids = {job.prompt_id for job in jobs if job.prompt_id}
             if not jobs:
                 return "No active job in this session and tab."

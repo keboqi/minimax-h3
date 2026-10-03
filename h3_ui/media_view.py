@@ -1,14 +1,9 @@
 """Typed builders for self-contained application views."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any, Sequence
-
 import gradio as gr
-
-
-from .workspace_mode import workspace_enabled
 
 
 @dataclass(frozen=True)
@@ -89,8 +84,7 @@ def build_gallery_view(
             "Import local media", open=False, elem_classes=["h3-gallery-card"]
         ):
             gr.Markdown(
-                "Add an existing video, image, or audio file to the active library "
-                "so it can be previewed alongside generated outputs."
+                "Add an existing video, image, or audio file to the active library so it can be previewed alongside generated outputs."
             )
             with gr.Row(equal_height=True, elem_classes=["h3-gallery-import"]):
                 upload_video = gr.File(
@@ -131,15 +125,11 @@ def build_gallery_view(
                     confirm_delete = gr.Checkbox(
                         value=False,
                         label="I understand deletion is permanent",
-                        visible=not workspace_enabled(),
-                        info=(
-                            "Required before deleting the selected item "
-                            "or emptying the generated library."
-                        ),
+                        visible=False,
+                        info="Required before deleting the selected item or emptying the generated library.",
                     )
                     with gr.Row(
-                        equal_height=True,
-                        elem_classes=["h3-gallery-danger-actions"],
+                        equal_height=True, elem_classes=["h3-gallery-danger-actions"]
                     ):
                         delete = gr.Button("Delete selected", variant="stop")
                         empty = gr.Button("Empty generated library", variant="stop")
@@ -206,11 +196,7 @@ def build_gallery_view(
                             value=default_seedvr2,
                             label="SeedVR2 model",
                             visible=True,
-                            info=(
-                                "Downloaded on first use. 7B INT8 is the default quality/VRAM "
-                                "balance; FP16 favors fidelity, 7B Sharp favors stronger detail, "
-                                "and MXFP8/NVFP4 are experimental speed options."
-                            ),
+                            info="Downloaded on first use. 7B INT8 is the default quality/VRAM balance; FP16 favors fidelity, 7B Sharp favors stronger detail, and MXFP8/NVFP4 are experimental speed options.",
                         )
                         ltx25_model = gr.Dropdown(
                             choices=list(ltx25_choices),
@@ -238,10 +224,7 @@ def build_gallery_view(
                         split_upscale = gr.Checkbox(
                             value=False,
                             label="Split source into clips before LTX processing",
-                            info=(
-                                "Opt in after an out-of-VRAM error. Processes clips "
-                                "independently, then concatenates them."
-                            ),
+                            info="Opt in after an out-of-VRAM error. Processes clips independently, then concatenates them.",
                             visible=False,
                         )
                         split_seconds = gr.Slider(

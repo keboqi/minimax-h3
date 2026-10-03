@@ -14,7 +14,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-import gradio_app as app
+from h3_ui import application as app
 import h3_models
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error

@@ -20,12 +20,22 @@ def snapshot_path(path: str | Path) -> Path:
 
 def write_snapshot(path: str | Path, settings: Mapping[str, Any]) -> None:
     from .jobs import CURRENT_JOB
+
     destination = snapshot_path(path)
     temporary = destination.with_name(destination.name + f".{uuid.uuid4().hex}.tmp")
     payload = {"schema_version": 1, "output": Path(path).name, **settings}
+    payload["asset_id"] = uuid.uuid5(
+        uuid.NAMESPACE_URL, Path(path).resolve().as_uri()
+    ).hex
     job = CURRENT_JOB.get()
     if job is not None:
-        payload.update(application_job_id=job.id, variant=job.variant, retry_of=job.retry_of)
+        payload.update(
+            application_job_id=job.id, variant=job.variant, retry_of=job.retry_of
+        )
+        if job.source_asset_ids:
+            payload["source_asset_ids"] = job.source_asset_ids
+        if job.canvas_request:
+            payload["image_canvas"] = job.canvas_request
     try:
         temporary.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -72,7 +82,17 @@ def copy_snapshot(source: Path, destination: Path) -> None:
     if payload:
         write_snapshot(
             destination,
-            {key: value for key, value in payload.items() if key != "output"},
+            {
+                **{
+                    key: value
+                    for key, value in payload.items()
+                    if key not in {"output", "asset_id"}
+                },
+                "source_asset_ids": [
+                    payload.get("asset_id")
+                    or uuid.uuid5(uuid.NAMESPACE_URL, source.resolve().as_uri()).hex
+                ],
+            },
         )
 
 

@@ -2,8 +2,6 @@
 set -Eeuo pipefail
 
 # MiniMax H3 fixed-default launcher.
-# No command-line options are required. H3_UI_LAYOUT can select the legacy UI.
-export H3_UI_LAYOUT="${H3_UI_LAYOUT:-workspace}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$SCRIPT_DIR/h3"

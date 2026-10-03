@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 import uuid
 from pathlib import Path
+from dataclasses import asdict
+from types import SimpleNamespace
 from typing import Generator
 
 from h3_app.catalog import (
@@ -24,6 +26,40 @@ from .preparation import PreparedH3
 from .requests import H3Request
 from .results import GenerationUpdate
 from .services import GenerationServices
+
+
+def retain_finishing(job, request, prepared, snapshot):
+    """Keep resolved finishing policy; durable only with a saved project."""
+    job.finishing_request = job.finishing_request or {}
+    job.finishing_request[str(job.variant)] = {
+        "request": request.values(),
+        "snapshot": snapshot,
+        "prepared": {
+            "actual_seed": prepared.actual_seed,
+            "resolved_width": prepared.resolved_width,
+            "resolved_height": prepared.resolved_height,
+            "models": asdict(prepared.models),
+        },
+    }
+    job.persist()
+
+
+def restore_finishing(job, services):
+    from h3_app.model_types import ModelConfig, ModelProfile
+
+    for index, payload in (job.finishing_request or {}).items():
+        values = dict(payload["prepared"])
+        models = dict(values["models"])
+        models["profiles"] = {
+            key: ModelProfile(**profile) for key, profile in models["profiles"].items()
+        }
+        values["models"] = ModelConfig(**models)
+        job.finishing_callbacks[int(index)] = make_finishing_retry(
+            H3Request.from_values(payload["request"]),
+            SimpleNamespace(**values),
+            services,
+            payload["snapshot"],
+        )
 
 
 def make_finishing_retry(request, prepared, services, execution_snapshot):

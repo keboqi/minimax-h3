@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import numpy as np
-import gradio_app as app
+from h3_ui import application as app
 from h3_app import model_service
 from h3_app.catalog import (
     GENERATION_POSTPROCESS_OPTIONS, LTX25_SDR_TO_HDR, POSTPROCESS_OPTIONS,

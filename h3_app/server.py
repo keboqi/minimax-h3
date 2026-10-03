@@ -41,12 +41,18 @@ class ReverseProxySchemeMiddleware:
         if scope["type"] in ("http", "websocket"):
             headers_dict = dict(scope.get("headers", []))
             host = (
-                headers_dict.get(b"x-forwarded-host")
-                or headers_dict.get(b"host", b"")
-            ).decode("latin1", errors="replace").lower()
-            proto = headers_dict.get(b"x-forwarded-proto", b"").decode(
-                "latin1", errors="replace"
-            ).lower()
+                (
+                    headers_dict.get(b"x-forwarded-host")
+                    or headers_dict.get(b"host", b"")
+                )
+                .decode("latin1", errors="replace")
+                .lower()
+            )
+            proto = (
+                headers_dict.get(b"x-forwarded-proto", b"")
+                .decode("latin1", errors="replace")
+                .lower()
+            )
             if (
                 proto == "https"
                 or host.endswith(".gradio.live")
@@ -213,6 +219,11 @@ def build_server(
             await client.aclose()
 
     app = FastAPI(lifespan=lifespan)
+    from .jobs import JOBS
+    from .workspace_store import install_owner_cookie
+
+    if JOBS.store is not None:
+        install_owner_cookie(app, JOBS.store)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
     app.add_middleware(ReverseProxySchemeMiddleware)
 
@@ -396,5 +407,5 @@ def build_server(
         allowed_paths=allowed_paths,
         show_error=True,
         css=config.css,
-        theme=gr.themes.Default(primary_hue="blue", secondary_hue="slate") if getattr(demo, "h3_workspace", False) is True else None,
+        theme=gr.themes.Default(primary_hue="blue", secondary_hue="slate"),
     )

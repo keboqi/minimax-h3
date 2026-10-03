@@ -3,7 +3,7 @@ import ast
 from pathlib import Path
 import unittest
 
-import gradio_app as app
+from h3_ui import application as app
 
 
 class RefinementAttentionTests(unittest.TestCase):

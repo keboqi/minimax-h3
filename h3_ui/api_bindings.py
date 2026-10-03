@@ -8,7 +8,7 @@ from typing import Any
 from .job_bindings import bind_gpu_action, owned_generation
 
 
-from .views import ApiView
+from .api_view import ApiView
 
 
 def bind_api_view(view: ApiView, *, generate: Callable[..., Any]) -> Any:

@@ -22,16 +22,16 @@ def run():
         socket_.bind(("127.0.0.1", 0))
         port = socket_.getsockname()[1]
     source = (
-        "import gradio_app as app;"
+        "from h3_ui import application as app;from h3_ui.styles import H3_SETUP_CSS,H3_WORKSPACE_CSS;"
         "app.backend_status=lambda:'Connected browser test fixture';"
         "app.build_ui().queue(default_concurrency_limit=1,max_size=8).launch("
-        f"server_name='127.0.0.1',server_port={port},inbrowser=False,ssr_mode=False,css=app.H3_SETUP_CSS)"
+        f"server_name='127.0.0.1',server_port={port},inbrowser=False,ssr_mode=False,css=H3_SETUP_CSS+H3_WORKSPACE_CSS)"
     )
     with tempfile.TemporaryFile(mode="w+b") as log:
         process = subprocess.Popen(
             [sys.executable, "-u", "-c", source],
             cwd=ROOT,
-            env={**os.environ, "H3_UI_LAYOUT": "legacy"},
+            env={**os.environ, "H3_WORKSPACE_DIR": str(ROOT / ".cache/ui-redesign" / "settings-state")},
             stdout=log,
             stderr=log,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
@@ -88,12 +88,14 @@ def run():
                     card.get_by_text("Generation canvas", exact=True)
                 ).to_be_visible()
                 card.get_by_text("Execution details", exact=True).click()
-                preset = page.locator(".h3-run-panel")
+                page.get_by_text("Output & recipe", exact=True).click()
+                page.get_by_text("Advanced settings", exact=True).click()
+                preset = page.locator("#h3-output-settings")
                 preset.get_by_label("Quality", exact=True).first.check()
                 expect(card).to_contain_text("Turbo · 8 steps")
                 expect(card).not_to_contain_text("Modified")
                 expect(card).to_contain_text("Base model: Singularity")
-                page.get_by_text("Output essentials", exact=True).click()
+                page.get_by_text("Sampling steps (advanced)", exact=True).click()
                 steps = (
                     page.get_by_text("Steps", exact=True)
                     .locator('xpath=ancestor::div[contains(@class,"block")][1]')
@@ -111,7 +113,7 @@ def run():
                 expect(card).to_contain_text("Turbo · 8 steps")
                 expect(card).not_to_contain_text("Modified")
                 # Semantic Bridge starts on, is FL2VA-only, and remembers its preference.
-                page.get_by_text("Model and memory (advanced)", exact=True).click()
+                page.get_by_role("tab", name="Model & memory", exact=True).click()
                 bridge = page.get_by_label("Semantic Bridge (experimental)", exact=True)
                 expect(bridge).to_be_checked()
                 bridge.uncheck()
@@ -157,7 +159,8 @@ def run():
                 expect(card).to_contain_text("Turbo · 11 steps")
                 expect(card).to_contain_text("Quality")
                 expect(card).to_contain_text("Server backend")
-                page.get_by_text("Model and memory (advanced)", exact=True).click()
+                page.get_by_text("Advanced settings", exact=True).click()
+                page.get_by_role("tab", name="Model & memory", exact=True).click()
                 expect(page.get_by_label("Qwen small input attention", exact=True)).not_to_be_checked()
                 expect(card).to_contain_text("Experimental v1 · strength 0.15")
                 second = browser.new_context()
@@ -169,19 +172,18 @@ def run():
                 expect(second_page.locator(".h3-setup-card")).to_contain_text(
                     "Turbo · 4 steps"
                 )
-                second_page.get_by_text("Model and memory (advanced)", exact=True).click()
+                second_page.get_by_text("Advanced settings", exact=True).click()
+                second_page.get_by_role("tab", name="Model & memory", exact=True).click()
                 expect(second_page.get_by_label("Semantic Bridge (experimental)", exact=True)).to_be_checked()
                 expect(second_page.get_by_label("Qwen small input attention", exact=True)).not_to_be_checked()
                 second.close()
                 # Audio retains the native-refinement preference for the next video.
-                page.get_by_label("Audio", exact=True).check()
+                page.locator(".h3-task-picker").get_by_label("Audio / Music", exact=True).check()
                 expect(card).to_contain_text("Audio · 5 seconds")
                 expect(card).not_to_contain_text("H3 output")
-                page.get_by_label("Video", exact=True).check()
+                page.locator(".h3-task-picker").get_by_label("Video", exact=True).check()
                 expect(card).to_contain_text("Native 2× refinement")
-                page.get_by_text(
-                    "Performance & sampling (advanced)", exact=True
-                ).click()
+                page.get_by_role("tab", name="Sampling & performance", exact=True).click()
                 page.get_by_label("Sol-Attn", exact=True).check()
                 expect(page.get_by_text("Sol-Attn tau", exact=True)).to_be_visible()
                 page.get_by_label("SLA", exact=True).check()

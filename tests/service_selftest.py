@@ -1,7 +1,7 @@
-"""Legacy workflow contracts extracted from the production entry point."""
+"""Workflow and service contracts for the workspace runtime."""
 from __future__ import annotations
-import gradio_app as app
-import os
+from h3_ui import application as app
+import unittest.mock
 
 def selftest() -> None:
     assert app.MODEL_PROFILE_CHOICES == [
@@ -27,15 +27,15 @@ def selftest() -> None:
         "Lightning AI",
     )
     with (
-        app.unittest.mock.patch.dict(
+        unittest.mock.patch.dict(
             app.os.environ, {"LIGHTNING_API_KEY": "selftest-lightning-key"}
         ),
-        app.unittest.mock.patch("openai.OpenAI") as openai_client,
+        unittest.mock.patch("openai.OpenAI") as openai_client,
     ):
-        completion = app.unittest.mock.Mock()
+        completion = unittest.mock.Mock()
         completion.choices = [
-            app.unittest.mock.Mock(
-                message=app.unittest.mock.Mock(content="Rewritten Lightning prompt")
+            unittest.mock.Mock(
+                message=unittest.mock.Mock(content="Rewritten Lightning prompt")
             )
         ]
         openai_client.return_value.chat.completions.create.return_value = completion
@@ -101,50 +101,6 @@ def selftest() -> None:
     assert "<backend error>" not in escaped_backend
     assert "&lt;backend error&gt;" in escaped_backend
     assert 'role="alert"' in escaped_backend
-    assert "h3-action-dock" in app.H3_UI_CSS
-    assert "button:focus-visible" in app.H3_UI_CSS
-    assert "@media (max-width: 600px)" in app.H3_UI_CSS
-    with app.unittest.mock.patch.dict(os.environ, {"H3_UI_LAYOUT": "legacy"}), app.unittest.mock.patch(
-        f"{app.__name__}.backend_status", return_value="Connected self-test"
-    ):
-        ui_demo = app.build_ui()
-    ui_config = ui_demo.get_config_file()
-    components_by_id = {
-        component["id"]: component for component in ui_config["components"]
-    }
-    main_tabs = next(
-        component
-        for component in ui_config["components"]
-        if component["type"] == "tabs"
-        and component.get("props", {}).get("elem_id") == "h3-main-tabs"
-    )
-
-    def find_layout_node(
-        node: dict[str, app.Any], component_id: int
-    ) -> dict[str, app.Any] | None:
-        if node.get("id") == component_id:
-            return node
-        for child in node.get("children", []):
-            match = find_layout_node(child, component_id)
-            if match is not None:
-                return match
-        return None
-
-    tabs_layout = find_layout_node(ui_config["layout"], main_tabs["id"])
-    assert tabs_layout is not None
-    tab_nodes = tabs_layout["children"]
-    assert [components_by_id[node["id"]]["props"]["label"] for node in tab_nodes] == [
-        "MiniMax H3",
-        "Qwen Image 2.1",
-        "LTX 2.5",
-        "MiniMax Music 3",
-        "YuE2",
-        "Gallery",
-        "API",
-    ]
-    assert [
-        components_by_id[node["children"][0]["id"]]["type"] for node in tab_nodes
-    ] == ["row", "group", "group", "group", "group", "group", "group"]
     with app.tempfile.TemporaryDirectory() as output_temp:
         output_root = app.Path(output_temp)
         staging_root = output_root / "h3" / "image_staging"
@@ -168,7 +124,7 @@ def selftest() -> None:
                 },
             }
         }
-        with app.unittest.mock.patch(f"{app.__name__}.OUTPUT_DIR", output_root):
+        with unittest.mock.patch(f"{app.__name__}.OUTPUT_DIR", output_root):
             assert app._history_output_candidates(history, app.VIDEO_EXTENSIONS) == [
                 video_path.resolve()
             ]
@@ -480,7 +436,7 @@ def selftest() -> None:
         fake.turbo_lora_for("Reference media", app.LIGHTX2V_8STEP_TURBO)
         == fake.turbo_8step_ref_lora
     )
-    with app.unittest.mock.patch(
+    with unittest.mock.patch(
         "h3_app.model_service.stale_model_keys", return_value=[]
     ) as stale_turbo_models:
         assert (
@@ -1690,7 +1646,7 @@ def selftest() -> None:
         source.write_bytes(b"same input bytes")
         vars(app)["INPUT_DIR"] = staged_input_root
         try:
-            with app.unittest.mock.patch("builtins.print") as cache_print:
+            with unittest.mock.patch("builtins.print") as cache_print:
                 cached_first = app.stage_file(str(source), "reference_images", reuse=True)
                 cached_second = app.stage_file(str(source), "reference_images", reuse=True)
             assert cached_first == cached_second
@@ -1702,7 +1658,7 @@ def selftest() -> None:
             ).read_bytes() == b"same input bytes"
 
             (staged_input_root / cached_first).write_bytes(b"")
-            with app.unittest.mock.patch("builtins.print") as repair_print:
+            with unittest.mock.patch("builtins.print") as repair_print:
                 repaired = app.stage_file(str(source), "reference_images", reuse=True)
             assert repaired == cached_first
             assert "Stored" in repair_print.call_args.args[0]
@@ -1713,7 +1669,7 @@ def selftest() -> None:
             assert uncached_first != uncached_second
 
             source.write_bytes(b"changed input bytes")
-            with app.unittest.mock.patch("builtins.print"):
+            with unittest.mock.patch("builtins.print"):
                 changed = app.stage_file(str(source), "reference_images", reuse=True)
             assert changed != cached_first
 
@@ -1722,11 +1678,11 @@ def selftest() -> None:
 
             def fake_ffmpeg(command: list[str], **_kwargs: app.Any):
                 app.Path(command[-1]).write_bytes(b"transcoded video")
-                return app.unittest.mock.Mock(returncode=0, stderr="")
+                return unittest.mock.Mock(returncode=0, stderr="")
 
             with (
-                app.unittest.mock.patch.object(app.staging, "run_media_process", side_effect=fake_ffmpeg) as run,
-                app.unittest.mock.patch("builtins.print"),
+                unittest.mock.patch.object(app.staging, "run_media_process", side_effect=fake_ffmpeg) as run,
+                unittest.mock.patch("builtins.print"),
             ):
                 video_first = app.stage_file(
                     str(video_source),
@@ -1746,7 +1702,7 @@ def selftest() -> None:
 
             failed_video = staging_root / "failed.mov"
             failed_video.write_bytes(b"failed video bytes")
-            with app.unittest.mock.patch(
+            with unittest.mock.patch(
                 "h3_app.staging.run_media_process", side_effect=OSError("ffmpeg unavailable")
             ):
                 try:
@@ -2050,7 +2006,7 @@ def selftest() -> None:
     assert "Sampling schedule 6 steps (UI setting)" in expanded_progress
     assert "Sampler step 3/12" not in expanded_progress
 
-    with app.unittest.mock.patch("builtins.print") as timing_print:
+    with unittest.mock.patch("builtins.print") as timing_print:
         stage_timings = app.StageTimings("test job", 100.0, "Preparing request")
         stage_timings.transition("Loading models", now=102.0)
         stage_timings.transition("Loading models", now=103.0)

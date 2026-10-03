@@ -1,4 +1,4 @@
-"""Graph fixtures and the legacy compatibility entry point are discoverable."""
+"""Baseline graph fixtures and service self-test contracts are discoverable."""
 
 import asyncio
 import json
@@ -7,8 +7,8 @@ import unittest
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
-import gradio_app as app
-from tests.legacy_selftest import selftest
+from h3_ui import application as app
+from tests.service_selftest import selftest
 
 
 def normalize(value):
@@ -25,7 +25,7 @@ def normalize(value):
 
 
 class WorkflowFixtureTests(unittest.TestCase):
-    def test_workflow_graphs_and_legacy_contracts(self):
+    def test_workflow_graphs_and_service_contracts(self):
         expected = json.loads(
             (Path(__file__).parent / "fixtures/workflow_graphs.json").read_text(
                 encoding="utf-8"

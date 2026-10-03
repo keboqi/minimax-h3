@@ -36,7 +36,10 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
         effective.sampling,
         effective.finishing,
     )
-    esc = lambda value: escape(str(value), quote=True)
+
+    def esc(value):
+        return escape(str(value), quote=True)
+
     differences = plan.differences()
     title = effective.preset + (" · Modified" if differences else "")
     fmt = output.result_format
@@ -52,9 +55,7 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
     seed = (
         "Independent random seeds"
         if output.batch_count > 1
-        else "Random seed"
-        if output.seed < 0
-        else f"Seed {output.seed}"
+        else "Random seed" if output.seed < 0 else f"Seed {output.seed}"
     )
 
     def detail(label, value):
@@ -115,7 +116,11 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
     )
     technical += detail(
         "Qwen attention",
-        "Small input (PyTorch/basic)" if sampling.encoder_small_input else "Server backend",
+        (
+            "Small input (PyTorch/basic)"
+            if sampling.encoder_small_input
+            else "Server backend"
+        ),
     )
     technical += detail(
         "Stage offload", "On" if sampling.stage_model_offload else "Off"
@@ -132,29 +137,38 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
     technical += detail("Scheduler", sampling.scheduler)
     technical += detail(
         "Semantic Bridge",
-        f"Experimental v1 · strength {effective.semantic_bridge_alpha:g} · per token"
-        if effective.semantic_bridge else "Off",
+        (
+            f"Experimental v1 · strength {effective.semantic_bridge_alpha:g} · per token"
+            if effective.semantic_bridge
+            else "Off"
+        ),
     )
     technical += detail(
         "Attention",
-        "Automatic · resolved during preparation"
-        if sampling.attention_mode == "Auto"
-        else sampling.attention_mode,
+        (
+            "Automatic · resolved during preparation"
+            if sampling.attention_mode == "Auto"
+            else sampling.attention_mode
+        ),
     )
     if sampling.attention_mode == "SLA":
         technical += detail("SLA preset", sampling.sla_preset)
     technical += detail("Acceleration", effective.cache_mode)
     technical += detail(
         "Decoder",
-        output.image_vae
-        if fmt == "Image"
-        else "TensorRT"
-        if effective.use_trt_vae
-        else "LynnReal Light INT8"
-        if effective.use_lynnreal_vae
-        else "INT8 ConvRot"
-        if effective.use_int8_vae
-        else "FP16",
+        (
+            output.image_vae
+            if fmt == "Image"
+            else (
+                "TensorRT"
+                if effective.use_trt_vae
+                else (
+                    "LynnReal Light INT8"
+                    if effective.use_lynnreal_vae
+                    else "INT8 ConvRot" if effective.use_int8_vae else "FP16"
+                )
+            )
+        ),
     )
     if finishing.latent_upscale:
         technical += detail(

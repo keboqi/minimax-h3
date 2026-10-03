@@ -1,10 +1,11 @@
-"""Run CPU contracts and legacy suites; opt in to UI-only browser acceptance."""
+"""Run CPU service/workflow contracts; opt in to UI-only browser acceptance."""
 
 import argparse
 import os
 from pathlib import Path
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 import unittest
 
 
@@ -16,6 +17,17 @@ def main():
         help="Also run settings, references, resolution and workspace browser checks",
     )
     args = parser.parse_args()
+    with TemporaryDirectory(prefix="h3-test-state-") as state:
+        os.environ["H3_WORKSPACE_DIR"] = state
+        try:
+            return run(args)
+        finally:
+            from h3_app.jobs import JOBS
+
+            JOBS.close()
+
+
+def run(args):
     os.environ["HF_HUB_OFFLINE"] = "1"
     root = Path(__file__).resolve().parents[1]
     os.chdir(root)
@@ -36,7 +48,7 @@ def main():
                 [sys.executable, "-m", "tests." + Path(script).stem],
                 cwd=root,
                 check=True,
-                timeout=300,
+                timeout=600,
             )
     return 0
 

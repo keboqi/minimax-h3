@@ -42,7 +42,11 @@ def replay_stage(graph, job):
         for node in normalized.values():
             inputs = node.get("inputs", {})
             if "filename_prefix" in inputs:
-                inputs["filename_prefix"] = inputs["filename_prefix"].rsplit("/", 1)[0] if "/" in inputs["filename_prefix"] else "<output>"
+                inputs["filename_prefix"] = (
+                    inputs["filename_prefix"].rsplit("/", 1)[0]
+                    if "/" in inputs["filename_prefix"]
+                    else "<output>"
+                )
             for field in (
                 "image",
                 "video",
@@ -109,6 +113,7 @@ class Submission:
                 if self.job:
                     self.job.state = "running"
                     self.job.stage = update[0]
+                    self.job.persist()
                 yield ProgressUpdate(*update)
         finally:
             self.close()
@@ -122,6 +127,7 @@ class Submission:
                 for entry in self.job.ledger:
                     if entry["prompt_id"] == self.prompt_id:
                         entry["state"] = "completed"
+                self.job.persist()
         return self._completed_history
 
     def close(self):
@@ -387,6 +393,7 @@ class ExecutionRunner:
                     job.prompt_id = prompt_id
                     job.state = "submitted"
                     intent.update(prompt_id=prompt_id, state="submitted")
+                    job.persist()
             submission = Submission(
                 prompt_id,
                 graph,
@@ -408,6 +415,8 @@ class ExecutionRunner:
         except BaseException:
             if intent is not None and intent["state"] == "submitting":
                 intent["state"] = "submission_unknown"
+            if job:
+                job.persist()
             if socket is not None:
                 try:
                     socket.close()

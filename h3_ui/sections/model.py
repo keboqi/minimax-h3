@@ -1,14 +1,11 @@
 """Build the model section in its existing parent container."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Mapping
-
 import gradio as gr
 from h3_app.decoder_intent import VideoDecoder
-from ..workspace_mode import workspace_enabled
 
 if TYPE_CHECKING:
     from ..h3_view import H3ViewServices
@@ -37,7 +34,6 @@ class ModelSection:
 def build_model_section(
     defaults: Mapping[str, Any], services: H3ViewServices, *, advanced_parent=None
 ) -> ModelSection:
-    workspace = workspace_enabled()
     with gr.Row(elem_classes=["h3-mode-row"]):
         mode = gr.Radio(
             ["Text to video", "First / last frame", "Reference media"],
@@ -49,35 +45,24 @@ def build_model_section(
             value=defaults["result_format"],
             label="Result format",
             info="H3 always samples vision and audio; this selects what is decoded and shown.",
-            visible=not workspace,
+            visible=False,
         )
-    with advanced_parent if advanced_parent is not None else nullcontext(), (
-        gr.Accordion("Model & generation (advanced)", open=advanced_parent is not None)
-        if workspace
-        else nullcontext()
+    with (
+        advanced_parent if advanced_parent is not None else nullcontext()
+    ), gr.Accordion(
+        "Model & generation (advanced)", open=advanced_parent is not None
     ), gr.Row():
         model_profile = gr.Radio(
             services.MODEL_PROFILE_CHOICES,
             value=defaults["model_profile"],
             label="Base model",
-            info=(
-                "Speed uses the rebuilt single-pass NVFP4 files. "
-                "Quality uses the mixed NVFP4/FP8/INT8 ConvRot files. "
-                "Original uses the official BF16 files. "
-                "Singularity uses the fine-tuned pruned v1.3 INT8 checkpoint. "
-                "FastH3 8-Step V2 is a T2VA-only distilled INT8 checkpoint. "
-                "Speed, Original, Singularity and FastH3 "
-                "download when first selected."
-            ),
+            info="Speed uses the rebuilt single-pass NVFP4 files. Quality uses the mixed NVFP4/FP8/INT8 ConvRot files. Original uses the official BF16 files. Singularity uses the fine-tuned pruned v1.3 INT8 checkpoint. FastH3 8-Step V2 is a T2VA-only distilled INT8 checkpoint. Speed, Original, Singularity and FastH3 download when first selected.",
         )
         generation_mode = gr.Radio(
             ["Normal", "Turbo"],
             value=defaults["generation_mode"],
             label="Generation",
-            info=(
-                "Turbo uses the implementation selected in Performance & sampling. "
-                "LightX2V uses the matching reference adapter; Larry reference mode is experimental."
-            ),
+            info="Turbo uses the implementation selected in Performance & sampling. LightX2V uses the matching reference adapter; Larry reference mode is experimental.",
         )
     with (
         advanced_parent if advanced_parent is not None else nullcontext()
@@ -91,38 +76,23 @@ def build_model_section(
                 choices=list(services.H3_TEXT_ENCODER_CHOICES),
                 value=defaults["text_encoder"],
                 label="Text encoder",
-                info=(
-                    "BF16 is approximately 51.5 GB. "
-                    "NVFP4/AWQ and INT8 ConvRot download on first use."
-                ),
+                info="BF16 is approximately 51.5 GB. NVFP4/AWQ and INT8 ConvRot download on first use.",
             )
             stage_model_offload = gr.Checkbox(
                 value=defaults["stage_model_offload"],
                 interactive=defaults["text_encoder"] != "BF16",
                 label="Offload models between H3 stages",
-                info=(
-                    "Unload resident models between text encoding, diffusion, "
-                    "latent upscaling, and VAE decoding."
-                ),
+                info="Unload resident models between text encoding, diffusion, latent upscaling, and VAE decoding.",
             )
             reuse_unchanged_inputs = gr.Checkbox(
                 value=defaults["reuse_unchanged_inputs"],
                 label="Reuse unchanged prompt and media",
-                info=(
-                    "Reuse matching prompt/media encoding and unchanged workflow nodes. "
-                    "Off forces fresh conditioning at every stage, including refinement. "
-                    "Sampling still reruns when the seed changes."
-                ),
+                info="Reuse matching prompt/media encoding and unchanged workflow nodes. Off forces fresh conditioning at every stage, including refinement. Sampling still reruns when the seed changes.",
             )
         encoder_small_input = gr.Checkbox(
             value=defaults["encoder_small_input"],
             label="Qwen small input attention",
-            info=(
-                "On: upstream PyTorch/basic attention. Off: the server attention "
-                "backend (Kitchen in this app). Applies to Qwen text and vision encoding. "
-                "Changing this rebuilds conditioning on the next generation. "
-                "The diffusion Sage 2 selection does not change the encoder backend."
-            ),
+            info="On: upstream PyTorch/basic attention. Off: the server attention backend (Kitchen in this app). Applies to Qwen text and vision encoding. Changing this rebuilds conditioning on the next generation. The diffusion Sage 2 selection does not change the encoder backend.",
         )
         semantic_bridge = gr.Checkbox(
             value=defaults["semantic_bridge"],
@@ -148,51 +118,37 @@ def build_model_section(
                 defaults["use_trt_vae"],
             ).value,
             label="Video decoder",
-            visible=workspace,
+            visible=True,
             info="One decoder per run. Image decoding is configured separately. TensorRT prepares a local engine when needed.",
         )
         use_int8_vae = gr.Checkbox(
-            visible=not workspace,
+            visible=False,
             value=defaults["use_int8_vae"],
             label="INT8 ConvRot video VAE",
-            info=(
-                "On for Balanced and Quality presets. Downloads the official "
-                "Comfy-Org checkpoint on first use for faster H3 video decoding."
-            ),
+            info="On for Balanced and Quality presets. Downloads the official Comfy-Org checkpoint on first use for faster H3 video decoding.",
         )
         use_lynnreal_vae = gr.Checkbox(
-            visible=not workspace,
+            visible=False,
             value=defaults["use_lynnreal_vae"],
             label="LynnReal Light INT8 video VAE",
             info="On for Fast and Singularity presets. Experimental distilled decoder; downloads 2.14 GB on first use and may change fine detail.",
         )
         with gr.Row():
             use_trt_vae = gr.Checkbox(
-                visible=not workspace,
+                visible=False,
                 value=defaults["use_trt_vae"],
                 label="Experimental TensorRT video VAE",
-                info=(
-                    "Default off. Uses a local TensorRT engine for final H3 "
-                    "video decoding and compiles it automatically when needed."
-                ),
+                info="Default off. Uses a local TensorRT engine for final H3 video decoding and compiles it automatically when needed.",
                 scale=2,
             )
-            trt_vae_compile = gr.Button(
-                "Compile TensorRT VAE engine",
-                scale=1,
-            )
+            trt_vae_compile = gr.Button("Compile TensorRT VAE engine", scale=1)
         image_vae = gr.Radio(
             services.IMAGE_VAE_CHOICES,
             value=defaults["image_vae"],
             label="Image VAE",
             visible=False,
-            info=(
-                "Official is the default and remains the only video decoder. "
-                "The experimental 500K option downloads 9.69 GB on first use "
-                "and decodes one image from temporal latent slice 0."
-            ),
+            info="Official is the default and remains the only video decoder. The experimental 500K option downloads 9.69 GB on first use and decodes one image from temporal latent slice 0.",
         )
-
     return ModelSection(
         video_decoder=video_decoder,
         generation_mode=generation_mode,

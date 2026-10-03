@@ -20,10 +20,10 @@ def run():
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     source = (
-        "import gradio_app as app;"
+        "from h3_ui import application as app;from h3_ui.styles import H3_SETUP_CSS,H3_WORKSPACE_CSS;"
         "app.backend_status=lambda:'Connected browser test fixture';"
         "app.build_ui().queue(default_concurrency_limit=1,max_size=8).launch("
-        f"server_name='127.0.0.1',server_port={port},inbrowser=False,ssr_mode=False,css=app.H3_SETUP_CSS)"
+        f"server_name='127.0.0.1',server_port={port},inbrowser=False,ssr_mode=False,css=H3_SETUP_CSS+H3_WORKSPACE_CSS)"
     )
     with tempfile.TemporaryFile(mode="w+b") as log, tempfile.TemporaryDirectory() as images:
         first = Path(images) / "first.png"
@@ -33,7 +33,7 @@ def run():
         process = subprocess.Popen(
             [sys.executable, "-u", "-c", source],
             cwd=ROOT,
-            env={**os.environ, "H3_UI_LAYOUT": "legacy"},
+            env={**os.environ, "H3_WORKSPACE_DIR": str(ROOT / ".cache/ui-redesign" / "auto_resolution-state")},
             stdout=log,
             stderr=log,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
@@ -67,8 +67,9 @@ def run():
                     page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for()
                     decoder = card.locator(".h3-setup-detail").filter(has_text="Decoder")
                     expect(decoder).to_contain_text("LynnReal Light INT8")
+                    page.get_by_text("Output & recipe", exact=True).click()
                     presets = page.locator("fieldset").filter(
-                        has=page.get_by_text("Generation preset", exact=True)
+                        has=page.get_by_text("Recipe", exact=True)
                     )
                     presets.get_by_label("Quality", exact=True).check()
                     expect(decoder).to_contain_text("INT8 ConvRot")
@@ -77,7 +78,7 @@ def run():
                     presets.get_by_label("Singularity", exact=True).check()
                     expect(decoder).to_contain_text("LynnReal Light INT8")
                     page.get_by_label("First / last frame", exact=True).check()
-                    output = page.get_by_text("Output essentials", exact=True)
+                    output = page.get_by_text("Output & recipe", exact=True)
                     expect(output).to_be_visible()
                     file_input = page.locator('#first-frame-image input[type="file"]')
                     file_input.set_input_files(str(first))

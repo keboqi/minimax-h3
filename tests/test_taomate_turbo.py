@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import gradio_app as app
+from h3_ui import application as app
 import h3_models
 from h3_app import model_service
 from h3_app.catalog import TAOMATE_3STEP_TURBO, TURBO_SETTINGS

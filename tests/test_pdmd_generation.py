@@ -4,7 +4,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 import unittest
 
-import gradio_app as app
+from h3_ui import application as app
 from h3_app.catalog import PDMD_2STEP_LORA, PDMD_4STEP_LORA, TURBO_SETTINGS
 from h3_app.generation.preparation import _validate_sampling_steps
 from h3_app.policy import normalize_turbo_variant, turbo_sampler_name, turbo_steps_for

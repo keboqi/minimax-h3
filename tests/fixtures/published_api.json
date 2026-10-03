@@ -1,0 +1,1467 @@
+{
+  "baseline_commit": "2dbf18d7dd3876f01e8c12adf3e498934ebd8911",
+  "endpoints": {
+    "/generate_video": {
+      "parameters": [
+        {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"}
+      ],
+      "returns": [
+        {"type": "type_1", "component": "Textbox"},
+        {"type": "type_1", "component": "Textbox"}
+      ]
+    },
+    "/generate_video_advanced": {
+      "parameters": [
+        {"parameter_name": "batch_count", "parameter_has_default": true, "parameter_default": 1, "type": "type_2"},
+        {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "Text to video", "type": "type_3"},
+        {"parameter_name": "model_profile", "parameter_has_default": true, "parameter_default": "Singularity", "type": "type_4"},
+        {"parameter_name": "text_encoder", "parameter_has_default": true, "parameter_default": "NVFP4 / AWQ", "type": "type_5"},
+        {"parameter_name": "stage_model_offload", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
+        {"parameter_name": "generation_mode", "parameter_has_default": true, "parameter_default": "Turbo", "type": "type_7"},
+        {"parameter_name": "turbo_variant", "parameter_has_default": true, "parameter_default": "LightX2V / 4-step (FL2V 768p · Ref2V 544p)", "type": "type_8"},
+        {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "first_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "last_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_1", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_2", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_3", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_4", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_5", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_6", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_7", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_8", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_9", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_video_1", "parameter_has_default": false, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "ref_video_2", "parameter_has_default": false, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "ref_video_3", "parameter_has_default": false, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "ref_audio_1", "parameter_has_default": false, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "ref_audio_2", "parameter_has_default": false, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "ref_audio_3", "parameter_has_default": false, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "duration", "parameter_has_default": true, "parameter_default": 5, "type": "type_11"},
+        {"parameter_name": "width", "parameter_has_default": true, "parameter_default": 1376, "type": "type_12"},
+        {"parameter_name": "height", "parameter_has_default": true, "parameter_default": 768, "type": "type_12"},
+        {"parameter_name": "steps", "parameter_has_default": true, "parameter_default": 4, "type": "type_13"},
+        {"parameter_name": "scheduler", "parameter_has_default": true, "parameter_default": "simple", "type": "type_14"},
+        {"parameter_name": "seed", "parameter_has_default": true, "parameter_default": -1, "type": "type_12"},
+        {"parameter_name": "attention_mode", "parameter_has_default": true, "parameter_default": "SLA", "type": "type_15"},
+        {"parameter_name": "sla_preset", "parameter_has_default": true, "parameter_default": "Fast", "type": "type_16"},
+        {"parameter_name": "sol_tau", "parameter_has_default": true, "parameter_default": 1.2, "type": "type_17"},
+        {"parameter_name": "sol_thresh_type", "parameter_has_default": true, "parameter_default": "diag", "type": "type_18"},
+        {"parameter_name": "sol_exact_mode", "parameter_has_default": true, "parameter_default": "off", "type": "type_19"},
+        {"parameter_name": "sol_dense_steps", "parameter_has_default": true, "parameter_default": 1, "type": "type_20"},
+        {"parameter_name": "cache_mode", "parameter_has_default": true, "parameter_default": "Spectrum", "type": "type_21"},
+        {"parameter_name": "fbcache_preset", "parameter_has_default": true, "parameter_default": "Fast", "type": "type_22"},
+        {"parameter_name": "fbcache_threshold", "parameter_has_default": true, "parameter_default": 0.1, "type": "type_23"},
+        {"parameter_name": "fbcache_start", "parameter_has_default": true, "parameter_default": 0.1, "type": "type_24"},
+        {"parameter_name": "fbcache_end", "parameter_has_default": true, "parameter_default": 0.95, "type": "type_25"},
+        {"parameter_name": "fbcache_max_hits", "parameter_has_default": true, "parameter_default": 2, "type": "type_26"},
+        {"parameter_name": "fbcache_temporal_guard", "parameter_has_default": true, "parameter_default": true, "type": "type_6"},
+        {"parameter_name": "easycache_threshold", "parameter_has_default": true, "parameter_default": 0.1, "type": "type_27"},
+        {"parameter_name": "easycache_start", "parameter_has_default": true, "parameter_default": 0.15, "type": "type_24"},
+        {"parameter_name": "easycache_end", "parameter_has_default": true, "parameter_default": 0.85, "type": "type_25"},
+        {"parameter_name": "easycache_verbose", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
+        {"parameter_name": "ref_image_size", "parameter_has_default": true, "parameter_default": "match", "type": "type_28"},
+        {"parameter_name": "postprocess", "parameter_has_default": true, "parameter_default": "None", "type": "type_29"},
+        {"parameter_name": "reuse_unchanged_inputs", "parameter_has_default": true, "parameter_default": true, "type": "type_6"},
+        {"parameter_name": "latent_upscale", "parameter_has_default": true, "parameter_default": true, "type": "type_6"},
+        {"parameter_name": "latent_upscaler_model", "parameter_has_default": true, "parameter_default": "Quality (FP32)", "type": "type_30"},
+        {"parameter_name": "latent_upscale_refine_steps", "parameter_has_default": true, "parameter_default": 2, "type": "type_31"},
+        {"parameter_name": "latent_upscale_method", "parameter_has_default": true, "parameter_default": "Full-frame refinement", "type": "type_32"},
+        {"parameter_name": "latent_split_tile_width", "parameter_has_default": true, "parameter_default": 512, "type": "type_33"},
+        {"parameter_name": "latent_split_tile_height", "parameter_has_default": true, "parameter_default": 512, "type": "type_33"},
+        {"parameter_name": "latent_split_overlap_ratio", "parameter_has_default": true, "parameter_default": 0.25, "type": "type_24"},
+        {"parameter_name": "latent_split_fade_ratio", "parameter_has_default": true, "parameter_default": 0.5, "type": "type_34"},
+        {"parameter_name": "latent_split_chunk_frames", "parameter_has_default": true, "parameter_default": 73, "type": "type_35"},
+        {"parameter_name": "latent_split_temporal_overlap_frames", "parameter_has_default": true, "parameter_default": 22, "type": "type_36"},
+        {"parameter_name": "latent_split_seam_denoise", "parameter_has_default": true, "parameter_default": 0.75, "type": "type_25"},
+        {"parameter_name": "latent_split_seam_polish", "parameter_has_default": true, "parameter_default": "off", "type": "type_37"},
+        {"parameter_name": "upscale_force_offload", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
+        {"parameter_name": "upscale_split_enabled", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
+        {"parameter_name": "upscale_split_seconds", "parameter_has_default": true, "parameter_default": 5.0, "type": "type_38"},
+        {"parameter_name": "upscale_resolution", "parameter_has_default": true, "parameter_default": "1920 × 1920", "type": "type_39"},
+        {"parameter_name": "seedvr2_model", "parameter_has_default": true, "parameter_default": "7B INT8", "type": "type_40"},
+        {"parameter_name": "ltx25_model", "parameter_has_default": true, "parameter_default": "INT8 ConvRot", "type": "type_41"},
+        {"parameter_name": "use_int8_vae", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
+        {"parameter_name": "use_trt_vae", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
+        {"parameter_name": "image_vae", "parameter_has_default": true, "parameter_default": "Official video VAE", "type": "type_42"},
+        {"parameter_name": "result_format", "parameter_has_default": true, "parameter_default": "Video", "type": "type_43"},
+        {"parameter_name": "image_frames", "parameter_has_default": true, "parameter_default": 5, "type": "type_44"},
+        {"parameter_name": "semantic_bridge", "parameter_has_default": true, "parameter_default": true, "type": "type_6"},
+        {"parameter_name": "semantic_bridge_alpha", "parameter_has_default": true, "parameter_default": 0.1, "type": "type_34"},
+        {"parameter_name": "fl2va_audio_1", "parameter_has_default": true, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "fl2va_audio_2", "parameter_has_default": true, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "fl2va_audio_3", "parameter_has_default": true, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "encoder_small_input", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
+        {"parameter_name": "use_lynnreal_vae", "parameter_has_default": true, "parameter_default": true, "type": "type_6"},
+        {"parameter_name": "latent_upscale_refine_lora", "parameter_has_default": true, "parameter_default": "Same as generation", "type": "type_45"}
+      ],
+      "returns": [
+        {"type": "type_10", "component": "Video"},
+        {"type": "type_10", "component": "Video"},
+        {"type": "type_10", "component": "Video"},
+        {"type": "type_10", "component": "Video"},
+        {"type": "type_46", "component": "Gallery"},
+        {"type": "type_47", "component": "Checkboxgroup"},
+        {"type": "type_48", "component": "File"},
+        {"type": "type_10", "component": "Audio"},
+        {"type": "type_1", "component": "Markdown"},
+        {"type": "type_1", "component": "Textbox"}
+      ]
+    },
+    "/enhance_prompt": {
+      "parameters": [
+        {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_49"},
+        {"parameter_name": "local_base_model", "parameter_has_default": true, "parameter_default": "Qwen3-VL 8B · BF16", "type": "type_50"},
+        {"parameter_name": "local_max_new_tokens", "parameter_has_default": true, "parameter_default": 4096, "type": "type_51"},
+        {"parameter_name": "local_temperature", "parameter_has_default": true, "parameter_default": 0.7, "type": "type_52"},
+        {"parameter_name": "local_top_p", "parameter_has_default": true, "parameter_default": 0.8, "type": "type_53"},
+        {"parameter_name": "local_greedy", "parameter_has_default": true, "parameter_default": true, "type": "type_6"},
+        {"parameter_name": "local_seed", "parameter_has_default": true, "parameter_default": 42, "type": "type_12"},
+        {"parameter_name": "gemini_model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
+        {"parameter_name": "gemini_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "Text to video", "type": "type_3"},
+        {"parameter_name": "first_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "last_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_1", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_2", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_3", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_4", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_5", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_6", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_7", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_8", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_9", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_video_1", "parameter_has_default": false, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "ref_video_2", "parameter_has_default": false, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "ref_video_3", "parameter_has_default": false, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "ref_audio_1", "parameter_has_default": false, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "ref_audio_2", "parameter_has_default": false, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "ref_audio_3", "parameter_has_default": false, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "duration", "parameter_has_default": true, "parameter_default": 5, "type": "type_11"},
+        {"parameter_name": "width", "parameter_has_default": true, "parameter_default": 1376, "type": "type_12"},
+        {"parameter_name": "height", "parameter_has_default": true, "parameter_default": 768, "type": "type_12"},
+        {"parameter_name": "result_format", "parameter_has_default": true, "parameter_default": "Video", "type": "type_43"},
+        {"parameter_name": "image_frames", "parameter_has_default": true, "parameter_default": 5, "type": "type_44"},
+        {"parameter_name": "fl2va_audio_1", "parameter_has_default": true, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "fl2va_audio_2", "parameter_has_default": true, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "fl2va_audio_3", "parameter_has_default": true, "parameter_default": null, "type": "type_10"}
+      ],
+      "returns": [
+        {"type": "type_1", "component": "Textbox"},
+        {"type": "type_1", "component": "Textbox"}
+      ]
+    },
+    "/save_h3_image_frames": {
+      "parameters": [
+        {"parameter_name": "selected_labels", "parameter_has_default": true, "parameter_default": [], "type": "type_47"}
+      ],
+      "returns": [
+        {"type": "type_48", "component": "File"},
+        {"type": "type_1", "component": "Markdown"}
+      ]
+    },
+    "/upscale_h3_input_images": {
+      "parameters": [
+        {"parameter_name": "selected_slots", "parameter_has_default": true, "parameter_default": [], "type": "type_55"},
+        {"parameter_name": "model_choice", "parameter_has_default": true, "parameter_default": "7B INT8", "type": "type_40"},
+        {"parameter_name": "seed", "parameter_has_default": true, "parameter_default": -1, "type": "type_12"},
+        {"parameter_name": "force_offload", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
+        {"parameter_name": "frame_width", "parameter_has_default": true, "parameter_default": 1920, "type": "type_12"},
+        {"parameter_name": "frame_height", "parameter_has_default": true, "parameter_default": 1920, "type": "type_12"},
+        {"parameter_name": "first_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "last_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_1", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_2", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_3", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_4", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_5", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_6", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_7", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_8", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_9", "parameter_has_default": false, "parameter_default": null, "type": "type_9"}
+      ],
+      "returns": [
+        {"type": "type_9", "component": "Image"},
+        {"type": "type_9", "component": "Image"},
+        {"type": "type_9", "component": "Image"},
+        {"type": "type_9", "component": "Image"},
+        {"type": "type_9", "component": "Image"},
+        {"type": "type_9", "component": "Image"},
+        {"type": "type_9", "component": "Image"},
+        {"type": "type_9", "component": "Image"},
+        {"type": "type_9", "component": "Image"},
+        {"type": "type_9", "component": "Image"},
+        {"type": "type_9", "component": "Image"},
+        {"type": "type_48", "component": "File"},
+        {"type": "type_1", "component": "Markdown"}
+      ]
+    },
+    "/generate_ltx25_video": {
+      "parameters": [
+        {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "Text to video", "type": "type_56"},
+        {"parameter_name": "model_choice", "parameter_has_default": true, "parameter_default": "INT8 ConvRot", "type": "type_41"},
+        {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "negative_prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "first_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "duration", "parameter_has_default": true, "parameter_default": 5, "type": "type_44"},
+        {"parameter_name": "fps", "parameter_has_default": true, "parameter_default": 24, "type": "type_57"},
+        {"parameter_name": "width", "parameter_has_default": true, "parameter_default": 960, "type": "type_12"},
+        {"parameter_name": "height", "parameter_has_default": true, "parameter_default": 544, "type": "type_12"},
+        {"parameter_name": "seed", "parameter_has_default": true, "parameter_default": -1, "type": "type_12"},
+        {"parameter_name": "cfg", "parameter_has_default": true, "parameter_default": 1.0, "type": "type_58"},
+        {"parameter_name": "sampler_name", "parameter_has_default": true, "parameter_default": "euler_ancestral", "type": "type_59"},
+        {"parameter_name": "image_strength", "parameter_has_default": true, "parameter_default": 0.7, "type": "type_34"},
+        {"parameter_name": "middle_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "middle_time", "parameter_has_default": true, "parameter_default": 2.5, "type": "type_60"},
+        {"parameter_name": "middle_strength", "parameter_has_default": true, "parameter_default": 0.7, "type": "type_34"},
+        {"parameter_name": "end_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "end_strength", "parameter_has_default": true, "parameter_default": 0.7, "type": "type_34"},
+        {"parameter_name": "reference_images", "parameter_has_default": false, "parameter_default": null, "type": "type_48"}
+      ],
+      "returns": [
+        {"type": "type_10", "component": "Video"},
+        {"type": "type_1", "component": "Textbox"}
+      ]
+    },
+    "/enhance_ltx25_prompt": {
+      "parameters": [
+        {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
+        {"parameter_name": "temporary_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "Text to video", "type": "type_56"},
+        {"parameter_name": "start_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "middle_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "end_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "duration", "parameter_has_default": true, "parameter_default": 5, "type": "type_44"},
+        {"parameter_name": "width", "parameter_has_default": true, "parameter_default": 960, "type": "type_12"},
+        {"parameter_name": "height", "parameter_has_default": true, "parameter_default": 544, "type": "type_12"},
+        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_61"},
+        {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"}
+      ],
+      "returns": [
+        {"type": "type_1", "component": "Textbox"},
+        {"type": "type_1", "component": "Textbox"}
+      ]
+    },
+    "/generate_qwen_image21": {
+      "parameters": [
+        {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "Text to image", "type": "type_62"},
+        {"parameter_name": "model_choice", "parameter_has_default": true, "parameter_default": "BF16", "type": "type_63"},
+        {"parameter_name": "text_encoder_choice", "parameter_has_default": true, "parameter_default": "BF16", "type": "type_64"},
+        {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "negative_prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "reference_images", "parameter_has_default": false, "parameter_default": null, "type": "type_48"},
+        {"parameter_name": "width", "parameter_has_default": true, "parameter_default": 1024, "type": "type_65"},
+        {"parameter_name": "height", "parameter_has_default": true, "parameter_default": 1024, "type": "type_65"},
+        {"parameter_name": "reference_resolution", "parameter_has_default": true, "parameter_default": 0, "type": "type_66"},
+        {"parameter_name": "edit_size", "parameter_has_default": true, "parameter_default": "Match first image size", "type": "type_67"},
+        {"parameter_name": "seed", "parameter_has_default": true, "parameter_default": -1, "type": "type_12"},
+        {"parameter_name": "steps", "parameter_has_default": true, "parameter_default": 40, "type": "type_68"},
+        {"parameter_name": "cfg", "parameter_has_default": true, "parameter_default": 1.0, "type": "type_69"},
+        {"parameter_name": "sampler_name", "parameter_has_default": true, "parameter_default": "euler", "type": "type_70"},
+        {"parameter_name": "scheduler", "parameter_has_default": true, "parameter_default": "qwen_image21", "type": "type_71"},
+        {"parameter_name": "cache_device", "parameter_has_default": true, "parameter_default": "auto", "type": "type_72"},
+        {"parameter_name": "cache_dtype", "parameter_has_default": true, "parameter_default": "default", "type": "type_73"},
+        {"parameter_name": "attention_backend", "parameter_has_default": true, "parameter_default": "pytorch attention", "type": "type_74"},
+        {"parameter_name": "accelerator", "parameter_has_default": true, "parameter_default": "Spectrum (Quality)", "type": "type_75"},
+        {"parameter_name": "turbo_variant", "parameter_has_default": true, "parameter_default": "Off", "type": "type_76"},
+        {"parameter_name": "output_resolution_1k", "parameter_has_default": false, "parameter_default": null, "type": "type_77"},
+        {"parameter_name": "output_resolution_2k", "parameter_has_default": false, "parameter_default": null, "type": "type_78"},
+        {"parameter_name": "batch_count", "parameter_has_default": true, "parameter_default": 1, "type": "type_2"},
+        {"parameter_name": "batch_edit_inputs", "parameter_has_default": true, "parameter_default": false, "type": "type_6"}
+      ],
+      "returns": [
+        {"type": "type_46", "component": "Gallery"},
+        {"type": "type_1", "component": "Textbox"}
+      ]
+    },
+    "/enhance_qwen_image21_prompt": {
+      "parameters": [
+        {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
+        {"parameter_name": "temporary_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "Text to image", "type": "type_62"},
+        {"parameter_name": "reference_images", "parameter_has_default": false, "parameter_default": null, "type": "type_48"},
+        {"parameter_name": "width", "parameter_has_default": true, "parameter_default": 1024, "type": "type_65"},
+        {"parameter_name": "height", "parameter_has_default": true, "parameter_default": 1024, "type": "type_65"},
+        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_61"},
+        {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "edit_size", "parameter_has_default": true, "parameter_default": "Match first image size", "type": "type_67"}
+      ],
+      "returns": [
+        {"type": "type_1", "component": "Textbox"},
+        {"type": "type_1", "component": "Textbox"}
+      ]
+    },
+    "/generate_music3": {
+      "parameters": [
+        {"parameter_name": "model_choice", "parameter_has_default": true, "parameter_default": "INT8 ConvRot (lower VRAM)", "type": "type_79"},
+        {"parameter_name": "caption", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "lyrics", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "max_duration", "parameter_has_default": true, "parameter_default": 120, "type": "type_80"},
+        {"parameter_name": "seed", "parameter_has_default": true, "parameter_default": -1, "type": "type_12"},
+        {"parameter_name": "steps", "parameter_has_default": true, "parameter_default": 30, "type": "type_68"},
+        {"parameter_name": "cfg", "parameter_has_default": true, "parameter_default": 1.7, "type": "type_81"},
+        {"parameter_name": "ar_cfg", "parameter_has_default": true, "parameter_default": 1.7, "type": "type_81"},
+        {"parameter_name": "top_k", "parameter_has_default": true, "parameter_default": 50, "type": "type_82"},
+        {"parameter_name": "tiled_decode", "parameter_has_default": true, "parameter_default": true, "type": "type_6"}
+      ],
+      "returns": [
+        {"type": "type_10", "component": "Audio"},
+        {"type": "type_1", "component": "Textbox"}
+      ]
+    },
+    "/enhance_music3_prompt": {
+      "parameters": [
+        {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
+        {"parameter_name": "temporary_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "lyrics", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "ref_image_1", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_2", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "ref_image_3", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
+        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_61"},
+        {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"}
+      ],
+      "returns": [
+        {"type": "type_1", "component": "Textbox"},
+        {"type": "type_1", "component": "Textbox"},
+        {"type": "type_1", "component": "Textbox"}
+      ]
+    },
+    "/generate_yue2": {
+      "parameters": [
+        {"parameter_name": "model_choice", "parameter_has_default": true, "parameter_default": "INT8 ConvRot (lower VRAM)", "type": "type_63"},
+        {"parameter_name": "style", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "lyrics", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "abc", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "full", "type": "type_83"},
+        {"parameter_name": "max_duration", "parameter_has_default": true, "parameter_default": 180, "type": "type_84"},
+        {"parameter_name": "seed", "parameter_has_default": true, "parameter_default": -1, "type": "type_12"},
+        {"parameter_name": "steps", "parameter_has_default": true, "parameter_default": 32, "type": "type_68"},
+        {"parameter_name": "cfg", "parameter_has_default": true, "parameter_default": 1.0, "type": "type_69"},
+        {"parameter_name": "temperature", "parameter_has_default": true, "parameter_default": 1.0, "type": "type_85"},
+        {"parameter_name": "top_p", "parameter_has_default": true, "parameter_default": 0.95, "type": "type_86"},
+        {"parameter_name": "top_k", "parameter_has_default": true, "parameter_default": 100, "type": "type_87"},
+        {"parameter_name": "repetition_penalty", "parameter_has_default": true, "parameter_default": 1.2, "type": "type_88"},
+        {"parameter_name": "max_abc_tokens", "parameter_has_default": true, "parameter_default": 8192, "type": "type_89"},
+        {"parameter_name": "abc_temperature", "parameter_has_default": true, "parameter_default": 0.7, "type": "type_85"},
+        {"parameter_name": "abc_top_p", "parameter_has_default": true, "parameter_default": 0.9, "type": "type_86"},
+        {"parameter_name": "abc_top_k", "parameter_has_default": true, "parameter_default": 30, "type": "type_87"},
+        {"parameter_name": "abc_repetition_penalty", "parameter_has_default": true, "parameter_default": 1.005, "type": "type_88"},
+        {"parameter_name": "abc_penalty_window", "parameter_has_default": true, "parameter_default": 100, "type": "type_89"},
+        {"parameter_name": "tiled_decode", "parameter_has_default": true, "parameter_default": true, "type": "type_6"}
+      ],
+      "returns": [
+        {"type": "type_10", "component": "Audio"},
+        {"type": "type_1", "component": "Textbox"}
+      ]
+    },
+    "/enhance_yue2_prompt": {
+      "parameters": [
+        {"parameter_name": "style", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
+        {"parameter_name": "temporary_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "lyrics", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "full", "type": "type_83"},
+        {"parameter_name": "duration", "parameter_has_default": true, "parameter_default": 180, "type": "type_84"},
+        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_61"},
+        {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"}
+      ],
+      "returns": [
+        {"type": "type_1", "component": "Textbox"},
+        {"type": "type_1", "component": "Textbox"},
+        {"type": "type_1", "component": "Textbox"}
+      ]
+    }
+  },
+  "types": {
+    "type_1": {
+      "type": "string"
+    },
+    "type_2": {
+      "type": "number",
+      "description": "numeric value between 1 and 4"
+    },
+    "type_3": {
+      "enum": [
+        "Text to video",
+        "First / last frame",
+        "Reference media"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_4": {
+      "enum": [
+        "Speed",
+        "Quality",
+        "Original",
+        "Singularity",
+        "FastH3 8-Step V2"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_5": {
+      "type": "string",
+      "enum": [
+        "NVFP4 / AWQ",
+        "INT8 ConvRot",
+        "BF16"
+      ]
+    },
+    "type_6": {
+      "type": "boolean"
+    },
+    "type_7": {
+      "enum": [
+        "Normal",
+        "Turbo"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_8": {
+      "enum": [
+        "TaoMate-H3 / 3-step",
+        "Larry v4-600 EMA",
+        "LightX2V / 4-step (FL2V 768p · Ref2V 544p)",
+        "LightX2V v1.0 / 8-step 768p",
+        "PDMD / 2-step",
+        "PDMD / 4-step"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_9": {
+      "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Path to a local file",
+          "title": "Path"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Publicly available url or base64 encoded image",
+          "title": "Url"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Size of image in bytes",
+          "title": "Size"
+        },
+        "orig_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Original filename",
+          "title": "Orig Name"
+        },
+        "mime_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "mime type of image",
+          "title": "Mime Type"
+        },
+        "is_stream": {
+          "default": false,
+          "description": "Can always be set to False",
+          "title": "Is Stream",
+          "type": "boolean"
+        },
+        "meta": {
+          "additionalProperties": true,
+          "default": {
+            "_type": "gradio.FileData"
+          },
+          "title": "Meta",
+          "type": "object"
+        }
+      },
+      "title": "ImageData",
+      "type": "object",
+      "additional_description": "A local filepath or publicly available URL."
+    },
+    "type_10": {
+      "$defs": {
+        "FileDataMeta": {
+          "properties": {
+            "_type": {
+              "const": "gradio.FileData",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "_type"
+          ],
+          "title": "FileDataMeta",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
+        },
+        "orig_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Orig Name"
+        },
+        "mime_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mime Type"
+        },
+        "is_stream": {
+          "default": false,
+          "title": "Is Stream",
+          "type": "boolean"
+        },
+        "meta": {
+          "$ref": "#/$defs/FileDataMeta"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "FileData",
+      "type": "object",
+      "additional_description": "The FileData class is a subclass of the GradioModel class that represents a file object within a Gradio interface. It is used to store file data and metadata when a file is uploaded.\n\nAttributes:\n    path: The server file path where the file is stored.\n    url: The normalized server URL pointing to the file.\n    size: The size of the file in bytes.\n    orig_name: The original filename before upload.\n    mime_type: The MIME type of the file.\n    is_stream: Indicates whether the file is a stream.\n    meta: Additional metadata used internally (should not be changed)."
+    },
+    "type_11": {
+      "type": "number",
+      "description": "numeric value between 2 and 15"
+    },
+    "type_12": {
+      "type": "integer"
+    },
+    "type_13": {
+      "type": "number",
+      "description": "numeric value between 2 and 30"
+    },
+    "type_14": {
+      "enum": [
+        "simple",
+        "beta",
+        "normal"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_15": {
+      "enum": [
+        "Sage 2",
+        "Kitchen",
+        "SLA",
+        "Sol-Attn",
+        "Auto"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_16": {
+      "enum": [
+        "Fast",
+        "Balanced",
+        "Quality"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_17": {
+      "type": "number",
+      "description": "numeric value between 0.5 and 1.5"
+    },
+    "type_18": {
+      "enum": [
+        "diag",
+        "exact"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_19": {
+      "enum": [
+        "off",
+        "exact_kv",
+        "exact_kv_and_rows"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_20": {
+      "type": "number",
+      "description": "numeric value between 0 and 4"
+    },
+    "type_21": {
+      "enum": [
+        "Spectrum",
+        "FirstBlockCache",
+        "EasyCache",
+        "Off"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_22": {
+      "enum": [
+        "Safe",
+        "Fast",
+        "Aggressive",
+        "Custom"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_23": {
+      "type": "number",
+      "description": "numeric value between 0.0 and 0.25"
+    },
+    "type_24": {
+      "type": "number",
+      "description": "numeric value between 0.0 and 0.9"
+    },
+    "type_25": {
+      "type": "number",
+      "description": "numeric value between 0.1 and 1.0"
+    },
+    "type_26": {
+      "type": "number",
+      "description": "numeric value between 1 and 8"
+    },
+    "type_27": {
+      "type": "number",
+      "description": "numeric value between 0.0 and 0.5"
+    },
+    "type_28": {
+      "enum": [
+        "match",
+        "max"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_29": {
+      "type": "string",
+      "enum": [
+        "None",
+        "SeedVR2 2x",
+        "LTX-2.5 IC-LoRA 2x",
+        "SwiftVR 2x"
+      ]
+    },
+    "type_30": {
+      "type": "string",
+      "enum": [
+        "Balanced (BF16)",
+        "Fast (FP16)",
+        "Quality (FP32)"
+      ]
+    },
+    "type_31": {
+      "type": "number",
+      "description": "numeric value between 1 and 6"
+    },
+    "type_32": {
+      "type": "string",
+      "enum": [
+        "Full-frame refinement",
+        "MMH3 Split Upscale (experimental)"
+      ]
+    },
+    "type_33": {
+      "type": "number",
+      "description": "numeric value between 256 and 2048"
+    },
+    "type_34": {
+      "type": "number",
+      "description": "numeric value between 0.0 and 1.0"
+    },
+    "type_35": {
+      "type": "number",
+      "description": "numeric value between 5 and 1000"
+    },
+    "type_36": {
+      "type": "number",
+      "description": "numeric value between 0 and 240"
+    },
+    "type_37": {
+      "type": "string",
+      "enum": [
+        "off",
+        "auto",
+        "all"
+      ]
+    },
+    "type_38": {
+      "type": "number",
+      "description": "numeric value between 1.0 and 15.0"
+    },
+    "type_39": {
+      "type": "string",
+      "enum": [
+        "1280 × 1280",
+        "1920 × 1920",
+        "2560 × 2560",
+        "3840 × 3840"
+      ]
+    },
+    "type_40": {
+      "type": "string",
+      "enum": [
+        "7B FP16",
+        "7B INT8",
+        "3B FP16",
+        "3B INT8",
+        "7B Sharp FP16",
+        "7B MXFP8",
+        "3B NVFP4",
+        "7B NVFP4",
+        "7B Sharp NVFP4"
+      ]
+    },
+    "type_41": {
+      "type": "string",
+      "enum": [
+        "INT8 ConvRot",
+        "BF16"
+      ]
+    },
+    "type_42": {
+      "enum": [
+        "Official video VAE",
+        "Single-frame 500K (experimental)"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_43": {
+      "enum": [
+        "Video",
+        "Image",
+        "Audio"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_44": {
+      "type": "number",
+      "description": "numeric value between 1 and 20"
+    },
+    "type_45": {
+      "type": "string",
+      "enum": [
+        "Same as generation",
+        "TaoMate-H3 / 3-step",
+        "Larry v4-600 EMA",
+        "LightX2V / 4-step (FL2V 768p · Ref2V 544p)",
+        "LightX2V v1.0 / 8-step 768p",
+        "PDMD / 2-step",
+        "PDMD / 4-step"
+      ]
+    },
+    "type_46": {
+      "$defs": {
+        "FileData": {
+          "description": "The FileData class is a subclass of the GradioModel class that represents a file object within a Gradio interface. It is used to store file data and metadata when a file is uploaded.\n\nAttributes:\n    path: The server file path where the file is stored.\n    url: The normalized server URL pointing to the file.\n    size: The size of the file in bytes.\n    orig_name: The original filename before upload.\n    mime_type: The MIME type of the file.\n    is_stream: Indicates whether the file is a stream.\n    meta: Additional metadata used internally (should not be changed).",
+          "properties": {
+            "path": {
+              "title": "Path",
+              "type": "string"
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Url"
+            },
+            "size": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Size"
+            },
+            "orig_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Orig Name"
+            },
+            "mime_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Mime Type"
+            },
+            "is_stream": {
+              "default": false,
+              "title": "Is Stream",
+              "type": "boolean"
+            },
+            "meta": {
+              "$ref": "#/$defs/FileDataMeta"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "title": "FileData",
+          "type": "object"
+        },
+        "FileDataMeta": {
+          "properties": {
+            "_type": {
+              "const": "gradio.FileData",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "_type"
+          ],
+          "title": "FileDataMeta",
+          "type": "object"
+        },
+        "GalleryImage": {
+          "properties": {
+            "image": {
+              "$ref": "#/$defs/ImageData"
+            },
+            "caption": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Caption"
+            }
+          },
+          "required": [
+            "image"
+          ],
+          "title": "GalleryImage",
+          "type": "object"
+        },
+        "GalleryVideo": {
+          "properties": {
+            "video": {
+              "$ref": "#/$defs/FileData"
+            },
+            "caption": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Caption"
+            }
+          },
+          "required": [
+            "video"
+          ],
+          "title": "GalleryVideo",
+          "type": "object"
+        },
+        "ImageData": {
+          "description": "A local filepath or publicly available URL.",
+          "properties": {
+            "path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Path to a local file",
+              "title": "Path"
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Publicly available url or base64 encoded image",
+              "title": "Url"
+            },
+            "size": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Size of image in bytes",
+              "title": "Size"
+            },
+            "orig_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Original filename",
+              "title": "Orig Name"
+            },
+            "mime_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "mime type of image",
+              "title": "Mime Type"
+            },
+            "is_stream": {
+              "default": false,
+              "description": "Can always be set to False",
+              "title": "Is Stream",
+              "type": "boolean"
+            },
+            "meta": {
+              "additionalProperties": true,
+              "default": {
+                "_type": "gradio.FileData"
+              },
+              "title": "Meta",
+              "type": "object"
+            }
+          },
+          "title": "ImageData",
+          "type": "object"
+        }
+      },
+      "items": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/GalleryImage"
+          },
+          {
+            "$ref": "#/$defs/GalleryVideo"
+          }
+        ]
+      },
+      "title": "GalleryData",
+      "type": "array",
+      "additional_description": null
+    },
+    "type_47": {
+      "items": {
+        "enum": [],
+        "type": "string"
+      },
+      "title": "Checkbox Group",
+      "type": "array"
+    },
+    "type_48": {
+      "$defs": {
+        "FileData": {
+          "description": "The FileData class is a subclass of the GradioModel class that represents a file object within a Gradio interface. It is used to store file data and metadata when a file is uploaded.\n\nAttributes:\n    path: The server file path where the file is stored.\n    url: The normalized server URL pointing to the file.\n    size: The size of the file in bytes.\n    orig_name: The original filename before upload.\n    mime_type: The MIME type of the file.\n    is_stream: Indicates whether the file is a stream.\n    meta: Additional metadata used internally (should not be changed).",
+          "properties": {
+            "path": {
+              "title": "Path",
+              "type": "string"
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Url"
+            },
+            "size": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Size"
+            },
+            "orig_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Orig Name"
+            },
+            "mime_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Mime Type"
+            },
+            "is_stream": {
+              "default": false,
+              "title": "Is Stream",
+              "type": "boolean"
+            },
+            "meta": {
+              "$ref": "#/$defs/FileDataMeta"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "title": "FileData",
+          "type": "object"
+        },
+        "FileDataMeta": {
+          "properties": {
+            "_type": {
+              "const": "gradio.FileData",
+              "title": "Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "_type"
+          ],
+          "title": "FileDataMeta",
+          "type": "object"
+        }
+      },
+      "items": {
+        "$ref": "#/$defs/FileData"
+      },
+      "title": "ListFiles",
+      "type": "array",
+      "additional_description": null
+    },
+    "type_49": {
+      "enum": [
+        "Local MiniMax-H3 8B",
+        "Gemini",
+        "Lightning AI"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_50": {
+      "type": "string",
+      "enum": [
+        "Qwen3-VL 8B · BF16",
+        "Qwen3-VL 8B · FP8"
+      ]
+    },
+    "type_51": {
+      "type": "number",
+      "description": "numeric value between 256 and 8192"
+    },
+    "type_52": {
+      "type": "number",
+      "description": "numeric value between 0.1 and 2.0"
+    },
+    "type_53": {
+      "type": "number",
+      "description": "numeric value between 0.05 and 1.0"
+    },
+    "type_54": {
+      "type": "string",
+      "enum": [
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite"
+      ]
+    },
+    "type_55": {
+      "items": {
+        "enum": [
+          "First frame",
+          "Last frame",
+          "Picture 1",
+          "Picture 2",
+          "Picture 3",
+          "Picture 4",
+          "Picture 5",
+          "Picture 6",
+          "Picture 7",
+          "Picture 8",
+          "Picture 9"
+        ],
+        "type": "string"
+      },
+      "title": "Checkbox Group",
+      "type": "array"
+    },
+    "type_56": {
+      "enum": [
+        "Text to video",
+        "Image to video",
+        "Reference images"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_57": {
+      "type": "number",
+      "description": "numeric value between 1 and 60"
+    },
+    "type_58": {
+      "type": "number",
+      "description": "numeric value between 0.0 and 3.0"
+    },
+    "type_59": {
+      "type": "string",
+      "enum": [
+        "euler_ancestral",
+        "euler",
+        "dpmpp_2m",
+        "dpmpp_2m_sde"
+      ]
+    },
+    "type_60": {
+      "type": "number",
+      "description": "numeric value between 0.1 and 19.9"
+    },
+    "type_61": {
+      "enum": [
+        "Lightning AI",
+        "Gemini"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_62": {
+      "type": "string",
+      "enum": [
+        "Text to image",
+        "Image edit"
+      ]
+    },
+    "type_63": {
+      "type": "string",
+      "enum": [
+        "INT8 ConvRot (lower VRAM)",
+        "BF16"
+      ]
+    },
+    "type_64": {
+      "type": "string",
+      "enum": [
+        "INT8 ConvRot (recommended)",
+        "W4A8 (lowest VRAM)",
+        "BF16"
+      ]
+    },
+    "type_65": {
+      "type": "number",
+      "description": "numeric value between 256 and 2752"
+    },
+    "type_66": {
+      "type": "string",
+      "enum": [
+        0,
+        512,
+        768,
+        1024,
+        1536,
+        2048
+      ]
+    },
+    "type_67": {
+      "enum": [
+        "Match first image size",
+        "Max resolution (up to 4 MP)",
+        "Use width and height above"
+      ],
+      "title": "Radio",
+      "type": "string"
+    },
+    "type_68": {
+      "type": "number",
+      "description": "numeric value between 1 and 100"
+    },
+    "type_69": {
+      "type": "number",
+      "description": "numeric value between 0 and 20"
+    },
+    "type_70": {
+      "type": "string",
+      "enum": [
+        "euler",
+        "euler_ancestral",
+        "er_sde",
+        "dpmpp_2m",
+        "dpmpp_sde",
+        "dpmpp_sde_gpu"
+      ]
+    },
+    "type_71": {
+      "type": "string",
+      "enum": [
+        "qwen_image21",
+        "simple",
+        "normal",
+        "beta"
+      ]
+    },
+    "type_72": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "gpu",
+        "cpu",
+        "off"
+      ]
+    },
+    "type_73": {
+      "type": "string",
+      "enum": [
+        "default",
+        "int8",
+        "int4"
+      ]
+    },
+    "type_74": {
+      "type": "string",
+      "enum": [
+        "pytorch attention",
+        "comfy kitchen attention"
+      ]
+    },
+    "type_75": {
+      "type": "string",
+      "enum": [
+        "Off",
+        "Spectrum (Quality)",
+        "Spectrum (Preview)"
+      ]
+    },
+    "type_76": {
+      "type": "string",
+      "enum": [
+        "Off",
+        "Viggle Turbo v0.2.1 (6-step)",
+        "Viggle Turbo v0.3 (6-step)",
+        "Viggle Turbo v0.3 (9-step)"
+      ]
+    },
+    "type_77": {
+      "type": "string",
+      "enum": [
+        "1K · 1:1 · 1024×1024",
+        "1K · 4:3 · 1376×1024",
+        "1K · 3:2 · 1536×1024",
+        "1K · 16:9 · 1824×1024",
+        "1K · 3:4 · 1024×1376",
+        "1K · 2:3 · 1024×1536",
+        "1K · 9:16 · 1024×1824"
+      ]
+    },
+    "type_78": {
+      "type": "string",
+      "enum": [
+        "2K · 1:1 · 2048×2048",
+        "2K · 4:3 · 2400×1792",
+        "2K · 3:2 · 2528×1696",
+        "2K · 16:9 · 2752×1536",
+        "2K · 3:4 · 1792×2400",
+        "2K · 2:3 · 1696×2528",
+        "2K · 9:16 · 1536×2752"
+      ]
+    },
+    "type_79": {
+      "type": "string",
+      "enum": [
+        "INT8 ConvRot (lower VRAM)",
+        "FP16"
+      ]
+    },
+    "type_80": {
+      "type": "number",
+      "description": "numeric value between 1 and 300"
+    },
+    "type_81": {
+      "type": "number",
+      "description": "numeric value between 0 and 10"
+    },
+    "type_82": {
+      "type": "number",
+      "description": "numeric value between 1 and 200"
+    },
+    "type_83": {
+      "type": "string",
+      "enum": [
+        "full",
+        "melody",
+        "off"
+      ]
+    },
+    "type_84": {
+      "type": "number",
+      "description": "numeric value between 1 and 900"
+    },
+    "type_85": {
+      "type": "number",
+      "description": "numeric value between 0 and 5"
+    },
+    "type_86": {
+      "type": "number",
+      "description": "numeric value between 0.01 and 1"
+    },
+    "type_87": {
+      "type": "number",
+      "description": "numeric value between 1 and 32768"
+    },
+    "type_88": {
+      "type": "number",
+      "description": "numeric value between 0.01 and 10"
+    },
+    "type_89": {
+      "type": "number",
+      "description": "numeric value between 1 and 20000"
+    }
+  }
+}

@@ -52,7 +52,7 @@ class AssetPage:
             detail += f" · {self.unavailable} thumbnail{plural} unavailable"
         return detail
 
-    def legacy(self) -> tuple[list[tuple[str, str]], list[str], str]:
+    def as_ui_values(self) -> tuple[list[tuple[str, str]], list[str], str]:
         return list(self.items), list(self.paths), self.status
 
     @classmethod

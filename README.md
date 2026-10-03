@@ -5,26 +5,29 @@ generation on NVIDIA Blackwell GPUs. It provisions ComfyUI, the required H3
 models, SLA, Sol-Attn, Comfy Kitchen attention, SageAttention 2, Spectrum, and a
 bundled FirstBlockCache node.
 
-## Workspace preview
+## Creative workspace
 
-The redesigned interface loads by default with `bash run_h3.sh` or
-`python gradio_app.py`. It provides task and
-engine selection, a composer and result preview, Media, session-owned Jobs,
-System readiness, and API/workflows. H3 uses compact output controls and an
-exclusive video decoder selector. Prompt suggestions require acceptance.
+`bash run_h3.sh` and `python gradio_app.py` launch the workspace. It is the
+sole interface; the legacy layout, selection flag and launcher compatibility
+shim have been removed. Local and Modal launches use the same UI.
 
-Jobs capture the request before entering the existing GPU queue. Failed variants
-can be retried with their recorded seeds while inputs remain available; optional
-H3 finishing can be retried from its completed source. Unsaved requests expire
-after 30 minutes, may be evicted earlier at capacity, and end on process restart.
-Generated media and technical settings sidecars remain in the existing library.
+The compact H3 composer keeps inputs, prompt and actions next to results.
+Output/recipe and advanced controls are collapsed below. Create supports H3,
+LTX 2.5, Qwen Image 2.1, MiniMax Music 3 and YuE2. Prompt suggestions require
+acceptance. Media includes indexed search, shared tags/favorites, lineage,
+image comparison and synchronized video playback.
 
-Supported-GPU inference, deployment, performance and accessibility validation
-remain incomplete. Set
-`H3_UI_LAYOUT=legacy` or pass `--ui-layout legacy` to switch back. For Modal,
-set the environment variable when deploying so the image receives the selection.
-See [implementation status and validation](docs/workspace-implementation.md) and
-the [revised plan](docs/ui-ux-redesign-plan-2026-10-03.md).
+Jobs capture requests before the GPU queue, retain seeds for failed-variant
+retries, and support separate H3 finishing retries. SQLite stores technical job
+history across restarts. A signed browser cookie and recovery key preserve
+ownership. Explicitly saved projects retain prompts/settings and copied sources;
+unsaved request content remains temporary. Recovery observes recorded backend
+work and never automatically resubmits an ambiguous request.
+
+See [implementation and operating guide](docs/workspace-implementation.md) for
+retention, backup/restore, comparison limits and validation. Real GPU inference
+is excluded from this implementation's tests at the user's request. Actual Modal
+deployment and production performance remain unmeasured.
 
 ## What is included
 

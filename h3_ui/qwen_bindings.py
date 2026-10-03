@@ -10,7 +10,7 @@ from h3_models import QWEN_IMAGE21_TURBO_MODES
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation
 
 
-from .views import QwenImage21View
+from .qwen_view import QwenImage21View
 
 QWEN_IMAGE21_PRESETS = {
     "Fast": ("INT8 ConvRot (lower VRAM)", "Viggle Turbo v0.2.1 (6-step)", 6, "Off"),

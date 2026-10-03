@@ -146,13 +146,14 @@ def bind_resolution(
 
     def refresh_after_auto_cap(memory, *values):
         updates = controller.refresh(memory, *values)
-        return (*updates[:cap_index], *updates[cap_index + 1:])
+        return (*updates[:cap_index], *updates[cap_index + 1 :])
 
     auto_megapixels_change.then(
         refresh_after_auto_cap,
         inputs=[controller.memory, *controller.inputs],
         outputs=[
-            component for component in controller.outputs
+            component
+            for component in controller.outputs
             if component is not components.auto_megapixels
         ],
         queue=False,

@@ -1,89 +1,143 @@
-"""Application composition and temporary public compatibility adapters."""
+"""Runtime configuration and stable Gradio API adapters."""
 
-# ruff: noqa: F401, E402
 from __future__ import annotations
+from fastapi import Response
+from h3_models import (
+    DEFAULT_MUSIC3_MODEL,
+    LTX25_ICLORA_MODEL_KEYS,
+)
+from h3_requirements import LTX25_WORKFLOW_FILENAMES
+from h3_prompt_rewriter import (
+    rewrite_prompt as rewrite_local_h3_prompt,
+)
+from h3_app.contracts import GENERATION_FIELDS
+from h3_app.server import (
+    _proxy_headers,
+    _rewrite_comfy_text,
+    _comfy_upstream_path,
+    _append_set_cookies,
+)
+from h3_app.graph import Graph
+from h3_app.catalog import (
+    CHUNK_FEED_FORWARD_NODE,
+    COMFY_UPSCALE_OPTIONS,
+    LTX25_CQ_ENHANCER,
+    LTX25_REFINE_DETAILS,
+    LTX25_RESTORE,
+    LTX25_DECOMPRESSION,
+    LTX25_DEBLUR,
+    LTX25_SDR_TO_HDR,
+    CORE_LORA_LOADER_NODE,
+    CORE_SAMPLER_NODE,
+    FUSED_MODULATION_NODE,
+    H3_COMBINE_AV_LATENT_NODE,
+    H3_CONDITIONING_CACHE_NODE,
+    H3_IMAGE_SLICES_NODE,
+    H3_LATENT_UPSCALER_NODE,
+    H3_NVENC_SAVE_NODE,
+    H3_REFINEMENT_COMPILER_GUARD_NODE,
+    H3_SEMANTIC_BRIDGE_NODE,
+    H3_SEPARATE_AV_LATENT_NODE,
+    H3_SIGMA_SHIFT_NODE,
+    H3_SINGLE_FRAME_VAE_LOADER_NODE,
+    H3_SPLIT_SPATIAL_PARAMS_NODE,
+    H3_SPLIT_TEMPORAL_PARAMS_NODE,
+    H3_SPLIT_UPSCALE_NODE,
+    H3_STAGE_OFFLOAD_NODE,
+    H3_STAGE_OFFLOAD_POLICY_NODE,
+    LARRY_TURBO,
+    LARRY_TURBO_LORA_NODE,
+    LARRY_TURBO_SAMPLER_NODE,
+    LIGHTNING_API_ROOT,
+    LIGHTX2V_4STEP_TURBO,
+    LIGHTX2V_8STEP_TURBO,
+    LIGHTX2V_BYPASS_LORA_NODE,
+    LTX25_SIGMAS,
+    OFFICIAL_IMAGE_VAE,
+    RESOLUTION_TIERS,
+    SAGE_ATTENTION_NODE,
+    SAMPLING_PRESETS,
+    SAMPLING_PRESET_TEXT_ENCODERS,
+    SINGLE_FRAME_IMAGE_VAE,
+    SLA_ATTENTION_NODE,
+    SOL_ATTENTION_NODE,
+)
+from h3_app.policy import (
+    active_fl2va_voice_references,
+    collect_reference_slots,
+    frame_length,
+    h3_latent_upscale_dimensions,
+    image_sampling_length,
+    ltx25_frame_length,
+    resolve_cache_policy,
+    resolve_h3_split_upscale_config,
+    resolve_sla_preset,
+    selected_image_sampling_length,
+    single_frame_image_sampling_length,
+    turbo_sampler_name,
+    turbo_strength_for,
+    turbo_uses_custom_nodes,
+)
+from h3_app.workflows.music import build_music3_graph, required_music3_nodes
+from h3_app.status import StageTimings, graph_class_types, node_stage
+from h3_app.processes import run_media_process
 
-import argparse
-import asyncio
-import base64
-import hashlib
-import html
 import inspect
 import json
+import shutil
+import httpx
+from .prompt_controller import PromptController, PromptServices
+from .model_controller import ModelController, ModelServices
+from .media_controller import (
+    MediaController,
+    MediaServices,
+    GalleryMutationResult,
+    GalleryPostprocessResult,
+    GalleryMediaMutationResult,
+    GalleryMediaPostprocessResult,
+)
+
+import argparse
+import html
 import math
-import mimetypes
 import os
 import random
 import re
-import shutil
 import signal
-import subprocess
-import sys
 import tempfile
 import threading
 import time
-import unittest.mock
 import uuid
-from contextlib import asynccontextmanager, nullcontext
-from dataclasses import dataclass
+from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterable
+from typing import Any, Iterable
 from urllib.parse import quote, urlsplit, urlunsplit
-
-import aiohttp
 import gradio as gr
 from gradio import networking as gradio_networking
-import httpx
 import requests
 import uvicorn
 import websocket
-from fastapi import (
-    FastAPI,
-    HTTPException,
-    Request,
-    Response,
-    WebSocket,
-    WebSocketDisconnect,
-)
-from fastapi.responses import (
-    FileResponse,
-    PlainTextResponse,
-    RedirectResponse,
-    StreamingResponse,
-)
+from fastapi import FastAPI
 from h3_models import (
     DEFAULT_H3_LATENT_UPSCALER_MODEL,
-    DEFAULT_MUSIC3_MODEL,
     DEFAULT_LTX25_MODEL,
     DEFAULT_SEEDVR2_MODEL,
     H3_LATENT_UPSCALER_MODEL_CHOICES,
     H3_TEXT_ENCODER_CHOICES,
     LTX25_MODEL_CHOICES,
-    LTX25_ICLORA_MODEL_KEYS,
-    LTX25_SHARED_MODEL_KEYS,
-    MIN_VALID_MODEL_BYTES,
     MODEL_SPECS,
     MUSIC3_MODEL_CHOICES,
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
-    MUSIC3_SHARED_MODEL_KEYS,
     YUE2_MODEL_CHOICES,
-    PROFILE_LABELS,
     SEEDVR2_MODEL_CHOICES,
-    TRT_VAE_ENGINE_BUILD_ID,
-    TRT_VAE_ENGINE_MARKER,
-    TRT_VAE_RUNTIME_MODEL_KEYS,
     resolve_hf_token,
     stale_model_keys,
     sync_models,
 )
-from h3_requirements import LTX25_WORKFLOW_FILENAMES, SWIFTVR_HF_REPO
 from h3_prompt_rewriter import (
     BASE_MODEL_CHOICES as LOCAL_PROMPT_BASE_MODELS,
     DEFAULT_BASE_MODEL_LABEL as DEFAULT_LOCAL_PROMPT_BASE_MODEL,
-    resolution_for_size as local_prompt_resolution,
-    rewrite_prompt as rewrite_local_h3_prompt,
-    task_for_inputs as local_prompt_task,
     unload_prompt_rewriter,
 )
 from h3_ui.presentation import (
@@ -92,61 +146,19 @@ from h3_ui.presentation import (
     mode_presentation,
     result_format_presentation,
 )
-from h3_ui.bindings import (
-    bind_api_view,
-    bind_gallery_view,
-    bind_interrupts,
-    bind_ltx_view,
-    bind_music_view,
-    bind_qwen_image21_view,
-    qwen_resolution_preset_values,
-    bind_yue2_view,
-    bind_preflight,
-    bind_summary,
-)
-from h3_ui.app_bindings import bind_app
-from h3_ui.contracts import AppComponents, AppServices
-from h3_ui.h3_view import build_h3_view, H3ViewServices
-from h3_ui.layout import create_app_views, bind_workspace_navigation
-from h3_ui.workspace_mode import workspace_enabled
-from h3_ui.persistence import bind_browser_settings
-from h3_ui.ltx_view import build_ltx_view
-from h3_ui.styles import H3_SETUP_CSS, H3_UI_CSS, H3_WORKSPACE_CSS
-from h3_ui.views import (
-    build_api_view,
-    build_gallery_view,
-    build_music_view,
-    build_qwen_image21_view,
-    build_yue2_view,
-)
-
+from h3_ui.qwen_bindings import qwen_resolution_preset_values
+from h3_ui.styles import H3_SETUP_CSS
 from dataclasses import asdict
 from h3_app.settings import (
     GenerationRequest,
     ResolutionContext,
     resolve_settings,
     preset_settings,
-    PRESETS,
 )
-from h3_app.contracts import GenerationArguments, GENERATION_FIELDS
-from h3_app import media as media_store
+from h3_app.contracts import GenerationArguments
 from h3_app import server as server_routes
-from h3_app.server import (
-    _proxy_headers,
-    _rewrite_comfy_text,
-    _comfy_upstream_path,
-    _append_set_cookies,
-)
-from h3_app.graph import Graph
 from h3_app.comfy import ComfyClient
-from h3_app.jobs import (
-    gpu_maintenance,
-    JOBS,
-    CURRENT_JOB,
-    check_cancelled,
-    scoped_graph,
-)
-from h3_app.processes import run_process
+from h3_app.jobs import gpu_maintenance, JOBS, CURRENT_JOB
 from h3_app.provenance import (
     RUN_CONTEXT,
     write_snapshot,
@@ -155,39 +167,17 @@ from h3_app.provenance import (
     snapshot_path,
 )
 from h3_ui.settings_presentation import render_settings
-
-from h3_app.errors import (
-    H3Error,
-)
+from h3_app.errors import H3Error
 from h3_app.catalog import (
     AI_POSTPROCESS_OPTIONS,
     AUDIO_EXTENSIONS,
     AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
-    AUTO_RESOLUTION_PIXEL_CAP,
     AUTO_SOL_TOKEN_THRESHOLD,
-    CHUNK_FEED_FORWARD_NODE,
-    COMFY_PROXY_PATH,
-    COMFY_UPSCALE_OPTIONS,
     COMFY_POSTPROCESS_OPTIONS,
-    LTX25_CQ_ENHANCER,
-    LTX25_REFINE_DETAILS,
-    LTX25_RESTORE,
-    LTX25_DECOMPRESSION,
-    LTX25_DEBLUR,
     LTX25_POSTPROCESS_MODELS,
-    LTX25_RESTORATION_OPTIONS,
     LTX25_SAME_RESOLUTION_OPTIONS,
-    LTX25_SDR_TO_HDR,
-    CORE_LORA_LOADER_NODE,
-    CORE_SAMPLER_NODE,
     DEFAULT_ACCELERATOR,
     DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
-    DEFAULT_FBCACHE_END,
-    DEFAULT_FBCACHE_MAX_HITS,
-    DEFAULT_FBCACHE_PRESET,
-    DEFAULT_FBCACHE_START,
-    DEFAULT_FBCACHE_TEMPORAL_GUARD,
-    DEFAULT_FBCACHE_THRESHOLD,
     DEFAULT_GEMINI_PROMPT_MODEL,
     DEFAULT_IMAGE_FRAMES,
     DEFAULT_IMAGE_VAE,
@@ -200,47 +190,20 @@ from h3_app.catalog import (
     DEFAULT_VIDEO_BATCH_COUNT,
     DRAFT_RESOLUTIONS,
     FAST_RESOLUTIONS,
-    FUSED_MODULATION_NODE,
-    GEMINI_API_ROOT,
     GEMINI_PROMPT_MODELS,
     GENERATION_POSTPROCESS_OPTIONS,
-    H3_COMBINE_AV_LATENT_NODE,
-    H3_CONDITIONING_CACHE_NODE,
-    H3_IMAGE_SLICES_NODE,
-    H3_LATENT_UPSCALER_NODE,
     H3_LATENT_UPSCALE_METHODS,
-    H3_LATENT_UPSCALE_SCALE,
     H3_LATENT_UPSCALE_SPLIT,
     H3_LATENT_UPSCALE_STANDARD,
-    H3_NVENC_SAVE_NODE,
-    H3_REFINEMENT_COMPILER_GUARD_NODE,
-    H3_SEMANTIC_BRIDGE_NODE,
-    H3_SEPARATE_AV_LATENT_NODE,
-    H3_SIGMA_SHIFT_NODE,
-    H3_SINGLE_FRAME_VAE_LOADER_NODE,
-    H3_SPLIT_SPATIAL_PARAMS_NODE,
-    H3_SPLIT_TEMPORAL_PARAMS_NODE,
-    H3_SPLIT_UPSCALE_NODE,
-    H3_STAGE_OFFLOAD_NODE,
-    H3_STAGE_OFFLOAD_POLICY_NODE,
     IMAGE_EXTENSIONS,
     IMAGE_VAE_CHOICES,
     INPUT_IMAGE_FRAME_PRESETS,
     INPUT_IMAGE_UPSCALE_SLOTS,
     LARGE_RESOLUTIONS,
-    LARRY_TURBO,
-    LARRY_TURBO_LORA_NODE,
-    LARRY_TURBO_SAMPLER_NODE,
-    LIGHTNING_API_ROOT,
     LIGHTNING_PROMPT_MODEL,
-    LIGHTX2V_4STEP_TURBO,
-    LIGHTX2V_8STEP_TURBO,
-    LIGHTX2V_BYPASS_LORA_NODE,
     LTX25_DEFAULTS,
-    LTX25_SIGMAS,
     LTX25_UPSCALE,
     LTX25_WORKFLOWS,
-    LTX25_WORKFLOW_COMMON_MODEL_KEYS,
     MAX_IMAGE_FRAMES,
     MAX_REFERENCE_AUDIOS,
     MAX_REFERENCE_IMAGES,
@@ -255,26 +218,13 @@ from h3_app.catalog import (
     QWEN_EDIT_SIZE_MAX,
     QWEN_EDIT_SIZE_MANUAL,
     YUE2_DEFAULTS,
-    NATIVE_PIXEL_CAP,
-    OFFICIAL_IMAGE_VAE,
     POSTPROCESS_OPTIONS,
     PROMPT_WRITER_BACKENDS,
-    REFERENCE_VIDEO_TRANSCODE_CACHE_VERSION,
-    RESOLUTION_TIERS,
     RESULT_FORMATS,
-    SAGE_ATTENTION_NODE,
-    SAMPLING_PRESETS,
-    SAMPLING_PRESET_TEXT_ENCODERS,
     SEEDVR2_UPSCALE,
-    SINGLE_FRAME_IMAGE_VAE,
-    SLA_ATTENTION_NODE,
     SLA_PRESET_INPUTS,
-    SOL_ATTENTION_NODE,
-    SPECTRUM_DEFAULT_INPUTS,
-    STAGED_INPUT_HASH_CHUNK_BYTES,
     SWIFTVR_UPSCALE,
     TURBO_SETTINGS,
-    TurboSpec,
     UI_DEFAULTS,
     UPSCALE_RESOLUTION_PRESETS,
     UVICORN_WEBSOCKET_OPTIONS,
@@ -282,55 +232,29 @@ from h3_app.catalog import (
 )
 from h3_app.policy import (
     H3SplitUpscaleConfig,
-    active_fl2va_voice_references,
     auto_resolution_pixel_cap,
-    collect_reference_slots,
     estimate_packed_tokens,
-    frame_length,
-    h3_latent_upscale_dimensions,
-    h3_latent_upscaler_settings,
-    image_sampling_length,
-    is_lightx2v_turbo_lora,
-    lightx2v_uses_768p_schedule,
-    ltx25_frame_length,
     normalize_image_vae,
     normalize_paths,
     normalize_result_format,
-    normalize_turbo_variant,
     resolution_choice_values,
     resolution_for_aspect_ratio,
     resolution_summary,
-    resolve_cache_policy,
     resolve_h3_latent_upscale_method,
-    resolve_h3_split_upscale_config,
-    resolve_sla_preset,
-    selected_image_sampling_length,
-    single_frame_image_sampling_length,
-    snap32,
     snap64,
     snap_to_grid,
-    turbo_sampler_name,
     turbo_steps_for,
-    turbo_strength_for,
-    turbo_uses_custom_nodes,
     upscale_target_dimensions,
-    validate_image_frame_count,
     validate_resolution,
-    video_latent_t,
 )
 from h3_app.model_types import (
     ModelConfig,
     ModelProfile,
     h3_text_encoder_settings,
-    ltx25_model_keys,
-    ltx25_model_names,
     ltx25_official_inventory_keys,
     ltx25_workflow_entry,
     ltx25_workflow_model_keys,
     model_file_is_ready,
-    music3_model_keys,
-    seedvr2_upscale_model_names,
-    trt_vae_engine_name,
 )
 from h3_app import model_service
 import h3_app.workflows.ltx as ltx_workflow
@@ -347,21 +271,8 @@ from h3_app.outputs import OutputContext
 from h3_app.config import RuntimeConfig
 from h3_app.provenance import copy_media
 from dataclasses import replace
-
-from h3_app.workflows.music import (
-    build_music3_graph,
-    required_music3_nodes,
-)
-from h3_app.status import (
-    StageTimings,
-    graph_class_types,
-    node_stage,
-    progress_status,
-)
-from h3_app.media_types import (
-    UpscaleClipBatch,
-    VideoMetadata,
-)
+from h3_app.status import progress_status
+from h3_app.media_types import UpscaleClipBatch, VideoMetadata
 from h3_app.generation import (
     requests as generation_requests,
     services as generation_services,
@@ -376,16 +287,7 @@ from h3_app.generation import (
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
 RUNTIME = RuntimeConfig.from_environment(SCRIPT_DIR)
-
-
 COMFY_URL = RUNTIME.comfy_url
-
-# Modal supports RFC 6455 WebSockets but deliberately does not support the
-# RFC 7692 permessage-deflate extension. Uvicorn enables that extension by
-# default, which makes Modal close the connection as soon as ComfyUI sends its
-# initial status frame. Keep the transport deterministic on Modal and local
-# standalone servers by using the dependency we install and disabling RFC 7692.
-
 COMFY_DIR = RUNTIME.comfy_dir
 INPUT_DIR = RUNTIME.input_dir
 OUTPUT_DIR = RUNTIME.output_dir
@@ -393,37 +295,156 @@ MODELS_CONFIG = RUNTIME.models_config
 SERVER_ATTENTION_BACKEND = RUNTIME.attention_backend
 SERVER_DENSE_ATTENTION_BACKEND = RUNTIME.dense_attention_backend
 SERVER_MEMORY_PROFILE = RUNTIME.memory_profile
-
-
 PROMPT_ENHANCER_SYSTEM_PATH = RUNTIME.prompt_system_path
 PROMPT_ENHANCER_SYSTEMS = RUNTIME.prompt_systems
-
-
 LTX25_WORKFLOW_TEMPLATE_DIR = RUNTIME.workflow_dir
-
-
-# The official H3 workflow uses a 768×1344 pixel-area native canvas. Larger
-# entries are still available for workflows that can handle them.
-
-
-# Preset dimensions use the model-required 32-pixel grid (1080p aligns to 1088).
-
-
 REQUEST_TIMEOUT = RUNTIME.request_timeout
 GENERATION_TIMEOUT = RUNTIME.generation_timeout
 POLL_SECONDS = RUNTIME.poll_seconds
 OUTPUTS_DIR = RUNTIME.outputs_dir
 GALLERY_THUMBNAILS_DIR = RUNTIME.gallery_thumbnails_dir
 GALLERY_LIMIT = RUNTIME.gallery_limit
-
-
 GALLERY_METADATA_CACHE_LIMIT = RUNTIME.gallery_metadata_cache_limit
-
 HTTP = requests.Session()
 
 
+def _promptcontroller():
+    return PromptController(
+        PromptServices(
+            H3Error=H3Error,
+            JOBS=JOBS,
+            Path=Path,
+            QWEN_EDIT_SIZE_MANUAL=QWEN_EDIT_SIZE_MANUAL,
+            QWEN_EDIT_SIZE_MATCH=QWEN_EDIT_SIZE_MATCH,
+            QWEN_EDIT_SIZE_MAX=QWEN_EDIT_SIZE_MAX,
+            _runtime_config=_runtime_config,
+            gr=gr,
+            nullcontext=nullcontext,
+            prompt_service=prompt_service,
+            qwen_generation=qwen_generation,
+            qwen_edit_size_flags=qwen_edit_size_flags,
+        )
+    )
+
+
+def _modelcontroller():
+    return ModelController(
+        ModelServices(
+            COMFY_DIR=COMFY_DIR,
+            H3Error=H3Error,
+            H3_TEXT_ENCODER_CHOICES=H3_TEXT_ENCODER_CHOICES,
+            MODELS_CONFIG=MODELS_CONFIG,
+            MODEL_SPECS=MODEL_SPECS,
+            _runtime_config=_runtime_config,
+            gr=gr,
+            ltx25_official_inventory_keys=ltx25_official_inventory_keys,
+            ltx25_workflow_entry=ltx25_workflow_entry,
+            ltx25_workflow_model_keys=ltx25_workflow_model_keys,
+            model_file_is_ready=model_file_is_ready,
+            model_service=model_service,
+            resolve_hf_token=resolve_hf_token,
+            stale_model_keys=stale_model_keys,
+            sync_models=sync_models,
+            unload_comfy_models=unload_comfy_models,
+            load_model_config=load_model_config,
+            render_ltx25_official_model_inventory=render_ltx25_official_model_inventory,
+            _prepare_ltx25_model_set=_prepare_ltx25_model_set,
+            ensure_trt_video_vae_engine=ensure_trt_video_vae_engine,
+        )
+    )
+
+
+def _mediacontroller():
+    return MediaController(
+        MediaServices(
+            AUDIO_EXTENSIONS=AUDIO_EXTENSIONS,
+            COMFY_POSTPROCESS_OPTIONS=COMFY_POSTPROCESS_OPTIONS,
+            GALLERY_THUMBNAILS_DIR=GALLERY_THUMBNAILS_DIR,
+            H3Error=H3Error,
+            IMAGE_EXTENSIONS=IMAGE_EXTENSIONS,
+            LTX25_POSTPROCESS_MODELS=LTX25_POSTPROCESS_MODELS,
+            LTX25_SAME_RESOLUTION_OPTIONS=LTX25_SAME_RESOLUTION_OPTIONS,
+            OUTPUTS_DIR=OUTPUTS_DIR,
+            POSTPROCESS_OPTIONS=POSTPROCESS_OPTIONS,
+            Path=Path,
+            SEEDVR2_UPSCALE=SEEDVR2_UPSCALE,
+            SWIFTVR_UPSCALE=SWIFTVR_UPSCALE,
+            UPSCALE_RESOLUTION_PRESETS=UPSCALE_RESOLUTION_PRESETS,
+            VIDEO_EXTENSIONS=VIDEO_EXTENSIONS,
+            _runtime_config=_runtime_config,
+            build_seedvr2_image_upscale_graph=build_seedvr2_image_upscale_graph,
+            build_upscale_graph=build_upscale_graph,
+            cleanup_upscale_clip_batch=cleanup_upscale_clip_batch,
+            concat_upscaled_clips=concat_upscaled_clips,
+            copy_media=copy_media,
+            ensure_ltx25_upscale_models=ensure_ltx25_upscale_models,
+            ensure_seedvr2_upscale_models=ensure_seedvr2_upscale_models,
+            gallery_store=gallery_store,
+            gr=gr,
+            input_image_upscale_dimensions=input_image_upscale_dimensions,
+            load_model_config=load_model_config,
+            object_info=object_info,
+            poll_comfy_progress=poll_comfy_progress,
+            postprocess_swiftvr_video=postprocess_swiftvr_video,
+            postprocess_video=postprocess_video,
+            prepare_upscale_clip_batch=prepare_upscale_clip_batch,
+            probe_video_metadata=probe_video_metadata,
+            progress_status=progress_status,
+            random=random,
+            required_seedvr2_image_upscale_nodes=required_seedvr2_image_upscale_nodes,
+            required_upscale_nodes=required_upscale_nodes,
+            resolve_output=resolve_output,
+            resolve_seedvr2_input_upscale_outputs=resolve_seedvr2_input_upscale_outputs,
+            snapshot_path=snapshot_path,
+            stage_file=stage_file,
+            stream_comfy_progress=stream_comfy_progress,
+            submit_prompt=submit_prompt,
+            time=time,
+            unload_comfy_models=unload_comfy_models,
+            upscale_target_dimensions=upscale_target_dimensions,
+            uuid=uuid,
+            wait_for_history=wait_for_history,
+            write_snapshot=write_snapshot,
+            gallery_audio_paths=gallery_audio_paths,
+            empty_generated_gallery=empty_generated_gallery,
+            gallery_processed_result=gallery_processed_result,
+            generated_video_family=generated_video_family,
+            refresh_gallery=refresh_gallery,
+            gallery_media_processed_result=gallery_media_processed_result,
+            gallery_video_paths=gallery_video_paths,
+            absolute_gallery_media_download_url=absolute_gallery_media_download_url,
+            managed_gallery_audio_path=managed_gallery_audio_path,
+            managed_video_path=managed_video_path,
+            gallery_image_paths=gallery_image_paths,
+            postprocess_selected_gallery_image=postprocess_selected_gallery_image,
+            managed_gallery_image_path=managed_gallery_image_path,
+            gallery_media_download_path=gallery_media_download_path,
+            refresh_gallery_page=refresh_gallery_page,
+            gallery_mutation_result=gallery_mutation_result,
+            gallery_thumbnail=gallery_thumbnail,
+            refresh_media_gallery=refresh_media_gallery,
+            gallery_progress_result=gallery_progress_result,
+            delete_selected_gallery_video=delete_selected_gallery_video,
+            gallery_preview_updates=gallery_preview_updates,
+            absolute_video_download_url=absolute_video_download_url,
+            gallery_media_progress_result=gallery_media_progress_result,
+            gallery_thumbnail_path=gallery_thumbnail_path,
+            forget_gallery_metadata=forget_gallery_metadata,
+            gallery_media_mode=gallery_media_mode,
+            select_gallery_video=select_gallery_video,
+            video_download_path=video_download_path,
+            postprocess_selected_gallery_video=postprocess_selected_gallery_video,
+            gallery_image_resolution_text=gallery_image_resolution_text,
+            gallery_media_mutation_result=gallery_media_mutation_result,
+            absolute_video_url=absolute_video_url,
+            gallery_resolution_text=gallery_resolution_text,
+            refresh_media_page=refresh_media_page,
+        )
+    )
+
+
 def _runtime_config() -> RuntimeConfig:
-    """Build an explicit service context from the legacy application aliases."""
+    """Build an explicit service context from startup configuration."""
     return replace(
         RUNTIME,
         input_root=INPUT_DIR,
@@ -466,39 +487,35 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
 
 
 def _gemini_api_key(temporary_key: str | None) -> str:
-    return prompt_service._gemini_api_key(temporary_key)
+    return _promptcontroller()._gemini_api_key(temporary_key)
 
 
 def _lightning_api_key(temporary_key: str | None) -> str:
-    return prompt_service._lightning_api_key(temporary_key)
+    return _promptcontroller()._lightning_api_key(temporary_key)
 
 
 def _uploaded_media_path(value: Any) -> Path | None:
-    return prompt_service._uploaded_media_path(value)
+    return _promptcontroller()._uploaded_media_path(value)
 
 
 def _gemini_mime_type(path: Path) -> str:
-    return prompt_service._gemini_mime_type(path)
+    return _promptcontroller()._gemini_mime_type(path)
 
 
 def _gemini_error(response: requests.Response, action: str) -> H3Error:
-    return prompt_service._gemini_error(response, action)
+    return _promptcontroller()._gemini_error(response, action)
 
 
 def _upload_gemini_file(
-    session: requests.Session,
-    path: Path,
-    api_key: str,
+    session: requests.Session, path: Path, api_key: str
 ) -> dict[str, Any]:
-    return prompt_service._upload_gemini_file(session, path, api_key)
+    return _promptcontroller()._upload_gemini_file(session, path, api_key)
 
 
 def _wait_for_gemini_file(
-    session: requests.Session,
-    file_info: dict[str, Any],
-    api_key: str,
+    session: requests.Session, file_info: dict[str, Any], api_key: str
 ) -> dict[str, Any]:
-    return prompt_service._wait_for_gemini_file(session, file_info, api_key)
+    return _promptcontroller()._wait_for_gemini_file(session, file_info, api_key)
 
 
 def _active_prompt_media(
@@ -509,7 +526,7 @@ def _active_prompt_media(
     reference_videos: Iterable[Any],
     reference_audios: Iterable[Any],
 ) -> list[tuple[str, Path]]:
-    return prompt_service._active_prompt_media(
+    return _promptcontroller()._active_prompt_media(
         mode,
         first_image,
         last_image,
@@ -529,7 +546,7 @@ def _enhance_prompt_from_media(
     media_values: Iterable[tuple[str, Any]],
     context: str,
 ) -> tuple[str, str]:
-    return prompt_service._enhance_prompt_from_media(
+    return _promptcontroller()._enhance_prompt_from_media(
         prompt=prompt,
         model=model,
         temporary_api_key=temporary_api_key,
@@ -551,7 +568,7 @@ def enhance_music3_prompt(
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
 ) -> tuple[str, str, str]:
-    return prompt_service.enhance_music3_prompt(
+    return _promptcontroller().enhance_music3_prompt(
         prompt,
         model,
         temporary_api_key,
@@ -559,9 +576,8 @@ def enhance_music3_prompt(
         ref_image_1,
         ref_image_2,
         ref_image_3,
-        backend=backend,
-        lightning_api_key=lightning_api_key,
-        runtime=_runtime_config(),
+        backend,
+        lightning_api_key,
     )
 
 
@@ -579,7 +595,7 @@ def enhance_ltx25_prompt(
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
 ) -> tuple[str, str]:
-    return prompt_service.enhance_ltx25_prompt(
+    return _promptcontroller().enhance_ltx25_prompt(
         prompt,
         model,
         temporary_api_key,
@@ -590,21 +606,13 @@ def enhance_ltx25_prompt(
         duration,
         width,
         height,
-        backend=backend,
-        lightning_api_key=lightning_api_key,
-        runtime=_runtime_config(),
+        backend,
+        lightning_api_key,
     )
 
 
 def qwen_edit_size_flags(edit_size: str) -> tuple[bool, bool]:
-    """Map the mutually exclusive UI choice onto the existing request fields."""
-    if edit_size not in {
-        QWEN_EDIT_SIZE_MATCH,
-        QWEN_EDIT_SIZE_MAX,
-        QWEN_EDIT_SIZE_MANUAL,
-    }:
-        raise H3Error("Choose a valid Qwen edit output size.")
-    return edit_size == QWEN_EDIT_SIZE_MATCH, edit_size == QWEN_EDIT_SIZE_MAX
+    return _promptcontroller().qwen_edit_size_flags(edit_size)
 
 
 def enhance_qwen_image21_prompt(
@@ -619,21 +627,7 @@ def enhance_qwen_image21_prompt(
     lightning_api_key: str = "",
     edit_size: str = QWEN_EDIT_SIZE_MATCH,
 ) -> tuple[str, str]:
-    match_input_size, max_resolution = qwen_edit_size_flags(edit_size)
-    if (match_input_size or max_resolution) and str(mode).strip().lower() == "image edit":
-        uploaded = reference_images or []
-        if isinstance(uploaded, (str, Path)):
-            uploaded = [uploaded]
-        if uploaded:
-            source_width, source_height = qwen_generation.first_reference_dimensions(
-                str(uploaded[0])
-            )
-            width, height = (
-                qwen_generation.max_qwen_edit_dimensions(source_width, source_height)
-                if max_resolution
-                else (source_width, source_height)
-            )
-    return prompt_service.enhance_qwen_image21_prompt(
+    return _promptcontroller().enhance_qwen_image21_prompt(
         prompt,
         model,
         temporary_api_key,
@@ -641,9 +635,9 @@ def enhance_qwen_image21_prompt(
         reference_images,
         width,
         height,
-        backend=backend,
-        lightning_api_key=lightning_api_key,
-        runtime=_runtime_config(),
+        backend,
+        lightning_api_key,
+        edit_size,
     )
 
 
@@ -657,16 +651,15 @@ def enhance_yue2_prompt(
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
 ) -> tuple[str, str, str]:
-    return prompt_service.enhance_yue2_prompt(
+    return _promptcontroller().enhance_yue2_prompt(
         style,
         model,
         temporary_api_key,
         lyrics,
         mode,
         duration,
-        backend=backend,
-        lightning_api_key=lightning_api_key,
-        runtime=_runtime_config(),
+        backend,
+        lightning_api_key,
     )
 
 
@@ -698,7 +691,7 @@ def _enhance_h3_prompt_with_gemini(
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
 ) -> tuple[str, str]:
-    return prompt_service._enhance_h3_prompt_with_gemini(
+    return _promptcontroller()._enhance_h3_prompt_with_gemini(
         prompt,
         model,
         temporary_api_key,
@@ -725,7 +718,6 @@ def _enhance_h3_prompt_with_gemini(
         height,
         result_format,
         image_frames,
-        runtime=_runtime_config(),
     )
 
 
@@ -756,7 +748,7 @@ def _enhance_h3_prompt_with_lightning(
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
 ) -> tuple[str, str]:
-    return prompt_service._enhance_h3_prompt_with_lightning(
+    return _promptcontroller()._enhance_h3_prompt_with_lightning(
         prompt,
         temporary_api_key,
         mode,
@@ -782,12 +774,11 @@ def _enhance_h3_prompt_with_lightning(
         height,
         result_format,
         image_frames,
-        runtime=_runtime_config(),
     )
 
 
 def fl2va_prompt_voice_context(prompt: str, mode: str, *slots: Any):
-    return prompt_service.fl2va_prompt_voice_context(prompt, mode, *slots)
+    return _promptcontroller().fl2va_prompt_voice_context(prompt, mode, *slots)
 
 
 def enhance_h3_prompt(
@@ -829,381 +820,209 @@ def enhance_h3_prompt(
     fl2va_audio_2: Any = None,
     fl2va_audio_3: Any = None,
 ) -> tuple[str, str]:
-    lease = (
-        JOBS.maintenance("prompt-enhance")
-        if backend == "Local MiniMax-H3 8B"
-        else nullcontext()
+    return _promptcontroller().enhance_h3_prompt(
+        prompt,
+        backend,
+        local_base_model,
+        local_max_new_tokens,
+        local_temperature,
+        local_top_p,
+        local_greedy,
+        local_seed,
+        gemini_model,
+        gemini_api_key,
+        lightning_api_key,
+        mode,
+        first_image,
+        last_image,
+        ref_image_1,
+        ref_image_2,
+        ref_image_3,
+        ref_image_4,
+        ref_image_5,
+        ref_image_6,
+        ref_image_7,
+        ref_image_8,
+        ref_image_9,
+        ref_video_1,
+        ref_video_2,
+        ref_video_3,
+        ref_audio_1,
+        ref_audio_2,
+        ref_audio_3,
+        duration,
+        width,
+        height,
+        result_format,
+        image_frames,
+        fl2va_audio_1,
+        fl2va_audio_2,
+        fl2va_audio_3,
     )
-    with lease:
-        return prompt_service.enhance_h3_prompt(
-            prompt,
-            backend,
-            local_base_model,
-            local_max_new_tokens,
-            local_temperature,
-            local_top_p,
-            local_greedy,
-            local_seed,
-            gemini_model,
-            gemini_api_key,
-            lightning_api_key,
-            mode,
-            first_image,
-            last_image,
-            ref_image_1,
-            ref_image_2,
-            ref_image_3,
-            ref_image_4,
-            ref_image_5,
-            ref_image_6,
-            ref_image_7,
-            ref_image_8,
-            ref_image_9,
-            ref_video_1,
-            ref_video_2,
-            ref_video_3,
-            ref_audio_1,
-            ref_audio_2,
-            ref_audio_3,
-            duration,
-            width,
-            height,
-            result_format,
-            image_frames,
-            fl2va_audio_1,
-            fl2va_audio_2,
-            fl2va_audio_3,
-            runtime=_runtime_config(),
-        )
 
 
 def prompt_writer_backend_visibility(backend: str) -> tuple[Any, Any, Any]:
-    """Show only controls belonging to the selected prompt-writer backend."""
-    local_selected = backend == "Local MiniMax-H3 8B"
-    return (
-        gr.update(visible=local_selected),
-        gr.update(visible=backend == "Gemini"),
-        gr.update(visible=backend == "Lightning AI"),
-    )
+    return _promptcontroller().prompt_writer_backend_visibility(backend)
 
 
 def load_model_config() -> ModelConfig:
-    return model_service.load_model_config(runtime=_runtime_config())
+    return _modelcontroller().load_model_config()
 
 
 def trt_vae_decoder_paths(models: ModelConfig) -> tuple[Path, Path, Path]:
-    return model_service.trt_vae_decoder_paths(models, runtime=_runtime_config())
+    return _modelcontroller().trt_vae_decoder_paths(models)
 
 
 def _load_trt_vae_compiler(node_path: Path) -> Any:
-    return model_service._load_trt_vae_compiler(node_path, runtime=_runtime_config())
+    return _modelcontroller()._load_trt_vae_compiler(node_path)
 
 
 def trt_vae_runtime_fingerprint(models: ModelConfig | None = None) -> str:
-    return model_service.trt_vae_runtime_fingerprint(models, runtime=_runtime_config())
+    return _modelcontroller().trt_vae_runtime_fingerprint(models)
 
 
 def is_trt_engine_loadable(engine_path: Path) -> bool:
-    return model_service.is_trt_engine_loadable(engine_path, runtime=_runtime_config())
+    return _modelcontroller().is_trt_engine_loadable(engine_path)
 
 
 def trt_vae_engine_is_current(models: ModelConfig) -> bool:
-    return model_service.trt_vae_engine_is_current(models, runtime=_runtime_config())
+    return _modelcontroller().trt_vae_engine_is_current(models)
 
 
 def ensure_h3_text_encoder(models: ModelConfig, model_choice: str) -> tuple[str, bool]:
-    return model_service.ensure_h3_text_encoder(
-        models, model_choice, runtime=_runtime_config()
-    )
+    return _modelcontroller().ensure_h3_text_encoder(models, model_choice)
 
 
 def text_encoder_offload_update(model_choice: str):
-    """Keep the UI memory option aligned with the selected encoder tier."""
-    bf16 = H3_TEXT_ENCODER_CHOICES.get(str(model_choice)) == "text_encoder_bf16"
-    return gr.update(
-        value=bf16,
-        interactive=not bf16,
-        info=(
-            "Required for the 51.5 GB BF16 encoder; models are unloaded between "
-            "text encoding, diffusion, latent upscaling, and VAE decoding."
-            if bf16
-            else "Unload resident models at each H3 stage boundary to reduce peak VRAM."
-        ),
-    )
+    return _modelcontroller().text_encoder_offload_update(model_choice)
 
 
 def ensure_h3_semantic_bridge() -> None:
-    return model_service.ensure_h3_semantic_bridge(runtime=_runtime_config())
+    return _modelcontroller().ensure_h3_semantic_bridge()
 
 
 def ensure_h3_latent_upscaler_model(model_choice: str) -> bool:
-    return model_service.ensure_h3_latent_upscaler_model(
-        model_choice, runtime=_runtime_config()
-    )
+    return _modelcontroller().ensure_h3_latent_upscaler_model(model_choice)
 
 
-def ensure_profile_model(
-    profile_key: str,
-    profile: ModelProfile,
-    mode: str,
-) -> bool:
-    return model_service.ensure_profile_model(
-        profile_key, profile, mode, runtime=_runtime_config()
-    )
+def ensure_profile_model(profile_key: str, profile: ModelProfile, mode: str) -> bool:
+    return _modelcontroller().ensure_profile_model(profile_key, profile, mode)
 
 
 def ensure_turbo_lora(models: ModelConfig, turbo_variant: str, mode: str) -> bool:
-    return model_service.ensure_turbo_lora(
-        models, turbo_variant, mode, runtime=_runtime_config()
-    )
+    return _modelcontroller().ensure_turbo_lora(models, turbo_variant, mode)
 
 
 def ensure_base_video_vae(models: ModelConfig) -> bool:
-    return model_service.ensure_base_video_vae(models, runtime=_runtime_config())
+    return _modelcontroller().ensure_base_video_vae(models)
 
 
 def ensure_audio_vae(models: ModelConfig) -> bool:
-    return model_service.ensure_audio_vae(models, runtime=_runtime_config())
+    return _modelcontroller().ensure_audio_vae(models)
 
 
 def ensure_int8_video_vae(models: ModelConfig, *, lynnreal: bool = False) -> bool:
-    return model_service.ensure_int8_video_vae(
-        models, runtime=_runtime_config(), lynnreal=lynnreal
+    return _modelcontroller().ensure_int8_video_vae(models, lynnreal=lynnreal)
+
+
+def ensure_trt_video_vae(models: ModelConfig, *, require_engine: bool = True) -> bool:
+    return _modelcontroller().ensure_trt_video_vae(
+        models, require_engine=require_engine
     )
 
 
-def ensure_trt_video_vae(
-    models: ModelConfig,
-    *,
-    require_engine: bool = True,
-) -> bool:
-    return model_service.ensure_trt_video_vae(
-        models, require_engine=require_engine, runtime=_runtime_config()
-    )
-
-
-def _build_trt_video_vae_engine(
-    models: ModelConfig,
-    progress: Any,
-) -> None:
-    return model_service._build_trt_video_vae_engine(
-        models, progress, release_backend=unload_comfy_models, runtime=_runtime_config()
-    )
+def _build_trt_video_vae_engine(models: ModelConfig, progress: Any) -> None:
+    return _modelcontroller()._build_trt_video_vae_engine(models, progress)
 
 
 def ensure_trt_video_vae_engine(
-    models: ModelConfig,
-    *,
-    force: bool = False,
-    progress=gr.Progress(track_tqdm=False),
+    models: ModelConfig, *, force: bool = False, progress=gr.Progress(track_tqdm=False)
 ) -> bool:
-    return model_service.ensure_trt_video_vae_engine(
-        models,
-        force=force,
-        progress=progress,
-        release_backend=unload_comfy_models,
-        runtime=_runtime_config(),
+    return _modelcontroller().ensure_trt_video_vae_engine(
+        models, force=force, progress=progress
     )
 
 
-def compile_trt_video_vae(
-    progress=gr.Progress(track_tqdm=False),
-) -> str:
-    """Build the local TensorRT decoder engine from the manual UI action."""
-    try:
-        ensure_trt_video_vae_engine(
-            load_model_config(),
-            force=True,
-            progress=progress,
-        )
-        return "TensorRT VAE decoder compiled and ready to use."
-    except Exception as exc:
-        return f"TensorRT VAE compilation failed: {exc}"
+def compile_trt_video_vae(progress=gr.Progress(track_tqdm=False)) -> str:
+    return _modelcontroller().compile_trt_video_vae(progress)
 
 
 def ensure_single_frame_image_vae(models: ModelConfig) -> bool:
-    return model_service.ensure_single_frame_image_vae(
-        models, runtime=_runtime_config()
-    )
+    return _modelcontroller().ensure_single_frame_image_vae(models)
 
 
 def missing_ltx25_model_names(model_choice: str = DEFAULT_LTX25_MODEL) -> list[str]:
-    return model_service.missing_ltx25_model_names(
-        model_choice, runtime=_runtime_config()
-    )
+    return _modelcontroller().missing_ltx25_model_names(model_choice)
 
 
 def ensure_ltx25_models(model_choice: str = DEFAULT_LTX25_MODEL) -> bool:
-    return model_service.ensure_ltx25_models(model_choice, runtime=_runtime_config())
+    return _modelcontroller().ensure_ltx25_models(model_choice)
 
 
 def ensure_ltx25_ingredients_model() -> bool:
-    return model_service.ensure_ltx25_ingredients_model(runtime=_runtime_config())
+    return _modelcontroller().ensure_ltx25_ingredients_model()
 
 
 def render_ltx25_official_model_inventory() -> str:
-    keys = ltx25_official_inventory_keys()
-    installed = 0
-    rows = []
-    for key in keys:
-        spec = MODEL_SPECS[key]
-        path = COMFY_DIR / "models" / spec.folder / spec.local_name
-        ready = model_file_is_ready(path)
-        installed += int(ready)
-        status = "✅ Installed" if ready else "⬇️ Available"
-        source = f"[{spec.repo_id}](https://huggingface.co/{spec.repo_id})"
-        rows.append(f"| `{spec.local_name}` | `{spec.folder}` | {status} | {source} |")
-    return (
-        f"**Installed: {installed}/{len(keys)}**\n\n"
-        "| Model | ComfyUI folder | Status | Source / license |\n"
-        "|---|---|---|---|\n" + "\n".join(rows)
-    )
+    return _modelcontroller().render_ltx25_official_model_inventory()
 
 
 def render_ltx25_workflow_details(workflow_label: str) -> str:
-    entry = ltx25_workflow_entry(workflow_label)
-    extra_names = [MODEL_SPECS[key].local_name for key in entry["extra_models"]]
-    extras = (
-        ", ".join(f"`{name}`" for name in extra_names)
-        if extra_names
-        else "No use-case-specific checkpoint."
-    )
-    return (
-        f"### {workflow_label}\n\n"
-        f"{entry['description']}\n\n"
-        f"**Inputs:** {entry['inputs']}\n\n"
-        f"**Additional checkpoint(s):** {extras}\n\n"
-        "Model preparation also installs the official BF16 transformer, text "
-        "encoder, prompt enhancer, audio VAE, and (for video workflows) the "
-        "full diffusion-decoder video VAE. These are large gated downloads.\n\n"
-        f"[Download official workflow JSON](/ltx25-workflows/{entry['id']}.json) · "
-        "[Open ComfyUI](/comfyui/)\n\n"
-        "The template is also installed under **Workflows → Browse → LTX 2.5**. "
-        "Download its models here first, then reload ComfyUI so its model "
-        "dropdowns rescan the shared model folders."
-    )
+    return _modelcontroller().render_ltx25_workflow_details(workflow_label)
 
 
 def _prepare_ltx25_model_set(required_keys: Iterable[str], label: str):
-    """Lazily fetch a named set and refresh the visible model inventory."""
-    try:
-        required_keys = tuple(dict.fromkeys(required_keys))
-        stale = stale_model_keys(
-            root=COMFY_DIR / "models",
-            manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
-            model_keys=required_keys,
-        )
-        if not stale:
-            yield (
-                f"Ready: all models for **{label}** are installed.",
-                render_ltx25_official_model_inventory(),
-            )
-            return
-        names = ", ".join(MODEL_SPECS[key].local_name for key in stale)
-        yield (
-            f"Downloading models for **{label}**: {names}",
-            render_ltx25_official_model_inventory(),
-        )
-        sync_models(
-            root=COMFY_DIR / "models",
-            manifest_path=MODELS_CONFIG.parent / "h3_model_manifest.json",
-            token=resolve_hf_token(),
-            log_prefix="[ltx25-workflow-on-demand]",
-            model_keys=stale,
-            download_workers=min(len(stale), 4),
-        )
-        missing = [
-            MODEL_SPECS[key].local_name
-            for key in required_keys
-            if not model_file_is_ready(
-                COMFY_DIR
-                / "models"
-                / MODEL_SPECS[key].folder
-                / MODEL_SPECS[key].local_name
-            )
-        ]
-        if missing:
-            raise H3Error("Downloads did not produce: " + ", ".join(missing))
-        yield (
-            f"Ready: installed all models for **{label}**. Open ComfyUI and "
-            "refresh model definitions or reload the page.",
-            render_ltx25_official_model_inventory(),
-        )
-    except Exception as exc:
-        yield (
-            "Error downloading official workflow models. Open the Source / "
-            "license links below, accept any gated terms, and authenticate "
-            "with `hf auth login` or HF_TOKEN. "
-            f"Details: {exc}",
-            render_ltx25_official_model_inventory(),
-        )
+    return _modelcontroller()._prepare_ltx25_model_set(required_keys, label)
 
 
 def prepare_ltx25_official_workflow(workflow_label: str):
-    """Lazily fetch every checkpoint referenced by one official template."""
-    yield from _prepare_ltx25_model_set(
-        ltx25_workflow_model_keys(workflow_label),
-        workflow_label,
-    )
+    return _modelcontroller().prepare_ltx25_official_workflow(workflow_label)
 
 
 def prepare_all_ltx25_official_models():
-    """Download every missing model displayed in the official inventory."""
-    yield from _prepare_ltx25_model_set(
-        ltx25_official_inventory_keys(),
-        "all official workflow models",
-    )
+    return _modelcontroller().prepare_all_ltx25_official_models()
 
 
-def ensure_seedvr2_upscale_models(
-    models: ModelConfig,
-    model_choice: str,
-) -> bool:
-    return model_service.ensure_seedvr2_upscale_models(
-        models, model_choice, runtime=_runtime_config()
-    )
+def ensure_seedvr2_upscale_models(models: ModelConfig, model_choice: str) -> bool:
+    return _modelcontroller().ensure_seedvr2_upscale_models(models, model_choice)
 
 
 def ensure_ltx25_upscale_models(
-    model_choice: str = DEFAULT_LTX25_MODEL, *, option: str = LTX25_UPSCALE,
+    model_choice: str = DEFAULT_LTX25_MODEL, *, option: str = LTX25_UPSCALE
 ) -> bool:
-    return model_service.ensure_ltx25_upscale_models(
-        model_choice, runtime=_runtime_config(), option=option,
-    )
+    return _modelcontroller().ensure_ltx25_upscale_models(model_choice, option=option)
 
 
 def missing_music3_model_names(model_choice: str) -> list[str]:
-    return model_service.missing_music3_model_names(
-        model_choice, runtime=_runtime_config()
-    )
+    return _modelcontroller().missing_music3_model_names(model_choice)
 
 
 def ensure_music3_models(model_choice: str) -> bool:
-    return model_service.ensure_music3_models(model_choice, runtime=_runtime_config())
+    return _modelcontroller().ensure_music3_models(model_choice)
 
 
 def missing_qwen_image21_model_names(
     model_choice: str, text_encoder_choice: str, turbo_variant: str = "Off"
 ) -> list[str]:
-    return model_service.missing_qwen_image21_model_names(
-        model_choice, text_encoder_choice, turbo_variant, runtime=_runtime_config()
+    return _modelcontroller().missing_qwen_image21_model_names(
+        model_choice, text_encoder_choice, turbo_variant
     )
 
 
 def ensure_qwen_image21_models(
     model_choice: str, text_encoder_choice: str, turbo_variant: str = "Off"
 ) -> bool:
-    return model_service.ensure_qwen_image21_models(
-        model_choice, text_encoder_choice, turbo_variant, runtime=_runtime_config()
+    return _modelcontroller().ensure_qwen_image21_models(
+        model_choice, text_encoder_choice, turbo_variant
     )
 
 
 def missing_yue2_model_names(model_choice: str) -> list[str]:
-    return model_service.missing_yue2_model_names(model_choice, runtime=_runtime_config())
+    return _modelcontroller().missing_yue2_model_names(model_choice)
 
 
 def ensure_yue2_models(model_choice: str) -> bool:
-    return model_service.ensure_yue2_models(model_choice, runtime=_runtime_config())
+    return _modelcontroller().ensure_yue2_models(model_choice)
 
 
 def api_get(path: str, **kwargs: Any) -> requests.Response:
@@ -1235,7 +1054,7 @@ def resolution_control_updates(
         resolved_width = snap_to_grid(width, alignment) if width is not None else 864
         resolved_height = snap_to_grid(height, alignment) if height is not None else 480
     except Exception:
-        resolved_width, resolved_height = 864, 480
+        resolved_width, resolved_height = (864, 480)
     prefix = "**Latent upscale 64-pixel alignment** · " if latent_upscale else ""
     return (
         resolved_width,
@@ -1297,7 +1116,6 @@ def auto_resolution_from_start_frame(
             fallback_height,
             resolution_summary(fallback_width, fallback_height),
         )
-
     try:
         from PIL import Image
 
@@ -1314,14 +1132,11 @@ def auto_resolution_from_start_frame(
             fallback_height,
             f"⚠️ Unable to read start frame dimensions: {exc}",
         )
-    return width, height, resolution_summary(width, height)
+    return (width, height, resolution_summary(width, height))
 
 
 def resolution_choice_updates(
-    name: str,
-    tier: str,
-    latent_upscale: bool,
-    result_format: str,
+    name: str, tier: str, latent_upscale: bool, result_format: str
 ) -> tuple[int | float, int | float, str]:
     """Resolve and align a preset before updating its controls.
 
@@ -1334,9 +1149,7 @@ def resolution_choice_updates(
 
 
 def start_frame_generation_resolution(
-    first_image: Any,
-    *,
-    alignment: int,
+    first_image: Any, *, alignment: int
 ) -> tuple[int, int] | None:
     paths = normalize_paths(first_image)
     if not paths:
@@ -1346,9 +1159,7 @@ def start_frame_generation_resolution(
 
         with Image.open(paths[0]) as image:
             return resolution_for_aspect_ratio(
-                *image.size,
-                preserve_native=True,
-                alignment=alignment,
+                *image.size, preserve_native=True, alignment=alignment
             )
     except Exception as exc:
         raise H3Error(f"Unable to read start frame dimensions: {exc}") from exc
@@ -1365,7 +1176,7 @@ def generation_resolution(
 ) -> tuple[int, int]:
     normalized_result = normalize_result_format(result_format)
     if normalized_result == "Audio":
-        return 32, 32
+        return (32, 32)
     alignment = 64 if latent_upscale else 32
     if normalized_result == "Image" and mode == "First / last frame" and first_image:
         start_resolution = start_frame_generation_resolution(
@@ -1373,7 +1184,7 @@ def generation_resolution(
         )
         if start_resolution is not None:
             return start_resolution
-    return snap_to_grid(width, alignment), snap_to_grid(height, alignment)
+    return (snap_to_grid(width, alignment), snap_to_grid(height, alignment))
 
 
 def resolve_sol_policy(
@@ -1391,39 +1202,30 @@ def resolve_sol_policy(
         mode, width, height, duration, first_image, last_image
     )
     if requested in {"dense", "kitchen", "comfy-kitchen"}:
-        return False, tokens, "forced Comfy Kitchen"
+        return (False, tokens, "forced Comfy Kitchen")
     if requested in {"sage", "sage 2", "sage2"}:
-        return False, tokens, "forced Sage 2"
+        return (False, tokens, "forced Sage 2")
     if requested in {"sla", "sla attention", "sparse-linear"}:
-        return False, tokens, "forced SLA"
+        return (False, tokens, "forced SLA")
     if SERVER_ATTENTION_BACKEND != "sol":
-        return False, tokens, "Sol backend unavailable"
+        return (False, tokens, "Sol backend unavailable")
     if requested in {"sol-attn", "sol", "sparse"}:
-        return True, tokens, "forced Sol-Attn"
-    # Reference conditioning is not available to the estimator before ComfyUI
-    # encodes the uploaded media. Treat it as a large job in both generation
-    # modes instead of making a decision from the target tokens alone.
+        return (True, tokens, "forced Sol-Attn")
     if mode == "Reference media":
         prefix = "Auto Turbo" if use_turbo else "Auto"
-        return True, tokens, f"{prefix}: reference mode"
+        return (True, tokens, f"{prefix}: reference mode")
     if use_turbo:
         enabled = tokens >= AUTO_SOL_TOKEN_THRESHOLD
         return (
             enabled,
             tokens,
-            (
-                f"Auto Turbo: {tokens:,} target tokens "
-                f"{'≥' if enabled else '<'} {AUTO_SOL_TOKEN_THRESHOLD:,}"
-            ),
+            f"Auto Turbo: {tokens:,} target tokens {('≥' if enabled else '<')} {AUTO_SOL_TOKEN_THRESHOLD:,}",
         )
     enabled = tokens >= AUTO_SOL_TOKEN_THRESHOLD
     return (
         enabled,
         tokens,
-        (
-            f"Auto: {tokens:,} target tokens "
-            f"{'≥' if enabled else '<'} {AUTO_SOL_TOKEN_THRESHOLD:,}"
-        ),
+        f"Auto: {tokens:,} target tokens {('≥' if enabled else '<')} {AUTO_SOL_TOKEN_THRESHOLD:,}",
     )
 
 
@@ -1454,7 +1256,7 @@ def result_format_layout_updates(
     result_format = presentation.format
     is_image = presentation.is_image
     is_audio = presentation.is_audio
-    display_width, display_height = current_width, current_height
+    display_width, display_height = (current_width, current_height)
     if not is_audio:
         alignment = 64 if latent_upscale else 32
         if first_image:
@@ -1480,11 +1282,7 @@ def result_format_layout_updates(
         gr.update(visible=False),
         gr.update(visible=False),
         gr.update(visible=False),
-        (
-            gr.update(visible=True)
-            if presentation.is_video
-            else gr.update(visible=False)
-        ),
+        gr.update(visible=True) if presentation.is_video else gr.update(visible=False),
         gr.update(visible=is_image),
         gr.update(visible=is_audio),
         (
@@ -1492,7 +1290,7 @@ def result_format_layout_updates(
             if presentation.is_video
             else gr.update(interactive=False)
         ),
-        (gr.update(interactive=False) if is_audio else gr.update(interactive=True)),
+        gr.update(interactive=False) if is_audio else gr.update(interactive=True),
         gr.update(value=display_width, interactive=not is_audio),
         gr.update(value=display_height, interactive=not is_audio),
         (
@@ -1508,17 +1306,16 @@ def image_vae_frame_updates(image_vae: Any):
     single = normalize_image_vae(image_vae) != DEFAULT_IMAGE_VAE
     return gr.update(
         interactive=not single,
-        info="Effective output: one frame with the 500K decoder."
-        if single
-        else "Choose 1–20 decoded frames.",
+        info=(
+            "Effective output: one frame with the 500K decoder."
+            if single
+            else "Choose 1–20 decoded frames."
+        ),
     )
 
 
 def latent_upscale_layout_updates(
-    enabled: bool,
-    width: int | float,
-    height: int | float,
-    result_format: str,
+    enabled: bool, width: int | float, height: int | float, result_format: str
 ):
     if normalize_result_format(result_format) == "Audio":
         return (
@@ -1528,7 +1325,7 @@ def latent_upscale_layout_updates(
             "**Audio result** · resolution controls are ignored; H3 samples at 32×32.",
         )
     if enabled:
-        resolved_width, resolved_height = snap64(width), snap64(height)
+        resolved_width, resolved_height = (snap64(width), snap64(height))
         note = "**Latent upscale 64-pixel alignment** · "
     else:
         resolved_width, resolved_height = validate_resolution(width, height)
@@ -1543,7 +1340,7 @@ def latent_upscale_layout_updates(
 
 def latent_upscale_method_layout_update(method: str):
     return gr.update(
-        visible=(resolve_h3_latent_upscale_method(method) == H3_LATENT_UPSCALE_SPLIT)
+        visible=resolve_h3_latent_upscale_method(method) == H3_LATENT_UPSCALE_SPLIT
     )
 
 
@@ -1556,15 +1353,11 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
     if str(name).strip().lower() == "turbo":
         return (
             gr.update(interactive=True),
-            gr.update(
-                value=turbo_steps_for(turbo_variant),
-                interactive=True,
-            ),
+            gr.update(value=turbo_steps_for(turbo_variant), interactive=True),
             "simple",
             DEFAULT_ACCELERATOR,
             "SLA",
         )
-
     return (
         gr.update(value="Balanced", interactive=True),
         gr.update(value=18, interactive=True),
@@ -1577,20 +1370,17 @@ def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
 def turbo_variant_defaults(turbo_variant: str, generation_mode: str):
     """Apply variant sampling defaults only while Turbo is selected."""
     if str(generation_mode).strip().lower() != "turbo":
-        return gr.update(), gr.update()
-    return gr.update(
-        value=turbo_steps_for(turbo_variant),
-        interactive=True,
-    ), "simple"
+        return (gr.update(), gr.update())
+    return (gr.update(value=turbo_steps_for(turbo_variant), interactive=True), "simple")
 
 
 def fbcache_preset_defaults(name: str):
     key = str(name).strip().lower()
     if key == "safe":
-        values = (0.08, 0.10, 0.95, 2)
+        values = (0.08, 0.1, 0.95, 2)
         interactive = False
     elif key == "aggressive":
-        values = (0.12, 0.10, 0.95, 2)
+        values = (0.12, 0.1, 0.95, 2)
         interactive = False
     elif key == "custom":
         return (
@@ -1600,12 +1390,9 @@ def fbcache_preset_defaults(name: str):
             gr.update(interactive=True),
         )
     else:
-        values = (0.10, 0.10, 0.95, 2)
+        values = (0.1, 0.1, 0.95, 2)
         interactive = False
-    return tuple(gr.update(value=value, interactive=interactive) for value in values)
-
-
-from h3_app.processes import run_media_process
+    return tuple((gr.update(value=value, interactive=interactive) for value in values))
 
 
 def file_content_sha256(path: Path) -> str:
@@ -1617,10 +1404,7 @@ def staged_input_is_ready(path: Path) -> bool:
 
 
 def materialize_staged_input(
-    source: Path,
-    destination: Path,
-    *,
-    transcode_video: bool,
+    source: Path, destination: Path, *, transcode_video: bool
 ) -> None:
     return staging.materialize_staged_input(
         source, destination, transcode_video=transcode_video
@@ -1628,10 +1412,7 @@ def materialize_staged_input(
 
 
 def stage_file(
-    path: str,
-    category: str,
-    transcode_video: bool = False,
-    reuse: bool = False,
+    path: str, category: str, transcode_video: bool = False, reuse: bool = False
 ) -> str:
     return staging.stage_file(
         path, category, transcode_video, reuse, runtime=_runtime_config()
@@ -1639,26 +1420,12 @@ def stage_file(
 
 
 turbo_required_nodes = h3_workflow.turbo_required_nodes
-
-
 add_turbo_model_patch = h3_workflow.add_turbo_model_patch
-
-
 add_model_stack = h3_workflow.add_model_stack
-
-
 h3_conditioning_video_vae = h3_workflow.h3_conditioning_video_vae
-
-
 h3_conditioning_cache_key = h3_workflow.h3_conditioning_cache_key
-
-
 add_h3_stage_offload = h3_workflow.add_h3_stage_offload
-
-
 h3_refinement_attention_model = h3_workflow.h3_refinement_attention_model
-
-
 finish_sampling = h3_workflow.finish_sampling
 
 
@@ -1718,7 +1485,7 @@ def build_fl2va_graph(
     stage_model_offload: bool = False,
     smart_stage_offload: bool = False,
     semantic_bridge: bool = False,
-    semantic_bridge_alpha: float = 0.10,
+    semantic_bridge_alpha: float = 0.1,
     voice_reference_audios: list[str] | None = None,
 ) -> dict[str, Any]:
     first_image = (
@@ -1733,7 +1500,7 @@ def build_fl2va_graph(
     )
     voice_reference_audios = [
         stage_file(path, "fl2va_voice_audios", reuse=reuse_unchanged_inputs)
-        for path in (voice_reference_audios or [])
+        for path in voice_reference_audios or []
     ]
     return h3_workflow.build_fl2va_graph(
         prompt=prompt,
@@ -1964,7 +1731,7 @@ def build_ltx25_graph(
         count = len(reference_images)
         columns = min(3, count)
         rows = math.ceil(count / columns)
-        panel_width, panel_height = width // columns, height // rows
+        panel_width, panel_height = (width // columns, height // rows)
         with tempfile.TemporaryDirectory() as temporary:
             sheet = Image.new("RGB", (width, height), "black")
             for index, path in enumerate(reference_images):
@@ -1973,8 +1740,8 @@ def build_ltx25_graph(
                         ImageOps.exif_transpose(source).convert("RGB"),
                         (panel_width - 8, panel_height - 8),
                     )
-                x = (index % columns) * panel_width + (panel_width - panel.width) // 2
-                y = (index // columns) * panel_height + (panel_height - panel.height) // 2
+                x = index % columns * panel_width + (panel_width - panel.width) // 2
+                y = index // columns * panel_height + (panel_height - panel.height) // 2
                 sheet.paste(panel, (x, y))
             sheet_path = Path(temporary) / "reference_sheet.png"
             sheet.save(sheet_path)
@@ -2004,8 +1771,6 @@ def build_ltx25_graph(
 
 
 required_seedvr2_upscale_nodes = upscale_workflow.required_seedvr2_upscale_nodes
-
-
 required_seedvr2_image_upscale_nodes = (
     upscale_workflow.required_seedvr2_image_upscale_nodes
 )
@@ -2222,20 +1987,16 @@ def resolve_seedvr2_input_upscale_outputs(
 
 
 def input_image_frame_preset_updates(
-    preset: str,
-    current_width: int | float,
-    current_height: int | float,
+    preset: str, current_width: int | float, current_height: int | float
 ) -> tuple[Any, Any]:
     dimensions = INPUT_IMAGE_FRAME_PRESETS.get(str(preset))
     if dimensions is None:
-        return gr.update(value=current_width), gr.update(value=current_height)
+        return (gr.update(value=current_width), gr.update(value=current_height))
     return dimensions
 
 
 def input_image_upscale_dimensions(
-    image_path: str,
-    frame_width: int | float,
-    frame_height: int | float,
+    image_path: str, frame_width: int | float, frame_height: int | float
 ) -> tuple[int, int, int, int, float]:
     """Fit an image upward into a bounding frame without ever downscaling it."""
     try:
@@ -2245,7 +2006,6 @@ def input_image_upscale_dimensions(
         raise H3Error("Input upscale frame width and height must be numbers.") from exc
     if target_width < 1 or target_height < 1:
         raise H3Error("Input upscale frame width and height must be positive.")
-
     try:
         from PIL import Image, ImageOps
 
@@ -2255,13 +2015,9 @@ def input_image_upscale_dimensions(
         raise H3Error(f"Could not read input image dimensions: {exc}") from exc
     if source_width < 1 or source_height < 1:
         raise H3Error("Input image has invalid dimensions.")
-
-    scale_by = min(
-        target_width / source_width,
-        target_height / source_height,
-    )
+    scale_by = min(target_width / source_width, target_height / source_height)
     if scale_by <= 1.0:
-        return source_width, source_height, source_width, source_height, 1.0
+        return (source_width, source_height, source_width, source_height, 1.0)
     destination_width = min(target_width, round(source_width * scale_by))
     destination_height = min(target_height, round(source_height * scale_by))
     return (
@@ -2313,13 +2069,12 @@ def upscale_selected_input_images(
         ref_image_8,
         ref_image_9,
     )
-    selected = list(dict.fromkeys(str(value) for value in (selected_slots or [])))
+    selected = list(dict.fromkeys((str(value) for value in selected_slots or [])))
     if not selected:
         raise gr.Error("Select at least one start, end, or reference image to upscale.")
     unknown = sorted(set(selected) - set(slot_labels))
     if unknown:
         raise gr.Error("Unknown input image selection: " + ", ".join(unknown))
-
     values_by_label = dict(zip(slot_labels, image_values))
     keys_by_label = dict(zip(slot_labels, slot_keys))
     staged: list[tuple[str, str, float]] = []
@@ -2353,7 +2108,6 @@ def upscale_selected_input_images(
         else:
             unchanged_results[slot_key] = source_path
             dimension_notes.append(f"{label}: {source_width}×{source_height} unchanged")
-
     actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
     generated_keys = {slot_key for slot_key, _path, _scale in staged}
     results = dict(unchanged_results)
@@ -2372,7 +2126,6 @@ def upscale_selected_input_images(
             if force_offload:
                 progress(0, desc="Unloading resident models")
                 unload_comfy_models()
-
             output_token = uuid.uuid4().hex
             graph = build_seedvr2_image_upscale_graph(
                 source_images=staged,
@@ -2394,17 +2147,13 @@ def upscale_selected_input_images(
             history = wait_for_history(prompt_id)
             results.update(
                 resolve_seedvr2_input_upscale_outputs(
-                    history,
-                    queued_at,
-                    output_token,
-                    generated_keys,
+                    history, queued_at, output_token, generated_keys
                 )
             )
     except gr.Error:
         raise
     except Exception as exc:
         raise gr.Error(f"Input image upscaling failed: {exc}") from exc
-
     component_updates: list[Any] = []
     downloads: list[str] = []
     for slot_key in slot_keys:
@@ -2417,10 +2166,8 @@ def upscale_selected_input_images(
             downloads.append(str(results[slot_key]))
     progress(1, desc="Input images ready")
     summary = (
-        f"Fit selected images into a {int(frame_width)}×{int(frame_height)} frame: "
-        f"{len(staged)} upscaled with SeedVR2 {model_choice}, "
-        f"{len(unchanged_results)} already large enough. Aspect ratios were preserved "
-        "and no image was downscaled.\n\n" + "  \n".join(dimension_notes)
+        f"Fit selected images into a {int(frame_width)}×{int(frame_height)} frame: {len(staged)} upscaled with SeedVR2 {model_choice}, {len(unchanged_results)} already large enough. Aspect ratios were preserved and no image was downscaled.\n\n"
+        + "  \n".join(dimension_notes)
     )
     return (*component_updates, downloads, summary)
 
@@ -2442,10 +2189,9 @@ def save_selected_image_frames(
         raise gr.Error("Generate image frames before saving a selection.")
     if not labels:
         raise gr.Error("Select at least one image frame to save.")
-
     selected_indices: list[int] = []
     for label in labels:
-        match = re.fullmatch(r"Frame\s+(\d+)", str(label).strip())
+        match = re.fullmatch("Frame\\s+(\\d+)", str(label).strip())
         if not match:
             raise gr.Error(f"Invalid frame selection: {label}")
         index = int(match.group(1)) - 1
@@ -2453,7 +2199,6 @@ def save_selected_image_frames(
             raise gr.Error(f"Frame selection is out of range: {label}")
         if index not in selected_indices:
             selected_indices.append(index)
-
     staging_root = (OUTPUT_DIR / "h3" / "image_staging").resolve()
     for index in selected_indices:
         source = paths[index]
@@ -2461,7 +2206,6 @@ def save_selected_image_frames(
             raise gr.Error(
                 "A selected frame is outside the H3 image staging directory."
             )
-
     destination = (
         OUTPUT_DIR
         / "h3"
@@ -2474,7 +2218,7 @@ def save_selected_image_frames(
         target = destination / f"frame_{index + 1:03d}.png"
         copy_media(paths[index], target)
         saved.append(str(target))
-    return saved, f"Saved {len(saved)} selected frame(s) to `{destination}`."
+    return (saved, f"Saved {len(saved)} selected frame(s) to `{destination}`.")
 
 
 def has_encoder(name: str) -> bool:
@@ -2490,11 +2234,7 @@ def import_swiftvr_pipeline() -> Any:
 
 
 def postprocess_swiftvr_video(
-    source: Path,
-    *,
-    fps: float,
-    target_width: int,
-    target_height: int,
+    source: Path, *, fps: float, target_width: int, target_height: int
 ) -> Path:
     return swiftvr.postprocess_swiftvr_video(
         source,
@@ -2532,12 +2272,7 @@ def prepare_upscale_clip_batch(
 
 
 def concat_upscaled_clips(
-    source: Path,
-    clips: list[Path],
-    *,
-    option: str,
-    duration: float,
-    frame_count: int,
+    source: Path, clips: list[Path], *, option: str, duration: float, frame_count: int
 ) -> Path:
     return media_tools.concat_upscaled_clips(
         source,
@@ -2550,8 +2285,7 @@ def concat_upscaled_clips(
 
 
 def cleanup_upscale_clip_batch(
-    batch: UpscaleClipBatch | None,
-    outputs: Iterable[Path] = (),
+    batch: UpscaleClipBatch | None, outputs: Iterable[Path] = ()
 ) -> None:
     return media_tools.cleanup_upscale_clip_batch(batch, outputs)
 
@@ -2574,321 +2308,130 @@ def unload_all_models() -> tuple[str, str]:
         )
     except Exception as exc:
         local_note = " Local 8B prompt writer was unloaded." if local_was_loaded else ""
-        return f"ComfyUI VRAM release failed: {exc}.{local_note}", backend_status()
+        return (f"ComfyUI VRAM release failed: {exc}.{local_note}", backend_status())
 
 
 def video_download_path(video: str | Path) -> str:
-    return gallery_store.video_download_path(video, runtime=_runtime_config())
+    return _mediacontroller().video_download_path(video)
 
 
-def managed_video_path(
-    video: str | Path,
-    *,
-    require_file: bool = True,
-) -> Path:
-    return gallery_store.managed_video_path(
-        video, require_file=require_file, runtime=_runtime_config()
-    )
+def managed_video_path(video: str | Path, *, require_file: bool = True) -> Path:
+    return _mediacontroller().managed_video_path(video, require_file=require_file)
 
 
 def absolute_video_url(
-    video: str | Path,
-    request: gr.Request,
-    *,
-    download: bool = False,
+    video: str | Path, request: gr.Request, *, download: bool = False
 ) -> str:
-    relative_url = video_download_path(video)
-    base_url = str(request.request.base_url).rstrip("/")
-    url = f"{base_url}{relative_url}"
-    return f"{url}?download=1" if download else url
+    return _mediacontroller().absolute_video_url(video, request, download=download)
 
 
 def absolute_video_download_url(video: str | Path, request: gr.Request) -> str:
-    return absolute_video_url(video, request, download=True)
+    return _mediacontroller().absolute_video_download_url(video, request)
 
 
 def gallery_video_paths(*, limit: int | None = GALLERY_LIMIT) -> list[Path]:
-    return gallery_store.gallery_video_paths(limit=limit, runtime=_runtime_config())
+    return _mediacontroller().gallery_video_paths(limit=limit)
 
 
 def gallery_thumbnail(video: Path) -> Path | None:
-    return gallery_store.gallery_thumbnail(video, runtime=_runtime_config())
+    return _mediacontroller().gallery_thumbnail(video)
 
 
 def gallery_thumbnail_path(video: str | Path) -> Path:
-    return gallery_store.gallery_thumbnail_path(video, runtime=_runtime_config())
+    return _mediacontroller().gallery_thumbnail_path(video)
 
 
 def gallery_video_resolution(video: Path) -> tuple[int, int] | None:
-    return gallery_store.gallery_video_resolution(video, runtime=_runtime_config())
+    return _mediacontroller().gallery_video_resolution(video)
 
 
 def gallery_resolution_text(video: Path) -> str:
-    return gallery_store.gallery_resolution_text(video, runtime=_runtime_config())
+    return _mediacontroller().gallery_resolution_text(video)
 
 
 def generated_video_family(video: str | Path) -> str:
-    return gallery_store.generated_video_family(video, runtime=_runtime_config())
+    return _mediacontroller().generated_video_family(video)
 
 
 def forget_gallery_metadata(video: str | Path | None = None) -> None:
-    return gallery_store.forget_gallery_metadata(video)
+    return _mediacontroller().forget_gallery_metadata(video)
 
 
-def managed_gallery_image_path(
-    image: str | Path, *, require_file: bool = True
-) -> Path:
-    return gallery_store.managed_image_path(
-        image, require_file=require_file, runtime=_runtime_config()
+def managed_gallery_image_path(image: str | Path, *, require_file: bool = True) -> Path:
+    return _mediacontroller().managed_gallery_image_path(
+        image, require_file=require_file
     )
 
 
 def gallery_image_paths(*, limit: int | None = GALLERY_LIMIT) -> list[Path]:
-    return gallery_store.gallery_image_paths(limit=limit, runtime=_runtime_config())
+    return _mediacontroller().gallery_image_paths(limit=limit)
 
 
 def gallery_image_resolution_text(image: Path) -> str:
-    return gallery_store.gallery_image_resolution_text(image)
+    return _mediacontroller().gallery_image_resolution_text(image)
 
 
-def managed_gallery_audio_path(
-    audio: str | Path, *, require_file: bool = True
-) -> Path:
-    return gallery_store.managed_audio_path(
-        audio, require_file=require_file, runtime=_runtime_config()
+def managed_gallery_audio_path(audio: str | Path, *, require_file: bool = True) -> Path:
+    return _mediacontroller().managed_gallery_audio_path(
+        audio, require_file=require_file
     )
 
 
 def gallery_audio_paths(*, limit: int | None = GALLERY_LIMIT) -> list[Path]:
-    return gallery_store.gallery_audio_paths(limit=limit, runtime=_runtime_config())
+    return _mediacontroller().gallery_audio_paths(limit=limit)
 
 
 def gallery_media_mode(mode: str) -> str:
-    return str(mode) if str(mode) in {"Video", "Image", "Audio"} else "Video"
+    return _mediacontroller().gallery_media_mode(mode)
 
 
 def gallery_media_download_path(media: str | Path, mode: str) -> str:
-    media_mode = gallery_media_mode(mode)
-    if media_mode == "Image":
-        return gallery_store.image_download_path(media, runtime=_runtime_config())
-    if media_mode == "Audio":
-        return gallery_store.audio_download_path(media, runtime=_runtime_config())
-    return video_download_path(media)
+    return _mediacontroller().gallery_media_download_path(media, mode)
 
 
 def absolute_gallery_media_download_url(
     media: str | Path, mode: str, request: gr.Request
 ) -> str:
-    relative_url = gallery_media_download_path(media, mode)
-    base_url = str(request.request.base_url).rstrip("/")
-    return f"{base_url}{relative_url}?download=1"
+    return _mediacontroller().absolute_gallery_media_download_url(media, mode, request)
 
 
 def import_gallery_media(mode: str, uploaded_media: str | None):
-    media_mode = gallery_media_mode(mode)
-    if not uploaded_media:
-        return gallery_media_mutation_result(
-            media_mode,
-            f"Choose a local {media_mode.lower()} first.",
-            clear_selection=False,
-        )
-    source = Path(uploaded_media).expanduser().resolve()
-    extensions = {
-        "Video": VIDEO_EXTENSIONS,
-        "Image": IMAGE_EXTENSIONS,
-        "Audio": AUDIO_EXTENSIONS,
-    }[media_mode]
-    if not source.is_file() or source.suffix.lower() not in extensions:
-        return gallery_media_mutation_result(
-            media_mode,
-            f"The selected file is not a supported {media_mode.lower()}.",
-            clear_selection=False,
-        )
-    destination_dir = OUTPUTS_DIR / "imports"
-    destination_dir.mkdir(parents=True, exist_ok=True)
-    destination = (
-        destination_dir
-        / f"import_{int(time.time())}_{uuid.uuid4().hex[:8]}{source.suffix.lower()}"
-    )
-    copy_media(source, destination)
-    return gallery_media_mutation_result(
-        media_mode,
-        f"Imported `{source.name}`",
-        selected_media=str(destination),
-        clear_selection=False,
-    )
+    return _mediacontroller().import_gallery_media(mode, uploaded_media)
 
 
 def import_gallery_video(uploaded_video: str | None) -> GalleryMutationResult:
-    if not uploaded_video:
-        return gallery_mutation_result(
-            "Choose a local video first.", clear_selection=False
-        )
-    source = Path(uploaded_video).expanduser().resolve()
-    if not source.is_file() or source.suffix.lower() not in VIDEO_EXTENSIONS:
-        return gallery_mutation_result(
-            "The selected file is not a supported video.", clear_selection=False
-        )
-    destination_dir = OUTPUTS_DIR / "imports"
-    destination_dir.mkdir(parents=True, exist_ok=True)
-    destination = (
-        destination_dir
-        / f"import_{int(time.time())}_{uuid.uuid4().hex[:8]}{source.suffix.lower()}"
-    )
-    copy_media(source, destination)
-    return gallery_mutation_result(
-        f"Imported `{source.name}`",
-        selected_video=str(destination),
-        clear_selection=False,
-    )
+    return _mediacontroller().import_gallery_video(uploaded_video)
 
 
 GALLERY_PAGE_SIZE = 48
 
 
-def refresh_gallery_page(
-    limit: int = GALLERY_PAGE_SIZE,
-) -> gallery_store.AssetPage:
-    videos = gallery_video_paths(limit=None)
-    shown_videos = videos[: max(0, limit)]
-    items: list[tuple[str, str]] = []
-    selectable_paths: list[str] = []
-    failed = 0
-    for video in shown_videos:
-        thumbnail = gallery_thumbnail(video)
-        if thumbnail is None:
-            failed += 1
-            thumbnail = gallery_store.gallery_placeholder(
-                video, kind="Video", runtime=_runtime_config()
-            )
-        if thumbnail is None:
-            continue
-        try:
-            stat = video.stat()
-        except OSError:
-            continue
-        timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
-        size_mb = stat.st_size / (1024 * 1024)
-        caption = (
-            f"{generated_video_family(video)} · {video.name} · "
-            f"{timestamp} · {size_mb:.1f} MB"
-        )
-        items.append((str(thumbnail), caption))
-        selectable_paths.append(str(video))
-    return gallery_store.AssetPage.from_scan(
-        items, selectable_paths, len(videos), limit, "videos", failed
-    )
+def refresh_gallery_page(limit: int = GALLERY_PAGE_SIZE) -> gallery_store.AssetPage:
+    return _mediacontroller().refresh_gallery_page(limit)
 
 
 def refresh_gallery(limit: int = GALLERY_PAGE_SIZE):
-    """Compatibility adapter for existing gallery callers."""
-    return refresh_gallery_page(limit).legacy()
+    return _mediacontroller().refresh_gallery(limit)
 
 
 def select_gallery_video(
-    paths: list[str],
-    request: gr.Request,
-    evt: gr.SelectData,
+    paths: list[str], request: gr.Request, evt: gr.SelectData
 ) -> tuple[str | None, str, str | None]:
-    index = evt.index
-    if isinstance(index, (tuple, list)):
-        index = index[0]
-    try:
-        video = paths[int(index)]
-    except (IndexError, TypeError, ValueError):
-        return None, "", None
-    download_url = absolute_video_download_url(video, request)
-    resolution = gallery_resolution_text(managed_video_path(video))
-    # Return the local path to gr.Video. Gradio treats arbitrary HTTP URLs as
-    # remote fetches and can reject its own public hostname during validation.
-    return (
-        video,
-        f"**Resolution:** {resolution} · [Download video]({download_url})",
-        video,
-    )
+    return _mediacontroller().select_gallery_video(paths, request, evt)
 
 
 def list_media_paths(mode):
-    return {"Video": gallery_video_paths, "Image": gallery_image_paths, "Audio": gallery_audio_paths}[gallery_media_mode(mode)](limit=None)
+    return _mediacontroller().list_media_paths(mode)
 
 
 def refresh_media_page(
-    mode: str = "Video",
-    limit: int = GALLERY_PAGE_SIZE,
+    mode: str = "Video", limit: int = GALLERY_PAGE_SIZE
 ) -> gallery_store.AssetPage:
-    """Refresh the active gallery, defaulting to the existing video library."""
-    media_mode = gallery_media_mode(mode)
-    if media_mode == "Video":
-        return refresh_gallery_page(limit)
-    if media_mode == "Audio":
-        all_audio_files = gallery_audio_paths(limit=None)
-        audio_files = all_audio_files[: max(0, limit)]
-        items: list[tuple[str, str]] = []
-        selectable_paths: list[str] = []
-        failed = 0
-        for audio in audio_files:
-            thumbnail = gallery_store.gallery_audio_thumbnail(
-                audio, runtime=_runtime_config()
-            )
-            if thumbnail is None:
-                failed += 1
-                continue
-            try:
-                stat = audio.stat()
-            except OSError:
-                continue
-            timestamp = time.strftime(
-                "%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)
-            )
-            size_mb = stat.st_size / (1024 * 1024)
-            family = gallery_store.generated_audio_family(
-                audio, runtime=_runtime_config()
-            )
-            caption = (
-                f"{family} · {audio.name} · {timestamp} · {size_mb:.1f} MB"
-            )
-            items.append((str(thumbnail), caption))
-            selectable_paths.append(str(audio))
-        return gallery_store.AssetPage.from_scan(
-            items, selectable_paths, len(all_audio_files), limit, "audio files", failed
-        )
-    all_images = gallery_image_paths(limit=None)
-    images = all_images[: max(0, limit)]
-    items: list[tuple[str, str]] = []
-    selectable_paths: list[str] = []
-    failed = 0
-    for image in images:
-        thumbnail = gallery_store.gallery_image_thumbnail(
-            image, runtime=_runtime_config()
-        )
-        if thumbnail is None:
-            failed += 1
-            thumbnail = gallery_store.gallery_placeholder(
-                image, kind="Image", runtime=_runtime_config()
-            )
-        if thumbnail is None:
-            continue
-        try:
-            stat = image.stat()
-        except OSError:
-            continue
-        timestamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
-        size_mb = stat.st_size / (1024 * 1024)
-        caption = (
-            f"{gallery_store.generated_image_family(image, runtime=_runtime_config())}"
-            f" · {image.name} · {timestamp} · {size_mb:.1f} MB"
-        )
-        items.append((str(thumbnail), caption))
-        selectable_paths.append(str(image))
-    return gallery_store.AssetPage.from_scan(
-        items, selectable_paths, len(all_images), limit, "images", failed
-    )
+    return _mediacontroller().refresh_media_page(mode, limit)
 
 
 def refresh_media_gallery(mode: str = "Video", limit: int = GALLERY_PAGE_SIZE):
-    """Preserve the public tuple contract while the UI consumes typed pages."""
-    return refresh_media_page(mode, limit).legacy()
-
+    return _mediacontroller().refresh_media_gallery(mode, limit)
 
 
 def gallery_preview_updates(
@@ -2898,220 +2441,53 @@ def gallery_preview_updates(
     image: str | None = None,
     audio: str | None = None,
 ) -> tuple[Any, Any, Any]:
-    """Always update all preview visibility flags with the selected media."""
-    media_mode = gallery_media_mode(mode)
-    return (
-        gr.update(value=video, visible=media_mode == "Video"),
-        gr.update(value=image, visible=media_mode == "Image"),
-        gr.update(value=audio, visible=media_mode == "Audio"),
+    return _mediacontroller().gallery_preview_updates(
+        mode, video=video, image=image, audio=audio
     )
 
 
 def select_gallery_media(
-    mode: str,
-    paths: list[str],
-    request: gr.Request,
-    evt: gr.SelectData,
+    mode: str, paths: list[str], request: gr.Request, evt: gr.SelectData
 ) -> tuple[Any, Any, Any, str, str | None]:
-    index = evt.index
-    if isinstance(index, (tuple, list)):
-        index = index[0]
-    try:
-        media = paths[int(index)]
-    except (IndexError, TypeError, ValueError):
-        return (*gallery_preview_updates(mode), "", None)
-    media_mode = gallery_media_mode(mode)
-    if media_mode == "Image":
-        resolved = managed_gallery_image_path(media)
-        resolution = gallery_image_resolution_text(resolved)
-        download_url = absolute_gallery_media_download_url(media, media_mode, request)
-        return (
-            *gallery_preview_updates(mode, image=media),
-            f"**Resolution:** {resolution} · [Download image]({download_url})",
-            media,
-        )
-    if media_mode == "Audio":
-        resolved = managed_gallery_audio_path(media)
-        download_url = absolute_gallery_media_download_url(
-            resolved, media_mode, request
-        )
-        return (
-            *gallery_preview_updates(mode, audio=media),
-            f"[Download audio]({download_url})",
-            media,
-        )
-    video, download, selected = select_gallery_video(paths, request, evt)
-    return (*gallery_preview_updates(mode, video=video), download, selected)
-
-
-GalleryMutationResult = tuple[
-    list[tuple[str, str]],
-    list[str],
-    str,
-    Any,
-    Any,
-    str | None,
-    bool,
-]
-
-GalleryPostprocessResult = tuple[
-    list[tuple[str, str]],
-    list[str],
-    str,
-    Any,
-    Any,
-    str | None,
-    bool,
-    str,
-]
-
-GalleryMediaMutationResult = tuple[
-    list[tuple[str, str]],
-    list[str],
-    str,
-    Any,
-    Any,
-    Any,
-    Any,
-    str | None,
-    bool,
-]
-
-GalleryMediaPostprocessResult = tuple[
-    list[tuple[str, str]],
-    list[str],
-    str,
-    Any,
-    Any,
-    Any,
-    Any,
-    str | None,
-    bool,
-    str,
-]
+    return _mediacontroller().select_gallery_media(mode, paths, request, evt)
 
 
 def gallery_media_mutation_result(
-    mode: str,
-    message: str,
-    *,
-    selected_media: str | None = None,
-    clear_selection: bool,
+    mode: str, message: str, *, selected_media: str | None = None, clear_selection: bool
 ) -> GalleryMediaMutationResult:
-    items, paths, detail = refresh_media_gallery(mode)
-    video = None if clear_selection else gr.skip()
-    image = None if clear_selection else gr.skip()
-    audio = None if clear_selection else gr.skip()
-    download = "" if clear_selection else gr.skip()
-    selected = None if clear_selection else selected_media
-    return (
-        items,
-        paths,
-        f"{message} · {detail}",
-        video,
-        image,
-        audio,
-        download,
-        selected,
-        False,
+    return _mediacontroller().gallery_media_mutation_result(
+        mode, message, selected_media=selected_media, clear_selection=clear_selection
     )
 
 
 def gallery_media_progress_result(message: str) -> GalleryMediaPostprocessResult:
-    return (
-        gr.skip(),
-        gr.skip(),
-        message,
-        gr.skip(),
-        gr.skip(),
-        gr.skip(),
-        gr.skip(),
-        gr.skip(),
-        gr.skip(),
-        message,
-    )
+    return _mediacontroller().gallery_media_progress_result(message)
 
 
 def gallery_media_processed_result(
-    mode: str,
-    result: Path,
-    option: str,
-    elapsed: float,
-    request: gr.Request,
+    mode: str, result: Path, option: str, elapsed: float, request: gr.Request
 ) -> GalleryMediaPostprocessResult:
-    items, paths, detail = refresh_media_gallery(mode)
-    download_url = absolute_gallery_media_download_url(result, mode, request)
-    if str(mode) == "Image":
-        resolution = gallery_image_resolution_text(result)
-        video, image, audio, noun = None, str(result), None, "image"
-    else:
-        resolution = gallery_resolution_text(result)
-        video, image, audio, noun = str(result), None, None, "video"
-    return (
-        items,
-        paths,
-        f"Completed {option} in {elapsed:.1f}s · {detail}",
-        *gallery_preview_updates(mode, video=video, image=image, audio=audio),
-        f"**Resolution:** {resolution} · [Download processed {noun}]({download_url})",
-        str(result),
-        False,
-        f"Completed {option} in {elapsed:.1f}s",
+    return _mediacontroller().gallery_media_processed_result(
+        mode, result, option, elapsed, request
     )
 
 
 def gallery_mutation_result(
-    message: str,
-    *,
-    selected_video: str | None = None,
-    clear_selection: bool,
+    message: str, *, selected_video: str | None = None, clear_selection: bool
 ) -> GalleryMutationResult:
-    items, paths, detail = refresh_gallery()
-    player = None if clear_selection else gr.skip()
-    download = "" if clear_selection else gr.skip()
-    selected = None if clear_selection else selected_video
-    return (
-        items,
-        paths,
-        f"{message} · {detail}",
-        player,
-        download,
-        selected,
-        False,
+    return _mediacontroller().gallery_mutation_result(
+        message, selected_video=selected_video, clear_selection=clear_selection
     )
 
 
 def gallery_progress_result(message: str) -> GalleryPostprocessResult:
-    return (
-        gr.skip(),
-        gr.skip(),
-        message,
-        gr.skip(),
-        gr.skip(),
-        gr.skip(),
-        gr.skip(),
-        message,
-    )
+    return _mediacontroller().gallery_progress_result(message)
 
 
 def gallery_processed_result(
-    result: Path,
-    option: str,
-    elapsed: float,
-    request: gr.Request,
+    result: Path, option: str, elapsed: float, request: gr.Request
 ) -> GalleryPostprocessResult:
-    items, paths, detail = refresh_gallery()
-    download_url = absolute_video_download_url(result, request)
-    resolution = gallery_resolution_text(result)
-    return (
-        items,
-        paths,
-        f"Completed {option} in {elapsed:.1f}s · {detail}",
-        str(result),
-        f"**Resolution:** {resolution} · [Download processed video]({download_url})",
-        str(result),
-        False,
-        f"Completed {option} in {elapsed:.1f}s",
-    )
+    return _mediacontroller().gallery_processed_result(result, option, elapsed, request)
 
 
 def postprocess_selected_gallery_video(
@@ -3128,251 +2504,20 @@ def postprocess_selected_gallery_video(
     request: gr.Request,
     progress=gr.Progress(track_tqdm=False),
 ):
-    """Create a new post-processed output from one selected gallery video."""
-    started = time.monotonic()
-    ws: websocket.WebSocket | None = None
-    clip_batch: UpscaleClipBatch | None = None
-    clip_outputs: list[Path] = []
-    try:
-        if not selected_video:
-            raise H3Error("Select a gallery video first.")
-        if option not in POSTPROCESS_OPTIONS:
-            raise H3Error("Choose a post-processing method.")
-        source = managed_video_path(selected_video)
-        actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
-        progress(0, desc=f"Preparing {option}")
-        yield gallery_progress_result(f"Preparing `{source.name}` for {option}")
-
-        if option == SWIFTVR_UPSCALE:
-            progress(0, desc="Checking SwiftVR runtime and checkpoint")
-            yield gallery_progress_result(
-                "Checking SwiftVR runtime and downloading its checkpoint on first use."
-            )
-            metadata = probe_video_metadata(source)
-            target_width, target_height = upscale_target_dimensions(
-                metadata.width, metadata.height, upscale_resolution
-            )
-            result = postprocess_swiftvr_video(
-                source,
-                fps=metadata.fps,
-                target_width=target_width,
-                target_height=target_height,
-            )
-            progress(1, desc="Complete")
-            yield gallery_processed_result(
-                result, option, time.monotonic() - started, request
-            )
-            return
-
-        if option not in COMFY_POSTPROCESS_OPTIONS:
-            result = postprocess_video(source, option)
-            progress(1, desc="Complete")
-            yield gallery_processed_result(
-                result, option, time.monotonic() - started, request
-            )
-            return
-
-        models = load_model_config()
-        available = set(object_info())
-        missing = required_upscale_nodes(option) - available
-        if missing:
-            raise H3Error(
-                f"{option} is unavailable. Missing ComfyUI nodes: "
-                + ", ".join(sorted(missing))
-            )
-
-        if option == SEEDVR2_UPSCALE:
-            model_status = f"SeedVR2 {seedvr2_model}"
-            yield gallery_progress_result(f"Checking {model_status} models")
-            downloaded = ensure_seedvr2_upscale_models(models, seedvr2_model)
-            stage_bucket = "seedvr2_upscale"
-        else:
-            model_status = f"{option} with {ltx25_model}"
-            yield gallery_progress_result(f"Checking {model_status} models")
-            downloaded = ensure_ltx25_upscale_models(ltx25_model, option=option)
-            stage_bucket = (
-                LTX25_POSTPROCESS_MODELS[option]
-                if option in LTX25_SAME_RESOLUTION_OPTIONS else "ltx25_upscale"
-            )
-
-        if downloaded:
-            yield gallery_progress_result(f"{option} models downloaded")
-        metadata = probe_video_metadata(source)
-        target_width, target_height = (
-            (metadata.width, metadata.height)
-            if option in LTX25_SAME_RESOLUTION_OPTIONS
-            else upscale_target_dimensions(
-                metadata.width, metadata.height, upscale_resolution
-            )
-        )
-        use_split = option in LTX25_POSTPROCESS_MODELS and bool(split_upscale)
-        clip_batch = prepare_upscale_clip_batch(
-            source,
-            category=stage_bucket,
-            split_enabled=use_split,
-            split_seconds=split_seconds,
-            metadata=metadata,
-        )
-        clip_count = len(clip_batch.sources)
-        if use_split:
-            yield gallery_progress_result(
-                f"Split `{source.name}` into {clip_count} LTX-safe clips "
-                f"(target {float(split_seconds):g}s each)"
-            )
-        if force_offload:
-            yield gallery_progress_result(f"Unloading resident models before {option}")
-            unload_comfy_models()
-
-        if not use_split:
-            graph, configured_steps = build_upscale_graph(
-                option=option,
-                source_video=clip_batch.sources[0],
-                seed=actual_seed,
-                models=models,
-                seedvr2_model=seedvr2_model,
-                ltx25_model=ltx25_model,
-                prompt=ltx25_prompt,
-                width=metadata.width,
-                height=metadata.height,
-                target_width=target_width,
-                target_height=target_height,
-                fps=metadata.fps,
-            )
-
-        client_id = str(uuid.uuid4())
-        ws = None  # Progress connections belong to the execution runner.
-        if use_split:
-            for clip_index, staged_source in enumerate(clip_batch.sources):
-                clip_seed = (actual_seed + clip_index) % (2**63 - 1)
-                graph, configured_steps = build_upscale_graph(
-                    option=option,
-                    source_video=staged_source,
-                    seed=clip_seed,
-                    models=models,
-                    seedvr2_model=seedvr2_model,
-                    ltx25_model=ltx25_model,
-                    prompt=ltx25_prompt,
-                    width=metadata.width,
-                    height=metadata.height,
-                    target_width=target_width,
-                    target_height=target_height,
-                    fps=metadata.fps,
-                )
-                queued_at = time.time()
-                prompt_id = submit_prompt(graph, client_id)
-                clip_label = f"Clip {clip_index + 1}/{clip_count}"
-                yield gallery_progress_result(
-                    progress_status(
-                        f"{option} queued",
-                        started=started,
-                        detail=f"{clip_label} 路 job `{prompt_id}` 路 seed {clip_seed}",
-                    )
-                )
-                updates = (
-                    stream_comfy_progress(ws, prompt_id, graph, started)
-                    if ws is not None
-                    else poll_comfy_progress(prompt_id, graph)
-                )
-                for stage, completed_nodes, total_nodes, step, step_total in updates:
-                    if stage == "Generating video and audio":
-                        stage = f"Processing with {option}"
-                    if step is not None and step_total:
-                        progress(
-                            (clip_index * step_total + step, clip_count * step_total),
-                            desc=f"{clip_label}: {stage}",
-                        )
-                    elif total_nodes:
-                        progress(
-                            (
-                                clip_index * total_nodes + completed_nodes,
-                                clip_count * total_nodes,
-                            ),
-                            desc=f"{clip_label}: {stage}",
-                        )
-                    yield gallery_progress_result(
-                        progress_status(
-                            f"{clip_label}: {stage}",
-                            started=started,
-                            completed_nodes=completed_nodes,
-                            total_nodes=total_nodes,
-                            step=step,
-                            step_total=step_total,
-                            configured_steps=(
-                                configured_steps if step is not None else None
-                            ),
-                            detail=f"Post-process job `{prompt_id}`",
-                        )
-                    )
-                clip_outputs.append(
-                    resolve_output(wait_for_history(prompt_id), queued_at)
-                )
-            yield gallery_progress_result(
-                f"Concatenating {clip_count} processed clips and restoring source audio"
-            )
-            result = concat_upscaled_clips(
-                source,
-                clip_outputs,
-                option=option,
-                duration=metadata.duration,
-                frame_count=metadata.frame_count,
-            )
-            progress(1, desc="Complete")
-            yield gallery_processed_result(
-                result, option, time.monotonic() - started, request
-            )
-            return
-
-        queued_at = time.time()
-        prompt_id = submit_prompt(graph, client_id)
-        yield gallery_progress_result(
-            progress_status(
-                f"{option} queued",
-                started=started,
-                detail=f"Job `{prompt_id}` · seed {actual_seed}",
-            )
-        )
-        updates = (
-            stream_comfy_progress(ws, prompt_id, graph, started)
-            if ws is not None
-            else poll_comfy_progress(prompt_id, graph)
-        )
-        for stage, completed_nodes, total_nodes, step, step_total in updates:
-            if stage == "Generating video and audio":
-                stage = f"Processing with {option}"
-            if step is not None and step_total:
-                progress((step, step_total), desc=stage)
-            elif total_nodes:
-                progress((completed_nodes, total_nodes), desc=stage)
-            yield gallery_progress_result(
-                progress_status(
-                    stage,
-                    started=started,
-                    completed_nodes=completed_nodes,
-                    total_nodes=total_nodes,
-                    step=step,
-                    step_total=step_total,
-                    configured_steps=configured_steps if step is not None else None,
-                    detail=f"Post-process job `{prompt_id}`",
-                )
-            )
-
-        result = resolve_output(wait_for_history(prompt_id), queued_at)
-        progress(1, desc="Complete")
-        yield gallery_processed_result(
-            result, option, time.monotonic() - started, request
-        )
-    except Exception as exc:
-        yield gallery_progress_result(f"Post-processing failed: {exc}")
-    finally:
-        cleanup_upscale_clip_batch(
-            clip_batch,
-            clip_outputs if clip_batch and clip_batch.temporary_inputs else (),
-        )
-        if ws is not None:
-            try:
-                ws.close()
-            except Exception:
-                pass
+    return _mediacontroller().postprocess_selected_gallery_video(
+        selected_video,
+        option,
+        seed,
+        seedvr2_model,
+        ltx25_model,
+        ltx25_prompt,
+        force_offload,
+        split_upscale,
+        split_seconds,
+        upscale_resolution,
+        request,
+        progress,
+    )
 
 
 def postprocess_selected_gallery_image(
@@ -3385,111 +2530,16 @@ def postprocess_selected_gallery_image(
     request: gr.Request,
     progress=gr.Progress(track_tqdm=False),
 ):
-    """Upscale one selected gallery still with the shared SeedVR2 workflow."""
-    started = time.monotonic()
-    try:
-        if not selected_image:
-            raise H3Error("Select a gallery image first.")
-        if option != SEEDVR2_UPSCALE:
-            raise H3Error("Image gallery enhancement currently uses SeedVR2.")
-        source = managed_gallery_image_path(selected_image)
-        try:
-            frame_width, frame_height = UPSCALE_RESOLUTION_PRESETS[
-                str(upscale_resolution)
-            ]
-        except KeyError as exc:
-            raise H3Error(
-                f"Unknown upscale resolution preset: {upscale_resolution}"
-            ) from exc
-        source_width, source_height, target_width, target_height, scale_by = (
-            input_image_upscale_dimensions(source, frame_width, frame_height)
-        )
-        if scale_by <= 1.0:
-            raise H3Error(
-                f"`{source.name}` is already {source_width}×{source_height}; "
-                "choose a larger target resolution."
-            )
-
-        actual_seed = (
-            random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
-        )
-        yield gallery_media_progress_result(
-            f"Preparing `{source.name}` for SeedVR2 image upscaling"
-        )
-        available = set(object_info())
-        missing = required_seedvr2_image_upscale_nodes() - available
-        if missing:
-            raise H3Error(
-                "SeedVR2 image upscaling requires current ComfyUI nodes: "
-                + ", ".join(sorted(missing))
-            )
-        models = load_model_config()
-        downloaded = ensure_seedvr2_upscale_models(models, seedvr2_model)
-        if downloaded:
-            yield gallery_media_progress_result("SeedVR2 models downloaded")
-        if force_offload:
-            yield gallery_media_progress_result(
-                "Unloading resident models before SeedVR2 image upscaling"
-            )
-            unload_comfy_models()
-
-        staged = stage_file(str(source), "gallery_image_upscale", reuse=True)
-        output_token = uuid.uuid4().hex
-        graph = build_seedvr2_image_upscale_graph(
-            source_images=[("gallery", staged, scale_by)],
-            seed=actual_seed,
-            models=models,
-            model_choice=seedvr2_model,
-            output_token=output_token,
-        )
-        queued_at = time.time()
-        prompt_id = submit_prompt(graph, str(uuid.uuid4()))
-        yield gallery_media_progress_result(
-            f"SeedVR2 image upscale queued · job `{prompt_id}` · seed {actual_seed}"
-        )
-        for stage, completed, total, step, step_total in poll_comfy_progress(
-            prompt_id, graph
-        ):
-            if step is not None and step_total:
-                progress((step, step_total), desc=stage)
-            elif total:
-                progress((completed, total), desc=stage)
-            yield gallery_media_progress_result(
-                progress_status(
-                    stage,
-                    started=started,
-                    completed_nodes=completed,
-                    total_nodes=total,
-                    step=step,
-                    step_total=step_total,
-                    configured_steps=1 if step is not None else None,
-                    detail=f"Image upscale job `{prompt_id}`",
-                )
-            )
-        history = wait_for_history(prompt_id)
-        result = resolve_seedvr2_input_upscale_outputs(
-            history, queued_at, output_token, ["gallery"]
-        )["gallery"]
-        write_snapshot(
-            result,
-            {
-                "job_id": prompt_id,
-                "family": "SeedVR2 image upscale",
-                "settings": {
-                    "source": source.name,
-                    "source_resolution": f"{source_width}×{source_height}",
-                    "target_resolution": f"{target_width}×{target_height}",
-                    "model": seedvr2_model,
-                    "seed": actual_seed,
-                },
-            },
-        )
-        progress(1, desc="Complete")
-        yield gallery_media_processed_result(
-            "Image", result, option, time.monotonic() - started, request
-        )
-    except Exception as exc:
-        yield gallery_media_progress_result(f"Image upscaling failed: {exc}")
+    return _mediacontroller().postprocess_selected_gallery_image(
+        selected_image,
+        option,
+        seed,
+        seedvr2_model,
+        force_offload,
+        upscale_resolution,
+        request,
+        progress,
+    )
 
 
 def postprocess_selected_gallery_media(
@@ -3507,26 +2557,8 @@ def postprocess_selected_gallery_media(
     request: gr.Request,
     progress=gr.Progress(track_tqdm=False),
 ):
-    """Dispatch gallery enhancement according to the active media library."""
-    media_mode = gallery_media_mode(mode)
-    if media_mode == "Audio":
-        yield gallery_media_progress_result(
-            "Audio gallery outputs are available for playback and download."
-        )
-        return
-    if media_mode == "Image":
-        yield from postprocess_selected_gallery_image(
-            selected_media,
-            option,
-            seed,
-            seedvr2_model,
-            force_offload,
-            upscale_resolution,
-            request,
-            progress,
-        )
-        return
-    for update in postprocess_selected_gallery_video(
+    return _mediacontroller().postprocess_selected_gallery_media(
+        mode,
         selected_media,
         option,
         seed,
@@ -3539,107 +2571,35 @@ def postprocess_selected_gallery_media(
         upscale_resolution,
         request,
         progress,
-    ):
-        yield (*update[:4], None, None, *update[4:])
+    )
 
 
 def delete_selected_gallery_video(
-    selected_video: str | None,
-    confirmed: bool,
+    selected_video: str | None, confirmed: bool
 ) -> GalleryMutationResult:
-    if not confirmed:
-        return gallery_mutation_result(
-            "Confirm permanent deletion first.",
-            selected_video=selected_video,
-            clear_selection=False,
-        )
-    if not selected_video:
-        return gallery_mutation_result(
-            "Select a video to delete.",
-            clear_selection=True,
-        )
-    try:
-        video = managed_video_path(selected_video)
-        thumbnail = gallery_thumbnail_path(video)
-        name = video.name
-        video.unlink()
-        snapshot_path(video).unlink(missing_ok=True)
-        thumbnail.unlink(missing_ok=True)
-        forget_gallery_metadata(video)
-        return gallery_mutation_result(
-            f"Deleted `{name}`.",
-            clear_selection=True,
-        )
-    except (H3Error, OSError) as exc:
-        return gallery_mutation_result(
-            f"Delete failed: {exc}",
-            clear_selection=True,
-        )
+    return _mediacontroller().delete_selected_gallery_video(selected_video, confirmed)
 
 
 def delete_selected_gallery_media(
     mode: str, selected_media: str | None, confirmed: bool
 ) -> GalleryMediaMutationResult:
-    media_mode = gallery_media_mode(mode)
-    if media_mode != "Video":
-        return gallery_media_mutation_result(
-            media_mode,
-            f"{media_mode} deletion is not enabled in this gallery.",
-            selected_media=selected_media,
-            clear_selection=False,
-        )
-    result = delete_selected_gallery_video(selected_media, confirmed)
-    return (*result[:4], None, None, *result[4:])
+    return _mediacontroller().delete_selected_gallery_media(
+        mode, selected_media, confirmed
+    )
 
 
 def empty_generated_gallery(
-    selected_video: str | None,
-    confirmed: bool,
+    selected_video: str | None, confirmed: bool
 ) -> GalleryMutationResult:
-    if not confirmed:
-        return gallery_mutation_result(
-            "Confirm permanent deletion first.",
-            selected_video=selected_video,
-            clear_selection=False,
-        )
-    deleted = 0
-    failed = 0
-    for candidate in gallery_video_paths(limit=None):
-        try:
-            video = managed_video_path(candidate)
-            gallery_thumbnail_path(video).unlink(missing_ok=True)
-            video.unlink()
-            snapshot_path(video).unlink(missing_ok=True)
-            deleted += 1
-        except (H3Error, OSError):
-            failed += 1
-    if GALLERY_THUMBNAILS_DIR.is_dir():
-        for thumbnail in GALLERY_THUMBNAILS_DIR.iterdir():
-            if thumbnail.is_file() and thumbnail.suffix.lower() in {".jpg", ".tmp"}:
-                try:
-                    thumbnail.unlink()
-                except OSError:
-                    failed += 1
-    forget_gallery_metadata()
-    result = f"Deleted {deleted} generated video{'s' if deleted != 1 else ''}."
-    if failed:
-        result += f" {failed} file{'s' if failed != 1 else ''} could not be deleted."
-    return gallery_mutation_result(result, clear_selection=True)
+    return _mediacontroller().empty_generated_gallery(selected_video, confirmed)
 
 
 def empty_generated_media_gallery(
     mode: str, selected_media: str | None, confirmed: bool
 ) -> GalleryMediaMutationResult:
-    media_mode = gallery_media_mode(mode)
-    if media_mode != "Video":
-        return gallery_media_mutation_result(
-            media_mode,
-            f"{media_mode} library deletion is not enabled.",
-            selected_media=selected_media,
-            clear_selection=False,
-        )
-    result = empty_generated_gallery(selected_media, confirmed)
-    return (*result[:4], None, None, *result[4:])
+    return _mediacontroller().empty_generated_media_gallery(
+        mode, selected_media, confirmed
+    )
 
 
 def backend_status() -> str:
@@ -3653,10 +2613,10 @@ def backend_status() -> str:
         vram_free = device.get("vram_free")
         if isinstance(vram_total, (int, float)) and isinstance(vram_free, (int, float)):
             vram_text = (
-                f" · {vram_free / 2**30:.1f}/{vram_total / 2**30:.1f} GiB VRAM free"
+                f" · {vram_free / 2 ** 30:.1f}/{vram_total / 2 ** 30:.1f} GiB VRAM free"
             )
         elif isinstance(vram_total, (int, float)):
-            vram_text = f" · {vram_total / 2**30:.1f} GiB VRAM"
+            vram_text = f" · {vram_total / 2 ** 30:.1f} GiB VRAM"
         else:
             vram_text = ""
         models = load_model_config()
@@ -3670,8 +2630,7 @@ def backend_status() -> str:
         profile_lines = [f"**Spectrum accelerator**: {spectrum_status}"]
         for profile in models.profiles.values():
             profile_lines.append(
-                f"**{profile.label}** · FL2VA `{profile.fl2va}` · "
-                f"Ref2VA `{profile.ref2va}`"
+                f"**{profile.label}** · FL2VA `{profile.fl2va}` · Ref2VA `{profile.ref2va}`"
             )
         for label, filename in (
             ("PDMD / 2-step", models.pdmd_2step_lora),
@@ -3679,35 +2638,27 @@ def backend_status() -> str:
         ):
             if filename:
                 profile_lines.append(
-                    f"**{label} (experimental)** | LoRA `{filename}` | "
-                    "FL2VA / Ref2VA | Euler/simple | strength 1.0 | downloads on first use"
+                    f"**{label} (experimental)** | LoRA `{filename}` | FL2VA / Ref2VA | Euler/simple | strength 1.0 | downloads on first use"
                 )
         if models.taomate_turbo_lora:
             profile_lines.append(
-                f"**TaoMate-H3 / 3-step** | LoRA `{models.taomate_turbo_lora}` | "
-                "FL2VA / Ref2VA | Euler/simple | strength 0.7 | downloads on first use"
+                f"**TaoMate-H3 / 3-step** | LoRA `{models.taomate_turbo_lora}` | FL2VA / Ref2VA | Euler/simple | strength 0.7 | downloads on first use"
             )
         if models.larry_turbo_lora:
             profile_lines.append(
-                f"**Larry Turbo v4-600 EMA** | LoRA `{models.larry_turbo_lora}` | "
-                "6-step default | strength 1.0 | custom loader/sampler"
+                f"**Larry Turbo v4-600 EMA** | LoRA `{models.larry_turbo_lora}` | 6-step default | strength 1.0 | custom loader/sampler"
             )
         if models.turbo_lora:
             profile_lines.append(
-                f"**LightX2V Turbo / 4-step** · FL2VA v1.2 `{models.turbo_lora}` · "
-                f"Ref2VA v0.1 544p `{models.turbo_ref_lora}` · strength 1.0"
+                f"**LightX2V Turbo / 4-step** · FL2VA v1.2 `{models.turbo_lora}` · Ref2VA v0.1 544p `{models.turbo_ref_lora}` · strength 1.0"
             )
         if models.turbo_8step_lora:
             profile_lines.append(
-                f"**LightX2V Turbo v1.0 / 8-step 768p** · FL2VA `{models.turbo_8step_lora}` · "
-                f"Ref2VA `{models.turbo_8step_ref_lora}` · "
-                "8-step default · strength 1.0 · FL2VA and Ref2VA"
+                f"**LightX2V Turbo v1.0 / 8-step 768p** · FL2VA `{models.turbo_8step_lora}` · Ref2VA `{models.turbo_8step_ref_lora}` · 8-step default · strength 1.0 · FL2VA and Ref2VA"
             )
         return (
-            f"Connected · {gpu}{vram_text} · sparse: {SERVER_ATTENTION_BACKEND} · "
-            f"dense: {SERVER_DENSE_ATTENTION_BACKEND} · "
-            f"memory: {SERVER_MEMORY_PROFILE} · FirstBlockCache: {fbcache_status} · "
-            f"EasyCache: {easycache_status}  \n" + "  \n".join(profile_lines)
+            f"Connected · {gpu}{vram_text} · sparse: {SERVER_ATTENTION_BACKEND} · dense: {SERVER_DENSE_ATTENTION_BACKEND} · memory: {SERVER_MEMORY_PROFILE} · FirstBlockCache: {fbcache_status} · EasyCache: {easycache_status}  \n"
+            + "  \n".join(profile_lines)
         )
     except Exception as exc:
         return f"Backend unavailable: {exc}"
@@ -3835,7 +2786,7 @@ def generate(
     latent_split_tile_width: int = 512,
     latent_split_tile_height: int = 512,
     latent_split_overlap_ratio: float = 0.25,
-    latent_split_fade_ratio: float = 0.50,
+    latent_split_fade_ratio: float = 0.5,
     latent_split_chunk_frames: int = 73,
     latent_split_temporal_overlap_frames: int = 22,
     latent_split_seam_denoise: float = 0.75,
@@ -3852,7 +2803,7 @@ def generate(
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
     semantic_bridge: bool = True,
-    semantic_bridge_alpha: float = 0.10,
+    semantic_bridge_alpha: float = 0.1,
     fl2va_audio_1: Any = None,
     fl2va_audio_2: Any = None,
     fl2va_audio_3: Any = None,
@@ -4078,8 +3029,10 @@ def generate_qwen_image21(
     if isinstance(uploaded, (str, Path)):
         uploaded = [uploaded]
     staged = tuple(
-        stage_file(str(path), "qwen_image21_references", reuse=True)
-        for path in uploaded
+        (
+            stage_file(str(path), "qwen_image21_references", reuse=True)
+            for path in uploaded
+        )
     )
     request = generation_requests.QwenImage21Request(
         mode=mode,
@@ -4163,11 +3116,9 @@ def generate_yue2(
 
 def interrupt(request: gr.Request, family: str = "h3") -> str:
     try:
-        return (
-            JOBS.cancel(request.session_hash, family, api_get, api_post)
-            if request.session_hash
-            else "No session-owned job to cancel."
-        )
+        from .job_admission import require_owner
+
+        return JOBS.cancel(require_owner(request), family, api_get, api_post)
     except Exception as exc:
         return f"Interrupt failed: {exc}"
 
@@ -4175,9 +3126,14 @@ def interrupt(request: gr.Request, family: str = "h3") -> str:
 def preset_values(name: str, generation_mode: str = "Normal"):
     values = asdict(preset_settings(name, generation_mode))
     return (
-        *(text_encoder_offload_update(values["text_encoder"])
-          if key == "stage_model_offload" else value
-          for key, value in values.items()),
+        *(
+            (
+                text_encoder_offload_update(values["text_encoder"])
+                if key == "stage_model_offload"
+                else value
+            )
+            for key, value in values.items()
+        ),
     )
 
 
@@ -4214,7 +3170,7 @@ def compact_settings_summary(
     latent_split_tile_width: int = 512,
     latent_split_tile_height: int = 512,
     latent_split_overlap_ratio: float = 0.25,
-    latent_split_fade_ratio: float = 0.50,
+    latent_split_fade_ratio: float = 0.5,
     latent_split_chunk_frames: int = 73,
     latent_split_temporal_overlap_frames: int = 22,
     latent_split_seam_denoise: float = 0.75,
@@ -4226,6 +3182,7 @@ def compact_settings_summary(
 
 
 def result_settings_for_media(value):
+
     def media_path(item):
         if isinstance(item, dict):
             return media_path(item.get("path") or item.get("name") or item.get("image"))
@@ -4241,7 +3198,7 @@ def result_settings_for_media(value):
             continue
         if not read_snapshot(path):
             name = Path(path).name
-            if re.search(r"[0-9a-f]{32}", name):
+            if re.search("[0-9a-f]{32}", name):
                 candidates = [
                     candidate
                     for root in (OUTPUT_DIR, OUTPUTS_DIR)
@@ -4284,11 +3241,7 @@ def describe_settings(values: dict) -> str:
 
 
 def reference_prompt_help() -> str:
-    return (
-        f"Use `<Picture 1>` through `<Picture {MAX_REFERENCE_IMAGES}>`, "
-        f"`<Video 1>` through `<Video {MAX_REFERENCE_VIDEOS}>`, and "
-        f"`<Audio 1>` through `<Audio {MAX_REFERENCE_AUDIOS}>` in the prompt."
-    )
+    return f"Use `<Picture 1>` through `<Picture {MAX_REFERENCE_IMAGES}>`, `<Video 1>` through `<Video {MAX_REFERENCE_VIDEOS}>`, and `<Audio 1>` through `<Audio {MAX_REFERENCE_AUDIOS}>` in the prompt."
 
 
 def mode_help(mode: str) -> str:
@@ -4303,9 +3256,7 @@ def mode_help(mode: str) -> str:
 
 
 def generate_with_ui_defaults(
-    prompt: str,
-    request: gr.Request,
-    progress=gr.Progress(track_tqdm=False),
+    prompt: str, request: gr.Request, progress=gr.Progress(track_tqdm=False)
 ):
     """Generate with UI defaults and return a reusable public download URL."""
     defaults = UI_DEFAULTS
@@ -4397,7 +3348,7 @@ def generate_with_ui_defaults(
         download_url = (
             absolute_video_download_url(video, request) if video is not None else None
         )
-        yield download_url, status
+        yield (download_url, status)
 
 
 def video_batch_seeds(seed: int, batch_count: int) -> list[int]:
@@ -4405,8 +3356,7 @@ def video_batch_seeds(seed: int, batch_count: int) -> list[int]:
     count = int(batch_count)
     if not MIN_VIDEO_BATCH_COUNT <= count <= MAX_VIDEO_BATCH_COUNT:
         raise H3Error(
-            f"Video batch count must be between {MIN_VIDEO_BATCH_COUNT} and "
-            f"{MAX_VIDEO_BATCH_COUNT}."
+            f"Video batch count must be between {MIN_VIDEO_BATCH_COUNT} and {MAX_VIDEO_BATCH_COUNT}."
         )
     base_seed = int(seed)
     if count == 1:
@@ -4421,10 +3371,13 @@ def generate_for_ui(batch_count: int, *args: Any):
     count = int(batch_count) if result_format == "Video" else 1
     job = CURRENT_JOB.get()
     seeds = (
-        list(job.replay_seeds) if job is not None and job.replay_seeds else
-        video_batch_seeds(int(arguments.values["seed"]), count)
-        if result_format == "Video"
-        else [int(arguments.values["seed"])]
+        list(job.replay_seeds)
+        if job is not None and job.replay_seeds
+        else (
+            video_batch_seeds(int(arguments.values["seed"]), count)
+            if result_format == "Video"
+            else [int(arguments.values["seed"])]
+        )
     )
     indices = list(range(count))
     if job is not None:
@@ -4433,7 +3386,9 @@ def generate_for_ui(batch_count: int, *args: Any):
             indices = list(job.replay_indices)
             count = len(seeds)
         else:
-            seeds = [random.randrange(0, 2**63 - 1) if seed < 0 else seed for seed in seeds]
+            seeds = [
+                random.randrange(0, 2**63 - 1) if seed < 0 else seed for seed in seeds
+            ]
             job.variant_seeds.update(enumerate(seeds))
     first_update = True
     for batch_index, batch_seed in enumerate(seeds):
@@ -4449,8 +3404,7 @@ def generate_for_ui(batch_count: int, *args: Any):
                 first_update = False
                 video_updates = [
                     gr.update(
-                        value=None,
-                        visible=(result_format == "Video" and index < count),
+                        value=None, visible=result_format == "Video" and index < count
                     )
                     for index in range(MAX_VIDEO_BATCH_COUNT)
                 ]
@@ -4467,7 +3421,6 @@ def generate_for_ui(batch_count: int, *args: Any):
                 )
                 if result is None:
                     continue
-
             if result is None:
                 yield (
                     *video_updates,
@@ -4481,7 +3434,6 @@ def generate_for_ui(batch_count: int, *args: Any):
                     status,
                 )
                 continue
-
             if result_format == "Image":
                 paths = normalize_paths(result)
                 labels = image_frame_labels(paths)
@@ -4526,65 +3478,52 @@ def generate_for_ui(batch_count: int, *args: Any):
 
 def api_guide() -> str:
     defaults = UI_DEFAULTS
-    return f"""## Generate through the API
-
-The `/generate_video` endpoint accepts a prompt and preserves the existing **Video** defaults from the **MiniMax H3** tab, including default-on reuse of unchanged prompt/media conditioning:
-
-`{defaults["mode"]}` · `{defaults["model_profile"]}` · `{defaults["generation_mode"]} / {defaults["turbo_variant"]}` · `{defaults["duration"]}s` · `{defaults["width"]}×{defaults["height"]}` · `{defaults["steps"]} steps` · `{defaults["scheduler"]}` scheduler · random seed
-
-Install the client and submit a job:
-
-```bash
-pip install gradio_client
-```
-
-```python
-from gradio_client import Client
-
-client = Client("http://127.0.0.1:7860")
-download_url, status = client.predict(
-    "A cinematic tracking shot through a rain-soaked neon city",
-    api_name="/generate_video",
-)
-print(download_url)
-print(status)
-```
-
-`download_url` is an HTTP URL served by this app, so it can be opened in a browser or downloaded with `curl -L -O` while the app is running.
-
-For every control exposed by the MiniMax H3 tab, including **Image** and **Audio** result formats, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. Image selections can be persisted through `/save_h3_image_frames`. API requests share the same single-job queue as the UI.
-"""
+    return f"""## Generate through the API\n\nThe `/generate_video` endpoint accepts a prompt and preserves the existing **Video** defaults from the **MiniMax H3** tab, including default-on reuse of unchanged prompt/media conditioning:\n\n`{defaults['mode']}` · `{defaults['model_profile']}` · `{defaults['generation_mode']} / {defaults['turbo_variant']}` · `{defaults['duration']}s` · `{defaults['width']}×{defaults['height']}` · `{defaults['steps']} steps` · `{defaults['scheduler']}` scheduler · random seed\n\nInstall the client and submit a job:\n\n```bash\npip install gradio_client\n```\n\n```python\nfrom gradio_client import Client\n\nclient = Client("http://127.0.0.1:7860")\ndownload_url, status = client.predict(\n    "A cinematic tracking shot through a rain-soaked neon city",\n    api_name="/generate_video",\n)\nprint(download_url)\nprint(status)\n```\n\n`download_url` is an HTTP URL served by this app, so it can be opened in a browser or downloaded with `curl -L -O` while the app is running.\n\nFor every control exposed by the MiniMax H3 tab, including **Image** and **Audio** result formats, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. Image selections can be persisted through `/save_h3_image_frames`. API requests share the same single-job queue as the UI.\n"""
 
 
 def compact_backend_status(detail: str) -> str:
     """Render a calm, glanceable status while retaining diagnostics separately."""
-    if workspace_enabled() and detail.startswith("Connected"):
+    if detail.startswith("Connected"):
         detail = "Connected · ComfyUI"
     return backend_status_html(detail)
 
 
 def refresh_backend_views() -> tuple[str, str]:
     detail = backend_status()
-    return compact_backend_status(detail), detail
+    return (compact_backend_status(detail), detail)
 
 
 def generation_preflight(
-    mode: str,
-    prompt: str,
-    first_image: Any,
-    last_image: Any,
-    *reference_media: Any,
+    mode: str, prompt: str, first_image: Any, last_image: Any, *reference_media: Any
 ) -> tuple[str, Any]:
     """Keep invalid jobs out of the expensive backend queue."""
     readiness = generation_readiness_state(
         mode, prompt, first_image, last_image, reference_media
     )
-    return readiness.html, gr.update(interactive=readiness.ready)
+    return (readiness.html, gr.update(interactive=readiness.ready))
 
 
 def build_ui() -> gr.Blocks:
-    """Legacy composition entry point; captures patched callbacks explicitly."""
+    """Compose the workspace using explicit catalogs and callbacks."""
     from .bootstrap import BootstrapCatalog, BootstrapServices, build_ui as compose_ui
+    from h3_app.jobs import JOBS
+    from h3_app.workspace_store import default_store
+
+    JOBS.configure(default_store(OUTPUTS_DIR))
+    from h3_app.media import history_output_candidates
+
+    JOBS.history_outputs = lambda history, entry: [
+        str(path)
+        for path in history_output_candidates(
+            _runtime_config().output_dir,
+            history,
+            VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_EXTENSIONS,
+        )
+    ]
+    from h3_app.generation.finish_video import restore_finishing
+
+    JOBS.finishing_factory = lambda job: restore_finishing(job, _generation_services())
+
     return compose_ui(
         BootstrapCatalog(
             AI_POSTPROCESS_OPTIONS=AI_POSTPROCESS_OPTIONS,
@@ -4703,9 +3642,7 @@ def build_ui() -> gr.Blocks:
 
 
 def selftest() -> None:
-    # Alias __main__ so mocks target this exact application instance.
-    sys.modules.setdefault("gradio_app", sys.modules[__name__])
-    from tests.legacy_selftest import selftest as run_contracts
+    from tests.service_selftest import selftest as run_contracts
 
     run_contracts()
 
@@ -4713,20 +3650,14 @@ def selftest() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--selftest", action="store_true")
-    parser.add_argument("--ui-layout", choices=["legacy", "workspace"], default=None)
     args = parser.parse_args()
-    if args.ui_layout:
-        os.environ["H3_UI_LAYOUT"] = args.ui_layout
     if args.selftest:
         selftest()
         return
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    allowed_paths = [
-        str(OUTPUT_DIR.resolve()),
-        str(OUTPUTS_DIR.resolve()),
-    ]
+    allowed_paths = [str(OUTPUT_DIR.resolve()), str(OUTPUTS_DIR.resolve())]
     print(
         "[h3-ui] Runtime configuration:",
         {
@@ -4771,7 +3702,6 @@ def main() -> None:
             signal.signal(signal.SIGHUP, handle_shutdown)
         except (ValueError, AttributeError):
             pass
-
     server = uvicorn.Server(
         uvicorn.Config(
             app,
@@ -4785,12 +3715,8 @@ def main() -> None:
     )
     server_thread = threading.Thread(target=server.run, daemon=True)
     server_thread.start()
-
     if share_enabled:
         try:
-            # The app is mounted into a custom FastAPI server, so demo.launch()
-            # cannot create the tunnel without starting a second server. Use
-            # the same Gradio tunnel implementation against this server.
             share_url = gradio_networking.setup_tunnel(
                 local_host="127.0.0.1",
                 local_port=port,
@@ -4802,13 +3728,9 @@ def main() -> None:
             )
             print(f"[h3-ui] Public Gradio URL: {share_url}", flush=True)
         except Exception as exc:
-            print(
-                f"[h3-ui] Could not create Gradio share link: {exc}",
-                flush=True,
-            )
-
+            print(f"[h3-ui] Could not create Gradio share link: {exc}", flush=True)
     try:
-        while server_thread.is_alive() and not shutdown_requested.is_set():
+        while server_thread.is_alive() and (not shutdown_requested.is_set()):
             server_thread.join(timeout=0.5)
     except (KeyboardInterrupt, SystemExit):
         pass
@@ -4824,3 +3746,152 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+__all__ = [
+    "AUTO_SOL_TOKEN_THRESHOLD",
+    "Any",
+    "CHUNK_FEED_FORWARD_NODE",
+    "COMFY_UPSCALE_OPTIONS",
+    "CORE_LORA_LOADER_NODE",
+    "CORE_SAMPLER_NODE",
+    "DEFAULT_AUTO_RESOLUTION_MEGAPIXELS",
+    "DEFAULT_GEMINI_PROMPT_MODEL",
+    "DEFAULT_LTX25_MODEL",
+    "DEFAULT_MUSIC3_MODEL",
+    "DEFAULT_SEEDVR2_MODEL",
+    "DEFAULT_TURBO",
+    "FUSED_MODULATION_NODE",
+    "GEMINI_PROMPT_MODELS",
+    "GENERATION_FIELDS",
+    "GENERATION_POSTPROCESS_OPTIONS",
+    "Graph",
+    "H3Error",
+    "H3SplitUpscaleConfig",
+    "H3_COMBINE_AV_LATENT_NODE",
+    "H3_CONDITIONING_CACHE_NODE",
+    "H3_IMAGE_SLICES_NODE",
+    "H3_LATENT_UPSCALER_NODE",
+    "H3_LATENT_UPSCALE_SPLIT",
+    "H3_LATENT_UPSCALE_STANDARD",
+    "H3_NVENC_SAVE_NODE",
+    "H3_REFINEMENT_COMPILER_GUARD_NODE",
+    "H3_SEMANTIC_BRIDGE_NODE",
+    "H3_SEPARATE_AV_LATENT_NODE",
+    "H3_SIGMA_SHIFT_NODE",
+    "H3_SINGLE_FRAME_VAE_LOADER_NODE",
+    "H3_SPLIT_SPATIAL_PARAMS_NODE",
+    "H3_SPLIT_TEMPORAL_PARAMS_NODE",
+    "H3_SPLIT_UPSCALE_NODE",
+    "H3_STAGE_OFFLOAD_NODE",
+    "H3_STAGE_OFFLOAD_POLICY_NODE",
+    "IMAGE_EXTENSIONS",
+    "INPUT_IMAGE_FRAME_PRESETS",
+    "INPUT_IMAGE_UPSCALE_SLOTS",
+    "JOBS",
+    "LARRY_TURBO",
+    "LARRY_TURBO_LORA_NODE",
+    "LARRY_TURBO_SAMPLER_NODE",
+    "LIGHTNING_API_ROOT",
+    "LIGHTNING_PROMPT_MODEL",
+    "LIGHTX2V_4STEP_TURBO",
+    "LIGHTX2V_8STEP_TURBO",
+    "LIGHTX2V_BYPASS_LORA_NODE",
+    "LTX25_CQ_ENHANCER",
+    "LTX25_DEBLUR",
+    "LTX25_DECOMPRESSION",
+    "LTX25_ICLORA_MODEL_KEYS",
+    "LTX25_REFINE_DETAILS",
+    "LTX25_RESTORE",
+    "LTX25_SDR_TO_HDR",
+    "LTX25_SIGMAS",
+    "LTX25_UPSCALE",
+    "LTX25_WORKFLOWS",
+    "LTX25_WORKFLOW_FILENAMES",
+    "MODEL_PROFILE_CHOICES",
+    "MODEL_SPECS",
+    "MUSIC3_DEFAULTS",
+    "ModelConfig",
+    "ModelProfile",
+    "OFFICIAL_IMAGE_VAE",
+    "POSTPROCESS_OPTIONS",
+    "PROMPT_WRITER_BACKENDS",
+    "Path",
+    "RESOLUTION_TIERS",
+    "Response",
+    "SAGE_ATTENTION_NODE",
+    "SAMPLING_PRESETS",
+    "SAMPLING_PRESET_TEXT_ENCODERS",
+    "SEEDVR2_UPSCALE",
+    "SINGLE_FRAME_IMAGE_VAE",
+    "SLA_ATTENTION_NODE",
+    "SLA_PRESET_INPUTS",
+    "SOL_ATTENTION_NODE",
+    "SWIFTVR_UPSCALE",
+    "StageTimings",
+    "UI_DEFAULTS",
+    "UVICORN_WEBSOCKET_OPTIONS",
+    "VIDEO_EXTENSIONS",
+    "_append_set_cookies",
+    "_comfy_upstream_path",
+    "_proxy_headers",
+    "_rewrite_comfy_text",
+    "active_fl2va_voice_references",
+    "auto_resolution_pixel_cap",
+    "backend_status_html",
+    "build_music3_graph",
+    "collect_reference_slots",
+    "estimate_packed_tokens",
+    "frame_length",
+    "gallery_store",
+    "generation_readiness_state",
+    "gr",
+    "graph_class_types",
+    "h3_latent_upscale_dimensions",
+    "h3_text_encoder_settings",
+    "h3_workflow",
+    "httpx",
+    "image_sampling_length",
+    "inspect",
+    "json",
+    "ltx25_frame_length",
+    "ltx25_official_inventory_keys",
+    "ltx25_workflow_model_keys",
+    "math",
+    "model_file_is_ready",
+    "model_service",
+    "node_stage",
+    "normalize_result_format",
+    "os",
+    "outputs",
+    "progress_status",
+    "prompt_service",
+    "random",
+    "replace",
+    "required_music3_nodes",
+    "resolution_choice_values",
+    "resolution_for_aspect_ratio",
+    "resolve_cache_policy",
+    "resolve_h3_split_upscale_config",
+    "resolve_hf_token",
+    "resolve_sla_preset",
+    "rewrite_local_h3_prompt",
+    "run_media_process",
+    "selected_image_sampling_length",
+    "shutil",
+    "single_frame_image_sampling_length",
+    "staging",
+    "stale_model_keys",
+    "swiftvr",
+    "sync_models",
+    "tempfile",
+    "threading",
+    "time",
+    "turbo_sampler_name",
+    "turbo_steps_for",
+    "turbo_strength_for",
+    "turbo_uses_custom_nodes",
+    "unload_prompt_rewriter",
+    "upscale_target_dimensions",
+    "validate_resolution",
+    "write_snapshot",
+]

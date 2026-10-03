@@ -9,7 +9,7 @@ class VideoDecoder(StrEnum):
     LYNNREAL_INT8 = "LynnReal INT8"
     TENSORRT = "TensorRT"
 
-    def legacy_flags(self) -> dict[str, bool]:
+    def workflow_flags(self) -> dict[str, bool]:
         return {
             "use_int8_vae": self == self.OFFICIAL_INT8,
             "use_lynnreal_vae": self == self.LYNNREAL_INT8,
