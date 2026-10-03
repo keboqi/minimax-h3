@@ -31,6 +31,7 @@ def run():
         process = subprocess.Popen(
             [sys.executable, "-u", "-c", source],
             cwd=ROOT,
+            env={**os.environ, "H3_UI_LAYOUT": "legacy"},
             stdout=log,
             stderr=log,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,

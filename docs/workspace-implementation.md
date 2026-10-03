@@ -3,15 +3,17 @@
 Updated 3 October 2026 against the [revised UI/UX plan](ui-ux-redesign-plan-2026-10-03.md).
 
 The first-release workspace features are implemented behind a server selection
-flag. The legacy layout remains the default. This is a preview implementation;
+flag. Workspace is the default at the user's request on 3 October 2026. This remains a preview implementation;
 Milestone A5 release acceptance is incomplete.
 
 ## Running and rollback
 
-Start the existing local launcher with `H3_UI_LAYOUT=workspace`, or run
-`python gradio_app.py --ui-layout workspace` in the provisioned environment.
-For Modal, set `H3_UI_LAYOUT=workspace` in the deployment environment; the image
-captures that value. Restart/redeploy with `legacy` to return to the old layout.
+Start the existing local launcher with `bash run_h3.sh`, or run
+`python gradio_app.py` in the provisioned environment. Both default to workspace.
+Modal also defaults to workspace; the image captures the deployment environment's
+`H3_UI_LAYOUT` override. Use `H3_UI_LAYOUT=legacy bash run_h3.sh`,
+`python gradio_app.py --ui-layout legacy`, or redeploy Modal with
+`H3_UI_LAYOUT=legacy` to return to the old layout.
 An invalid value fails explicitly. Switching the layout does not migrate media
 directories or replace the inference stack.
 
@@ -97,12 +99,13 @@ handoff rejection and job isolation. Workspace screenshots cover 390, 768, 1280
 and 1440 pixels, light/dark themes and reduced motion; basic keyboard focus and
 horizontal overflow are checked.
 
-On this host, discovery ran 243 tests successfully with three optional PyTorch
+On this host, discovery ran 244 tests successfully with three optional PyTorch
 tests skipped. All four browser suites passed. Undefined-name checks, Python
 compilation and `git diff --check` passed. The final workspace upload checks also
 cover input-derived Image canvas locking and sparse reference replacement/repair.
 
-Evidence is generated under `.cache/ui-redesign/`: `final-tests.log`, baseline
+Evidence is generated under `.cache/ui-redesign/`: `final-tests.log`,
+`default-workspace-tests.log`, baseline
 screenshots, workspace screenshots, `workspace/results.json`, and server logs.
 These local artifacts are ignored by Git. Browser timing includes Playwright
 round trips and server updates; it is not an inference or production benchmark.
@@ -111,7 +114,7 @@ individual prompt/readiness updates took approximately 0.23–0.53 seconds; this
 does not satisfy the plan's 200 ms target. Baseline comparison and tuning remain
 release work.
 
-Remaining gates before changing the default:
+Remaining validation gates (the default switch does not imply these passed):
 
 1. Provisioned supported-GPU inference for H3 Text/Frames/References, all outputs,
    other engines, partial batches, finishing and interruption. The checked host
@@ -128,5 +131,6 @@ Remaining gates before changing the default:
 5. Broad reference replacement/removal and rapid mode/settings browser scenarios
    with real uploaded media across engines; pure policy tests cover the core map.
 
-These outstanding acceptance gates keep the workspace flag opt-in. Milestone B
-is not delivered by this change.
+The user requested the workspace default before these acceptance gates were
+completed. The explicit legacy override remains available. Milestone B is not
+delivered by this change.

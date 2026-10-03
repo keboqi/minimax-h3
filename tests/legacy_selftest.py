@@ -1,6 +1,7 @@
 """Legacy workflow contracts extracted from the production entry point."""
 from __future__ import annotations
 import gradio_app as app
+import os
 
 def selftest() -> None:
     assert app.MODEL_PROFILE_CHOICES == [
@@ -103,7 +104,7 @@ def selftest() -> None:
     assert "h3-action-dock" in app.H3_UI_CSS
     assert "button:focus-visible" in app.H3_UI_CSS
     assert "@media (max-width: 600px)" in app.H3_UI_CSS
-    with app.unittest.mock.patch(
+    with app.unittest.mock.patch.dict(os.environ, {"H3_UI_LAYOUT": "legacy"}), app.unittest.mock.patch(
         f"{app.__name__}.backend_status", return_value="Connected self-test"
     ):
         ui_demo = app.build_ui()

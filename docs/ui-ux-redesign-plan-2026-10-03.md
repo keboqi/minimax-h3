@@ -4,6 +4,11 @@ Original review date: 2 October 2026
 
 Revision date: 3 October 2026
 
+Implementation update, 3 October 2026: the user requested workspace as the
+default for local and Modal launches. The explicit legacy override remains.
+This overrides the initial opt-in rollout sequencing; outstanding release
+validation is recorded in [implementation status](workspace-implementation.md).
+
 Repository: [keboqi/minimax-h3](https://github.com/keboqi/minimax-h3)
 
 Reviewed commit: [e773cd6](https://github.com/keboqi/minimax-h3/tree/e773cd6461004a94251c89865d827d4fefa1caa4)

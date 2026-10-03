@@ -37,6 +37,7 @@ def bind_gallery_view(
     empty: Callable[..., Any],
     list_paths: Callable[..., Any] | None = None,
 ) -> None:
+    workspace = workspace_enabled()
     page_size = 48
 
     def refresh_page(mode: str, limit: int = page_size):
@@ -67,7 +68,7 @@ def bind_gallery_view(
             gr.update(visible=value == "Audio", value=None),
             None,
             "",
-            gr.update(visible=value == "Video" or workspace_enabled()),
+            gr.update(visible=value == "Video" or workspace),
             gr.update(value=False),
             gr.update(
                 choices=(
@@ -262,7 +263,7 @@ def bind_gallery_view(
         queue=False,
     )
     stopped.then(fn=None, cancels=[post_event], queue=False, api_name=False)
-    if workspace_enabled():
+    if workspace:
         from .media_actions import bind_safe_deletion
 
         bind_safe_deletion(

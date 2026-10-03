@@ -30,6 +30,7 @@ class UiContractTests(unittest.TestCase):
             return loop
 
         with (
+            mock.patch.dict(os.environ, {"H3_UI_LAYOUT": "legacy"}),
             mock.patch.object(
                 gradio_app, "backend_status", return_value="Connected UI test"
             ),
@@ -85,7 +86,7 @@ class UiContractTests(unittest.TestCase):
         self.assertIs(event["queue"], False)
 
     def test_workspace_preserves_published_api_parameters_and_returns(self):
-        with mock.patch.dict(os.environ, {"H3_UI_LAYOUT": "workspace"}), mock.patch.object(
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
             gradio_app, "backend_status", return_value="Connected contract fixture"
         ):
             workspace = gradio_app.build_ui()

@@ -22,7 +22,8 @@ def run():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
-    env = {**os.environ, "H3_UI_LAYOUT": "workspace", "HF_HUB_OFFLINE": "1"}
+    env = {key: value for key, value in os.environ.items() if key != "H3_UI_LAYOUT"}
+    env["HF_HUB_OFFLINE"] = "1"
     with (ARTIFACTS / "server.log").open("wb") as log:
         process = subprocess.Popen(
             [sys.executable, "-u", "-m", "tests.workspace_fixture", str(port)],

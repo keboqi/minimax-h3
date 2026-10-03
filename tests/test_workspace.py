@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 import gradio_app as app
 from pathlib import Path
 import tempfile
@@ -22,6 +23,18 @@ from types import SimpleNamespace
 from h3_ui.prompt_preview import fingerprint
 from h3_ui.job_admission import execute_accepted
 from h3_ui.media_actions import file_fingerprints
+from h3_ui.workspace_mode import workspace_enabled
+
+
+class LayoutTests(unittest.TestCase):
+    def test_workspace_default_and_explicit_legacy_override(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(workspace_enabled())
+        with patch.dict(os.environ, {"H3_UI_LAYOUT": "legacy"}):
+            self.assertFalse(workspace_enabled())
+        with patch.dict(os.environ, {"H3_UI_LAYOUT": "invalid"}):
+            with self.assertRaises(ValueError):
+                workspace_enabled()
 
 
 class ReferenceTests(unittest.TestCase):
