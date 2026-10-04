@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import shutil
 import subprocess
 import sys
@@ -269,6 +270,100 @@ class ColabLauncherTests(unittest.TestCase):
             self.assertIn("Python environment missing", failed.stderr)
 
 
+class InterruptingOutput:
+    closed = False
+
+    def __iter__(self):
+        raise KeyboardInterrupt
+
+    def close(self):
+        self.closed = True
+
+
+class ColabLogStreamingTests(unittest.TestCase):
+    def setUp(self):
+        self.run = load_function("run_colab_launcher", dict(os=os, subprocess=subprocess, signal=signal))
+
+    def run_child_fixture(self, script, output):
+        original_popen = subprocess.Popen
+        def open_fixture(command, **kwargs):
+            self.assertEqual(command, ["bash", "fixture.sh"])
+            self.assertEqual(kwargs["env"]["PYTHONUNBUFFERED"], "1")
+            return original_popen([sys.executable, "-u", "-c", script], **kwargs)
+        with patch.object(subprocess, "Popen", side_effect=open_fixture), contextlib.redirect_stdout(output):
+            self.run("fixture.sh")
+
+    def test_stdout_and_stderr_are_visible_before_child_exits(self):
+        with TemporaryDirectory() as directory:
+            release = Path(directory) / "log-seen"
+            class NotebookOutput(io.StringIO):
+                def write(self, text):
+                    if "server ready" in text:
+                        release.touch()
+                    return super().write(text)
+            output = NotebookOutput()
+            script = f"""import sys, time
+from pathlib import Path
+print('server ready', flush=True)
+deadline = time.monotonic() + 5
+while not Path({str(release)!r}).exists():
+    if time.monotonic() >= deadline:
+        sys.exit('Startup output was not relayed while the process was running')
+    time.sleep(0.01)
+print('Public URL: https://fixture.gradio.live', file=sys.stderr, flush=True)
+sys.stdout.buffer.write(b'\\xffinvalid byte\\n')
+sys.stdout.buffer.flush()
+"""
+            self.run_child_fixture(script, output)
+            self.assertTrue(release.exists())
+            self.assertIn("server ready", output.getvalue())
+            self.assertIn("https://fixture.gradio.live", output.getvalue())
+            self.assertIn("\ufffdinvalid byte", output.getvalue())
+            self.assertIn("This cell stays running", output.getvalue())
+
+    def test_startup_failure_keeps_error_log_and_reports_exit_code(self):
+        output = io.StringIO()
+        script = "import sys; print('setup failed', file=sys.stderr, flush=True); sys.exit(7)"
+        with self.assertRaises(subprocess.CalledProcessError) as raised:
+            self.run_child_fixture(script, output)
+        self.assertEqual(raised.exception.returncode, 7)
+        self.assertIn("setup failed", output.getvalue())
+
+    def test_interrupt_signals_linux_process_group_and_closes_log_pipe(self):
+        proc = Mock(pid=12345, stdout=InterruptingOutput())
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+        with patch.object(subprocess, "Popen", return_value=proc) as popen, patch.object(os, "name", "posix"), patch.object(os, "killpg", create=True) as killpg, contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run("fixture.sh")
+            killpg.assert_called_once_with(proc.pid, signal.SIGTERM)
+            self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        proc.wait.assert_called_once_with(timeout=10)
+        self.assertTrue(proc.stdout.closed)
+
+    def test_unresponsive_process_group_is_force_killed(self):
+        proc = Mock(pid=12345, stdout=InterruptingOutput())
+        proc.poll.return_value = None
+        proc.wait.side_effect = [subprocess.TimeoutExpired("bash", 10), 0]
+        with patch.object(subprocess, "Popen", return_value=proc), patch.object(os, "name", "posix"), patch.object(os, "killpg", create=True) as killpg, patch.object(signal, "SIGKILL", 9, create=True), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run("fixture.sh")
+            self.assertEqual(killpg.call_count, 2)
+            self.assertEqual(killpg.call_args.args, (proc.pid, signal.SIGKILL))
+        self.assertEqual(proc.wait.call_count, 2)
+        self.assertTrue(proc.stdout.closed)
+
+    def test_interrupt_uses_process_termination_on_windows(self):
+        proc = Mock(stdout=InterruptingOutput())
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+        with patch.object(subprocess, "Popen", return_value=proc), patch.object(os, "name", "nt"), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run("fixture.sh")
+        proc.terminate.assert_called_once()
+        self.assertTrue(proc.stdout.closed)
+
+
 class ColabCloudflareTests(unittest.TestCase):
     def setUp(self):
         self.namespace = dict(Path=Path, subprocess=subprocess, threading=threading, re=re, os=os)
@@ -344,9 +439,13 @@ class ColabCloudflareTests(unittest.TestCase):
             for node in tree.body:
                 if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "ENABLE_CLOUDFLARE_TUNNEL" for t in node.targets):
                     node.value = ast.Constant(True)
-            with patch.object(os, "chdir"), patch.object(subprocess, "Popen", return_value=new), patch.object(threading, "Thread"), patch.object(subprocess, "run", side_effect=KeyboardInterrupt):
+            app = Mock(pid=12345, stdout=InterruptingOutput())
+            app.poll.return_value = None
+            app.wait.return_value = 0
+            with patch.object(os, "chdir"), patch.object(subprocess, "Popen", side_effect=[new, app]), patch.object(threading, "Thread"), patch.object(os, "killpg", create=True), contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaises(KeyboardInterrupt):
                     exec(compile(ast.fix_missing_locations(tree), "<launch cell>", "exec"), namespace)
+            self.assertTrue(app.stdout.closed)
             old.terminate.assert_called_once()
             new.terminate.assert_called_once()
             self.assertIsNone(namespace["_CLOUDFLARE_PROCESS"])
