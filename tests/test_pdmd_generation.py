@@ -1,13 +1,13 @@
-"""PDMD generation selection, schedules, and independent refinement."""
+"""PDMD/DMAD generation selection, schedules, and independent refinement."""
 import inspect
 from dataclasses import replace
 from types import SimpleNamespace
 import unittest
 
 from h3_ui import application as app
-from h3_app.catalog import PDMD_4STEP_LORA, TURBO_SETTINGS
+from h3_app.catalog import DMAD_4STEP_LORA, PDMD_4STEP_LORA, TURBO_SETTINGS
 from h3_app.generation.preparation import _validate_sampling_steps
-from h3_app.policy import normalize_turbo_variant, turbo_sampler_name, turbo_steps_for
+from h3_app.policy import normalize_turbo_variant, turbo_sampler_name, turbo_sigma_shifts, turbo_steps_for
 from h3_app.settings import GenerationRequest, SamplingSettings, resolve_settings, transition_modes
 from h3_ui.persistence import restore_preferences
 from tests import test_refinement_lora as refinement_tests
@@ -15,7 +15,7 @@ from tests import test_refinement_lora as refinement_tests
 
 class PdmdGenerationTests(unittest.TestCase):
     def test_defaults_validation_and_preferences(self):
-        for variant, steps in ((PDMD_4STEP_LORA, 4),):
+        for variant, steps in ((PDMD_4STEP_LORA, 4), (DMAD_4STEP_LORA, 4)):
             with self.subTest(variant=variant):
                 self.assertEqual(normalize_turbo_variant(variant), variant)
                 self.assertEqual(turbo_steps_for(variant), steps)
@@ -43,11 +43,11 @@ class PdmdGenerationTests(unittest.TestCase):
                 self.assertEqual(restored['h3.steps'], steps)
                 self.assertEqual(restored['h3.turbo_variant'], variant)
 
-    def test_both_workflows_use_pdmd_for_generation_and_optional_refinement(self):
+    def test_both_workflows_use_selected_adapter_for_generation_and_refinement(self):
         models = refinement_tests.RefinementLoraTests().models()
         for build in (app.build_fl2va_graph, app.build_ref2va_graph):
-            for variant, steps in ((PDMD_4STEP_LORA, 4),):
-                for refine_variant in (None, PDMD_4STEP_LORA):
+            for variant, steps in ((PDMD_4STEP_LORA, 4), (DMAD_4STEP_LORA, 4)):
+                for refine_variant in (None, PDMD_4STEP_LORA, DMAD_4STEP_LORA):
                     with self.subTest(build=build.__name__, variant=variant, refinement=refine_variant):
                         args = {
                             name: app.UI_DEFAULTS.get(name, 0)
@@ -60,9 +60,10 @@ class PdmdGenerationTests(unittest.TestCase):
                             steps=steps, scheduler='simple', seed=7, model_name='base.safetensors',
                             models=models, turbo_variant=variant, turbo_lora_name=filename,
                             turbo_strength=1.0, use_sol=False, cache_mode='Off',
-                            available_nodes=app.turbo_required_nodes(variant),
+                            available_nodes=(app.turbo_required_nodes(variant)
+                                             | (app.turbo_required_nodes(refine_variant) if refine_variant else set())),
                             latent_upscale_model_name='upscaler.pth', latent_upscale_refine_steps=1,
-                            refinement_lora_name=models.pdmd_4step_lora if refine_variant else None,
+                            refinement_lora_name=models.turbo_lora_for('Text to video', refine_variant) if refine_variant else None,
                             refinement_variant=refine_variant,
                         )
                         if build is app.build_fl2va_graph:
@@ -74,11 +75,32 @@ class PdmdGenerationTests(unittest.TestCase):
                         self.assertEqual(schedule['steps'], steps)
                         samples = [n['inputs'] for n in graph.values() if n['class_type'] == 'SamplerCustomAdvanced']
                         initial, refined = samples
-                        for sample, expected in ((initial, filename), (refined, models.pdmd_4step_lora if refine_variant else filename)):
+                        for sample, expected, selected in (
+                            (initial, filename, variant),
+                            (refined, models.turbo_lora_for('Text to video', refine_variant) if refine_variant else filename, refine_variant or variant),
+                        ):
                             model = graph[sample['guider'][0]]['inputs']['model']
                             chain = refinement_tests.RefinementLoraTests().model_chain(graph, model)
                             loras = [n['inputs'] for n in chain if 'lora_name' in n['inputs']]
                             self.assertEqual([n['lora_name'] for n in loras], [expected])
                             self.assertEqual(loras[0]['strength_model'], 1.0)
                             self.assertEqual(graph[sample['sampler'][0]]['inputs']['sampler_name'], 'euler')
-                        self.assertFalse(any(n['class_type'] in {app.H3_SIGMA_SHIFT_NODE, app.LIGHTX2V_BYPASS_LORA_NODE} for n in graph.values()))
+                            shifts = [n['inputs'] for n in chain if n['class_type'] == app.H3_SIGMA_SHIFT_NODE]
+                            self.assertEqual(
+                                [(n['shift_video'], n['shift_audio']) for n in shifts],
+                                [(12.0, 2.0)] if selected == DMAD_4STEP_LORA else [],
+                            )
+                        self.assertEqual(graph[refined['sigmas'][0]]['inputs']['sigmas'], initial['sigmas'])
+                        self.assertFalse(any(n['class_type'] == app.LIGHTX2V_BYPASS_LORA_NODE for n in graph.values()))
+
+    def test_dmad_requires_shift_node_and_normal_mode_keeps_base_schedule(self):
+        self.assertEqual(turbo_sigma_shifts(DMAD_4STEP_LORA, 'dmad.safetensors'), (12.0, 2.0))
+        self.assertIsNone(turbo_sigma_shifts(DMAD_4STEP_LORA, None))
+        self.assertIn(app.H3_SIGMA_SHIFT_NODE, app.turbo_required_nodes(DMAD_4STEP_LORA))
+        graph = app.Graph()
+        with self.assertRaisesRegex(app.H3Error, 'MiniMaxH3SigmaShift'):
+            app.add_turbo_model_patch(
+                graph, ['base', 0], lora_name='dmad.safetensors',
+                turbo_variant=DMAD_4STEP_LORA, strength=1.0,
+                available_nodes={app.CORE_LORA_LOADER_NODE, app.CORE_SAMPLER_NODE},
+            )

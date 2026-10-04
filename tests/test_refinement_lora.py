@@ -10,7 +10,7 @@ from h3_ui import application as app
 import h3_models
 from h3_app import model_service
 from h3_app.catalog import (
-    LARRY_TURBO, LIGHTX2V_8STEP_TURBO, PDMD_4STEP_LORA,
+    DMAD_4STEP_LORA, LARRY_TURBO, LIGHTX2V_8STEP_TURBO, PDMD_4STEP_LORA,
     REFINEMENT_LORA_SETTINGS, SAME_REFINEMENT_LORA,
 )
 from h3_app.config import RuntimeConfig
@@ -29,6 +29,7 @@ class RefinementLoraTests(unittest.TestCase):
             turbo_8step_lora='generation_8step_768p.safetensors',
             turbo_8step_ref_lora='reference_8step_768p.safetensors',
             pdmd_4step_lora=h3_models.MODEL_SPECS['pdmd_4step_lora'].local_name,
+            dmad_4step_lora=h3_models.MODEL_SPECS['dmad_4step_lora'].local_name,
         )
 
     def model_chain(self, graph, ref):
@@ -41,7 +42,7 @@ class RefinementLoraTests(unittest.TestCase):
 
     def test_both_workflows_replace_lora_only_on_refinement_branch(self):
         for build in (app.build_fl2va_graph, app.build_ref2va_graph):
-            for variant in (PDMD_4STEP_LORA, LARRY_TURBO):
+            for variant in (PDMD_4STEP_LORA, DMAD_4STEP_LORA, LARRY_TURBO):
                 for split in (False, True):
                     with self.subTest(build=build.__name__, variant=variant, split=split):
                         args = {
@@ -117,17 +118,17 @@ class RefinementLoraTests(unittest.TestCase):
         disabled = resolve_settings(GenerationRequest.from_values({'latent_upscale': False, 'latent_upscale_refine_lora': PDMD_4STEP_LORA}))
         self.assertIn('latent_upscale_refine_lora', disabled.inactive)
 
-    def test_pdmd_is_lazy_and_old_model_config_gets_filenames(self):
+    def test_experimental_adapters_are_lazy_and_old_model_config_gets_filenames(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             runtime = RuntimeConfig(root, 'http://fixture', root / 'ComfyUI', root / 'models.json', root / 'outputs')
             config = h3_models._build_config('manifest.json')
-            for key in ('pdmd_4step_lora',):
+            for key in ('pdmd_4step_lora', 'dmad_4step_lora'):
                 config.pop(key)
                 self.assertNotIn(key, h3_models.PRELOAD_MODEL_KEYS)
             runtime.models_config.write_text(json.dumps(config), encoding='utf-8')
             models = model_service.load_model_config(runtime=runtime)
-            for variant, spec in ((PDMD_4STEP_LORA, 'pdmd_4step_lora'),):
+            for variant, spec in ((PDMD_4STEP_LORA, 'pdmd_4step_lora'), (DMAD_4STEP_LORA, 'dmad_4step_lora')):
                 for mode in ('Text to video', 'Reference media'):
                     self.assertEqual(models.turbo_lora_for(mode, variant), h3_models.MODEL_SPECS[spec].local_name)
                     with (patch.object(model_service, 'stale_model_keys', return_value=[spec]),

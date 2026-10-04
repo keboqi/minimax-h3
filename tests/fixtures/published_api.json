@@ -428,7 +428,8 @@
         "Larry v4-600 EMA",
         "LightX2V / 4-step (FL2V 768p · Ref2V 544p)",
         "LightX2V v1.0 / 8-step 768p",
-        "PDMD / 4-step"
+        "PDMD / 4-step",
+        "DMAD / 4-step"
       ],
       "title": "Radio",
       "type": "string"
@@ -832,7 +833,8 @@
         "Larry v4-600 EMA",
         "LightX2V / 4-step (FL2V 768p · Ref2V 544p)",
         "LightX2V v1.0 / 8-step 768p",
-        "PDMD / 4-step"
+        "PDMD / 4-step",
+        "DMAD / 4-step"
       ]
     },
     "type_46": {

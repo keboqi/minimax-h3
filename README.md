@@ -58,7 +58,7 @@ deployment and production performance remain unmeasured.
   images, with downloadable results and no forced downscaling
 - Optional generation-stage MiniMax H3 latent 2x upscale, with Balanced BF16,
   Fast FP16, and Quality FP32 model choices
-- Selectable Larry v4-600 EMA and official LightX2V 4-step/8-step Turbo LoRAs,
+- Selectable Larry v4-600 EMA, official LightX2V 4-step/8-step, and experimental DMAD 4-step Turbo LoRAs,
   including dedicated LightX2V Ref2V adapters for 4 and 8 steps
 - Audio-safe SLA block-sparse attention by default, with selectable SageAttention 2,
   Comfy Kitchen comparison, and optional
@@ -275,7 +275,7 @@ bash run_h3.sh
 ```
 
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
-Singularity pruned v1.3 INT8 checkpoint plus the Fast NVFP4/AWQ text encoder, default FP32 latent-upscaler checkpoint, shared VAEs, and default 4-step Turbo LoRAs. The Speed, Quality and Original checkpoints plus the selectable PDMD 4-step and LightX2V 8-step Turbo LoRAs download on demand when selected; the Balanced preset's 6-step Larry LoRA is preloaded. SeedVR2 models, the
+Singularity pruned v1.3 INT8 checkpoint plus the Fast NVFP4/AWQ text encoder, default FP32 latent-upscaler checkpoint, shared VAEs, and default 4-step Turbo LoRAs. The Speed, Quality and Original checkpoints plus the selectable PDMD 4-step, DMAD 4-step and LightX2V 8-step Turbo LoRAs download on demand when selected; the Balanced preset's 6-step Larry LoRA is preloaded. SeedVR2 models, the
 LTX-2.5 upscaler and restoration IC-LoRAs, and SwiftVR checkpoints are lazy and download only
 when their post-processing option is first used. The installer pins the official
 SwiftVR inference source; no SWIFTVR_CHECKPOINT_DIR is required unless you want
@@ -588,6 +588,18 @@ steps with the simple scheduler and Euler sampler at LoRA strength 1.0, using
 the base H3 sigma shift. The adapter downloads on first use and shares its
 weights across conditioning modes. The refinement LoRA remains independently
 selectable, with **Same as generation** as its default.
+
+The experimental **DMAD / 4-step** option uses
+[Kijai's rank-reduced BF16 full-critic conversion](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/loras/minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors).
+It downloads on first use, selects 4 steps with Euler/simple at strength 1.0,
+and applies DMAD's trained video/audio shifts of **12/2** through
+`MiniMaxH3SigmaShift`. Older model configurations acquire its filename automatically.
+The same adapter is available for FL2VA, experimental Ref2VA, and independent
+high-resolution refinement; refinement retains the generation schedule's
+low-denoise tail. The [DMAD authors](https://github.com/Yzmblog/DMAD#inference)
+train and evaluate text-to-audio-video on the full 33B model. Their supported
+Euler inference path is used here; their paper results use a different re-noise
+sampler. Reference conditioning and pruned checkpoints are experimental.
 
 The **High-resolution refinement method** control keeps **Full-frame
 refinement** as the normal path. Selecting **MMH3 Split Upscale

@@ -15,6 +15,7 @@ from h3_app.catalog import (
     DEFAULT_IMAGE_VAE,
     DEFAULT_RESULT_FORMAT,
     DEFAULT_SLA_PRESET,
+    DMAD_4STEP_LORA,
     FUSED_MODULATION_NODE,
     H3_COMBINE_AV_LATENT_NODE,
     H3_CONDITIONING_CACHE_NODE,
@@ -46,7 +47,7 @@ from h3_app.catalog import (
     SLA_ATTENTION_NODE,
     SOL_ATTENTION_NODE,
     SPECTRUM_DEFAULT_INPUTS,
-    PDMD_REFINEMENT_SETTINGS,
+    STANDARD_TURBO_LORA_SETTINGS,
     REFINEMENT_LORA_SETTINGS,
 )
 from h3_app.errors import H3Error
@@ -57,7 +58,6 @@ from h3_app.policy import (
     frame_length,
     h3_latent_upscale_dimensions,
     image_sampling_length,
-    lightx2v_uses_768p_schedule,
     normalize_image_vae,
     normalize_result_format,
     normalize_turbo_variant,
@@ -66,6 +66,7 @@ from h3_app.policy import (
     selected_image_sampling_length,
     snap32,
     turbo_sampler_name,
+    turbo_sigma_shifts,
     turbo_uses_custom_nodes,
     validate_image_frame_count,
 )
@@ -76,8 +77,11 @@ def turbo_required_nodes(
     lora_filename: str = "",
 ) -> set[str]:
     """Return the external node contract for one normalized Turbo variant."""
-    if turbo_variant in PDMD_REFINEMENT_SETTINGS:
-        return {CORE_LORA_LOADER_NODE, CORE_SAMPLER_NODE}
+    if turbo_variant in STANDARD_TURBO_LORA_SETTINGS:
+        required = {CORE_LORA_LOADER_NODE, CORE_SAMPLER_NODE}
+        if turbo_variant == DMAD_4STEP_LORA:
+            required.add(H3_SIGMA_SHIFT_NODE)
+        return required
     if turbo_uses_custom_nodes(turbo_variant):
         return {LARRY_TURBO_LORA_NODE, LARRY_TURBO_SAMPLER_NODE}
     required = {
@@ -85,7 +89,7 @@ def turbo_required_nodes(
         CORE_SAMPLER_NODE,
         FUSED_MODULATION_NODE,
     }
-    if lightx2v_uses_768p_schedule(turbo_variant, lora_filename):
+    if turbo_sigma_shifts(turbo_variant, lora_filename) is not None:
         required.add(H3_SIGMA_SHIFT_NODE)
     return required
 
@@ -101,7 +105,7 @@ def add_turbo_model_patch(
 ) -> list[Any]:
     """Apply a Turbo LoRA and compatible model-level optimizations."""
     variant = (
-        turbo_variant if turbo_variant in PDMD_REFINEMENT_SETTINGS
+        turbo_variant if turbo_variant in STANDARD_TURBO_LORA_SETTINGS
         else normalize_turbo_variant(turbo_variant)
     )
     required = turbo_required_nodes(variant, lora_name)
@@ -113,7 +117,7 @@ def add_turbo_model_patch(
             "Re-run setup_h3.py and restart ComfyUI."
         )
 
-    if variant in PDMD_REFINEMENT_SETTINGS:
+    if variant in STANDARD_TURBO_LORA_SETTINGS:
         # The ComfyUI conversion embeds alpha tensors for the standard loader.
         turbo = graph.add(
             CORE_LORA_LOADER_NODE,
@@ -347,17 +351,18 @@ def add_model_stack(
         )
         model_ref = Graph.out(cache)
 
-    if turbo_lora_name and lightx2v_uses_768p_schedule(turbo_variant, turbo_lora_name):
+    sigma_shifts = turbo_sigma_shifts(turbo_variant, turbo_lora_name)
+    if sigma_shifts is not None:
         if H3_SIGMA_SHIFT_NODE not in available_nodes:
             raise H3Error(
-                "LightX2V 768p Turbo requires MiniMaxH3SigmaShift. "
+                f"{turbo_variant} Turbo requires MiniMaxH3SigmaShift. "
                 "Update ComfyUI and restart the service."
             )
         shifted = graph.add(
             H3_SIGMA_SHIFT_NODE,
             model=model_ref,
-            shift_video=6.0,
-            shift_audio=3.0,
+            shift_video=sigma_shifts[0],
+            shift_audio=sigma_shifts[1],
         )
         model_ref = Graph.out(shifted)
 
@@ -537,9 +542,11 @@ def add_refinement_model(
         graph, model_ref, lora_name=lora_name, variant=variant,
         available_nodes=available_nodes,
     )
-    if lightx2v_uses_768p_schedule(variant, lora_name):
+    sigma_shifts = turbo_sigma_shifts(variant, lora_name)
+    if sigma_shifts is not None:
         model = Graph.out(graph.add(
-            H3_SIGMA_SHIFT_NODE, model=model, shift_video=6.0, shift_audio=3.0,
+            H3_SIGMA_SHIFT_NODE, model=model,
+            shift_video=sigma_shifts[0], shift_audio=sigma_shifts[1],
         ))
     return model
 
@@ -651,12 +658,12 @@ def finish_sampling(
         if refinement_lora_name is not None:
             refinement_sampler = (
                 graph.add(LARRY_TURBO_SAMPLER_NODE)
-                if refinement_variant not in PDMD_REFINEMENT_SETTINGS
+                if refinement_variant not in STANDARD_TURBO_LORA_SETTINGS
                 and turbo_uses_custom_nodes(refinement_variant)
                 else graph.add(
                     CORE_SAMPLER_NODE,
                     sampler_name=(
-                        "euler" if refinement_variant in PDMD_REFINEMENT_SETTINGS
+                        "euler" if refinement_variant in STANDARD_TURBO_LORA_SETTINGS
                         else turbo_sampler_name(refinement_variant, refinement_lora_name)
                     ),
                 )

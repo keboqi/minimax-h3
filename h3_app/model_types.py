@@ -73,6 +73,7 @@ class ModelConfig:
     seedvr2_vae: str | None = None
     seedvr2_vae_source: str = "unknown"
     pdmd_4step_lora: str | None = None
+    dmad_4step_lora: str | None = None
 
     def profile_key(self, name: str) -> str:
         key = str(name).strip().lower()

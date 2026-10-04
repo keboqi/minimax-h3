@@ -239,6 +239,14 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "loras/minimax_h3_pdmd_4step_lora_avg_rank_57_bf16.safetensors",
         "Experimental PDMD 4-step LoRA · rank reduced BF16",
     ),
+    "dmad_4step_lora": ModelSpec(
+        "Kijai/MiniMax-H3-experimental", "loras",
+        "loras/minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors",
+        "Experimental DMAD 4-step full-critic LoRA · rank reduced BF16",
+        expected_sha256=(
+            "ddfdd94f4c9a0f32bf3649bb8e98ca20db572e4db6bcd9cca546a5b33ea32d11"
+        ),
+    ),
     "larry_turbo_lora": ModelSpec(
         LARRY_TURBO_REPO,
         "loras",
@@ -685,6 +693,7 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     "video_vae_trt_decoder_data",
     "image_vae_500k",
     "pdmd_4step_lora",
+    "dmad_4step_lora",
     "turbo_8step_lora",
     "turbo_8step_ref_lora",
     "larry_turbo_lora",
@@ -1284,6 +1293,7 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         "turbo_8step_ref_lora": turbo_8step_ref_lora.local_name,
         "turbo_8step_ref_source": turbo_8step_ref_lora.source,
         "pdmd_4step_lora": MODEL_SPECS["pdmd_4step_lora"].local_name,
+        "dmad_4step_lora": MODEL_SPECS["dmad_4step_lora"].local_name,
         "larry_turbo_lora": larry_turbo_lora.local_name,
         "larry_turbo_source": larry_turbo_lora.source,
         # Larry's FL2VA-trained LoRA is also exposed for experimental Ref2VA.
@@ -1512,6 +1522,7 @@ def selftest() -> None:
         "turbo_8step_lora",
         "turbo_8step_ref_lora",
         "pdmd_4step_lora",
+        "dmad_4step_lora",
         "larry_turbo_lora",
         "seedvr2_3b_fp16",
         "seedvr2_3b_nvfp4",

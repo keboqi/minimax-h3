@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from h3_app.catalog import (
     LARRY_TURBO,
-    PDMD_REFINEMENT_SETTINGS,
+    STANDARD_TURBO_LORA_SETTINGS,
     LIGHTX2V_8STEP_TURBO,
     LIGHTX2V_4STEP_TURBO,
     LTX25_POSTPROCESS_MODELS,
@@ -121,6 +121,9 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
         image_vae_500k_source=data.get("image_vae_500k_source", "unknown"),
         pdmd_4step_lora=data.get(
             "pdmd_4step_lora", MODEL_SPECS["pdmd_4step_lora"].local_name
+        ),
+        dmad_4step_lora=data.get(
+            "dmad_4step_lora", MODEL_SPECS["dmad_4step_lora"].local_name
         ),
         turbo_lora=data.get("turbo_lora"),
         turbo_source=data.get("turbo_source", "unknown"),
@@ -412,12 +415,12 @@ def ensure_turbo_lora(
 ) -> bool:
     """Download a non-default Turbo LoRA only when its variant is selected."""
     variant = (
-        turbo_variant if turbo_variant in PDMD_REFINEMENT_SETTINGS
+        turbo_variant if turbo_variant in STANDARD_TURBO_LORA_SETTINGS
         else normalize_turbo_variant(turbo_variant)
     )
     reference = str(mode).strip().lower() == "reference media"
-    if variant in PDMD_REFINEMENT_SETTINGS:
-        model_key = PDMD_REFINEMENT_SETTINGS[variant].lora_attr
+    if variant in STANDARD_TURBO_LORA_SETTINGS:
+        model_key = STANDARD_TURBO_LORA_SETTINGS[variant].lora_attr
         filename = getattr(models, model_key)
     elif variant == LARRY_TURBO:
         model_key = "larry_turbo_lora"

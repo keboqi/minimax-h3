@@ -27,7 +27,8 @@ from h3_app.catalog import (
     SINGLE_FRAME_IMAGE_VAE,
     SLA_PRESET_INPUTS,
     TURBO_SETTINGS,
-    PDMD_4STEP_LORA,
+    DMAD_4STEP_LORA,
+    STANDARD_TURBO_LORA_SETTINGS,
     UPSCALE_RESOLUTION_PRESETS,
 )
 from h3_app.errors import H3Error
@@ -82,19 +83,30 @@ def lightx2v_uses_768p_schedule(turbo_variant: str, lora_filename: str | None) -
 
 
 def turbo_sampler_name(turbo_variant: str, lora_filename: str | None) -> str:
-    # LightX2V and PDMD use Euler. A missing LoRA means normal
+    # LightX2V, PDMD and DMAD use Euler. A missing LoRA means normal
     # generation and keeps res_multistep.
     return (
         "euler"
         if is_lightx2v_turbo_lora(turbo_variant, lora_filename)
         or (
             lora_filename
-            and normalize_turbo_variant(turbo_variant) in {
-                PDMD_4STEP_LORA,
-            }
+            and normalize_turbo_variant(turbo_variant) in STANDARD_TURBO_LORA_SETTINGS
         )
         else "res_multistep"
     )
+
+
+def turbo_sigma_shifts(
+    turbo_variant: str, lora_filename: str | None,
+) -> tuple[float, float] | None:
+    """Return a trained video/audio shift override for an active adapter."""
+    if not lora_filename:
+        return None
+    if turbo_variant == DMAD_4STEP_LORA:
+        return 12.0, 2.0
+    if lightx2v_uses_768p_schedule(turbo_variant, lora_filename):
+        return 6.0, 3.0
+    return None
 
 
 def h3_latent_upscaler_settings(model_choice: str) -> tuple[str, str, str]:

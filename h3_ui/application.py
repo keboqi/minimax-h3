@@ -2634,6 +2634,7 @@ def backend_status() -> str:
             )
         for label, filename in (
             ("PDMD / 4-step", models.pdmd_4step_lora),
+            ("DMAD / 4-step · shifts 12/2", models.dmad_4step_lora),
         ):
             if filename:
                 profile_lines.append(

@@ -88,7 +88,7 @@ def build_finishing_section(
                     "Same as generation preserves the generation LoRA. Choose a different "
                     "LoRA for just the high-resolution pass; downloaded on first use. "
                     "LoRA step labels describe training, not the number of refinement steps. "
-                    "PDMD is experimental."
+                    "PDMD and DMAD are experimental."
                 ),
             )
             latent_upscale_method = gr.Dropdown(

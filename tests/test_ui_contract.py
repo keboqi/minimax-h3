@@ -190,7 +190,7 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(parameter["parameter_default"])
 
     def test_only_supported_model_and_turbo_options_are_selectable(self):
-        from h3_app.catalog import PDMD_4STEP_LORA
+        from h3_app.catalog import DMAD_4STEP_LORA, PDMD_4STEP_LORA
 
         controls = {
             c.get("props", {}).get("label"): c for c in self.config["components"]
@@ -199,6 +199,7 @@ class UiContractTests(unittest.TestCase):
         self.assertNotIn("PDMD / 2-step", choices)
         self.assertNotIn("TaoMate-H3 / 3-step", choices)
         self.assertIn(PDMD_4STEP_LORA, choices)
+        self.assertIn(DMAD_4STEP_LORA, choices)
         profiles = [c[0] for c in controls["Base model"]["props"]["choices"]]
         self.assertNotIn("FastH3 8-Step V2", profiles)
         refinements = [
@@ -206,6 +207,7 @@ class UiContractTests(unittest.TestCase):
         ]
         self.assertNotIn("PDMD / 2-step", refinements)
         self.assertNotIn("TaoMate-H3 / 3-step", refinements)
+        self.assertIn(DMAD_4STEP_LORA, refinements)
         from h3_app.contracts import GENERATION_FIELDS
 
         advanced = next(
