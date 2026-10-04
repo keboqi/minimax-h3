@@ -258,11 +258,10 @@ def prepare_h3(
             ),
         )
     services.models.ensure_profile_model(profile_key, profile, request.media.mode)
-    needs_video_vae = request.output.result_format == "Video" or (
-        request.output.result_format == "Image"
-        and selected_image_vae != SINGLE_FRAME_IMAGE_VAE
-    )
-    if needs_video_vae and not any(
+    # H3 conditioning requires a video VAE even for Audio output and the
+    # single-frame image decoder. Provision the VAE used by add_model_stack,
+    # independently of whether the result includes decoded video.
+    if not any(
         (
             request.output.use_int8_vae,
             request.output.use_trt_vae,

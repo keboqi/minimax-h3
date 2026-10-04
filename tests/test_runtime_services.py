@@ -14,16 +14,112 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from h3_app.config import RuntimeConfig
+from h3_app.generation.construct_graph import construct_graph
+from h3_app.generation.preparation import prepare_h3
+from h3_app.generation.requests import H3Request
 from h3_app.execution import Submission, ExecutionRunner
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCoordinator, CURRENT_JOB, JobCancelled
 from h3_app.processes import run_process
 from h3_app.resources import resolve_decoders
 from h3_app.settings import GenerationRequest, OutputSettings, resolve_settings
+from h3_app.workflows import h3 as h3_workflows
 import websocket
 
 
 class DecoderTests(unittest.TestCase):
+    def test_conditioning_vae_is_ready_before_audio_or_image_graph_construction(self):
+        from h3_ui import application as app
+
+        models = app.ModelConfig(
+            {"speed": app.ModelProfile("Speed", "fl", "ref")},
+            "speed", "text", "video", "audio", image_vae_500k="image",
+        )
+        cases = [
+            ("Audio", app.DEFAULT_IMAGE_VAE, mode)
+            for mode in ("Text to video", "First / last frame", "Reference media")
+        ] + [
+            ("Image", image_vae, "Text to video")
+            for image_vae in (app.DEFAULT_IMAGE_VAE, app.SINGLE_FRAME_IMAGE_VAE)
+        ]
+        for fmt, image_vae, mode in cases:
+            for installed in (False, True):
+                with self.subTest(fmt=fmt, image_vae=image_vae, mode=mode, installed=installed):
+                    values = {
+                        name: app.UI_DEFAULTS.get(name)
+                        if parameter.default is inspect.Parameter.empty
+                        else parameter.default
+                        for name, parameter in inspect.signature(app.generate).parameters.items()
+                        if name != "progress"
+                    }
+                    values.update(
+                        mode=mode, model_profile="Speed", prompt="Fixture",
+                        first_image="first.png" if mode == "First / last frame" else None,
+                        ref_audio_1="voice.wav" if mode == "Reference media" else None,
+                        generation_mode="Normal", steps=15, seed=123,
+                        attention_mode="Kitchen", cache_mode="Off",
+                        sol_step_off=0.0, sol_sink_tokens=0,
+                        result_format=fmt, image_vae=image_vae, image_frames=1,
+                        semantic_bridge=False, latent_upscale=False, postprocess="None",
+                        use_trt_vae=fmt == "Audio", use_int8_vae=fmt == "Audio",
+                        use_lynnreal_vae=fmt == "Audio",
+                    )
+                    request = H3Request.from_values(values)
+                    ready = {"text", "fl", "ref", "audio", "image"}
+                    if installed:
+                        ready.add("video")
+                    model_services = SimpleNamespace(
+                        load_model_config=Mock(return_value=models),
+                        h3_text_encoder_settings=Mock(return_value=("text_encoder", "text", False)),
+                        ensure_h3_text_encoder=Mock(return_value=("text", False)),
+                        ensure_profile_model=Mock(),
+                        model_file_is_ready=Mock(side_effect=lambda path: path.name in ready),
+                        ensure_base_video_vae=Mock(side_effect=lambda _: ready.add("video")),
+                        ensure_audio_vae=Mock(),
+                        ensure_single_frame_image_vae=Mock(),
+                        ensure_trt_video_vae_engine=Mock(side_effect=AssertionError("unused TRT")),
+                        ensure_int8_video_vae=Mock(side_effect=AssertionError("unused INT8")),
+                    )
+                    available = h3_workflows.required_nodes_for(
+                        mode, False, "Off", result_format=fmt, image_vae=image_vae,
+                    )
+                    services = SimpleNamespace(
+                        models=model_services,
+                        execution=SimpleNamespace(object_info=lambda: dict.fromkeys(available, {})),
+                        policy=SimpleNamespace(
+                            resolve_request_settings=lambda v: resolve_settings(GenerationRequest.from_values(v)),
+                            resolve_sol_policy=app.resolve_sol_policy,
+                        ),
+                        workflows=h3_workflows,
+                    )
+                    preparation = prepare_h3(
+                        request, services, app.RUNTIME, values, time.monotonic(),
+                        lambda *args, **kwargs: None,
+                    )
+                    updates = []
+                    while True:
+                        try:
+                            updates.append(next(preparation))
+                        except StopIteration as completed:
+                            prepared = completed.value
+                            break
+                    if installed:
+                        model_services.ensure_base_video_vae.assert_not_called()
+                    else:
+                        model_services.ensure_base_video_vae.assert_called_once_with(models)
+                        self.assertTrue(any("Downloading video VAE" in update.status for update in updates))
+                    model_services.ensure_trt_video_vae_engine.assert_not_called()
+                    model_services.ensure_int8_video_vae.assert_not_called()
+                    graph = construct_graph(request, prepared, services)
+                    for node in graph.values():
+                        if node["class_type"] == "VAELoader":
+                            self.assertIn(node["inputs"]["vae_name"], ready)
+                    if fmt == "Audio":
+                        classes = {node["class_type"] for node in graph.values()}
+                        self.assertIn("SaveAudioMP3", classes)
+                        self.assertNotIn("VAEDecode", classes)
+                        self.assertNotIn("CreateVideo", classes)
+
     def test_output_decoders_are_independent_of_inactive_preferences(self):
         for fmt, image, needs_video in (
             ("Audio", "", False),
