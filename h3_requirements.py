@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Shared dependency compatibility policy for MiniMax H3 deployments."""
+
 from __future__ import annotations
 
 import re
@@ -43,7 +44,7 @@ COMFY_REF = "65787d668397d230bf5839d69a0a7239e2dad378"
 COMFY_KITCHEN_VERSION = "0.2.36"
 COMFY_FRONTEND_VERSION = "1.53.10"
 WSPROTO_VERSION = "1.2.0"
-GRADIO_VERSION = "6.27.0"
+GRADIO_VERSION = "6.29.1"
 SWIFTVR_REPO = "https://github.com/H-oliday/SwiftVR.git"
 SWIFTVR_REF = "5ca168cef6ca7200f135fdfea85e5e13d12c5b53"
 SWIFTVR_HF_REPO = "H-oliday/SwiftVR"
@@ -140,10 +141,9 @@ def comfy_frontend_package_is_ready() -> bool:
     try:
         resolved_root = root.resolve(strict=True)
         resolved_assets = [
-            (
-                root
-                / urlsplit(reference).path.lstrip("/").removeprefix("./")
-            ).resolve(strict=True)
+            (root / urlsplit(reference).path.lstrip("/").removeprefix("./")).resolve(
+                strict=True
+            )
             for reference in references
         ]
     except (OSError, RuntimeError):
@@ -255,7 +255,10 @@ def selftest() -> None:
     ]
     filtered, skipped = filter_pinned_requirements(source)
     assert [package for package, _ in skipped] == [
-        "torch", "numpy", "scipy", "huggingface-hub"
+        "torch",
+        "numpy",
+        "scipy",
+        "huggingface-hub",
     ]
     assert filtered == source[4:]
     assert ABI_CONSTRAINTS == (
@@ -268,9 +271,7 @@ def selftest() -> None:
     assert INSTALL_CONSTRAINTS == (*ABI_CONSTRAINTS, "huggingface-hub>=1.5,<2")
     assert KORNIA_VERSION == "0.8.3"
     assert KORNIA_RS_VERSION == "0.1.14"
-    assert LTX_HDR_REQUIREMENTS == (
-        "colour-science==0.4.6", "openimageio==3.0.12.0"
-    )
+    assert LTX_HDR_REQUIREMENTS == ("colour-science==0.4.6", "openimageio==3.0.12.0")
     assert KERNELS_VERSION == "0.16.0"
     assert COMFY_REF == "65787d668397d230bf5839d69a0a7239e2dad378"
     assert COMFY_KITCHEN_VERSION == "0.2.36"
@@ -286,9 +287,7 @@ def selftest() -> None:
             (source / filename).write_text(filename, encoding="utf-8")
         installed = sync_ltx25_workflows(source, destination)
         assert tuple(path.name for path in installed) == LTX25_WORKFLOW_FILENAMES
-        assert all(
-            path.read_text(encoding="utf-8") == path.name for path in installed
-        )
+        assert all(path.read_text(encoding="utf-8") == path.name for path in installed)
     assert comfy_frontend_static_references(
         '<link href="user.css"><link href="materialdesignicons.min.css">'
         '<script src="./assets/index-abc.js"></script>'

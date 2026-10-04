@@ -116,6 +116,7 @@ def bind_accepted_action(
     ticket = gr.Textbox(visible=False)
     request_key = gr.Textbox(visible=False)
     canvas_controls = getattr(getattr(trigger, "__self__", None), "h3_canvas", ())
+    stop_control = getattr(getattr(trigger, "__self__", None), "h3_stop", None)
 
     def capture(*args):
         request = args[-1]
@@ -190,7 +191,12 @@ def bind_accepted_action(
 
     def accept(*args):
         try:
-            return capture(*args)
+            job_id = capture(*args)
+            return (
+                (job_id, gr.update(interactive=True))
+                if stop_control is not None
+                else job_id
+            )
         except (H3Error, ValueError) as exc:
             raise gr.Error(str(exc)) from exc
 
@@ -226,7 +232,7 @@ def bind_accepted_action(
             *canvas_controls,
             request_key,
         ],
-        outputs=ticket,
+        outputs=[ticket, stop_control] if stop_control is not None else ticket,
         queue=False,
         api_name=False,
         trigger_mode="multiple",
@@ -247,10 +253,10 @@ def bind_accepted_action(
         api_name=False,
         show_progress=options.get("show_progress", "minimal"),
         trigger_mode="multiple",
-        **gpu_queue
+        **gpu_queue,
     )
 
-    event.failure(
+    failed = event.failure(
         dispatch_failed,
         inputs=ticket,
         outputs=None,
@@ -258,6 +264,24 @@ def bind_accepted_action(
         api_name=False,
         show_progress="hidden",
     )
+    if stop_control is not None:
+
+        def stop_availability(request: gr.Request):
+            return gr.update(
+                interactive=any(
+                    job.family == callback.job_family and job.finished_at is None
+                    for job in JOBS.list_owned(require_owner(request))
+                )
+            )
+
+        for completion in (event, failed):
+            completion.then(
+                stop_availability,
+                outputs=stop_control,
+                queue=False,
+                api_name=False,
+                show_progress="hidden",
+            )
     event.acceptance = accepted
     event.ticket = ticket
     return event

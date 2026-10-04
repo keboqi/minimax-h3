@@ -67,7 +67,13 @@ def run():
                 context = browser.new_context(viewport={"width": 1440, "height": 1000})
                 page = context.new_page()
                 errors = []
-                page.on("pageerror", lambda error: errors.append(str(error)))
+                phase = ["workspace startup"]
+                page.on(
+                    "pageerror",
+                    lambda error: errors.append(
+                        f"{phase[0]}: {error.message}\n{error.stack}"
+                    ),
+                )
                 loaded_at = time.perf_counter()
                 page.goto(url, wait_until="domcontentloaded")
                 page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for()
@@ -148,15 +154,22 @@ def run():
                     h3.get_by_text("Model & generation (advanced)", exact=True)
                 ).to_have_count(0)
                 expect(
-                    h3.get_by_role("slider", name="range slider for Seconds", exact=True)
+                    h3.get_by_role(
+                        "slider", name="range slider for Seconds", exact=True
+                    )
                 ).to_be_visible()
-                expect(h3.get_by_text("Base model", exact=True)).to_be_visible()
+                expect(h3.get_by_text("Base model", exact=True)).to_have_count(0)
                 page.locator("#h3-advanced-settings").get_by_text(
                     "Advanced settings", exact=True
                 ).click()
                 expect(
                     page.locator("#h3-advanced-settings").get_by_text(
                         "Generation", exact=True
+                    )
+                ).to_be_visible()
+                expect(
+                    page.locator("#h3-advanced-settings").get_by_text(
+                        "Base model", exact=True
                     )
                 ).to_be_visible()
                 page.locator("#h3-advanced-settings").get_by_role(
@@ -199,9 +212,7 @@ def run():
                             < 8
                         )
                 prompt = h3.get_by_label("Prompt", exact=True)
-                generate = page.locator("#h3-preview").get_by_role(
-                    "button", name="Generate video", exact=True
-                )
+                generate = h3.get_by_role("button", name="Generate video", exact=True)
                 prompt.focus()
                 page.keyboard.press("Tab")
                 focused = page.locator(":focus")
@@ -273,6 +284,13 @@ def run():
                 )
                 captured = requests.get(url + "/test/jobs", timeout=2).json()
                 assert len(captured) == 2, captured
+                page.get_by_label("Job", exact=True).click()
+                page.get_by_role(
+                    "option", name=re.compile(captured[0]["id"][:8])
+                ).click()
+                expect(
+                    page.get_by_role("button", name="Cancel selected job", exact=True)
+                ).to_be_enabled()
                 from h3_app.contracts import GENERATION_FIELDS
 
                 prompt_index = GENERATION_FIELDS.index("prompt") + 1
@@ -290,6 +308,10 @@ def run():
                 assert (
                     captured[0]["state"] == "completed" and failed["state"] == "failed"
                 ), captured
+                # A selected running job updates its actions without reselecting.
+                expect(
+                    page.get_by_role("button", name="Cancel selected job", exact=True)
+                ).to_be_disabled()
                 # Native dropdown chooses the failed job by its visible stable ID.
                 page.get_by_label("Job", exact=True).click()
                 page.get_by_role(
@@ -327,7 +349,9 @@ def run():
                 outsider.goto(url, wait_until="domcontentloaded")
                 outsider.get_by_role("tab", name="Jobs", exact=True).click()
                 expect(
-                    outsider.get_by_text("No jobs for this browser owner yet.", exact=True)
+                    outsider.get_by_text(
+                        "No jobs for this browser owner yet.", exact=True
+                    )
                 ).to_be_visible()
                 expect(outsider.locator(".h3-job-table")).to_have_count(0)
                 other.close()
@@ -387,6 +411,7 @@ def run():
                     ),
                     ("Audio / Music", "YuE2", "Style prompt", "Generate with YuE2"),
                 ):
+                    phase[0] = f"engine switch: {label}"
                     page.get_by_role("tab", name="Create", exact=True).click()
                     page.locator(".h3-task-picker").get_by_label(
                         task, exact=True
@@ -396,23 +421,33 @@ def run():
                     form = page.locator('#h3-engine-tabs > [role="tabpanel"]:visible')
                     form.get_by_label(field, exact=True).fill("Fixture request")
                     form.get_by_role("button", name=action, exact=True).click()
-                    expect(form.get_by_label("Status", exact=True)).to_have_value(
-                        re.compile("Fixture .* completed"), timeout=15000
-                    )
+                    expect(
+                        form.get_by_label("Generation progress", exact=True)
+                    ).to_have_value(re.compile("Fixture .* completed"), timeout=15000)
                 assert {
                     job["family"]
                     for job in requests.get(url + "/test/jobs", timeout=2).json()
                 } == {"h3", "ltx", "qwen_image21", "music", "yue2"}
-                # Bounded indexing, shared annotations and image/video comparison.
+                # One filtered gallery drives preview, shared annotations and comparison.
+                phase[0] = "Media image selection"
                 page.get_by_role("tab", name="Media", exact=True).click()
-                page.get_by_text("Search, tags, lineage & compare", exact=True).click()
-                page.get_by_role(
-                    "button", name="Index next 200 files", exact=True
-                ).click()
-                expect(page.locator("body")).to_contain_text("Indexed 4 of 4 files")
+                page.locator("#h3-library-kind").get_by_label(
+                    "Image", exact=True
+                ).check()
+                expect(
+                    page.locator("#generated-video-gallery .thumbnail-item")
+                ).to_have_count(2)
                 page.get_by_role("button", name="Search library", exact=True).click()
-                page.get_by_label("Indexed asset", exact=True).click()
-                page.get_by_role("option", name="alpha.png", exact=False).click()
+                page.get_by_text("Compare two outputs", exact=True).click()
+                page.locator("#generated-video-gallery .thumbnail-item").filter(
+                    has_text="alpha.png"
+                ).click()
+                expect(
+                    page.get_by_label("Tags (comma separated)", exact=True)
+                ).to_have_value("")
+                expect(page.get_by_label("Comparison A", exact=True)).to_have_value(
+                    re.compile("alpha.png")
+                )
                 page.get_by_label("Tags (comma separated)", exact=True).fill(
                     "browser-test"
                 )
@@ -425,10 +460,34 @@ def run():
                 page.get_by_label("Favorites only", exact=True).check()
                 page.get_by_role("button", name="Search library", exact=True).click()
                 expect(page.locator("body")).to_contain_text("1 matching assets")
+                expect(
+                    page.locator("#generated-video-gallery .thumbnail-item")
+                ).to_have_count(1)
+                expect(page.locator("#generated-video-gallery")).to_contain_text(
+                    "alpha.png"
+                )
+                comparison_b = page.get_by_label("Comparison B", exact=True)
+                comparison_b.click()
+                expect(
+                    comparison_b.locator(
+                        "xpath=ancestor::*[contains(concat(' ',normalize-space(@class),' '),' block ')][1]"
+                    ).get_by_role("option", name=re.compile("beta.png"))
+                ).to_be_visible()
+                page.keyboard.press("Escape")
+                page.get_by_label("Search media", exact=True).fill("missing-test-asset")
+                phase[0] = "Media empty search"
+                page.get_by_role("button", name="Search library", exact=True).click()
+                expect(
+                    page.locator("#generated-video-gallery .thumbnail-item")
+                ).to_have_count(0)
+                expect(page.get_by_label("Comparison A", exact=True)).to_have_value("")
+                expect(
+                    page.get_by_label("Tags (comma separated)", exact=True)
+                ).to_have_value("")
                 page.get_by_label("Search media", exact=True).fill("")
+                phase[0] = "Media restore search and image comparison"
                 page.get_by_label("Favorites only", exact=True).uncheck()
                 page.get_by_role("button", name="Search library", exact=True).click()
-                page.get_by_text("Compare two outputs", exact=True).click()
                 for component, name in (
                     ("Comparison A", "alpha.png"),
                     ("Comparison B", "beta.png"),
@@ -446,6 +505,13 @@ def run():
                 expect(
                     page.get_by_text("Image comparison A / B", exact=True)
                 ).to_be_visible()
+                page.locator("#h3-library-kind").get_by_label(
+                    "Video", exact=True
+                ).check()
+                phase[0] = "Media video comparison"
+                expect(
+                    page.locator("#generated-video-gallery .thumbnail-item")
+                ).to_have_count(2)
                 for component, name in (
                     ("Comparison A", "alpha.mp4"),
                     ("Comparison B", "beta.mp4"),

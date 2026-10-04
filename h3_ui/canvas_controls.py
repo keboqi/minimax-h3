@@ -67,7 +67,7 @@ def bind_canvas_controls(components, resolve_dimensions, controller, presets):
                 gr.skip(),
                 "Input-derived image canvas; the first frame determines aligned dimensions.",
             )
-        if tier == "custom":
+        if tier == "custom" or ratio == "Custom":
             return gr.skip(), gr.skip(), "Use Width and Height in Exact dimensions."
         name = choices.get(tier, {}).get(ratio)
         if name is None:
@@ -95,13 +95,15 @@ def bind_canvas_controls(components, resolve_dimensions, controller, presets):
             api_name=False,
             show_progress="hidden",
         )
-        event.then(
-            controller.refresh,
-            inputs=[controller.memory, *controller.inputs],
-            outputs=controller.outputs,
-            queue=False,
-            api_name=False,
-            show_progress="hidden",
+        controller.events.append(
+            event.then(
+                controller.refresh,
+                inputs=[controller.memory, *controller.inputs],
+                outputs=controller.outputs,
+                queue=False,
+                api_name=False,
+                show_progress="hidden",
+            )
         )
 
     def sync(width, height, result_format, mode, first):
@@ -122,7 +124,9 @@ def bind_canvas_controls(components, resolve_dimensions, controller, presets):
                         ),
                     )
         return (
-            gr.update(interactive=not locked and result_format != "Audio"),
+            gr.update(
+                value="Custom", interactive=not locked and result_format != "Audio"
+            ),
             gr.update(
                 value="custom", interactive=not locked and result_format != "Audio"
             ),

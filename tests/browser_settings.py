@@ -31,7 +31,10 @@ def run():
         process = subprocess.Popen(
             [sys.executable, "-u", "-c", source],
             cwd=ROOT,
-            env={**os.environ, "H3_WORKSPACE_DIR": str(ROOT / ".cache/ui-redesign" / "settings-state")},
+            env={
+                **os.environ,
+                "H3_WORKSPACE_DIR": str(ROOT / ".cache/ui-redesign" / "settings-state"),
+            },
             stdout=log,
             stderr=log,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
@@ -90,7 +93,7 @@ def run():
                 card.get_by_text("Execution details", exact=True).click()
                 page.get_by_text("Advanced settings", exact=True).click()
                 preset = page.locator("#h3-output-settings")
-                preset.get_by_label("Quality", exact=True).first.check()
+                preset.get_by_label("Quality", exact=True).check()
                 expect(card).to_contain_text("Turbo · 8 steps")
                 expect(card).not_to_contain_text("Modified")
                 expect(card).to_contain_text("Base model: Singularity")
@@ -108,7 +111,9 @@ def run():
                 expect(card).to_contain_text("Normal · 20 steps")
                 page.get_by_label("Turbo", exact=True).check()
                 expect(card).to_contain_text("Turbo · 10 steps")
+                page.get_by_text("Changes these settings", exact=True).click()
                 page.get_by_role("button", name="Restore preset settings").click()
+                page.get_by_text("Changes these settings", exact=True).click()
                 expect(card).to_contain_text("Turbo · 8 steps")
                 expect(card).not_to_contain_text("Modified")
                 # Semantic Bridge starts on, is FL2VA-only, and remembers its preference.
@@ -122,9 +127,11 @@ def run():
                 expect(card).not_to_contain_text("Experimental v1")
                 bridge.check()
                 expect(card).to_contain_text("Experimental v1")
-                strength = page.get_by_text("Semantic Bridge strength", exact=True).locator(
-                    'xpath=ancestor::div[contains(@class,"block")][1]'
-                ).locator('input[type="number"]')
+                strength = (
+                    page.get_by_text("Semantic Bridge strength", exact=True)
+                    .locator('xpath=ancestor::div[contains(@class,"block")][1]')
+                    .locator('input[type="number"]')
+                )
                 expect(strength).to_be_visible()
                 strength.fill("0.15")
                 strength.press("Tab")
@@ -137,7 +144,9 @@ def run():
                 expect(bridge).to_be_enabled()
                 expect(bridge).to_be_checked()
                 expect(strength).to_have_value("0.15")
-                encoder_attention = page.get_by_label("Qwen small input attention", exact=True)
+                encoder_attention = page.get_by_label(
+                    "Qwen small input attention", exact=True
+                )
                 expect(encoder_attention).not_to_be_checked()
                 expect(card).to_contain_text("Server backend")
                 encoder_attention.check()
@@ -160,8 +169,26 @@ def run():
                 expect(card).to_contain_text("Server backend")
                 page.get_by_text("Advanced settings", exact=True).click()
                 page.get_by_role("tab", name="Model & memory", exact=True).click()
-                expect(page.get_by_label("Qwen small input attention", exact=True)).not_to_be_checked()
+                expect(
+                    page.get_by_label("Qwen small input attention", exact=True)
+                ).not_to_be_checked()
                 expect(card).to_contain_text("Experimental v1 · strength 0.15")
+                # Restoration must retain a non-default mode and its overrides.
+                page.get_by_label("Normal", exact=True).check()
+                expect(card).to_contain_text("Normal · 20 steps")
+                page.get_by_text("Sampling steps (advanced)", exact=True).click()
+                steps.fill("14")
+                steps.press("Tab")
+                expect(card).to_contain_text("Normal · 14 steps")
+                page.wait_for_timeout(500)
+                page.reload(wait_until="domcontentloaded")
+                page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for()
+                expect(card).to_contain_text("Normal · 14 steps")
+                expect(card).to_contain_text("Quality")
+                page.get_by_text("Advanced settings", exact=True).click()
+                page.get_by_role("tab", name="Model & memory", exact=True).click()
+                page.get_by_label("Turbo", exact=True).check()
+                expect(card).to_contain_text("Turbo · 11 steps")
                 second = browser.new_context()
                 second_page = second.new_page()
                 second_page.goto(url, wait_until="domcontentloaded")
@@ -172,17 +199,31 @@ def run():
                     "Turbo · 4 steps"
                 )
                 second_page.get_by_text("Advanced settings", exact=True).click()
-                second_page.get_by_role("tab", name="Model & memory", exact=True).click()
-                expect(second_page.get_by_label("Semantic Bridge (experimental)", exact=True)).to_be_checked()
-                expect(second_page.get_by_label("Qwen small input attention", exact=True)).not_to_be_checked()
+                second_page.get_by_role(
+                    "tab", name="Model & memory", exact=True
+                ).click()
+                expect(
+                    second_page.get_by_label(
+                        "Semantic Bridge (experimental)", exact=True
+                    )
+                ).to_be_checked()
+                expect(
+                    second_page.get_by_label("Qwen small input attention", exact=True)
+                ).not_to_be_checked()
                 second.close()
                 # Audio retains the native-refinement preference for the next video.
-                page.locator(".h3-task-picker").get_by_label("Audio / Music", exact=True).check()
+                page.locator(".h3-task-picker").get_by_label(
+                    "Audio / Music", exact=True
+                ).check()
                 expect(card).to_contain_text("Audio · 5 seconds")
                 expect(card).not_to_contain_text("H3 output")
-                page.locator(".h3-task-picker").get_by_label("Video", exact=True).check()
+                page.locator(".h3-task-picker").get_by_label(
+                    "Video", exact=True
+                ).check()
                 expect(card).to_contain_text("Native 2× refinement")
-                page.get_by_role("tab", name="Sampling & performance", exact=True).click()
+                page.get_by_role(
+                    "tab", name="Sampling & performance", exact=True
+                ).click()
                 page.get_by_label("Sol-Attn", exact=True).check()
                 expect(page.get_by_text("Sol-Attn tau", exact=True)).to_be_visible()
                 page.get_by_label("SLA", exact=True).check()

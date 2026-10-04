@@ -263,7 +263,7 @@ Ref2VA keys so workflow construction remains mode-specific.
 
 ## Run locally
 
-Local and Modal provisioning and the UI test environment pin Gradio 6.27.0.
+Local and Modal provisioning and the UI test environment pin Gradio 6.29.1.
 Existing local installs refresh an older Gradio on the next `run_h3.sh` startup;
 Spectrum also refreshes from its shared source pin. Modal deployments require a
 rebuild/redeploy to pick up these dependency changes.

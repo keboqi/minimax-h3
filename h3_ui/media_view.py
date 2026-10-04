@@ -45,6 +45,11 @@ class GalleryView:
     deletion_confirm: Any = None
     deletion_cancel: Any = None
     deletion_intent: Any = None
+    query: Any = None
+    favorite_only: Any = None
+    search: Any = None
+    inspector: Any = None
+    filters: Any = None
 
 
 def build_gallery_view(
@@ -68,6 +73,7 @@ def build_gallery_view(
                 choices=["Video", "Image", "Audio"],
                 value="Video",
                 label="Gallery type",
+                elem_id="h3-library-kind",
                 scale=0,
                 min_width=180,
             )
@@ -80,6 +86,15 @@ def build_gallery_view(
             )
         paths = gr.State([])
         selected = gr.State(None)
+        with gr.Row(elem_classes=["h3-gallery-filters"]):
+            query = gr.Textbox(
+                label="Search media",
+                placeholder="Filename, tags or technical settings",
+                scale=3,
+            )
+            favorite_only = gr.Checkbox(label="Favorites only", scale=1)
+            search = gr.Button("Search library", scale=0)
+        filters = gr.State({"query": "", "favorite": False})
         with gr.Accordion(
             "Import local media", open=False, elem_classes=["h3-gallery-card"]
         ):
@@ -141,7 +156,7 @@ def build_gallery_view(
                             )
                             deletion_cancel = gr.Button("Keep media")
                         deletion_intent = gr.State(None)
-            with gr.Column(scale=5, min_width=480):
+            with gr.Column(scale=5, min_width=320, elem_classes=["h3-preview-panel"]):
                 gr.Markdown(
                     "### Preview & enhance\nReview the selected item, download it, or create an enhanced copy.",
                     elem_classes=["h3-gallery-section-title"],
@@ -168,9 +183,10 @@ def build_gallery_view(
                     elem_classes=["h3-gallery-player"],
                 )
                 download = gr.Markdown(elem_classes=["h3-gallery-download"])
+                inspector = gr.Column()
                 with gr.Accordion(
                     "Enhance selected media",
-                    open=True,
+                    open=False,
                     elem_classes=["h3-gallery-card", "h3-gallery-enhance"],
                 ) as enhance:
                     with gr.Row(equal_height=True):
@@ -280,4 +296,9 @@ def build_gallery_view(
         deletion_confirm,
         deletion_cancel,
         deletion_intent,
+        query,
+        favorite_only,
+        search,
+        inspector,
+        filters,
     )

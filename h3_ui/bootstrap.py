@@ -107,6 +107,7 @@ class BootstrapServices:
     generate_with_ui_defaults: Callable
     generate_yue2: Callable
     generation_readiness_state: Callable
+    gallery_media_download_path: Callable
     image_vae_frame_updates: Callable
     import_gallery_media: Callable
     input_image_frame_preset_updates: Callable
@@ -144,8 +145,9 @@ class BootstrapServices:
 def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Blocks:
     defaults = catalog.UI_DEFAULTS
     initial_backend = services.backend_status()
-    with gr.Blocks(title="MiniMax H3 Local") as demo, gr.Column(
-        elem_classes=["h3-workspace"]
+    with (
+        gr.Blocks(title="MiniMax H3 Local") as demo,
+        gr.Column(elem_classes=["h3-workspace"]),
     ):
         with gr.Row(elem_classes=["h3-workspace-header"]):
             gr.HTML(
@@ -267,17 +269,29 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             ltx25_choices=tuple(catalog.LTX25_MODEL_CHOICES),
             default_ltx25=catalog.DEFAULT_LTX25_MODEL,
         )
-        with gallery_view:
+        from .engine_readiness import bind_engine_readiness
+
+        for view, family in (
+            (ltx25_components, "ltx"),
+            (qwen_image21_components, "qwen"),
+            (music3_components, "music"),
+            (yue2_components, "yue2"),
+        ):
+            bind_engine_readiness(view, family)
+        with gallery_components.inspector:
             gallery_settings_used = gr.HTML("Select an output to inspect its settings.")
         from .library_tools import build_library_tools
 
-        build_library_tools(gallery_view, services.list_media_paths)
-        gallery_components.selected.change(
+        gallery_components.selected.h3_snapshot = (
             services.render_snapshot,
-            inputs=gallery_components.selected,
-            outputs=gallery_settings_used,
-            queue=False,
-            api_name=False,
+            gallery_settings_used,
+        )
+        build_library_tools(
+            gallery_view,
+            services.list_media_paths,
+            view=gallery_components,
+            system_root=app_views.system,
+            validate_path=services.gallery_media_download_path,
         )
         for root, view in (
             (ltx25_view, ltx25_components),
@@ -285,7 +299,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             (qwen_image21_view, qwen_image21_components),
             (yue2_view, yue2_components),
         ):
-            with root:
+            with view.output.h3_metadata_root:
                 metadata_view = gr.HTML(
                     "Settings used will appear with the generated result."
                 )

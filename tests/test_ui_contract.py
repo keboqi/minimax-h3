@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import inspect
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ import unittest
 from unittest import mock
 
 from h3_ui import application as gradio_app
+from h3_ui.settings_controller import MEDIA_NAMES, SETTING_NAMES
 from h3_ui.presentation import (
     backend_status_html,
     generation_readiness,
@@ -101,7 +103,9 @@ class UiContractTests(unittest.TestCase):
         for name, expected in fixture["endpoints"].items():
             with self.subTest(endpoint=name):
                 for key, rows in expected.items():
-                    rows = [{**row, "type": fixture["types"][row["type"]]} for row in rows]
+                    rows = [
+                        {**row, "type": fixture["types"][row["type"]]} for row in rows
+                    ]
                     fields = tuple(rows[0]) if rows else ()
                     self.assertEqual(
                         rows,
@@ -110,6 +114,68 @@ class UiContractTests(unittest.TestCase):
                             for item in actual[name][key]
                         ],
                     )
+
+    def test_media_selection_skips_library_scans_and_rejects_unmanaged_or_missing_files(
+        self,
+    ):
+        from dataclasses import replace
+        from tempfile import TemporaryDirectory
+        from h3_app.config import RuntimeConfig
+        from h3_app.jobs import JOBS
+        from h3_app.workspace_store import WorkspaceStore
+        import gradio as gr
+
+        synchronize = next(
+            event.fn
+            for event in self.demo.fns.values()
+            if event.fn
+            and event.fn.__name__ == "synchronize"
+            and event.fn.__module__ == "h3_ui.library_tools"
+        )
+        compare = next(
+            event.fn
+            for event in self.demo.fns.values()
+            if event.fn and event.fn.__name__ == "compare_assets"
+        )
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = replace(
+                RuntimeConfig.from_environment(root, {}),
+                outputs_dir=root / "media",
+                output_root=root / "comfy",
+            )
+            config.outputs_dir.mkdir()
+            image = config.outputs_dir / "image.png"
+            outside = root / "outside.png"
+            image.write_bytes(b"fixture")
+            outside.write_bytes(b"fixture")
+            store = WorkspaceStore(root / "state")
+            identity = store.index_asset(image, "Image")
+            outside_id = store.index_asset(outside, "Image")
+            with (
+                mock.patch.object(JOBS, "store", store),
+                mock.patch.object(gradio_app, "_runtime_config", return_value=config),
+                mock.patch.object(
+                    gradio_app,
+                    "gallery_image_paths",
+                    side_effect=AssertionError("rescan"),
+                ),
+                mock.patch.object(
+                    gradio_app,
+                    "gallery_video_paths",
+                    side_effect=AssertionError("rescan"),
+                ),
+            ):
+                result = synchronize("Image", [str(image)], str(image), None, None, {})
+                self.assertEqual(result[2]["asset_id"], identity)
+                self.assertEqual(result[3]["value"], identity)
+                with self.assertRaises(gr.Error):
+                    compare(identity, outside_id)
+                image.unlink()
+                result = synchronize("Image", [str(image)], str(image), None, None, {})
+                self.assertIsNone(result[2])
+                with self.assertRaises(gr.Error):
+                    compare(identity, identity)
 
     def test_fl2va_voice_inputs_live_under_frames_and_have_separate_api_fields(self):
         controls = {
@@ -203,7 +269,8 @@ class UiContractTests(unittest.TestCase):
         profiles = [c[0] for c in controls["Base model"]["props"]["choices"]]
         self.assertNotIn("FastH3 8-Step V2", profiles)
         refinements = [
-            c[0] for c in controls["High-resolution refinement LoRA"]["props"]["choices"]
+            c[0]
+            for c in controls["High-resolution refinement LoRA"]["props"]["choices"]
         ]
         self.assertNotIn("PDMD / 2-step", refinements)
         self.assertNotIn("TaoMate-H3 / 3-step", refinements)
@@ -512,25 +579,31 @@ class UiContractTests(unittest.TestCase):
         restore = next(
             dependency
             for dependency in self.config["dependencies"]
-            if dependency["inputs"] == [state["id"]]
+            if state["id"] in dependency["inputs"]
             and base_model["id"] in dependency["outputs"]
         )
         self.assertIn(sampling_preset["id"], restore["outputs"])
 
+        transition = next(
+            d
+            for d in self.config["dependencies"]
+            if (sampling_preset["id"], "input") in d["targets"]
+        )
+        memory_id = next(
+            i for i in transition["outputs"] if self.components[i]["type"] == "state"
+        )
         save = next(
             dependency
             for dependency in self.config["dependencies"]
             if dependency["outputs"] == [state["id"]]
-            and base_model["id"] in dependency["inputs"]
+            and (memory_id, "change") in dependency["targets"]
         )
-        self.assertIn(sampling_preset["id"], save["inputs"])
-        # Presets save after their atomic transition, never from a change cascade.
-        self.assertTrue(
-            save["trigger_after"] is not None
-            or all(
-                event_name == "input" for _component_id, event_name in save["targets"]
-            )
-        )
+        self.assertIn(memory_id, save["inputs"])
+        self.assertLessEqual(len(save["inputs"]), 24)
+        self.assertNotIn(base_model["id"], save["inputs"])
+        self.assertNotIn(sampling_preset["id"], save["inputs"])
+        # Settings are saved from the completed atomic transition's state.
+        self.assertTrue(save["queue"])
 
     def test_fast_and_singularity_default_to_lynnreal_video_vae(self) -> None:
         controls = {
@@ -568,7 +641,94 @@ class UiContractTests(unittest.TestCase):
         self.assertIn(summary["id"], dependency["outputs"])
         self.assertNotIn((controls["Recipe"]["id"], "change"), dependency["targets"])
         fn = self.demo.fns[dependency["id"]]
-        self.assertEqual(fn.concurrency_id, "h3-settings")
+        self.assertNotEqual(fn.concurrency_id, "h3-gpu")
+        self.assertIsNone(fn.concurrency_limit)
+        self.assertLessEqual(len(fn.inputs), 24)
+
+    def test_numeric_edits_preserve_newer_session_settings_and_isolate_browsers(self):
+        composer_id = next(
+            c["id"]
+            for c in self.config["components"]
+            if c["props"].get("elem_id") == "h3-composer"
+        )
+
+        def ids(node):
+            return {node["id"]} | set().union(
+                *(ids(child) for child in node.get("children", []))
+            )
+
+        composer_ids = ids(self.find_layout_node(composer_id))
+
+        def handler(label):
+            control_ids = {
+                c["id"]
+                for c in self.config["components"]
+                if c["id"] in composer_ids and c["props"].get("label") == label
+            }
+            dependency = next(
+                d
+                for d in self.config["dependencies"]
+                if any(i in control_ids for i, _ in d["targets"])
+                and len(d["outputs"]) == 4
+            )
+            self.assertTrue(
+                all(kind != "change" for _, kind in dependency["targets"]),
+                "Programmatic numeric updates must not echo stale settings edits",
+            )
+            fn = self.demo.fns[dependency["id"]]
+            values = [deepcopy(component.value) for component in fn.inputs]
+            values[-1] = type(values[-1])()
+            return fn, values
+
+        duration, duration_values = handler("Seconds")
+        seed, seed_values = handler("Seed")
+        refresh = next(
+            fn
+            for fn in self.demo.fns.values()
+            if getattr(fn.fn, "__name__", "") == "refresh" and len(fn.inputs) > 80
+        )
+
+        def restored_session():
+            values = [deepcopy(component.value) for component in refresh.inputs]
+            values[-1] = type(values[-1])()
+            refresh.fn(*values)
+            return values[-1]
+
+        duration.fn(*duration_values)
+        self.assertIsNone(duration_values[-1].memory)
+        readiness = next(
+            fn
+            for fn in self.demo.fns.values()
+            if getattr(fn.fn, "__name__", "") == "prompt_readiness"
+        )
+        pending = [deepcopy(component.value) for component in readiness.inputs]
+        pending[-1] = type(pending[-1])()
+        pending[1] = "Prompt entered during restoration"
+        self.assertFalse(readiness.fn(*pending)[1]["interactive"])
+        duration_values[-1] = restored_session()
+        duration_values[1] = 9
+        updated = duration.fn(*duration_values)
+        self.assertEqual(updated[0]["values"]["duration"], 9)
+        # Deliberately pass the outgoing state from before the preceding edit.
+        seed_values[1] = 123
+        seed_values[-1] = duration_values[-1]
+        updated = seed.fn(*seed_values)
+        self.assertEqual(updated[0]["values"]["duration"], 9)
+        self.assertEqual(updated[0]["values"]["seed"], 123)
+        # Resolution refreshes may observe a newer frontend draft before its
+        # input event runs. They must not write unrelated stored values back.
+        refreshed = [deepcopy(component.value) for component in refresh.inputs]
+        refreshed[-1] = duration_values[-1]
+        controller_names = (*SETTING_NAMES, *MEDIA_NAMES)
+        refreshed[1 + controller_names.index("steps")] = 10
+        result = refresh.fn(*refreshed)
+        self.assertNotIn("value", result[SETTING_NAMES.index("steps")])
+        _, separate_values = handler("Seed")
+        separate_values[1] = 42
+        separate_values[-1] = restored_session()
+        separate = seed.fn(*separate_values)
+        self.assertEqual(separate[0]["values"]["duration"], 5)
+        self.assertEqual(separate[0]["values"]["seed"], 42)
 
     def test_resolution_presets_apply_latent_alignment_atomically(self) -> None:
         self.assertEqual(
@@ -1079,7 +1239,7 @@ class UiContractTests(unittest.TestCase):
         }
         self.assertIn("Prompt", labels)
         self.assertIn("Recipe", labels)
-        self.assertIn("Base model", labels)
+        self.assertNotIn("Base model", labels)
         self.assertIn("Seconds", labels)
         self.assertNotIn("Generation progress", labels)
         preview_labels = {
@@ -1099,24 +1259,35 @@ class UiContractTests(unittest.TestCase):
             composer_children[enhancer_index + 1]["props"]["elem_id"],
             "h3-output-settings",
         )
-        preview_children = [
-            self.components[node["id"]] for node in preview["children"]
-        ]
+        preview_children = [self.components[node["id"]] for node in preview["children"]]
         summary_index = next(
             i
-            for i, c in enumerate(preview_children)
-            if "h3-settings-summary" in c.get("props", {}).get("elem_classes", [])
+            for i, component in enumerate(preview_children)
+            if "h3-settings-summary"
+            in component.get("props", {}).get("elem_classes", [])
         )
-        action = self.find_layout_node(preview_children[summary_index + 1]["id"])
+        self.assertEqual(
+            preview_children[summary_index + 1]["props"]["elem_id"],
+            "h3-generate-actions",
+        )
+        action = self.find_layout_node(by_id["h3-generate-actions"]["id"])
         self.assertTrue(
             any(
-                self.components[i].get("props", {}).get("label") == "Generation progress"
+                self.components[i].get("props", {}).get("label")
+                == "Generation progress"
                 for i in descendants(action)
             )
         )
         self.assertTrue(descendants(composer).isdisjoint(descendants(advanced)))
         self.assertTrue(descendants(composer).isdisjoint(descendants(preview)))
-        self.assertEqual(by_id["h3-output-settings"]["type"], "group")
+        self.assertEqual(by_id["h3-output-settings"]["type"], "column")
+        self.assertIn(
+            "Base model",
+            {
+                self.components[i].get("props", {}).get("label")
+                for i in descendants(advanced)
+            },
+        )
         self.assertFalse(by_id["h3-advanced-settings"]["props"]["open"])
 
     def test_presentation_state_is_pure_and_semantic(self) -> None:

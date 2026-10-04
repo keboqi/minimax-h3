@@ -2,6 +2,7 @@
 
 import ast
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from contextlib import ExitStack
 from dataclasses import FrozenInstanceError, replace
 import inspect
@@ -10,6 +11,7 @@ from pathlib import Path
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from threading import Barrier
 import time
 import unittest
 from unittest.mock import patch
@@ -19,6 +21,7 @@ import h3_models
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.gallery_store import (
+    AssetInventory,
     gallery_audio_paths,
     gallery_audio_thumbnail,
     gallery_image_paths,
@@ -186,9 +189,7 @@ class MediaPublicationTests(unittest.TestCase):
             )
             files = {
                 config.output_dir / "audio" / "h3_fl2va_1.mp3": "MiniMax H3",
-                config.output_dir
-                / "audio"
-                / "minimax_music3_2.mp3": "MiniMax Music 3",
+                config.output_dir / "audio" / "minimax_music3_2.mp3": "MiniMax Music 3",
                 config.output_dir / "audio" / "yue2_3.mp3": "YuE2",
                 config.outputs_dir / "imports" / "reference.wav": "Imported",
             }
@@ -199,9 +200,7 @@ class MediaPublicationTests(unittest.TestCase):
             self.assertEqual(set(gallery_audio_paths(runtime=config)), set(files))
             for path, family in files.items():
                 self.assertEqual(managed_audio_path(path, runtime=config), path)
-                self.assertEqual(
-                    generated_audio_family(path, runtime=config), family
-                )
+                self.assertEqual(generated_audio_family(path, runtime=config), family)
                 thumbnail = gallery_audio_thumbnail(path, runtime=config)
                 self.assertIsNotNone(thumbnail)
                 self.assertTrue(thumbnail.is_file())
@@ -232,7 +231,9 @@ class MediaPublicationTests(unittest.TestCase):
             with self.assertRaises(H3Error):
                 managed_image_path(thumbnail, runtime=config)
 
-    def test_gallery_uses_small_image_thumbnail_and_keeps_full_source_for_selection(self):
+    def test_gallery_uses_small_image_thumbnail_and_keeps_full_source_for_selection(
+        self,
+    ):
         from PIL import Image
 
         with TemporaryDirectory() as directory:
@@ -257,8 +258,9 @@ class MediaPublicationTests(unittest.TestCase):
             self.assertEqual(gallery_image_thumbnail(source, runtime=config), thumbnail)
             self.assertEqual(thumbnail.stat().st_mtime_ns, cached_mtime)
 
-            with patch.object(app, "gallery_image_paths", return_value=[source]), patch.object(
-                app, "_runtime_config", return_value=config
+            with (
+                patch.object(app, "gallery_image_paths", return_value=[source]),
+                patch.object(app, "_runtime_config", return_value=config),
             ):
                 items, paths, _detail = app.refresh_media_gallery("Image")
             self.assertEqual(items[0][0], str(thumbnail))
@@ -279,7 +281,9 @@ class MediaPublicationTests(unittest.TestCase):
             with (
                 patch.object(app, "gallery_video_paths", return_value=[source]),
                 patch.object(app, "gallery_thumbnail", return_value=None),
-                patch.object(app, "gallery_resolution_text", return_value="unavailable"),
+                patch.object(
+                    app, "gallery_resolution_text", return_value="unavailable"
+                ),
                 patch.object(app, "_runtime_config", return_value=config),
             ):
                 items, paths, _detail = app.refresh_gallery()
@@ -303,7 +307,9 @@ class MediaPublicationTests(unittest.TestCase):
 
             with (
                 patch.object(app, "gallery_video_paths", return_value=videos),
-                patch.object(app, "gallery_thumbnail", return_value=root / "poster.jpg") as poster,
+                patch.object(
+                    app, "gallery_thumbnail", return_value=root / "poster.jpg"
+                ) as poster,
                 patch.object(app, "gallery_resolution_text") as video_resolution,
                 patch.object(app, "_runtime_config", return_value=config),
             ):
@@ -315,7 +321,11 @@ class MediaPublicationTests(unittest.TestCase):
 
             with (
                 patch.object(app, "gallery_image_paths", return_value=images),
-                patch.object(app.gallery_store, "gallery_image_thumbnail", return_value=root / "poster.jpg") as poster,
+                patch.object(
+                    app.gallery_store,
+                    "gallery_image_thumbnail",
+                    return_value=root / "poster.jpg",
+                ) as poster,
                 patch.object(app, "gallery_image_resolution_text") as image_resolution,
                 patch.object(app, "_runtime_config", return_value=config),
             ):
@@ -324,6 +334,64 @@ class MediaPublicationTests(unittest.TestCase):
                 self.assertIn("96 of 120", status)
                 self.assertEqual(poster.call_count, 96)
                 image_resolution.assert_not_called()
+
+    def test_video_posters_run_with_bounded_parallelism_and_keep_order_and_context(
+        self,
+    ):
+        marker = ContextVar("poster_test_context", default=None)
+        token = marker.set("owned-finishing-job")
+        barrier = Barrier(4)
+        try:
+            with TemporaryDirectory() as directory:
+                root = Path(directory)
+                videos = [root / f"video-{index}.mp4" for index in range(8)]
+                for video in videos:
+                    video.write_bytes(b"fixture")
+
+                def poster(video):
+                    self.assertEqual(marker.get(), "owned-finishing-job")
+                    barrier.wait(timeout=10)
+                    return video.with_suffix(".jpg")
+
+                with (
+                    patch.object(app, "gallery_video_paths", return_value=videos),
+                    patch.object(app, "gallery_thumbnail", side_effect=poster),
+                ):
+                    items, paths, _ = app.refresh_gallery()
+                self.assertEqual(paths, [str(video) for video in videos])
+                self.assertEqual(
+                    [item[0] for item in items],
+                    [str(video.with_suffix(".jpg")) for video in videos],
+                )
+        finally:
+            marker.reset(token)
+
+    def test_indexed_page_reuses_managed_inventory_and_plain_filters_still_validate(
+        self,
+    ):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "image.png"
+            image.write_bytes(b"fixture")
+            with (
+                patch.object(
+                    app, "gallery_image_paths", side_effect=AssertionError("rescan")
+                ),
+                patch.object(
+                    app.gallery_store,
+                    "gallery_image_thumbnail",
+                    return_value=root / "poster.jpg",
+                ),
+            ):
+                page = app.refresh_media_page(
+                    "Image", paths=AssetInventory("Image", (image,))
+                )
+                self.assertEqual(page.paths, (str(image),))
+            with patch.object(app, "gallery_image_paths", return_value=[]):
+                page = app.refresh_media_page("Image", paths={root / "outside.png"})
+                self.assertEqual(page.paths, ())
+            with self.assertRaises(ValueError):
+                app.refresh_media_page("Video", paths=AssetInventory("Image", (image,)))
 
     def test_processed_and_copied_media_retain_provenance(self):
         with TemporaryDirectory() as directory:

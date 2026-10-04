@@ -82,12 +82,14 @@ def bind_resolution(
         fast_resolution_event,
         large_resolution_event,
     ):
-        resolution_event.then(
-            controller.refresh,
-            inputs=[controller.memory, *controller.inputs],
-            outputs=controller.outputs,
-            queue=False,
-            show_progress="hidden",
+        controller.events.append(
+            resolution_event.then(
+                controller.refresh,
+                inputs=[controller.memory, *controller.inputs],
+                outputs=controller.outputs,
+                queue=False,
+                show_progress="hidden",
+            )
         )
     # One committed-value event handles uploads, clears, and programmatic
     # replacements. Competing upload and input handlers could restore stale
@@ -148,16 +150,18 @@ def bind_resolution(
         updates = controller.refresh(memory, *values)
         return (*updates[:cap_index], *updates[cap_index + 1 :])
 
-    auto_megapixels_change.then(
-        refresh_after_auto_cap,
-        inputs=[controller.memory, *controller.inputs],
-        outputs=[
-            component
-            for component in controller.outputs
-            if component is not components.auto_megapixels
-        ],
-        queue=False,
-        show_progress="hidden",
+    controller.events.append(
+        auto_megapixels_change.then(
+            refresh_after_auto_cap,
+            inputs=[controller.memory, *controller.inputs],
+            outputs=[
+                component
+                for component in controller.outputs
+                if component is not components.auto_megapixels
+            ],
+            queue=False,
+            show_progress="hidden",
+        )
     )
     components.width.input(
         services.resolution_info_preview,
@@ -205,10 +209,12 @@ def bind_resolution(
             queue=False,
             show_progress="hidden",
         )
-        res_snap_event.then(
-            controller.refresh,
-            inputs=[controller.memory, *controller.inputs],
-            outputs=controller.outputs,
-            queue=False,
-            show_progress="hidden",
+        controller.events.append(
+            res_snap_event.then(
+                controller.refresh,
+                inputs=[controller.memory, *controller.inputs],
+                outputs=controller.outputs,
+                queue=False,
+                show_progress="hidden",
+            )
         )

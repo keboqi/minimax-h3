@@ -613,7 +613,7 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
             conditioning_root = gr.Group()
             references_section = build_references_section(defaults, services)
             prompt_section = build_prompt_section(defaults, services)
-            with gr.Group(elem_id="h3-output-settings"):
+            with gr.Column(elem_id="h3-output-settings"):
                 preset = gr.Radio(
                     ["Singularity", "Quality", "Balanced", "Fast"],
                     value="Singularity",
@@ -625,14 +625,14 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
                     gr.Markdown(
                         "Recipes change sampling, text encoding, memory, attention, refinement and decoding. Singularity also selects its checkpoint; other recipes keep the selected checkpoint. Prompt, media and output intent are preserved. Explicit edits appear in the next-run summary."
                     )
-                restore_preset = gr.Button("Restore preset settings", size="sm")
+                    restore_preset = gr.Button("Restore preset settings", size="sm")
                 model_section = build_model_section(
                     defaults,
                     services,
                     advanced_parent=model_root,
                     conditioning_parent=conditioning_root,
                 )
-                output_settings_section = gr.Group(elem_classes=["h3-essentials"])
+                output_settings_section = gr.Column(elem_classes=["h3-essentials"])
                 output_section = build_output_section(
                     defaults, services, output_settings_section
                 )
@@ -642,7 +642,7 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
             elem_id="h3-preview",
             elem_classes=["h3-preview-panel"],
         ):
-            results_root = gr.Group()
+            results_root = gr.Column()
             settings_overview = gr.HTML(
                 services.compact_settings_summary(
                     defaults["mode"],
@@ -687,7 +687,9 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
                 ),
                 elem_classes=["h3-settings-summary"],
             )
-            action_root = gr.Group()
+            action_root = gr.Column(
+                elem_id="h3-generate-actions", elem_classes=["h3-actions-slot"]
+            )
             with results_root:
                 results_section = build_results_section(
                     defaults, services, action_root=action_root

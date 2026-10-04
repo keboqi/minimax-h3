@@ -8,7 +8,7 @@ import json
 import gradio as gr
 
 from h3_app.jobs import JOBS
-from h3_app.provenance import read_snapshot
+from h3_app.errors import H3Error
 
 VIDEO_JS = """
 const setup = () => {
@@ -64,173 +64,217 @@ def comparison_html(left, right):
     )
 
 
-def build_library_tools(root, list_paths):
-    with root, gr.Accordion("Search, tags, lineage & compare", open=False):
+def build_library_tools(root, list_paths, *, view, system_root, validate_path):
+    from .asset_index import AssetIndex
+
+    index = AssetIndex(JOBS.store, list_paths)
+    view.search.h3_asset_index = index
+    with view.inspector:
         gr.Markdown(
-            "The Media library is shared by users of this server. Tags and favorites are shared library metadata. "
-            "Search uses filenames, tags and recorded technical settings; prompts are excluded."
+            "Tags and favorites are shared library metadata. Search matches filenames, "
+            "tags and technical settings; prompts are excluded."
         )
-        with gr.Row():
-            query = gr.Textbox(label="Search media")
-            kind = gr.Dropdown(
-                ["All", "Video", "Image", "Audio"], value="All", label="Media type"
-            )
-            favorite_only = gr.Checkbox(label="Favorites only")
-        with gr.Row():
-            search = gr.Button("Search library")
-            more = gr.Button("Index next 200 files")
-            rebuild = gr.Button("Rebuild media index")
-        index_cursor = gr.State(0)
-        status = gr.Markdown(
-            "Index the library to search existing and newly generated files."
-        )
-        asset = gr.Dropdown([], label="Indexed asset", value=None)
-        with gr.Row():
-            tags = gr.Textbox(label="Tags (comma separated)")
-            favorite = gr.Checkbox(label="Favorite")
-            save = gr.Button("Save asset annotations")
-        lineage = gr.JSON(label="Asset identity and lineage")
-        with gr.Accordion("Compare two outputs", open=False):
-            gr.Markdown(
-                "Images use a reveal slider. Videos compare elapsed seconds from the beginning, "
-                "at their native frame rates, on the shorter duration. This is browser playback synchronization "
-                "with drift correction, not frame-accurate editing. Audio is muted by default; choose A or B. "
-                "Buffering pauses both players."
-            )
+        with gr.Accordion("Tags & lineage", open=True):
             with gr.Row():
-                left = gr.Dropdown([], label="Comparison A", value=None)
-                right = gr.Dropdown([], label="Comparison B", value=None)
-                compare = gr.Button("Compare selected outputs")
-            images = gr.ImageSlider(
-                label="Image comparison A / B",
-                type="filepath",
-                interactive=False,
-                visible=False,
-            )
-            videos = gr.HTML("", js_on_load=VIDEO_JS)
-
-    def scan(cursor):
-        entries = [
-            (path, mode)
-            for mode in ("Video", "Image", "Audio")
-            for path in list_paths(mode)
-        ]
-        for path, mode in entries[int(cursor) : int(cursor) + 200]:
-            try:
-                JOBS.store.index_asset(path, mode, read_snapshot(path))
-            except (OSError, ValueError):
-                continue
-        end = min(len(entries), int(cursor) + 200)
-        return (
-            end,
-            f"Indexed {end} of {len(entries)} files. Tags and favorites are preserved.",
+                tags = gr.Textbox(label="Tags (comma separated)")
+                favorite = gr.Checkbox(label="Favorite")
+            save = gr.Button("Save asset annotations")
+            status = gr.Markdown()
+            with gr.Accordion("Asset identity and lineage", open=False, max_height=400):
+                lineage = gr.JSON(label="Asset identity and lineage")
+    comparison_open = gr.State(False)
+    with root, gr.Accordion("Compare two outputs", open=False) as comparison:
+        gr.Markdown(
+            "Images use a reveal slider. Videos share elapsed playback time up to the "
+            "shorter duration, with drift correction. Buffering pauses both players. "
+            "Audio is muted by default; choose A or B. Choose either output from the "
+            "managed image/video library, including outside the current search."
         )
-
-    def index_more(cursor):
-        return scan(cursor)
-
-    more.click(
-        index_more,
-        inputs=index_cursor,
-        outputs=[index_cursor, status],
-        queue=False,
-        api_name=False,
-    )
-
-    def rebuild_index():
-        # Metadata is processed in bounded batches and yields progress to the UI.
-        with JOBS.store.connect() as db:
-            db.execute("UPDATE assets SET available=0")
-        cursor = 0
-        while True:
-            end, message = scan(cursor)
-            yield end, message
-            if end == cursor:
-                break
-            cursor = end
+        with gr.Row():
+            left = gr.Dropdown([], label="Comparison A", value=None)
+            right = gr.Dropdown([], label="Comparison B", value=None)
+            compare = gr.Button("Compare selected outputs")
+        images = gr.ImageSlider(
+            label="Image comparison A / B",
+            type="filepath",
+            interactive=False,
+            visible=False,
+        )
+        videos = gr.HTML("", js_on_load=VIDEO_JS)
+    with system_root, gr.Accordion("Media index maintenance", open=False):
+        gr.Markdown(
+            "The library indexes new and changed files when you browse it. Rebuild after repairing sidecar metadata."
+        )
+        rebuild = gr.Button("Rebuild media index")
+        index_status = gr.Markdown()
 
     rebuild.click(
-        rebuild_index,
-        outputs=[index_cursor, status],
+        index.rebuild,
+        outputs=index_status,
         concurrency_id="h3-media-index",
         concurrency_limit=1,
         api_name=False,
     )
 
-    def results(text, mode, favorites):
-        rows = JOBS.store.search_assets(
-            query=text, kind=None if mode == "All" else mode, favorite=favorites
-        )
-        allowed = {
-            mode: {Path(p).resolve() for p in list_paths(mode)}
-            for mode in {row["kind"] for row in rows}
-        }
-        rows = [
-            row
-            for row in rows
-            if Path(row["path"]).is_file() and Path(row["path"]) in allowed[row["kind"]]
-        ]
-        choices = [
-            (Path(row["path"]).name + " · " + row["id"][:8], row["id"]) for row in rows
-        ]
-        return (
-            gr.update(choices=choices, value=None),
-            gr.update(choices=choices, value=None),
-            gr.update(choices=choices, value=None),
-            f"{len(rows)} matching assets (up to 200).",
-        )
-
-    search.click(
-        results,
-        inputs=[query, kind, favorite_only],
-        outputs=[asset, left, right, status],
-        queue=False,
-        api_name=False,
-    )
+    def is_managed(path, mode):
+        try:
+            validate_path(path, mode)
+            return Path(path).is_file()
+        except (H3Error, OSError, ValueError):
+            return False
 
     def resolve(asset_id):
         with JOBS.store.connect() as db:
             row = db.execute(
-                "SELECT a.*, COALESCE(n.tags, '[]') AS tags, COALESCE(n.favorite,0) AS favorite FROM assets a LEFT JOIN annotations n ON n.asset_id=a.id WHERE a.id=?",
+                "SELECT a.*, COALESCE(n.tags, '[]') AS tags, COALESCE(n.favorite,0) AS favorite "
+                "FROM assets a LEFT JOIN annotations n ON n.asset_id=a.id WHERE a.id=?",
                 (asset_id,),
             ).fetchone()
-        if row is None or Path(row["path"]) not in {
-            Path(p).resolve() for p in list_paths(row["kind"])
-        }:
+        if row is None or not is_managed(row["path"], row["kind"]):
             raise gr.Error("This asset is unavailable in the current managed library.")
         return dict(row)
 
-    def inspect_asset(asset_id):
+    def selected_id(mode, path):
+        if not path or not is_managed(path, mode):
+            return None
+        with JOBS.store.connect() as db:
+            row = db.execute(
+                "SELECT id FROM assets WHERE path=?", (str(Path(path).resolve()),)
+            ).fetchone()
+        return row["id"] if row else None
+
+    def inspect_asset(mode, path):
+        asset_id = selected_id(mode, path)
         if not asset_id:
-            return "", False, None
+            return "", False, None, gr.update(value=None)
         row = resolve(asset_id)
-        metadata = json.loads(row["metadata"])
         return (
             ", ".join(json.loads(row["tags"])),
             bool(row["favorite"]),
             {
                 "asset_id": asset_id,
                 "filename": Path(row["path"]).name,
-                "settings_and_lineage": metadata,
+                "settings_and_lineage": json.loads(row["metadata"]),
             },
+            gr.update(value=asset_id if row["kind"] in {"Image", "Video"} else None),
         )
 
-    asset.change(
-        inspect_asset,
-        inputs=asset,
-        outputs=[tags, favorite, lineage],
+    def comparison_choices(a, b, current, *, refresh=False):
+        # Comparison B should remain available outside a filtered thumbnail
+        # page. Keep its inventory independent of search/type transitions;
+        # replacing an open native dropdown's choices can race its filtering.
+        if refresh:
+            index.sync("Image")
+            index.sync("Video")
+        revised = current.get("comparison_revision") != index.revision
+        choices = current.get("comparison_choices", [])
+        if revised or refresh:
+            allowed = index.cached_paths("Image") | index.cached_paths("Video")
+            rows = [
+                row
+                for row in JOBS.store.search_assets(limit=None)
+                if row["kind"] in {"Image", "Video"} and Path(row["path"]) in allowed
+            ]
+            choices = [
+                (
+                    row["kind"]
+                    + " · "
+                    + Path(row["path"]).name
+                    + " · "
+                    + row["id"][:8],
+                    row["id"],
+                )
+                for row in rows
+            ]
+        ids = {item[1] for item in choices}
+        changed = refresh or current.get("comparison_choices") != choices
+        current["comparison_choices"] = choices
+        current["comparison_revision"] = index.revision
+
+        # An empty captured value can precede a thumbnail selection. Updating
+        # choices alone preserves that newer selection when responses overlap.
+        def update(current):
+            props = {"choices": choices} if changed else {}
+            if current is not None and current not in ids:
+                props["value"] = None
+            return gr.update(**props)
+
+        return update(a), update(b)
+
+    def open_comparison(a, b, current):
+        return *comparison_choices(a, b, current, refresh=True), True
+
+    comparison.expand(
+        open_comparison,
+        inputs=[left, right, view.filters],
+        outputs=[left, right, comparison_open],
         queue=False,
+        show_progress="minimal",
+        api_name=False,
+    )
+    comparison.collapse(
+        lambda: False,
+        outputs=comparison_open,
+        queue=False,
+        show_progress="hidden",
         api_name=False,
     )
 
-    def annotate(asset_id, text, starred):
+    view.mode.change(
+        lambda: (None, None, gr.update(visible=False), ""),
+        outputs=[left, right, images, videos],
+        queue=False,
+        show_progress="hidden",
+        api_name=False,
+    )
+
+    snapshot, snapshot_component = view.selected.h3_snapshot
+
+    def synchronize(mode, paths, selected, a, b, current, comparing=False):
+        inspected = inspect_asset(mode, selected)
+        if comparing:
+            choices_a, choices_b = comparison_choices(a, b, current)
+        else:
+            # A follows the selected thumbnail even before comparison is opened.
+            identity = inspected[2]
+            choice = (
+                [(mode + " · " + identity["filename"], identity["asset_id"])]
+                if identity
+                else []
+            )
+            choices_a, choices_b = gr.update(choices=choice), gr.skip()
+        return (
+            *inspected[:3],
+            {**choices_a, **inspected[3]},
+            choices_b,
+            snapshot(selected),
+        )
+
+    view.selected.h3_sync = (
+        synchronize,
+        [
+            view.mode,
+            view.paths,
+            view.selected,
+            left,
+            right,
+            view.filters,
+            comparison_open,
+        ],
+        [tags, favorite, lineage, left, right, snapshot_component],
+    )
+
+    def annotate(mode, path, text, starred):
+        asset_id = selected_id(mode, path)
+        if not asset_id:
+            raise gr.Error("Select an item in the Media library first.")
         resolve(asset_id)
         JOBS.store.annotate(asset_id, tags=text.split(","), favorite=starred)
         return "Asset annotations saved."
 
     save.click(
         annotate,
-        inputs=[asset, tags, favorite],
+        inputs=[view.mode, view.selected, tags, favorite],
         outputs=status,
         queue=False,
         api_name=False,
@@ -242,9 +286,7 @@ def build_library_tools(root, list_paths):
             raise gr.Error("Select two images or two videos to compare.")
         if first["kind"] == "Image":
             return gr.update(value=(first["path"], second["path"]), visible=True), ""
-        return gr.update(value=None, visible=False), comparison_html(
-            first["path"], second["path"]
-        )
+        return gr.update(visible=False), comparison_html(first["path"], second["path"])
 
     compare.click(
         compare_assets,

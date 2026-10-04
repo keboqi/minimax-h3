@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from pathlib import Path
 from typing import Any
 import gradio as gr
@@ -10,7 +12,9 @@ from h3_app.media_types import UpscaleClipBatch
 from dataclasses import dataclass
 
 
-from h3_app.gallery_store import AssetPage
+from h3_app.gallery_store import AssetInventory, AssetPage
+
+_THUMBNAIL_WORKERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="h3-posters")
 
 GalleryMutationResult = tuple[
     list[tuple[str, str]], list[str], str, Any, Any, str | None, bool
@@ -304,14 +308,30 @@ class MediaController:
             clear_selection=False,
         )
 
-    def refresh_gallery_page(self, limit: int = 48) -> AssetPage:
-        videos = self.services.gallery_video_paths(limit=None)
+    def refresh_gallery_page(self, limit: int = 48, *, paths=None) -> AssetPage:
+        if isinstance(paths, AssetInventory) and paths.kind != "Video":
+            raise ValueError("Gallery inventory does not match the media type.")
+        if isinstance(paths, AssetInventory) and paths.kind == "Video":
+            videos = list(paths.paths)
+        else:
+            videos = self.services.gallery_video_paths(limit=None)
+        if paths is not None and not isinstance(paths, AssetInventory):
+            selected = {self.services.Path(path).resolve() for path in paths}
+            videos = [path for path in videos if path.resolve() in selected]
         shown_videos = videos[: max(0, limit)]
         items: list[tuple[str, str]] = []
         selectable_paths: list[str] = []
         failed = 0
-        for video in shown_videos:
-            thumbnail = self.services.gallery_thumbnail(video)
+        # One shared bound across browser sessions. Copy job context so finishing
+        # callbacks retain cancellation checks inside the media subprocesses.
+        posters = [
+            _THUMBNAIL_WORKERS.submit(
+                copy_context().run, self.services.gallery_thumbnail, video
+            )
+            for video in shown_videos
+        ]
+        for video, poster in zip(shown_videos, posters):
+            thumbnail = poster.result()
             if thumbnail is None:
                 failed += 1
                 thumbnail = self.services.gallery_store.gallery_placeholder(
@@ -365,13 +385,30 @@ class MediaController:
             "Audio": self.services.gallery_audio_paths,
         }[self.services.gallery_media_mode(mode)](limit=None)
 
-    def refresh_media_page(self, mode: str = "Video", limit: int = 48) -> AssetPage:
+    def refresh_media_page(
+        self, mode: str = "Video", limit: int = 48, *, paths=None
+    ) -> AssetPage:
         """Refresh the active gallery, defaulting to the existing video library."""
         media_mode = self.services.gallery_media_mode(mode)
+        if isinstance(paths, AssetInventory) and paths.kind != media_mode:
+            raise ValueError("Gallery inventory does not match the media type.")
         if media_mode == "Video":
-            return self.services.refresh_gallery_page(limit)
+            return (
+                self.refresh_gallery_page(limit, paths=paths)
+                if paths is not None
+                else self.services.refresh_gallery_page(limit)
+            )
         if media_mode == "Audio":
-            all_audio_files = self.services.gallery_audio_paths(limit=None)
+            all_audio_files = (
+                list(paths.paths)
+                if isinstance(paths, AssetInventory) and paths.kind == "Audio"
+                else self.services.gallery_audio_paths(limit=None)
+            )
+            if paths is not None and not isinstance(paths, AssetInventory):
+                selected = {self.services.Path(path).resolve() for path in paths}
+                all_audio_files = [
+                    path for path in all_audio_files if path.resolve() in selected
+                ]
             audio_files = all_audio_files[: max(0, limit)]
             items: list[tuple[str, str]] = []
             selectable_paths: list[str] = []
@@ -405,7 +442,14 @@ class MediaController:
                 "audio files",
                 failed,
             )
-        all_images = self.services.gallery_image_paths(limit=None)
+        all_images = (
+            list(paths.paths)
+            if isinstance(paths, AssetInventory) and paths.kind == "Image"
+            else self.services.gallery_image_paths(limit=None)
+        )
+        if paths is not None and not isinstance(paths, AssetInventory):
+            selected = {self.services.Path(path).resolve() for path in paths}
+            all_images = [path for path in all_images if path.resolve() in selected]
         images = all_images[: max(0, limit)]
         items: list[tuple[str, str]] = []
         selectable_paths: list[str] = []

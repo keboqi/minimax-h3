@@ -349,6 +349,27 @@ class WorkspaceStoreTests(unittest.TestCase):
         self.store.rebuild_index([(image, "Image", {})])
         self.assertTrue(self.store.search_assets()[0]["favorite"])
 
+    def test_batch_index_preserves_annotations_and_skips_vanished_files(self):
+        image, other = self.root / "result.png", self.root / "other.png"
+        image.write_bytes(b"output")
+        other.write_bytes(b"other")
+        asset_id = self.store.index_asset(image, "Image", {"seed": 42})
+        self.store.annotate(asset_id, tags=["keep"], favorite=True)
+        with patch.object(self.store, "connect", wraps=self.store.connect) as connect:
+            indexed = self.store.index_assets(
+                [
+                    (image, "Image", {"seed": 7}),
+                    (other, "Image", {}),
+                    (self.root / "missing.png", "Image", {}),
+                ]
+            )
+            self.assertEqual(indexed, {image, other})
+            self.assertEqual(connect.call_count, 1)
+        row = self.store.search_assets(favorite=True)[0]
+        self.assertEqual(row["id"], asset_id)
+        self.assertEqual(row["tags"], ["keep"])
+        self.assertEqual(row["metadata"], {"seed": 7})
+
     def test_large_input_copy_does_not_block_monitoring(self):
         source = self.root / "source.png"
         source.write_bytes(b"source")
@@ -362,9 +383,10 @@ class WorkspaceStoreTests(unittest.TestCase):
             self.assertTrue(resume.wait(5))
             return copy(*args)
 
-        with patch(
-            "h3_app.jobs.shutil.copy2", side_effect=slow_copy
-        ), ThreadPoolExecutor() as pool:
+        with (
+            patch("h3_app.jobs.shutil.copy2", side_effect=slow_copy),
+            ThreadPoolExecutor() as pool,
+        ):
             accepted = pool.submit(
                 self.jobs.accept, "a", "h3", [str(source)], media_indices=(0,)
             )

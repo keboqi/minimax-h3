@@ -41,16 +41,13 @@ def table(jobs):
 def build_jobs_view(root, *, get, post, summary):
     with root:
         gr.Markdown(
-            "## Jobs\nAccepted requests keep their own settings and input files. "
-            "Technical job history survives server restarts. Unsaved prompts and uploaded input copies "
-            "expire after 30 minutes or a restart. Save a project to keep its prompt, settings and source media "
-            "until you delete it. This browser's signed ownership cookie expires after 30 days; "
-            "keep that cookie to reconnect to your projects. Recovery never automatically repeats inference."
+            "## Jobs\nTrack requests, cancel active work, or retry failed variants. "
+            "Select a job to inspect its outputs and recorded settings."
         )
         listing = gr.HTML(table(()))
         refresh = gr.Button("Refresh jobs")
         selected = gr.Dropdown([], label="Job", value=None)
-        details = gr.HTML()
+        details = gr.HTML(elem_classes=["h3-job-details"])
         variants = gr.CheckboxGroup([], label="Failed variants to retry", value=[])
         with gr.Row():
             cancel = gr.Button("Cancel selected job", interactive=False)
@@ -65,8 +62,13 @@ def build_jobs_view(root, *, get, post, summary):
         status = gr.Markdown()
         ticket = gr.Textbox(visible=False)
         timer = gr.Timer(2)
+        presentation = gr.State({})
         with gr.Accordion("Browser ownership and recovery", open=False):
             gr.Markdown(
+                "Technical job history survives server restarts. Unsaved prompts and uploaded "
+                "input copies expire after 30 minutes or a restart. Save a project to retain them. "
+                "This browser's signed ownership cookie expires after 30 days. "
+                "Recovery never automatically repeats inference. "
                 "Keep a recovery key to reopen jobs and projects after losing browser cookies. "
                 "The key grants access to your saved content; keep it private."
             )
@@ -117,7 +119,9 @@ def build_jobs_view(root, *, get, post, summary):
         js="async (key) => { const r = await fetch('/workspace/owner/recover', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key})}); if (!r.ok) { alert('Invalid browser recovery key'); return; } location.reload(); }",
     )
 
-    def refresh_jobs(selected_id, request: gr.Request):
+    def refresh_jobs(
+        selected_id, failed_selection, source_selection, previous, request: gr.Request
+    ):
         jobs = JOBS.list_owned(require_owner(request))
         choices = [
             (f"{job.id[:8]} · {job.family} · {job.state}", job.id) for job in jobs
@@ -125,19 +129,63 @@ def build_jobs_view(root, *, get, post, summary):
         value = selected_id if any(job.id == selected_id for job in jobs) else None
         queued = sum(job.state == "queued" for job in jobs)
         active = sum(job.finished_at is None and job.state != "queued" for job in jobs)
+        inspected = list(inspect_job(value, request))
+        signature = json.dumps(inspected, sort_keys=True)
+        failed_choices = inspected[1].get("choices")
+        previous = previous or {}
+        if previous.get("selected") == value:
+            if previous.get("failed") == inspected[1].get("choices"):
+                inspected[1]["value"] = failed_selection
+            sources = [item[1] for item in inspected[5].get("choices", [])]
+            if source_selection in sources:
+                inspected[5]["value"] = source_selection
+        if previous.get("detail") == signature and previous.get("selected") == value:
+            inspected = [gr.skip() for _ in inspected]
+        next_presentation = {
+            "selected": value,
+            "detail": signature,
+            "choices": choices,
+            "failed": failed_choices,
+            "table": table(jobs),
+            "counts": (queued, active),
+        }
         return (
-            table(jobs),
-            gr.update(choices=choices, value=value),
             (
-                f'<p class="h3-system-status" role="status">{queued} queued · {active} active in this session</p>'
+                gr.skip()
+                if previous.get("table") == next_presentation["table"]
+                else next_presentation["table"]
             ),
+            (
+                gr.skip()
+                if previous.get("choices") == choices and value == selected_id
+                else gr.update(choices=choices, value=value)
+            ),
+            (
+                gr.skip()
+                if previous.get("counts") == (queued, active)
+                else f'<p class="h3-system-status" role="status">{queued} queued · {active} active in this session</p>'
+            ),
+            *inspected,
+            next_presentation,
         )
 
     for event in (timer.tick, refresh.click):
         event(
             refresh_jobs,
-            inputs=selected,
-            outputs=[listing, selected, summary],
+            inputs=[selected, variants, finishing_variant, presentation],
+            outputs=[
+                listing,
+                selected,
+                summary,
+                details,
+                variants,
+                cancel,
+                retry,
+                finishing,
+                finishing_variant,
+                files,
+                presentation,
+            ],
             queue=False,
             api_name=False,
             show_progress="hidden",
@@ -203,7 +251,9 @@ def build_jobs_view(root, *, get, post, summary):
             values[names[index]] = (
                 [Path(item).name for item in value]
                 if isinstance(value, list)
-                else Path(value).name if isinstance(value, str) else value
+                else Path(value).name
+                if isinstance(value, str)
+                else value
             )
         return content, {
             "engine": saved["family"],
@@ -381,9 +431,10 @@ def build_jobs_view(root, *, get, post, summary):
                 yield gr.skip(), f"Job `{job.id[:8]}` · {job.state} · {job.stage}"
         except JobCancelled:
             pass
-        yield [
-            path for path in job.outputs if Path(path).is_file()
-        ], f"Job `{job.id[:8]}` · {job.state}. " + (job.error or "")
+        yield (
+            [path for path in job.outputs if Path(path).is_file()],
+            f"Job `{job.id[:8]}` · {job.state}. " + (job.error or ""),
+        )
 
     for accepted in (
         retry.click(

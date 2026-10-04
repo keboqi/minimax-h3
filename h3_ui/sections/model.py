@@ -39,8 +39,9 @@ def build_model_section(
     conditioning_parent=None,
 ) -> ModelSection:
     with (
-        conditioning_parent if conditioning_parent is not None else nullcontext()
-    ), gr.Row(elem_classes=["h3-mode-row"]):
+        conditioning_parent if conditioning_parent is not None else nullcontext(),
+        gr.Row(elem_classes=["h3-mode-row"]),
+    ):
         mode = gr.Radio(
             ["Text to video", "First / last frame", "Reference media"],
             value=defaults["mode"],
@@ -53,7 +54,7 @@ def build_model_section(
             info="H3 always samples vision and audio; this selects what is decoded and shown.",
             visible=False,
         )
-    with gr.Row():
+    with advanced_parent if advanced_parent is not None else nullcontext(), gr.Row():
         model_profile = gr.Radio(
             services.MODEL_PROFILE_CHOICES,
             value=defaults["model_profile"],
@@ -61,10 +62,10 @@ def build_model_section(
             info="Speed uses the rebuilt single-pass NVFP4 files. Quality uses the mixed NVFP4/FP8/INT8 ConvRot files. Original uses the official BF16 files. Singularity uses the fine-tuned pruned v1.3 INT8 checkpoint. Speed, Original and Singularity download when first selected.",
         )
     with (
-        advanced_parent if advanced_parent is not None else nullcontext()
-    ), gr.Accordion(
-        "Model & generation (advanced)", open=advanced_parent is not None
-    ), gr.Row():
+        advanced_parent if advanced_parent is not None else nullcontext(),
+        gr.Accordion("Model & generation (advanced)", open=advanced_parent is not None),
+        gr.Row(),
+    ):
         generation_mode = gr.Radio(
             ["Normal", "Turbo"],
             value=defaults["generation_mode"],
@@ -72,11 +73,12 @@ def build_model_section(
             info="Turbo uses the implementation selected in Performance & sampling. LightX2V uses the matching reference adapter; Larry reference mode is experimental.",
         )
     with (
-        advanced_parent if advanced_parent is not None else nullcontext()
-    ), gr.Accordion(
-        "Model and memory (advanced)",
-        open=advanced_parent is not None,
-        elem_classes=["h3-advanced-block"],
+        advanced_parent if advanced_parent is not None else nullcontext(),
+        gr.Accordion(
+            "Model and memory (advanced)",
+            open=advanced_parent is not None,
+            elem_classes=["h3-advanced-block"],
+        ),
     ):
         with gr.Row():
             text_encoder = gr.Dropdown(

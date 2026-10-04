@@ -23,6 +23,11 @@ from starlette.requests import Request
 SCHEMA_VERSION = 1
 COOKIE = "h3_workspace_owner"
 OWNER_TTL = 30 * 86400
+_INDEX_ASSET_SQL = (
+    "INSERT INTO assets VALUES (?, ?, ?, ?, 1, ?) "
+    "ON CONFLICT(path) DO UPDATE SET modified=excluded.modified, "
+    "available=1, metadata=excluded.metadata"
+)
 
 
 class WorkspaceStore:
@@ -328,7 +333,7 @@ class WorkspaceStore:
         asset_id = uuid.uuid5(uuid.NAMESPACE_URL, path.as_uri()).hex
         with self.connect() as db:
             db.execute(
-                "INSERT INTO assets VALUES (?, ?, ?, ?, 1, ?) ON CONFLICT(path) DO UPDATE SET modified=excluded.modified, available=1, metadata=excluded.metadata",
+                _INDEX_ASSET_SQL,
                 (
                     asset_id,
                     str(path),
@@ -338,6 +343,31 @@ class WorkspaceStore:
                 ),
             )
         return asset_id
+
+    def index_assets(self, assets):
+        """Commit a library scan once, preserving existing identities/annotations."""
+        rows = []
+        indexed = set()
+        for source, kind, metadata in assets:
+            try:
+                path = Path(source).resolve()
+                modified = path.stat().st_mtime
+            except OSError:
+                continue
+            rows.append(
+                (
+                    uuid.uuid5(uuid.NAMESPACE_URL, path.as_uri()).hex,
+                    str(path),
+                    kind,
+                    modified,
+                    json.dumps(metadata or {}),
+                )
+            )
+            indexed.add(path)
+        if rows:
+            with self.connect() as db:
+                db.executemany(_INDEX_ASSET_SQL, rows)
+        return indexed
 
     def annotate(self, asset_id, *, tags, favorite):
         tags = sorted({str(tag).strip()[:40] for tag in tags if str(tag).strip()})[:32]
@@ -367,7 +397,13 @@ class WorkspaceStore:
                 "WHERE available=1 AND (? IS NULL OR kind=?) AND (?=0 OR n.favorite=1) "
                 "AND lower(path || ' ' || COALESCE(n.tags,'[]') || ' ' || metadata) LIKE ? ESCAPE '\\' "
                 "ORDER BY modified DESC LIMIT ?",
-                (kind, kind, int(favorite), pattern, min(max(1, limit), 200)),
+                (
+                    kind,
+                    kind,
+                    int(favorite),
+                    pattern,
+                    -1 if limit is None else min(max(1, limit), 200),
+                ),
             ).fetchall()
         results = []
         for row in rows:

@@ -55,7 +55,7 @@ def build_workspace_output(defaults, services, root):
             )
         with gr.Row():
             aspect_ratio = gr.Dropdown(
-                ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3"],
+                ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "Custom"],
                 value="16:9",
                 label="Aspect ratio",
             )

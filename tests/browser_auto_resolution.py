@@ -25,7 +25,10 @@ def run():
         "app.build_ui().queue(default_concurrency_limit=1,max_size=8).launch("
         f"server_name='127.0.0.1',server_port={port},inbrowser=False,ssr_mode=False,css=H3_SETUP_CSS+H3_WORKSPACE_CSS)"
     )
-    with tempfile.TemporaryFile(mode="w+b") as log, tempfile.TemporaryDirectory() as images:
+    with (
+        tempfile.TemporaryFile(mode="w+b") as log,
+        tempfile.TemporaryDirectory() as images,
+    ):
         first = Path(images) / "first.png"
         second = Path(images) / "second.png"
         Image.new("RGB", (768, 1152)).save(first)
@@ -33,7 +36,12 @@ def run():
         process = subprocess.Popen(
             [sys.executable, "-u", "-c", source],
             cwd=ROOT,
-            env={**os.environ, "H3_WORKSPACE_DIR": str(ROOT / ".cache/ui-redesign" / "auto_resolution-state")},
+            env={
+                **os.environ,
+                "H3_WORKSPACE_DIR": str(
+                    ROOT / ".cache/ui-redesign" / "auto_resolution-state"
+                ),
+            },
             stdout=log,
             stderr=log,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
@@ -64,8 +72,12 @@ def run():
                     page = browser.new_page()
                     page.goto(url, wait_until="domcontentloaded")
                     card = page.locator(".h3-setup-card")
-                    page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for()
-                    decoder = card.locator(".h3-setup-detail").filter(has_text="Decoder")
+                    page.locator(
+                        '.h3-setup-card[data-settings-ready="true"]'
+                    ).wait_for()
+                    decoder = card.locator(".h3-setup-detail").filter(
+                        has_text="Decoder"
+                    )
                     expect(decoder).to_contain_text("LynnReal Light INT8")
                     presets = page.locator("fieldset").filter(
                         has=page.get_by_text("Recipe", exact=True)
@@ -85,8 +97,11 @@ def run():
                     file_input.set_input_files(str(second))
                     expect(card).to_contain_text("640×960", timeout=15000)
                     page.wait_for_timeout(500)
+                    expect(card).to_contain_text("640×960")
                     page.reload(wait_until="domcontentloaded")
-                    page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for()
+                    page.locator(
+                        '.h3-setup-card[data-settings-ready="true"]'
+                    ).wait_for()
                     expect(card).to_contain_text("640×960", timeout=15000)
                 finally:
                     browser.close()

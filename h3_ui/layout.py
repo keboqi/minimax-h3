@@ -52,7 +52,7 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
             '<p class="h3-system-status" role="status">No active jobs in this session.</p>',
             elem_classes=["h3-jobs-summary"],
         )
-    tabs = gr.Tabs(elem_id="h3-main-tabs", selected="create")
+    tabs = gr.Tabs(elem_id="h3-main-tabs", selected="create", overflow_behavior="wrap")
     with tabs:
         with gr.Tab("Create", id="create"):
             with gr.Row(elem_classes=["h3-task-picker"]):
@@ -70,7 +70,7 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
             with gr.Tabs(selected="h3", elem_id="h3-engine-tabs") as engine_tabs:
                 with gr.Tab("MiniMax H3", id="h3"):
                     gr.HTML(
-                        '<nav class="h3-mobile-nav" aria-label="Workspace sections"><a href="#h3-composer">Compose</a><a href="#h3-preview">Preview</a></nav>',
+                        '<nav class="h3-mobile-nav" aria-label="Workspace sections"><a href="#h3-composer">Compose</a><a href="#h3-generate-actions">Generate</a><a href="#h3-preview">Preview</a></nav>',
                         elem_classes=["h3-mobile-nav-container"],
                     )
                     generation = gr.Row(elem_classes=["h3-generator-shell"])

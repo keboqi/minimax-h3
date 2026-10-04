@@ -46,6 +46,29 @@ def bind_qwen_image21_view(
     enhance_prompt: Callable[..., Any],
     generate: Callable[..., Any],
 ) -> Any:
+    view.mode.change(
+        lambda mode: tuple(gr.update(visible=mode == "Image edit") for _ in range(3))
+        + tuple(gr.update(interactive=mode == "Image edit") for _ in range(2)),
+        inputs=view.mode,
+        outputs=[
+            view.batch_edit_inputs,
+            view.edit_size,
+            view.reference_resolution,
+            view.cache_device,
+            view.cache_dtype,
+        ],
+        queue=False,
+        show_progress="hidden",
+        api_name=False,
+    )
+    view.cfg.change(
+        lambda cfg: gr.update(visible=cfg > 1),
+        inputs=view.cfg,
+        outputs=view.negative_prompt,
+        queue=False,
+        show_progress="hidden",
+        api_name=False,
+    )
     view.preset.change(
         qwen_preset_values,
         inputs=view.preset,

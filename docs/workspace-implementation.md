@@ -176,3 +176,37 @@ Real GPU inference was deliberately excluded. Actual Modal deployment, a full
 screen-reader/usability audit and production storage/performance measurements
 were not performed on this host. Modal environment/volume wiring and local HTTP
 startup are covered by CPU checks, with inference graphs preserved by fixtures.
+
+## Gradio and interaction follow-up — 4 October 2026
+
+The shared Gradio pin is now 6.29.1. H3's readiness message, generation actions
+and progress sit in the right results column directly below Next run. Other
+engines keep their actions with the composer. Mobile navigation provides a
+direct Generate anchor, and the native main tabs wrap. Technical disclosures
+stay collapsed, Qwen controls follow mode
+and CFG, and all engines show composition prerequisites before submission.
+Idle Interrupt is disabled until owned work is accepted. Selected Jobs details,
+outputs and actions refresh together, including terminal cancellation state.
+
+H3 ordinary settings handlers use at most 24 inputs; scalar edits return four
+outputs while coupled policy changes retain the full resolver presentation.
+Authoritative transition memory and its lock are per session. Numeric handlers
+listen to user input/commit events, avoiding delayed preset-change echoes.
+Preference saves merge seven namespaces into a session snapshot, with explicit
+saves after unqueued resolution refreshes. Existing privacy and migrations remain.
+
+Media search and Favorites filter the paged thumbnail grid. One selection feeds
+preview, metadata, tags, lineage and comparison A. New/changed managed files and
+sidecars are indexed during browsing; rebuild lives in System maintenance and
+preserves annotations. Empty results clear the inspector. Comparison inventory
+loads when its panel opens; scan results are reused for pages, database updates
+are batched, and video posters use four shared workers. The local 1,060-asset
+benchmark and remaining indexing costs are recorded in
+[the gallery investigation](gallery-performance-2026-10-04.md).
+
+Final pre-push verification runs 293 CPU tests (three optional PyTorch checks skipped),
+the four browser suites and standalone self-test. The 13 published API contracts
+and 15 normalized workflow fixtures remain unchanged. Measurements, validation
+details and limitations are recorded in
+[the Gradio/UI audit](gradio-ui-audit-2026-10-04.md). GPU inference and deployment
+remain excluded from local acceptance.

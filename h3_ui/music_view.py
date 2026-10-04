@@ -55,11 +55,12 @@ def build_music_view(
             "[ComfyUI guide](https://docs.comfy.org/tutorials/audio/minimax/minimax-music-3) · "
             "[Official prompting skill](https://github.com/MiniMax-AI/MiniMax-Music3/tree/main/skills/music-caption-rewriter)"
         )
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=3):
+        with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
+            with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
+                gr.Markdown("### Compose")
                 caption = gr.Textbox(
                     label="Music caption",
-                    lines=12,
+                    lines=4,
                     placeholder=(
                         "Global Metadata: genre, BPM, key, mood, production...\n\n"
                         "Vocal Details: singer, delivery, harmonies, effects...\n\n"
@@ -68,7 +69,7 @@ def build_music_view(
                 )
                 lyrics = gr.Textbox(
                     label="Lyrics and song structure",
-                    lines=16,
+                    lines=8,
                     placeholder=(
                         "[Intro]\n\n[Verse]\nWrite lyrics here...\n\n"
                         "[Chorus]\n...\n\n[Bridge]\n...\n\n[Outro]"
@@ -96,71 +97,91 @@ def build_music_view(
                     enhance_status = gr.Textbox(
                         label="Prompt writer status", lines=2, interactive=False
                     )
-            with gr.Column(scale=2):
+                action_root = gr.Column(elem_classes=["h3-action-dock"])
+                settings_root = gr.Column(elem_classes=["h3-essentials"])
+            with gr.Column(scale=2, min_width=320, elem_classes=["h3-preview-panel"]):
+                gr.Markdown("### Results")
                 output = gr.Audio(
                     label="Generated song", type="filepath", interactive=False
                 )
-                with gr.Row():
-                    run = gr.Button("Generate with Music 3", variant="primary")
-                    stop = gr.Button("Interrupt")
-                status = gr.Textbox(label="Status", lines=7)
-                gr.Markdown("### Generation settings")
-                model = gr.Dropdown(
-                    choices=list(model_choices),
-                    value=defaults["model"],
-                    label="Diffusion model",
-                    info="The selected DiT and shared encoder/decoder download on first use.",
-                )
-                with gr.Row():
-                    duration = gr.Slider(
-                        1,
-                        300,
-                        value=defaults["duration"],
-                        step=1,
-                        label="Maximum seconds",
-                    )
-                    seed = gr.Number(
-                        value=defaults["seed"], precision=0, label="Seed (-1 random)"
-                    )
-                tiled = gr.Checkbox(
-                    value=defaults["tiled_decode"],
-                    label="Tiled audio decode",
-                    info="Reduces peak VRAM for long songs; disable for fastest decode on high-VRAM GPUs.",
-                )
-                with gr.Accordion("Advanced sampling", open=False):
-                    steps = gr.Slider(
-                        1,
-                        100,
-                        value=defaults["steps"],
-                        step=1,
-                        label="Diffusion steps",
+                output.h3_metadata_root = gr.Column()
+                with action_root:
+                    readiness = gr.HTML(
+                        '<p class="h3-readiness" role="alert">Write a prompt to start.</p>'
                     )
                     with gr.Row():
-                        cfg = gr.Slider(
-                            0,
-                            10,
-                            value=defaults["cfg"],
-                            step=0.05,
-                            label="Diffusion CFG",
+                        run = gr.Button(
+                            "Generate with Music 3",
+                            variant="primary",
+                            interactive=False,
                         )
-                        ar_cfg = gr.Slider(
-                            0,
-                            10,
-                            value=defaults["ar_cfg"],
-                            step=0.05,
-                            label="Autoregressive CFG",
-                        )
-                    top_k = gr.Slider(
-                        1,
-                        200,
-                        value=defaults["top_k"],
-                        step=1,
-                        label="Autoregressive Top K",
+                        stop = gr.Button("Interrupt", interactive=False)
+                        run.h3_stop = stop
+                        run.h3_readiness = readiness
+                    status = gr.Textbox(
+                        label="Generation progress", lines=2, interactive=False
                     )
-                gr.Markdown(
-                    "Output is saved as V0-quality MP3 under `ComfyUI/output/audio`. "
-                    "Music 3 may end a song before the maximum duration."
-                )
+                with settings_root:
+                    gr.Markdown("### Generation settings")
+                    with gr.Accordion("Model (advanced)", open=False):
+                        model = gr.Dropdown(
+                            choices=list(model_choices),
+                            value=defaults["model"],
+                            label="Diffusion model",
+                            info="The selected DiT and shared encoder/decoder download on first use.",
+                        )
+                    with gr.Row():
+                        duration = gr.Slider(
+                            1,
+                            300,
+                            value=defaults["duration"],
+                            step=1,
+                            label="Maximum seconds",
+                        )
+                        seed = gr.Number(
+                            value=defaults["seed"],
+                            precision=0,
+                            label="Seed (-1 random)",
+                        )
+                    tiled = gr.Checkbox(
+                        value=defaults["tiled_decode"],
+                        label="Tiled audio decode",
+                        info="Reduces peak VRAM for long songs; disable for fastest decode on high-VRAM GPUs.",
+                    )
+                    with gr.Accordion("Advanced sampling", open=False):
+                        steps = gr.Slider(
+                            1,
+                            100,
+                            value=defaults["steps"],
+                            step=1,
+                            label="Diffusion steps",
+                        )
+                        with gr.Row():
+                            cfg = gr.Slider(
+                                0,
+                                10,
+                                value=defaults["cfg"],
+                                step=0.05,
+                                label="Diffusion CFG",
+                            )
+                            ar_cfg = gr.Slider(
+                                0,
+                                10,
+                                value=defaults["ar_cfg"],
+                                step=0.05,
+                                label="Autoregressive CFG",
+                            )
+                        top_k = gr.Slider(
+                            1,
+                            200,
+                            value=defaults["top_k"],
+                            step=1,
+                            label="Autoregressive Top K",
+                        )
+                    gr.Markdown(
+                        "Output is saved as V0-quality MP3 under `ComfyUI/output/audio`. "
+                        "Music 3 may end a song before the maximum duration."
+                    )
     return MusicView(
         caption,
         lyrics,

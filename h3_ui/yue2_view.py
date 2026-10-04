@@ -58,8 +58,9 @@ def build_yue2_view(
         gr.Markdown(
             "## YuE2\nGenerate full songs from a style prompt and sectioned lyrics on the shared ComfyUI backend. Full and Melody modes plan a score first; Direct skips planning. The INT8 checkpoint downloads on first use. Model license: CC-BY-NC-4.0. [Model details](https://huggingface.co/Comfy-Org/YuE2)"
         )
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=3):
+        with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
+            with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
+                gr.Markdown("### Compose")
                 style = gr.Textbox(
                     label="Style prompt",
                     lines=6,
@@ -67,14 +68,15 @@ def build_yue2_view(
                 )
                 lyrics = gr.Textbox(
                     label="Lyrics and song structure",
-                    lines=16,
+                    lines=8,
                     placeholder="[verse]\nLyrics here...\n\n[chorus]\n...",
                 )
-                abc = gr.Textbox(
-                    label="ABC score override (optional)",
-                    lines=7,
-                    placeholder="Leave blank to let YuE2 create the score.",
-                )
+                with gr.Accordion("Score override (optional)", open=False):
+                    abc = gr.Textbox(
+                        label="ABC score override (optional)",
+                        lines=7,
+                        placeholder="Leave blank to let YuE2 create the score.",
+                    )
                 with gr.Accordion("Prompt writer / enhancer", open=False):
                     gr.Markdown(
                         "Create or enhance the style prompt and sectioned lyrics for YuE2."
@@ -91,134 +93,152 @@ def build_yue2_view(
                     enhance_status = gr.Textbox(
                         label="Prompt writer status", lines=2, interactive=False
                     )
-            with gr.Column(scale=2):
+                action_root = gr.Column(elem_classes=["h3-action-dock"])
+                settings_root = gr.Column(elem_classes=["h3-essentials"])
+            with gr.Column(scale=2, min_width=320, elem_classes=["h3-preview-panel"]):
+                gr.Markdown("### Results")
                 output = gr.Audio(
                     label="Generated song", type="filepath", interactive=False
                 )
-                with gr.Row():
-                    run = gr.Button("Generate with YuE2", variant="primary")
-                    stop = gr.Button("Interrupt")
-                status = gr.Textbox(label="Status", lines=7)
-                model = gr.Dropdown(
-                    choices=list(model_choices),
-                    value=defaults["model"],
-                    label="Checkpoint",
-                    info="INT8 ConvRot uses less VRAM; downloaded on first use.",
-                )
-                mode = gr.Dropdown(
-                    choices=[
-                        ("Full score", "full"),
-                        ("Melody only", "melody"),
-                        ("Direct generation", "off"),
-                    ],
-                    value=defaults["mode"],
-                    label="Score mode",
-                )
-                with gr.Row():
-                    duration = gr.Slider(
-                        1,
-                        900,
-                        value=defaults["duration"],
-                        step=1,
-                        label="Maximum seconds",
-                    )
-                    seed = gr.Number(
-                        value=defaults["seed"], precision=0, label="Seed (-1 random)"
-                    )
-                tiled = gr.Checkbox(
-                    value=defaults["tiled_decode"],
-                    label="Tiled audio decode",
-                    info="Recommended for long songs to reduce peak VRAM.",
-                )
-                with gr.Accordion("Advanced sampling", open=False):
-                    with gr.Row():
-                        steps = gr.Slider(
-                            1,
-                            100,
-                            value=defaults["steps"],
-                            step=1,
-                            label="Diffusion steps",
-                        )
-                        cfg = gr.Slider(
-                            0,
-                            20,
-                            value=defaults["cfg"],
-                            step=0.05,
-                            label="Diffusion CFG",
-                        )
-                    with gr.Row():
-                        temperature = gr.Slider(
-                            0,
-                            5,
-                            value=defaults["temperature"],
-                            step=0.05,
-                            label="Acoustic temperature",
-                        )
-                        top_p = gr.Slider(
-                            0.01,
-                            1,
-                            value=defaults["top_p"],
-                            step=0.01,
-                            label="Acoustic top-p",
-                        )
-                        top_k = gr.Slider(
-                            1,
-                            32768,
-                            value=defaults["top_k"],
-                            step=1,
-                            label="Acoustic top-k",
-                        )
-                    repetition_penalty = gr.Slider(
-                        0.01,
-                        10,
-                        value=defaults["repetition_penalty"],
-                        step=0.01,
-                        label="Acoustic repetition penalty",
+                output.h3_metadata_root = gr.Column()
+                with action_root:
+                    readiness = gr.HTML(
+                        '<p class="h3-readiness" role="alert">Write a prompt to start.</p>'
                     )
                     with gr.Row():
-                        max_abc_tokens = gr.Slider(
-                            1,
-                            20000,
-                            value=defaults["max_abc_tokens"],
-                            step=1,
-                            label="Maximum ABC tokens",
+                        run = gr.Button(
+                            "Generate with YuE2", variant="primary", interactive=False
                         )
-                        abc_temperature = gr.Slider(
-                            0,
-                            5,
-                            value=defaults["abc_temperature"],
-                            step=0.05,
-                            label="ABC temperature",
+                        stop = gr.Button("Interrupt", interactive=False)
+                        run.h3_stop = stop
+                        run.h3_readiness = readiness
+                    status = gr.Textbox(
+                        label="Generation progress", lines=2, interactive=False
+                    )
+                with settings_root:
+                    with gr.Accordion("Model (advanced)", open=False):
+                        model = gr.Dropdown(
+                            choices=list(model_choices),
+                            value=defaults["model"],
+                            label="Checkpoint",
+                            info="INT8 ConvRot uses less VRAM; downloaded on first use.",
                         )
-                        abc_top_p = gr.Slider(
-                            0.01,
-                            1,
-                            value=defaults["abc_top_p"],
-                            step=0.01,
-                            label="ABC top-p",
-                        )
+                    mode = gr.Dropdown(
+                        choices=[
+                            ("Full score", "full"),
+                            ("Melody only", "melody"),
+                            ("Direct generation", "off"),
+                        ],
+                        value=defaults["mode"],
+                        label="Score mode",
+                    )
                     with gr.Row():
-                        abc_top_k = gr.Slider(
+                        duration = gr.Slider(
                             1,
-                            32768,
-                            value=defaults["abc_top_k"],
+                            900,
+                            value=defaults["duration"],
                             step=1,
-                            label="ABC top-k",
+                            label="Maximum seconds",
                         )
-                        abc_repetition_penalty = gr.Slider(
+                        seed = gr.Number(
+                            value=defaults["seed"],
+                            precision=0,
+                            label="Seed (-1 random)",
+                        )
+                    tiled = gr.Checkbox(
+                        value=defaults["tiled_decode"],
+                        label="Tiled audio decode",
+                        info="Recommended for long songs to reduce peak VRAM.",
+                    )
+                    with gr.Accordion("Advanced sampling", open=False):
+                        with gr.Row():
+                            steps = gr.Slider(
+                                1,
+                                100,
+                                value=defaults["steps"],
+                                step=1,
+                                label="Diffusion steps",
+                            )
+                            cfg = gr.Slider(
+                                0,
+                                20,
+                                value=defaults["cfg"],
+                                step=0.05,
+                                label="Diffusion CFG",
+                            )
+                        with gr.Row():
+                            temperature = gr.Slider(
+                                0,
+                                5,
+                                value=defaults["temperature"],
+                                step=0.05,
+                                label="Acoustic temperature",
+                            )
+                            top_p = gr.Slider(
+                                0.01,
+                                1,
+                                value=defaults["top_p"],
+                                step=0.01,
+                                label="Acoustic top-p",
+                            )
+                            top_k = gr.Slider(
+                                1,
+                                32768,
+                                value=defaults["top_k"],
+                                step=1,
+                                label="Acoustic top-k",
+                            )
+                        repetition_penalty = gr.Slider(
                             0.01,
                             10,
-                            value=defaults["abc_repetition_penalty"],
-                            step=0.005,
-                            label="ABC repetition penalty",
+                            value=defaults["repetition_penalty"],
+                            step=0.01,
+                            label="Acoustic repetition penalty",
                         )
-                        abc_penalty_window = gr.Slider(
-                            1,
-                            20000,
-                            value=defaults["abc_penalty_window"],
-                            step=1,
-                            label="ABC penalty window",
-                        )
+                        with gr.Row():
+                            max_abc_tokens = gr.Slider(
+                                1,
+                                20000,
+                                value=defaults["max_abc_tokens"],
+                                step=1,
+                                label="Maximum ABC tokens",
+                            )
+                            abc_temperature = gr.Slider(
+                                0,
+                                5,
+                                value=defaults["abc_temperature"],
+                                step=0.05,
+                                label="ABC temperature",
+                            )
+                            abc_top_p = gr.Slider(
+                                0.01,
+                                1,
+                                value=defaults["abc_top_p"],
+                                step=0.01,
+                                label="ABC top-p",
+                            )
+                        with gr.Row():
+                            abc_top_k = gr.Slider(
+                                1,
+                                32768,
+                                value=defaults["abc_top_k"],
+                                step=1,
+                                label="ABC top-k",
+                            )
+                            abc_repetition_penalty = gr.Slider(
+                                0.01,
+                                10,
+                                value=defaults["abc_repetition_penalty"],
+                                step=0.005,
+                                label="ABC repetition penalty",
+                            )
+                            abc_penalty_window = gr.Slider(
+                                1,
+                                20000,
+                                value=defaults["abc_penalty_window"],
+                                step=1,
+                                label="ABC penalty window",
+                            )
     return YuE2View(
         style,
         lyrics,

@@ -2425,9 +2425,9 @@ def list_media_paths(mode):
 
 
 def refresh_media_page(
-    mode: str = "Video", limit: int = GALLERY_PAGE_SIZE
+    mode: str = "Video", limit: int = GALLERY_PAGE_SIZE, *, paths=None
 ) -> gallery_store.AssetPage:
-    return _mediacontroller().refresh_media_page(mode, limit)
+    return _mediacontroller().refresh_media_page(mode, limit, paths=paths)
 
 
 def refresh_media_gallery(mode: str = "Video", limit: int = GALLERY_PAGE_SIZE):
@@ -2613,10 +2613,10 @@ def backend_status() -> str:
         vram_free = device.get("vram_free")
         if isinstance(vram_total, (int, float)) and isinstance(vram_free, (int, float)):
             vram_text = (
-                f" · {vram_free / 2 ** 30:.1f}/{vram_total / 2 ** 30:.1f} GiB VRAM free"
+                f" · {vram_free / 2**30:.1f}/{vram_total / 2**30:.1f} GiB VRAM free"
             )
         elif isinstance(vram_total, (int, float)):
-            vram_text = f" · {vram_total / 2 ** 30:.1f} GiB VRAM"
+            vram_text = f" · {vram_total / 2**30:.1f} GiB VRAM"
         else:
             vram_text = ""
         models = load_model_config()
@@ -3178,7 +3178,6 @@ def compact_settings_summary(
 
 
 def result_settings_for_media(value):
-
     def media_path(item):
         if isinstance(item, dict):
             return media_path(item.get("path") or item.get("name") or item.get("image"))
@@ -3474,7 +3473,7 @@ def generate_for_ui(batch_count: int, *args: Any):
 
 def api_guide() -> str:
     defaults = UI_DEFAULTS
-    return f"""## Generate through the API\n\nThe `/generate_video` endpoint accepts a prompt and preserves the existing **Video** defaults from the **MiniMax H3** tab, including default-on reuse of unchanged prompt/media conditioning:\n\n`{defaults['mode']}` · `{defaults['model_profile']}` · `{defaults['generation_mode']} / {defaults['turbo_variant']}` · `{defaults['duration']}s` · `{defaults['width']}×{defaults['height']}` · `{defaults['steps']} steps` · `{defaults['scheduler']}` scheduler · random seed\n\nInstall the client and submit a job:\n\n```bash\npip install gradio_client\n```\n\n```python\nfrom gradio_client import Client\n\nclient = Client("http://127.0.0.1:7860")\ndownload_url, status = client.predict(\n    "A cinematic tracking shot through a rain-soaked neon city",\n    api_name="/generate_video",\n)\nprint(download_url)\nprint(status)\n```\n\n`download_url` is an HTTP URL served by this app, so it can be opened in a browser or downloaded with `curl -L -O` while the app is running.\n\nFor every control exposed by the MiniMax H3 tab, including **Image** and **Audio** result formats, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. Image selections can be persisted through `/save_h3_image_frames`. API requests share the same single-job queue as the UI.\n"""
+    return f"""## Generate through the API\n\nThe `/generate_video` endpoint accepts a prompt and preserves the existing **Video** defaults from the **MiniMax H3** tab, including default-on reuse of unchanged prompt/media conditioning:\n\n`{defaults["mode"]}` · `{defaults["model_profile"]}` · `{defaults["generation_mode"]} / {defaults["turbo_variant"]}` · `{defaults["duration"]}s` · `{defaults["width"]}×{defaults["height"]}` · `{defaults["steps"]} steps` · `{defaults["scheduler"]}` scheduler · random seed\n\nInstall the client and submit a job:\n\n```bash\npip install gradio_client\n```\n\n```python\nfrom gradio_client import Client\n\nclient = Client("http://127.0.0.1:7860")\ndownload_url, status = client.predict(\n    "A cinematic tracking shot through a rain-soaked neon city",\n    api_name="/generate_video",\n)\nprint(download_url)\nprint(status)\n```\n\n`download_url` is an HTTP URL served by this app, so it can be opened in a browser or downloaded with `curl -L -O` while the app is running.\n\nFor every control exposed by the MiniMax H3 tab, including **Image** and **Audio** result formats, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. Image selections can be persisted through `/save_h3_image_frames`. API requests share the same single-job queue as the UI.\n"""
 
 
 def compact_backend_status(detail: str) -> str:
@@ -3608,6 +3607,7 @@ def build_ui() -> gr.Blocks:
             latent_upscale_layout_updates=latent_upscale_layout_updates,
             latent_upscale_method_layout_update=latent_upscale_method_layout_update,
             list_media_paths=list_media_paths,
+            gallery_media_download_path=gallery_media_download_path,
             mode_help=mode_help,
             mode_layout_updates=mode_layout_updates,
             postprocess_selected_gallery_media=postprocess_selected_gallery_media,

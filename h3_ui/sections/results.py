@@ -39,8 +39,9 @@ class ResultsSection:
 def build_results_section(
     defaults: Mapping[str, Any], services: H3ViewServices, *, action_root=None
 ) -> ResultsSection:
-    with action_root if action_root is not None else nullcontext(), gr.Group(
-        elem_classes=["h3-action-dock"]
+    with (
+        action_root if action_root is not None else nullcontext(),
+        gr.Column(elem_classes=["h3-action-dock"]),
     ):
         generation_readiness = gr.HTML(
             services.generation_readiness_state(defaults["mode"], "", None, None).html
@@ -53,7 +54,8 @@ def build_results_section(
                 interactive=False,
                 elem_classes=["h3-primary-action"],
             )
-            stop = gr.Button("Interrupt", scale=1)
+            stop = gr.Button("Interrupt", scale=1, interactive=False)
+            run.h3_stop = stop
             refresh = gr.Button("Refresh status", scale=1)
         status = gr.Textbox(
             label="Generation progress",

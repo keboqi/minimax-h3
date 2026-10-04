@@ -23,7 +23,17 @@ def file_fingerprints(paths):
     )
 
 
-def bind_safe_deletion(view, *, list_paths, delete, empty, mutation_outputs, sync_more):
+def bind_safe_deletion(
+    view,
+    *,
+    list_paths,
+    delete,
+    empty,
+    mutation_outputs,
+    sync_more,
+    refresh_inputs=None,
+    refresh_outputs=None,
+):
     def prepare(mode, selected, action):
         paths = tuple(str(path) for path in list_paths(mode))
         if action == "selected":
@@ -91,10 +101,10 @@ def bind_safe_deletion(view, *, list_paths, delete, empty, mutation_outputs, syn
         queue=False,
         api_name=False,
     )
-    confirmed.success(
+    refreshed = confirmed.success(
         sync_more,
-        inputs=view.mode,
-        outputs=[view.shown, view.show_more],
+        inputs=refresh_inputs or view.mode,
+        outputs=refresh_outputs or [view.shown, view.show_more],
         queue=False,
         api_name=False,
         show_progress="hidden",
@@ -105,3 +115,4 @@ def bind_safe_deletion(view, *, list_paths, delete, empty, mutation_outputs, syn
         queue=False,
         api_name=False,
     )
+    return refreshed

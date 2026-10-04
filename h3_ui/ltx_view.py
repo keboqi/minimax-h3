@@ -73,14 +73,16 @@ def build_ltx_view(
             "[LTX-2.5 model license](https://huggingface.co/Lightricks/LTX-2.5) "
             "before generating."
         )
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=3):
-                model = gr.Dropdown(
-                    choices=list(model_choices),
-                    value=defaults["model"],
-                    label="Transformer model",
-                    info="INT8 ConvRot is the default lower-memory option.",
-                )
+        with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
+            with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
+                gr.Markdown("### Compose")
+                with gr.Accordion("Model (advanced)", open=False):
+                    model = gr.Dropdown(
+                        choices=list(model_choices),
+                        value=defaults["model"],
+                        label="Transformer model",
+                        info="INT8 ConvRot is the default lower-memory option.",
+                    )
                 mode = gr.Radio(
                     ["Text to video", "Image to video", "Reference images"],
                     value=defaults["mode"],
@@ -88,7 +90,7 @@ def build_ltx_view(
                 )
                 prompt = gr.Textbox(
                     label="Positive prompt",
-                    lines=10,
+                    lines=6,
                     placeholder=(
                         "Describe the action chronologically, then the setting, "
                         "camera movement, lighting, dialogue, sound effects, and music."
@@ -168,41 +170,62 @@ def build_ltx_view(
                         type="filepath",
                         file_types=["image"],
                     )
-            with gr.Column(scale=2):
+                action_root = gr.Column(elem_classes=["h3-action-dock"])
+                settings_root = gr.Column(elem_classes=["h3-essentials"])
+            with gr.Column(scale=2, min_width=320, elem_classes=["h3-preview-panel"]):
+                gr.Markdown("### Results")
                 output = gr.Video(label="Generated LTX-2.5 video", interactive=False)
-                with gr.Row():
-                    run = gr.Button("Generate with LTX-2.5", variant="primary")
-                    stop = gr.Button("Interrupt")
-                status = gr.Textbox(label="Status", lines=6)
-                gr.Markdown("### Generation settings")
-                with gr.Row():
-                    duration = gr.Slider(
-                        1, 20, value=defaults["duration"], step=0.5, label="Seconds"
+                output.h3_metadata_root = gr.Column()
+                with action_root:
+                    readiness = gr.HTML(
+                        '<p class="h3-readiness" role="alert">Write a prompt to start.</p>'
                     )
-                    fps = gr.Slider(1, 60, value=defaults["fps"], step=1, label="FPS")
-                with gr.Row():
-                    width = gr.Number(
-                        value=defaults["width"], precision=0, label="Width"
+                    with gr.Row():
+                        run = gr.Button(
+                            "Generate with LTX-2.5",
+                            variant="primary",
+                            interactive=False,
+                        )
+                        stop = gr.Button("Interrupt", interactive=False)
+                        run.h3_stop = stop
+                        run.h3_readiness = readiness
+                    status = gr.Textbox(
+                        label="Generation progress", lines=2, interactive=False
                     )
-                    height = gr.Number(
-                        value=defaults["height"], precision=0, label="Height"
+                with settings_root:
+                    gr.Markdown("### Generation settings")
+                    with gr.Row():
+                        duration = gr.Slider(
+                            1, 20, value=defaults["duration"], step=0.5, label="Seconds"
+                        )
+                        fps = gr.Slider(
+                            1, 60, value=defaults["fps"], step=1, label="FPS"
+                        )
+                    with gr.Row():
+                        width = gr.Number(
+                            value=defaults["width"], precision=0, label="Width"
+                        )
+                        height = gr.Number(
+                            value=defaults["height"], precision=0, label="Height"
+                        )
+                    gr.Markdown(
+                        "Dimensions snap to multiples of 32; frames snap to `8n + 1`."
                     )
-                gr.Markdown(
-                    "Dimensions snap to multiples of 32; frames snap to `8n + 1`."
-                )
-                with gr.Row():
-                    seed = gr.Number(
-                        value=defaults["seed"], precision=0, label="Seed (-1 random)"
+                    with gr.Row():
+                        seed = gr.Number(
+                            value=defaults["seed"],
+                            precision=0,
+                            label="Seed (-1 random)",
+                        )
+                        cfg = gr.Slider(
+                            0.0, 3.0, value=defaults["cfg"], step=0.05, label="CFG"
+                        )
+                    sampler = gr.Dropdown(
+                        ["euler_ancestral", "euler", "dpmpp_2m", "dpmpp_2m_sde"],
+                        value=defaults["sampler"],
+                        label="Sampler",
                     )
-                    cfg = gr.Slider(
-                        0.0, 3.0, value=defaults["cfg"], step=0.05, label="CFG"
-                    )
-                sampler = gr.Dropdown(
-                    ["euler_ancestral", "euler", "dpmpp_2m", "dpmpp_2m_sde"],
-                    value=defaults["sampler"],
-                    label="Sampler",
-                )
-        with gr.Accordion("Official workflows and model downloads", open=True):
+        with gr.Accordion("Official workflows and model downloads", open=False):
             gr.Markdown(
                 "Download missing workflow models here first. Individual Hugging Face "
                 "repositories can require separate license acceptance."

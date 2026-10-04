@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from collections.abc import Mapping
+from copy import deepcopy
 import gradio as gr
 from h3_app.settings import valid_preference, PRESET_FIELDS
 from .settings_controller import SETTING_NAMES
@@ -194,9 +195,14 @@ def bind_browser_settings(demo, components, *, controller):
         storage_key=_STORAGE_KEY,
         secret=_BROWSER_STATE_SECRET,
     )
+    snapshot = gr.State({"schema_version": SCHEMA_VERSION, "values": defaults})
 
-    def restore(saved):
+    def restore(saved, current):
         restored, memory = restore_preferences(saved, selected)
+        current.clear()
+        current.update(
+            schema_version=SCHEMA_VERSION, values=restored, mode_memory=memory
+        )
         updates = [restored[name] for name in names]
         if "workspace.engine" in names and isinstance(
             selected["workspace.engine"], gr.Dropdown
@@ -210,16 +216,9 @@ def bind_browser_settings(demo, components, *, controller):
             )
         return (*updates, memory)
 
-    def remember(memory, *values):
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "values": dict(zip(names, values, strict=True)),
-            "mode_memory": memory,
-        }
-
     restored = demo.load(
         restore,
-        inputs=browser_state,
+        inputs=[browser_state, snapshot],
         outputs=[*controls, controller.memory],
         queue=False,
         show_progress="hidden",
@@ -233,29 +232,80 @@ def bind_browser_settings(demo, components, *, controller):
         show_progress="hidden",
         api_name=False,
     )
-    for event in controller.events:
-        event.then(
-            remember,
-            inputs=[controller.memory, *controls],
+
+    def remember_namespace(namespace_names, *, h3=False):
+        def remember(memory, current, session, *values):
+            current["values"].update(dict(zip(namespace_names, values, strict=True)))
+            if h3:
+                memory = session.memory or memory
+                current["values"].update(
+                    {
+                        "h3." + name: value
+                        for name, value in (memory or {}).get("values", {}).items()
+                        if "h3." + name in selected
+                    }
+                )
+                current["mode_memory"] = {
+                    key: value
+                    for key, value in (memory or {}).items()
+                    if key in {"active", "modes", "offload_preference"}
+                }
+            return deepcopy(current)
+
+        return remember
+
+    for namespace in sorted({name.split(".", 1)[0] for name in names}):
+        namespace_names = [
+            name
+            for name in names
+            if name.startswith(namespace + ".")
+            and not (namespace == "h3" and name[3:] in SETTING_NAMES)
+        ]
+        triggers = [
+            (
+                selected[name].change
+                if name == "workspace.engine"
+                else selected[name].input
+            )
+            for name in namespace_names
+        ]
+        if namespace == "h3":
+            triggers.append(controller.memory.change)
+            # Unqueued callbacks do not dispatch State.change in this Gradio
+            # path. Save after their explicit resolution refresh instead.
+            for event in controller.events:
+                if not event.get("queue", True):
+                    event.then(
+                        remember_namespace(namespace_names, h3=True),
+                        inputs=[
+                            controller.memory,
+                            snapshot,
+                            controller.session,
+                            *(selected[name] for name in namespace_names),
+                        ],
+                        outputs=browser_state,
+                        queue=True,
+                        concurrency_id="h3-preferences",
+                        concurrency_limit=1,
+                        show_progress="hidden",
+                        api_name=False,
+                    )
+        gr.on(
+            triggers=triggers,
+            fn=remember_namespace(namespace_names, h3=namespace == "h3"),
+            inputs=[
+                controller.memory,
+                snapshot,
+                controller.session,
+                *(selected[name] for name in namespace_names),
+            ],
             outputs=browser_state,
-            queue=False,
+            queue=True,
+            concurrency_id="h3-preferences",
+            concurrency_limit=1,
             show_progress="hidden",
             api_name=False,
+            trigger_mode="always_last",
         )
-    others = [
-        (component.change if name == "workspace.engine" else component.input)
-        for name, component in selected.items()
-        if name not in {"h3." + n for n in SETTING_NAMES}
-    ]
-    gr.on(
-        triggers=others,
-        fn=remember,
-        inputs=[controller.memory, *controls],
-        outputs=browser_state,
-        queue=False,
-        show_progress="hidden",
-        api_name=False,
-        trigger_mode="always_last",
-    )
     browser_state.h3_restore_event = refreshed
     return browser_state

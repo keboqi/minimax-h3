@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 import subprocess
 import uuid
 from dataclasses import dataclass
@@ -19,6 +21,14 @@ from h3_app.processes import run_media_process
 
 _GALLERY_RESOLUTION_CACHE = {}
 _GALLERY_RESOLUTION_CACHE_LOCK = Lock()
+
+
+@dataclass(frozen=True)
+class AssetInventory:
+    """Ordered paths from one server-side managed-library scan."""
+
+    kind: str
+    paths: tuple[Path, ...]
 
 
 @dataclass(frozen=True)
@@ -58,8 +68,14 @@ class AssetPage:
     @classmethod
     def from_scan(cls, items, paths, total, limit, kind, unavailable=0):
         scanned = min(max(0, int(limit)), total)
-        return cls(tuple(items), tuple(paths), total,
-                   scanned if scanned < total else None, kind, unavailable)
+        return cls(
+            tuple(items),
+            tuple(paths),
+            total,
+            scanned if scanned < total else None,
+            kind,
+            unavailable,
+        )
 
 
 def video_download_path(video: str | Path, *, runtime: RuntimeConfig) -> str:
@@ -151,113 +167,80 @@ def managed_audio_path(
     return resolved
 
 
+def _gallery_paths(extensions, *, limit, runtime, exclude_thumbnails=False):
+    """Walk once without statting sidecars or descending into preview/work dirs."""
+    media = {}
+    thumbnail_root = runtime.gallery_thumbnails_dir.resolve()
+    for root in (runtime.output_dir, runtime.outputs_dir):
+        if not root.is_dir() or ".processing" in root.parts:
+            continue
+        resolved_root = root.resolve()
+        for directory, subdirs, filenames in os.walk(root):
+            subdirs[:] = [
+                name
+                for name in subdirs
+                if name != ".processing"
+                and not (Path(directory) / name)
+                .resolve()
+                .is_relative_to(thumbnail_root)
+            ]
+            for name in filenames:
+                candidate = Path(directory) / name
+                if candidate.suffix.lower() not in extensions:
+                    continue
+                try:
+                    info = candidate.stat()
+                    resolved = candidate.resolve()
+                    if (
+                        stat.S_ISREG(info.st_mode)
+                        and resolved.is_relative_to(resolved_root)
+                        and not (
+                            exclude_thumbnails
+                            and resolved.is_relative_to(thumbnail_root)
+                        )
+                    ):
+                        media[resolved] = (candidate, info.st_mtime)
+                except OSError:
+                    continue
+    ordered = [
+        path
+        for path, _ in sorted(media.values(), key=lambda item: item[1], reverse=True)
+    ]
+    return ordered if limit is None else ordered[: max(0, int(limit))]
+
+
 def gallery_video_paths(
     *, limit: int | None | EllipsisType = ..., runtime: RuntimeConfig
 ) -> list[Path]:
     """Return generated videos, optionally limited to the newest entries."""
-    if limit is Ellipsis:
-        limit = runtime.gallery_limit
-    videos: dict[Path, Path] = {}
-    for root in (runtime.output_dir, runtime.outputs_dir):
-        if not root.is_dir():
-            continue
-        resolved_root = root.resolve()
-        for candidate in root.rglob("*"):
-            if (
-                not candidate.is_file()
-                or candidate.suffix.lower() not in VIDEO_EXTENSIONS
-                or ".processing" in candidate.parts
-            ):
-                continue
-            try:
-                resolved = candidate.resolve()
-                if resolved.is_relative_to(resolved_root):
-                    videos[resolved] = candidate
-            except OSError:
-                continue
-
-    def modified(path: Path) -> float:
-        try:
-            return path.stat().st_mtime
-        except OSError:
-            return 0.0
-
-    ordered = sorted(videos.values(), key=modified, reverse=True)
-    return ordered if limit is None else ordered[: max(0, int(limit))]
+    return _gallery_paths(
+        VIDEO_EXTENSIONS,
+        limit=runtime.gallery_limit if limit is Ellipsis else limit,
+        runtime=runtime,
+    )
 
 
 def gallery_image_paths(
     *, limit: int | None | EllipsisType = ..., runtime: RuntimeConfig
 ) -> list[Path]:
     """Return generated images, optionally limited to the newest entries."""
-    if limit is Ellipsis:
-        limit = runtime.gallery_limit
-    images: dict[Path, Path] = {}
-    thumbnail_root = runtime.gallery_thumbnails_dir.resolve()
-    for root in (runtime.output_dir, runtime.outputs_dir):
-        if not root.is_dir():
-            continue
-        resolved_root = root.resolve()
-        for candidate in root.rglob("*"):
-            if (
-                not candidate.is_file()
-                or candidate.suffix.lower() not in IMAGE_EXTENSIONS
-                or ".processing" in candidate.parts
-            ):
-                continue
-            try:
-                resolved = candidate.resolve()
-                if (
-                    resolved.is_relative_to(resolved_root)
-                    and not resolved.is_relative_to(thumbnail_root)
-                ):
-                    images[resolved] = candidate
-            except OSError:
-                continue
-
-    def modified(path: Path) -> float:
-        try:
-            return path.stat().st_mtime
-        except OSError:
-            return 0.0
-
-    ordered = sorted(images.values(), key=modified, reverse=True)
-    return ordered if limit is None else ordered[: max(0, int(limit))]
+    return _gallery_paths(
+        IMAGE_EXTENSIONS,
+        limit=runtime.gallery_limit if limit is Ellipsis else limit,
+        runtime=runtime,
+        exclude_thumbnails=True,
+    )
 
 
 def gallery_audio_paths(
     *, limit: int | None | EllipsisType = ..., runtime: RuntimeConfig
 ) -> list[Path]:
     """Return generated audio files, optionally limited to the newest entries."""
-    if limit is Ellipsis:
-        limit = runtime.gallery_limit
-    audio_files: dict[Path, Path] = {}
-    for root in (runtime.output_dir, runtime.outputs_dir):
-        if not root.is_dir():
-            continue
-        resolved_root = root.resolve()
-        for candidate in root.rglob("*"):
-            if (
-                not candidate.is_file()
-                or candidate.suffix.lower() not in AUDIO_EXTENSIONS
-                or ".processing" in candidate.parts
-            ):
-                continue
-            try:
-                resolved = candidate.resolve()
-                if resolved.is_relative_to(resolved_root):
-                    audio_files[resolved] = candidate
-            except OSError:
-                continue
-
-    def modified(path: Path) -> float:
-        try:
-            return path.stat().st_mtime
-        except OSError:
-            return 0.0
-
-    ordered = sorted(audio_files.values(), key=modified, reverse=True)
-    return ordered if limit is None else ordered[: max(0, int(limit))]
+    return _gallery_paths(
+        AUDIO_EXTENSIONS,
+        limit=runtime.gallery_limit if limit is Ellipsis else limit,
+        runtime=runtime,
+    )
 
 
 def gallery_audio_thumbnail(audio: Path, *, runtime: RuntimeConfig) -> Path | None:
@@ -286,9 +269,7 @@ def gallery_audio_thumbnail(audio: Path, *, runtime: RuntimeConfig) -> Path | No
         draw.text((28, 28), "AUDIO", fill=(225, 235, 248))
         display_name = audio.name if len(audio.name) <= 52 else f"{audio.name[:49]}..."
         draw.text((28, 230), display_name, fill=(172, 188, 210))
-        temporary = thumbnail.with_name(
-            f"{thumbnail.stem}.{uuid.uuid4().hex}.tmp.png"
-        )
+        temporary = thumbnail.with_name(f"{thumbnail.stem}.{uuid.uuid4().hex}.tmp.png")
         canvas.save(temporary, format="PNG")
         temporary.replace(thumbnail)
         return thumbnail
@@ -296,9 +277,7 @@ def gallery_audio_thumbnail(audio: Path, *, runtime: RuntimeConfig) -> Path | No
         return None
 
 
-def gallery_audio_thumbnail_path(
-    audio: str | Path, *, runtime: RuntimeConfig
-) -> Path:
+def gallery_audio_thumbnail_path(audio: str | Path, *, runtime: RuntimeConfig) -> Path:
     cache_key = hashlib.sha256(str(Path(audio).resolve()).encode("utf-8")).hexdigest()[
         :24
     ]
@@ -316,9 +295,7 @@ def gallery_image_thumbnail(image: Path, *, runtime: RuntimeConfig) -> Path | No
         if thumbnail.is_file() and thumbnail.stat().st_mtime >= source_mtime:
             return thumbnail
         runtime.gallery_thumbnails_dir.mkdir(parents=True, exist_ok=True)
-        temporary = thumbnail.with_name(
-            f"{thumbnail.stem}.{uuid.uuid4().hex}.tmp.jpg"
-        )
+        temporary = thumbnail.with_name(f"{thumbnail.stem}.{uuid.uuid4().hex}.tmp.jpg")
         with Image.open(image) as opened:
             opened.draft("RGB", (480, 480))
             preview = ImageOps.exif_transpose(opened)
@@ -340,17 +317,26 @@ def gallery_image_thumbnail(image: Path, *, runtime: RuntimeConfig) -> Path | No
 
 
 def gallery_image_thumbnail_path(image: str | Path, *, runtime: RuntimeConfig) -> Path:
-    cache_key = hashlib.sha256(str(Path(image).resolve()).encode("utf-8")).hexdigest()[:24]
+    cache_key = hashlib.sha256(str(Path(image).resolve()).encode("utf-8")).hexdigest()[
+        :24
+    ]
     return runtime.gallery_thumbnails_dir / f"image-{cache_key}.jpg"
 
 
-def gallery_placeholder(media: Path, *, kind: str, runtime: RuntimeConfig) -> Path | None:
+def gallery_placeholder(
+    media: Path, *, kind: str, runtime: RuntimeConfig
+) -> Path | None:
     """Keep an unreadable item selectable without exposing its full media file."""
     try:
         from PIL import Image, ImageDraw
 
-        cache_key = hashlib.sha256(str(media.resolve()).encode("utf-8")).hexdigest()[:24]
-        thumbnail = runtime.gallery_thumbnails_dir / f"{kind.lower()}-{cache_key}-unavailable.png"
+        cache_key = hashlib.sha256(str(media.resolve()).encode("utf-8")).hexdigest()[
+            :24
+        ]
+        thumbnail = (
+            runtime.gallery_thumbnails_dir
+            / f"{kind.lower()}-{cache_key}-unavailable.png"
+        )
         if thumbnail.is_file():
             return thumbnail
         runtime.gallery_thumbnails_dir.mkdir(parents=True, exist_ok=True)
@@ -387,6 +373,10 @@ def gallery_thumbnail(video: Path, *, runtime: RuntimeConfig) -> Path | None:
             "-hide_banner",
             "-loglevel",
             "error",
+            "-threads",
+            "1",
+            "-filter_threads",
+            "1",
             "-ss",
             "0.1",
             "-i",
@@ -395,13 +385,15 @@ def gallery_thumbnail(video: Path, *, runtime: RuntimeConfig) -> Path | None:
             "1",
             "-vf",
             "scale=480:-2:force_original_aspect_ratio=decrease",
+            "-threads",
+            "1",
             str(temporary),
         ]
         proc = run_media_process(
             cmd,
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=10,
             partial_outputs=(temporary,),
         )
         if proc.returncode != 0 or not temporary.is_file():
@@ -498,9 +490,7 @@ def gallery_image_resolution(image: Path) -> tuple[int, int] | None:
 def gallery_image_resolution_text(image: Path) -> str:
     resolution = gallery_image_resolution(image)
     return (
-        f"{resolution[0]}×{resolution[1]}"
-        if resolution
-        else "resolution unavailable"
+        f"{resolution[0]}×{resolution[1]}" if resolution else "resolution unavailable"
     )
 
 

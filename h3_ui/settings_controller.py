@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
+from copy import deepcopy
+from threading import RLock
 from typing import Any, Callable, Mapping
 import gradio as gr
 from h3_app.decoder_intent import VideoDecoder
@@ -86,12 +88,28 @@ class SettingsServices:
     cache_defaults: Callable
 
 
+class SessionSettings:
+    """One authoritative transition stream per browser session."""
+
+    def __init__(self):
+        self.memory = None
+        self.lock = RLock()
+
+    def __deepcopy__(self, memo):
+        clone = type(self)()
+        clone.memory = deepcopy(self.memory, memo)
+        return clone
+
+
 class SettingsController:
     def __init__(self, components: Mapping[str, Any], services: SettingsServices):
         self.components = components
         self.services = services
         self.names = SETTING_NAMES
         self.inputs = [components[name] for name in (*self.names, *MEDIA_NAMES)]
+        self.defaults = {name: components[name].value for name in self.names}
+        self.session = gr.State(SessionSettings())
+        self.inputs.append(self.session)
         self.memory = gr.State({"active": "Turbo", "modes": {}})
         self.ids = {
             component._id: name
@@ -118,9 +136,22 @@ class SettingsController:
         ]
 
     def update(self, memory, *values, action="edit"):
+        if values and isinstance(values[-1], SessionSettings):
+            session, values = values[-1], values[:-1]
+            with session.lock:
+                result = self._update(session.memory or memory, *values, action=action)
+                session.memory = result[len(self.names)]
+                return result
+        return self._update(memory, *values, action=action)
+
+    def _update(self, memory, *values, action="edit"):
         incoming = dict(zip((*self.names, *MEDIA_NAMES), values, strict=True))
         before = dict(incoming)
-        if action in (*self.names, *MEDIA_NAMES) or action == "restore":
+        if (
+            action in (*self.names, *MEDIA_NAMES)
+            or action == "restore"
+            or action.startswith("decoder:")
+        ):
             previous = (memory or {}).get("values")
             if previous:
                 incoming = {
@@ -178,9 +209,9 @@ class SettingsController:
             plan = self.services.resolve(request_values)
         except (ValueError, TypeError, RuntimeError):
             return (
-                *(gr.update() for _ in self.names),
+                *(gr.skip() for _ in self.names),
                 new_memory,
-                *(gr.update() for _ in self.groups),
+                *(gr.skip() for _ in self.groups),
                 self.services.describe(request_values),
                 "",
                 gr.update(interactive=False),
@@ -189,13 +220,20 @@ class SettingsController:
         updates = []
         previous_presentation = (memory or {}).get("presentation", {})
         presentation = {}
+        previous_values = (memory or {}).get("values", before)
         for name in self.names:
             props = {
                 key: value
                 for key, value in cache_updates.get(name, {}).items()
                 if key != "__type__"
             }
-            if current[name] != before[name]:
+            already_entered = (
+                name == action or action == "refresh" and name in {"width", "height"}
+            ) and current[name] == before[name]
+            # Only actual policy changes should write another control's value.
+            # A resolution refresh can capture an in-progress numeric edit
+            # before its input callback reaches the authoritative session.
+            if current[name] != previous_values[name] and not already_entered:
                 props["value"] = current[name]
             if name in {
                 "fbcache_threshold",
@@ -218,9 +256,7 @@ class SettingsController:
             if name == "semantic_bridge_alpha":
                 props["visible"] = bool(plan.effective.semantic_bridge)
             if name == "turbo_variant":
-                props["visible"] = (
-                    current["generation_mode"] == "Turbo"
-                )
+                props["visible"] = current["generation_mode"] == "Turbo"
             if name == "mode":
                 props.update(
                     choices=["Text to video", "First / last frame", "Reference media"],
@@ -258,7 +294,7 @@ class SettingsController:
                 if key == "value"
                 or previous_presentation.get(name, {}).get(key) != value
             }
-            updates.append(gr.update(**props))
+            updates.append(gr.update(**props) if props else gr.skip())
         readiness = generation_readiness(
             current["mode"],
             current["prompt"],
@@ -304,11 +340,34 @@ class SettingsController:
         # Generic EventData from a multi-trigger gr.on can have no target.
         self.events = []
 
-        def prompt_readiness(memory, *values):
+        media_inputs = [self.components[name] for name in MEDIA_NAMES]
+
+        def snapshot(memory, media, change=None):
+            current = {
+                **self.defaults,
+                **(memory or {}).get("values", {}),
+                **dict(zip(MEDIA_NAMES, media, strict=True)),
+            }
+            if change:
+                current[change[0]] = change[1]
+            return [current[name] for name in (*self.names, *MEDIA_NAMES)]
+
+        def prompt_readiness(memory, *args):
+            media, session = args[:-1], args[-1]
+            if session.memory is None:
+                return (
+                    '<p class="h3-readiness" role="status">Restoring your settings…</p>',
+                    gr.update(interactive=False),
+                )
             # A draft edit does not change model policy. Keep its readiness
             # response small and avoid rewriting all settings components.
-            current = dict(zip((*self.names, *MEDIA_NAMES), values, strict=True))
-            current.update((memory or {}).get("values", {}))
+            current = dict(
+                zip(
+                    (*self.names, *MEDIA_NAMES),
+                    snapshot(session.memory or memory, media),
+                    strict=True,
+                )
+            )
             request_values = {
                 ALIASES.get(key, key): value for key, value in current.items()
             }
@@ -327,7 +386,7 @@ class SettingsController:
 
         self.components["prompt"].change(
             prompt_readiness,
-            inputs=[self.memory, *self.inputs],
+            inputs=[self.memory, *media_inputs, self.session],
             outputs=[self.components["generation_readiness"], self.components["run"]],
             queue=False,
             trigger_mode="always_last",
@@ -335,17 +394,26 @@ class SettingsController:
             api_name=False,
         )
 
-        def select_decoder(value, memory, *values):
-            return self.update(memory, *values, action="decoder:" + value)
+        def select_decoder(value, memory, *args):
+            media, session = args[:-1], args[-1]
+            if session.memory is None:
+                return tuple(gr.skip() for _ in self.outputs)
+            return self.update(
+                memory, *snapshot(memory, media), session, action="decoder:" + value
+            )
 
         self.events.append(
             self.components["video_decoder"].input(
                 select_decoder,
-                inputs=[self.components["video_decoder"], self.memory, *self.inputs],
+                inputs=[
+                    self.components["video_decoder"],
+                    self.memory,
+                    *media_inputs,
+                    self.session,
+                ],
                 outputs=self.outputs,
                 queue=True,
-                concurrency_id="h3-settings",
-                concurrency_limit=1,
+                concurrency_limit=None,
                 trigger_mode="always_last",
                 show_progress="hidden",
                 api_name=False,
@@ -372,9 +440,45 @@ class SettingsController:
             show_progress="hidden",
         )
 
-        def handler(action):
-            def dispatch(memory, *values):
-                return self.update(memory, *values, action=action)
+        # These edits cannot change another control's value or presentation.
+        # Presets, modes and policy selectors retain their complete updates.
+        independent = {
+            "duration",
+            "seed",
+            "batch_count",
+            "width",
+            "height",
+            "steps",
+            "cfg",
+            "image_frames",
+            "latent_upscale_refine_steps",
+            "semantic_bridge_alpha",
+            "generation_split_seconds",
+            "easycache_threshold",
+            "easycache_start",
+            "easycache_end",
+            "easycache_verbose",
+            "fbcache_temporal_guard",
+        }
+        independent.update(
+            name
+            for name in self.names
+            if isinstance(self.components[name], (gr.Slider, gr.Number))
+        )
+
+        def handler(action, output_indices):
+            def dispatch(memory, *args):
+                session, args = args[-1], args[:-1]
+                if session.memory is None:
+                    # Restoration writes numeric controls before its complete
+                    # refresh. Those change events must not seed partial defaults.
+                    return tuple(gr.skip() for _ in output_indices)
+                change = (action, args[0]) if action in self.names else None
+                media = args[1:] if change else args
+                updates = self.update(
+                    memory, *snapshot(memory, media, change), session, action=action
+                )
+                return tuple(updates[index] for index in output_indices)
 
             return dispatch
 
@@ -383,25 +487,39 @@ class SettingsController:
             *(n for n in MEDIA_NAMES if n not in {"first", "prompt"}),
             "restore_preset",
         ):
-            trigger = (
-                self.components[name].click
-                if name == "restore_preset"
-                # Textbox input can fire before its bound value has updated.
-                # Change observes the committed value, including enhancer results.
-                else (
-                    self.components[name].change
-                    if name == "prompt"
-                    else self.components[name].input
-                )
+            component = self.components[name]
+            if name == "restore_preset":
+                triggers = [component.click]
+            elif isinstance(component, gr.Slider):
+                # Slider input awaits the frontend binding; release also covers
+                # its reset button. Change includes delayed preset writes, which
+                # can otherwise overwrite a newer user edit.
+                triggers = [component.input, component.release]
+            elif isinstance(component, gr.Number):
+                # Number input dispatches before its frontend binding commits.
+                # Blur/submit observe the edited value without preset echoes.
+                triggers = [component.blur, component.submit]
+            else:
+                triggers = [component.input]
+            action = "restore" if name == "restore_preset" else name
+            indices = (
+                [len(self.names), *range(len(self.outputs) - 3, len(self.outputs))]
+                if name in independent
+                else list(range(len(self.outputs)))
             )
             self.events.append(
-                trigger(
-                    handler("restore" if name == "restore_preset" else name),
-                    inputs=[self.memory, *self.inputs],
-                    outputs=self.outputs,
+                gr.on(
+                    triggers=triggers,
+                    fn=handler(action, indices),
+                    inputs=[
+                        self.memory,
+                        *([self.components[name]] if name in self.names else []),
+                        *media_inputs,
+                        self.session,
+                    ],
+                    outputs=[self.outputs[index] for index in indices],
                     queue=True,
-                    concurrency_id="h3-settings",
-                    concurrency_limit=1,
+                    concurrency_limit=None,
                     trigger_mode="always_last",
                     show_progress="hidden",
                     api_name=False,

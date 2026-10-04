@@ -34,22 +34,94 @@ def bind_gallery_view(
 ) -> None:
     page_size = 48
 
-    def refresh_page(mode: str, limit: int = page_size):
-        page = refresh(mode, limit)
+    filters = view.filters or gr.State({"query": "", "favorite": False})
+    index = getattr(view.search, "h3_asset_index", None)
+    page_outputs = [view.grid, view.paths, view.status, view.shown, view.show_more]
+
+    def refresh_page(mode: str, filter_values, limit: int = page_size):
+        matching = (
+            index.inventory(
+                mode,
+                filter_values.get("query", ""),
+                filter_values.get("favorite", False),
+            )
+            if index
+            else None
+        )
+        page = (
+            refresh(mode, limit, paths=matching)
+            if matching is not None
+            else refresh(mode, limit)
+        )
         return (
             list(page.items),
             list(page.paths),
-            page.status,
+            f"{page.total} matching assets · {page.status}",
             min(max(0, int(limit)), page.total),
             gr.update(interactive=page.next_cursor is not None),
         )
 
-    def sync_more(mode: str):
-        page = refresh(mode, page_size)
+    def sync_more(mode: str, filter_values):
+        return refresh_page(mode, filter_values)
+
+    def validate_selection(mode, paths, selected):
+        if selected and selected in paths:
+            return (gr.skip(),) * 5
         return (
-            min(page_size, page.total),
-            gr.update(interactive=page.next_cursor is not None),
+            gr.update(value=None, visible=mode == "Video"),
+            gr.update(value=None, visible=mode == "Image"),
+            gr.update(value=None, visible=mode == "Audio"),
+            "",
+            None,
         )
+
+    def synchronize(event, *, refreshed=False):
+        if refreshed:
+            event = event.then(
+                validate_selection,
+                inputs=[view.mode, view.paths, view.selected],
+                outputs=[
+                    view.player,
+                    view.image,
+                    view.audio,
+                    view.download,
+                    view.selected,
+                ],
+                queue=False,
+                show_progress="hidden",
+                api_name=False,
+            )
+        callbacks = getattr(view.selected, "h3_sync", None)
+        if callbacks:
+            fn, inputs, outputs = callbacks
+            event.then(
+                fn,
+                inputs=inputs,
+                outputs=outputs,
+                queue=False,
+                show_progress="hidden",
+                api_name=False,
+            )
+        return event
+
+    if view.search is not None:
+
+        def apply_filters(mode, text, favorite, current):
+            current.update(query=text.strip(), favorite=bool(favorite))
+            return refresh_page(mode, current)
+
+        filtered = gr.on(
+            triggers=[view.search.click, view.query.submit, view.favorite_only.input],
+            fn=apply_filters,
+            inputs=[view.mode, view.query, view.favorite_only, filters],
+            outputs=page_outputs,
+            queue=False,
+            show_progress="hidden",
+            api_name=False,
+            trigger_mode="always_last",
+        )
+
+        synchronize(filtered, refreshed=True)
 
     ltx_options = {ltx_option} | LTX25_SAME_RESOLUTION_OPTIONS
     video_postprocess_options = [
@@ -96,13 +168,14 @@ def bind_gallery_view(
         queue=False,
         show_progress="hidden",
     )
-    mode_changed.then(
+    refreshed = mode_changed.then(
         refresh_page,
-        inputs=view.mode,
-        outputs=[view.grid, view.paths, view.status, view.shown, view.show_more],
+        inputs=[view.mode, filters],
+        outputs=page_outputs,
         queue=False,
         show_progress="hidden",
     )
+    synchronize(refreshed, refreshed=True)
     view.postprocess.change(
         lambda value: (
             gr.update(visible=value in ai_options),
@@ -162,34 +235,38 @@ def bind_gallery_view(
         queue=False,
         show_progress="hidden",
     )
-    opened.then(
+    refreshed = opened.then(
         refresh_page,
-        inputs=view.mode,
-        outputs=[view.grid, view.paths, view.status, view.shown, view.show_more],
+        inputs=[view.mode, filters],
+        outputs=page_outputs,
         queue=False,
         show_progress="hidden",
     )
-    view.refresh.click(
+    synchronize(refreshed, refreshed=True)
+    refreshed = view.refresh.click(
         refresh_page,
-        inputs=view.mode,
-        outputs=[view.grid, view.paths, view.status, view.shown, view.show_more],
+        inputs=[view.mode, filters],
+        outputs=page_outputs,
         queue=False,
         show_progress="hidden",
     )
-    view.show_more.click(
-        lambda mode, shown: refresh_page(mode, shown + page_size),
-        inputs=[view.mode, view.shown],
-        outputs=[view.grid, view.paths, view.status, view.shown, view.show_more],
+    synchronize(refreshed, refreshed=True)
+    refreshed = view.show_more.click(
+        lambda mode, current, shown: refresh_page(mode, current, shown + page_size),
+        inputs=[view.mode, filters, view.shown],
+        outputs=page_outputs,
         queue=False,
         show_progress="hidden",
     )
-    view.grid.select(
+    synchronize(refreshed, refreshed=True)
+    selected = view.grid.select(
         select,
         inputs=[view.mode, view.paths],
         outputs=[view.player, view.image, view.audio, view.download, view.selected],
         queue=False,
         show_progress="hidden",
     )
+    synchronize(selected)
     mutation_outputs = [
         view.grid,
         view.paths,
@@ -209,13 +286,14 @@ def bind_gallery_view(
         show_progress="minimal",
         api_name=False,
     )
-    imported.then(
+    refreshed = imported.then(
         sync_more,
-        inputs=view.mode,
-        outputs=[view.shown, view.show_more],
+        inputs=[view.mode, filters],
+        outputs=page_outputs,
         queue=False,
         show_progress="hidden",
     )
+    synchronize(refreshed, refreshed=True)
     post_event = bind_gpu_action(
         view.post_run.click,
         owned_generation(postprocess, "gallery"),
@@ -236,13 +314,14 @@ def bind_gallery_view(
         show_progress="minimal",
         api_name=False,
     )
-    post_event.then(
+    refreshed = post_event.then(
         sync_more,
-        inputs=view.mode,
-        outputs=[view.shown, view.show_more],
+        inputs=[view.mode, filters],
+        outputs=page_outputs,
         queue=False,
         show_progress="hidden",
     )
+    synchronize(refreshed, refreshed=True)
     stopped = view.post_stop.click(
         owned_interrupt(interrupt, "gallery"),
         outputs=view.post_status,
@@ -252,11 +331,14 @@ def bind_gallery_view(
     stopped.then(fn=None, cancels=[post_event], queue=False, api_name=False)
     from .media_actions import bind_safe_deletion
 
-    bind_safe_deletion(
+    deleted = bind_safe_deletion(
         view,
         list_paths=list_paths,
         delete=delete,
         empty=empty,
         mutation_outputs=mutation_outputs,
         sync_more=sync_more,
+        refresh_inputs=[view.mode, filters],
+        refresh_outputs=page_outputs,
     )
+    synchronize(deleted, refreshed=True)
