@@ -906,8 +906,14 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual([d["targets"][0][1] for d in first_deps], ["change"])
         first_change_dep = first_deps[0]
         self.assertFalse(first_change_dep.get("js"))
-        h3_width_id = first_change_dep["outputs"][0]
-        h3_height_id = first_change_dep["outputs"][1]
+        h3_width_id = next(
+            cid for cid in first_change_dep["outputs"]
+            if self.components[cid].get("props", {}).get("label") == "Width"
+        )
+        h3_height_id = next(
+            cid for cid in first_change_dep["outputs"]
+            if self.components[cid].get("props", {}).get("label") == "Height"
+        )
         self.assertEqual(
             self.components[h3_width_id].get("props", {}).get("label"), "Width"
         )
@@ -915,12 +921,11 @@ class UiContractTests(unittest.TestCase):
             self.components[h3_height_id].get("props", {}).get("label"), "Height"
         )
 
-        first_refresh_dep = next(
-            d
-            for d in self.config["dependencies"]
-            if d.get("trigger_after") == first_change_dep["id"]
-        )
-        self.assertIn(summary["id"], first_refresh_dep["outputs"])
+        self.assertIn(summary["id"], first_change_dep["outputs"])
+        self.assertTrue(any(
+            self.components[cid].get("props", {}).get("elem_classes") == ["h3-primary-action"]
+            for cid in first_change_dep["outputs"]
+        ))
         dimensions_accordion = controls["Exact dimensions, seed & image frames"]
         self.assertFalse(dimensions_accordion["props"]["open"])
 
@@ -1045,6 +1050,29 @@ class UiContractTests(unittest.TestCase):
         summary_new = out_new[-3]
         self.assertIn("768×1152", summary_new)
         self.assertNotIn("1408×768", summary_new)
+
+        # A committed image must size the next run even if browser dimensions
+        # still contain the preceding frame's values.
+        first_component = controller.components["first"]
+        first_fn = next(
+            fn for fn in self.demo.fns.values()
+            if (first_component._id, "change") in fn.targets
+            and len(fn.targets) == 1
+        )
+        atomic_values = deepcopy(input_values_new)
+        atomic_values[controller.inputs.index(controller.components["width"])] = 1408
+        atomic_values[controller.inputs.index(controller.components["height"])] = 768
+        atomic_values[controller.inputs.index(controller.components["prompt"])] = "Camera moves slowly."
+        atomic_memory = deepcopy(memory)
+        atomic_memory["values"]["mode"] = "First / last frame"
+        # Use a fresh authoritative session so this test's previous refreshes
+        # cannot substitute their saved mode.
+        atomic_values[-1].memory = None
+        atomic = first_fn.fn(atomic_memory, *atomic_values)
+        self.assertEqual(atomic[controller.outputs.index(controller.components["width"])]["value"], w)
+        self.assertEqual(atomic[controller.outputs.index(controller.components["height"])]["value"], h)
+        self.assertIn("768×1152", atomic[-4])
+        self.assertTrue(atomic[-2]["interactive"])
 
         # 2. When preset changes auto_megapixels cap (e.g. from 1 MP to 2 MP on a large image),
         # auto_resolution_from_start_frame applies the new cap

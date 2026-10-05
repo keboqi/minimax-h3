@@ -778,6 +778,30 @@ modal secret create custom-secret HF_TOKEN="$HF_TOKEN"
 modal deploy modal_h3.py
 ```
 
+Deployment exposes two independent URLs: `models` for the CPU model manager
+and `h3` for GPU generation. Open the **models** URL printed by Modal first.
+The manager uses a separate lightweight image with Modal's default CPU and RAM;
+opening it does not start the expensive GPU endpoint or ComfyUI.
+
+Select one or more presets (MiniMax H3, Qwen Image 2.1, LTX 2.5, Music 3, or
+YuE2), click **Select preset models**, and adjust the individual model/LoRA
+selection. **Download / update selected** checks remote versions and downloads
+the batch sequentially with resumable Hugging Face downloads. Optional presets
+include Qwen Turbo LoRAs and LTX IC-LoRAs. The inventory shows installed,
+missing, and unverified files with their disk sizes and source repositories,
+grouped into MiniMax H3, Qwen Image 2.1, LTX 2.5, Music 3, YuE2, and SeedVR2
+catalog tabs. Each tab can add its entire family to the batch selection.
+**Select installed files** and **Remove selected** support batch cleanup;
+removal requires the confirmation checkbox. Failed downloads are listed for
+retry, and completed files remain saved to the shared volume.
+
+Stop the GPU endpoint before downloading or removing models, then start it
+after the batch finishes. Modal volumes require a reload to see another
+container's commits, and their file locks do not coordinate separate containers.
+GPU startup now loads the catalog without provisioning models or checking remote
+versions. Generation still downloads missing assets on demand. The old
+`provision_models` function is replaced by `manage_models`.
+
 The deployment attaches the `custom-secret` Modal Secret to both runtime
 functions and requires it to contain `HF_TOKEN`. If your existing secret uses a
 different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`. To make a

@@ -1,6 +1,7 @@
 """Browser acceptance for library frames, reference slots and multi-image inputs."""
 
 import os
+import json
 from pathlib import Path
 import socket
 import subprocess
@@ -25,16 +26,27 @@ def run():
         output.mkdir()
         Image.new("RGB", (768, 1152), "red").save(output / "portrait.png")
         Image.new("RGB", (640, 960), "blue").save(output / "second.png")
-        source = (
-            "from h3_ui import application as app;"
-            "app.backend_status=lambda:'Connected browser test fixture';"
-            "app.build_ui().queue().launch("
-            f"server_name='127.0.0.1',server_port={port},inbrowser=False,ssr_mode=False)"
-        )
+        captured = Path(directory) / "captured.json"
+        source = f"""
+import json
+import os
+from pathlib import Path
+import gradio as gr
+from h3_ui import application as app
+from h3_app.contracts import GENERATION_FIELDS
+app.backend_status = lambda: 'Connected browser test fixture'
+def generate(batch_count, *args):
+    values = dict(zip(GENERATION_FIELDS, args, strict=True))
+    Path(os.environ['H3_TEST_CAPTURE']).write_text(json.dumps(values), encoding='utf-8')
+    yield (*(gr.skip() for _ in range(11)), 'Library generation fixture completed: ' + values['prompt'])
+app.generate_for_ui = generate
+app.build_ui().queue().launch(server_name='127.0.0.1', server_port={port}, inbrowser=False, ssr_mode=False)
+"""
         process = subprocess.Popen(
             [sys.executable, "-u", "-c", source], cwd=ROOT,
             env={**os.environ, "GRADIO_OUTPUT_DIR": str(output),
-                 "H3_WORKSPACE_DIR": str(Path(directory) / "workspace")},
+                 "H3_WORKSPACE_DIR": str(Path(directory) / "workspace"),
+                 "H3_TEST_CAPTURE": str(captured)},
             stdout=log, stderr=log,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
@@ -73,7 +85,27 @@ def run():
                     first.get_by_role("button", name="Search / refresh images", exact=True).click()
                     expect(first.locator(".thumbnail-item")).to_have_count(1)
                     first.locator(".thumbnail-item").click()
-                    expect(page.locator(".h3-setup-card")).to_contain_text("768×1152", timeout=15000)
+                    expect(page.locator(".h3-setup-metrics")).to_contain_text("768×1152", timeout=15000)
+                    page.locator("#h3-composer").get_by_label("Prompt", exact=True).fill("A slow camera move.")
+                    generate = page.get_by_role("button", name="Generate video", exact=True)
+                    expect(generate).to_be_enabled()
+                    generate.click()
+                    expect(page.get_by_label("Generation progress", exact=True).first).to_have_value("Library generation fixture completed: A slow camera move.", timeout=15000)
+                    values = json.loads(captured.read_text(encoding="utf-8"))
+                    assert (values["width"], values["height"]) == (768, 1152), values
+                    assert values["first_image"] and values["prompt"] == "A slow camera move.", values
+                    first.get_by_label("Search library images").fill("second.png")
+                    first.get_by_role("button", name="Search / refresh images", exact=True).click()
+                    expect(first.locator(".thumbnail-item")).to_have_count(1)
+                    first.locator(".thumbnail-item").click()
+                    expect(page.locator(".h3-setup-metrics")).to_contain_text("640×960", timeout=15000)
+                    page.locator("#h3-composer").get_by_label("Prompt", exact=True).fill("A replacement frame.")
+                    expect(generate).to_be_enabled()
+                    generate.click()
+                    expect(page.get_by_label("Generation progress", exact=True).first).to_have_value("Library generation fixture completed: A replacement frame.", timeout=15000)
+                    values = json.loads(captured.read_text(encoding="utf-8"))
+                    assert (values["width"], values["height"]) == (640, 960), values
+                    assert values["first_image"] and values["prompt"] == "A replacement frame.", values
                     last = page.locator(".h3-image-library-input").filter(
                         has=page.get_by_text("Last frame", exact=True)
                     )

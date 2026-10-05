@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import shutil
 import subprocess
@@ -666,6 +665,21 @@ hf_secret = modal.Secret.from_name(
     required_keys=["HF_TOKEN"],
 )
 
+# The manager has its own small CPU image; it does not build or import ComfyUI.
+manager_image = modal.Image.debian_slim(python_version="3.12").uv_pip_install(
+    f"gradio=={GRADIO_VERSION}", HUGGINGFACE_HUB_REQUIREMENT,
+)
+if IS_LOCAL:
+    # Modal imports this deployment module in each image, so the lightweight
+    # build-configuration modules must also be available in the CPU container.
+    for filename in (
+        "h3_models.py", "h3_model_manager.py", "h3_sources.py",
+        "h3_requirements.py", "h3_node_patches.py",
+    ):
+        manager_image = manager_image.add_local_file(
+            LOCAL / filename, remote_path=(ROOT / filename).as_posix(), copy=False,
+        )
+
 
 def layout() -> None:
     for path in (MODELS, INPUT, OUTPUT, LOGS):
@@ -692,54 +706,14 @@ def layout() -> None:
         dest.symlink_to(src, target_is_directory=True)
 
 
-def _provision_unlocked() -> dict:
-    from h3_models import (
-        PRELOAD_MODEL_KEYS,
-        sync_models,
-        validate_config_files,
-        write_json_atomic,
-    )
+def prepare_runtime_models() -> None:
+    """Use the CPU manager's files; generation downloads missing assets on demand."""
+    from h3_models import build_model_config, write_json_atomic
 
+    volume.reload()
     layout()
-
-    config = sync_models(
-        root=Path(MODELS),
-        manifest_path=Path(MANIFEST),
-        token=os.getenv("HF_TOKEN") or None,
-        log_prefix="[modal-h3]",
-        model_keys=PRELOAD_MODEL_KEYS,
-    )
-
-    missing = validate_config_files(Path(MODELS), config)
-    if missing:
-        raise RuntimeError(
-            "Provisioning incomplete: " + ", ".join(missing)
-        )
-
-    write_json_atomic(Path(CONFIG), config)
+    write_json_atomic(Path(CONFIG), build_model_config(Path(MANIFEST).name))
     volume.commit()
-
-    print(
-        "[modal-h3] Model provisioning and remote version check complete",
-        flush=True,
-    )
-    return config
-
-
-def provision() -> dict:
-    """Serialize writes to the shared persistent model volume."""
-    layout()
-    lock_path = Path(DATA / ".model-provision.lock")
-    lock_path.touch(exist_ok=True)
-
-    import fcntl
-
-    with lock_path.open("r+") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        try:
-            return _provision_unlocked()
-        finally:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def service_env() -> dict[str, str]:
@@ -827,13 +801,27 @@ def wait_for_comfy_frontend(
 
 
 @app.function(
+    image=manager_image,
     timeout=21600,
     volumes={DATA.as_posix(): volume},
     secrets=[hf_secret],
     max_containers=1,
+    scaledown_window=300,
 )
-def provision_models():
-    return provision()
+@modal.concurrent(max_inputs=100)
+@modal.web_server(
+    UI_PORT, startup_timeout=120, label="models", requires_proxy_auth=PROXY_AUTH,
+)
+def manage_models():
+    from h3_model_manager import ModelManager, build_ui
+
+    os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
+    os.environ["HF_HOME"] = "/tmp/hf"
+    ui = build_ui(ModelManager(Path(DATA), volume))
+    ui.launch(
+        server_name="0.0.0.0", server_port=UI_PORT,
+        prevent_thread_lock=True, ssr_mode=False,
+    )
 
 
 @app.function(
@@ -861,7 +849,7 @@ def serve():
         + ("yes" if os.getenv("HF_TOKEN") else "no"),
         flush=True,
     )
-    provision()
+    prepare_runtime_models()
 
     # User workflow files live in the image filesystem rather than the model
     # volume. Re-sync them on every cold start so a reused image layer can never
@@ -939,8 +927,3 @@ def serve():
             f"/comfyui asset validation failed: {exc}",
             flush=True,
         )
-
-
-@app.local_entrypoint()
-def main():
-    print(json.dumps(provision_models.remote(), indent=2))

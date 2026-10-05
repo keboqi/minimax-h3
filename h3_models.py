@@ -1351,6 +1351,11 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
     }
 
 
+def build_model_config(manifest_name: str) -> dict[str, Any]:
+    """Build the runtime catalog without downloading or checking remote files."""
+    return _build_config(manifest_name)
+
+
 def sync_models(
     *,
     root: Path,
@@ -1469,7 +1474,7 @@ def sync_models(
                 f"{len(download_failures)} model download(s) failed: {details}"
             ) from download_failures[0][1]
 
-        return _build_config(manifest_path.name)
+        return build_model_config(manifest_path.name)
 
 
 def validate_config_files(

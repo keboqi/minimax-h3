@@ -91,38 +91,38 @@ def bind_resolution(
                 show_progress="hidden",
             )
         )
-    # One committed-value event handles uploads, clears, and programmatic
-    # replacements. Competing upload and input handlers could restore stale
-    # width/height after the automatic calculation, especially with the output
-    # accordion closed.
-    first_change_event = components.first.change(
-        fn=services.auto_resolution_from_start_frame,
-        inputs=[
-            components.first,
-            components.width,
-            components.height,
-            components.result_format,
-            components.latent_upscale,
-            components.auto_megapixels,
-        ],
-        outputs=[
-            components.width,
-            components.height,
-            components.resolution_info,
-        ],
+    # Resolve dimensions and the authoritative settings in one response. A
+    # chained refresh reads browser controls again and can observe the previous
+    # dimensions while an upload or library selection is committing its value.
+    def refresh_start_frame(memory, *values):
+        values = list(values)
+
+        def value(component):
+            return values[controller.inputs.index(component)]
+
+        width, height, info = services.auto_resolution_from_start_frame(
+            value(components.first), value(components.width), value(components.height),
+            value(components.result_format), value(components.latent_upscale),
+            value(components.auto_megapixels),
+        )
+        values[controller.inputs.index(components.width)] = width
+        values[controller.inputs.index(components.height)] = height
+        updates = list(controller.refresh(memory, *values))
+        for component, dimension in ((components.width, width), (components.height, height)):
+            index = controller.outputs.index(component)
+            updates[index] = {**updates[index], "value": dimension}
+        return (*updates, info)
+
+    first_refresh_event = components.first.change(
+        refresh_start_frame,
+        inputs=[controller.memory, *controller.inputs],
+        outputs=[*controller.outputs, components.resolution_info],
         queue=False,
         trigger_mode="always_last",
         show_progress="hidden",
+        api_name=False,
     )
-    first_refresh_event = first_change_event.then(
-        controller.refresh,
-        inputs=[controller.memory, *controller.inputs],
-        outputs=controller.outputs,
-        queue=False,
-        show_progress="hidden",
-    )
-    # Browser persistence saves controller events. Include this chained refresh
-    # so an automatically chosen size survives a page reload.
+    # Persist the same settings snapshot that produced the visible dimensions.
     controller.events.append(first_refresh_event)
     auto_megapixels_change = components.auto_megapixels.change(
         fn=services.auto_resolution_from_start_frame,
