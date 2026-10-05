@@ -505,6 +505,16 @@ def generated_image_family(image: str | Path, *, runtime: RuntimeConfig) -> str:
         if "qwen_image21" in resolved.name.lower():
             return "Qwen Image 2.1"
         if "/input_upscale/" in f"/{lowered}/":
+            # CQ and SeedVR2 share this directory. Prefer provenance so older
+            # CQ outputs also receive their actual processing family.
+            from h3_app.provenance import read_snapshot
+
+            snapshot = read_snapshot(resolved) or {}
+            if (
+                snapshot.get("family") == "CQ image enhancement"
+                or resolved.name.lower().startswith("cq_image_")
+            ):
+                return "CQ image enhancement"
             return "SeedVR2"
         if relative.parts and relative.parts[0].lower() == "h3":
             return "MiniMax H3"

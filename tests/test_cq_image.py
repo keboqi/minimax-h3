@@ -94,6 +94,12 @@ class CqImageTests(unittest.TestCase):
                 ))
                 self.assertEqual(updates[-1], "complete")
                 self.assertEqual((build.call_args.kwargs["target_width"], build.call_args.kwargs["target_height"]), expected)
+                output_token = build.call_args.kwargs["output_token"]
+                self.assertTrue(output_token.startswith("cq_image_"))
+                self.assertEqual(
+                    mocks["resolve_seedvr2_input_upscale_outputs"].call_args.args[2],
+                    output_token,
+                )
                 mocks["ensure_cq_image_enhance_models"].assert_called_once_with()
                 mocks["ensure_seedvr2_upscale_models"].assert_not_called()
                 mocks["load_model_config"].assert_not_called()

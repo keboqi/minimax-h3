@@ -108,7 +108,7 @@ def resolve_seedvr2_input_upscale_outputs(
     *,
     context: OutputContext,
 ) -> dict[str, Path]:
-    """Resolve each named still written by a SeedVR2 input-upscale graph."""
+    """Resolve named stills written by SeedVR2 or CQ image processing."""
     output_root = (context.config.output_dir / "h3" / "input_upscale").resolve()
     candidates = _history_output_candidates(
         history, IMAGE_EXTENSIONS, directory=output_root, context=context
@@ -126,7 +126,7 @@ def resolve_seedvr2_input_upscale_outputs(
     missing = [slot_key for slot_key in slot_keys if slot_key not in resolved]
     if missing:
         raise H3Error(
-            "SeedVR2 completed, but these upscaled inputs could not be located: "
+            "Image processing completed, but these outputs could not be located: "
             + ", ".join(missing)
         )
     return resolved

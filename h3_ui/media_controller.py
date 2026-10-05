@@ -1030,6 +1030,8 @@ class MediaController:
             )
             output_token = self.services.uuid.uuid4().hex
             if cq_image:
+                output_token = f"cq_image_{output_token}"
+            if cq_image:
                 graph = self.services.build_cq_image_enhance_graph(
                     source_image=staged, seed=actual_seed,
                     target_width=target_width, target_height=target_height,
@@ -1068,7 +1070,7 @@ class MediaController:
                         step=step,
                         step_total=step_total,
                         configured_steps=(8 if cq_image else 1) if step is not None else None,
-                        detail=f"Image upscale job `{prompt_id}`",
+                        detail=f"{family} job `{prompt_id}`",
                     )
                 )
             history = self.services.wait_for_history(prompt_id)

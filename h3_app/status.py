@@ -32,6 +32,11 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
     """Turn ComfyUI implementation node names into useful user-facing stages."""
     name = str(class_type)
     workflow_classes = workflow_classes or set()
+    # SaveImage also appears in video graphs that export frames. Only call a
+    # workflow image-only when it has no video assembly or video output nodes.
+    image_only = "SaveImage" in workflow_classes and not (
+        {"CreateVideo", "SaveVideo", H3_NVENC_SAVE_NODE} & workflow_classes
+    )
     if name in {
         "UNETLoader",
         "CLIPLoader",
@@ -42,6 +47,8 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         "LTXICLoRALoaderModelOnly",
         LARRY_TURBO_LORA_NODE,
         LIGHTX2V_BYPASS_LORA_NODE,
+        "LoraLoaderModelOnly",
+        "H3Qwen21ViggleLora",
     }:
         return "Loading models"
     if name.startswith("Load") or name == "GetVideoComponents":
@@ -49,11 +56,21 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
     if name == "LTXVAddGuide":
         return "Applying LTX-2.5 keyframes"
     if name == "LTXAddVideoICLoRAGuide":
+        if image_only:
+            return "Encoding source image for CQ enhancement"
         return "Encoding source video for LTX-2.5 2x upscaling"
     if name == "LTXVCropGuides":
         return "Removing LTX-2.5 reference tokens"
     if name in {"CLIPTextEncode", "LTXVConditioning"}:
-        return "Encoding LTX-2.5 prompt"
+        if "LTXVConditioning" in workflow_classes or name == "LTXVConditioning":
+            return "Encoding LTX-2.5 prompt"
+        return "Encoding prompt"
+    if name == "TextEncodeQwenImage21":
+        if "LoadImage" in workflow_classes:
+            return "Encoding Qwen prompt and reference images"
+        return "Encoding Qwen prompt"
+    if name == "EmptyLatentImage":
+        return "Preparing image latents"
     if name == "MiniMaxMusic3TextEncode":
         return "Composing song structure and acoustic conditioning"
     if name == "EmptyMiniMaxMusic3LatentAudio":
@@ -69,10 +86,16 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         "LTXVEmptyLatentAudio",
         "LTXVConcatAVLatent",
     }:
+        if image_only:
+            return "Preparing image latents"
         return "Preparing LTX-2.5 audio-video latents"
     if name == "VAEEncodeTiled":
         if "SeedVR2Preprocess" in workflow_classes:
+            if image_only:
+                return "Encoding image for SeedVR2"
             return "Encoding H3 video for SeedVR2"
+        if image_only:
+            return "Encoding image"
         return "Encoding video"
     if name == "SeedVR2Preprocess":
         return "Preparing SeedVR2 input"
@@ -84,7 +107,7 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Merging SeedVR2 chunks"
     if name == "SeedVR2PostProcessing":
         return "Restoring SeedVR2 output"
-    if name == "H3ConditioningCache":
+    if name in {"H3ConditioningCache", "QwenImage21Cache"}:
         return "Configuring Qwen attention and cache"
     if name == "MiniMaxH3AudioConditioningT8":
         return "Preparing prompt, keyframe and voice conditioning"
@@ -98,6 +121,8 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         "SpectrumApplyMiniMaxH3",
         "H3FirstBlockCache",
         "EasyCache",
+        "ModelAttentionBackend",
+        "QwenSpectrumModelPatcher",
     }:
         return "Configuring generation model"
     if name in {
@@ -108,6 +133,10 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         "BasicScheduler",
         "ManualSigmas",
         "SplitSigmas",
+        "KSamplerSelect",
+        "H3Qwen21Sigmas",
+        "H3Qwen21TurboSigmas",
+        "DisableNoise",
     }:
         return "Preparing sampler"
     if name == H3_SEPARATE_AV_LATENT_NODE:
@@ -120,11 +149,13 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Preparing MMH3 split-upscale tiles and chunks"
     if name == H3_SPLIT_UPSCALE_NODE:
         return "Refining MMH3 temporal chunks and spatial tiles"
-    if name == "KSampler" and "MiniMaxMusic3TextEncode" in workflow_classes:
-        return "Generating music"
-    if name == "KSampler" and "YuE2GenerateMusic" in workflow_classes:
-        return "Generating YuE2 audio"
     if name == "SamplerCustomAdvanced" or "Sampler" in name:
+        if "MiniMaxMusic3TextEncode" in workflow_classes:
+            return "Generating music"
+        if "YuE2GenerateMusic" in workflow_classes:
+            return "Generating YuE2 audio"
+        if image_only:
+            return "Generating image"
         return "Generating video and audio"
     if name in {
         "VAEDecode",
@@ -139,6 +170,8 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
     if name == H3_NVENC_SAVE_NODE:
         return "Saving video with NVENC"
     if name.startswith("Save"):
+        if "Image" in name:
+            return "Saving image"
         return "Saving audio" if "Audio" in name else "Saving video"
     return name
 
