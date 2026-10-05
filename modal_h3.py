@@ -753,8 +753,8 @@ def service_env() -> dict[str, str]:
             "H3_WORKSPACE_DIR": (DATA / "h3-workspace").as_posix(),
             "SERVER_ATTENTION_BACKEND": "sol",
             "SERVER_DENSE_ATTENTION_BACKEND": "comfy-kitchen",
-            # Modal already provides the public endpoint. Avoid asking Gradio
-            # to create a second, unauthenticated share tunnel at startup.
+            # Modal already provides the public endpoint.
+            "ENABLE_CLOUDFLARE_TUNNEL": "false",
             "GRADIO_SHARE": "false",
             "SERVER_MEMORY_PROFILE": "dynamic",
             "GRADIO_ANALYTICS_ENABLED": "False",

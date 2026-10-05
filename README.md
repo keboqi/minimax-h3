@@ -718,6 +718,18 @@ single-job ComfyUI queue. Qwen Image 2.1 is available as
 `run_h3.sh` binds Gradio to `0.0.0.0`, so use host firewall rules or a trusted
 network when the machine is reachable by other devices.
 
+The standalone launcher creates a Cloudflare `*.trycloudflare.com` public URL by
+default and prints the ComfyUI proxy URL alongside it. It uses `cloudflared` from
+`PATH`, or downloads it into `.cache/cloudflared` on Linux and Windows.
+Set `ENABLE_CLOUDFLARE_TUNNEL=false` for local access only. To use Gradio Share,
+set `GRADIO_SHARE=true`; this disables Cloudflare unless explicitly enabled.
+Modal continues to use its own public endpoint.
+
+Cloudflare's [Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/#limitations)
+do not support Server-Sent Events (SSE), which Gradio uses for queue progress.
+Use a named Cloudflare tunnel when SSE support is required; disable the automatic
+Quick Tunnel with `ENABLE_CLOUDFLARE_TUNNEL=false` when running your own tunnel.
+
 To provision without launching:
 
 ```bash
@@ -739,7 +751,7 @@ Run MiniMax H3 directly on Google Colab using [`minimax_h3_colab.ipynb`](./minim
 Features in the Colab notebook:
 - **Instant startup with Python 3.12**: Automatically provisions an isolated Python 3.12 environment with `uv` matching the pinned PyTorch 2.11 + CUDA 13 and SageAttention cp312 runtime requirements.
 - **On-demand model provisioning**: No heavy pre-downloads at startup. Checkpoints, text encoders, VAEs, and LoRAs download automatically on first use.
-- **Public access via Gradio Share & Cloudflare Tunnel**: Provides both a public `*.gradio.live` URL and a Cloudflare `*.trycloudflare.com` tunnel for reliable, high-bandwidth remote generation.
+- **Public access via Cloudflare Tunnel**: Generates a `*.trycloudflare.com` URL by default. Gradio Share is an optional launch-cell setting.
 
 ## Deploy with Modal
 

@@ -81,6 +81,7 @@ from h3_app.policy import (
 from h3_app.workflows.music import build_music3_graph, required_music3_nodes
 from h3_app.status import StageTimings, graph_class_types, node_stage
 from h3_app.processes import run_media_process
+from h3_app.public_url import launch_cloudflare, public_url_settings, stop_cloudflare
 
 import inspect
 import json
@@ -3672,12 +3673,7 @@ def main() -> None:
     app = build_server(demo, allowed_paths)
     host = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
     port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
-    share_enabled = os.getenv("GRADIO_SHARE", "true").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    cloudflare_enabled, share_enabled = public_url_settings()
     shutdown_requested = threading.Event()
 
     def handle_shutdown(signum, frame):
@@ -3710,22 +3706,31 @@ def main() -> None:
         )
     )
     server_thread = threading.Thread(target=server.run, daemon=True)
+    cloudflare_process = None
     server_thread.start()
-    if share_enabled:
-        try:
-            share_url = gradio_networking.setup_tunnel(
-                local_host="127.0.0.1",
-                local_port=port,
-                share_token=demo.share_token,
-                share_server_address=getattr(demo, "share_server_address", None),
-                share_server_tls_certificate=getattr(
-                    demo, "share_server_tls_certificate", None
-                ),
-            )
-            print(f"[h3-ui] Public Gradio URL: {share_url}", flush=True)
-        except Exception as exc:
-            print(f"[h3-ui] Could not create Gradio share link: {exc}", flush=True)
     try:
+        while server_thread.is_alive() and not server.started:
+            if shutdown_requested.wait(timeout=0.1):
+                break
+        if server_thread.is_alive() and server.started and not shutdown_requested.is_set():
+            if cloudflare_enabled:
+                cloudflare_process = launch_cloudflare(
+                    port, cache_dir=SCRIPT_DIR / ".cache" / "cloudflared"
+                )
+            if share_enabled:
+                try:
+                    share_url = gradio_networking.setup_tunnel(
+                        local_host="127.0.0.1",
+                        local_port=port,
+                        share_token=demo.share_token,
+                        share_server_address=getattr(demo, "share_server_address", None),
+                        share_server_tls_certificate=getattr(
+                            demo, "share_server_tls_certificate", None
+                        ),
+                    )
+                    print(f"[h3-ui] Public Gradio URL: {share_url}", flush=True)
+                except Exception as exc:
+                    print(f"[h3-ui] Could not create Gradio share link: {exc}", flush=True)
         while server_thread.is_alive() and (not shutdown_requested.is_set()):
             server_thread.join(timeout=0.5)
     except (KeyboardInterrupt, SystemExit):
@@ -3733,11 +3738,14 @@ def main() -> None:
     finally:
         server.should_exit = True
         server.force_exit = True
-        server_thread.join(timeout=3)
         try:
-            demo.close()
-        except Exception:
-            pass
+            stop_cloudflare(cloudflare_process)
+        finally:
+            server_thread.join(timeout=3)
+            try:
+                demo.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

@@ -5,7 +5,6 @@ import contextlib
 import io
 import json
 import os
-import re
 import shlex
 import signal
 import shutil
@@ -19,6 +18,7 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 import h3_models
+from h3_app import public_url
 
 NOTEBOOK = Path(__file__).resolve().parents[1] / "minimax_h3_colab.ipynb"
 
@@ -282,13 +282,18 @@ class InterruptingOutput:
 
 class ColabLogStreamingTests(unittest.TestCase):
     def setUp(self):
-        self.run = load_function("run_colab_launcher", dict(os=os, subprocess=subprocess, signal=signal))
+        self.run = load_function("run_colab_launcher", dict(
+            os=os, subprocess=subprocess, signal=signal,
+            ENABLE_CLOUDFLARE_TUNNEL=True, ENABLE_GRADIO_SHARE=False,
+        ))
 
     def run_child_fixture(self, script, output):
         original_popen = subprocess.Popen
         def open_fixture(command, **kwargs):
             self.assertEqual(command, ["bash", "fixture.sh"])
             self.assertEqual(kwargs["env"]["PYTHONUNBUFFERED"], "1")
+            self.assertEqual(kwargs["env"]["ENABLE_CLOUDFLARE_TUNNEL"], "true")
+            self.assertEqual(kwargs["env"]["GRADIO_SHARE"], "false")
             return original_popen([sys.executable, "-u", "-c", script], **kwargs)
         with patch.object(subprocess, "Popen", side_effect=open_fixture), contextlib.redirect_stdout(output):
             self.run("fixture.sh")
@@ -310,14 +315,14 @@ while not Path({str(release)!r}).exists():
     if time.monotonic() >= deadline:
         sys.exit('Startup output was not relayed while the process was running')
     time.sleep(0.01)
-print('Public URL: https://fixture.gradio.live', file=sys.stderr, flush=True)
+print('Public URL: https://fixture.trycloudflare.com', file=sys.stderr, flush=True)
 sys.stdout.buffer.write(b'\\xffinvalid byte\\n')
 sys.stdout.buffer.flush()
 """
             self.run_child_fixture(script, output)
             self.assertTrue(release.exists())
             self.assertIn("server ready", output.getvalue())
-            self.assertIn("https://fixture.gradio.live", output.getvalue())
+            self.assertIn("https://fixture.trycloudflare.com", output.getvalue())
             self.assertIn("\ufffdinvalid byte", output.getvalue())
             self.assertIn("This cell stays running", output.getvalue())
 
@@ -364,12 +369,11 @@ sys.stdout.buffer.flush()
         self.assertTrue(proc.stdout.closed)
 
 
-class ColabCloudflareTests(unittest.TestCase):
+class CloudflareTests(unittest.TestCase):
     def setUp(self):
-        self.namespace = dict(Path=Path, subprocess=subprocess, threading=threading, re=re, os=os)
-        self.stop = load_function("stop_cloudflare", self.namespace)
-        self.drain = load_function("drain_cloudflare_logs", self.namespace)
-        self.launch = load_function("launch_cloudflare", self.namespace)
+        self.stop = public_url.stop_cloudflare
+        self.drain = public_url.drain_cloudflare_logs
+        self.launch = public_url.launch_cloudflare
 
     def test_reader_drains_logs_after_first_url_and_announces_once(self):
         class LogStream(io.StringIO):
@@ -384,7 +388,8 @@ class ColabCloudflareTests(unittest.TestCase):
             self.drain(SimpleNamespace(stdout=stream))
         self.assertEqual(stream.count, 3)
         self.assertTrue(stream.closed)
-        self.assertEqual(output.getvalue().count("Cloudflare Tunnel Public URL:"), 1)
+        self.assertEqual(output.getvalue().count("Public Cloudflare URL:"), 1)
+        self.assertIn("https://fixture.trycloudflare.com/comfyui/", output.getvalue())
 
     def test_unresponsive_tunnel_is_killed_and_reaped(self):
         proc = Mock()
@@ -395,60 +400,81 @@ class ColabCloudflareTests(unittest.TestCase):
         proc.kill.assert_called_once()
         self.assertEqual(proc.wait.call_count, 2)
 
+    def test_process_group_shutdown_race_still_reaps_tunnel(self):
+        proc = Mock()
+        proc.poll.return_value = None
+        proc.terminate.side_effect = ProcessLookupError
+        self.stop(proc)
+        proc.wait.assert_called_once_with(timeout=5)
+
     def test_launch_merges_streams_and_starts_drain_thread(self):
-        with TemporaryDirectory() as directory:
-            root = Path(directory)
-            binary = root / ".colab_bin" / "cloudflared"
-            binary.parent.mkdir()
-            binary.touch()
-            self.namespace["NOTEBOOK_DIR"] = root
-            proc = Mock()
-            with patch.object(subprocess, "Popen", return_value=proc) as popen, patch.object(threading, "Thread") as thread:
-                self.assertIs(self.launch(), proc)
-            self.assertEqual(popen.call_args.kwargs["stderr"], subprocess.STDOUT)
-            thread.assert_called_once_with(target=self.drain, args=(proc,), daemon=True)
-            thread.return_value.start.assert_called_once()
+        proc = Mock()
+        with patch.object(public_url, "cloudflared_binary", return_value="cloudflared"), patch.object(subprocess, "Popen", return_value=proc) as popen, patch.object(threading, "Thread") as thread:
+            self.assertIs(self.launch(9876, cache_dir=Path("cache")), proc)
+        self.assertEqual(popen.call_args.args[0], ["cloudflared", "tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:9876"])
+        self.assertEqual(popen.call_args.kwargs["stderr"], subprocess.STDOUT)
+        thread.assert_called_once_with(target=self.drain, args=(proc,), daemon=True)
+        thread.return_value.start.assert_called_once()
 
     def test_interruption_while_starting_log_reader_stops_tunnel(self):
-        with TemporaryDirectory() as directory:
-            root = Path(directory)
-            binary = root / ".colab_bin" / "cloudflared"
-            binary.parent.mkdir()
-            binary.touch()
-            self.namespace["NOTEBOOK_DIR"] = root
-            proc = Mock()
-            proc.poll.return_value = None
-            with patch.object(subprocess, "Popen", return_value=proc), patch.object(threading, "Thread") as thread:
-                thread.return_value.start.side_effect = KeyboardInterrupt
-                with self.assertRaises(KeyboardInterrupt):
-                    self.launch()
-            proc.terminate.assert_called_once()
-            proc.wait.assert_called_once_with(timeout=5)
+        proc = Mock()
+        proc.poll.return_value = None
+        with patch.object(public_url, "cloudflared_binary", return_value="cloudflared"), patch.object(subprocess, "Popen", return_value=proc), patch.object(threading, "Thread") as thread:
+            thread.return_value.start.side_effect = KeyboardInterrupt
+            with self.assertRaises(KeyboardInterrupt):
+                self.launch(7860, cache_dir=Path("cache"))
+        proc.terminate.assert_called_once()
+        proc.wait.assert_called_once_with(timeout=5)
 
-    def test_interrupted_app_cleans_up_old_and_new_tunnels(self):
+    def test_notebook_launches_one_app_with_cloudflare_and_without_gradio_share(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            for name in ("h3_ui/application.py", "h3_models.py", ".colab_bin/cloudflared"):
+            for name in ("h3_ui/application.py", "h3_models.py"):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.touch()
-            old, new = Mock(), Mock()
-            old.poll.return_value = new.poll.return_value = None
-            namespace = dict(Path=Path, NOTEBOOK_DIR=root, WORKSPACE_DIR=str(root), COLAB_LAUNCHER=str(root / "run_h3_colab.sh"), _CLOUDFLARE_PROCESS=old)
-            tree = ast.parse(cell_source("def launch_cloudflare("))
-            for node in tree.body:
-                if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "ENABLE_CLOUDFLARE_TUNNEL" for t in node.targets):
-                    node.value = ast.Constant(True)
+            namespace = dict(Path=Path, WORKSPACE_DIR=str(root), COLAB_LAUNCHER=str(root / "run_h3_colab.sh"))
+            tree = ast.parse(cell_source("def run_colab_launcher("))
             app = Mock(pid=12345, stdout=InterruptingOutput())
             app.poll.return_value = None
             app.wait.return_value = 0
-            with patch.object(os, "chdir"), patch.object(subprocess, "Popen", side_effect=[new, app]), patch.object(threading, "Thread"), patch.object(os, "killpg", create=True), contextlib.redirect_stdout(io.StringIO()):
+            with patch.object(os, "chdir"), patch.object(subprocess, "Popen", return_value=app) as popen, patch.object(os, "killpg", create=True), contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaises(KeyboardInterrupt):
                     exec(compile(ast.fix_missing_locations(tree), "<launch cell>", "exec"), namespace)
             self.assertTrue(app.stdout.closed)
-            old.terminate.assert_called_once()
-            new.terminate.assert_called_once()
-            self.assertIsNone(namespace["_CLOUDFLARE_PROCESS"])
+            popen.assert_called_once()
+            self.assertEqual(popen.call_args.kwargs["env"]["ENABLE_CLOUDFLARE_TUNNEL"], "true")
+            self.assertEqual(popen.call_args.kwargs["env"]["GRADIO_SHARE"], "false")
+
+    def test_public_url_defaults_and_overrides(self):
+        for environment, expected in (
+            ({}, (True, False)),
+            ({"GRADIO_SHARE": "true"}, (False, True)),
+            ({"ENABLE_CLOUDFLARE_TUNNEL": "false"}, (False, False)),
+            ({"ENABLE_CLOUDFLARE_TUNNEL": "true", "GRADIO_SHARE": "true"}, (True, True)),
+        ):
+            with self.subTest(environment=environment), patch.dict(os.environ, environment, clear=True):
+                self.assertEqual(public_url.public_url_settings(), expected)
+
+    def test_failed_download_does_not_publish_partial_binary(self):
+        with TemporaryDirectory() as directory:
+            cache = Path(directory)
+            with patch.object(shutil, "which", return_value=None), patch.object(public_url.platform, "system", return_value="Linux"), patch.object(public_url.platform, "machine", return_value="x86_64"), patch.object(public_url, "urlopen", return_value=io.BytesIO(b"partial")), patch.object(shutil, "copyfileobj", side_effect=OSError("download failed")), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(OSError, "download failed"):
+                    public_url.cloudflared_binary(cache)
+            self.assertEqual(list(cache.iterdir()), [])
+
+    def test_binary_download_is_cached_and_installed_binary_is_preferred(self):
+        with TemporaryDirectory() as directory:
+            cache = Path(directory)
+            with patch.object(shutil, "which", return_value=None), patch.object(public_url.platform, "system", return_value="Linux"), patch.object(public_url.platform, "machine", return_value="x86_64"), patch.object(public_url, "urlopen", return_value=io.BytesIO(b"binary")) as download, contextlib.redirect_stdout(io.StringIO()):
+                binary = public_url.cloudflared_binary(cache)
+                self.assertEqual(public_url.cloudflared_binary(cache), binary)
+            download.assert_called_once()
+            self.assertEqual(Path(binary).read_bytes(), b"binary")
+            with patch.object(shutil, "which", return_value="installed-cloudflared"), patch.object(public_url, "urlopen") as download:
+                self.assertEqual(public_url.cloudflared_binary(cache), "installed-cloudflared")
+            download.assert_not_called()
 
 
 if __name__ == "__main__":
