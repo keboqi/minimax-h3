@@ -27,6 +27,7 @@ from fastapi.responses import (
 )
 
 from starlette.middleware.gzip import GZipMiddleware
+from .queue_transport import QueueTransportHeadMiddleware, install_queue_transport
 
 COMFY_PROXY_PATH = "/comfyui"
 
@@ -224,8 +225,10 @@ def build_server(
 
     if JOBS.store is not None:
         install_owner_cookie(app, JOBS.store)
+    app.add_middleware(QueueTransportHeadMiddleware)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
     app.add_middleware(ReverseProxySchemeMiddleware)
+    install_queue_transport(app)
 
     @app.get(
         "/ltx25-workflows/{workflow_id}.json",

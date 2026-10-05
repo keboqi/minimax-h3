@@ -727,8 +727,12 @@ Modal continues to use its own public endpoint.
 
 Cloudflare's [Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/#limitations)
 do not support Server-Sent Events (SSE), which Gradio uses for queue progress.
-Use a named Cloudflare tunnel when SSE support is required; disable the automatic
-Quick Tunnel with `ENABLE_CLOUDFLARE_TUNNEL=false` when running your own tunnel.
+The workspace browser carries queue updates and session heartbeats over
+WebSockets, so generation progress and intermediate results reach the UI through
+Cloudflare without relying on public SSE support. External Gradio API clients
+still use HTTP/SSE; use a named Cloudflare tunnel when those clients require SSE.
+Disable the automatic Quick Tunnel with `ENABLE_CLOUDFLARE_TUNNEL=false` when
+running your own tunnel.
 
 To provision without launching:
 

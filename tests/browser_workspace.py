@@ -212,7 +212,7 @@ def run():
                             < 8
                         )
                 prompt = h3.get_by_label("Prompt", exact=True)
-                generate = h3.get_by_role("button", name="Generate video", exact=True)
+                generate = page.get_by_role("button", name="Generate video", exact=True)
                 prompt.focus()
                 page.keyboard.press("Tab")
                 focused = page.locator(":focus")

@@ -39,6 +39,7 @@ def run(args):
         return 1
     if args.browser:
         for script in (
+            "browser_queue_transport.py",
             "browser_settings.py",
             "browser_voice_refs.py",
             "browser_auto_resolution.py",
