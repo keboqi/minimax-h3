@@ -166,16 +166,29 @@ class UiContractTests(unittest.TestCase):
                     side_effect=AssertionError("rescan"),
                 ),
             ):
-                result = synchronize("Image", [str(image)], str(image), None, None, {})
+                result = synchronize(
+                    "Image", [str(image)], str(image), {"a": None, "b": None}
+                )
                 self.assertEqual(result[2]["asset_id"], identity)
-                self.assertEqual(result[3]["value"], identity)
+                self.assertTrue(result[4]["interactive"])
                 with self.assertRaises(gr.Error):
-                    compare(identity, outside_id)
+                    compare({"a": identity, "b": outside_id})
+                video = config.outputs_dir / "video.mp4"
+                video.write_bytes(b"fixture")
+                video_id = store.index_asset(video, "Video")
+                with self.assertRaises(gr.Error):
+                    compare({"a": identity, "b": video_id})
+                with self.assertRaises(gr.Error):
+                    compare({"a": identity, "b": None})
                 image.unlink()
-                result = synchronize("Image", [str(image)], str(image), None, None, {})
+                result = synchronize(
+                    "Image", [str(image)], str(image), {"a": identity, "b": None}
+                )
                 self.assertIsNone(result[2])
+                self.assertFalse(result[4]["interactive"])
+                self.assertEqual(result[6], {"a": None, "b": None})
                 with self.assertRaises(gr.Error):
-                    compare(identity, identity)
+                    compare({"a": identity, "b": identity})
 
     def test_fl2va_voice_inputs_live_under_frames_and_have_separate_api_fields(self):
         controls = {

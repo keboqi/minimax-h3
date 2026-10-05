@@ -628,11 +628,17 @@ and exposes every selected result (including unchanged originals) for download.
 The SeedVR2 model and VAE remain lazy-downloaded, and the optional resident-model
 unload control can reduce peak VRAM before this preprocessing pass.
 
-Open **Gallery** to browse the video library (the default), or switch **Gallery
+Open **Media** to browse the video library (the default), or switch **Media
 type** to **Image** or **Audio**. Image mode includes generated Qwen/H3 stills
 and SeedVR2 results; Audio mode includes MiniMax H3, MiniMax Music 3, and YuE2
 outputs. All three use the same card, preview, settings, import, and download
 layout. **Import local media** accepts a matching file for the active library.
+To compare outputs, select a library thumbnail and choose **Add to compare A**
+or **Add to compare B**. The slots show thumbnails and keep their picks while
+you filter the library. Choose two different images or two different videos;
+adding another type starts a new pair. **Clear A** and **Clear B** remove picks.
+In **Jobs**, click a history row (or focus it and press Enter/Space) to inspect
+that request and its available actions.
 Image mode uses the existing one-step
 SeedVR2 workflow to upscale the selected still while preserving its aspect ratio;
 the processed image is added back to the image gallery with its settings and a

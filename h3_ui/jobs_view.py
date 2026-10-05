@@ -12,6 +12,21 @@ from h3_app.jobs import JOBS, JobCancelled
 from .job_admission import execute_accepted, require_owner, dispatch_failed
 from .job_bindings import GPU_QUEUE
 
+JOB_SELECTION_JS = """
+const select = (row) => {
+  if (!row) return;
+  element.querySelectorAll('[data-job-id]').forEach(item => item.setAttribute('aria-selected', String(item === row)));
+  trigger('click', {job_id: row.dataset.jobId});
+};
+element.addEventListener('click', event => select(event.target.closest('[data-job-id]')));
+element.addEventListener('keydown', event => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    const row = event.target.closest('[data-job-id]');
+    if (row) { event.preventDefault(); select(row); }
+  }
+});
+"""
+
 
 def state_badge(state):
     tone = {
@@ -27,11 +42,11 @@ def state_badge(state):
 def empty_details():
     return (
         '<div class="h3-empty-state"><strong>Select a job</strong>'
-        "<p>Choose a request from the job selector to review its progress, outputs and retry options.</p></div>"
+        "<p>Click a request in the history to review its progress, outputs and retry options.</p></div>"
     )
 
 
-def table(jobs):
+def table(jobs, selected=None):
     if not jobs:
         return (
             '<div class="h3-empty-state" role="status"><strong>No jobs yet</strong>'
@@ -69,7 +84,7 @@ def table(jobs):
             len(job.outputs),
         )
         rows.append(
-            "<tr>"
+            f'<tr data-job-id="{escape(job.id, quote=True)}" tabindex="0" aria-selected="{str(job.id == selected).lower()}" aria-label="Select job {escape(job.id[:8], quote=True)}">'
             + f"<td><code>{escape(str(cells[0]))}</code><small>{escape(str(cells[1]))}</small></td>"
             + f"<td>{state_badge(job.state)}</td>"
             + "".join(f"<td>{escape(str(cell))}</td>" for cell in cells[2:])
@@ -94,10 +109,10 @@ def build_jobs_view(root, *, get, post, summary):
         with gr.Row(equal_height=False, elem_classes=["h3-jobs-workspace"]):
             with gr.Column(scale=5, min_width=340, elem_classes=["h3-job-history"]):
                 gr.Markdown(
-                    "### Request history\nUpdates automatically every 2 seconds.",
+                    "### Request history\nClick a row to inspect it. Updates automatically every 2 seconds.",
                     elem_classes=["h3-gallery-section-title"],
                 )
-                listing = gr.HTML(table(()))
+                listing = gr.HTML(table(()), js_on_load=JOB_SELECTION_JS)
             with gr.Column(
                 scale=3,
                 min_width=320,
@@ -225,7 +240,7 @@ def build_jobs_view(root, *, get, post, summary):
             "detail": signature,
             "choices": choices,
             "failed": failed_choices,
-            "table": table(jobs),
+            "table": table(jobs, value),
             "counts": (queued, active),
         }
         return (
@@ -269,6 +284,18 @@ def build_jobs_view(root, *, get, post, summary):
             api_name=False,
             show_progress="hidden",
         )
+
+    def select_row(evt: gr.EventData, request: gr.Request):
+        job = JOBS.owned(require_owner(request), evt.job_id)
+        return job.id
+
+    listing.click(
+        select_row,
+        outputs=selected,
+        queue=False,
+        api_name=False,
+        show_progress="hidden",
+    )
 
     def reconnect(request: gr.Request):
         try:

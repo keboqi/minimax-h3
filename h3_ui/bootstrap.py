@@ -292,6 +292,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             view=gallery_components,
             system_root=app_views.system,
             validate_path=services.gallery_media_download_path,
+            preview_media=services.refresh_media_page,
         )
         for root, view in (
             (ltx25_view, ltx25_components),

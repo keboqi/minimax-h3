@@ -64,11 +64,18 @@ def comparison_html(left, right):
     )
 
 
-def build_library_tools(root, list_paths, *, view, system_root, validate_path):
+def build_library_tools(
+    root, list_paths, *, view, system_root, validate_path, preview_media
+):
     from .asset_index import AssetIndex
+    from h3_app.gallery_store import AssetInventory
 
     index = AssetIndex(JOBS.store, list_paths)
     view.search.h3_asset_index = index
+    with view.inspector:
+        with gr.Row(elem_classes=["h3-compare-selection-actions"]):
+            add_a = gr.Button("Add to compare A", interactive=False)
+            add_b = gr.Button("Add to compare B", interactive=False)
     with view.inspector:
         with gr.Accordion("Tags & lineage", open=False):
             gr.Markdown(
@@ -81,18 +88,42 @@ def build_library_tools(root, list_paths, *, view, system_root, validate_path):
             status = gr.Markdown()
             with gr.Accordion("Asset identity and lineage", open=False, max_height=400):
                 lineage = gr.JSON(label="Asset identity and lineage")
-    comparison_open = gr.State(False)
+    pair = gr.State({"a": None, "b": None})
     with root, gr.Accordion("Compare two outputs", open=False) as comparison:
         gr.Markdown(
-            "Images use a reveal slider. Videos share elapsed playback time up to the "
-            "shorter duration, with drift correction. Buffering pauses both players. "
-            "Audio is muted by default; choose A or B. Choose either output from the "
-            "managed image/video library, including outside the current search."
+            "Select a thumbnail in the library, then add it to A or B. Compare two different images or two different videos. "
+            "Your picks stay here while you search and browse. Adding another media type starts a new pair."
         )
-        with gr.Row():
-            left = gr.Dropdown([], label="Comparison A", value=None)
-            right = gr.Dropdown([], label="Comparison B", value=None)
-            compare = gr.Button("Compare selected outputs")
+        with gr.Row(equal_height=True, elem_classes=["h3-compare-slots"]):
+            with gr.Column(min_width=140):
+                left = gr.Image(
+                    label="Comparison A",
+                    type="filepath",
+                    height=180,
+                    interactive=False,
+                    buttons=[],
+                    elem_id="h3-compare-a",
+                    min_width=140,
+                )
+                clear_a = gr.Button("Clear A", size="sm")
+            with gr.Column(min_width=140):
+                right = gr.Image(
+                    label="Comparison B",
+                    type="filepath",
+                    height=180,
+                    interactive=False,
+                    buttons=[],
+                    elem_id="h3-compare-b",
+                    min_width=140,
+                )
+                clear_b = gr.Button("Clear B", size="sm")
+        comparison_status = gr.Markdown(
+            "Choose an image or video in the library to start.",
+            elem_classes=["h3-compare-status"],
+        )
+        compare = gr.Button(
+            "Compare selected outputs", variant="primary", interactive=False
+        )
         images = gr.ImageSlider(
             label="Image comparison A / B",
             type="filepath",
@@ -145,7 +176,7 @@ def build_library_tools(root, list_paths, *, view, system_root, validate_path):
     def inspect_asset(mode, path):
         asset_id = selected_id(mode, path)
         if not asset_id:
-            return "", False, None, gr.update(value=None)
+            return "", False, None
         row = resolve(asset_id)
         return (
             ", ".join(json.loads(row["tags"])),
@@ -155,112 +186,159 @@ def build_library_tools(root, list_paths, *, view, system_root, validate_path):
                 "filename": Path(row["path"]).name,
                 "settings_and_lineage": json.loads(row["metadata"]),
             },
-            gr.update(value=asset_id if row["kind"] in {"Image", "Video"} else None),
         )
 
-    def comparison_choices(a, b, current, *, refresh=False):
-        # Comparison B should remain available outside a filtered thumbnail
-        # page. Keep its inventory independent of search/type transitions;
-        # replacing an open native dropdown's choices can race its filtering.
-        if refresh:
-            index.sync("Image")
-            index.sync("Video")
-        revised = current.get("comparison_revision") != index.revision
-        choices = current.get("comparison_choices", [])
-        if revised or refresh:
-            allowed = index.cached_paths("Image") | index.cached_paths("Video")
-            rows = [
-                row
-                for row in JOBS.store.search_assets(limit=None)
-                if row["kind"] in {"Image", "Video"} and Path(row["path"]) in allowed
-            ]
-            choices = [
-                (
-                    row["kind"]
-                    + " · "
-                    + Path(row["path"]).name
-                    + " · "
-                    + row["id"][:8],
-                    row["id"],
-                )
-                for row in rows
-            ]
-        ids = {item[1] for item in choices}
-        changed = refresh or current.get("comparison_choices") != choices
-        current["comparison_choices"] = choices
-        current["comparison_revision"] = index.revision
+    def slot_preview(asset_id, slot):
+        if not asset_id:
+            return gr.update(value=None, label=f"Comparison {slot.upper()}")
+        row = resolve(asset_id)
+        page = preview_media(
+            row["kind"], 1, paths=AssetInventory(row["kind"], (Path(row["path"]),))
+        )
+        return gr.update(
+            value=page.items[0][0] if page.items else None,
+            label=f"Comparison {slot.upper()} · {row['kind']} · {Path(row['path']).name}",
+        )
 
-        # An empty captured value can precede a thumbnail selection. Updating
-        # choices alone preserves that newer selection when responses overlap.
-        def update(current):
-            props = {"choices": choices} if changed else {}
-            if current is not None and current not in ids:
-                props["value"] = None
-            return gr.update(**props)
+    def pair_status(current):
+        filled = [slot.upper() for slot in ("a", "b") if current.get(slot)]
+        if len(filled) == 2:
+            return "A and B are ready. Compare them below."
+        if filled:
+            missing = "B" if filled[0] == "A" else "A"
+            return (
+                f"{filled[0]} is set. Select another thumbnail and add it to {missing}."
+            )
+        return "Choose an image or video in the library to start."
 
-        return update(a), update(b)
+    pair_outputs = [
+        pair,
+        left,
+        right,
+        compare,
+        comparison_status,
+        images,
+        videos,
+        comparison,
+    ]
 
-    def open_comparison(a, b, current):
-        return *comparison_choices(a, b, current, refresh=True), True
+    def update_pair(current, message=None):
+        return (
+            current,
+            slot_preview(current["a"], "a"),
+            slot_preview(current["b"], "b"),
+            gr.update(interactive=bool(current["a"] and current["b"])),
+            message or pair_status(current),
+            gr.update(value=None, visible=False),
+            "",
+            gr.update(open=True),
+        )
 
-    comparison.expand(
-        open_comparison,
-        inputs=[left, right, view.filters],
-        outputs=[left, right, comparison_open],
-        queue=False,
-        show_progress="minimal",
-        api_name=False,
-    )
-    comparison.collapse(
-        lambda: False,
-        outputs=comparison_open,
-        queue=False,
-        show_progress="hidden",
-        api_name=False,
-    )
+    def assign(slot, mode, path, current):
+        asset_id = selected_id(mode, path)
+        if not asset_id or mode not in {"Image", "Video"}:
+            raise gr.Error("Select an image or video thumbnail in the library first.")
+        candidate = resolve(asset_id)
+        current = dict(current)
+        other = "b" if slot == "a" else "a"
+        message = None
+        if current[other]:
+            try:
+                previous = resolve(current[other])
+            except gr.Error:
+                current[other] = None
+            else:
+                if previous["kind"] != candidate["kind"]:
+                    current[other] = None
+                    message = f"Started a new {mode.lower()} pair. Add another {mode.lower()} to {other.upper()}."
+                elif current[other] == asset_id:
+                    raise gr.Error(
+                        "This media is already in the other slot. Choose a different thumbnail."
+                    )
+        current[slot] = asset_id
+        return update_pair(current, message)
 
-    view.mode.change(
-        lambda: (None, None, gr.update(visible=False), ""),
-        outputs=[left, right, images, videos],
-        queue=False,
-        show_progress="hidden",
-        api_name=False,
-    )
+    for button, slot in ((add_a, "a"), (add_b, "b")):
+
+        def add(mode, path, current, slot=slot):
+            return assign(slot, mode, path, current)
+
+        button.click(
+            add,
+            inputs=[view.mode, view.selected, pair],
+            outputs=pair_outputs,
+            concurrency_id="h3-comparison",
+            concurrency_limit=1,
+            api_name=False,
+            show_progress="hidden",
+        )
+
+    for button, slot in ((clear_a, "a"), (clear_b, "b")):
+
+        def clear(current, slot=slot):
+            return update_pair({**current, slot: None})
+
+        button.click(
+            clear,
+            inputs=pair,
+            outputs=pair_outputs,
+            concurrency_id="h3-comparison",
+            concurrency_limit=1,
+            api_name=False,
+            show_progress="hidden",
+        )
 
     snapshot, snapshot_component = view.selected.h3_snapshot
 
-    def synchronize(mode, paths, selected, a, b, current, comparing=False):
+    def synchronize(mode, paths, selected, current):
         inspected = inspect_asset(mode, selected)
-        if comparing:
-            choices_a, choices_b = comparison_choices(a, b, current)
-        else:
-            # A follows the selected thumbnail even before comparison is opened.
-            identity = inspected[2]
-            choice = (
-                [(mode + " · " + identity["filename"], identity["asset_id"])]
-                if identity
-                else []
+        can_add = bool(inspected[2]) and mode in {"Image", "Video"}
+        revised = dict(current)
+        for slot in ("a", "b"):
+            if revised[slot]:
+                try:
+                    resolve(revised[slot])
+                except gr.Error:
+                    revised[slot] = None
+        updates = (
+            (
+                revised,
+                slot_preview(revised["a"], "a"),
+                slot_preview(revised["b"], "b"),
+                gr.update(interactive=bool(revised["a"] and revised["b"])),
+                "An unavailable comparison item was removed. " + pair_status(revised),
+                gr.update(value=None, visible=False),
+                "",
             )
-            choices_a, choices_b = gr.update(choices=choice), gr.skip()
+            if revised != current
+            else (gr.skip(),) * 7
+        )
         return (
-            *inspected[:3],
-            {**choices_a, **inspected[3]},
-            choices_b,
+            *inspected,
             snapshot(selected),
+            gr.update(interactive=can_add),
+            gr.update(interactive=can_add),
+            *updates,
         )
 
     view.selected.h3_sync = (
         synchronize,
+        [view.mode, view.paths, view.selected, pair],
         [
-            view.mode,
-            view.paths,
-            view.selected,
+            tags,
+            favorite,
+            lineage,
+            snapshot_component,
+            add_a,
+            add_b,
+            pair,
             left,
             right,
-            view.filters,
-            comparison_open,
+            compare,
+            comparison_status,
+            images,
+            videos,
         ],
-        [tags, favorite, lineage, left, right, snapshot_component],
     )
 
     def annotate(mode, path, text, starred):
@@ -279,7 +357,10 @@ def build_library_tools(root, list_paths, *, view, system_root, validate_path):
         api_name=False,
     )
 
-    def compare_assets(a, b):
+    def compare_assets(current):
+        a, b = current.get("a"), current.get("b")
+        if not a or not b or a == b:
+            raise gr.Error("Add two different thumbnails to A and B first.")
         first, second = resolve(a), resolve(b)
         if first["kind"] != second["kind"] or first["kind"] not in {"Image", "Video"}:
             raise gr.Error("Select two images or two videos to compare.")
@@ -289,8 +370,9 @@ def build_library_tools(root, list_paths, *, view, system_root, validate_path):
 
     compare.click(
         compare_assets,
-        inputs=[left, right],
+        inputs=pair,
         outputs=[images, videos],
-        queue=False,
+        concurrency_id="h3-comparison",
+        concurrency_limit=1,
         api_name=False,
     )

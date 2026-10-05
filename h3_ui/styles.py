@@ -216,6 +216,12 @@ H3_WORKSPACE_CSS = """
 .h3-workspace .h3-job-table small { display: block; margin-top: 5px; color: var(--h3-muted); }
 .h3-workspace .h3-job-table tbody tr:last-child td { border-bottom: 0 !important; }
 .h3-workspace .h3-job-table tbody tr:hover { background: var(--h3-muted-surface); }
+.h3-workspace .h3-job-table [data-job-id] { cursor: pointer; scroll-margin: 24px; }
+.h3-workspace .h3-job-table [aria-selected="true"] { background: var(--h3-muted-surface); box-shadow: inset 3px 0 var(--h3-accent); }
+.h3-workspace .h3-job-table [data-job-id]:focus-visible { outline: 2px solid var(--h3-focus); outline-offset: -2px; }
+.h3-workspace .h3-compare-selection-actions { gap: 8px; }
+.h3-workspace .h3-compare-slots { gap: 16px; }
+.h3-workspace .h3-compare-status { color: var(--h3-muted); font-size: 13px; }
 .h3-workspace .h3-job-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px; background: var(--h3-muted-surface); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .h3-workspace .h3-job-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 .h3-workspace .h3-job-success { color: #166534; background: #dcfce7; }

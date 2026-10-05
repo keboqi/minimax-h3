@@ -284,10 +284,12 @@ def run():
                 )
                 captured = requests.get(url + "/test/jobs", timeout=2).json()
                 assert len(captured) == 2, captured
-                page.get_by_label("Job", exact=True).click()
-                page.get_by_role(
-                    "option", name=re.compile(captured[0]["id"][:8])
-                ).click()
+                first_row = page.locator(f'[data-job-id="{captured[0]["id"]}"]')
+                first_row.click()
+                expect(page.get_by_label("Job", exact=True)).to_have_value(
+                    re.compile(captured[0]["id"][:8])
+                )
+                expect(first_row).to_have_attribute("aria-selected", "true")
                 expect(
                     page.get_by_role("button", name="Cancel selected job", exact=True)
                 ).to_be_enabled()
@@ -313,10 +315,15 @@ def run():
                     page.get_by_role("button", name="Cancel selected job", exact=True)
                 ).to_be_disabled()
                 # Native dropdown chooses the failed job by its visible stable ID.
-                page.get_by_label("Job", exact=True).click()
-                page.get_by_role(
-                    "option", name=f"{failed['id'][:8]} · h3 · failed", exact=True
-                ).click()
+                failed_row = page.locator(f'[data-job-id="{failed["id"]}"]')
+                failed_row.focus()
+                failed_row.press("Enter")
+                expect(page.get_by_label("Job", exact=True)).to_have_value(
+                    re.compile(failed["id"][:8])
+                )
+                expect(page.locator(".h3-job-details").first).to_contain_text(
+                    "Fixture variant failed"
+                )
                 page.get_by_text("Retry & recovery", exact=True).click()
                 page.get_by_role(
                     "button", name="Retry failed variants", exact=True
@@ -436,16 +443,24 @@ def run():
                 ).to_have_count(2)
                 page.get_by_role("button", name="Search library", exact=True).click()
                 page.get_by_text("Tags & lineage", exact=True).click()
-                page.get_by_text("Compare two outputs", exact=True).click()
                 page.locator("#generated-video-gallery .thumbnail-item").filter(
                     has_text="alpha.png"
                 ).click()
                 expect(
                     page.get_by_label("Tags (comma separated)", exact=True)
                 ).to_have_value("")
-                expect(page.get_by_label("Comparison A", exact=True)).to_have_value(
-                    re.compile("alpha.png")
+                page.get_by_role("button", name="Add to compare A", exact=True).click()
+                expect(page.locator("#h3-compare-a")).to_contain_text("alpha.png")
+                expect(
+                    page.get_by_role(
+                        "button", name="Compare selected outputs", exact=True
+                    )
+                ).to_be_disabled()
+                page.get_by_role("button", name="Add to compare B", exact=True).click()
+                expect(page.locator("body")).to_contain_text(
+                    "Choose a different thumbnail."
                 )
+                expect(page.locator("#h3-compare-b img")).to_have_count(0)
                 page.get_by_label("Tags (comma separated)", exact=True).fill(
                     "browser-test"
                 )
@@ -464,21 +479,17 @@ def run():
                 expect(page.locator("#generated-video-gallery")).to_contain_text(
                     "alpha.png"
                 )
-                comparison_b = page.get_by_label("Comparison B", exact=True)
-                comparison_b.click()
-                expect(
-                    comparison_b.locator(
-                        "xpath=ancestor::*[contains(concat(' ',normalize-space(@class),' '),' block ')][1]"
-                    ).get_by_role("option", name=re.compile("beta.png"))
-                ).to_be_visible()
-                page.keyboard.press("Escape")
+                expect(page.locator("#h3-compare-a")).to_contain_text("alpha.png")
                 page.get_by_label("Search media", exact=True).fill("missing-test-asset")
                 phase[0] = "Media empty search"
                 page.get_by_role("button", name="Search library", exact=True).click()
                 expect(
                     page.locator("#generated-video-gallery .thumbnail-item")
                 ).to_have_count(0)
-                expect(page.get_by_label("Comparison A", exact=True)).to_have_value("")
+                expect(page.locator("#h3-compare-a")).to_contain_text("alpha.png")
+                expect(
+                    page.get_by_role("button", name="Add to compare B", exact=True)
+                ).to_be_disabled()
                 expect(
                     page.get_by_label("Tags (comma separated)", exact=True)
                 ).to_have_value("")
@@ -486,17 +497,21 @@ def run():
                 phase[0] = "Media restore search and image comparison"
                 page.get_by_label("Favorites only", exact=True).uncheck()
                 page.get_by_role("button", name="Search library", exact=True).click()
-                for component, name in (
-                    ("Comparison A", "alpha.png"),
-                    ("Comparison B", "beta.png"),
-                ):
-                    control = page.get_by_label(component, exact=True)
-                    control.click()
-                    control.locator(
-                        "xpath=ancestor::*[contains(concat(' ',normalize-space(@class),' '),' block ')][1]"
-                    ).get_by_role("option", name=name, exact=False).click()
-                    expect(control).to_have_value(re.compile(re.escape(name)))
-                    page.keyboard.press("Escape")
+                for slot, name in (("A", "alpha.png"), ("B", "beta.png")):
+                    page.locator("#generated-video-gallery .thumbnail-item").filter(
+                        has_text=name
+                    ).click()
+                    expect(
+                        page.get_by_role(
+                            "button", name=f"Add to compare {slot}", exact=True
+                        )
+                    ).to_be_enabled()
+                    page.get_by_role(
+                        "button", name=f"Add to compare {slot}", exact=True
+                    ).click()
+                    expect(page.locator(f"#h3-compare-{slot.lower()}")).to_contain_text(
+                        name
+                    )
                 page.get_by_role(
                     "button", name="Compare selected outputs", exact=True
                 ).click()
@@ -510,17 +525,31 @@ def run():
                 expect(
                     page.locator("#generated-video-gallery .thumbnail-item")
                 ).to_have_count(2)
-                for component, name in (
-                    ("Comparison A", "alpha.mp4"),
-                    ("Comparison B", "beta.mp4"),
-                ):
-                    control = page.get_by_label(component, exact=True)
-                    control.click()
-                    control.locator(
-                        "xpath=ancestor::*[contains(concat(' ',normalize-space(@class),' '),' block ')][1]"
-                    ).get_by_role("option", name=name, exact=False).click()
-                    expect(control).to_have_value(re.compile(re.escape(name)))
-                    page.keyboard.press("Escape")
+                for slot, name in (("A", "alpha.mp4"), ("B", "beta.mp4")):
+                    page.locator("#generated-video-gallery .thumbnail-item").filter(
+                        has_text=name
+                    ).click()
+                    expect(
+                        page.get_by_role(
+                            "button", name=f"Add to compare {slot}", exact=True
+                        )
+                    ).to_be_enabled()
+                    page.get_by_role(
+                        "button", name=f"Add to compare {slot}", exact=True
+                    ).click()
+                    expect(page.locator(f"#h3-compare-{slot.lower()}")).to_contain_text(
+                        name
+                    )
+                    if slot == "A":
+                        expect(page.locator("#h3-compare-b img")).to_have_count(0)
+                        expect(
+                            page.locator(".h3-compare-status").first
+                        ).to_contain_text("Started a new video pair")
+                        expect(
+                            page.get_by_role(
+                                "button", name="Compare selected outputs", exact=True
+                            )
+                        ).to_be_disabled()
                 page.get_by_role(
                     "button", name="Compare selected outputs", exact=True
                 ).click()
@@ -534,6 +563,21 @@ def run():
                     page.get_by_role("button", name="Pause both", exact=True)
                 ).to_be_visible()
                 page.get_by_role("button", name="Pause both", exact=True).click()
+                page.get_by_role("button", name="Clear B", exact=True).click()
+                expect(page.locator("#h3-compare-b img")).to_have_count(0)
+                expect(
+                    page.get_by_role(
+                        "button", name="Compare selected outputs", exact=True
+                    )
+                ).to_be_disabled()
+                expect(page.locator("[data-video-a]")).to_have_count(0)
+                page.get_by_role("button", name="Add to compare B", exact=True).click()
+                page.get_by_role(
+                    "button", name="Compare selected outputs", exact=True
+                ).click()
+                expect(page.locator("[data-state]")).to_contain_text(
+                    "Shared timeline: 1.00 seconds"
+                )
                 page.screenshot(path=str(ARTIFACTS / "media.png"), full_page=True)
                 for tab_name in ("Media", "Jobs"):
                     page.get_by_role("tab", name=tab_name, exact=True).click()
