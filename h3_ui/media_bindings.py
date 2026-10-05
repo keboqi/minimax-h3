@@ -6,6 +6,7 @@ from typing import Any
 import gradio as gr
 from h3_app.catalog import (
     LTX25_CQ_ENHANCER,
+    LTX25_CQ_IMAGE_ENHANCER,
     LTX25_DEBLUR,
     LTX25_RESTORATION_OPTIONS,
     LTX25_SAME_RESOLUTION_OPTIONS,
@@ -150,13 +151,13 @@ def bind_gallery_view(
             gr.update(value=False),
             gr.update(
                 choices=(
-                    [seedvr_option] if value == "Image" else video_postprocess_options
+                    [seedvr_option, LTX25_CQ_IMAGE_ENHANCER] if value == "Image" else video_postprocess_options
                 ),
                 value=seedvr_option,
             ),
             gr.update(
                 value=(
-                    "Upscale selected image"
+                    "Enhance selected image"
                     if value == "Image"
                     else "Enhance selected media"
                 )
@@ -189,7 +190,7 @@ def bind_gallery_view(
     synchronize(refreshed, refreshed=True)
     view.postprocess.change(
         lambda value: (
-            gr.update(visible=value in ai_options),
+            gr.update(visible=value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER),
             gr.update(visible=value == seedvr_option),
             gr.update(
                 visible=value in ltx_options
@@ -207,7 +208,7 @@ def bind_gallery_view(
             gr.update(visible=value in ltx_options),
             gr.update(visible=value in ltx_options),
             gr.update(
-                visible=value in ai_options
+                visible=(value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER)
                 and value not in LTX25_SAME_RESOLUTION_OPTIONS
             ),
             gr.update(visible=value in ltx_options),

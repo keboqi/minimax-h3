@@ -33,6 +33,7 @@ from h3_app.model_types import (
 )
 from h3_app.policy import h3_latent_upscaler_settings, normalize_turbo_variant
 from h3_models import (
+    CQ_IMAGE_MODEL_KEYS,
     DEFAULT_LTX25_MODEL,
     MODEL_SPECS,
     PROFILE_LABELS,
@@ -803,6 +804,26 @@ def ensure_seedvr2_upscale_models(
             runtime.comfy_dir / "models" / spec.folder / filename
         ):
             raise H3Error(f"On-demand SeedVR2 download did not produce {filename}.")
+    return True
+
+
+def ensure_cq_image_enhance_models(*, runtime: RuntimeConfig) -> bool:
+    """Download only the assets used by the official CQ image recipe."""
+    root = runtime.comfy_dir / "models"
+    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
+    if not stale_model_keys(
+        root=root, manifest_path=manifest_path, model_keys=CQ_IMAGE_MODEL_KEYS,
+    ):
+        return False
+    sync_models(
+        root=root, manifest_path=manifest_path, token=resolve_hf_token(),
+        log_prefix="[cq-image-on-demand]", model_keys=CQ_IMAGE_MODEL_KEYS,
+        download_workers=2,
+    )
+    for key in CQ_IMAGE_MODEL_KEYS:
+        spec = MODEL_SPECS[key]
+        if not model_file_is_ready(root / spec.folder / spec.local_name):
+            raise H3Error(f"On-demand CQ image download did not produce {spec.local_name}.")
     return True
 
 

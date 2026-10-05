@@ -9,6 +9,7 @@ from typing import Any
 import gradio as gr
 import websocket
 from h3_app.media_types import UpscaleClipBatch
+from h3_app.catalog import LTX25_CQ_IMAGE_ENHANCER
 from dataclasses import dataclass
 
 
@@ -48,12 +49,14 @@ class MediaServices:
     VIDEO_EXTENSIONS: Any
     _runtime_config: Any
     build_seedvr2_image_upscale_graph: Any
+    build_cq_image_enhance_graph: Any
     build_upscale_graph: Any
     cleanup_upscale_clip_batch: Any
     concat_upscaled_clips: Any
     copy_media: Any
     ensure_ltx25_upscale_models: Any
     ensure_seedvr2_upscale_models: Any
+    ensure_cq_image_enhance_models: Any
     gallery_store: Any
     gr: Any
     input_image_upscale_dimensions: Any
@@ -67,6 +70,7 @@ class MediaServices:
     progress_status: Any
     random: Any
     required_seedvr2_image_upscale_nodes: Any
+    required_cq_image_enhance_nodes: Any
     required_upscale_nodes: Any
     resolve_output: Any
     resolve_seedvr2_input_upscale_outputs: Any
@@ -955,14 +959,16 @@ class MediaController:
         request: gr.Request,
         progress=gr.Progress(track_tqdm=False),
     ):
-        """Upscale one selected gallery still with the shared SeedVR2 workflow."""
+        """Enhance one selected gallery still with SeedVR2 or CQ."""
         started = self.services.time.monotonic()
         try:
             if not selected_image:
                 raise self.services.H3Error("Select a gallery image first.")
-            if option != self.services.SEEDVR2_UPSCALE:
+            cq_image = option == LTX25_CQ_IMAGE_ENHANCER
+            family = "CQ image enhancement" if cq_image else "SeedVR2 image upscale"
+            if option not in {self.services.SEEDVR2_UPSCALE, LTX25_CQ_IMAGE_ENHANCER}:
                 raise self.services.H3Error(
-                    "Image gallery enhancement currently uses SeedVR2."
+                    f"Unsupported image enhancement method: {option}"
                 )
             source = self.services.managed_gallery_image_path(selected_image)
             try:
@@ -978,7 +984,11 @@ class MediaController:
                     source, frame_width, frame_height
                 )
             )
-            if scale_by <= 1.0:
+            if cq_image:
+                scale_by = min(frame_width / source_width, frame_height / source_height)
+                target_width = max(1, min(frame_width, round(source_width * scale_by)))
+                target_height = max(1, min(frame_height, round(source_height * scale_by)))
+            if scale_by <= 1.0 and not cq_image:
                 raise self.services.H3Error(
                     f"`{source.name}` is already {source_width}×{source_height}; choose a larger target resolution."
                 )
@@ -988,45 +998,55 @@ class MediaController:
                 else int(seed)
             )
             yield self.services.gallery_media_progress_result(
-                f"Preparing `{source.name}` for SeedVR2 image upscaling"
+                f"Preparing `{source.name}` for {family}"
             )
             available = set(self.services.object_info())
-            missing = self.services.required_seedvr2_image_upscale_nodes() - available
+            required = (
+                self.services.required_cq_image_enhance_nodes()
+                if cq_image else self.services.required_seedvr2_image_upscale_nodes()
+            )
+            missing = required - available
             if missing:
                 raise self.services.H3Error(
-                    "SeedVR2 image upscaling requires current ComfyUI nodes: "
+                    f"{family} requires current ComfyUI nodes: "
                     + ", ".join(sorted(missing))
                 )
-            models = self.services.load_model_config()
-            downloaded = self.services.ensure_seedvr2_upscale_models(
-                models, seedvr2_model
+            models = None if cq_image else self.services.load_model_config()
+            downloaded = (
+                self.services.ensure_cq_image_enhance_models()
+                if cq_image else self.services.ensure_seedvr2_upscale_models(models, seedvr2_model)
             )
             if downloaded:
                 yield self.services.gallery_media_progress_result(
-                    "SeedVR2 models downloaded"
+                    f"{family} models downloaded"
                 )
             if force_offload:
                 yield self.services.gallery_media_progress_result(
-                    "Unloading resident models before SeedVR2 image upscaling"
+                    f"Unloading resident models before {family}"
                 )
                 self.services.unload_comfy_models()
             staged = self.services.stage_file(
                 str(source), "gallery_image_upscale", reuse=True
             )
             output_token = self.services.uuid.uuid4().hex
-            graph = self.services.build_seedvr2_image_upscale_graph(
-                source_images=[("gallery", staged, scale_by)],
-                seed=actual_seed,
-                models=models,
-                model_choice=seedvr2_model,
-                output_token=output_token,
-            )
+            if cq_image:
+                graph = self.services.build_cq_image_enhance_graph(
+                    source_image=staged, seed=actual_seed,
+                    target_width=target_width, target_height=target_height,
+                    output_token=output_token,
+                )
+            else:
+                graph = self.services.build_seedvr2_image_upscale_graph(
+                    source_images=[("gallery", staged, scale_by)],
+                    seed=actual_seed, models=models, model_choice=seedvr2_model,
+                    output_token=output_token,
+                )
             queued_at = self.services.time.time()
             prompt_id = self.services.submit_prompt(
                 graph, str(self.services.uuid.uuid4())
             )
             yield self.services.gallery_media_progress_result(
-                f"SeedVR2 image upscale queued · job `{prompt_id}` · seed {actual_seed}"
+                f"{family} queued · job `{prompt_id}` · seed {actual_seed}"
             )
             for (
                 stage,
@@ -1047,7 +1067,7 @@ class MediaController:
                         total_nodes=total,
                         step=step,
                         step_total=step_total,
-                        configured_steps=1 if step is not None else None,
+                        configured_steps=(8 if cq_image else 1) if step is not None else None,
                         detail=f"Image upscale job `{prompt_id}`",
                     )
                 )
@@ -1059,12 +1079,13 @@ class MediaController:
                 result,
                 {
                     "job_id": prompt_id,
-                    "family": "SeedVR2 image upscale",
+                    "family": family,
                     "settings": {
                         "source": source.name,
                         "source_resolution": f"{source_width}×{source_height}",
                         "target_resolution": f"{target_width}×{target_height}",
-                        "model": seedvr2_model,
+                        "model": "LTX-2.5 Dev INT8 + CQ image LoRA" if cq_image else seedvr2_model,
+                        "method": option,
                         "seed": actual_seed,
                     },
                 },
@@ -1079,7 +1100,7 @@ class MediaController:
             )
         except Exception as exc:
             yield self.services.gallery_media_progress_result(
-                f"Image upscaling failed: {exc}"
+                f"Image enhancement failed: {exc}"
             )
 
     def postprocess_selected_gallery_media(

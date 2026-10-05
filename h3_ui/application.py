@@ -22,6 +22,7 @@ from h3_app.catalog import (
     CHUNK_FEED_FORWARD_NODE,
     COMFY_UPSCALE_OPTIONS,
     LTX25_CQ_ENHANCER,
+    LTX25_CQ_IMAGE_ENHANCER,
     LTX25_REFINE_DETAILS,
     LTX25_RESTORE,
     LTX25_DECOMPRESSION,
@@ -374,12 +375,14 @@ def _mediacontroller():
             VIDEO_EXTENSIONS=VIDEO_EXTENSIONS,
             _runtime_config=_runtime_config,
             build_seedvr2_image_upscale_graph=build_seedvr2_image_upscale_graph,
+            build_cq_image_enhance_graph=build_cq_image_enhance_graph,
             build_upscale_graph=build_upscale_graph,
             cleanup_upscale_clip_batch=cleanup_upscale_clip_batch,
             concat_upscaled_clips=concat_upscaled_clips,
             copy_media=copy_media,
             ensure_ltx25_upscale_models=ensure_ltx25_upscale_models,
             ensure_seedvr2_upscale_models=ensure_seedvr2_upscale_models,
+            ensure_cq_image_enhance_models=ensure_cq_image_enhance_models,
             gallery_store=gallery_store,
             gr=gr,
             input_image_upscale_dimensions=input_image_upscale_dimensions,
@@ -393,6 +396,7 @@ def _mediacontroller():
             progress_status=progress_status,
             random=random,
             required_seedvr2_image_upscale_nodes=required_seedvr2_image_upscale_nodes,
+            required_cq_image_enhance_nodes=required_cq_image_enhance_nodes,
             required_upscale_nodes=required_upscale_nodes,
             resolve_output=resolve_output,
             resolve_seedvr2_input_upscale_outputs=resolve_seedvr2_input_upscale_outputs,
@@ -986,6 +990,10 @@ def prepare_all_ltx25_official_models():
 
 def ensure_seedvr2_upscale_models(models: ModelConfig, model_choice: str) -> bool:
     return _modelcontroller().ensure_seedvr2_upscale_models(models, model_choice)
+
+
+def ensure_cq_image_enhance_models() -> bool:
+    return _modelcontroller().ensure_cq_image_enhance_models()
 
 
 def ensure_ltx25_upscale_models(
@@ -1775,6 +1783,8 @@ required_seedvr2_upscale_nodes = upscale_workflow.required_seedvr2_upscale_nodes
 required_seedvr2_image_upscale_nodes = (
     upscale_workflow.required_seedvr2_image_upscale_nodes
 )
+required_cq_image_enhance_nodes = upscale_workflow.required_cq_image_enhance_nodes
+build_cq_image_enhance_graph = upscale_workflow.build_cq_image_enhance_graph
 
 
 def build_seedvr2_image_upscale_graph(
@@ -3801,6 +3811,7 @@ __all__ = [
     "LIGHTX2V_8STEP_TURBO",
     "LIGHTX2V_BYPASS_LORA_NODE",
     "LTX25_CQ_ENHANCER",
+    "LTX25_CQ_IMAGE_ENHANCER",
     "LTX25_DEBLUR",
     "LTX25_DECOMPRESSION",
     "LTX25_ICLORA_MODEL_KEYS",

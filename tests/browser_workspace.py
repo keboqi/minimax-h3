@@ -446,6 +446,21 @@ def run():
                 page.locator("#generated-video-gallery .thumbnail-item").filter(
                     has_text="alpha.png"
                 ).click()
+                page.get_by_text("Enhance selected media", exact=True).click()
+                page.get_by_label("Method", exact=True).click()
+                page.get_by_role("option", name="LTX-2.5 CQ Image Enhancer", exact=True).click()
+                expect(page.get_by_label("Target resolution", exact=True)).to_be_visible()
+                expect(page.get_by_label("SeedVR2 model", exact=True)).not_to_be_visible()
+                expect(page.get_by_label("Finishing LTX model", exact=True)).not_to_be_visible()
+                expect(page.get_by_label("LTX-2.5 scene prompt", exact=True)).not_to_be_visible()
+                expect(page.get_by_label("Split source into clips before LTX processing", exact=True)).not_to_be_visible()
+                expect(page.get_by_role("button", name="Enhance selected image", exact=True)).to_be_enabled()
+                page.get_by_label("Target resolution", exact=True).click()
+                page.get_by_role("option", name="2560 × 2560", exact=True).click()
+                page.get_by_label("Method", exact=True).click()
+                page.get_by_role("option", name="SeedVR2 2x", exact=True).click()
+                expect(page.get_by_label("SeedVR2 model", exact=True)).to_be_visible()
+                page.get_by_text("Enhance selected media", exact=True).click()
                 expect(
                     page.get_by_label("Tags (comma separated)", exact=True)
                 ).to_have_value("")

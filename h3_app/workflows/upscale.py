@@ -144,6 +144,99 @@ def build_seedvr2_image_upscale_graph(
     return graph.nodes
 
 
+def required_cq_image_enhance_nodes() -> set[str]:
+    return {
+        "LoadImage", "ImageScale", "UNETLoader", "LoraLoaderModelOnly",
+        "CLIPLoader", "CLIPTextEncode", "VAELoader", "LTXVConditioning",
+        "EmptyLTXVLatentVideo", "LTXAddVideoICLoRAGuide", "CFGGuider",
+        "RandomNoise", "KSamplerSelect", "ManualSigmas", "SamplerCustomAdvanced",
+        "LTXVCropGuides", "VAEDecodeTiled", "SaveImage",
+    }
+
+
+def build_cq_image_enhance_graph(
+    *, source_image: str, seed: int, target_width: int, target_height: int,
+    output_token: str,
+) -> dict[str, Any]:
+    """CQ's image recipe: development model + 0.5 distillation + image LoRA.
+
+    Resize before enhancement, use one latent frame and empty conditioning.
+    Core loaders and tiled VAE decoding replace optional KJ optimizations.
+    """
+    width, height = snap32(target_width), snap32(target_height)
+    graph = Graph()
+    loaded = graph.add("LoadImage", image=source_image)
+    resized = graph.add(
+        "ImageScale", image=Graph.out(loaded), upscale_method="lanczos",
+        width=width, height=height, crop="disabled",
+    )
+    base = graph.add(
+        "UNETLoader", unet_name=MODEL_SPECS["ltx25_dev_int8"].local_name,
+        weight_dtype="default",
+    )
+    distilled = graph.add(
+        "LoraLoaderModelOnly", model=Graph.out(base),
+        lora_name=MODEL_SPECS["ltx25_distillation_lora"].local_name,
+        strength_model=0.5,
+    )
+    model = graph.add(
+        "LoraLoaderModelOnly", model=Graph.out(distilled),
+        lora_name=MODEL_SPECS["ltx25_cq_image_enhancer"].local_name,
+        strength_model=1.0,
+    )
+    vae = graph.add("VAELoader", vae_name=MODEL_SPECS["ltx25_video_vae"].local_name)
+    clip = graph.add(
+        "CLIPLoader", clip_name=MODEL_SPECS["ltx25_text_encoder"].local_name,
+        type="ltxv", device="default",
+    )
+    positive = graph.add("CLIPTextEncode", clip=Graph.out(clip), text="")
+    negative = graph.add("CLIPTextEncode", clip=Graph.out(clip), text="")
+    conditioning = graph.add(
+        "LTXVConditioning", positive=Graph.out(positive),
+        negative=Graph.out(negative), frame_rate=1.0,
+    )
+    latent = graph.add(
+        "EmptyLTXVLatentVideo", width=width, height=height, length=1, batch_size=1,
+    )
+    guide = graph.add(
+        "LTXAddVideoICLoRAGuide", positive=Graph.out(conditioning, 0),
+        negative=Graph.out(conditioning, 1), vae=Graph.out(vae),
+        latent=Graph.out(latent), image=Graph.out(resized), frame_idx=0,
+        strength=1.0, latent_downscale_factor=1, crop="disabled",
+        use_tiled_encode=True, tile_size=512, tile_overlap=64,
+    )
+    guider = graph.add(
+        "CFGGuider", model=Graph.out(model), positive=Graph.out(guide, 0),
+        negative=Graph.out(guide, 1), cfg=1.0,
+    )
+    noise = graph.add("RandomNoise", noise_seed=int(seed))
+    sampler = graph.add("KSamplerSelect", sampler_name="euler_ancestral")
+    sigmas = graph.add("ManualSigmas", sigmas=LTX25_SIGMAS)
+    sampled = graph.add(
+        "SamplerCustomAdvanced", noise=Graph.out(noise), guider=Graph.out(guider),
+        sampler=Graph.out(sampler), sigmas=Graph.out(sigmas),
+        latent_image=Graph.out(guide, 2),
+    )
+    cropped = graph.add(
+        "LTXVCropGuides", positive=Graph.out(guide, 0),
+        negative=Graph.out(guide, 1), latent=Graph.out(sampled),
+    )
+    decoded = graph.add(
+        "VAEDecodeTiled", samples=Graph.out(cropped, 2), vae=Graph.out(vae),
+        tile_size=512, overlap=64, temporal_size=64, temporal_overlap=8,
+    )
+    if (width, height) != (target_width, target_height):
+        decoded = graph.add(
+            "ImageScale", image=Graph.out(decoded), upscale_method="lanczos",
+            width=target_width, height=target_height, crop="disabled",
+        )
+    graph.add(
+        "SaveImage", images=Graph.out(decoded),
+        filename_prefix=f"h3/input_upscale/{output_token}_gallery",
+    )
+    return graph.nodes
+
+
 def build_seedvr2_upscale_graph(
     *,
     source_video: str,

@@ -639,8 +639,14 @@ you filter the library. Choose two different images or two different videos;
 adding another type starts a new pair. **Clear A** and **Clear B** remove picks.
 In **Jobs**, click a history row (or focus it and press Enter/Space) to inspect
 that request and its available actions.
-Image mode uses the existing one-step
-SeedVR2 workflow to upscale the selected still while preserving its aspect ratio;
+Image mode offers the one-step **SeedVR2 2x** workflow and
+**LTX-2.5 CQ Image Enhancer**, using the same target-resolution presets.
+CQ resizes the selected still to fit the target, then generatively restores
+detail using the dedicated image LoRA, the LTX development INT8 model, a
+0.5-strength distillation adapter, and the convolutional VAE. It needs no prompt
+and can also enhance at the same resolution or resize downward. Its required
+models download on first use. Reconstructed detail may differ from the source.
+Both methods preserve the image's aspect ratio;
 the processed image is added back to the image gallery with its settings and a
 download link. Audio mode provides playback and downloads. Video mode retains
 all existing enhancement methods. Each run

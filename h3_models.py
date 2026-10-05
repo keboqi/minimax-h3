@@ -415,6 +415,24 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "ltx2.5-CQ-enhancer-lora-V2.safetensors",
         "LTX-2.5 CQ generative video quality enhancer V2",
     ),
+    "ltx25_cq_image_enhancer": ModelSpec(
+        LTX25_CQ_ENHANCER_REPO,
+        "loras",
+        "ltx2.5-CQ-enhancer-lora-for-images-rank128.safetensors",
+        "LTX-2.5 CQ generative image enhancer",
+    ),
+    "ltx25_dev_int8": ModelSpec(
+        LTX25_REPO,
+        "diffusion_models",
+        "diffusion_models/ltx-2.5-22b-dev-transformer-comfy-int8-convrot.safetensors",
+        "LTX-2.5 development INT8 transformer for CQ image enhancement",
+    ),
+    "ltx25_distillation_lora": ModelSpec(
+        LTX25_REPO,
+        "loras",
+        "loras/ltx-2.5-22b-distilled-lora-450-bf16.safetensors",
+        "LTX-2.5 distillation adapter for CQ image enhancement",
+    ),
     "ltx25_iclora_ingredients": ModelSpec(
         "Lightricks/LTX-2.5-22b-IC-LoRA-Ingredients",
         "loras",
@@ -584,6 +602,13 @@ SEEDVR2_MODEL_CHOICES = {
     "7B Sharp NVFP4": "seedvr2_7b_sharp_nvfp4",
 }
 DEFAULT_SEEDVR2_MODEL = "7B INT8"
+CQ_IMAGE_MODEL_KEYS = (
+    "ltx25_dev_int8",
+    "ltx25_distillation_lora",
+    "ltx25_cq_image_enhancer",
+    "ltx25_text_encoder",
+    "ltx25_video_vae",
+)
 SEEDVR2_UPSCALE_MODEL_KEYS = (
     *SEEDVR2_MODEL_CHOICES.values(),
     "seedvr2_vae",
@@ -594,6 +619,9 @@ LAZY_POSTPROCESS_MODEL_KEYS = (
     "ltx25_decompression",
     "ltx25_deblur",
     "ltx25_cq_video_enhancer_v2",
+    "ltx25_cq_image_enhancer",
+    "ltx25_dev_int8",
+    "ltx25_distillation_lora",
     "ltx25_refine_details",
     "ltx25_restore",
     "ltx25_sdr_to_hdr",
@@ -1551,6 +1579,9 @@ def selftest() -> None:
         "ltx25_decompression",
         "ltx25_deblur",
         "ltx25_cq_video_enhancer_v2",
+        "ltx25_cq_image_enhancer",
+        "ltx25_dev_int8",
+        "ltx25_distillation_lora",
         "ltx25_refine_details",
         "ltx25_restore",
         "ltx25_sdr_to_hdr",

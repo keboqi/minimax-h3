@@ -312,6 +312,11 @@ class ModelController:
             model_choice, runtime=self.services._runtime_config(), option=option
         )
 
+    def ensure_cq_image_enhance_models(self) -> bool:
+        return self.services.model_service.ensure_cq_image_enhance_models(
+            runtime=self.services._runtime_config()
+        )
+
     def missing_music3_model_names(self, model_choice: str) -> list[str]:
         return self.services.model_service.missing_music3_model_names(
             model_choice, runtime=self.services._runtime_config()

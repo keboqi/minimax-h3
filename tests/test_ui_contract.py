@@ -366,6 +366,11 @@ class UiContractTests(unittest.TestCase):
             [u["visible"] for u in callback(gradio_app.SEEDVR2_UPSCALE)],
             [True, True, False, False, False, True, False],
         )
+        self.assertNotIn(gradio_app.LTX25_CQ_IMAGE_ENHANCER, choices)
+        self.assertEqual(
+            [u["visible"] for u in callback(gradio_app.LTX25_CQ_IMAGE_ENHANCER)],
+            [True, False, False, False, False, True, False],
+        )
         self.assertIn(gradio_app.LTX25_SDR_TO_HDR, choices)
         self.assertEqual(
             [u["visible"] for u in callback(gradio_app.LTX25_SDR_TO_HDR)],
@@ -400,7 +405,9 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(updates[1]["visible"])
         self.assertFalse(updates[2]["visible"])
         self.assertTrue(updates[5]["visible"])
-        self.assertEqual(updates[7]["choices"], [gradio_app.SEEDVR2_UPSCALE])
+        self.assertEqual(updates[7]["choices"], [
+            gradio_app.SEEDVR2_UPSCALE, gradio_app.LTX25_CQ_IMAGE_ENHANCER,
+        ])
         self.assertTrue(updates[9]["visible"])
 
         tab_open = next(
