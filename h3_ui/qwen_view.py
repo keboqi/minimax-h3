@@ -16,6 +16,7 @@ from h3_app.catalog import (
 )
 
 from .prompt_review import build_prompt_review
+from .image_library import build_image_file_input
 from .prompt_writer_controls import build_remote_prompt_writer_controls
 
 
@@ -129,7 +130,7 @@ def build_qwen_image21_view(
                     "Reference images and editing",
                     open=defaults["mode"] == "Image edit",
                 ):
-                    reference_images = gr.File(
+                    reference_images = build_image_file_input(
                         label="Input / reference images",
                         file_count="multiple",
                         file_types=["image"],

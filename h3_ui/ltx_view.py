@@ -8,6 +8,7 @@ from typing import Any, Mapping, Sequence
 import gradio as gr
 
 from .prompt_review import build_prompt_review
+from .image_library import build_image_input, build_image_file_input
 from .prompt_writer_controls import build_remote_prompt_writer_controls
 
 
@@ -118,7 +119,7 @@ def build_ltx_view(
                 with gr.Group(visible=False) as image_group:
                     gr.Markdown("Choose a required start frame and optional keyframes.")
                     with gr.Row():
-                        image = gr.Image(
+                        image = build_image_input(
                             type="filepath", label="Start keyframe (required)"
                         )
                         image_strength = gr.Slider(
@@ -130,7 +131,7 @@ def build_ltx_view(
                         )
                     with gr.Accordion("Optional middle and end keyframes", open=False):
                         with gr.Row():
-                            middle_image = gr.Image(
+                            middle_image = build_image_input(
                                 type="filepath", label="Middle keyframe"
                             )
                             with gr.Column():
@@ -149,7 +150,7 @@ def build_ltx_view(
                                     label="Middle strength",
                                 )
                         with gr.Row():
-                            end_image = gr.Image(type="filepath", label="End keyframe")
+                            end_image = build_image_input(type="filepath", label="End keyframe")
                             end_strength = gr.Slider(
                                 0.0,
                                 1.0,
@@ -164,7 +165,7 @@ def build_ltx_view(
                         "`Reference sheet: ...` and `Generated video: ...` sections. "
                         "Use 768×448, 121 frames (5 seconds at 24 fps)."
                     )
-                    reference_images = gr.File(
+                    reference_images = build_image_file_input(
                         label="Reference images",
                         file_count="multiple",
                         type="filepath",

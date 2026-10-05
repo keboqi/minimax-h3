@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 import gradio as gr
+from .image_library import build_image_input
 
 
 from .prompt_review import build_prompt_review
@@ -89,7 +90,7 @@ def build_music_view(
                     lightning_api_key = writer.lightning_api_key
                     with gr.Row():
                         references = tuple(
-                            gr.Image(type="filepath", label=f"Reference image {index}")
+                            build_image_input(type="filepath", label=f"Reference image {index}")
                             for index in range(1, 4)
                         )
                     enhance = gr.Button("Generate / enhance Music 3 caption")

@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 import gradio as gr
+from ..image_library import build_image_input
 from h3_app.reference_bindings import ReferenceMap, KINDS
 from h3_app.reference_metadata import describe_reference
 from html import escape
@@ -51,12 +52,12 @@ def build_references_section(
     with gr.Group(visible=False) as frame_group:
         gr.Markdown("### First / last frame inputs")
         with gr.Row():
-            first = gr.Image(
+            first = build_image_input(
                 type="filepath",
                 label="First frame (auto resolution)",
                 elem_id="first-frame-image",
             )
-            last = gr.Image(type="filepath", label="Last frame")
+            last = build_image_input(type="filepath", label="Last frame")
         with gr.Accordion("Optional voice references (experimental)", open=False):
             gr.Markdown(
                 'Use short, clean voice samples for new dialogue with these frames. Start with 2–3 seconds per voice. Assign speakers in the prompt, for example: `The woman uses the voice timbre of <Audio 1> and says, "Hello."` Fill slots in order. These uploads apply only to First / last frame mode; Ref2VA has separate uploads. Voice fidelity is experimental.'
@@ -82,31 +83,31 @@ def build_references_section(
         gr.Markdown(services.reference_prompt_help())
         with gr.Accordion("Reference images · up to 9", open=True):
             with gr.Row():
-                ref_image_1 = gr.Image(type="filepath", label="Picture 1")
-                ref_image_2 = gr.Image(
+                ref_image_1 = build_image_input(type="filepath", label="Picture 1")
+                ref_image_2 = build_image_input(
                     type="filepath", label="Picture 2", visible=False
                 )
-                ref_image_3 = gr.Image(
+                ref_image_3 = build_image_input(
                     type="filepath", label="Picture 3", visible=False
                 )
             with gr.Row():
-                ref_image_4 = gr.Image(
+                ref_image_4 = build_image_input(
                     type="filepath", label="Picture 4", visible=False
                 )
-                ref_image_5 = gr.Image(
+                ref_image_5 = build_image_input(
                     type="filepath", label="Picture 5", visible=False
                 )
-                ref_image_6 = gr.Image(
+                ref_image_6 = build_image_input(
                     type="filepath", label="Picture 6", visible=False
                 )
             with gr.Row():
-                ref_image_7 = gr.Image(
+                ref_image_7 = build_image_input(
                     type="filepath", label="Picture 7", visible=False
                 )
-                ref_image_8 = gr.Image(
+                ref_image_8 = build_image_input(
                     type="filepath", label="Picture 8", visible=False
                 )
-                ref_image_9 = gr.Image(
+                ref_image_9 = build_image_input(
                     type="filepath", label="Picture 9", visible=False
                 )
             shown = gr.State(1)
@@ -151,11 +152,16 @@ def build_references_section(
     names = [
         f"{prefix}_{slot}" for _, prefix, limit in KINDS for slot in range(1, limit + 1)
     ]
+    for slot, component in enumerate(controls[:9], start=1):
+        component.h3_reference_slot = slot
+        component.h3_reference_shown = shown
+        component.h3_reference_add = add_reference
 
     def reveal(count):
         count = min(9, count + 1)
         return (
             count,
+            *(gr.update(visible=i < count) for i in range(9)),
             *(gr.update(visible=i < count) for i in range(9)),
             gr.update(interactive=count < 9),
         )
@@ -163,7 +169,12 @@ def build_references_section(
     add_reference.click(
         reveal,
         inputs=shown,
-        outputs=[shown, *controls[:9], add_reference],
+        outputs=[
+            shown,
+            *controls[:9],
+            *(c.h3_library_container for c in controls[:9]),
+            add_reference,
+        ],
         queue=False,
         api_name=False,
         show_progress="hidden",

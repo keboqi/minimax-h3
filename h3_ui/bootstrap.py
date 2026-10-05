@@ -294,6 +294,41 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             validate_path=services.gallery_media_download_path,
             preview_media=services.refresh_media_page,
         )
+        from .image_library import bind_image_library, build_media_image_destinations
+
+        image_inputs = [
+            *h3_components.values.values(),
+            *vars(ltx25_components).values(),
+            *vars(qwen_image21_components).values(),
+            *music3_components.reference_images,
+        ]
+        for component in image_inputs:
+            if hasattr(component, "h3_library_picker"):
+                bind_image_library(
+                    component,
+                    index=gallery_components.search.h3_asset_index,
+                    refresh_page=services.refresh_media_page,
+                    validate_path=services.gallery_media_download_path,
+                )
+        destinations = {
+            "H3 · Reference images": tuple(
+                component for component in h3_components.values.values()
+                if hasattr(component, "h3_reference_slot")
+            ),
+        }
+        for family, inputs in (
+            ("H3", h3_components.values.values()),
+            ("LTX", vars(ltx25_components).values()),
+            ("Qwen", vars(qwen_image21_components).values()),
+        ):
+            for component in inputs:
+                if hasattr(component, "h3_library_picker") and not hasattr(component, "h3_reference_slot"):
+                    destinations[f"{family} · {component.label}"] = component
+        destinations["Music · Reference images"] = music3_components.reference_images
+        build_media_image_destinations(
+            gallery_components, destinations,
+            validate_path=services.gallery_media_download_path,
+        )
         for root, view in (
             (ltx25_view, ltx25_components),
             (music3_view, music3_components),

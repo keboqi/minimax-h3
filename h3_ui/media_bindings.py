@@ -103,6 +103,13 @@ def bind_gallery_view(
                 show_progress="hidden",
                 api_name=False,
             )
+        image_destination_sync = getattr(view.selected, "h3_image_destination_sync", None)
+        if image_destination_sync:
+            fn, inputs, outputs = image_destination_sync
+            event.then(
+                fn, inputs=inputs, outputs=outputs, queue=False,
+                show_progress="hidden", api_name=False,
+            )
         event.then(
             lambda mode, selected: (
                 gr.update(interactive=bool(selected) and mode != "Audio"),

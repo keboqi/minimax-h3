@@ -43,6 +43,7 @@ def run(args):
             "browser_settings.py",
             "browser_voice_refs.py",
             "browser_auto_resolution.py",
+            "browser_image_library.py",
             "browser_workspace.py",
         ):
             subprocess.run(

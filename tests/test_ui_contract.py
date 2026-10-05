@@ -91,6 +91,44 @@ class UiContractTests(unittest.TestCase):
         )
         self.assertIs(event["queue"], False)
 
+    def test_all_generator_image_inputs_have_library_selection(self):
+        image_inputs = [
+            c for c in self.config["components"]
+            if (c["type"] == "image" and c["props"].get("interactive") is not False)
+            or (c["type"] == "file" and c["props"].get("file_types") == ["image"])
+        ]
+        self.assertEqual(len(image_inputs), 19)
+        pickers = [
+            c for c in self.config["components"]
+            if c["type"] == "gallery" and c["props"].get("label") == "Library images"
+        ]
+        self.assertEqual(len(pickers), len(image_inputs))
+        for component in image_inputs:
+            with self.subTest(label=component["props"].get("label")):
+                self.assertTrue(any(
+                    d["outputs"] == [component["id"]]
+                    and any(
+                        target[0] in {p["id"] for p in pickers} and target[1] == "select"
+                        for target in d["targets"]
+                    )
+                    and d["api_visibility"] == "private"
+                    for d in self.config["dependencies"]
+                ))
+
+    def test_media_set_as_offers_all_image_destinations(self):
+        dropdown = next(
+            c for c in self.config["components"]
+            if c["type"] == "dropdown" and c["props"].get("label") == "Set as"
+        )
+        choices = [choice[0] for choice in dropdown["props"]["choices"]]
+        self.assertEqual(len(choices), 9)
+        self.assertIn("H3 · First frame (auto resolution)", choices)
+        self.assertIn("H3 · Reference images", choices)
+        self.assertIn("LTX · End keyframe", choices)
+        self.assertIn("Qwen · Input / reference images", choices)
+        self.assertIn("Music · Reference images", choices)
+        self.assertFalse(dropdown["props"]["interactive"])
+
     def test_workspace_preserves_published_api_parameters_and_returns(self):
         import json
 
