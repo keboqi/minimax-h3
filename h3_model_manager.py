@@ -197,10 +197,12 @@ class ModelManager:
                 try:
                     for key, path in paths:
                         path.unlink(missing_ok=True)
+                        # Forget a file only after it is really gone.
                         manifest["files"].pop(model_manifest_key(MODEL_SPECS[key]), None)
                 finally:
                     write_json_atomic(self.manifest, manifest)
-            self.volume.commit()
+                    # Persist whatever was removed, even after a mid-batch error.
+                    self.volume.commit()
             return f"Removed {len(selected)} selected model files.", self._inventory()
 
 

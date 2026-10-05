@@ -76,6 +76,30 @@ class ModelManagerTests(unittest.TestCase):
         self.assertIn(model_manifest_key(MODEL_SPECS[retained]), remaining)
         self.volume.commit.assert_called_once()
 
+    def test_remove_failure_keeps_unremoved_entries_and_commits_progress(self):
+        first, second = "turbo_lora", "text_encoder"
+        manifest = {"files": {}}
+        for key in (first, second):
+            path = self.manager._path(key)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"model")
+            manifest["files"][model_manifest_key(MODEL_SPECS[key])] = {"size": 5}
+        write_json_atomic(self.manager.manifest, manifest)
+        real_unlink = Path.unlink
+
+        def flaky(path, *args, **kwargs):
+            if path.name == MODEL_SPECS[second].local_name:
+                raise OSError("busy")
+            return real_unlink(path, *args, **kwargs)
+
+        with patch.object(Path, "unlink", flaky), self.assertRaises(OSError):
+            self.manager.remove([first, second], True)
+        remaining = read_json(self.manager.manifest, {})["files"]
+        self.assertNotIn(model_manifest_key(MODEL_SPECS[first]), remaining)
+        self.assertIn(model_manifest_key(MODEL_SPECS[second]), remaining)
+        self.assertTrue(self.manager._path(second).exists())
+        self.volume.commit.assert_called_once()
+
     def test_unknown_keys_rejected_before_mutation(self):
         with self.assertRaises(ValueError):
             self.manager.download(["../anything"])
