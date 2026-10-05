@@ -755,7 +755,7 @@ Run MiniMax H3 directly on Google Colab using [`minimax_h3_colab.ipynb`](./minim
 Features in the Colab notebook:
 - **Instant startup with Python 3.12**: Automatically provisions an isolated Python 3.12 environment with `uv` matching the pinned PyTorch 2.11 + CUDA 13 and SageAttention cp312 runtime requirements.
 - **On-demand model provisioning**: No heavy pre-downloads at startup. Checkpoints, text encoders, VAEs, and LoRAs download automatically on first use.
-- **Public access via Cloudflare Tunnel**: Generates a `*.trycloudflare.com` URL by default. Gradio Share is an optional launch-cell setting.
+- **Public access via Cloudflare Tunnel**: Generates a `*.trycloudflare.com` URL by default. Enable the independent `ENABLE_GRADIO_SHARE` checkbox in launch cell 6 to add a Gradio public URL alongside Cloudflare; it defaults to off.
 
 ## Deploy with Modal
 
