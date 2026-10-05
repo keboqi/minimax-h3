@@ -317,6 +317,7 @@ def run():
                 page.get_by_role(
                     "option", name=f"{failed['id'][:8]} · h3 · failed", exact=True
                 ).click()
+                page.get_by_text("Retry & recovery", exact=True).click()
                 page.get_by_role(
                     "button", name="Retry failed variants", exact=True
                 ).click()
@@ -348,11 +349,7 @@ def run():
                 outsider = other.new_page()
                 outsider.goto(url, wait_until="domcontentloaded")
                 outsider.get_by_role("tab", name="Jobs", exact=True).click()
-                expect(
-                    outsider.get_by_text(
-                        "No jobs for this browser owner yet.", exact=True
-                    )
-                ).to_be_visible()
+                expect(outsider.get_by_text("No jobs yet", exact=True)).to_be_visible()
                 expect(outsider.locator(".h3-job-table")).to_have_count(0)
                 other.close()
                 # Explicit project saving retains content, while recovery keys
@@ -438,6 +435,7 @@ def run():
                     page.locator("#generated-video-gallery .thumbnail-item")
                 ).to_have_count(2)
                 page.get_by_role("button", name="Search library", exact=True).click()
+                page.get_by_text("Tags & lineage", exact=True).click()
                 page.get_by_text("Compare two outputs", exact=True).click()
                 page.locator("#generated-video-gallery .thumbnail-item").filter(
                     has_text="alpha.png"
@@ -536,7 +534,25 @@ def run():
                     page.get_by_role("button", name="Pause both", exact=True)
                 ).to_be_visible()
                 page.get_by_role("button", name="Pause both", exact=True).click()
-                page.screenshot(path=str(ARTIFACTS / "jobs.png"), full_page=True)
+                page.screenshot(path=str(ARTIFACTS / "media.png"), full_page=True)
+                for tab_name in ("Media", "Jobs"):
+                    page.get_by_role("tab", name=tab_name, exact=True).click()
+                    for width in (390, 1440):
+                        page.set_viewport_size({"width": width, "height": 1000})
+                        expect(
+                            page.locator(
+                                ".h3-gallery-shell"
+                                if tab_name == "Media"
+                                else ".h3-jobs-shell"
+                            ).first
+                        ).to_be_visible()
+                        page.screenshot(
+                            path=str(ARTIFACTS / f"{tab_name.lower()}-{width}.png"),
+                            full_page=True,
+                        )
+                        assert page.evaluate(
+                            "document.documentElement.scrollWidth <= innerWidth + 2"
+                        ), f"{tab_name} overflows at {width}px"
                 page.emulate_media(color_scheme="dark", reduced_motion="reduce")
                 page.goto(url + "/?__theme=dark", wait_until="domcontentloaded")
                 page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for(
@@ -556,6 +572,20 @@ def run():
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= innerWidth + 2"
                     )
+                for tab_name in ("Media", "Jobs"):
+                    page.get_by_role("tab", name=tab_name, exact=True).click()
+                    for width in (390, 1440):
+                        page.set_viewport_size({"width": width, "height": 1000})
+                        page.screenshot(
+                            path=str(
+                                ARTIFACTS / f"{tab_name.lower()}-dark-{width}.png"
+                            ),
+                            full_page=True,
+                        )
+                        assert page.evaluate(
+                            "document.documentElement.scrollWidth <= innerWidth + 2"
+                        ), f"{tab_name} dark overflows at {width}px"
+                page.get_by_role("tab", name="Create", exact=True).click()
                 page.set_viewport_size({"width": 1280, "height": 1000})
                 page.evaluate("document.documentElement.style.zoom = '2'")
                 assert page.evaluate(

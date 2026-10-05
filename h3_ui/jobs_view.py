@@ -13,53 +13,132 @@ from .job_admission import execute_accepted, require_owner, dispatch_failed
 from .job_bindings import GPU_QUEUE
 
 
+def state_badge(state):
+    tone = {
+        "completed": "success",
+        "failed": "danger",
+        "cancelled": "muted",
+        "queued": "waiting",
+        "submission_unknown": "danger",
+    }.get(state, "active")
+    return f'<span class="h3-job-badge h3-job-{tone}">{escape(state.replace("_", " "))}</span>'
+
+
+def empty_details():
+    return (
+        '<div class="h3-empty-state"><strong>Select a job</strong>'
+        "<p>Choose a request from the job selector to review its progress, outputs and retry options.</p></div>"
+    )
+
+
 def table(jobs):
     if not jobs:
-        return '<p role="status">No jobs for this browser owner yet.</p>'
+        return (
+            '<div class="h3-empty-state" role="status"><strong>No jobs yet</strong>'
+            "<p>Start a request in Create. Its progress and outputs will appear here.</p></div>"
+        )
+    counts = (
+        ("Queued", sum(job.state == "queued" for job in jobs)),
+        (
+            "Active",
+            sum(job.finished_at is None and job.state != "queued" for job in jobs),
+        ),
+        ("Completed", sum(job.state == "completed" for job in jobs)),
+        (
+            "Needs attention",
+            sum(
+                job.state in {"failed", "submission_unknown", "recovering"}
+                for job in jobs
+            ),
+        ),
+    )
+    metrics = (
+        '<dl class="h3-job-metrics">'
+        + "".join(
+            f"<div><dt>{label}</dt><dd>{count}</dd></div>" for label, count in counts
+        )
+        + "</dl>"
+    )
     rows = []
     for job in jobs:
         cells = (
             job.id[:8],
             job.family,
-            job.state,
             job.stage,
             f"{max(0, int((job.finished_at or time.time()) - job.created_at))}s",
             len(job.outputs),
         )
         rows.append(
             "<tr>"
-            + "".join(f"<td>{escape(str(cell))}</td>" for cell in cells)
+            + f"<td><code>{escape(str(cells[0]))}</code><small>{escape(str(cells[1]))}</small></td>"
+            + f"<td>{state_badge(job.state)}</td>"
+            + "".join(f"<td>{escape(str(cell))}</td>" for cell in cells[2:])
             + "</tr>"
         )
     return (
-        '<div class="h3-job-table"><table><caption>Jobs for this browser owner</caption>'
-        "<thead><tr><th>Job</th><th>Engine</th><th>State</th><th>Stage</th><th>Elapsed</th><th>Outputs</th></tr></thead>"
+        metrics
+        + '<div class="h3-job-table"><table><caption>Jobs for this browser owner</caption>'
+        '<thead><tr><th scope="col">Request / engine</th><th scope="col">Status</th><th scope="col">Current stage</th><th scope="col">Elapsed</th><th scope="col">Outputs</th></tr></thead>'
         "<tbody>" + "".join(rows) + "</tbody></table></div>"
     )
 
 
 def build_jobs_view(root, *, get, post, summary):
     with root:
-        gr.Markdown(
-            "## Jobs\nTrack requests, cancel active work, or retry failed variants. "
-            "Select a job to inspect its outputs and recorded settings."
-        )
-        listing = gr.HTML(table(()))
-        refresh = gr.Button("Refresh jobs")
-        selected = gr.Dropdown([], label="Job", value=None)
-        details = gr.HTML(elem_classes=["h3-job-details"])
-        variants = gr.CheckboxGroup([], label="Failed variants to retry", value=[])
-        with gr.Row():
-            cancel = gr.Button("Cancel selected job", interactive=False)
-            retry = gr.Button("Retry failed variants", interactive=False)
-            finishing = gr.Button("Retry finishing only", interactive=False)
-        finishing_variant = gr.Dropdown(
-            [], label="Retained H3 source variant", value=None
-        )
-        files = gr.File(
-            label="Retained outputs", file_count="multiple", interactive=False
-        )
-        status = gr.Markdown()
+        with gr.Row(equal_height=False, elem_classes=["h3-view-heading"]):
+            gr.Markdown(
+                "## Jobs\nFollow your requests from queue to output. Review a job to download results or recover unfinished work.",
+                scale=4,
+            )
+            refresh = gr.Button("Refresh jobs", scale=0, min_width=140)
+        with gr.Row(equal_height=False, elem_classes=["h3-jobs-workspace"]):
+            with gr.Column(scale=5, min_width=340, elem_classes=["h3-job-history"]):
+                gr.Markdown(
+                    "### Request history\nUpdates automatically every 2 seconds.",
+                    elem_classes=["h3-gallery-section-title"],
+                )
+                listing = gr.HTML(table(()))
+            with gr.Column(
+                scale=3,
+                min_width=320,
+                elem_classes=["h3-preview-panel", "h3-job-inspector"],
+            ):
+                gr.Markdown(
+                    "### Job details", elem_classes=["h3-gallery-section-title"]
+                )
+                selected = gr.Dropdown(
+                    [],
+                    label="Job",
+                    value=None,
+                    info="Choose a request to inspect or manage.",
+                )
+                details = gr.HTML(empty_details(), elem_classes=["h3-job-details"])
+                files = gr.File(
+                    label="Retained outputs",
+                    file_count="multiple",
+                    interactive=False,
+                    visible=False,
+                )
+                cancel = gr.Button(
+                    "Cancel selected job", variant="stop", interactive=False
+                )
+                with gr.Accordion(
+                    "Retry & recovery", open=False, elem_classes=["h3-gallery-card"]
+                ):
+                    gr.Markdown(
+                        "Retry failed variants with their recorded seeds, or finish a retained source without repeating generation."
+                    )
+                    variants = gr.CheckboxGroup(
+                        [], label="Failed variants to retry", value=[]
+                    )
+                    retry = gr.Button(
+                        "Retry failed variants", variant="primary", interactive=False
+                    )
+                    finishing_variant = gr.Dropdown(
+                        [], label="Retained H3 source variant", value=None
+                    )
+                    finishing = gr.Button("Retry finishing only", interactive=False)
+                status = gr.Markdown(elem_classes=["h3-job-action-status"])
         ticket = gr.Textbox(visible=False)
         timer = gr.Timer(2)
         presentation = gr.State({})
@@ -72,6 +151,7 @@ def build_jobs_view(root, *, get, post, summary):
                 "Keep a recovery key to reopen jobs and projects after losing browser cookies. "
                 "The key grants access to your saved content; keep it private."
             )
+            reconcile = gr.Button("Reconnect to backend history")
             recovery_key = gr.Textbox(
                 label="Browser recovery key", type="password", interactive=False
             )
@@ -80,7 +160,6 @@ def build_jobs_view(root, *, get, post, summary):
                 label="Restore browser recovery key", type="password"
             )
             recover_owner = gr.Button("Restore owner and reload")
-        reconcile = gr.Button("Reconnect to backend history")
         with gr.Accordion("Saved projects", open=False):
             gr.Markdown(
                 "**Saving retains the selected job's prompt and source files on this server.** "
@@ -331,11 +410,11 @@ def build_jobs_view(root, *, get, post, summary):
     def inspect_job(job_id, request: gr.Request):
         if not job_id:
             return (
-                "",
+                empty_details(),
                 gr.update(choices=[], value=[]),
                 *(gr.update(interactive=False) for _ in range(3)),
                 gr.update(choices=[], value=None),
-                [],
+                gr.update(value=[], visible=False),
             )
         job = JOBS.owned(require_owner(request), job_id)
         safe_ledger = [
@@ -343,7 +422,12 @@ def build_jobs_view(root, *, get, post, summary):
             for entry in job.ledger
         ]
         detail = (
-            '<p role="status">' + escape(job.error or job.stage) + "</p>"
+            '<div class="h3-job-detail-heading">'
+            + state_badge(job.state)
+            + f"<code>{escape(job.id[:8])}</code></div>"
+            + '<p role="status">'
+            + escape(job.error or job.stage)
+            + "</p>"
             "<details><summary>Recorded execution and seeds</summary><pre>"
             + escape(json.dumps(safe_ledger, indent=2))
             + "</pre></details>"
@@ -372,7 +456,10 @@ def build_jobs_view(root, *, get, post, summary):
                 and job.finished_at is not None
             ),
             gr.update(choices=sources, value=sources[0][1] if sources else None),
-            [path for path in job.outputs if Path(path).is_file()],
+            gr.update(
+                value=[path for path in job.outputs if Path(path).is_file()],
+                visible=any(Path(path).is_file() for path in job.outputs),
+            ),
         )
 
     selected.change(
@@ -432,7 +519,10 @@ def build_jobs_view(root, *, get, post, summary):
         except JobCancelled:
             pass
         yield (
-            [path for path in job.outputs if Path(path).is_file()],
+            gr.update(
+                value=[path for path in job.outputs if Path(path).is_file()],
+                visible=any(Path(path).is_file() for path in job.outputs),
+            ),
             f"Job `{job.id[:8]}` · {job.state}. " + (job.error or ""),
         )
 

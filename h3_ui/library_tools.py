@@ -70,11 +70,10 @@ def build_library_tools(root, list_paths, *, view, system_root, validate_path):
     index = AssetIndex(JOBS.store, list_paths)
     view.search.h3_asset_index = index
     with view.inspector:
-        gr.Markdown(
-            "Tags and favorites are shared library metadata. Search matches filenames, "
-            "tags and technical settings; prompts are excluded."
-        )
-        with gr.Accordion("Tags & lineage", open=True):
+        with gr.Accordion("Tags & lineage", open=False):
+            gr.Markdown(
+                "Organize this asset with tags and favorites. Annotations are shared across the library."
+            )
             with gr.Row():
                 tags = gr.Textbox(label="Tags (comma separated)")
                 favorite = gr.Checkbox(label="Favorite")

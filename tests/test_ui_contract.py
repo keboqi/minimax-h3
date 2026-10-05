@@ -364,7 +364,7 @@ class UiContractTests(unittest.TestCase):
             component.get("props", {}).get("label"): component
             for component in self.config["components"]
         }
-        mode = controls["Gallery type"]
+        mode = controls["Media type"]
         self.assertEqual(mode["props"]["value"], "Video")
         self.assertEqual(
             [choice[1] for choice in mode["props"]["choices"]],

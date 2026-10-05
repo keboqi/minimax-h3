@@ -21,11 +21,11 @@ class AppViews:
     ltx25: gr.Group
     music3: gr.Group
     yue2: gr.Group
-    gallery: gr.Group
+    gallery: gr.Column
     api: gr.Group
     gallery_tab: gr.Tab
     system: gr.Group | None = None
-    jobs: gr.Group | None = None
+    jobs: gr.Column | None = None
     task: gr.Radio | None = None
     engine: gr.Dropdown | None = None
     engine_tabs: gr.Tabs | None = None
@@ -86,9 +86,9 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
                 with gr.Tab("YuE2", id="yue2"):
                     yue2 = gr.Group(elem_classes=["h3-engine-view"])
         with gr.Tab("Media", id="media") as gallery_tab:
-            gallery = gr.Group(elem_classes=["h3-gallery-shell"])
+            gallery = gr.Column(elem_classes=["h3-gallery-shell"])
         with gr.Tab("Jobs", id="jobs"):
-            jobs = gr.Group()
+            jobs = gr.Column(elem_classes=["h3-jobs-shell"])
         with gr.Tab("System", id="system"):
             system = gr.Group()
         with gr.Tab("API & workflows", id="api"):

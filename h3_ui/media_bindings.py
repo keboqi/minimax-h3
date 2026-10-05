@@ -102,6 +102,17 @@ def bind_gallery_view(
                 show_progress="hidden",
                 api_name=False,
             )
+        event.then(
+            lambda mode, selected: (
+                gr.update(interactive=bool(selected) and mode != "Audio"),
+                gr.update(interactive=bool(selected)),
+            ),
+            inputs=[view.mode, view.selected],
+            outputs=[view.post_run, view.delete],
+            queue=False,
+            show_progress="hidden",
+            api_name=False,
+        )
         return event
 
     if view.search is not None:

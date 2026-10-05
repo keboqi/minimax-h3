@@ -53,7 +53,7 @@ class GalleryView:
 
 
 def build_gallery_view(
-    root: gr.Group,
+    root: gr.Column,
     *,
     postprocess_options: Sequence[str],
     resolution_choices: Sequence[str],
@@ -65,65 +65,56 @@ def build_gallery_view(
 ) -> GalleryView:
     with root:
         gr.Markdown(
-            "## Media gallery\nBrowse generated videos, images, or audio and import local media. Video and image outputs can also be enhanced.",
-            elem_classes=["h3-gallery-heading"],
+            "## Media library\nYour outputs, in one place. Find a favorite, review the details, and create an enhanced copy.",
+            elem_classes=["h3-gallery-heading", "h3-view-heading"],
         )
-        with gr.Row(equal_height=True, elem_classes=["h3-gallery-toolbar"]):
+        with gr.Row(equal_height=False, elem_classes=["h3-gallery-toolbar"]):
             mode = gr.Radio(
                 choices=["Video", "Image", "Audio"],
                 value="Video",
-                label="Gallery type",
+                label="Media type",
                 elem_id="h3-library-kind",
                 scale=0,
-                min_width=180,
+                min_width=310,
             )
             refresh = gr.Button(
-                "Refresh library", variant="secondary", scale=0, min_width=150
+                "Refresh library",
+                variant="secondary",
+                scale=0,
+                min_width=150,
+                elem_classes=["h3-library-button"],
             )
             status = gr.Markdown(
-                "Open this tab to scan generated videos.",
+                "Choose a media type to browse your library.",
                 elem_classes=["h3-gallery-status"],
             )
         paths = gr.State([])
         selected = gr.State(None)
-        with gr.Row(elem_classes=["h3-gallery-filters"]):
+        with gr.Row(equal_height=False, elem_classes=["h3-gallery-filters"]):
             query = gr.Textbox(
                 label="Search media",
-                placeholder="Filename, tags or technical settings",
+                placeholder="Search filenames, tags or settings…",
                 scale=3,
             )
             favorite_only = gr.Checkbox(label="Favorites only", scale=1)
-            search = gr.Button("Search library", scale=0)
-        filters = gr.State({"query": "", "favorite": False})
-        with gr.Accordion(
-            "Import local media", open=False, elem_classes=["h3-gallery-card"]
-        ):
-            gr.Markdown(
-                "Add an existing video, image, or audio file to the active library so it can be previewed alongside generated outputs."
+            search = gr.Button(
+                "Search library",
+                scale=0,
+                min_width=150,
+                elem_classes=["h3-library-button"],
             )
-            with gr.Row(equal_height=True, elem_classes=["h3-gallery-import"]):
-                upload_video = gr.File(
-                    label="Choose a video, image, or audio file",
-                    file_count="single",
-                    file_types=["video", "image", "audio"],
-                    type="filepath",
-                    height=90,
-                    scale=4,
-                )
-                import_video = gr.Button(
-                    "Add to library", variant="primary", scale=0, min_width=170
-                )
+        filters = gr.State({"query": "", "favorite": False})
         with gr.Row(equal_height=False, elem_classes=["h3-gallery-workspace"]):
-            with gr.Column(scale=3, min_width=320):
+            with gr.Column(scale=5, min_width=320):
                 gr.Markdown(
-                    "### Library\nSelect an item to load the full video, image, or audio output.",
+                    "### Browse outputs\nSelect a thumbnail to preview it and see its details.",
                     elem_classes=["h3-gallery-section-title"],
                 )
                 grid = gr.Gallery(
                     value=[],
                     label="Media library",
                     columns=3,
-                    height=620,
+                    height=420,
                     object_fit="cover",
                     allow_preview=False,
                     fit_columns=False,
@@ -131,7 +122,27 @@ def build_gallery_view(
                     elem_classes=["h3-gallery-grid"],
                 )
                 shown = gr.State(48)
-                show_more = gr.Button("Show more", interactive=False)
+                show_more = gr.Button(
+                    "Show more", interactive=False, variant="secondary"
+                )
+                with gr.Accordion(
+                    "Import local media", open=False, elem_classes=["h3-gallery-card"]
+                ):
+                    gr.Markdown(
+                        "Add an existing video, image, or audio file to the active library so it can be previewed alongside generated outputs."
+                    )
+                    with gr.Row(equal_height=True, elem_classes=["h3-gallery-import"]):
+                        upload_video = gr.File(
+                            label="Choose a video, image, or audio file",
+                            file_count="single",
+                            file_types=["video", "image", "audio"],
+                            type="filepath",
+                            height=90,
+                            scale=4,
+                        )
+                        import_video = gr.Button(
+                            "Add to library", variant="primary", scale=0, min_width=170
+                        )
                 with gr.Accordion(
                     "Manage library",
                     open=False,
@@ -146,7 +157,9 @@ def build_gallery_view(
                     with gr.Row(
                         equal_height=True, elem_classes=["h3-gallery-danger-actions"]
                     ):
-                        delete = gr.Button("Delete selected", variant="stop")
+                        delete = gr.Button(
+                            "Delete selected", variant="stop", interactive=False
+                        )
                         empty = gr.Button("Empty generated library", variant="stop")
                     with gr.Group(visible=False) as deletion_confirmation:
                         deletion_message = gr.Markdown()
@@ -156,21 +169,21 @@ def build_gallery_view(
                             )
                             deletion_cancel = gr.Button("Keep media")
                         deletion_intent = gr.State(None)
-            with gr.Column(scale=5, min_width=320, elem_classes=["h3-preview-panel"]):
+            with gr.Column(scale=4, min_width=320, elem_classes=["h3-preview-panel"]):
                 gr.Markdown(
-                    "### Preview & enhance\nReview the selected item, download it, or create an enhanced copy.",
+                    "### Selected media\nPreview and download your original. Enhancements are saved as a new copy.",
                     elem_classes=["h3-gallery-section-title"],
                 )
                 player = gr.Video(
                     label="Selected video",
-                    height=420,
+                    height=360,
                     interactive=False,
                     elem_classes=["h3-gallery-player"],
                 )
                 image = gr.Image(
                     label="Selected image",
                     type="filepath",
-                    height=420,
+                    height=360,
                     visible=False,
                     interactive=False,
                     elem_classes=["h3-gallery-player"],
@@ -183,7 +196,7 @@ def build_gallery_view(
                     elem_classes=["h3-gallery-player"],
                 )
                 download = gr.Markdown(elem_classes=["h3-gallery-download"])
-                inspector = gr.Column()
+                inspector = gr.Column(elem_classes=["h3-media-inspector"])
                 with gr.Accordion(
                     "Enhance selected media",
                     open=False,
@@ -254,7 +267,10 @@ def build_gallery_view(
                         )
                     with gr.Row(equal_height=True, elem_classes=["h3-gallery-actions"]):
                         post_run = gr.Button(
-                            "Enhance selected media", variant="primary", scale=3
+                            "Enhance selected media",
+                            variant="primary",
+                            scale=3,
+                            interactive=False,
                         )
                         post_stop = gr.Button("Interrupt", scale=1)
                     post_status = gr.Markdown(elem_classes=["h3-gallery-post-status"])
