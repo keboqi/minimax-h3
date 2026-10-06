@@ -810,11 +810,13 @@ hosted prompt enhancer available without entering a key in the UI, also store
 The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
-The deployment pins ComfyUI post-v0.38.0 at immutable revision
-`65787d668397d230bf5839d69a0a7239e2dad378` (native H3 VAE offloading and
+The deployment pins ComfyUI v0.39.0 at immutable revision
+`b0b743566f65daafc423b4fea8a2fbda94b3384a` (native H3 VAE offloading and
 embedding memory fixes, including LynnReal light VAE support) with its required
-frontend package 1.53.10, Comfy Kitchen 0.2.36 and upstream aimdo 0.5.5.
-The source also pins workflow templates 0.11.74 and embedded docs 0.5.13.
+frontend package 1.53.10, Comfy Kitchen 0.2.37 and upstream aimdo 0.5.5.
+The source also pins workflow templates 0.11.76 and embedded docs 0.5.13.
+Version 0.39.0 also reduces asset scan/database contention, pauses scans during
+generation, fixes cross-volume uploads, and updates Qwen Image attention support.
 This update includes native Qwen Image 2.1 generation/editing, corrected edit
 KV-cache placement, compiled Qwen transformer blocks, sparse attention, Comfy
 Compiler, optional H3 reference VAEs and DiffSynth/ModelScope H3 LoRA support.
