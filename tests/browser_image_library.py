@@ -40,7 +40,12 @@ def generate(batch_count, *args):
     Path(os.environ['H3_TEST_CAPTURE']).write_text(json.dumps(values), encoding='utf-8')
     yield (*(gr.skip() for _ in range(11)), 'Library generation fixture completed: ' + values['prompt'])
 app.generate_for_ui = generate
-app.build_ui().queue().launch(server_name='127.0.0.1', server_port={port}, inbrowser=False, ssr_mode=False)
+demo = app.build_ui().queue()
+for name in ('portrait.png', 'second.png'):
+    app.write_snapshot(app.OUTPUTS_DIR / name, {{'family': 'Browser fixture'}})
+import uvicorn
+server = app.build_server(demo, [str(app.OUTPUT_DIR.resolve()), str(app.OUTPUTS_DIR.resolve())])
+uvicorn.run(server, host='127.0.0.1', port={port}, log_level='warning')
 """
         process = subprocess.Popen(
             [sys.executable, "-u", "-c", source], cwd=ROOT,

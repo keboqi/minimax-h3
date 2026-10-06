@@ -50,6 +50,7 @@ class GalleryView:
     search: Any = None
     inspector: Any = None
     filters: Any = None
+    scan_history: Any = None
 
 
 def build_gallery_view(
@@ -84,6 +85,7 @@ def build_gallery_view(
                 min_width=150,
                 elem_classes=["h3-library-button"],
             )
+            scan_history = gr.Button("Scan historical media", variant="secondary", scale=0, min_width=180)
             status = gr.Markdown(
                 "Choose a media type to browse your library.",
                 elem_classes=["h3-gallery-status"],
@@ -317,4 +319,5 @@ def build_gallery_view(
         search,
         inspector,
         filters,
+        scan_history,
     )

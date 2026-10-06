@@ -487,6 +487,7 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
             IMAGE_EXTENSIONS,
             AUDIO_EXTENSIONS,
             css,
+            GALLERY_THUMBNAILS_DIR,
         ),
     )
 
@@ -2418,6 +2419,9 @@ GALLERY_PAGE_SIZE = 48
 
 
 def refresh_gallery_page(limit: int = GALLERY_PAGE_SIZE) -> gallery_store.AssetPage:
+    inventory = _catalog_inventory("Video", limit)
+    if inventory is not None:
+        return _mediacontroller().refresh_media_page("Video", limit, paths=inventory)
     return _mediacontroller().refresh_gallery_page(limit)
 
 
@@ -2436,9 +2440,20 @@ def list_media_paths(mode):
 
 
 def refresh_media_page(
-    mode: str = "Video", limit: int = GALLERY_PAGE_SIZE, *, paths=None, preview_timeout=None
+    mode: str = "Video", limit: int = GALLERY_PAGE_SIZE, *, paths=None, preview_timeout=None, previous=None
 ) -> gallery_store.AssetPage:
-    return _mediacontroller().refresh_media_page(mode, limit, paths=paths, preview_timeout=preview_timeout)
+    if paths is None and previous is None:
+        paths = _catalog_inventory(mode, limit)
+    return _mediacontroller().refresh_media_page(mode, limit, paths=paths, preview_timeout=preview_timeout, previous=previous)
+
+
+def _catalog_inventory(mode, limit):
+    from h3_app.media_catalog import get_media_catalog
+    catalog = get_media_catalog()
+    if catalog is None:
+        return None
+    records, total = catalog.store.catalog_page(kind=mode, limit=limit, roots=catalog.roots)
+    return gallery_store.AssetInventory(mode, tuple(Path(row["path"]) for row in records), tuple(records), total)
 
 
 def refresh_media_gallery(mode: str = "Video", limit: int = GALLERY_PAGE_SIZE):
@@ -3516,6 +3531,8 @@ def build_ui() -> gr.Blocks:
     from h3_app.workspace_store import default_store
 
     JOBS.configure(default_store(OUTPUTS_DIR))
+    from h3_app.media_catalog import configure_media_catalog
+    configure_media_catalog(JOBS.store, _runtime_config)
     from h3_app.media import history_output_candidates
 
     JOBS.history_outputs = lambda history, entry: [

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from types import EllipsisType
+from typing import Any
 from urllib.parse import quote
 
 from h3_app.catalog import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
@@ -25,10 +26,12 @@ _GALLERY_RESOLUTION_CACHE_LOCK = Lock()
 
 @dataclass(frozen=True)
 class AssetInventory:
-    """Ordered paths from one server-side managed-library scan."""
+    """Ordered catalog records, or paths supplied by an explicit scan."""
 
     kind: str
     paths: tuple[Path, ...]
+    records: tuple[dict, ...] = ()
+    total: int | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +49,7 @@ class AssetPage:
     kind: str
     unavailable: int = 0
     preparing: int = 0
+    preview_jobs: tuple[tuple[int, Any], ...] = ()
 
     def __post_init__(self):
         if len(self.items) != len(self.paths):
@@ -69,7 +73,7 @@ class AssetPage:
         return list(self.items), list(self.paths), self.status
 
     @classmethod
-    def from_scan(cls, items, paths, total, limit, kind, unavailable=0, preparing=0):
+    def from_scan(cls, items, paths, total, limit, kind, unavailable=0, preparing=0, preview_jobs=()):
         scanned = min(max(0, int(limit)), total)
         return cls(
             tuple(items),
@@ -79,6 +83,7 @@ class AssetPage:
             kind,
             unavailable,
             preparing,
+            tuple(preview_jobs),
         )
 
 
@@ -171,41 +176,54 @@ def managed_audio_path(
     return resolved
 
 
-def _gallery_paths(extensions, *, limit, runtime, exclude_thumbnails=False):
+def _gallery_paths(extensions, *, limit, runtime, exclude_thumbnails=False, strict=False):
     """Walk once without statting sidecars or descending into preview/work dirs."""
     media = {}
     thumbnail_root = runtime.gallery_thumbnails_dir.resolve()
+    scanned_roots = set()
     for root in (runtime.output_dir, runtime.outputs_dir):
-        if not root.is_dir() or ".processing" in root.parts:
+        try:
+            is_directory = stat.S_ISDIR(root.stat().st_mode)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            if strict:
+                raise
+            continue
+        if not is_directory or ".processing" in root.parts:
             continue
         resolved_root = root.resolve()
-        for directory, subdirs, filenames in os.walk(root):
-            subdirs[:] = [
-                name
-                for name in subdirs
-                if name != ".processing"
-                and not (Path(directory) / name)
-                .resolve()
-                .is_relative_to(thumbnail_root)
-            ]
-            for name in filenames:
-                candidate = Path(directory) / name
-                if candidate.suffix.lower() not in extensions:
-                    continue
-                try:
-                    info = candidate.stat()
-                    resolved = candidate.resolve()
-                    if (
-                        stat.S_ISREG(info.st_mode)
-                        and resolved.is_relative_to(resolved_root)
-                        and not (
-                            exclude_thumbnails
-                            and resolved.is_relative_to(thumbnail_root)
-                        )
-                    ):
-                        media[resolved] = (candidate, info.st_mtime)
-                except OSError:
-                    continue
+        if resolved_root in scanned_roots:
+            continue
+        scanned_roots.add(resolved_root)
+        directories = [resolved_root]
+        while directories:
+            directory = directories.pop()
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        candidate = directory / entry.name
+                        if entry.is_dir(follow_symlinks=False):
+                            if entry.name not in {".processing", ".gallery_thumbnails", ".gallery-thumbnails", ".h3-workspace"} and not candidate.is_relative_to(thumbnail_root):
+                                directories.append(candidate)
+                            continue
+                        if candidate.suffix.lower() not in extensions:
+                            continue
+                        try:
+                            info = entry.stat()
+                            # scandir paths are already rooted at the canonical
+                            # directory. Only a file symlink needs another resolve.
+                            resolved = candidate.resolve() if entry.is_symlink() else candidate
+                            if stat.S_ISREG(info.st_mode) and resolved.is_relative_to(resolved_root) and not (exclude_thumbnails and resolved.is_relative_to(thumbnail_root)):
+                                media[resolved] = (resolved, info.st_mtime)
+                        except OSError as exc:
+                            if strict and not isinstance(exc, FileNotFoundError):
+                                raise
+                            continue
+            except OSError as exc:
+                if strict and not isinstance(exc, FileNotFoundError):
+                    raise
+                continue
     ordered = [
         path
         for path, _ in sorted(media.values(), key=lambda item: item[1], reverse=True)
@@ -214,18 +232,19 @@ def _gallery_paths(extensions, *, limit, runtime, exclude_thumbnails=False):
 
 
 def gallery_video_paths(
-    *, limit: int | None | EllipsisType = ..., runtime: RuntimeConfig
+    *, limit: int | None | EllipsisType = ..., runtime: RuntimeConfig, strict=False
 ) -> list[Path]:
     """Return generated videos, optionally limited to the newest entries."""
     return _gallery_paths(
         VIDEO_EXTENSIONS,
         limit=runtime.gallery_limit if limit is Ellipsis else limit,
         runtime=runtime,
+        strict=strict,
     )
 
 
 def gallery_image_paths(
-    *, limit: int | None | EllipsisType = ..., runtime: RuntimeConfig
+    *, limit: int | None | EllipsisType = ..., runtime: RuntimeConfig, strict=False
 ) -> list[Path]:
     """Return generated images, optionally limited to the newest entries."""
     return _gallery_paths(
@@ -233,17 +252,19 @@ def gallery_image_paths(
         limit=runtime.gallery_limit if limit is Ellipsis else limit,
         runtime=runtime,
         exclude_thumbnails=True,
+        strict=strict,
     )
 
 
 def gallery_audio_paths(
-    *, limit: int | None | EllipsisType = ..., runtime: RuntimeConfig
+    *, limit: int | None | EllipsisType = ..., runtime: RuntimeConfig, strict=False
 ) -> list[Path]:
     """Return generated audio files, optionally limited to the newest entries."""
     return _gallery_paths(
         AUDIO_EXTENSIONS,
         limit=runtime.gallery_limit if limit is Ellipsis else limit,
         runtime=runtime,
+        strict=strict,
     )
 
 

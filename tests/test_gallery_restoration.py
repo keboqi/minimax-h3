@@ -52,15 +52,16 @@ class GalleryRestorationTests(unittest.TestCase):
             patch.object(
                 app, "absolute_gallery_media_download_url", return_value="/image"
             ),
+            patch.object(Path, "stat", return_value=SimpleNamespace(st_mtime_ns=1, st_size=2)),
         ):
             updates = app.select_gallery_media(
-                "Image", ["image.png"], Mock(), SimpleNamespace(index=0)
+                "Image", ["image.png"], SimpleNamespace(request=SimpleNamespace(base_url="https://example.com/")), SimpleNamespace(index=0)
             )
         self.assertEqual(
             [item["visible"] for item in updates[:3]], [False, True, False]
         )
         self.assertEqual(
-            [item["value"] for item in updates[:3]], [None, "/image", None]
+            [item["value"] for item in updates[:3]], [None, "/image?v=1-2", None]
         )
 
     def test_processed_image_hides_video_preview(self):

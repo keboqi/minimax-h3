@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import gradio as gr
+from .media_previews import browser_gallery_items
 
 
 @dataclass(frozen=True)
@@ -160,10 +161,10 @@ def bind_image_library(component, *, index, refresh_page, validate_path):
     picker = component.h3_library_picker
     outputs = [picker.grid, picker.paths, picker.shown, picker.more, picker.status]
 
-    def browse(query, limit=24):
-        page = refresh_page("Image", limit, paths=index.inventory("Image", query or ""))
+    def browse(query, limit=24, request: gr.Request = None):
+        page = refresh_page("Image", limit, paths=index.inventory("Image", query or "", limit=limit))
         return (
-            list(page.items), list(page.paths), limit,
+            browser_gallery_items(page.items, request, version=index.versions.get("Image")), list(page.paths), limit,
             gr.update(interactive=page.next_cursor is not None),
             f"{page.total} matching images. Select a thumbnail to "
             + ("append it to the inputs." if isinstance(component, gr.File) else "use it."),
@@ -175,8 +176,11 @@ def bind_image_library(component, *, index, refresh_page, validate_path):
         queue=False, api_name=False, show_progress="hidden",
         trigger_mode="always_last",
     )
+    def more(query, shown, request: gr.Request):
+        return browse(query, shown + 24, request=request)
+
     picker.more.click(
-        lambda query, shown: browse(query, shown + 24),
+        more,
         inputs=[picker.query, picker.shown], outputs=outputs,
         queue=False, api_name=False, show_progress="hidden",
     )

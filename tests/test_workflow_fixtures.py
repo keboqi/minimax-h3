@@ -59,6 +59,9 @@ class WorkflowFixtureTests(unittest.TestCase):
             ]
         )
         with ExitStack() as stack:
+            # This self-test supplies temporary filesystem inventories directly;
+            # creation/restart catalog behavior has dedicated AssetIndex tests.
+            stack.enter_context(patch.object(app, "_catalog_inventory", return_value=None))
             stack.enter_context(
                 patch.object(policy, "new_event_loop", side_effect=tracked_loop)
             )

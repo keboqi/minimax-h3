@@ -125,16 +125,16 @@ class ImageLibraryTests(unittest.TestCase):
             if fn.outputs == [picker.grid, picker.paths, picker.shown, picker.more, picker.status]
         )
         result = browse("favorite")
-        index.inventory.assert_called_once_with("Image", "favorite")
+        index.inventory.assert_called_once_with("Image", "favorite", limit=24)
         refresh.assert_called_once_with("Image", 24, paths=inventory)
         self.assertEqual(result[0], [("thumbnail.jpg", "Original")])
         self.assertEqual(result[1], ["original.png"])
         self.assertTrue(result[3]["interactive"])
         more = next(fn.fn for fn in demo.fns.values() if fn.inputs == [picker.query, picker.shown])
-        more("favorite", 24)
+        more("favorite", 24, None)
         refresh.assert_called_with("Image", 48, paths=inventory)
         browse(None)
-        index.inventory.assert_called_with("Image", "")
+        index.inventory.assert_called_with("Image", "", limit=24)
 
 
 if __name__ == "__main__":

@@ -78,6 +78,7 @@ class ServerConfig:
     image_extensions: frozenset[str]
     audio_extensions: frozenset[str]
     css: str
+    thumbnail_dir: Path | None = None
 
 
 _HOP_BY_HOP_HEADERS = {
@@ -230,6 +231,17 @@ def build_server(
     app.add_middleware(ReverseProxySchemeMiddleware)
     install_queue_transport(app)
 
+    @app.get("/media-previews/{filename}", include_in_schema=False)
+    def media_preview(filename: str) -> FileResponse:
+        root = config.thumbnail_dir
+        if root is None or not re.fullmatch(r"[a-zA-Z0-9_-]+\.(jpg|png)", filename):
+            raise HTTPException(status_code=404, detail="Preview not found")
+        root = root.resolve()
+        candidate = (root / filename).resolve()
+        if not candidate.is_relative_to(root) or not candidate.is_file():
+            raise HTTPException(status_code=404, detail="Preview not found")
+        return FileResponse(candidate, headers={"Cache-Control": "private, max-age=60"})
+
     @app.get(
         "/ltx25-workflows/{workflow_id}.json",
         name="download_ltx25_workflow",
@@ -268,7 +280,7 @@ def build_server(
         name="download_generated_video",
         include_in_schema=False,
     )
-    async def download_generated_video(
+    def download_generated_video(
         bucket: str,
         file_path: str,
         download: bool = False,
@@ -295,6 +307,7 @@ def build_server(
         return FileResponse(
             candidate,
             filename=candidate.name if download else None,
+            headers={"Cache-Control": "private, max-age=60"} if not download else None,
         )
 
     @app.api_route(
@@ -408,6 +421,7 @@ def build_server(
         demo,
         path="/",
         allowed_paths=allowed_paths,
+        blocked_paths=[str(config.outputs_dir / ".h3-workspace")],
         show_error=True,
         css=config.css,
         theme=gr.themes.Default(primary_hue="blue", secondary_hue="slate"),

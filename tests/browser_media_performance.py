@@ -1,4 +1,4 @@
-"""Cold poster generation must not block browsing, selection, or mode changes."""
+"""Persisted previews bypass scanning and hashing; selection keeps originals."""
 
 import os
 from pathlib import Path
@@ -21,13 +21,28 @@ def run():
             port = sock.getsockname()[1]
         env = {**os.environ, "HF_HUB_OFFLINE": "1", "H3_WORKSPACE_DIR": str(state),
                "GRADIO_OUTPUT_DIR": str(state / "media"), "COMFY_DIR": str(state / "comfy")}
-        code = (
-            "import sys,time,runpy; from h3_ui import application as app; "
-            "original=app.gallery_thumbnail; "
-            "app.gallery_thumbnail=lambda path: (time.sleep(4),original(path))[1]; "
-            f"sys.argv=['fixture','{port}']; "
-            "runpy.run_module('tests.workspace_fixture',run_name='__main__')"
-        )
+        code = f"""
+import sys,runpy
+from h3_ui import application as app
+from gradio import processing_utils
+from PIL import Image
+original_new = Image.new
+def full_resolution_fixture(mode, size, *args, **kwargs):
+    return original_new(mode, (960,768) if size == (320,256) else size, *args, **kwargs)
+Image.new = full_resolution_fixture
+original_hash = processing_utils.hash_file
+def forbid_scan(*args, **kwargs):
+    raise AssertionError('Browsing must not scan the filesystem')
+def forbid_thumbnail_hash(path, *args, **kwargs):
+    if '.gallery_thumbnails' in str(path):
+        raise AssertionError('Thumbnail must be served directly')
+    return original_hash(path, *args, **kwargs)
+app.gallery_image_paths = app.gallery_video_paths = app.gallery_audio_paths = forbid_scan
+app.gallery_store.gallery_image_paths = app.gallery_store.gallery_video_paths = app.gallery_store.gallery_audio_paths = forbid_scan
+processing_utils.hash_file = forbid_thumbnail_hash
+sys.argv=['fixture','{port}']
+runpy.run_module('tests.workspace_fixture',run_name='__main__')
+"""
         with (state / "server.log").open("wb") as log:
             process = subprocess.Popen(
                 [sys.executable, "-u", "-c", code], cwd=root, env=env,
@@ -63,7 +78,6 @@ def run():
                         thumbs = page.locator("#generated-video-gallery .thumbnail-item")
                         expect(thumbs).to_have_count(2, timeout=2500)
                         first_page = monotonic() - started
-                        expect(page.locator(".h3-gallery-status").first).to_contain_text("Preparing")
                         started = monotonic()
                         thumbs.filter(has_text="alpha.mp4").click()
                         player = page.locator(".h3-gallery-player video")
@@ -72,6 +86,16 @@ def run():
                         page.locator("#h3-library-kind").get_by_label("Image", exact=True).check()
                         expect(thumbs).to_have_count(2, timeout=2500)
                         expect(thumbs.first).to_contain_text(".png")
+                        thumbs.filter(has_text="alpha.png").click()
+                        original = page.locator('.h3-gallery-player img[src*="/downloads/"]').first
+                        expect(original).to_be_visible(timeout=2000)
+                        expect(original).to_have_js_property("naturalWidth", 960)
+                        expect(original).to_have_js_property("naturalHeight", 768)
+                        assert requests.get(original.get_attribute("src"), timeout=5).content == (state / "media" / "alpha.png").read_bytes()
+                        expect(thumbs.first.locator("img")).to_have_attribute("src", __import__("re").compile(r"/media-previews/"))
+                        page.get_by_role("button", name="Add to compare A", exact=True).click()
+                        expect(page.locator("#h3-compare-a")).to_contain_text("alpha.png")
+                        expect(page.locator("#h3-compare-a img")).to_have_attribute("src", __import__("re").compile(r"/media-previews/"))
                         # Wait beyond the old video decode: it must not replace images.
                         page.wait_for_timeout(4500)
                         expect(thumbs.first).to_contain_text(".png")

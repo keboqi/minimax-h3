@@ -31,10 +31,11 @@ _INDEX_ASSET_SQL = (
 
 
 class WorkspaceStore:
-    def __init__(self, root):
+    def __init__(self, root, *, database=None):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
-        self.database = self.root / "workspace.sqlite3"
+        self.database = Path(database).resolve() if database is not None else self.root / "workspace.sqlite3"
+        self.database.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version > SCHEMA_VERSION:
@@ -57,6 +58,9 @@ class WorkspaceStore:
                 CREATE TABLE IF NOT EXISTS annotations (
                     asset_id TEXT PRIMARY KEY, tags TEXT NOT NULL DEFAULT '[]',
                     favorite INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS media_catalog (
+                    asset_id TEXT PRIMARY KEY REFERENCES assets(id));
+                CREATE INDEX IF NOT EXISTS assets_kind_available_modified ON assets(kind, available, modified DESC);
                 CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner, created);
                 CREATE INDEX IF NOT EXISTS projects_owner ON projects(owner, created);
             """
@@ -342,21 +346,28 @@ class WorkspaceStore:
                     json.dumps(metadata or {}),
                 ),
             )
+            if metadata and "_media" in metadata:
+                db.execute("INSERT OR IGNORE INTO media_catalog VALUES (?)", (asset_id,))
+            else:
+                db.execute("DELETE FROM media_catalog WHERE asset_id=?", (asset_id,))
         return asset_id
 
     def index_assets(self, assets):
-        """Commit a library scan once, preserving existing identities/annotations."""
+        """Commit media records once, preserving existing identities/annotations."""
         rows = []
         indexed = set()
+        catalog_ids = []
+        uncataloged_ids = []
         for source, kind, metadata in assets:
             try:
                 path = Path(source).resolve()
                 modified = path.stat().st_mtime
             except OSError:
                 continue
+            asset_id = uuid.uuid5(uuid.NAMESPACE_URL, path.as_uri()).hex
             rows.append(
                 (
-                    uuid.uuid5(uuid.NAMESPACE_URL, path.as_uri()).hex,
+                    asset_id,
                     str(path),
                     kind,
                     modified,
@@ -364,9 +375,15 @@ class WorkspaceStore:
                 )
             )
             indexed.add(path)
+            if metadata and "_media" in metadata:
+                catalog_ids.append((asset_id,))
+            else:
+                uncataloged_ids.append((asset_id,))
         if rows:
             with self.connect() as db:
                 db.executemany(_INDEX_ASSET_SQL, rows)
+                db.executemany("INSERT OR IGNORE INTO media_catalog VALUES (?)", catalog_ids)
+                db.executemany("DELETE FROM media_catalog WHERE asset_id=?", uncataloged_ids)
         return indexed
 
     def annotate(self, asset_id, *, tags, favorite):
@@ -412,6 +429,52 @@ class WorkspaceStore:
             data["tags"] = json.loads(data["tags"])
             results.append(data)
         return results
+
+    def catalog_page(self, *, kind, query="", favorite=False, limit=None, roots=None):
+        """Read a bounded, persisted media page without touching output files."""
+        pattern = "%" + query.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        where = (
+            "FROM assets a JOIN media_catalog c ON c.asset_id=a.id LEFT JOIN annotations n ON a.id=n.asset_id "
+            "WHERE available=1 AND kind=? AND (?=0 OR n.favorite=1) "
+        )
+        params = (kind, int(favorite))
+        if query.strip():
+            where += "AND lower(path || ' ' || COALESCE(n.tags,'[]') || ' ' || metadata) LIKE ? ESCAPE '\\' "
+            params += (pattern,)
+        if roots:
+            prefixes = tuple(str(root) + os.sep for root in roots)
+            where += "AND (" + " OR ".join("substr(path,1,?)=?" for _ in prefixes) + ") "
+            params += tuple(value for prefix in prefixes for value in (len(prefix), prefix))
+        with self.connect() as db:
+            total = db.execute("SELECT COUNT(*) " + where, params).fetchone()[0]
+            rows = db.execute(
+                "SELECT a.*, COALESCE(n.tags,'[]') AS tags, COALESCE(n.favorite,0) AS favorite "
+                + where + "ORDER BY modified DESC LIMIT ?",
+                (*params, -1 if limit is None else max(0, int(limit))),
+            ).fetchall()
+        records = []
+        for row in rows:
+            record = dict(row)
+            record["metadata"] = json.loads(record["metadata"])
+            record["tags"] = json.loads(record["tags"])
+            records.append(record)
+        return records, total
+
+    def forget_asset(self, source):
+        with self.connect() as db:
+            db.execute("UPDATE assets SET available=0 WHERE path=?", (str(Path(source).resolve()),))
+
+    def reconcile_catalog(self, paths, roots, *, started_ns):
+        with self.connect() as db:
+            db.execute("CREATE TEMP TABLE seen_media (path TEXT PRIMARY KEY)")
+            db.executemany("INSERT OR IGNORE INTO seen_media VALUES (?)", ((path,) for path in paths))
+            for root in roots:
+                prefix = str(root) + os.sep
+                db.execute(
+                    "UPDATE assets SET available=0 WHERE substr(path,1,?)=? AND path NOT IN (SELECT path FROM seen_media) "
+                    "AND COALESCE(json_extract(metadata, '$._media.registered_ns'),0)<=?",
+                    (len(prefix), prefix, started_ns),
+                )
 
     def rebuild_index(self, paths):
         # Keep identity and annotation rows authoritative, even for missing files.
@@ -499,8 +562,20 @@ def install_owner_cookie(app, store):
 
 
 def default_store(outputs_dir):
-    return WorkspaceStore(
-        os.getenv(
-            "H3_WORKSPACE_DIR", str(Path(outputs_dir).resolve().parent / "h3-workspace")
-        )
-    )
+    override = os.getenv("H3_WORKSPACE_DIR")
+    if override:
+        return WorkspaceStore(override)
+    output = Path(outputs_dir).resolve()
+    root = output / ".h3-workspace"
+    previous = output.parent / "h3-workspace" / "workspace.sqlite3"
+    destination = root / "workspace.sqlite3"
+    if not destination.is_file() and previous.is_file():
+        root.mkdir(parents=True, exist_ok=True)
+        temporary = root / f"migration-{uuid.uuid4().hex}.sqlite3"
+        try:
+            with closing(sqlite3.connect(previous)) as source, closing(sqlite3.connect(temporary)) as target:
+                source.backup(target)
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return WorkspaceStore(output.parent / "h3-workspace", database=destination)

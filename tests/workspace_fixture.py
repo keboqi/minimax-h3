@@ -100,6 +100,8 @@ app.enhance_h3_prompt = lambda *args: (
     "Enhancement finished.",
 )
 demo = app.build_ui().queue(default_concurrency_limit=1, max_size=8)
+for name in ("alpha.png", "beta.png", "alpha.mp4", "beta.mp4"):
+    app.write_snapshot(app.OUTPUTS_DIR / name, {"family": "Browser fixture"})
 server = app.build_server(
     demo, [str(app.OUTPUT_DIR.resolve()), str(app.OUTPUTS_DIR.resolve())]
 )

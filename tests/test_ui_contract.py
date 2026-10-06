@@ -617,6 +617,7 @@ class UiContractTests(unittest.TestCase):
         self.assertIs(result, mock.sentinel.mounted_app)
         mounted_css = mount.call_args.kwargs["css"]
         self.assertEqual(mounted_css, H3_SETUP_CSS)
+        self.assertIn(str(gradio_app.OUTPUTS_DIR / ".h3-workspace"), mount.call_args.kwargs["blocked_paths"])
         self.assertNotIn(".gradio-container", mounted_css)
 
     def test_generation_settings_use_native_browser_state(self) -> None:

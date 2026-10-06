@@ -14,9 +14,57 @@ from h3_app.config import RuntimeConfig
 from h3_app import gallery_store
 from h3_ui.media_controller import MediaController
 from h3_ui.media_previews import preview_results, browser_preview_updates
+from dataclasses import replace
 
 
 class MediaPerformanceTests(TestCase):
+    def test_thumbnails_persist_inside_outputs_with_optional_override(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = RuntimeConfig(root, "", root, root / "models.json", root / "drive" / "outputs")
+            self.assertTrue(runtime.gallery_thumbnails_dir.is_relative_to(runtime.outputs_dir))
+            custom = RuntimeConfig.from_environment(root, {"H3_GALLERY_CACHE_DIR": str(root / "local-cache")})
+            self.assertEqual(custom.gallery_thumbnails_dir, root / "local-cache")
+
+    def test_existing_thumbnail_is_reused_without_reading_original_pixels(self):
+        from PIL import Image
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = replace(RuntimeConfig(root, "", root, root / "models.json", root / "drive"), thumbnail_root=root / "local-cache")
+            source = runtime.outputs_dir / "original.png"
+            source.parent.mkdir()
+            source.write_bytes(b"original pixels must never be opened")
+            thumbnail = gallery_store.gallery_image_thumbnail_path(source, runtime=runtime)
+            thumbnail.parent.mkdir()
+            Image.new("RGB", (100, 80)).save(thumbnail)
+            with patch.object(Image, "open", side_effect=AssertionError("original image read")):
+                self.assertEqual(gallery_store.gallery_image_thumbnail(source, runtime=runtime), thumbnail)
+
+    def test_image_selection_serves_full_original_without_decoding_pixels(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = replace(RuntimeConfig(root, "", root, root / "models.json", root / "drive"), thumbnail_root=root / "local-cache")
+            source = runtime.outputs_dir / "large.png"
+            source.parent.mkdir()
+            source.write_bytes(b"original")
+            file_stat = source.stat()
+            thumbnail = gallery_store.gallery_image_thumbnail_path(source, runtime=runtime)
+            thumbnail.parent.mkdir()
+            thumbnail.touch()
+            services = SimpleNamespace(
+                gallery_media_mode=lambda mode: mode, gallery_store=gallery_store,
+                _runtime_config=lambda: runtime,
+                managed_gallery_image_path=Mock(return_value=source),
+                gallery_image_resolution_text=Mock(side_effect=AssertionError("original image read")),
+                absolute_gallery_media_download_url=Mock(return_value="https://example.com/downloads/gradio/large.png?download=1"),
+                gallery_preview_updates=lambda mode, **values: tuple(gr.update(value=values.get(kind), visible=mode == kind.title()) for kind in ("video", "image", "audio")),
+            )
+            request = SimpleNamespace(request=SimpleNamespace(base_url="https://example.com/"))
+            updates = MediaController(services).select_gallery_media("Image", [str(source)], request, SimpleNamespace(index=0))
+            self.assertEqual(updates[1]["value"], f"https://example.com/downloads/gradio/large.png?v={file_stat.st_mtime_ns}-{file_stat.st_size}")
+            self.assertEqual(updates[-1], str(source))
+            self.assertIn("/downloads/gradio/large.png?download=1", updates[3])
+            services.managed_gallery_image_path.assert_called_once_with(str(source), require_file=False)
     def test_image_dimensions_honor_orientation_without_loading_pixels(self):
         from PIL import Image
         with TemporaryDirectory() as directory:
@@ -100,7 +148,12 @@ class MediaPerformanceTests(TestCase):
                 self.assertEqual(first.paths, (str(source),))
             finally:
                 release.set()
-            final = controller.refresh_gallery_page(paths=inventory)
+            with patch.object(Path, "stat", side_effect=AssertionError("repeat Drive stat")):
+                # Polling only the in-flight Future must not revisit Drive.
+                final = controller.refresh_media_page("Video", previous=first)
+                while final.preparing:
+                    __import__("time").sleep(0.01)
+                    final = controller.refresh_media_page("Video", previous=final)
             self.assertEqual(final.preparing, 0)
             self.assertEqual(final.paths, first.paths)
             self.assertEqual(final.items[0][0], str(root / "poster.jpg"))

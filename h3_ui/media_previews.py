@@ -5,30 +5,44 @@ from contextvars import copy_context
 from threading import Lock
 from time import monotonic
 from pathlib import Path
-from urllib.parse import urlsplit, unquote
+from urllib.parse import urlsplit, unquote, quote
 from gradio.data_classes import FileData
+
+
+def browser_gallery_items(items, request, *, version=None):
+    """Serve small cached files directly; no Gradio hashing or cache copying."""
+    if request is None:
+        return list(items)
+    base = str(request.request.base_url).rstrip("/")
+    suffix = f"?v={version}" if version is not None else ""
+    return [(f"{base}/media-previews/{quote(Path(path).name)}{suffix}", caption) for path, caption in items]
 
 
 def browser_preview_updates(updates):
     """Serialize URL previews explicitly so Gradio never downloads them itself."""
     serialized = []
     for update in updates[:3]:
-        value = update.get("value")
-        serialized.append({
-            **update,
-            "value": FileData(
-                path=value, url=value,
-                orig_name=Path(unquote(urlsplit(value).path)).name,
-            ).model_dump() if value else None,
-        })
+        serialized.append(browser_file_update(update))
     return (*serialized, *updates[3:])
+
+
+def browser_file_update(update):
+    """Explicit file data for callbacks bound with postprocess=False."""
+    value = update.get("value")
+    return {
+        **update,
+        "value": FileData(
+            path=value, url=value,
+            orig_name=Path(unquote(urlsplit(value).path)).name,
+        ).model_dump() if value else None,
+    }
 
 _WORKERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="h3-posters")
 _LOCK = Lock()
 _TASKS = {}
 
 
-def preview_results(paths, create, *, kind, cache_root, timeout=None):
+def preview_results(paths, create, *, kind, cache_root, timeout=None, return_futures=False):
     futures = []
     submitted = []
     with _LOCK:
@@ -62,5 +76,8 @@ def preview_results(paths, create, *, kind, cache_root, timeout=None):
                     _TASKS[key] = (done, monotonic() + 30)
         future.add_done_callback(expire)
     wait([future for future in futures if future is not None], timeout=timeout)
-    return [(future.result() if future is not None and future.done() else None,
-             future is not None and not future.done()) for future in futures]
+    results = []
+    for future in futures:
+        pending = future is not None and not future.done()
+        results.append((future.result() if future is not None and not pending else None, pending))
+    return (results, futures) if return_futures else results

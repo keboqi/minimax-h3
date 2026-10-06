@@ -192,6 +192,10 @@ class MediaController:
         )
 
     def forget_gallery_metadata(self, video: str | Path | None = None) -> None:
+        from h3_app.media_catalog import get_media_catalog
+        catalog = get_media_catalog()
+        if video is not None and catalog is not None:
+            catalog.store.forget_asset(video)
         return self.services.gallery_store.forget_gallery_metadata(video)
 
     def managed_gallery_image_path(
@@ -323,14 +327,13 @@ class MediaController:
         items: list[tuple[str, str]] = []
         selectable_paths: list[str] = []
         failed = 0
-        preparing = 0
-        posters = preview_results(
+        preview_jobs = []
+        posters, futures = preview_results(
             shown_videos, self.services.gallery_thumbnail, kind="Video",
-            cache_root=self.services.GALLERY_THUMBNAILS_DIR, timeout=preview_timeout,
+            cache_root=self.services.GALLERY_THUMBNAILS_DIR, timeout=preview_timeout, return_futures=True,
         )
-        for video, (thumbnail, pending) in zip(shown_videos, posters):
+        for video, (thumbnail, pending), future in zip(shown_videos, posters, futures):
             if thumbnail is None:
-                preparing += int(pending)
                 failed += int(not pending)
                 thumbnail = self.services.gallery_store.gallery_placeholder(
                     video, kind="Video", runtime=self.services._runtime_config()
@@ -346,10 +349,12 @@ class MediaController:
             )
             size_mb = stat.st_size / (1024 * 1024)
             caption = f"{self.services.generated_video_family(video)} · {video.name} · {timestamp} · {size_mb:.1f} MB"
+            if pending:
+                preview_jobs.append((len(items), future))
             items.append((str(thumbnail), caption))
             selectable_paths.append(str(video))
         return AssetPage.from_scan(
-            items, selectable_paths, len(videos), limit, "videos", failed, preparing
+            items, selectable_paths, len(videos), limit, "videos", failed, len(preview_jobs), preview_jobs
         )
 
     def refresh_gallery(self, limit: int = 48):
@@ -378,15 +383,51 @@ class MediaController:
 
     def list_media_paths(self, mode):
         return {
-            "Video": self.services.gallery_video_paths,
-            "Image": self.services.gallery_image_paths,
-            "Audio": self.services.gallery_audio_paths,
-        }[self.services.gallery_media_mode(mode)](limit=None)
+            "Video": self.services.gallery_store.gallery_video_paths,
+            "Image": self.services.gallery_store.gallery_image_paths,
+            "Audio": self.services.gallery_store.gallery_audio_paths,
+        }[self.services.gallery_media_mode(mode)](
+            limit=None, runtime=self.services._runtime_config(), strict=True,
+        )
 
     def refresh_media_page(
-        self, mode: str = "Video", limit: int = 48, *, paths=None, preview_timeout=None
+        self, mode: str = "Video", limit: int = 48, *, paths=None, preview_timeout=None, previous=None
     ) -> AssetPage:
         """Refresh the active gallery, defaulting to the existing video library."""
+        if previous is not None:
+            # A progressive update only needs the in-flight results. Do not
+            # rescan, stat originals, read sidecars or regenerate captions.
+            items = list(previous.items)
+            pending = []
+            failed = previous.unavailable
+            for index, future in previous.preview_jobs:
+                if not future.done():
+                    pending.append((index, future))
+                else:
+                    thumbnail = future.result()
+                    if thumbnail is None:
+                        failed += 1
+                    else:
+                        items[index] = (str(thumbnail), items[index][1])
+            return AssetPage(
+                tuple(items), previous.paths, previous.total, previous.next_cursor,
+                previous.kind, failed, len(pending), tuple(pending),
+            )
+        if isinstance(paths, AssetInventory) and paths.total is not None:
+            if paths.kind != self.services.gallery_media_mode(mode):
+                raise ValueError("Gallery inventory does not match the media type.")
+            items, selected = [], []
+            failed = 0
+            root = self.services._runtime_config().gallery_thumbnails_dir
+            for row in paths.records[:max(0, limit)]:
+                info = row["metadata"]["_media"]
+                name = info.get("thumbnail")
+                if name and Path(name).name == name:
+                    items.append((str(root / name), info["caption"]))
+                    selected.append(row["path"])
+                    failed += int(not info.get("preview_available", True))
+            kind = {"Video": "videos", "Image": "images", "Audio": "audio files"}[paths.kind]
+            return AssetPage.from_scan(items, selected, paths.total, limit, kind, failed)
         media_mode = self.services.gallery_media_mode(mode)
         if isinstance(paths, AssetInventory) and paths.kind != media_mode:
             raise ValueError("Gallery inventory does not match the media type.")
@@ -452,16 +493,15 @@ class MediaController:
         items: list[tuple[str, str]] = []
         selectable_paths: list[str] = []
         failed = 0
-        preparing = 0
+        preview_jobs = []
         runtime = self.services._runtime_config()
-        posters = preview_results(
+        posters, futures = preview_results(
             images,
             lambda image: self.services.gallery_store.gallery_image_thumbnail(image, runtime=runtime),
-            kind="Image", cache_root=runtime.gallery_thumbnails_dir, timeout=preview_timeout,
+            kind="Image", cache_root=runtime.gallery_thumbnails_dir, timeout=preview_timeout, return_futures=True,
         )
-        for image, (thumbnail, pending) in zip(images, posters):
+        for image, (thumbnail, pending), future in zip(images, posters, futures):
             if thumbnail is None:
-                preparing += int(pending)
                 failed += int(not pending)
                 thumbnail = self.services.gallery_store.gallery_placeholder(
                     image, kind="Image", runtime=self.services._runtime_config()
@@ -477,10 +517,12 @@ class MediaController:
             )
             size_mb = stat.st_size / (1024 * 1024)
             caption = f"{self.services.gallery_store.generated_image_family(image, runtime=self.services._runtime_config())} · {image.name} · {timestamp} · {size_mb:.1f} MB"
+            if pending:
+                preview_jobs.append((len(items), future))
             items.append((str(thumbnail), caption))
             selectable_paths.append(str(image))
         return AssetPage.from_scan(
-            items, selectable_paths, len(all_images), limit, "images", failed, preparing
+            items, selectable_paths, len(all_images), limit, "images", failed, len(preview_jobs), preview_jobs
         )
 
     def refresh_media_gallery(self, mode: str = "Video", limit: int = 48):
@@ -515,14 +557,15 @@ class MediaController:
             return (*self.services.gallery_preview_updates(mode), "", None)
         media_mode = self.services.gallery_media_mode(mode)
         if media_mode == "Image":
-            resolved = self.services.managed_gallery_image_path(media)
-            resolution = self.services.gallery_image_resolution_text(resolved)
+            resolved = self.services.managed_gallery_image_path(media, require_file=False)
+            source_info = resolved.stat()
             download_url = self.services.absolute_gallery_media_download_url(
                 media, media_mode, request
             )
+            preview_url = download_url.removesuffix("?download=1") + f"?v={source_info.st_mtime_ns}-{source_info.st_size}"
             return (
-                *self.services.gallery_preview_updates(mode, image=download_url.removesuffix("?download=1")),
-                f"**Resolution:** {resolution} · [Download image]({download_url})",
+                *self.services.gallery_preview_updates(mode, image=preview_url),
+                f"[Download original image]({download_url})",
                 media,
             )
         if media_mode == "Audio":
@@ -1215,6 +1258,7 @@ class MediaController:
                 self.services.gallery_thumbnail_path(video).unlink(missing_ok=True)
                 video.unlink()
                 self.services.snapshot_path(video).unlink(missing_ok=True)
+                self.services.forget_gallery_metadata(video)
                 deleted += 1
             except (self.services.H3Error, OSError):
                 failed += 1

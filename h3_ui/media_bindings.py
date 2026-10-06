@@ -15,7 +15,7 @@ from h3_app.catalog import (
 )
 from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 from .media_view import GalleryView
-from .media_previews import browser_preview_updates
+from .media_previews import browser_preview_updates, browser_gallery_items
 
 
 def bind_gallery_view(
@@ -42,38 +42,52 @@ def bind_gallery_view(
     page_outputs = [view.grid, view.paths, view.status, view.shown, view.show_more]
     refresh_events = []
 
-    def refresh_page(mode: str, filter_values, limit: int = page_size, *, force=True):
+    def refresh_page(mode: str, filter_values, limit: int = page_size, request: gr.Request = None):
         matching = (
             index.inventory(
                 mode,
                 filter_values.get("query", ""),
                 filter_values.get("favorite", False),
-                force=force,
+                limit=limit,
             )
             if index
             else None
         )
+        previous = None
+        version = index.versions.get(mode) if index else None
         while True:
-            page = refresh(mode, limit, paths=matching, preview_timeout=0.1)
-            yield (
-                list(page.items),
-                list(page.paths),
-                f"{page.total} matching assets · {page.status}",
-                min(max(0, int(limit)), page.total),
-                gr.update(interactive=page.next_cursor is not None),
-            )
+            page = refresh(mode, limit, paths=matching, preview_timeout=0.1, previous=previous)
+            if previous is None or page.items != previous.items or page.status != previous.status:
+                yield (
+                    browser_gallery_items(page.items, request, version=version),
+                    list(page.paths),
+                    f"{page.total} matching assets · {page.status}" + (
+                        " · Use Scan historical media to add older or externally created outputs."
+                        if page.total == 0 else ""
+                    ),
+                    min(max(0, int(limit)), page.total),
+                    gr.update(interactive=page.next_cursor is not None),
+                )
             if not page.preparing:
                 break
+            previous = page
             sleep(0.25)
 
-    def browse_page(mode, filter_values):
-        yield from refresh_page(mode, filter_values, force=False)
+    def browse_page(mode, filter_values, request: gr.Request):
+        yield from refresh_page(mode, filter_values, request=request)
 
-    def more_page(mode, current, shown):
-        yield from refresh_page(mode, current, shown + page_size, force=False)
+    def more_page(mode, current, shown, request: gr.Request):
+        yield from refresh_page(mode, current, shown + page_size, request=request)
 
-    def sync_more(mode: str, filter_values):
-        yield from refresh_page(mode, filter_values)
+    def sync_more(mode: str, filter_values, request: gr.Request):
+        yield from refresh_page(mode, filter_values, request=request)
+
+    scan_event = getattr(view.search, "h3_scan_event", None)
+    if scan_event is not None:
+        scan_event.success(
+            sync_more, inputs=[view.mode, filters], outputs=page_outputs,
+            queue=True, concurrency_limit=None, api_name=False,
+        )
 
     def validate_selection(mode, paths, selected):
         if selected and selected in paths:
@@ -109,6 +123,7 @@ def bind_gallery_view(
                 fn,
                 inputs=inputs,
                 outputs=outputs,
+                postprocess=False,
                 queue=False,
                 show_progress="hidden",
                 api_name=False,
@@ -135,9 +150,9 @@ def bind_gallery_view(
 
     if view.search is not None:
 
-        def apply_filters(mode, text, favorite, current):
+        def apply_filters(mode, text, favorite, current, request: gr.Request):
             current.update(query=text.strip(), favorite=bool(favorite))
-            yield from refresh_page(mode, current)
+            yield from refresh_page(mode, current, request=request)
 
         filtered = gr.on(
             triggers=[view.search.click, view.query.submit, view.favorite_only.input],

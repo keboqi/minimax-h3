@@ -178,6 +178,12 @@ class ManifestTests(unittest.TestCase):
 
 
 class MediaPublicationTests(unittest.TestCase):
+    def setUp(self):
+        # These tests exercise the legacy filesystem adapters in isolation.
+        self.catalog_patch = patch.object(app, "_catalog_inventory", return_value=None)
+        self.catalog_patch.start()
+        self.addCleanup(self.catalog_patch.stop)
+
     def test_audio_gallery_discovers_and_classifies_generated_audio(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

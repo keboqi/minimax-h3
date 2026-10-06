@@ -108,4 +108,8 @@ class RuntimeConfig:
                 gallery_limit,
                 int(env.get("GRADIO_GALLERY_METADATA_CACHE_LIMIT", "512")),
             ),
+            thumbnail_root=(
+                Path(env["H3_GALLERY_CACHE_DIR"]).expanduser().resolve()
+                if env.get("H3_GALLERY_CACHE_DIR") else None
+            ),
         )

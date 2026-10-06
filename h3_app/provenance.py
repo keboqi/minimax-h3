@@ -41,6 +41,8 @@ def write_snapshot(path: str | Path, settings: Mapping[str, Any]) -> None:
             json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
         )
         os.replace(temporary, destination)
+        from .media_catalog import register_created_media
+        register_created_media(path, payload)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -78,22 +80,21 @@ def render_snapshot(paths: Any) -> str:
 
 def copy_snapshot(source: Path, destination: Path) -> None:
     """Retain settings while recording the copied output's actual name."""
-    payload = read_snapshot(source)
-    if payload:
-        write_snapshot(
-            destination,
-            {
-                **{
-                    key: value
-                    for key, value in payload.items()
-                    if key not in {"output", "asset_id"}
-                },
-                "source_asset_ids": [
-                    payload.get("asset_id")
-                    or uuid.uuid5(uuid.NAMESPACE_URL, source.resolve().as_uri()).hex
-                ],
+    payload = read_snapshot(source) or {}
+    write_snapshot(
+        destination,
+        {
+            **{
+                key: value
+                for key, value in payload.items()
+                if key not in {"output", "asset_id"}
             },
-        )
+            "source_asset_ids": [
+                payload.get("asset_id")
+                or uuid.uuid5(uuid.NAMESPACE_URL, source.resolve().as_uri()).hex
+            ],
+        },
+    )
 
 
 def copy_media(source: Path, destination: Path) -> None:
@@ -106,7 +107,7 @@ def copy_media(source: Path, destination: Path) -> None:
     try:
         shutil.copy2(source, temporary)
         check_cancelled()
-        copy_snapshot(source, destination)
         temporary.replace(destination)
+        copy_snapshot(source, destination)
     finally:
         temporary.unlink(missing_ok=True)

@@ -15,11 +15,19 @@ requires checking out a prior code version; there is no runtime layout switch.
 Public named generation APIs retain their parameter ordering and return shape.
 Workflow scheduling modes that happen to be called legacy remain supported.
 
-Workspace state is `<GRADIO_OUTPUT_DIR parent>/h3-workspace` by default.
-`H3_WORKSPACE_DIR` overrides it. Modal places it at `/data/h3-workspace` on the
+The database is `<GRADIO_OUTPUT_DIR>/.h3-workspace/workspace.sqlite3` by default,
+so it persists with the outputs. An existing database in the previous location
+is copied on first startup, retaining ownership, history and annotations.
+Private inputs and project files remain in
+`<GRADIO_OUTPUT_DIR parent>/h3-workspace`. `H3_WORKSPACE_DIR` explicitly overrides
+both locations. Modal places workspace state at `/data/h3-workspace` on the
 persisted data volume. SQLite schema 1 stores ownership, jobs, projects, assets
 and annotations. A newer schema is rejected rather than overwritten. Generated
 media and schema-1 technical sidecars stay in their existing directories.
+The database directory is blocked from Gradio file serving. New media register
+their thumbnails and catalog records when saved; ordinary browsing and server
+restarts do not discover files. **Scan historical media** explicitly discovers
+older or externally added images, videos and audio and reconciles missing files.
 
 Browser preferences use schema 6 inside the existing v3 transport key. Values
 migrate through field validation. Prompts, uploaded paths, provider credentials,

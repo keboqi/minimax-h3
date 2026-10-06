@@ -9,6 +9,7 @@ import gradio as gr
 
 from h3_app.jobs import JOBS
 from h3_app.errors import H3Error
+from .media_previews import browser_gallery_items, browser_file_update
 
 VIDEO_JS = """
 const setup = () => {
@@ -133,18 +134,24 @@ def build_library_tools(
         videos = gr.HTML("", js_on_load=VIDEO_JS)
     with system_root, gr.Accordion("Media index maintenance", open=False):
         gr.Markdown(
-            "The library indexes new and changed files when you browse it. Rebuild after repairing sidecar metadata."
+            "New outputs are registered when created. Scan historical media to add older or externally created files and repair missing previews."
         )
-        rebuild = gr.Button("Rebuild media index")
+        rebuild = gr.Button("Scan historical media", elem_id="h3-system-history-scan")
         index_status = gr.Markdown()
 
-    rebuild.click(
-        index.rebuild,
-        outputs=index_status,
+    def scan_history():
+        for message in index.rebuild():
+            yield message, message
+
+    scan_event = gr.on(
+        triggers=[rebuild.click, view.scan_history.click],
+        fn=scan_history,
+        outputs=[index_status, view.status],
         concurrency_id="h3-media-index",
         concurrency_limit=1,
         api_name=False,
     )
+    view.search.h3_scan_event = scan_event
 
     def is_managed(path, mode):
         try:
@@ -184,21 +191,27 @@ def build_library_tools(
             {
                 "asset_id": asset_id,
                 "filename": Path(row["path"]).name,
-                "settings_and_lineage": json.loads(row["metadata"]),
+                "settings_and_lineage": {key: value for key, value in json.loads(row["metadata"]).items() if key != "_media"},
             },
         )
 
-    def slot_preview(asset_id, slot):
+    def slot_preview(asset_id, slot, request):
         if not asset_id:
             return gr.update(value=None, label=f"Comparison {slot.upper()}")
         row = resolve(asset_id)
+        metadata = json.loads(row["metadata"])
         page = preview_media(
-            row["kind"], 1, paths=AssetInventory(row["kind"], (Path(row["path"]),))
+            row["kind"], 1, paths=AssetInventory(
+                row["kind"], (Path(row["path"]),),
+                ({**row, "metadata": metadata},), 1,
+            )
         )
-        return gr.update(
-            value=page.items[0][0] if page.items else None,
+        version = metadata["_media"]["registered_ns"]
+        items = browser_gallery_items(page.items, request, version=version)
+        return browser_file_update(gr.update(
+            value=items[0][0] if items else None,
             label=f"Comparison {slot.upper()} · {row['kind']} · {Path(row['path']).name}",
-        )
+        ))
 
     def pair_status(current):
         filled = [slot.upper() for slot in ("a", "b") if current.get(slot)]
@@ -222,11 +235,11 @@ def build_library_tools(
         comparison,
     ]
 
-    def update_pair(current, message=None):
+    def update_pair(current, request, message=None):
         return (
             current,
-            slot_preview(current["a"], "a"),
-            slot_preview(current["b"], "b"),
+            slot_preview(current["a"], "a", request),
+            slot_preview(current["b"], "b", request),
             gr.update(interactive=bool(current["a"] and current["b"])),
             message or pair_status(current),
             gr.update(value=None, visible=False),
@@ -234,7 +247,7 @@ def build_library_tools(
             gr.update(open=True),
         )
 
-    def assign(slot, mode, path, current):
+    def assign(slot, mode, path, current, request):
         asset_id = selected_id(mode, path)
         if not asset_id or mode not in {"Image", "Video"}:
             raise gr.Error("Select an image or video thumbnail in the library first.")
@@ -256,17 +269,18 @@ def build_library_tools(
                         "This media is already in the other slot. Choose a different thumbnail."
                     )
         current[slot] = asset_id
-        return update_pair(current, message)
+        return update_pair(current, request, message)
 
     for button, slot in ((add_a, "a"), (add_b, "b")):
 
-        def add(mode, path, current, slot=slot):
-            return assign(slot, mode, path, current)
+        def add(mode, path, current, request: gr.Request, slot=slot):
+            return assign(slot, mode, path, current, request)
 
         button.click(
             add,
             inputs=[view.mode, view.selected, pair],
             outputs=pair_outputs,
+            postprocess=False,
             concurrency_id="h3-comparison",
             concurrency_limit=1,
             api_name=False,
@@ -275,13 +289,14 @@ def build_library_tools(
 
     for button, slot in ((clear_a, "a"), (clear_b, "b")):
 
-        def clear(current, slot=slot):
-            return update_pair({**current, slot: None})
+        def clear(current, request: gr.Request, slot=slot):
+            return update_pair({**current, slot: None}, request)
 
         button.click(
             clear,
             inputs=pair,
             outputs=pair_outputs,
+            postprocess=False,
             concurrency_id="h3-comparison",
             concurrency_limit=1,
             api_name=False,
@@ -290,7 +305,7 @@ def build_library_tools(
 
     snapshot, snapshot_component = view.selected.h3_snapshot
 
-    def synchronize(mode, paths, selected, current):
+    def synchronize(mode, paths, selected, current, request: gr.Request = None):
         inspected = inspect_asset(mode, selected)
         can_add = bool(inspected[2]) and mode in {"Image", "Video"}
         revised = dict(current)
@@ -303,8 +318,8 @@ def build_library_tools(
         updates = (
             (
                 revised,
-                slot_preview(revised["a"], "a"),
-                slot_preview(revised["b"], "b"),
+                slot_preview(revised["a"], "a", request),
+                slot_preview(revised["b"], "b", request),
                 gr.update(interactive=bool(revised["a"] and revised["b"])),
                 "An unavailable comparison item was removed. " + pair_status(revised),
                 gr.update(value=None, visible=False),

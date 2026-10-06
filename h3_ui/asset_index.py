@@ -1,125 +1,68 @@
-"""Incremental technical metadata indexing for the managed Media library."""
+"""Read the persisted catalog; filesystem discovery is an explicit history scan."""
 
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from pathlib import Path
 from threading import RLock
-from time import monotonic
+from time import time_ns
 
-from h3_app.provenance import read_snapshot, snapshot_path
+from h3_app.provenance import read_snapshot
 from h3_app.gallery_store import AssetInventory
-
-
-def technical_metadata(value):
-    if isinstance(value, dict):
-        return {
-            key: technical_metadata(item)
-            for key, item in value.items()
-            if key == "prompt_id"
-            or not any(
-                word in key.casefold()
-                for word in (
-                    "prompt",
-                    "caption",
-                    "lyrics",
-                    "api_key",
-                    "secret",
-                    "token",
-                    "abc",
-                )
-            )
-        }
-    if isinstance(value, list):
-        return [technical_metadata(item) for item in value]
-    return value
+from h3_app.media_catalog import get_media_catalog
 
 
 class AssetIndex:
-    def __init__(self, store, list_paths):
+    def __init__(self, store, list_paths, *, catalog=None):
         self.store = store
         self.list_paths = list_paths
-        self.fingerprints = {}
+        self.catalog = catalog or get_media_catalog()
         self.inventories = {}
-        self.ordered = {}
-        self.revision = 0
+        self.versions = {}
         self.lock = RLock()
-        self.scanned_at = {}
 
-    def sync(self, mode):
+    def inventory(self, mode, query="", favorite=False, *, limit=None):
+        rows, total = self.store.catalog_page(
+            kind=mode, query=query.strip(), favorite=favorite, limit=limit,
+            roots=self.catalog.roots if self.catalog else None,
+        )
+        paths = tuple(Path(row["path"]) for row in rows)
         with self.lock:
-            allowed = set()
-            ordered = []
-            changed = {}
-            assets = []
-            for source in self.list_paths(mode):
-                path = Path(source).resolve()
-                try:
-                    stat = path.stat()
-                    sidecar = snapshot_path(path)
-                    metadata_stat = sidecar.stat() if sidecar.is_file() else None
-                    fingerprint = (
-                        stat.st_mtime_ns,
-                        stat.st_size,
-                        metadata_stat.st_mtime_ns if metadata_stat else None,
-                    )
-                    allowed.add(path)
-                    ordered.append(path)
-                    if self.fingerprints.get(path) != fingerprint:
-                        assets.append(
-                            (
-                                path,
-                                mode,
-                                technical_metadata(read_snapshot(path) or {})
-                                if metadata_stat
-                                else {},
-                            )
-                        )
-                        changed[path] = fingerprint
-                except (OSError, ValueError):
-                    continue
-            indexed = self.store.index_assets(assets)
-            self.fingerprints.update({path: changed[path] for path in indexed})
-            if indexed or self.inventories.get(mode) != allowed:
-                self.revision += 1
-            self.inventories[mode] = allowed
-            self.ordered[mode] = ordered
-            self.scanned_at[mode] = monotonic()
-            return allowed
+            self.inventories[mode] = set(paths)
+            self.versions[mode] = max((row["metadata"]["_media"]["registered_ns"] for row in rows), default=0)
+        return AssetInventory(mode, paths, tuple(rows), total)
+
+    def paths(self, mode, query="", favorite=False):
+        return set(self.inventory(mode, query, favorite).paths)
 
     def cached_paths(self, mode):
-        """Reuse a completed scan for comparison choices; actions validate live paths."""
         with self.lock:
             return set(self.inventories.get(mode, ()))
 
-    def paths(self, mode, query="", favorite=False, *, force=True):
-        with self.lock:
-            allowed = (
-                self.sync(mode)
-                if force or monotonic() - self.scanned_at.get(mode, float("-inf")) >= 5
-                else set(self.inventories[mode])
-            )
-        if not query.strip() and not favorite:
-            return allowed
-        rows = self.store.search_assets(
-            query=query.strip(), kind=mode, favorite=favorite, limit=None
-        )
-        return {Path(row["path"]).resolve() for row in rows} & allowed
-
-    def inventory(self, mode, query="", favorite=False, *, force=True):
-        with self.lock:
-            matching = self.paths(mode, query, favorite, force=force)
-            return AssetInventory(
-                mode, tuple(path for path in self.ordered[mode] if path in matching)
-            )
-
     def rebuild(self):
-        with self.lock:
-            self.fingerprints.clear()
-            self.inventories.clear()
-            self.ordered.clear()
-            self.scanned_at.clear()
-            self.revision += 1
-            with self.store.connect() as db:
-                db.execute("UPDATE assets SET available=0")
-            total = 0
+        """Only this explicit action scans output folders and prepares old media."""
+        if self.catalog is None:
+            raise RuntimeError("Media catalog is not configured.")
+        seen = []
+        started_ns = time_ns()
+        count = 0
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="h3-history") as workers:
             for mode in ("Video", "Image", "Audio"):
-                total += len(self.sync(mode))
-                yield f"Indexed {total} files. Tags and favorites are preserved."
+                yield f"Scanning historical {mode.lower()} files…"
+                sources = self.list_paths(mode)
+                for offset in range(0, len(sources), 48):
+                    futures = [workers.submit(copy_context().run, self._prepare_historical, source)
+                               for source in sources[offset:offset + 48]]
+                    records = [record for future in futures if (record := future.result()) is not None]
+                    self.store.index_assets(records)
+                    seen.extend(str(record[0]) for record in records)
+                    count += len(records)
+                    yield f"Prepared thumbnails and metadata for {count} historical files."
+        self.store.reconcile_catalog(seen, self.catalog.roots, started_ns=started_ns)
+        yield f"Historical scan complete: {count} files. Tags and favorites are preserved."
+
+    def _prepare_historical(self, source):
+        try:
+            return self.catalog.prepare(source, read_snapshot(source) or {})
+        except FileNotFoundError:
+            # A file removed during the scan will be reconciled as missing.
+            return None

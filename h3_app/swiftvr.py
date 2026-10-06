@@ -164,8 +164,8 @@ def postprocess_swiftvr_video(
             if proc.returncode != 0 or not pending.is_file():
                 raise H3Error(f"SwiftVR output mux failed: {proc.stderr.strip()}")
             check_cancelled()
-            copy_snapshot(source, result)
             pending.replace(result)
+            copy_snapshot(source, result)
             return result
         finally:
             pending.unlink(missing_ok=True)

@@ -58,8 +58,8 @@ def postprocess_video(source: Path, option: str, *, runtime: RuntimeConfig) -> P
         if proc.returncode != 0 or not pending.is_file():
             raise H3Error(f"Post-processing failed: {proc.stderr.strip()}")
         check_cancelled()
-        copy_snapshot(source, target)
         pending.replace(target)
+        copy_snapshot(source, target)
         return target
     finally:
         pending.unlink(missing_ok=True)
@@ -289,8 +289,8 @@ def concat_upscaled_clips(
                 f"Could not concatenate upscaled clips: {proc.stderr.strip()}"
             )
         check_cancelled()
-        copy_snapshot(source, target)
         pending.replace(target)
+        copy_snapshot(source, target)
         return target
     finally:
         pending.unlink(missing_ok=True)

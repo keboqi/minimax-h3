@@ -633,6 +633,16 @@ type** to **Image** or **Audio**. Image mode includes generated Qwen/H3 stills
 and SeedVR2 results; Audio mode includes MiniMax H3, MiniMax Music 3, and YuE2
 outputs. All three use the same card, preview, settings, import, and download
 layout. **Import local media** accepts a matching file for the active library.
+New and imported images, videos, and audio create their thumbnails and catalog
+metadata when they are saved. The persistent SQLite catalog lives at
+`outputs/.h3-workspace/workspace.sqlite3`, and thumbnails live in
+`outputs/.gallery_thumbnails`. Browsing, switching media types, and restarting
+the server read the catalog without scanning the output folders. This workflow
+is the same for local storage and mounted Google Drive.
+Use **Scan historical media** once to add older or externally created files,
+or to reconcile files changed outside the app. This explicit scan preserves
+existing tags and favorites. Clicking an image thumbnail displays the full
+original image; the grid uses the smaller saved thumbnails.
 To compare outputs, select a library thumbnail and choose **Add to compare A**
 or **Add to compare B**. The slots show thumbnails and keep their picks while
 you filter the library. Choose two different images or two different videos;
