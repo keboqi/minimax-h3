@@ -54,7 +54,7 @@ def token_request(fields):
             result = json.load(response)
     except urllib.error.HTTPError as exc:
         if exc.code in (400, 401):
-            raise ReauthorizationRequired("Google rejected the credentials. Run the one-time setup and replace H3_DRIVE_AUTH.") from None
+            raise ReauthorizationRequired("Google rejected the credentials. Rerun the Drive cell to replace H3_DRIVE_AUTH.") from None
         raise DriveAuthError("Google token service failed. Retry later; keep your existing secret.") from None
     except (urllib.error.URLError, TimeoutError, OSError):
         raise DriveAuthError("Could not reach Google token service. Retry later; keep your existing secret.") from None
@@ -179,10 +179,18 @@ def mount_from_secret(mount_dir):
     try:
         value = userdata.get(SECRET_NAME)
     except userdata.SecretNotFoundError:
-        raise DriveAuthError("H3_DRIVE_AUTH is missing. Run the one-time setup cell, save the secret, and enable notebook access.") from None
+        value = None
     except userdata.NotebookAccessError:
         raise DriveAuthError("Enable notebook access for H3_DRIVE_AUTH in Colab's Secrets panel, then rerun this cell.") from None
-    mount_with_credentials(mount_dir, validate_credentials(value))
+    if value is None:
+        credentials = one_time_setup()
+    else:
+        try:
+            credentials = validate_credentials(value)
+            TokenProvider(credentials).get()
+        except ReauthorizationRequired:
+            credentials = one_time_setup()
+    mount_with_credentials(mount_dir, credentials)
 
 
 def authorization_request(client):
@@ -224,15 +232,17 @@ def one_time_setup():
         except ReauthorizationRequired:
             print("[i] Existing H3_DRIVE_AUTH needs replacement. Starting one-time setup.")
         else:
-            print("[OK] H3_DRIVE_AUTH works. Authorization setup skipped; run the mount cell.")
-            return
+            print("[OK] H3_DRIVE_AUTH works. Authorization setup skipped.")
+            return validate_credentials(stored)
     client_text = output.eval_js("""new Promise(resolve => {
       const panel = document.createElement('div');
       const label = document.createElement('p');
-      label.textContent = 'Choose the Desktop OAuth client JSON downloaded from Google Cloud (Drive API enabled). This file stays in memory.';
+      label.textContent = 'First use: enable Google Drive API, create a Desktop app OAuth client, and download its JSON. For an external app, use Production to avoid seven-day test tokens. Choose the JSON below.';
+      const help = document.createElement('a'); help.href = 'https://console.cloud.google.com/apis/credentials';
+      help.target = '_blank'; help.rel = 'noopener noreferrer'; help.textContent = 'Open Google Cloud setup';
       const input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
       input.onchange = async () => { const text = await input.files[0].text(); panel.remove(); resolve(text); };
-      panel.append(label, input); document.body.append(panel);
+      panel.append(label, help, document.createElement('br'), input); document.body.append(panel);
     })""", timeout_sec=600)
     try:
         installed = json.loads(client_text)["installed"]
@@ -256,10 +266,10 @@ def one_time_setup():
     })""".replace("AUTH_URL", json.dumps(url)), timeout_sec=600)
     credentials = exchange_callback(client, callback, state, verifier)
     TokenProvider(credentials).get()
-    output.eval_js("""(() => {
+    output.eval_js("""new Promise(resolve => {
       const panel = document.createElement('div');
       const text = document.createElement('p');
-      text.textContent = 'In the key / Secrets panel, add H3_DRIVE_AUTH, paste this JSON, and enable notebook access. Then rerun the Drive mount cell. Clear this field after saving.';
+      text.textContent = 'Copy credentials. In Colab Secrets (key icon), create H3_DRIVE_AUTH, paste the JSON, and enable notebook access. Then click Saved — continue below.';
       const input = document.createElement('input'); input.type = 'password'; input.autocomplete = 'off';
       input.value = AUTH_JSON; input.style.width = '90%';
       const copy = document.createElement('button'); copy.textContent = 'Copy credentials';
@@ -267,8 +277,15 @@ def one_time_setup():
         try { await navigator.clipboard.writeText(input.value); copy.textContent = 'Copied'; }
         catch { input.focus(); input.select(); copy.textContent = 'Press Ctrl+C / Cmd+C'; }
       };
-      const clear = document.createElement('button'); clear.textContent = 'Clear credentials';
-      clear.onclick = () => { input.value = ''; panel.remove(); };
-      panel.append(text, input, copy, clear); document.body.append(panel); return true;
-    })()""".replace("AUTH_JSON", json.dumps(json.dumps(credentials))))
-    print("Authorization succeeded. Save H3_DRIVE_AUTH using the transient field above, then rerun the mount cell.")
+      const saved = document.createElement('button'); saved.textContent = 'Saved — continue';
+      saved.onclick = () => { input.value = ''; panel.remove(); resolve(true); };
+      panel.append(text, input, copy, saved); document.body.append(panel);
+    })""".replace("AUTH_JSON", json.dumps(json.dumps(credentials))), timeout_sec=600)
+    try:
+        saved = validate_credentials(userdata.get(SECRET_NAME))
+    except (userdata.SecretNotFoundError, userdata.NotebookAccessError):
+        raise DriveAuthError("Save H3_DRIVE_AUTH and enable notebook access, then run this Drive cell again.") from None
+    if saved != credentials:
+        raise DriveAuthError("H3_DRIVE_AUTH does not match the new credentials. Replace its value and run this Drive cell again.")
+    print("[OK] H3_DRIVE_AUTH saved. Continuing Drive setup.")
+    return credentials

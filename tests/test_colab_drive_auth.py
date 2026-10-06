@@ -34,11 +34,27 @@ class DriveAuthTests(unittest.TestCase):
         self.modules = {"google": self.google, "google.colab": self.colab}
 
     def test_valid_secret_mounts_without_browser_authorization(self):
-        with patch.dict(sys.modules, self.modules), patch.object(drive, "drive_mounted", return_value=False), \
+        with patch.dict(sys.modules, self.modules), patch.object(drive.TokenProvider, "get"), patch.object(drive, "drive_mounted", return_value=False), \
              patch.object(drive, "mount_with_credentials") as mount:
             drive.mount_from_secret("/content/drive")
         self.userdata.get.assert_called_once_with("H3_DRIVE_AUTH")
         mount.assert_called_once_with("/content/drive", AUTH)
+
+    def test_run_all_drive_cell_starts_setup_and_finishes_mount_by_default(self):
+        notebook = json.loads((Path(__file__).resolve().parents[1] / "minimax_h3_colab.ipynb").read_text(encoding="utf-8"))
+        source = next("".join(c["source"]) for c in notebook["cells"] if "def setup_google_drive_outputs(" in "".join(c["source"]))
+        self.userdata.get.side_effect = self.userdata.SecretNotFoundError()
+        with TemporaryDirectory() as directory:
+            namespace = dict(NOTEBOOK_DIR=Path(directory), WORKSPACE_DIR=directory)
+            with patch.dict(sys.modules, self.modules), patch.object(os.path, "ismount", return_value=False), \
+                 patch.object(drive, "one_time_setup", return_value=AUTH) as setup, \
+                 patch.object(drive, "mount_with_credentials") as mount, \
+                 patch.object(Path, "symlink_to", return_value=None), contextlib.redirect_stdout(io.StringIO()):
+                exec(compile(source, "<Drive cell>", "exec"), namespace)
+            setup.assert_called_once_with()
+            mount.assert_called_once_with(Path(directory) / "drive", AUTH)
+            self.assertTrue(namespace["MOUNT_GOOGLE_DRIVE"])
+            self.assertTrue((Path(directory) / "drive" / "MyDrive" / "MiniMax-H3" / "output").is_dir())
 
     def test_existing_mount_does_not_read_secret(self):
         with patch.object(drive, "drive_mounted", return_value=True):
@@ -61,7 +77,7 @@ class DriveAuthTests(unittest.TestCase):
         self.colab.output.eval_js.assert_not_called()
 
     def test_setup_uses_transient_ui_and_does_not_print_credentials(self):
-        self.userdata.get.side_effect = self.userdata.SecretNotFoundError()
+        self.userdata.get.side_effect = [self.userdata.SecretNotFoundError(), json.dumps(AUTH)]
         self.colab.output = SimpleNamespace(eval_js=Mock(side_effect=[json.dumps({"installed": AUTH}), "callback", True]))
         with patch.dict(sys.modules, self.modules), patch.object(drive, "exchange_callback", return_value=AUTH), \
              patch.object(drive.TokenProvider, "get"), contextlib.redirect_stdout(io.StringIO()) as output:
@@ -71,15 +87,43 @@ class DriveAuthTests(unittest.TestCase):
             self.assertNotIn(value, output.getvalue())
         self.assertIn("input.type = 'password'", self.colab.output.eval_js.call_args.args[0])
 
-    def test_missing_denied_and_malformed_secret_do_not_mount(self):
-        for value in (self.userdata.SecretNotFoundError(), self.userdata.NotebookAccessError(), "invalid-json", "{}"):
+    def test_missing_and_malformed_secret_start_setup_then_mount(self):
+        for value in (self.userdata.SecretNotFoundError(), "invalid-json", "{}"):
             with self.subTest(value=type(value).__name__), patch.dict(sys.modules, self.modules), \
-                 patch.object(drive, "drive_mounted", return_value=False), patch.object(drive, "mount_with_credentials") as mount:
+                 patch.object(drive, "drive_mounted", return_value=False), patch.object(drive, "mount_with_credentials") as mount, \
+                 patch.object(drive, "one_time_setup", return_value=AUTH) as setup:
                 self.userdata.get.side_effect = value if isinstance(value, Exception) else None
                 self.userdata.get.return_value = value
-                with self.assertRaises(drive.DriveAuthError):
+                drive.mount_from_secret("/content/drive")
+                setup.assert_called_once_with()
+                mount.assert_called_once_with("/content/drive", AUTH)
+
+    def test_denied_secret_access_stops_without_reauthorization(self):
+        self.userdata.get.side_effect = self.userdata.NotebookAccessError()
+        with patch.dict(sys.modules, self.modules), patch.object(drive, "drive_mounted", return_value=False), \
+             patch.object(drive, "one_time_setup") as setup, patch.object(drive, "mount_with_credentials") as mount:
+            with self.assertRaises(drive.DriveAuthError):
+                drive.mount_from_secret("/content/drive")
+            setup.assert_not_called()
+            mount.assert_not_called()
+
+    def test_rejected_secret_starts_setup_but_network_error_does_not(self):
+        for error, expect_setup in ((drive.ReauthorizationRequired("Expired"), True),
+                                     (drive.DriveAuthError("Retry later"), False)):
+            with self.subTest(expect_setup=expect_setup), patch.dict(sys.modules, self.modules), \
+                 patch.object(drive, "drive_mounted", return_value=False), \
+                 patch.object(drive.TokenProvider, "get", side_effect=error), \
+                 patch.object(drive, "one_time_setup", return_value=AUTH) as setup, \
+                 patch.object(drive, "mount_with_credentials") as mount:
+                if expect_setup:
                     drive.mount_from_secret("/content/drive")
-                mount.assert_not_called()
+                    setup.assert_called_once_with()
+                    mount.assert_called_once()
+                else:
+                    with self.assertRaises(drive.DriveAuthError):
+                        drive.mount_from_secret("/content/drive")
+                    setup.assert_not_called()
+                    mount.assert_not_called()
 
     def test_access_token_cached_then_refreshed_without_consent(self):
         with patch.object(drive, "token_request", side_effect=[dict(access_token="first", expires_in=3600),
@@ -138,14 +182,15 @@ class DriveAuthTests(unittest.TestCase):
         source = next("".join(c["source"]) for c in notebook["cells"] if "def setup_google_drive_outputs(" in "".join(c["source"]))
         function = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef))
         with TemporaryDirectory() as directory:
-            namespace = dict(Path=Path, os=os, NOTEBOOK_DIR=Path(directory), DRIVE_AUTH_MODE="Reusable secret")
+            namespace = dict(Path=Path, os=os, NOTEBOOK_DIR=Path(directory))
             exec(compile(ast.Module(body=[function], type_ignores=[]), "<notebook>", "exec"), namespace)
             mount = Mock()
             self.colab.drive = SimpleNamespace(mount=mount)
             with patch.dict(sys.modules, self.modules), patch.object(os.path, "ismount", return_value=False), \
                  patch.object(drive, "mount_from_secret", side_effect=drive.DriveAuthError("H3_DRIVE_AUTH is missing")), \
                  contextlib.redirect_stdout(io.StringIO()) as output:
-                namespace["setup_google_drive_outputs"](True, workspace_dir=directory)
+                with self.assertRaises(RuntimeError):
+                    namespace["setup_google_drive_outputs"](True, workspace_dir=directory)
             mount.assert_not_called()
             self.assertIn("H3_DRIVE_AUTH is missing", output.getvalue())
             self.assertFalse((Path(directory) / "h3").exists())

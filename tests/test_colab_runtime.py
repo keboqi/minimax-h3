@@ -160,13 +160,15 @@ class ColabDriveSafetyTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.workspace = self.root / "workspace"
-        self.namespace = dict(Path=Path, shutil=shutil, os=os, NOTEBOOK_DIR=self.root, DRIVE_AUTH_MODE="Standard Colab")
+        self.namespace = dict(Path=Path, shutil=shutil, os=os, NOTEBOOK_DIR=self.root)
         self.setup = load_function("setup_google_drive_outputs", self.namespace)
         self.mount = Mock()
         google, colab = ModuleType("google"), ModuleType("google.colab")
         colab.drive = SimpleNamespace(mount=self.mount)
         google.colab = colab
-        self.modules = {"google": google, "google.colab": colab}
+        helper = ModuleType("h3_colab_drive")
+        helper.mount_from_secret = self.mount
+        self.modules = {"google": google, "google.colab": colab, "h3_colab_drive": helper}
         self.gradio = self.workspace / "h3" / "gradio_outputs"
         self.gradio.mkdir(parents=True)
         self.clip = self.gradio / "clip.mp4"
