@@ -2436,9 +2436,9 @@ def list_media_paths(mode):
 
 
 def refresh_media_page(
-    mode: str = "Video", limit: int = GALLERY_PAGE_SIZE, *, paths=None
+    mode: str = "Video", limit: int = GALLERY_PAGE_SIZE, *, paths=None, preview_timeout=None
 ) -> gallery_store.AssetPage:
-    return _mediacontroller().refresh_media_page(mode, limit, paths=paths)
+    return _mediacontroller().refresh_media_page(mode, limit, paths=paths, preview_timeout=preview_timeout)
 
 
 def refresh_media_gallery(mode: str = "Video", limit: int = GALLERY_PAGE_SIZE):

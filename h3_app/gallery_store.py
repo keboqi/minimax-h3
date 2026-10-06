@@ -45,6 +45,7 @@ class AssetPage:
     next_cursor: int | None
     kind: str
     unavailable: int = 0
+    preparing: int = 0
 
     def __post_init__(self):
         if len(self.items) != len(self.paths):
@@ -60,13 +61,15 @@ class AssetPage:
         if self.unavailable:
             plural = "s" if self.unavailable != 1 else ""
             detail += f" · {self.unavailable} thumbnail{plural} unavailable"
+        if self.preparing:
+            detail += f" · Preparing {self.preparing} previews…"
         return detail
 
     def as_ui_values(self) -> tuple[list[tuple[str, str]], list[str], str]:
         return list(self.items), list(self.paths), self.status
 
     @classmethod
-    def from_scan(cls, items, paths, total, limit, kind, unavailable=0):
+    def from_scan(cls, items, paths, total, limit, kind, unavailable=0, preparing=0):
         scanned = min(max(0, int(limit)), total)
         return cls(
             tuple(items),
@@ -75,6 +78,7 @@ class AssetPage:
             scanned if scanned < total else None,
             kind,
             unavailable,
+            preparing,
         )
 
 
@@ -476,10 +480,12 @@ def gallery_resolution_text(video: Path, *, runtime: RuntimeConfig) -> str:
 def gallery_image_resolution(image: Path) -> tuple[int, int] | None:
     """Read an image's display dimensions, honoring EXIF orientation."""
     try:
-        from PIL import Image, ImageOps
+        from PIL import Image
 
         with Image.open(image) as opened:
-            width, height = ImageOps.exif_transpose(opened).size
+            width, height = opened.size
+            if opened.getexif().get(274) in {5, 6, 7, 8}:
+                width, height = height, width
         if width > 0 and height > 0:
             return int(width), int(height)
     except (OSError, TypeError, ValueError):

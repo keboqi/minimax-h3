@@ -60,7 +60,7 @@ class GalleryRestorationTests(unittest.TestCase):
             [item["visible"] for item in updates[:3]], [False, True, False]
         )
         self.assertEqual(
-            [item["value"] for item in updates[:3]], [None, "image.png", None]
+            [item["value"] for item in updates[:3]], [None, "/image", None]
         )
 
     def test_processed_image_hides_video_preview(self):

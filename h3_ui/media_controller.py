@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from contextvars import copy_context
 from pathlib import Path
 from typing import Any
 import gradio as gr
@@ -14,8 +12,7 @@ from dataclasses import dataclass
 
 
 from h3_app.gallery_store import AssetInventory, AssetPage
-
-_THUMBNAIL_WORKERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="h3-posters")
+from .media_previews import preview_results
 
 GalleryMutationResult = tuple[
     list[tuple[str, str]], list[str], str, Any, Any, str | None, bool
@@ -312,7 +309,7 @@ class MediaController:
             clear_selection=False,
         )
 
-    def refresh_gallery_page(self, limit: int = 48, *, paths=None) -> AssetPage:
+    def refresh_gallery_page(self, limit: int = 48, *, paths=None, preview_timeout=None) -> AssetPage:
         if isinstance(paths, AssetInventory) and paths.kind != "Video":
             raise ValueError("Gallery inventory does not match the media type.")
         if isinstance(paths, AssetInventory) and paths.kind == "Video":
@@ -326,18 +323,15 @@ class MediaController:
         items: list[tuple[str, str]] = []
         selectable_paths: list[str] = []
         failed = 0
-        # One shared bound across browser sessions. Copy job context so finishing
-        # callbacks retain cancellation checks inside the media subprocesses.
-        posters = [
-            _THUMBNAIL_WORKERS.submit(
-                copy_context().run, self.services.gallery_thumbnail, video
-            )
-            for video in shown_videos
-        ]
-        for video, poster in zip(shown_videos, posters):
-            thumbnail = poster.result()
+        preparing = 0
+        posters = preview_results(
+            shown_videos, self.services.gallery_thumbnail, kind="Video",
+            cache_root=self.services.GALLERY_THUMBNAILS_DIR, timeout=preview_timeout,
+        )
+        for video, (thumbnail, pending) in zip(shown_videos, posters):
             if thumbnail is None:
-                failed += 1
+                preparing += int(pending)
+                failed += int(not pending)
                 thumbnail = self.services.gallery_store.gallery_placeholder(
                     video, kind="Video", runtime=self.services._runtime_config()
                 )
@@ -355,7 +349,7 @@ class MediaController:
             items.append((str(thumbnail), caption))
             selectable_paths.append(str(video))
         return AssetPage.from_scan(
-            items, selectable_paths, len(videos), limit, "videos", failed
+            items, selectable_paths, len(videos), limit, "videos", failed, preparing
         )
 
     def refresh_gallery(self, limit: int = 48):
@@ -390,7 +384,7 @@ class MediaController:
         }[self.services.gallery_media_mode(mode)](limit=None)
 
     def refresh_media_page(
-        self, mode: str = "Video", limit: int = 48, *, paths=None
+        self, mode: str = "Video", limit: int = 48, *, paths=None, preview_timeout=None
     ) -> AssetPage:
         """Refresh the active gallery, defaulting to the existing video library."""
         media_mode = self.services.gallery_media_mode(mode)
@@ -398,8 +392,8 @@ class MediaController:
             raise ValueError("Gallery inventory does not match the media type.")
         if media_mode == "Video":
             return (
-                self.refresh_gallery_page(limit, paths=paths)
-                if paths is not None
+                self.refresh_gallery_page(limit, paths=paths, preview_timeout=preview_timeout)
+                if paths is not None or preview_timeout is not None
                 else self.services.refresh_gallery_page(limit)
             )
         if media_mode == "Audio":
@@ -458,12 +452,17 @@ class MediaController:
         items: list[tuple[str, str]] = []
         selectable_paths: list[str] = []
         failed = 0
-        for image in images:
-            thumbnail = self.services.gallery_store.gallery_image_thumbnail(
-                image, runtime=self.services._runtime_config()
-            )
+        preparing = 0
+        runtime = self.services._runtime_config()
+        posters = preview_results(
+            images,
+            lambda image: self.services.gallery_store.gallery_image_thumbnail(image, runtime=runtime),
+            kind="Image", cache_root=runtime.gallery_thumbnails_dir, timeout=preview_timeout,
+        )
+        for image, (thumbnail, pending) in zip(images, posters):
             if thumbnail is None:
-                failed += 1
+                preparing += int(pending)
+                failed += int(not pending)
                 thumbnail = self.services.gallery_store.gallery_placeholder(
                     image, kind="Image", runtime=self.services._runtime_config()
                 )
@@ -481,7 +480,7 @@ class MediaController:
             items.append((str(thumbnail), caption))
             selectable_paths.append(str(image))
         return AssetPage.from_scan(
-            items, selectable_paths, len(all_images), limit, "images", failed
+            items, selectable_paths, len(all_images), limit, "images", failed, preparing
         )
 
     def refresh_media_gallery(self, mode: str = "Video", limit: int = 48):
@@ -522,7 +521,7 @@ class MediaController:
                 media, media_mode, request
             )
             return (
-                *self.services.gallery_preview_updates(mode, image=media),
+                *self.services.gallery_preview_updates(mode, image=download_url.removesuffix("?download=1")),
                 f"**Resolution:** {resolution} · [Download image]({download_url})",
                 media,
             )
@@ -532,17 +531,17 @@ class MediaController:
                 resolved, media_mode, request
             )
             return (
-                *self.services.gallery_preview_updates(mode, audio=media),
+                *self.services.gallery_preview_updates(mode, audio=download_url.removesuffix("?download=1")),
                 f"[Download audio]({download_url})",
                 media,
             )
-        video, download, selected = self.services.select_gallery_video(
-            paths, request, evt
-        )
+        video = self.services.managed_video_path(media)
+        preview_url = self.services.absolute_video_url(video, request)
+        download_url = self.services.absolute_video_download_url(video, request)
         return (
-            *self.services.gallery_preview_updates(mode, video=video),
-            download,
-            selected,
+            *self.services.gallery_preview_updates(mode, video=preview_url),
+            f"[Download video]({download_url})",
+            media,
         )
 
     def gallery_media_mutation_result(

@@ -45,6 +45,7 @@ def run(args):
             "browser_auto_resolution.py",
             "browser_image_library.py",
             "browser_workspace.py",
+            "browser_media_performance.py",
         ):
             subprocess.run(
                 [sys.executable, "-m", "tests." + Path(script).stem],

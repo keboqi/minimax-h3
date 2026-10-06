@@ -105,7 +105,8 @@ def bind_safe_deletion(
         sync_more,
         inputs=refresh_inputs or view.mode,
         outputs=refresh_outputs or [view.shown, view.show_more],
-        queue=False,
+        queue=True,
+        concurrency_limit=None,
         api_name=False,
         show_progress="hidden",
     )

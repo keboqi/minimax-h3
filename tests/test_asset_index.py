@@ -9,6 +9,20 @@ from h3_ui.asset_index import AssetIndex
 
 
 class AssetIndexTests(unittest.TestCase):
+    def test_browsing_reuses_recent_inventory_but_refresh_finds_new_files(self):
+        image = self.root / "alpha.png"
+        image.write_bytes(b"first")
+        self.index.inventory("Image")
+        with patch.object(self.index, "list_paths", side_effect=AssertionError("rescan")):
+            self.assertEqual(self.index.inventory("Image", force=False).paths, (image,))
+        other = self.root / "beta.png"
+        other.write_bytes(b"new")
+        self.assertEqual(set(self.index.inventory("Image").paths), {image, other})
+        with patch("h3_ui.asset_index.monotonic", return_value=self.index.scanned_at["Image"] + 6):
+            with patch.object(self.index, "list_paths", wraps=self.index.list_paths) as scan:
+                self.index.inventory("Image", force=False)
+                scan.assert_called_once()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

@@ -1291,7 +1291,6 @@ class UiContractTests(unittest.TestCase):
 
     def test_non_gpu_media_actions_bypass_the_application_queue(self):
         expected = {
-            "refresh_page",
             "select_gallery_media",
             "import_gallery_media",
             "confirm",
@@ -1305,6 +1304,18 @@ class UiContractTests(unittest.TestCase):
                 self.assertFalse(event.queue, name)
                 self.assertNotEqual(event.concurrency_id, "h3-gpu", name)
         self.assertEqual(found, expected)
+
+    def test_progressive_media_refreshes_do_not_wait_for_gpu_jobs(self):
+        names = {"refresh_page", "browse_page", "more_page", "apply_filters", "sync_more"}
+        found = set()
+        for event in self.demo.fns.values():
+            name = getattr(event.fn, "__name__", "")
+            if name in names:
+                found.add(name)
+                self.assertTrue(event.queue, name)
+                self.assertIsNone(event.concurrency_limit, name)
+                self.assertNotEqual(event.concurrency_id, "h3-gpu", name)
+        self.assertEqual(found, names)
 
     def test_h3_progressive_section_order(self) -> None:
         by_id = {

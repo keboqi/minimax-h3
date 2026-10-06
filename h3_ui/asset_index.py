@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from threading import RLock
+from time import monotonic
 
 from h3_app.provenance import read_snapshot, snapshot_path
 from h3_app.gallery_store import AssetInventory
@@ -40,6 +41,7 @@ class AssetIndex:
         self.ordered = {}
         self.revision = 0
         self.lock = RLock()
+        self.scanned_at = {}
 
     def sync(self, mode):
         with self.lock:
@@ -79,6 +81,7 @@ class AssetIndex:
                 self.revision += 1
             self.inventories[mode] = allowed
             self.ordered[mode] = ordered
+            self.scanned_at[mode] = monotonic()
             return allowed
 
     def cached_paths(self, mode):
@@ -86,8 +89,13 @@ class AssetIndex:
         with self.lock:
             return set(self.inventories.get(mode, ()))
 
-    def paths(self, mode, query="", favorite=False):
-        allowed = self.sync(mode)
+    def paths(self, mode, query="", favorite=False, *, force=True):
+        with self.lock:
+            allowed = (
+                self.sync(mode)
+                if force or monotonic() - self.scanned_at.get(mode, float("-inf")) >= 5
+                else set(self.inventories[mode])
+            )
         if not query.strip() and not favorite:
             return allowed
         rows = self.store.search_assets(
@@ -95,9 +103,9 @@ class AssetIndex:
         )
         return {Path(row["path"]).resolve() for row in rows} & allowed
 
-    def inventory(self, mode, query="", favorite=False):
+    def inventory(self, mode, query="", favorite=False, *, force=True):
         with self.lock:
-            matching = self.paths(mode, query, favorite)
+            matching = self.paths(mode, query, favorite, force=force)
             return AssetInventory(
                 mode, tuple(path for path in self.ordered[mode] if path in matching)
             )
@@ -107,6 +115,7 @@ class AssetIndex:
             self.fingerprints.clear()
             self.inventories.clear()
             self.ordered.clear()
+            self.scanned_at.clear()
             self.revision += 1
             with self.store.connect() as db:
                 db.execute("UPDATE assets SET available=0")
