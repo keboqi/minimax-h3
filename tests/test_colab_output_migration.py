@@ -24,8 +24,6 @@ class ColabOutputMigrationTests(unittest.TestCase):
         mount = Mock()
         colab.drive = SimpleNamespace(mount=mount)
         google.colab = colab
-        helper = ModuleType("h3_colab_drive")
-        helper.mount_from_secret = mount
         for mounted, accessible in ((True, True), (False, True), (True, False), (False, False)):
             with self.subTest(mounted=mounted, accessible=accessible), TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -34,14 +32,14 @@ class ColabOutputMigrationTests(unittest.TestCase):
                 namespace = dict(Path=Path, shutil=shutil, os=os, NOTEBOOK_DIR=root)
                 exec(compile(ast.Module(body=[function], type_ignores=[]), "<colab>", "exec"), namespace)
                 mount.reset_mock()
-                with patch.dict(sys.modules, {"google": google, "google.colab": colab, "h3_colab_drive": helper}), \
+                with patch.dict(sys.modules, {"google": google, "google.colab": colab}), \
                      patch.object(os.path, "ismount", return_value=mounted), \
                      patch.object(Path, "symlink_to", return_value=None):
                     namespace["setup_google_drive_outputs"](True, workspace_dir=str(root / "workspace"))
                 if mounted and accessible:
                     mount.assert_not_called()
                 else:
-                    mount.assert_called_once_with(root / "drive")
+                    mount.assert_called_once_with(str(root / "drive"))
 
     def test_existing_drive_name_preserves_both_outputs(self):
         notebook = json.loads(
@@ -64,8 +62,6 @@ class ColabOutputMigrationTests(unittest.TestCase):
         colab = ModuleType("google.colab")
         colab.drive = SimpleNamespace(mount=lambda _: None)
         google.colab = colab
-        helper = ModuleType("h3_colab_drive")
-        helper.mount_from_secret = lambda _: None
 
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -78,7 +74,7 @@ class ColabOutputMigrationTests(unittest.TestCase):
             drive_output.mkdir(parents=True)
             (drive_output / "clip.mp4").write_bytes(b"old clip")
 
-            with patch.dict(sys.modules, {"google": google, "google.colab": colab, "h3_colab_drive": helper}):
+            with patch.dict(sys.modules, {"google": google, "google.colab": colab}):
                 with patch.object(Path, "symlink_to", return_value=None):
                     namespace["setup_google_drive_outputs"](
                         True, str(drive_root), str(workspace)

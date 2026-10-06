@@ -166,9 +166,7 @@ class ColabDriveSafetyTests(unittest.TestCase):
         google, colab = ModuleType("google"), ModuleType("google.colab")
         colab.drive = SimpleNamespace(mount=self.mount)
         google.colab = colab
-        helper = ModuleType("h3_colab_drive")
-        helper.mount_from_secret = self.mount
-        self.modules = {"google": google, "google.colab": colab, "h3_colab_drive": helper}
+        self.modules = {"google": google, "google.colab": colab}
         self.gradio = self.workspace / "h3" / "gradio_outputs"
         self.gradio.mkdir(parents=True)
         self.clip = self.gradio / "clip.mp4"
