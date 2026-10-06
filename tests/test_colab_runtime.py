@@ -160,7 +160,7 @@ class ColabDriveSafetyTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.workspace = self.root / "workspace"
-        self.namespace = dict(Path=Path, shutil=shutil, os=os, NOTEBOOK_DIR=self.root)
+        self.namespace = dict(Path=Path, shutil=shutil, os=os, NOTEBOOK_DIR=self.root, DRIVE_AUTH_MODE="Standard Colab")
         self.setup = load_function("setup_google_drive_outputs", self.namespace)
         self.mount = Mock()
         google, colab = ModuleType("google"), ModuleType("google.colab")

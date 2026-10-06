@@ -7,10 +7,40 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import ModuleType, SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 class ColabOutputMigrationTests(unittest.TestCase):
+    def test_only_accessible_existing_mount_skips_authorization(self):
+        notebook = json.loads(
+            (Path(__file__).resolve().parents[1] / "minimax_h3_colab.ipynb").read_text(encoding="utf-8")
+        )
+        source = next("".join(c["source"]) for c in notebook["cells"]
+                      if "def setup_google_drive_outputs(" in "".join(c["source"]))
+        function = next(n for n in ast.parse(source).body
+                        if isinstance(n, ast.FunctionDef) and n.name == "setup_google_drive_outputs")
+        google = ModuleType("google")
+        colab = ModuleType("google.colab")
+        mount = Mock()
+        colab.drive = SimpleNamespace(mount=mount)
+        google.colab = colab
+        for mounted, accessible in ((True, True), (False, True), (True, False), (False, False)):
+            with self.subTest(mounted=mounted, accessible=accessible), TemporaryDirectory() as directory:
+                root = Path(directory)
+                if accessible:
+                    (root / "drive" / "MyDrive").mkdir(parents=True)
+                namespace = dict(Path=Path, shutil=shutil, os=os, NOTEBOOK_DIR=root, DRIVE_AUTH_MODE="Standard Colab")
+                exec(compile(ast.Module(body=[function], type_ignores=[]), "<colab>", "exec"), namespace)
+                mount.reset_mock()
+                with patch.dict(sys.modules, {"google": google, "google.colab": colab}), \
+                     patch.object(os.path, "ismount", return_value=mounted), \
+                     patch.object(Path, "symlink_to", return_value=None):
+                    namespace["setup_google_drive_outputs"](True, workspace_dir=str(root / "workspace"))
+                if mounted and accessible:
+                    mount.assert_not_called()
+                else:
+                    mount.assert_called_once_with(str(root / "drive"))
+
     def test_existing_drive_name_preserves_both_outputs(self):
         notebook = json.loads(
             (Path(__file__).resolve().parents[1] / "minimax_h3_colab.ipynb").read_text(encoding="utf-8")
@@ -25,7 +55,7 @@ class ColabOutputMigrationTests(unittest.TestCase):
             for node in ast.parse(source).body
             if isinstance(node, ast.FunctionDef) and node.name == "setup_google_drive_outputs"
         )
-        namespace = {"Path": Path, "shutil": shutil, "os": os}
+        namespace = {"Path": Path, "shutil": shutil, "os": os, "DRIVE_AUTH_MODE": "Standard Colab"}
         exec(compile(ast.Module(body=[function], type_ignores=[]), "<colab>", "exec"), namespace)
 
         google = ModuleType("google")
