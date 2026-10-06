@@ -426,7 +426,7 @@ class CloudflareTests(unittest.TestCase):
         proc.terminate.assert_called_once()
         proc.wait.assert_called_once_with(timeout=5)
 
-    def test_notebook_launches_one_app_with_cloudflare_and_without_gradio_share(self):
+    def test_notebook_launches_one_app_with_gradio_share_and_without_cloudflare(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             for name in ("h3_ui/application.py", "h3_models.py"):
@@ -443,8 +443,8 @@ class CloudflareTests(unittest.TestCase):
                     exec(compile(ast.fix_missing_locations(tree), "<launch cell>", "exec"), namespace)
             self.assertTrue(app.stdout.closed)
             popen.assert_called_once()
-            self.assertEqual(popen.call_args.kwargs["env"]["ENABLE_CLOUDFLARE_TUNNEL"], "true")
-            self.assertEqual(popen.call_args.kwargs["env"]["GRADIO_SHARE"], "false")
+            self.assertEqual(popen.call_args.kwargs["env"]["ENABLE_CLOUDFLARE_TUNNEL"], "false")
+            self.assertEqual(popen.call_args.kwargs["env"]["GRADIO_SHARE"], "true")
 
     def test_public_url_defaults_and_overrides(self):
         for environment, expected in (
