@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from h3_app.config import RuntimeConfig
+from h3_app.catalog import SINGLE_FRAME_IMAGE_VAE
 from h3_app.generation.construct_graph import construct_graph
 from h3_app.generation.preparation import prepare_h3
 from h3_app.generation.requests import H3Request
@@ -40,7 +41,7 @@ class DecoderTests(unittest.TestCase):
             for mode in ("Text to video", "First / last frame", "Reference media")
         ] + [
             ("Image", image_vae, "Text to video")
-            for image_vae in (app.DEFAULT_IMAGE_VAE, app.SINGLE_FRAME_IMAGE_VAE)
+            for image_vae in (app.DEFAULT_IMAGE_VAE, SINGLE_FRAME_IMAGE_VAE)
         ]
         for fmt, image_vae, mode in cases:
             for installed in (False, True):
@@ -160,7 +161,7 @@ class DecoderTests(unittest.TestCase):
             kwargs.update(
                 prompt="Fixture",
                 result_format=fmt,
-                image_vae=app.SINGLE_FRAME_IMAGE_VAE,
+                image_vae=SINGLE_FRAME_IMAGE_VAE,
                 latent_upscale=False,
                 use_trt_vae=True,
                 image_frames=1,

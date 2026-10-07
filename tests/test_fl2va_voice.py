@@ -1,4 +1,7 @@
 """Voice conditioning, input isolation, and backwards-compatible API routing."""
+import h3_app.prompt_service as _prompt_service
+import h3_app.catalog as _catalog
+import h3_app.policy as _policy
 import inspect
 import unittest
 from types import SimpleNamespace
@@ -24,7 +27,7 @@ class Fl2vaVoiceTests(unittest.TestCase):
             first_image="start.png", last_image="end.png", width=864, height=480,
             duration=5, steps=4, seed=7,
             models=SimpleNamespace(text_encoder="encoder.safetensors"),
-            available_nodes={T8, "LoadAudio", app.H3_SEMANTIC_BRIDGE_NODE} if available is None else available,
+            available_nodes={T8, "LoadAudio", _catalog.H3_SEMANTIC_BRIDGE_NODE} if available is None else available,
             voice_reference_audios=list(voices),
             latent_upscale_model_name="upscaler.pth" if upscale else None,
             semantic_bridge=bool(voices),
@@ -52,11 +55,11 @@ class Fl2vaVoiceTests(unittest.TestCase):
             self.assertEqual(inputs["audio_vae"], ["audio", 0])
             for field in ("first_frame", "last_frame", "ref_audios.ref_audio_1", "ref_audios.ref_audio_2"):
                 self.assertIn(field, inputs)
-        self.assertEqual(sum(n["class_type"] == app.H3_SEMANTIC_BRIDGE_NODE for n in graph.values()), 2)
+        self.assertEqual(sum(n["class_type"] == _catalog.H3_SEMANTIC_BRIDGE_NODE for n in graph.values()), 2)
         self.assertEqual(finish["model_ref"], ["model", 0])
         for field in ("conditioning_ref", "initial_conditioning_ref"):
             bridge = graph[finish[field][0]]
-            self.assertEqual(bridge["class_type"], app.H3_SEMANTIC_BRIDGE_NODE)
+            self.assertEqual(bridge["class_type"], _catalog.H3_SEMANTIC_BRIDGE_NODE)
             self.assertEqual(graph[bridge["inputs"]["conditioning"][0]]["class_type"], T8)
         for field in ("latent_ref", "initial_latent_ref"):
             self.assertEqual(graph[finish[field][0]]["class_type"], T8)
@@ -71,7 +74,7 @@ class Fl2vaVoiceTests(unittest.TestCase):
     def test_audio_change_and_removal_invalidate_cache(self):
         def key(voices):
             graph, _ = self.graph(voices)
-            return next(n["inputs"]["cache_key"] for n in graph.values() if n["class_type"] == app.H3_CONDITIONING_CACHE_NODE)
+            return next(n["inputs"]["cache_key"] for n in graph.values() if n["class_type"] == _catalog.H3_CONDITIONING_CACHE_NODE)
         self.assertEqual(key(("alice.wav",)), key(("alice.wav",)))
         self.assertEqual(len({key(()), key(("alice.wav",)), key(("bob.wav",))}), 3)
 
@@ -81,11 +84,10 @@ class Fl2vaVoiceTests(unittest.TestCase):
 
     def test_hidden_voice_slots_are_ignored_and_speaker_ordinals_do_not_shift(self):
         for mode in ("Reference media", "Text to video"):
-            self.assertEqual(app.active_fl2va_voice_references(mode, None, "hidden.wav", None), [])
+            self.assertEqual(_policy.active_fl2va_voice_references(mode, None, "hidden.wav", None), [])
         with self.assertRaisesRegex(app.H3Error, "Fill FL2VA voice slots in order"):
-            app.active_fl2va_voice_references("First / last frame", None, "bob.wav", None)
-        with patch.object(app, "collect_reference_slots", return_value=["alice.wav"]):
-            self.assertEqual(app.active_fl2va_voice_references("First / last frame", "alice.wav", None, None), ["alice.wav"])
+            _policy.active_fl2va_voice_references("First / last frame", None, "bob.wav", None)
+        self.assertEqual(_policy.active_fl2va_voice_references("First / last frame", "alice.wav", None, None), ["alice.wav"])
 
     def test_bridge_preference_survives_mode_switches(self):
         values = dict(semantic_bridge=True, fl2va_audio_1="alice.wav")
@@ -157,15 +159,15 @@ class Fl2vaVoiceTests(unittest.TestCase):
         self.assertIn("offline", status)
 
     def test_voice_context_supports_drafts_and_ignores_hidden_slots(self):
-        context, allowed, required = app.fl2va_prompt_voice_context("Voice <Audio 2>", "First / last frame")
+        context, allowed, required = _prompt_service.fl2va_prompt_voice_context("Voice <Audio 2>", "First / last frame")
         self.assertIn("<Audio 2>", context)
         self.assertEqual(allowed, {"2"})
         self.assertEqual(required, {"2"})
         for mode in ("Text to video", "Reference media"):
-            self.assertEqual(app.fl2va_prompt_voice_context("Voice <Audio 1>", mode, "hidden.wav"), ("", set(), set()))
+            self.assertEqual(_prompt_service.fl2va_prompt_voice_context("Voice <Audio 1>", mode, "hidden.wav"), ("", set(), set()))
         with self.assertRaises(app.H3Error):
-            app.fl2va_prompt_voice_context("Voice <Audio 2>", "First / last frame", "only-one.wav")
-        context, allowed, required = app.fl2va_prompt_voice_context("Two speakers.", "First / last frame", "one.wav", "two.wav")
+            _prompt_service.fl2va_prompt_voice_context("Voice <Audio 2>", "First / last frame", "only-one.wav")
+        context, allowed, required = _prompt_service.fl2va_prompt_voice_context("Two speakers.", "First / last frame", "one.wav", "two.wav")
         self.assertEqual(allowed, {"1", "2"})
         self.assertEqual(required, set())
 

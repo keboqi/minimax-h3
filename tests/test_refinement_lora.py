@@ -1,4 +1,7 @@
 """Independent refinement adapters, sampler routing, and lazy provisioning."""
+import h3_app.catalog as _catalog
+import h3_app.graph as _graph
+import h3_app.workflows.h3 as _h3_workflow
 import inspect
 import json
 from pathlib import Path
@@ -59,8 +62,8 @@ class RefinementLoraTests(unittest.TestCase):
                             use_sol=False, cache_mode='Off', use_sla=True,
                             latent_upscale_model_name='upscaler.pth',
                             refinement_lora_name='refinement.safetensors', refinement_variant=variant,
-                            available_nodes=(app.turbo_required_nodes(LIGHTX2V_8STEP_TURBO, models.turbo_8step_lora)
-                                             | app.turbo_required_nodes(variant) | {app.SLA_ATTENTION_NODE}),
+                            available_nodes=(_h3_workflow.turbo_required_nodes(LIGHTX2V_8STEP_TURBO, models.turbo_8step_lora)
+                                             | _h3_workflow.turbo_required_nodes(variant) | {_catalog.SLA_ATTENTION_NODE}),
                             latent_split_config=(app.H3SplitUpscaleConfig(512, 512, .25, .5, 73, 22, .75, 'off')
                                                  if split else None),
                         )
@@ -73,7 +76,7 @@ class RefinementLoraTests(unittest.TestCase):
                         initial = samples[0]
                         initial_model = graph[initial['guider'][0]]['inputs']['model']
                         if split:
-                            target = next(n['inputs'] for n in graph.values() if n['class_type'] == app.H3_SPLIT_UPSCALE_NODE)
+                            target = next(n['inputs'] for n in graph.values() if n['class_type'] == _catalog.H3_SPLIT_UPSCALE_NODE)
                             refine_model = target['model']
                         else:
                             target = samples[1]
@@ -85,9 +88,9 @@ class RefinementLoraTests(unittest.TestCase):
                         self.assertEqual([n['inputs']['lora_name'] for n in refine_chain if 'lora_name' in n['inputs']],
                                          ['refinement.safetensors'])
                         self.assertEqual(initial_chain[-1], refine_chain[-1])
-                        self.assertEqual(next(n['inputs']['dense_steps'] for n in initial_chain if n['class_type'] == app.SLA_ATTENTION_NODE), '0')
-                        self.assertEqual(next(n['inputs']['dense_steps'] for n in refine_chain if n['class_type'] == app.SLA_ATTENTION_NODE), '')
-                        expected = app.LARRY_TURBO_SAMPLER_NODE if variant == LARRY_TURBO else app.CORE_SAMPLER_NODE
+                        self.assertEqual(next(n['inputs']['dense_steps'] for n in initial_chain if n['class_type'] == _catalog.SLA_ATTENTION_NODE), '0')
+                        self.assertEqual(next(n['inputs']['dense_steps'] for n in refine_chain if n['class_type'] == _catalog.SLA_ATTENTION_NODE), '')
+                        expected = _catalog.LARRY_TURBO_SAMPLER_NODE if variant == LARRY_TURBO else _catalog.CORE_SAMPLER_NODE
                         self.assertEqual(graph[target['sampler'][0]]['class_type'], expected)
                         if variant != LARRY_TURBO:
                             self.assertEqual(graph[target['sampler'][0]]['inputs']['sampler_name'], 'euler')
@@ -97,8 +100,8 @@ class RefinementLoraTests(unittest.TestCase):
                         self.assertEqual(split_node['inputs']['sigmas'], initial['sigmas'])
 
     def test_same_has_no_extra_model_branch_and_old_api_defaults_to_same(self):
-        graph = app.Graph()
-        base = app.Graph.out(graph.add('UNETLoader', unet_name='base', weight_dtype='default'))
+        graph = _graph.Graph()
+        base = _graph.Graph.out(graph.add('UNETLoader', unet_name='base', weight_dtype='default'))
         self.assertIsNone(add_refinement_model(graph, base, lora_name=None, variant=None, available_nodes=set()))
         self.assertEqual(len(graph.nodes), 1)
         values = [app.UI_DEFAULTS.get(name) for name in GENERATION_FIELDS[:-1]]

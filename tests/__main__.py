@@ -9,14 +9,14 @@ from tempfile import TemporaryDirectory
 import unittest
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--browser",
         action="store_true",
         help="Also run settings, references, resolution and workspace browser checks",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     with TemporaryDirectory(prefix="h3-test-state-") as state:
         os.environ["H3_WORKSPACE_DIR"] = state
         try:

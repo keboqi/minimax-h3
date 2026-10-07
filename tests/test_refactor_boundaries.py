@@ -1,5 +1,9 @@
 """Integration regressions for extracted configuration, media, and generation."""
 
+import h3_app.catalog as _catalog
+import h3_app.workflows.ltx as _ltx_workflow
+import h3_app.workflows.music as _music_workflow
+import h3_models as _models
 import ast
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
@@ -561,7 +565,7 @@ class GenerationIntegrationTests(unittest.TestCase):
                         cache_mode="Off",
                         seed=123,
                         result_format=fmt,
-                        image_vae=app.SINGLE_FRAME_IMAGE_VAE,
+                        image_vae=_catalog.SINGLE_FRAME_IMAGE_VAE,
                         image_frames=1,
                         use_trt_vae=False,
                         use_int8_vae=False,
@@ -600,8 +604,8 @@ class GenerationIntegrationTests(unittest.TestCase):
                     "object_info",
                     return_value={
                         key: {}
-                        for key in app.required_ltx25_nodes(image_to_video=True)
-                        | app.required_music3_nodes(tiled_decode=True)
+                        for key in _ltx_workflow.required_ltx25_nodes(image_to_video=True)
+                        | _music_workflow.required_music3_nodes(tiled_decode=True)
                     },
                 )
             )
@@ -640,7 +644,7 @@ class GenerationIntegrationTests(unittest.TestCase):
                 if key != "progress"
             }
             required.update(
-                model_choice=app.DEFAULT_MUSIC3_MODEL,
+                model_choice=_models.DEFAULT_MUSIC3_MODEL,
                 caption="Private caption",
                 lyrics="Private lyrics",
                 max_duration=120,

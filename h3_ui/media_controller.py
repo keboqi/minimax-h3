@@ -113,7 +113,6 @@ class MediaServices:
     refresh_gallery_page: Any
     refresh_media_gallery: Any
     refresh_media_page: Any
-    select_gallery_video: Any
     video_download_path: Any
 
 
@@ -173,11 +172,6 @@ class MediaController:
 
     def gallery_thumbnail_path(self, video: str | Path) -> Path:
         return self.services.gallery_store.gallery_thumbnail_path(
-            video, runtime=self.services._runtime_config()
-        )
-
-    def gallery_video_resolution(self, video: Path) -> tuple[int, int] | None:
-        return self.services.gallery_store.gallery_video_resolution(
             video, runtime=self.services._runtime_config()
         )
 
@@ -284,32 +278,6 @@ class MediaController:
             media_mode,
             f"Imported `{source.name}`",
             selected_media=str(destination),
-            clear_selection=False,
-        )
-
-    def import_gallery_video(self, uploaded_video: str | None) -> GalleryMutationResult:
-        if not uploaded_video:
-            return self.services.gallery_mutation_result(
-                "Choose a local video first.", clear_selection=False
-            )
-        source = self.services.Path(uploaded_video).expanduser().resolve()
-        if (
-            not source.is_file()
-            or source.suffix.lower() not in self.services.VIDEO_EXTENSIONS
-        ):
-            return self.services.gallery_mutation_result(
-                "The selected file is not a supported video.", clear_selection=False
-            )
-        destination_dir = self.services.OUTPUTS_DIR / "imports"
-        destination_dir.mkdir(parents=True, exist_ok=True)
-        destination = (
-            destination_dir
-            / f"import_{int(self.services.time.time())}_{self.services.uuid.uuid4().hex[:8]}{source.suffix.lower()}"
-        )
-        self.services.copy_media(source, destination)
-        return self.services.gallery_mutation_result(
-            f"Imported `{source.name}`",
-            selected_video=str(destination),
             clear_selection=False,
         )
 

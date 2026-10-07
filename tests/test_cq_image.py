@@ -1,6 +1,7 @@
 """CQ image recipe, lazy provisioning, and gallery execution contracts."""
 
 from contextlib import ExitStack
+from h3_app.catalog import LTX25_CQ_IMAGE_ENHANCER
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -87,7 +88,7 @@ class CqImageTests(unittest.TestCase):
                 mocks = {name: stack.enter_context(patch.object(app, name, return_value=value)) for name, value in returns.items()}
                 build = stack.enter_context(patch.object(app, "build_cq_image_enhance_graph", wraps=build_cq_image_enhance_graph))
                 updates = list(app.postprocess_selected_gallery_media(
-                    "Image", "source.png", app.LTX25_CQ_IMAGE_ENHANCER,
+                    "Image", "source.png", LTX25_CQ_IMAGE_ENHANCER,
                     42, app.DEFAULT_SEEDVR2_MODEL, app.DEFAULT_LTX25_MODEL,
                     "ignored", True, True, 5.0, "1920 × 1920",
                     request=Mock(), progress=Mock(),
@@ -106,7 +107,7 @@ class CqImageTests(unittest.TestCase):
                 mocks["unload_comfy_models"].assert_called_once_with()
                 snapshot = mocks["write_snapshot"].call_args.args[1]
                 self.assertEqual(snapshot["settings"]["target_resolution"], f"{expected[0]}×{expected[1]}")
-                self.assertEqual(snapshot["settings"]["method"], app.LTX25_CQ_IMAGE_ENHANCER)
+            self.assertEqual(snapshot["settings"]["method"], LTX25_CQ_IMAGE_ENHANCER)
 
     def test_missing_nodes_prevent_download_and_submission(self):
         with (
@@ -117,7 +118,7 @@ class CqImageTests(unittest.TestCase):
             patch.object(app, "submit_prompt") as submit,
         ):
             updates = list(app.postprocess_selected_gallery_image(
-                "source.png", app.LTX25_CQ_IMAGE_ENHANCER, 42,
+                "source.png", LTX25_CQ_IMAGE_ENHANCER, 42,
                 app.DEFAULT_SEEDVR2_MODEL, False, "1920 × 1920",
                 request=Mock(), progress=Mock(),
             ))

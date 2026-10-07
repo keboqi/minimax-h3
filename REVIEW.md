@@ -1,5 +1,10 @@
 # Code review and refactor notes
 
+This is a historical audit log; later entries can supersede earlier defaults and
+implementation details. See the [current structure review](docs/structure-review-2026-10-07.md)
+and [architecture guide](docs/settings-refactor.md) for the maintained boundaries
+and validation commands.
+
 ## Output discovery review — 2026-08-20
 
 1. **Closed a containment gap in fallback output scans.** History-reported

@@ -19,7 +19,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | Module | Owns |
 |---|---|
 | h3_app/config.py | Immutable startup paths, backend mode and transport limits |
-| h3_sources.py | The 21 repository, revision and wheel pins shared by local and Modal setup |
+| h3_sources.py | Repository, revision and wheel pins shared by local and Modal setup |
 | h3_app/settings.py, resources.py | Requested/effective settings, presets and output-specific decoder dependencies |
 | h3_app/contracts.py | Stable positional API ordering |
 | h3_app/model_types.py, model_service.py | Model selection, lazy provisioning and TensorRT engine lifecycle |
@@ -28,7 +28,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/workspace_store.py, workspace_admin.py | SQLite ownership, technical history, explicit projects, asset annotations, backup/restore |
 | h3_ui/prompt_controller.py, model_controller.py, media_controller.py | Feature behavior through explicit service dependencies |
 | h3_app/comfy.py, execution.py | HTTP transport and one submission lifecycle, deadline and websocket owner |
-| h3_app/workflows/ | Pure H3, LTX, Music and upscale graph builders with staged input identities |
+| h3_app/workflows/ | Pure H3, LTX, Qwen, Music, YuE2 and finishing graph builders with staged input identities |
 | h3_app/generation/ | Named requests and typed services; preparation, graph construction, execution and finishing |
 | h3_app/staging.py, media_tools.py, swiftvr.py | Input staging, media inspection, controlled subprocesses and post-processing |
 | h3_app/media.py, outputs.py, gallery_store.py | Contained discovery, explicit output context and complete managed gallery inventory |
@@ -45,7 +45,9 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_ui/settings_controller.py, settings_presentation.py | Serialized settings actions and resolved-plan rendering |
 | h3_ui/persistence.py | Explicit browser preference allowlist and migration |
 | gradio_app.py | Workspace launcher |
-| tests/__main__.py, test_service_contracts.py, test_workflow_fixtures.py | Consolidated validation, service suites and 15 baseline graph fixtures |
+| tests/__main__.py, test_service_contracts.py | Consolidated validation and standalone provisioning checks |
+| tests/test_application_adapters.py, test_workflow_contracts.py, test_server_proxy.py | Focused application, workflow and proxy behavior |
+| tests/workflow_cases.py, test_workflow_fixtures.py | Shared fixed inputs and 15 unchanged baseline graph fixtures, independent of Gradio |
 
 The H3/LTX/Music graph algorithms and model patch ordering remain intact. This refactor does not replace the inference stack or introduce a plugin framework.
 
@@ -71,7 +73,7 @@ H3 metadata is attached before Gradio copies media into its cache. Gallery metad
 
 ## Compatibility and deployment
 
-gradio_app is a launcher only. Prompt, model and media controllers receive explicit service records; the workspace is the only UI. New domain code imports h3_app modules and receives runtime configuration and named services explicitly. H3Request groups conditioning, sampling, output and finishing inputs. Resolved settings remain the policy authority; capability and model checks take place during preparation.
+gradio_app is a launcher only. Prompt, model and media controllers receive explicit service records; the workspace is the only UI. Application exports are runtime wiring and public API adapters. Tests import pure policies, catalogs and workflow helpers from their owning modules; retired settings callbacks and private service forwarding methods have been removed. New domain code imports h3_app modules and receives runtime configuration and named services explicitly. H3Request groups conditioning, sampling, output and finishing inputs. Resolved settings remain the policy authority; capability and model checks take place during preparation.
 
 Graph builders accept staged paths and explicit output naming tokens. Importing them or generation, media and model services does not construct Gradio components, contact a backend or download models. Graph fixture normalization changes only volatile save-prefix timestamp/UUID suffixes.
 
@@ -94,7 +96,7 @@ uv pip install --python .venv/Scripts/python.exe -r requirements-test.txt
 .venv/Scripts/python.exe -m tests --browser
 ```
 
-The consolidated command runs discovery, all standalone service self-tests and baseline workflow contracts, with offline Hugging Face mode. The gradio_app.py --selftest entry point remains available. CPU PyTorch numerical tests run only when PyTorch is installed; pinned upstream contract tests run only when their .cache/upstream-upgrade sources exist. Neither gate fetches dependencies. The --browser option adds settings, voice-reference, first-frame resolution and workspace acceptance.
+The consolidated command runs discovery, standalone provisioning checks and baseline workflow contracts, with offline Hugging Face mode. The gradio_app.py --selftest entry point delegates to that same CPU suite. CPU PyTorch numerical tests run only when PyTorch is installed; pinned upstream contract tests run only when their .cache/upstream-upgrade sources exist. Neither gate fetches dependencies. Cached upstream files must match the current pins in h3_requirements.py and h3_sources.py; refresh them after upgrades or select a matching directory with H3_UPSTREAM_SOURCE_DIR. The --browser option adds queue transport, settings, voice-reference, first-frame resolution, image-library, workspace and media-performance acceptance.
 
 On Linux use .venv/bin/python. Browser checks use installed Chrome on Windows, or Playwright Chromium elsewhere; H3_BROWSER_EXECUTABLE can select a Chromium executable. Fixtures mock backend health and never load models. Workspace job checks use a synthetic generation callback and test-only queue controls; they do not measure inference.
 

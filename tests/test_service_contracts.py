@@ -1,10 +1,10 @@
-"""Keep remaining standalone service regressions in normal discovery."""
+"""Provisioning module smoke checks participate in normal discovery."""
 
 import importlib
 import unittest
 
 
-class LegacyServiceTests(unittest.TestCase):
+class ProvisioningContractTests(unittest.TestCase):
     def test_requirements(self):
         importlib.import_module("h3_requirements").selftest()
 

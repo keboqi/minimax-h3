@@ -1,5 +1,6 @@
 """FL2VA adapter routing, raw-cache identity, settings, and lazy provisioning."""
 
+import h3_app.catalog as _catalog
 import inspect
 import unittest
 from unittest.mock import patch
@@ -52,7 +53,7 @@ class SemanticBridgeTests(unittest.TestCase):
             steps=4,
             seed=7,
             models=SimpleNamespace(text_encoder="encoder.safetensors"),
-            available_nodes={app.H3_SEMANTIC_BRIDGE_NODE},
+            available_nodes={_catalog.H3_SEMANTIC_BRIDGE_NODE},
             semantic_bridge=enabled,
             semantic_bridge_alpha=alpha,
             latent_upscale_model_name="upscaler.pth" if upscale else None,
@@ -73,7 +74,7 @@ class SemanticBridgeTests(unittest.TestCase):
         bridges = {
             key: n
             for key, n in graph.items()
-            if n["class_type"] == app.H3_SEMANTIC_BRIDGE_NODE
+            if n["class_type"] == _catalog.H3_SEMANTIC_BRIDGE_NODE
         }
         self.assertEqual(len(bridges), 2)
         for name in ("conditioning_ref", "initial_conditioning_ref"):
@@ -92,7 +93,7 @@ class SemanticBridgeTests(unittest.TestCase):
         graph, finish = self.graph(enabled=True)
         self.assertEqual(finish["conditioning_ref"], finish["initial_conditioning_ref"])
         self.assertEqual(
-            sum(n["class_type"] == app.H3_SEMANTIC_BRIDGE_NODE for n in graph.values()),
+            sum(n["class_type"] == _catalog.H3_SEMANTIC_BRIDGE_NODE for n in graph.values()),
             1,
         )
 
@@ -100,7 +101,7 @@ class SemanticBridgeTests(unittest.TestCase):
             return next(
                 n["inputs"]
                 for n in graph.values()
-                if n["class_type"] == app.H3_CONDITIONING_CACHE_NODE
+                if n["class_type"] == _catalog.H3_CONDITIONING_CACHE_NODE
             )
 
         stronger, _ = self.graph(enabled=True, alpha=0.15)

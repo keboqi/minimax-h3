@@ -2,7 +2,6 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import json
-import os
 from h3_ui import application as app
 from pathlib import Path
 import tempfile

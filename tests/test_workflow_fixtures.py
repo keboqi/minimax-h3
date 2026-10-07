@@ -1,14 +1,21 @@
-"""Baseline graph fixtures and service self-test contracts are discoverable."""
+"""Pure graph builders must match the reviewed baseline snapshots."""
 
-import asyncio
 import json
 import re
 import unittest
-from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import patch
-from h3_ui import application as app
-from tests.service_selftest import selftest
+from h3_app.workflows import h3, ltx, music, upscale
+from tests.workflow_cases import CASES
+
+
+BUILDERS = {
+    "build_fl2va_graph": h3.build_fl2va_graph,
+    "build_ltx25_graph": ltx.build_ltx25_graph,
+    "build_music3_graph": music.build_music3_graph,
+    "build_seedvr2_upscale_graph": upscale.build_seedvr2_upscale_graph,
+    "build_seedvr2_image_upscale_graph": upscale.build_seedvr2_image_upscale_graph,
+    "build_ltx25_upscale_graph": upscale.build_ltx25_upscale_graph,
+}
 
 
 def normalize(value):
@@ -25,54 +32,54 @@ def normalize(value):
 
 
 class WorkflowFixtureTests(unittest.TestCase):
-    def test_workflow_graphs_and_service_contracts(self):
+    def test_preflight_requirements_match_generated_nodes(self):
+        upscale_requirements = {
+            "build_seedvr2_upscale_graph": upscale.required_seedvr2_upscale_nodes,
+            "build_seedvr2_image_upscale_graph": upscale.required_seedvr2_image_upscale_nodes,
+            "build_ltx25_upscale_graph": upscale.required_ltx25_upscale_nodes,
+        }
+        for index, (name, arguments) in enumerate(CASES):
+            if name == "build_fl2va_graph":
+                continue
+            variants = [arguments]
+            if name == "build_music3_graph":
+                variants = [
+                    {**arguments, "tiled_decode": tiled} for tiled in (False, True)
+                ]
+            for inputs in variants:
+                with self.subTest(
+                    index=index, builder=name, tiled=inputs.get("tiled_decode")
+                ):
+                    if name == "build_music3_graph":
+                        required = music.required_music3_nodes(inputs["tiled_decode"])
+                    elif name == "build_ltx25_graph":
+                        required = ltx.required_ltx25_nodes(
+                            image_to_video=any(
+                                inputs.get(key)
+                                for key in ("first_image", "middle_image", "end_image")
+                            ),
+                            reference_images=bool(inputs.get("reference_sheet")),
+                        )
+                    else:
+                        required = upscale_requirements[name]()
+                    graph = BUILDERS[name](**inputs)
+                    self.assertEqual(
+                        required, {node["class_type"] for node in graph.values()}
+                    )
+
+    def test_workflow_graphs(self):
         expected = json.loads(
             (Path(__file__).parent / "fixtures/workflow_graphs.json").read_text(
                 encoding="utf-8"
             )
         )
-        names = {row["function"] for row in expected}
-        actual = []
-
-        def capture(name, fn):
-            def run(*args, **kwargs):
-                result = fn(*args, **kwargs)
-                actual.append({"function": name, "graph": normalize(result)})
-                return result
-
-            return run
-
-        loops = []
-        policy = asyncio.get_event_loop_policy()
-        create_loop = policy.new_event_loop
-
-        def tracked_loop():
-            loop = create_loop()
-            loops.append(loop)
-            return loop
-
-        self.addCleanup(
-            lambda: [
-                loop.close()
-                for loop in loops
-                if not loop.is_closed() and not loop.is_running()
-            ]
-        )
-        with ExitStack() as stack:
-            # This self-test supplies temporary filesystem inventories directly;
-            # creation/restart catalog behavior has dedicated AssetIndex tests.
-            stack.enter_context(patch.object(app, "_catalog_inventory", return_value=None))
-            stack.enter_context(
-                patch.object(policy, "new_event_loop", side_effect=tracked_loop)
-            )
-            for name in names:
-                stack.enter_context(
-                    patch.object(
-                        app, name, side_effect=capture(name, getattr(app, name))
-                    )
+        self.assertEqual(len(CASES), len(expected))
+        for index, ((name, arguments), baseline) in enumerate(zip(CASES, expected)):
+            with self.subTest(index=index, builder=name):
+                graph = BUILDERS[name](**arguments)
+                self.assertEqual(
+                    {"function": name, "graph": normalize(graph)}, baseline
                 )
-            selftest()
-        self.assertEqual(actual, expected)
 
 
 if __name__ == "__main__":

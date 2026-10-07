@@ -1,4 +1,7 @@
 """PDMD/DMAD generation selection, schedules, and independent refinement."""
+import h3_app.catalog as _catalog
+import h3_app.graph as _graph
+import h3_app.workflows.h3 as _h3_workflow
 import inspect
 from dataclasses import replace
 from types import SimpleNamespace
@@ -38,7 +41,7 @@ class PdmdGenerationTests(unittest.TestCase):
                 restored, _ = restore_preferences(
                     {'h3.steps': steps, 'h3.turbo_variant': variant},
                     {'h3.steps': SimpleNamespace(value=4, minimum=4, maximum=30),
-                     'h3.turbo_variant': SimpleNamespace(value=app.DEFAULT_TURBO, choices=list(TURBO_SETTINGS))},
+                     'h3.turbo_variant': SimpleNamespace(value=_catalog.DEFAULT_TURBO, choices=list(TURBO_SETTINGS))},
                 )
                 self.assertEqual(restored['h3.steps'], steps)
                 self.assertEqual(restored['h3.turbo_variant'], variant)
@@ -60,8 +63,8 @@ class PdmdGenerationTests(unittest.TestCase):
                             steps=steps, scheduler='simple', seed=7, model_name='base.safetensors',
                             models=models, turbo_variant=variant, turbo_lora_name=filename,
                             turbo_strength=1.0, use_sol=False, cache_mode='Off',
-                            available_nodes=(app.turbo_required_nodes(variant)
-                                             | (app.turbo_required_nodes(refine_variant) if refine_variant else set())),
+                            available_nodes=(_h3_workflow.turbo_required_nodes(variant)
+                                             | (_h3_workflow.turbo_required_nodes(refine_variant) if refine_variant else set())),
                             latent_upscale_model_name='upscaler.pth', latent_upscale_refine_steps=1,
                             refinement_lora_name=models.turbo_lora_for('Text to video', refine_variant) if refine_variant else None,
                             refinement_variant=refine_variant,
@@ -85,22 +88,22 @@ class PdmdGenerationTests(unittest.TestCase):
                             self.assertEqual([n['lora_name'] for n in loras], [expected])
                             self.assertEqual(loras[0]['strength_model'], 1.0)
                             self.assertEqual(graph[sample['sampler'][0]]['inputs']['sampler_name'], 'euler')
-                            shifts = [n['inputs'] for n in chain if n['class_type'] == app.H3_SIGMA_SHIFT_NODE]
+                            shifts = [n['inputs'] for n in chain if n['class_type'] == _catalog.H3_SIGMA_SHIFT_NODE]
                             self.assertEqual(
                                 [(n['shift_video'], n['shift_audio']) for n in shifts],
                                 [(12.0, 2.0)] if selected == DMAD_4STEP_LORA else [],
                             )
                         self.assertEqual(graph[refined['sigmas'][0]]['inputs']['sigmas'], initial['sigmas'])
-                        self.assertFalse(any(n['class_type'] == app.LIGHTX2V_BYPASS_LORA_NODE for n in graph.values()))
+                        self.assertFalse(any(n['class_type'] == _catalog.LIGHTX2V_BYPASS_LORA_NODE for n in graph.values()))
 
     def test_dmad_requires_shift_node_and_normal_mode_keeps_base_schedule(self):
         self.assertEqual(turbo_sigma_shifts(DMAD_4STEP_LORA, 'dmad.safetensors'), (12.0, 2.0))
         self.assertIsNone(turbo_sigma_shifts(DMAD_4STEP_LORA, None))
-        self.assertIn(app.H3_SIGMA_SHIFT_NODE, app.turbo_required_nodes(DMAD_4STEP_LORA))
-        graph = app.Graph()
+        self.assertIn(_catalog.H3_SIGMA_SHIFT_NODE, _h3_workflow.turbo_required_nodes(DMAD_4STEP_LORA))
+        graph = _graph.Graph()
         with self.assertRaisesRegex(app.H3Error, 'MiniMaxH3SigmaShift'):
-            app.add_turbo_model_patch(
+            _h3_workflow.add_turbo_model_patch(
                 graph, ['base', 0], lora_name='dmad.safetensors',
                 turbo_variant=DMAD_4STEP_LORA, strength=1.0,
-                available_nodes={app.CORE_LORA_LOADER_NODE, app.CORE_SAMPLER_NODE},
+                available_nodes={_catalog.CORE_LORA_LOADER_NODE, _catalog.CORE_SAMPLER_NODE},
             )

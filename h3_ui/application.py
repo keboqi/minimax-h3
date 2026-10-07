@@ -1,93 +1,8 @@
 """Runtime configuration and stable Gradio API adapters."""
 
 from __future__ import annotations
-from fastapi import Response
-from h3_models import (
-    DEFAULT_MUSIC3_MODEL,
-    LTX25_ICLORA_MODEL_KEYS,
-)
-from h3_requirements import LTX25_WORKFLOW_FILENAMES
-from h3_prompt_rewriter import (
-    rewrite_prompt as rewrite_local_h3_prompt,
-)
-from h3_app.contracts import GENERATION_FIELDS
-from h3_app.server import (
-    _proxy_headers,
-    _rewrite_comfy_text,
-    _comfy_upstream_path,
-    _append_set_cookies,
-)
-from h3_app.graph import Graph
-from h3_app.catalog import (
-    CHUNK_FEED_FORWARD_NODE,
-    COMFY_UPSCALE_OPTIONS,
-    LTX25_CQ_ENHANCER,
-    LTX25_CQ_IMAGE_ENHANCER,
-    LTX25_REFINE_DETAILS,
-    LTX25_RESTORE,
-    LTX25_DECOMPRESSION,
-    LTX25_DEBLUR,
-    LTX25_SDR_TO_HDR,
-    CORE_LORA_LOADER_NODE,
-    CORE_SAMPLER_NODE,
-    FUSED_MODULATION_NODE,
-    H3_COMBINE_AV_LATENT_NODE,
-    H3_CONDITIONING_CACHE_NODE,
-    H3_IMAGE_SLICES_NODE,
-    H3_LATENT_UPSCALER_NODE,
-    H3_NVENC_SAVE_NODE,
-    H3_REFINEMENT_COMPILER_GUARD_NODE,
-    H3_SEMANTIC_BRIDGE_NODE,
-    H3_SEPARATE_AV_LATENT_NODE,
-    H3_SIGMA_SHIFT_NODE,
-    H3_SINGLE_FRAME_VAE_LOADER_NODE,
-    H3_SPLIT_SPATIAL_PARAMS_NODE,
-    H3_SPLIT_TEMPORAL_PARAMS_NODE,
-    H3_SPLIT_UPSCALE_NODE,
-    H3_STAGE_OFFLOAD_NODE,
-    H3_STAGE_OFFLOAD_POLICY_NODE,
-    LARRY_TURBO,
-    LARRY_TURBO_LORA_NODE,
-    LARRY_TURBO_SAMPLER_NODE,
-    LIGHTNING_API_ROOT,
-    LIGHTX2V_4STEP_TURBO,
-    LIGHTX2V_8STEP_TURBO,
-    LIGHTX2V_BYPASS_LORA_NODE,
-    LTX25_SIGMAS,
-    OFFICIAL_IMAGE_VAE,
-    RESOLUTION_TIERS,
-    SAGE_ATTENTION_NODE,
-    SAMPLING_PRESETS,
-    SAMPLING_PRESET_TEXT_ENCODERS,
-    SINGLE_FRAME_IMAGE_VAE,
-    SLA_ATTENTION_NODE,
-    SOL_ATTENTION_NODE,
-)
-from h3_app.policy import (
-    active_fl2va_voice_references,
-    collect_reference_slots,
-    frame_length,
-    h3_latent_upscale_dimensions,
-    image_sampling_length,
-    ltx25_frame_length,
-    resolve_cache_policy,
-    resolve_h3_split_upscale_config,
-    resolve_sla_preset,
-    selected_image_sampling_length,
-    single_frame_image_sampling_length,
-    turbo_sampler_name,
-    turbo_strength_for,
-    turbo_uses_custom_nodes,
-)
-from h3_app.workflows.music import build_music3_graph, required_music3_nodes
-from h3_app.status import StageTimings, graph_class_types, node_stage
-from h3_app.processes import run_media_process
 from h3_app.public_url import launch_cloudflare, public_url_settings, stop_cloudflare
 
-import inspect
-import json
-import shutil
-import httpx
 from .prompt_controller import PromptController, PromptServices
 from .model_controller import ModelController, ModelServices
 from .media_controller import (
@@ -150,13 +65,7 @@ from h3_ui.presentation import (
 )
 from h3_ui.qwen_bindings import qwen_resolution_preset_values
 from h3_ui.styles import H3_SETUP_CSS
-from dataclasses import asdict
-from h3_app.settings import (
-    GenerationRequest,
-    ResolutionContext,
-    resolve_settings,
-    preset_settings,
-)
+from h3_app.settings import GenerationRequest, ResolutionContext, resolve_settings
 from h3_app.contracts import GenerationArguments
 from h3_app import server as server_routes
 from h3_app.comfy import ComfyClient
@@ -178,7 +87,6 @@ from h3_app.catalog import (
     COMFY_POSTPROCESS_OPTIONS,
     LTX25_POSTPROCESS_MODELS,
     LTX25_SAME_RESOLUTION_OPTIONS,
-    DEFAULT_ACCELERATOR,
     DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
     DEFAULT_GEMINI_PROMPT_MODEL,
     DEFAULT_IMAGE_FRAMES,
@@ -187,7 +95,6 @@ from h3_app.catalog import (
     DEFAULT_PROMPT_WRITER_BACKEND,
     DEFAULT_RESULT_FORMAT,
     DEFAULT_SLA_PRESET,
-    DEFAULT_TURBO,
     DEFAULT_UPSCALE_RESOLUTION,
     DEFAULT_VIDEO_BATCH_COUNT,
     DRAFT_RESOLUTIONS,
@@ -245,7 +152,6 @@ from h3_app.policy import (
     resolve_h3_latent_upscale_method,
     snap64,
     snap_to_grid,
-    turbo_steps_for,
     upscale_target_dimensions,
     validate_resolution,
 )
@@ -297,8 +203,6 @@ MODELS_CONFIG = RUNTIME.models_config
 SERVER_ATTENTION_BACKEND = RUNTIME.attention_backend
 SERVER_DENSE_ATTENTION_BACKEND = RUNTIME.dense_attention_backend
 SERVER_MEMORY_PROFILE = RUNTIME.memory_profile
-PROMPT_ENHANCER_SYSTEM_PATH = RUNTIME.prompt_system_path
-PROMPT_ENHANCER_SYSTEMS = RUNTIME.prompt_systems
 LTX25_WORKFLOW_TEMPLATE_DIR = RUNTIME.workflow_dir
 REQUEST_TIMEOUT = RUNTIME.request_timeout
 GENERATION_TIMEOUT = RUNTIME.generation_timeout
@@ -334,11 +238,9 @@ def _modelcontroller():
         ModelServices(
             COMFY_DIR=COMFY_DIR,
             H3Error=H3Error,
-            H3_TEXT_ENCODER_CHOICES=H3_TEXT_ENCODER_CHOICES,
             MODELS_CONFIG=MODELS_CONFIG,
             MODEL_SPECS=MODEL_SPECS,
             _runtime_config=_runtime_config,
-            gr=gr,
             ltx25_official_inventory_keys=ltx25_official_inventory_keys,
             ltx25_workflow_entry=ltx25_workflow_entry,
             ltx25_workflow_model_keys=ltx25_workflow_model_keys,
@@ -436,7 +338,6 @@ def _mediacontroller():
             gallery_thumbnail_path=gallery_thumbnail_path,
             forget_gallery_metadata=forget_gallery_metadata,
             gallery_media_mode=gallery_media_mode,
-            select_gallery_video=select_gallery_video,
             video_download_path=video_download_path,
             postprocess_selected_gallery_video=postprocess_selected_gallery_video,
             gallery_image_resolution_text=gallery_image_resolution_text,
@@ -489,77 +390,6 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
             css,
             GALLERY_THUMBNAILS_DIR,
         ),
-    )
-
-
-def _gemini_api_key(temporary_key: str | None) -> str:
-    return _promptcontroller()._gemini_api_key(temporary_key)
-
-
-def _lightning_api_key(temporary_key: str | None) -> str:
-    return _promptcontroller()._lightning_api_key(temporary_key)
-
-
-def _uploaded_media_path(value: Any) -> Path | None:
-    return _promptcontroller()._uploaded_media_path(value)
-
-
-def _gemini_mime_type(path: Path) -> str:
-    return _promptcontroller()._gemini_mime_type(path)
-
-
-def _gemini_error(response: requests.Response, action: str) -> H3Error:
-    return _promptcontroller()._gemini_error(response, action)
-
-
-def _upload_gemini_file(
-    session: requests.Session, path: Path, api_key: str
-) -> dict[str, Any]:
-    return _promptcontroller()._upload_gemini_file(session, path, api_key)
-
-
-def _wait_for_gemini_file(
-    session: requests.Session, file_info: dict[str, Any], api_key: str
-) -> dict[str, Any]:
-    return _promptcontroller()._wait_for_gemini_file(session, file_info, api_key)
-
-
-def _active_prompt_media(
-    mode: str,
-    first_image: Any,
-    last_image: Any,
-    reference_images: Iterable[Any],
-    reference_videos: Iterable[Any],
-    reference_audios: Iterable[Any],
-) -> list[tuple[str, Path]]:
-    return _promptcontroller()._active_prompt_media(
-        mode,
-        first_image,
-        last_image,
-        reference_images,
-        reference_videos,
-        reference_audios,
-    )
-
-
-def _enhance_prompt_from_media(
-    *,
-    prompt: str,
-    model: str,
-    temporary_api_key: str,
-    target: str,
-    system_path: Path,
-    media_values: Iterable[tuple[str, Any]],
-    context: str,
-) -> tuple[str, str]:
-    return _promptcontroller()._enhance_prompt_from_media(
-        prompt=prompt,
-        model=model,
-        temporary_api_key=temporary_api_key,
-        target=target,
-        system_path=system_path,
-        media_values=media_values,
-        context=context,
     )
 
 
@@ -669,124 +499,6 @@ def enhance_yue2_prompt(
     )
 
 
-def _enhance_h3_prompt_with_gemini(
-    prompt: str,
-    model: str,
-    temporary_api_key: str,
-    mode: str,
-    first_image: Any,
-    last_image: Any,
-    ref_image_1: Any,
-    ref_image_2: Any,
-    ref_image_3: Any,
-    ref_image_4: Any,
-    ref_image_5: Any,
-    ref_image_6: Any,
-    ref_image_7: Any,
-    ref_image_8: Any,
-    ref_image_9: Any,
-    ref_video_1: Any,
-    ref_video_2: Any,
-    ref_video_3: Any,
-    ref_audio_1: Any,
-    ref_audio_2: Any,
-    ref_audio_3: Any,
-    duration: float,
-    width: int,
-    height: int,
-    result_format: str = DEFAULT_RESULT_FORMAT,
-    image_frames: int = DEFAULT_IMAGE_FRAMES,
-) -> tuple[str, str]:
-    return _promptcontroller()._enhance_h3_prompt_with_gemini(
-        prompt,
-        model,
-        temporary_api_key,
-        mode,
-        first_image,
-        last_image,
-        ref_image_1,
-        ref_image_2,
-        ref_image_3,
-        ref_image_4,
-        ref_image_5,
-        ref_image_6,
-        ref_image_7,
-        ref_image_8,
-        ref_image_9,
-        ref_video_1,
-        ref_video_2,
-        ref_video_3,
-        ref_audio_1,
-        ref_audio_2,
-        ref_audio_3,
-        duration,
-        width,
-        height,
-        result_format,
-        image_frames,
-    )
-
-
-def _enhance_h3_prompt_with_lightning(
-    prompt: str,
-    temporary_api_key: str,
-    mode: str,
-    first_image: Any,
-    last_image: Any,
-    ref_image_1: Any,
-    ref_image_2: Any,
-    ref_image_3: Any,
-    ref_image_4: Any,
-    ref_image_5: Any,
-    ref_image_6: Any,
-    ref_image_7: Any,
-    ref_image_8: Any,
-    ref_image_9: Any,
-    ref_video_1: Any,
-    ref_video_2: Any,
-    ref_video_3: Any,
-    ref_audio_1: Any,
-    ref_audio_2: Any,
-    ref_audio_3: Any,
-    duration: float,
-    width: int,
-    height: int,
-    result_format: str = DEFAULT_RESULT_FORMAT,
-    image_frames: int = DEFAULT_IMAGE_FRAMES,
-) -> tuple[str, str]:
-    return _promptcontroller()._enhance_h3_prompt_with_lightning(
-        prompt,
-        temporary_api_key,
-        mode,
-        first_image,
-        last_image,
-        ref_image_1,
-        ref_image_2,
-        ref_image_3,
-        ref_image_4,
-        ref_image_5,
-        ref_image_6,
-        ref_image_7,
-        ref_image_8,
-        ref_image_9,
-        ref_video_1,
-        ref_video_2,
-        ref_video_3,
-        ref_audio_1,
-        ref_audio_2,
-        ref_audio_3,
-        duration,
-        width,
-        height,
-        result_format,
-        image_frames,
-    )
-
-
-def fl2va_prompt_voice_context(prompt: str, mode: str, *slots: Any):
-    return _promptcontroller().fl2va_prompt_voice_context(prompt, mode, *slots)
-
-
 def enhance_h3_prompt(
     prompt: str,
     backend: str,
@@ -879,28 +591,8 @@ def trt_vae_decoder_paths(models: ModelConfig) -> tuple[Path, Path, Path]:
     return _modelcontroller().trt_vae_decoder_paths(models)
 
 
-def _load_trt_vae_compiler(node_path: Path) -> Any:
-    return _modelcontroller()._load_trt_vae_compiler(node_path)
-
-
-def trt_vae_runtime_fingerprint(models: ModelConfig | None = None) -> str:
-    return _modelcontroller().trt_vae_runtime_fingerprint(models)
-
-
-def is_trt_engine_loadable(engine_path: Path) -> bool:
-    return _modelcontroller().is_trt_engine_loadable(engine_path)
-
-
-def trt_vae_engine_is_current(models: ModelConfig) -> bool:
-    return _modelcontroller().trt_vae_engine_is_current(models)
-
-
 def ensure_h3_text_encoder(models: ModelConfig, model_choice: str) -> tuple[str, bool]:
     return _modelcontroller().ensure_h3_text_encoder(models, model_choice)
-
-
-def text_encoder_offload_update(model_choice: str):
-    return _modelcontroller().text_encoder_offload_update(model_choice)
 
 
 def ensure_h3_semantic_bridge() -> None:
@@ -929,16 +621,6 @@ def ensure_audio_vae(models: ModelConfig) -> bool:
 
 def ensure_int8_video_vae(models: ModelConfig, *, lynnreal: bool = False) -> bool:
     return _modelcontroller().ensure_int8_video_vae(models, lynnreal=lynnreal)
-
-
-def ensure_trt_video_vae(models: ModelConfig, *, require_engine: bool = True) -> bool:
-    return _modelcontroller().ensure_trt_video_vae(
-        models, require_engine=require_engine
-    )
-
-
-def _build_trt_video_vae_engine(models: ModelConfig, progress: Any) -> None:
-    return _modelcontroller()._build_trt_video_vae_engine(models, progress)
 
 
 def ensure_trt_video_vae_engine(
@@ -1175,28 +857,6 @@ def start_frame_generation_resolution(
         raise H3Error(f"Unable to read start frame dimensions: {exc}") from exc
 
 
-def generation_resolution(
-    width: int | float,
-    height: int | float,
-    *,
-    result_format: str,
-    latent_upscale: bool,
-    mode: str,
-    first_image: Any,
-) -> tuple[int, int]:
-    normalized_result = normalize_result_format(result_format)
-    if normalized_result == "Audio":
-        return (32, 32)
-    alignment = 64 if latent_upscale else 32
-    if normalized_result == "Image" and mode == "First / last frame" and first_image:
-        start_resolution = start_frame_generation_resolution(
-            first_image, alignment=alignment
-        )
-        if start_resolution is not None:
-            return start_resolution
-    return (snap_to_grid(width, alignment), snap_to_grid(height, alignment))
-
-
 def resolve_sol_policy(
     attention_mode: str,
     mode: str,
@@ -1354,36 +1014,6 @@ def latent_upscale_method_layout_update(method: str):
     )
 
 
-def generation_mode_defaults(name: str, turbo_variant: str = DEFAULT_TURBO):
-    """Normal/Turbo is independent from the selected base-model profile.
-
-    Important: when entering Turbo, do not change preset.value. Changing it
-    would fire preset.change() and race with the Turbo Steps update.
-    """
-    if str(name).strip().lower() == "turbo":
-        return (
-            gr.update(interactive=True),
-            gr.update(value=turbo_steps_for(turbo_variant), interactive=True),
-            "simple",
-            DEFAULT_ACCELERATOR,
-            "SLA",
-        )
-    return (
-        gr.update(value="Balanced", interactive=True),
-        gr.update(value=18, interactive=True),
-        "simple",
-        DEFAULT_ACCELERATOR,
-        "SLA",
-    )
-
-
-def turbo_variant_defaults(turbo_variant: str, generation_mode: str):
-    """Apply variant sampling defaults only while Turbo is selected."""
-    if str(generation_mode).strip().lower() != "turbo":
-        return (gr.update(), gr.update())
-    return (gr.update(value=turbo_steps_for(turbo_variant), interactive=True), "simple")
-
-
 def fbcache_preset_defaults(name: str):
     key = str(name).strip().lower()
     if key == "safe":
@@ -1405,38 +1035,12 @@ def fbcache_preset_defaults(name: str):
     return tuple((gr.update(value=value, interactive=interactive) for value in values))
 
 
-def file_content_sha256(path: Path) -> str:
-    return staging.file_content_sha256(path)
-
-
-def staged_input_is_ready(path: Path) -> bool:
-    return staging.staged_input_is_ready(path)
-
-
-def materialize_staged_input(
-    source: Path, destination: Path, *, transcode_video: bool
-) -> None:
-    return staging.materialize_staged_input(
-        source, destination, transcode_video=transcode_video
-    )
-
-
 def stage_file(
     path: str, category: str, transcode_video: bool = False, reuse: bool = False
 ) -> str:
     return staging.stage_file(
         path, category, transcode_video, reuse, runtime=_runtime_config()
     )
-
-
-turbo_required_nodes = h3_workflow.turbo_required_nodes
-add_turbo_model_patch = h3_workflow.add_turbo_model_patch
-add_model_stack = h3_workflow.add_model_stack
-h3_conditioning_video_vae = h3_workflow.h3_conditioning_video_vae
-h3_conditioning_cache_key = h3_workflow.h3_conditioning_cache_key
-add_h3_stage_offload = h3_workflow.add_h3_stage_offload
-h3_refinement_attention_model = h3_workflow.h3_refinement_attention_model
-finish_sampling = h3_workflow.finish_sampling
 
 
 def build_fl2va_graph(
@@ -1707,9 +1311,6 @@ def build_ref2va_graph(
     )
 
 
-required_ltx25_nodes = ltx_workflow.required_ltx25_nodes
-
-
 def build_ltx25_graph(
     *,
     model_choice: str = DEFAULT_LTX25_MODEL,
@@ -1780,7 +1381,6 @@ def build_ltx25_graph(
     )
 
 
-required_seedvr2_upscale_nodes = upscale_workflow.required_seedvr2_upscale_nodes
 required_seedvr2_image_upscale_nodes = (
     upscale_workflow.required_seedvr2_image_upscale_nodes
 )
@@ -1802,59 +1402,6 @@ def build_seedvr2_image_upscale_graph(
         models=models,
         model_choice=model_choice,
         output_token=output_token,
-        output_stamp=str(int(time.time())),
-        output_nonce=uuid.uuid4().hex[:8],
-    )
-
-
-def build_seedvr2_upscale_graph(
-    *,
-    source_video: str,
-    seed: int,
-    models: ModelConfig,
-    model_choice: str = DEFAULT_SEEDVR2_MODEL,
-    target_width: int | None = None,
-    source_width: int | None = None,
-    fps: float = 24.0,
-) -> dict[str, Any]:
-    return upscale_workflow.build_seedvr2_upscale_graph(
-        source_video=source_video,
-        seed=seed,
-        models=models,
-        model_choice=model_choice,
-        target_width=target_width,
-        source_width=source_width,
-        fps=fps,
-        output_stamp=str(int(time.time())),
-        output_nonce=uuid.uuid4().hex[:8],
-    )
-
-
-required_ltx25_upscale_nodes = upscale_workflow.required_ltx25_upscale_nodes
-
-
-def build_ltx25_upscale_graph(
-    *,
-    source_video: str,
-    seed: int,
-    model_choice: str = DEFAULT_LTX25_MODEL,
-    prompt: str = "",
-    width: int,
-    height: int,
-    target_width: int | None = None,
-    target_height: int | None = None,
-    fps: float = 24.0,
-) -> dict[str, Any]:
-    return upscale_workflow.build_ltx25_upscale_graph(
-        source_video=source_video,
-        seed=seed,
-        model_choice=model_choice,
-        prompt=prompt,
-        width=width,
-        height=height,
-        target_width=target_width,
-        target_height=target_height,
-        fps=fps,
         output_stamp=str(int(time.time())),
         output_nonce=uuid.uuid4().hex[:8],
     )
@@ -1896,9 +1443,6 @@ def build_upscale_graph(
     )
 
 
-required_nodes_for = h3_workflow.required_nodes_for
-
-
 def output_context() -> OutputContext:
     job = CURRENT_JOB.get()
     return OutputContext(_runtime_config(), job.output_token if job else None)
@@ -1936,10 +1480,6 @@ def websocket_url(client_id: str) -> str:
     return urlunsplit((scheme, parsed.netloc, path, f"clientId={quote(client_id)}", ""))
 
 
-def queue_position(prompt_id: str) -> tuple[str, int | None]:
-    return _submission(prompt_id).queue_position(str(prompt_id))
-
-
 def stream_comfy_progress(ws, prompt_id, graph, started):
     submission = _submission(prompt_id, graph)
     if submission.socket is None:
@@ -1953,22 +1493,6 @@ def poll_comfy_progress(prompt_id, graph):
 
 def wait_for_history(prompt_id):
     return _submission(prompt_id).history()
-
-
-def walk_saved_refs(value):
-    yield from outputs.walk_saved_refs(value)
-
-
-def _history_output_candidates(history, extensions, *, directory=None):
-    return outputs._history_output_candidates(
-        history, extensions, directory=directory, context=output_context()
-    )
-
-
-def _recent_output_candidates(directory, extensions, queued_at):
-    return outputs._recent_output_candidates(
-        directory, extensions, queued_at, context=output_context()
-    )
 
 
 def resolve_output(history: dict[str, Any], queued_at: float) -> Path:
@@ -2233,18 +1757,6 @@ def save_selected_image_frames(
     return (saved, f"Saved {len(saved)} selected frame(s) to `{destination}`.")
 
 
-def has_encoder(name: str) -> bool:
-    return media_tools.has_encoder(name)
-
-
-def ensure_swiftvr_checkpoint() -> tuple[Path, bool]:
-    return swiftvr.ensure_swiftvr_checkpoint(runtime=_runtime_config())
-
-
-def import_swiftvr_pipeline() -> Any:
-    return swiftvr.import_swiftvr_pipeline(runtime=_runtime_config())
-
-
 def postprocess_swiftvr_video(
     source: Path, *, fps: float, target_width: int, target_height: int
 ) -> Path:
@@ -2353,10 +1865,6 @@ def gallery_thumbnail_path(video: str | Path) -> Path:
     return _mediacontroller().gallery_thumbnail_path(video)
 
 
-def gallery_video_resolution(video: Path) -> tuple[int, int] | None:
-    return _mediacontroller().gallery_video_resolution(video)
-
-
 def gallery_resolution_text(video: Path) -> str:
     return _mediacontroller().gallery_resolution_text(video)
 
@@ -2411,10 +1919,6 @@ def import_gallery_media(mode: str, uploaded_media: str | None):
     return _mediacontroller().import_gallery_media(mode, uploaded_media)
 
 
-def import_gallery_video(uploaded_video: str | None) -> GalleryMutationResult:
-    return _mediacontroller().import_gallery_video(uploaded_video)
-
-
 GALLERY_PAGE_SIZE = 48
 
 
@@ -2440,20 +1944,32 @@ def list_media_paths(mode):
 
 
 def refresh_media_page(
-    mode: str = "Video", limit: int = GALLERY_PAGE_SIZE, *, paths=None, preview_timeout=None, previous=None
+    mode: str = "Video",
+    limit: int = GALLERY_PAGE_SIZE,
+    *,
+    paths=None,
+    preview_timeout=None,
+    previous=None,
 ) -> gallery_store.AssetPage:
     if paths is None and previous is None:
         paths = _catalog_inventory(mode, limit)
-    return _mediacontroller().refresh_media_page(mode, limit, paths=paths, preview_timeout=preview_timeout, previous=previous)
+    return _mediacontroller().refresh_media_page(
+        mode, limit, paths=paths, preview_timeout=preview_timeout, previous=previous
+    )
 
 
 def _catalog_inventory(mode, limit):
     from h3_app.media_catalog import get_media_catalog
+
     catalog = get_media_catalog()
     if catalog is None:
         return None
-    records, total = catalog.store.catalog_page(kind=mode, limit=limit, roots=catalog.roots)
-    return gallery_store.AssetInventory(mode, tuple(Path(row["path"]) for row in records), tuple(records), total)
+    records, total = catalog.store.catalog_page(
+        kind=mode, limit=limit, roots=catalog.roots
+    )
+    return gallery_store.AssetInventory(
+        mode, tuple(Path(row["path"]) for row in records), tuple(records), total
+    )
 
 
 def refresh_media_gallery(mode: str = "Video", limit: int = GALLERY_PAGE_SIZE):
@@ -3145,20 +2661,6 @@ def interrupt(request: gr.Request, family: str = "h3") -> str:
         return f"Interrupt failed: {exc}"
 
 
-def preset_values(name: str, generation_mode: str = "Normal"):
-    values = asdict(preset_settings(name, generation_mode))
-    return (
-        *(
-            (
-                text_encoder_offload_update(values["text_encoder"])
-                if key == "stage_model_offload"
-                else value
-            )
-            for key, value in values.items()
-        ),
-    )
-
-
 def compact_settings_summary(
     mode: str,
     model_profile: str,
@@ -3514,16 +3016,6 @@ def refresh_backend_views() -> tuple[str, str]:
     return (compact_backend_status(detail), detail)
 
 
-def generation_preflight(
-    mode: str, prompt: str, first_image: Any, last_image: Any, *reference_media: Any
-) -> tuple[str, Any]:
-    """Keep invalid jobs out of the expensive backend queue."""
-    readiness = generation_readiness_state(
-        mode, prompt, first_image, last_image, reference_media
-    )
-    return (readiness.html, gr.update(interactive=readiness.ready))
-
-
 def build_ui() -> gr.Blocks:
     """Compose the workspace using explicit catalogs and callbacks."""
     from .bootstrap import BootstrapCatalog, BootstrapServices, build_ui as compose_ui
@@ -3532,6 +3024,7 @@ def build_ui() -> gr.Blocks:
 
     JOBS.configure(default_store(OUTPUTS_DIR))
     from h3_app.media_catalog import configure_media_catalog
+
     configure_media_catalog(JOBS.store, _runtime_config)
     from h3_app.media import history_output_candidates
 
@@ -3666,9 +3159,11 @@ def build_ui() -> gr.Blocks:
 
 
 def selftest() -> None:
-    from tests.service_selftest import selftest as run_contracts
+    from tests.__main__ import main as run_tests
 
-    run_contracts()
+    result = run_tests([])
+    if result:
+        raise SystemExit(result)
 
 
 def main() -> None:
@@ -3739,7 +3234,11 @@ def main() -> None:
         while server_thread.is_alive() and not server.started:
             if shutdown_requested.wait(timeout=0.1):
                 break
-        if server_thread.is_alive() and server.started and not shutdown_requested.is_set():
+        if (
+            server_thread.is_alive()
+            and server.started
+            and not shutdown_requested.is_set()
+        ):
             if cloudflare_enabled:
                 cloudflare_process = launch_cloudflare(
                     port, cache_dir=SCRIPT_DIR / ".cache" / "cloudflared"
@@ -3750,14 +3249,18 @@ def main() -> None:
                         local_host="127.0.0.1",
                         local_port=port,
                         share_token=demo.share_token,
-                        share_server_address=getattr(demo, "share_server_address", None),
+                        share_server_address=getattr(
+                            demo, "share_server_address", None
+                        ),
                         share_server_tls_certificate=getattr(
                             demo, "share_server_tls_certificate", None
                         ),
                     )
                     print(f"[h3-ui] Public Gradio URL: {share_url}", flush=True)
                 except Exception as exc:
-                    print(f"[h3-ui] Could not create Gradio share link: {exc}", flush=True)
+                    print(
+                        f"[h3-ui] Could not create Gradio share link: {exc}", flush=True
+                    )
         while server_thread.is_alive() and (not shutdown_requested.is_set()):
             server_thread.join(timeout=0.5)
     except (KeyboardInterrupt, SystemExit):
@@ -3777,153 +3280,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-__all__ = [
-    "AUTO_SOL_TOKEN_THRESHOLD",
-    "Any",
-    "CHUNK_FEED_FORWARD_NODE",
-    "COMFY_UPSCALE_OPTIONS",
-    "CORE_LORA_LOADER_NODE",
-    "CORE_SAMPLER_NODE",
-    "DEFAULT_AUTO_RESOLUTION_MEGAPIXELS",
-    "DEFAULT_GEMINI_PROMPT_MODEL",
-    "DEFAULT_LTX25_MODEL",
-    "DEFAULT_MUSIC3_MODEL",
-    "DEFAULT_SEEDVR2_MODEL",
-    "DEFAULT_TURBO",
-    "FUSED_MODULATION_NODE",
-    "GEMINI_PROMPT_MODELS",
-    "GENERATION_FIELDS",
-    "GENERATION_POSTPROCESS_OPTIONS",
-    "Graph",
-    "H3Error",
-    "H3SplitUpscaleConfig",
-    "H3_COMBINE_AV_LATENT_NODE",
-    "H3_CONDITIONING_CACHE_NODE",
-    "H3_IMAGE_SLICES_NODE",
-    "H3_LATENT_UPSCALER_NODE",
-    "H3_LATENT_UPSCALE_SPLIT",
-    "H3_LATENT_UPSCALE_STANDARD",
-    "H3_NVENC_SAVE_NODE",
-    "H3_REFINEMENT_COMPILER_GUARD_NODE",
-    "H3_SEMANTIC_BRIDGE_NODE",
-    "H3_SEPARATE_AV_LATENT_NODE",
-    "H3_SIGMA_SHIFT_NODE",
-    "H3_SINGLE_FRAME_VAE_LOADER_NODE",
-    "H3_SPLIT_SPATIAL_PARAMS_NODE",
-    "H3_SPLIT_TEMPORAL_PARAMS_NODE",
-    "H3_SPLIT_UPSCALE_NODE",
-    "H3_STAGE_OFFLOAD_NODE",
-    "H3_STAGE_OFFLOAD_POLICY_NODE",
-    "IMAGE_EXTENSIONS",
-    "INPUT_IMAGE_FRAME_PRESETS",
-    "INPUT_IMAGE_UPSCALE_SLOTS",
-    "JOBS",
-    "LARRY_TURBO",
-    "LARRY_TURBO_LORA_NODE",
-    "LARRY_TURBO_SAMPLER_NODE",
-    "LIGHTNING_API_ROOT",
-    "LIGHTNING_PROMPT_MODEL",
-    "LIGHTX2V_4STEP_TURBO",
-    "LIGHTX2V_8STEP_TURBO",
-    "LIGHTX2V_BYPASS_LORA_NODE",
-    "LTX25_CQ_ENHANCER",
-    "LTX25_CQ_IMAGE_ENHANCER",
-    "LTX25_DEBLUR",
-    "LTX25_DECOMPRESSION",
-    "LTX25_ICLORA_MODEL_KEYS",
-    "LTX25_REFINE_DETAILS",
-    "LTX25_RESTORE",
-    "LTX25_SDR_TO_HDR",
-    "LTX25_SIGMAS",
-    "LTX25_UPSCALE",
-    "LTX25_WORKFLOWS",
-    "LTX25_WORKFLOW_FILENAMES",
-    "MODEL_PROFILE_CHOICES",
-    "MODEL_SPECS",
-    "MUSIC3_DEFAULTS",
-    "ModelConfig",
-    "ModelProfile",
-    "OFFICIAL_IMAGE_VAE",
-    "POSTPROCESS_OPTIONS",
-    "PROMPT_WRITER_BACKENDS",
-    "Path",
-    "RESOLUTION_TIERS",
-    "Response",
-    "SAGE_ATTENTION_NODE",
-    "SAMPLING_PRESETS",
-    "SAMPLING_PRESET_TEXT_ENCODERS",
-    "SEEDVR2_UPSCALE",
-    "SINGLE_FRAME_IMAGE_VAE",
-    "SLA_ATTENTION_NODE",
-    "SLA_PRESET_INPUTS",
-    "SOL_ATTENTION_NODE",
-    "SWIFTVR_UPSCALE",
-    "StageTimings",
-    "UI_DEFAULTS",
-    "UVICORN_WEBSOCKET_OPTIONS",
-    "VIDEO_EXTENSIONS",
-    "_append_set_cookies",
-    "_comfy_upstream_path",
-    "_proxy_headers",
-    "_rewrite_comfy_text",
-    "active_fl2va_voice_references",
-    "auto_resolution_pixel_cap",
-    "backend_status_html",
-    "build_music3_graph",
-    "collect_reference_slots",
-    "estimate_packed_tokens",
-    "frame_length",
-    "gallery_store",
-    "generation_readiness_state",
-    "gr",
-    "graph_class_types",
-    "h3_latent_upscale_dimensions",
-    "h3_text_encoder_settings",
-    "h3_workflow",
-    "httpx",
-    "image_sampling_length",
-    "inspect",
-    "json",
-    "ltx25_frame_length",
-    "ltx25_official_inventory_keys",
-    "ltx25_workflow_model_keys",
-    "math",
-    "model_file_is_ready",
-    "model_service",
-    "node_stage",
-    "normalize_result_format",
-    "os",
-    "outputs",
-    "progress_status",
-    "prompt_service",
-    "random",
-    "replace",
-    "required_music3_nodes",
-    "resolution_choice_values",
-    "resolution_for_aspect_ratio",
-    "resolve_cache_policy",
-    "resolve_h3_split_upscale_config",
-    "resolve_hf_token",
-    "resolve_sla_preset",
-    "rewrite_local_h3_prompt",
-    "run_media_process",
-    "selected_image_sampling_length",
-    "shutil",
-    "single_frame_image_sampling_length",
-    "staging",
-    "stale_model_keys",
-    "swiftvr",
-    "sync_models",
-    "tempfile",
-    "threading",
-    "time",
-    "turbo_sampler_name",
-    "turbo_steps_for",
-    "turbo_strength_for",
-    "turbo_uses_custom_nodes",
-    "unload_prompt_rewriter",
-    "upscale_target_dimensions",
-    "validate_resolution",
-    "write_snapshot",
-]

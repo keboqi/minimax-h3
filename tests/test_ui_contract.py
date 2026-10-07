@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import httpx as _httpx
+import h3_app.model_service as _model_service
+import h3_app.catalog as _catalog
 import asyncio
 from copy import deepcopy
 import inspect
@@ -376,9 +379,9 @@ class UiContractTests(unittest.TestCase):
         )
         callback = self.demo.fns[change["id"]].fn
         for option in (
-            gradio_app.LTX25_DECOMPRESSION,
-            gradio_app.LTX25_DEBLUR,
-            gradio_app.LTX25_CQ_ENHANCER,
+            _catalog.LTX25_DECOMPRESSION,
+            _catalog.LTX25_DEBLUR,
+            _catalog.LTX25_CQ_ENHANCER,
         ):
             self.assertIn(option, choices)
             updates = callback(option)
@@ -387,14 +390,14 @@ class UiContractTests(unittest.TestCase):
                 [
                     True,
                     False,
-                    option != gradio_app.LTX25_CQ_ENHANCER,
+                    option != _catalog.LTX25_CQ_ENHANCER,
                     True,
                     True,
                     False,
                     True,
                 ],
             )
-            if option != gradio_app.LTX25_CQ_ENHANCER:
+            if option != _catalog.LTX25_CQ_ENHANCER:
                 self.assertIn("Preserves source resolution", updates[2]["info"])
         self.assertEqual(
             [u["visible"] for u in callback(gradio_app.LTX25_UPSCALE)],
@@ -404,14 +407,14 @@ class UiContractTests(unittest.TestCase):
             [u["visible"] for u in callback(gradio_app.SEEDVR2_UPSCALE)],
             [True, True, False, False, False, True, False],
         )
-        self.assertNotIn(gradio_app.LTX25_CQ_IMAGE_ENHANCER, choices)
+        self.assertNotIn(_catalog.LTX25_CQ_IMAGE_ENHANCER, choices)
         self.assertEqual(
-            [u["visible"] for u in callback(gradio_app.LTX25_CQ_IMAGE_ENHANCER)],
+            [u["visible"] for u in callback(_catalog.LTX25_CQ_IMAGE_ENHANCER)],
             [True, False, False, False, False, True, False],
         )
-        self.assertIn(gradio_app.LTX25_SDR_TO_HDR, choices)
+        self.assertIn(_catalog.LTX25_SDR_TO_HDR, choices)
         self.assertEqual(
-            [u["visible"] for u in callback(gradio_app.LTX25_SDR_TO_HDR)],
+            [u["visible"] for u in callback(_catalog.LTX25_SDR_TO_HDR)],
             [True, False, False, True, True, False, True],
         )
 
@@ -444,7 +447,7 @@ class UiContractTests(unittest.TestCase):
         self.assertFalse(updates[2]["visible"])
         self.assertTrue(updates[5]["visible"])
         self.assertEqual(updates[7]["choices"], [
-            gradio_app.SEEDVR2_UPSCALE, gradio_app.LTX25_CQ_IMAGE_ENHANCER,
+            gradio_app.SEEDVR2_UPSCALE, _catalog.LTX25_CQ_IMAGE_ENHANCER,
         ])
         self.assertTrue(updates[9]["visible"])
 
@@ -606,7 +609,7 @@ class UiContractTests(unittest.TestCase):
 
     def test_custom_server_mount_receives_ui_styles(self) -> None:
         with (
-            mock.patch.object(gradio_app.httpx, "AsyncClient"),
+            mock.patch.object(_httpx, "AsyncClient"),
             mock.patch.object(
                 gradio_app.gr,
                 "mount_gradio_app",
@@ -1201,7 +1204,7 @@ class UiContractTests(unittest.TestCase):
         ):
             # Mismatched marker (e.g. from an older TRT version 243)
             with mock.patch.object(Path, "read_text", return_value="v4:trt_10.8:sm_89"):
-                self.assertFalse(gradio_app.trt_vae_engine_is_current(models))
+                self.assertFalse(_model_service.trt_vae_engine_is_current(models, runtime=gradio_app._runtime_config()))
 
             # Matching marker but deserialization fails (returns None)
             with (
@@ -1212,7 +1215,7 @@ class UiContractTests(unittest.TestCase):
                     return_value=False,
                 ),
             ):
-                self.assertFalse(gradio_app.trt_vae_engine_is_current(models))
+                self.assertFalse(_model_service.trt_vae_engine_is_current(models, runtime=gradio_app._runtime_config()))
 
             # Matching marker and loadable engine
             with (
@@ -1223,7 +1226,7 @@ class UiContractTests(unittest.TestCase):
                     return_value=True,
                 ),
             ):
-                self.assertTrue(gradio_app.trt_vae_engine_is_current(models))
+                self.assertTrue(_model_service.trt_vae_engine_is_current(models, runtime=gradio_app._runtime_config()))
 
     def test_gpu_actions_share_the_application_queue(self):
         expected = {
@@ -1397,7 +1400,35 @@ class UiContractTests(unittest.TestCase):
         blocked = generation_readiness("Text to video", "", None, None)
         self.assertFalse(blocked.ready)
         self.assertIn('role="alert"', blocked.html)
-        self.assertIn("&lt;offline&gt;", backend_status_html("<offline>"))
+        self.assertIn("write a prompt", blocked.html)
+        backend = backend_status_html("<offline>")
+        self.assertIn("&lt;offline&gt;", backend)
+        self.assertNotIn("<offline>", backend)
+        self.assertIn('role="alert"', backend)
+
+        frames = generation_readiness("First / last frame", "A tracking shot", "first.png", None)
+        self.assertTrue(frames.ready)
+        self.assertIn("Ready to generate", frames.html)
+        references = generation_readiness("Reference media", "Match the subject", None, None)
+        self.assertFalse(references.ready)
+        self.assertIn("add at least one reference", references.html)
+
+    def test_ready_status_never_echoes_private_prompt_text(self) -> None:
+        ready = generation_readiness("Text to video", "<script>prompt</script>", None, None)
+        self.assertTrue(ready.ready)
+        self.assertIn('role="status"', ready.html)
+        self.assertNotIn("<script>", ready.html)
+        self.assertNotIn("&lt;script&gt;", ready.html)
+        self.assertNotIn("prompt</script>", ready.html)
+
+    def test_layout_callbacks_preserve_inactive_control_preferences(self) -> None:
+        acceleration = gradio_app.mode_layout_updates("Reference media")[3]
+        self.assertTrue(acceleration["interactive"])
+        self.assertNotIn("value", acceleration)
+
+        frames = gradio_app.image_vae_frame_updates(_catalog.SINGLE_FRAME_IMAGE_VAE)
+        self.assertFalse(frames["interactive"])
+        self.assertNotIn("value", frames)
 
     def test_mmh3_split_upscale_controls_are_explicit_and_conditional(self) -> None:
         labels = {
@@ -1459,7 +1490,7 @@ class UiContractTests(unittest.TestCase):
             True,
             False,
             "Turbo",
-            gradio_app.LIGHTX2V_8STEP_TURBO,
+            _catalog.LIGHTX2V_8STEP_TURBO,
             5,
             1344,
             768,
@@ -1497,7 +1528,7 @@ class UiContractTests(unittest.TestCase):
             True,
             False,
             "Normal",
-            gradio_app.LIGHTX2V_8STEP_TURBO,
+            _catalog.LIGHTX2V_8STEP_TURBO,
             5,
             1024,
             1024,

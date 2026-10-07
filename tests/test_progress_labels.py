@@ -61,6 +61,10 @@ class ProgressLabelTests(unittest.TestCase):
             video_classes = classes | {video_node}
             self.assertEqual(node_stage("KSampler", video_classes), "Generating video and audio")
             self.assertEqual(node_stage("VAEEncodeTiled", video_classes), "Encoding H3 video for SeedVR2")
+            self.assertEqual(
+                node_stage("SeedVR2TemporalChunk", video_classes),
+                "Splitting SeedVR2 video into VRAM-safe chunks",
+            )
             self.assertEqual(node_stage("SaveImage", video_classes), "Saving image")
 
     def test_audio_samplers_and_save_nodes_use_correct_media_labels(self):

@@ -13,6 +13,62 @@ import h3_ui.application as app
 
 
 class LtxIngredientsTests(unittest.TestCase):
+    def test_keyframe_uploads_are_staged_and_forwarded_in_temporal_order(self):
+        def stage(path, category):
+            return f"{category}/{Path(path).name}"
+
+        with patch.object(app, "stage_file", side_effect=stage) as staging:
+            graph = app.build_ltx25_graph(
+                prompt="a guided test shot",
+                negative_prompt="artifacts",
+                first_image="uploads/start.png",
+                middle_image="uploads/middle.png",
+                middle_time=2.5,
+                end_image="uploads/end.png",
+                width=960,
+                height=544,
+                duration=5,
+                fps=24,
+                seed=10,
+                cfg=1.0,
+                sampler_name="euler_ancestral",
+                image_strength=0.8,
+                middle_strength=0.65,
+                end_strength=0.9,
+            )
+
+        self.assertEqual(
+            staging.call_args_list,
+            [
+                unittest.mock.call("uploads/start.png", "ltx25_keyframes"),
+                unittest.mock.call("uploads/middle.png", "ltx25_keyframes"),
+                unittest.mock.call("uploads/end.png", "ltx25_keyframes"),
+            ],
+        )
+        self.assertEqual(
+            [
+                node["inputs"]["image"]
+                for node in graph.values()
+                if node["class_type"] == "LoadImage"
+            ],
+            [
+                "ltx25_keyframes/start.png",
+                "ltx25_keyframes/middle.png",
+                "ltx25_keyframes/end.png",
+            ],
+        )
+        guides = [
+            node["inputs"]
+            for node in graph.values()
+            if node["class_type"] == "LTXVAddGuide"
+        ]
+        self.assertEqual([guide["frame_idx"] for guide in guides], [0, 60, -1])
+        self.assertEqual([guide["strength"] for guide in guides], [0.8, 0.65, 0.9])
+        self.assertLessEqual(
+            required_ltx25_nodes(image_to_video=True),
+            {node["class_type"] for node in graph.values()},
+        )
+
     def test_multiple_uploads_become_distinct_sheet_panels(self):
         with TemporaryDirectory() as directory:
             paths = [Path(directory) / "red.png", Path(directory) / "blue.png"]

@@ -208,8 +208,8 @@ choices. Turbo defaults to Spectrum through the reviewed Larry Turbo and
 RES multistep sampler paths. EasyCache is also available as an experimental,
 default-off Turbo option after ComfyUI's H3 audio-carry fix. FirstBlockCache is
 also available as a default-off experimental Turbo option. Attention defaults
-to **SLA with the Fast preset**, which uses audio-safe block-sparse attention
-and a dense final sampling step. Sage 2 remains available through KJNodes'
+to **SLA with the Fast preset**, which uses audio-safe block-sparse attention.
+The Quality preset adds a dense final sampling step. Sage 2 remains available through KJNodes'
 per-model override, and Kitchen remains ComfyUI's global backend and a selectable
 comparison/fallback. SLA also offers Fast and Balanced presets, while
 Auto can
@@ -877,13 +877,13 @@ to the private ComfyUI backend on port 8188. Its public Uvicorn transport uses
 `wsproto` with per-message compression disabled, matching Modal's WebSocket
 feature set while remaining compatible with standalone servers.
 
-Runtime-only Python sources (`gradio_app.py`, the `h3_ui` package,
+Runtime-only Python sources (`gradio_app.py`, the `h3_app` and `h3_ui` packages,
 `h3_models.py`, `h3_attention.py`, `h3_prompt_rewriter.py`, and the bundled
 H3Acceleration node) are mounted into Modal containers at startup after the
 expensive ComfyUI image layer is built. Changes to those sources
-therefore reuse the cached ComfyUI, CUDA, Torch, and dependency layers. Only
-`h3_requirements.py`, which controls build-time package installation and ABI
-pins, is copied into an earlier image layer.
+therefore reuse the cached ComfyUI, CUDA, Torch, and dependency layers.
+`h3_requirements.py` and `h3_sources.py`, which control build-time package
+installation, ABI policy and source pins, are copied into an earlier image layer.
 
 ## Validation
 
@@ -894,10 +894,11 @@ python -m tests
 python -m tests --browser
 ```
 
-The first command runs discovery, all standalone service self-tests and 15 baseline
-workflow fixtures. The second adds settings migration and voice-reference browser
-acceptance using headless Chrome/Chromium. `python gradio_app.py --selftest` remains
-available. CPU PyTorch numerical tests and cached upstream contract tests run when
+The first command runs discovery, standalone provisioning checks, focused service
+contracts and 15 baseline workflow fixtures. Graph fixtures call pure builders
+directly, without importing the UI. The second adds browser acceptance using
+headless Chrome/Chromium. `python gradio_app.py --selftest` runs the same CPU suite.
+CPU PyTorch numerical tests and cached upstream contract tests run when
 their optional dependencies are present. Supported GPU inference, TensorRT
 compilation and deployment remain separate checks.
 
@@ -906,7 +907,7 @@ module ownership and cancellation boundaries.
 
 ## Repository layout
 
-- `gradio_app.py` — launcher and temporary compatibility API
+- `gradio_app.py` — workspace launcher
 - `h3_app/` — configuration, model services, workflows, generation, media and execution
 - `h3_ui/` — application composition, visible sections, events and UI adapters
 - `h3_sources.py` — shared local/Modal source pins
@@ -923,7 +924,9 @@ module ownership and cancellation boundaries.
   preprocessors, and Video Depth Anything nodes required by the official LTX-2.5
   workflow collection
 
-See [REVIEW.md](REVIEW.md) for review findings and refactor history.
+See [the structure review](docs/structure-review-2026-10-07.md) for current
+ownership and cleanup decisions. [REVIEW.md](REVIEW.md) records historical
+upgrades; the architecture guide describes the current implementation.
 
 ## Settings and execution architecture
 

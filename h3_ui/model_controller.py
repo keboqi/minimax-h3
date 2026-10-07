@@ -15,11 +15,9 @@ from dataclasses import dataclass
 class ModelServices:
     COMFY_DIR: Any
     H3Error: Any
-    H3_TEXT_ENCODER_CHOICES: Any
     MODELS_CONFIG: Any
     MODEL_SPECS: Any
     _runtime_config: Any
-    gr: Any
     ltx25_official_inventory_keys: Any
     ltx25_workflow_entry: Any
     ltx25_workflow_model_keys: Any
@@ -36,7 +34,6 @@ class ModelServices:
 
 
 class ModelController:
-
     def __init__(self, services: ModelServices):
         self.services = services
 
@@ -50,47 +47,11 @@ class ModelController:
             models, runtime=self.services._runtime_config()
         )
 
-    def _load_trt_vae_compiler(self, node_path: Path) -> Any:
-        return self.services.model_service._load_trt_vae_compiler(
-            node_path, runtime=self.services._runtime_config()
-        )
-
-    def trt_vae_runtime_fingerprint(self, models: ModelConfig | None = None) -> str:
-        return self.services.model_service.trt_vae_runtime_fingerprint(
-            models, runtime=self.services._runtime_config()
-        )
-
-    def is_trt_engine_loadable(self, engine_path: Path) -> bool:
-        return self.services.model_service.is_trt_engine_loadable(
-            engine_path, runtime=self.services._runtime_config()
-        )
-
-    def trt_vae_engine_is_current(self, models: ModelConfig) -> bool:
-        return self.services.model_service.trt_vae_engine_is_current(
-            models, runtime=self.services._runtime_config()
-        )
-
     def ensure_h3_text_encoder(
         self, models: ModelConfig, model_choice: str
     ) -> tuple[str, bool]:
         return self.services.model_service.ensure_h3_text_encoder(
             models, model_choice, runtime=self.services._runtime_config()
-        )
-
-    def text_encoder_offload_update(self, model_choice: str):
-        """Keep the UI memory option aligned with the selected encoder tier."""
-        bf16 = (
-            self.services.H3_TEXT_ENCODER_CHOICES.get(str(model_choice))
-            == "text_encoder_bf16"
-        )
-        return self.services.gr.update(
-            value=bf16,
-            interactive=not bf16,
-            info=(
-                "Required for the 51.5 GB BF16 encoder; models are unloaded between text encoding, diffusion, latent upscaling, and VAE decoding."
-                if bf16
-                else "Unload resident models at each H3 stage boundary to reduce peak VRAM."
-            ),
         )
 
     def ensure_h3_semantic_bridge(self) -> None:
@@ -132,23 +93,6 @@ class ModelController:
     ) -> bool:
         return self.services.model_service.ensure_int8_video_vae(
             models, runtime=self.services._runtime_config(), lynnreal=lynnreal
-        )
-
-    def ensure_trt_video_vae(
-        self, models: ModelConfig, *, require_engine: bool = True
-    ) -> bool:
-        return self.services.model_service.ensure_trt_video_vae(
-            models,
-            require_engine=require_engine,
-            runtime=self.services._runtime_config(),
-        )
-
-    def _build_trt_video_vae_engine(self, models: ModelConfig, progress: Any) -> None:
-        return self.services.model_service._build_trt_video_vae_engine(
-            models,
-            progress,
-            release_backend=self.services.unload_comfy_models,
-            runtime=self.services._runtime_config(),
         )
 
     def ensure_trt_video_vae_engine(

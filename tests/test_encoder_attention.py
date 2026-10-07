@@ -1,4 +1,5 @@
 """Qwen dispatch isolation, cache invalidation, and end-to-end graph settings."""
+import h3_app.catalog as _catalog
 import ast
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -213,7 +214,7 @@ class EncoderOptionTests(unittest.TestCase):
             keys = []
             for small_input, seed in ((True, 7), (False, 7), (False, 8)):
                 graph = self.graph(family, small_input, seed)
-                cache_id, node = next((i, n) for i, n in graph.items() if n["class_type"] == app.H3_CONDITIONING_CACHE_NODE)
+                cache_id, node = next((i, n) for i, n in graph.items() if n["class_type"] == _catalog.H3_CONDITIONING_CACHE_NODE)
                 self.assertIs(node["inputs"]["encoder_small_input"], small_input)
                 keys.append(node["inputs"]["cache_key"])
                 stages = [n for n in graph.values() if n["class_type"] in ("MiniMaxH3ImageToVideo", "MiniMaxH3ReferenceToVideo")]
@@ -227,7 +228,7 @@ class EncoderOptionTests(unittest.TestCase):
             for small_input in (True, False):
                 for reuse in (True, False):
                     graph = self.graph(family, small_input, reuse=reuse, voices=voices)
-                    cache = next(n for n in graph.values() if n["class_type"] == app.H3_CONDITIONING_CACHE_NODE)
+                    cache = next(n for n in graph.values() if n["class_type"] == _catalog.H3_CONDITIONING_CACHE_NODE)
                     self.assertIs(cache["inputs"]["reuse_conditioning"], reuse)
                     self.assertIs(cache["inputs"]["encoder_small_input"], small_input)
                     if voices:
