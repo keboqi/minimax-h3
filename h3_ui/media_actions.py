@@ -33,6 +33,7 @@ def bind_safe_deletion(
     sync_more,
     refresh_inputs=None,
     refresh_outputs=None,
+    refresh_queue=True,
 ):
     def prepare(mode, selected, action):
         paths = tuple(str(path) for path in list_paths(mode))
@@ -105,7 +106,7 @@ def bind_safe_deletion(
         sync_more,
         inputs=refresh_inputs or view.mode,
         outputs=refresh_outputs or [view.shown, view.show_more],
-        queue=True,
+        queue=refresh_queue,
         concurrency_limit=None,
         api_name=False,
         show_progress="hidden",

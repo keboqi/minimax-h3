@@ -96,14 +96,61 @@ runpy.run_module('tests.workspace_fixture',run_name='__main__')
                         page.get_by_role("button", name="Add to compare A", exact=True).click()
                         expect(page.locator("#h3-compare-a")).to_contain_text("alpha.png")
                         expect(page.locator("#h3-compare-a img")).to_have_attribute("src", __import__("re").compile(r"/media-previews/"))
-                        # Wait beyond the old video decode: it must not replace images.
-                        page.wait_for_timeout(4500)
-                        expect(thumbs.first).to_contain_text(".png")
+                        # Ordinary catalog pages, including empty media types, must
+                        # arrive in one direct callback without a queue stream.
+                        config = requests.get(url + "/config", timeout=5).json()
+                        grid_id = next(component["id"] for component in config["components"]
+                                       if component["props"].get("elem_id") == "generated-video-gallery")
+                        page_events = {event["id"] for event in config["dependencies"]
+                                       if grid_id in event["outputs"]}
+                        page_requests = []
+
+                        def record_page_request(request):
+                            if request.method != "POST" or "/gradio_api/" not in request.url:
+                                return
+                            data = request.post_data_json
+                            if isinstance(data, dict) and data.get("fn_index") in page_events:
+                                page_requests.append(request.url)
+
+                        page.on("request", record_page_request)
+                        switches = []
+                        for mode, kind, extension, count in (
+                            ("Audio", "audio files", None, 0),
+                            ("Video", "videos", ".mp4", 2),
+                            ("Image", "images", ".png", 2),
+                        ):
+                            page_requests.clear()
+                            started = monotonic()
+                            page.locator("#h3-library-kind").get_by_label(mode, exact=True).check()
+                            expect(page.locator(".h3-gallery-status").first).to_contain_text(
+                                f"generated {kind}", timeout=2000)
+                            expect(thumbs).to_have_count(count, timeout=2000)
+                            if extension:
+                                expect(thumbs.first).to_contain_text(extension)
+                            elapsed = monotonic() - started
+                            assert len(page_requests) == 1, page_requests
+                            assert "/queue/join" not in page_requests[0], page_requests
+                            switches.append(f"{mode}: {elapsed:.3f}s")
+                        # An older response must not overwrite the last selected type.
                         page.locator("#h3-library-kind").get_by_label("Video", exact=True).check()
                         page.locator("#h3-library-kind").get_by_label("Audio", exact=True).check()
                         expect(thumbs).to_have_count(0, timeout=2500)
                         expect(page.locator(".h3-gallery-status").first).to_contain_text("audio files")
-                        print(f"Cold media page: {first_page:.3f}s; thumbnail selection: {selection:.3f}s; mode cancellation passed")
+                        # Search and type changes share the same latest-request
+                        # handling, so a previous search cannot replace a new type.
+                        search = page.get_by_label("Search media", exact=True)
+                        search.fill("no-matching-media")
+                        search.press("Enter")
+                        page.locator("#h3-library-kind").get_by_label("Image", exact=True).check()
+                        page.locator("#h3-library-kind").get_by_label("Video", exact=True).check()
+                        expect(page.locator(".h3-gallery-status").first).to_contain_text("generated videos")
+                        expect(thumbs).to_have_count(0)
+                        search.fill("")
+                        page.get_by_role("button", name="Search library", exact=True).click()
+                        expect(thumbs).to_have_count(2)
+                        expect(thumbs.first).to_contain_text(".mp4")
+                        print(f"Cold media page: {first_page:.3f}s; thumbnail selection: {selection:.3f}s; "
+                              f"media switches: {', '.join(switches)}; latest mode preserved")
                     finally:
                         browser.close()
             finally:
