@@ -826,6 +826,8 @@ def manage_models():
 
 @app.cls(
     gpu=GPU,
+    cpu=1,
+    memory=1024,
     timeout=86400,
     startup_timeout=3600,
     volumes={DATA.as_posix(): volume},
