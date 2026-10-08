@@ -93,7 +93,8 @@ class RefinementLoraTests(unittest.TestCase):
                         expected = _catalog.LARRY_TURBO_SAMPLER_NODE if variant == LARRY_TURBO else _catalog.CORE_SAMPLER_NODE
                         self.assertEqual(graph[target['sampler'][0]]['class_type'], expected)
                         if variant != LARRY_TURBO:
-                            self.assertEqual(graph[target['sampler'][0]]['inputs']['sampler_name'], 'euler')
+                            self.assertEqual(graph[target['sampler'][0]]['inputs']['sampler_name'],
+                                             'lcm' if variant == DMAD_4STEP_LORA else 'euler')
                         # Retain the generation schedule's last two intervals for low denoise.
                         split_node = graph[target['sigmas'][0]]
                         self.assertEqual(split_node['inputs']['step'], 6)
@@ -144,3 +145,33 @@ class RefinementLoraTests(unittest.TestCase):
                           patch.object(model_service, 'sync_models') as sync):
                         self.assertFalse(model_service.ensure_turbo_lora(models, variant, mode, runtime=runtime))
                         sync.assert_not_called()
+
+    def test_legacy_dmad_config_provisions_the_official_adapter(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = RuntimeConfig(root, 'http://fixture', root / 'ComfyUI', root / 'models.json', root / 'outputs')
+            config = h3_models._build_config('manifest.json')
+            config['dmad_4step_lora'] = 'minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors'
+            runtime.models_config.write_text(json.dumps(config), encoding='utf-8')
+            models = model_service.load_model_config(runtime=runtime)
+            spec = h3_models.MODEL_SPECS['dmad_4step_lora']
+            self.assertEqual(models.dmad_4step_lora, spec.local_name)
+            for mode in ('Text to video', 'Reference media'):
+                self.assertEqual(models.turbo_lora_for(mode, DMAD_4STEP_LORA), spec.local_name)
+
+            def download(**kwargs):
+                self.assertEqual(kwargs['model_keys'], ('dmad_4step_lora',))
+                destination = kwargs['root'] / spec.folder / spec.local_name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(b'0' * (h3_models.MIN_VALID_MODEL_BYTES + 1))
+
+            with (patch.object(model_service, 'sync_models', side_effect=download) as sync,
+                  patch.object(model_service, 'resolve_hf_token', return_value=None)):
+                self.assertTrue(model_service.ensure_turbo_lora(models, DMAD_4STEP_LORA,
+                                                               'Text to video', runtime=runtime))
+                sync.assert_called_once()
+
+            config['dmad_4step_lora'] = 'custom-dmad.safetensors'
+            runtime.models_config.write_text(json.dumps(config), encoding='utf-8')
+            self.assertEqual(model_service.load_model_config(runtime=runtime).dmad_4step_lora,
+                             'custom-dmad.safetensors')

@@ -83,8 +83,10 @@ def lightx2v_uses_768p_schedule(turbo_variant: str, lora_filename: str | None) -
 
 
 def turbo_sampler_name(turbo_variant: str, lora_filename: str | None) -> str:
-    # LightX2V, PDMD and DMAD use Euler. A missing LoRA means normal
-    # generation and keeps res_multistep.
+    # DMAD's trained re-noise rule is implemented by ComfyUI's stock LCM.
+    # A missing LoRA means normal generation and keeps res_multistep.
+    if lora_filename and normalize_turbo_variant(turbo_variant) == DMAD_4STEP_LORA:
+        return "lcm"
     return (
         "euler"
         if is_lightx2v_turbo_lora(turbo_variant, lora_filename)

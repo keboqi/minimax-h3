@@ -58,7 +58,7 @@ def build_performance_section(
                 "Choose the Turbo adapter. Each variant supplies its trained step count; "
                 "you can then adjust the number of steps. "
                 "Experimental PDMD and DMAD 4-step adapters download on first use "
-                "and share weights across conditioning modes. DMAD uses Euler "
+                "and share weights across conditioning modes. DMAD uses LCM "
                 "with video/audio shifts 12/2; reference conditioning is experimental."
             ),
         )

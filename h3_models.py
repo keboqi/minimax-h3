@@ -240,11 +240,11 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "Experimental PDMD 4-step LoRA · rank reduced BF16",
     ),
     "dmad_4step_lora": ModelSpec(
-        "Kijai/MiniMax-H3-experimental", "loras",
-        "loras/minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors",
-        "Experimental DMAD 4-step full-critic LoRA · rank reduced BF16",
+        "ZhengmingYu/DMAD", "loras",
+        "minimax_h3/dmad_minimax_h3_4step_full_critic_comfyui.safetensors",
+        "DMAD 4-step full-critic LoRA · official exact ComfyUI BF16 conversion",
         expected_sha256=(
-            "ddfdd94f4c9a0f32bf3649bb8e98ca20db572e4db6bcd9cca546a5b33ea32d11"
+            "d3ee9f599ef1ac2d76850e90372ce9064fdc2c16e7f3de6a7ba9bc90cb91eb1b"
         ),
     ),
     "larry_turbo_lora": ModelSpec(

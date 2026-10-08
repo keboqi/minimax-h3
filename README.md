@@ -590,16 +590,20 @@ weights across conditioning modes. The refinement LoRA remains independently
 selectable, with **Same as generation** as its default.
 
 The experimental **DMAD / 4-step** option uses
-[Kijai's rank-reduced BF16 full-critic conversion](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/loras/minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors).
-It downloads on first use, selects 4 steps with Euler/simple at strength 1.0,
+[the authors' exact BF16 full-critic ComfyUI conversion](https://huggingface.co/ZhengmingYu/DMAD/blob/main/minimax_h3/dmad_minimax_h3_4step_full_critic_comfyui.safetensors)
+(about 1.96 GB, without rank reduction). It downloads on first use, selects
+4 steps with LCM/simple at strength 1.0,
 and applies DMAD's trained video/audio shifts of **12/2** through
-`MiniMaxH3SigmaShift`. Older model configurations acquire its filename automatically.
+`MiniMaxH3SigmaShift`. Older model configurations automatically migrate the
+previous Kijai adapter filename to the official adapter; custom filenames are preserved.
 The same adapter is available for FL2VA, experimental Ref2VA, and independent
 high-resolution refinement; refinement retains the generation schedule's
-low-denoise tail. The [DMAD authors](https://github.com/Yzmblog/DMAD#inference)
+low-denoise tail and uses LCM for both full-frame and split refinement.
+The [DMAD authors](https://github.com/Yzmblog/DMAD/tree/main/comfyui)
 train and evaluate text-to-audio-video on the full 33B model. Their supported
-Euler inference path is used here; their paper results use a different re-noise
-sampler. Reference conditioning and pruned checkpoints are experimental.
+re-noise rule is implemented by ComfyUI's stock LCM sampler. Their ComfyUI
+examples include pruned INT8 checkpoints; reference conditioning and latent
+upscale refinement remain experimental.
 
 The **High-resolution refinement method** control keeps **Full-frame
 refinement** as the normal path. Selecting **MMH3 Split Upscale

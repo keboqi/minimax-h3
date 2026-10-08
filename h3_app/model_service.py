@@ -100,6 +100,12 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
     if default_profile not in profiles:
         default_profile = "singularity"
 
+    dmad_lora = data.get("dmad_4step_lora", MODEL_SPECS["dmad_4step_lora"].local_name)
+    # Migrate the previously generated filename so on-demand provisioning and
+    # the workflow both use the official adapter. Preserve custom filenames.
+    if dmad_lora == "minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors":
+        dmad_lora = MODEL_SPECS["dmad_4step_lora"].local_name
+
     return ModelConfig(
         profiles=profiles,
         default_profile=default_profile,
@@ -123,9 +129,7 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
         pdmd_4step_lora=data.get(
             "pdmd_4step_lora", MODEL_SPECS["pdmd_4step_lora"].local_name
         ),
-        dmad_4step_lora=data.get(
-            "dmad_4step_lora", MODEL_SPECS["dmad_4step_lora"].local_name
-        ),
+        dmad_4step_lora=dmad_lora,
         turbo_lora=data.get("turbo_lora"),
         turbo_source=data.get("turbo_source", "unknown"),
         turbo_ref_lora=data.get("turbo_ref_lora", data.get("turbo_lora")),

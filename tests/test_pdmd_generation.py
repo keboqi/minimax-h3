@@ -22,7 +22,8 @@ class PdmdGenerationTests(unittest.TestCase):
             with self.subTest(variant=variant):
                 self.assertEqual(normalize_turbo_variant(variant), variant)
                 self.assertEqual(turbo_steps_for(variant), steps)
-                self.assertEqual(turbo_sampler_name(variant, 'pdmd.safetensors'), 'euler')
+                self.assertEqual(turbo_sampler_name(variant, 'adapter.safetensors'),
+                                 'lcm' if variant == DMAD_4STEP_LORA else 'euler')
                 self.assertEqual(turbo_sampler_name(variant, None), 'res_multistep')
                 _, values = transition_modes(None, {
                     'generation_mode': 'Turbo', 'turbo_variant': variant,
@@ -87,7 +88,8 @@ class PdmdGenerationTests(unittest.TestCase):
                             loras = [n['inputs'] for n in chain if 'lora_name' in n['inputs']]
                             self.assertEqual([n['lora_name'] for n in loras], [expected])
                             self.assertEqual(loras[0]['strength_model'], 1.0)
-                            self.assertEqual(graph[sample['sampler'][0]]['inputs']['sampler_name'], 'euler')
+                            self.assertEqual(graph[sample['sampler'][0]]['inputs']['sampler_name'],
+                                             'lcm' if selected == DMAD_4STEP_LORA else 'euler')
                             shifts = [n['inputs'] for n in chain if n['class_type'] == _catalog.H3_SIGMA_SHIFT_NODE]
                             self.assertEqual(
                                 [(n['shift_video'], n['shift_audio']) for n in shifts],

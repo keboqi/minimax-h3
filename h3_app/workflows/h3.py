@@ -662,10 +662,7 @@ def finish_sampling(
                 and turbo_uses_custom_nodes(refinement_variant)
                 else graph.add(
                     CORE_SAMPLER_NODE,
-                    sampler_name=(
-                        "euler" if refinement_variant in STANDARD_TURBO_LORA_SETTINGS
-                        else turbo_sampler_name(refinement_variant, refinement_lora_name)
-                    ),
+                    sampler_name=turbo_sampler_name(refinement_variant, refinement_lora_name),
                 )
             )
         initial_guider = graph.add(
