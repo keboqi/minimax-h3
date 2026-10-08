@@ -869,8 +869,6 @@ class H3Service:
         )
 
         env = service_env()
-        env["GRADIO_SERVER_NAME"] = "0.0.0.0"
-        env["GRADIO_SERVER_PORT"] = str(UI_PORT)
 
         comfy_args = [
             "python",
@@ -899,6 +897,21 @@ class H3Service:
             timeout=20 * 60,
             label="ComfyUI",
         )
+
+    @modal.enter(snap=False)
+    def check_services(self):
+        # Reuse ComfyUI, but initialize Gradio against this container's mounted
+        # volume. Capturing its WorkspaceStore, owner secret and job coordinator
+        # would retain stale state after the volume changes between restores.
+        wait_for_service(
+            f"http://127.0.0.1:{COMFY_PORT}/system_stats",
+            self.comfy_process,
+            timeout=20 * 60,
+            label="ComfyUI after restore",
+        )
+        env = service_env()
+        env["GRADIO_SERVER_NAME"] = "0.0.0.0"
+        env["GRADIO_SERVER_PORT"] = str(UI_PORT)
         print("[modal-h3] Launching Gradio", flush=True)
         self.gradio_process = subprocess.Popen(
             ["python", "-u", UI.as_posix()],
@@ -910,6 +923,9 @@ class H3Service:
             timeout=10 * 60,
             label="Gradio",
         )
+        # Persist the initialized database and owner secret before serving the UI;
+        # do not depend on a background volume commit for the next cold start.
+        volume.commit()
         print(
             f"[modal-h3] Public Gradio server is listening on port {UI_PORT}",
             flush=True,
@@ -927,23 +943,6 @@ class H3Service:
                 f"/comfyui asset validation failed: {exc}",
                 flush=True,
             )
-
-    @modal.enter(snap=False)
-    def check_services(self):
-        # Restored containers reuse the captured subprocesses; do not launch
-        # new servers on ports that are already occupied.
-        wait_for_service(
-            f"http://127.0.0.1:{COMFY_PORT}/system_stats",
-            self.comfy_process,
-            timeout=20 * 60,
-            label="ComfyUI after restore",
-        )
-        wait_for_service(
-            f"http://127.0.0.1:{UI_PORT}/",
-            self.gradio_process,
-            timeout=10 * 60,
-            label="Gradio after restore",
-        )
 
     @modal.web_server(
         UI_PORT,

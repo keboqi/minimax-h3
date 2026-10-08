@@ -799,9 +799,11 @@ opening it does not start the expensive GPU endpoint or ComfyUI.
 
 The GPU endpoint scales to zero by default (`H3_MODAL_MIN_CONTAINERS=0`), with a
 300-second idle scale-down window (`H3_MODAL_SCALEDOWN_WINDOW`). It uses
-Modal CPU and experimental GPU memory snapshots to capture ComfyUI and Gradio
-after startup and readiness checks. Restored containers reuse those servers
-and check their health before accepting requests. Snapshots are created only
+Modal CPU and experimental GPU memory snapshots to capture ComfyUI
+after startup and readiness checks. Restored containers reuse ComfyUI and
+start Gradio after restoration so the workspace database, browser ownership and
+media catalog are initialized from the current shared volume. The initialized
+workspace is committed before the UI accepts requests. Snapshots are created only
 for deployed apps; the initial snapshot creation still performs a full startup.
 Model weights continue to load on demand during generation. Use the Modal
 Containers tab to confirm snapshot restoration and measure cold-start latency.
