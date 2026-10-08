@@ -1166,6 +1166,29 @@ class MediaController:
         ):
             yield (*update[:4], None, None, *update[4:])
 
+    def _delete_generated_media(self, selected_media, mode):
+        """Delete only managed outputs and retire their catalog entries immediately."""
+        store = self.services.gallery_store
+        runtime = self.services._runtime_config()
+        media = {
+            "Video": store.managed_video_path,
+            "Image": store.managed_image_path,
+            "Audio": store.managed_audio_path,
+        }[mode](selected_media, runtime=runtime)
+        thumbnail = {
+            "Video": store.gallery_thumbnail_path,
+            "Image": store.gallery_image_thumbnail_path,
+            "Audio": store.gallery_audio_thumbnail_path,
+        }[mode](media, runtime=runtime)
+        placeholder = store.gallery_placeholder_path(media, kind=mode, runtime=runtime)
+        media.unlink()
+        # Even if sidecar cleanup fails, browsing must stop offering this file.
+        self.services.forget_gallery_metadata(media)
+        self.services.snapshot_path(media).unlink(missing_ok=True)
+        thumbnail.unlink(missing_ok=True)
+        placeholder.unlink(missing_ok=True)
+        return media.name
+
     def delete_selected_gallery_video(
         self, selected_video: str | None, confirmed: bool
     ) -> GalleryMutationResult:
@@ -1180,13 +1203,7 @@ class MediaController:
                 "Select a video to delete.", clear_selection=True
             )
         try:
-            video = self.services.managed_video_path(selected_video)
-            thumbnail = self.services.gallery_thumbnail_path(video)
-            name = video.name
-            video.unlink()
-            self.services.snapshot_path(video).unlink(missing_ok=True)
-            thumbnail.unlink(missing_ok=True)
-            self.services.forget_gallery_metadata(video)
+            name = self._delete_generated_media(selected_video, "Video")
             return self.services.gallery_mutation_result(
                 f"Deleted `{name}`.", clear_selection=True
             )
@@ -1199,15 +1216,28 @@ class MediaController:
         self, mode: str, selected_media: str | None, confirmed: bool
     ) -> GalleryMediaMutationResult:
         media_mode = self.services.gallery_media_mode(mode)
-        if media_mode != "Video":
+        if media_mode == "Video":
+            result = self.services.delete_selected_gallery_video(selected_media, confirmed)
+            return (*result[:4], None, None, *result[4:])
+        if not confirmed:
             return self.services.gallery_media_mutation_result(
                 media_mode,
-                f"{media_mode} deletion is not enabled in this gallery.",
+                "Confirm permanent deletion first.",
                 selected_media=selected_media,
                 clear_selection=False,
             )
-        result = self.services.delete_selected_gallery_video(selected_media, confirmed)
-        return (*result[:4], None, None, *result[4:])
+        if not selected_media:
+            return self.services.gallery_media_mutation_result(
+                media_mode, "Select an item to delete.", clear_selection=True,
+            )
+        try:
+            name = self._delete_generated_media(selected_media, media_mode)
+            message = f"Deleted `{name}`."
+        except (self.services.H3Error, OSError) as exc:
+            message = f"Delete failed: {exc}"
+        return self.services.gallery_media_mutation_result(
+            media_mode, message, clear_selection=True,
+        )
 
     def empty_generated_gallery(
         self, selected_video: str | None, confirmed: bool
@@ -1222,22 +1252,10 @@ class MediaController:
         failed = 0
         for candidate in self.services.gallery_video_paths(limit=None):
             try:
-                video = self.services.managed_video_path(candidate)
-                self.services.gallery_thumbnail_path(video).unlink(missing_ok=True)
-                video.unlink()
-                self.services.snapshot_path(video).unlink(missing_ok=True)
-                self.services.forget_gallery_metadata(video)
+                self._delete_generated_media(candidate, "Video")
                 deleted += 1
             except (self.services.H3Error, OSError):
                 failed += 1
-        if self.services.GALLERY_THUMBNAILS_DIR.is_dir():
-            for thumbnail in self.services.GALLERY_THUMBNAILS_DIR.iterdir():
-                if thumbnail.is_file() and thumbnail.suffix.lower() in {".jpg", ".tmp"}:
-                    try:
-                        thumbnail.unlink()
-                    except OSError:
-                        failed += 1
-        self.services.forget_gallery_metadata()
         result = f"Deleted {deleted} generated video{('s' if deleted != 1 else '')}."
         if failed:
             result += (
@@ -1249,12 +1267,26 @@ class MediaController:
         self, mode: str, selected_media: str | None, confirmed: bool
     ) -> GalleryMediaMutationResult:
         media_mode = self.services.gallery_media_mode(mode)
-        if media_mode != "Video":
+        if media_mode == "Video":
+            result = self.services.empty_generated_gallery(selected_media, confirmed)
+            return (*result[:4], None, None, *result[4:])
+        if not confirmed:
             return self.services.gallery_media_mutation_result(
                 media_mode,
-                f"{media_mode} library deletion is not enabled.",
+                "Confirm permanent deletion first.",
                 selected_media=selected_media,
                 clear_selection=False,
             )
-        result = self.services.empty_generated_gallery(selected_media, confirmed)
-        return (*result[:4], None, None, *result[4:])
+        deleted = failed = 0
+        for candidate in self.list_media_paths(media_mode):
+            try:
+                self._delete_generated_media(candidate, media_mode)
+                deleted += 1
+            except (self.services.H3Error, OSError):
+                failed += 1
+        message = f"Deleted {deleted} generated {media_mode.lower()} item(s)."
+        if failed:
+            message += f" {failed} item(s) could not be deleted."
+        return self.services.gallery_media_mutation_result(
+            media_mode, message, clear_selection=True,
+        )

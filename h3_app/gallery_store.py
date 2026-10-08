@@ -348,6 +348,11 @@ def gallery_image_thumbnail_path(image: str | Path, *, runtime: RuntimeConfig) -
     return runtime.gallery_thumbnails_dir / f"image-{cache_key}.jpg"
 
 
+def gallery_placeholder_path(media: str | Path, *, kind: str, runtime: RuntimeConfig) -> Path:
+    cache_key = hashlib.sha256(str(Path(media).resolve()).encode("utf-8")).hexdigest()[:24]
+    return runtime.gallery_thumbnails_dir / f"{kind.lower()}-{cache_key}-unavailable.png"
+
+
 def gallery_placeholder(
     media: Path, *, kind: str, runtime: RuntimeConfig
 ) -> Path | None:
@@ -355,13 +360,7 @@ def gallery_placeholder(
     try:
         from PIL import Image, ImageDraw
 
-        cache_key = hashlib.sha256(str(media.resolve()).encode("utf-8")).hexdigest()[
-            :24
-        ]
-        thumbnail = (
-            runtime.gallery_thumbnails_dir
-            / f"{kind.lower()}-{cache_key}-unavailable.png"
-        )
+        thumbnail = gallery_placeholder_path(media, kind=kind, runtime=runtime)
         if thumbnail.is_file():
             return thumbnail
         runtime.gallery_thumbnails_dir.mkdir(parents=True, exist_ok=True)

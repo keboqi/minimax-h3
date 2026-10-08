@@ -376,13 +376,22 @@ def bind_gallery_view(
     stopped.then(fn=None, cancels=[post_event], queue=False, api_name=False)
     from .media_actions import bind_safe_deletion
 
+    def refresh_after_deletion(mode: str, filter_values, request: gr.Request):
+        values = sync_more(mode, filter_values, request)
+        return (*values[:2], gr.skip(), *values[3:])
+
+    if page_queue:
+        def refresh_after_deletion(mode: str, filter_values, request: gr.Request):
+            for values in sync_more(mode, filter_values, request):
+                yield (*values[:2], gr.skip(), *values[3:])
+
     deleted = bind_safe_deletion(
         view,
         list_paths=list_paths,
         delete=delete,
         empty=empty,
         mutation_outputs=mutation_outputs,
-        sync_more=sync_more,
+        sync_more=refresh_after_deletion,
         refresh_inputs=[view.mode, filters],
         refresh_outputs=page_outputs,
         refresh_queue=page_queue,
