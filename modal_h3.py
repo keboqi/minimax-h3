@@ -65,7 +65,7 @@ VOL = os.getenv("H3_MODAL_VOLUME", "minimax-h3-data")
 GPU = "RTX-PRO-6000"
 MIN_CONTAINERS = int(os.getenv("H3_MODAL_MIN_CONTAINERS", "0"))
 SCALEDOWN_WINDOW = int(
-    os.getenv("H3_MODAL_SCALEDOWN_WINDOW", "1200")
+    os.getenv("H3_MODAL_SCALEDOWN_WINDOW", "300")
 )
 PROXY_AUTH = os.getenv("H3_MODAL_PROXY_AUTH", "0") != "0"
 HF_SECRET_NAME = os.getenv("H3_MODAL_HF_SECRET", "custom-secret")
@@ -824,7 +824,7 @@ def manage_models():
     )
 
 
-@app.function(
+@app.cls(
     gpu=GPU,
     timeout=86400,
     startup_timeout=3600,
@@ -834,96 +834,120 @@ def manage_models():
     max_containers=1,
     buffer_containers=0,
     scaledown_window=SCALEDOWN_WINDOW,
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
 )
 @modal.concurrent(max_inputs=100)
-@modal.web_server(
-    UI_PORT,
-    startup_timeout=3600,
-    label="h3",
-    requires_proxy_auth=PROXY_AUTH,
-)
-def serve():
-    print("[modal-h3] Starting MiniMax H3 service", flush=True)
-    print(
-        "[modal-h3] Hugging Face token injected: "
-        + ("yes" if os.getenv("HF_TOKEN") else "no"),
-        flush=True,
-    )
-    prepare_runtime_models()
-
-    # User workflow files live in the image filesystem rather than the model
-    # volume. Re-sync them on every cold start so a reused image layer can never
-    # expose newer UI mappings without their corresponding JSON templates.
-    workflow_source = (
-        Path(COMFY) / "custom_nodes" / "ComfyUI-LTXVideo"
-        / "example_workflows" / "2.5"
-    )
-    workflow_destination = (
-        Path(COMFY) / "user" / "default" / "workflows" / "LTX 2.5"
-    )
-    workflows = sync_ltx25_workflows(workflow_source, workflow_destination)
-    print(
-        f"[modal-h3] runtime-synced {len(workflows)} official LTX 2.5 "
-        f"workflows to {workflow_destination}",
-        flush=True,
-    )
-
-    env = service_env()
-    env["GRADIO_SERVER_NAME"] = "0.0.0.0"
-    env["GRADIO_SERVER_PORT"] = str(UI_PORT)
-
-    comfy_args = [
-        "python",
-        "-u",
-        "main.py",
-        "--listen",
-        "127.0.0.1",
-        "--port",
-        str(COMFY_PORT),
-        "--fast",
-        "fp16_accumulation",
-        "--use-ck-attention",
-    ]
-    print("[modal-h3] Dense/fallback attention: Comfy Kitchen", flush=True)
-    comfy_args += ["--enable-cors-header", "*"]
-
-    print("[modal-h3] Launching ComfyUI", flush=True)
-    comfy_process = subprocess.Popen(
-        comfy_args,
-        cwd=COMFY.as_posix(),
-        env=env,
-    )
-    wait_for_service(
-        f"http://127.0.0.1:{COMFY_PORT}/system_stats",
-        comfy_process,
-        timeout=20 * 60,
-        label="ComfyUI",
-    )
-    print("[modal-h3] Launching Gradio", flush=True)
-    gradio_process = subprocess.Popen(
-        ["python", "-u", UI.as_posix()],
-        env=env,
-    )
-    wait_for_service(
-        f"http://127.0.0.1:{UI_PORT}/",
-        gradio_process,
-        timeout=10 * 60,
-        label="Gradio",
-    )
-    print(
-        f"[modal-h3] Public Gradio server is listening on port {UI_PORT}",
-        flush=True,
-    )
-    try:
-        wait_for_comfy_frontend(
-            f"http://127.0.0.1:{UI_PORT}/comfyui/",
-            gradio_process,
-            timeout=30,
-            label="ComfyUI proxy",
-        )
-    except Exception as exc:
+class H3Service:
+    @modal.enter(snap=True)
+    def start(self):
+        print("[modal-h3] Starting MiniMax H3 service", flush=True)
         print(
-            "[modal-h3] WARNING: Main UI is running, but "
-            f"/comfyui asset validation failed: {exc}",
+            "[modal-h3] Hugging Face token injected: "
+            + ("yes" if os.getenv("HF_TOKEN") else "no"),
             flush=True,
         )
+        prepare_runtime_models()
+
+        # User workflow files live in the image filesystem rather than the model
+        # volume. Re-sync before snapshotting so a reused image layer can never
+        # expose newer UI mappings without their corresponding JSON templates.
+        workflow_source = (
+            Path(COMFY) / "custom_nodes" / "ComfyUI-LTXVideo"
+            / "example_workflows" / "2.5"
+        )
+        workflow_destination = (
+            Path(COMFY) / "user" / "default" / "workflows" / "LTX 2.5"
+        )
+        workflows = sync_ltx25_workflows(workflow_source, workflow_destination)
+        print(
+            f"[modal-h3] runtime-synced {len(workflows)} official LTX 2.5 "
+            f"workflows to {workflow_destination}",
+            flush=True,
+        )
+
+        env = service_env()
+        env["GRADIO_SERVER_NAME"] = "0.0.0.0"
+        env["GRADIO_SERVER_PORT"] = str(UI_PORT)
+
+        comfy_args = [
+            "python",
+            "-u",
+            "main.py",
+            "--listen",
+            "127.0.0.1",
+            "--port",
+            str(COMFY_PORT),
+            "--fast",
+            "fp16_accumulation",
+            "--use-ck-attention",
+        ]
+        print("[modal-h3] Dense/fallback attention: Comfy Kitchen", flush=True)
+        comfy_args += ["--enable-cors-header", "*"]
+
+        print("[modal-h3] Launching ComfyUI", flush=True)
+        self.comfy_process = subprocess.Popen(
+            comfy_args,
+            cwd=COMFY.as_posix(),
+            env=env,
+        )
+        wait_for_service(
+            f"http://127.0.0.1:{COMFY_PORT}/system_stats",
+            self.comfy_process,
+            timeout=20 * 60,
+            label="ComfyUI",
+        )
+        print("[modal-h3] Launching Gradio", flush=True)
+        self.gradio_process = subprocess.Popen(
+            ["python", "-u", UI.as_posix()],
+            env=env,
+        )
+        wait_for_service(
+            f"http://127.0.0.1:{UI_PORT}/",
+            self.gradio_process,
+            timeout=10 * 60,
+            label="Gradio",
+        )
+        print(
+            f"[modal-h3] Public Gradio server is listening on port {UI_PORT}",
+            flush=True,
+        )
+        try:
+            wait_for_comfy_frontend(
+                f"http://127.0.0.1:{UI_PORT}/comfyui/",
+                self.gradio_process,
+                timeout=30,
+                label="ComfyUI proxy",
+            )
+        except Exception as exc:
+            print(
+                "[modal-h3] WARNING: Main UI is running, but "
+                f"/comfyui asset validation failed: {exc}",
+                flush=True,
+            )
+
+    @modal.enter(snap=False)
+    def check_services(self):
+        # Restored containers reuse the captured subprocesses; do not launch
+        # new servers on ports that are already occupied.
+        wait_for_service(
+            f"http://127.0.0.1:{COMFY_PORT}/system_stats",
+            self.comfy_process,
+            timeout=20 * 60,
+            label="ComfyUI after restore",
+        )
+        wait_for_service(
+            f"http://127.0.0.1:{UI_PORT}/",
+            self.gradio_process,
+            timeout=10 * 60,
+            label="Gradio after restore",
+        )
+
+    @modal.web_server(
+        UI_PORT,
+        startup_timeout=3600,
+        label="h3",
+        requires_proxy_auth=PROXY_AUTH,
+    )
+    def serve(self):
+        """Expose the servers initialized by the snapshot lifecycle hooks."""

@@ -797,6 +797,17 @@ and `h3` for GPU generation. Open the **models** URL printed by Modal first.
 The manager uses a separate lightweight image with Modal's default CPU and RAM;
 opening it does not start the expensive GPU endpoint or ComfyUI.
 
+The GPU endpoint scales to zero by default (`H3_MODAL_MIN_CONTAINERS=0`), with a
+300-second idle scale-down window (`H3_MODAL_SCALEDOWN_WINDOW`). It uses
+Modal CPU and experimental GPU memory snapshots to capture ComfyUI and Gradio
+after startup and readiness checks. Restored containers reuse those servers
+and check their health before accepting requests. Snapshots are created only
+for deployed apps; the initial snapshot creation still performs a full startup.
+Model weights continue to load on demand during generation. Use the Modal
+Containers tab to confirm snapshot restoration and measure cold-start latency.
+Changes to the shared volume do not invalidate snapshots, so redeploy after
+changing the installed model inventory to capture fresh startup state.
+
 Select one or more presets (MiniMax H3, Qwen Image 2.1, LTX 2.5, Music 3, or
 YuE2), click **Select preset models**, and adjust the individual model/LoRA
 selection. **Download / update selected** checks remote versions and downloads
@@ -817,7 +828,7 @@ versions. Generation still downloads missing assets on demand. The old
 `provision_models` function is replaced by `manage_models`.
 
 The deployment attaches the `custom-secret` Modal Secret to both runtime
-functions and requires it to contain `HF_TOKEN`. If your existing secret uses a
+services and requires it to contain `HF_TOKEN`. If your existing secret uses a
 different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`. To make a
 hosted prompt enhancer available without entering a key in the UI, also store
 `GEMINI_API_KEY` and/or `LIGHTNING_API_KEY` in that Modal Secret.
