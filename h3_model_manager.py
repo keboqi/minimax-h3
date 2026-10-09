@@ -78,7 +78,8 @@ def model_presets() -> dict[str, tuple[str, ...]]:
         ))),
         "Qwen Image 2.1 defaults": qwen,
         "Qwen Image 2.1 + Turbo LoRAs": (
-            *qwen, "qwen_image21_viggle_v02_lora", "qwen_image21_viggle_v03_lora",
+            *qwen, "qwen_image21_official_turbo_lora",
+            "qwen_image21_viggle_v02_lora", "qwen_image21_viggle_v03_lora",
         ),
         "LTX 2.5 defaults": ltx,
         "LTX 2.5 + IC-LoRAs": (*ltx, *LTX25_ICLORA_MODEL_KEYS),

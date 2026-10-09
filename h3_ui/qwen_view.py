@@ -194,7 +194,7 @@ def build_qwen_image21_view(
                 with settings_root:
                     preset = gr.Radio(
                         choices=["Fast", "Normal", "Quality"],
-                        value="Quality",
+                        value=defaults["preset"],
                         label="Qwen preset",
                         info="Sets the diffusion model, Turbo mode, steps, and accelerator. Controls remain editable.",
                     )
@@ -206,10 +206,12 @@ def build_qwen_image21_view(
                         )
                         turbo_variant = gr.Dropdown(
                             choices=["Off", *QWEN_IMAGE21_TURBO_MODES],
-                            value="Off",
+                            value=defaults["turbo_variant"],
                             label="Turbo mode",
                             info=(
-                                "v0.2.1 and v0.3 offer 6 turbo steps. v0.3 also offers "
+                                "Official Turbo uses an 8-step LoRA with your base model "
+                                "and supports up to 10 references. "
+                                "Viggle v0.2.1 and v0.3 offer 6 turbo steps. v0.3 also offers "
                                 "7 turbo steps + 2 base steps for finer detail. "
                                 "Use Euler, CFG 1, and accelerator Off. "
                                 "Research and evaluation use only."
@@ -359,8 +361,8 @@ def build_qwen_image21_view(
                             ),
                         )
                     gr.Markdown(
-                        "Base defaults are CFG 1 and 40 Euler steps with resolution-aware "
-                        "scheduling. Native "
+                        "Fast is the default: Official Turbo uses CFG 1 and 8 Euler steps. "
+                        "Quality uses the base model with 40 resolution-aware steps. Native "
                         "sizes include 2048×2048, 2400×1792, 1792×2400, 2528×1696, "
                         "1696×2528, 2752×1536, and 1536×2752. For transparent PNGs, "
                         "ask for an RGBA image with an alpha channel and transparent background. "

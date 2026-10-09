@@ -573,6 +573,13 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "vae/qwen_image_2.1_vae_bf16.safetensors",
         "Qwen Image 2.1 BF16 VAE",
     ),
+    "qwen_image21_official_turbo_lora": ModelSpec(
+        QWEN_IMAGE21_REPO,
+        "loras",
+        "loras/qwen_image_2.1_turbo_lora_avg_rank_178_bf16.safetensors",
+        "Official Qwen Image 2.1 Turbo 8-step LoRA extraction by Kijai",
+        expected_sha256="208dd43250e1e01467ba190572ae2e7107a7870ec1ff026bc65f791fa1e80e95",
+    ),
     "qwen_image21_viggle_v02_lora": ModelSpec(
         QWEN_IMAGE21_VIGGLE_REPO,
         "loras",
@@ -713,7 +720,9 @@ QWEN_IMAGE21_TEXT_ENCODER_CHOICES = {
     "BF16": "qwen_image21_text_bf16",
 }
 DEFAULT_QWEN_IMAGE21_TEXT_ENCODER = "BF16"
+QWEN_IMAGE21_OFFICIAL_TURBO = "Official Turbo (8-step)"
 QWEN_IMAGE21_TURBO_MODES = {
+    QWEN_IMAGE21_OFFICIAL_TURBO: ("qwen_image21_official_turbo_lora", 8),
     "Viggle Turbo v0.2.1 (6-step)": ("qwen_image21_viggle_v02_lora", 6),
     "Viggle Turbo v0.3 (6-step)": ("qwen_image21_viggle_v03_lora", 6),
     "Viggle Turbo v0.3 (9-step)": ("qwen_image21_viggle_v03_lora", 9),
@@ -722,6 +731,7 @@ QWEN_IMAGE21_MODEL_KEYS = (
     *QWEN_IMAGE21_MODEL_CHOICES.values(),
     *QWEN_IMAGE21_TEXT_ENCODER_CHOICES.values(),
     "qwen_image21_vae",
+    "qwen_image21_official_turbo_lora",
     "qwen_image21_viggle_v02_lora",
     "qwen_image21_viggle_v03_lora",
 )
@@ -1626,6 +1636,7 @@ def selftest() -> None:
         "qwen_image21_text_w4a8",
         "qwen_image21_text_bf16",
         "qwen_image21_vae",
+        "qwen_image21_official_turbo_lora",
         "qwen_image21_viggle_v02_lora",
         "qwen_image21_viggle_v03_lora",
     }

@@ -14,8 +14,17 @@ from h3_app.graph import Graph
 from h3_models import (
     MODEL_SPECS,
     QWEN_IMAGE21_MODEL_CHOICES,
+    QWEN_IMAGE21_OFFICIAL_TURBO,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
     QWEN_IMAGE21_TURBO_MODES,
+)
+
+
+# Qwen/Qwen-Image-2.1-Turbo model_index.json at d65dbc9a7e8f6b5479e33dee6030eaab2a906509.
+# These are final sigmas: no resolution shift or terminal stretch is applied.
+QWEN_IMAGE21_OFFICIAL_TURBO_SIGMAS = (
+    1.0, 0.978453, 0.95418, 0.926626,
+    0.89508, 0.845148, 0.704534, 0.414568, 0.0,
 )
 
 
@@ -26,6 +35,7 @@ def required_qwen_image21_nodes(
     turbo: bool = False,
     viggle: bool = False,
     nine_step: bool = False,
+    official_turbo: bool = False,
     scheduler: str = QWEN_IMAGE21_DYNAMIC_SCHEDULER,
 ) -> set[str]:
     nodes = {
@@ -56,6 +66,8 @@ def required_qwen_image21_nodes(
             nodes.add("H3Qwen21Sigmas")
     if viggle:
         nodes.add("H3Qwen21ViggleLora")
+    if official_turbo:
+        nodes |= {"LoraLoaderModelOnly", "ManualSigmas"}
     if nine_step:
         nodes |= {"SplitSigmas", "DisableNoise"}
     return nodes
@@ -102,16 +114,19 @@ def build_qwen_image21_graph(
         unet_name=MODEL_SPECS[model_key].local_name,
         weight_dtype="default",
     )
-    viggle = turbo_variant in QWEN_IMAGE21_TURBO_MODES
+    turbo = turbo_variant in QWEN_IMAGE21_TURBO_MODES
+    official_turbo = turbo_variant == QWEN_IMAGE21_OFFICIAL_TURBO
+    viggle = turbo and not official_turbo
     nine_step = viggle and QWEN_IMAGE21_TURBO_MODES[turbo_variant][1] == 9
-    turbo = viggle
-    if viggle:
+    if turbo:
         lora_key, expected_steps = QWEN_IMAGE21_TURBO_MODES[turbo_variant]
         if int(steps) != expected_steps or float(cfg) != 1.0:
             raise ValueError(f"{turbo_variant} requires {expected_steps} steps and CFG 1.")
         if nine_step and (sampler_name != "euler" or accelerator.lower() != "off"):
             raise ValueError("Viggle nine-step mode requires Euler and accelerator Off.")
-    if not viggle and turbo_variant != "Off":
+        if official_turbo and (sampler_name != "euler" or accelerator.lower() != "off"):
+            raise ValueError("Official Turbo requires Euler and accelerator Off.")
+    if not turbo and turbo_variant != "Off":
         raise ValueError(f"Unknown Qwen Image 2.1 Turbo variant: {turbo_variant}")
     clip = graph.add(
         "CLIPLoader",
@@ -180,6 +195,14 @@ def build_qwen_image21_graph(
             lora_name=MODEL_SPECS[lora_key].local_name,
         )
         sampled_model = Graph.out(viggle_model)
+    elif official_turbo:
+        official_model = graph.add(
+            "LoraLoaderModelOnly",
+            model=sampled_model,
+            lora_name=MODEL_SPECS[lora_key].local_name,
+            strength_model=1.0,
+        )
+        sampled_model = Graph.out(official_model)
     accelerator_key = str(accelerator).strip().lower()
     if accelerator_key != "off":
         if accelerator_key == "spectrum (preview)":
@@ -205,10 +228,16 @@ def build_qwen_image21_graph(
             cfg=float(cfg),
         )
         sampler = graph.add("KSamplerSelect", sampler_name=str(sampler_name))
-        sigmas = graph.add(
-            "H3Qwen21TurboSigmas" if turbo else "H3Qwen21Sigmas",
-            latent_image=latent, steps=int(steps),
-        )
+        if official_turbo:
+            sigmas = graph.add(
+                "ManualSigmas",
+                sigmas=", ".join(map(str, QWEN_IMAGE21_OFFICIAL_TURBO_SIGMAS)),
+            )
+        else:
+            sigmas = graph.add(
+                "H3Qwen21TurboSigmas" if viggle else "H3Qwen21Sigmas",
+                latent_image=latent, steps=int(steps),
+            )
         sampling_sigmas = Graph.out(sigmas)
         if nine_step:
             split = graph.add("SplitSigmas", sigmas=sampling_sigmas, step=7)

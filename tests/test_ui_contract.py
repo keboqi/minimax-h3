@@ -75,7 +75,7 @@ class UiContractTests(unittest.TestCase):
             c.get("props", {}).get("label"): c for c in self.config["components"]
         }
         preset = controls["Qwen preset"]
-        self.assertEqual(preset["props"]["value"], "Quality")
+        self.assertEqual(preset["props"]["value"], "Fast")
         self.assertEqual(
             [choice[0] for choice in preset["props"]["choices"]],
             ["Fast", "Normal", "Quality"],
@@ -93,6 +93,33 @@ class UiContractTests(unittest.TestCase):
             ]
         )
         self.assertIs(event["queue"], False)
+
+        from h3_models import QWEN_IMAGE21_OFFICIAL_TURBO
+        from h3_ui.persistence import restore_preferences
+
+        turbo = controls["Turbo mode"]
+        self.assertIn(QWEN_IMAGE21_OFFICIAL_TURBO,
+                      [choice[1] for choice in turbo["props"]["choices"]])
+        self.assertEqual(turbo["props"]["value"], QWEN_IMAGE21_OFFICIAL_TURBO)
+        self.assertEqual(controls["Diffusion model"]["props"]["value"],
+                         "INT8 ConvRot (lower VRAM)")
+        for label, expected in (("Steps", 8), ("CFG", 1.0), ("Sampler", "euler"),
+                                ("Diffusion accelerator", "Off")):
+            self.assertEqual(controls[label]["props"]["value"], expected)
+        self.assertEqual(self.demo.fns[event["id"]].fn("Fast"),
+                         ("INT8 ConvRot (lower VRAM)", QWEN_IMAGE21_OFFICIAL_TURBO, 8, "Off"))
+        restored, _ = restore_preferences(
+            {"values": {"qwen_image21.turbo_variant": QWEN_IMAGE21_OFFICIAL_TURBO}},
+            {"qwen_image21.turbo_variant": self.demo.blocks[turbo["id"]]},
+        )
+        self.assertEqual(restored["qwen_image21.turbo_variant"], QWEN_IMAGE21_OFFICIAL_TURBO)
+        turbo_event = next(
+            dependency for dependency in self.config["dependencies"]
+            if dependency["inputs"] == [turbo["id"], preset["id"]]
+        )
+        callback = self.demo.fns[turbo_event["id"]].fn
+        self.assertEqual(callback(QWEN_IMAGE21_OFFICIAL_TURBO, "Quality"),
+                         (8, 1.0, "euler", "Off"))
 
     def test_all_generator_image_inputs_have_library_selection(self):
         image_inputs = [

@@ -6,17 +6,12 @@ from collections.abc import Callable
 from typing import Any
 
 import gradio as gr
+from h3_app.catalog import QWEN_IMAGE21_PRESETS
 from h3_models import QWEN_IMAGE21_TURBO_MODES
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation
 
 
 from .qwen_view import QwenImage21View
-
-QWEN_IMAGE21_PRESETS = {
-    "Fast": ("INT8 ConvRot (lower VRAM)", "Viggle Turbo v0.2.1 (6-step)", 6, "Off"),
-    "Normal": ("BF16", "Off", 25, "Spectrum (Quality)"),
-    "Quality": ("BF16", "Off", 40, "Spectrum (Quality)"),
-}
 
 
 def qwen_resolution_preset_values(name: str) -> tuple[int, int]:

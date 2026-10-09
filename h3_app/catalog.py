@@ -16,6 +16,7 @@ from h3_models import (
     DEFAULT_YUE2_MODEL,
     DEFAULT_SEEDVR2_MODEL,
     PROFILE_LABELS,
+    QWEN_IMAGE21_OFFICIAL_TURBO,
 )
 
 COMFY_PROXY_PATH = "/comfyui"
@@ -226,23 +227,32 @@ QWEN_EDIT_SIZE_MANUAL = "Use width and height above"
 QWEN_IMAGE21_DYNAMIC_SCHEDULER = "qwen_image21"
 
 
+QWEN_IMAGE21_PRESETS = {
+    "Fast": ("INT8 ConvRot (lower VRAM)", QWEN_IMAGE21_OFFICIAL_TURBO, 8, "Off"),
+    "Normal": ("BF16", "Off", 25, "Spectrum (Quality)"),
+    "Quality": ("BF16", "Off", 40, "Spectrum (Quality)"),
+}
+
+
 QWEN_IMAGE21_DEFAULTS = {
+    "preset": "Fast",
+    "turbo_variant": QWEN_IMAGE21_PRESETS["Fast"][1],
     "mode": "Text to image",
-    "model": DEFAULT_QWEN_IMAGE21_MODEL,
+    "model": QWEN_IMAGE21_PRESETS["Fast"][0],
     "text_encoder": DEFAULT_QWEN_IMAGE21_TEXT_ENCODER,
     "width": 1024,
     "height": 1024,
     "reference_resolution": 0,
     "edit_size": QWEN_EDIT_SIZE_MATCH,
     "seed": -1,
-    "steps": 40,
+    "steps": QWEN_IMAGE21_PRESETS["Fast"][2],
     "cfg": 1.0,
     "sampler": "euler",
     "scheduler": QWEN_IMAGE21_DYNAMIC_SCHEDULER,
     "cache_device": "auto",
     "cache_dtype": "default",
     "attention_backend": "pytorch attention",
-    "accelerator": "Spectrum (Quality)",
+    "accelerator": QWEN_IMAGE21_PRESETS["Fast"][3],
 }
 
 

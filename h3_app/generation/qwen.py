@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterator
 
 from PIL import Image
-from h3_models import QWEN_IMAGE21_TURBO_MODES
+from h3_models import QWEN_IMAGE21_OFFICIAL_TURBO, QWEN_IMAGE21_TURBO_MODES
 
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
@@ -154,7 +154,9 @@ def generate_qwen_image21(
             and request.turbo_variant not in QWEN_IMAGE21_TURBO_MODES
         ):
             raise H3Error(f"Unknown Qwen Turbo variant: {request.turbo_variant}")
-        reference_limit = 3 if turbo else 10
+        official_turbo = request.turbo_variant == QWEN_IMAGE21_OFFICIAL_TURBO
+        viggle = turbo and not official_turbo
+        reference_limit = 3 if viggle else 10
         separate_inputs = editing and bool(request.batch_edit_inputs)
         if not separate_inputs and len(references) > reference_limit:
             raise H3Error(
@@ -185,9 +187,8 @@ def generate_qwen_image21(
         steps = int(request.steps)
         if not 1 <= steps <= 100:
             raise H3Error("Sampling steps must be between 1 and 100.")
-        viggle = request.turbo_variant in QWEN_IMAGE21_TURBO_MODES
         nine_step = viggle and QWEN_IMAGE21_TURBO_MODES[request.turbo_variant][1] == 9
-        if viggle and steps != QWEN_IMAGE21_TURBO_MODES[request.turbo_variant][1]:
+        if turbo and steps != QWEN_IMAGE21_TURBO_MODES[request.turbo_variant][1]:
             raise H3Error(
                 f"{request.turbo_variant} requires exactly "
                 f"{QWEN_IMAGE21_TURBO_MODES[request.turbo_variant][1]} sampling steps."
@@ -195,8 +196,10 @@ def generate_qwen_image21(
         cfg = float(request.cfg)
         if not 0 <= cfg <= 20:
             raise H3Error("CFG must be between 0 and 20.")
-        if viggle and cfg != 1.0:
-            raise H3Error("Viggle Turbo requires CFG 1.")
+        if turbo and cfg != 1.0:
+            raise H3Error(f"{request.turbo_variant} requires CFG 1.")
+        if official_turbo and request.sampler_name != "euler":
+            raise H3Error("Official Turbo requires Euler sampling.")
         if nine_step and request.sampler_name != "euler":
             raise H3Error("Viggle nine-step mode requires Euler sampling.")
         attention_backend = str(request.attention_backend)
@@ -246,6 +249,7 @@ def generate_qwen_image21(
                 turbo=turbo,
                 viggle=viggle,
                 nine_step=nine_step,
+                official_turbo=official_turbo,
                 scheduler=request.scheduler,
             )
             - available

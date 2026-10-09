@@ -28,6 +28,7 @@ from h3_models import (
     DEFAULT_QWEN_IMAGE21_TEXT_ENCODER,
     MODEL_SPECS,
     QWEN_IMAGE21_MODEL_CHOICES,
+    QWEN_IMAGE21_OFFICIAL_TURBO,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
 )
 from h3_ui.qwen_bindings import qwen_preset_values, qwen_resolution_preset_values, qwen_turbo_defaults
@@ -177,26 +178,27 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         self.assertIn("H3Qwen21Sigmas", updates[-1].status)
 
     def _build(self, references=(), match_input_size=True, *, steps=25, turbo_variant="Off",
-               scheduler="simple"):
+               scheduler="simple", cfg=1.0, sampler_name="euler", accelerator="Off",
+               width=1024, height=768):
         return build_qwen_image21_graph(
             model_choice="INT8 ConvRot (lower VRAM)",
             text_encoder_choice="INT8 ConvRot (recommended)",
             prompt="A red fox reading a book",
             negative_prompt="blurry",
             reference_images=references,
-            width=1024,
-            height=768,
+            width=width,
+            height=height,
             reference_resolution=0,
             match_input_size=match_input_size,
             seed=123,
             steps=steps,
-            cfg=1.0,
-            sampler_name="euler",
+            cfg=cfg,
+            sampler_name=sampler_name,
             scheduler=scheduler,
             cache_device="auto",
             cache_dtype="default",
             attention_backend="pytorch attention",
-            accelerator="Off",
+            accelerator=accelerator,
             output_stamp="1234",
             output_nonce="abcd",
             turbo_variant=turbo_variant,
@@ -445,13 +447,17 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         self.assertEqual(DEFAULT_QWEN_IMAGE21_MODEL, "BF16")
         self.assertEqual(DEFAULT_QWEN_IMAGE21_TEXT_ENCODER, "BF16")
 
-    def test_spectrum_quality_is_the_default_accelerator(self):
+    def test_fast_official_turbo_is_the_default(self):
         from h3_app.catalog import QWEN_IMAGE21_DEFAULTS
 
+        self.assertEqual(QWEN_IMAGE21_DEFAULTS["preset"], "Fast")
         self.assertEqual(
-            QWEN_IMAGE21_DEFAULTS["accelerator"],
-            "Spectrum (Quality)",
+            tuple(QWEN_IMAGE21_DEFAULTS[key] for key in
+                  ("model", "turbo_variant", "steps", "accelerator")),
+            qwen_preset_values("Fast"),
         )
+        self.assertEqual(QWEN_IMAGE21_DEFAULTS["cfg"], 1.0)
+        self.assertEqual(QWEN_IMAGE21_DEFAULTS["sampler"], "euler")
 
     def test_native_resolution_presets(self):
         from h3_ui.qwen_view import QWEN_1K_RESOLUTION_PRESETS, QWEN_2K_RESOLUTION_PRESETS
@@ -644,6 +650,145 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         self.assertEqual(spectrum["inputs"]["warmup_steps"], 10)
         self.assertEqual(spectrum["inputs"]["tail_actual_steps"], 8)
 
+    def test_official_turbo_reuses_base_with_native_lora_and_unshifted_eight_step_schedule(self):
+        from h3_app.catalog import QWEN_IMAGE21_DYNAMIC_SCHEDULER
+
+        expected_sigmas = [
+            1.0, .978453, .95418, .926626, .89508,
+            .845148, .704534, .414568, 0.0,
+        ]
+        for references, match, width, height, scheduler in (
+            ((), False, 1024, 1024, "simple"),
+            ((), False, 2048, 2048, QWEN_IMAGE21_DYNAMIC_SCHEDULER),
+            (tuple(f"ref{i}.png" for i in range(10)), True, 1024, 768, "beta"),
+        ):
+            with self.subTest(references=len(references), size=(width, height)):
+                graph = self._build(
+                    references, match, steps=8, turbo_variant=QWEN_IMAGE21_OFFICIAL_TURBO,
+                    width=width, height=height, scheduler=scheduler,
+                )
+                loader = self._by_type(graph, "UNETLoader")[0][1]["inputs"]
+                self.assertEqual(loader["unet_name"], MODEL_SPECS["qwen_image21_dit_int8"].local_name)
+                lora_id, lora = self._by_type(graph, "LoraLoaderModelOnly")[0]
+                self.assertEqual(lora["inputs"]["lora_name"],
+                                 MODEL_SPECS["qwen_image21_official_turbo_lora"].local_name)
+                self.assertEqual(lora["inputs"]["strength_model"], 1.0)
+                sigma_id, sigma = self._by_type(graph, "ManualSigmas")[0]
+                self.assertEqual([float(s) for s in sigma["inputs"]["sigmas"].split(",")],
+                                 expected_sigmas)
+                sampler = self._by_type(graph, "SamplerCustomAdvanced")[0][1]
+                self.assertEqual(sampler["inputs"]["sigmas"], [sigma_id, 0])
+                guider = self._by_type(graph, "CFGGuider")[0][1]
+                self.assertEqual(guider["inputs"]["model"], [lora_id, 0])
+                self.assertEqual(guider["inputs"]["cfg"], 1.0)
+                for unused in ("H3Qwen21ViggleLora", "H3Qwen21TurboSigmas", "H3Qwen21Sigmas",
+                               "KSampler", "QwenSpectrumModelPatcher", "SplitSigmas"):
+                    self.assertFalse(self._by_type(graph, unused))
+                if references:
+                    cache_id = self._by_type(graph, "QwenImage21Cache")[0][0]
+                    self.assertEqual(lora["inputs"]["model"], [cache_id, 0])
+                    encode_id = self._by_type(graph, "TextEncodeQwenImage21")[0][0]
+                    self.assertEqual(sampler["inputs"]["latent_image"], [encode_id, 2])
+                nodes = required_qwen_image21_nodes(
+                    editing=bool(references), turbo=True, official_turbo=True, scheduler=scheduler,
+                )
+                self.assertTrue({node["class_type"] for node in graph.values()} <= nodes)
+                self.assertNotIn("H3Qwen21TurboSigmas", nodes)
+                self.assertNotIn("H3Qwen21ViggleLora", nodes)
+
+    def test_official_turbo_download_is_only_one_optional_adapter(self):
+        from h3_app.model_service import qwen_image21_model_keys
+        from h3_model_manager import model_presets
+        from h3_models import LAZY_OPTIONAL_MODEL_KEYS, PRELOAD_MODEL_KEYS
+
+        self.assertEqual(qwen_turbo_defaults(QWEN_IMAGE21_OFFICIAL_TURBO), (8, 1., "euler", "Off"))
+        for model in QWEN_IMAGE21_MODEL_CHOICES:
+            keys = qwen_image21_model_keys(model, "BF16", QWEN_IMAGE21_OFFICIAL_TURBO)
+            self.assertEqual(keys[:-1], qwen_image21_model_keys(model, "BF16"))
+            self.assertEqual(keys[-1], "qwen_image21_official_turbo_lora")
+        spec = MODEL_SPECS[keys[-1]]
+        self.assertEqual(spec.repo_id, "Comfy-Org/Qwen-Image-2.1")
+        self.assertEqual(spec.folder, "loras")
+        self.assertEqual(spec.filename, "loras/qwen_image_2.1_turbo_lora_avg_rank_178_bf16.safetensors")
+        self.assertIn(keys[-1], LAZY_OPTIONAL_MODEL_KEYS)
+        self.assertNotIn(keys[-1], PRELOAD_MODEL_KEYS)
+        self.assertIn(keys[-1], model_presets()["Qwen Image 2.1 + Turbo LoRAs"])
+        for settings, message in (
+            ({"steps": 6}, "requires 8 steps"),
+            ({"cfg": 2}, "CFG 1"),
+            ({"sampler_name": "heun"}, "Euler"),
+            ({"accelerator": "Spectrum (Quality)"}, "accelerator Off"),
+        ):
+            with self.subTest(settings=settings), self.assertRaisesRegex(ValueError, message):
+                self._build(**{"steps": 8, "turbo_variant": QWEN_IMAGE21_OFFICIAL_TURBO, **settings})
+
+    def test_official_turbo_requests_execute_and_validate_before_downloading(self):
+        request = QwenImage21Request(
+            mode="Text to image", model_choice="BF16", text_encoder_choice="BF16",
+            prompt="A sign reading OPEN", negative_prompt="", reference_images=(),
+            width=1024, height=1024, reference_resolution=0, match_input_size=True,
+            seed=42, steps=8, cfg=1.0, sampler_name="euler", scheduler="qwen_image21",
+            cache_device="auto", cache_dtype="default", attention_backend="pytorch attention",
+            turbo_variant=QWEN_IMAGE21_OFFICIAL_TURBO,
+        )
+        graphs = []
+        models = SimpleNamespace(
+            unload_prompt_rewriter=Mock(),
+            missing_qwen_image21_model_names=Mock(return_value=[]),
+            ensure_qwen_image21_models=Mock(),
+        )
+        execution = SimpleNamespace(
+            object_info=lambda: required_qwen_image21_nodes(
+                editing=True, turbo=True, official_turbo=True,
+            ),
+            submit_prompt=Mock(side_effect=lambda graph, client_id: (graphs.append(graph) or "job-8")),
+            poll_comfy_progress=lambda prompt_id, graph: iter(()),
+            wait_for_history=lambda prompt_id: {},
+        )
+        services = SimpleNamespace(
+            models=models, execution=execution,
+            media=SimpleNamespace(resolve_image_outputs=lambda *args: [Path("eight.png")]),
+        )
+        runtime = SimpleNamespace(input_dir=Path("."))
+        for mode, refs in (("Text to image", ()),
+                           ("Image edit", tuple(f"ref{i}.png" for i in range(10)))):
+            with self.subTest(mode=mode), patch("h3_app.generation.qwen.write_snapshot") as snapshot:
+                updates = list(generate_qwen_image21(
+                    replace(request, mode=mode, reference_images=refs), services, runtime,
+                ))
+                self.assertEqual(updates[-1].output, ["eight.png"])
+                self.assertEqual(snapshot.call_args.args[1]["settings"]["turbo_variant"],
+                                 QWEN_IMAGE21_OFFICIAL_TURBO)
+                self.assertEqual(len(self._by_type(graphs[-1], "LoadImage")), len(refs))
+        models.ensure_qwen_image21_models.assert_called_with("BF16", "BF16", QWEN_IMAGE21_OFFICIAL_TURBO)
+        for settings, message in (
+            ({"steps": 6}, "exactly 8"),
+            ({"cfg": 2}, "CFG 1"),
+            ({"sampler_name": "heun"}, "Euler"),
+            ({"accelerator": "Spectrum (Quality)"}, "unavailable"),
+            ({"mode": "Image edit", "reference_images": tuple(f"ref{i}.png" for i in range(11))},
+             "at most 10"),
+            ({"mode": "Image edit", "reference_images": tuple(f"ref{i}.png" for i in range(4)),
+              "turbo_variant": "Viggle Turbo v0.2.1 (6-step)", "steps": 6}, "at most 3"),
+        ):
+            with self.subTest(settings=settings):
+                models.ensure_qwen_image21_models.reset_mock()
+                execution.submit_prompt.reset_mock()
+                updates = list(generate_qwen_image21(replace(request, **settings), services, runtime))
+                self.assertIn("Error:", updates[-1].status)
+                self.assertIn(message, updates[-1].status)
+                models.ensure_qwen_image21_models.assert_not_called()
+                execution.submit_prompt.assert_not_called()
+        for missing in ("ManualSigmas", "LoraLoaderModelOnly"):
+            with self.subTest(missing=missing):
+                execution.object_info = lambda: required_qwen_image21_nodes(
+                    editing=False, turbo=True, official_turbo=True,
+                ) - {missing}
+                execution.submit_prompt.reset_mock()
+                updates = list(generate_qwen_image21(request, services, runtime))
+                self.assertIn(missing, updates[-1].status)
+                execution.submit_prompt.assert_not_called()
+
     def test_viggle_turbo_uses_lora_and_custom_sigmas(self):
         graph = build_qwen_image21_graph(
             model_choice="BF16",
@@ -688,7 +833,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
     def test_qwen_presets_select_the_requested_controls(self):
         self.assertEqual(
             qwen_preset_values("Fast"),
-            ("INT8 ConvRot (lower VRAM)", "Viggle Turbo v0.2.1 (6-step)", 6, "Off"),
+            ("INT8 ConvRot (lower VRAM)", QWEN_IMAGE21_OFFICIAL_TURBO, 8, "Off"),
         )
         self.assertEqual(
             qwen_preset_values("Normal"),

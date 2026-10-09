@@ -416,8 +416,8 @@ minutes, with tiled audio decoding enabled by default for lower peak VRAM.
 Later runs check remote metadata for the preloaded set and refresh only stale
 files; lazy checkpoints remain local and are fetched again if missing or incomplete.
 The **Qwen Image 2.1** tab uses ComfyUI's native `TextEncodeQwenImage21`
-workflow for both generation and editing. The BF16 DiT and text encoder are
-selected by default; INT8 ConvRot and W4A8 alternatives are available. The selected
+workflow for both generation and editing. The INT8 ConvRot DiT and BF16 text encoder are
+selected by default; BF16 DiT and W4A8 encoder alternatives are available. The selected
 DiT, Qwen3-VL 8B encoder, and BF16 VAE download on first use from
 [Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1).
 Image edit accepts up to 10 inputs and treats `image1` as the edit target.
@@ -427,8 +427,9 @@ images and their settings are saved with the other application outputs. The
 **Images per batch** control generates one to four images from the same inputs.
 Each image uses a distinct seed (successive seeds when a seed is specified),
 appears in the gallery when complete, and keeps its own settings snapshot. The
-40-step Euler path with **Qwen 2.1 (resolution-aware)** scheduling is the default.
-It follows the official dynamic shift and 0.02 terminal setting; `simple`,
+default Fast preset uses Official Turbo with eight Euler steps. The base
+40-step Quality path uses **Qwen 2.1 (resolution-aware)** scheduling,
+following the official dynamic shift and 0.02 terminal setting; `simple`,
 `normal`, and `beta` remain selectable. Native ~4 MP aspect-ratio
 sizes are accepted, and Comfy Kitchen INT8 attention plus Spectrum
 hidden-state forecasting are available as experimental opt-in speed settings.
@@ -443,12 +444,22 @@ before Qwen encoding. The scheduler counts the output latent's native 16× grid
 for both editing and text-to-image; reference token counts do not affect it.
 
 The Qwen tab offers three editable presets: **Fast** selects INT8 ConvRot,
-Viggle Turbo v0.2.1, six steps, and accelerator Off; **Normal** selects BF16,
+Official Turbo, eight steps, and accelerator Off; **Normal** selects BF16,
 Turbo Off, 25 steps, and Spectrum (Quality); **Quality** selects BF16, Turbo
-Off, 40 steps, and Spectrum (Quality). Quality is selected initially. The text
+Off, 40 steps, and Spectrum (Quality). Fast is selected initially. The text
 encoder and other controls retain their chosen values when switching presets.
 
-The Qwen tab offers **Viggle Turbo v0.2.1** as a six-step ComfyUI LoRA mode.
+**Official Turbo (8-step)** uses Kijai's LoRA extraction of the official
+Qwen-Image-2.1-Turbo checkpoint from
+[Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1#turbo).
+Only the approximately 913 MB adapter downloads on first use; the selected
+base BF16/INT8 model, text encoder, and VAE are reused. It uses ComfyUI's native
+LoRA loader at strength 1, eight Euler steps, CFG 1, and accelerator Off.
+The checkpoint's fixed sigma schedule is supplied explicitly, without the
+base model's resolution shift or terminal stretch, regardless of the scheduler
+control. Generation and editing with up to ten references are supported.
+
+The Qwen tab also offers **Viggle Turbo v0.2.1** as a six-step ComfyUI LoRA mode.
 It downloads the rank-256 adapter on first use and uses its published six-node
 schedule with Qwen's resolution-dependent time shift. A bundled custom loader
 applies the adapter without merging it into BF16/INT8 weights. Turbo editing
