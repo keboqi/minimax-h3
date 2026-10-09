@@ -255,7 +255,7 @@ def resolve_settings(
         inactive.update(
             {"sol_tau", "sol_thresh_type", "sol_exact_mode", "sol_dense_steps"}
         )
-    if sampling.attention_mode != "SLA":
+    if sampling.attention_mode not in {"SLA", "Veda"}:
         inactive.add("sla_preset")
     if request.mode != "First / last frame":
         inactive.add("auto_megapixels")

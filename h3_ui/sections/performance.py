@@ -69,7 +69,7 @@ def build_performance_section(
             info="Controls how sampling steps are distributed across denoising.",
         )
         attention_mode = gr.Radio(
-            ["Sage 2", "Kitchen", "SLA", "Sol-Attn", "Auto"],
+            ["Sage 2", "Kitchen", "SLA", "Veda", "Sol-Attn", "Auto"],
             value=defaults["attention_mode"],
             label="Attention",
             interactive=services.SERVER_ATTENTION_BACKEND == "sol",
@@ -80,26 +80,30 @@ def build_performance_section(
                 "selects the global ComfyUI backend. SLA is the default, uses "
                 "the selected audio-safe block-sparse preset, and automatically "
                 "keeps short sequences dense; it is intended for SLA-distilled "
-                "H3 LoRAs. Auto uses Kitchen for "
+                "H3 LoRAs. Veda is experimental learned sparse attention with "
+                "32 key tiles and full reference attention; its task-specific "
+                "predictor downloads on first use. Auto uses Kitchen for "
                 "smaller jobs. Sol "
                 f"dense/fallback calls use {services.SERVER_DENSE_ATTENTION_BACKEND}."
             ),
         )
         with gr.Accordion(
-            "SLA quality controls",
+            "SLA / Veda quality controls",
             open=False,
-            visible=defaults["attention_mode"] == "SLA",
+            visible=defaults["attention_mode"] in {"SLA", "Veda"},
         ) as sla_settings:
             sla_preset = gr.Radio(
                 list(services.SLA_PRESET_INPUTS),
                 value=defaults["sla_preset"],
-                label="SLA preset",
+                label="SLA / Veda preset",
                 info=(
                     "Fast uses validated 0.90 sparsity. Balanced uses the "
                     "LoRA-distilled 0.85 sparsity. Quality also runs the final "
                     "sampling step dense to recover fine detail; in a two-stage "
                     "latent-upscale workflow this applies to both stages. All "
-                    "presets use 64-token blocks and protect audio."
+                    "SLA presets use 64-token blocks and protect audio. Veda uses "
+                    "32 key tiles in every preset and keeps reference attention "
+                    "full; Quality adds the same dense final step to each stage."
                 ),
             )
 

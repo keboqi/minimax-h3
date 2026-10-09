@@ -465,6 +465,7 @@ SAGE_ATTENTION_NODE = "PathchSageAttentionKJ"
 
 
 SLA_ATTENTION_NODE = "H3SLAAttention"
+VEDA_ATTENTION_NODE = "VedaSparseAttention"
 
 
 FUSED_MODULATION_NODE = "MiniMaxH3FusedModulation"

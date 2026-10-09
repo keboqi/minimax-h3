@@ -329,6 +329,28 @@ def ensure_h3_text_encoder(
     return filename, requires_offload
 
 
+def ensure_h3_veda_predictor(mode: str, *, runtime: RuntimeConfig) -> None:
+    """Download only the predictor for the selected H3 task, on first use."""
+    key = "veda_r2va" if mode == "Reference media" else "veda_t2va"
+    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
+    if stale_model_keys(
+        root=runtime.comfy_dir / "models",
+        manifest_path=manifest_path,
+        model_keys=(key,),
+    ):
+        sync_models(
+            root=runtime.comfy_dir / "models",
+            manifest_path=manifest_path,
+            token=resolve_hf_token(),
+            model_keys=(key,),
+            download_workers=1,
+            log_prefix="[h3-veda-on-demand]",
+        )
+    spec = MODEL_SPECS[key]
+    if not model_file_is_ready(runtime.comfy_dir / "models" / spec.folder / spec.local_name):
+        raise H3Error("Veda predictor download did not produce a valid model file.")
+
+
 def ensure_h3_semantic_bridge(*, runtime: RuntimeConfig) -> None:
     """Fetch only the optional v1 adapter; never preload it with the base models."""
     key = "semantic_bridge_v1"

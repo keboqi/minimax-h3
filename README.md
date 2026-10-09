@@ -2,7 +2,7 @@
 
 A standalone Gradio interface and deployment toolkit for MiniMax H3 video
 generation on NVIDIA Blackwell GPUs. It provisions ComfyUI, the required H3
-models, SLA, Sol-Attn, Comfy Kitchen attention, SageAttention 2, Spectrum, and a
+models, SLA, Veda, Sol-Attn, Comfy Kitchen attention, SageAttention 2, Spectrum, and a
 bundled FirstBlockCache node.
 
 ## Creative workspace
@@ -61,7 +61,7 @@ deployment and production performance remain unmeasured.
 - Selectable Larry v4-600 EMA, official LightX2V 4-step/8-step, and experimental DMAD 4-step Turbo LoRAs,
   including dedicated LightX2V Ref2V adapters for 4 and 8 steps
 - Audio-safe SLA block-sparse attention by default, with selectable SageAttention 2,
-  Comfy Kitchen comparison, and optional
+  Comfy Kitchen comparison, experimental Veda learned sparse attention, and optional
   H3-native zero-copy Sol v0.6.2 sparse attention
 - Bit-exact fused H3 modulation projections for LightX2V Turbo
 - Two-way feed-forward chunking for ConvRot quality checkpoints
@@ -77,6 +77,39 @@ deployment and production performance remain unmeasured.
 - FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
 - Version-aware, resumable Hugging Face model provisioning
+
+## Veda attention (experimental)
+
+Select **Veda** under **Sampling & performance → Attention** to use learned
+sparse attention for both base generation and latent-upscale refinement. **SLA
+remains the default.** Local and Modal provisioning install the same pinned
+[Veda node](https://github.com/veda-sparse/Veda-on-ComfyUI) revision
+`8d7ac153ac215d636eaf1b5910b0536c3de9e6ed`; existing installations need updated
+setup and a ComfyUI restart, and Modal images need rebuilding/redeploying.
+
+The app downloads the checksum-pinned ~275 MB predictor on first use into
+`ComfyUI/models/veda/`: the T2VA predictor for text and first/last-frame generation,
+or the dedicated R2VA predictor for reference-media generation. These are optional
+assets and are not preloaded for SLA users. Veda replaces the selected attention
+backend; it is not stacked with SLA, Sol or the Sage model override.
+
+The shared **SLA / Veda preset** control retains the existing SLA behavior. For
+Veda, Fast and Balanced both keep 32 key tiles per query tile, using upstream's
+fixed budget to avoid starving small first-pass grids. Reference attention stays
+full (`reference_sparsity=0%`). The base stage keeps its first sampling step dense;
+refinement starts at low noise and has no first-step anchor. Quality additionally
+runs the final step dense in each stage, so two-step refinement runs sparse then
+dense, and one-step Quality refinement is fully dense. Each stage gets its own
+Veda node and runtime state, including when a different refinement LoRA is selected.
+
+Result settings record the predictor, checksum, tile budget and dense-step policy.
+Backend logs report actual sparse execution and dense fallbacks. Existing
+cache policy still applies: latent upscaling disables forecasting/cache modes
+across the two samplers. Single-stage Veda with Spectrum or cache acceleration is
+experimental. The preview predictor's training coverage does not establish quality
+for every resolution, low-noise refinement schedule or Turbo adapter. CPU graph
+tests cover composition; GPU speed, memory and audiovisual quality remain unmeasured
+for this integration.
 
 ## FL2VA voice references (experimental)
 

@@ -595,6 +595,10 @@ def ensure_h3_text_encoder(models: ModelConfig, model_choice: str) -> tuple[str,
     return _modelcontroller().ensure_h3_text_encoder(models, model_choice)
 
 
+def ensure_h3_veda_predictor(mode: str) -> None:
+    return _modelcontroller().ensure_h3_veda_predictor(mode)
+
+
 def ensure_h3_semantic_bridge() -> None:
     return _modelcontroller().ensure_h3_semantic_bridge()
 
@@ -875,6 +879,8 @@ def resolve_sol_policy(
         return (False, tokens, "forced Comfy Kitchen")
     if requested in {"sage", "sage 2", "sage2"}:
         return (False, tokens, "forced Sage 2")
+    if requested == "veda":
+        return (False, tokens, "forced Veda")
     if requested in {"sla", "sla attention", "sparse-linear"}:
         return (False, tokens, "forced SLA")
     if SERVER_ATTENTION_BACKEND != "sol":
@@ -1083,6 +1089,7 @@ def build_fl2va_graph(
     use_trt_vae: bool = False,
     use_sage: bool = False,
     use_sla: bool = False,
+    use_veda: bool = False,
     sla_preset: str = DEFAULT_SLA_PRESET,
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
@@ -1155,6 +1162,7 @@ def build_fl2va_graph(
         use_trt_vae=use_trt_vae,
         use_sage=use_sage,
         use_sla=use_sla,
+        use_veda=use_veda,
         sla_preset=sla_preset,
         latent_upscale_model_name=latent_upscale_model_name,
         latent_upscale_precision=latent_upscale_precision,
@@ -1220,6 +1228,7 @@ def build_ref2va_graph(
     use_trt_vae: bool = False,
     use_sage: bool = False,
     use_sla: bool = False,
+    use_veda: bool = False,
     sla_preset: str = DEFAULT_SLA_PRESET,
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
@@ -1291,6 +1300,7 @@ def build_ref2va_graph(
         use_trt_vae=use_trt_vae,
         use_sage=use_sage,
         use_sla=use_sla,
+        use_veda=use_veda,
         sla_preset=sla_preset,
         latent_upscale_model_name=latent_upscale_model_name,
         latent_upscale_precision=latent_upscale_precision,
@@ -2226,6 +2236,7 @@ def _generation_services() -> generation_services.GenerationServices:
             ensure_base_video_vae=ensure_base_video_vae,
             ensure_h3_latent_upscaler_model=ensure_h3_latent_upscaler_model,
             ensure_h3_semantic_bridge=ensure_h3_semantic_bridge,
+            ensure_h3_veda_predictor=ensure_h3_veda_predictor,
             ensure_h3_text_encoder=ensure_h3_text_encoder,
             ensure_int8_video_vae=ensure_int8_video_vae,
             ensure_ltx25_models=ensure_ltx25_models,

@@ -69,7 +69,7 @@ class ConfigurationTests(unittest.TestCase):
             for target in node.targets
             if isinstance(target, ast.Name)
         }
-        self.assertEqual(len(names), 23)
+        self.assertEqual(len(names), 25)
         for filename in ("setup_h3.py", "modal_h3.py"):
             tree = ast.parse((root / filename).read_text(encoding="utf-8"))
             imports = {

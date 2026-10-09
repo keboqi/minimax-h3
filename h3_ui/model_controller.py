@@ -54,6 +54,11 @@ class ModelController:
             models, model_choice, runtime=self.services._runtime_config()
         )
 
+    def ensure_h3_veda_predictor(self, mode: str) -> None:
+        return self.services.model_service.ensure_h3_veda_predictor(
+            mode, runtime=self.services._runtime_config()
+        )
+
     def ensure_h3_semantic_bridge(self) -> None:
         return self.services.model_service.ensure_h3_semantic_bridge(
             runtime=self.services._runtime_config()

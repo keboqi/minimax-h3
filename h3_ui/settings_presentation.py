@@ -13,7 +13,7 @@ LABELS = {
     "stage_model_offload": "Stage offload",
     "turbo_variant": "Turbo implementation",
     "attention_mode": "Attention",
-    "sla_preset": "SLA preset",
+    "sla_preset": "SLA / Veda preset",
     "scheduler": "Scheduler",
     "latent_upscale_refine_steps": "Refinement steps",
     "latent_upscale_refine_lora": "Refinement LoRA",
@@ -151,8 +151,8 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
             else sampling.attention_mode
         ),
     )
-    if sampling.attention_mode == "SLA":
-        technical += detail("SLA preset", sampling.sla_preset)
+    if sampling.attention_mode in {"SLA", "Veda"}:
+        technical += detail(f"{sampling.attention_mode} preset", sampling.sla_preset)
     technical += detail("Acceleration", effective.cache_mode)
     technical += detail(
         "Decoder",

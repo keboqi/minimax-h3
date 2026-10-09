@@ -28,6 +28,8 @@ from h3_sources import (
     SAGE_WHEEL_URL,
     SLA_REF,
     SLA_REPO,
+    VEDA_REF,
+    VEDA_REPO,
     SOL_REF,
     SOL_REPO,
     SPECTRUM_REF,
@@ -778,6 +780,14 @@ def sync_external_nodes(
     )
     if install_requirements and (sla / "requirements.txt").is_file():
         install_custom_node_requirements(sla / "requirements.txt")
+
+    veda = comfy / "custom_nodes" / "Veda-on-ComfyUI"
+    sync_git_repo(
+        VEDA_REPO, veda, ref=VEDA_REF,
+        required_paths=("__init__.py", "veda_comfy/nodes.py"),
+    )
+    if install_requirements:
+        install_custom_node_requirements(veda / "requirements.txt")
 
     spectrum = comfy / "custom_nodes" / "ComfyUI-Spectrum-MiniMax-H3"
     sync_git_repo(

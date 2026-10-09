@@ -303,7 +303,7 @@ class SettingsController:
             [current[n] for n in MEDIA_NAMES if n.startswith("ref_")],
         )
         visibility = (
-            current["attention_mode"] == "SLA",
+            current["attention_mode"] in {"SLA", "Veda"},
             current["attention_mode"] in {"Sol-Attn", "Auto"},
             current["attention_mode"] in {"Sol-Attn", "Auto"},
             plan.effective.cache_mode == "FirstBlockCache",

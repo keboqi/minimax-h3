@@ -226,6 +226,9 @@ def run():
                 ).click()
                 page.get_by_label("Sol-Attn", exact=True).check()
                 expect(page.get_by_text("Sol-Attn tau", exact=True)).to_be_visible()
+                page.get_by_label("Veda", exact=True).check()
+                expect(page.get_by_text("Sol-Attn tau", exact=True)).not_to_be_visible()
+                expect(page.get_by_text("SLA / Veda quality controls", exact=True)).to_be_visible()
                 page.get_by_label("SLA", exact=True).check()
                 expect(page.get_by_text("Sol-Attn tau", exact=True)).not_to_be_visible()
                 # Layout must keep result metadata inside the two-column H3 row.

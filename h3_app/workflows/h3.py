@@ -45,12 +45,14 @@ from h3_app.catalog import (
     SAGE_ATTENTION_NODE,
     SINGLE_FRAME_IMAGE_VAE,
     SLA_ATTENTION_NODE,
+    VEDA_ATTENTION_NODE,
     SOL_ATTENTION_NODE,
     SPECTRUM_DEFAULT_INPUTS,
     STANDARD_TURBO_LORA_SETTINGS,
     REFINEMENT_LORA_SETTINGS,
 )
 from h3_app.errors import H3Error
+from h3_models import MODEL_SPECS
 from h3_app.graph import Graph
 from h3_app.model_types import ModelConfig, trt_vae_engine_name
 from h3_app.policy import (
@@ -191,8 +193,13 @@ def add_model_stack(
     use_trt_vae: bool = False,
     use_sage: bool = False,
     use_sla: bool = False,
+    use_veda: bool = False,
+    veda_predictor: str | None = None,
+    sampling_steps: int = 4,
     sla_preset: str = DEFAULT_SLA_PRESET,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
+    if use_veda and (use_sla or use_sol or use_sage):
+        raise H3Error("Veda must be selected as the only attention override.")
     unet = graph.add("UNETLoader", unet_name=model_name, weight_dtype="default")
     model_ref = Graph.out(unet)
 
@@ -226,6 +233,30 @@ def add_model_stack(
             temporal_guard=bool(fbcache_temporal_guard),
         )
         model_ref = Graph.out(cache)
+
+    if use_veda:
+        if VEDA_ATTENTION_NODE not in available_nodes:
+            raise H3Error(
+                "Veda was requested, but VedaSparseAttention is not loaded. "
+                "Re-run setup_h3.py and restart ComfyUI."
+            )
+        preset, _ = resolve_sla_preset(sla_preset)
+        dense_steps = "0"
+        if preset == "Quality":
+            dense_steps += f", {max(0, int(sampling_steps) - 1)}"
+        veda = graph.add(
+            VEDA_ATTENTION_NODE,
+            model=model_ref,
+            predictor=veda_predictor or MODEL_SPECS["veda_t2va"].local_name,
+            # Ratios can retain too few tiles in the small first pass. Use
+            # upstream's fixed budget for both stages and keep references dense.
+            generated_sparsity="32",
+            reference_sparsity="0%",
+            full_attention_layers="",
+            full_attention_steps=dense_steps,
+            verbose=False,
+        )
+        model_ref = Graph.out(veda)
 
     if use_sla:
         if SLA_ATTENTION_NODE not in available_nodes:
@@ -463,18 +494,31 @@ def add_h3_stage_offload(
     return tuple(Graph.out(barrier, slot) for slot in range(4))  # type: ignore[return-value]
 
 
-def h3_refinement_attention_model(graph: Graph, model_ref: list[Any]) -> list[Any]:
-    """Branch the model patch chain so SLA's first-step anchor is base-stage only.
+def h3_refinement_attention_model(
+    graph: Graph, model_ref: list[Any], *, refine_steps: int = 2,
+    veda_dense_tail: bool = False,
+) -> list[Any]:
+    """Branch sparse attention so the first-step anchor is base-stage only.
 
     Refinement starts from the generated/upscaled latent at a late sigma, not
-    fresh noise. Preserve the selected SLA preset's dense tail and all later
-    model patches, but give the refinement sampler independent SLA/cache state.
-    Rebuild from SLA's unpatched input rather than stacking two SLA wrappers.
+    fresh noise. Preserve the dense tail and later model patches, but give the
+    refinement sampler independent attention/cache state. Rebuild from the
+    attention node's unpatched input rather than stacking two sparse wrappers.
     """
     node = graph.nodes.get(model_ref[0])
     if node is None:
         return model_ref
     inputs = node["inputs"]
+    if node["class_type"] == VEDA_ATTENTION_NODE:
+        return Graph.out(
+            graph.add(
+                VEDA_ATTENTION_NODE,
+                **{**inputs, "full_attention_steps": (
+                    str(max(0, int(refine_steps) - 1)) if veda_dense_tail else ""
+                )},
+            ),
+            model_ref[1],
+        )
     if node["class_type"] == SLA_ATTENTION_NODE:
         return Graph.out(
             graph.add(
@@ -486,7 +530,9 @@ def h3_refinement_attention_model(graph: Graph, model_ref: list[Any]) -> list[An
     upstream = inputs.get("model")
     if not isinstance(upstream, list) or len(upstream) != 2:
         return model_ref
-    replacement = h3_refinement_attention_model(graph, upstream)
+    replacement = h3_refinement_attention_model(
+        graph, upstream, refine_steps=refine_steps, veda_dense_tail=veda_dense_tail
+    )
     if replacement == upstream:
         return model_ref
     return Graph.out(
@@ -581,6 +627,7 @@ def finish_sampling(
     stage_model_offload: bool = False,
     smart_stage_offload: bool = False,
     conditioning_cache_key: str | None = None,
+    veda_dense_tail: bool = False,
 ) -> None:
     result_format = normalize_result_format(result_format)
     stage_offload_enabled_ref: list[Any] | None = None
@@ -615,7 +662,10 @@ def finish_sampling(
             )
     noise = graph.add("RandomNoise", noise_seed=int(seed))
     refinement_model_ref = (
-        h3_refinement_attention_model(graph, refinement_model_ref or model_ref)
+        h3_refinement_attention_model(
+            graph, refinement_model_ref or model_ref,
+            refine_steps=latent_upscale_refine_steps, veda_dense_tail=veda_dense_tail,
+        )
         if latent_upscale_model_name is not None
         else model_ref
     )
@@ -893,6 +943,7 @@ def build_fl2va_graph(
     use_trt_vae: bool = False,
     use_sage: bool = False,
     use_sla: bool = False,
+    use_veda: bool = False,
     sla_preset: str = DEFAULT_SLA_PRESET,
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
@@ -947,6 +998,9 @@ def build_fl2va_graph(
         use_trt_vae=use_trt_vae,
         use_sage=use_sage,
         use_sla=use_sla,
+        use_veda=use_veda,
+        sampling_steps=steps,
+        veda_predictor=MODEL_SPECS["veda_t2va"].local_name,
         sla_preset=sla_preset,
     )
     conditioning_vae_ref = h3_conditioning_video_vae(
@@ -1126,6 +1180,7 @@ def build_fl2va_graph(
         latent_upscale_refine_steps=latent_upscale_refine_steps,
         refinement_lora_name=refinement_lora_name,
         refinement_variant=refinement_variant,
+        veda_dense_tail=use_veda and resolve_sla_preset(sla_preset)[0] == "Quality",
         refinement_model_ref=(
             add_refinement_model(
                 graph, model_ref, lora_name=refinement_lora_name,
@@ -1182,6 +1237,7 @@ def build_ref2va_graph(
     use_trt_vae: bool = False,
     use_sage: bool = False,
     use_sla: bool = False,
+    use_veda: bool = False,
     sla_preset: str = DEFAULT_SLA_PRESET,
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
@@ -1233,6 +1289,9 @@ def build_ref2va_graph(
         use_trt_vae=use_trt_vae,
         use_sage=use_sage,
         use_sla=use_sla,
+        use_veda=use_veda,
+        sampling_steps=steps,
+        veda_predictor=MODEL_SPECS["veda_r2va"].local_name,
         sla_preset=sla_preset,
     )
     conditioning_vae_ref = h3_conditioning_video_vae(
@@ -1369,6 +1428,7 @@ def build_ref2va_graph(
         latent_upscale_refine_steps=latent_upscale_refine_steps,
         refinement_lora_name=refinement_lora_name,
         refinement_variant=refinement_variant,
+        veda_dense_tail=use_veda and resolve_sla_preset(sla_preset)[0] == "Quality",
         refinement_model_ref=(
             add_refinement_model(
                 graph, model_ref, lora_name=refinement_lora_name,
@@ -1393,6 +1453,7 @@ def required_nodes_for(
     turbo_lora_filename: str = "",
     use_sage: bool = False,
     use_sla: bool = False,
+    use_veda: bool = False,
     latent_upscale: bool = False,
     latent_upscale_method: str = H3_LATENT_UPSCALE_STANDARD,
     result_format: str = DEFAULT_RESULT_FORMAT,
@@ -1448,6 +1509,8 @@ def required_nodes_for(
         common.add(SAGE_ATTENTION_NODE)
     if use_sla:
         common.add(SLA_ATTENTION_NODE)
+    if use_veda:
+        common.add(VEDA_ATTENTION_NODE)
     if latent_upscale:
         common |= {
             "SplitSigmas",

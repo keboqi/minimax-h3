@@ -19,6 +19,8 @@ SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SLA_REF = "d58d006a4ea32c25c06499f2ff104f0852a045a6"
 SLA_REPO = "https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes.git"
+VEDA_REF = "8d7ac153ac215d636eaf1b5910b0536c3de9e6ed"
+VEDA_REPO = "https://github.com/veda-sparse/Veda-on-ComfyUI.git"
 SOL_REF = "930a4d6e432ff8b8ed5e30ff2f72519b92d69bdf"
 # The original Saganaki22 repository became unavailable. This public fork retains
 # the exact reviewed v0.6.2 commit, so the node code and graph contract stay fixed.

@@ -55,6 +55,7 @@ class BuildFl2VaGraph(Protocol):
         use_trt_vae: bool = ...,
         use_sage: bool = ...,
         use_sla: bool = ...,
+        use_veda: bool = ...,
         sla_preset: str = ...,
         latent_upscale_model_name: str | None = ...,
         latent_upscale_precision: str = ...,
@@ -144,6 +145,7 @@ class BuildRef2VaGraph(Protocol):
         use_trt_vae: bool = ...,
         use_sage: bool = ...,
         use_sla: bool = ...,
+        use_veda: bool = ...,
         sla_preset: str = ...,
         latent_upscale_model_name: str | None = ...,
         latent_upscale_precision: str = ...,
@@ -245,6 +247,10 @@ class EnsureH3LatentUpscalerModel(Protocol):
 
 class EnsureH3SemanticBridge(Protocol):
     def __call__(self) -> None: ...
+
+
+class EnsureH3VedaPredictor(Protocol):
+    def __call__(self, mode: str) -> None: ...
 
 
 class EnsureH3TextEncoder(Protocol):
@@ -418,6 +424,7 @@ class ModelsServices:
     ensure_base_video_vae: EnsureBaseVideoVae
     ensure_h3_latent_upscaler_model: EnsureH3LatentUpscalerModel
     ensure_h3_semantic_bridge: EnsureH3SemanticBridge
+    ensure_h3_veda_predictor: EnsureH3VedaPredictor
     ensure_h3_text_encoder: EnsureH3TextEncoder
     ensure_int8_video_vae: EnsureInt8VideoVae
     ensure_ltx25_models: EnsureLtx25Models

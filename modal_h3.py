@@ -94,6 +94,8 @@ from h3_sources import (  # noqa: E402
     SAGE_WHEEL_URL,
     SLA_REF,
     SLA_REPO,
+    VEDA_REF,
+    VEDA_REPO,
     SOL_REF,
     SOL_REPO,
     SPECTRUM_REF,
@@ -250,6 +252,10 @@ def build(revision: str) -> None:
     sla_dir = Path(COMFY) / "custom_nodes" / "ComfyUI-PlagueKind-Nodes"
     _clone(SLA_REPO, sla_dir, ref=SLA_REF)
     _print_git_revision(sla_dir)
+
+    veda_dir = Path(COMFY) / "custom_nodes" / "Veda-on-ComfyUI"
+    _clone(VEDA_REPO, veda_dir, ref=VEDA_REF)
+    _print_git_revision(veda_dir)
 
     spectrum_dir = (
         Path(COMFY) / "custom_nodes" / "ComfyUI-Spectrum-MiniMax-H3"
@@ -467,6 +473,7 @@ def build(revision: str) -> None:
     custom_requirements = [
         sol_dir / "requirements.txt",
         sla_dir / "requirements.txt",
+        veda_dir / "requirements.txt",
         spectrum_dir / "requirements.txt",
         larry_turbo_dir / "requirements.txt",
     ]

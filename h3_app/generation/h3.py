@@ -89,13 +89,11 @@ def generate(
             model_filename=prepared.selected_model,
             text_encoder_filename=prepared.selected_text_encoder,
             attention_mode=(
-                "SLA"
-                if prepared.effective_sla
-                else (
-                    "Sage 2"
-                    if prepared.effective_sage
-                    else "Sol-Attn" if prepared.effective_sol else "Kitchen"
-                )
+                "Veda" if prepared.effective_veda
+                else "SLA" if prepared.effective_sla
+                else "Sage 2" if prepared.effective_sage
+                else "Sol-Attn" if prepared.effective_sol
+                else "Kitchen"
             ),
             fl2va_voice_reference_count=len(prepared.voice_refs),
             fl2va_voice_reference_mode="Hybrid/native" if prepared.voice_refs else None,
@@ -124,6 +122,28 @@ def generate(
             use_int8_vae=request.output.use_int8_vae,
             use_lynnreal_vae=request.output.use_lynnreal_vae,
         )
+        if prepared.effective_veda:
+            predictor_key = (
+                "veda_r2va" if request.media.mode == "Reference media" else "veda_t2va"
+            )
+            predictor = MODEL_SPECS[predictor_key]
+            execution_snapshot["settings"].update(
+                veda_predictor=predictor.local_name,
+                veda_predictor_sha256=predictor.expected_sha256,
+                veda_generated_budget="32",
+                veda_reference_sparsity="0%",
+                veda_preset=prepared.effective_sla_preset,
+                veda_base_dense_steps=(
+                    f"0, {prepared.effective_steps - 1}"
+                    if prepared.effective_sla_preset == "Quality" else "0"
+                ),
+                veda_refine_dense_steps=(
+                    str(int(request.finishing.latent_upscale_refine_steps) - 1)
+                    if request.finishing.latent_upscale
+                    and prepared.effective_sla_preset == "Quality"
+                    else ""
+                ),
+            )
         timings.label = f"H3 job {prompt_id}"
         timings.transition("Waiting for ComfyUI")
         attention_status = (
@@ -143,6 +163,12 @@ def generate(
                 )
             )
         )
+        if prepared.effective_veda:
+            attention_status = (
+                f"Veda {prepared.effective_sla_preset} "
+                "(32 key tiles, reference attention full, dense first base step"
+                + (", dense final step per stage)" if prepared.effective_sla_preset == "Quality" else ")")
+            )
         if prepared.effective_cache_mode.lower() == "firstblockcache":
             cache_status = (
                 f"FirstBlockCache {request.sampling.fbcache_preset} "

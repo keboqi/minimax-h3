@@ -81,6 +81,20 @@ class ModelSpec:
 
 
 MODEL_SPECS: dict[str, ModelSpec] = {
+    "veda_t2va": ModelSpec(
+        "Veda-Sparse/Minimax-H3-T2VA-Veda-8NFE-600Step-Preview",
+        "veda",
+        "minimax_h3_t2va_veda_8nfe_600step_preview_fp8.safetensors",
+        "Veda T2VA / FL2VA sparse-attention predictor",
+        expected_sha256="2a8d8845c5342756a2781e8e69563940e4bb573c9a40ebb534915ff8fd76573a",
+    ),
+    "veda_r2va": ModelSpec(
+        "Veda-Sparse/Minimax-H3-R2VA-Veda-Preview",
+        "veda",
+        "minimax_h3_r2va_veda_preview_fp8.safetensors",
+        "Veda R2VA sparse-attention predictor",
+        expected_sha256="23edace948693772be33d5cc945d302d2b037a29bd44bd57071bfbdd8b02517d",
+    ),
     "semantic_bridge_v1": ModelSpec(
         "speach1sdef178/MiniMax-H3-Semantic-Bridge",
         "semantic_bridge",
@@ -712,6 +726,8 @@ QWEN_IMAGE21_MODEL_KEYS = (
     "qwen_image21_viggle_v03_lora",
 )
 LAZY_OPTIONAL_MODEL_KEYS = (
+    "veda_t2va",
+    "veda_r2va",
     "semantic_bridge_v1",
     *H3_OPTIONAL_TEXT_ENCODER_KEYS,
     "video_vae_int8",
@@ -1530,6 +1546,8 @@ def selftest() -> None:
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert set(MODEL_SPECS) == {
+        "veda_t2va",
+        "veda_r2va",
         "semantic_bridge_v1",
         "speed_fl2va",
         "speed_ref2va",

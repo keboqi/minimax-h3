@@ -86,6 +86,7 @@ class PreparedH3:
     effective_sage: bool
     effective_scheduler: str
     effective_sla: bool
+    effective_veda: bool
     effective_sla_inputs: dict[str, Any]
     effective_sla_preset: str
     effective_sol: bool
@@ -467,7 +468,8 @@ def prepare_h3(
         "sla attention",
         "sparse-linear",
     }
-    if effective_sla:
+    effective_veda = str(effective.sampling.attention_mode).strip().lower() == "veda"
+    if effective_sla or effective_veda:
         effective_sla_preset, effective_sla_inputs = resolve_sla_preset(
             request.sampling.sla_preset
         )
@@ -492,6 +494,7 @@ def prepare_h3(
             effective_cache_mode,
             use_sage=effective_sage,
             use_sla=effective_sla,
+            use_veda=effective_veda,
             use_turbo=use_turbo,
             turbo_variant=selected_turbo,
             model_filename=selected_model,
@@ -512,6 +515,13 @@ def prepare_h3(
         )
     if missing:
         raise H3Error("Missing ComfyUI nodes: " + ", ".join(sorted(missing)))
+
+    if effective_veda:
+        progress(0, desc="Preparing Veda predictor")
+        yield GenerationUpdate(
+            None, progress_status("Preparing Veda predictor (download on first use)", started=started)
+        )
+        services.models.ensure_h3_veda_predictor(request.media.mode)
 
     refs_i = collect_reference_slots(
         request.media.ref_image_1,
@@ -553,6 +563,7 @@ def prepare_h3(
         effective_sage=effective_sage,
         effective_scheduler=effective_scheduler,
         effective_sla=effective_sla,
+        effective_veda=effective_veda,
         effective_sla_inputs=effective_sla_inputs,
         effective_sla_preset=effective_sla_preset,
         effective_sol=effective_sol,
