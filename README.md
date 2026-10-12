@@ -17,6 +17,11 @@ LTX 2.5, Qwen Image 2.1, MiniMax Music 3 and YuE2. Prompt suggestions require
 acceptance. Media includes indexed search, shared tags/favorites, lineage,
 image comparison and synchronized video playback.
 
+Media also offers NVIDIA RTX Video Super Resolution and experimental DLSS 5
+neural rendering for selected SDR images and videos. Both use optional runtimes with
+explicit host checks, cancellable workers, and new output copies. See
+[installation, controls, and current limitations](docs/nvidia-media-postprocess.md).
+
 Jobs capture requests before the GPU queue, retain seeds for failed-variant
 retries, and support separate H3 finishing retries. SQLite stores technical job
 history across restarts. A signed browser cookie and recovery key preserve
@@ -714,13 +719,16 @@ adding another type starts a new pair. **Clear A** and **Clear B** remove picks.
 In **Jobs**, click a history row (or focus it and press Enter/Space) to inspect
 that request and its available actions.
 Image mode offers the one-step **SeedVR2 2x** workflow and
-**LTX-2.5 CQ Image Enhancer**, using the same target-resolution presets.
+**LTX-2.5 CQ Image Enhancer**, plus **NVIDIA RTX Video Super Resolution** and
+experimental **DLSS 5 Neural Rendering**, using the same target-resolution presets.
+The NVIDIA methods save lossless PNG copies, normalize color/orientation, and
+preserve transparency. They need the [optional NVIDIA runtimes](docs/nvidia-media-postprocess.md).
 CQ resizes the selected still to fit the target, then generatively restores
 detail using the dedicated image LoRA, the LTX development INT8 model, a
 0.5-strength distillation adapter, and the convolutional VAE. It needs no prompt
 and can also enhance at the same resolution or resize downward. Its required
 models download on first use. Reconstructed detail may differ from the source.
-Both methods preserve the image's aspect ratio;
+The methods preserve the image's aspect ratio;
 the processed image is added back to the image gallery with its settings and a
 download link. Audio mode provides playback and downloads. Video mode retains
 all existing enhancement methods. Each run

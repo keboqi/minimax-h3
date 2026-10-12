@@ -2056,6 +2056,8 @@ def postprocess_selected_gallery_video(
     upscale_resolution: str,
     request: gr.Request,
     progress=gr.Progress(track_tqdm=False),
+    *,
+    nvidia_settings=None,
 ):
     return _mediacontroller().postprocess_selected_gallery_video(
         selected_video,
@@ -2070,6 +2072,7 @@ def postprocess_selected_gallery_video(
         upscale_resolution,
         request,
         progress,
+        nvidia_settings=nvidia_settings,
     )
 
 
@@ -2082,6 +2085,8 @@ def postprocess_selected_gallery_image(
     upscale_resolution: str,
     request: gr.Request,
     progress=gr.Progress(track_tqdm=False),
+    *,
+    nvidia_settings=None,
 ):
     return _mediacontroller().postprocess_selected_gallery_image(
         selected_image,
@@ -2092,6 +2097,7 @@ def postprocess_selected_gallery_image(
         upscale_resolution,
         request,
         progress,
+        nvidia_settings=nvidia_settings,
     )
 
 
@@ -2109,6 +2115,8 @@ def postprocess_selected_gallery_media(
     upscale_resolution: str,
     request: gr.Request,
     progress=gr.Progress(track_tqdm=False),
+    *,
+    nvidia_settings=None,
 ):
     return _mediacontroller().postprocess_selected_gallery_media(
         mode,
@@ -2124,6 +2132,7 @@ def postprocess_selected_gallery_media(
         upscale_resolution,
         request,
         progress,
+        nvidia_settings=nvidia_settings,
     )
 
 

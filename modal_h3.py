@@ -127,6 +127,7 @@ from h3_requirements import (  # noqa: E402
     WSPROTO_VERSION,
     SWIFTVR_REF,
     SWIFTVR_REPO,
+    NVIDIA_VFX_REQUIREMENT,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
     probe_comfy_frontend,
@@ -631,6 +632,9 @@ image = (
         index_url=TORCH_INDEX,
     )
 )
+
+if os.getenv("H3_ENABLE_NVIDIA_VSR") == "1":
+    image = image.uv_pip_install(NVIDIA_VFX_REQUIREMENT)
 
 if IS_LOCAL:
     for local_path, remote_path in _BUILD_LOCAL_MOUNTS:

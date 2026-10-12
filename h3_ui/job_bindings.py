@@ -146,7 +146,11 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
         inspect.Parameter(
             name,
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            default=optional_defaults.get(name, inspect.Parameter.empty),
+            default=optional_defaults.get(
+                name, signature.parameters[name].default
+                if family == "gallery" and name in signature.parameters
+                else inspect.Parameter.empty,
+            ),
         )
         for name in names
     ]

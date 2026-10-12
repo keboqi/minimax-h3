@@ -1,0 +1,53 @@
+"""NVIDIA gallery request capture and inexpensive UI availability checks."""
+
+from __future__ import annotations
+
+import gradio as gr
+
+from h3_app.catalog import NVIDIA_POSTPROCESS_OPTIONS
+from h3_app.jobs import record_failure
+from h3_app.nvidia_postprocess import availability, probe_runtime
+
+
+def can_enhance(mode, selected, method):
+    if not selected or mode == "Audio":
+        return False
+    if method in NVIDIA_POSTPROCESS_OPTIONS:
+        return mode in {"Video", "Image"} and availability(method)[0]
+    return True
+
+
+def with_nvidia_settings(callback):
+    """Append optional values so retained pre-NVIDIA gallery jobs still replay."""
+    def enhance(
+        mode, selected_media, option, seed, seedvr2_model, ltx25_model,
+        ltx25_prompt, force_offload, split_upscale, split_seconds, upscale_resolution,
+        nvidia_original=False, vsr_quality="High", vsr_strength=1.0,
+        vsr_profile="Compressed", vsr_preprocess="None", vsr_preprocess_strength=0.5,
+        dlss_style="Natural", dlss_intensity=1.0, request: gr.Request = None,
+    ):
+        kwargs = {}
+        if option in NVIDIA_POSTPROCESS_OPTIONS:
+            kwargs["nvidia_settings"] = {
+                "original_size": nvidia_original, "quality": vsr_quality,
+                "strength": vsr_strength, "profile": vsr_profile,
+                "preprocess": vsr_preprocess, "preprocess_strength": vsr_preprocess_strength,
+                "style": dlss_style, "intensity": dlss_intensity,
+            }
+        return callback(
+            mode, selected_media, option, seed, seedvr2_model, ltx25_model,
+            ltx25_prompt, force_offload, split_upscale, split_seconds,
+            upscale_resolution, request=request, **kwargs,
+        )
+    enhance.__name__ = callback.__name__
+    return enhance
+
+
+def check_runtime(method: str, request: gr.Request):
+    from .application import _runtime_config
+    yield "Checking NVIDIA runtime on the processing host…"
+    try:
+        yield probe_runtime(method, _runtime_config())
+    except Exception as exc:
+        record_failure(exc)
+        yield f"Runtime check failed: {exc}"

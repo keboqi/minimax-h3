@@ -13,7 +13,12 @@ from h3_app.catalog import (
     LTX25_SAME_RESOLUTION_OPTIONS,
     LTX25_SDR_TO_HDR,
     LTX25_TILED_UPSCALE,
+    DLSS5_NR,
+    NVIDIA_VSR,
+    NVIDIA_POSTPROCESS_OPTIONS,
 )
+from .nvidia_media import can_enhance, with_nvidia_settings, check_runtime
+from h3_app.nvidia_postprocess import availability
 from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 from .media_view import GalleryView
 from .media_previews import browser_preview_updates, browser_gallery_items
@@ -143,11 +148,11 @@ def bind_gallery_view(
                 show_progress="hidden", api_name=False,
             )
         event.then(
-            lambda mode, selected: (
-                gr.update(interactive=bool(selected) and mode != "Audio"),
+            lambda mode, selected, method: (
+                gr.update(interactive=can_enhance(mode, selected, method)),
                 gr.update(interactive=bool(selected)),
             ),
-            inputs=[view.mode, view.selected],
+            inputs=[view.mode, view.selected, view.postprocess],
             outputs=[view.post_run, view.delete],
             queue=False,
             show_progress="hidden",
@@ -171,7 +176,8 @@ def bind_gallery_view(
             gr.update(value=False),
             gr.update(
                 choices=(
-                    [seedvr_option, LTX25_CQ_IMAGE_ENHANCER] if value == "Image" else video_postprocess_options
+                    [seedvr_option, LTX25_CQ_IMAGE_ENHANCER, NVIDIA_VSR, DLSS5_NR]
+                    if value == "Image" else video_postprocess_options
                 ),
                 value=seedvr_option,
             ),
@@ -259,8 +265,8 @@ def bind_gallery_view(
     synchronize(refreshed, refreshed=True)
     refresh_events.append(refreshed)
     view.postprocess.change(
-        lambda value: (
-            gr.update(visible=value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER),
+        lambda value, mode, selected: (
+            gr.update(visible=value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER or value in NVIDIA_POSTPROCESS_OPTIONS),
             gr.update(visible=value == seedvr_option),
             gr.update(
                 visible=value in ltx_options
@@ -281,12 +287,19 @@ def bind_gallery_view(
             gr.update(visible=value in ltx_options),
             gr.update(visible=value in ltx_options),
             gr.update(
-                visible=(value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER)
+                visible=(value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER or value == NVIDIA_VSR)
                 and value not in LTX25_SAME_RESOLUTION_OPTIONS
             ),
             gr.update(visible=value in ltx_options),
+            gr.update(visible=value not in NVIDIA_POSTPROCESS_OPTIONS),
+            gr.update(visible=value in NVIDIA_POSTPROCESS_OPTIONS),
+            gr.update(visible=value == NVIDIA_VSR),
+            gr.update(visible=value == DLSS5_NR),
+            gr.update(value=value == DLSS5_NR),
+            availability(value)[1] if value in NVIDIA_POSTPROCESS_OPTIONS else "",
+            gr.update(interactive=can_enhance(mode, selected, value)),
         ),
-        inputs=view.postprocess,
+        inputs=[view.postprocess, view.mode, view.selected],
         outputs=[
             view.ai_settings,
             view.seedvr2_model,
@@ -295,10 +308,32 @@ def bind_gallery_view(
             view.split_seconds,
             view.upscale_resolution,
             selected_ltx_model,
+            view.post_seed,
+            view.nvidia_settings,
+            view.vsr_settings,
+            view.dlss_settings,
+            view.nvidia_original,
+            view.nvidia_status,
+            view.post_run,
         ],
         queue=False,
         show_progress="hidden",
     )
+    view.nvidia_original.change(
+        lambda original, method: gr.update(visible=not original)
+        if method in NVIDIA_POSTPROCESS_OPTIONS else gr.skip(),
+        inputs=[view.nvidia_original, view.postprocess], outputs=view.upscale_resolution,
+        queue=False, api_name=False,
+    )
+    check_event = bind_gpu_action(
+        view.nvidia_check.click, owned_generation(check_runtime, "nvidia-check"),
+        inputs=view.postprocess, outputs=view.nvidia_status, api_name=False,
+    )
+    check_stopped = view.nvidia_check_stop.click(
+        owned_interrupt(interrupt, "nvidia-check"), outputs=view.nvidia_status,
+        queue=False, api_name=False,
+    )
+    check_stopped.then(fn=None, cancels=[check_event], queue=False, api_name=False)
     def select_gallery_media(mode: str, paths: list[str], request: gr.Request, evt: gr.SelectData):
         return browser_preview_updates(select(mode, paths, request, evt))
 
@@ -343,7 +378,7 @@ def bind_gallery_view(
     refresh_events.append(refreshed)
     post_event = bind_gpu_action(
         view.post_run.click,
-        owned_generation(postprocess, "gallery"),
+        owned_generation(with_nvidia_settings(postprocess), "gallery"),
         inputs=[
             view.mode,
             view.selected,
@@ -356,6 +391,14 @@ def bind_gallery_view(
             view.split_upscale,
             view.split_seconds,
             view.upscale_resolution,
+            view.nvidia_original,
+            view.vsr_quality,
+            view.vsr_strength,
+            view.vsr_profile,
+            view.vsr_preprocess,
+            view.vsr_preprocess_strength,
+            view.dlss_style,
+            view.dlss_intensity,
         ],
         outputs=mutation_outputs + [view.post_status],
         show_progress="minimal",

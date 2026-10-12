@@ -69,6 +69,7 @@ from h3_requirements import (
     WSPROTO_VERSION,
     SWIFTVR_REF,
     SWIFTVR_REPO,
+    NVIDIA_VFX_REQUIREMENT,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
     sync_ltx25_workflows,
@@ -1078,6 +1079,10 @@ def main() -> None:
     parser.add_argument("--install-dir", default="h3")
     parser.add_argument("--skip-env", action="store_true")
     parser.add_argument(
+        "--enable-nvidia-vsr", action="store_true",
+        help="Install the optional pinned NVIDIA VFX runtime for Media enhancement",
+    )
+    parser.add_argument(
         "--prune-cache",
         action="store_true",
         help="Prune cached Hugging Face model downloads to free disk space and exit",
@@ -1131,6 +1136,8 @@ def main() -> None:
     if not args.skip_env:
         uv_pip(HUGGINGFACE_HUB_REQUIREMENT, no_deps=True)
     sync_swiftvr_runtime(install_dir)
+    if args.enable_nvidia_vsr or os.getenv("H3_ENABLE_NVIDIA_VSR") == "1":
+        uv_pip(NVIDIA_VFX_REQUIREMENT)
     if not torch_stack_matches():
         install_pinned_torch_stack()
     if not numpy_stack_matches():
