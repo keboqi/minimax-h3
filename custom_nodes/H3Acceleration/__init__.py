@@ -1379,7 +1379,7 @@ class H3RefinementCompilerGuard:
 
 
 class H3SaveVideoNVENC:
-    """Encode an in-memory ComfyUI VIDEO with NVIDIA's H.264 hardware encoder."""
+    """Encode an in-memory VIDEO, preferring NVENC with a software fallback."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1410,20 +1410,49 @@ class H3SaveVideoNVENC:
     CATEGORY = "video/minimax"
     OUTPUT_NODE = True
     DESCRIPTION = (
-        "Saves an H.264 MP4 using the NVIDIA NVENC hardware encoder. "
-        "Requires PyAV/FFmpeg with h264_nvenc and an NVIDIA driver."
+        "Saves an H.264 MP4 using NVENC when available, otherwise CPU libx264. "
+        "The quality value controls NVENC CQ or software CRF."
     )
 
     @staticmethod
-    def _require_encoder() -> None:
+    def _probe_encoder(encoder, width, height, frame_rate, options):
+        # Codec registration alone does not prove hardware support: H200 has
+        # no NVENC, even when PyAV lists h264_nvenc. Open a real codec context.
+        context = None
         try:
-            av.Codec("h264_nvenc", "w")
-        except Exception as exc:
-            raise RuntimeError(
-                "H3 NVENC output requires an FFmpeg/PyAV build with the "
-                "h264_nvenc encoder. Verify that ffmpeg -encoders lists "
-                "h264_nvenc and install an NVENC-enabled PyAV/FFmpeg build."
-            ) from exc
+            context = av.CodecContext.create(encoder, "w")
+            context.width = width
+            context.height = height
+            context.pix_fmt = "yuv420p"
+            context.time_base = 1 / frame_rate
+            context.framerate = frame_rate
+            context.bit_rate = 0
+            context.options = options.copy()
+            context.open()
+        finally:
+            # Release the probe's hardware session before opening the output.
+            del context
+
+    @classmethod
+    def _select_encoder(cls, width, height, frame_rate, preset, constant_quality):
+        quality = str(int(constant_quality))
+        options = {"preset": str(preset), "tune": "hq", "rc": "vbr", "cq": quality}
+        try:
+            cls._probe_encoder("h264_nvenc", width, height, frame_rate, options)
+            return "h264_nvenc", options
+        except Exception as nvenc_error:
+            logging.warning(
+                "[H3 video] NVENC unavailable; using CPU libx264: %s", nvenc_error
+            )
+            options = {"preset": "medium", "crf": quality}
+            try:
+                cls._probe_encoder("libx264", width, height, frame_rate, options)
+            except Exception as software_error:
+                raise RuntimeError(
+                    "H3 video output requires a working h264_nvenc or libx264 encoder "
+                    f"in PyAV. NVENC: {nvenc_error}. libx264: {software_error}"
+                ) from software_error
+            return "libx264", options
 
     def save(
         self,
@@ -1434,18 +1463,17 @@ class H3SaveVideoNVENC:
         prompt=None,
         extra_pnginfo=None,
     ):
-        self._require_encoder()
         components = video.get_components()
         images = components.images
         if images.ndim != 4 or images.shape[0] < 1 or images.shape[-1] < 3:
             raise ValueError(
-                "H3 NVENC output expects video images shaped [frames, H, W, RGB]"
+                "H3 video output expects video images shaped [frames, H, W, RGB]"
             )
 
         height, width = int(images.shape[1]), int(images.shape[2])
         if width % 2 or height % 2:
             raise ValueError(
-                f"H.264 NVENC requires even dimensions, got {width}x{height}"
+                f"H.264 requires even dimensions, got {width}x{height}"
             )
         full_output_folder, filename, counter, subfolder, _prefix = (
             folder_paths.get_save_image_path(
@@ -1459,6 +1487,9 @@ class H3SaveVideoNVENC:
         path = os.path.join(full_output_folder, file)
         frame_rate = Fraction(
             round(float(components.frame_rate) * 1000), 1000
+        )
+        encoder, encoder_options = self._select_encoder(
+            width, height, frame_rate, preset, constant_quality
         )
 
         try:
@@ -1478,17 +1509,12 @@ class H3SaveVideoNVENC:
                         value if isinstance(value, str) else json.dumps(value)
                     )
 
-                video_stream = output.add_stream("h264_nvenc", rate=frame_rate)
+                video_stream = output.add_stream(encoder, rate=frame_rate)
                 video_stream.width = width
                 video_stream.height = height
                 video_stream.pix_fmt = "yuv420p"
                 video_stream.bit_rate = 0
-                video_stream.options = {
-                    "preset": str(preset),
-                    "tune": "hq",
-                    "rc": "vbr",
-                    "cq": str(int(constant_quality)),
-                }
+                video_stream.options = encoder_options
 
                 audio = components.audio
                 audio_stream = None
@@ -1972,5 +1998,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3StageOffloadPolicy": "MiniMax H3 Stage Offload Policy",
     "H3StageModelOffload": "MiniMax H3 Stage Model Offload",
     "H3RefinementCompilerGuard": "MiniMax H3 Refinement Compiler Guard",
-    "H3SaveVideoNVENC": "MiniMax H3 Save Video (NVENC)",
+    "H3SaveVideoNVENC": "MiniMax H3 Save Video (Auto H.264)",
 }

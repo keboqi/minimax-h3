@@ -67,7 +67,7 @@ deployment and production performance remain unmeasured.
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Optional official INT8 ConvRot video VAE, lazy-downloaded on first use
 - Optional LynnReal Light INT8 video VAE, lazy-downloaded on first use
-- H.264 NVENC hardware encoding for MiniMax H3 video outputs
+- H.264 video output with NVENC hardware encoding and automatic CPU libx264 fallback
 - Optional 500K single-frame image decoder, lazy-downloaded only when selected;
   visual conditioning retains the official FP16 path when TensorRT decoding is selected
 - Hardware-aware ComfyUI memory mode selection
@@ -183,7 +183,7 @@ and the author's [licensing notes](https://huggingface.co/speach1sdef178/MiniMax
 - Python 3.12
 - An NVIDIA Blackwell GPU and a compatible CUDA 13 driver
 - Git, FFmpeg, and enough disk space for ComfyUI and the model set
-- An NVIDIA driver/GPU with NVENC support for MiniMax H3 video output
+- An NVIDIA driver/GPU for generation; NVENC is optional for faster video encoding
 - Hugging Face access to every configured model repository
 
 The installer pins the ABI-sensitive stack to Torch 2.11.0 + CUDA 13.0,
@@ -314,6 +314,14 @@ and reuses it on later launches. Missing `uv` is bootstrapped into `h3/.bootstra
 Setup, ComfyUI, and Gradio use that interpreter; the host Conda environment is
 left intact. Direct `setup_h3.py` invocations require Python 3.12 and fail early
 with a launcher hint if the interpreter is incompatible.
+
+Video saving opens an actual encoder session before choosing NVENC. GPUs without
+NVENC, including [H100/H200](https://docs.nvidia.com/dynamo/v1.4.0/multimodal/video-decode-gpu-requirements),
+automatically use CPU `libx264` for H.264 MP4 output;
+generation stays on the GPU. Audio, frame rate, frame count, and metadata are
+preserved. The quality value maps to NVENC CQ or software CRF, with `medium` as
+the software preset. 48 fps interpolation also checks whether its encoder can
+actually run, rather than relying on FFmpeg's codec list.
 
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
 Singularity pruned v1.3 INT8 checkpoint plus the Fast NVFP4/AWQ text encoder, default FP32 latent-upscaler checkpoint, shared VAEs, and default 4-step Turbo LoRAs. The Speed, Quality and Original checkpoints plus the selectable PDMD 4-step, DMAD 4-step and LightX2V 8-step Turbo LoRAs download on demand when selected; the Balanced preset's 6-step Larry LoRA is preloaded. SeedVR2 models, the

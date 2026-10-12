@@ -176,7 +176,7 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
     if name == "CreateVideo":
         return "Assembling video"
     if name == H3_NVENC_SAVE_NODE:
-        return "Saving video with NVENC"
+        return "Saving H.264 video"
     if name.startswith("Save"):
         if "Image" in name:
             return "Saving image"

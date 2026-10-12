@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import subprocess
 import uuid
 from pathlib import Path
 from typing import Iterable
@@ -21,10 +22,20 @@ from .provenance import copy_snapshot
 
 
 def has_encoder(name: str) -> bool:
-    proc = run_media_process(
-        ["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True
-    )
-    return name in proc.stdout
+    # A listed NVENC codec can still fail to open on GPUs without encoder
+    # hardware (such as H200), or when the container lacks driver access.
+    try:
+        proc = run_media_process(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                "-i", "color=c=black:s=64x64:r=1", "-frames:v", "1",
+                "-c:v", name, "-f", "null", "-",
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    return proc.returncode == 0
 
 
 def postprocess_video(source: Path, option: str, *, runtime: RuntimeConfig) -> Path:

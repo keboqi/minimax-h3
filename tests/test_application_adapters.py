@@ -748,7 +748,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
         )
         self.assertEqual(_status.node_stage("VAEDecode"), "Decoding output")
         self.assertEqual(
-            _status.node_stage(_catalog.H3_NVENC_SAVE_NODE), "Saving video with NVENC"
+            _status.node_stage(_catalog.H3_NVENC_SAVE_NODE), "Saving H.264 video"
         )
         rendered_progress = app.progress_status(
             "Generating video and audio",
