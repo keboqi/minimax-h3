@@ -1089,6 +1089,12 @@ def main() -> None:
         print(f"[h3-setup] Hugging Face cache pruned ({freed} bytes freed)")
         return
 
+    if sys.version_info[:2] != (3, 12):
+        parser.error(
+            "H3 setup requires Python 3.12 for its pinned NumPy/SciPy and cp312 GPU wheels. "
+            "Run bash run_h3.sh to provision an isolated Python 3.12 environment automatically."
+        )
+
     ensure_root_entrypoints()
     install_dir = Path(args.install_dir).expanduser().resolve()
     comfy = install_dir / "ComfyUI"

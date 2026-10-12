@@ -307,6 +307,14 @@ cd minimax-h3
 bash run_h3.sh
 ```
 
+The launcher reuses an active Python 3.12 environment. On hosts whose default
+Python has another version (including Lightning/Conda environments on Python
+3.14), it uses `uv` to provision an isolated Python 3.12 environment at `h3/.venv`
+and reuses it on later launches. Missing `uv` is bootstrapped into `h3/.bootstrap`.
+Setup, ComfyUI, and Gradio use that interpreter; the host Conda environment is
+left intact. Direct `setup_h3.py` invocations require Python 3.12 and fail early
+with a launcher hint if the interpreter is incompatible.
+
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
 Singularity pruned v1.3 INT8 checkpoint plus the Fast NVFP4/AWQ text encoder, default FP32 latent-upscaler checkpoint, shared VAEs, and default 4-step Turbo LoRAs. The Speed, Quality and Original checkpoints plus the selectable PDMD 4-step, DMAD 4-step and LightX2V 8-step Turbo LoRAs download on demand when selected; the Balanced preset's 6-step Larry LoRA is preloaded. SeedVR2 models, the
 LTX-2.5 upscaler and restoration IC-LoRAs, and SwiftVR checkpoints are lazy and download only

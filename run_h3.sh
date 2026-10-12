@@ -210,6 +210,7 @@ trap cleanup EXIT INT TERM
 ensure_repo_integrity() {
   local -a required_paths=(
     gradio_app.py
+    h3_runtime.py
     h3_ui/__init__.py
     h3_ui/application.py
     h3_app/__init__.py
@@ -305,10 +306,18 @@ EOF
   fi
 }
 
-ensure_ffmpeg
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || die "python3 is required"
 [[ -f "$SCRIPT_DIR/setup_h3.py" ]] || die "Missing setup_h3.py"
 ensure_repo_integrity
+[[ -f "$SCRIPT_DIR/h3_runtime.py" ]] || die "Missing h3_runtime.py; update the repository"
+PYTHON_BIN="$("$PYTHON_BIN" "$SCRIPT_DIR/h3_runtime.py" --install-dir "$INSTALL_DIR")"
+# Keep setup, pip subprocesses, ComfyUI and Gradio on the same interpreter.
+if [[ "$PYTHON_BIN" == */.venv/bin/python3 ]]; then
+  export VIRTUAL_ENV="$(dirname -- "$(dirname -- "$PYTHON_BIN")")"
+  export PATH="$VIRTUAL_ENV/bin:$PATH"
+fi
+log "Runtime Python: $PYTHON_BIN"
+ensure_ffmpeg
 
 if [[ ! -f "$COMFY_DIR/main.py" || ! -f "$MODELS_CONFIG" ]]; then
   log "Installation or models are missing; running automatic setup"
