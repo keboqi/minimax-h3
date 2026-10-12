@@ -12,6 +12,7 @@ from h3_app.catalog import (
     LTX25_RESTORATION_OPTIONS,
     LTX25_SAME_RESOLUTION_OPTIONS,
     LTX25_SDR_TO_HDR,
+    LTX25_TILED_UPSCALE,
 )
 from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 from .media_view import GalleryView
@@ -154,7 +155,7 @@ def bind_gallery_view(
         )
         return event
 
-    ltx_options = {ltx_option} | LTX25_SAME_RESOLUTION_OPTIONS
+    ltx_options = {ltx_option, LTX25_TILED_UPSCALE} | LTX25_SAME_RESOLUTION_OPTIONS
     video_postprocess_options = [
         choice[1] if isinstance(choice, (tuple, list)) else choice
         for choice in view.postprocess.choices
@@ -265,6 +266,9 @@ def bind_gallery_view(
                 visible=value in ltx_options
                 and value not in {LTX25_CQ_ENHANCER, LTX25_SDR_TO_HDR},
                 info=(
+                    "Describe texture, lighting and sharpness only; named subjects can repeat across tiles. "
+                    "Uses spatial tiles and temporal streaming. Segment splitting is an advanced fallback."
+                    if value == LTX25_TILED_UPSCALE else
                     "Describe the source scene; focus restoration instructions are added automatically. Preserves source resolution. Uses the finishing model selected here."
                     if value == LTX25_DEBLUR
                     else (

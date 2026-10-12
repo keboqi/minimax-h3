@@ -11,7 +11,8 @@ from typing import Generator
 
 from h3_app.catalog import (
     COMFY_UPSCALE_OPTIONS,
-    LTX25_UPSCALE,
+    LTX25_UPSCALE_OPTIONS,
+    LTX25_TILED_UPSCALE,
     SEEDVR2_UPSCALE,
     SWIFTVR_UPSCALE,
 )
@@ -142,14 +143,14 @@ def finish_video(
                     prepared.models, request.finishing.seedvr2_model
                 )
             else:
-                model_status = f"LTX-2.5 {request.finishing.ltx25_model} and 2x IC-LoRA"
+                model_status = f"{request.finishing.postprocess} with {request.finishing.ltx25_model}"
                 stage_bucket = "ltx25_upscale"
                 yield GenerationUpdate(
                     None,
                     progress_status(f"Checking {model_status} models", started=started),
                 )
                 downloaded = services.models.ensure_ltx25_upscale_models(
-                    request.finishing.ltx25_model
+                    request.finishing.ltx25_model, option=request.finishing.postprocess
                 )
 
             if downloaded:
@@ -164,8 +165,14 @@ def finish_video(
             target_width, target_height = upscale_target_dimensions(
                 metadata.width, metadata.height, request.finishing.upscale_resolution
             )
-            use_split = request.finishing.postprocess == LTX25_UPSCALE and bool(
+            use_split = request.finishing.postprocess in LTX25_UPSCALE_OPTIONS and bool(
                 request.finishing.upscale_split_enabled
+            )
+            # Narrative prompts can stamp subjects into each spatial tile.
+            upscale_prompt = (
+                ""
+                if request.finishing.postprocess == LTX25_TILED_UPSCALE
+                else request.media.prompt
             )
             clip_batch = services.media.prepare_upscale_clip_batch(
                 source,
@@ -205,7 +212,7 @@ def finish_video(
                     models=prepared.models,
                     seedvr2_model=request.finishing.seedvr2_model,
                     ltx25_model=request.finishing.ltx25_model,
-                    prompt=request.media.prompt,
+                    prompt=upscale_prompt,
                     width=prepared.resolved_width,
                     height=prepared.resolved_height,
                     target_width=target_width,
@@ -229,8 +236,8 @@ def finish_video(
                     f"{request.finishing.postprocess} queued",
                     started=started,
                     detail=(
-                        f"Job `{upscale_prompt_id}` · {prepared.resolved_width * 2}×"
-                        f"{prepared.resolved_height * 2} · {unload_note}"
+                        f"Job `{upscale_prompt_id}` · {target_width}×"
+                        f"{target_height} · {unload_note}"
                     ),
                 ),
             )
@@ -279,7 +286,7 @@ def finish_video(
                         models=prepared.models,
                         seedvr2_model=request.finishing.seedvr2_model,
                         ltx25_model=request.finishing.ltx25_model,
-                        prompt=request.media.prompt,
+                        prompt=upscale_prompt,
                         width=prepared.resolved_width,
                         height=prepared.resolved_height,
                         target_width=target_width,

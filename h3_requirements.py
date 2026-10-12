@@ -24,7 +24,7 @@ SCIPY_VERSION = "1.15.3"
 HUGGINGFACE_HUB_REQUIREMENT = "huggingface-hub>=1.5,<2"
 # Transformers' fine-grained FP8 loader requires this exact minor release.
 KERNELS_VERSION = "0.16.0"
-# LTXVideo f8387c8 uses torch.nn.functional.pad instead of Kornia's removed
+# Pinned LTXVideo uses torch.nn.functional.pad instead of Kornia's removed
 # pyramid.pad export.
 KORNIA_VERSION = "0.8.3"
 KORNIA_RS_VERSION = "0.1.14"
@@ -57,6 +57,8 @@ LTX25_WORKFLOW_FILENAMES = (
     "LTX-2.5_ICLoRA_Inpaint_Two_Stage_Distilled.json",
     "LTX-2.5_ICLoRA_Outpaint_Two_Stage_Distilled.json",
     "LTX-2.5_ICLoRA_Union_Control_Distilled.json",
+    "LTX-2.5_V2V_TiledFusion_Native_4K_8K.json",
+    "LTX-2.5_V2V_TiledFusion_Upscale.json",
 )
 
 ABI_CONSTRAINTS = (
@@ -275,7 +277,7 @@ def selftest() -> None:
     assert COMFY_KITCHEN_VERSION == "0.2.37"
     assert COMFY_FRONTEND_VERSION == "1.53.10"
     assert WSPROTO_VERSION == "1.2.0"
-    assert len(LTX25_WORKFLOW_FILENAMES) == 10
+    assert len(LTX25_WORKFLOW_FILENAMES) == 12
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         source = root / "source"

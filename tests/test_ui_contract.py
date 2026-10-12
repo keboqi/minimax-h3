@@ -430,6 +430,19 @@ class UiContractTests(unittest.TestCase):
             [u["visible"] for u in callback(gradio_app.LTX25_UPSCALE)],
             [True, False, True, True, True, True, True],
         )
+        self.assertIn(_catalog.LTX25_TILED_UPSCALE, choices)
+        tiled_updates = callback(_catalog.LTX25_TILED_UPSCALE)
+        self.assertEqual(
+            [u["visible"] for u in tiled_updates],
+            [True, False, True, True, True, True, True],
+        )
+        self.assertIn("texture", tiled_updates[2]["info"])
+        split_controls = [
+            c for c in self.config["components"]
+            if c.get("props", {}).get("label", "").startswith("Advanced: split source")
+        ]
+        self.assertEqual(len(split_controls), 2)
+        self.assertTrue(all(c["props"]["value"] is False for c in split_controls))
         self.assertEqual(
             [u["visible"] for u in callback(gradio_app.SEEDVR2_UPSCALE)],
             [True, True, False, False, False, True, False],

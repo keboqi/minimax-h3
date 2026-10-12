@@ -15,6 +15,7 @@ from h3_app.catalog import (
     LTX25_SDR_TO_HDR,
     LTX25_SIGMAS,
     LTX25_UPSCALE,
+    LTX25_TILED_UPSCALE,
     SEEDVR2_UPSCALE,
 )
 from h3_app.errors import H3Error
@@ -418,6 +419,13 @@ def build_ltx25_upscale_graph(
     """Build single-stage IC-LoRA upscaling or same-resolution restoration."""
     if option not in LTX25_POSTPROCESS_MODELS:
         raise H3Error(f"Unknown LTX-2.5 post-processing method: {option}")
+    if option == LTX25_TILED_UPSCALE:
+        return build_ltx25_tiled_upscale_graph(
+            source_video=source_video, seed=seed, model_choice=model_choice,
+            prompt=prompt, width=target_width or width * 2,
+            height=target_height or height * 2, fps=fps,
+            output_stamp=output_stamp,
+        )
     if option == LTX25_SDR_TO_HDR:
         return build_ltx25_hdr_graph(
             source_video=source_video, seed=seed, model_choice=model_choice,
@@ -578,7 +586,95 @@ def build_ltx25_upscale_graph(
     return graph.nodes
 
 
+def required_ltx25_tiled_upscale_nodes() -> set[str]:
+    return {
+        "LoadVideo", "GetVideoComponents", "H3LTXPadVideoFrames",
+        "UNETLoader", "LTXICLoRALoaderModelOnly", "CLIPLoader", "VAELoader",
+        "CLIPTextEncode", "LTXVConditioning", "EmptyLTXVLatentVideo",
+        "LTXAddVideoICLoRAGuide", "KSamplerSelect", "ManualSigmas",
+        "LTXVTiledFusionSampler", "VAEDecodeTiled", "ImageFromBatch",
+        "CreateVideo", "SaveVideo",
+    }
+
+
+def build_ltx25_tiled_upscale_graph(
+    *, source_video: str, seed: int, width: int, height: int,
+    model_choice: str = DEFAULT_LTX25_MODEL, prompt: str = "",
+    fps: float = 24.0, output_stamp: str = "0",
+) -> dict[str, Any]:
+    """Refine one shared canvas with spatial tiles and fresh temporal guides."""
+    width, height = snap32(width), snap32(height)
+    # Match the reference workflow's HD long edge, retaining the canvas aspect.
+    scale = 1280 / max(width, height)
+    tile_width = max(256, snap32(width * scale))
+    tile_height = max(256, snap32(height * scale))
+    names = ltx25_model_names(model_choice)
+    graph = Graph()
+    loaded = graph.add("LoadVideo", file=source_video)
+    components = graph.add("GetVideoComponents", video=Graph.out(loaded))
+    padded = graph.add("H3LTXPadVideoFrames", images=Graph.out(components, 0))
+    base = graph.add("UNETLoader", unet_name=names["distilled"], weight_dtype="default")
+    model = graph.add(
+        "LTXICLoRALoaderModelOnly", model=Graph.out(base),
+        lora_name=MODEL_SPECS["ltx25_refine_details"].local_name, strength_model=1.0,
+    )
+    clip = graph.add(
+        "CLIPLoader", clip_name=names["text_encoder"], type="ltxv", device="default",
+    )
+    vae = graph.add("VAELoader", vae_name=names["video_vae"])
+    positive = graph.add(
+        "CLIPTextEncode", clip=Graph.out(clip),
+        text=prompt.strip() or "Natural fine texture, crisp edges, consistent lighting and color.",
+    )
+    negative = graph.add("CLIPTextEncode", clip=Graph.out(clip), text="")
+    conditioning = graph.add(
+        "LTXVConditioning", positive=Graph.out(positive), negative=Graph.out(negative),
+        frame_rate=float(fps),
+    )
+    latent = graph.add(
+        "EmptyLTXVLatentVideo", width=width, height=height,
+        length=Graph.out(padded, 1), batch_size=1,
+    )
+    guide = graph.add(
+        "LTXAddVideoICLoRAGuide", positive=Graph.out(conditioning, 0),
+        negative=Graph.out(conditioning, 1), vae=Graph.out(vae),
+        latent=Graph.out(latent), image=Graph.out(padded, 0), frame_idx=0,
+        strength=1.0, latent_downscale_factor=1, crop="disabled",
+        use_tiled_encode=False, tile_size=512, tile_overlap=64,
+        use_streaming=True, tile_frames=97,
+    )
+    sampler = graph.add("KSamplerSelect", sampler_name="euler")
+    sigmas = graph.add("ManualSigmas", sigmas=LTX25_SIGMAS)
+    sampled = graph.add(
+        "LTXVTiledFusionSampler", model=Graph.out(model),
+        positive=Graph.out(guide, 0), negative=Graph.out(guide, 1),
+        latents=Graph.out(guide, 2), sigmas=Graph.out(sigmas), sampler=Graph.out(sampler),
+        seed=int(seed), cfg=1.0, tile_width=tile_width, tile_height=tile_height,
+        overlap_frac=0.5, blend_var=0.05, grid_cycle=1, tile_frames=97,
+        vae=Graph.out(vae), canvas_device="auto",
+    )
+    decoded = graph.add(
+        "VAEDecodeTiled", samples=Graph.out(sampled), vae=Graph.out(vae),
+        tile_size=512, overlap=64, temporal_size=128, temporal_overlap=32,
+    )
+    trimmed = graph.add(
+        "ImageFromBatch", image=Graph.out(decoded), batch_index=0,
+        length=Graph.out(padded, 2),
+    )
+    video = graph.add(
+        "CreateVideo", images=Graph.out(trimmed), audio=Graph.out(components, 1),
+        fps=float(fps), bit_depth=8,
+    )
+    graph.add(
+        "SaveVideo", video=Graph.out(video), filename_prefix=f"ltx25/tiled_upscale_{output_stamp}",
+        format="auto", codec="auto",
+    )
+    return graph.nodes
+
+
 def required_upscale_nodes(option: str) -> set[str]:
+    if option == LTX25_TILED_UPSCALE:
+        return required_ltx25_tiled_upscale_nodes()
     if option == SEEDVR2_UPSCALE:
         return required_seedvr2_upscale_nodes()
     if option == LTX25_SDR_TO_HDR:

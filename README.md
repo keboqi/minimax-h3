@@ -721,7 +721,16 @@ alternative that synthesizes fine detail with the transformer selected in the
 **LTX 2.5**
 tab and the official gated pixel spatial upscaler IC-LoRA. Gallery runs accept
 an optional scene prompt; automatic post-processing reuses the H3 generation
-prompt. All three upscale methods preserve the source audio and frame rate and can
+prompt. **LTX-2.5 Tiled Upscale** adds the upstream Tiled Fusion sampler with
+overlapping spatial tiles and 97-frame temporal windows on one shared canvas.
+Use it for large target resolutions without enabling independent clip splits.
+It uses the gated [Refine Details IC-LoRA](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Refine-Details),
+downloaded on first use, and the selected LTX base model. Streaming guides are
+encoded freshly for each temporal window. Media accepts an optional texture or
+lighting prompt; automatic H3 finishing uses a neutral detail prompt. Avoid
+named subjects in tiled prompts because each spatial tile receives that prompt.
+Inputs are padded to LTX-compatible frame counts and trimmed back after decoding.
+All four upscale methods preserve the source audio and frame rate and can
 also run automatically as soon as the base H3 video finishes. Enable
 **Unload resident models first** in Gallery, or **Unload H3 models before
 upscaling** in MiniMax H3, when
@@ -742,8 +751,8 @@ source resolution and audio and lazily downloads the V2 video LoRA from
 The adapters download on first use and require access to their separate gated
 [Decompression](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Decompression)
 and [Deblur](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Deblur)
-repositories. Deblur targets defocus, not motion blur. Use **Split source into
-clips before LTX processing** for restoration clips that exceed available VRAM.
+repositories. Deblur targets defocus, not motion blur. Use **Advanced: split source
+into clips before LTX processing** for restoration clips that exceed available VRAM.
 
 **LTX-2.5 IC-LoRA SDR to HDR** converts an SDR gallery video into a 10-bit
 BT.2020/HLG HEVC MP4 while preserving source resolution, frame rate, and audio.
@@ -757,15 +766,22 @@ HLG/HEVC-capable player and display. Optional split processing joins HDR streams
 without re-encoding them. This uses plain IC-LoRA conditioning; the upstream
 pipeline's optional seam-keyframe/high-quality mode and EXR export are not enabled.
 
-LTX-2.5 upscaling remains a single full-video pass by default. If a long or
-high-resolution source runs out of VRAM, enable **Split source into clips before
-LTX processing** in Gallery, or **Split source into clips before LTX upscaling**
-in the MiniMax H3 post-processing settings. The
+Independent clip splitting remains off by default. Tiled Fusion streams temporal
+windows internally, but source frames, output frames, and the shared latent canvas
+still require memory. If a long or high-resolution source exceeds available memory,
+enable **Advanced: split source into clips before LTX processing** in Media, or
+**Advanced: split source into clips before LTX upscaling** in the MiniMax H3
+post-processing settings. The
 default target is 5 seconds per clip; cuts are adjusted to LTX-compatible frame
 counts, clips are upscaled sequentially, and their video streams are joined
 without an additional video encode. The final file is trimmed to the original
 frame count and remuxed with the original source audio. Because clips are
 generated independently, a visible detail or motion change can occur at a cut.
+
+Existing installations need setup and a ComfyUI restart to load the new pinned
+LTX nodes and local frame-padding node; rebuild/redeploy Modal images as applicable.
+The bundled upstream workflow inventory includes ten classic workflows and the two
+Tiled Fusion examples. Tiled upscaling is exposed through Media and H3 finishing.
 
 SeedVR2 offers **7B FP16**, **7B INT8 (default)**, **3B FP16**, **3B INT8**,
 **7B Sharp FP16**, experimental **7B MXFP8**, and legacy fast/experimental

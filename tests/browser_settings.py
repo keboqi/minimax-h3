@@ -231,6 +231,21 @@ def run():
                 expect(page.get_by_text("SLA / Veda quality controls", exact=True)).to_be_visible()
                 page.get_by_label("SLA", exact=True).check()
                 expect(page.get_by_text("Sol-Attn tau", exact=True)).not_to_be_visible()
+                # Tiled finishing exposes splitting only as an unchecked fallback.
+                page.get_by_role("tab", name="Upscaling & finishing", exact=True).click()
+                finishing = page.get_by_label("After generation", exact=True)
+                finishing.click()
+                page.get_by_role("option", name="LTX-2.5 Tiled Upscale", exact=True).click()
+                split = page.get_by_label(
+                    "Advanced: split source into clips before LTX upscaling", exact=True
+                )
+                expect(split).to_be_visible()
+                expect(split).not_to_be_checked()
+                expect(page.get_by_text("Uses spatial tiles and temporal streaming", exact=False)).to_be_visible()
+                finishing.click()
+                page.get_by_role("option", name="None", exact=True).click()
+                expect(split).not_to_be_visible()
+                page.get_by_role("tab", name="Sampling & performance", exact=True).click()
                 # Layout must keep result metadata inside the two-column H3 row.
                 artifact = ROOT / ".cache" / "ui-review"
                 artifact.mkdir(parents=True, exist_ok=True)

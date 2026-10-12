@@ -278,7 +278,10 @@ class ApplicationAdaptersTests(unittest.TestCase):
             len({entry["id"] for entry in app.LTX25_WORKFLOWS.values()}), 10
         )
         self.assertEqual(
-            {entry["filename"] for entry in app.LTX25_WORKFLOWS.values()},
+            {entry["filename"] for entry in app.LTX25_WORKFLOWS.values()} | {
+                "LTX-2.5_V2V_TiledFusion_Native_4K_8K.json",
+                "LTX-2.5_V2V_TiledFusion_Upscale.json",
+            },
             set(_requirements.LTX25_WORKFLOW_FILENAMES),
         )
         self.assertTrue(

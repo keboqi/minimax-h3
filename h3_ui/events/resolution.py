@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gradio as gr
+from h3_app.catalog import LTX25_TILED_UPSCALE
 
 from ..contracts import AppComponents, AppServices
 from ..settings_controller import SettingsController
@@ -15,10 +16,19 @@ def bind_resolution(
         lambda value: (
             gr.update(visible=value in services.AI_POSTPROCESS_OPTIONS),
             gr.update(visible=value == services.SEEDVR2_UPSCALE),
-            gr.update(visible=value == services.LTX25_UPSCALE),
-            gr.update(visible=value == services.LTX25_UPSCALE),
-            gr.update(visible=value == services.LTX25_UPSCALE),
-            gr.update(visible=value == services.LTX25_UPSCALE),
+            gr.update(
+                visible=value in {services.LTX25_UPSCALE, LTX25_TILED_UPSCALE},
+                value=(
+                    "Uses spatial tiles and temporal streaming. The detail-refinement adapter "
+                    "downloads on first use. Uses a neutral detail prompt; segment splitting is an advanced fallback."
+                    if value == LTX25_TILED_UPSCALE else
+                    "Uses the finishing model selected here and the H3 generation prompt. "
+                    "The gated 2x IC-LoRA downloads on first use."
+                ),
+            ),
+            gr.update(visible=value in {services.LTX25_UPSCALE, LTX25_TILED_UPSCALE}),
+            gr.update(visible=value in {services.LTX25_UPSCALE, LTX25_TILED_UPSCALE}),
+            gr.update(visible=value in {services.LTX25_UPSCALE, LTX25_TILED_UPSCALE}),
         ),
         inputs=components.generation_postprocess,
         outputs=[

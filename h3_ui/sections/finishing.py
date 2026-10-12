@@ -193,7 +193,7 @@ def build_finishing_section(
             value=defaults["postprocess"],
             label="After generation",
             info=(
-                "Optionally run SeedVR2 or LTX-2.5 2x immediately after the base H3 "
+                "Optionally run SeedVR2, SwiftVR or LTX-2.5 upscaling immediately after the base H3 "
                 "video finishes. The source video remains in the gallery."
             ),
         )
@@ -237,9 +237,9 @@ def build_finishing_section(
             )
             generation_split_upscale = gr.Checkbox(
                 value=defaults["upscale_split_enabled"],
-                label="Split source into clips before LTX upscaling",
+                label="Advanced: split source into clips before LTX upscaling",
                 info=(
-                    "Opt in after an out-of-VRAM error. Each clip is "
+                    "Normally leave off with Tiled Upscale. Opt in if memory is still insufficient. Each clip is "
                     "upscaled independently and concatenated afterward."
                 ),
                 visible=False,

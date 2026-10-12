@@ -58,7 +58,13 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
     if name == "LTXAddVideoICLoRAGuide":
         if image_only:
             return "Encoding source image for CQ enhancement"
+        if "LTXVTiledFusionSampler" in workflow_classes:
+            return "Encoding LTX streaming guides"
         return "Encoding source video for LTX-2.5 2x upscaling"
+    if name == "H3LTXPadVideoFrames":
+        return "Preparing source video frames"
+    if name == "LTXVTiledFusionSampler":
+        return "Upscaling video with LTX tiled fusion"
     if name == "LTXVCropGuides":
         return "Removing LTX-2.5 reference tokens"
     if name in {"CLIPTextEncode", "LTXVConditioning"}:
@@ -88,6 +94,8 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
     }:
         if image_only:
             return "Preparing image latents"
+        if "LTXVTiledFusionSampler" in workflow_classes:
+            return "Preparing LTX video latents"
         return "Preparing LTX-2.5 audio-video latents"
     if name == "VAEEncodeTiled":
         if "SeedVR2Preprocess" in workflow_classes:

@@ -254,8 +254,8 @@ def build_gallery_view(
                             )
                         split_upscale = gr.Checkbox(
                             value=False,
-                            label="Split source into clips before LTX processing",
-                            info="Opt in after an out-of-VRAM error. Processes clips independently, then concatenates them.",
+                            label="Advanced: split source into clips before LTX processing",
+                            info="Normally leave off with Tiled Upscale. Opt in if memory is still insufficient. Processes clips independently, then concatenates them.",
                             visible=False,
                         )
                         split_seconds = gr.Slider(

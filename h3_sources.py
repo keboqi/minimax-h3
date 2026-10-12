@@ -13,7 +13,7 @@ LARRY_TURBO_REF = (
     "4274783a23afcfdbea3b4876cb79effd6c510785"  # v1.2.3+ audio/reference fixes
 )
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
-LTXVIDEO_REF = "f8387c893de3f652c3a416052c82bba593edcf2b"
+LTXVIDEO_REF = "3bf3ca62595f1764c47d01c35c8e5dfe47e1a88f"
 LTXVIDEO_REPO = "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
 SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"

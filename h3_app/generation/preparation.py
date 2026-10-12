@@ -17,7 +17,7 @@ from h3_app.catalog import (
     LARRY_TURBO,
     REFINEMENT_LORA_SETTINGS,
     SAME_REFINEMENT_LORA,
-    LTX25_UPSCALE,
+    LTX25_UPSCALE_OPTIONS,
     SEEDVR2_UPSCALE,
     SINGLE_FRAME_IMAGE_VAE,
 )
@@ -240,7 +240,7 @@ def prepare_h3(
         services.models.ensure_single_frame_image_vae(models)
     if request.finishing.postprocess == SEEDVR2_UPSCALE:
         seedvr2_upscale_model_names(models, request.finishing.seedvr2_model)
-    elif request.finishing.postprocess == LTX25_UPSCALE:
+    elif request.finishing.postprocess in LTX25_UPSCALE_OPTIONS:
         ltx25_model_keys(request.finishing.ltx25_model)
     profile_key = models.profile_key(request.sampling.model_profile)
     profile = models.profiles[profile_key]

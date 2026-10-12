@@ -1873,6 +1873,28 @@ class H3Qwen21ViggleLora:
         return (patched,)
 
 
+class H3LTXPadVideoFrames:
+    """Pad a guide to 8n+1 without dropping source frames; retain its trim length."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"images": ("IMAGE",)}}
+
+    RETURN_TYPES = ("IMAGE", "INT", "INT")
+    RETURN_NAMES = ("images", "padded_frames", "source_frames")
+    FUNCTION = "pad"
+    CATEGORY = "H3/LTX"
+
+    def pad(self, images):
+        if images.ndim != 4 or images.shape[0] < 1:
+            raise ValueError("LTX upscale requires a nonempty IMAGE frame batch.")
+        frames = int(images.shape[0])
+        padded = ((frames - 1 + 7) // 8) * 8 + 1
+        if padded != frames:
+            images = torch.cat((images, images[-1:].expand(padded - frames, -1, -1, -1)))
+        return images, padded, frames
+
+
 class H3LTXHDRConditioning:
     """Load fixed HDR video context with a neutral, unused AV audio context."""
 
@@ -1915,6 +1937,7 @@ class H3LTXHDRConditioning:
 
 
 NODE_CLASS_MAPPINGS = {
+    "H3LTXPadVideoFrames": H3LTXPadVideoFrames,
     "H3Qwen21Sigmas": H3Qwen21Sigmas,
     "H3LTXHDRConditioning": H3LTXHDRConditioning,
     "H3Qwen21TurboSigmas": H3Qwen21TurboSigmas,
@@ -1934,6 +1957,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "H3LTXPadVideoFrames": "LTX Pad Video Frames",
     "H3Qwen21Sigmas": "Qwen Image 2.1 Resolution-Aware Sigmas",
     "H3Qwen21TurboSigmas": "Qwen Image 2.1 Viggle Turbo Sigmas",
     "H3Qwen21ViggleLora": "Qwen Image 2.1 Viggle Turbo LoRA (unmerged)",

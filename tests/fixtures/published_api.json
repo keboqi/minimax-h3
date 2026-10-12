@@ -248,7 +248,7 @@
     "/generate_qwen_image21": {
       "parameters": [
         {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "Text to image", "type": "type_62"},
-        {"parameter_name": "model_choice", "parameter_has_default": true, "parameter_default": "BF16", "type": "type_63"},
+        {"parameter_name": "model_choice", "parameter_has_default": true, "parameter_default": "INT8 ConvRot (lower VRAM)", "type": "type_63"},
         {"parameter_name": "text_encoder_choice", "parameter_has_default": true, "parameter_default": "BF16", "type": "type_64"},
         {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "negative_prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
@@ -258,15 +258,15 @@
         {"parameter_name": "reference_resolution", "parameter_has_default": true, "parameter_default": 0, "type": "type_66"},
         {"parameter_name": "edit_size", "parameter_has_default": true, "parameter_default": "Match first image size", "type": "type_67"},
         {"parameter_name": "seed", "parameter_has_default": true, "parameter_default": -1, "type": "type_12"},
-        {"parameter_name": "steps", "parameter_has_default": true, "parameter_default": 40, "type": "type_68"},
+        {"parameter_name": "steps", "parameter_has_default": true, "parameter_default": 8, "type": "type_68"},
         {"parameter_name": "cfg", "parameter_has_default": true, "parameter_default": 1.0, "type": "type_69"},
         {"parameter_name": "sampler_name", "parameter_has_default": true, "parameter_default": "euler", "type": "type_70"},
         {"parameter_name": "scheduler", "parameter_has_default": true, "parameter_default": "qwen_image21", "type": "type_71"},
         {"parameter_name": "cache_device", "parameter_has_default": true, "parameter_default": "auto", "type": "type_72"},
         {"parameter_name": "cache_dtype", "parameter_has_default": true, "parameter_default": "default", "type": "type_73"},
         {"parameter_name": "attention_backend", "parameter_has_default": true, "parameter_default": "pytorch attention", "type": "type_74"},
-        {"parameter_name": "accelerator", "parameter_has_default": true, "parameter_default": "Spectrum (Quality)", "type": "type_75"},
-        {"parameter_name": "turbo_variant", "parameter_has_default": true, "parameter_default": "Off", "type": "type_76"},
+        {"parameter_name": "accelerator", "parameter_has_default": true, "parameter_default": "Off", "type": "type_75"},
+        {"parameter_name": "turbo_variant", "parameter_has_default": true, "parameter_default": "Official Turbo (8-step)", "type": "type_76"},
         {"parameter_name": "output_resolution_1k", "parameter_has_default": false, "parameter_default": null, "type": "type_77"},
         {"parameter_name": "output_resolution_2k", "parameter_has_default": false, "parameter_default": null, "type": "type_78"},
         {"parameter_name": "batch_count", "parameter_has_default": true, "parameter_default": 1, "type": "type_2"},
@@ -726,6 +726,7 @@
         "None",
         "SeedVR2 2x",
         "LTX-2.5 IC-LoRA 2x",
+        "LTX-2.5 Tiled Upscale",
         "SwiftVR 2x"
       ]
     },
@@ -1381,6 +1382,7 @@
       "type": "string",
       "enum": [
         "Off",
+        "Official Turbo (8-step)",
         "Viggle Turbo v0.2.1 (6-step)",
         "Viggle Turbo v0.3 (6-step)",
         "Viggle Turbo v0.3 (9-step)"
