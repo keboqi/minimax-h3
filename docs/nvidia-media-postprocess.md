@@ -1,71 +1,40 @@
-# NVIDIA enhancement in Media
+# Experimental DLSS 5 Media enhancement
 
-Select an image or video in **Media → Enhance selected media** and choose **NVIDIA RTX Video Super Resolution** or **DLSS 5 Neural Rendering (experimental)**. Both save a new copy and keep the original. Imported videos work too. The controls and runtime checks run on the server that processes media, not the browser's machine.
+Select **DLSS 5 Neural Rendering (experimental)** in Media for images or videos. Default/Natural/Cinematic styles and intensity are available. Keep original resolution is the default. Disabling it selects the largest supported DLSS factor fitting the target box: 1×, 1.5×, 1.724×, 2×, or 3×. The actual resolution is recorded in output metadata. Output must fit 7680 × 4320 in either orientation; no downscaling occurs.
 
-VSR provides quality, enhancement strength, compressed/high-bitrate source profiles, and optional denoise/deblur preprocessing. To clean a video without upscaling, enable **Keep original resolution** and choose Denoise or Deblur. At original resolution the preprocessing strength is used. DLSS 5 provides Default/Natural/Cinematic styles and intensity. It defaults to original resolution; disable **Keep original resolution** for DLSS Super Resolution followed by neural rendering.
+The implementation uses the MIT-licensed RunningHub host and bridge, pinned to commit `71ab1060865ea781c7f4a8b7c0c79600f51b6617`. The Python adapter converts bounded RGBA frames into its DNR2 protocol: RGB float32 pixels, FP16 motion guides, indexed reply headers, and END1 completion. Feature readiness is recorded only after a successful frame evaluation. Images use zero motion and retain their original alpha separately. Videos use OpenCV DIS motion and scene-cut resets when OpenCV is available; otherwise every frame resets history with zero motion.
 
-The initial integration supports SDR, constant-frame-rate videos with square pixels, zero video start timestamp, and normalized rotation. HDR/linear/wide-gamut BT.2020 sources and irregular timestamps are rejected explicitly. The frame-timing check is conservative: some container timestamp jitter can require conversion to CFR even when the video is nominally CFR. It scans the whole video before enhancement. Targets preserve aspect ratio with encoder/SDK alignment; VSR supports 1–4× and the DLSS adapter limits upscaling to 1–3×. No downscaling is performed.
+## Automatic processing-host setup
 
-Video output is 8-bit HEVC MP4. The encoder is tested before enhancement: HEVC NVENC is preferred, with CPU libx265 if hardware encoding cannot initialize. An encoding failure after processing starts fails the job instead of silently recomputing it. Compatible audio streams are copied; other audio is converted to AAC. Videos without audio are supported. Frame count, rate, dimensions, and audio-stream presence are checked before publication.
+`run_h3.sh` invokes the shared `h3_nvidia_runtime.py` installer. Colab uses that same launcher. Modal builds immutable runtime files into its image, then initializes its dedicated Wine prefix against the live host after restore. Installation and runtime checks must run on the processing host, not on a developer's desktop.
 
-Image output is lossless 8-bit PNG with an embedded sRGB profile. EXIF orientation is applied before enhancement; valid embedded color profiles are converted to sRGB. Transparency is retained separately and resized to the target using Lanczos, then restored after enhancement. Each image uses one RGB/RGBA worker frame; DLSS motion estimation is disabled for stills. The image path does not encode an intermediate video or require a video encoder. Animated images, high-bit-depth/linear PNGs, unsupported pixel modes, invalid color profiles, and images over 8192 pixels per axis are rejected. Untagged 8-bit images are treated as sRGB. Native-size images may have odd dimensions; video output still requires even dimensions.
+Setup obtains:
 
-## Automatic installation
+- Wine 11 amd64-wow64, which avoids a dependency on the 32-bit Linux loader.
+- DXVK 3.1, VKD3D-Proton 3.0.1 and DXVK-NVAPI 0.9.2, with release SHA-256 checks.
+- RunningHub's host, bridge and caller shim, checked against pinned Git blob identities.
+- The existing SHA-256-pinned model bundle; its previous video processing executable is not used.
+- `_nvngx.dll` extracted from the pinned official NVIDIA **Windows** 616.56 package. The driver installer is never executed and the host driver is never replaced. This first setup downloads a large driver archive solely for extraction.
+- A server-only build of pinned DXVK-NVAPI with a narrow headless fix: when Vulkan has no valid device LUID, use the same DXGI adapter's LUID. The build uses distribution MinGW/Meson packages and pinned submodules, with tests disabled, and caches the resulting DLL. This is a project patch, not an upstream released fix.
 
-Run the normal launcher, `bash run_h3.sh`, including from the Colab notebook. Setup installs `nvidia-vfx==0.2.0.0` by default. The launcher downloads and verifies the pinned video2dlssnr v1.4.1 release, including its executable, forwarder, Super Resolution library, and neural rendering model. Linux setup also installs its display/Vulkan dependencies and GE-Proton11-7 graphics DLLs. Every Linux host uses the pinned Kron4ek Wine 11.0 **amd64-wow64** runner, including Ubuntu 22.04 Colab sessions and newer Ubuntu containers. This runner works without 32-bit Linux libraries; selecting Proton's runner using only glibc version missed its `/lib/ld-linux.so.2` dependency.
+Linux setup requires apt-get with root or sudo access. Modal/Colab install the same prerequisites. Set `H3_ENABLE_DLSSNR=0` to opt out. No optional enhancement failure prevents ordinary generation from starting.
 
-The managed Wine prefix is named for its runner, for example `prefix-wine-11.0-amd64-wow64`. Upgrading from the old Proton prefix automatically initializes this separate prefix instead of reusing links into the old Wine build. The old prefix is preserved. Startup performs the same automatic repair through standalone, Colab, and Modal; no manual multilib installation or prefix deletion is needed.
+The new managed Wine prefix is isolated from prior prefixes. Wine inherits no application `LD_LIBRARY_PATH`. NR is enabled through the NVAPI DRS override. A separately managed Xvfb display keeps display wrappers away from binary stdout. CUDA GPU assignments are translated to a Vulkan UUID; `H3_DLSSNR_GPU_UUID` can explicitly identify the assigned GPU.
 
-Files are cached under `h3/nvidia` (`H3_NVIDIA_RUNTIME_DIR` overrides this location). Linux receives a dedicated prefix, native DXVK/VKD3D/NVAPI DLLs, and a headless Xvfb display when no desktop display exists. Startup locates the host's native NGX core and Wine bridges. Missing files are extracted from the **exact host-driver version** of NVIDIA's `libnvidia-gl` package, resolved through the official CUDA repository's amd64 package index and verified against its SHA-256. This includes data-center versions such as `580.126.20` that have no desktop-driver archive at the XFree86 URL. Only `libnvidia-ngx.so.1`, `nvngx.dll`, and `_nvngx.dll` are copied into the application cache. The package is never installed, and no host driver is replaced or upgraded. Missing or corrupted cached components are repaired on restart. The manifest records the helper, runner, neural model hash, native NGX location, and driver version. Downloads remain outside source control.
+## Processing-host requirements and diagnostics
 
-VSR needs native `libnvidia-ngx.so.1` even with working CUDA, PyTorch, and the VFX wheel. The SDK loads this driver component dynamically, so checking `ldd` on VFX alone can miss it. Compute-only cloud containers can omit it and produce `NvVFX_Load` code `-12`; see the [upstream VFX container report](https://github.com/Comfy-Org/ComfyUI_Nvidia_VFX_Nodes/issues/4). Startup prepares it independently of DLSS setup, and both worker environments receive its loader path. VSR explicitly loads the library before SDK initialization and reports its path, GPU, and SDK version. Code `-12` can have other causes; the actual effect evaluation still needs to pass on the host.
+CUDA or `nvidia-smi` alone is insufficient. The assigned NVIDIA GPU must appear in `vulkaninfo --summary` under the display used by Wine. Container creation must expose the NVIDIA graphics capabilities, ICD, and matching userspace driver libraries, including ray-tracing components used by VKD3D. Setting a capability variable after container creation cannot mount missing host libraries. The launcher cannot repair provider-controlled device access.
 
-No manual helper paths, model downloads, Wine installation, or prefix configuration are required. The VSR worker uses `nvvfx.VideoSuperRes` directly, without a third-party ComfyUI node. For an intentional opt-out, set `H3_ENABLE_NVIDIA_VSR=0` or `H3_ENABLE_DLSSNR=0` before setup/deployment. Linux package installation uses apt-get with root or sudo access; the Colab and Modal environments already run as root.
+Startup checks Wine prefix creation and NVIDIA Vulkan visibility; it does not run GPU inference. **Check NVIDIA runtime** evaluates two textured native-size frames and rejects bypassed, malformed or all-black output. Image/video enhancement runs this probe before opening the main processing pipeline. Actual model evaluation on the deployed GPU remains the compatibility gate; successful provisioning is not proof of inference support.
 
-For a separate GPU Python, set `H3_VSR_PYTHON` to its absolute executable path before starting the app. That environment needs the pinned VFX package, NumPy, and a CUDA/Blackwell-compatible PyTorch build. The worker imports these only when run. The browser/UI process does not load the GPU runtime while browsing Media.
+Videos must be SDR with constant frame rate, square pixels, zero start timestamp and normalized rotation. HDR/linear/BT.2020 sources are rejected. A known frame count from 1 to 1,000,000 is required by the host protocol; if container metadata omits it, ffprobe counts it first. Timing and frame counts are validated before publication. Audio is copied when MP4-compatible, otherwise encoded as AAC. Images are normalized to sRGB and saved losslessly as PNG with original transparency restored.
 
-NVIDIA documents Linux VSR driver requirements as 570.190+, 580.82+, or 590.44+ on the corresponding driver branches. Effect initialization remains the authoritative runtime check. See the [SDK requirements](https://docs.nvidia.com/maxine/vfx/latest/Filters/VideoSuperResolution.html).
+Cancellation stops job-owned processes and only the dedicated Wine prefix's server. Source files are retained. Partial outputs are never published. Output provenance records the model/helper hashes, actual dimensions, motion backend, stage order, frame rate/count, encoder and source lineage.
 
-## Runtime checks and advanced overrides
+## References
 
-The [video2dlssnr](https://github.com/DaniilSokolyuk/video2dlssnr) helper uses its raw RGBA `--nr-video` pipeline, target size, style/intensity, and automatic optical flow. Its libraries retain their upstream licenses/terms; the installer keeps the upstream README beside the executable. Automatic installation establishes prerequisites, not GPU compatibility. NVIDIA's driver, Vulkan capabilities, and neural feature initialization remain authoritative. A Colab/Modal provider's incompatible GPU or driver cannot be fixed by installing these files; the Media runtime check reports that failure. Linux RTX PRO 6000 neural execution still needs verification on the actual host.
-
-The pinned helper's [v1.4.1 source](https://github.com/DaniilSokolyuk/video2dlssnr/blob/v1.4.1/src/nr.cpp) checks for **Windows NVIDIA driver 616.56 or newer** before NR execution. That version number is not a Linux driver compatibility guarantee. Wine/DXVK may report a synthetic Windows adapter version, so passing the version check does not establish that a Linux `580.126.20` NGX bridge implements the neural feature. We do not spoof a newer driver to bypass the check or claim successful DLSS inference from installation alone. The check must confirm initialization and changed, non-black RGB frames on the actual GPU.
-
-Advanced users can bypass managed DLSS installation by setting `H3_DLSSNR_EXE` before launch. On Windows:
-
-```powershell
-$env:H3_DLSSNR_EXE = 'D:\tools\video2dlssnr\video2dlssnr.exe'
-$env:H3_DLSSNR_DLL_DIR = 'D:\tools\video2dlssnr'
-```
-
-For a custom Linux installation, supply a compatible runner and **dedicated** initialized prefix:
-
-```bash
-export H3_DLSSNR_EXE=/opt/video2dlssnr/video2dlssnr.exe
-export H3_DLSSNR_DLL_DIR=/opt/video2dlssnr
-export H3_DLSSNR_WINE=/absolute/path/to/wine
-export H3_DLSSNR_WINEPREFIX=/absolute/path/to/dedicated-dlss-prefix
-```
-
-`H3_DLSSNR_WINE` is the Wine executable, not a shell command or Proton launch string. A custom runner needs a sibling `wineserver`, DXVK/VKD3D/NVAPI, matching NGX bridges, and a prefix containing `system.reg`. Explicit custom paths take precedence over the managed configuration.
-
-The prefix is exclusively for this feature: the application locks it while using it and stops that prefix's wineserver on completion, cancellation, or failure. Never point it at a shared application or game prefix. Other Wine prefixes are not stopped.
-
-Managed setup saves the model SHA-256 automatically. For custom installations, `H3_DLSSNR_MODEL_SHA256` provides the same verification. Hash verification runs inside processing, not while browsing. Each output records the model and executable hashes. Keep the exact helper/model/runner combination fixed when reproducing results.
-
-Choose **Check NVIDIA runtime** to evaluate two textured frames on the GPU. The DLSS probe runs at native resolution, requires changed RGB pixels and the helper's neural-feature initialization confirmation, and rejects pass-through output (including alpha-only changes). Enhancement repeats the probe before processing the selected video; a passing file/prerequisite check alone never establishes neural execution. The underlying helper must return nonzero on a failed NGX evaluation, as the inspected `video2dlssnr` implementation does. **Stop runtime check** cancels the probe; **Interrupt** cancels enhancement. Both share the existing GPU queue with generation jobs.
-
-This integration does not reimplement NVIDIA's model and does not establish official DLSS support for RTX PRO cards. Linux/Wine behavior and actual neural output still require acceptance on the intended processing host. A runtime failure is shown in the Media status and recorded as a failed job.
-
-## Modal and headless hosts
-
-The standard Modal image installs VSR and builds the same pinned DLSS runtime automatically. It initializes its dedicated Wine prefix and matching driver bridges after snapshot restore, before launching Gradio. Rebuild/redeploy to receive these image dependencies. No GPU inference runs during image construction.
-
-Colab's `run_h3_colab.sh` delegates to `run_h3.sh`, so notebook and terminal launches receive the same setup. First launch needs extra download time and disk space for the helper/model and Linux runner. Existing generation options remain available if experimental DLSS host preparation fails; the precise error appears in Media. Runtime browsing and Media actions never install system packages or download software.
-
-## Output records and verification
-
-Successful output settings include the method parameters, requested/actual dimensions, rational frame rate, processed frame count, encoder and fallback status, audio policy, and source asset lineage. VSR also reports its runtime, PyTorch version, GPU, and selected effect mode; DLSS records executable/model hashes, requested motion mode, and the actual optical-flow backend when reported by the helper. Runtime evidence is retained even for long videos. Working files are temporary and never appear as completed library assets.
-
-CPU tests use synthetic workers, still images, and small FFmpeg clips, covering raw binary transport, transparency, color/orientation, failures, timeouts, cancellation, metadata validation, lineage, and request capture. They do not load either GPU runtime. Before claiming hardware support, run a real runtime probe, still-image comparisons, a short clip with motion/cuts, a representative long clip, cancellation followed by another job, and original/enhanced comparisons on the actual deployment. Record warm-up separately from steady-state speed and memory. No GPU speed or quality claim has been validated by this change.
+- [RunningHub Linux implementation](https://github.com/RH-RunningHub/ComfyUI-RH-DLSS5)
+- [NGX runtime requirements](https://github.com/RH-RunningHub/ComfyUI-RH-DLSS5/blob/main/runtime/README.txt)
+- [NVAPI source](https://github.com/jp7677/dxvk-nvapi/tree/v0.9.2)
+- [NVIDIA container driver capabilities](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html#driver-capabilities)
+- MIT notices for the adapted motion code and host: `docs/licenses/RunningHub-DLSS5-MIT.txt`.

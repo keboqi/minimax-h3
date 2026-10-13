@@ -129,7 +129,6 @@ from h3_requirements import (  # noqa: E402
     WSPROTO_VERSION,
     SWIFTVR_REF,
     SWIFTVR_REPO,
-    NVIDIA_VFX_REQUIREMENT,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
     probe_comfy_frontend,
@@ -638,8 +637,6 @@ image = (
     )
 )
 
-if os.getenv("H3_ENABLE_NVIDIA_VSR", "1") != "0":
-    image = image.uv_pip_install(NVIDIA_VFX_REQUIREMENT)
 
 # Install display/Vulkan libraries in the image; Wine and neural libraries are
 # provisioned by the same pinned installer used by standalone and Colab.

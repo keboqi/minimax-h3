@@ -8,7 +8,7 @@ import tempfile
 from PIL import Image, ImageCms, ImageOps
 
 from . import nvidia_postprocess as backend
-from .catalog import DLSS5_NR, NVIDIA_POSTPROCESS_OPTIONS, NVIDIA_VSR
+from .catalog import DLSS5_NR, NVIDIA_POSTPROCESS_OPTIONS
 from .errors import H3Error
 from .jobs import check_cancelled
 from .nvidia_pipeline import stream_pipeline
@@ -67,14 +67,10 @@ def postprocess_image(source, method, resolution, settings_value, *, runtime):
     if method == DLSS5_NR:
         yield backend.NvidiaUpdate("Checking DLSS 5 neural execution", total=1)
         backend.probe_runtime(method, runtime)
-    channels = 3 if method == NVIDIA_VSR else 4
-    mode = "RGB" if channels == 3 else "RGBA"
+    channels = 4
+    mode = "RGBA"
     raw = rgb.convert(mode).tobytes()
-    command, cwd = backend.worker_command(method, width, height, out_width, out_height, settings)
-    if method == DLSS5_NR:
-        # One still frame has no motion history. Reuse the verified raw-frame
-        # interface without file-path translation or lossy video encoding.
-        command[command.index("--nr-motion") + 1] = "0"
+    command, cwd = backend.worker_command(method, width, height, out_width, out_height, settings, frames=1, motion=False)
     result = bytearray()
     with backend.worker_context(method, runtime) as env:
         for update in stream_pipeline(
@@ -93,7 +89,7 @@ def postprocess_image(source, method, resolution, settings_value, *, runtime):
     enhanced = Image.frombytes(mode, (out_width, out_height), bytes(result)).convert("RGB")
     if alpha is not None:
         enhanced.putalpha(alpha.resize(enhanced.size, Image.Resampling.LANCZOS))
-    category = "nvidia_vsr" if method == NVIDIA_VSR else "dlss5"
+    category = "dlss5"
     root = runtime.outputs_dir / category
     root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".processing-", dir=root) as directory:

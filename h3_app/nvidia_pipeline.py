@@ -107,7 +107,7 @@ def stream_pipeline(
     def log_line(line, label):
         decoded = line[-2048:].decode("utf-8", "replace")
         with log_lock:
-            for marker in ("H3VFX ", "feature ready; streaming", "optical flow:"):
+            for marker in ("feature ready; streaming", "optical flow:"):
                 if marker in decoded:
                     headers[label + marker] = label + decoded
             logs.append(label + decoded)

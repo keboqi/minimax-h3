@@ -122,33 +122,28 @@ class UiContractTests(unittest.TestCase):
                          (8, 1.0, "euler", "Off"))
 
     def test_nvidia_media_controls_capture_settings_and_gate_unavailable_methods(self):
-        from h3_app.catalog import NVIDIA_VSR, DLSS5_NR
+        from h3_app.catalog import DLSS5_NR
         from h3_ui import media_bindings, nvidia_media
         method = next(c for c in self.config["components"] if c.get("props", {}).get("label") == "Method")
         choices = [c[1] for c in method["props"]["choices"]]
-        self.assertIn(NVIDIA_VSR, choices)
         self.assertIn(DLSS5_NR, choices)
         event = next(d for d in self.config["dependencies"]
-                     if d["inputs"][:1] == [method["id"]] and len(d["outputs"]) == 14)
+                     if d["inputs"][:1] == [method["id"]] and len(d["outputs"]) == 13)
         callback = self.demo.fns[event["id"]].fn
         with mock.patch.object(media_bindings, "availability", return_value=(True, "Ready to check")), mock.patch.object(nvidia_media, "availability", return_value=(True, "Ready to check")):
-            vsr = callback(NVIDIA_VSR, "Video", "clip.mp4")
-            self.assertFalse(vsr[7]["visible"])  # random seed
-            self.assertTrue(vsr[9]["visible"])
-            self.assertFalse(vsr[10]["visible"])
             dlss = callback(DLSS5_NR, "Video", "clip.mp4")
-            self.assertTrue(dlss[10]["visible"])
-            self.assertTrue(dlss[11]["value"])  # original size default
-            self.assertTrue(dlss[13]["interactive"])
+            self.assertTrue(dlss[9]["visible"])
+            self.assertTrue(dlss[10]["value"])  # original size default
+            self.assertTrue(dlss[12]["interactive"])
             image = callback(DLSS5_NR, "Image", "picture.png")
-            self.assertTrue(image[13]["interactive"])
+            self.assertTrue(image[12]["interactive"])
         with mock.patch.object(media_bindings, "availability", return_value=(False, "Missing model")), mock.patch.object(nvidia_media, "availability", return_value=(False, "Missing model")):
             missing = callback(DLSS5_NR, "Video", "clip.mp4")
-            self.assertEqual(missing[12], "Missing model")
-            self.assertFalse(missing[13]["interactive"])
+            self.assertEqual(missing[11], "Missing model")
+            self.assertFalse(missing[12]["interactive"])
         admission = next(d for d in self.config["dependencies"]
                          if any(self.components[i].get("props", {}).get("label") == "DLSS 5 intensity" for i in d["inputs"]))
-        self.assertEqual(len(admission["inputs"]), 20)  # 19 captured values + request key
+        self.assertEqual(len(admission["inputs"]), 15)  # 14 captured values + request key
 
     def test_all_generator_image_inputs_have_library_selection(self):
         image_inputs = [
@@ -520,7 +515,7 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(updates[5]["visible"])
         self.assertEqual(updates[7]["choices"], [
             gradio_app.SEEDVR2_UPSCALE, _catalog.LTX25_CQ_IMAGE_ENHANCER,
-            _catalog.NVIDIA_VSR, _catalog.DLSS5_NR,
+            _catalog.DLSS5_NR,
         ])
         self.assertTrue(updates[9]["visible"])
 
@@ -1511,7 +1506,7 @@ class UiContractTests(unittest.TestCase):
             self.assertEqual([update["visible"] for update in switched[:3]], [False, True, False])
             self.assertEqual(switched[7]["choices"], [
                 gradio_app.SEEDVR2_UPSCALE, _catalog.LTX25_CQ_IMAGE_ENHANCER,
-                _catalog.NVIDIA_VSR, _catalog.DLSS5_NR,
+                _catalog.DLSS5_NR,
             ])
             inventory.reset_mock()
             filtered = event.fn(

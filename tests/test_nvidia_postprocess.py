@@ -10,12 +10,11 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-from h3_app.catalog import DLSS5_NR, NVIDIA_VSR, POSTPROCESS_OPTIONS, GENERATION_POSTPROCESS_OPTIONS
+from h3_app.catalog import DLSS5_NR, POSTPROCESS_OPTIONS, GENERATION_POSTPROCESS_OPTIONS
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
 from h3_app import nvidia_postprocess as service
-from h3_app import vsr_worker
 from h3_app.nvidia_pipeline import stream_pipeline
 from h3_app.provenance import read_snapshot, write_snapshot
 from h3_ui.nvidia_media import with_nvidia_settings, can_enhance
@@ -24,45 +23,40 @@ from h3_ui.presentation import error_markdown
 
 
 class NvidiaSettingsTests(unittest.TestCase):
-    def test_vsr_checks_dynamic_ngx_dependency_before_loading_sdk(self):
-        with patch.object(vsr_worker.sys, "platform", "linux"), patch.dict(service.os.environ, {"H3_VSR_NGX_LIBRARY": "/private/libnvidia-ngx.so.1"}), patch.object(vsr_worker.ctypes, "CDLL", side_effect=OSError("not found")) as load:
-            with self.assertRaisesRegex(RuntimeError, "driver NGX core.*not found"):
-                vsr_worker.load_native_ngx()
-            load.assert_called_once_with("/private/libnvidia-ngx.so.1", mode=vsr_worker.ctypes.RTLD_GLOBAL)
+    def test_fixed_dlss_factors_fit_the_target_without_arbitrary_resizing(self):
+        with patch.dict(service.UPSCALE_RESOLUTION_PRESETS, {"fixture": (2500, 2500)}):
+            self.assertEqual(service.target_dimensions(DLSS5_NR, 1280, 720, "fixture",
+                                                       service.NvidiaSettings()), (2206, 1242))
+        with patch.dict(service.UPSCALE_RESOLUTION_PRESETS, {"fixture": (1920, 1920)}):
+            with self.assertRaisesRegex(H3Error, "downscale"):
+                service.target_dimensions(DLSS5_NR, 3840, 2160, "fixture", service.NvidiaSettings())
+        with self.assertRaisesRegex(H3Error, "envelope"):
+            service.target_dimensions(DLSS5_NR, 8000, 5000, "unused", service.NvidiaSettings(original_size=True))
 
-    def test_gpu_python_preserves_virtualenv_executable_without_resolving_symlink(self):
-        with TemporaryDirectory() as directory:
-            executable = Path(directory) / ".venv/bin/python"
-            executable.parent.mkdir(parents=True)
-            executable.touch()
-            with patch.dict(service.os.environ, {"H3_VSR_PYTHON": str(executable)}), patch.object(service.Path, "resolve", side_effect=AssertionError("Must not follow a virtualenv symlink")):
-                self.assertEqual(service.gpu_python(), str(executable.absolute()))
+    def test_image_worker_has_one_frame_and_no_motion(self):
+        with patch.object(service, "dlss_config"):
+            command, cwd = service.worker_command(DLSS5_NR, 640, 360, 640, 360,
+                                                   service.NvidiaSettings(), frames=1, motion=False)
+        self.assertEqual(command[command.index("--frames") + 1], "1")
+        self.assertEqual(command[command.index("--motion") + 1], "0")
+        self.assertTrue(command[1].endswith("dlss_worker.py"))
+        self.assertIsNone(cwd)
 
     def test_traceback_is_rendered_as_literal_markdown_including_final_cause(self):
-        error = RuntimeError('File "vsr_worker.py", in <module>\nModuleNotFoundError: No module named numpy\n```')
+        error = RuntimeError('File "dlss_worker.py", in <module>\nModuleNotFoundError: No module named numpy\n```')
         message = error_markdown("Post-processing failed", error)
         self.assertIn("````text\n" + str(error), message)
         self.assertTrue(message.endswith("\n````"))
 
     def test_settings_reject_unknown_nonfinite_and_invalid_values(self):
-        for value in ({"strength": float("nan")}, {"intensity": 2}, {"quality": "fake"},
+        for value in ({"intensity": float("nan")}, {"intensity": 2}, {"style": "fake"},
                       {"original_size": "yes"}, {"arbitrary_exe": "bad"}, []):
             with self.subTest(value=value), self.assertRaises(H3Error):
                 service.NvidiaSettings.parse(value)
 
-    def test_original_vsr_requires_restoration_and_upscale_cannot_shrink(self):
-        with self.assertRaisesRegex(H3Error, "Denoise or Deblur"):
-            service.target_dimensions(NVIDIA_VSR, 1280, 720, "1920 × 1920",
-                                      service.NvidiaSettings(original_size=True))
-        with self.assertRaisesRegex(H3Error, "1× to 4×"):
-            service.target_dimensions(NVIDIA_VSR, 3840, 2160, "1920 × 1920", service.NvidiaSettings())
-        self.assertEqual(service.target_dimensions(DLSS5_NR, 1280, 720, "1920 × 1920",
-            service.NvidiaSettings(original_size=True)), (1280, 720))
-        self.assertEqual(service.target_dimensions(NVIDIA_VSR, 1280, 720, "3840 × 3840",
-            service.NvidiaSettings()), (3840, 2160))
 
     def test_gallery_only_methods_and_old_job_defaults(self):
-        for method in (NVIDIA_VSR, DLSS5_NR):
+        for method in (DLSS5_NR,):
             self.assertIn(method, POSTPROCESS_OPTIONS)
             self.assertNotIn(method, GENERATION_POSTPROCESS_OPTIONS)
         callback = Mock(__name__="postprocess")
@@ -73,7 +67,7 @@ class NvidiaSettingsTests(unittest.TestCase):
         wrapped = owned_generation(capture, "gallery")
         self.assertEqual(inspect.signature(wrapped).parameters["dlss_style"].default, "Natural")
         values[2] = DLSS5_NR
-        capture(*values, True, "Ultra", 0.7, "High bitrate", "Deblur", 0.2, "Cinematic", 0.4, request="owner")
+        capture(*values, True, "Cinematic", 0.4, request="owner")
         settings = callback.call_args.kwargs["nvidia_settings"]
         self.assertEqual(settings["intensity"], 0.4)
         self.assertTrue(settings["original_size"])
@@ -84,20 +78,13 @@ class NvidiaSettingsTests(unittest.TestCase):
         with patch.object(service, "dlss_config", side_effect=H3Error("missing model")), patch.object(service, "probe_runtime") as probe:
             self.assertEqual(service.availability(DLSS5_NR), (False, "missing model"))
             probe.assert_not_called()
-        self.assertFalse(can_enhance("Audio", "sound.wav", NVIDIA_VSR))
+        self.assertFalse(can_enhance("Audio", "sound.wav", DLSS5_NR))
 
     def test_hdr_rotation_and_non_square_pixels_are_rejected(self):
         for metadata in ({"color_transfer": "smpte2084"}, {"color_transfer": "arib-std-b67"},
                          {"side_data_list": [{"rotation": 90}]}, {"sample_aspect_ratio": "4:3"}):
             with self.subTest(metadata=metadata), self.assertRaises(H3Error):
                 service.validate_source(metadata)
-
-    def test_wine_model_paths_and_helper_flags(self):
-        with patch.object(service, "dlss_config", return_value=(PurePosixPath("/opt/helper/video2dlssnr.exe"), PurePosixPath("/opt/my models"), PurePosixPath("model"), "/usr/bin/wine")), patch.object(service.os, "name", "posix"), patch.object(service, "headless_command", side_effect=lambda command: command):
-            command, cwd = service.worker_command(DLSS5_NR, 640, 360, 1280, 720, service.NvidiaSettings())
-        self.assertEqual(command[:2], ["/usr/bin/wine", "/opt/helper/video2dlssnr.exe"])
-        self.assertEqual(command[command.index("--dll-dir") + 1], "Z:\\opt\\my models")
-        self.assertEqual(command[command.index("--nr-motion") + 1], "1")
 
 
 class BinaryPipeTests(unittest.TestCase):
@@ -123,14 +110,14 @@ class BinaryPipeTests(unittest.TestCase):
         command = self.command(
             "import sys,time; sys.stdin.close(); "
             "print('Traceback (most recent call last):', file=sys.stderr, flush=True); "
-            "time.sleep(0.3); print('RuntimeError: VSR fixture initialization failed', file=sys.stderr, flush=True); "
+            "time.sleep(0.3); print('RuntimeError: DLSS fixture initialization failed', file=sys.stderr, flush=True); "
             "raise SystemExit(1)"
         )
         with self.assertLogs("h3_app.nvidia_pipeline", level="ERROR") as logs:
-            with self.assertRaisesRegex(H3Error, "VSR fixture initialization failed"):
+            with self.assertRaisesRegex(H3Error, "DLSS fixture initialization failed"):
                 list(stream_pipeline([command], input_size=1024 * 1024, output_size=8,
                     timeout=5, source_bytes=b"x" * (1024 * 1024), capture=bytearray()))
-        self.assertIn("VSR fixture initialization failed", "\n".join(logs.output))
+        self.assertIn("DLSS fixture initialization failed", "\n".join(logs.output))
 
     def test_timeout_and_cancellation_stop_workers(self):
         command = self.command("import time; time.sleep(30)")
@@ -144,13 +131,13 @@ class BinaryPipeTests(unittest.TestCase):
 
     def test_runtime_probe_rejects_bypass(self):
         command = self.command("import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())")
-        with patch.object(service, "availability", return_value=(True, "")), patch.object(service, "worker_command", return_value=(command, None)):
+        with patch.object(service, "availability", return_value=(True, "")), patch.object(service, "worker_command", return_value=(command, None)), patch.object(service, "worker_context", return_value=nullcontext()):
             with self.assertRaisesRegex(H3Error, "unchanged frames"):
-                service.probe_runtime(NVIDIA_VSR, Mock(generation_timeout=15))
+                service.probe_runtime(DLSS5_NR, Mock(generation_timeout=15))
 
     def test_runtime_probe_rejects_black_output_including_opaque_alpha(self):
-        for method in (NVIDIA_VSR, DLSS5_NR):
-            channels = 3 if method == NVIDIA_VSR else 4
+        for method in (DLSS5_NR,):
+            channels = 4
             code = ("import sys; data=bytearray(sys.stdin.buffer.read()); data[:]=bytes(len(data)); "
                     + ("data[3::4]=bytes([255])*(len(data)//4); " if channels == 4 else "")
                     + "print('feature ready; streaming', file=sys.stderr); sys.stdout.buffer.write(data)")
@@ -159,12 +146,12 @@ class BinaryPipeTests(unittest.TestCase):
                     service.probe_runtime(method, Mock(generation_timeout=15))
 
     def test_runtime_evidence_survives_long_progress_logs(self):
-        command = self.command("import sys; print('H3VFX {\"gpu\":\"fixture\"}', file=sys.stderr); "
+        command = self.command("import sys; print('feature ready; streaming', file=sys.stderr); "
                                "[print('H3PROG '+str(i), file=sys.stderr) for i in range(1000)]; "
                                "sys.stdout.buffer.write(sys.stdin.buffer.read())")
         updates = list(stream_pipeline([command], input_size=8, output_size=8, timeout=5,
                                        source_bytes=b"abcdefgh", capture=bytearray()))
-        self.assertTrue(any("H3VFX " in line for line in updates[-1].diagnostics))
+        self.assertTrue(any("feature ready; streaming" in line for line in updates[-1].diagnostics))
         self.assertLessEqual(len(updates[-1].diagnostics), 99)
 
     def test_dlss_probe_requires_rgb_changes_and_feature_initialization(self):
@@ -225,13 +212,16 @@ class NvidiaMediaTests(unittest.TestCase):
                 "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5", "-c:v", "libx264", "-c:a", "aac", "-shortest", str(source)], check=True)
             runtime = RuntimeConfig(root, "", root / "comfy", root / "models.json", root / "outputs", generation_timeout=30)
             write_snapshot(source, {"settings": {"fixture": True}})
-            worker = [sys.executable, "-u", "-c", "import sys;\nwhile True:\n b=sys.stdin.buffer.read(64*48*3)\n if not b: break\n sys.stdout.buffer.write(bytes(255-x for x in b)); sys.stdout.buffer.flush()"]
+            worker = [sys.executable, "-u", "-c", "import sys; print('feature ready; streaming', file=sys.stderr);\nwhile True:\n b=sys.stdin.buffer.read(64*48*4)\n if not b: break\n sys.stdout.buffer.write(bytes(255-x for x in b)); sys.stdout.buffer.flush()"]
             with ExitStack() as stack:
                 stack.enter_context(patch.object(service, "availability", return_value=(True, "")))
                 stack.enter_context(patch.object(service, "worker_command", return_value=(worker, None)))
                 stack.enter_context(patch.object(service, "_encoder", return_value=("libx265", ["-c:v", "libx265", "-preset", "ultrafast", "-crf", "19"])))
-                updates = list(service.postprocess(source, NVIDIA_VSR, "1920 × 1920",
-                    {"original_size": True, "preprocess": "Denoise"}, runtime=runtime))
+                stack.enter_context(patch.object(service, "worker_context", side_effect=lambda *args: nullcontext()))
+                stack.enter_context(patch.object(service, "probe_runtime", return_value="fixture passed"))
+                stack.enter_context(patch.object(service, "dlss_config", return_value=(source, root, source, None)))
+                updates = list(service.postprocess(source, DLSS5_NR, "1920 × 1920",
+                    {"original_size": True}, runtime=runtime))
                 result = updates[-1].result
                 self.assertTrue(result.is_file())
                 payload, metadata, rate = service.probe_source(result, runtime, count=True)
@@ -243,10 +233,10 @@ class NvidiaMediaTests(unittest.TestCase):
                 self.assertTrue(snapshot["settings"]["encoder_fallback"])
                 stack.enter_context(patch.object(service, "worker_command", return_value=([sys.executable, "-c", "raise SystemExit(4)"], None)))
                 with self.assertRaises(H3Error):
-                    list(service.postprocess(source, NVIDIA_VSR, "1920 × 1920",
-                        {"original_size": True, "preprocess": "Denoise"}, runtime=runtime))
-                self.assertEqual(list((root / "outputs/nvidia_vsr").glob(".processing-*")), [])
-                self.assertEqual(len(list((root / "outputs/nvidia_vsr").glob("*.mp4"))), 1)
+                    list(service.postprocess(source, DLSS5_NR, "1920 × 1920",
+                        {"original_size": True}, runtime=runtime))
+                self.assertEqual(list((root / "outputs/dlss5").glob(".processing-*")), [])
+                self.assertEqual(len(list((root / "outputs/dlss5").glob("*.mp4"))), 1)
 
 
 if __name__ == "__main__":

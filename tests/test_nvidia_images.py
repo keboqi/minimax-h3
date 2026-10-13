@@ -12,7 +12,7 @@ from PIL import Image, ImageCms
 
 from h3_app import nvidia_images as images
 from h3_app import nvidia_postprocess as backend
-from h3_app.catalog import DLSS5_NR, NVIDIA_VSR
+from h3_app.catalog import DLSS5_NR
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
@@ -44,7 +44,7 @@ class NvidiaImageTests(unittest.TestCase):
             self.assertIsNone(alpha)
             self.assertIn("sRGB", ImageCms.getProfileName(ImageCms.ImageCmsProfile(BytesIO(profile))))
 
-    def test_vsr_native_png_preserves_alpha_source_and_lineage(self):
+    def test_dlss_native_png_preserves_alpha_source_and_lineage(self):
         with TemporaryDirectory() as directory, ExitStack() as stack:
             root = Path(directory)
             source = root / "transparent.png"
@@ -53,12 +53,12 @@ class NvidiaImageTests(unittest.TestCase):
             unchanged = source.read_bytes()
             write_snapshot(source, {"family": "fixture"})
             command = [sys.executable, "-u", "-c",
-                "import sys; print('H3VFX {\"gpu\":\"fixture\"}', file=sys.stderr); "
+                "import sys; print('feature ready; streaming', file=sys.stderr); "
                 "sys.stdout.buffer.write(bytes(255-x for x in sys.stdin.buffer.read()))"]
             probe = self.mock_runtime(stack, source, command)
-            result = list(images.postprocess_image(source, NVIDIA_VSR, "1920 × 1920",
-                {"original_size": True, "preprocess": "Denoise"}, runtime=self.runtime(root)))[-1].result
-            probe.assert_not_called()
+            result = list(images.postprocess_image(source, DLSS5_NR, "1920 × 1920",
+                {"original_size": True}, runtime=self.runtime(root)))[-1].result
+            probe.assert_called_once()
             with Image.open(result) as enhanced:
                 self.assertEqual(enhanced.mode, "RGBA")
                 self.assertEqual(enhanced.size, original.size)
@@ -66,7 +66,7 @@ class NvidiaImageTests(unittest.TestCase):
                 self.assertTrue(enhanced.info["icc_profile"])
             snapshot = read_snapshot(result)
             self.assertEqual(snapshot["source_asset_ids"], [read_snapshot(source)["asset_id"]])
-            self.assertEqual(snapshot["settings"]["gpu"], "fixture")
+            self.assertEqual(snapshot["settings"]["backend"], "RunningHub DNR2")
             self.assertEqual(snapshot["settings"]["alpha"], "preserved")
             self.assertEqual(source.read_bytes(), unchanged)
 
@@ -80,7 +80,7 @@ class NvidiaImageTests(unittest.TestCase):
                 "print('feature ready; streaming', file=sys.stderr); "
                 "image=Image.frombytes('RGBA',(65,49),sys.stdin.buffer.read()); "
                 "sys.stdout.buffer.write(image.convert('RGB').resize((130,98)).convert('RGBA').tobytes())",
-                "--nr-motion", "1"]
+                "--motion", "0"]
             probe = self.mock_runtime(stack, source, command)
             stack.enter_context(patch.dict(backend.UPSCALE_RESOLUTION_PRESETS, {"fixture": (130, 98)}))
             runtime = self.runtime(root)
@@ -110,8 +110,8 @@ class NvidiaImageTests(unittest.TestCase):
                     stack.enter_context(patch("h3_app.nvidia_pipeline.check_cancelled",
                                               side_effect=[None, JobCancelled("stop")]))
                 with self.assertRaises(JobCancelled if cancel else H3Error):
-                    list(images.postprocess_image(source, NVIDIA_VSR, "1920 × 1920",
-                        {"original_size": True, "preprocess": "Denoise"}, runtime=self.runtime(root)))
+                    list(images.postprocess_image(source, DLSS5_NR, "1920 × 1920",
+                        {"original_size": True}, runtime=self.runtime(root)))
                 self.assertEqual(list((root / "outputs").rglob("*.png")), [])
                 self.assertEqual(list((root / "outputs").rglob(".processing-*")), [])
                 self.assertTrue(source.is_file())

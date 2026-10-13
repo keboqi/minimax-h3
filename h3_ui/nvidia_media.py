@@ -23,16 +23,13 @@ def with_nvidia_settings(callback):
     def enhance(
         mode, selected_media, option, seed, seedvr2_model, ltx25_model,
         ltx25_prompt, force_offload, split_upscale, split_seconds, upscale_resolution,
-        nvidia_original=False, vsr_quality="High", vsr_strength=1.0,
-        vsr_profile="Compressed", vsr_preprocess="None", vsr_preprocess_strength=0.5,
+        nvidia_original=False,
         dlss_style="Natural", dlss_intensity=1.0, request: gr.Request = None,
     ):
         kwargs = {}
         if option in NVIDIA_POSTPROCESS_OPTIONS:
             kwargs["nvidia_settings"] = {
-                "original_size": nvidia_original, "quality": vsr_quality,
-                "strength": vsr_strength, "profile": vsr_profile,
-                "preprocess": vsr_preprocess, "preprocess_strength": vsr_preprocess_strength,
+                "original_size": nvidia_original,
                 "style": dlss_style, "intensity": dlss_intensity,
             }
         return callback(

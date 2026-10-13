@@ -46,7 +46,6 @@ GRADIO_VERSION = "6.29.1"
 SWIFTVR_REPO = "https://github.com/H-oliday/SwiftVR.git"
 SWIFTVR_REF = "5ca168cef6ca7200f135fdfea85e5e13d12c5b53"
 SWIFTVR_HF_REPO = "H-oliday/SwiftVR"
-NVIDIA_VFX_REQUIREMENT = "nvidia-vfx==0.2.0.0"
 LTX25_WORKFLOW_FILENAMES = (
     "LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
     "LTX-2.5_T2V_I2V_Two_Stage_Distilled.json",

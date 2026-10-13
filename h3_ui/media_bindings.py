@@ -14,7 +14,6 @@ from h3_app.catalog import (
     LTX25_SDR_TO_HDR,
     LTX25_TILED_UPSCALE,
     DLSS5_NR,
-    NVIDIA_VSR,
     NVIDIA_POSTPROCESS_OPTIONS,
 )
 from .nvidia_media import can_enhance, with_nvidia_settings, check_runtime
@@ -176,7 +175,7 @@ def bind_gallery_view(
             gr.update(value=False),
             gr.update(
                 choices=(
-                    [seedvr_option, LTX25_CQ_IMAGE_ENHANCER, NVIDIA_VSR, DLSS5_NR]
+                    [seedvr_option, LTX25_CQ_IMAGE_ENHANCER, DLSS5_NR]
                     if value == "Image" else video_postprocess_options
                 ),
                 value=seedvr_option,
@@ -287,13 +286,12 @@ def bind_gallery_view(
             gr.update(visible=value in ltx_options),
             gr.update(visible=value in ltx_options),
             gr.update(
-                visible=(value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER or value == NVIDIA_VSR)
+                visible=(value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER)
                 and value not in LTX25_SAME_RESOLUTION_OPTIONS
             ),
             gr.update(visible=value in ltx_options),
             gr.update(visible=value not in NVIDIA_POSTPROCESS_OPTIONS),
             gr.update(visible=value in NVIDIA_POSTPROCESS_OPTIONS),
-            gr.update(visible=value == NVIDIA_VSR),
             gr.update(visible=value == DLSS5_NR),
             gr.update(value=value == DLSS5_NR),
             availability(value)[1] if value in NVIDIA_POSTPROCESS_OPTIONS else "",
@@ -310,7 +308,6 @@ def bind_gallery_view(
             selected_ltx_model,
             view.post_seed,
             view.nvidia_settings,
-            view.vsr_settings,
             view.dlss_settings,
             view.nvidia_original,
             view.nvidia_status,
@@ -392,11 +389,6 @@ def bind_gallery_view(
             view.split_seconds,
             view.upscale_resolution,
             view.nvidia_original,
-            view.vsr_quality,
-            view.vsr_strength,
-            view.vsr_profile,
-            view.vsr_preprocess,
-            view.vsr_preprocess_strength,
             view.dlss_style,
             view.dlss_intensity,
         ],

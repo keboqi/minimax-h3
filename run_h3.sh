@@ -351,7 +351,7 @@ log "Dense/fallback attention: Comfy Kitchen"
 free_port "$COMFY_PORT"
 free_port "$GRADIO_SERVER_PORT"
 
-log "Preparing NVIDIA image and video enhancement"
+log "Preparing DLSS 5 image and video enhancement on this processing host"
 "$PYTHON_BIN" "$SCRIPT_DIR/h3_nvidia_runtime.py" --initialize
 
 log "Starting ComfyUI at $COMFY_URL"

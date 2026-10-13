@@ -53,12 +53,6 @@ class GalleryView:
     scan_history: Any = None
     nvidia_settings: Any = None
     nvidia_original: Any = None
-    vsr_settings: Any = None
-    vsr_quality: Any = None
-    vsr_strength: Any = None
-    vsr_profile: Any = None
-    vsr_preprocess: Any = None
-    vsr_preprocess_strength: Any = None
     dlss_settings: Any = None
     dlss_style: Any = None
     dlss_intensity: Any = None
@@ -283,14 +277,8 @@ def build_gallery_view(
                         )
                     with gr.Group(visible=False) as nvidia_settings:
                         nvidia_original = gr.Checkbox(value=False, label="Keep original resolution")
-                        with gr.Group(visible=False) as vsr_settings:
-                            vsr_quality = gr.Dropdown(["Low", "Medium", "High", "Ultra"], value="High", label="VSR quality")
-                            vsr_strength = gr.Slider(0, 1, value=1, step=0.05, label="VSR strength")
-                            vsr_profile = gr.Dropdown(["Compressed", "High bitrate"], value="Compressed", label="Source profile")
-                            vsr_preprocess = gr.Dropdown(["None", "Denoise", "Deblur"], value="None", label="VSR preprocessing", info="At original resolution, select Denoise or Deblur.")
-                            vsr_preprocess_strength = gr.Slider(0, 1, value=0.5, step=0.05, label="Preprocessing strength")
                         with gr.Group(visible=False) as dlss_settings:
-                            gr.Markdown("DLSS 5 changes lighting and material appearance. Motion estimation and scene-cut handling are enabled by the helper.")
+                            gr.Markdown("DLSS 5 changes lighting and material appearance. Upscaling uses the largest supported factor fitting the target: 1.5×, 1.724×, 2× or 3×. Video motion guides and scene-cut handling are automatic when available.")
                             dlss_style = gr.Dropdown(["Default", "Natural", "Cinematic"], value="Natural", label="DLSS 5 style")
                             dlss_intensity = gr.Slider(0, 1, value=1, step=0.05, label="DLSS 5 intensity")
                         nvidia_status = gr.Markdown()
@@ -352,12 +340,6 @@ def build_gallery_view(
         scan_history,
         nvidia_settings,
         nvidia_original,
-        vsr_settings,
-        vsr_quality,
-        vsr_strength,
-        vsr_profile,
-        vsr_preprocess,
-        vsr_preprocess_strength,
         dlss_settings,
         dlss_style,
         dlss_intensity,
