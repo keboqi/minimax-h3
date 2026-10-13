@@ -125,6 +125,29 @@ class LinuxDlssSetupTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "NVIDIA Vulkan device"):
                 runtime.check_vulkan({"DISPLAY": ":99"})
 
+    def test_missing_icd_manifest_is_generated_for_mounted_driver(self):
+        with TemporaryDirectory() as directory:
+            library = Path(directory) / "driver" / "libGLX_nvidia.so.0"
+            library.parent.mkdir()
+            library.touch()
+            with patch.object(runtime.platform, "system", return_value="Linux"), patch.object(runtime, "nvidia_icd_manifests", return_value=[]),                     patch.object(runtime, "find_driver_library", return_value=(library, False)):
+                env = runtime.vulkan_driver_env({}, Path(directory) / "root")
+            manifest = json.loads(Path(env["VK_DRIVER_FILES"]).read_text())
+            self.assertEqual(manifest["ICD"]["library_path"], str(library))
+            self.assertEqual(env["VK_ICD_FILENAMES"], env["VK_DRIVER_FILES"])
+            self.assertEqual(env["LD_LIBRARY_PATH"], str(library.parent))
+
+    def test_existing_icd_or_absent_driver_leaves_environment_unchanged(self):
+        with patch.object(runtime.platform, "system", return_value="Linux"), patch.object(runtime, "nvidia_icd_manifests", return_value=[Path("/etc/vulkan/icd.d/nvidia_icd.json")]):
+            self.assertEqual(runtime.vulkan_driver_env({}), {})
+        with patch.object(runtime.platform, "system", return_value="Linux"), patch.object(runtime, "nvidia_icd_manifests", return_value=[]),                 patch.object(runtime, "find_driver_library", return_value=(None, False)):
+            self.assertEqual(runtime.vulkan_driver_env({}), {})
+
+    def test_ldconfig_cache_lookup_parses_driver_path(self):
+        listing = "\tlibGLX_nvidia.so.0 (libc6,x86-64) => /usr/lib/x86_64-linux-gnu/libGLX_nvidia.so.0\n"
+        self.assertEqual(runtime.find_driver_library("libGLX_nvidia.so.0", listing),
+                         (Path("/usr/lib/x86_64-linux-gnu/libGLX_nvidia.so.0"), True))
+
     def test_vulkan_accepts_real_nvidia_device(self):
         result = Mock(returncode=0, stdout="deviceName = NVIDIA RTX PRO 6000 Blackwell", stderr="")
         with patch.object(runtime.subprocess, "run", return_value=result) as run:

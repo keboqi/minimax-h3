@@ -275,10 +275,97 @@ def ensure_display(env):
     return env
 
 
+VULKAN_ICD_DIRS = ("/etc/vulkan/icd.d", "/usr/share/vulkan/icd.d", "/usr/local/share/vulkan/icd.d")
+DRIVER_LIBRARY_DIRS = ("/usr/lib/x86_64-linux-gnu", "/usr/lib64", "/usr/lib", "/usr/local/nvidia/lib64",
+                       "/usr/local/nvidia/lib", "/usr/lib/wsl/lib")
+
+
+def nvidia_icd_manifests():
+    found = []
+    for directory in VULKAN_ICD_DIRS:
+        for path in sorted(Path(directory).glob("*.json")) if Path(directory).is_dir() else ():
+            try:
+                library = json.loads(path.read_text(encoding="utf-8"))["ICD"]["library_path"]
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+            if "nvidia" in str(library).lower():
+                found.append(path)
+    return found
+
+
+def ldconfig_listing():
+    ldconfig = shutil.which("ldconfig") or ("/sbin/ldconfig" if Path("/sbin/ldconfig").is_file() else None)
+    if not ldconfig:
+        return ""
+    try:
+        return subprocess.run([ldconfig, "-p"], capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def find_driver_library(name, listing=None):
+    """Return (path, in_loader_cache) for a driver library, or (None, False)."""
+    for line in (ldconfig_listing() if listing is None else listing).splitlines():
+        if line.strip().startswith(name) and "x86-64" in line and "=>" in line:
+            return Path(line.split("=>", 1)[1].strip()), True
+    directories = [*os.environ.get("LD_LIBRARY_PATH", "").split(":"), *DRIVER_LIBRARY_DIRS]
+    for directory in filter(None, directories):
+        matches = sorted(Path(directory).glob(name + "*")) if Path(directory).is_dir() else []
+        if matches:
+            return matches[0], False
+    return None, False
+
+
+def vulkan_driver_env(env, root=None):
+    """Register the NVIDIA Vulkan ICD when the container mounted its library but not its manifest.
+
+    Several providers inject libGLX_nvidia without /etc/vulkan/icd.d/nvidia_icd.json,
+    which the loader reports as "Found no drivers". The driver library itself is never
+    supplied by us: if it is absent, the container lacks graphics capabilities.
+    """
+    if platform.system() == "Windows" or env.get("VK_ICD_FILENAMES") or env.get("VK_DRIVER_FILES") or nvidia_icd_manifests():
+        return env
+    library, cached = find_driver_library("libGLX_nvidia.so.0")
+    if library is None:
+        return env
+    manifest = runtime_root(root) / "vulkan" / "nvidia_icd.json"
+    content = json.dumps({"file_format_version": "1.0.1",
+                          "ICD": {"library_path": str(library), "api_version": "1.3.0"}}, indent=2)
+    try:
+        if not manifest.is_file() or manifest.read_text(encoding="utf-8") != content:
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text(content, encoding="utf-8")
+    except OSError:
+        return env
+    env["VK_DRIVER_FILES"] = env["VK_ICD_FILENAMES"] = str(manifest)
+    # Driver dependencies (libnvidia-glcore, libnvidia-rtcore...) sit beside the ICD.
+    # Expose only that directory, never the application's CUDA library paths.
+    if not cached:
+        env["LD_LIBRARY_PATH"] = str(library.parent)
+    return env
+
+
+def vulkan_diagnostics(env):
+    """Summarize what the container exposes so operators can fix provider configuration."""
+    if platform.system() == "Windows":
+        return ""
+    manifests = nvidia_icd_manifests()
+    details = [
+        "NVIDIA_DRIVER_CAPABILITIES=" + (env.get("NVIDIA_DRIVER_CAPABILITIES") or "<unset>"),
+        "NVIDIA ICD manifests: " + (", ".join(map(str, manifests)) or "none"),
+        "generated ICD: " + (env.get("VK_DRIVER_FILES") or "none"),
+    ]
+    listing = ldconfig_listing()
+    for name in ("libGLX_nvidia.so.0", "libnvidia-glcore.so", "libnvidia-rtcore.so", "libnvidia-glvkspirv.so"):
+        details.append(f"{name}: {find_driver_library(name, listing)[0] or 'missing'}")
+    return "Host diagnostics: " + "; ".join(details) + ". "
+
+
 def wine_env(prefix, wine):
     env = dict(os.environ)
     # CUDA libraries injected by the application can break Wine NVIDIA shims.
     env.pop("LD_LIBRARY_PATH", None)
+    vulkan_driver_env(env)
     env.update(WINEPREFIX=str(prefix), WINEDEBUG="-all", WINEARCH="win64",
                WINEDLLOVERRIDES="d3d12,d3d12core,dxgi,d3d11,nvapi64,nvofapi64=n,b;winemenubuilder.exe=d",
                DXVK_ENABLE_NVAPI="1", DXVK_NVAPI_DRS_NGX_DLSS_NR_OVERRIDE="on",
@@ -311,8 +398,9 @@ def check_vulkan(env):
     if result.returncode or not re.search(r"deviceName\s*=.*NVIDIA", result.stdout, re.I):
         raise RuntimeError("DLSS requires a working NVIDIA Vulkan device inside this processing host. "
                            "Expose graphics driver capabilities when creating the container, including "
-                           "the NVIDIA ICD and matching driver libraries (including libnvidia-rtcore). "
-                           + (result.stderr or result.stdout)[-2000:])
+                           "the NVIDIA ICD and matching driver libraries (including libnvidia-rtcore), "
+                           "e.g. NVIDIA_DRIVER_CAPABILITIES=all or --gpus 'all,\"capabilities=compute,utility,graphics\"'. "
+                           + vulkan_diagnostics(env) + (result.stderr or result.stdout)[-2000:])
     return result.stdout[-4000:]
 
 
@@ -496,7 +584,7 @@ def ensure_runtime(root=None, *, initialize=False, system_packages=True):
                 # Diagnose provider graphics access before downloading/building runtimes.
                 graphics_env = dict(os.environ)
                 graphics_env.pop("LD_LIBRARY_PATH", None)
-                check_vulkan(ensure_display(graphics_env))
+                check_vulkan(ensure_display(vulkan_driver_env(graphics_env, root)))
             host = install_rh_host(root)
             # Reuse the existing pinned model archive; its old executable is not launched.
             models = install_archive(root, "video2dlssnr-" + DLSSNR_VERSION,
