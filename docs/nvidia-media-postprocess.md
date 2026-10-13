@@ -35,6 +35,17 @@ Videos must be SDR with constant frame rate, square pixels, zero start timestamp
 
 Cancellation stops job-owned processes and only the dedicated Wine prefix's server. Source files are retained. Partial outputs are never published. Output provenance records the model/helper hashes, actual dimensions, motion backend, stage order, frame rate/count, encoder and source lineage.
 
+## Deployment acceptance
+
+Run acceptance on the processing host, never on a developer desktop.
+
+1. Launch through `run_h3.sh`, a rebuilt Modal image or the Colab notebook. Record provisioning failures separately from inference failures.
+2. Confirm the assigned NVIDIA Vulkan GPU and initialized Wine prefix.
+3. Run **Check NVIDIA runtime** and keep the NGX/NVAPI diagnostics (`h3/nvidia/logs/dlss-last-failure.log` on failure).
+4. Enhance a still image at native size, including transparency, then above 1× with each upscaler.
+5. Enhance a short SDR video with motion, a scene cut and audio; verify resolution, frame count, frame rate and audio.
+6. Cancel processing, then run again to check prefix cleanup. Check a longer video for bounded memory and sustained throughput.
+
 ## References
 
 - [RunningHub Linux implementation](https://github.com/RH-RunningHub/ComfyUI-RH-DLSS5)

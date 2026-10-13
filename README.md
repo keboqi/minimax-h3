@@ -7,9 +7,8 @@ bundled FirstBlockCache node.
 
 ## Creative workspace
 
-`bash run_h3.sh` and `python gradio_app.py` launch the workspace. It is the
-sole interface; the legacy layout, selection flag and launcher compatibility
-shim have been removed. Local and Modal launches use the same UI.
+`bash run_h3.sh` and `python gradio_app.py` launch the workspace. Local and
+Modal launches use the same UI.
 
 The compact H3 composer keeps inputs, prompt and actions next to results.
 Output/recipe and advanced controls are collapsed below. Create supports H3,
@@ -17,9 +16,9 @@ LTX 2.5, Qwen Image 2.1, MiniMax Music 3 and YuE2. Prompt suggestions require
 acceptance. Media includes indexed search, shared tags/favorites, lineage,
 image comparison and synchronized video playback.
 
-Media also offers NVIDIA RTX Video Super Resolution and experimental DLSS 5
-neural rendering for selected SDR images and videos. Both use optional runtimes with
-explicit host checks, cancellable workers, and new output copies. See
+Media also offers experimental DLSS 5 neural rendering for selected SDR images
+and videos. It uses an optional runtime with explicit host checks, a cancellable
+worker, and new output copies. See
 [installation, controls, and current limitations](docs/nvidia-media-postprocess.md).
 
 Jobs capture requests before the GPU queue, retain seeds for failed-variant
@@ -29,10 +28,9 @@ ownership. Explicitly saved projects retain prompts/settings and copied sources;
 unsaved request content remains temporary. Recovery observes recorded backend
 work and never automatically resubmits an ambiguous request.
 
-See [implementation and operating guide](docs/workspace-implementation.md) for
-retention, backup/restore, comparison limits and validation. Real GPU inference
-is excluded from this implementation's tests at the user's request. Actual Modal
-deployment and production performance remain unmeasured.
+See the [workspace operating guide](docs/workspace.md) for retention,
+backup/restore and comparison limits. Automated tests run on CPU with synthetic
+backends; GPU inference and deployment are validated separately.
 
 ## What is included
 
@@ -719,10 +717,10 @@ adding another type starts a new pair. **Clear A** and **Clear B** remove picks.
 In **Jobs**, click a history row (or focus it and press Enter/Space) to inspect
 that request and its available actions.
 Image mode offers the one-step **SeedVR2 2x** workflow and
-**LTX-2.5 CQ Image Enhancer**, plus **NVIDIA RTX Video Super Resolution** and
-experimental **DLSS 5 Neural Rendering**, using the same target-resolution presets.
-The NVIDIA methods save lossless PNG copies, normalize color/orientation, and
-preserve transparency. They need the [optional NVIDIA runtimes](docs/nvidia-media-postprocess.md).
+**LTX-2.5 CQ Image Enhancer**, plus experimental **DLSS 5 Neural Rendering**,
+using the same target-resolution presets. DLSS 5 saves lossless PNG copies,
+normalizes color/orientation, and preserves transparency. It needs the
+[optional NVIDIA runtime](docs/nvidia-media-postprocess.md).
 CQ resizes the selected still to fit the target, then generatively restores
 detail using the dedicated image LoRA, the LTX development INT8 model, a
 0.5-strength distillation adapter, and the convolutional VAE. It needs no prompt
@@ -1003,8 +1001,8 @@ CPU PyTorch numerical tests and cached upstream contract tests run when
 their optional dependencies are present. Supported GPU inference, TensorRT
 compilation and deployment remain separate checks.
 
-See [the architecture and validation guide](docs/settings-refactor.md) for setup,
-module ownership and cancellation boundaries.
+See [the architecture guide](docs/architecture.md) for test setup, module
+ownership and cancellation boundaries.
 
 ## Repository layout
 
@@ -1025,10 +1023,7 @@ module ownership and cancellation boundaries.
   preprocessors, and Video Depth Anything nodes required by the official LTX-2.5
   workflow collection
 
-See [the structure review](docs/structure-review-2026-10-07.md) for current
-ownership and cleanup decisions. [REVIEW.md](REVIEW.md) records historical
-upgrades; the architecture guide describes the current implementation.
-
-## Settings and execution architecture
-
-See [the settings refactor guide](docs/settings-refactor.md) for preset behavior, module boundaries, cancellation ownership, preference migration, result metadata, and test commands.
+See [the architecture guide](docs/architecture.md) for preset behavior, module
+boundaries, cancellation ownership, preference migration and result metadata.
+[The latest upstream audit](docs/upstream-audit-2026-10-12.md) lists pending
+component upgrade candidates.
