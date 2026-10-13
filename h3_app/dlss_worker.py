@@ -19,7 +19,7 @@ import threading
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from h3_nvidia_runtime import (check_vulkan, display_reachable, ensure_display, pin_gpu, runtime_env,
-                               runtime_root, wine_env)
+                               runtime_root, wine_env, xvfb_log_path)
 
 HEADER = struct.Struct("<4s12I5f")
 FRAME = struct.Struct("<4sII")
@@ -182,7 +182,7 @@ def graphics_logs(diagnostics, env, engine_log=()):
     display = env.get("DISPLAY", "")
     header = f"\nDISPLAY={display or '<unset>'} reachable={bool(display) and display_reachable(display)}"
     full, brief = [header], [header]
-    for path in sorted(Path(diagnostics.name).iterdir()):
+    for path in [*sorted(Path(diagnostics.name).iterdir()), xvfb_log_path()]:
         try:
             text = path.read_text(encoding="utf-8", errors="replace").strip()
         except OSError:

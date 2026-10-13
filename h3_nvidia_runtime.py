@@ -256,6 +256,10 @@ def display_reachable(name):
     return False
 
 
+def xvfb_log_path():
+    return runtime_root() / "logs" / "xvfb.log"
+
+
 def ensure_display(env):
     """Keep Xvfb separate from the host's binary stdout; never use xvfb-run."""
     global _display_process, _display_name
@@ -268,12 +272,19 @@ def ensure_display(env):
             if not shutil.which("Xvfb"):
                 raise RuntimeError("Headless DLSS requires Xvfb. Restart the launcher to provision it.")
             reader, writer = os.pipe()
+            log = xvfb_log_path()
             try:
-                process = subprocess.Popen(
-                    ["Xvfb", "-displayfd", str(writer), "-screen", "0", "1280x720x24", "-nolisten", "tcp"],
-                    pass_fds=(writer,), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                log.parent.mkdir(parents=True, exist_ok=True)
+                # -noreset: an X server resets when its last client disconnects,
+                # and Xvfb can crash during that reset. Each worker's first
+                # client (a probe or vulkaninfo) disconnects before Wine connects.
+                with log.open("wb") as output:
+                    process = subprocess.Popen(
+                        ["Xvfb", "-displayfd", str(writer), "-screen", "0", "1280x720x24",
+                         "-nolisten", "tcp", "-noreset"],
+                        pass_fds=(writer,), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                        stderr=output,
+                    )
                 os.close(writer)
                 writer = None
                 if not select.select([reader], [], [], 10)[0]:
