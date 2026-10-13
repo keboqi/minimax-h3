@@ -19,7 +19,7 @@ import tempfile
 from typing import Iterator
 
 from h3_nvidia_runtime import (
-    enabled, runtime_env,
+    enabled, ensure_r580_core, runtime_env,
     stop_wine_server, wine_env,
 )
 
@@ -38,6 +38,9 @@ class NvidiaSettings:
     original_size: bool = False
     style: str = "Natural"
     intensity: float = 1.0
+    # "resize": Lanczos to the target, then DLSS 5 at 1× (works under Wine).
+    # "dlss_sr": DLSS SR carrier; on Linux it uses the experimental R580 NGX core.
+    upscaler: str = "resize"
 
     @classmethod
     def parse(cls, value=None):
@@ -54,6 +57,8 @@ class NvidiaSettings:
             raise H3Error("DLSS intensity must be between 0 and 1.")
         if not isinstance(settings.original_size, bool):
             raise H3Error("Original size must be a boolean.")
+        if settings.upscaler not in ("resize", "dlss_sr"):
+            raise H3Error("Invalid DLSS upscaler.")
         return settings
 
 
@@ -231,14 +236,41 @@ def worker_context(method, runtime):
                         raise H3Error("Could not stop the dedicated DLSS Wine server.") from exc
 
 
-def worker_command(method, width, height, out_width, out_height, settings, *, frames=1, motion=True):
+def worker_command(method, width, height, out_width, out_height, settings, *, frames=1, motion=True,
+                   ngx_core="default"):
     dlss_config(verify=True)
     # Preserve the virtualenv executable path; resolving its symlink loses its packages.
     command = [os.path.abspath(sys.executable), str(Path(__file__).with_name("dlss_worker.py")),
                "--width", str(width), "--height", str(height), "--out-width", str(out_width),
                "--out-height", str(out_height), "--frames", str(frames), "--motion", str(int(motion)),
-               "--settings", json.dumps(asdict(settings))]
+               "--ngx-core", ngx_core, "--settings", json.dumps(asdict(settings))]
     return command, None
+
+
+@dataclass(frozen=True)
+class UpscalePlan:
+    """What the DLSS worker sees: its input size and which NGX core it uses."""
+    width: int
+    height: int
+    resize: bool = False
+    ngx_core: str = "default"
+    core_info: dict | None = None
+
+
+def plan_upscale(settings, width, height, out_width, out_height):
+    if (width, height) == (out_width, out_height):
+        return UpscalePlan(width, height)
+    if settings.upscaler == "resize":
+        # Under Wine the DLSS SR carrier's signed load fails; enlarge first and
+        # run the neural pass natively at the target size.
+        return UpscalePlan(out_width, out_height, resize=True)
+    if os.name == "nt":
+        return UpscalePlan(width, height)
+    try:
+        info = ensure_r580_core()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise H3Error("Experimental R580 NGX core setup failed: " + str(exc)) from exc
+    return UpscalePlan(width, height, ngx_core="r580", core_info=info)
 
 
 def probe_runtime(method, runtime):
@@ -282,7 +314,7 @@ def _encoder():
     raise H3Error("No usable HEVC encoder. Install FFmpeg with hevc_nvenc or libx265.")
 
 
-def runtime_details(method, diagnostics, *, upscaled, motion=True):
+def runtime_details(method, diagnostics, *, upscaled, motion=True, plan=None):
     details = {}
     if method == DLSS5_NR:
         if not any("feature ready; streaming" in line for line in diagnostics):
@@ -290,7 +322,9 @@ def runtime_details(method, diagnostics, *, upscaled, motion=True):
         exe, _, model, wine = dlss_config()
         details.update(helper_sha256=file_hash(exe), model_sha256=file_hash(model),
                        backend="RunningHub DNR2", runner=Path(wine).name if wine else "Windows", motion="auto" if motion else "disabled",
-                       stage_order="DLSS SR → NR" if upscaled else "NR")
+                       stage_order="Lanczos → NR" if plan and plan.resize else "DLSS SR → NR" if upscaled else "NR")
+        if plan and plan.core_info:
+            details["ngx_core"] = {"experimental": "R580", **plan.core_info}
         for line in diagnostics:
             if "optical flow:" in line:
                 details["motion_backend"] = line.split("optical flow:", 1)[1].strip()
@@ -321,6 +355,9 @@ def postprocess(source: Path, method: str, resolution: str, settings_value, *, r
     if method == DLSS5_NR:
         yield NvidiaUpdate("Checking DLSS 5 neural execution", total=total)
         probe_runtime(method, runtime)
+    if settings.upscaler == "dlss_sr" and os.name != "nt" and (out_width, out_height) != (width, height):
+        yield NvidiaUpdate("Preparing experimental R580 NGX core (one-time driver download)", total=total)
+    plan = plan_upscale(settings, width, height, out_width, out_height)
     encoder, encoder_args = _encoder()
     category = "dlss5"
     root = runtime.outputs_dir / category
@@ -341,9 +378,12 @@ def postprocess(source: Path, method: str, resolution: str, settings_value, *, r
     with tempfile.TemporaryDirectory(prefix=".processing-", dir=root) as directory:
         pending = Path(directory) / "output.mp4"
         output = root / (source.stem + "_" + Path(directory).name.removeprefix(".processing-") + ".mp4")
+        resize = ["-vf", f"scale={out_width}:{out_height}:flags=lanczos"] if plan.resize else []
         decode = ["ffmpeg", "-v", "error", "-nostdin", "-noautorotate", "-i", str(source),
-                  "-map", "0:v:0", "-an", "-fps_mode", "passthrough", "-pix_fmt", pixel, "-f", "rawvideo", "pipe:1"]
-        command, cwd = worker_command(method, width, height, out_width, out_height, settings, frames=total)
+                  "-map", "0:v:0", "-an", "-fps_mode", "passthrough", *resize,
+                  "-pix_fmt", pixel, "-f", "rawvideo", "pipe:1"]
+        command, cwd = worker_command(method, plan.width, plan.height, out_width, out_height, settings,
+                                      frames=total, ngx_core=plan.ngx_core)
         encode = ["ffmpeg", "-v", "error", "-nostdin", "-y", "-f", "rawvideo", "-pix_fmt", pixel,
             "-video_size", f"{out_width}x{out_height}", "-framerate", str(rate), "-i", "pipe:0",
             "-i", str(source), "-map", "0:v:0", "-map", "1:a?", "-map_metadata", "1",
@@ -356,7 +396,7 @@ def postprocess(source: Path, method: str, resolution: str, settings_value, *, r
         last = None
         with worker_context(method, runtime) as env:
             for update in stream_pipeline([decode, command, encode],
-                input_size=width * height * channels, output_size=out_width * out_height * channels,
+                input_size=plan.width * plan.height * channels, output_size=out_width * out_height * channels,
                 timeout=runtime.generation_timeout, worker_env=env, worker_cwd=cwd):
                 last = update
                 yield NvidiaUpdate(f"Processing {update.frames}" + (f"/{total}" if total else "") + f" frames · {encoder}", update.frames, total)
@@ -370,7 +410,7 @@ def postprocess(source: Path, method: str, resolution: str, settings_value, *, r
             raise H3Error("Enhanced video did not preserve the source audio streams.")
         check_cancelled()
         gpu_details = runtime_details(method, last.diagnostics,
-                                      upscaled=(out_width, out_height) != (width, height))
+                                      upscaled=(out_width, out_height) != (width, height), plan=plan)
         details = {"method": method, **asdict(settings), "source_resolution": f"{width}x{height}",
             "target_resolution": f"{out_width}x{out_height}", "frame_rate": str(rate), "frames": last.frames,
             "encoder": encoder, "encoder_fallback": encoder != "hevc_nvenc",

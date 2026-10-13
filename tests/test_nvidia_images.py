@@ -75,27 +75,44 @@ class NvidiaImageTests(unittest.TestCase):
             root = Path(directory)
             source = root / "transparent.png"
             Image.new("RGBA", (65, 49), (20, 50, 100, 87)).save(source)
+            # Default upscaler: Lanczos to the target, so the worker runs DLSS 5 at 1×.
             command = [sys.executable, "-u", "-c",
-                "import sys; from PIL import Image; "
-                "print('feature ready; streaming', file=sys.stderr); "
-                "image=Image.frombytes('RGBA',(65,49),sys.stdin.buffer.read()); "
-                "sys.stdout.buffer.write(image.convert('RGB').resize((130,98)).convert('RGBA').tobytes())",
+                "import sys; print('feature ready; streaming', file=sys.stderr); "
+                "data=sys.stdin.buffer.read(); assert len(data)==130*98*4; sys.stdout.buffer.write(data)",
                 "--motion", "0"]
             probe = self.mock_runtime(stack, source, command)
             stack.enter_context(patch.dict(backend.UPSCALE_RESOLUTION_PRESETS, {"fixture": (130, 98)}))
             runtime = self.runtime(root)
             result = list(images.postprocess_image(source, DLSS5_NR, "fixture", {}, runtime=runtime))[-1].result
             probe.assert_called_once_with(DLSS5_NR, runtime)
+            self.assertEqual(backend.worker_command.call_args.args[1:5], (130, 98, 130, 98))
+            self.assertEqual(backend.worker_command.call_args.kwargs["ngx_core"], "default")
             self.assertEqual(command[-1], "0")
             with Image.open(result) as enhanced:
                 self.assertEqual(enhanced.size, (130, 98))
                 self.assertEqual(enhanced.getpixel((0, 0)), (20, 50, 100, 87))
             settings = read_snapshot(result)["settings"]
-            self.assertEqual(settings["stage_order"], "DLSS SR → NR")
+            self.assertEqual(settings["stage_order"], "Lanczos → NR")
+            self.assertEqual(settings["upscaler"], "resize")
             self.assertEqual(settings["motion"], "disabled")
             self.assertEqual(settings["model_sha256"], backend.file_hash(source))
             self.assertEqual(backend.target_dimensions(DLSS5_NR, 65, 49, "fixture",
                 backend.NvidiaSettings(original_size=True), image=True), (65, 49))
+
+    def test_experimental_dlss_sr_uses_r580_core_only_on_linux(self):
+        settings = backend.NvidiaSettings(upscaler="dlss_sr")
+        info = {"driver": "581.57", "core_sha256": "ab"}
+        with patch.object(backend, "ensure_r580_core", return_value=info) as ensure:
+            with patch.object(backend.os, "name", "posix"):
+                plan = backend.plan_upscale(settings, 64, 48, 128, 96)
+            self.assertEqual((plan.width, plan.height, plan.resize, plan.ngx_core), (64, 48, False, "r580"))
+            self.assertEqual(plan.core_info, info)
+            # Native size never needs a carrier, so nothing is downloaded.
+            with patch.object(backend.os, "name", "posix"):
+                self.assertEqual(backend.plan_upscale(settings, 64, 48, 64, 48).ngx_core, "default")
+            ensure.assert_called_once()
+        with self.assertRaises(H3Error):
+            backend.NvidiaSettings.parse({"upscaler": "bicubic"})
 
     def test_bad_worker_and_cancellation_publish_no_image(self):
         for cancel in (False, True):

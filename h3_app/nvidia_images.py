@@ -2,6 +2,7 @@
 
 from dataclasses import asdict
 from io import BytesIO
+import os
 from pathlib import Path
 import tempfile
 
@@ -67,10 +68,15 @@ def postprocess_image(source, method, resolution, settings_value, *, runtime):
     if method == DLSS5_NR:
         yield backend.NvidiaUpdate("Checking DLSS 5 neural execution", total=1)
         backend.probe_runtime(method, runtime)
+    if settings.upscaler == "dlss_sr" and os.name != "nt" and (out_width, out_height) != (width, height):
+        yield backend.NvidiaUpdate("Preparing experimental R580 NGX core (one-time driver download)", total=1)
+    plan = backend.plan_upscale(settings, width, height, out_width, out_height)
     channels = 4
     mode = "RGBA"
-    raw = rgb.convert(mode).tobytes()
-    command, cwd = backend.worker_command(method, width, height, out_width, out_height, settings, frames=1, motion=False)
+    source_rgb = rgb.resize((out_width, out_height), Image.Resampling.LANCZOS) if plan.resize else rgb
+    raw = source_rgb.convert(mode).tobytes()
+    command, cwd = backend.worker_command(method, plan.width, plan.height, out_width, out_height, settings,
+                                          frames=1, motion=False, ngx_core=plan.ngx_core)
     result = bytearray()
     with backend.worker_context(method, runtime) as env:
         for update in stream_pipeline(
@@ -84,7 +90,7 @@ def postprocess_image(source, method, resolution, settings_value, *, runtime):
         "source_resolution": f"{width}x{height}", "target_resolution": f"{out_width}x{out_height}",
         "format": "PNG", "color_profile": "sRGB", "alpha": "preserved" if alpha is not None else "none",
         **backend.runtime_details(method, update.diagnostics,
-                                  upscaled=rgb.size != (out_width, out_height), motion=False),
+                                  upscaled=rgb.size != (out_width, out_height), motion=False, plan=plan),
     }
     enhanced = Image.frombytes(mode, (out_width, out_height), bytes(result)).convert("RGB")
     if alpha is not None:

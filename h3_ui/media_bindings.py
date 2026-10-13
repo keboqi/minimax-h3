@@ -391,6 +391,7 @@ def bind_gallery_view(
             view.nvidia_original,
             view.dlss_style,
             view.dlss_intensity,
+            view.dlss_upscaler,
         ],
         outputs=mutation_outputs + [view.post_status],
         show_progress="minimal",

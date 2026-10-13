@@ -19,7 +19,7 @@ import threading
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from h3_nvidia_runtime import (check_vulkan, display_reachable, ensure_display, pin_gpu, runtime_env,
-                               runtime_root, wine_env, xvfb_log_path)
+                               r580_host_dir, runtime_root, wine_env, xvfb_log_path)
 
 HEADER = struct.Struct("<4s12I5f")
 FRAME = struct.Struct("<4sII")
@@ -60,6 +60,12 @@ def transform(args):
     config = runtime_env()
     runtime = Path(config["H3_DLSSNR_DLL_DIR"])
     exe = Path(config["H3_DLSSNR_EXE"])
+    if args.ngx_core == "r580":
+        # Same host files, prepared by ensure_r580_core with a different _nvngx.dll.
+        runtime = r580_host_dir()
+        exe = runtime / exe.name
+        if not (runtime / "_nvngx.dll").is_file() or not exe.is_file():
+            raise RuntimeError("The experimental R580 NGX core is not prepared.")
     settings = json.loads(args.settings)
     ratio = (args.out_width / args.width + args.out_height / args.height) / 2
     factor = min(SCALES, key=lambda value: abs(value - ratio))
@@ -206,6 +212,7 @@ def main():
     for name in ("width", "height", "out-width", "out-height", "frames"):
         parser.add_argument("--" + name, type=int, required=True)
     parser.add_argument("--motion", type=int, choices=(0, 1), default=1)
+    parser.add_argument("--ngx-core", choices=("default", "r580"), default="default")
     parser.add_argument("--settings", required=True)
     args = parser.parse_args()
     if not 1 <= args.frames <= 1_000_000:

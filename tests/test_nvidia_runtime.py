@@ -102,6 +102,41 @@ class RuntimeInstallTests(unittest.TestCase):
                 fetch.assert_not_called()
 
 
+class R580CoreTests(unittest.TestCase):
+    def test_r580_core_mirrors_host_and_falls_back_across_driver_versions(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            host = root / "host"
+            (host / "caller").mkdir(parents=True)
+            for name in ("dlss5nr_host.exe", "dlss5nr_bridge.dll", "nvngx_dlss.dll", "_nvngx.dll",
+                         "caller/nvngx.dll_comfy.dll"):
+                (host / name).write_bytes(b"MZ " + name.encode())
+            attempts = []
+
+            def fetch(url, path, expected=None):
+                attempts.append(url)
+                if len(attempts) == 1:
+                    raise RuntimeError("Download failed: HTTP Error 404")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"driver")
+                return path
+
+            with patch.dict(os.environ, {"H3_DLSSNR_R580_DRIVER": ""}), \
+                    patch.object(runtime, "runtime_env", return_value={"H3_DLSSNR_DLL_DIR": str(host)}), \
+                    patch.object(runtime, "download", side_effect=fetch), \
+                    patch.object(runtime, "extract_ngx_core",
+                                 side_effect=lambda root, archive, core: core.write_bytes(b"MZ r580")):
+                info = runtime.ensure_r580_core(root)
+                again = runtime.ensure_r580_core(root)
+            target = runtime.r580_host_dir(root)
+            self.assertEqual(info["driver"], runtime.R580_DRIVER_CANDIDATES[1])
+            self.assertEqual(again, info)
+            self.assertEqual(len(attempts), 2)  # Cached after the first success.
+            self.assertEqual((target / "_nvngx.dll").read_bytes(), b"MZ r580")
+            self.assertEqual((target / "caller/nvngx.dll_comfy.dll").read_bytes(), b"MZ caller/nvngx.dll_comfy.dll")
+            self.assertEqual((host / "_nvngx.dll").read_bytes(), b"MZ _nvngx.dll")  # Default core untouched.
+
+
 class LinuxDlssSetupTests(unittest.TestCase):
     def test_wine_environment_removes_cuda_paths_and_enables_neural_rendering(self):
         with patch.dict(os.environ, {"LD_LIBRARY_PATH": "/cuda/lib64", "KEEP": "value"}, clear=True):

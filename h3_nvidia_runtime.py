@@ -535,6 +535,12 @@ def install_windows_core(root, target):
     except (OSError, ValueError, KeyError):
         pass
     archive = download(NGX_WINDOWS_URL, root / "downloads" / "windows-ngx-driver.exe", NGX_WINDOWS_SHA256)
+    extract_ngx_core(root, archive, core)
+    marker.write_text(json.dumps({"archive": NGX_WINDOWS_SHA256, "file": sha256(core)}))
+    archive.unlink(missing_ok=True)
+
+
+def extract_ngx_core(root, archive, core):
     with tempfile.TemporaryDirectory(dir=root) as directory:
         staging = Path(directory)
         subprocess.run(["7z", "e", "-y", str(archive), "-r", "_nvngx.dll", "_nvngx.dl_", "-o" + directory],
@@ -544,10 +550,74 @@ def install_windows_core(root, target):
                            check=True, capture_output=True, timeout=60)
         extracted = staging / "_nvngx.dll"
         if not extracted.is_file() or extracted.read_bytes()[:2] != b"MZ":
-            raise RuntimeError("The pinned Windows driver package does not contain a valid _nvngx.dll.")
+            raise RuntimeError(f"Windows driver package {archive.name} does not contain a valid _nvngx.dll.")
         copy_dll(extracted, core)
-    marker.write_text(json.dumps({"archive": NGX_WINDOWS_SHA256, "file": sha256(core)}))
-    archive.unlink(missing_ok=True)
+
+
+# Experimental: NGX core from the host driver's R580 branch for the DLSS SR
+# carrier, whose signed-module load fails under Wine with the 616 core. These
+# packages are not pinned by checksum; the downloaded hash is recorded instead.
+R580_DRIVER_CANDIDATES = ("581.57", "581.42", "581.29", "580.97", "580.88")
+
+
+def r580_host_dir(root=None):
+    return runtime_root(root) / ("rh-dlss-" + RH_DLSS_REF + "-r580")
+
+
+def mirror_host(source, target):
+    """Share the managed host's files; only _nvngx.dll differs."""
+    for path in source.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in (".dll", ".exe") or path.name == "_nvngx.dll":
+            continue
+        destination = target / path.relative_to(source)
+        if destination.is_file() and destination.stat().st_size == path.stat().st_size \
+                and sha256(destination) == sha256(path):
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.unlink(missing_ok=True)
+        try:
+            os.link(path, destination)
+        except OSError:
+            shutil.copy2(path, destination)
+
+
+def ensure_r580_core(root=None):
+    """Prepare a host directory using a Windows R580 NGX core. Returns its provenance."""
+    root = runtime_root(root)
+    target = r580_host_dir(root)
+    marker = target / ".h3-r580.json"
+    with installation_lock(root):
+        host = Path(runtime_env(root).get("H3_DLSSNR_DLL_DIR", ""))
+        if not (host / "dlss5nr_host.exe").is_file():
+            raise RuntimeError("The managed DLSS host is not installed. Restart the launcher first.")
+        mirror_host(host, target)
+        try:
+            cached = json.loads(marker.read_text(encoding="utf-8"))
+            if sha256(target / "_nvngx.dll") == cached["core_sha256"]:
+                return cached
+        except (OSError, ValueError, KeyError):
+            pass
+        override = os.getenv("H3_DLSSNR_R580_DRIVER", "").strip()
+        failures = []
+        for version in (override,) if override else R580_DRIVER_CANDIDATES:
+            url = (f"https://us.download.nvidia.com/Windows/{version}/"
+                   f"{version}-desktop-win10-win11-64bit-international-dch-whql.exe")
+            try:
+                print(f"[h3-nvidia] Downloading Windows R580 driver {version} for its NGX core", flush=True)
+                archive = download(url, root / "downloads" / f"windows-ngx-{version}.exe")
+            except (OSError, RuntimeError) as exc:
+                failures.append(f"{version}: {exc}")
+                continue
+            try:
+                info = {"driver": version, "url": url, "archive_sha256": sha256(archive)}
+                extract_ngx_core(root, archive, target / "_nvngx.dll")
+            finally:
+                archive.unlink(missing_ok=True)
+            info["core_sha256"] = sha256(target / "_nvngx.dll")
+            marker.write_text(json.dumps(info), encoding="utf-8")
+            return info
+        raise RuntimeError("Could not obtain a Windows R580 driver package. Set H3_DLSSNR_R580_DRIVER to an "
+                           "available R580 version (for example 581.57). " + "; ".join(failures)[-1500:])
 
 
 def install_headless_nvapi(root):
