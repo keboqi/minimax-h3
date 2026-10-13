@@ -122,38 +122,3 @@ class MediaPerformanceTests(TestCase):
             output = browser_preview_updates(updates)[0]["value"]
             result = processing_utils.move_files_to_cache(output, component, postprocess=True)
         self.assertEqual(result["url"], url)
-
-    def test_progressive_video_page_preserves_selection_until_poster_is_ready(self):
-        with TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = root / "original.mp4"
-            source.touch()
-            runtime = RuntimeConfig(root, "", root, root / "models.json", root)
-            release = Event()
-            def poster(path):
-                release.wait(5)
-                return root / "poster.jpg"
-            services = SimpleNamespace(
-                Path=Path, gallery_thumbnail=poster, gallery_store=gallery_store,
-                GALLERY_THUMBNAILS_DIR=runtime.gallery_thumbnails_dir,
-                _runtime_config=lambda: runtime,
-                generated_video_family=lambda path: "Generated", time=__import__("time"),
-            )
-            controller = MediaController(services)
-            inventory = gallery_store.AssetInventory("Video", (source,))
-            try:
-                first = controller.refresh_gallery_page(paths=inventory, preview_timeout=0)
-                self.assertEqual(first.preparing, 1)
-                self.assertEqual(first.unavailable, 0)
-                self.assertEqual(first.paths, (str(source),))
-            finally:
-                release.set()
-            with patch.object(Path, "stat", side_effect=AssertionError("repeat Drive stat")):
-                # Polling only the in-flight Future must not revisit Drive.
-                final = controller.refresh_media_page("Video", previous=first)
-                while final.preparing:
-                    __import__("time").sleep(0.01)
-                    final = controller.refresh_media_page("Video", previous=final)
-            self.assertEqual(final.preparing, 0)
-            self.assertEqual(final.paths, first.paths)
-            self.assertEqual(final.items[0][0], str(root / "poster.jpg"))

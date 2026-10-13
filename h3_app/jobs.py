@@ -58,7 +58,6 @@ class Job:
     lease_lock: Any = field(default=None, repr=False)
     input_bytes: int = 0
     claimed: bool = False
-    recoverable_source: str | None = None
     finishing_request: dict | None = None
     finishing_callbacks: dict[int, Any] = field(default_factory=dict, repr=False)
     finishing_offsets: dict[int, int] = field(default_factory=dict)

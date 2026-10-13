@@ -3,7 +3,6 @@
 from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
-from time import sleep
 import gradio as gr
 from h3_app.catalog import (
     LTX25_CQ_ENHANCER,
@@ -42,11 +41,9 @@ def bind_gallery_view(
 ) -> None:
     page_size = 48
 
-    filters = view.filters or gr.State({"query": "", "favorite": False})
-    index = getattr(view.search, "h3_asset_index", None)
-    page_queue = index is None
+    filters = view.filters
+    index = view.search.h3_asset_index
     page_outputs = [view.grid, view.paths, view.status, view.shown, view.show_more]
-    refresh_events = []
 
     def page_values(page, limit, request, version):
         return (
@@ -72,33 +69,13 @@ def bind_gallery_view(
         page = refresh(mode, limit, paths=matching)
         return page_values(page, limit, request, index.versions.get(mode))
 
-    def progressive_page(mode: str, filter_values, limit: int = page_size, request: gr.Request = None):
-        # Legacy callers without a catalog can still render while decoding.
-        previous = None
-        while True:
-            page = refresh(mode, limit, preview_timeout=0.1, previous=previous)
-            if previous is None or page.items != previous.items or page.status != previous.status:
-                yield page_values(page, limit, request, None)
-            if not page.preparing:
-                break
-            previous = page
-            sleep(0.25)
-
     def sync_more(mode: str, filter_values, request: gr.Request):
         return refresh_page(mode, filter_values, request=request)
 
-    if page_queue:
-        refresh_page = progressive_page
-
-        def sync_more(mode: str, filter_values, request: gr.Request):
-            yield from refresh_page(mode, filter_values, request=request)
-
-    scan_event = getattr(view.search, "h3_scan_event", None)
-    if scan_event is not None:
-        scan_event.success(
-            sync_more, inputs=[view.mode, filters], outputs=page_outputs,
-            queue=page_queue, concurrency_limit=None, api_name=False,
-        )
+    view.search.h3_scan_event.success(
+        sync_more, inputs=[view.mode, filters], outputs=page_outputs,
+        queue=False, concurrency_limit=None, api_name=False,
+    )
 
     def validate_selection(mode, paths, selected):
         if selected and selected in paths:
@@ -208,11 +185,9 @@ def bind_gallery_view(
         mode_changed = mode != current.get("_mode", mode) or (
             "_mode" not in current and target is view.mode
         )
-        filters_changed = False
-        if view.search is not None:
-            query, starred = text.strip(), bool(favorite)
-            filters_changed = query != current.get("query", "") or starred != current.get("favorite", False)
-            current.update(query=query, favorite=starred)
+        query, starred = text.strip(), bool(favorite)
+        filters_changed = query != current.get("query", "") or starred != current.get("favorite", False)
+        current.update(query=query, favorite=starred)
         current["_mode"] = mode
         # Gradio replays a deferred dependency with its original event target,
         # but its inputs contain the latest controls. Use those inputs to reset
@@ -229,21 +204,11 @@ def bind_gallery_view(
         controls, limit = browse_parameters(mode, current, shown, evt, text, favorite)
         return (*controls, *refresh_page(mode, current, limit, request=request))
 
-    if page_queue:
-        def browse_library(mode, current, shown, request: gr.Request, evt: gr.EventData, text="", favorite=False):
-            controls, limit = browse_parameters(mode, current, shown, evt, text, favorite)
-            if evt.target is view.mode:
-                yield (*controls, [], [], "Loading library…", 0, gr.update(interactive=False))
-                controls = [gr.skip() for _ in range(10)]
-            for page in refresh_page(mode, current, limit, request=request):
-                yield (*controls, *page)
-                controls = [gr.skip() for _ in range(10)]
-
-    browse_triggers = [view.mode.change, tab.select, view.refresh.click, view.show_more.click]
-    browse_inputs = [view.mode, filters, view.shown]
-    if view.search is not None:
-        browse_triggers.extend([view.search.click, view.query.submit, view.favorite_only.input])
-        browse_inputs.extend([view.query, view.favorite_only])
+    browse_triggers = [
+        view.mode.change, tab.select, view.refresh.click, view.show_more.click,
+        view.search.click, view.query.submit, view.favorite_only.input,
+    ]
+    browse_inputs = [view.mode, filters, view.shown, view.query, view.favorite_only]
     # One dependency serializes all user browsing actions, so a late search or
     # pagination response cannot replace the final media-type switch.
     refreshed = gr.on(
@@ -255,14 +220,13 @@ def bind_gallery_view(
             view.manage, view.confirm_delete, view.postprocess, view.post_run,
             view.enhance, *page_outputs,
         ],
-        queue=page_queue,
+        queue=False,
         concurrency_limit=None,
         show_progress="minimal",
         trigger_mode="always_last",
         api_name=False,
     )
     synchronize(refreshed, refreshed=True)
-    refresh_events.append(refreshed)
     view.postprocess.change(
         lambda value, mode, selected: (
             gr.update(visible=value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER or value in NVIDIA_POSTPROCESS_OPTIONS),
@@ -367,12 +331,11 @@ def bind_gallery_view(
         sync_more,
         inputs=[view.mode, filters],
         outputs=page_outputs,
-        queue=page_queue,
+        queue=False,
         concurrency_limit=None,
         show_progress="hidden",
     )
     synchronize(refreshed, refreshed=True)
-    refresh_events.append(refreshed)
     post_event = bind_gpu_action(
         view.post_run.click,
         owned_generation(with_nvidia_settings(postprocess), "gallery"),
@@ -401,12 +364,11 @@ def bind_gallery_view(
         sync_more,
         inputs=[view.mode, filters],
         outputs=page_outputs,
-        queue=page_queue,
+        queue=False,
         concurrency_limit=None,
         show_progress="hidden",
     )
     synchronize(refreshed, refreshed=True)
-    refresh_events.append(refreshed)
     stopped = view.post_stop.click(
         owned_interrupt(interrupt, "gallery"),
         outputs=view.post_status,
@@ -420,11 +382,6 @@ def bind_gallery_view(
         values = sync_more(mode, filter_values, request)
         return (*values[:2], gr.skip(), *values[3:])
 
-    if page_queue:
-        def refresh_after_deletion(mode: str, filter_values, request: gr.Request):
-            for values in sync_more(mode, filter_values, request):
-                yield (*values[:2], gr.skip(), *values[3:])
-
     deleted = bind_safe_deletion(
         view,
         list_paths=list_paths,
@@ -434,10 +391,5 @@ def bind_gallery_view(
         sync_more=refresh_after_deletion,
         refresh_inputs=[view.mode, filters],
         refresh_outputs=page_outputs,
-        refresh_queue=page_queue,
     )
     synchronize(deleted, refreshed=True)
-    refresh_events.append(deleted)
-    if page_queue:
-        # Only legacy progressive pages have in-flight decoding to cancel.
-        view.mode.input(fn=None, cancels=refresh_events, queue=False, api_name=False)

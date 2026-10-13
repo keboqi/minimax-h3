@@ -3,21 +3,26 @@
 from __future__ import annotations
 
 import gradio as gr
-from h3_app.catalog import LTX25_TILED_UPSCALE
+from h3_app.catalog import AI_POSTPROCESS_OPTIONS, LTX25_TILED_UPSCALE, LTX25_UPSCALE, SEEDVR2_UPSCALE
 
-from ..contracts import AppComponents, AppServices
+from typing import TYPE_CHECKING
+
+from ..contracts import AppComponents
+
+if TYPE_CHECKING:
+    from ..bootstrap import BootstrapServices
 from ..settings_controller import SettingsController
 
 
 def bind_resolution(
-    components: AppComponents, services: AppServices, controller: SettingsController
+    components: AppComponents, services: BootstrapServices, controller: SettingsController
 ) -> None:
     components.generation_postprocess.change(
         lambda value: (
-            gr.update(visible=value in services.AI_POSTPROCESS_OPTIONS),
-            gr.update(visible=value == services.SEEDVR2_UPSCALE),
+            gr.update(visible=value in AI_POSTPROCESS_OPTIONS),
+            gr.update(visible=value == SEEDVR2_UPSCALE),
             gr.update(
-                visible=value in {services.LTX25_UPSCALE, LTX25_TILED_UPSCALE},
+                visible=value in {LTX25_UPSCALE, LTX25_TILED_UPSCALE},
                 value=(
                     "Uses spatial tiles and temporal streaming. The detail-refinement adapter "
                     "downloads on first use. Uses a neutral detail prompt; segment splitting is an advanced fallback."
@@ -26,9 +31,9 @@ def bind_resolution(
                     "The gated 2x IC-LoRA downloads on first use."
                 ),
             ),
-            gr.update(visible=value in {services.LTX25_UPSCALE, LTX25_TILED_UPSCALE}),
-            gr.update(visible=value in {services.LTX25_UPSCALE, LTX25_TILED_UPSCALE}),
-            gr.update(visible=value in {services.LTX25_UPSCALE, LTX25_TILED_UPSCALE}),
+            gr.update(visible=value in {LTX25_UPSCALE, LTX25_TILED_UPSCALE}),
+            gr.update(visible=value in {LTX25_UPSCALE, LTX25_TILED_UPSCALE}),
+            gr.update(visible=value in {LTX25_UPSCALE, LTX25_TILED_UPSCALE}),
         ),
         inputs=components.generation_postprocess,
         outputs=[

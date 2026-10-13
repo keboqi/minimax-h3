@@ -382,10 +382,6 @@ class _LocalPromptRewriter:
         with self._lock:
             return self._unload_locked()
 
-    def is_loaded(self) -> bool:
-        with self._lock:
-            return self._model is not None
-
 
 _LOCAL_REWRITER = _LocalPromptRewriter()
 
@@ -396,10 +392,6 @@ def rewrite_prompt(**kwargs: Any) -> tuple[str, str]:
 
 def unload_prompt_rewriter() -> bool:
     return _LOCAL_REWRITER.unload()
-
-
-def prompt_rewriter_is_loaded() -> bool:
-    return _LOCAL_REWRITER.is_loaded()
 
 
 def selftest() -> None:

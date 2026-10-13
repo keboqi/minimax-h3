@@ -35,7 +35,6 @@ H3_LATENT_UPSCALER_REPO = "LBH-123-AI/Minimax_h3_latent_Upscaler"
 LTX25_REPO = "Lightricks/LTX-2.5"
 LTX25_PIXEL_UPSCALER_REPO = "Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler"
 LTX25_CQ_ENHANCER_REPO = "CQdesign/LTX-2.5-CQ-Video-and-Image-Enhancer-LoRAs"
-LTX23_REPO = "Lightricks/LTX-2.3"
 MINIMAX_MUSIC3_REPO = "Comfy-Org/MiniMax-Music-3"
 YUE2_REPO = "Comfy-Org/YuE2"
 QWEN_IMAGE21_REPO = "Comfy-Org/Qwen-Image-2.1"
@@ -654,13 +653,11 @@ H3_LATENT_UPSCALER_MODEL_CHOICES = {
     "Quality (FP32)": "h3_latent_upscaler_3d_fp32",
 }
 DEFAULT_H3_LATENT_UPSCALER_MODEL = "Quality (FP32)"
-H3_LATENT_UPSCALER_MODEL_KEYS = tuple(H3_LATENT_UPSCALER_MODEL_CHOICES.values())
 H3_TEXT_ENCODER_CHOICES = {
     "NVFP4 / AWQ": "text_encoder",
     "INT8 ConvRot": "text_encoder_int8",
     "BF16": "text_encoder_bf16",
 }
-DEFAULT_H3_TEXT_ENCODER = "INT8 ConvRot"
 DEFAULT_H3_TEXT_ENCODER_KEY = "text_encoder_int8"
 H3_OPTIONAL_TEXT_ENCODER_KEYS = (
     "text_encoder",

@@ -5,7 +5,7 @@ from contextlib import nullcontext
 from typing import Any, Callable
 import gradio as gr
 from .app_bindings import bind_app
-from .contracts import AppComponents, AppServices
+from .contracts import AppComponents
 from .h3_view import build_h3_view, H3ViewServices
 from .layout import create_app_views, bind_workspace_navigation
 from .persistence import bind_browser_settings
@@ -16,17 +16,10 @@ from .media_view import build_gallery_view
 from .music_view import build_music_view
 from .qwen_view import build_qwen_image21_view
 from .yue2_view import build_yue2_view
-from .api_bindings import bind_api_view
-from .media_bindings import bind_gallery_view
-from .music_bindings import bind_music_view
-from .ltx_bindings import bind_ltx_view
-from .qwen_bindings import bind_qwen_image21_view
-from .yue2_bindings import bind_yue2_view
 
 
 @dataclass(frozen=True)
 class BootstrapCatalog:
-    AI_POSTPROCESS_OPTIONS: Any
     AUTO_RESOLUTION_MEGAPIXEL_PRESETS: Any
     AUTO_SOL_TOKEN_THRESHOLD: Any
     COMFY_DIR: Any
@@ -54,7 +47,6 @@ class BootstrapCatalog:
     LOCAL_PROMPT_BASE_MODELS: Any
     LTX25_DEFAULTS: Any
     LTX25_MODEL_CHOICES: Any
-    LTX25_UPSCALE: Any
     LTX25_WORKFLOWS: Any
     MAX_IMAGE_FRAMES: Any
     MAX_VIDEO_BATCH_COUNT: Any
@@ -70,7 +62,6 @@ class BootstrapCatalog:
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES: Any
     RESULT_FORMATS: Any
     SEEDVR2_MODEL_CHOICES: Any
-    SEEDVR2_UPSCALE: Any
     SERVER_ATTENTION_BACKEND: Any
     SERVER_DENSE_ATTENTION_BACKEND: Any
     SLA_PRESET_INPUTS: Any
@@ -123,7 +114,6 @@ class BootstrapServices:
     prompt_writer_backend_visibility: Callable
     reference_prompt_help: Callable
     refresh_backend_views: Callable
-    refresh_media_gallery: Callable
     refresh_media_page: Callable
     render_ltx25_official_model_inventory: Callable
     render_ltx25_workflow_details: Callable
@@ -376,61 +366,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         )
         settings_controller = bind_app(
             AppComponents.from_mapping(app_components),
-            AppServices(
-                resolve_request_settings=services.resolve_request_settings,
-                describe_settings=services.describe_settings,
-                AI_POSTPROCESS_OPTIONS=catalog.AI_POSTPROCESS_OPTIONS,
-                LTX25_UPSCALE=catalog.LTX25_UPSCALE,
-                SEEDVR2_UPSCALE=catalog.SEEDVR2_UPSCALE,
-                auto_resolution_from_start_frame=services.auto_resolution_from_start_frame,
-                bind_api_view=bind_api_view,
-                bind_gallery_view=bind_gallery_view,
-                bind_ltx_view=bind_ltx_view,
-                bind_music_view=bind_music_view,
-                bind_qwen_image21_view=bind_qwen_image21_view,
-                bind_yue2_view=bind_yue2_view,
-                compile_trt_video_vae=services.compile_trt_video_vae,
-                delete_selected_gallery_media=services.delete_selected_gallery_media,
-                empty_generated_media_gallery=services.empty_generated_media_gallery,
-                enhance_h3_prompt=services.enhance_h3_prompt,
-                enhance_ltx25_prompt=services.enhance_ltx25_prompt,
-                enhance_music3_prompt=services.enhance_music3_prompt,
-                enhance_qwen_image21_prompt=services.enhance_qwen_image21_prompt,
-                enhance_yue2_prompt=services.enhance_yue2_prompt,
-                fbcache_preset_defaults=services.fbcache_preset_defaults,
-                generate_for_ui=services.generate_for_ui,
-                generate_ltx25=services.generate_ltx25,
-                generate_music3=services.generate_music3,
-                generate_qwen_image21=services.generate_qwen_image21,
-                generate_yue2=services.generate_yue2,
-                generate_with_ui_defaults=services.generate_with_ui_defaults,
-                image_vae_frame_updates=services.image_vae_frame_updates,
-                import_gallery_media=services.import_gallery_media,
-                input_image_frame_preset_updates=services.input_image_frame_preset_updates,
-                interrupt=services.interrupt,
-                latent_upscale_layout_updates=services.latent_upscale_layout_updates,
-                latent_upscale_method_layout_update=services.latent_upscale_method_layout_update,
-                mode_layout_updates=services.mode_layout_updates,
-                postprocess_selected_gallery_media=services.postprocess_selected_gallery_media,
-                prepare_all_ltx25_official_models=services.prepare_all_ltx25_official_models,
-                prepare_ltx25_official_workflow=services.prepare_ltx25_official_workflow,
-                prompt_writer_backend_visibility=services.prompt_writer_backend_visibility,
-                refresh_backend_views=services.refresh_backend_views,
-                refresh_media_gallery=services.refresh_media_gallery,
-                refresh_media_page=services.refresh_media_page,
-                list_media_paths=services.list_media_paths,
-                render_ltx25_official_model_inventory=services.render_ltx25_official_model_inventory,
-                render_ltx25_workflow_details=services.render_ltx25_workflow_details,
-                resolution_control_updates=services.resolution_control_updates,
-                resolution_choice_updates=services.resolution_choice_updates,
-                resolution_info_preview=services.resolution_info_preview,
-                result_format_layout_updates=services.result_format_layout_updates,
-                save_selected_image_frames=services.save_selected_image_frames,
-                select_all_image_frames=services.select_all_image_frames,
-                select_gallery_media=services.select_gallery_media,
-                unload_all_models=services.unload_all_models,
-                upscale_selected_input_images=services.upscale_selected_input_images,
-            ),
+            services,
         )
         navigation = bind_workspace_navigation(
             app_views, h3_components.result_format, settings_controller

@@ -2,7 +2,7 @@
 
 from contextlib import ExitStack, nullcontext
 import inspect
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import shutil
 import subprocess
 import sys

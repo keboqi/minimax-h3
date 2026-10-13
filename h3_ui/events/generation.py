@@ -6,12 +6,17 @@ import gradio as gr
 
 from h3_app.contracts import GENERATION_COMPONENTS, GENERATION_FIELDS
 
-from ..contracts import AppComponents, AppServices
+from typing import TYPE_CHECKING
+
+from ..contracts import AppComponents
+
+if TYPE_CHECKING:
+    from ..bootstrap import BootstrapServices
 from ..job_bindings import bind_gpu_action, owned_generation
 
 
 def bind_generation(
-    components: AppComponents, services: AppServices
+    components: AppComponents, services: BootstrapServices
 ) -> tuple[gr.events.Dependency, gr.events.Dependency]:
     generation_inputs = [
         components.batch_count,

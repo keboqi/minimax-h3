@@ -80,7 +80,6 @@ from h3_app.provenance import (
 from h3_ui.settings_presentation import render_settings
 from h3_app.errors import H3Error
 from h3_app.catalog import (
-    AI_POSTPROCESS_OPTIONS,
     AUDIO_EXTENSIONS,
     AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
     AUTO_SOL_TOKEN_THRESHOLD,
@@ -112,7 +111,6 @@ from h3_app.catalog import (
     LIGHTNING_PROMPT_MODEL,
     LTX25_DEFAULTS,
     LTX25_UPSCALE,
-    LTX25_TILED_UPSCALE,
     LTX25_WORKFLOWS,
     MAX_IMAGE_FRAMES,
     MAX_REFERENCE_AUDIOS,
@@ -1959,14 +1957,10 @@ def refresh_media_page(
     limit: int = GALLERY_PAGE_SIZE,
     *,
     paths=None,
-    preview_timeout=None,
-    previous=None,
 ) -> gallery_store.AssetPage:
-    if paths is None and previous is None:
+    if paths is None:
         paths = _catalog_inventory(mode, limit)
-    return _mediacontroller().refresh_media_page(
-        mode, limit, paths=paths, preview_timeout=preview_timeout, previous=previous
-    )
+    return _mediacontroller().refresh_media_page(mode, limit, paths=paths)
 
 
 def _catalog_inventory(mode, limit):
@@ -3063,7 +3057,6 @@ def build_ui() -> gr.Blocks:
 
     return compose_ui(
         BootstrapCatalog(
-            AI_POSTPROCESS_OPTIONS=AI_POSTPROCESS_OPTIONS,
             AUTO_RESOLUTION_MEGAPIXEL_PRESETS=AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
             AUTO_SOL_TOKEN_THRESHOLD=AUTO_SOL_TOKEN_THRESHOLD,
             COMFY_DIR=COMFY_DIR,
@@ -3091,7 +3084,6 @@ def build_ui() -> gr.Blocks:
             LOCAL_PROMPT_BASE_MODELS=LOCAL_PROMPT_BASE_MODELS,
             LTX25_DEFAULTS=LTX25_DEFAULTS,
             LTX25_MODEL_CHOICES=LTX25_MODEL_CHOICES,
-            LTX25_UPSCALE=LTX25_UPSCALE,
             LTX25_WORKFLOWS=LTX25_WORKFLOWS,
             MAX_IMAGE_FRAMES=MAX_IMAGE_FRAMES,
             MAX_VIDEO_BATCH_COUNT=MAX_VIDEO_BATCH_COUNT,
@@ -3107,7 +3099,6 @@ def build_ui() -> gr.Blocks:
             QWEN_IMAGE21_TEXT_ENCODER_CHOICES=QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
             RESULT_FORMATS=RESULT_FORMATS,
             SEEDVR2_MODEL_CHOICES=SEEDVR2_MODEL_CHOICES,
-            SEEDVR2_UPSCALE=SEEDVR2_UPSCALE,
             SERVER_ATTENTION_BACKEND=SERVER_ATTENTION_BACKEND,
             SERVER_DENSE_ATTENTION_BACKEND=SERVER_DENSE_ATTENTION_BACKEND,
             SLA_PRESET_INPUTS=SLA_PRESET_INPUTS,
@@ -3158,7 +3149,6 @@ def build_ui() -> gr.Blocks:
             prompt_writer_backend_visibility=prompt_writer_backend_visibility,
             reference_prompt_help=reference_prompt_help,
             refresh_backend_views=refresh_backend_views,
-            refresh_media_gallery=refresh_media_gallery,
             refresh_media_page=refresh_media_page,
             render_ltx25_official_model_inventory=render_ltx25_official_model_inventory,
             render_ltx25_workflow_details=render_ltx25_workflow_details,

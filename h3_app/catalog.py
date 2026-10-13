@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 
 from h3_app.settings import (
-    PRESETS, PDMD_4STEP as PDMD_4STEP_LORA, DMAD_4STEP as DMAD_4STEP_LORA,
+    PDMD_4STEP as PDMD_4STEP_LORA, DMAD_4STEP as DMAD_4STEP_LORA,
 )
 from h3_models import (
     DEFAULT_H3_LATENT_UPSCALER_MODEL,
     DEFAULT_LTX25_MODEL,
     DEFAULT_MUSIC3_MODEL,
-    DEFAULT_QWEN_IMAGE21_MODEL,
     DEFAULT_QWEN_IMAGE21_TEXT_ENCODER,
     DEFAULT_YUE2_MODEL,
     DEFAULT_SEEDVR2_MODEL,
@@ -290,11 +289,6 @@ QWEN_IMAGE21_SPECTRUM_PREVIEW_INPUTS = {
     "force_actual_on_control": True,
     "debug": False,
 }
-
-# Backward-compatible name for callers that previously selected "Spectrum".
-# It now resolves to the quality-biased profile rather than the preview one.
-QWEN_IMAGE21_SPECTRUM_INPUTS = QWEN_IMAGE21_SPECTRUM_QUALITY_INPUTS
-
 
 LTX25_WORKFLOWS = {
     "Text / image to video — single stage": {
@@ -788,11 +782,6 @@ RESOLUTION_TIERS: dict[str, dict[str, tuple[int, int]]] = {
     "draft": DRAFT_RESOLUTIONS,
     "fast": FAST_RESOLUTIONS,
     "large": LARGE_RESOLUTIONS,
-}
-
-
-SAMPLING_PRESETS = {
-    name: tuple(asdict(value).values())[:11] for name, value in PRESETS.items()
 }
 
 

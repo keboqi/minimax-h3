@@ -285,7 +285,7 @@ class MediaController:
             clear_selection=False,
         )
 
-    def refresh_gallery_page(self, limit: int = 48, *, paths=None, preview_timeout=None) -> AssetPage:
+    def refresh_gallery_page(self, limit: int = 48, *, paths=None) -> AssetPage:
         if isinstance(paths, AssetInventory) and paths.kind != "Video":
             raise ValueError("Gallery inventory does not match the media type.")
         if isinstance(paths, AssetInventory) and paths.kind == "Video":
@@ -299,14 +299,13 @@ class MediaController:
         items: list[tuple[str, str]] = []
         selectable_paths: list[str] = []
         failed = 0
-        preview_jobs = []
-        posters, futures = preview_results(
+        posters = preview_results(
             shown_videos, self.services.gallery_thumbnail, kind="Video",
-            cache_root=self.services.GALLERY_THUMBNAILS_DIR, timeout=preview_timeout, return_futures=True,
+            cache_root=self.services.GALLERY_THUMBNAILS_DIR,
         )
-        for video, (thumbnail, pending), future in zip(shown_videos, posters, futures):
+        for video, (thumbnail, _pending) in zip(shown_videos, posters):
             if thumbnail is None:
-                failed += int(not pending)
+                failed += 1
                 thumbnail = self.services.gallery_store.gallery_placeholder(
                     video, kind="Video", runtime=self.services._runtime_config()
                 )
@@ -321,12 +320,10 @@ class MediaController:
             )
             size_mb = stat.st_size / (1024 * 1024)
             caption = f"{self.services.generated_video_family(video)} · {video.name} · {timestamp} · {size_mb:.1f} MB"
-            if pending:
-                preview_jobs.append((len(items), future))
             items.append((str(thumbnail), caption))
             selectable_paths.append(str(video))
         return AssetPage.from_scan(
-            items, selectable_paths, len(videos), limit, "videos", failed, len(preview_jobs), preview_jobs
+            items, selectable_paths, len(videos), limit, "videos", failed
         )
 
     def refresh_gallery(self, limit: int = 48):
@@ -363,28 +360,9 @@ class MediaController:
         )
 
     def refresh_media_page(
-        self, mode: str = "Video", limit: int = 48, *, paths=None, preview_timeout=None, previous=None
+        self, mode: str = "Video", limit: int = 48, *, paths=None
     ) -> AssetPage:
         """Refresh the active gallery, defaulting to the existing video library."""
-        if previous is not None:
-            # A progressive update only needs the in-flight results. Do not
-            # rescan, stat originals, read sidecars or regenerate captions.
-            items = list(previous.items)
-            pending = []
-            failed = previous.unavailable
-            for index, future in previous.preview_jobs:
-                if not future.done():
-                    pending.append((index, future))
-                else:
-                    thumbnail = future.result()
-                    if thumbnail is None:
-                        failed += 1
-                    else:
-                        items[index] = (str(thumbnail), items[index][1])
-            return AssetPage(
-                tuple(items), previous.paths, previous.total, previous.next_cursor,
-                previous.kind, failed, len(pending), tuple(pending),
-            )
         if isinstance(paths, AssetInventory) and paths.total is not None:
             if paths.kind != self.services.gallery_media_mode(mode):
                 raise ValueError("Gallery inventory does not match the media type.")
@@ -405,8 +383,8 @@ class MediaController:
             raise ValueError("Gallery inventory does not match the media type.")
         if media_mode == "Video":
             return (
-                self.refresh_gallery_page(limit, paths=paths, preview_timeout=preview_timeout)
-                if paths is not None or preview_timeout is not None
+                self.refresh_gallery_page(limit, paths=paths)
+                if paths is not None
                 else self.services.refresh_gallery_page(limit)
             )
         if media_mode == "Audio":
@@ -465,16 +443,15 @@ class MediaController:
         items: list[tuple[str, str]] = []
         selectable_paths: list[str] = []
         failed = 0
-        preview_jobs = []
         runtime = self.services._runtime_config()
-        posters, futures = preview_results(
+        posters = preview_results(
             images,
             lambda image: self.services.gallery_store.gallery_image_thumbnail(image, runtime=runtime),
-            kind="Image", cache_root=runtime.gallery_thumbnails_dir, timeout=preview_timeout, return_futures=True,
+            kind="Image", cache_root=runtime.gallery_thumbnails_dir,
         )
-        for image, (thumbnail, pending), future in zip(images, posters, futures):
+        for image, (thumbnail, _pending) in zip(images, posters):
             if thumbnail is None:
-                failed += int(not pending)
+                failed += 1
                 thumbnail = self.services.gallery_store.gallery_placeholder(
                     image, kind="Image", runtime=self.services._runtime_config()
                 )
@@ -489,12 +466,10 @@ class MediaController:
             )
             size_mb = stat.st_size / (1024 * 1024)
             caption = f"{self.services.gallery_store.generated_image_family(image, runtime=self.services._runtime_config())} · {image.name} · {timestamp} · {size_mb:.1f} MB"
-            if pending:
-                preview_jobs.append((len(items), future))
             items.append((str(thumbnail), caption))
             selectable_paths.append(str(image))
         return AssetPage.from_scan(
-            items, selectable_paths, len(all_images), limit, "images", failed, len(preview_jobs), preview_jobs
+            items, selectable_paths, len(all_images), limit, "images", failed
         )
 
     def refresh_media_gallery(self, mode: str = "Video", limit: int = 48):

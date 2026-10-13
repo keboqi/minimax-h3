@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
-from ..contracts import AppComponents, AppServices
+from typing import TYPE_CHECKING
+
+from h3_app.catalog import AI_POSTPROCESS_OPTIONS, LTX25_UPSCALE, SEEDVR2_UPSCALE
+
+from ..contracts import AppComponents
+from ..media_bindings import bind_gallery_view
+
+if TYPE_CHECKING:
+    from ..bootstrap import BootstrapServices
 
 
-def bind_gallery(components: AppComponents, services: AppServices) -> None:
-    services.bind_gallery_view(
+def bind_gallery(components: AppComponents, services: BootstrapServices) -> None:
+    bind_gallery_view(
         components.gallery_components,
         tab=components.gallery_tab,
         selected_ltx_model=components.gallery_components.ltx25_model,
-        ai_options=services.AI_POSTPROCESS_OPTIONS,
-        seedvr_option=services.SEEDVR2_UPSCALE,
-        ltx_option=services.LTX25_UPSCALE,
+        ai_options=AI_POSTPROCESS_OPTIONS,
+        seedvr_option=SEEDVR2_UPSCALE,
+        ltx_option=LTX25_UPSCALE,
         refresh=services.refresh_media_page,
         select=services.select_gallery_media,
         import_video=services.import_gallery_media,

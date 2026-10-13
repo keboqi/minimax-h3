@@ -42,7 +42,7 @@ _LOCK = Lock()
 _TASKS = {}
 
 
-def preview_results(paths, create, *, kind, cache_root, timeout=None, return_futures=False):
+def preview_results(paths, create, *, kind, cache_root, timeout=None):
     futures = []
     submitted = []
     with _LOCK:
@@ -80,4 +80,4 @@ def preview_results(paths, create, *, kind, cache_root, timeout=None, return_fut
     for future in futures:
         pending = future is not None and not future.done()
         results.append((future.result() if future is not None and not pending else None, pending))
-    return (results, futures) if return_futures else results
+    return results

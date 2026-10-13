@@ -34,10 +34,6 @@ class AssetIndex:
     def paths(self, mode, query="", favorite=False):
         return set(self.inventory(mode, query, favorite).paths)
 
-    def cached_paths(self, mode):
-        with self.lock:
-            return set(self.inventories.get(mode, ()))
-
     def rebuild(self):
         """Only this explicit action scans output folders and prepares old media."""
         if self.catalog is None:

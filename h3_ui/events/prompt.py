@@ -1,13 +1,18 @@
 """Bind prompt actions."""
 
 from __future__ import annotations
-from ..contracts import AppComponents, AppServices
+from typing import TYPE_CHECKING
+
+from ..contracts import AppComponents
+
+if TYPE_CHECKING:
+    from ..bootstrap import BootstrapServices
 from ..job_bindings import bind_prompt_action
 from ..prompt_preview import bind_prompt_preview
 import gradio as gr
 
 
-def bind_prompt(components: AppComponents, services: AppServices) -> None:
+def bind_prompt(components: AppComponents, services: BootstrapServices) -> None:
     components.prompt_writer_backend.change(
         services.prompt_writer_backend_visibility,
         inputs=components.prompt_writer_backend,

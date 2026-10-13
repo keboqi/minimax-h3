@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import gradio as gr
 
-from ..contracts import AppComponents, AppServices
+from typing import TYPE_CHECKING
+
+from ..contracts import AppComponents
+from ..ltx_bindings import bind_ltx_view
+
+if TYPE_CHECKING:
+    from ..bootstrap import BootstrapServices
 
 
-def bind_ltx(components: AppComponents, services: AppServices) -> gr.events.Dependency:
-    ltx25_event = services.bind_ltx_view(
+def bind_ltx(components: AppComponents, services: BootstrapServices) -> gr.events.Dependency:
+    ltx25_event = bind_ltx_view(
         components.ltx25_components,
         render_workflow=services.render_ltx25_workflow_details,
         prepare_workflow=services.prepare_ltx25_official_workflow,

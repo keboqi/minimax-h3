@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from ..contracts import AppComponents, AppServices
+from typing import TYPE_CHECKING
+
+from ..contracts import AppComponents
+
+if TYPE_CHECKING:
+    from ..bootstrap import BootstrapServices
 
 
-def bind_image_results(components: AppComponents, services: AppServices) -> None:
+def bind_image_results(components: AppComponents, services: BootstrapServices) -> None:
     components.image_select_all.click(
         services.select_all_image_frames,
         inputs=components.image_frame_paths,

@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from types import EllipsisType
-from typing import Any
 from urllib.parse import quote
 
 from h3_app.catalog import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
@@ -49,7 +48,6 @@ class AssetPage:
     kind: str
     unavailable: int = 0
     preparing: int = 0
-    preview_jobs: tuple[tuple[int, Any], ...] = ()
 
     def __post_init__(self):
         if len(self.items) != len(self.paths):
@@ -73,7 +71,7 @@ class AssetPage:
         return list(self.items), list(self.paths), self.status
 
     @classmethod
-    def from_scan(cls, items, paths, total, limit, kind, unavailable=0, preparing=0, preview_jobs=()):
+    def from_scan(cls, items, paths, total, limit, kind, unavailable=0, preparing=0):
         scanned = min(max(0, int(limit)), total)
         return cls(
             tuple(items),
@@ -83,7 +81,6 @@ class AssetPage:
             kind,
             unavailable,
             preparing,
-            tuple(preview_jobs),
         )
 
 

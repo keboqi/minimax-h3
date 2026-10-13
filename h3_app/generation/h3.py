@@ -314,7 +314,6 @@ def generate(
             job.finishing_offsets[job.variant] = sum(
                 entry["variant"] == job.variant for entry in job.ledger
             )
-            job.recoverable_source = str(source)
             retain_finishing(job, request, prepared, execution_snapshot)
         write_snapshot(
             source, {**execution_snapshot, "stage": "H3 output before post-processing"}

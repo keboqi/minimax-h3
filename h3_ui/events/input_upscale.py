@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import gradio as gr
 
-from ..contracts import AppComponents, AppServices
+from typing import TYPE_CHECKING
+
+from ..contracts import AppComponents
+
+if TYPE_CHECKING:
+    from ..bootstrap import BootstrapServices
 from ..job_bindings import bind_gpu_action, owned_generation
 
 
 def bind_input_upscale(
-    components: AppComponents, services: AppServices
+    components: AppComponents, services: BootstrapServices
 ) -> gr.events.Dependency:
     components.input_upscale_frame_preset.change(
         services.input_image_frame_preset_updates,

@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-from ..contracts import AppComponents, AppServices
+from typing import TYPE_CHECKING
+
+from ..contracts import AppComponents
+
+if TYPE_CHECKING:
+    from ..bootstrap import BootstrapServices
 from ..job_bindings import bind_gpu_action
 
 
-def bind_system(components: AppComponents, services: AppServices) -> None:
+def bind_system(components: AppComponents, services: BootstrapServices) -> None:
     components.refresh.click(
         services.refresh_backend_views,
         outputs=[components.system_summary, components.health],

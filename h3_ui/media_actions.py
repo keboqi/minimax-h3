@@ -31,9 +31,8 @@ def bind_safe_deletion(
     empty,
     mutation_outputs,
     sync_more,
-    refresh_inputs=None,
-    refresh_outputs=None,
-    refresh_queue=True,
+    refresh_inputs,
+    refresh_outputs,
 ):
     def prepare(mode, selected, action):
         paths = tuple(str(path) for path in list_paths(mode))
@@ -104,9 +103,9 @@ def bind_safe_deletion(
     )
     refreshed = confirmed.success(
         sync_more,
-        inputs=refresh_inputs or view.mode,
-        outputs=refresh_outputs or [view.shown, view.show_more],
-        queue=refresh_queue,
+        inputs=refresh_inputs,
+        outputs=refresh_outputs,
+        queue=False,
         concurrency_limit=None,
         api_name=False,
         show_progress="hidden",

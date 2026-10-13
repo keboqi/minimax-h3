@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from .contracts import AppComponents, AppServices
+from typing import TYPE_CHECKING
+
+from .contracts import AppComponents
 from .events.gallery import bind_gallery
 from .events.generation import bind_generation
 from .events.image_results import bind_image_results
@@ -16,10 +18,13 @@ from .events.system import bind_system
 from .job_bindings import owned_interrupt
 from .settings_controller import SettingsController, SettingsServices
 
+if TYPE_CHECKING:
+    from .bootstrap import BootstrapServices
+
 
 def bind_app(
     components: AppComponents,
-    services: AppServices,
+    services: BootstrapServices,
 ) -> SettingsController:
     controller = SettingsController(
         components.as_mapping(),
