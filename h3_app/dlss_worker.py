@@ -13,11 +13,13 @@ from pathlib import Path
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from h3_nvidia_runtime import check_vulkan, ensure_display, pin_gpu, runtime_env, wine_env
+from h3_nvidia_runtime import (check_vulkan, display_reachable, ensure_display, pin_gpu, runtime_env,
+                               runtime_root, wine_env)
 
 HEADER = struct.Struct("<4s12I5f")
 FRAME = struct.Struct("<4sII")
@@ -64,6 +66,7 @@ def transform(args):
     if abs(ratio - factor) > 0.03:
         raise RuntimeError("DLSS supports only native, 1.5×, 1.724×, 2× and 3× output sizes.")
     command = [str(exe), str(runtime)]
+    diagnostics = None
     env = dict(os.environ)
     env.update(DLSS5NR_DISABLE_OTHER_SINKS="1", DLSS5NR_HDR="0", DLSS5NR_SNR_FILENAME="nvngx_dlssnr.dll")
     if os.name != "nt":
@@ -72,6 +75,13 @@ def transform(args):
         pin_gpu(env)
         check_vulkan(env)
         command = [wine, str(exe), "Z:" + str(runtime).replace("/", "\\")]
+        # Graphics-layer logs go to files (never the binary stdout) and are
+        # attached to failures; otherwise device errors arrive without a cause.
+        diagnostics = tempfile.TemporaryDirectory(prefix="h3-dlss-log-")
+        env.update(VKD3D_DEBUG="warn", VKD3D_LOG_FILE=os.path.join(diagnostics.name, "vkd3d.log"),
+                   DXVK_LOG_LEVEL="warn", DXVK_LOG_PATH=diagnostics.name,
+                   DXVK_NVAPI_LOG_LEVEL="info", DXVK_NVAPI_LOG_PATH=diagnostics.name,
+                   WINEDEBUG="err+all,fixme-all")
     logs = deque(maxlen=40)
     # Keep the child in our process group so pipeline cancellation kills it too.
     process = subprocess.Popen(command, cwd=exe.parent, env=env, stdin=subprocess.PIPE,
@@ -144,16 +154,51 @@ def transform(args):
         except subprocess.TimeoutExpired:
             pass
     except Exception as exc:
-        raise RuntimeError(str(exc) + "\nDLSS engine log:\n" + "\n".join(logs)) from exc
-    finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=3)
+        # Stop the host first so its stderr and log files are complete.
+        stop_host(process)
         thread.join(timeout=1)
+        raise RuntimeError(str(exc) + "\nDLSS engine log:\n" + "\n".join(logs)
+                           + graphics_logs(diagnostics, env, logs)) from exc
+    finally:
+        stop_host(process)
+        thread.join(timeout=1)
+        if diagnostics is not None:
+            diagnostics.cleanup()
+
+
+def stop_host(process):
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=3)
+
+
+def graphics_logs(diagnostics, env, engine_log=()):
+    if diagnostics is None:
+        return ""
+    display = env.get("DISPLAY", "")
+    header = f"\nDISPLAY={display or '<unset>'} reachable={bool(display) and display_reachable(display)}"
+    full, brief = [header], [header]
+    for path in sorted(Path(diagnostics.name).iterdir()):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            continue
+        if text:
+            full.append(f"--- {path.name} ---\n" + text[-20000:])
+            brief.append(f"--- {path.name} (tail) ---\n" + text[-1200:])
+    # The UI keeps only the error's tail; keep the whole report on the host.
+    saved = runtime_root() / "logs" / "dlss-last-failure.log"
+    try:
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        saved.write_text("DLSS engine log:\n" + "\n".join(engine_log) + "\n".join(full) + "\n", encoding="utf-8")
+        brief.append(f"Full report: {saved}")
+    except OSError:
+        pass
+    return "\n".join(brief)
 
 
 def main():
