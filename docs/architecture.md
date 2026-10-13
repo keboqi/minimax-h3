@@ -1,0 +1,120 @@
+# Architecture
+
+The UI describes the **next run**. Each completed output has an independent **settings used** record.
+
+## User behavior
+
+- Generation presets apply sampling, encoder, offload, attention, start-frame cap and refinement defaults. Singularity also selects its base model; the other presets preserve the selected model. All preserve prompt, media, output format, dimensions, duration and seed.
+- Editing an active preset field shows **Modified**. The details list actual differences, and **Restore preset settings** reapplies only the preset-owned fields.
+- Normal and Turbo maintain separate session preferences. The first visit to a mode starts from the selected preset.
+- Required adjustments are separate from manual differences. Native refinement forces acceleration Off; BF16 requires stage offload; the 500K decoder produces one frame.
+- Inactive preferences remain stored when switching output formats or attention implementations. They do not affect execution or the active modification count.
+- Readiness and execution details use the shared resolved settings. Prompt and conditioning requirements are checked separately.
+- Browser preferences use schema version 6 inside the original v3 BrowserState transport key and secret, allowing existing encrypted preferences to migrate in place. Each field is validated; presets are not reapplied during restoration. Qwen technical settings, independent finishing models and workspace task/engine selection are included.
+- Prompts, uploaded paths, credentials, outputs and transient confirmations are excluded from browser preferences.
+- Existing public generation API names and positional contracts remain available. H3 UI preset context is carried through a separate internal adapter.
+
+## Boundaries
+
+| Module | Owns |
+|---|---|
+| setup_h3.py, run_h3.sh, modal_h3.py, Colab notebook | Environment provisioning and deployment lifecycle |
+| h3_requirements.py | Dependency compatibility policy shared by setup and Modal |
+| h3_node_patches.py, h3_attention.py, custom_nodes/H3Acceleration/ | Pinned upstream compatibility patches and GPU runtime optimizations |
+| h3_nvidia_runtime.py, h3_app/nvidia_*.py, dlss_*.py | DLSS 5 runtime provisioning, worker process and media pipeline |
+| h3_app/config.py | Immutable startup paths, backend mode and transport limits |
+| h3_sources.py | Repository, revision and wheel pins shared by local and Modal setup |
+| h3_app/settings.py, resources.py | Requested/effective settings, presets and output-specific decoder dependencies |
+| h3_app/contracts.py | Stable positional API ordering |
+| h3_app/model_types.py, model_service.py | Model selection, lazy provisioning and TensorRT engine lifecycle |
+| h3_models.py | Model inventory and manifest transactions locked across threads and processes |
+| h3_app/jobs.py | Bounded admission, immutable requests, input leases, durable technical ledgers, exact retries, browser ownership, cancellation and the application GPU lease |
+| h3_app/workspace_store.py, workspace_admin.py | SQLite ownership, technical history, explicit projects, asset annotations, backup/restore |
+| h3_ui/prompt_controller.py, model_controller.py, media_controller.py | Feature behavior through explicit service dependencies |
+| h3_app/comfy.py, execution.py | HTTP transport and one submission lifecycle, deadline and websocket owner |
+| h3_app/workflows/ | Pure H3, LTX, Qwen, Music, YuE2 and finishing graph builders with staged input identities |
+| h3_app/generation/ | Named requests and typed services; preparation, graph construction, execution and finishing |
+| h3_app/staging.py, media_tools.py, swiftvr.py | Input staging, media inspection, controlled subprocesses and post-processing |
+| h3_app/media.py, outputs.py, gallery_store.py | Contained discovery, explicit output context and complete managed gallery inventory |
+| h3_app/provenance.py | Atomic sidecars, copied-media provenance and escaped metadata rendering |
+| h3_app/prompt_service.py | Local, Gemini and Lightning writer adapters with transient credentials |
+| h3_app/server.py | Configured FastAPI routes and HTTP/WebSocket proxy |
+| h3_ui/application.py | Runtime service wiring and signature-preserving public API adapters |
+| h3_ui/bootstrap.py, contracts.py | UI composition; one catalog and one service record passed to event registration |
+| h3_ui/*_view.py, *_bindings.py | Feature-owned views and event bindings |
+| h3_ui/sections/, events/ | Existing visible sections and event registration, preserving component order |
+| h3_ui/job_bindings.py, job_admission.py, jobs_view.py | Gradio request injection, acceptance before queueing, shared GPU binding and owner-scoped job presentation |
+| h3_app/reference_bindings.py, h3_ui/prompt_preview.py, prompt_review.py | Stable reference translation and guarded accept/keep/undo prompt previews |
+| h3_ui/media_actions.py | Selection- and file-specific deletion confirmation |
+| h3_ui/settings_controller.py, settings_presentation.py | Serialized settings actions and resolved-plan rendering |
+| h3_ui/persistence.py | Explicit browser preference allowlist and migration |
+| gradio_app.py | Workspace launcher |
+| tests/__main__.py, test_service_contracts.py | Consolidated validation and standalone provisioning checks |
+| tests/test_application_adapters.py, test_workflow_contracts.py, test_server_proxy.py | Focused application, workflow and proxy behavior |
+| tests/workflow_cases.py, test_workflow_fixtures.py | Shared fixed inputs and 15 unchanged baseline graph fixtures, independent of Gradio |
+
+The large H3 workflow and acceleration modules encode runtime-sensitive ComfyUI node ordering and optimization behavior. Change their numerical paths only with GPU evidence; the graph fixtures are the CPU regression boundary.
+
+## Ownership and cancellation
+
+Application GPU actions register through bind_gpu_action, including manual TensorRT compilation. Standalone compilation, local prompt enhancement and unloading acquire the same application lease; maintenance inside a generation reuses its existing ownership. Managed generation also acquires a process-local lease and records its browser session, tab family and Comfy prompt ID. Settings updates use their own short queue.
+
+Stop first requests cancellation for the current session and tab, then cancels its Gradio events. Pending Comfy prompts are deleted by ID. A backend-wide interrupt is issued only after checking that the running prompt belongs to that session/tab. Submission and cancellation share a registry lock.
+
+ComfyUI's interrupt endpoint remains global. External clients using ComfyUI directly are outside the application scheduler; the running-ID check narrows that boundary but cannot make a remote global endpoint atomic with externally submitted jobs. Multiple application processes also require a shared coordinator before they can share one GPU lease.
+
+ExecutionRunner owns submission identity, save-prefix scope, websocket cleanup, progress fallback and final history. Its HTTP calls and websocket receives use the same monotonic deadline; a disconnected socket does not restart the time budget. H3, LTX, Music and gallery jobs all use this lifecycle. The string-compatible prompt handle retains the submission for legacy callers.
+
+FFmpeg subprocesses check cancellation and a deadline, drain bounded diagnostics, terminate and reap on interruption, and remove partial output. Interpolation and concatenation publish their final media name only after success. SwiftVR's intermediate video stays in a processing directory excluded from gallery discovery. Cancellation during optional finishing leaves the completed source available.
+
+Every submission receives a unique save prefix. Fallback output discovery requires that submission token and a contained path; an unowned timestamp-only scan returns no output.
+
+## Result provenance
+
+H3, LTX and Music write versioned JSON sidecars next to generated media. Records contain effective execution facts and actual seeds; H3 also records preset differences and automatic adjustments. They omit prompts, media inputs and credentials. Selected image-frame copies, gallery imports, interpolation and concatenation retain their records, and gallery deletion removes the corresponding sidecar. Gallery inventory remains complete for deletion and lookup even when the display limit shows only recent results.
+
+H3 metadata is attached before Gradio copies media into its cache. Gallery metadata uses the managed source path. Cached LTX/Music output metadata is recovered only from a unique exact managed basename containing the submission UUID. Older or ambiguous outputs report settings unavailable.
+
+## Compatibility and deployment
+
+gradio_app is a launcher only. Prompt, model and media controllers receive explicit service records; the workspace is the only UI. Application exports are runtime wiring and public API adapters. Tests import pure policies, catalogs and workflow helpers from their owning modules. New domain code imports h3_app modules and receives runtime configuration and named services explicitly. H3Request groups conditioning, sampling, output and finishing inputs. Resolved settings remain the policy authority; capability and model checks take place during preparation.
+
+Graph builders accept staged paths and explicit output naming tokens. Importing them or generation, media and model services does not construct Gradio components, contact a backend or download models. Graph fixture normalization changes only volatile save-prefix timestamp/UUID suffixes.
+
+Local and Modal setup consume h3_sources.py. Modal copies that small build dependency into its image and mounts h3_app and h3_ui at runtime, so ordinary application changes do not invalidate expensive image builds.
+
+## Validation
+
+Pure policy and ownership tests require only Python:
+
+```bash
+python -m unittest tests.test_settings
+```
+
+UI and integration tests use the lightweight test dependencies:
+
+```bash
+uv venv .venv
+uv pip install --python .venv/Scripts/python.exe -r requirements-test.txt
+.venv/Scripts/python.exe -m tests
+.venv/Scripts/python.exe -m tests --browser
+```
+
+The consolidated command runs discovery, standalone provisioning checks and baseline workflow contracts, with offline Hugging Face mode. The gradio_app.py --selftest entry point delegates to that same CPU suite. CPU PyTorch numerical tests run only when PyTorch is installed; pinned upstream contract tests run only when their .cache/upstream-upgrade sources exist. Neither gate fetches dependencies. Cached upstream files must match the current pins in h3_requirements.py and h3_sources.py; refresh them after upgrades or select a matching directory with H3_UPSTREAM_SOURCE_DIR. The --browser option adds queue transport, settings, voice-reference, first-frame resolution, image-library, workspace, media-performance and media-deletion acceptance.
+
+On Linux use .venv/bin/python. Browser checks use installed Chrome on Windows, or Playwright Chromium elsewhere; H3_BROWSER_EXECUTABLE can select a Chromium executable. Fixtures mock backend health and never load models. Workspace job checks use a synthetic generation callback and test-only queue controls; they do not measure inference.
+
+Browser checks cover preset application, overrides/reset, mode memory, reload, session isolation, conditional controls and horizontal overflow at a narrow viewport. Screenshots are written to .cache/ui-review.
+
+A real supported GPU and provisioned ComfyUI installation are still needed for inference smoke tests and performance/quality comparisons.
+
+## Keeping the structure small
+
+Add behavior checks beside the owning feature, not to a launcher self-test, and
+do not export a domain helper through `application.py` only to reach it from
+tests. Event registration imports feature binding functions directly; pass only
+runtime callbacks through `BootstrapServices`. Preserve behavioral regressions
+even when their names mention an older feature: preference migrations, retired
+model selections, legacy media and positional API calls still have consumers.
+Git history holds earlier audits and plans; keep `docs/` describing the current
+repository.

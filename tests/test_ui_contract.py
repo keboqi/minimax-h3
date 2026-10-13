@@ -143,7 +143,9 @@ class UiContractTests(unittest.TestCase):
             self.assertFalse(missing[12]["interactive"])
         admission = next(d for d in self.config["dependencies"]
                          if any(self.components[i].get("props", {}).get("label") == "DLSS 5 intensity" for i in d["inputs"]))
-        self.assertEqual(len(admission["inputs"]), 15)  # 14 captured values + request key
+        self.assertEqual(len(admission["inputs"]), 16)  # 15 captured values + request key
+        labels = {self.components[i].get("props", {}).get("label") for i in admission["inputs"]}
+        self.assertIn("Upscaler (above 1×)", labels)
 
     def test_all_generator_image_inputs_have_library_selection(self):
         image_inputs = [
