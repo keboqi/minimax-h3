@@ -75,10 +75,33 @@ class NvidiaSettingsTests(unittest.TestCase):
     def test_unavailable_methods_cannot_run_and_browsing_never_probes_gpu(self):
         with patch("h3_ui.nvidia_media.availability", return_value=(False, "missing")):
             self.assertFalse(can_enhance("Video", "clip.mp4", DLSS5_NR))
-        with patch.object(service, "dlss_config", side_effect=H3Error("missing model")), patch.object(service, "probe_runtime") as probe:
+        with patch.object(service, "runtime_ready", return_value=True),                 patch.object(service, "dlss_config", side_effect=H3Error("missing model")), patch.object(service, "probe_runtime") as probe:
             self.assertEqual(service.availability(DLSS5_NR), (False, "missing model"))
             probe.assert_not_called()
         self.assertFalse(can_enhance("Audio", "sound.wav", DLSS5_NR))
+
+    def test_dlss_is_offered_before_setup_and_set_up_on_first_use(self):
+        with patch.object(service.shutil, "which", return_value="/usr/bin/ffmpeg"), \
+                patch.object(service, "runtime_ready", return_value=False), \
+                patch.object(service, "runtime_env", return_value={}):
+            ready, message = service.availability(DLSS5_NR)
+        self.assertTrue(ready)
+        self.assertIn("first use", message)
+        with patch.object(service, "runtime_ready", return_value=False), \
+                patch.object(service, "ensure_ready") as setup, patch.object(service, "dlss_config") as config:
+            updates = list(service.prepare_dlss_runtime(total=4))
+        self.assertEqual(len(updates), 1)
+        self.assertIn("Setting up DLSS 5", updates[0].message)
+        setup.assert_called_once_with(force=True)
+        config.assert_called_once()
+        with patch.object(service, "runtime_ready", return_value=True), \
+                patch.object(service, "ensure_ready") as setup, patch.object(service, "dlss_config"):
+            self.assertEqual(list(service.prepare_dlss_runtime()), [])
+        setup.assert_not_called()
+        with patch.object(service, "runtime_ready", return_value=False), \
+                patch.object(service, "ensure_ready", side_effect=RuntimeError("HTTP Error 403")):
+            with self.assertRaisesRegex(H3Error, "DLSS 5 setup failed: HTTP Error 403"):
+                list(service.prepare_dlss_runtime())
 
     def test_hdr_rotation_and_non_square_pixels_are_rejected(self):
         for metadata in ({"color_transfer": "smpte2084"}, {"color_transfer": "arib-std-b67"},
@@ -187,6 +210,7 @@ class NvidiaMediaTests(unittest.TestCase):
                 "print('optical flow: fixture', file=sys.stderr); "
                 "data=sys.stdin.buffer.read(); sys.stdout.buffer.write(bytes(255-x for x in data))"]
             stack.enter_context(patch.object(service, "availability", return_value=(True, "")))
+            stack.enter_context(patch.object(service, "runtime_ready", return_value=True))
             stack.enter_context(patch.object(service, "worker_command", return_value=(worker, None)))
             stack.enter_context(patch.object(service, "worker_context", side_effect=lambda *args: nullcontext()))
             stack.enter_context(patch.object(service, "dlss_config", return_value=(source, root, source, None)))
@@ -215,6 +239,7 @@ class NvidiaMediaTests(unittest.TestCase):
             worker = [sys.executable, "-u", "-c", "import sys; print('feature ready; streaming', file=sys.stderr);\nwhile True:\n b=sys.stdin.buffer.read(64*48*4)\n if not b: break\n sys.stdout.buffer.write(bytes(255-x for x in b)); sys.stdout.buffer.flush()"]
             with ExitStack() as stack:
                 stack.enter_context(patch.object(service, "availability", return_value=(True, "")))
+                stack.enter_context(patch.object(service, "runtime_ready", return_value=True))
                 stack.enter_context(patch.object(service, "worker_command", return_value=(worker, None)))
                 stack.enter_context(patch.object(service, "_encoder", return_value=("libx265", ["-c:v", "libx265", "-preset", "ultrafast", "-crf", "19"])))
                 stack.enter_context(patch.object(service, "worker_context", side_effect=lambda *args: nullcontext()))

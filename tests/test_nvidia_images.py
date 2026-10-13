@@ -26,6 +26,7 @@ class NvidiaImageTests(unittest.TestCase):
 
     def mock_runtime(self, stack, source, command):
         stack.enter_context(patch.object(backend, "availability", return_value=(True, "")))
+        stack.enter_context(patch.object(backend, "runtime_ready", return_value=True))
         stack.enter_context(patch.object(backend, "worker_command", return_value=(command, None)))
         stack.enter_context(patch.object(backend, "worker_context", side_effect=lambda *args: nullcontext()))
         stack.enter_context(patch.object(backend, "dlss_config", return_value=(source, source.parent, source, None)))

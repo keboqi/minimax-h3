@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import gradio as gr
 
-from h3_app.catalog import NVIDIA_POSTPROCESS_OPTIONS
+from h3_app.catalog import DLSS5_NR, NVIDIA_POSTPROCESS_OPTIONS
 from h3_app.jobs import record_failure
-from h3_app.nvidia_postprocess import availability, probe_runtime
+from h3_app.nvidia_postprocess import availability, prepare_dlss_runtime, probe_runtime
 from .presentation import error_markdown
 
 
@@ -46,6 +46,9 @@ def check_runtime(method: str, request: gr.Request):
     from .application import _runtime_config
     yield "Checking NVIDIA runtime on the processing host…"
     try:
+        if method == DLSS5_NR:
+            for update in prepare_dlss_runtime():
+                yield update.message
         yield probe_runtime(method, _runtime_config())
     except Exception as exc:
         record_failure(exc)

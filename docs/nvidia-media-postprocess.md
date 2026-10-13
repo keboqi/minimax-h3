@@ -8,7 +8,7 @@ The implementation uses the MIT-licensed RunningHub host and bridge, pinned to c
 
 ## Automatic processing-host setup
 
-`run_h3.sh` invokes the shared `h3_nvidia_runtime.py` installer. Colab uses that same launcher. Modal builds immutable runtime files into its image, then initializes its dedicated Wine prefix against the live host after restore. Installation and runtime checks must run on the processing host, not on a developer's desktop.
+Setup does not slow down startup. On standalone hosts (`run_h3.sh`) and Colab, the shared `h3_nvidia_runtime.py` installer runs on first DLSS use: enhancing an image or video, or **Check NVIDIA runtime**. The UI reports progress while it runs. A successful setup is recorded in `h3/nvidia/runtime.json`. A failed one is recorded and retried on the next use, and an incomplete installation is repaired the same way. Modal does the one-time setup at image build, including the Wine prefix (`check_gpu=False`), so containers start without it. The first use there only runs the Vulkan GPU check. Modal sets `H3_DLSSNR_SYSTEM_PACKAGES=0` because its image already contains the system packages. To prepare a host ahead of time, run `python h3_nvidia_runtime.py --initialize`, adding `--no-gpu-check` on hosts without a GPU. Installation and runtime checks must run on the processing host, not on a developer's desktop.
 
 Setup obtains:
 
@@ -29,7 +29,7 @@ CUDA or `nvidia-smi` alone is insufficient. The assigned NVIDIA GPU must appear 
 
 Under Wine, NGX cannot locate its driver store (`QueryAdapterInfo` fails with `0xD0000002`), so it falls back to `C:\ProgramData\NVIDIA\NGX`. Before each run the launcher makes sure `C:\ProgramData` exists in the dedicated prefix and removes `NVIDIA\NGX`, whose access control list NGX rewrites when it creates the folder. Otherwise `NGXGetPath` fails and `Init_ProjectID` returns `0xBAD00002`. New prefixes wait for `wineserver` to exit so that the registry is saved.
 
-Startup checks Wine prefix creation and NVIDIA Vulkan visibility; it does not run GPU inference. **Check NVIDIA runtime** evaluates two textured native-size frames and rejects bypassed, malformed or all-black output. Image/video enhancement runs this probe before opening the main processing pipeline. Actual model evaluation on the deployed GPU remains the compatibility gate; successful provisioning is not proof of inference support.
+First-use setup checks Wine prefix creation and NVIDIA Vulkan visibility; it does not run GPU inference. **Check NVIDIA runtime** evaluates two textured native-size frames and rejects bypassed, malformed or all-black output. Image/video enhancement runs this probe before opening the main processing pipeline. Actual model evaluation on the deployed GPU remains the compatibility gate; successful provisioning is not proof of inference support.
 
 Videos must be SDR with constant frame rate, square pixels, zero start timestamp and normalized rotation. HDR/linear/BT.2020 sources are rejected. A known frame count from 1 to 1,000,000 is required by the host protocol; if container metadata omits it, ffprobe counts it first. Timing and frame counts are validated before publication. Audio is copied when MP4-compatible, otherwise encoded as AAC. Images are normalized to sRGB and saved losslessly as PNG with original transparency restored.
 

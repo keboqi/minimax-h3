@@ -1,7 +1,8 @@
 """Shared, GPU-free provisioning for standalone, Colab and Modal enhancement.
 
-Only startup prepares Wine and the NGX runtime. UI discovery reads the manifest;
-it never downloads software, starts Wine, or initializes a GPU.
+Setup runs on first DLSS use (ensure_ready), or at Modal image build. UI
+discovery reads the manifest; it never downloads software, starts Wine, or
+initializes a GPU.
 """
 from __future__ import annotations
 
@@ -708,7 +709,7 @@ def install_headless_nvapi(root):
     return dll
 
 
-def initialize_prefix(root, graphics, env):
+def initialize_prefix(root, graphics, env, *, check_gpu=True):
     prefix, wine = Path(env["H3_DLSSNR_WINEPREFIX"]), Path(env["H3_DLSSNR_WINE"])
     prefix.mkdir(parents=True, exist_ok=True)
     import fcntl
@@ -725,7 +726,8 @@ def initialize_prefix(root, graphics, env):
             prepare_ngx_programdata(prefix)
             for name, source in graphics.items():
                 copy_dll(source, prefix / "drive_c/windows/system32" / name)
-            check_vulkan(process_env)
+            if check_gpu:
+                check_vulkan(process_env)
         except BaseException:
             try:
                 stop_wine_server(wine, process_env)
@@ -736,19 +738,25 @@ def initialize_prefix(root, graphics, env):
             stop_wine_server(wine, process_env)
 
 
-def ensure_runtime(root=None, *, initialize=False, system_packages=True):
+def ensure_runtime(root=None, *, initialize=False, system_packages=True, check_gpu=True):
+    """Install (and with `initialize`, prepare the Wine prefix). Idempotent.
+
+    check_gpu=False prepares everything but the Vulkan check, for image builds
+    without a GPU; the first use on a GPU host then completes the check.
+    """
     if not enabled("H3_ENABLE_DLSSNR") or os.getenv("H3_DLSSNR_EXE"):
         return
     root = runtime_root(root)
     root.mkdir(parents=True, exist_ok=True)
     with installation_lock(root):
-        manifest = {"backend": "runninghub-dnr2", "upstream_ref": RH_DLSS_REF, "initialized": False}
+        manifest = {"backend": "runninghub-dnr2", "upstream_ref": RH_DLSS_REF,
+                    "initialized": False, "gpu_checked": False}
         try:
             if platform.system() not in {"Linux", "Windows"} or platform.machine().lower() not in {"x86_64", "amd64"}:
                 raise RuntimeError("DLSS setup supports Linux x86_64 and Windows x64.")
             if os.name != "nt" and system_packages:
                 install_linux_packages(root)
-            if os.name != "nt" and initialize:
+            if os.name != "nt" and initialize and check_gpu:
                 # Diagnose provider graphics access before downloading/building runtimes.
                 graphics_env = dict(os.environ)
                 graphics_env.pop("LD_LIBRARY_PATH", None)
@@ -773,19 +781,51 @@ def ensure_runtime(root=None, *, initialize=False, system_packages=True):
                 env.update(H3_DLSSNR_WINE=str(runner / "bin/wine"),
                            H3_DLSSNR_WINEPREFIX=str(root / "prefix-rh-dnr2-wine11"))
                 if initialize:
-                    initialize_prefix(root, graphics, env)
+                    initialize_prefix(root, graphics, env, check_gpu=check_gpu)
             manifest["initialized"] = initialize or os.name == "nt"
+            manifest["gpu_checked"] = (initialize and check_gpu) or os.name == "nt"
             write_manifest(root, manifest)
-            print("[h3-nvidia] DLSS Linux host files ready; GPU evaluation is checked on demand", flush=True)
+            print("[h3-nvidia] DLSS host files ready" + ("" if manifest["gpu_checked"] else
+                  "; the GPU is checked on first use"), flush=True)
         except Exception as exc:
-            manifest.update(error=str(exc), initialized=False)
+            manifest.update(error=str(exc), initialized=False, gpu_checked=False)
             write_manifest(root, manifest)
             raise
 
 
-def prepare_runtime(root=None, *, system_packages=True):
+def runtime_ready(root=None):
+    """Cheap check (no downloads, no GPU) that setup completed on this host."""
+    if os.getenv("H3_DLSSNR_EXE"):
+        return True  # Operator-supplied helper; validated by its consumer.
+    manifest = read_manifest(runtime_root(root))
+    env = manifest.get("env", {})
+    if manifest.get("error") or not manifest.get("initialized") or not manifest.get("gpu_checked"):
+        return False
+    if not Path(env.get("H3_DLSSNR_EXE", "")).is_file():
+        return False
+    return os.name == "nt" or (Path(env.get("H3_DLSSNR_WINEPREFIX", "")) / "system.reg").is_file()
+
+
+_ready_lock = threading.Lock()
+
+
+def ensure_ready(root=None, *, force=False):
+    """Complete setup on first use; later calls return immediately.
+
+    force reruns the idempotent setup to repair an incomplete installation.
+    Failures are recorded in the manifest and retried by the next call.
+    """
+    if not enabled("H3_ENABLE_DLSSNR"):
+        raise RuntimeError("DLSS enhancement is disabled on this processing host.")
+    with _ready_lock:
+        if force or not runtime_ready(root):
+            ensure_runtime(root, initialize=True,
+                           system_packages=enabled("H3_DLSSNR_SYSTEM_PACKAGES"))
+
+
+def prepare_runtime(root=None, *, system_packages=True, check_gpu=True):
     try:
-        ensure_runtime(root, initialize=True, system_packages=system_packages)
+        ensure_runtime(root, initialize=True, system_packages=system_packages, check_gpu=check_gpu)
     except Exception as exc:
         print(f"[h3-nvidia] DLSS unavailable on this host: {exc}", flush=True)
 
@@ -794,8 +834,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root")
     parser.add_argument("--initialize", action="store_true")
+    parser.add_argument("--no-gpu-check", action="store_true",
+                        help="prepare the Wine prefix without a GPU (image builds)")
     args = parser.parse_args()
     if args.initialize:
-        prepare_runtime(args.root)
+        prepare_runtime(args.root, check_gpu=not args.no_gpu_check)
     else:
         ensure_runtime(args.root)

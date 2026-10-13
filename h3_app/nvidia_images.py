@@ -64,6 +64,8 @@ def postprocess_image(source, method, resolution, settings_value, *, runtime):
     out_width, out_height = backend.target_dimensions(
         method, width, height, resolution, settings, image=True,
     )
+    if method == DLSS5_NR:
+        yield from backend.prepare_dlss_runtime(total=1)
     plan = yield from backend.prepare_upscale(settings, width, height, out_width, out_height, total=1)
     if method == DLSS5_NR:
         yield backend.NvidiaUpdate("Checking DLSS 5 neural execution", total=1)

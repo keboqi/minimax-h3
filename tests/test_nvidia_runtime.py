@@ -102,6 +102,48 @@ class RuntimeInstallTests(unittest.TestCase):
                 fetch.assert_not_called()
 
 
+class OnDemandSetupTests(unittest.TestCase):
+    def manifest(self, root, **values):
+        host = root / "host"
+        host.mkdir(exist_ok=True)
+        (host / "dlss5nr_host.exe").write_bytes(b"MZ")
+        prefix = root / "prefix"
+        prefix.mkdir(exist_ok=True)
+        (prefix / "system.reg").write_text("registry")
+        data = {"initialized": True, "gpu_checked": True,
+                "env": {"H3_DLSSNR_EXE": str(host / "dlss5nr_host.exe"), "H3_DLSSNR_WINEPREFIX": str(prefix)}}
+        data.update(values)
+        runtime.write_manifest(root, data)
+
+    def test_ready_requires_completed_gpu_checked_setup(self):
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            root = Path(directory)
+            self.assertFalse(runtime.runtime_ready(root))
+            self.manifest(root, gpu_checked=False)  # Modal image build: no GPU yet.
+            self.assertFalse(runtime.runtime_ready(root))
+            self.manifest(root, error="network failed")
+            self.assertFalse(runtime.runtime_ready(root))
+            self.manifest(root)
+            self.assertTrue(runtime.runtime_ready(root))
+
+    def test_first_use_sets_up_once_and_respects_system_package_opt_out(self):
+        with TemporaryDirectory() as directory, \
+                patch.dict(os.environ, {"H3_DLSSNR_SYSTEM_PACKAGES": "0"}, clear=True):
+            root = Path(directory)
+            with patch.object(runtime, "ensure_runtime", side_effect=lambda *a, **k: self.manifest(root)) as setup:
+                runtime.ensure_ready(root)
+                runtime.ensure_ready(root)
+            setup.assert_called_once_with(root, initialize=True, system_packages=False)
+            with patch.object(runtime, "ensure_runtime") as setup:
+                runtime.ensure_ready(root, force=True)  # Repair reruns the idempotent setup.
+            setup.assert_called_once()
+
+    def test_image_build_prepares_prefix_without_a_gpu_check(self):
+        with patch.object(runtime, "ensure_runtime") as setup:
+            runtime.prepare_runtime("/root", system_packages=False, check_gpu=False)
+        setup.assert_called_once_with("/root", initialize=True, system_packages=False, check_gpu=False)
+
+
 class PrefixStateTests(unittest.TestCase):
     def test_ngx_programdata_exists_and_stale_ngx_folder_is_removed(self):
         with TemporaryDirectory() as directory:

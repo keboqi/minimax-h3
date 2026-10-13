@@ -608,8 +608,10 @@ def build(revision: str) -> None:
         + trt_import.stdout.strip(),
         flush=True,
     )
-    from h3_nvidia_runtime import ensure_runtime
-    ensure_runtime(ROOT / "nvidia", system_packages=False)
+    # One-time DLSS 5 setup in the image, including the Wine prefix, so containers
+    # start without it. The Vulkan check needs a GPU and runs on first use.
+    from h3_nvidia_runtime import prepare_runtime
+    prepare_runtime(ROOT / "nvidia", system_packages=False, check_gpu=False)
 
 image = (
     modal.Image.from_registry(
@@ -645,6 +647,8 @@ image = image.apt_install(*LINUX_PACKAGES).env({
     "H3_NVIDIA_RUNTIME_DIR": (ROOT / "nvidia").as_posix(),
     "H3_ENABLE_DLSSNR": os.getenv("H3_ENABLE_DLSSNR", "1"),
     "NVIDIA_DRIVER_CAPABILITIES": "all",
+    # System packages are part of this image; on-demand setup must not apt-get.
+    "H3_DLSSNR_SYSTEM_PACKAGES": "0",
 })
 
 if IS_LOCAL:
@@ -761,12 +765,6 @@ def service_env() -> dict[str, str]:
         }
     )
     return env
-
-
-def prepare_nvidia_runtime() -> None:
-    # Driver bridges must match the live GPU host, after snapshot restore.
-    from h3_nvidia_runtime import prepare_runtime
-    prepare_runtime(ROOT / "nvidia", system_packages=False)
 
 
 def wait_for_service(
@@ -938,7 +936,6 @@ class H3Service:
             timeout=20 * 60,
             label="ComfyUI after restore",
         )
-        prepare_nvidia_runtime()
         env = service_env()
         env["GRADIO_SERVER_NAME"] = "0.0.0.0"
         env["GRADIO_SERVER_PORT"] = str(UI_PORT)

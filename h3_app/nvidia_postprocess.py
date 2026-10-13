@@ -19,7 +19,7 @@ import tempfile
 from typing import Iterator
 
 from h3_nvidia_runtime import (
-    enabled, ensure_r580_core, prepare_ngx_programdata, runtime_env,
+    enabled, ensure_r580_core, ensure_ready, prepare_ngx_programdata, runtime_env, runtime_ready,
     stop_wine_server, wine_env,
 )
 
@@ -93,7 +93,7 @@ def dlss_config(*, verify=False):
         raise H3Error("Automatic DLSS setup failed: " + config["H3_DLSSNR_SETUP_ERROR"])
     configured = config.get("H3_DLSSNR_EXE", "")
     if not configured or not Path(configured).is_file():
-        raise H3Error("DLSS runtime is missing. Restart run_h3.sh or redeploy Modal to install it automatically.")
+        raise H3Error("DLSS 5 is not set up on this host yet. Enhance media or check the runtime to set it up.")
     exe = Path(configured).expanduser().resolve()
     directory = Path(config.get("H3_DLSSNR_DLL_DIR", str(exe.parent))).expanduser().resolve()
     model = directory / "nvngx_dlssnr.dll"
@@ -104,7 +104,7 @@ def dlss_config(*, verify=False):
         if not required.is_file():
             raise H3Error("Missing DLSS host component: " + str(required))
     if exe.name != "dlss5nr_host.exe":
-        raise H3Error("The previous video2dlssnr helper is unsupported. Restart the launcher to install the RunningHub host.")
+        raise H3Error("The previous video2dlssnr helper is unsupported. Retry to install the RunningHub host.")
     expected = config.get("H3_DLSSNR_MODEL_SHA256", "").lower()
     if verify and expected and file_hash(model) != expected:
         raise H3Error("DLSS neural model SHA-256 does not match H3_DLSSNR_MODEL_SHA256.")
@@ -120,7 +120,7 @@ def dlss_config(*, verify=False):
             raise H3Error("H3_DLSSNR_WINEPREFIX must be an initialized, dedicated absolute Wine prefix.")
         for name in ("dxgi.dll", "d3d11.dll", "d3d12.dll", "d3d12core.dll", "nvapi64.dll", "nvofapi64.dll"):
             if not (prefix / "drive_c/windows/system32" / name).is_file():
-                raise H3Error("DLSS Wine graphics setup is incomplete: " + name + ". Restart the launcher to repair it.")
+                raise H3Error("DLSS Wine graphics setup is incomplete: " + name + ". Retry to repair it automatically.")
     return exe, directory, model, wine
 
 
@@ -129,13 +129,37 @@ def availability(method):
     try:
         if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
             raise H3Error("FFmpeg and ffprobe must be installed on the processing host.")
-        if method == DLSS5_NR:
-            dlss_config()
-        else:
+        if method != DLSS5_NR:
             return True, ""
+        if not enabled("H3_ENABLE_DLSSNR"):
+            raise H3Error("DLSS enhancement is disabled on this processing host.")
+        if not runtime_ready():
+            error = runtime_env().get("H3_DLSSNR_SETUP_ERROR")
+            if error:
+                return True, "The last DLSS 5 setup failed and will retry on next use: " + error
+            return True, ("DLSS 5 is set up on first use (one-time downloads and Wine setup; several minutes). "
+                          "SDR images and videos only.")
+        dlss_config()
         return True, "Runtime files found. Check runtime or enhance to verify GPU execution. SDR images and videos only."
     except (H3Error, OSError, ValueError, ImportError) as exc:
         return False, str(exc)
+
+
+def prepare_dlss_runtime(*, total=0):
+    """Set up (or repair) DLSS 5 on first use; use as `yield from prepare_dlss_runtime()`."""
+    try:
+        if runtime_ready():
+            dlss_config()
+            return
+    except H3Error:
+        pass  # Incomplete installation: the idempotent setup below repairs it.
+    yield NvidiaUpdate("Setting up DLSS 5 on this host (first use; downloads and Wine setup "
+                       "can take several minutes)", total=total)
+    try:
+        ensure_ready(force=True)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise H3Error("DLSS 5 setup failed: " + str(exc)) from exc
+    dlss_config()
 
 
 def target_dimensions(method, width, height, resolution, settings, *, image=False):
@@ -328,7 +352,7 @@ def probe_runtime(method, runtime, *, ngx_core="default"):
     if not any(any(result[channel::channels]) for channel in range(3)):
         raise H3Error("Runtime returned black frames for textured input; neural execution failed.")
     if method == DLSS5_NR and not any("feature ready; streaming" in line for line in last.diagnostics):
-        raise H3Error("DLSS helper did not confirm neural feature initialization. Restart the launcher to repair the RunningHub host.")
+        raise H3Error("DLSS helper did not confirm neural feature initialization. Check the DLSS engine log in the error details.")
     return "Runtime check passed: two frames evaluated and enhanced on the processing host."
 
 
@@ -378,6 +402,8 @@ def postprocess(source: Path, method: str, resolution: str, settings_value, *, r
         raise H3Error("DLSS requires a known frame count from 1 to 1,000,000.")
     yield NvidiaUpdate("Checking source frame timing", total=total)
     validate_cfr(source, runtime)
+    if method == DLSS5_NR:
+        yield from prepare_dlss_runtime(total=total)
     plan = yield from prepare_upscale(settings, width, height, out_width, out_height, total=total)
     if method == DLSS5_NR:
         yield NvidiaUpdate("Checking DLSS 5 neural execution", total=total)
