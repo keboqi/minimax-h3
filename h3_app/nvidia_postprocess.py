@@ -19,7 +19,7 @@ import tempfile
 from typing import Iterator
 
 from h3_nvidia_runtime import (
-    enabled, ensure_r580_core, runtime_env,
+    enabled, ensure_r580_core, prepare_ngx_programdata, runtime_env,
     stop_wine_server, wine_env,
 )
 
@@ -218,6 +218,10 @@ def worker_context(method, runtime):
             raise H3Error("The dedicated DLSS Wine prefix is busy in another process.") from exc
         wine = shutil.which(config.get("H3_DLSSNR_WINE", "wine"))
         env = wine_env(prefix, wine)
+        try:
+            prepare_ngx_programdata(prefix)
+        except OSError as exc:
+            raise H3Error("Could not prepare NGX state in the dedicated DLSS Wine prefix.") from exc
         failed = False
         try:
             yield env

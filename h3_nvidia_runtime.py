@@ -212,6 +212,25 @@ def wait_wine_server(wine, env, *, timeout=120):
         stop_wine_server(wine, env)
 
 
+def prepare_ngx_programdata(prefix):
+    """Give NGX the state it initialized from successfully under Wine.
+
+    QueryAdapterInfo cannot locate the NGX driver store under Wine, so NGX falls
+    back to SHGetKnownFolderPath(ProgramData), which fails when C:\\ProgramData
+    is missing (a fresh prefix may not have it). NGX then creates
+    ProgramData\\NVIDIA\\NGX\\models and rewrites its ACL; later runs cannot use
+    that folder. Either case ends in NGXGetPath failing and Init 0xBAD00002.
+    NGX's updater cannot run under Wine, so the folder holds nothing reusable.
+    """
+    programdata = Path(prefix) / "drive_c" / "ProgramData"
+    programdata.mkdir(parents=True, exist_ok=True)
+    ngx = programdata / "NVIDIA" / "NGX"
+    if ngx.is_symlink():
+        ngx.unlink()
+    elif ngx.exists():
+        shutil.rmtree(ngx)
+
+
 def copy_dll(source, destination):
     # Never write through a prefix symlink into a runner's built-in libraries.
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -698,6 +717,7 @@ def initialize_prefix(root, graphics, env):
                 wait_wine_server(wine, process_env)
             if not (prefix / "system.reg").is_file():
                 raise RuntimeError("Wine did not initialize the dedicated DLSS prefix.")
+            prepare_ngx_programdata(prefix)
             for name, source in graphics.items():
                 copy_dll(source, prefix / "drive_c/windows/system32" / name)
             check_vulkan(process_env)
