@@ -82,7 +82,7 @@ def transform(args):
                    DXVK_LOG_LEVEL="warn", DXVK_LOG_PATH=diagnostics.name,
                    DXVK_NVAPI_LOG_LEVEL="info", DXVK_NVAPI_LOG_PATH=diagnostics.name,
                    WINEDEBUG="err+all,fixme-all")
-    logs = deque(maxlen=40)
+    logs = deque(maxlen=5000)  # Full NGX verbose trail for the saved report.
     # Keep the child in our process group so pipeline cancellation kills it too.
     process = subprocess.Popen(command, cwd=exe.parent, env=env, stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -157,7 +157,7 @@ def transform(args):
         # Stop the host first so its stderr and log files are complete.
         stop_host(process)
         thread.join(timeout=1)
-        raise RuntimeError(str(exc) + "\nDLSS engine log:\n" + "\n".join(logs)
+        raise RuntimeError(str(exc) + "\nDLSS engine log:\n" + "\n".join(list(logs)[-40:])
                            + graphics_logs(diagnostics, env, logs)) from exc
     finally:
         stop_host(process)
