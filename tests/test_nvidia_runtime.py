@@ -103,19 +103,6 @@ class RuntimeInstallTests(unittest.TestCase):
 
 
 class PrefixStateTests(unittest.TestCase):
-    def test_ngx_programdata_is_reset_without_touching_the_rest_of_the_prefix(self):
-        with TemporaryDirectory() as directory:
-            prefix = Path(directory)
-            models = prefix / "drive_c/ProgramData/NVIDIA/NGX/models"
-            models.mkdir(parents=True)
-            (models / "state").write_text("stale")
-            (prefix / "system.reg").write_text("registry")
-            runtime.reset_ngx_state(prefix)
-            runtime.reset_ngx_state(prefix)  # Absent folder is fine.
-            self.assertFalse((prefix / "drive_c/ProgramData/NVIDIA/NGX").exists())
-            self.assertTrue((prefix / "drive_c/ProgramData/NVIDIA").is_dir())
-            self.assertEqual((prefix / "system.reg").read_text(), "registry")
-
     def test_wineboot_waits_for_wineserver_to_save_the_registry(self):
         with patch.object(runtime.subprocess, "run", return_value=Mock(returncode=0)) as run:
             runtime.wait_wine_server("/runner/bin/wine", {})

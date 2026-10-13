@@ -212,20 +212,6 @@ def wait_wine_server(wine, env, *, timeout=120):
         stop_wine_server(wine, env)
 
 
-def reset_ngx_state(prefix):
-    """Remove NGX's ProgramData folder from the dedicated prefix before a run.
-
-    Under Wine, NGX creates C:\\ProgramData\\NVIDIA\\NGX\\models and rewrites its ACL;
-    later runs then fail NGXGetPath and Init returns 0xBAD00002. NGX's updater
-    cannot run under Wine, so this folder holds nothing reusable.
-    """
-    ngx = Path(prefix) / "drive_c" / "ProgramData" / "NVIDIA" / "NGX"
-    if ngx.is_symlink():
-        ngx.unlink()
-    elif ngx.exists():
-        shutil.rmtree(ngx)
-
-
 def copy_dll(source, destination):
     # Never write through a prefix symlink into a runner's built-in libraries.
     destination.parent.mkdir(parents=True, exist_ok=True)

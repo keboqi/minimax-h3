@@ -81,6 +81,10 @@ def transform(args):
         pin_gpu(env)
         check_vulkan(env)
         command = [wine, str(exe), "Z:" + str(runtime).replace("/", "\\")]
+        # NGX finds its own directory via the adapter's NGXCore\NGXPath registry
+        # key, which Wine cannot supply (0xD0000002), and then falls back to this
+        # variable, as Proton sets it. Without it Init fails with 0xBAD00002.
+        env["NVIDIA_WINE_DLL_DIR"] = str(runtime)
         # Graphics-layer logs go to files (never the binary stdout) and are
         # attached to failures; otherwise device errors arrive without a cause.
         diagnostics = tempfile.TemporaryDirectory(prefix="h3-dlss-log-")
