@@ -139,10 +139,23 @@ def install_archive(root, name, url, checksum, required, *, helper=False):
         staging = Path(directory)
         if helper:
             with zipfile.ZipFile(archive) as bundle:
+                # Upstream builds this ZIP on Windows and stores backslashes.
+                # ZipInfo normalizes them only on Windows, so use the entry
+                # objects after normalizing names explicitly on every platform.
+                entries = {}
+                for entry in bundle.infolist():
+                    normalized = entry.filename.replace("\\", "/")
+                    if normalized in entries:
+                        raise RuntimeError(f"Runtime archive contains duplicate entry {normalized}")
+                    entries[normalized] = entry
+                selected = ("README.md", *("out/" + filename for filename in HELPER_FILES))
+                for filename in selected:
+                    if filename not in entries:
+                        raise RuntimeError(f"Runtime archive is missing {filename}")
                 for filename in HELPER_FILES:
-                    with bundle.open("out/" + filename) as source, (staging / filename).open("wb") as dest:
+                    with bundle.open(entries["out/" + filename]) as source, (staging / filename).open("wb") as dest:
                         shutil.copyfileobj(source, dest)
-                (staging / "README.md").write_bytes(bundle.read("README.md"))
+                (staging / "README.md").write_bytes(bundle.read(entries["README.md"]))
             content = staging
         else:
             with tarfile.open(archive) as bundle:

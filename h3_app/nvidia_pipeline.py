@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import signal
 import subprocess
 import threading
@@ -53,10 +54,13 @@ def stream_pipeline(
     threads = []
     errors = deque(maxlen=4)
     logs = deque(maxlen=96)
+    worker_logs = deque(maxlen=64)
     headers = {}  # Keep runtime evidence after progress lines rotate out.
     log_lock = threading.Lock()
     counts = [0, 0]
     deadline = time.monotonic() + timeout
+    failed = False
+    worker_index = 0 if source_bytes is not None else 1
     check_cancelled()
 
     def relay(reader, writer, frame_size, slot, data=None, output=None):
@@ -107,6 +111,8 @@ def stream_pipeline(
                 if marker in decoded:
                     headers[label + marker] = label + decoded
             logs.append(label + decoded)
+            if label == f"[{worker_index}] ":
+                worker_logs.append(label + decoded)
 
     def diagnostics():
         with log_lock:
@@ -137,7 +143,6 @@ def stream_pipeline(
 
     try:
         for index, command in enumerate(commands):
-            worker_index = 0 if source_bytes is not None else 1
             process = subprocess.Popen(
                 command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, bufsize=0,
@@ -163,14 +168,21 @@ def stream_pipeline(
             if time.monotonic() >= deadline:
                 raise H3Error("NVIDIA processing timed out; worker processes were stopped.")
             if errors or any(p.poll() not in (None, 0) for p in processes):
-                raise H3Error("Video worker failed: " + "\n".join((*errors, *diagnostics()))[-6000:])
+                failed = True
+                # A closed input pipe can precede the worker's traceback. Let
+                # it finish reporting the cause before stopping the pipeline.
+                try:
+                    worker.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    pass
+                break
             yield PipeProgress(counts[1], diagnostics())
             time.sleep(0.1)
-        if errors or any(p.returncode != 0 for p in processes):
-            raise H3Error("Video worker failed: " + "\n".join((*errors, *diagnostics()))[-6000:])
-        if not counts[0] or counts[0] != counts[1]:
+        failed = failed or bool(errors) or any(p.poll() not in (None, 0) for p in processes)
+        if not failed and (not counts[0] or counts[0] != counts[1]):
             raise H3Error(f"Video worker lost frames ({counts[0]} input, {counts[1]} output).")
-        yield PipeProgress(counts[1], diagnostics())
+        if not failed:
+            yield PipeProgress(counts[1], diagnostics())
     finally:
         for process in reversed(processes):
             stop_process(process)
@@ -180,3 +192,14 @@ def stream_pipeline(
             for stream in (process.stdin, process.stdout, process.stderr):
                 if stream is not None and not stream.closed:
                     stream.close()
+    if failed:
+        # Construct the error after stderr drain threads have reached EOF.
+        # Decoder/encoder teardown can be noisy. Keep the neural worker's final
+        # exception independently and place it last so truncation preserves it.
+        exits = [f"[{index}] process exited with code {process.returncode}"
+                 for index, process in enumerate(processes)]
+        with log_lock:
+            other_logs = [line for line in logs if not line.startswith(f"[{worker_index}] ")]
+            detail = "\n".join((*exits, *errors, *other_logs, *worker_logs))[-6000:]
+        logging.getLogger(__name__).error("NVIDIA processing failed:\n%s", detail)
+        raise H3Error("Video worker failed: " + detail)

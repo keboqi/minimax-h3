@@ -97,6 +97,19 @@ class BinaryPipeTests(unittest.TestCase):
                 list(stream_pipeline([self.command(code)], input_size=8, output_size=8,
                     timeout=5, source_bytes=b"abcdefgh", capture=bytearray()))
 
+    def test_broken_pipe_retains_delayed_worker_error_and_logs_it(self):
+        command = self.command(
+            "import sys,time; sys.stdin.close(); "
+            "print('Traceback (most recent call last):', file=sys.stderr, flush=True); "
+            "time.sleep(0.3); print('RuntimeError: VSR fixture initialization failed', file=sys.stderr, flush=True); "
+            "raise SystemExit(1)"
+        )
+        with self.assertLogs("h3_app.nvidia_pipeline", level="ERROR") as logs:
+            with self.assertRaisesRegex(H3Error, "VSR fixture initialization failed"):
+                list(stream_pipeline([command], input_size=1024 * 1024, output_size=8,
+                    timeout=5, source_bytes=b"x" * (1024 * 1024), capture=bytearray()))
+        self.assertIn("VSR fixture initialization failed", "\n".join(logs.output))
+
     def test_timeout_and_cancellation_stop_workers(self):
         command = self.command("import time; time.sleep(30)")
         with self.assertRaisesRegex(H3Error, "timed out"):

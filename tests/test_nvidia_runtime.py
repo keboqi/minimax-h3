@@ -17,10 +17,10 @@ from h3_app import nvidia_postprocess as service
 
 
 class RuntimeInstallTests(unittest.TestCase):
-    def helper_archive(self, path):
+    def helper_archive(self, path, separator="/"):
         with zipfile.ZipFile(path, "w") as bundle:
             for name in runtime.HELPER_FILES:
-                bundle.writestr("out/" + name, b"MZ fixture " + name.encode())
+                bundle.writestr("out" + separator + name, b"MZ fixture " + name.encode())
             bundle.writestr("README.md", "Upstream terms and instructions")
         return runtime.sha256(path)
 
@@ -57,6 +57,17 @@ class RuntimeInstallTests(unittest.TestCase):
                 runtime.install_archive(root, "helper-v1", "https://example.invalid/helper.zip", checksum, runtime.HELPER_FILES, helper=True)
                 self.assertEqual(fetch.call_count, 2)
                 self.assertTrue((target / "nvngx_dlssnr.dll").is_file())
+
+    def test_helper_accepts_windows_archive_paths_on_every_platform(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "windows.zip"
+            checksum = self.helper_archive(archive, separator="\\")
+            # Simulate Linux ZipInfo parsing even when this test runs on Windows.
+            with patch.object(runtime.zipfile.os, "sep", "/"), patch.object(runtime, "download", return_value=archive):
+                target = runtime.install_archive(root, "helper-v1", "https://example.invalid/helper.zip", checksum, runtime.HELPER_FILES, helper=True)
+            for name in runtime.HELPER_FILES:
+                self.assertEqual((target / name).read_bytes(), b"MZ fixture " + name.encode())
 
     def test_tar_traversal_is_rejected_before_installation(self):
         with TemporaryDirectory() as directory:
