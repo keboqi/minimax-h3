@@ -160,8 +160,20 @@ class LinuxDlssSetupTests(unittest.TestCase):
     def test_vulkan_accepts_real_nvidia_device(self):
         result = Mock(returncode=0, stdout="deviceName = NVIDIA RTX PRO 6000 Blackwell", stderr="")
         with patch.object(runtime.subprocess, "run", return_value=result) as run:
-            runtime.check_vulkan({"DISPLAY": ":99"})
-        self.assertEqual(run.call_args.kwargs["env"]["DISPLAY"], ":99")
+            runtime.check_vulkan({"DISPLAY": ":99", "KEEP": "1"})
+        # Surface/X availability must not decide whether the GPU driver works.
+        self.assertNotIn("DISPLAY", run.call_args.kwargs["env"])
+        self.assertEqual(run.call_args.kwargs["env"]["KEEP"], "1")
+
+    def test_reachable_display_is_reused(self):
+        with patch.object(runtime.os, "name", "posix"), patch.object(runtime, "display_reachable", return_value=True),                 patch.object(runtime.subprocess, "Popen") as popen:
+            self.assertEqual(runtime.ensure_display({"DISPLAY": ":5"}), {"DISPLAY": ":5"})
+        popen.assert_not_called()
+
+    def test_unreachable_display_is_replaced_with_managed_xvfb(self):
+        with patch.object(runtime.os, "name", "posix"), patch.object(runtime, "display_reachable", return_value=False),                 patch.object(runtime.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "requires Xvfb"):
+                runtime.ensure_display({"DISPLAY": ":5"})
 
     def test_host_download_is_checked_against_pinned_git_blob(self):
         with TemporaryDirectory() as directory:

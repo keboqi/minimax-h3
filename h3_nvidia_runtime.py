@@ -238,21 +238,41 @@ def close_display():
 atexit.register(close_display)
 
 
+def display_reachable(name):
+    """Connect to a local X display's socket (abstract or filesystem)."""
+    import socket
+    match = re.fullmatch(r"(?:unix)?:(\d+)(?:\.\d+)?", name or "")
+    if not match:
+        return bool(name)  # Remote/TCP displays are the operator's responsibility.
+    path = "/tmp/.X11-unix/X" + match.group(1)
+    for address in (chr(0) + path, path):
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+            probe.settimeout(2)
+            try:
+                probe.connect(address)
+                return True
+            except OSError:
+                continue
+    return False
+
+
 def ensure_display(env):
     """Keep Xvfb separate from the host's binary stdout; never use xvfb-run."""
     global _display_process, _display_name
-    if os.name == "nt" or env.get("DISPLAY"):
+    if os.name == "nt" or display_reachable(env.get("DISPLAY")):
         return env
     import select
     with _display_lock:
-        if _display_process is None or _display_process.poll() is not None:
+        if _display_process is None or _display_process.poll() is not None or not display_reachable(_display_name):
+            close_display()
             if not shutil.which("Xvfb"):
                 raise RuntimeError("Headless DLSS requires Xvfb. Restart the launcher to provision it.")
             reader, writer = os.pipe()
             try:
                 process = subprocess.Popen(
                     ["Xvfb", "-displayfd", str(writer), "-screen", "0", "1280x720x24", "-nolisten", "tcp"],
-                    pass_fds=(writer,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    pass_fds=(writer,), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
                 os.close(writer)
                 writer = None
@@ -261,11 +281,11 @@ def ensure_display(env):
                     process.wait(timeout=5)
                     raise RuntimeError("Xvfb did not become ready for DLSS.")
                 number = os.read(reader, 32).decode().strip()
-                if not number.isdigit() or process.poll() is not None:
+                if not number.isdigit() or process.poll() is not None or not display_reachable(":" + number):
                     if process.poll() is None:
                         process.terminate()
                         process.wait(timeout=5)
-                    raise RuntimeError("Xvfb could not allocate a headless display.")
+                    raise RuntimeError("Xvfb could not provide a reachable headless display.")
                 _display_process, _display_name = process, ":" + number
             finally:
                 os.close(reader)
@@ -393,6 +413,8 @@ def pin_gpu(env):
 
 def check_vulkan(env):
     """Check the real driver, not merely that libvulkan1 or CUDA is installed."""
+    # Surface support is irrelevant to offscreen DLSS; an X hiccup must not mask the GPU.
+    env = {key: value for key, value in env.items() if key not in ("DISPLAY", "WAYLAND_DISPLAY")}
     result = subprocess.run(["vulkaninfo", "--summary"], env=env, capture_output=True,
                             text=True, timeout=30)
     if result.returncode or not re.search(r"deviceName\s*=.*NVIDIA", result.stdout, re.I):
