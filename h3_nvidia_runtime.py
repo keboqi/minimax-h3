@@ -405,10 +405,23 @@ def check_vulkan(env):
 
 
 def wine_run(wine, args, env):
-    result = subprocess.run([str(wine), *args], env=ensure_display(env), text=True,
-                            capture_output=True, timeout=180)
+    env = dict(ensure_display(env))
+    # Mono/Gecko install prompts are invisible dialogs under Xvfb and block wineboot.
+    env["WINEDLLOVERRIDES"] = env.get("WINEDLLOVERRIDES", "") + ";mscoree,mshtml="
+    # wineserver and Wine's services outlive wineboot and inherit its handles, so
+    # pipes would never reach EOF. Use a file, which needs no EOF to be read.
+    with tempfile.TemporaryFile() as log:
+        try:
+            result = subprocess.run([str(wine), *args], env=env, stdin=subprocess.DEVNULL,
+                                    stdout=log, stderr=subprocess.STDOUT, timeout=300)
+        except subprocess.TimeoutExpired as exc:
+            log.seek(0)
+            raise RuntimeError(f"DLSS Wine setup timed out running {args[0]}: "
+                               + log.read().decode("utf-8", "replace")[-2000:]) from exc
+        log.seek(0)
+        output = log.read().decode("utf-8", "replace")
     if result.returncode:
-        raise RuntimeError(f"DLSS Wine setup failed running {args[0]}: " + (result.stderr or result.stdout)[-2000:])
+        raise RuntimeError(f"DLSS Wine setup failed running {args[0]}: " + output[-2000:])
 
 
 def install_rh_host(root):

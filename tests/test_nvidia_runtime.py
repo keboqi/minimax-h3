@@ -148,6 +148,15 @@ class LinuxDlssSetupTests(unittest.TestCase):
         self.assertEqual(runtime.find_driver_library("libGLX_nvidia.so.0", listing),
                          (Path("/usr/lib/x86_64-linux-gnu/libGLX_nvidia.so.0"), True))
 
+    def test_wineboot_output_never_uses_pipes_held_by_wine_services(self):
+        with patch.object(runtime, "ensure_display", side_effect=lambda env: env),                 patch.object(runtime.subprocess, "run", return_value=Mock(returncode=0)) as run:
+            runtime.wine_run("/runner/bin/wine", ["wineboot.exe", "-u"], {"WINEDLLOVERRIDES": "dxgi=n,b"})
+        kwargs = run.call_args.kwargs
+        self.assertNotIn("capture_output", kwargs)
+        self.assertIs(kwargs["stdin"], runtime.subprocess.DEVNULL)
+        self.assertNotEqual(kwargs["stdout"], runtime.subprocess.PIPE)
+        self.assertIn("mscoree,mshtml=", kwargs["env"]["WINEDLLOVERRIDES"])
+
     def test_vulkan_accepts_real_nvidia_device(self):
         result = Mock(returncode=0, stdout="deviceName = NVIDIA RTX PRO 6000 Blackwell", stderr="")
         with patch.object(runtime.subprocess, "run", return_value=result) as run:
