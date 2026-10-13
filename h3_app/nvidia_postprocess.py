@@ -19,6 +19,8 @@ import sys
 import tempfile
 from typing import Iterator
 
+from h3_nvidia_runtime import enabled, headless_command, runtime_env, wine_env
+
 from .catalog import DLSS5_NR, NVIDIA_VSR, NVIDIA_POSTPROCESS_OPTIONS, UPSCALE_RESOLUTION_PRESETS
 from .config import RuntimeConfig
 from .errors import H3Error
@@ -97,27 +99,32 @@ def gpu_python():
 
 
 def dlss_config(*, verify=False):
-    configured = os.getenv("H3_DLSSNR_EXE", "")
+    config = runtime_env()
+    if not enabled("H3_ENABLE_DLSSNR"):
+        raise H3Error("DLSS enhancement is disabled on this processing host.")
+    if config.get("H3_DLSSNR_SETUP_ERROR"):
+        raise H3Error("Automatic DLSS setup failed: " + config["H3_DLSSNR_SETUP_ERROR"])
+    configured = config.get("H3_DLSSNR_EXE", "")
     if not configured or not Path(configured).is_file():
-        raise H3Error("Configure H3_DLSSNR_EXE with video2dlssnr.exe on the processing host.")
+        raise H3Error("DLSS runtime is missing. Restart run_h3.sh or redeploy Modal to install it automatically.")
     exe = Path(configured).expanduser().resolve()
-    directory = Path(os.getenv("H3_DLSSNR_DLL_DIR", str(exe.parent))).expanduser().resolve()
+    directory = Path(config.get("H3_DLSSNR_DLL_DIR", str(exe.parent))).expanduser().resolve()
     model = directory / "nvngx_dlssnr.dll"
     if not model.is_file():
         raise H3Error("Missing nvngx_dlssnr.dll in H3_DLSSNR_DLL_DIR (or beside the helper).")
     if not (exe.parent / "nvngx.dll_dlssnr.dll").is_file():
         raise H3Error("Missing video2dlssnr forwarder nvngx.dll_dlssnr.dll beside the helper.")
-    expected = os.getenv("H3_DLSSNR_MODEL_SHA256", "").lower()
+    expected = config.get("H3_DLSSNR_MODEL_SHA256", "").lower()
     if verify and expected and file_hash(model) != expected:
         raise H3Error("DLSS neural model SHA-256 does not match H3_DLSSNR_MODEL_SHA256.")
     wine = None
     if os.name != "nt":
-        wine = shutil.which(os.getenv("H3_DLSSNR_WINE", "wine"))
+        wine = shutil.which(config.get("H3_DLSSNR_WINE", "wine"))
         if not wine:
             raise H3Error("Install a compatible Wine runner and configure H3_DLSSNR_WINE.")
         if not (Path(wine).parent / "wineserver").is_file():
             raise H3Error("H3_DLSSNR_WINE needs a sibling wineserver for dedicated-prefix cleanup.")
-        prefix = Path(os.getenv("H3_DLSSNR_WINEPREFIX", "")).expanduser()
+        prefix = Path(config.get("H3_DLSSNR_WINEPREFIX", "")).expanduser()
         if not prefix.is_absolute() or not (prefix / "system.reg").is_file():
             raise H3Error("H3_DLSSNR_WINEPREFIX must be an initialized, dedicated absolute Wine prefix.")
     return exe, directory, model, wine
@@ -133,7 +140,7 @@ def availability(method):
             if python == str(Path(sys.executable).resolve()) and (
                 importlib.util.find_spec("nvvfx") is None or importlib.util.find_spec("torch") is None
             ):
-                raise H3Error("Install the optional VSR runtime with setup_h3.py --enable-nvidia-vsr.")
+                raise H3Error("VSR runtime is missing. Restart run_h3.sh or redeploy Modal to install it automatically.")
         elif method == DLSS5_NR:
             dlss_config()
         else:
@@ -219,13 +226,15 @@ def worker_context(method, runtime):
         yield None
         return
     import fcntl
-    prefix = Path(os.environ["H3_DLSSNR_WINEPREFIX"]).expanduser().resolve()
+    config = runtime_env()
+    prefix = Path(config["H3_DLSSNR_WINEPREFIX"]).expanduser().resolve()
     with (prefix / ".h3-dlssnr.lock").open("a+b") as lock:
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
             raise H3Error("The dedicated DLSS Wine prefix is busy in another process.") from exc
-        env = dict(os.environ, WINEPREFIX=str(prefix), WINEDEBUG="-all")
+        wine = shutil.which(config.get("H3_DLSSNR_WINE", "wine"))
+        env = wine_env(prefix, wine)
         failed = False
         try:
             yield env
@@ -235,7 +244,6 @@ def worker_context(method, runtime):
         finally:
             # wineserver can detach from the launched process group. Stop only
             # this operator-dedicated prefix, while still holding its lock.
-            wine = shutil.which(os.getenv("H3_DLSSNR_WINE", "wine"))
             server = Path(wine).parent / "wineserver" if wine else None
             if server and server.is_file():
                 try:
@@ -258,6 +266,10 @@ def worker_command(method, width, height, out_width, out_height, settings):
         str(("Default", "Natural", "Cinematic").index(settings.style)),
         "--nr-intensity", str(settings.intensity), "--nr-detail", "1", "--nr-color", "1",
         "--nr-motion", "1", "--nr-motion-engine", "auto", "--dll-dir", dll_path]
+    try:
+        cmd = headless_command(cmd) if wine else cmd
+    except RuntimeError as exc:
+        raise H3Error(str(exc)) from exc
     return cmd, exe.parent
 
 

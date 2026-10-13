@@ -25,6 +25,7 @@ SHARED_MODELS = ROOT / "h3_models.py"
 SHARED_REQUIREMENTS = ROOT / "h3_requirements.py"
 SHARED_SOURCES = ROOT / "h3_sources.py"
 NODE_PATCHES = ROOT / "h3_node_patches.py"
+NVIDIA_RUNTIME = ROOT / "h3_nvidia_runtime.py"
 ATTENTION_HELPER = ROOT / "h3_attention.py"
 PROMPT_REWRITER = ROOT / "h3_prompt_rewriter.py"
 PROMPT_ENHANCER = ROOT / "prompt.txt"
@@ -41,6 +42,7 @@ LOCAL_SHARED_MODELS = LOCAL / "h3_models.py"
 LOCAL_SHARED_REQUIREMENTS = LOCAL / "h3_requirements.py"
 LOCAL_SHARED_SOURCES = LOCAL / "h3_sources.py"
 LOCAL_NODE_PATCHES = LOCAL / "h3_node_patches.py"
+LOCAL_NVIDIA_RUNTIME = LOCAL / "h3_nvidia_runtime.py"
 LOCAL_ATTENTION_HELPER = LOCAL / "h3_attention.py"
 LOCAL_PROMPT_REWRITER = LOCAL / "h3_prompt_rewriter.py"
 LOCAL_PROMPT_ENHANCER = LOCAL / "prompt.txt"
@@ -146,6 +148,7 @@ _BUILD_LOCAL_MOUNTS = (
     (LOCAL_SHARED_REQUIREMENTS, SHARED_REQUIREMENTS),
     (LOCAL_SHARED_SOURCES, SHARED_SOURCES),
     (LOCAL_NODE_PATCHES, NODE_PATCHES),
+    (LOCAL_NVIDIA_RUNTIME, NVIDIA_RUNTIME),
 )
 _RUNTIME_LOCAL_MOUNTS = (
     (LOCAL_UI, UI),
@@ -606,6 +609,8 @@ def build(revision: str) -> None:
         + trt_import.stdout.strip(),
         flush=True,
     )
+    from h3_nvidia_runtime import ensure_runtime
+    ensure_runtime(ROOT / "nvidia", system_packages=False)
 
 image = (
     modal.Image.from_registry(
@@ -633,8 +638,17 @@ image = (
     )
 )
 
-if os.getenv("H3_ENABLE_NVIDIA_VSR") == "1":
+if os.getenv("H3_ENABLE_NVIDIA_VSR", "1") != "0":
     image = image.uv_pip_install(NVIDIA_VFX_REQUIREMENT)
+
+# Install display/Vulkan libraries in the image; Wine and neural libraries are
+# provisioned by the same pinned installer used by standalone and Colab.
+from h3_nvidia_runtime import LINUX_PACKAGES  # noqa: E402
+image = image.apt_install(*LINUX_PACKAGES).env({
+    "H3_NVIDIA_RUNTIME_DIR": (ROOT / "nvidia").as_posix(),
+    "H3_ENABLE_DLSSNR": os.getenv("H3_ENABLE_DLSSNR", "1"),
+    "NVIDIA_DRIVER_CAPABILITIES": "all",
+})
 
 if IS_LOCAL:
     for local_path, remote_path in _BUILD_LOCAL_MOUNTS:
@@ -685,7 +699,7 @@ if IS_LOCAL:
     # build-configuration modules must also be available in the CPU container.
     for filename in (
         "h3_models.py", "h3_model_manager.py", "h3_sources.py",
-        "h3_requirements.py", "h3_node_patches.py",
+        "h3_requirements.py", "h3_node_patches.py", "h3_nvidia_runtime.py",
     ):
         manager_image = manager_image.add_local_file(
             LOCAL / filename, remote_path=(ROOT / filename).as_posix(), copy=False,
@@ -746,9 +760,16 @@ def service_env() -> dict[str, str]:
             "PYTHONUNBUFFERED": "1",
             "HF_HOME": "/tmp/hf",
             "XDG_CACHE_HOME": "/tmp/cache",
+            "H3_NVIDIA_RUNTIME_DIR": (ROOT / "nvidia").as_posix(),
         }
     )
     return env
+
+
+def prepare_nvidia_runtime() -> None:
+    # Driver bridges must match the live GPU host, after snapshot restore.
+    from h3_nvidia_runtime import prepare_runtime
+    prepare_runtime(ROOT / "nvidia", system_packages=False)
 
 
 def wait_for_service(
@@ -920,6 +941,7 @@ class H3Service:
             timeout=20 * 60,
             label="ComfyUI after restore",
         )
+        prepare_nvidia_runtime()
         env = service_env()
         env["GRADIO_SERVER_NAME"] = "0.0.0.0"
         env["GRADIO_SERVER_PORT"] = str(UI_PORT)

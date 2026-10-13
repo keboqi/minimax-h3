@@ -986,6 +986,8 @@ def sync_model_inventory(install_dir: Path, comfy: Path) -> None:
 def ensure_root_entrypoints() -> None:
     required_paths = [
         SCRIPT_DIR / "gradio_app.py",
+        SCRIPT_DIR / "h3_nvidia_runtime.py",
+        SCRIPT_DIR / "h3_sources.py",
         SCRIPT_DIR / "h3_ui" / "__init__.py",
         SCRIPT_DIR / "h3_ui" / "application.py",
         SCRIPT_DIR / "h3_app" / "__init__.py",
@@ -1136,7 +1138,7 @@ def main() -> None:
     if not args.skip_env:
         uv_pip(HUGGINGFACE_HUB_REQUIREMENT, no_deps=True)
     sync_swiftvr_runtime(install_dir)
-    if args.enable_nvidia_vsr or os.getenv("H3_ENABLE_NVIDIA_VSR") == "1":
+    if args.enable_nvidia_vsr or os.getenv("H3_ENABLE_NVIDIA_VSR", "1") != "0":
         uv_pip(NVIDIA_VFX_REQUIREMENT)
     if not torch_stack_matches():
         install_pinned_torch_stack()

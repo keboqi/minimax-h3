@@ -5,6 +5,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$SCRIPT_DIR/h3"
+export H3_NVIDIA_RUNTIME_DIR="${H3_NVIDIA_RUNTIME_DIR:-$INSTALL_DIR/nvidia}"
 COMFY_DIR="$INSTALL_DIR/ComfyUI"
 MODELS_CONFIG="$INSTALL_DIR/h3_models.json"
 
@@ -211,6 +212,8 @@ ensure_repo_integrity() {
   local -a required_paths=(
     gradio_app.py
     h3_runtime.py
+    h3_nvidia_runtime.py
+    h3_sources.py
     h3_ui/__init__.py
     h3_ui/application.py
     h3_app/__init__.py
@@ -347,6 +350,9 @@ log "Dense/fallback attention: Comfy Kitchen"
 
 free_port "$COMFY_PORT"
 free_port "$GRADIO_SERVER_PORT"
+
+log "Preparing NVIDIA image and video enhancement"
+"$PYTHON_BIN" "$SCRIPT_DIR/h3_nvidia_runtime.py" --initialize
 
 log "Starting ComfyUI at $COMFY_URL"
 log "Memory profile: $COMFYUI_MEMORY_MODE"

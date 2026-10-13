@@ -40,6 +40,7 @@ class ModalLifecycleTests(unittest.TestCase):
             "print": Mock(),
             "subprocess": SimpleNamespace(Popen=self.calls.launch),
             "prepare_runtime_models": self.calls.prepare,
+            "prepare_nvidia_runtime": self.calls.nvidia,
             "sync_ltx25_workflows": self.calls.sync,
             "service_env": Mock(return_value={}),
             "wait_for_service": self.calls.ready,
@@ -66,7 +67,7 @@ class ModalLifecycleTests(unittest.TestCase):
         self.service.check_services()
         self.assertIsNone(self.service.serve())
         self.assertEqual([call[0] for call in self.calls.mock_calls], [
-            "ready", "launch", "ready", "commit", "frontend",
+            "ready", "nvidia", "launch", "ready", "commit", "frontend",
         ])
         checks = self.calls.ready.call_args_list
         self.assertIs(checks[0].args[1], self.comfy)

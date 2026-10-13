@@ -1,0 +1,254 @@
+"""Provisioning acceptance without network downloads, Wine, or GPU allocation."""
+import ast
+from contextlib import ExitStack, nullcontext
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import tarfile
+from tempfile import TemporaryDirectory
+import unittest
+from unittest.mock import Mock, patch
+import zipfile
+
+import h3_nvidia_runtime as runtime
+from h3_app import nvidia_postprocess as service
+
+
+class RuntimeInstallTests(unittest.TestCase):
+    def helper_archive(self, path):
+        with zipfile.ZipFile(path, "w") as bundle:
+            for name in runtime.HELPER_FILES:
+                bundle.writestr("out/" + name, b"MZ fixture " + name.encode())
+            bundle.writestr("README.md", "Upstream terms and instructions")
+        return runtime.sha256(path)
+
+    def test_download_rejects_mismatch_without_publishing(self):
+        with TemporaryDirectory() as directory, patch.object(runtime, "urlopen", side_effect=lambda *a, **k: io.BytesIO(b"wrong")), patch.object(runtime.time, "sleep"):
+            target = Path(directory) / "bundle.zip"
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                runtime.download("https://example.invalid/bundle.zip", target, "0" * 64)
+            self.assertFalse(target.exists())
+            self.assertFalse(target.with_suffix(".zip.partial").exists())
+
+    def test_download_retries_then_caches_only_verified_content(self):
+        with TemporaryDirectory() as directory, patch.object(runtime, "urlopen", side_effect=[OSError("interrupted"), io.BytesIO(b"verified")]) as fetch, patch.object(runtime.time, "sleep"):
+            target = Path(directory) / "bundle.zip"
+            checksum = hashlib.sha256(b"verified").hexdigest()
+            runtime.download("https://example.invalid/bundle.zip", target, checksum)
+            runtime.download("https://example.invalid/bundle.zip", target, checksum)
+            self.assertEqual(fetch.call_count, 2)
+            self.assertEqual(target.read_bytes(), b"verified")
+
+    def test_helper_install_is_idempotent_and_repairs_missing_libraries(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "fixture.zip"
+            checksum = self.helper_archive(archive)
+            with patch.object(runtime, "download", return_value=archive) as fetch:
+                target = runtime.install_archive(root, "helper-v1", "https://example.invalid/helper.zip", checksum, runtime.HELPER_FILES, helper=True)
+                self.assertFalse((target / "ffmpeg.exe").exists())
+                self.assertTrue((target / "README.md").is_file())
+                runtime.install_archive(root, "helper-v1", "https://example.invalid/helper.zip", checksum, runtime.HELPER_FILES, helper=True)
+                fetch.assert_called_once()
+                (target / "nvngx_dlssnr.dll").unlink()
+                self.helper_archive(archive)
+                runtime.install_archive(root, "helper-v1", "https://example.invalid/helper.zip", checksum, runtime.HELPER_FILES, helper=True)
+                self.assertEqual(fetch.call_count, 2)
+                self.assertTrue((target / "nvngx_dlssnr.dll").is_file())
+
+    def test_tar_traversal_is_rejected_before_installation(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "unsafe.tar.gz"
+            with tarfile.open(archive, "w:gz") as bundle:
+                entry = tarfile.TarInfo("../escaped")
+                entry.size = 1
+                bundle.addfile(entry, io.BytesIO(b"x"))
+            with patch.object(runtime, "download", return_value=archive):
+                with self.assertRaises(tarfile.TarError):
+                    runtime.install_archive(root, "runner", "https://example.invalid/runner.tar.gz", "fixture", ("bin/wine",))
+            self.assertFalse((root / "runner").exists())
+            self.assertFalse((root.parent / "escaped").exists())
+
+    def test_manifest_defaults_discover_helper_without_exports(self):
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            root = Path(directory)
+            archive = root / "fixture.zip"
+            self.helper_archive(archive)
+            with patch.object(runtime, "download", return_value=archive), patch.object(runtime.platform, "system", return_value="Windows"), patch.object(runtime.platform, "machine", return_value="AMD64"):
+                if os.name != "nt":
+                    self.skipTest("Windows fixture exercises the native branch")
+                runtime.ensure_runtime(root)
+            os.environ["H3_NVIDIA_RUNTIME_DIR"] = str(root)
+            exe, library, model, wine = service.dlss_config(verify=True)
+            self.assertTrue(exe.is_file())
+            self.assertEqual(model.parent, library)
+            self.assertIsNone(wine)
+            self.assertTrue(runtime.read_manifest(root)["initialized"])
+            self.assertEqual(runtime.runtime_env()["H3_DLSSNR_MODEL_SHA256"], runtime.sha256(model))
+
+    def test_custom_configuration_never_inherits_managed_paths_or_error(self):
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {"H3_DLSSNR_EXE": "/custom/helper.exe"}, clear=True):
+            root = Path(directory)
+            runtime.write_manifest(root, {"env": {"H3_DLSSNR_EXE": "/managed/helper.exe", "H3_DLSSNR_DLL_DIR": "/managed/models"}, "error": "old failure"})
+            self.assertEqual(runtime.runtime_env(root), {"H3_DLSSNR_EXE": "/custom/helper.exe"})
+            with patch.object(runtime, "download") as fetch:
+                runtime.ensure_runtime(root)
+                fetch.assert_not_called()
+
+    def test_failed_setup_is_visible_and_disabled_setup_does_not_download(self):
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {"H3_NVIDIA_RUNTIME_DIR": directory}, clear=True), patch.object(runtime.platform, "machine", return_value="AMD64"):
+            with patch.object(runtime, "install_archive", side_effect=RuntimeError("network failed")):
+                runtime.prepare_runtime()
+            self.assertIn("network failed", runtime.runtime_env()["H3_DLSSNR_SETUP_ERROR"])
+            with self.assertRaisesRegex(service.H3Error, "network failed"):
+                service.dlss_config()
+            with patch.dict(os.environ, {"H3_ENABLE_DLSSNR": "0"}), patch.object(runtime, "download") as fetch:
+                runtime.ensure_runtime()
+                fetch.assert_not_called()
+
+
+class LinuxRuntimeTests(unittest.TestCase):
+    def test_matching_driver_bridges_are_reused_without_downloading(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            cached = root / "drivers/610.50"
+            cached.mkdir(parents=True)
+            for name in ("nvngx.dll", "_nvngx.dll"):
+                (cached / name).write_bytes(b"bridge")
+            with patch.object(runtime, "BRIDGE_DIRS", ()), patch.object(runtime.subprocess, "run", return_value=Mock(stdout="610.50\n")), patch.object(runtime, "download") as fetch:
+                self.assertEqual(runtime.driver_bridges(root), (cached, "610.50"))
+            fetch.assert_not_called()
+
+    def test_missing_driver_bridges_extract_only_and_never_install_driver(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "nvidia.run"
+            archive.write_bytes(b"vendor archive fixture")
+
+            def run(command, **kwargs):
+                if command[0] == "nvidia-smi":
+                    return Mock(stdout="610.50\n")
+                self.assertEqual(command[:3], ["sh", str(archive), "--extract-only"])
+                extracted = Path(command[-1]) / "wine"
+                extracted.mkdir(parents=True)
+                for name in ("nvngx.dll", "_nvngx.dll"):
+                    (extracted / name).write_bytes(b"bridge")
+                return Mock(returncode=0)
+
+            with patch.object(runtime, "BRIDGE_DIRS", ()), patch.object(runtime.subprocess, "run", side_effect=run) as process, patch.object(runtime, "download", return_value=archive) as fetch:
+                bridges, version = runtime.driver_bridges(root)
+            self.assertEqual(version, "610.50")
+            self.assertEqual(process.call_count, 2)
+            self.assertIn("/610.50/NVIDIA-Linux-x86_64-610.50.run", fetch.call_args.args[0])
+            self.assertTrue((bridges / "_nvngx.dll").is_file())
+            self.assertTrue((bridges / "source.json").is_file())
+            self.assertFalse(archive.exists())
+
+    def test_colab_glibc_uses_compatible_wine_and_newer_hosts_reuse_proton(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            proton = root / "proton"
+            with patch.object(runtime.platform, "libc_ver", return_value=("glibc", "2.35")), patch.object(runtime, "install_archive", return_value=root / "compatible") as install:
+                wine, version = runtime.choose_wine_runner(root, proton)
+                self.assertEqual(wine, root / "compatible/bin/wine")
+                self.assertEqual(version, runtime.WINE_COMPAT_VERSION)
+                self.assertEqual(install.call_args.args[3], runtime.WINE_COMPAT_SHA256)
+            with patch.object(runtime.platform, "libc_ver", return_value=("glibc", "2.39")), patch.object(runtime, "install_archive") as install:
+                self.assertEqual(runtime.choose_wine_runner(root, proton)[0], proton / "files/bin/wine")
+                install.assert_not_called()
+
+    def test_headless_launch_wraps_worker_and_keeps_arguments_separate(self):
+        command = ["/runner/wine", "/my helper/video2dlssnr.exe", "--nr-video"]
+        with patch.object(runtime.os, "name", "posix"), patch.dict(os.environ, {}, clear=True), patch.object(runtime.shutil, "which", return_value="/usr/bin/xvfb-run"):
+            wrapped = runtime.headless_command(command)
+        self.assertEqual(wrapped[-3:], command)
+        self.assertEqual(wrapped[:2], ["/usr/bin/xvfb-run", "-a"])
+        with patch.object(runtime.os, "name", "posix"), patch.dict(os.environ, {"DISPLAY": ":99"}, clear=True):
+            self.assertEqual(runtime.headless_command(command), command)
+
+    def test_prefix_installs_native_graphics_and_matching_bridges_then_stops_server(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefix, proton, bridges = root / "prefix", root / "proton", root / "bridges"
+            prefix.mkdir()
+            (prefix / "system.reg").touch()
+            bridges.mkdir()
+            for name in ("nvngx.dll", "_nvngx.dll"):
+                (bridges / name).write_bytes(name.encode())
+            for name, package in runtime.TRANSLATION_DLLS.items():
+                path = proton / "files/lib/wine" / package / "x86_64-windows" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"native " + name.encode())
+            env = {"H3_DLSSNR_WINEPREFIX": str(prefix), "H3_DLSSNR_WINE": str(proton / "files/bin/wine")}
+            with patch.object(runtime, "driver_bridges", return_value=(bridges, "610.50")), patch.object(runtime, "wine_run") as run, patch.object(runtime.subprocess, "run") as stop:
+                version = runtime.initialize_prefix(root, proton, env)
+            self.assertEqual(version, "610.50")
+            self.assertEqual(run.call_count, 4)
+            self.assertEqual((prefix / "drive_c/windows/system32/dxgi.dll").read_bytes(), b"native dxgi.dll")
+            self.assertTrue((prefix / "drive_c/ngx_bridge/_nvngx.dll").is_file())
+            self.assertEqual(stop.call_args.args[0][-1], "-k")
+            self.assertEqual(stop.call_args.kwargs["env"]["WINEPREFIX"], str(prefix))
+            self.assertIn("nvapi64", stop.call_args.kwargs["env"]["WINEDLLOVERRIDES"])
+
+    def test_prefix_failure_still_stops_only_its_server(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {"H3_DLSSNR_WINEPREFIX": str(root / "prefix"), "H3_DLSSNR_WINE": str(root / "runner/bin/wine")}
+            with patch.object(runtime, "wine_run", side_effect=RuntimeError("boot failed")), patch.object(runtime.subprocess, "run") as stop:
+                with self.assertRaisesRegex(RuntimeError, "boot failed"):
+                    runtime.initialize_prefix(root, root / "runner", env)
+            stop.assert_called_once()
+            self.assertEqual(stop.call_args.args[0], [str(root / "runner/bin/wineserver"), "-k"])
+
+    def test_live_host_initialization_is_separate_from_image_build(self):
+        with TemporaryDirectory() as directory, ExitStack() as stack:
+            root = Path(directory)
+            concrete_path = type(root)
+            helper, proton = root / "helper", root / "proton"
+            helper.mkdir()
+            (helper / "nvngx_dlssnr.dll").write_bytes(b"model")
+            stack.enter_context(patch.object(runtime, "Path", concrete_path))
+            stack.enter_context(patch.object(runtime.os, "name", "posix"))
+            stack.enter_context(patch.dict(os.environ, {}, clear=True))
+            stack.enter_context(patch.object(runtime.platform, "system", return_value="Linux"))
+            stack.enter_context(patch.object(runtime.platform, "machine", return_value="x86_64"))
+            stack.enter_context(patch.object(runtime, "installation_lock", side_effect=lambda root: nullcontext()))
+            stack.enter_context(patch.object(runtime, "install_archive", side_effect=[helper, proton, helper, proton]))
+            packages = stack.enter_context(patch.object(runtime, "install_linux_packages"))
+            stack.enter_context(patch.object(runtime, "choose_wine_runner", return_value=(proton / "files/bin/wine", "GE")))
+            initialize = stack.enter_context(patch.object(runtime, "initialize_prefix", return_value="610.50"))
+            runtime.ensure_runtime(root, system_packages=False)
+            initialize.assert_not_called()
+            self.assertFalse(runtime.read_manifest(root)["initialized"])
+            runtime.write_manifest(root, dict(runtime.read_manifest(root), error="previous setup failure"))
+            runtime.prepare_runtime(root)
+            initialize.assert_called_once()
+            packages.assert_called_once()
+            self.assertTrue(runtime.read_manifest(root)["initialized"])
+            self.assertNotIn("error", runtime.read_manifest(root))
+
+
+class LauncherProvisioningTests(unittest.TestCase):
+    def test_colab_launches_shared_installer_and_modal_packages_same_inputs(self):
+        root = Path(__file__).resolve().parents[1]
+        notebook = json.loads((root / "minimax_h3_colab.ipynb").read_text(encoding="utf-8"))
+        source = "\n".join("".join(cell["source"]) for cell in notebook["cells"])
+        self.assertIn("exec env -u PYTHONPATH", source)
+        self.assertIn("run_h3.sh", source)
+        launcher = (root / "run_h3.sh").read_text(encoding="utf-8")
+        self.assertIn('"$SCRIPT_DIR/h3_nvidia_runtime.py" --initialize', launcher)
+        self.assertLess(launcher.index('"$SCRIPT_DIR/h3_nvidia_runtime.py" --initialize'), launcher.index('log "Starting ComfyUI'))
+        modal = (root / "modal_h3.py").read_text(encoding="utf-8")
+        tree = ast.parse(modal)
+        build = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "build")
+        self.assertTrue(any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                            and node.func.id == "ensure_runtime" for node in ast.walk(build)))
+        self.assertIn("(LOCAL_NVIDIA_RUNTIME, NVIDIA_RUNTIME)", modal)
+        self.assertIn("prepare_nvidia_runtime()", modal)
+
+
+if __name__ == "__main__":
+    unittest.main()

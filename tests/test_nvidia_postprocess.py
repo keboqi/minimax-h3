@@ -71,7 +71,7 @@ class NvidiaSettingsTests(unittest.TestCase):
                 service.validate_source(metadata)
 
     def test_wine_model_paths_and_helper_flags(self):
-        with patch.object(service, "dlss_config", return_value=(PurePosixPath("/opt/helper/video2dlssnr.exe"), PurePosixPath("/opt/my models"), PurePosixPath("model"), "/usr/bin/wine")), patch.object(service.os, "name", "posix"):
+        with patch.object(service, "dlss_config", return_value=(PurePosixPath("/opt/helper/video2dlssnr.exe"), PurePosixPath("/opt/my models"), PurePosixPath("model"), "/usr/bin/wine")), patch.object(service.os, "name", "posix"), patch.object(service, "headless_command", side_effect=lambda command: command):
             command, cwd = service.worker_command(DLSS5_NR, 640, 360, 1280, 720, service.NvidiaSettings())
         self.assertEqual(command[:2], ["/usr/bin/wine", "/opt/helper/video2dlssnr.exe"])
         self.assertEqual(command[command.index("--dll-dir") + 1], "Z:\\opt\\my models")

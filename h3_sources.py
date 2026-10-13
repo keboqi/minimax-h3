@@ -1,5 +1,15 @@
 """Pinned external source catalog shared by local and Modal provisioning."""
 
+DLSSNR_VERSION = "v1.4.1"
+DLSSNR_URL = f"https://github.com/DaniilSokolyuk/video2dlssnr/releases/download/{DLSSNR_VERSION}/video2dlssnr_release.zip"
+DLSSNR_SHA256 = "cf1e01b3715b5ee75708744a5d5e6a4f2a96b5504834dd854b4c06388f230ccf"
+PROTON_VERSION = "GE-Proton11-7-x86_64"
+PROTON_URL = f"https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton11-7/{PROTON_VERSION}.tar.gz"
+PROTON_SHA256 = "c5448b76a230384e2d7bc6beb5ccb97bafb7e2c3b6c527cb03a1a546bbcb00a0"
+WINE_COMPAT_VERSION = "wine-11.0-amd64"
+WINE_COMPAT_URL = f"https://github.com/Kron4ek/Wine-Builds/releases/download/11.0/{WINE_COMPAT_VERSION}.tar.xz"
+WINE_COMPAT_SHA256 = "632f2c8e9150841c26d277000e76b82c425cd4564bfb050780705b9d37b2567f"
+
 COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
 CONTROLNET_AUX_REF = "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
 CONTROLNET_AUX_REPO = "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
