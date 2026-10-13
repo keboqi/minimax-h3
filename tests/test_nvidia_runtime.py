@@ -102,6 +102,29 @@ class RuntimeInstallTests(unittest.TestCase):
                 fetch.assert_not_called()
 
 
+class PrefixStateTests(unittest.TestCase):
+    def test_ngx_programdata_is_reset_without_touching_the_rest_of_the_prefix(self):
+        with TemporaryDirectory() as directory:
+            prefix = Path(directory)
+            models = prefix / "drive_c/ProgramData/NVIDIA/NGX/models"
+            models.mkdir(parents=True)
+            (models / "state").write_text("stale")
+            (prefix / "system.reg").write_text("registry")
+            runtime.reset_ngx_state(prefix)
+            runtime.reset_ngx_state(prefix)  # Absent folder is fine.
+            self.assertFalse((prefix / "drive_c/ProgramData/NVIDIA/NGX").exists())
+            self.assertTrue((prefix / "drive_c/ProgramData/NVIDIA").is_dir())
+            self.assertEqual((prefix / "system.reg").read_text(), "registry")
+
+    def test_wineboot_waits_for_wineserver_to_save_the_registry(self):
+        with patch.object(runtime.subprocess, "run", return_value=Mock(returncode=0)) as run:
+            runtime.wait_wine_server("/runner/bin/wine", {})
+        args = run.call_args.args[0]
+        self.assertEqual(Path(args[0]).name, "wineserver")
+        self.assertEqual(args[1], "-w")
+        self.assertIs(run.call_args.kwargs["stdout"], runtime.subprocess.DEVNULL)
+
+
 class R580CoreTests(unittest.TestCase):
     def test_r580_core_mirrors_host_and_falls_back_across_driver_versions(self):
         with TemporaryDirectory() as directory:

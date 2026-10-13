@@ -203,6 +203,29 @@ def stop_wine_server(wine, env, *, timeout=15):
         raise RuntimeError(f"DLSS Wine cleanup failed (exit {result.returncode}): {detail[-2000:]}")
 
 
+def wait_wine_server(wine, env, *, timeout=120):
+    """Wait for the prefix's wineserver to exit (flushing the registry); stop it if it lingers."""
+    try:
+        subprocess.run([str(Path(wine).parent / "wineserver"), "-w"], env=env, stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        stop_wine_server(wine, env)
+
+
+def reset_ngx_state(prefix):
+    """Remove NGX's ProgramData folder from the dedicated prefix before a run.
+
+    Under Wine, NGX creates C:\\ProgramData\\NVIDIA\\NGX\\models and rewrites its ACL;
+    later runs then fail NGXGetPath and Init returns 0xBAD00002. NGX's updater
+    cannot run under Wine, so this folder holds nothing reusable.
+    """
+    ngx = Path(prefix) / "drive_c" / "ProgramData" / "NVIDIA" / "NGX"
+    if ngx.is_symlink():
+        ngx.unlink()
+    elif ngx.exists():
+        shutil.rmtree(ngx)
+
+
 def copy_dll(source, destination):
     # Never write through a prefix symlink into a runner's built-in libraries.
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -685,6 +708,8 @@ def initialize_prefix(root, graphics, env):
         try:
             if not (prefix / "system.reg").is_file():
                 wine_run(wine, [r"C:\windows\system32\wineboot.exe", "-u"], process_env)
+                # wineserver saves the registry (system.reg) only when it exits.
+                wait_wine_server(wine, process_env)
             if not (prefix / "system.reg").is_file():
                 raise RuntimeError("Wine did not initialize the dedicated DLSS prefix.")
             for name, source in graphics.items():
