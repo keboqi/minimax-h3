@@ -260,12 +260,33 @@ def xvfb_log_path():
     return runtime_root() / "logs" / "xvfb.log"
 
 
+def read_display_number(reader, process, timeout=10):
+    """Read Xvfb's -displayfd reply through its newline.
+
+    Xvfb writes the number and the newline separately and treats a failed
+    write as fatal, so closing the pipe after the digits kills the server.
+    """
+    import select
+    data = b""
+    deadline = time.monotonic() + timeout
+    while b"\n" not in data:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([reader], [], [], remaining)[0]:
+            process.terminate()
+            process.wait(timeout=5)
+            raise RuntimeError("Xvfb did not become ready for DLSS.")
+        chunk = os.read(reader, 32)
+        if not chunk:
+            break
+        data += chunk
+    return data.decode(errors="replace").strip()
+
+
 def ensure_display(env):
     """Keep Xvfb separate from the host's binary stdout; never use xvfb-run."""
     global _display_process, _display_name
     if os.name == "nt" or display_reachable(env.get("DISPLAY")):
         return env
-    import select
     with _display_lock:
         if _display_process is None or _display_process.poll() is not None or not display_reachable(_display_name):
             close_display()
@@ -275,9 +296,8 @@ def ensure_display(env):
             log = xvfb_log_path()
             try:
                 log.parent.mkdir(parents=True, exist_ok=True)
-                # -noreset: an X server resets when its last client disconnects,
-                # and Xvfb can crash during that reset. Each worker's first
-                # client (a probe or vulkaninfo) disconnects before Wine connects.
+                # -noreset keeps server state stable when the reachability probe
+                # disconnects before Wine connects.
                 with log.open("wb") as output:
                     process = subprocess.Popen(
                         ["Xvfb", "-displayfd", str(writer), "-screen", "0", "1280x720x24",
@@ -287,11 +307,7 @@ def ensure_display(env):
                     )
                 os.close(writer)
                 writer = None
-                if not select.select([reader], [], [], 10)[0]:
-                    process.terminate()
-                    process.wait(timeout=5)
-                    raise RuntimeError("Xvfb did not become ready for DLSS.")
-                number = os.read(reader, 32).decode().strip()
+                number = read_display_number(reader, process)
                 if not number.isdigit() or process.poll() is not None or not display_reachable(":" + number):
                     if process.poll() is None:
                         process.terminate()

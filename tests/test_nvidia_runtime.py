@@ -165,6 +165,14 @@ class LinuxDlssSetupTests(unittest.TestCase):
         self.assertNotIn("DISPLAY", run.call_args.kwargs["env"])
         self.assertEqual(run.call_args.kwargs["env"]["KEEP"], "1")
 
+    def test_display_number_is_read_through_newline_before_pipe_closes(self):
+        # Xvfb writes digits and newline separately; closing early kills it.
+        fake_select = Mock(select=Mock(side_effect=lambda r, w, x, t: (r, w, x)))
+        with patch.dict("sys.modules", {"select": fake_select}), \
+                patch.object(runtime.os, "read", side_effect=[b"12", b"\n"]) as read:
+            self.assertEqual(runtime.read_display_number(5, Mock()), "12")
+        self.assertEqual(read.call_count, 2)
+
     def test_reachable_display_is_reused(self):
         with patch.object(runtime.os, "name", "posix"), patch.object(runtime, "display_reachable", return_value=True),                 patch.object(runtime.subprocess, "Popen") as popen:
             self.assertEqual(runtime.ensure_display({"DISPLAY": ":5"}), {"DISPLAY": ":5"})
