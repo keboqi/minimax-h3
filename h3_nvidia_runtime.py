@@ -598,9 +598,14 @@ def mirror_host(source, target):
         if not path.is_file() or path.suffix.lower() not in (".dll", ".exe") or path.name == "_nvngx.dll":
             continue
         destination = target / path.relative_to(source)
-        if destination.is_file() and destination.stat().st_size == path.stat().st_size \
-                and sha256(destination) == sha256(path):
-            continue
+        if destination.is_file():
+            # Installers replace host files (new inode), never edit them in place:
+            # a hard link is current, and a copy2 fallback keeps size and mtime.
+            if os.path.samefile(path, destination):
+                continue
+            current, wanted = destination.stat(), path.stat()
+            if (current.st_size, current.st_mtime_ns) == (wanted.st_size, wanted.st_mtime_ns):
+                continue
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.unlink(missing_ok=True)
         try:

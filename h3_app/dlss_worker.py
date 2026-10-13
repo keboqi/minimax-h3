@@ -19,7 +19,7 @@ import threading
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from h3_nvidia_runtime import (check_vulkan, display_reachable, ensure_display, pin_gpu, runtime_env,
-                               r580_host_dir, runtime_root, wine_env, wine_run, xvfb_log_path)
+                               r580_host_dir, runtime_root, wine_env, xvfb_log_path)
 
 HEADER = struct.Struct("<4s12I5f")
 FRAME = struct.Struct("<4sII")
@@ -81,12 +81,6 @@ def transform(args):
         pin_gpu(env)
         check_vulkan(env)
         command = [wine, str(exe), "Z:" + str(runtime).replace("/", "\\")]
-        # NGX resolves its directory via the adapter's NGXCore\NGXPath query,
-        # which Wine cannot answer (0xD0000002), then via this key. Proton's
-        # wine.inf sets it; upstream Wine does not, and Init fails with 0xBAD00002.
-        wine_run(wine, ["reg", "add", r"HKLM\Software\NVIDIA Corporation\Global\NGXCore",
-                        "/v", "FullPath", "/t", "REG_SZ", "/d", "Z:" + str(runtime).replace("/", "\\"), "/f"],
-                 env)
         # Graphics-layer logs go to files (never the binary stdout) and are
         # attached to failures; otherwise device errors arrive without a cause.
         diagnostics = tempfile.TemporaryDirectory(prefix="h3-dlss-log-")

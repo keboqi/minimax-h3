@@ -251,33 +251,55 @@ def worker_command(method, width, height, out_width, out_height, settings, *, fr
     return command, None
 
 
+STAGE_ORDER = {"native": "NR", "resize": "Lanczos → NR", "dlss_sr": "DLSS SR → NR"}
+
+
 @dataclass(frozen=True)
 class UpscalePlan:
-    """What the DLSS worker sees: its input size and which NGX core it uses."""
+    """How a job reaches its output size: the worker's input size and NGX core."""
+    mode: str  # A STAGE_ORDER key.
     width: int
     height: int
-    resize: bool = False
     ngx_core: str = "default"
     core_info: dict | None = None
+
+    @property
+    def resize(self):
+        return self.mode == "resize"
+
+    @property
+    def stage_order(self):
+        return STAGE_ORDER[self.mode]
+
+
+def uses_r580_core(settings, source_size, target_size):
+    # On Windows the DLSS SR carrier uses the system driver's NGX core.
+    return settings.upscaler == "dlss_sr" and source_size != target_size and os.name != "nt"
 
 
 def plan_upscale(settings, width, height, out_width, out_height):
     if (width, height) == (out_width, out_height):
-        return UpscalePlan(width, height)
+        return UpscalePlan("native", width, height)
     if settings.upscaler == "resize":
-        # Under Wine the DLSS SR carrier's signed load fails; enlarge first and
-        # run the neural pass natively at the target size.
-        return UpscalePlan(out_width, out_height, resize=True)
-    if os.name == "nt":
-        return UpscalePlan(width, height)
+        # Enlarge first, then run the neural pass natively at the target size.
+        return UpscalePlan("resize", out_width, out_height)
+    if not uses_r580_core(settings, (width, height), (out_width, out_height)):
+        return UpscalePlan("dlss_sr", width, height)
     try:
         info = ensure_r580_core()
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         raise H3Error("Experimental R580 NGX core setup failed: " + str(exc)) from exc
-    return UpscalePlan(width, height, ngx_core="r580", core_info=info)
+    return UpscalePlan("dlss_sr", width, height, ngx_core="r580", core_info=info)
 
 
-def probe_runtime(method, runtime):
+def prepare_upscale(settings, width, height, out_width, out_height, *, total=0):
+    """Yield progress while preparing; use as `plan = yield from prepare_upscale(...)`."""
+    if uses_r580_core(settings, (width, height), (out_width, out_height)):
+        yield NvidiaUpdate("Preparing experimental R580 NGX core (one-time driver download)", total=total)
+    return plan_upscale(settings, width, height, out_width, out_height)
+
+
+def probe_runtime(method, runtime, *, ngx_core="default"):
     ready, message = availability(method)
     if not ready:
         raise H3Error(message)
@@ -291,7 +313,7 @@ def probe_runtime(method, runtime):
         raw[i * channels:i * channels + 3] = bytes((x * 7 % 256, y * 11 % 256, (x ^ y) % 256))
         raw[i * channels + 3] = 255
     settings = NvidiaSettings(original_size=True)
-    command, cwd = worker_command(method, width, height, width, height, settings, frames=2)
+    command, cwd = worker_command(method, width, height, width, height, settings, frames=2, ngx_core=ngx_core)
     result = bytearray()
     last = None
     with worker_context(method, runtime) as env:
@@ -318,7 +340,7 @@ def _encoder():
     raise H3Error("No usable HEVC encoder. Install FFmpeg with hevc_nvenc or libx265.")
 
 
-def runtime_details(method, diagnostics, *, upscaled, motion=True, plan=None):
+def runtime_details(method, diagnostics, *, plan, motion=True):
     details = {}
     if method == DLSS5_NR:
         if not any("feature ready; streaming" in line for line in diagnostics):
@@ -326,8 +348,8 @@ def runtime_details(method, diagnostics, *, upscaled, motion=True, plan=None):
         exe, _, model, wine = dlss_config()
         details.update(helper_sha256=file_hash(exe), model_sha256=file_hash(model),
                        backend="RunningHub DNR2", runner=Path(wine).name if wine else "Windows", motion="auto" if motion else "disabled",
-                       stage_order="Lanczos → NR" if plan and plan.resize else "DLSS SR → NR" if upscaled else "NR")
-        if plan and plan.core_info:
+                       stage_order=plan.stage_order)
+        if plan.core_info:
             details["ngx_core"] = {"experimental": "R580", **plan.core_info}
         for line in diagnostics:
             if "optical flow:" in line:
@@ -356,12 +378,10 @@ def postprocess(source: Path, method: str, resolution: str, settings_value, *, r
         raise H3Error("DLSS requires a known frame count from 1 to 1,000,000.")
     yield NvidiaUpdate("Checking source frame timing", total=total)
     validate_cfr(source, runtime)
+    plan = yield from prepare_upscale(settings, width, height, out_width, out_height, total=total)
     if method == DLSS5_NR:
         yield NvidiaUpdate("Checking DLSS 5 neural execution", total=total)
-        probe_runtime(method, runtime)
-    if settings.upscaler == "dlss_sr" and os.name != "nt" and (out_width, out_height) != (width, height):
-        yield NvidiaUpdate("Preparing experimental R580 NGX core (one-time driver download)", total=total)
-    plan = plan_upscale(settings, width, height, out_width, out_height)
+        probe_runtime(method, runtime, ngx_core=plan.ngx_core)
     encoder, encoder_args = _encoder()
     category = "dlss5"
     root = runtime.outputs_dir / category
@@ -413,8 +433,7 @@ def postprocess(source: Path, method: str, resolution: str, settings_value, *, r
         if len([s for s in result_payload["streams"] if s["codec_type"] == "audio"]) != len(audio):
             raise H3Error("Enhanced video did not preserve the source audio streams.")
         check_cancelled()
-        gpu_details = runtime_details(method, last.diagnostics,
-                                      upscaled=(out_width, out_height) != (width, height), plan=plan)
+        gpu_details = runtime_details(method, last.diagnostics, plan=plan)
         details = {"method": method, **asdict(settings), "source_resolution": f"{width}x{height}",
             "target_resolution": f"{out_width}x{out_height}", "frame_rate": str(rate), "frames": last.frames,
             "encoder": encoder, "encoder_fallback": encoder != "hevc_nvenc",

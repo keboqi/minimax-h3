@@ -84,7 +84,7 @@ class NvidiaImageTests(unittest.TestCase):
             stack.enter_context(patch.dict(backend.UPSCALE_RESOLUTION_PRESETS, {"fixture": (130, 98)}))
             runtime = self.runtime(root)
             result = list(images.postprocess_image(source, DLSS5_NR, "fixture", {}, runtime=runtime))[-1].result
-            probe.assert_called_once_with(DLSS5_NR, runtime)
+            probe.assert_called_once_with(DLSS5_NR, runtime, ngx_core="default")
             self.assertEqual(backend.worker_command.call_args.args[1:5], (130, 98, 130, 98))
             self.assertEqual(backend.worker_command.call_args.kwargs["ngx_core"], "default")
             self.assertEqual(command[-1], "0")
@@ -106,11 +106,20 @@ class NvidiaImageTests(unittest.TestCase):
             with patch.object(backend.os, "name", "posix"):
                 plan = backend.plan_upscale(settings, 64, 48, 128, 96)
             self.assertEqual((plan.width, plan.height, plan.resize, plan.ngx_core), (64, 48, False, "r580"))
-            self.assertEqual(plan.core_info, info)
+            self.assertEqual((plan.core_info, plan.stage_order), (info, "DLSS SR → NR"))
+            # prepare_upscale reports the one-time download, then returns the same plan.
+            with patch.object(backend.os, "name", "posix"):
+                steps = backend.prepare_upscale(settings, 64, 48, 128, 96, total=3)
+                self.assertIn("R580", next(steps).message)
+                with self.assertRaises(StopIteration) as done:
+                    next(steps)
+            self.assertEqual(done.exception.value, plan)
+            self.assertEqual(backend.plan_upscale(backend.NvidiaSettings(), 64, 48, 128, 96).stage_order,
+                             "Lanczos → NR")
             # Native size never needs a carrier, so nothing is downloaded.
             with patch.object(backend.os, "name", "posix"):
                 self.assertEqual(backend.plan_upscale(settings, 64, 48, 64, 48).ngx_core, "default")
-            ensure.assert_called_once()
+            self.assertEqual(ensure.call_count, 2)
         with self.assertRaises(H3Error):
             backend.NvidiaSettings.parse({"upscaler": "bicubic"})
 

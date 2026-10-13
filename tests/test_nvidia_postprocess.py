@@ -194,7 +194,7 @@ class NvidiaMediaTests(unittest.TestCase):
             probe = stack.enter_context(patch.object(service, "probe_runtime", return_value="fixture passed"))
             result = list(service.postprocess(source, DLSS5_NR, "1920 × 1920",
                 {"original_size": True}, runtime=runtime))[-1].result
-            probe.assert_called_once_with(DLSS5_NR, runtime)
+            probe.assert_called_once_with(DLSS5_NR, runtime, ngx_core="default")
             payload, metadata, rate = service.probe_source(result, runtime, count=True)
             self.assertFalse(any(s["codec_type"] == "audio" for s in payload["streams"]))
             self.assertEqual(int(metadata["nb_read_frames"]), 6)

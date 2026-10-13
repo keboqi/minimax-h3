@@ -2,7 +2,6 @@
 
 from dataclasses import asdict
 from io import BytesIO
-import os
 from pathlib import Path
 import tempfile
 
@@ -65,12 +64,10 @@ def postprocess_image(source, method, resolution, settings_value, *, runtime):
     out_width, out_height = backend.target_dimensions(
         method, width, height, resolution, settings, image=True,
     )
+    plan = yield from backend.prepare_upscale(settings, width, height, out_width, out_height, total=1)
     if method == DLSS5_NR:
         yield backend.NvidiaUpdate("Checking DLSS 5 neural execution", total=1)
-        backend.probe_runtime(method, runtime)
-    if settings.upscaler == "dlss_sr" and os.name != "nt" and (out_width, out_height) != (width, height):
-        yield backend.NvidiaUpdate("Preparing experimental R580 NGX core (one-time driver download)", total=1)
-    plan = backend.plan_upscale(settings, width, height, out_width, out_height)
+        backend.probe_runtime(method, runtime, ngx_core=plan.ngx_core)
     channels = 4
     mode = "RGBA"
     source_rgb = rgb.resize((out_width, out_height), Image.Resampling.LANCZOS) if plan.resize else rgb
@@ -90,7 +87,7 @@ def postprocess_image(source, method, resolution, settings_value, *, runtime):
         "source_resolution": f"{width}x{height}", "target_resolution": f"{out_width}x{out_height}",
         "format": "PNG", "color_profile": "sRGB", "alpha": "preserved" if alpha is not None else "none",
         **backend.runtime_details(method, update.diagnostics,
-                                  upscaled=rgb.size != (out_width, out_height), motion=False, plan=plan),
+                                  motion=False, plan=plan),
     }
     enhanced = Image.frombytes(mode, (out_width, out_height), bytes(result)).convert("RGB")
     if alpha is not None:
