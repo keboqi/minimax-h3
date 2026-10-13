@@ -60,7 +60,6 @@ from h3_prompt_rewriter import (
 from h3_ui.presentation import (
     backend_status_html,
     generation_readiness as generation_readiness_state,
-    mode_presentation,
     result_format_presentation,
 )
 from h3_ui.qwen_bindings import qwen_resolution_preset_values
@@ -901,22 +900,6 @@ def resolve_sol_policy(
         enabled,
         tokens,
         f"Auto: {tokens:,} target tokens {('≥' if enabled else '<')} {AUTO_SOL_TOKEN_THRESHOLD:,}",
-    )
-
-
-def mode_layout_updates(mode: str):
-    """Update task-specific inputs without changing the acceleration choice."""
-    presentation = mode_presentation(mode)
-    return (
-        mode_help(mode),
-        gr.update(visible=presentation.show_frames),
-        gr.update(visible=presentation.show_references),
-        gr.update(interactive=True),
-        gr.update(),
-        gr.update(),
-        gr.update(),
-        gr.update(),
-        gr.update(),
     )
 
 
@@ -3142,7 +3125,6 @@ def build_ui() -> gr.Blocks:
             list_media_paths=list_media_paths,
             gallery_media_download_path=gallery_media_download_path,
             mode_help=mode_help,
-            mode_layout_updates=mode_layout_updates,
             postprocess_selected_gallery_media=postprocess_selected_gallery_media,
             prepare_all_ltx25_official_models=prepare_all_ltx25_official_models,
             prepare_ltx25_official_workflow=prepare_ltx25_official_workflow,

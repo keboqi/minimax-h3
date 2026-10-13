@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 def bind_app(
     components: AppComponents,
     services: BootstrapServices,
+    preferences=None,
 ) -> SettingsController:
     controller = SettingsController(
         components.as_mapping(),
@@ -33,8 +34,10 @@ def bind_app(
             services.describe_settings,
             services.fbcache_preset_defaults,
         ),
+        preferences,
     )
-    controller.bind()
+    # Dimension edits resolve their alignment and settings in one response.
+    controller.bind(handled_elsewhere=("width", "height", "latent_upscale"))
     bind_layout(components, services)
     ltx25_event = bind_ltx(components, services)
     bind_resolution(components, services, controller)

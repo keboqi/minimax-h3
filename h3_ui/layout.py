@@ -36,10 +36,25 @@ class AppViews:
 
 @dataclass(frozen=True)
 class NavigationBindings:
+    # restore(task, engine, settings_memory, settings_values) returns
+    # (component, update) pairs for ``outputs`` during preference restoration.
     restore: Callable
-    inputs: tuple
     outputs: tuple
     engine_value: gr.Textbox
+
+
+# Output components owned by the result format but not by settings policy,
+# with their positions in result_format_layout_updates.
+FORMAT_LAYOUT_OUTPUTS = (
+    ("output", 3),
+    ("output_2", 4),
+    ("output_3", 5),
+    ("output_4", 6),
+    ("image_output_group", 8),
+    ("audio_output", 9),
+    ("resolution_info", 14),
+)
+FORMAT_FOR_TASK = {"Video": "Video", "Image": "Image", "Audio / Music": "Audio"}
 
 
 def create_app_views(*, summary_root=None) -> AppViews:
@@ -115,36 +130,87 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
 
 
 def bind_workspace_navigation(
-    views: AppViews, result_format, controller=None
+    views: AppViews,
+    result_format,
+    controller=None,
+    *,
+    format_layout: Callable | None = None,
+    preferences=None,
 ) -> NavigationBindings | None:
+    """Bind task and engine selection; each choice resolves in one response."""
     if views.task is None:
         return
     memory = gr.State({})
     engine_value = gr.Textbox(value="h3", visible=False)
     restoring = gr.Checkbox(value=True, visible=False)
+    components = controller.components
+    layout_outputs = tuple(components[name] for name, _ in FORMAT_LAYOUT_OUTPUTS)
+    no_preferences = (gr.skip(),) if preferences is not None else ()
 
-    def output_intent(task, settings_memory, values):
+    def output_intent(task, settings_memory, values, snap=True):
+        """Settings and result-format presentation for the task's output.
+
+        Restoration keeps the saved dimensions; only a task switch realigns
+        them for the new result format.
+        """
         values = list(values)
-        desired = {"Video": "Video", "Image": "Image", "Audio / Music": "Audio"}[task]
-        values[controller.names.index("result_format")] = desired
+        session = values[-1]
+        desired = FORMAT_FOR_TASK[task]
+        settled = (session.memory or settings_memory or {}).get("values", {})
+
+        def browser(name):
+            return values[controller.inputs.index(components[name])]
+
+        def value(name):
+            return settled.get(name, browser(name))
+
+        overrides = {"result_format": desired}
+        layout = None
+        if format_layout is not None:
+            layout = list(format_layout(
+                desired,
+                value("width"),
+                value("height"),
+                browser("first"),
+                value("latent_upscale"),
+            ))
+            if snap:
+                overrides.update(width=layout[12]["value"], height=layout[13]["value"])
+            else:
+                layout[14] = gr.skip()
         updates = list(
-            controller.update(settings_memory, *values, action="result_format")
+            controller.update(
+                settings_memory, *values, action="result_format", overrides=overrides
+            )
         )
-        index = controller.outputs.index(result_format)
-        updates[index] = {**updates[index], "value": desired}
-        return updates
+        for name, override in overrides.items():
+            # Rewriting an unchanged value would still fire change listeners.
+            if override != browser(name):
+                index = controller.outputs.index(components[name])
+                updates[index] = {**updates[index], "value": override}
+        extras = (
+            [layout[index] for _, index in FORMAT_LAYOUT_OUTPUTS]
+            if layout is not None
+            else [gr.skip() for _ in layout_outputs]
+        )
+        return updates + extras
+
+    def stage(session, task, engine):
+        if preferences is not None:
+            session.stage({"workspace.task": task, "workspace.engine": engine})
 
     def select_task(
         task, remembered, pending_restore, settings_memory, *settings_values
     ):
         if pending_restore:
-            return (gr.skip(),) * (4 + len(controller.outputs))
+            return (gr.skip(),) * (4 + len(controller.outputs) + len(layout_outputs))
         choices = engines_for_task(task)
         available = {e.id for e in choices}
         selected = (remembered or {}).get(task)
         if selected not in available:
             selected = choices[0].id
         detail = next((e.description for e in choices if e.id == selected))
+        stage(settings_values[-1], task, selected)
         return (
             gr.update(choices=[(e.label, e.id) for e in choices], value=selected),
             gr.update(selected=selected),
@@ -153,7 +219,8 @@ def bind_workspace_navigation(
             *output_intent(task, settings_memory, settings_values),
         )
 
-    views.task.change(
+    # Input, not change: restoration writes the task without re-running this.
+    views.task.input(
         select_task,
         inputs=[
             views.task,
@@ -168,40 +235,64 @@ def bind_workspace_navigation(
             views.engine_help,
             engine_value,
             *controller.outputs,
+            *layout_outputs,
         ],
-        queue=True,
-        concurrency_id="h3-settings",
-        concurrency_limit=1,
+        queue=False,
+        trigger_mode="always_last",
         api_name=False,
         show_progress="hidden",
     )
 
-    def select_engine(task, engine, remembered, pending_restore):
+    def select_engine(task, engine, remembered, pending_restore, session):
         if pending_restore:
-            return (gr.skip(),) * 4
+            return (gr.skip(),) * (4 + len(no_preferences))
         choices = engines_for_task(task)
         selected = next((e for e in choices if e.id == engine), choices[0])
         remembered = {**(remembered or {}), task: selected.id}
+        saved = ()
+        if preferences is not None:
+            saved = (
+                session.remember({"workspace.task": task, "workspace.engine": selected.id}),
+            )
         return (
             gr.update(selected=selected.id),
             selected.description,
             remembered,
             selected.id,
+            *saved,
         )
 
     views.engine.input(
         select_engine,
-        inputs=[views.task, views.engine, memory, restoring],
-        outputs=[views.engine_tabs, views.engine_help, memory, engine_value],
+        inputs=[views.task, views.engine, memory, restoring, controller.session],
+        outputs=[
+            views.engine_tabs,
+            views.engine_help,
+            memory,
+            engine_value,
+            *([preferences] if preferences is not None else []),
+        ],
         queue=False,
         api_name=False,
         show_progress="hidden",
     )
 
-    def finish_restore(task, engine, settings_memory, *settings_values):
+    outputs = (
+        views.engine,
+        views.engine_tabs,
+        views.engine_help,
+        *controller.outputs,
+        *layout_outputs,
+        restoring,
+        views.task,
+        memory,
+    )
+
+    def finish_restore(task, engine, settings_memory, settings_values):
         choices = engines_for_task(task)
         selected = next((item for item in choices if item.id == engine), choices[0])
-        return (
+        stage(settings_values[-1], task, selected.id)
+        updates = (
             gr.update(
                 choices=[(item.label, item.id) for item in choices],
                 value=selected.id,
@@ -209,23 +300,11 @@ def bind_workspace_navigation(
             ),
             gr.update(selected=selected.id),
             selected.description,
-            *output_intent(task, settings_memory, settings_values),
+            *output_intent(task, settings_memory, settings_values, snap=False),
             False,
             gr.update(interactive=True),
             {task: selected.id},
         )
+        return list(zip(outputs, updates, strict=True))
 
-    return NavigationBindings(
-        finish_restore,
-        (views.task, engine_value, controller.memory, *controller.inputs),
-        (
-            views.engine,
-            views.engine_tabs,
-            views.engine_help,
-            *controller.outputs,
-            restoring,
-            views.task,
-            memory,
-        ),
-        engine_value,
-    )
+    return NavigationBindings(finish_restore, outputs, engine_value)

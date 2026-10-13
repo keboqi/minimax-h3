@@ -12,6 +12,8 @@ The UI describes the **next run**. Each completed output has an independent **se
 - Readiness and execution details use the shared resolved settings. Prompt and conditioning requirements are checked separately.
 - Browser preferences use schema version 6 inside the original v3 BrowserState transport key and secret, allowing existing encrypted preferences to migrate in place. Each field is validated; presets are not reapplied during restoration. Qwen technical settings, independent finishing models and workspace task/engine selection are included.
 - Prompts, uploaded paths, credentials, outputs and transient confirmations are excluded from browser preferences.
+- Page load restores preferences, resolves settings and restores navigation in one response. Values equal to their defaults are not rewritten, so their change listeners stay idle.
+- Each settings edit returns its presentation and its preference save in the same direct (unqueued) response. The session's preference snapshot sends a save only when the allowlisted values changed. Controls outside H3 settings and navigation save through one direct request.
 - Existing public generation API names and positional contracts remain available. H3 UI preset context is carried through a separate internal adapter.
 
 ## Boundaries
@@ -47,7 +49,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/reference_bindings.py, h3_ui/prompt_preview.py, prompt_review.py | Stable reference translation and guarded accept/keep/undo prompt previews |
 | h3_ui/media_actions.py | Selection- and file-specific deletion confirmation |
 | h3_ui/settings_controller.py, settings_presentation.py | Serialized settings actions and resolved-plan rendering |
-| h3_ui/persistence.py | Explicit browser preference allowlist and migration |
+| h3_ui/persistence.py | Explicit browser preference allowlist, migration and single-response restoration |
 | gradio_app.py | Workspace launcher |
 | tests/__main__.py, test_service_contracts.py | Consolidated validation and standalone provisioning checks |
 | tests/test_application_adapters.py, test_workflow_contracts.py, test_server_proxy.py | Focused application, workflow and proxy behavior |
@@ -100,7 +102,7 @@ uv pip install --python .venv/Scripts/python.exe -r requirements-test.txt
 .venv/Scripts/python.exe -m tests --browser
 ```
 
-The consolidated command runs discovery, standalone provisioning checks and baseline workflow contracts, with offline Hugging Face mode. The gradio_app.py --selftest entry point delegates to that same CPU suite. CPU PyTorch numerical tests run only when PyTorch is installed; pinned upstream contract tests run only when their .cache/upstream-upgrade sources exist. Neither gate fetches dependencies. Cached upstream files must match the current pins in h3_requirements.py and h3_sources.py; refresh them after upgrades or select a matching directory with H3_UPSTREAM_SOURCE_DIR. The --browser option adds queue transport, settings, voice-reference, first-frame resolution, image-library, workspace, media-performance and media-deletion acceptance.
+The consolidated command runs discovery, standalone provisioning checks and baseline workflow contracts, with offline Hugging Face mode. The gradio_app.py --selftest entry point delegates to that same CPU suite. CPU PyTorch numerical tests run only when PyTorch is installed; pinned upstream contract tests run only when their .cache/upstream-upgrade sources exist. Neither gate fetches dependencies. Cached upstream files must match the current pins in h3_requirements.py and h3_sources.py; refresh them after upgrades or select a matching directory with H3_UPSTREAM_SOURCE_DIR. The --browser option adds queue transport, settings, voice-reference, first-frame resolution, image-library, workspace, media-performance, media-deletion and UI request-budget acceptance. `python -m tests.browser_ui_requests --report` prints the round trips each common action costs.
 
 On Linux use .venv/bin/python. Browser checks use installed Chrome on Windows, or Playwright Chromium elsewhere; H3_BROWSER_EXECUTABLE can select a Chromium executable. Fixtures mock backend health and never load models. Workspace job checks use a synthetic generation callback and test-only queue controls; they do not measure inference.
 
@@ -109,6 +111,12 @@ Browser checks cover preset application, overrides/reset, mode memory, reload, s
 A real supported GPU and provisioned ComfyUI installation are still needed for inference smoke tests and performance/quality comparisons.
 
 ## Keeping the structure small
+
+Keep one response per user action. A settings edit that changes dimensions
+or another policy input uses `SettingsController.bind_refresh` instead of a
+`.then(refresh)` chain, and presentation the settings transition already owns
+gets no second listener. Labelling that needs only static catalogs runs as a
+browser-side `js` callback.
 
 Add behavior checks beside the owning feature, not to a launcher self-test, and
 do not export a domain helper through `application.py` only to reach it from

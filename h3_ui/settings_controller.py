@@ -89,20 +89,59 @@ class SettingsServices:
 
 
 class SessionSettings:
-    """One authoritative transition stream per browser session."""
+    """One authoritative transition stream per browser session.
+
+    It also holds the browser preference snapshot, so a settings response can
+    carry its own save instead of needing a follow-up request.
+    """
 
     def __init__(self):
         self.memory = None
         self.lock = RLock()
+        self.preferences = None
+        self.saved = None
 
     def __deepcopy__(self, memo):
         clone = type(self)()
         clone.memory = deepcopy(self.memory, memo)
+        clone.preferences = deepcopy(self.preferences, memo)
+        clone.saved = deepcopy(self.saved, memo)
         return clone
+
+    def stage(self, values):
+        """Merge allowlisted values for the next payload this session sends."""
+        with self.lock:
+            if self.preferences is not None:
+                stored = self.preferences["values"]
+                stored.update(
+                    {name: value for name, value in values.items() if name in stored}
+                )
+
+    def remember(self, values=None, memory=None):
+        """Merge allowlisted values; return the new payload, or skip if unchanged."""
+        with self.lock:
+            if self.preferences is None:
+                return gr.skip()
+            self.stage(values or {})
+            if memory is not None:
+                self.preferences["mode_memory"] = {
+                    key: value
+                    for key, value in memory.items()
+                    if key in {"active", "modes", "offload_preference"}
+                }
+            if self.preferences == self.saved:
+                return gr.skip()
+            self.saved = deepcopy(self.preferences)
+            return deepcopy(self.preferences)
 
 
 class SettingsController:
-    def __init__(self, components: Mapping[str, Any], services: SettingsServices):
+    def __init__(
+        self,
+        components: Mapping[str, Any],
+        services: SettingsServices,
+        preferences=None,
+    ):
         self.components = components
         self.services = services
         self.names = SETTING_NAMES
@@ -117,6 +156,11 @@ class SettingsController:
             if hasattr(component, "_id")
         }
         self.outputs = [components[name] for name in self.names] + [self.memory]
+        # The browser preference save rides in the same response as the change.
+        self.preference_index = None
+        if preferences is not None:
+            self.preference_index = len(self.outputs)
+            self.outputs.append(preferences)
         self.groups = (
             "sla_settings",
             "sol_settings",
@@ -135,16 +179,27 @@ class SettingsController:
             components["run"],
         ]
 
-    def update(self, memory, *values, action="edit"):
+    def update(self, memory, *values, action="edit", overrides=None):
         if values and isinstance(values[-1], SessionSettings):
             session, values = values[-1], values[:-1]
             with session.lock:
-                result = self._update(session.memory or memory, *values, action=action)
+                result = self._update(
+                    session.memory or memory, *values, action=action, overrides=overrides
+                )
                 session.memory = result[len(self.names)]
-                return result
-        return self._update(memory, *values, action=action)
+                if self.preference_index is not None:
+                    result = list(result)
+                    result[self.preference_index] = session.remember(
+                        {
+                            "h3." + name: value
+                            for name, value in session.memory["values"].items()
+                        },
+                        session.memory,
+                    )
+                return tuple(result)
+        return self._update(memory, *values, action=action, overrides=overrides)
 
-    def _update(self, memory, *values, action="edit"):
+    def _update(self, memory, *values, action="edit", overrides=None):
         incoming = dict(zip((*self.names, *MEDIA_NAMES), values, strict=True))
         before = dict(incoming)
         if (
@@ -171,6 +226,8 @@ class SettingsController:
             incoming.update(
                 VideoDecoder(action.removeprefix("decoder:")).workflow_flags()
             )
+        # Values another policy resolved for this same response.
+        incoming.update(overrides or {})
         new_memory, current = transition_modes(memory, incoming, action)
         if action == "text_encoder":
             if incoming["text_encoder"] == "BF16":
@@ -211,6 +268,7 @@ class SettingsController:
             return (
                 *(gr.skip() for _ in self.names),
                 new_memory,
+                *self._preference_placeholder(),
                 *(gr.skip() for _ in self.groups),
                 self.services.describe(request_values),
                 "",
@@ -319,6 +377,7 @@ class SettingsController:
         return (
             *updates,
             new_memory,
+            *self._preference_placeholder(),
             *(
                 (
                     gr.update(visible=v)
@@ -335,7 +394,70 @@ class SettingsController:
             ),
         )
 
-    def bind(self):
+    def _preference_placeholder(self):
+        return (gr.skip(),) if self.preference_index is not None else ()
+
+    def snapshot(self, memory, media, overrides=None):
+        """Authoritative settings plus the browser's current media values."""
+        current = {
+            **self.defaults,
+            **(memory or {}).get("values", {}),
+            **dict(zip(MEDIA_NAMES, media, strict=True)),
+            **(overrides or {}),
+        }
+        return [current[name] for name in (*self.names, *MEDIA_NAMES)]
+
+    def bind_refresh(self, triggers, prepare, inputs, extra_outputs=(), exclude=()):
+        """Resolve another policy and the settings it feeds in one response.
+
+        ``prepare`` receives the values of ``inputs`` and returns setting
+        overrides plus values for ``extra_outputs``, or None to change nothing.
+        A chained refresh would read browser controls again and could observe
+        values from before the first callback committed.
+        """
+        media_inputs = [self.components[name] for name in MEDIA_NAMES]
+        outputs = [c for c in self.outputs if all(c is not e for e in exclude)]
+        indices = [self.outputs.index(c) for c in outputs]
+
+        def run(*args):
+            own, memory = args[: len(inputs)], args[len(inputs)]
+            media, session = args[len(inputs) + 1 : -1], args[-1]
+            prepared = None if session.memory is None else prepare(*own)
+            if prepared is None:
+                return (gr.skip(),) * (len(outputs) + len(extra_outputs))
+            overrides, extras = prepared
+            updates = list(
+                self.update(
+                    memory,
+                    *self.snapshot(session.memory, media, overrides),
+                    session,
+                    action="refresh",
+                    overrides=overrides,
+                )
+            )
+            for name, value in overrides.items():
+                # Rewriting an unchanged value would still fire change listeners.
+                component = self.components[name]
+                shown = own[inputs.index(component)] if component in inputs else None
+                if value != shown:
+                    index = self.outputs.index(self.components[name])
+                    updates[index] = {**updates[index], "value": value}
+            return (*(updates[i] for i in indices), *extras)
+
+        event = gr.on(
+            triggers=triggers,
+            fn=run,
+            inputs=[*inputs, self.memory, *media_inputs, self.session],
+            outputs=[*outputs, *extra_outputs],
+            queue=False,
+            trigger_mode="always_last",
+            show_progress="hidden",
+            api_name=False,
+        )
+        self.events.append(event)
+        return event
+
+    def bind(self, handled_elsewhere=()):
         # Explicit action closures work for ordinary inputs and API invocation.
         # Generic EventData from a multi-trigger gr.on can have no target.
         self.events = []
@@ -343,14 +465,7 @@ class SettingsController:
         media_inputs = [self.components[name] for name in MEDIA_NAMES]
 
         def snapshot(memory, media, change=None):
-            current = {
-                **self.defaults,
-                **(memory or {}).get("values", {}),
-                **dict(zip(MEDIA_NAMES, media, strict=True)),
-            }
-            if change:
-                current[change[0]] = change[1]
-            return [current[name] for name in (*self.names, *MEDIA_NAMES)]
+            return self.snapshot(memory, media, dict([change]) if change else None)
 
         def prompt_readiness(memory, *args):
             media, session = args[:-1], args[-1]
@@ -412,7 +527,7 @@ class SettingsController:
                     self.session,
                 ],
                 outputs=self.outputs,
-                queue=True,
+                queue=False,
                 concurrency_limit=None,
                 trigger_mode="always_last",
                 show_progress="hidden",
@@ -474,6 +589,14 @@ class SettingsController:
                     # refresh. Those change events must not seed partial defaults.
                     return tuple(gr.skip() for _ in output_indices)
                 change = (action, args[0]) if action in self.names else None
+                if (
+                    change
+                    and isinstance(self.components[action], gr.Slider)
+                    and session.memory.get("values", {}).get(action) == change[1]
+                ):
+                    # A slider's number box dispatches release before it commits,
+                    # repeating the stored value; its input carries the edit.
+                    return tuple(gr.skip() for _ in output_indices)
                 media = args[1:] if change else args
                 updates = self.update(
                     memory, *snapshot(memory, media, change), session, action=action
@@ -483,7 +606,7 @@ class SettingsController:
             return dispatch
 
         for name in (
-            *self.names,
+            *(n for n in self.names if n not in handled_elsewhere),
             *(n for n in MEDIA_NAMES if n not in {"first", "prompt"}),
             "restore_preset",
         ):
@@ -491,8 +614,8 @@ class SettingsController:
             if name == "restore_preset":
                 triggers = [component.click]
             elif isinstance(component, gr.Slider):
-                # Slider input awaits the frontend binding; release also covers
-                # its reset button. Change includes delayed preset writes, which
+                # Input commits typed values and drags; release also covers the
+                # reset button. Change includes delayed preset writes, which
                 # can otherwise overwrite a newer user edit.
                 triggers = [component.input, component.release]
             elif isinstance(component, gr.Number):
@@ -503,7 +626,11 @@ class SettingsController:
                 triggers = [component.input]
             action = "restore" if name == "restore_preset" else name
             indices = (
-                [len(self.names), *range(len(self.outputs) - 3, len(self.outputs))]
+                [
+                    len(self.names),
+                    *([self.preference_index] if self.preference_index else []),
+                    *range(len(self.outputs) - 3, len(self.outputs)),
+                ]
                 if name in independent
                 else list(range(len(self.outputs)))
             )
@@ -518,7 +645,7 @@ class SettingsController:
                         self.session,
                     ],
                     outputs=[self.outputs[index] for index in indices],
-                    queue=True,
+                    queue=False,
                     concurrency_limit=None,
                     trigger_mode="always_last",
                     show_progress="hidden",

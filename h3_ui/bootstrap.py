@@ -8,7 +8,7 @@ from .app_bindings import bind_app
 from .contracts import AppComponents
 from .h3_view import build_h3_view, H3ViewServices
 from .layout import create_app_views, bind_workspace_navigation
-from .persistence import bind_browser_settings
+from .persistence import bind_browser_settings, create_browser_state
 from .ltx_view import build_ltx_view
 from .styles import H3_SETUP_CSS, H3_WORKSPACE_CSS
 from .api_view import build_api_view
@@ -107,7 +107,6 @@ class BootstrapServices:
     latent_upscale_method_layout_update: Callable
     list_media_paths: Callable
     mode_help: Callable
-    mode_layout_updates: Callable
     postprocess_selected_gallery_media: Callable
     prepare_all_ltx25_official_models: Callable
     prepare_ltx25_official_workflow: Callable
@@ -364,12 +363,18 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 "unload_models": unload_models,
             }
         )
+        browser_state = create_browser_state()
         settings_controller = bind_app(
             AppComponents.from_mapping(app_components),
             services,
+            preferences=browser_state,
         )
         navigation = bind_workspace_navigation(
-            app_views, h3_components.result_format, settings_controller
+            app_views,
+            h3_components.result_format,
+            settings_controller,
+            format_layout=services.result_format_layout_updates,
+            preferences=browser_state,
         )
         if app_views.jobs is not None:
             from h3_ui.jobs_view import build_jobs_view
@@ -433,19 +438,12 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                     "workspace.engine": navigation.engine_value,
                 }
             )
-        preferences = bind_browser_settings(
-            demo, browser_settings, controller=settings_controller
+        bind_browser_settings(
+            demo,
+            browser_settings,
+            controller=settings_controller,
+            browser_state=browser_state,
+            navigation=navigation,
         )
-        if navigation is not None:
-            preferences.h3_restore_event.success(
-                navigation.restore,
-                inputs=list(navigation.inputs),
-                outputs=list(navigation.outputs),
-                queue=True,
-                concurrency_id="h3-settings",
-                concurrency_limit=1,
-                api_name=False,
-                show_progress="hidden",
-            )
     demo.h3_css = H3_SETUP_CSS + H3_WORKSPACE_CSS
     return demo

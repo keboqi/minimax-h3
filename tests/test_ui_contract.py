@@ -49,6 +49,18 @@ class UiContractTests(unittest.TestCase):
         cls.components = {
             component["id"]: component for component in cls.config["components"]
         }
+        cls.restore = next(
+            fn
+            for fn in cls.demo.fns.values()
+            if getattr(fn.fn, "__name__", "") == "restore" and len(fn.inputs) > 80
+        )
+        closure = dict(
+            zip(
+                cls.restore.fn.__code__.co_freevars,
+                (cell.cell_contents for cell in cls.restore.fn.__closure__),
+            )
+        )
+        cls.controller = closure["controller"]
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -699,6 +711,13 @@ class UiContractTests(unittest.TestCase):
         self.assertIn(str(gradio_app.OUTPUTS_DIR / ".h3-workspace"), mount.call_args.kwargs["blocked_paths"])
         self.assertNotIn(".gradio-container", mounted_css)
 
+    def restored_session(self):
+        """Run the page-load restoration and return its authoritative session."""
+        values = [deepcopy(component.value) for component in self.restore.inputs]
+        values[-1] = type(values[-1])()
+        self.restore.fn(*values)
+        return values[-1]
+
     def test_generation_settings_use_native_browser_state(self) -> None:
         state = next(
             component
@@ -721,27 +740,43 @@ class UiContractTests(unittest.TestCase):
             and base_model["id"] in dependency["outputs"]
         )
         self.assertIn(sampling_preset["id"], restore["outputs"])
+        # Restoration, its settings refresh and navigation share one response.
+        self.assertFalse(
+            any(
+                d.get("trigger_after") == restore["id"]
+                for d in self.config["dependencies"]
+            )
+        )
 
         transition = next(
             d
             for d in self.config["dependencies"]
             if (sampling_preset["id"], "input") in d["targets"]
         )
+        # The completed transition carries its own save: no follow-up request.
+        self.assertIn(state["id"], transition["outputs"])
+        self.assertFalse(transition["queue"])
         memory_id = next(
             i for i in transition["outputs"] if self.components[i]["type"] == "state"
         )
-        save = next(
-            dependency
-            for dependency in self.config["dependencies"]
-            if dependency["outputs"] == [state["id"]]
-            and (memory_id, "change") in dependency["targets"]
+        self.assertFalse(
+            any(
+                (memory_id, "change") in d["targets"]
+                for d in self.config["dependencies"]
+            )
         )
-        self.assertIn(memory_id, save["inputs"])
-        self.assertLessEqual(len(save["inputs"]), 24)
-        self.assertNotIn(base_model["id"], save["inputs"])
-        self.assertNotIn(sampling_preset["id"], save["inputs"])
-        # Settings are saved from the completed atomic transition's state.
-        self.assertTrue(save["queue"])
+        session = self.restored_session()
+        values = [deepcopy(component.value) for component in self.demo.fns[transition["id"]].inputs]
+        values[-1] = session
+        values[1] = "Quality"
+        result = self.demo.fns[transition["id"]].fn(*values)
+        saved = result[transition["outputs"].index(state["id"])]
+        self.assertEqual(saved["values"]["h3.preset"], "Quality")
+        self.assertEqual(saved["mode_memory"]["active"], "Turbo")
+        self.assertNotIn("h3.prompt", saved["values"])
+        # An unchanged follow-up transition sends no second save.
+        repeat = self.demo.fns[transition["id"]].fn(*values)
+        self.assertEqual(repeat[transition["outputs"].index(state["id"])], {"__type__": "update"})
 
     def test_fast_and_singularity_default_to_lynnreal_video_vae(self) -> None:
         controls = {
@@ -807,7 +842,7 @@ class UiContractTests(unittest.TestCase):
                 d
                 for d in self.config["dependencies"]
                 if any(i in control_ids for i, _ in d["targets"])
-                and len(d["outputs"]) == 4
+                and len(d["outputs"]) == 5
             )
             self.assertTrue(
                 all(kind != "change" for _, kind in dependency["targets"]),
@@ -820,17 +855,8 @@ class UiContractTests(unittest.TestCase):
 
         duration, duration_values = handler("Seconds")
         seed, seed_values = handler("Seed")
-        refresh = next(
-            fn
-            for fn in self.demo.fns.values()
-            if getattr(fn.fn, "__name__", "") == "refresh" and len(fn.inputs) > 80
-        )
-
-        def restored_session():
-            values = [deepcopy(component.value) for component in refresh.inputs]
-            values[-1] = type(values[-1])()
-            refresh.fn(*values)
-            return values[-1]
+        restored_session = self.restored_session
+        controller = self.controller
 
         duration.fn(*duration_values)
         self.assertIsNone(duration_values[-1].memory)
@@ -855,11 +881,11 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(updated[0]["values"]["seed"], 123)
         # Resolution refreshes may observe a newer frontend draft before its
         # input event runs. They must not write unrelated stored values back.
-        refreshed = [deepcopy(component.value) for component in refresh.inputs]
+        refreshed = [deepcopy(component.value) for component in controller.inputs]
         refreshed[-1] = duration_values[-1]
         controller_names = (*SETTING_NAMES, *MEDIA_NAMES)
-        refreshed[1 + controller_names.index("steps")] = 10
-        result = refresh.fn(*refreshed)
+        refreshed[controller_names.index("steps")] = 10
+        result = controller.refresh(duration_values[0], *refreshed)
         self.assertNotIn("value", result[SETTING_NAMES.index("steps")])
         _, separate_values = handler("Seed")
         separate_values[1] = 42
@@ -901,25 +927,37 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(len(dependencies), 1)
 
     def test_registered_resolution_callbacks_apply_each_preset(self) -> None:
+        controller = self.controller
+        width_component = controller.components["width"]
+        height_component = controller.components["height"]
         callbacks = [
             fn
+            for name in ("draft_resolution", "fast_resolution", "large_resolution")
             for fn in self.demo.fns.values()
-            if inspect.isfunction(fn.fn)
-            and "resolution_choice_updates" in fn.fn.__code__.co_names
+            if fn.inputs and fn.inputs[0] is controller.components[name]
         ]
         self.assertEqual(len(callbacks), 3)
         for callback in callbacks:
+            outputs = list(callback.outputs)
             for choice in callback.inputs[0].choices:
                 name = choice[1] if isinstance(choice, (tuple, list)) else choice
                 for latent_upscale in (False, True):
                     with self.subTest(name=name, latent_upscale=latent_upscale):
-                        width, height, info = callback.fn(name, latent_upscale, "Video")
+                        values = [deepcopy(c.value) for c in callback.inputs]
+                        values[:3] = [name, latent_upscale, "Video"]
+                        values[-1] = self.restored_session()
+                        result = callback.fn(*values)
+                        width = result[outputs.index(width_component)]["value"]
+                        height = result[outputs.index(height_component)]["value"]
                         alignment = 64 if latent_upscale else 32
                         self.assertGreater(width, 0)
                         self.assertGreater(height, 0)
                         self.assertEqual(width % alignment, 0)
                         self.assertEqual(height % alignment, 0)
-                        self.assertTrue(info)
+                        self.assertTrue(result[-1])
+                        # The same response settles the next run's settings.
+                        stored = result[outputs.index(controller.memory)]["values"]
+                        self.assertEqual((stored["width"], stored["height"]), (width, height))
 
     def test_resolution_quick_presets_share_single_rows(self) -> None:
         controls = {
@@ -1009,22 +1047,16 @@ class UiContractTests(unittest.TestCase):
         dimensions_accordion = controls["Exact dimensions, seed & image frames"]
         self.assertFalse(dimensions_accordion["props"]["open"])
 
-        # 3. Start-frame auto cap triggers on .change (so preset changes trigger auto resolution),
-        # then refreshes summary
+        # 3. Start-frame auto cap triggers on .change (so preset changes trigger
+        # auto resolution) and refreshes the summary in the same response.
         auto_cap_change_dep = next(
             d
             for d in self.config["dependencies"]
             if (auto_cap["id"], "change") in d.get("targets", [])
             and h3_width_id in d.get("outputs", [])
         )
-        self.assertIsNotNone(auto_cap_change_dep)
-        auto_cap_refresh_dep = next(
-            d
-            for d in self.config["dependencies"]
-            if d.get("trigger_after") == auto_cap_change_dep["id"]
-        )
-        self.assertIn(summary["id"], auto_cap_refresh_dep["outputs"])
-        self.assertNotIn(auto_cap["id"], auto_cap_refresh_dep["outputs"])
+        self.assertIn(summary["id"], auto_cap_change_dep["outputs"])
+        self.assertNotIn(auto_cap["id"], auto_cap_change_dep["outputs"])
 
     def test_programmatic_change_and_chained_callbacks_have_no_feedback_cycles(self):
         dependencies = self.config["dependencies"]
@@ -1071,14 +1103,7 @@ class UiContractTests(unittest.TestCase):
         )
         self.assertEqual((w, h), (768, 1152))
 
-        # Find controller and run refresh with the new resolution
-        refresh_fn = next(
-            fn
-            for fn in self.demo.fns.values()
-            if hasattr(fn.fn, "__self__")
-            and type(fn.fn.__self__).__name__ == "SettingsController"
-        )
-        controller = refresh_fn.fn.__self__
+        controller = self.controller
 
         memory = {
             "active": "Turbo",
@@ -1139,16 +1164,22 @@ class UiContractTests(unittest.TestCase):
             if (first_component._id, "change") in fn.targets
             and len(fn.targets) == 1
         )
-        atomic_values = deepcopy(input_values_new)
-        atomic_values[controller.inputs.index(controller.components["width"])] = 1408
-        atomic_values[controller.inputs.index(controller.components["height"])] = 768
-        atomic_values[controller.inputs.index(controller.components["prompt"])] = "Camera moves slowly."
+        atomic_values = [deepcopy(component.value) for component in first_fn.inputs]
+        for index, component in enumerate(first_fn.inputs):
+            if component is controller.components["first"]:
+                atomic_values[index] = temp_img
+            elif component is controller.components["width"]:
+                atomic_values[index] = 1408
+            elif component is controller.components["height"]:
+                atomic_values[index] = 768
+            elif component is controller.components["prompt"]:
+                atomic_values[index] = "Camera moves slowly."
         atomic_memory = deepcopy(memory)
         atomic_memory["values"]["mode"] = "First / last frame"
-        # Use a fresh authoritative session so this test's previous refreshes
-        # cannot substitute their saved mode.
-        atomic_values[-1].memory = None
-        atomic = first_fn.fn(atomic_memory, *atomic_values)
+        # A fresh authoritative session holds the conditioning mode.
+        atomic_values[-1] = type(atomic_values[-1])()
+        atomic_values[-1].memory = atomic_memory
+        atomic = first_fn.fn(*atomic_values)
         self.assertEqual(atomic[controller.outputs.index(controller.components["width"])]["value"], w)
         self.assertEqual(atomic[controller.outputs.index(controller.components["height"])]["value"], h)
         self.assertIn("768×1152", atomic[-4])
@@ -1626,10 +1657,6 @@ class UiContractTests(unittest.TestCase):
         self.assertNotIn("prompt</script>", ready.html)
 
     def test_layout_callbacks_preserve_inactive_control_preferences(self) -> None:
-        acceleration = gradio_app.mode_layout_updates("Reference media")[3]
-        self.assertTrue(acceleration["interactive"])
-        self.assertNotIn("value", acceleration)
-
         frames = gradio_app.image_vae_frame_updates(_catalog.SINGLE_FRAME_IMAGE_VAE)
         self.assertFalse(frames["interactive"])
         self.assertNotIn("value", frames)

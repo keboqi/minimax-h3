@@ -182,130 +182,130 @@ def restore_preferences(saved, components):
     return restored, memory
 
 
-def bind_browser_settings(demo, components, *, controller):
+def create_browser_state():
+    """Create the preference store before settings events that write to it."""
+    return gr.BrowserState(
+        default_value={"schema_version": SCHEMA_VERSION, "values": {}},
+        storage_key=_STORAGE_KEY,
+        secret=_BROWSER_STATE_SECRET,
+    )
+
+
+def bind_browser_settings(
+    demo, components, *, controller, browser_state, navigation=None
+):
+    """Restore in one page-load response; save from each edit's own response.
+
+    H3 settings and workspace navigation already return the saved payload with
+    their updates. Other allowlisted controls save through one direct request.
+    """
     selected = {
         name: component
         for name, component in components.items()
         if name in PERSISTED_NAMES
     }
-    names, controls = list(selected), list(selected.values())
+    names = list(selected)
     defaults = {name: component.value for name, component in selected.items()}
-    browser_state = gr.BrowserState(
-        default_value={"schema_version": SCHEMA_VERSION, "values": defaults},
-        storage_key=_STORAGE_KEY,
-        secret=_BROWSER_STATE_SECRET,
-    )
-    snapshot = gr.State({"schema_version": SCHEMA_VERSION, "values": defaults})
 
-    def restore(saved, current):
-        restored, memory = restore_preferences(saved, selected)
-        current.clear()
-        current.update(
-            schema_version=SCHEMA_VERSION, values=restored, mode_memory=memory
-        )
-        updates = [restored[name] for name in names]
+    def restore(saved, memory, *values):
+        restored, mode_memory = restore_preferences(saved, selected)
+        session = values[-1]
+        with session.lock:
+            session.memory = None
+            session.preferences = {
+                "schema_version": SCHEMA_VERSION,
+                "values": dict(restored),
+                "mode_memory": deepcopy(mode_memory),
+            }
+            session.saved = deepcopy(session.preferences)
+        merged = {}
+
+        def put(component, update):
+            previous = merged.get(component._id, (component, {}))[1]
+            merged[component._id] = (component, {**previous, **update})
+
+        # Unchanged values stay unsent so their change listeners stay idle.
+        for name in names:
+            if restored[name] != defaults[name]:
+                put(selected[name], gr.update(value=restored[name]))
+            else:
+                put(selected[name], gr.skip())
         if "workspace.engine" in names and isinstance(
             selected["workspace.engine"], gr.Dropdown
         ):
             from h3_app.capabilities import engines_for_task
 
             choices = engines_for_task(restored["workspace.task"])
-            updates[names.index("workspace.engine")] = gr.update(
-                choices=[(item.label, item.id) for item in choices],
-                value=restored["workspace.engine"],
+            put(
+                selected["workspace.engine"],
+                gr.update(choices=[(item.label, item.id) for item in choices]),
             )
-        return (*updates, memory)
+        settings = list(values)
+        for index, name in enumerate(controller.names):
+            if "h3." + name in restored:
+                settings[index] = restored["h3." + name]
+        if navigation is not None:
+            pairs = navigation.restore(
+                restored.get("workspace.task", "Video"),
+                restored.get("workspace.engine"),
+                mode_memory,
+                settings,
+            )
+        else:
+            pairs = zip(
+                controller.outputs,
+                controller.update(mode_memory, *settings, action="refresh"),
+            )
+        for component, update in pairs:
+            if not (isinstance(update, dict) and update.get("__type__") == "update"):
+                update = gr.update(value=update)
+            put(component, update)
+        return [merged[key][1] for key in outputs]
 
-    restored = demo.load(
+    outputs = {component._id: component for component in selected.values()}
+    for component in (
+        navigation.outputs if navigation is not None else controller.outputs
+    ):
+        outputs.setdefault(component._id, component)
+    demo.load(
         restore,
-        inputs=[browser_state, snapshot],
-        outputs=[*controls, controller.memory],
-        queue=False,
-        show_progress="hidden",
-        api_name=False,
-    )
-    refreshed = restored.success(
-        controller.refresh,
-        inputs=[controller.memory, *controller.inputs],
-        outputs=controller.outputs,
+        inputs=[browser_state, controller.memory, *controller.inputs],
+        outputs=list(outputs.values()),
         queue=False,
         show_progress="hidden",
         api_name=False,
     )
 
-    def remember_namespace(namespace_names, *, h3=False):
-        def remember(memory, current, session, *values):
-            current["values"].update(dict(zip(namespace_names, values, strict=True)))
-            if h3:
-                memory = session.memory or memory
-                current["values"].update(
-                    {
-                        "h3." + name: value
-                        for name, value in (memory or {}).get("values", {}).items()
-                        if "h3." + name in selected
-                    }
-                )
-                current["mode_memory"] = {
-                    key: value
-                    for key, value in (memory or {}).items()
-                    if key in {"active", "modes", "offload_preference"}
-                }
-            return deepcopy(current)
+    def remember_namespace(namespace_names):
+        def remember(session, *values):
+            return session.remember(dict(zip(namespace_names, values, strict=True)))
 
         return remember
 
+    # H3 settings save from SettingsController; navigation saves the workspace.
+    owned = {"h3." + name for name in SETTING_NAMES} | {
+        "workspace.task",
+        "workspace.engine",
+    }
     for namespace in sorted({name.split(".", 1)[0] for name in names}):
         namespace_names = [
             name
             for name in names
-            if name.startswith(namespace + ".")
-            and not (namespace == "h3" and name[3:] in SETTING_NAMES)
+            if name.startswith(namespace + ".") and name not in owned
         ]
-        triggers = [
-            (
-                selected[name].change
-                if name == "workspace.engine"
-                else selected[name].input
-            )
-            for name in namespace_names
-        ]
-        if namespace == "h3":
-            triggers.append(controller.memory.change)
-            # Unqueued callbacks do not dispatch State.change in this Gradio
-            # path. Save after their explicit resolution refresh instead.
-            for event in controller.events:
-                if not event.get("queue", True):
-                    event.then(
-                        remember_namespace(namespace_names, h3=True),
-                        inputs=[
-                            controller.memory,
-                            snapshot,
-                            controller.session,
-                            *(selected[name] for name in namespace_names),
-                        ],
-                        outputs=browser_state,
-                        queue=True,
-                        concurrency_id="h3-preferences",
-                        concurrency_limit=1,
-                        show_progress="hidden",
-                        api_name=False,
-                    )
+        if not namespace_names:
+            continue
         gr.on(
-            triggers=triggers,
-            fn=remember_namespace(namespace_names, h3=namespace == "h3"),
+            triggers=[selected[name].input for name in namespace_names],
+            fn=remember_namespace(namespace_names),
             inputs=[
-                controller.memory,
-                snapshot,
                 controller.session,
                 *(selected[name] for name in namespace_names),
             ],
             outputs=browser_state,
-            queue=True,
-            concurrency_id="h3-preferences",
-            concurrency_limit=1,
+            queue=False,
             show_progress="hidden",
             api_name=False,
             trigger_mode="always_last",
         )
-    browser_state.h3_restore_event = refreshed
     return browser_state

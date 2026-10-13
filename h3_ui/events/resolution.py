@@ -47,189 +47,118 @@ def bind_resolution(
         queue=False,
         show_progress="hidden",
     )
-    draft_resolution_event = components.draft_resolution.change(
-        lambda name, latent_upscale, result_format: services.resolution_choice_updates(
-            name, "draft", latent_upscale, result_format
-        ),
-        inputs=[
-            components.draft_resolution,
-            components.latent_upscale,
-            components.result_format,
-        ],
-        outputs=[
-            components.width,
-            components.height,
-            components.resolution_info,
-        ],
-    )
-    fast_resolution_event = components.fast_resolution.change(
-        lambda name, latent_upscale, result_format: services.resolution_choice_updates(
-            name, "fast", latent_upscale, result_format
-        ),
-        inputs=[
-            components.fast_resolution,
-            components.latent_upscale,
-            components.result_format,
-        ],
-        outputs=[
-            components.width,
-            components.height,
-            components.resolution_info,
-        ],
-    )
-    large_resolution_event = components.large_resolution.change(
-        lambda name, latent_upscale, result_format: services.resolution_choice_updates(
-            name, "large", latent_upscale, result_format
-        ),
-        inputs=[
-            components.large_resolution,
-            components.latent_upscale,
-            components.result_format,
-        ],
-        outputs=[
-            components.width,
-            components.height,
-            components.resolution_info,
-        ],
-    )
-    for resolution_event in (
-        draft_resolution_event,
-        fast_resolution_event,
-        large_resolution_event,
+    # Each dimension edit resolves its alignment and the authoritative settings
+    # in one response. A chained refresh would read browser controls again and
+    # could observe the previous dimensions while the first update commits.
+    def dimensions(width, height, info, **settings):
+        return {"width": width, "height": height, **settings}, (info,)
+
+    for tier, choice in (
+        ("draft", components.draft_resolution),
+        ("fast", components.fast_resolution),
+        ("large", components.large_resolution),
     ):
-        controller.events.append(
-            resolution_event.then(
-                controller.refresh,
-                inputs=[controller.memory, *controller.inputs],
-                outputs=controller.outputs,
-                queue=False,
-                show_progress="hidden",
+        controller.bind_refresh(
+            [choice.change],
+            lambda name, latent_upscale, result_format, tier=tier: dimensions(
+                *services.resolution_choice_updates(
+                    name, tier, latent_upscale, result_format
+                )
+            ),
+            inputs=[choice, components.latent_upscale, components.result_format],
+            extra_outputs=[components.resolution_info],
+        )
+
+    def start_frame(first, width, height, result_format, latent_upscale, cap):
+        return dimensions(
+            *services.auto_resolution_from_start_frame(
+                first, width, height, result_format, latent_upscale, cap
             )
         )
-    # Resolve dimensions and the authoritative settings in one response. A
-    # chained refresh reads browser controls again and can observe the previous
-    # dimensions while an upload or library selection is committing its value.
-    def refresh_start_frame(memory, *values):
-        values = list(values)
 
-        def value(component):
-            return values[controller.inputs.index(component)]
-
-        width, height, info = services.auto_resolution_from_start_frame(
-            value(components.first), value(components.width), value(components.height),
-            value(components.result_format), value(components.latent_upscale),
-            value(components.auto_megapixels),
-        )
-        values[controller.inputs.index(components.width)] = width
-        values[controller.inputs.index(components.height)] = height
-        updates = list(controller.refresh(memory, *values))
-        for component, dimension in ((components.width, width), (components.height, height)):
-            index = controller.outputs.index(component)
-            updates[index] = {**updates[index], "value": dimension}
-        return (*updates, info)
-
-    first_refresh_event = components.first.change(
-        refresh_start_frame,
-        inputs=[controller.memory, *controller.inputs],
-        outputs=[*controller.outputs, components.resolution_info],
-        queue=False,
-        trigger_mode="always_last",
-        show_progress="hidden",
-        api_name=False,
+    start_frame_inputs = [
+        components.first,
+        components.width,
+        components.height,
+        components.result_format,
+        components.latent_upscale,
+        components.auto_megapixels,
+    ]
+    controller.bind_refresh(
+        [components.first.change],
+        start_frame,
+        inputs=start_frame_inputs,
+        extra_outputs=[components.resolution_info],
     )
-    # Persist the same settings snapshot that produced the visible dimensions.
-    controller.events.append(first_refresh_event)
-    auto_megapixels_change = components.auto_megapixels.change(
-        fn=services.auto_resolution_from_start_frame,
-        inputs=[
-            components.first,
-            components.width,
-            components.height,
-            components.result_format,
-            components.latent_upscale,
-            components.auto_megapixels,
-        ],
-        outputs=[
-            components.width,
-            components.height,
-            components.resolution_info,
-        ],
-        queue=False,
-        show_progress="hidden",
-    )
+
     # The cap's .change also responds to preset updates. Writing the cap back
-    # from this chained refresh would retrigger it indefinitely in Gradio.
-    cap_index = controller.outputs.index(components.auto_megapixels)
-
-    def refresh_after_auto_cap(memory, *values):
-        updates = controller.refresh(memory, *values)
-        return (*updates[:cap_index], *updates[cap_index + 1 :])
-
-    controller.events.append(
-        auto_megapixels_change.then(
-            refresh_after_auto_cap,
-            inputs=[controller.memory, *controller.inputs],
-            outputs=[
-                component
-                for component in controller.outputs
-                if component is not components.auto_megapixels
-            ],
-            queue=False,
-            show_progress="hidden",
+    # from this response would retrigger it indefinitely in Gradio. Without a
+    # start frame the cap changes no dimension, and the preset or cap edit's
+    # own settings response already describes it.
+    def start_frame_cap(first, width, height, result_format, latent_upscale, cap):
+        if not first:
+            return None
+        overrides, extras = start_frame(
+            first, width, height, result_format, latent_upscale, cap
         )
+        return {**overrides, "auto_megapixels": cap}, extras
+
+    controller.bind_refresh(
+        [components.auto_megapixels.change],
+        start_frame_cap,
+        inputs=start_frame_inputs,
+        extra_outputs=[components.resolution_info],
+        exclude=[components.auto_megapixels],
     )
-    components.width.input(
-        services.resolution_info_preview,
-        inputs=[
-            components.width,
-            components.height,
-            components.latent_upscale,
-            components.result_format,
-        ],
-        outputs=[components.resolution_info],
-        queue=False,
-        show_progress="hidden",
-    )
-    components.height.input(
-        services.resolution_info_preview,
-        inputs=[
-            components.width,
-            components.height,
-            components.latent_upscale,
-            components.result_format,
-        ],
-        outputs=[components.resolution_info],
-        queue=False,
-        show_progress="hidden",
-    )
-    for res_event_trigger in (
-        components.width.blur,
-        components.height.blur,
-        components.width.submit,
-        components.height.submit,
-    ):
-        res_snap_event = res_event_trigger(
-            services.resolution_control_updates,
+    for dimension in (components.width, components.height):
+        dimension.input(
+            services.resolution_info_preview,
             inputs=[
                 components.width,
                 components.height,
                 components.latent_upscale,
                 components.result_format,
             ],
-            outputs=[
-                components.width,
-                components.height,
-                components.resolution_info,
-            ],
+            outputs=[components.resolution_info],
             queue=False,
+            trigger_mode="always_last",
             show_progress="hidden",
         )
-        controller.events.append(
-            res_snap_event.then(
-                controller.refresh,
-                inputs=[controller.memory, *controller.inputs],
-                outputs=controller.outputs,
-                queue=False,
-                show_progress="hidden",
+    # Number input dispatches before its frontend binding commits; blur and
+    # submit observe the edited value without programmatic echoes.
+    controller.bind_refresh(
+        [
+            components.width.blur,
+            components.height.blur,
+            components.width.submit,
+            components.height.submit,
+        ],
+        lambda width, height, latent_upscale, result_format: dimensions(
+            *services.resolution_control_updates(
+                width, height, latent_upscale, result_format
             )
-        )
+        ),
+        inputs=[
+            components.width,
+            components.height,
+            components.latent_upscale,
+            components.result_format,
+        ],
+        extra_outputs=[components.resolution_info],
+    )
+    controller.bind_refresh(
+        [components.latent_upscale.input],
+        lambda latent_upscale, width, height, result_format: dimensions(
+            *services.latent_upscale_layout_updates(
+                latent_upscale, width, height, result_format
+            )[1:],
+            latent_upscale=latent_upscale,
+        ),
+        inputs=[
+            components.latent_upscale,
+            components.width,
+            components.height,
+            components.result_format,
+        ],
+        extra_outputs=[components.resolution_info],
+    )

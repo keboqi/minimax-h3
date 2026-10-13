@@ -1,5 +1,7 @@
 """Canvas controls delegate dimension decisions to existing engine policy."""
 
+import json
+
 import gradio as gr
 
 
@@ -79,59 +81,49 @@ def bind_canvas_controls(components, resolve_dimensions, controller, presets):
         # Policy owns alignment, supported bounds and latent-upscale behavior.
         return resolve_dimensions(name, tier, latent_upscale, result_format)
 
-    for component in (components.aspect_ratio, components.size_tier):
-        event = component.input(
-            choose,
-            inputs=[
-                components.aspect_ratio,
-                components.size_tier,
-                components.latent_upscale,
-                components.result_format,
-                components.mode,
-                components.first,
-            ],
-            outputs=[components.width, components.height, components.resolution_info],
-            queue=False,
-            api_name=False,
-            show_progress="hidden",
+    def choose_settings(ratio, tier, latent_upscale, result_format, mode, first):
+        width, height, info = choose(
+            ratio, tier, latent_upscale, result_format, mode, first
         )
-        controller.events.append(
-            event.then(
-                controller.refresh,
-                inputs=[controller.memory, *controller.inputs],
-                outputs=controller.outputs,
-                queue=False,
-                api_name=False,
-                show_progress="hidden",
-            )
-        )
+        overrides = {
+            name: value
+            for name, value in (("width", width), ("height", height))
+            if not (isinstance(value, dict) and value.get("__type__") == "update")
+        }
+        return overrides, (info,)
 
-    def sync(width, height, result_format, mode, first):
-        locked = (
-            result_format == "Image" and mode == "First / last frame" and bool(first)
-        )
-        for tier, source in presets.items():
-            for name, dimensions in source.items():
-                if tuple(dimensions) == (width, height):
-                    return (
-                        gr.update(
-                            value=name.split("·", 1)[0].strip(),
-                            interactive=not locked and result_format != "Audio",
-                        ),
-                        gr.update(
-                            value=tier,
-                            interactive=not locked and result_format != "Audio",
-                        ),
-                    )
-        return (
-            gr.update(
-                value="Custom", interactive=not locked and result_format != "Audio"
-            ),
-            gr.update(
-                value="custom", interactive=not locked and result_format != "Audio"
-            ),
-        )
+    # One response resolves the preset dimensions and the settings they feed.
+    controller.bind_refresh(
+        [components.aspect_ratio.input, components.size_tier.input],
+        choose_settings,
+        inputs=[
+            components.aspect_ratio,
+            components.size_tier,
+            components.latent_upscale,
+            components.result_format,
+            components.mode,
+            components.first,
+        ],
+        extra_outputs=[components.resolution_info],
+    )
 
+    # Labelling the current dimensions needs only the preset catalog, so it
+    # runs in the browser instead of costing a request per dimension change.
+    catalog = [
+        [name.split("·", 1)[0].strip(), tier, *map(int, dimensions)]
+        for tier, source in presets.items()
+        for name, dimensions in source.items()
+    ]
+    sync = f"""(width, height, resultFormat, mode, first) => {{
+        const presets = {json.dumps(catalog)};
+        const locked = resultFormat === "Image" && mode === "First / last frame" && !!first;
+        const interactive = !locked && resultFormat !== "Audio";
+        const match = presets.find(([, , w, h]) => w === width && h === height);
+        return [
+            {{__type__: "update", value: match ? match[0] : "Custom", interactive}},
+            {{__type__: "update", value: match ? match[1] : "custom", interactive}},
+        ];
+    }}"""
     gr.on(
         triggers=[
             c.change
@@ -143,7 +135,8 @@ def bind_canvas_controls(components, resolve_dimensions, controller, presets):
                 components.first,
             )
         ],
-        fn=sync,
+        fn=None,
+        js=sync,
         inputs=[
             components.width,
             components.height,
