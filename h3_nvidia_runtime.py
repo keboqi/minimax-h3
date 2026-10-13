@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import gzip
 import hashlib
 import json
 import os
@@ -19,6 +20,7 @@ import tarfile
 import tempfile
 import time
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 import zipfile
 
 from h3_sources import (
@@ -32,7 +34,7 @@ LINUX_PACKAGES = (
     "libxrandr2", "libxi6", "libxfixes3", "libxcursor1", "libxcomposite1",
     "libxinerama1", "libxxf86vm1", "libfreetype6",
     "libfontconfig1", "libdbus-1-3", "libsm6", "libice6", "libusb-1.0-0",
-    "libudev1", "libunwind8", "xvfb", "xauth",
+    "libudev1", "libunwind8", "xvfb", "xauth", "dpkg",
 )
 HELPER_FILES = ("video2dlssnr.exe", "nvngx.dll_dlssnr.dll", "nvngx_dlss.dll", "nvngx_dlssnr.dll")
 TRANSLATION_DLLS = {
@@ -47,6 +49,10 @@ BRIDGE_DIRS = (
     "/usr/lib/x86_64-linux-gnu/nvidia/current/nvidia/wine",
 )
 NATIVE_OVERRIDES = "d3d12,d3d12core,dxgi,d3d11,nvapi64,nvngx,_nvngx=n;winemenubuilder.exe=d"
+NVIDIA_REPO = "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/"
+NGX_FILES = ("libnvidia-ngx.so.1", "nvngx.dll", "_nvngx.dll")
+NGX_DIRS = ("/usr/lib/x86_64-linux-gnu", "/usr/lib64", "/usr/lib/nvidia",
+            "/usr/local/nvidia/lib64", "/usr/lib/x86_64-linux-gnu/nvidia/current")
 
 
 def runtime_root(root=None):
@@ -114,9 +120,11 @@ def download(url, destination, expected=None):
                 raise ValueError(f"Runtime archive checksum mismatch: {url}")
             os.replace(partial, destination)
             return destination
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
             partial.unlink(missing_ok=True)
-            if attempt == 2:
+            if attempt == 2 or isinstance(exc, HTTPError) and exc.code == 404:
+                if isinstance(exc, HTTPError):
+                    raise RuntimeError(f"Download failed for {url}: {exc}") from exc
                 raise
             time.sleep(1 + attempt)
 
@@ -184,7 +192,7 @@ def install_archive(root, name, url, checksum, required, *, helper=False):
 
 
 def install_linux_packages(root):
-    if (root / ".linux-packages-v2").is_file() and shutil.which("xvfb-run"):
+    if (root / ".linux-packages-v2").is_file() and shutil.which("xvfb-run") and shutil.which("dpkg-deb"):
         return
     command = ["apt-get"]
     if os.geteuid() != 0:
@@ -196,6 +204,18 @@ def install_linux_packages(root):
     subprocess.run(command + ["install", "-y", "--no-install-recommends", *LINUX_PACKAGES],
                    check=True, env=env, timeout=600)
     (root / ".linux-packages-v2").touch()
+
+
+def native_env(root=None, base=None):
+    """Set the loader path before launching a worker, including Wine's NGX core."""
+    env = dict(os.environ if base is None else base)
+    library = read_manifest(runtime_root(root)).get("vsr", {}).get("library")
+    if library:
+        directory = str(Path(library).parent)
+        paths = env.get("LD_LIBRARY_PATH", "").split(":")
+        env["LD_LIBRARY_PATH"] = ":".join(dict.fromkeys([directory, *(path for path in paths if path)]))
+        env["H3_VSR_NGX_LIBRARY"] = str(library)
+    return env
 
 
 def wine_env(prefix, wine):
@@ -275,39 +295,109 @@ def seed_proton_prefix(proton, prefix):
     (prefix / ".update-timestamp").write_text(str(timestamp) + "\n", encoding="ascii")
 
 
-def driver_bridges(root):
-    """Extract matching user-space bridges only; never install/replace a driver."""
+def host_driver_version():
     try:
         result = subprocess.run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
                                 check=True, capture_output=True, text=True, timeout=15)
         version = result.stdout.splitlines()[0].strip()
     except (OSError, subprocess.SubprocessError, IndexError) as exc:
-        raise RuntimeError("An NVIDIA GPU and a working host driver are required for DLSS.") from exc
+        raise RuntimeError("NVIDIA enhancement requires a GPU and a working host driver (nvidia-smi).") from exc
     if not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", version):
-        raise RuntimeError("Could not identify the NVIDIA host driver for DLSS setup.")
-    for directory in [*(Path(path) for path in BRIDGE_DIRS), root / "drivers" / version]:
+        raise RuntimeError("Could not identify the NVIDIA host driver for NGX setup.")
+    return version
+
+
+def driver_package(version, index):
+    """Resolve only the exact host version and architecture in NVIDIA's index."""
+    for stanza in index.replace("\r\n", "\n").split("\n\n"):
+        fields = dict(line.split(": ", 1) for line in stanza.splitlines() if ": " in line and not line.startswith(" "))
+        if (fields.get("Package") != "libnvidia-gl-" + version.split(".")[0]
+                or fields.get("Architecture") != "amd64"
+                or not fields.get("Version", "").startswith(version + "-")):
+            continue
+        filename = fields.get("Filename", "").removeprefix("./")
+        checksum = fields.get("SHA256", "")
+        if not re.fullmatch(r"[\w.+~-]+\.deb", filename) or not re.fullmatch(r"[a-f0-9]{64}", checksum):
+            raise RuntimeError("NVIDIA package index contains an invalid filename or checksum.")
+        return NVIDIA_REPO + filename, checksum
+    return None
+
+
+def driver_components(root, version):
+    """Extract NGX files into the app only. Never execute a driver installer."""
+    destination = root / "drivers" / version
+    marker = destination / "source.json"
+    try:
+        installed = json.loads(marker.read_text(encoding="utf-8"))
+        if installed["driver_version"] == version and all(
+            (destination / name).is_file() and sha256(destination / name) == installed["files"][name]
+            for name in NGX_FILES
+        ):
+            return destination
+    except (OSError, ValueError, KeyError):
+        pass
+    print(f"[h3-nvidia] Obtaining native NGX and Wine bridges for host driver {version}", flush=True)
+    index = download(NVIDIA_REPO + "Packages.gz", root / "downloads/Packages.gz")
+    package = driver_package(version, gzip.decompress(index.read_bytes()).decode("utf-8"))
+    if package is None:
+        raise RuntimeError(f"NVIDIA's package repository has no exact amd64 NGX package for host driver {version}. "
+                           "Ask the host provider to expose libnvidia-ngx.so.1 and NVIDIA's Wine bridges; "
+                           "a different driver's libraries cannot be substituted.")
+    url, checksum = package
+    archive = download(url, root / "downloads" / url.rsplit("/", 1)[-1], checksum)
+    if not shutil.which("dpkg-deb"):
+        raise RuntimeError("NGX extraction requires dpkg-deb; restart run_h3.sh or redeploy Modal to install prerequisites.")
+    with tempfile.TemporaryDirectory(prefix=".driver-", dir=root) as directory:
+        extracted = Path(directory)
+        # -x extracts data only, without installing the package or running scripts.
+        subprocess.run(["dpkg-deb", "-x", str(archive), str(extracted)],
+                       check=True, capture_output=True, timeout=180)
+        sources = {"libnvidia-ngx.so.1": extracted / "usr/lib/x86_64-linux-gnu" / f"libnvidia-ngx.so.{version}"}
+        sources.update({name: extracted / "usr/lib/x86_64-linux-gnu/nvidia/wine" / name
+                        for name in ("nvngx.dll", "_nvngx.dll")})
+        for name, source in sources.items():
+            if not source.is_file() or source.is_symlink() or not source.stat().st_size:
+                raise RuntimeError(f"NVIDIA package for {version} is missing {name}.")
+        destination.mkdir(parents=True, exist_ok=True)
+        for name, source in sources.items():
+            copy_dll(source, destination / name)
+        marker.write_text(json.dumps({"url": url, "sha256": checksum, "driver_version": version,
+                                     "files": {name: sha256(destination / name) for name in NGX_FILES}}), encoding="utf-8")
+    archive.unlink(missing_ok=True)
+    return destination
+
+
+def driver_bridges(root):
+    version = host_driver_version()
+    for directory in (Path(path) for path in BRIDGE_DIRS):
         if all((directory / name).is_file() for name in ("nvngx.dll", "_nvngx.dll")):
             return directory, version
-    print(f"[h3-nvidia] Obtaining NGX bridges for host driver {version}", flush=True)
-    url = f"https://us.download.nvidia.com/XFree86/Linux-x86_64/{version}/NVIDIA-Linux-x86_64-{version}.run"
-    archive = download(url, root / "downloads" / f"nvidia-{version}.run")
-    with tempfile.TemporaryDirectory(prefix=".driver-", dir=root) as directory:
-        extracted = Path(directory) / "driver"
-        subprocess.run(["sh", str(archive), "--extract-only", "--target", str(extracted)],
-                       check=True, capture_output=True, timeout=180)
-        destination = root / "drivers" / version
-        destination.mkdir(parents=True, exist_ok=True)
-        sources = {}
-        for name in ("nvngx.dll", "_nvngx.dll"):
-            matches = list(extracted.rglob(name))
-            if not matches:
-                raise RuntimeError(f"NVIDIA driver {version} does not include {name}; DLSS is unavailable on this host.")
-            sources[name] = matches[0]
-        for name, source in sources.items():
-            shutil.copy2(source, destination / name)
-        (destination / "source.json").write_text(json.dumps({"url": url, "sha256": sha256(archive)}), encoding="utf-8")
-    archive.unlink(missing_ok=True)
-    return destination, version
+    return driver_components(root, version), version
+
+
+def prepare_native_runtime(root):
+    """VSR needs the driver NGX core even when DLSS is disabled or fails."""
+    if platform.system() != "Linux" or not (enabled("H3_ENABLE_NVIDIA_VSR") or enabled("H3_ENABLE_DLSSNR")):
+        return
+    with installation_lock(root):
+        manifest = read_manifest(root)
+        try:
+            if platform.machine().lower() not in {"x86_64", "amd64"}:
+                raise RuntimeError("Automatic native NGX setup supports Linux x86_64.")
+            version = host_driver_version()
+            paths = [*(Path(path) for path in os.getenv("LD_LIBRARY_PATH", "").split(":") if path),
+                     *(Path(path) for path in NGX_DIRS)]
+            library = next((directory / name for directory in paths
+                            for name in (f"libnvidia-ngx.so.{version}", "libnvidia-ngx.so.1")
+                            if (directory / name).is_file()), None)
+            if library is None:
+                library = driver_components(root, version) / "libnvidia-ngx.so.1"
+            manifest["vsr"] = {"library": str(library.resolve()), "driver_version": version}
+            print(f"[h3-nvidia] Native NGX for driver {version}: {library}", flush=True)
+        except Exception as exc:
+            manifest["vsr"] = {"error": str(exc)}
+            print(f"[h3-nvidia] VSR NGX setup failed: {exc}", flush=True)
+        write_manifest(root, manifest)
 
 
 def initialize_prefix(root, proton, env):
@@ -400,7 +490,8 @@ def ensure_runtime(root=None, *, initialize=False, system_packages=True):
                                      DLSSNR_URL, DLSSNR_SHA256, HELPER_FILES, helper=True)
             env = {"H3_DLSSNR_EXE": str(helper / "video2dlssnr.exe"), "H3_DLSSNR_DLL_DIR": str(helper),
                    "H3_DLSSNR_MODEL_SHA256": sha256(helper / "nvngx_dlssnr.dll")}
-            manifest = {"env": env, "helper_version": DLSSNR_VERSION, "initialized": os.name == "nt"}
+            manifest = {**manifest, "env": env, "helper_version": DLSSNR_VERSION, "initialized": os.name == "nt"}
+            manifest.pop("error", None)
             if os.name != "nt":
                 if system_packages:
                     install_linux_packages(root)
@@ -426,10 +517,13 @@ def ensure_runtime(root=None, *, initialize=False, system_packages=True):
 
 def prepare_runtime(root=None, *, system_packages=True):
     """Keep generation usable when this experimental optional backend cannot start."""
+    root = runtime_root(root)
+    root.mkdir(parents=True, exist_ok=True)
     try:
         ensure_runtime(root, initialize=True, system_packages=system_packages)
     except Exception as exc:
         print(f"[h3-nvidia] DLSS unavailable on this host: {exc}", flush=True)
+    prepare_native_runtime(root)
 
 
 if __name__ == "__main__":

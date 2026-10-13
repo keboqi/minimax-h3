@@ -2,6 +2,7 @@
 import ast
 from contextlib import ExitStack, nullcontext
 import hashlib
+import gzip
 import io
 import json
 import os
@@ -127,36 +128,101 @@ class LinuxRuntimeTests(unittest.TestCase):
             root = Path(directory)
             cached = root / "drivers/610.50"
             cached.mkdir(parents=True)
-            for name in ("nvngx.dll", "_nvngx.dll"):
+            for name in runtime.NGX_FILES:
                 (cached / name).write_bytes(b"bridge")
+            (cached / "source.json").write_text(json.dumps({"driver_version": "610.50",
+                "files": {name: runtime.sha256(cached / name) for name in runtime.NGX_FILES}}))
             with patch.object(runtime, "BRIDGE_DIRS", ()), patch.object(runtime.subprocess, "run", return_value=Mock(stdout="610.50\n")), patch.object(runtime, "download") as fetch:
                 self.assertEqual(runtime.driver_bridges(root), (cached, "610.50"))
             fetch.assert_not_called()
 
-    def test_missing_driver_bridges_extract_only_and_never_install_driver(self):
+    def test_missing_driver_components_extract_verified_package_without_installing(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            archive = root / "nvidia.run"
+            archive = root / "nvidia.deb"
             archive.write_bytes(b"vendor archive fixture")
+            checksum = runtime.sha256(archive)
+            index = root / "Packages.gz"
+            index.write_bytes(gzip.compress((
+                "Package: libnvidia-gl-580\nArchitecture: amd64\nVersion: 580.126.20-1ubuntu1\n"
+                "Filename: ./libnvidia-gl-580_580.126.20-1ubuntu1_amd64.deb\nSHA256: " + checksum
+            ).encode()))
 
             def run(command, **kwargs):
                 if command[0] == "nvidia-smi":
-                    return Mock(stdout="610.50\n")
-                self.assertEqual(command[:3], ["sh", str(archive), "--extract-only"])
-                extracted = Path(command[-1]) / "wine"
-                extracted.mkdir(parents=True)
+                    return Mock(stdout="580.126.20\n")
+                self.assertEqual(command[:3], ["dpkg-deb", "-x", str(archive)])
+                extracted = Path(command[-1]) / "usr/lib/x86_64-linux-gnu"
+                (extracted / "nvidia/wine").mkdir(parents=True)
+                (extracted / "libnvidia-ngx.so.580.126.20").write_bytes(b"native core")
                 for name in ("nvngx.dll", "_nvngx.dll"):
-                    (extracted / name).write_bytes(b"bridge")
+                    (extracted / "nvidia/wine" / name).write_bytes(b"bridge")
                 return Mock(returncode=0)
 
-            with patch.object(runtime, "BRIDGE_DIRS", ()), patch.object(runtime.subprocess, "run", side_effect=run) as process, patch.object(runtime, "download", return_value=archive) as fetch:
+            with patch.object(runtime, "BRIDGE_DIRS", ()), patch.object(runtime.subprocess, "run", side_effect=run) as process, patch.object(runtime.shutil, "which", return_value="dpkg-deb"), patch.object(runtime, "download", side_effect=[index, archive]) as fetch:
                 bridges, version = runtime.driver_bridges(root)
-            self.assertEqual(version, "610.50")
+                self.assertEqual(runtime.driver_components(root, version), bridges)
+            self.assertEqual(version, "580.126.20")
             self.assertEqual(process.call_count, 2)
-            self.assertIn("/610.50/NVIDIA-Linux-x86_64-610.50.run", fetch.call_args.args[0])
+            self.assertEqual(fetch.call_count, 2)
+            self.assertEqual(fetch.call_args.args[2], checksum)
+            self.assertIn("/libnvidia-gl-580_580.126.20-1ubuntu1_amd64.deb", fetch.call_args.args[0])
+            self.assertEqual((bridges / "libnvidia-ngx.so.1").read_bytes(), b"native core")
             self.assertTrue((bridges / "_nvngx.dll").is_file())
             self.assertTrue((bridges / "source.json").is_file())
             self.assertFalse(archive.exists())
+
+    def test_package_resolution_requires_exact_driver_architecture_and_safe_metadata(self):
+        def entry(version, architecture="amd64", filename="./driver.deb"):
+            return (f"Package: libnvidia-gl-580\nArchitecture: {architecture}\nVersion: {version}-1ubuntu1\n"
+                    f"Filename: {filename}\nSHA256: " + "a" * 64 + "\n\n")
+        wrong = entry("580.126.20", "i386") + entry("580.126.21")
+        self.assertIsNone(runtime.driver_package("580.126.20", wrong))
+        self.assertEqual(runtime.driver_package("580.126.20", wrong + entry("580.126.20")),
+                         (runtime.NVIDIA_REPO + "driver.deb", "a" * 64))
+        self.assertEqual(runtime.driver_package("580.126.20", entry("580.126.20").replace("\n", "\r\n")),
+                         (runtime.NVIDIA_REPO + "driver.deb", "a" * 64))
+        with self.assertRaisesRegex(RuntimeError, "invalid filename"):
+            runtime.driver_package("580.126.20", entry("580.126.20", filename="../../driver.deb"))
+
+    def test_native_setup_runs_with_dlss_disabled_and_keeps_its_own_error(self):
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {"H3_ENABLE_DLSSNR": "0"}, clear=True):
+            root = Path(directory)
+            runtime.write_manifest(root, {"error": "DLSS failed independently"})
+            with patch.object(runtime.platform, "system", return_value="Linux"), patch.object(runtime.platform, "machine", return_value="x86_64"), patch.object(runtime, "NGX_DIRS", ()), patch.object(runtime, "host_driver_version", return_value="580.126.20"), patch.object(runtime, "driver_components", return_value=root / "drivers/580.126.20"), patch.object(runtime, "installation_lock", side_effect=lambda root: nullcontext()):
+                runtime.prepare_runtime(root)
+            manifest = runtime.read_manifest(root)
+            self.assertEqual(manifest["error"], "DLSS failed independently")
+            self.assertEqual(manifest["vsr"]["driver_version"], "580.126.20")
+            env = runtime.native_env(root, {"LD_LIBRARY_PATH": "/existing/libs", "KEEP": "value"})
+            self.assertEqual(env["KEEP"], "value")
+            self.assertTrue(env["LD_LIBRARY_PATH"].endswith(":/existing/libs"))
+            self.assertEqual(env["H3_VSR_NGX_LIBRARY"], manifest["vsr"]["library"])
+
+    def test_native_failure_clears_stale_library_without_overwriting_dlss_state(self):
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            root = Path(directory)
+            runtime.write_manifest(root, {"vsr": {"library": "/old/ngx"}, "initialized": True})
+            with patch.object(runtime.platform, "system", return_value="Linux"), patch.object(runtime.platform, "machine", return_value="x86_64"), patch.object(runtime, "host_driver_version", side_effect=RuntimeError("host unavailable")), patch.object(runtime, "installation_lock", side_effect=lambda root: nullcontext()):
+                runtime.prepare_native_runtime(root)
+            manifest = runtime.read_manifest(root)
+            self.assertEqual(manifest["vsr"], {"error": "host unavailable"})
+            self.assertTrue(manifest["initialized"])
+
+    def test_dlss_also_prepares_native_ngx_when_vsr_is_disabled(self):
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {"H3_ENABLE_NVIDIA_VSR": "0"}, clear=True):
+            root = Path(directory)
+            with patch.object(runtime.platform, "system", return_value="Linux"), patch.object(runtime.platform, "machine", return_value="x86_64"), patch.object(runtime, "NGX_DIRS", ()), patch.object(runtime, "host_driver_version", return_value="580.126.20"), patch.object(runtime, "driver_components", return_value=root / "drivers/580.126.20") as prepare, patch.object(runtime, "installation_lock", side_effect=lambda root: nullcontext()):
+                runtime.prepare_native_runtime(root)
+            prepare.assert_called_once_with(root, "580.126.20")
+            self.assertIn("library", runtime.read_manifest(root)["vsr"])
+
+    def test_http_404_includes_url_and_does_not_retry_missing_artifact(self):
+        url = "https://example.invalid/missing.deb"
+        with TemporaryDirectory() as directory, patch.object(runtime, "urlopen", side_effect=runtime.HTTPError(url, 404, "Not Found", {}, None)) as fetch:
+            with self.assertRaisesRegex(RuntimeError, "https://example.invalid/missing.deb.*404"):
+                runtime.download(url, Path(directory) / "missing.deb")
+            fetch.assert_called_once()
 
     def test_colab_glibc_uses_compatible_wine_and_newer_hosts_reuse_proton(self):
         with TemporaryDirectory() as directory:

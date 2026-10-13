@@ -15,6 +15,7 @@ from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
 from h3_app import nvidia_postprocess as service
+from h3_app import vsr_worker
 from h3_app.nvidia_pipeline import stream_pipeline
 from h3_app.provenance import read_snapshot, write_snapshot
 from h3_ui.nvidia_media import with_nvidia_settings, can_enhance
@@ -23,6 +24,12 @@ from h3_ui.presentation import error_markdown
 
 
 class NvidiaSettingsTests(unittest.TestCase):
+    def test_vsr_checks_dynamic_ngx_dependency_before_loading_sdk(self):
+        with patch.object(vsr_worker.sys, "platform", "linux"), patch.dict(service.os.environ, {"H3_VSR_NGX_LIBRARY": "/private/libnvidia-ngx.so.1"}), patch.object(vsr_worker.ctypes, "CDLL", side_effect=OSError("not found")) as load:
+            with self.assertRaisesRegex(RuntimeError, "driver NGX core.*not found"):
+                vsr_worker.load_native_ngx()
+            load.assert_called_once_with("/private/libnvidia-ngx.so.1", mode=vsr_worker.ctypes.RTLD_GLOBAL)
+
     def test_gpu_python_preserves_virtualenv_executable_without_resolving_symlink(self):
         with TemporaryDirectory() as directory:
             executable = Path(directory) / ".venv/bin/python"
@@ -140,6 +147,16 @@ class BinaryPipeTests(unittest.TestCase):
         with patch.object(service, "availability", return_value=(True, "")), patch.object(service, "worker_command", return_value=(command, None)):
             with self.assertRaisesRegex(H3Error, "unchanged frames"):
                 service.probe_runtime(NVIDIA_VSR, Mock(generation_timeout=15))
+
+    def test_runtime_probe_rejects_black_output_including_opaque_alpha(self):
+        for method in (NVIDIA_VSR, DLSS5_NR):
+            channels = 3 if method == NVIDIA_VSR else 4
+            code = ("import sys; data=bytearray(sys.stdin.buffer.read()); data[:]=bytes(len(data)); "
+                    + ("data[3::4]=bytes([255])*(len(data)//4); " if channels == 4 else "")
+                    + "print('feature ready; streaming', file=sys.stderr); sys.stdout.buffer.write(data)")
+            with self.subTest(method=method), patch.object(service, "availability", return_value=(True, "")), patch.object(service, "worker_command", return_value=(self.command(code), None)), patch.object(service, "worker_context", return_value=nullcontext()):
+                with self.assertRaisesRegex(H3Error, "black frames"):
+                    service.probe_runtime(method, Mock(generation_timeout=15))
 
     def test_runtime_evidence_survives_long_progress_logs(self):
         command = self.command("import sys; print('H3VFX {\"gpu\":\"fixture\"}', file=sys.stderr); "

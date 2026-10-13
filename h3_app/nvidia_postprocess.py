@@ -19,7 +19,10 @@ import sys
 import tempfile
 from typing import Iterator
 
-from h3_nvidia_runtime import enabled, headless_command, runtime_env, stop_wine_server, wine_env
+from h3_nvidia_runtime import (
+    enabled, headless_command, native_env, read_manifest, runtime_env, runtime_root,
+    stop_wine_server, wine_env,
+)
 
 from .catalog import DLSS5_NR, NVIDIA_VSR, NVIDIA_POSTPROCESS_OPTIONS, UPSCALE_RESOLUTION_PRESETS
 from .config import RuntimeConfig
@@ -138,6 +141,11 @@ def availability(method):
         if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
             raise H3Error("FFmpeg and ffprobe must be installed on the processing host.")
         if method == NVIDIA_VSR:
+            if not enabled("H3_ENABLE_NVIDIA_VSR"):
+                raise H3Error("VSR enhancement is disabled on this processing host.")
+            native = read_manifest(runtime_root()).get("vsr", {})
+            if os.name != "nt" and native.get("error"):
+                raise H3Error("Automatic VSR NGX setup failed: " + native["error"])
             python = gpu_python()
             if os.path.normcase(python) == os.path.normcase(os.path.abspath(sys.executable)) and (
                 importlib.util.find_spec("nvvfx") is None or importlib.util.find_spec("torch") is None
@@ -225,7 +233,7 @@ def validate_cfr(source, runtime):
 def worker_context(method, runtime):
     """Reserve a dedicated Wine prefix across app processes; no global kill."""
     if method != DLSS5_NR or os.name == "nt":
-        yield None
+        yield native_env() if method == NVIDIA_VSR and os.name != "nt" else None
         return
     import fcntl
     config = runtime_env()
@@ -236,7 +244,7 @@ def worker_context(method, runtime):
         except OSError as exc:
             raise H3Error("The dedicated DLSS Wine prefix is busy in another process.") from exc
         wine = shutil.which(config.get("H3_DLSSNR_WINE", "wine"))
-        env = wine_env(prefix, wine)
+        env = native_env(base=wine_env(prefix, wine))
         failed = False
         try:
             yield env
@@ -303,6 +311,9 @@ def probe_runtime(method, runtime):
         changed = result != raw * 2
     if not changed:
         raise H3Error("Runtime returned unchanged frames; neural execution could not be verified.")
+    # Ignore alpha: a failed GPU backend can return opaque, all-black frames.
+    if not any(any(result[channel::channels]) for channel in range(3)):
+        raise H3Error("Runtime returned black frames for textured input; neural execution failed.")
     if method == DLSS5_NR and not any("feature ready; streaming" in line for line in last.diagnostics):
         raise H3Error("DLSS helper did not confirm neural feature initialization. Use a compatible video2dlssnr build.")
     return "Runtime check passed: two frames evaluated and enhanced on the processing host."

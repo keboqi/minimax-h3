@@ -7,11 +7,29 @@ without installing this application's Gradio dependencies.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
+import os
 import sys
 
 
+def load_native_ngx():
+    """NGX is dlopened by VFX, so ldd on the SDK alone misses this prerequisite."""
+    if sys.platform != "linux":
+        return None
+    library = os.getenv("H3_VSR_NGX_LIBRARY", "libnvidia-ngx.so.1")
+    try:
+        return ctypes.CDLL(library, mode=ctypes.RTLD_GLOBAL)
+    except OSError as exc:
+        raise RuntimeError(
+            f"VSR cannot load the NVIDIA driver NGX core {library}: {exc}. "
+            "Restart run_h3.sh or redeploy Modal to extract the exact host-driver library automatically. "
+            "In GPU containers, CUDA alone does not supply NGX."
+        ) from exc
+
+
 def transform_frames(width, height, out_width, out_height, settings):
+    ngx = load_native_ngx()
     import numpy as np
     import torch
     from nvvfx import VideoSuperRes
@@ -23,6 +41,11 @@ def transform_frames(width, height, out_width, out_height, settings):
     torch.cuda.set_device(device)
     stream = torch.cuda.current_stream(device)
     effects = []
+    print("H3VFX " + json.dumps({
+        "runtime": version("nvidia-vfx"), "torch": torch.__version__,
+        "gpu": torch.cuda.get_device_name(device),
+        "ngx": str(ngx._name) if ngx else "Windows",
+    }), file=sys.stderr, flush=True)
 
     def effect(quality, strength, w, h):
         sr = VideoSuperRes(
@@ -30,7 +53,6 @@ def transform_frames(width, height, out_width, out_height, settings):
             device=device, image_encoding=VideoSuperRes.ImageEncoding.RGB8,
         )
         effects.append(sr)
-        sr.input_width, sr.input_height = width, height
         sr.output_width, sr.output_height = w, h
         sr.load()
         return sr
@@ -76,7 +98,11 @@ def transform_frames(width, height, out_width, out_height, settings):
                     stream.synchronize()
                     gpu = torch.from_dlpack(result.image).clone()
                     stream.synchronize()
+                if not torch.isfinite(gpu).all().item():
+                    raise RuntimeError("VSR returned non-finite pixels; enhancement failed.")
                 output = gpu.clamp(0, 1).mul(255).round().to(torch.uint8).permute(1, 2, 0).contiguous().cpu()
+                if image.max() > 0 and output.max().item() == 0:
+                    raise RuntimeError("VSR returned a black frame for non-black input; enhancement failed.")
                 data = memoryview(output.numpy().tobytes())
                 while data:
                     written = sys.stdout.buffer.write(data)
