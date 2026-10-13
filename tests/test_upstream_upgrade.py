@@ -115,7 +115,34 @@ class ComfyRequirementsTests(unittest.TestCase):
         lines = (SOURCES / "comfy-requirements.txt").read_text().splitlines()
         self.assertIn(f"comfyui-frontend-package=={COMFY_FRONTEND_VERSION}", lines)
         self.assertIn(f"comfy-kitchen=={COMFY_KITCHEN_VERSION}", lines)
-        self.assertIn("comfy-aimdo==0.5.5", lines)
+        self.assertIn("comfy-aimdo==0.5.6", lines)
+        self.assertIn("comfyui-workflow-templates==0.11.82", lines)
+        self.assertIn("comfyui-embedded-docs==0.5.14", lines)
+
+
+@unittest.skipUnless((SOURCES / "comfy-minimax-vae.py").is_file(), "pinned native H3 VAE not downloaded")
+class NativeH3StillDecodeTests(unittest.TestCase):
+    def test_stock_still_expands_clip_but_finetuned_still_keeps_one_latent(self):
+        source = (SOURCES / "comfy-minimax-vae.py").read_text(encoding="utf-8")
+        cls = extracted_class(source, "MiniMaxH3VideoVAE", {"decode"})
+        for still_frame, expected_length in ((None, 5), (3, 1)):
+            with self.subTest(still_frame=still_frame):
+                obj = cls()
+                obj.latents_mean = SimpleNamespace(view=lambda *args: tensor(0))
+                obj.latents_std = SimpleNamespace(view=lambda *args: tensor(1))
+                obj.still_frame = still_frame
+                obj.frame_pre_padding, obj.tokens_chunk_size = 3, 5
+                observed = []
+                pixels = tensor(np.zeros((1, 3, 1, 1, 1)))
+
+                def decode(z, frame_slice):
+                    observed.append((z.shape[2], frame_slice))
+                    return pixels
+
+                obj._adaptive_decode = decode
+                obj._finalize_pixels = lambda value: value
+                self.assertIs(obj.decode(tensor(np.zeros((1, 24, 1, 1, 1)))), pixels)
+                self.assertEqual(observed, [(expected_length, slice(3, 4))])
 
 
 @unittest.skipUnless((SOURCES / "comfy-compositing.py").is_file(), "pinned native alpha node not downloaded")

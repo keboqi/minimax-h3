@@ -87,7 +87,7 @@ Select **Veda** under **Sampling & performance → Attention** to use learned
 sparse attention for both base generation and latent-upscale refinement. **SLA
 remains the default.** Local and Modal provisioning install the same pinned
 [Veda node](https://github.com/veda-sparse/Veda-on-ComfyUI) revision
-`8d7ac153ac215d636eaf1b5910b0536c3de9e6ed`; existing installations need updated
+`67e4eb5541b648555563144401ebaba832bd73ec` (v0.3.1); existing installations need updated
 setup and a ComfyUI restart, and Modal images need rebuilding/redeploying.
 
 The app downloads the checksum-pinned ~275 MB predictor on first use into
@@ -106,7 +106,10 @@ dense, and one-step Quality refinement is fully dense. Each stage gets its own
 Veda node and runtime state, including when a different refinement LoRA is selected.
 
 Result settings record the predictor, checksum, tile budget and dense-step policy.
-Backend logs report actual sparse execution and dense fallbacks. Existing
+Backend logs report actual sparse execution and deliberately configured dense
+steps/layers. Missing kernels, incompatible layouts and conflicting sparse
+overrides now fail explicitly instead of silently falling back to dense attention;
+CUDA OOM retains its exception type so ComfyUI can recover memory. Existing
 cache policy still applies: latent upscaling disables forecasting/cache modes
 across the two samplers. Single-stage Veda with Spectrum or cache acceleration is
 experimental. The preview predictor's training coverage does not establish quality
@@ -299,7 +302,7 @@ Ref2VA keys so workflow construction remains mode-specific.
 
 ## Run locally
 
-Local and Modal provisioning and the UI test environment pin Gradio 6.29.1.
+Local and Modal provisioning and the UI test environment pin Gradio 6.30.0.
 Existing local installs refresh an older Gradio on the next `run_h3.sh` startup;
 Spectrum also refreshes from its shared source pin. Modal deployments require a
 rebuild/redeploy to pick up these dependency changes.
@@ -919,11 +922,17 @@ hosted prompt enhancer available without entering a key in the UI, also store
 The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
-The deployment pins ComfyUI v0.39.0 at immutable revision
-`b0b743566f65daafc423b4fea8a2fbda94b3384a` (native H3 VAE offloading and
-embedding memory fixes, including LynnReal light VAE support) with its required
-frontend package 1.53.10, Comfy Kitchen 0.2.37 and upstream aimdo 0.5.5.
-The source also pins workflow templates 0.11.76 and embedded docs 0.5.13.
+The deployment pins ComfyUI v0.40.0 at immutable revision
+`3541246a9c997f4b8c32f9f88f3c985d02021c79` with its required frontend
+package 1.55.17, Comfy Kitchen 0.2.37 and upstream aimdo 0.5.6.
+The source also pins workflow templates 0.11.82 and embedded docs 0.5.14.
+This release fixes Qwen Image 2.1 caching under low VRAM and updates shared
+Linear/fusion and bypass-LoRA dispatch. Our optional 500K decoder supplies the
+direct single-latent metadata required by the new native H3 still-image path.
+The asset system stays off by default for ordinary Linux/Modal launches;
+`--enable-assets` opts in. Existing deployments need updated setup and a ComfyUI
+restart; rebuild/redeploy Modal images. GPU quality and memory validation remain
+separate from the CPU/browser checks.
 Version 0.39.0 also reduces asset scan/database contention, pauses scans during
 generation, fixes cross-volume uploads, and updates Qwen Image attention support.
 This update includes native Qwen Image 2.1 generation/editing, corrected edit
@@ -1025,5 +1034,5 @@ ownership and cancellation boundaries.
 
 See [the architecture guide](docs/architecture.md) for preset behavior, module
 boundaries, cancellation ownership, preference migration and result metadata.
-[The latest upstream audit](docs/upstream-audit-2026-10-12.md) lists pending
+[The latest upstream audit](docs/upstream-audit-2026-10-14.md) lists pending
 component upgrade candidates.

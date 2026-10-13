@@ -32,17 +32,16 @@ KORNIA_RS_VERSION = "0.1.14"
 # so keep their versions compatible with the pinned NumPy 1.26/CUDA stack.
 LTX_HDR_REQUIREMENTS = ("colour-science==0.4.6", "openimageio==3.0.12.0")
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
-# ComfyUI v0.39.0 includes LynnReal light VAE support, native H3 VAE offloading
-# and embedding memory fixes, plus asset scan/database and cross-volume upload
-# fixes. Keep its frontend and Kitchen versions aligned with upstream requirements.
+# ComfyUI v0.40.0 fixes Qwen Image low-VRAM caching and adds direct single-latent
+# H3 decoder metadata. Keep frontend and Kitchen aligned with its requirements.
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "6063fafbd9c3b85c5ff40aef435ae11b2844e558"
 
-COMFY_REF = "b0b743566f65daafc423b4fea8a2fbda94b3384a"
+COMFY_REF = "3541246a9c997f4b8c32f9f88f3c985d02021c79"
 COMFY_KITCHEN_VERSION = "0.2.37"
-COMFY_FRONTEND_VERSION = "1.53.10"
+COMFY_FRONTEND_VERSION = "1.55.17"
 WSPROTO_VERSION = "1.2.0"
-GRADIO_VERSION = "6.29.1"
+GRADIO_VERSION = "6.30.0"
 SWIFTVR_REPO = "https://github.com/H-oliday/SwiftVR.git"
 SWIFTVR_REF = "5ca168cef6ca7200f135fdfea85e5e13d12c5b53"
 SWIFTVR_HF_REPO = "H-oliday/SwiftVR"
@@ -273,9 +272,9 @@ def selftest() -> None:
     assert KORNIA_RS_VERSION == "0.1.14"
     assert LTX_HDR_REQUIREMENTS == ("colour-science==0.4.6", "openimageio==3.0.12.0")
     assert KERNELS_VERSION == "0.16.0"
-    assert COMFY_REF == "b0b743566f65daafc423b4fea8a2fbda94b3384a"
+    assert COMFY_REF == "3541246a9c997f4b8c32f9f88f3c985d02021c79"
     assert COMFY_KITCHEN_VERSION == "0.2.37"
-    assert COMFY_FRONTEND_VERSION == "1.53.10"
+    assert COMFY_FRONTEND_VERSION == "1.55.17"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 12
     with tempfile.TemporaryDirectory() as temp:

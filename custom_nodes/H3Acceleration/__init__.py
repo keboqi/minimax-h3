@@ -921,6 +921,11 @@ class H3SingleFrameVAELoader:
             )
 
         base.update(decoder)
+        # Core otherwise expands a single latent into a clip for the stock
+        # decoder. This fine-tuned decoder consumes one latent directly and
+        # selects its last real frame; retain the base architecture metadata.
+        metadata = dict(metadata or {})
+        metadata.update(h3_t1_direct="true", h3_t1_output_slice="3")
         logging.info(
             "Loaded MiniMax H3 single-frame decoder %s over %s",
             decoder_name,
