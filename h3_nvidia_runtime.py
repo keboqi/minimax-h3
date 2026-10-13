@@ -238,7 +238,8 @@ def wine_run(wine, args, env):
     result = subprocess.run(headless_command([str(wine), *args]), env=env, text=True,
                             capture_output=True, timeout=180)
     if result.returncode:
-        raise RuntimeError("DLSS Wine setup failed: " + (result.stderr or result.stdout)[-2000:])
+        raise RuntimeError(f"DLSS Wine setup failed running {args[0]} with {wine}: "
+                           + (result.stderr or result.stdout)[-2000:])
 
 
 def stop_wine_server(wine, env, *, timeout=15):
@@ -464,14 +465,15 @@ def installation_lock(root):
 
 
 def choose_wine_runner(root, proton):
-    # GE's ntdll requires glibc 2.38. Colab/Ubuntu 22.04 can still use its PE
-    # graphics DLLs with a glibc-2.27-compatible WoW64 build, without 32-bit libs.
-    _, version = platform.libc_ver()
-    parts = tuple(int(part) for part in version.split(".")[:2]) if version else (0, 0)
-    if parts >= (2, 38):
-        return proton / "files/bin/wine", PROTON_VERSION
+    # Full Proton includes i386-unix helpers which need /lib/ld-linux.so.2.
+    # A recent 64-bit glibc does not supply that loader in cloud containers.
+    # Use the pinned pure-64-bit WoW64 runner on every Linux host, retaining
+    # Proton only for the native DXVK/VKD3D/NVAPI Windows graphics DLLs.
     compatible = install_archive(root, WINE_COMPAT_VERSION, WINE_COMPAT_URL,
-                                 WINE_COMPAT_SHA256, ("bin/wine", "bin/wineserver"))
+                                 WINE_COMPAT_SHA256, ("bin/wine", "bin/wineserver",
+                                 "lib/wine/x86_64-unix/ntdll.so",
+                                 "lib/wine/x86_64-windows/wineboot.exe",
+                                 "lib/wine/x86_64-windows/reg.exe"))
     return compatible / "bin/wine", WINE_COMPAT_VERSION
 
 
@@ -501,7 +503,9 @@ def ensure_runtime(root=None, *, initialize=False, system_packages=True):
                 proton = install_archive(root, PROTON_VERSION, PROTON_URL, PROTON_SHA256, required)
                 wine, runner_version = choose_wine_runner(root, proton)
                 env.update(H3_DLSSNR_WINE=str(wine),
-                           H3_DLSSNR_WINEPREFIX=str(root / "prefix"))
+                           # Isolate runner changes from older Proton prefixes
+                           # and their symlinks into a different Wine build.
+                           H3_DLSSNR_WINEPREFIX=str(root / ("prefix-" + runner_version)))
                 manifest["runner_version"] = runner_version
                 if initialize:
                     manifest["driver_version"] = initialize_prefix(root, proton, env)

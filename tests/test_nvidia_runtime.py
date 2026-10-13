@@ -224,19 +224,27 @@ class LinuxRuntimeTests(unittest.TestCase):
                 runtime.download(url, Path(directory) / "missing.deb")
             fetch.assert_called_once()
 
-    def test_colab_glibc_uses_compatible_wine_and_newer_hosts_reuse_proton(self):
+    def test_old_and_new_glibc_hosts_use_wow64_without_32_bit_system_libraries(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             proton = root / "proton"
-            with patch.object(runtime.platform, "libc_ver", return_value=("glibc", "2.35")), patch.object(runtime, "install_archive", return_value=root / "compatible") as install:
-                wine, version = runtime.choose_wine_runner(root, proton)
-                self.assertEqual(wine, root / "compatible/bin/wine")
-                self.assertEqual(version, runtime.WINE_COMPAT_VERSION)
-                self.assertIn("-amd64-wow64", install.call_args.args[1])
-                self.assertEqual(install.call_args.args[3], runtime.WINE_COMPAT_SHA256)
-            with patch.object(runtime.platform, "libc_ver", return_value=("glibc", "2.39")), patch.object(runtime, "install_archive") as install:
-                self.assertEqual(runtime.choose_wine_runner(root, proton)[0], proton / "files/bin/wine")
-                install.assert_not_called()
+            for glibc in ("2.35", "2.39"):
+                with self.subTest(glibc=glibc), patch.object(runtime.platform, "libc_ver", return_value=("glibc", glibc)), patch.object(runtime, "install_archive", return_value=root / "compatible") as install:
+                    wine, version = runtime.choose_wine_runner(root, proton)
+                    self.assertEqual(wine, root / "compatible/bin/wine")
+                    self.assertEqual(version, runtime.WINE_COMPAT_VERSION)
+                    self.assertIn("-amd64-wow64", install.call_args.args[1])
+                    self.assertEqual(install.call_args.args[3], runtime.WINE_COMPAT_SHA256)
+                    self.assertIn("lib/wine/x86_64-unix/ntdll.so", install.call_args.args[4])
+
+    def test_wine_setup_failure_identifies_the_runner_and_windows_operation(self):
+        wine = "/runner/bin/wine"
+        with patch.object(runtime, "headless_command", side_effect=lambda command: command), patch.object(runtime.subprocess, "run", return_value=Mock(returncode=1, stderr="/lib/ld-linux.so.2: could not open", stdout="")):
+            with self.assertRaises(RuntimeError) as failure:
+                runtime.wine_run(wine, [r"C:\windows\system32\reg.exe", "query", "HKLM"], {})
+        self.assertIn(wine, str(failure.exception))
+        self.assertIn(r"C:\windows\system32\reg.exe", str(failure.exception))
+        self.assertIn("/lib/ld-linux.so.2", str(failure.exception))
 
     def test_headless_launch_wraps_worker_and_keeps_arguments_separate(self):
         command = ["/runner/wine", "/my helper/video2dlssnr.exe", "--nr-video"]
@@ -333,6 +341,9 @@ class LinuxRuntimeTests(unittest.TestCase):
             root = Path(directory)
             concrete_path = type(root)
             helper, proton = root / "helper", root / "proton"
+            old_prefix = root / "prefix"
+            old_prefix.mkdir()
+            (old_prefix / "system.reg").write_text("keep old Proton prefix")
             helper.mkdir()
             (helper / "nvngx_dlssnr.dll").write_bytes(b"model")
             stack.enter_context(patch.object(runtime, "Path", concrete_path))
@@ -343,7 +354,7 @@ class LinuxRuntimeTests(unittest.TestCase):
             stack.enter_context(patch.object(runtime, "installation_lock", side_effect=lambda root: nullcontext()))
             stack.enter_context(patch.object(runtime, "install_archive", side_effect=[helper, proton, helper, proton]))
             packages = stack.enter_context(patch.object(runtime, "install_linux_packages"))
-            stack.enter_context(patch.object(runtime, "choose_wine_runner", return_value=(proton / "files/bin/wine", "GE")))
+            stack.enter_context(patch.object(runtime, "choose_wine_runner", return_value=(root / "compatible/bin/wine", runtime.WINE_COMPAT_VERSION)))
             initialize = stack.enter_context(patch.object(runtime, "initialize_prefix", return_value="610.50"))
             runtime.ensure_runtime(root, system_packages=False)
             initialize.assert_not_called()
@@ -354,6 +365,9 @@ class LinuxRuntimeTests(unittest.TestCase):
             packages.assert_called_once()
             self.assertTrue(runtime.read_manifest(root)["initialized"])
             self.assertNotIn("error", runtime.read_manifest(root))
+            prefix = runtime.read_manifest(root)["env"]["H3_DLSSNR_WINEPREFIX"]
+            self.assertEqual(concrete_path(prefix), root / ("prefix-" + runtime.WINE_COMPAT_VERSION))
+            self.assertEqual((old_prefix / "system.reg").read_text(), "keep old Proton prefix")
 
 
 class LauncherProvisioningTests(unittest.TestCase):
