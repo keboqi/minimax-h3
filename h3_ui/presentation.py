@@ -7,6 +7,15 @@ from html import escape
 from typing import Any, Iterable
 
 
+def error_markdown(label: str, error: Exception) -> str:
+    """Keep tracebacks literal; Markdown must not treat <module> as HTML."""
+    detail = str(error)
+    fence = "```"
+    while fence in detail:
+        fence += "`"
+    return f"{label}:\n\n{fence}text\n{detail}\n{fence}"
+
+
 @dataclass(frozen=True)
 class GenerationReadiness:
     """A display message and whether the primary action can be used."""

@@ -221,12 +221,58 @@ def wine_run(wine, args, env):
         raise RuntimeError("DLSS Wine setup failed: " + (result.stderr or result.stdout)[-2000:])
 
 
+def stop_wine_server(wine, env, *, timeout=15):
+    result = subprocess.run([str(Path(wine).parent / "wineserver"), "-k"], env=env,
+                            check=False, timeout=timeout, capture_output=True, text=True)
+    detail = (result.stderr or result.stdout or "").strip()
+    # Wine can return 1 when the prefix's server has already exited. No shared
+    # server is started or killed to work around that normal cleanup condition.
+    absent = not detail or "not running" in detail.lower() or "no server" in detail.lower()
+    if result.returncode not in (0, 1) or (result.returncode == 1 and not absent):
+        raise RuntimeError(f"DLSS Wine cleanup failed (exit {result.returncode}): {detail[-2000:]}")
+
+
 def copy_dll(source, destination):
     # Proton's template may contain symlinks into its bundle. Never write through
     # those links and corrupt the runner's built-in libraries.
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.unlink(missing_ok=True)
     shutil.copy2(source, destination)
+
+
+def seed_proton_prefix(proton, prefix):
+    """Proton requires its bundled prefix; bare wineboot cannot create one."""
+    template = proton / "files/share/default_pfx"
+    if not (template / "system.reg").is_file():
+        raise RuntimeError("The bundled Proton prefix template is missing; restart setup to repair it.")
+    libraries = (proton / "files/lib/wine").resolve()
+    for directory, dirs, names in os.walk(template):
+        source_dir = Path(directory)
+        destination_dir = prefix / source_dir.relative_to(template)
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        for name in dirs + names:
+            source, destination = source_dir / name, destination_dir / name
+            if destination.exists():
+                continue
+            if source.is_symlink():
+                # Relative builtin links point outside the template. Relocating
+                # them unchanged would leave kernel32 and the other DLLs missing.
+                target = source.resolve()
+                link = str(target) if target.is_relative_to(libraries) else os.readlink(source)
+                destination.unlink(missing_ok=True)
+                destination.symlink_to(link)
+            elif source.is_file():
+                destination.unlink(missing_ok=True)
+                shutil.copy2(source, destination)
+    devices = prefix / "dosdevices"
+    devices.mkdir(exist_ok=True)
+    for name, target in (("c:", "../drive_c"), ("z:", "/")):
+        link = devices / name
+        if not link.exists() and not link.is_symlink():
+            link.symlink_to(target)
+    # Match Proton's launcher: its prebuilt registry is already initialized.
+    timestamp = int((proton / "files/share/wine/wine.inf").stat().st_mtime)
+    (prefix / ".update-timestamp").write_text(str(timestamp) + "\n", encoding="ascii")
 
 
 def driver_bridges(root):
@@ -281,9 +327,13 @@ def _initialize_prefix(root, proton, env):
     prefix = Path(env["H3_DLSSNR_WINEPREFIX"])
     wine = Path(env["H3_DLSSNR_WINE"])
     process_env = wine_env(prefix, wine)
+    failed = False
     try:
-        if not (prefix / "system.reg").is_file():
-            wine_run(wine, ["wineboot", "-u"], dict(process_env, WINEDLLOVERRIDES="winemenubuilder.exe=d"))
+        if not (prefix / "system.reg").is_file() or not (prefix / "drive_c/windows/system32/kernel32.dll").is_file():
+            if wine == proton / "files/bin/wine":
+                seed_proton_prefix(proton, prefix)
+            else:
+                wine_run(wine, [r"C:\windows\system32\wineboot.exe", "-u"], dict(process_env, WINEDLLOVERRIDES="winemenubuilder.exe=d"))
         if not (prefix / "system.reg").is_file():
             raise RuntimeError("Wine did not initialize the managed DLSS prefix.")
         system32 = prefix / "drive_c/windows/system32"
@@ -300,11 +350,18 @@ def _initialize_prefix(root, proton, env):
             (r"HKLM\System\CurrentControlSet\Services\nvlddmkm\Parameters\NGXCore", "NGXPath"),
         )
         for key, value in keys:
-            wine_run(wine, ["reg", "add", key, "/v", value, "/t", "REG_SZ", "/d", r"C:\ngx_bridge", "/f"], process_env)
+            wine_run(wine, [r"C:\windows\system32\reg.exe", "add", key, "/v", value, "/t", "REG_SZ", "/d", r"C:\ngx_bridge", "/f"], process_env)
         return version
+    except BaseException:
+        failed = True
+        raise
     finally:
-        subprocess.run([str(wine.parent / "wineserver"), "-k"], env=process_env,
-                       check=True, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            stop_wine_server(wine, process_env)
+        except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+            if not failed:
+                raise
+            print(f"[h3-nvidia] Wine cleanup also failed: {exc}", flush=True)
 
 
 @contextmanager
@@ -318,7 +375,7 @@ def installation_lock(root):
 
 def choose_wine_runner(root, proton):
     # GE's ntdll requires glibc 2.38. Colab/Ubuntu 22.04 can still use its PE
-    # graphics DLLs with this separately pinned glibc-2.27-compatible Wine build.
+    # graphics DLLs with a glibc-2.27-compatible WoW64 build, without 32-bit libs.
     _, version = platform.libc_ver()
     parts = tuple(int(part) for part in version.split(".")[:2]) if version else (0, 0)
     if parts >= (2, 38):
@@ -347,7 +404,8 @@ def ensure_runtime(root=None, *, initialize=False, system_packages=True):
             if os.name != "nt":
                 if system_packages:
                     install_linux_packages(root)
-                required = ("files/bin/wine", "files/bin/wineserver", *(
+                required = ("files/bin/wine", "files/bin/wineserver", "files/share/default_pfx/system.reg",
+                            "files/share/default_pfx/drive_c/windows/system32/kernel32.dll", *(
                     f"files/lib/wine/{package}/x86_64-windows/{name}" for name, package in TRANSLATION_DLLS.items()))
                 proton = install_archive(root, PROTON_VERSION, PROTON_URL, PROTON_SHA256, required)
                 wine, runner_version = choose_wine_runner(root, proton)

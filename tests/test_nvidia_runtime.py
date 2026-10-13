@@ -166,6 +166,7 @@ class LinuxRuntimeTests(unittest.TestCase):
                 wine, version = runtime.choose_wine_runner(root, proton)
                 self.assertEqual(wine, root / "compatible/bin/wine")
                 self.assertEqual(version, runtime.WINE_COMPAT_VERSION)
+                self.assertIn("-amd64-wow64", install.call_args.args[1])
                 self.assertEqual(install.call_args.args[3], runtime.WINE_COMPAT_SHA256)
             with patch.object(runtime.platform, "libc_ver", return_value=("glibc", "2.39")), patch.object(runtime, "install_archive") as install:
                 self.assertEqual(runtime.choose_wine_runner(root, proton)[0], proton / "files/bin/wine")
@@ -186,6 +187,9 @@ class LinuxRuntimeTests(unittest.TestCase):
             prefix, proton, bridges = root / "prefix", root / "proton", root / "bridges"
             prefix.mkdir()
             (prefix / "system.reg").touch()
+            kernel = prefix / "drive_c/windows/system32/kernel32.dll"
+            kernel.parent.mkdir(parents=True)
+            kernel.touch()
             bridges.mkdir()
             for name in ("nvngx.dll", "_nvngx.dll"):
                 (bridges / name).write_bytes(name.encode())
@@ -194,25 +198,69 @@ class LinuxRuntimeTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"native " + name.encode())
             env = {"H3_DLSSNR_WINEPREFIX": str(prefix), "H3_DLSSNR_WINE": str(proton / "files/bin/wine")}
-            with patch.object(runtime, "driver_bridges", return_value=(bridges, "610.50")), patch.object(runtime, "wine_run") as run, patch.object(runtime.subprocess, "run") as stop:
+            with patch.object(runtime, "driver_bridges", return_value=(bridges, "610.50")), patch.object(runtime, "wine_run") as run, patch.object(runtime.subprocess, "run", return_value=Mock(returncode=0, stderr="", stdout="")) as stop:
                 version = runtime.initialize_prefix(root, proton, env)
             self.assertEqual(version, "610.50")
             self.assertEqual(run.call_count, 4)
+            self.assertTrue(all(call.args[1][0] == r"C:\windows\system32\reg.exe" for call in run.call_args_list))
             self.assertEqual((prefix / "drive_c/windows/system32/dxgi.dll").read_bytes(), b"native dxgi.dll")
             self.assertTrue((prefix / "drive_c/ngx_bridge/_nvngx.dll").is_file())
             self.assertEqual(stop.call_args.args[0][-1], "-k")
             self.assertEqual(stop.call_args.kwargs["env"]["WINEPREFIX"], str(prefix))
             self.assertIn("nvapi64", stop.call_args.kwargs["env"]["WINEDLLOVERRIDES"])
 
+    def test_proton_template_repairs_partial_prefix_without_overwriting_registry(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            proton, prefix = root / "proton", root / "prefix"
+            template = proton / "files/share/default_pfx"
+            kernel = Path("drive_c/windows/system32/kernel32.dll")
+            (template / kernel).parent.mkdir(parents=True)
+            (template / kernel).write_bytes(b"builtin")
+            (template / "system.reg").write_text("template registry")
+            inf = proton / "files/share/wine/wine.inf"
+            inf.parent.mkdir(parents=True)
+            inf.touch()
+            prefix.mkdir()
+            (prefix / "system.reg").write_text("existing registry")
+            # Windows cannot create Wine's c: and z: device names.
+            with patch.object(Path, "symlink_to"):
+                runtime.seed_proton_prefix(proton, prefix)
+            self.assertEqual((prefix / kernel).read_bytes(), b"builtin")
+            self.assertEqual((prefix / "system.reg").read_text(), "existing registry")
+            self.assertEqual((prefix / ".update-timestamp").read_text().strip(), str(int(inf.stat().st_mtime)))
+            env = {"H3_DLSSNR_WINEPREFIX": str(prefix), "H3_DLSSNR_WINE": str(proton / "files/bin/wine")}
+            (prefix / kernel).unlink()
+            with patch.object(runtime, "seed_proton_prefix") as seed, patch.object(runtime, "driver_bridges", side_effect=RuntimeError("driver unavailable")), patch.object(runtime, "copy_dll"), patch.object(runtime, "wine_run") as boot, patch.object(runtime, "stop_wine_server"):
+                with self.assertRaisesRegex(RuntimeError, "driver unavailable"):
+                    runtime.initialize_prefix(root, proton, env)
+            seed.assert_called_once_with(proton, prefix)
+            boot.assert_not_called()
+
     def test_prefix_failure_still_stops_only_its_server(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             env = {"H3_DLSSNR_WINEPREFIX": str(root / "prefix"), "H3_DLSSNR_WINE": str(root / "runner/bin/wine")}
-            with patch.object(runtime, "wine_run", side_effect=RuntimeError("boot failed")), patch.object(runtime.subprocess, "run") as stop:
+            with patch.object(runtime, "wine_run", side_effect=RuntimeError("boot failed")), patch.object(runtime.subprocess, "run", return_value=Mock(returncode=1, stderr="", stdout="")) as stop:
                 with self.assertRaisesRegex(RuntimeError, "boot failed"):
                     runtime.initialize_prefix(root, root / "runner", env)
             stop.assert_called_once()
             self.assertEqual(stop.call_args.args[0], [str(root / "runner/bin/wineserver"), "-k"])
+
+    def test_cleanup_accepts_already_exited_server_and_reports_real_failures(self):
+        with patch.object(runtime.subprocess, "run", return_value=Mock(returncode=1, stderr="", stdout="")):
+            runtime.stop_wine_server("/runner/bin/wine", {"WINEPREFIX": "/dedicated"})
+        with patch.object(runtime.subprocess, "run", return_value=Mock(returncode=1, stderr="could not load library", stdout="")):
+            with self.assertRaisesRegex(RuntimeError, "could not load library"):
+                runtime.stop_wine_server("/runner/bin/wine", {"WINEPREFIX": "/dedicated"})
+
+    def test_cleanup_failure_never_masks_initialization_error(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {"H3_DLSSNR_WINEPREFIX": str(root / "prefix"), "H3_DLSSNR_WINE": str(root / "bin/wine")}
+            with patch.object(runtime, "wine_run", side_effect=RuntimeError("original Wine loader error")), patch.object(runtime, "stop_wine_server", side_effect=RuntimeError("secondary cleanup error")):
+                with self.assertRaisesRegex(RuntimeError, "original Wine loader error"):
+                    runtime.initialize_prefix(root, root, env)
 
     def test_live_host_initialization_is_separate_from_image_build(self):
         with TemporaryDirectory() as directory, ExitStack() as stack:

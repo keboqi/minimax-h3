@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from h3_app.gallery_store import AssetInventory, AssetPage
 from .media_previews import preview_results
+from .presentation import error_markdown
 
 GalleryMutationResult = tuple[
     list[tuple[str, str]], list[str], str, Any, Any, str | None, bool
@@ -968,7 +969,7 @@ class MediaController:
         except Exception as exc:
             record_failure(exc)
             yield self.services.gallery_progress_result(
-                f"Post-processing failed: {exc}"
+                error_markdown("Post-processing failed", exc)
             )
         finally:
             self.services.cleanup_upscale_clip_batch(
@@ -1155,7 +1156,7 @@ class MediaController:
         except Exception as exc:
             record_failure(exc)
             yield self.services.gallery_media_progress_result(
-                f"Image enhancement failed: {exc}"
+                error_markdown("Image enhancement failed", exc)
             )
 
     def postprocess_selected_gallery_media(

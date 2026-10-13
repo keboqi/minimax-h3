@@ -19,9 +19,24 @@ from h3_app.nvidia_pipeline import stream_pipeline
 from h3_app.provenance import read_snapshot, write_snapshot
 from h3_ui.nvidia_media import with_nvidia_settings, can_enhance
 from h3_ui.job_bindings import owned_generation
+from h3_ui.presentation import error_markdown
 
 
 class NvidiaSettingsTests(unittest.TestCase):
+    def test_gpu_python_preserves_virtualenv_executable_without_resolving_symlink(self):
+        with TemporaryDirectory() as directory:
+            executable = Path(directory) / ".venv/bin/python"
+            executable.parent.mkdir(parents=True)
+            executable.touch()
+            with patch.dict(service.os.environ, {"H3_VSR_PYTHON": str(executable)}), patch.object(service.Path, "resolve", side_effect=AssertionError("Must not follow a virtualenv symlink")):
+                self.assertEqual(service.gpu_python(), str(executable.absolute()))
+
+    def test_traceback_is_rendered_as_literal_markdown_including_final_cause(self):
+        error = RuntimeError('File "vsr_worker.py", in <module>\nModuleNotFoundError: No module named numpy\n```')
+        message = error_markdown("Post-processing failed", error)
+        self.assertIn("````text\n" + str(error), message)
+        self.assertTrue(message.endswith("\n````"))
+
     def test_settings_reject_unknown_nonfinite_and_invalid_values(self):
         for value in ({"strength": float("nan")}, {"intensity": 2}, {"quality": "fake"},
                       {"original_size": "yes"}, {"arbitrary_exe": "bad"}, []):

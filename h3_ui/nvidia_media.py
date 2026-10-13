@@ -7,6 +7,7 @@ import gradio as gr
 from h3_app.catalog import NVIDIA_POSTPROCESS_OPTIONS
 from h3_app.jobs import record_failure
 from h3_app.nvidia_postprocess import availability, probe_runtime
+from .presentation import error_markdown
 
 
 def can_enhance(mode, selected, method):
@@ -50,4 +51,4 @@ def check_runtime(method: str, request: gr.Request):
         yield probe_runtime(method, _runtime_config())
     except Exception as exc:
         record_failure(exc)
-        yield f"Runtime check failed: {exc}"
+        yield error_markdown("Runtime check failed", exc)

@@ -19,7 +19,7 @@ import sys
 import tempfile
 from typing import Iterator
 
-from h3_nvidia_runtime import enabled, headless_command, runtime_env, wine_env
+from h3_nvidia_runtime import enabled, headless_command, runtime_env, stop_wine_server, wine_env
 
 from .catalog import DLSS5_NR, NVIDIA_VSR, NVIDIA_POSTPROCESS_OPTIONS, UPSCALE_RESOLUTION_PRESETS
 from .config import RuntimeConfig
@@ -91,11 +91,13 @@ def _file_hash(path, size, modified):
 
 
 def gpu_python():
-    configured = os.getenv("H3_VSR_PYTHON", sys.executable)
+    configured = os.path.expanduser(os.getenv("H3_VSR_PYTHON", sys.executable))
     path = shutil.which(configured) or configured
     if not Path(path).is_file():
         raise H3Error("H3_VSR_PYTHON must point to the GPU Python executable.")
-    return str(Path(path).resolve())
+    # Linux virtualenv executables are symlinks. Resolving the link launches the
+    # base interpreter, which cannot see the environment's NumPy/Torch/VFX.
+    return os.path.abspath(path)
 
 
 def dlss_config(*, verify=False):
@@ -137,7 +139,7 @@ def availability(method):
             raise H3Error("FFmpeg and ffprobe must be installed on the processing host.")
         if method == NVIDIA_VSR:
             python = gpu_python()
-            if python == str(Path(sys.executable).resolve()) and (
+            if os.path.normcase(python) == os.path.normcase(os.path.abspath(sys.executable)) and (
                 importlib.util.find_spec("nvvfx") is None or importlib.util.find_spec("torch") is None
             ):
                 raise H3Error("VSR runtime is missing. Restart run_h3.sh or redeploy Modal to install it automatically.")
@@ -247,9 +249,8 @@ def worker_context(method, runtime):
             server = Path(wine).parent / "wineserver" if wine else None
             if server and server.is_file():
                 try:
-                    subprocess.run([str(server), "-k"], env=env, timeout=10, check=True,
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                except (OSError, subprocess.SubprocessError) as exc:
+                    stop_wine_server(wine, env, timeout=10)
+                except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
                     if not failed:
                         raise H3Error("Could not stop the dedicated DLSS Wine server.") from exc
 
