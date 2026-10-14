@@ -665,6 +665,10 @@ image = image.run_function(
     kwargs={"revision": REVISION},
 )
 
+# Local bytecode is rewritten by every test run or import. Mounting it changes the
+# function's content hash, which makes Modal discard memory snapshots on each deploy.
+_BYTECODE_IGNORE = ["**/__pycache__", "**/*.pyc"]
+
 if IS_LOCAL:
     # Runtime-only changes are mounted when containers start. Keeping these
     # after all build steps prevents normal code iteration from rebuilding
@@ -679,10 +683,14 @@ if IS_LOCAL:
         LOCAL_UI_PACKAGE,
         remote_path=UI_PACKAGE.as_posix(),
         copy=False,
+        ignore=_BYTECODE_IGNORE,
     )
-
-if IS_LOCAL:
-    image = image.add_local_dir(LOCAL / "h3_app", remote_path=(ROOT / "h3_app").as_posix(), copy=False)
+    image = image.add_local_dir(
+        LOCAL / "h3_app",
+        remote_path=(ROOT / "h3_app").as_posix(),
+        copy=False,
+        ignore=_BYTECODE_IGNORE,
+    )
 
 volume = modal.Volume.from_name(VOL, create_if_missing=True)
 app = modal.App(APP, image=image)
