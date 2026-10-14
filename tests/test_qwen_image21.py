@@ -27,6 +27,7 @@ from h3_models import (
     DEFAULT_QWEN_IMAGE21_MODEL,
     DEFAULT_QWEN_IMAGE21_TEXT_ENCODER,
     MODEL_SPECS,
+    QWEN_IMAGE21_LIGHTNING,
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_OFFICIAL_TURBO,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
@@ -179,9 +180,9 @@ class QwenImage21WorkflowTests(unittest.TestCase):
 
     def _build(self, references=(), match_input_size=True, *, steps=25, turbo_variant="Off",
                scheduler="simple", cfg=1.0, sampler_name="euler", accelerator="Off",
-               width=1024, height=768):
+               width=1024, height=768, model_choice="INT8 ConvRot (lower VRAM)"):
         return build_qwen_image21_graph(
-            model_choice="INT8 ConvRot (lower VRAM)",
+            model_choice=model_choice,
             text_encoder_choice="INT8 ConvRot (recommended)",
             prompt="A red fox reading a book",
             negative_prompt="blurry",
@@ -649,6 +650,93 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         spectrum = self._by_type(graph, "QwenSpectrumModelPatcher")[0][1]
         self.assertEqual(spectrum["inputs"]["warmup_steps"], 10)
         self.assertEqual(spectrum["inputs"]["tail_actual_steps"], 8)
+
+    def test_lightning_uses_native_adapter_and_resolution_aware_schedule_for_generation_and_editing(self):
+        from h3_app.model_service import qwen_image21_model_keys
+        from h3_model_manager import model_presets
+        from h3_models import LAZY_OPTIONAL_MODEL_KEYS, PRELOAD_MODEL_KEYS
+
+        key = "qwen_image21_lightning_lora"
+        self.assertEqual(qwen_turbo_defaults(QWEN_IMAGE21_LIGHTNING), (4, 1., "euler", "Off"))
+        self.assertEqual(qwen_image21_model_keys("BF16", "BF16", QWEN_IMAGE21_LIGHTNING),
+                         (*qwen_image21_model_keys("BF16", "BF16"), key))
+        self.assertIn(key, LAZY_OPTIONAL_MODEL_KEYS)
+        self.assertNotIn(key, PRELOAD_MODEL_KEYS)
+        self.assertIn(key, model_presets()["Qwen Image 2.1 + Turbo LoRAs"])
+        self.assertEqual(MODEL_SPECS[key].repo_id, "lightx2v/Qwen-Image-2.1-Lightning")
+        self.assertEqual(MODEL_SPECS[key].local_name, "qwen_image_2.1_lightning_4step.safetensors")
+        for references, match in (((), False), (("target.png", "ref.png"), True)):
+            for model in QWEN_IMAGE21_MODEL_CHOICES:
+                with self.subTest(references=references, model=model):
+                    graph = self._build(references, match, model_choice=model, steps=4,
+                                        turbo_variant=QWEN_IMAGE21_LIGHTNING, scheduler="beta")
+                    lora_id, lora = self._by_type(graph, "LoraLoaderModelOnly")[0]
+                    self.assertEqual(lora["inputs"]["lora_name"], MODEL_SPECS[key].local_name)
+                    self.assertEqual(lora["inputs"]["strength_model"], 1.)
+                    sigma_id, sigma = self._by_type(graph, "H3Qwen21LightningSigmas")[0]
+                    sampler = self._by_type(graph, "SamplerCustomAdvanced")[0][1]
+                    self.assertEqual(sampler["inputs"]["sigmas"], [sigma_id, 0])
+                    self.assertEqual(sigma["inputs"]["latent_image"], sampler["inputs"]["latent_image"])
+                    guider = self._by_type(graph, "CFGGuider")[0][1]
+                    self.assertEqual(guider["inputs"]["model"], [lora_id, 0])
+                    nodes = required_qwen_image21_nodes(editing=bool(references), turbo=True,
+                                                         lightning=True, scheduler="beta")
+                    self.assertTrue({node["class_type"] for node in graph.values()} <= nodes)
+                    for unused in ("H3Qwen21ViggleLora", "H3Qwen21TurboSigmas", "H3Qwen21Sigmas",
+                                   "ManualSigmas", "SplitSigmas", "QwenSpectrumModelPatcher"):
+                        self.assertFalse(self._by_type(graph, unused))
+                    if references:
+                        cache = self._by_type(graph, "QwenImage21Cache")[0][1]
+                        self.assertEqual(cache["inputs"]["device"], "off")
+        for settings, message in (({"steps": 8}, "requires 4 steps"),
+                                  ({"cfg": 2}, "CFG 1"),
+                                  ({"sampler_name": "heun"}, "Euler"),
+                                  ({"accelerator": "Spectrum (Quality)"}, "accelerator Off")):
+            with self.subTest(settings=settings), self.assertRaisesRegex(ValueError, message):
+                self._build(**{"steps": 4, "turbo_variant": QWEN_IMAGE21_LIGHTNING, **settings})
+
+    def test_lightning_requests_validate_and_execute_without_viggle_requirements(self):
+        request = QwenImage21Request(
+            mode="Text to image", model_choice="BF16", text_encoder_choice="BF16",
+            prompt="A fox", negative_prompt="", reference_images=(),
+            width=1024, height=1024, reference_resolution=0, match_input_size=True,
+            seed=42, steps=4, cfg=1., sampler_name="euler", scheduler="simple",
+            cache_device="auto", cache_dtype="default", attention_backend="pytorch attention",
+            turbo_variant=QWEN_IMAGE21_LIGHTNING,
+        )
+        models = SimpleNamespace(
+            unload_prompt_rewriter=Mock(), missing_qwen_image21_model_names=Mock(return_value=[]),
+            ensure_qwen_image21_models=Mock(),
+        )
+        execution = SimpleNamespace(
+            object_info=lambda: required_qwen_image21_nodes(editing=True, turbo=True, lightning=True),
+            submit_prompt=Mock(return_value="job-lightning"),
+            poll_comfy_progress=lambda *args: iter(()), wait_for_history=lambda *args: {},
+        )
+        services = SimpleNamespace(models=models, execution=execution,
+                                   media=SimpleNamespace(resolve_image_outputs=lambda *args: [Path("four.png")]))
+        runtime = SimpleNamespace(input_dir=Path("."))
+        for mode, references in (("Text to image", ()),
+                                 ("Image edit", tuple(f"ref{i}.png" for i in range(4)))):
+            with self.subTest(mode=mode), patch("h3_app.generation.qwen.write_snapshot"):
+                updates = list(generate_qwen_image21(
+                    replace(request, mode=mode, reference_images=references), services, runtime))
+                self.assertEqual(updates[-1].output, ["four.png"])
+                self.assertTrue(self._by_type(execution.submit_prompt.call_args.args[0],
+                                             "H3Qwen21LightningSigmas"))
+        models.ensure_qwen_image21_models.assert_called_with("BF16", "BF16", QWEN_IMAGE21_LIGHTNING)
+        for settings, message in (({"steps": 8}, "exactly 4"), ({"cfg": 2}, "CFG 1"),
+                                  ({"sampler_name": "heun"}, "Euler"),
+                                  ({"accelerator": "Spectrum (Quality)"}, "unavailable")):
+            with self.subTest(settings=settings):
+                models.ensure_qwen_image21_models.reset_mock()
+                updates = list(generate_qwen_image21(replace(request, **settings), services, runtime))
+                self.assertIn(message, updates[-1].status)
+                models.ensure_qwen_image21_models.assert_not_called()
+        execution.object_info = lambda: required_qwen_image21_nodes(
+            editing=False, turbo=True, lightning=True) - {"H3Qwen21LightningSigmas"}
+        updates = list(generate_qwen_image21(request, services, runtime))
+        self.assertIn("missing nodes: H3Qwen21LightningSigmas", updates[-1].status)
 
     def test_official_turbo_reuses_base_with_native_lora_and_unshifted_eight_step_schedule(self):
         from h3_app.catalog import QWEN_IMAGE21_DYNAMIC_SCHEDULER

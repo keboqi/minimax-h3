@@ -38,6 +38,7 @@ LTX25_CQ_ENHANCER_REPO = "CQdesign/LTX-2.5-CQ-Video-and-Image-Enhancer-LoRAs"
 MINIMAX_MUSIC3_REPO = "Comfy-Org/MiniMax-Music-3"
 YUE2_REPO = "Comfy-Org/YuE2"
 QWEN_IMAGE21_REPO = "Comfy-Org/Qwen-Image-2.1"
+QWEN_IMAGE21_LIGHTNING_REPO = "lightx2v/Qwen-Image-2.1-Lightning"
 QWEN_IMAGE21_VIGGLE_REPO = "Viggle/Qwen-Image-2.1-viggle-turbo"
 
 HF_METADATA_WORKERS = 2
@@ -579,6 +580,14 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "Official Qwen Image 2.1 Turbo 8-step LoRA extraction by Kijai",
         expected_sha256="208dd43250e1e01467ba190572ae2e7107a7870ec1ff026bc65f791fa1e80e95",
     ),
+    "qwen_image21_lightning_lora": ModelSpec(
+        QWEN_IMAGE21_LIGHTNING_REPO,
+        "loras",
+        "pytorch_lora_weights.safetensors",
+        "LightX2V Qwen Image 2.1 Lightning 4-step LoRA",
+        local_filename="qwen_image_2.1_lightning_4step.safetensors",
+        expected_sha256="53c69320d4163da51032f90275074028cb098556039c72b45f8dce9f0f9e34a3",
+    ),
     "qwen_image21_viggle_v02_lora": ModelSpec(
         QWEN_IMAGE21_VIGGLE_REPO,
         "loras",
@@ -718,8 +727,10 @@ QWEN_IMAGE21_TEXT_ENCODER_CHOICES = {
 }
 DEFAULT_QWEN_IMAGE21_TEXT_ENCODER = "BF16"
 QWEN_IMAGE21_OFFICIAL_TURBO = "Official Turbo (8-step)"
+QWEN_IMAGE21_LIGHTNING = "LightX2V Lightning (4-step)"
 QWEN_IMAGE21_TURBO_MODES = {
     QWEN_IMAGE21_OFFICIAL_TURBO: ("qwen_image21_official_turbo_lora", 8),
+    QWEN_IMAGE21_LIGHTNING: ("qwen_image21_lightning_lora", 4),
     "Viggle Turbo v0.2.1 (6-step)": ("qwen_image21_viggle_v02_lora", 6),
     "Viggle Turbo v0.3 (6-step)": ("qwen_image21_viggle_v03_lora", 6),
     "Viggle Turbo v0.3 (9-step)": ("qwen_image21_viggle_v03_lora", 9),
@@ -729,6 +740,7 @@ QWEN_IMAGE21_MODEL_KEYS = (
     *QWEN_IMAGE21_TEXT_ENCODER_CHOICES.values(),
     "qwen_image21_vae",
     "qwen_image21_official_turbo_lora",
+    "qwen_image21_lightning_lora",
     "qwen_image21_viggle_v02_lora",
     "qwen_image21_viggle_v03_lora",
 )
@@ -1634,6 +1646,7 @@ def selftest() -> None:
         "qwen_image21_text_bf16",
         "qwen_image21_vae",
         "qwen_image21_official_turbo_lora",
+        "qwen_image21_lightning_lora",
         "qwen_image21_viggle_v02_lora",
         "qwen_image21_viggle_v03_lora",
     }

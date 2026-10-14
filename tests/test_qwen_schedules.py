@@ -61,5 +61,41 @@ class QwenBaseScheduleTests(unittest.TestCase):
             self.scheduler.calculate({"samples": SimpleNamespace(shape=(1, 64, 0, 64))}, 40)
 
 
+class QwenLightningScheduleTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = Path(__file__).resolve().parents[1] / "custom_nodes/H3Acceleration/__init__.py"
+        names = {"_qwen21_target_tokens", "H3Qwen21LightningSigmas"}
+        nodes = [node for node in ast.parse(path.read_text(encoding="utf-8")).body
+                 if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
+        namespace = {"math": math, "torch": SimpleNamespace(
+            tensor=lambda values, dtype: values, float32="float32",
+        )}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), "exec"), namespace)
+        cls.scheduler = namespace["H3Qwen21LightningSigmas"]()
+
+    def test_training_schedule_at_native_output_sizes_without_terminal_stretch(self):
+        # Frozen from the published FlowMatchEulerDiscreteScheduler settings:
+        # raw sigmas 1/.75/.5/.25, dynamic exponential shift, terminal=None.
+        for height, width, expected in (
+            (48, 64, (.8507566293956469, .6551908482359347, .38777447360023015)),
+            (64, 64, (.8571919774348878, .6667558177123246, .40009629343090264)),
+            (128, 128, (.9177012146375123, .787998565089083, .5533686636373663)),
+        ):
+            with self.subTest(size=(height, width)):
+                native = {"samples": SimpleNamespace(shape=(1, 64, height, width))}
+                empty = {"samples": SimpleNamespace(shape=(1, 4, height * 2, width * 2)),
+                         "downscale_ratio_spacial": 8}
+                actual = self.scheduler.calculate(native)[0]
+                self.assertEqual(actual, self.scheduler.calculate(empty)[0])
+                self.assertEqual(len(actual), 5)
+                self.assertEqual(actual[0], 1.)
+                self.assertEqual(actual[-1], 0.)
+                for value, reference in zip(actual[1:-1], expected):
+                    self.assertAlmostEqual(value, reference, places=14)
+        with self.assertRaisesRegex(ValueError, "nonempty"):
+            self.scheduler.calculate({"samples": SimpleNamespace(shape=(1, 64, 0, 64))})
+
+
 if __name__ == "__main__":
     unittest.main()

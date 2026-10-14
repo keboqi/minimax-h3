@@ -211,6 +211,7 @@ def build_qwen_image21_view(
                             info=(
                                 "Official Turbo uses an 8-step LoRA with your base model "
                                 "and supports up to 10 references. "
+                                "LightX2V Lightning offers 4 steps for generation and editing. "
                                 "Viggle v0.2.1 and v0.3 offer 6 turbo steps. v0.3 also offers "
                                 "7 turbo steps + 2 base steps for finer detail. "
                                 "Use Euler, CFG 1, and accelerator Off. "

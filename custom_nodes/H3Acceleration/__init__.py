@@ -1764,6 +1764,28 @@ class H3Qwen21Sigmas:
         return (torch.tensor([*shifted, 0.0], dtype=torch.float32),)
 
 
+class H3Qwen21LightningSigmas:
+    """LightX2V four-step schedule with dynamic shift and no terminal stretch."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"latent_image": ("LATENT",)}}
+
+    RETURN_TYPES = ("SIGMAS",)
+    FUNCTION = "calculate"
+    CATEGORY = "sampling/custom_sampling/schedulers"
+
+    def calculate(self, latent_image):
+        tokens = _qwen21_target_tokens(latent_image)
+        mu = 0.5 + 0.4 * (tokens - 256) / (8192 - 256)
+        exponent = math.exp(mu)
+        shifted = [
+            exponent / (exponent + (1.0 / value - 1.0))
+            for value in (1.0, 0.75, 0.5, 0.25)
+        ]
+        return (torch.tensor([*shifted, 0.0], dtype=torch.float32),)
+
+
 class H3Qwen21TurboSigmas:
     """Viggle six-step / nine-step raw nodes with Qwen 2.1's dynamic shift.
 
@@ -1972,6 +1994,7 @@ NODE_CLASS_MAPPINGS = {
     "H3Qwen21Sigmas": H3Qwen21Sigmas,
     "H3LTXHDRConditioning": H3LTXHDRConditioning,
     "H3Qwen21TurboSigmas": H3Qwen21TurboSigmas,
+    "H3Qwen21LightningSigmas": H3Qwen21LightningSigmas,
     "H3Qwen21ViggleLora": H3Qwen21ViggleLora,
     "H3SemanticBridge": H3SemanticBridge,
     "H3FirstBlockCache": H3FirstBlockCache,
@@ -1991,6 +2014,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3LTXPadVideoFrames": "LTX Pad Video Frames",
     "H3Qwen21Sigmas": "Qwen Image 2.1 Resolution-Aware Sigmas",
     "H3Qwen21TurboSigmas": "Qwen Image 2.1 Viggle Turbo Sigmas",
+    "H3Qwen21LightningSigmas": "Qwen Image 2.1 LightX2V Lightning Sigmas",
     "H3Qwen21ViggleLora": "Qwen Image 2.1 Viggle Turbo LoRA (unmerged)",
     "H3SemanticBridge": "MiniMax H3 Semantic Bridge (experimental)",
     "H3FirstBlockCache": "MiniMax H3 FirstBlockCache",

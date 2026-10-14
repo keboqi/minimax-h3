@@ -106,7 +106,7 @@ class UiContractTests(unittest.TestCase):
         )
         self.assertIs(event["queue"], False)
 
-        from h3_models import QWEN_IMAGE21_OFFICIAL_TURBO
+        from h3_models import QWEN_IMAGE21_LIGHTNING, QWEN_IMAGE21_OFFICIAL_TURBO
         from h3_ui.persistence import restore_preferences
 
         turbo = controls["Turbo mode"]
@@ -132,6 +132,14 @@ class UiContractTests(unittest.TestCase):
         callback = self.demo.fns[turbo_event["id"]].fn
         self.assertEqual(callback(QWEN_IMAGE21_OFFICIAL_TURBO, "Quality"),
                          (8, 1.0, "euler", "Off"))
+        self.assertIn(QWEN_IMAGE21_LIGHTNING,
+                      [choice[1] for choice in turbo["props"]["choices"]])
+        self.assertEqual(callback(QWEN_IMAGE21_LIGHTNING, "Quality"), (4, 1., "euler", "Off"))
+        restored, _ = restore_preferences(
+            {"values": {"qwen_image21.turbo_variant": QWEN_IMAGE21_LIGHTNING}},
+            {"qwen_image21.turbo_variant": self.demo.blocks[turbo["id"]]},
+        )
+        self.assertEqual(restored["qwen_image21.turbo_variant"], QWEN_IMAGE21_LIGHTNING)
 
     def test_media_enhancement_captures_only_supported_settings(self):
         method = next(c for c in self.config["components"] if c.get("props", {}).get("label") == "Method")

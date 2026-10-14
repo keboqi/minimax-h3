@@ -476,6 +476,23 @@ The checkpoint's fixed sigma schedule is supplied explicitly, without the
 base model's resolution shift or terminal stretch, regardless of the scheduler
 control. Generation and editing with up to ten references are supported.
 
+**LightX2V Lightning (4-step)** adds the approximately 67 MB
+[Qwen-Image-2.1-Lightning LoRA](https://huggingface.co/lightx2v/Qwen-Image-2.1-Lightning)
+as an on-demand download, reusing the selected base model, encoder, and VAE.
+It uses the native LoRA loader at strength 1, four Euler steps, CFG 1, and
+accelerator Off for generation and editing. Its raw sigma nodes
+`[1, 0.75, 0.5, 0.25]` receive the author's resolution-dependent exponential
+shift (256/8192 tokens, 0.5/0.9 shifts), followed by zero, with no terminal
+stretch. This schedule overrides the scheduler control. Edit KV caching is
+disabled to match the published example. GPU image quality has not been
+validated locally; the author notes that BF16 inference can differ from the
+FP32 latents used during training and LightX2V inference.
+
+Checked 2026-10-15: the official eight-step adapter still has SHA-256
+`208dd43250e1e01467ba190572ae2e7107a7870ec1ff026bc65f791fa1e80e95`, matching
+our existing inventory. The upstream Turbo checkpoint's latest changes are
+model-card examples; its fixed eight-step sigma schedule is unchanged.
+
 The Qwen tab also offers **Viggle Turbo v0.2.1** as a six-step ComfyUI LoRA mode.
 It downloads the rank-256 adapter on first use and uses its published six-node
 schedule with Qwen's resolution-dependent time shift. A bundled custom loader

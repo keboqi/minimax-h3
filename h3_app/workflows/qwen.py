@@ -13,6 +13,7 @@ from h3_app.catalog import (
 from h3_app.graph import Graph
 from h3_models import (
     MODEL_SPECS,
+    QWEN_IMAGE21_LIGHTNING,
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_OFFICIAL_TURBO,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
@@ -36,6 +37,7 @@ def required_qwen_image21_nodes(
     viggle: bool = False,
     nine_step: bool = False,
     official_turbo: bool = False,
+    lightning: bool = False,
     scheduler: str = QWEN_IMAGE21_DYNAMIC_SCHEDULER,
 ) -> set[str]:
     nodes = {
@@ -68,6 +70,8 @@ def required_qwen_image21_nodes(
         nodes.add("H3Qwen21ViggleLora")
     if official_turbo:
         nodes |= {"LoraLoaderModelOnly", "ManualSigmas"}
+    if lightning:
+        nodes |= {"LoraLoaderModelOnly", "H3Qwen21LightningSigmas"}
     if nine_step:
         nodes |= {"SplitSigmas", "DisableNoise"}
     return nodes
@@ -116,7 +120,8 @@ def build_qwen_image21_graph(
     )
     turbo = turbo_variant in QWEN_IMAGE21_TURBO_MODES
     official_turbo = turbo_variant == QWEN_IMAGE21_OFFICIAL_TURBO
-    viggle = turbo and not official_turbo
+    lightning = turbo_variant == QWEN_IMAGE21_LIGHTNING
+    viggle = turbo and not (official_turbo or lightning)
     nine_step = viggle and QWEN_IMAGE21_TURBO_MODES[turbo_variant][1] == 9
     if turbo:
         lora_key, expected_steps = QWEN_IMAGE21_TURBO_MODES[turbo_variant]
@@ -126,6 +131,8 @@ def build_qwen_image21_graph(
             raise ValueError("Viggle nine-step mode requires Euler and accelerator Off.")
         if official_turbo and (sampler_name != "euler" or accelerator.lower() != "off"):
             raise ValueError("Official Turbo requires Euler and accelerator Off.")
+        if lightning and (sampler_name != "euler" or accelerator.lower() != "off"):
+            raise ValueError("LightX2V Lightning requires Euler and accelerator Off.")
     if not turbo and turbo_variant != "Off":
         raise ValueError(f"Unknown Qwen Image 2.1 Turbo variant: {turbo_variant}")
     clip = graph.add(
@@ -181,7 +188,7 @@ def build_qwen_image21_graph(
         cached = graph.add(
             "QwenImage21Cache",
             model=sampled_model,
-            device=str(cache_device),
+            device="off" if lightning else str(cache_device),
             dtype=str(cache_dtype),
         )
         sampled_model = Graph.out(cached)
@@ -195,14 +202,14 @@ def build_qwen_image21_graph(
             lora_name=MODEL_SPECS[lora_key].local_name,
         )
         sampled_model = Graph.out(viggle_model)
-    elif official_turbo:
-        official_model = graph.add(
+    elif official_turbo or lightning:
+        lora_model = graph.add(
             "LoraLoaderModelOnly",
             model=sampled_model,
             lora_name=MODEL_SPECS[lora_key].local_name,
             strength_model=1.0,
         )
-        sampled_model = Graph.out(official_model)
+        sampled_model = Graph.out(lora_model)
     accelerator_key = str(accelerator).strip().lower()
     if accelerator_key != "off":
         if accelerator_key == "spectrum (preview)":
@@ -233,6 +240,8 @@ def build_qwen_image21_graph(
                 "ManualSigmas",
                 sigmas=", ".join(map(str, QWEN_IMAGE21_OFFICIAL_TURBO_SIGMAS)),
             )
+        elif lightning:
+            sigmas = graph.add("H3Qwen21LightningSigmas", latent_image=latent)
         else:
             sigmas = graph.add(
                 "H3Qwen21TurboSigmas" if viggle else "H3Qwen21Sigmas",
