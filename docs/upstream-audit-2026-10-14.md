@@ -1,6 +1,6 @@
 # Component update audit — 2026-10-14
 
-Refreshed all 15 generation/provisioning Git source comparisons from the October 12 audit, added the RunningHub DLSS bridge and headless NVAPI source, and checked 25 primary packages on PyPI. Of these 17 sources, ten have newer default-branch commits and seven match their pins. Also checked the DLSS runtime release components. This assessment changes no runtime pins, models, installed packages or deployments.
+Refreshed all 15 generation/provisioning Git source comparisons from the October 12 audit and checked 25 primary packages on PyPI. Of these 15 sources, nine have newer default-branch commits and six match their pins. This assessment changes no runtime pins, models, installed packages or deployments.
 
 **Recommended order:** adopt ComfyUI v0.40.0 with the single-frame decoder adaptation and matching dependencies; evaluate Veda 0.3.1 separately; then update Gradio. Keep the CUDA/Torch/NumPy stack. LTX tiled fusion is already implemented here, so the October 12 feature recommendation is complete.
 
@@ -42,15 +42,7 @@ Keep the present pin: no clear current-workflow quality, speed or reliability ga
 
 **T8 Audio:** latest is now **1.99.0**, revision `2ccd8eb0a4160eef12f00e30b5aefda42d8be577`. The additional release introduces reviewed H11 Spark Wuli/modular reference workflows. These require deliberate feature/model integration; upgrading the node pack alone does not enable them in our voice-reference graph. Retain 1.85.0 for the current feature pending a separate review. The October 12 AST characterization applied to 1.98.2 and must not be treated as a new 1.99.0 validation. [Comparison](https://github.com/T8mars/comfyui-minimax-h3-audio-T8/compare/6063fafbd9c3b85c5ff40aef435ae11b2844e558...2ccd8eb0a4160eef12f00e30b5aefda42d8be577).
 
-## 4. DLSS runtime: retain the tested combination
-
-RunningHub's bridge HEAD still exactly matches `71ab1060`; video2dlssnr's latest release remains **v1.4.1**. vkd3d-proton **3.0.1** and dxvk-nvapi **0.9.2** also match our release pins. [RunningHub](https://github.com/RH-RunningHub/ComfyUI-RH-DLSS5), [video2dlssnr](https://github.com/DaniilSokolyuk/video2dlssnr/releases/tag/v1.4.1), [vkd3d](https://github.com/HansKristian-Work/vkd3d-proton/releases/tag/v3.0.1), [NVAPI](https://github.com/jp7677/dxvk-nvapi/releases/tag/v0.9.2).
-
-DXVK **3.1 → 3.1.1** is available, but its release notes target swap-chain behavior, shader compilation and game-specific fixes; no DLSS host improvement was established. Wine-Builds has **11.19**, while we pin 11.0. Neither warrants replacing the current checksum-pinned runtime without an end-to-end host test. [DXVK notes](https://github.com/doitsujin/dxvk/releases/tag/v3.1.1), [Wine builds](https://github.com/Kron4ek/Wine-Builds/releases/tag/11.19).
-
-The headless NVAPI source has 94 newer commits. It is a locally patched build, separate from the pinned NVAPI release archive: our adapter-LUID fallback must be reapplied/reviewed before any source bump. No benefit to this specific host path was established. Keep it pinned. NVIDIA driver/NGX extraction versions and model-weight repositories were not audited in this pass.
-
-## 5. Other sources and package policy
+## 4. Other sources and package policy
 
 Spectrum H3 0.2.29 remains optional for Core BSA/Flow/Untwist compatibility; no direct gain for our explicit SLA/Veda/Sol paths was established. ControlNet Aux 1.1.6 remains conditional on its face/animal-pose fixes and AlbumentationsX/native dependency compatibility. KJNodes is cosmetic/metadata, the latent-upscaler update is license-only, and SwiftVR's newer commits are documentation-only. These observations remain unchanged from the [October 12 audit](upstream-audit-2026-10-12.md).
 
@@ -71,8 +63,6 @@ Spectrum H3 0.2.29 remains optional for Core BSA/Flow/Untwist compatibility; no 
 | T8 Audio | 6063fafb | 2ccd8eb0 | 21 |
 | SwiftVR | 5ca168ce | 4fb82651 | 3 |
 | H3VAE TRT | 4360e008 | same | 0 |
-| RunningHub DLSS | 71ab1060 | same | 0 |
-| Headless NVAPI source | f9fdf268 | 0f26995d | 94 |
 
 All 25 registry latest package versions match the previous audit except the frontend, now **1.55.17**, which matches v0.40.0. Keep Torch 2.11.0/CUDA 13.0 and its matching Sage wheel, NumPy 1.26.4/SciPy 1.15.3, Hub <2, Diffusers <0.37, kernels 0.16.0 and the paired Kornia pins until coordinated runtime validation. Avoid treating newer individual Torch ecosystem packages as a compatible set.
 
@@ -80,7 +70,7 @@ The strongest package-policy improvement is still recording a tested Linux/Pytho
 
 ## Evidence and limits
 
-Raw GitHub comparisons, PyPI metadata, exact release source files and the LTX static characterization are in ignored `.cache/component-audit-2026-10-14/`. GitHub API rate limiting affected the final release lookups; DXVK/vkd3d/NVAPI/Gradio releases were checked through their public release pages instead. The T8 monolithic source lookup returned 404; this report makes no new conditioning-class equivalence claim. GitHub comparison file lists can cap at 300 entries, notably for T8.
+Raw GitHub comparisons, PyPI metadata, exact release source files and the LTX static characterization are in ignored `.cache/component-audit-2026-10-14/`. GitHub API rate limiting affected the final release lookups; the Gradio release was checked through its public release page instead. The T8 monolithic source lookup returned 404; this report makes no new conditioning-class equivalence claim. GitHub comparison file lists can cap at 300 entries, notably for T8.
 
 This was a source/metadata assessment. No package installs, model downloads, deployment changes, GPU inference, fresh Linux build or broad regression suite were performed. The LTX characterization checks removed decorated IDs against runtime source text; it does not validate every runtime registration, official workflow or saved user graph.
 

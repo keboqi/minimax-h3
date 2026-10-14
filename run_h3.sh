@@ -5,7 +5,6 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$SCRIPT_DIR/h3"
-export H3_NVIDIA_RUNTIME_DIR="${H3_NVIDIA_RUNTIME_DIR:-$INSTALL_DIR/nvidia}"
 COMFY_DIR="$INSTALL_DIR/ComfyUI"
 MODELS_CONFIG="$INSTALL_DIR/h3_models.json"
 
@@ -212,7 +211,6 @@ ensure_repo_integrity() {
   local -a required_paths=(
     gradio_app.py
     h3_runtime.py
-    h3_nvidia_runtime.py
     h3_sources.py
     h3_ui/__init__.py
     h3_ui/application.py

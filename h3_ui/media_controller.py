@@ -7,9 +7,7 @@ from typing import Any
 import gradio as gr
 import websocket
 from h3_app.media_types import UpscaleClipBatch
-from h3_app.catalog import LTX25_CQ_IMAGE_ENHANCER, NVIDIA_POSTPROCESS_OPTIONS
-from h3_app import nvidia_postprocess
-from h3_app.nvidia_images import postprocess_image as nvidia_postprocess_image
+from h3_app.catalog import LTX25_CQ_IMAGE_ENHANCER
 from h3_app.jobs import record_failure
 from dataclasses import dataclass
 
@@ -662,8 +660,6 @@ class MediaController:
         upscale_resolution: str,
         request: gr.Request,
         progress=gr.Progress(track_tqdm=False),
-        *,
-        nvidia_settings=None,
     ):
         """Create a new post-processed output from one selected gallery video."""
         started = self.services.time.monotonic()
@@ -685,23 +681,6 @@ class MediaController:
             yield self.services.gallery_progress_result(
                 f"Preparing `{source.name}` for {option}"
             )
-            if option in NVIDIA_POSTPROCESS_OPTIONS:
-                if force_offload:
-                    self.services.unload_comfy_models()
-                for update in nvidia_postprocess.postprocess(
-                    source, option, upscale_resolution, nvidia_settings,
-                    runtime=self.services._runtime_config(),
-                ):
-                    if update.result is not None:
-                        progress(1, desc="Complete")
-                        yield self.services.gallery_processed_result(
-                            update.result, option, self.services.time.monotonic() - started, request
-                        )
-                    else:
-                        if update.total:
-                            progress((update.frames, update.total), desc=update.message)
-                        yield self.services.gallery_progress_result(update.message)
-                return
             if option == self.services.SWIFTVR_UPSCALE:
                 progress(0, desc="Checking SwiftVR runtime and checkpoint")
                 yield self.services.gallery_progress_result(
@@ -967,31 +946,12 @@ class MediaController:
         upscale_resolution: str,
         request: gr.Request,
         progress=gr.Progress(track_tqdm=False),
-        *,
-        nvidia_settings=None,
     ):
         """Enhance one selected gallery still and retain its original."""
         started = self.services.time.monotonic()
         try:
             if not selected_image:
                 raise self.services.H3Error("Select a gallery image first.")
-            if option in NVIDIA_POSTPROCESS_OPTIONS:
-                source = self.services.managed_gallery_image_path(selected_image)
-                if force_offload:
-                    self.services.unload_comfy_models()
-                for update in nvidia_postprocess_image(
-                    source, option, upscale_resolution, nvidia_settings,
-                    runtime=self.services._runtime_config(),
-                ):
-                    if update.result is not None:
-                        progress(1, desc="Complete")
-                        yield self.services.gallery_media_processed_result(
-                            "Image", update.result, option,
-                            self.services.time.monotonic() - started, request,
-                        )
-                    else:
-                        yield self.services.gallery_media_progress_result(update.message)
-                return
             cq_image = option == LTX25_CQ_IMAGE_ENHANCER
             family = "CQ image enhancement" if cq_image else "SeedVR2 image upscale"
             if option not in {self.services.SEEDVR2_UPSCALE, LTX25_CQ_IMAGE_ENHANCER}:
@@ -1149,8 +1109,6 @@ class MediaController:
         upscale_resolution: str,
         request: gr.Request,
         progress=gr.Progress(track_tqdm=False),
-        *,
-        nvidia_settings=None,
     ):
         """Dispatch gallery enhancement according to the active media library."""
         media_mode = self.services.gallery_media_mode(mode)
@@ -1169,7 +1127,6 @@ class MediaController:
                 upscale_resolution,
                 request,
                 progress,
-                **({"nvidia_settings": nvidia_settings} if nvidia_settings is not None else {}),
             )
             return
         for update in self.services.postprocess_selected_gallery_video(
@@ -1185,7 +1142,6 @@ class MediaController:
             upscale_resolution,
             request,
             progress,
-            **({"nvidia_settings": nvidia_settings} if nvidia_settings is not None else {}),
         ):
             yield (*update[:4], None, None, *update[4:])
 

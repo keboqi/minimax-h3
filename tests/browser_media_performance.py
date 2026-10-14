@@ -24,7 +24,6 @@ def run():
         code = f"""
 import sys,runpy
 from h3_ui import application as app
-from h3_ui import media_bindings, nvidia_media
 from gradio import processing_utils
 from PIL import Image
 original_new = Image.new
@@ -41,7 +40,6 @@ def forbid_thumbnail_hash(path, *args, **kwargs):
 app.gallery_image_paths = app.gallery_video_paths = app.gallery_audio_paths = forbid_scan
 app.gallery_store.gallery_image_paths = app.gallery_store.gallery_video_paths = app.gallery_store.gallery_audio_paths = forbid_scan
 processing_utils.hash_file = forbid_thumbnail_hash
-media_bindings.availability = nvidia_media.availability = lambda method: (False, 'NVIDIA runtime fixture unavailable')
 sys.argv=['fixture','{port}']
 runpy.run_module('tests.workspace_fixture',run_name='__main__')
 """
@@ -87,27 +85,12 @@ runpy.run_module('tests.workspace_fixture',run_name='__main__')
                         selection = monotonic() - started
                         page.get_by_text("Enhance selected media", exact=True).first.click()
                         method = page.get_by_label("Method", exact=True)
-                        method.click()
-                        page.get_by_role("option", name="DLSS 5 Neural Rendering (experimental)", exact=True).click()
-                        expect(page.get_by_label("DLSS 5 style", exact=True)).to_be_visible()
-                        original_size = page.get_by_label("Keep original resolution", exact=True)
-                        expect(original_size).to_be_checked()
-                        expect(page.get_by_label("Target resolution", exact=True)).to_be_hidden()
-                        original_size.uncheck()
-                        expect(page.get_by_label("Target resolution", exact=True)).to_be_visible()
-                        original_size.check()
                         page.locator("#h3-library-kind").get_by_label("Image", exact=True).check()
                         expect(thumbs).to_have_count(2, timeout=2500)
                         expect(thumbs.first).to_contain_text(".png")
                         method.click()
-                        expect(page.get_by_role("option", name="DLSS 5 Neural Rendering (experimental)", exact=True)).to_be_visible()
                         page.get_by_role("option", name="LTX-2.5 CQ Image Enhancer", exact=True).click()
                         expect(page.get_by_label("Target resolution", exact=True)).to_be_visible()
-                        expect(original_size).to_be_hidden()
-                        method.click()
-                        page.get_by_role("option", name="DLSS 5 Neural Rendering (experimental)", exact=True).click()
-                        expect(page.get_by_label("DLSS 5 style", exact=True)).to_be_visible()
-                        expect(original_size).to_be_checked()
                         thumbs.filter(has_text="alpha.png").click()
                         original = page.locator('.h3-gallery-player img[src*="/downloads/"]').first
                         expect(original).to_be_visible(timeout=2000)
@@ -172,7 +155,7 @@ runpy.run_module('tests.workspace_fixture',run_name='__main__')
                         expect(thumbs).to_have_count(2)
                         expect(thumbs.first).to_contain_text(".mp4")
                         print(f"Cold media page: {first_page:.3f}s; thumbnail selection: {selection:.3f}s; "
-                              f"media switches: {', '.join(switches)}; latest mode preserved; NVIDIA controls verified")
+                              f"media switches: {', '.join(switches)}; latest mode preserved; image methods verified")
                     finally:
                         browser.close()
             finally:

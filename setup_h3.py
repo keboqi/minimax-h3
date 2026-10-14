@@ -985,7 +985,6 @@ def sync_model_inventory(install_dir: Path, comfy: Path) -> None:
 def ensure_root_entrypoints() -> None:
     required_paths = [
         SCRIPT_DIR / "gradio_app.py",
-        SCRIPT_DIR / "h3_nvidia_runtime.py",
         SCRIPT_DIR / "h3_sources.py",
         SCRIPT_DIR / "h3_ui" / "__init__.py",
         SCRIPT_DIR / "h3_ui" / "application.py",

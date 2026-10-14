@@ -69,12 +69,6 @@ class ConfigurationTests(unittest.TestCase):
             for target in node.targets
             if isinstance(target, ast.Name)
         }
-        runtime = ast.parse((root / "h3_nvidia_runtime.py").read_text(encoding="utf-8"))
-        runtime_names = {alias.name for node in runtime.body
-                         if isinstance(node, ast.ImportFrom) and node.module == "h3_sources"
-                         for alias in node.names}
-        self.assertLessEqual(runtime_names, names)
-        names -= runtime_names
         self.assertEqual(len(names), 25)
         for filename in ("setup_h3.py", "modal_h3.py"):
             tree = ast.parse((root / filename).read_text(encoding="utf-8"))

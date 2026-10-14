@@ -51,15 +51,6 @@ class GalleryView:
     inspector: Any = None
     filters: Any = None
     scan_history: Any = None
-    nvidia_settings: Any = None
-    nvidia_original: Any = None
-    dlss_settings: Any = None
-    dlss_style: Any = None
-    dlss_intensity: Any = None
-    nvidia_status: Any = None
-    nvidia_check: Any = None
-    nvidia_check_stop: Any = None
-    dlss_upscaler: Any = None
 
 
 def build_gallery_view(
@@ -218,7 +209,7 @@ def build_gallery_view(
                             choices=list(postprocess_options),
                             value=postprocess_options[0],
                             label="Method",
-                            info="Enhancements create a new copy. DLSS 5 is experimental; NVIDIA methods support SDR images and videos.",
+                            info="Enhancements create a new copy.",
                             scale=2,
                         )
                         upscale_resolution = gr.Dropdown(
@@ -276,22 +267,6 @@ def build_gallery_view(
                             info="The actual cut is adjusted to an LTX-valid frame count.",
                             visible=False,
                         )
-                    with gr.Group(visible=False) as nvidia_settings:
-                        nvidia_original = gr.Checkbox(value=False, label="Keep original resolution")
-                        with gr.Group(visible=False) as dlss_settings:
-                            gr.Markdown("DLSS 5 changes lighting and material appearance. Upscaling uses the largest supported factor fitting the target: 1.5×, 1.724×, 2× or 3×. Video motion guides and scene-cut handling are automatic when available.")
-                            dlss_style = gr.Dropdown(["Default", "Natural", "Cinematic"], value="Natural", label="DLSS 5 style")
-                            dlss_intensity = gr.Slider(0, 1, value=1, step=0.05, label="DLSS 5 intensity")
-                            dlss_upscaler = gr.Dropdown(
-                                [("Lanczos resize, then DLSS 5 at 1×", "resize"),
-                                 ("DLSS Super Resolution (experimental; R580 NGX core on Linux)", "dlss_sr")],
-                                value="resize", label="Upscaler (above 1×)",
-                                info="Ignored at original resolution. The experimental option downloads a Windows R580 driver once (~800 MB) on Linux hosts to extract its NGX core.",
-                            )
-                        nvidia_status = gr.Markdown()
-                        with gr.Row():
-                            nvidia_check = gr.Button("Check NVIDIA runtime", variant="secondary")
-                            nvidia_check_stop = gr.Button("Stop runtime check")
                     with gr.Row(equal_height=True, elem_classes=["h3-gallery-actions"]):
                         post_run = gr.Button(
                             "Enhance selected media",
@@ -345,13 +320,4 @@ def build_gallery_view(
         inspector,
         filters,
         scan_history,
-        nvidia_settings,
-        nvidia_original,
-        dlss_settings,
-        dlss_style,
-        dlss_intensity,
-        nvidia_status,
-        nvidia_check,
-        nvidia_check_stop,
-        dlss_upscaler=dlss_upscaler,
     )

@@ -23,7 +23,6 @@ The UI describes the **next run**. Each completed output has an independent **se
 | setup_h3.py, run_h3.sh, modal_h3.py, Colab notebook | Environment provisioning and deployment lifecycle |
 | h3_requirements.py | Dependency compatibility policy shared by setup and Modal |
 | h3_node_patches.py, h3_attention.py, custom_nodes/H3Acceleration/ | Pinned upstream compatibility patches and GPU runtime optimizations |
-| h3_nvidia_runtime.py, h3_app/nvidia_*.py, dlss_*.py | DLSS 5 runtime provisioning, worker process and media pipeline |
 | h3_app/config.py | Immutable startup paths, backend mode and transport limits |
 | h3_sources.py | Repository, revision and wheel pins shared by local and Modal setup |
 | h3_app/settings.py, resources.py | Requested/effective settings, presets and output-specific decoder dependencies |

@@ -1,32 +1,5 @@
 """Pinned external source catalog shared by local and Modal provisioning."""
 
-DLSSNR_VERSION = "v1.4.1"
-DLSSNR_URL = f"https://github.com/DaniilSokolyuk/video2dlssnr/releases/download/{DLSSNR_VERSION}/video2dlssnr_release.zip"
-DLSSNR_SHA256 = "cf1e01b3715b5ee75708744a5d5e6a4f2a96b5504834dd854b4c06388f230ccf"
-WINE_COMPAT_VERSION = "wine-11.0-amd64-wow64"
-WINE_COMPAT_URL = f"https://github.com/Kron4ek/Wine-Builds/releases/download/11.0/{WINE_COMPAT_VERSION}.tar.xz"
-WINE_COMPAT_SHA256 = "39574efa1132c3ca0d5c77dd2eddbe4a49cca0d6cc2c290ff4924493a1c40314"
-
-# RunningHub's MIT host/bridge implement the Linux DNR2 transport and NGX ABI.
-RH_DLSS_REF = "71ab1060865ea781c7f4a8b7c0c79600f51b6617"
-NVAPI_HEADLESS_REF = "f9fdf268e888d17ae9875a4f01908164ff05f740"
-RH_DLSS_FILES = {
-    "native/bin/dlss5nr_host.exe": "8d02590c9b21c2b4d101029d7f7c579ff5362322",
-    "native/bin/dlss5nr_bridge.dll": "e9eb9e95db3f6b3cf03bfdb513b159f4fbdacf6f",
-    "runtime/caller/nvngx.dll_comfy.dll": "4b73bce8e69f6a046fa24918d804d6c15a6fc80e",
-}
-DLSS_GRAPHICS = (
-    ("dxvk-3.1", "https://github.com/doitsujin/dxvk/releases/download/v3.1/dxvk-3.1.tar.gz",
-     "30f9cc326874be344285582275446968cfa4c069db31ce56df312d6644179154", "dxvk-3.1"),
-    ("vkd3d-proton-3.0.1", "https://github.com/HansKristian-Work/vkd3d-proton/releases/download/v3.0.1/vkd3d-proton-3.0.1.tar.zst",
-     "3cf2315522af5e43605ef6d3c41dad91387040bf97199934f3f7ab76caaa2f0c", "vkd3d-proton-3.0.1"),
-    ("dxvk-nvapi-0.9.2", "https://github.com/jp7677/dxvk-nvapi/releases/download/v0.9.2/dxvk-nvapi-v0.9.2.tar.gz",
-     "60c284223530d643c446c263f1e1a96c6de7b5ff21796219646da734d97a70d6", ""),
-)
-# Extract this Windows NGX core only; never execute/install the driver package.
-NGX_WINDOWS_URL = "https://us.download.nvidia.com/Windows/616.56/616.56-desktop-win10-win11-64bit-international-dch-whql.exe"
-NGX_WINDOWS_SHA256 = "da50178def40a17c40d7b4622003b2073efd20c9422d0bb707bc7e59e8cc4868"
-
 COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
 CONTROLNET_AUX_REF = "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
 CONTROLNET_AUX_REPO = "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
