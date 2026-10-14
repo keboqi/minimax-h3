@@ -8,7 +8,11 @@ from .app_bindings import bind_app
 from .contracts import AppComponents
 from .h3_view import build_h3_view, H3ViewServices
 from .layout import create_app_views, bind_workspace_navigation
-from .persistence import bind_browser_settings, create_browser_state
+from .persistence import (
+    RESET_BROWSER_SETTINGS_JS,
+    bind_browser_settings,
+    create_browser_state,
+)
 from .ltx_view import build_ltx_view
 from .styles import H3_SETUP_CSS, H3_WORKSPACE_CSS
 from .api_view import build_api_view
@@ -155,6 +159,17 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                     health = gr.Markdown(initial_backend)
                     unload_models = gr.Button("Unload all models / free VRAM", scale=0)
                 memory_status = gr.Markdown()
+            with gr.Row(equal_height=True):
+                gr.Markdown(
+                    "Settings are saved in this browser. Resetting clears them "
+                    "and reloads the page with the app defaults."
+                )
+                gr.Button(
+                    "Reset all settings to defaults",
+                    variant="stop",
+                    scale=0,
+                    elem_id="h3-reset-browser-settings",
+                ).click(None, js=RESET_BROWSER_SETTINGS_JS, api_name=False)
         app_views = app_views or create_app_views()
         generation_view = app_views.generation
         qwen_image21_view = app_views.qwen_image21

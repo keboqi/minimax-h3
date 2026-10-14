@@ -718,6 +718,22 @@ class UiContractTests(unittest.TestCase):
         self.restore.fn(*values)
         return values[-1]
 
+    def test_reset_settings_button_clears_browser_storage_client_side(self) -> None:
+        button = next(
+            component
+            for component in self.config["components"]
+            if component.get("props", {}).get("elem_id") == "h3-reset-browser-settings"
+        )
+        reset = next(
+            dependency
+            for dependency in self.config["dependencies"]
+            if [button["id"], "click"] in [list(t) for t in dependency["targets"]]
+        )
+        # No server round trip: the stored key is removed and the page reloads.
+        self.assertIsNone(reset.get("backend_fn") or None)
+        self.assertIn('startsWith("minimax-h3:")', reset["js"])
+        self.assertIn("location.reload()", reset["js"])
+
     def test_generation_settings_use_native_browser_state(self) -> None:
         state = next(
             component

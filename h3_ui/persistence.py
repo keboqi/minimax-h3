@@ -11,6 +11,21 @@ from .settings_controller import SETTING_NAMES
 _STORAGE_KEY = "minimax-h3:settings:v3"
 _BROWSER_STATE_SECRET = "minimax-h3-ui-settings-v3"
 SCHEMA_VERSION = 6
+# Runs only in the browser: drop every saved H3 preference, then reload so the
+# page restores from the app defaults in a brand-new session.
+RESET_BROWSER_SETTINGS_JS = """
+() => {
+  if (!confirm("Reset all saved UI settings in this browser to the app defaults? The page will reload.")) return;
+  try {
+    Object.keys(localStorage)
+      .filter((key) => key.startsWith("minimax-h3:"))
+      .forEach((key) => localStorage.removeItem(key));
+  } catch (error) {
+    console.error("Could not clear saved settings:", error);
+  }
+  location.reload();
+}
+"""
 EXTRA_FIELDS = {
     "workspace": ("task", "engine"),
     "qwen_image21": (
