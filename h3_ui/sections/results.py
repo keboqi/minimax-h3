@@ -46,7 +46,7 @@ def build_results_section(
         generation_readiness = gr.HTML(
             services.generation_readiness_state(defaults["mode"], "", None, None).html
         )
-        with gr.Row():
+        with gr.Row(elem_classes=["h3-generation-buttons"]):
             run = gr.Button(
                 "Generate video",
                 variant="primary",
@@ -64,11 +64,12 @@ def build_results_section(
             elem_classes=["h3-status"],
         )
     gr.HTML(
-        '<div class="h3-section-intro"><h3>Results</h3>'
-        "<p>Your latest output remains here while you adjust settings.</p></div>"
+        '<div class="h3-panel-heading"><span class="h3-step" aria-hidden="true">03</span>'
+        '<div><h3>Preview &amp; generate</h3>'
+        '<p>Your latest result stays here as you refine your next idea.</p></div></div>'
     )
     with gr.Row():
-        output = gr.Video(label="Generated video 1")
+        output = gr.Video(label="Generated video 1", elem_classes=["h3-result-player"])
         output_2 = gr.Video(label="Generated video 2", visible=False)
     with gr.Row():
         output_3 = gr.Video(label="Generated video 3", visible=False)

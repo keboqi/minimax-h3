@@ -144,7 +144,9 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
     ):
         with gr.Row(elem_classes=["h3-workspace-header"]):
             gr.HTML(
-                '<section class="h3-hero"><h1>MiniMax H3 Local</h1><p>Create video, images, audio, and music on the shared ComfyUI backend · <a href="/comfyui/" target="_blank" rel="noopener noreferrer">Open ComfyUI ↗</a></p></section>',
+                '<header class="h3-hero"><span class="h3-brand-mark" aria-hidden="true">H3</span>'
+                '<div><p class="h3-eyebrow">CREATIVE WORKSPACE</p>'
+                '<h1>MiniMax H3 Local</h1></div></header>',
                 scale=3,
             )
             summary_root = gr.Column(scale=2, elem_classes=["h3-header-status"])
@@ -154,6 +156,10 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 )
         app_views = create_app_views(summary_root=summary_root)
         with app_views.system if app_views is not None else nullcontext():
+            gr.Markdown(
+                "## System\nManage your backend, memory, and browser preferences. "
+                '[Open ComfyUI ↗](/comfyui/)'
+            )
             with gr.Accordion("System details and VRAM", open=False):
                 with gr.Row(equal_height=True):
                     health = gr.Markdown(initial_backend)

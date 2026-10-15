@@ -44,7 +44,8 @@ def build_prompt_section(
         label="Prompt",
         lines=5,
         max_lines=24,
-        placeholder="Describe shots, camera motion, dialogue, sound effects, ambience, music, and any tagged references.",
+        placeholder="A quiet seaside town at sunrise. The camera drifts over the rooftops as waves break in the distance…",
+        elem_classes=["h3-prompt-editor"],
     )
     with gr.Accordion("Prompt writer / enhancer", open=False):
         gr.Markdown(

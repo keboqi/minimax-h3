@@ -10,8 +10,12 @@ bundled FirstBlockCache node.
 `bash run_h3.sh` and `python gradio_app.py` launch the workspace. Local and
 Modal launches use the same UI.
 
-The compact H3 composer keeps inputs, prompt and actions next to results.
-Output/recipe and advanced controls are collapsed below. Create supports H3,
+The studio layout separates composition, output settings, and preview into
+clearly marked sections, with a shared teal palette in light and dark mode.
+The H3 composer keeps inputs and the prompt beside results and generation
+actions. Recipes and output essentials stay visible; advanced controls are
+collapsed below. Mobile section links jump to compose, generate, and preview.
+Create supports H3,
 LTX 2.5, Qwen Image 2.1, MiniMax Music 3 and YuE2. Prompt suggestions require
 acceptance. Media includes indexed search, shared tags/favorites, lineage,
 image comparison and synchronized video playback.

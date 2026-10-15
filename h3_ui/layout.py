@@ -81,7 +81,10 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
                     scale=1,
                     interactive=False,
                 )
-            engine_help = gr.Markdown(engines_for_task("Video")[0].description)
+            engine_help = gr.Markdown(
+                engines_for_task("Video")[0].description,
+                elem_classes=["h3-engine-help"],
+            )
             with gr.Tabs(selected="h3", elem_id="h3-engine-tabs") as engine_tabs:
                 with gr.Tab("MiniMax H3", id="h3"):
                     gr.HTML(

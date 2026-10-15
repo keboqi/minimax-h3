@@ -615,11 +615,18 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
             elem_id="h3-composer",
             elem_classes=["h3-composer", "h3-run-panel"],
         ):
-            gr.Markdown("### Compose")
+            gr.HTML(
+                '<div class="h3-panel-heading"><span class="h3-step" aria-hidden="true">01</span>'
+                '<div><h3>Compose</h3></div></div>'
+            )
             conditioning_root = gr.Group()
             references_section = build_references_section(defaults, services)
             prompt_section = build_prompt_section(defaults, services)
             with gr.Column(elem_id="h3-output-settings"):
+                gr.HTML(
+                    '<div class="h3-panel-heading"><span class="h3-step" aria-hidden="true">02</span>'
+                    '<div><h3>Make it fit</h3><p>Choose a recipe and your output settings.</p></div></div>'
+                )
                 preset = gr.Radio(
                     ["Singularity", "Quality", "Balanced", "Fast"],
                     value="Singularity",
