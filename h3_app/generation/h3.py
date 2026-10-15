@@ -120,6 +120,8 @@ def generate(
             image_frames=prepared.requested_image_frames,
             use_trt_vae=request.output.use_trt_vae,
             use_int8_vae=request.output.use_int8_vae,
+            video_encoder=request.output.video_encoder,
+            lightvae_decoder=request.output.lightvae_decoder,
             use_lynnreal_vae=request.output.use_lynnreal_vae,
         )
         if prepared.effective_veda:

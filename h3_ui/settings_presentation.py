@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import escape
+from h3_app.decoder_intent import VideoDecoder
 from h3_app.settings import ResolvedSettings
 
 LABELS = {
@@ -154,22 +155,19 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
     if sampling.attention_mode in {"SLA", "Veda"}:
         technical += detail(f"{sampling.attention_mode} preset", sampling.sla_preset)
     technical += detail("Acceleration", effective.cache_mode)
-    technical += detail(
-        "Decoder",
-        (
-            output.image_vae
-            if fmt == "Image"
-            else (
-                "TensorRT"
-                if effective.use_trt_vae
-                else (
-                    "LynnReal Light INT8"
-                    if effective.use_lynnreal_vae
-                    else "INT8 ConvRot" if effective.use_int8_vae else "FP16"
-                )
-            )
-        ),
-    )
+    technical += detail("Video encoder", effective.video_encoder)
+    try:
+        decoder_label = VideoDecoder.from_flags(
+            effective.use_int8_vae, effective.use_lynnreal_vae,
+            effective.use_trt_vae, effective.lightvae_decoder,
+        ).value
+    except ValueError:
+        decoder_label = "Conflicting decoder selections"
+    if fmt == "Audio":
+        decoder_label = "Native audio VAE"
+    elif fmt == "Image" and "500K" in output.image_vae:
+        decoder_label = output.image_vae
+    technical += detail("Decoder", decoder_label)
     if finishing.latent_upscale:
         technical += detail(
             "Refinement", extras.get("latent_upscale_method", "Full-frame")

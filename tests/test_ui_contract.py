@@ -785,6 +785,38 @@ class UiContractTests(unittest.TestCase):
         repeat = self.demo.fns[transition["id"]].fn(*values)
         self.assertEqual(repeat[transition["outputs"].index(state["id"])], {"__type__": "update"})
 
+    def test_lightvae_selectors_commit_independently_and_persist(self):
+        from h3_app.decoder_intent import VideoDecoder
+        controls = {c.get("props", {}).get("label"): c for c in self.config["components"]}
+        encoder = controls["Video encoder"]
+        decoder = controls["Video decoder"]
+        self.assertEqual(encoder["props"]["value"], "Original")
+        self.assertEqual([c[1] for c in encoder["props"]["choices"]], ["Original", "LightVAE Lite"])
+        self.assertEqual([c[1] for c in decoder["props"]["choices"]], [d.value for d in VideoDecoder])
+        session = self.restored_session()
+        for component, value in ((encoder, "LightVAE Lite"), (decoder, VideoDecoder.LIGHTVAE_INT8.value)):
+            event = next(d for d in self.config["dependencies"] if (component["id"], "input") in d["targets"])
+            fn = self.demo.fns[event["id"]]
+            args = [deepcopy(c.value) for c in fn.inputs]
+            args[-1] = session
+            args[0 if component is decoder else 1] = value
+            fn.fn(*args)
+        selected = session.memory["values"]
+        self.assertEqual(selected["video_encoder"], "LightVAE Lite")
+        self.assertEqual(selected["lightvae_decoder"], "int8")
+        self.assertFalse(any(selected[k] for k in ("use_int8_vae", "use_lynnreal_vae", "use_trt_vae")))
+        self.assertEqual(session.preferences["values"]["h3.video_encoder"], "LightVAE Lite")
+        self.assertEqual(session.preferences["values"]["h3.lightvae_decoder"], "int8")
+        # Selecting an existing decoder must leave the encoder preference alone.
+        event = next(d for d in self.config["dependencies"] if (decoder["id"], "input") in d["targets"])
+        fn = self.demo.fns[event["id"]]
+        args = [deepcopy(c.value) for c in fn.inputs]
+        args[0], args[-1] = VideoDecoder.TENSORRT.value, session
+        fn.fn(*args)
+        self.assertEqual(session.memory["values"]["video_encoder"], "LightVAE Lite")
+        self.assertEqual(session.memory["values"]["lightvae_decoder"], "none")
+        self.assertTrue(session.memory["values"]["use_trt_vae"])
+
     def test_fast_and_singularity_default_to_lynnreal_video_vae(self) -> None:
         controls = {
             c.get("props", {}).get("label"): c for c in self.config["components"]

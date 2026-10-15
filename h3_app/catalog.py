@@ -641,6 +641,8 @@ UI_DEFAULTS = {
     "reuse_unchanged_inputs": True,
     "use_int8_vae": False,
     "use_lynnreal_vae": True,
+    "video_encoder": "Original",
+    "lightvae_decoder": "none",
     "use_trt_vae": False,
     "generation_mode": "Turbo",
     "turbo_variant": DEFAULT_TURBO,

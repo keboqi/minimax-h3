@@ -485,6 +485,35 @@ def ensure_turbo_lora(
     return True
 
 
+def ensure_lightvae(video_encoder: str, decoder: str, *, runtime: RuntimeConfig) -> bool:
+    """Provision only selected LightVAE components through the shared manifest."""
+    from h3_app.resources import resolve_decoders
+
+    selected = resolve_decoders(
+        "Video", "", use_trt_vae=False, use_int8_vae=False,
+        video_encoder=video_encoder, lightvae_decoder=decoder,
+    )
+    keys = selected.optional_model_keys
+    if not keys:
+        return False
+    manifest = runtime.models_config.parent / "h3_model_manifest.json"
+    stale = stale_model_keys(
+        root=runtime.comfy_dir / "models", manifest_path=manifest, model_keys=keys,
+    )
+    if not stale:
+        return False
+    sync_models(
+        root=runtime.comfy_dir / "models", manifest_path=manifest,
+        token=resolve_hf_token(), log_prefix="[h3-lightvae-on-demand]",
+        model_keys=tuple(stale), download_workers=1,
+    )
+    for key in keys:
+        spec = MODEL_SPECS[key]
+        if not model_file_is_ready(runtime.comfy_dir / "models" / spec.folder / spec.local_name):
+            raise H3Error(f"LightVAE download did not produce {spec.local_name}.")
+    return True
+
+
 def ensure_int8_video_vae(
     models: ModelConfig, *, runtime: RuntimeConfig, lynnreal: bool = False
 ) -> bool:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Protocol
+from typing import Any, Callable, Iterable, Iterator, Protocol
 
 from h3_app.media_types import UpscaleClipBatch, VideoMetadata
 from h3_app.model_types import ModelConfig, ModelProfile
@@ -50,6 +50,8 @@ class BuildFl2VaGraph(Protocol):
         model_name: str,
         models: ModelConfig,
         available_nodes: set[str],
+        video_encoder: str = ...,
+        lightvae_decoder: str = ...,
         use_lynnreal_vae: bool = ...,
         use_int8_vae: bool = ...,
         use_trt_vae: bool = ...,
@@ -140,6 +142,8 @@ class BuildRef2VaGraph(Protocol):
         model_name: str,
         models: ModelConfig,
         available_nodes: set[str],
+        video_encoder: str = ...,
+        lightvae_decoder: str = ...,
         use_lynnreal_vae: bool = ...,
         use_int8_vae: bool = ...,
         use_trt_vae: bool = ...,
@@ -427,6 +431,7 @@ class ModelsServices:
     ensure_h3_veda_predictor: EnsureH3VedaPredictor
     ensure_h3_text_encoder: EnsureH3TextEncoder
     ensure_int8_video_vae: EnsureInt8VideoVae
+    ensure_lightvae: Callable[[str, str], bool]
     ensure_ltx25_models: EnsureLtx25Models
     ensure_ltx25_ingredients_model: EnsureLtx25IngredientsModel
     ensure_ltx25_upscale_models: EnsureLtx25UpscaleModels

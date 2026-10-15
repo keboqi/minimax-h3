@@ -965,6 +965,11 @@ def install_bundled_nodes(comfy: Path) -> None:
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(BUNDLED_ACCEL_NODE, destination)
+    lightvae_source = SCRIPT_DIR / "custom_nodes" / "H3LightVAE"
+    shutil.copytree(
+        lightvae_source, comfy / "custom_nodes" / "H3LightVAE", dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
     print(f"[h3-setup] synced {destination}")
 
 

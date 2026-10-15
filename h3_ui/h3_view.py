@@ -226,6 +226,8 @@ class H3View:
     trt_vae_compile: gr.components.Component
     use_int8_vae: gr.components.Component
     use_lynnreal_vae: gr.components.Component
+    video_encoder: gr.components.Component
+    lightvae_decoder: gr.components.Component
     use_trt_vae: gr.components.Component
     width: gr.components.Component
 
@@ -378,6 +380,8 @@ H3_COMPONENT_ORDER = (
     "trt_vae_compile",
     "use_int8_vae",
     "use_lynnreal_vae",
+    "video_encoder",
+    "lightvae_decoder",
     "use_trt_vae",
     "width",
 )
@@ -583,6 +587,8 @@ def build_h3_view(
             "trt_vae_compile": model_section.trt_vae_compile,
             "use_int8_vae": model_section.use_int8_vae,
             "use_lynnreal_vae": model_section.use_lynnreal_vae,
+            "video_encoder": model_section.video_encoder,
+            "lightvae_decoder": model_section.lightvae_decoder,
             "use_trt_vae": model_section.use_trt_vae,
             "width": output_section.width,
         }

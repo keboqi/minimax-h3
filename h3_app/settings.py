@@ -107,6 +107,8 @@ class GenerationRequest:
     use_trt_vae: bool = False
     use_int8_vae: bool = False
     use_lynnreal_vae: bool = False
+    video_encoder: str = "Original"
+    lightvae_decoder: str = "none"
     semantic_bridge: bool = True
     semantic_bridge_alpha: float = 0.10
     fl2va_audio_1: Any = None
@@ -316,12 +318,14 @@ def resolve_settings(
             use_trt_vae=request.use_trt_vae,
             use_int8_vae=request.use_int8_vae,
             use_lynnreal_vae=request.use_lynnreal_vae,
+            video_encoder=request.video_encoder,
+            lightvae_decoder=request.lightvae_decoder,
         )
     except ValueError as exc:
         issues.append(str(exc))
         decoders = None
     if decoders and decoders.video_decoder == "none":
-        inactive.update({"use_trt_vae", "use_int8_vae", "use_lynnreal_vae"})
+        inactive.update({"use_trt_vae", "use_int8_vae", "use_lynnreal_vae", "lightvae_decoder"})
     effective = replace(
         request,
         sampling=sampling,
@@ -330,6 +334,7 @@ def resolve_settings(
         generation_mode=generation_mode,
         cache_mode=cache,
         semantic_bridge=bridge,
+        lightvae_decoder=request.lightvae_decoder if decoders and decoders.video_decoder != "none" else "none",
         use_trt_vae=decoders.use_trt_vae if decoders else request.use_trt_vae,
         use_int8_vae=decoders.use_int8_vae if decoders else request.use_int8_vae,
         use_lynnreal_vae=decoders.use_lynnreal_vae if decoders else request.use_lynnreal_vae,
@@ -364,16 +369,20 @@ def transition_modes(
         current.update(asdict(preset_settings(preset, mode)))
         current["use_int8_vae"] = preset not in {"Singularity", "Fast"}
         current["use_trt_vae"] = False
+        current["lightvae_decoder"] = "none"
         current["use_lynnreal_vae"] = preset in {"Singularity", "Fast"}
         if preset == "Singularity":
             current["model_profile"] = "Singularity"
     elif action == "use_trt_vae" and current.get("use_trt_vae"):
+        current["lightvae_decoder"] = "none"
         current["use_int8_vae"] = False
         current["use_lynnreal_vae"] = False
     elif action == "use_int8_vae" and current.get("use_int8_vae"):
+        current["lightvae_decoder"] = "none"
         current["use_trt_vae"] = False
         current["use_lynnreal_vae"] = False
     elif action == "use_lynnreal_vae" and current.get("use_lynnreal_vae"):
+        current["lightvae_decoder"] = "none"
         current["use_int8_vae"] = False
         current["use_trt_vae"] = False
     elif action == "turbo_variant" and mode == "Turbo":

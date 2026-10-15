@@ -28,6 +28,8 @@ class ModelSection:
     trt_vae_compile: gr.components.Component
     use_int8_vae: gr.components.Component
     use_lynnreal_vae: gr.components.Component
+    video_encoder: gr.components.Component
+    lightvae_decoder: gr.components.Component
     use_trt_vae: gr.components.Component
 
 
@@ -119,12 +121,23 @@ def build_model_section(
             label="Semantic Bridge strength",
             info="Start at 0.10; try 0.15 for a stronger effect. Higher values can reduce quality. Uses per-token magnitude matching.",
         )
+        video_encoder = gr.Dropdown(
+            choices=["Original", "LightVAE Lite"],
+            value=defaults.get("video_encoder", "Original"),
+            label="Video encoder",
+            info="LightVAE downloads on first use. First/last-frame encoding is experimental; compare keyframe and reference fidelity.",
+        )
+        lightvae_decoder = gr.Dropdown(
+            choices=["none", "lite", "int8"], value=defaults.get("lightvae_decoder", "none"),
+            visible=False, label="LightVAE decoder compatibility",
+        )
         video_decoder = gr.Dropdown(
             choices=[item.value for item in VideoDecoder],
             value=VideoDecoder.from_flags(
                 defaults["use_int8_vae"],
                 defaults["use_lynnreal_vae"],
                 defaults["use_trt_vae"],
+                defaults.get("lightvae_decoder", "none"),
             ).value,
             label="Video decoder",
             visible=True,
@@ -156,10 +169,12 @@ def build_model_section(
             value=defaults["image_vae"],
             label="Image VAE",
             visible=False,
-            info="Official is the default and remains the only video decoder. The experimental 500K option downloads 9.69 GB on first use and decodes one image from temporal latent slice 0.",
+            info="Official uses the selected video decoder for image frames. The experimental 500K option downloads 9.69 GB on first use and decodes one image from temporal latent slice 0.",
         )
     return ModelSection(
         video_decoder=video_decoder,
+        video_encoder=video_encoder,
+        lightvae_decoder=lightvae_decoder,
         generation_mode=generation_mode,
         image_vae=image_vae,
         mode=mode,

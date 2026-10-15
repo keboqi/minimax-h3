@@ -621,6 +621,10 @@ def ensure_audio_vae(models: ModelConfig) -> bool:
     return _modelcontroller().ensure_audio_vae(models)
 
 
+def ensure_lightvae(video_encoder: str, decoder: str) -> bool:
+    return model_service.ensure_lightvae(video_encoder, decoder, runtime=_runtime_config())
+
+
 def ensure_int8_video_vae(models: ModelConfig, *, lynnreal: bool = False) -> bool:
     return _modelcontroller().ensure_int8_video_vae(models, lynnreal=lynnreal)
 
@@ -1066,6 +1070,8 @@ def build_fl2va_graph(
     model_name: str,
     models: ModelConfig,
     available_nodes: set[str],
+    video_encoder: str = "Original",
+    lightvae_decoder: str = "none",
     use_lynnreal_vae: bool = False,
     use_int8_vae: bool = False,
     use_trt_vae: bool = False,
@@ -1141,6 +1147,8 @@ def build_fl2va_graph(
         available_nodes=available_nodes,
         use_int8_vae=use_int8_vae,
         use_lynnreal_vae=use_lynnreal_vae,
+        video_encoder=video_encoder,
+        lightvae_decoder=lightvae_decoder,
         use_trt_vae=use_trt_vae,
         use_sage=use_sage,
         use_sla=use_sla,
@@ -1205,6 +1213,8 @@ def build_ref2va_graph(
     model_name: str,
     models: ModelConfig,
     available_nodes: set[str],
+    video_encoder: str = "Original",
+    lightvae_decoder: str = "none",
     use_lynnreal_vae: bool = False,
     use_int8_vae: bool = False,
     use_trt_vae: bool = False,
@@ -1279,6 +1289,8 @@ def build_ref2va_graph(
         available_nodes=available_nodes,
         use_int8_vae=use_int8_vae,
         use_lynnreal_vae=use_lynnreal_vae,
+        video_encoder=video_encoder,
+        lightvae_decoder=lightvae_decoder,
         use_trt_vae=use_trt_vae,
         use_sage=use_sage,
         use_sla=use_sla,
@@ -2217,6 +2229,7 @@ def _generation_services() -> generation_services.GenerationServices:
             ensure_h3_veda_predictor=ensure_h3_veda_predictor,
             ensure_h3_text_encoder=ensure_h3_text_encoder,
             ensure_int8_video_vae=ensure_int8_video_vae,
+            ensure_lightvae=ensure_lightvae,
             ensure_ltx25_models=ensure_ltx25_models,
             ensure_ltx25_ingredients_model=ensure_ltx25_ingredients_model,
             ensure_ltx25_upscale_models=ensure_ltx25_upscale_models,
@@ -2337,6 +2350,8 @@ def generate(
     encoder_small_input: bool = False,
     use_lynnreal_vae: bool = False,
     latent_upscale_refine_lora: str = "Same as generation",
+    video_encoder: str = "Original",
+    lightvae_decoder: str = "none",
     progress=gr.Progress(track_tqdm=False),
 ):
     request = generation_requests.H3Request.from_values(
@@ -2415,6 +2430,8 @@ def generate(
             "ltx25_model": ltx25_model,
             "use_int8_vae": use_int8_vae,
             "use_lynnreal_vae": use_lynnreal_vae,
+            "video_encoder": video_encoder,
+            "lightvae_decoder": lightvae_decoder,
             "use_trt_vae": use_trt_vae,
             "image_vae": image_vae,
             "result_format": result_format,
@@ -2690,6 +2707,8 @@ def compact_settings_summary(
     latent_split_seam_polish: str = "off",
     use_trt_vae: bool = False,
     use_lynnreal_vae: bool = False,
+    video_encoder: str = "Original",
+    lightvae_decoder: str = "none",
 ) -> str:
     return describe_settings(locals())
 

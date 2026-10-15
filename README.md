@@ -65,6 +65,8 @@ backends; GPU inference and deployment are validated separately.
 - Two-way feed-forward chunking for ConvRot quality checkpoints
 - Optional official INT8 ConvRot video VAE, lazy-downloaded on first use
 - Optional LynnReal Light INT8 video VAE, lazy-downloaded on first use
+- Independent Original / LightVAE Lite video encoding and optional LightVAE Lite
+  or LightVAE Lite INT8 ConvRot decoding, lazy-downloaded on first use
 - H.264 video output with NVENC hardware encoding and automatic CPU libx264 fallback
 - Optional 500K single-frame image decoder, lazy-downloaded only when selected;
   visual conditioning retains the official FP16 path when TensorRT decoding is selected
@@ -75,6 +77,34 @@ backends; GPU inference and deployment are validated separately.
 - FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
 - Version-aware, resumable Hugging Face model provisioning
+
+## LightVAE video encoding and decoding (experimental)
+
+Under **Model and memory**, choose **Video encoder** independently from
+**Video decoder**. Original encoding is the default. LightVAE Lite encoding
+supports first/last frames and reference images/videos; first/last-frame fidelity
+is experimental. Any encoder can pair with Original FP16, Official INT8,
+LynnReal INT8, TensorRT, LightVAE Lite, or LightVAE Lite INT8 ConvRot decoding.
+The audio VAE remains native. Image frames use the selected video decoder unless
+the separate 500K single-frame decoder is selected.
+
+Only selected LightVAE components download to `ComfyUI/models/vae/LightVAE/`:
+the encoder is approximately 406 MB, the standard decoder 3.25 GB, and the INT8
+decoder 834 MB. Files are checksum-pinned. Text-only generation does not download
+the encoder. Audio-only and 500K image output skip LightVAE decoder downloads;
+visual conditioning can still use the selected encoder. Both choices persist
+and are recorded in output settings. Changing the encoder invalidates matching
+conditioning caches; base generation and refinement use the same encoder.
+
+Local setup and Modal ship the native ComfyUI adapter from
+[ModelTC/LightVAE](https://github.com/ModelTC/LightVAE) revision
+`38b0587d47df9188e3e05973265352962b20ada4`. Existing local installations need
+updated setup and a ComfyUI restart; Modal deployments need rebuilding/redeploying.
+No LightVAE Python package or extra Triton kernels are required. The INT8 decoder
+uses native ConvRot operations; upstream recommends CUDA 13.0+ PyTorch for native
+NVIDIA acceleration. Preset decoder defaults are unchanged. GPU speed, VRAM,
+fine detail, temporal stability, and reference/keyframe fidelity need matched
+comparisons before promoting LightVAE to a preset default.
 
 ## Veda attention (experimental)
 

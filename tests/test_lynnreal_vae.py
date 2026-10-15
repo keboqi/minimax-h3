@@ -47,7 +47,7 @@ class LynnRealVaeTests(unittest.TestCase):
             self.assertEqual(plan.effective.use_lynnreal_vae, active)
         with self.assertRaises(ValueError):
             resolve_decoders("Video", "", use_trt_vae=False, use_int8_vae=True, use_lynnreal_vae=True)
-        legacy = [None] * (len(GENERATION_FIELDS) - 1)
+        legacy = [None] * GENERATION_FIELDS.index("use_lynnreal_vae")
         self.assertFalse(GenerationArguments.from_positional(legacy).values["use_lynnreal_vae"])
 
     def test_old_config_migrates_and_downloads_only_selected_vae(self):

@@ -81,6 +81,18 @@ class ModelSpec:
 
 
 MODEL_SPECS: dict[str, ModelSpec] = {
+    "lightvae_encoder": ModelSpec(
+        "lightx2v/LightVAE", "vae/LightVAE", "lightvae-lite-h3-encoder.safetensors", "LightVAE Lite H3 encoder",
+        expected_sha256="4b0e5af102da19324c64df40abbd95008d8acb0b9cf76e4704d74c8ac20cefac",
+    ),
+    "lightvae_decoder": ModelSpec(
+        "lightx2v/LightVAE", "vae/LightVAE", "lightvae-lite-h3-decoder.safetensors", "LightVAE Lite H3 decoder",
+        expected_sha256="d060ad616a33f422fcb8395f525d6d71185b5ddb3e016b31cc210ba2c9c06ee9",
+    ),
+    "lightvae_decoder_int8": ModelSpec(
+        "lightx2v/LightVAE", "vae/LightVAE", "lightvae-lite-h3-decoder-int8-convrot.safetensors", "LightVAE Lite H3 INT8 ConvRot decoder",
+        expected_sha256="247de59ddd078d121ba9ba4bac1bcbf1285c2ce68304d9d78eaea3e5a947a7e8",
+    ),
     "veda_t2va": ModelSpec(
         "Veda-Sparse/Minimax-H3-T2VA-Veda-8NFE-600Step-Preview",
         "veda",
@@ -745,6 +757,9 @@ QWEN_IMAGE21_MODEL_KEYS = (
     "qwen_image21_viggle_v03_lora",
 )
 LAZY_OPTIONAL_MODEL_KEYS = (
+    "lightvae_encoder",
+    "lightvae_decoder",
+    "lightvae_decoder_int8",
     "veda_t2va",
     "veda_r2va",
     "semantic_bridge_v1",
@@ -1565,6 +1580,7 @@ def selftest() -> None:
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert set(MODEL_SPECS) == {
+        "lightvae_encoder", "lightvae_decoder", "lightvae_decoder_int8",
         "veda_t2va",
         "veda_r2va",
         "semantic_bridge_v1",

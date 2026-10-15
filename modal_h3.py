@@ -149,6 +149,9 @@ _BUILD_LOCAL_MOUNTS = (
 _RUNTIME_LOCAL_MOUNTS = (
     (LOCAL_UI, UI),
     (LOCAL_ACCEL, ACCEL_DEST),
+    *((LOCAL / "custom_nodes" / "H3LightVAE" / filename,
+       COMFY / "custom_nodes" / "H3LightVAE" / filename)
+      for filename in ("__init__.py", "nodes.py", "h3_vae.py", "UPSTREAM.md")),
     (LOCAL_SHARED_MODELS, SHARED_MODELS),
     (LOCAL_ATTENTION_HELPER, ATTENTION_HELPER),
     (LOCAL_PROMPT_REWRITER, PROMPT_REWRITER),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from h3_app.jobs import CURRENT_JOB, variant_seed
+from h3_app.decoder_intent import VideoDecoder
 
 import random
 from dataclasses import dataclass
@@ -142,6 +143,8 @@ def prepare_h3(
     request.output.use_trt_vae = effective.use_trt_vae
     request.output.use_int8_vae = effective.use_int8_vae
     request.output.use_lynnreal_vae = effective.use_lynnreal_vae
+    request.output.video_encoder = effective.video_encoder
+    request.output.lightvae_decoder = effective.lightvae_decoder
     request.sampling.semantic_bridge = (
         effective.semantic_bridge and effective.semantic_bridge_alpha != 0
     )
@@ -212,6 +215,24 @@ def prepare_h3(
     selected_text_encoder, bf16_text_encoder = services.models.ensure_h3_text_encoder(
         models, request.sampling.text_encoder
     )
+    has_visual_conditioning = False
+    if request.media.mode == "First / last frame":
+        has_visual_conditioning = bool(request.media.first_image or request.media.last_image)
+    elif request.media.mode == "Reference media":
+        has_visual_conditioning = any(
+            getattr(request.media, f"ref_{kind}_{i}")
+            for kind, count in (("image", 9), ("video", 3))
+            for i in range(1, count + 1)
+        )
+    use_lightvae = request.output.lightvae_decoder != "none" or (
+        has_visual_conditioning and request.output.video_encoder == "LightVAE Lite"
+    )
+    if use_lightvae:
+        progress(0, desc="Preparing LightVAE")
+        services.models.ensure_lightvae(
+            request.output.video_encoder if has_visual_conditioning else "Original",
+            request.output.lightvae_decoder,
+        )
     if request.output.use_int8_vae:
         progress(0, desc="Preparing INT8 video VAE")
         services.models.ensure_int8_video_vae(models)
@@ -262,7 +283,7 @@ def prepare_h3(
     # H3 conditioning requires a video VAE even for Audio output and the
     # single-frame image decoder. Provision the VAE used by add_model_stack,
     # independently of whether the result includes decoded video.
-    if not any(
+    if has_visual_conditioning or request.output.lightvae_decoder != "none" or not any(
         (
             request.output.use_int8_vae,
             request.output.use_trt_vae,
@@ -329,11 +350,13 @@ def prepare_h3(
         selected_label = f"{profile.label} · Normal"
         turbo_lora_name = None
         turbo_strength = 1.0
-    selected_label += (
-        " · LynnReal Light INT8 VAE"
-        if request.output.use_lynnreal_vae
-        else " · INT8 ConvRot VAE" if request.output.use_int8_vae else " · FP16 VAE"
-    )
+    decoder_label = VideoDecoder.from_flags(
+        request.output.use_int8_vae, request.output.use_lynnreal_vae,
+        request.output.use_trt_vae, request.output.lightvae_decoder,
+    ).value
+    selected_label += f" · {decoder_label} VAE"
+    if has_visual_conditioning:
+        selected_label += f" · video encoder {request.output.video_encoder}"
     selected_label += (
         f" · text encoder {request.sampling.text_encoder} · stage offload "
         f"{'on' if effective_stage_offload else 'off'}"
@@ -425,6 +448,11 @@ def prepare_h3(
 
     info = services.execution.object_info()
     available = set(info)
+    if use_lightvae and "LightVAELoader" not in available:
+        raise H3Error(
+            "LightVAE is unavailable. Update setup_h3.py and restart ComfyUI; "
+            "rebuild/redeploy Modal images."
+        )
     if request.sampling.semantic_bridge:
         if H3_SEMANTIC_BRIDGE_NODE not in available:
             raise H3Error(

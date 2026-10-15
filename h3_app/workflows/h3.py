@@ -188,6 +188,7 @@ def add_model_stack(
     easycache_verbose: bool,
     available_nodes: set[str],
     text_encoder_name: str | None = None,
+    lightvae_decoder: str = "none",
     use_lynnreal_vae: bool = False,
     use_int8_vae: bool = False,
     use_trt_vae: bool = False,
@@ -403,8 +404,10 @@ def add_model_stack(
         type="minimax",
         device="default",
     )
-    if sum((use_int8_vae, use_trt_vae, use_lynnreal_vae)) > 1:
-        raise H3Error("Select only one video VAE: INT8 ConvRot, LynnReal Light INT8, or TensorRT.")
+    if lightvae_decoder not in {"none", "lite", "int8"}:
+        raise H3Error("Unsupported LightVAE decoder.")
+    if sum((use_int8_vae, use_trt_vae, use_lynnreal_vae, lightvae_decoder != "none")) > 1:
+        raise H3Error("Select only one video decoder.")
     if use_trt_vae:
         if "MiniMaxH3TRTVAELoader" not in available_nodes:
             raise H3Error(
@@ -429,8 +432,22 @@ def add_model_stack(
         else:
             video_vae_name = models.video_vae
         video_vae = graph.add("VAELoader", vae_name=video_vae_name)
+    if lightvae_decoder != "none":
+        video_vae = add_lightvae(graph, Graph.out(video_vae), available_nodes,
+                                 decoder=lightvae_decoder)
     audio_vae = graph.add("VAELoader", vae_name=models.audio_vae)
     return model_ref, Graph.out(clip), Graph.out(video_vae), Graph.out(audio_vae)
+
+
+def add_lightvae(graph, base_vae, available_nodes, *, encoder="Original", decoder="none"):
+    if "LightVAELoader" not in available_nodes:
+        raise H3Error("LightVAE is unavailable. Update setup_h3.py and restart ComfyUI; rebuild/redeploy Modal images.")
+    key = "lightvae_decoder_int8" if decoder == "int8" else "lightvae_decoder"
+    return graph.add(
+        "LightVAELoader", base_vae=base_vae,
+        encoder=MODEL_SPECS["lightvae_encoder"].local_name if encoder == "LightVAE Lite" else "none",
+        decoder=MODEL_SPECS[key].local_name if decoder != "none" else "none",
+    )
 
 
 def h3_conditioning_video_vae(
@@ -440,15 +457,25 @@ def h3_conditioning_video_vae(
     *,
     use_trt_vae: bool,
     has_visual_conditioning: bool,
+    video_encoder: str = "Original",
+    available_nodes: set[str] | None = None,
 ) -> list[Any]:
-    """Use the reference VAE encoder for visual conditioning.
-
-    Repeating one frame to satisfy the TensorRT encoder's fixed 17-frame
-    profile changes its causal latent. TensorRT remains the final decoder.
-    """
-    if not (use_trt_vae and has_visual_conditioning):
+    """Condition through the independently selected original or Lite encoder."""
+    if video_encoder not in {"Original", "LightVAE Lite"}:
+        raise H3Error("Unsupported video encoder.")
+    if not has_visual_conditioning:
+        return decode_vae_ref
+    # Only the original full VAE can be reused for original encoding. Decoder
+    # checkpoints (including quantized and distilled ones) never select encoding.
+    node = graph.nodes.get(decode_vae_ref[0], {})
+    if (video_encoder == "Original" and not use_trt_vae
+            and node.get("class_type") == "VAELoader"
+            and node.get("inputs", {}).get("vae_name") == models.video_vae):
         return decode_vae_ref
     encoder_vae = graph.add("VAELoader", vae_name=models.video_vae)
+    if video_encoder == "LightVAE Lite":
+        encoder_vae = add_lightvae(graph, Graph.out(encoder_vae), available_nodes or set(),
+                                   encoder=video_encoder)
     return Graph.out(encoder_vae)
 
 
@@ -938,6 +965,8 @@ def build_fl2va_graph(
     model_name: str,
     models: ModelConfig,
     available_nodes: set[str],
+    video_encoder: str = "Original",
+    lightvae_decoder: str = "none",
     use_lynnreal_vae: bool = False,
     use_int8_vae: bool = False,
     use_trt_vae: bool = False,
@@ -994,6 +1023,7 @@ def build_fl2va_graph(
         available_nodes=available_nodes,
         text_encoder_name=text_encoder_name,
         use_lynnreal_vae=use_lynnreal_vae,
+        lightvae_decoder=lightvae_decoder,
         use_int8_vae=use_int8_vae,
         use_trt_vae=use_trt_vae,
         use_sage=use_sage,
@@ -1008,6 +1038,8 @@ def build_fl2va_graph(
         models,
         video_vae_ref,
         use_trt_vae=use_trt_vae,
+        video_encoder=video_encoder,
+        available_nodes=available_nodes,
         has_visual_conditioning=bool(first_image or last_image),
     )
     normalized_image_vae = normalize_image_vae(image_vae)
@@ -1101,7 +1133,7 @@ def build_fl2va_graph(
         prompt,
         text_encoder_name or models.text_encoder,
         conditioning_media,
-        encoder_settings={"encoder_small_input": encoder_small_input},
+        encoder_settings={"encoder_small_input": encoder_small_input, **({"video_encoder": video_encoder} if video_encoder != "Original" else {})},
     )
     cache_node = graph.add(
         H3_CONDITIONING_CACHE_NODE,
@@ -1232,6 +1264,8 @@ def build_ref2va_graph(
     model_name: str,
     models: ModelConfig,
     available_nodes: set[str],
+    video_encoder: str = "Original",
+    lightvae_decoder: str = "none",
     use_lynnreal_vae: bool = False,
     use_int8_vae: bool = False,
     use_trt_vae: bool = False,
@@ -1285,6 +1319,7 @@ def build_ref2va_graph(
         available_nodes=available_nodes,
         text_encoder_name=text_encoder_name,
         use_lynnreal_vae=use_lynnreal_vae,
+        lightvae_decoder=lightvae_decoder,
         use_int8_vae=use_int8_vae,
         use_trt_vae=use_trt_vae,
         use_sage=use_sage,
@@ -1299,6 +1334,8 @@ def build_ref2va_graph(
         models,
         video_vae_ref,
         use_trt_vae=use_trt_vae,
+        video_encoder=video_encoder,
+        available_nodes=available_nodes,
         has_visual_conditioning=bool(reference_images or reference_videos),
     )
     normalized_image_vae = normalize_image_vae(image_vae)
@@ -1370,6 +1407,7 @@ def build_ref2va_graph(
         text_encoder_name or models.text_encoder,
         conditioning_media,
         encoder_settings={
+            **({"video_encoder": video_encoder} if video_encoder != "Original" else {}),
             "ref_image_size": ref_image_size,
             "encoder_small_input": encoder_small_input,
         },
