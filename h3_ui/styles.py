@@ -170,11 +170,13 @@ H3_WORKSPACE_CSS = """
   --h3-accent: #66d8bb; --h3-focus: #66d8bb;
   --input-placeholder-color: #94a3b8;
 }
+body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f5f3; }
+:is(.dark body, body.dark):has(.h3-workspace), .dark .gradio-container:has(.h3-workspace) { background: #111b18; }
 .h3-workspace .h3-hero { display: flex; align-items: center; gap: 16px; padding: 0; }
 .h3-workspace .h3-brand-mark { display: grid; place-items: center; width: 54px; height: 54px; flex-shrink: 0; border-radius: 16px; background: #087f6c; color: white; font-size: 22px; font-weight: 750; letter-spacing: -.06em; }
 .h3-workspace .h3-hero h1 { font-size: 25px; line-height: 1.25; letter-spacing: -.035em; margin: 4px 0; }
 .h3-workspace .h3-hero p { color: var(--h3-muted); margin: 0; }
-.h3-workspace .h3-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .14em; color: var(--h3-accent); margin: 0; }
+.h3-workspace .h3-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--h3-accent); margin: 0; }
 .h3-workspace .h3-workspace-header { align-items: center; gap: 24px; padding: 0 0 8px; }
 .h3-workspace .html-container { padding: 0; }
 .h3-workspace .h3-header-status p { margin: 0; }
@@ -204,14 +206,21 @@ H3_WORKSPACE_CSS = """
 .h3-workspace .h3-prompt-editor textarea { min-height: 150px; font-size: 15px; line-height: 1.65; }
 .h3-workspace #h3-output-settings { border-top: 1px solid var(--h3-border); padding-top: 16px; margin-top: 4px; }
 .h3-workspace .h3-result-player { min-height: 260px; background: var(--h3-muted-surface); border-style: dashed; }
+.h3-workspace .h3-result-player .empty { flex-direction: column; gap: 10px; color: var(--h3-muted); }
+.h3-workspace .h3-result-player .empty::after { content: "Your video will appear here"; font-size: 13px; }
 .h3-workspace #h3-advanced-settings { border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-surface); margin-top: 6px; }
 .h3-workspace .h3-engine-view { padding: 20px; border: 1px solid var(--h3-border); border-radius: 16px; background: var(--h3-surface); }
 .h3-workspace .h3-essentials { border: 1px solid var(--h3-border); border-radius: 12px; padding: 12px; background: var(--h3-surface); }
 .h3-workspace .h3-action-dock { padding: 14px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
 .h3-workspace .h3-generation-buttons { gap: 8px; }
-.h3-workspace .h3-generation-buttons > button { min-width: 100px; min-height: 44px; }
+.h3-workspace .h3-generation-buttons > button { min-width: 100px; min-height: 44px; white-space: nowrap; }
+.h3-workspace .h3-generation-buttons > button:not(.h3-primary-action) { border: 1px solid var(--h3-border); }
 .h3-workspace .h3-primary-action { font-weight: 650; }
-.h3-workspace button:disabled { cursor: not-allowed; }
+.h3-workspace .h3-primary-action:not(:disabled) { box-shadow: 0 4px 14px #087f6c40; }
+.h3-workspace button:disabled { cursor: not-allowed; opacity: .6; }
+.h3-workspace .h3-shortcut-hint { margin: 6px 0 0; font-size: 12px; color: var(--h3-muted); }
+@media (pointer: coarse) { .h3-workspace .h3-shortcut-hint { display: none; } }
+.h3-workspace kbd { padding: 1px 6px; border: 1px solid var(--h3-border); border-bottom-width: 2px; border-radius: 5px; background: var(--h3-surface); font: 600 11px/1.5 ui-monospace, monospace; }
 .h3-workspace .h3-action-dock .h3-status { margin-top: 8px; }
 .h3-workspace :is(.h3-actions-slot, .h3-action-dock) { scroll-margin-top: 16px; }
 .h3-workspace .h3-gallery-workspace { gap: 16px; align-items: flex-start; }

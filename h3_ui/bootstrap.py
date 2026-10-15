@@ -21,6 +21,23 @@ from .music_view import build_music_view
 from .qwen_view import build_qwen_image21_view
 from .yue2_view import build_yue2_view
 
+# Ctrl/Cmd+Enter presses the visible engine's generate button. Disabled
+# buttons swallow the shortcut so it never falls through to other handlers.
+GENERATE_SHORTCUT_JS = """
+() => {
+  if (window.h3GenerateShortcut) return;
+  window.h3GenerateShortcut = true;
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.repeat) return;
+    const button = [...document.querySelectorAll("button.h3-primary-action")]
+      .find((candidate) => candidate.offsetParent !== null);
+    if (!button) return;
+    event.preventDefault();
+    if (!button.disabled) button.click();
+  });
+}
+"""
+
 
 @dataclass(frozen=True)
 class BootstrapCatalog:
@@ -145,7 +162,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         with gr.Row(elem_classes=["h3-workspace-header"]):
             gr.HTML(
                 '<header class="h3-hero"><span class="h3-brand-mark" aria-hidden="true">H3</span>'
-                '<div><p class="h3-eyebrow">CREATIVE WORKSPACE</p>'
+                '<div><p class="h3-eyebrow">Creative workspace</p>'
                 '<h1>MiniMax H3 Local</h1></div></header>',
                 scale=3,
             )
@@ -466,5 +483,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             browser_state=browser_state,
             navigation=navigation,
         )
+        demo.load(None, js=GENERATE_SHORTCUT_JS, api_name=False)
     demo.h3_css = H3_SETUP_CSS + H3_WORKSPACE_CSS
     return demo

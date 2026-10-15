@@ -57,6 +57,10 @@ def build_results_section(
             stop = gr.Button("Interrupt", scale=1, interactive=False)
             run.h3_stop = stop
             refresh = gr.Button("Refresh status", scale=1)
+        gr.HTML(
+            '<p class="h3-shortcut-hint">Press <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> '
+            "anywhere in Create to generate.</p>"
+        )
         status = gr.Textbox(
             label="Generation progress",
             lines=2,

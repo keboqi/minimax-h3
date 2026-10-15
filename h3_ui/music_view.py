@@ -110,11 +110,12 @@ def build_music_view(
                     readiness = gr.HTML(
                         '<p class="h3-readiness" role="alert">Write a prompt to start.</p>'
                     )
-                    with gr.Row():
+                    with gr.Row(elem_classes=["h3-generation-buttons"]):
                         run = gr.Button(
                             "Generate with Music 3",
                             variant="primary",
                             interactive=False,
+                            elem_classes=["h3-primary-action"],
                         )
                         stop = gr.Button("Interrupt", interactive=False)
                         run.h3_stop = stop

@@ -656,6 +656,9 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
             elem_classes=["h3-preview-panel"],
         ):
             results_root = gr.Column()
+            action_root = gr.Column(
+                elem_id="h3-generate-actions", elem_classes=["h3-actions-slot"]
+            )
             settings_overview = gr.HTML(
                 services.compact_settings_summary(
                     defaults["mode"],
@@ -701,9 +704,6 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
                     lightvae_decoder=defaults["lightvae_decoder"],
                 ),
                 elem_classes=["h3-settings-summary"],
-            )
-            action_root = gr.Column(
-                elem_id="h3-generate-actions", elem_classes=["h3-actions-slot"]
             )
             with results_root:
                 results_section = build_results_section(

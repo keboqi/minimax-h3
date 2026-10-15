@@ -1655,8 +1655,9 @@ class UiContractTests(unittest.TestCase):
             if "h3-settings-summary"
             in component.get("props", {}).get("elem_classes", [])
         )
+        # Actions sit directly under the result so they never cover it.
         self.assertEqual(
-            preview_children[summary_index + 1]["props"]["elem_id"],
+            preview_children[summary_index - 1]["props"]["elem_id"],
             "h3-generate-actions",
         )
         action = self.find_layout_node(by_id["h3-generate-actions"]["id"])

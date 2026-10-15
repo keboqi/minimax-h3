@@ -424,5 +424,5 @@ def build_server(
         blocked_paths=[str(config.outputs_dir / ".h3-workspace")],
         show_error=True,
         css=config.css,
-        theme=gr.themes.Default(primary_hue="blue", secondary_hue="slate"),
+        theme=gr.themes.Default(primary_hue="teal", secondary_hue="slate"),
     )
