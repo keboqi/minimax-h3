@@ -13,6 +13,20 @@ from h3_ui.persistence import restore_preferences, PERSISTED_NAMES
 
 
 class MigrationTests(unittest.TestCase):
+    def test_old_decoder_preferences_do_not_conflict_with_lightvae_default(self):
+        components = {
+            "h3.lightvae_decoder": SimpleNamespace(value="lite", choices=[(s, s) for s in ("none", "lite", "int8")]),
+            **{"h3." + name: SimpleNamespace(value=False) for name in ("use_int8_vae", "use_lynnreal_vae", "use_trt_vae")},
+        }
+        for name in ("use_int8_vae", "use_lynnreal_vae", "use_trt_vae"):
+            restored, _ = restore_preferences({"h3." + name: True}, components)
+            self.assertTrue(restored["h3." + name])
+            self.assertEqual(restored["h3.lightvae_decoder"], "none")
+        restored, _ = restore_preferences({}, components)
+        self.assertEqual(restored["h3.lightvae_decoder"], "lite")
+        restored, _ = restore_preferences({"h3.lightvae_decoder": "int8"}, components)
+        self.assertEqual(restored["h3.lightvae_decoder"], "int8")
+
     def components(self):
         return {
             "h3.preset": SimpleNamespace(

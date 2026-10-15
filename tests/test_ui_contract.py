@@ -347,24 +347,24 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(parameter["parameter_has_default"])
         self.assertFalse(parameter["parameter_default"])
 
-    def test_lynnreal_vae_is_default_on_and_appended_to_api(self):
+    def test_lynnreal_vae_remains_optional_in_advanced_api(self):
         toggle = next(
             c
             for c in self.config["components"]
             if c.get("props", {}).get("label") == "LynnReal Light INT8 video VAE"
         )
-        self.assertTrue(toggle["props"]["value"])
+        self.assertFalse(toggle["props"]["value"])
         advanced = next(
             d
             for d in self.config["dependencies"]
             if d.get("api_name") == "generate_video_advanced"
         )
-        self.assertEqual(advanced["inputs"][-2], toggle["id"])
+        self.assertEqual(advanced["inputs"][-4], toggle["id"])
         parameter = self.demo.get_api_info()["named_endpoints"][
             "/generate_video_advanced"
-        ]["parameters"][-2]
+        ]["parameters"][-4]
         self.assertTrue(parameter["parameter_has_default"])
-        self.assertTrue(parameter["parameter_default"])
+        self.assertFalse(parameter["parameter_default"])
 
     def test_only_supported_model_and_turbo_options_are_selectable(self):
         from h3_app.catalog import DMAD_4STEP_LORA, PDMD_4STEP_LORA
@@ -790,7 +790,7 @@ class UiContractTests(unittest.TestCase):
         controls = {c.get("props", {}).get("label"): c for c in self.config["components"]}
         encoder = controls["Video encoder"]
         decoder = controls["Video decoder"]
-        self.assertEqual(encoder["props"]["value"], "Original")
+        self.assertEqual(encoder["props"]["value"], "LightVAE Lite")
         self.assertEqual([c[1] for c in encoder["props"]["choices"]], ["Original", "LightVAE Lite"])
         self.assertEqual([c[1] for c in decoder["props"]["choices"]], [d.value for d in VideoDecoder])
         session = self.restored_session()
@@ -817,12 +817,17 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(session.memory["values"]["lightvae_decoder"], "none")
         self.assertTrue(session.memory["values"]["use_trt_vae"])
 
-    def test_fast_and_singularity_default_to_lynnreal_video_vae(self) -> None:
+    def test_fast_and_singularity_apply_their_lightvae_combinations(self) -> None:
         controls = {
             c.get("props", {}).get("label"): c for c in self.config["components"]
         }
         self.assertFalse(controls["INT8 ConvRot video VAE"]["props"]["value"])
-        self.assertTrue(controls["LynnReal Light INT8 video VAE"]["props"]["value"])
+        self.assertFalse(controls["LynnReal Light INT8 video VAE"]["props"]["value"])
+        self.assertEqual(controls["Video encoder"]["props"]["value"], "LightVAE Lite")
+        self.assertEqual(controls["Video decoder"]["props"]["value"], "LightVAE Lite")
+        summary = next(c for c in self.config["components"] if "h3-settings-summary" in c.get("props", {}).get("elem_classes", []))
+        self.assertIn("LightVAE Lite", summary["props"]["value"])
+        self.assertNotIn("Original FP16", summary["props"]["value"])
         preset = controls["Recipe"]
         int8 = controls["INT8 ConvRot video VAE"]
         lynnreal = controls["LynnReal Light INT8 video VAE"]
@@ -835,6 +840,16 @@ class UiContractTests(unittest.TestCase):
         self.assertIn(int8["id"], transition["outputs"])
         self.assertIn(lynnreal["id"], transition["outputs"])
         self.assertIn(trt["id"], transition["outputs"])
+        fn = self.demo.fns[transition["id"]]
+        session = self.restored_session()
+        for recipe, expected in (("Fast", "int8"), ("Singularity", "lite"), ("Balanced", "none"), ("Fast", "int8")):
+            args = [deepcopy(c.value) for c in fn.inputs]
+            args[1], args[-1] = recipe, session
+            fn.fn(*args)
+            selected = session.memory["values"]
+            self.assertEqual(selected["lightvae_decoder"], expected)
+            self.assertEqual(selected["video_encoder"], "Original" if recipe == "Balanced" else "LightVAE Lite")
+            self.assertFalse(selected["use_lynnreal_vae"])
 
     def test_settings_transition_owns_summary_and_bypasses_gpu_queue(self) -> None:
         controls = {

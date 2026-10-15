@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Mapping
 
 from .resources import resolve_decoders
+from .decoder_intent import VideoDecoder
 
 LIGHTX2V_4STEP = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
 LIGHTX2V_8STEP = "LightX2V v1.0 / 8-step 768p"
@@ -344,6 +345,17 @@ def resolve_settings(
     )
 
 
+def preset_vae_settings(preset: str) -> dict[str, Any]:
+    decoder = {
+        "Singularity": VideoDecoder.LIGHTVAE,
+        "Fast": VideoDecoder.LIGHTVAE_INT8,
+    }.get(preset, VideoDecoder.OFFICIAL_INT8)
+    return {
+        "video_encoder": "LightVAE Lite" if preset in {"Singularity", "Fast"} else "Original",
+        **decoder.workflow_flags(),
+    }
+
+
 def transition_modes(
     saved: Mapping[str, Any] | None, values: Mapping[str, Any], action: str
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -367,10 +379,7 @@ def transition_modes(
     elif action in {"preset", "restore"}:
         preset = current.get("preset", "Singularity")
         current.update(asdict(preset_settings(preset, mode)))
-        current["use_int8_vae"] = preset not in {"Singularity", "Fast"}
-        current["use_trt_vae"] = False
-        current["lightvae_decoder"] = "none"
-        current["use_lynnreal_vae"] = preset in {"Singularity", "Fast"}
+        current.update(preset_vae_settings(preset))
         if preset == "Singularity":
             current["model_profile"] = "Singularity"
     elif action == "use_trt_vae" and current.get("use_trt_vae"):

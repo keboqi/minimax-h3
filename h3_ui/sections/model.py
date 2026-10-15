@@ -153,7 +153,7 @@ def build_model_section(
             visible=False,
             value=defaults["use_lynnreal_vae"],
             label="LynnReal Light INT8 video VAE",
-            info="On for Fast and Singularity presets. Experimental distilled decoder; downloads 2.14 GB on first use and may change fine detail.",
+            info="Optional experimental distilled decoder; downloads 2.14 GB on first use and may change fine detail.",
         )
         with gr.Row():
             use_trt_vae = gr.Checkbox(

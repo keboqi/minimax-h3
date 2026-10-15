@@ -166,6 +166,13 @@ def restore_preferences(saved, components):
         for name, component in components.items()
         if name in PERSISTED_NAMES
     }
+    # Older preferences can explicitly select a legacy decoder without the
+    # LightVAE field. Do not combine that choice with the new default decoder.
+    if "h3.lightvae_decoder" in restored and "h3.lightvae_decoder" not in values:
+        if any(restored.get("h3." + name) is True for name in (
+            "use_int8_vae", "use_lynnreal_vae", "use_trt_vae"
+        )):
+            restored["h3.lightvae_decoder"] = "none"
     if "workspace.task" in restored and "workspace.engine" in restored:
         from h3_app.capabilities import engines_for_task
 

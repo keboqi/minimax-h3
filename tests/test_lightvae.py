@@ -405,9 +405,9 @@ class LightVAETests(unittest.TestCase):
             **VideoDecoder.LIGHTVAE.workflow_flags(),
         }
         _, preset = transition_modes(None, values, "preset")
-        self.assertEqual(preset["lightvae_decoder"], "none")
+        self.assertEqual(preset["lightvae_decoder"], "int8")
         self.assertEqual(preset["video_encoder"], "LightVAE Lite")
-        self.assertTrue(preset["use_lynnreal_vae"])
+        self.assertFalse(preset["use_lynnreal_vae"])
 
 
 if __name__ == "__main__":

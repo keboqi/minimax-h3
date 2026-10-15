@@ -690,6 +690,8 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
                     defaults["latent_split_seam_polish"],
                     use_trt_vae=defaults["use_trt_vae"],
                     use_lynnreal_vae=defaults["use_lynnreal_vae"],
+                    video_encoder=defaults["video_encoder"],
+                    lightvae_decoder=defaults["lightvae_decoder"],
                 ),
                 elem_classes=["h3-settings-summary"],
             )

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from h3_app.settings import (
     PDMD_4STEP as PDMD_4STEP_LORA, DMAD_4STEP as DMAD_4STEP_LORA,
+    preset_vae_settings,
 )
 from h3_models import (
     DEFAULT_H3_LATENT_UPSCALER_MODEL,
@@ -639,11 +640,7 @@ UI_DEFAULTS = {
     "semantic_bridge": True,
     "semantic_bridge_alpha": 0.10,
     "reuse_unchanged_inputs": True,
-    "use_int8_vae": False,
-    "use_lynnreal_vae": True,
-    "video_encoder": "Original",
-    "lightvae_decoder": "none",
-    "use_trt_vae": False,
+    **preset_vae_settings("Singularity"),
     "generation_mode": "Turbo",
     "turbo_variant": DEFAULT_TURBO,
     "duration": 5,

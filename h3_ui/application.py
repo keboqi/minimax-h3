@@ -2799,6 +2799,8 @@ def generate_with_ui_defaults(
         stage_model_offload=defaults["stage_model_offload"],
         use_int8_vae=defaults["use_int8_vae"],
         use_lynnreal_vae=defaults["use_lynnreal_vae"],
+        video_encoder=defaults["video_encoder"],
+        lightvae_decoder=defaults["lightvae_decoder"],
         use_trt_vae=defaults["use_trt_vae"],
         image_vae=defaults["image_vae"],
         result_format=defaults["result_format"],

@@ -49,7 +49,9 @@ class SettingsTests(unittest.TestCase):
                 }
                 _, applied = transition_modes(None, values, "preset")
                 self.assertEqual(applied["use_int8_vae"], preset in {"Balanced", "Quality"})
-                self.assertEqual(applied["use_lynnreal_vae"], preset in {"Singularity", "Fast"})
+                self.assertFalse(applied["use_lynnreal_vae"])
+                self.assertEqual(applied["video_encoder"], "LightVAE Lite" if preset in {"Singularity", "Fast"} else "Original")
+                self.assertEqual(applied["lightvae_decoder"], {"Singularity": "lite", "Fast": "int8"}.get(preset, "none"))
                 self.assertFalse(applied["use_trt_vae"])
 
         values = {
@@ -73,7 +75,9 @@ class SettingsTests(unittest.TestCase):
         self.assertFalse(values["use_int8_vae"])
         memory, values = transition_modes(memory, values, "restore")
         self.assertFalse(values["use_int8_vae"])
-        self.assertTrue(values["use_lynnreal_vae"])
+        self.assertFalse(values["use_lynnreal_vae"])
+        self.assertEqual(values["video_encoder"], "LightVAE Lite")
+        self.assertEqual(values["lightvae_decoder"], "int8")
         self.assertFalse(values["use_trt_vae"])
 
     def test_presets_preserve_trained_counts(self):

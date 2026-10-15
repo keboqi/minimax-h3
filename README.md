@@ -81,7 +81,10 @@ backends; GPU inference and deployment are validated separately.
 ## LightVAE video encoding and decoding (experimental)
 
 Under **Model and memory**, choose **Video encoder** independently from
-**Video decoder**. Original encoding is the default. LightVAE Lite encoding
+**Video decoder**. The default **Singularity** preset selects LightVAE Lite
+encoding and standard LightVAE Lite decoding. **Fast** selects LightVAE Lite
+encoding and LightVAE Lite INT8 ConvRot decoding. **Balanced** and **Quality**
+select Original encoding and Official INT8 decoding. LightVAE Lite encoding
 supports first/last frames and reference images/videos; first/last-frame fidelity
 is experimental. Any encoder can pair with Original FP16, Official INT8,
 LynnReal INT8, TensorRT, LightVAE Lite, or LightVAE Lite INT8 ConvRot decoding.
@@ -102,9 +105,10 @@ Local setup and Modal ship the native ComfyUI adapter from
 updated setup and a ComfyUI restart; Modal deployments need rebuilding/redeploying.
 No LightVAE Python package or extra Triton kernels are required. The INT8 decoder
 uses native ConvRot operations; upstream recommends CUDA 13.0+ PyTorch for native
-NVIDIA acceleration. Preset decoder defaults are unchanged. GPU speed, VRAM,
-fine detail, temporal stability, and reference/keyframe fidelity need matched
-comparisons before promoting LightVAE to a preset default.
+NVIDIA acceleration. Selecting a recipe or restoring its defaults applies its
+encoder/decoder combination; manual choices and saved browser preferences remain
+supported. GPU speed, VRAM, fine detail, temporal stability, and reference/keyframe
+fidelity vary with the workload.
 
 ## Veda attention (experimental)
 
