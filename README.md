@@ -926,6 +926,16 @@ to 8 parallel chunks and no automatic retries; the server allows 32 concurrent
 requests. Chunk quality checks and advisories are skipped when retries is zero;
 enabling retries also enables those checks. Completed speech is saved as MP3.
 
+ComfyUI-Drama3 is pinned to `bc9b04a2acf1c553bec3b5e1d2339093eb826396`,
+which adds dialogue/stall fixes, reference normalization and windowed codec
+decoding for long takes. The app explicitly keeps joint dialogue generation
+and authored pauses. Balance and Expressive now use top-k 0 (uncapped);
+Strict retains top-k 30. Saved sampling settings remain respected. The
+SGLang route translates zero to its whole-vocabulary sampling value.
+Existing installations need updated setup and a ComfyUI restart; Modal
+deployments need rebuilding/redeploying. GPU quality and peak decode memory
+still require deployment validation.
+
 SGLang configuration uses these environment variables:
 
 | Variable | Default |

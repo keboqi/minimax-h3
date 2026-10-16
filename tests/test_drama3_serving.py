@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import io
 import struct
 import tempfile
 import unittest
-import wave
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -249,6 +247,11 @@ class ServerTests(unittest.TestCase):
                                                   "text": "Ref."}])
         self.assertNotIn("seed", payload)
         self.assertEqual((payload["top_k"], payload["max_new_tokens"]), (30, 300))
+        sampling = {"temperature": 1.0, "top_p": 0.9, "top_k": 0}
+        uncapped = instance.payload(text="Hi.", reference=Path(self.temp.name) / "a.wav",
+                                   transcript="Ref.", max_new_tokens=300, sampling=sampling)
+        self.assertEqual(uncapped["top_k"], 1 << 30)
+        self.assertEqual(sampling["top_k"], 0)
 
     def test_a_loaded_server_is_reused_after_releasing_comfyui(self):
         instance = server.SglangOmniServer(self.settings)
@@ -338,7 +341,7 @@ class GenerateTests(unittest.TestCase):
             self.assertTrue(Path(payload["references"][0]["audio_path"]).is_file())
             self.assertEqual(payload["references"][0]["text"], f"Reference {speaker}.")
             self.assertEqual({k: payload[k] for k in ("temperature", "top_p", "top_k")},
-                             {"temperature": 1.0, "top_p": 0.9, "top_k": 30})
+                             {"temperature": 1.0, "top_p": 0.9, "top_k": 1 << 30})
             self.assertLessEqual(payload["max_new_tokens"], 8192)
         fake.ensure_ready.assert_called_once()
         fake.release.assert_not_called()  # kept loaded for the next Drama 3 job

@@ -27,7 +27,7 @@ class Drama3Request:
     seed: int = -1
     temperature: float = 1.0
     top_p: float = 0.9
-    top_k: int = 30
+    top_k: int = 0
     max_frames: int = 8192
     split_long_text: bool = False
     experts: str = "in VRAM"

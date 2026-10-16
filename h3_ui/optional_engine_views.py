@@ -27,8 +27,8 @@ DRAMA3_SLOT_INPUT_NAMES = tuple(f"speaker_{speaker}_{field}" for speaker in rang
 UPLOAD_VOICE = "Upload a clip"
 DRAMA3_SAMPLING_PRESETS = {
     "Strict": (0.7, 0.7, 30),
-    "Balance": (1.0, 0.9, 30),
-    "Expressive": (2.0, 1.0, 30),
+    "Balance": (1.0, 0.9, 0),
+    "Expressive": (2.0, 1.0, 0),
 }
 
 
@@ -197,7 +197,7 @@ def build_drama3_view(root, speaker_names=()):
                 sampling_preset = gr.Radio(
                     list(DRAMA3_SAMPLING_PRESETS), value="Balance", label="Speech preset",
                     info="Temperature / top-p / top-k: Strict 0.7 / 0.7 / 30 · "
-                         "Balance 1.0 / 0.9 / 30 · Expressive 2.0 / 1.0 / 30. "
+                         "Balance 1.0 / 0.9 / 0 · Expressive 2.0 / 1.0 / 0 (uncapped). "
                          "Custom slider values clear the selection.",
                 )
                 text = gr.Textbox(label="Speech text", lines=8,
@@ -237,7 +237,8 @@ def build_drama3_view(root, speaker_names=()):
                             info="Default 0 keeps the first take. Enable to retry near-silent audio; duration warnings do not trigger retries.")
                     temperature = gr.Slider(0, 2, value=1, step=0.05, label="Temperature")
                     top_p = gr.Slider(0.05, 1, value=0.9, step=0.05, label="Top-p")
-                    top_k = gr.Slider(1, 4096, value=30, step=1, label="Top-k")
+                    top_k = gr.Slider(0, 4096, value=0, step=1, label="Top-k",
+                        info="0 keeps all candidates. Small caps can make speech stall at pauses.")
                     max_frames = gr.Slider(1, 8192, value=8192, step=1, label="Maximum audio frames per take",
                         info="21.5 frames per second; 8192 is about 6.3 minutes. A take stops when the "
                              "speech ends, so this only limits a take that runs on.")

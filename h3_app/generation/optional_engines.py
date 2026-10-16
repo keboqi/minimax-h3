@@ -120,7 +120,7 @@ def validate_request(request):
         for name, low, high in (("temperature", 0, 2), ("top_p", 0.05, 1), ("expert_cache_gb", 0, 256)):
             if not low <= float(getattr(request, name)) <= high:
                 raise H3Error(f"{name} must be between {low} and {high}.")
-        _integer(request.top_k, 1, 4096, "Top-k")
+        _integer(request.top_k, 0, 4096, "Top-k")
         _integer(request.max_frames, 1, MAX_FRAMES, "Maximum audio frames")
     else:
         raise TypeError("Unsupported generation request.")

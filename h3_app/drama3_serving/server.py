@@ -307,6 +307,11 @@ class SglangOmniServer:
 
     def payload(self, *, text, reference, transcript, max_new_tokens, sampling) -> dict:
         # FishOmni rejects per-request seeds on SGLang-Omni's speech endpoint.
+        sampling = dict(sampling)
+        # The Drama 3 request builder requires a positive top_k. SGLang uses
+        # 1 << 30 (TOP_K_ALL) to represent the whole vocabulary internally.
+        if sampling.get("top_k") == 0:
+            sampling["top_k"] = 1 << 30
         return {"input": text, "response_format": "wav", "max_new_tokens": max_new_tokens,
                 **sampling, "references": [{"audio_path": str(Path(reference).resolve()), "text": transcript}]}
 

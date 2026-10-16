@@ -1,4 +1,4 @@
-"""Graph contract for ComfyUI-Drama3 revision 66c4fb9."""
+"""Graph contract for ComfyUI-Drama3 revision bc9b04a."""
 
 import re
 
@@ -47,7 +47,7 @@ def speaker_transcript(speaker, transcript):
 
 
 def build_drama3_graph(*, text, voices=(), seed=0, temperature=1.0, top_p=0.9,
-                       top_k=30, max_frames=MAX_FRAMES, split_long_text=False,
+                       top_k=0, max_frames=MAX_FRAMES, split_long_text=False,
                        experts="in VRAM", expert_cache_gb=0.0):
     """``voices`` holds (speaker, staged audio, transcript); each clones <|speaker:N|>."""
     g = Graph()
@@ -65,8 +65,11 @@ def build_drama3_graph(*, text, voices=(), seed=0, temperature=1.0, top_p=0.9,
         )
     codes = add("Drama3Generate", model=model, text=text, seed=seed,
                 temperature=temperature, top_p=top_p, top_k=top_k,
-                max_frames=max_frames, split_long_text=split_long_text, **references)
-    audio = add("Drama3Decode", codec=codec, codes=codes)
+                max_frames=max_frames, split_long_text=split_long_text,
+                speakers="together", **references)
+    # Keep authored pauses and joint dialogue instead of inheriting upstream's
+    # new per-line generation and silence-shortening defaults.
+    audio = add("Drama3Decode", codec=codec, codes=codes, shorten_long_pauses=False)
     add("SaveAudioMP3", audio=audio, filename_prefix="drama3/Drama3", quality="V0")
     return g.nodes
 

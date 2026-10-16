@@ -63,6 +63,13 @@ class Drama3GraphTests(unittest.TestCase):
         generate = next(n for n in build_drama3_graph(text="Hello").values()
                         if n["class_type"] == "Drama3Generate")["inputs"]
         self.assertEqual((generate["split_long_text"], generate["max_frames"]), (False, 8192))
+        self.assertEqual((request.top_k, generate["top_k"]), (0, 0))
+        self.assertEqual(generate["speakers"], "together")
+        graph = build_drama3_graph(text="Hello")
+        decoder = next(n["inputs"] for n in graph.values() if n["class_type"] == "Drama3Decode")
+        self.assertFalse(decoder["shorten_long_pauses"])
+        self.assertEqual(decoder["codes"],
+                         [next(key for key, n in graph.items() if n["class_type"] == "Drama3Generate"), 0])
         for frames in (0, 8193):
             with self.subTest(frames=frames), self.assertRaises(H3Error):
                 validate_request(Drama3Request("Hello", max_frames=frames))
@@ -73,6 +80,16 @@ class Drama3GraphTests(unittest.TestCase):
         for voices in (((0, "a", ""),), ((0, "a", "t"), (0, "b", "t")), ((16, "a", "t"),), ((0, "", "t"),)):
             with self.subTest(voices=voices), self.assertRaises(H3Error):
                 validate_request(Drama3Request("hi", voices=voices))
+
+    def test_uncapped_sampling_is_valid_on_both_backends(self):
+        for backend in ("ComfyUI", "SGLang-Omni"):
+            for top_k in (0, 30, 4096):
+                validate_request(Drama3Request("Hello", voices=((0, "a.wav", "Hello"),),
+                                               backend=backend, top_k=top_k))
+            for top_k in (-1, 4097):
+                with self.subTest(backend=backend, top_k=top_k), self.assertRaises(H3Error):
+                    validate_request(Drama3Request("Hello", voices=((0, "a.wav", "Hello"),),
+                                                   backend=backend, top_k=top_k))
 
 
 class Drama3TranscriptionTests(unittest.TestCase):

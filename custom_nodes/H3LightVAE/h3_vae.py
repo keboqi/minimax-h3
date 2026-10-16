@@ -3,7 +3,6 @@
 import json
 
 import torch
-from torch import nn
 from safetensors import safe_open
 
 import comfy.sd
@@ -11,17 +10,6 @@ import comfy.ops
 import comfy.utils
 from comfy import model_management
 from comfy.ldm.minimax.vae import MiniMaxH3VideoVAE
-
-
-class ResidualShortcut(nn.Module):
-    """A removed encoder block still needs its channel-changing projection."""
-
-    def __init__(self, block):
-        super().__init__()
-        self.nin_shortcut = getattr(block, "nin_shortcut", nn.Identity())
-
-    def forward(self, x):
-        return self.nin_shortcut(x)
 
 
 def native_state_dict(state, component, heads=32):
@@ -86,23 +74,21 @@ class LightVAE(comfy.sd.VAE):
             weights, kept = load_component(decoder_path, "decoder")
             num_layers = len(kept)
             state.update(weights)
+        encoder_kept_blocks = None
+        if self.use_encoder:
+            weights, kept = load_component(encoder_path, "encoder")
+            # The native H3 encoder has six stages with two residual blocks each.
+            # LightVAE metadata numbers these blocks consecutively.
+            encoder_kept_blocks = {divmod(index, 2) for index in kept}
+            state.update(weights)
         quantization = comfy.utils.detect_layer_quantization(state, "")
         operations = (comfy.ops.mixed_precision_ops(quantization, self.vae_dtype)
                       if quantization is not None else comfy.ops.disable_weight_init)
-        model = MiniMaxH3VideoVAE(operations=operations, num_layers=num_layers)
-        if not self.use_decoder:
-            model.decoder = model.post_quant_conv = None
-        if self.use_encoder:
-            weights, kept = load_component(encoder_path, "encoder")
-            index = 0
-            for stage in model.encoder.down:
-                for local, block in enumerate(stage.block):
-                    if index not in kept:
-                        stage.block[local] = ResidualShortcut(block)
-                    index += 1
-            state.update(weights)
-        else:
-            model.encoder = model.quant_conv = None
+        model = MiniMaxH3VideoVAE(
+            operations=operations, num_layers=num_layers,
+            encoder=self.use_encoder, decoder=self.use_decoder,
+            encoder_kept_blocks=encoder_kept_blocks,
+        )
         state.update(latents_mean=model.latents_mean, latents_std=model.latents_std)
         model.load_state_dict(state, strict=True, assign=True)
         self.first_stage_model = model.eval().requires_grad_(False).to(dtype=self.vae_dtype)

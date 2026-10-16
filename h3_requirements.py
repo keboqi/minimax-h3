@@ -20,7 +20,8 @@ TORCHAUDIO_VERSION = "2.11.0"
 TENSORRT_PACKAGE = "tensorrt-cu13>=11.2,<12"
 NUMPY_VERSION = "1.26.4"
 SCIPY_VERSION = "1.15.3"
-# Transformers rejects huggingface-hub 2.x at import time.
+# Keep the validated Hub 1.x stack; newer Transformers releases allow Hub 2.x
+# but require a separate model-loading and kernels compatibility review.
 HUGGINGFACE_HUB_REQUIREMENT = "huggingface-hub>=1.5,<2"
 # Transformers' fine-grained FP8 loader requires this exact minor release.
 KERNELS_VERSION = "0.16.0"
@@ -40,7 +41,8 @@ H3_AUDIO_T8_REF = "6063fafbd9c3b85c5ff40aef435ae11b2844e558"
 # v0.41.0 adds the native FLUX 3 model and text encoder.
 COMFY_REF = "98cc0bf84b7cb1383654c5b402e7612d875d6d22"
 DRAMA3_REPO = "https://github.com/PedroMarinhoDev/ComfyUI-Drama3.git"
-DRAMA3_REF = "66c4fb9cd3c0151e1e2ccd207847cb8335e87ab4"
+# Dialogue/stall fixes and windowed codec decoding; graph policy is explicit.
+DRAMA3_REF = "bc9b04a2acf1c553bec3b5e1d2339093eb826396"
 # Optional parallel Drama 3 backend, isolated from ComfyUI's Torch stack.
 DRAMA3_SGLANG_TORCH_BACKEND = "cu130"
 DRAMA3_SGLANG_PYTHON = "3.12"

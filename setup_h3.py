@@ -752,7 +752,10 @@ def sync_external_nodes(
     # Drama 3 and base T8 conditioning use only ComfyUI dependencies.
     sync_git_repo(
         DRAMA3_REPO, comfy / "custom_nodes" / "ComfyUI-Drama3",
-        ref=DRAMA3_REF, required_paths=("__init__.py", "nodes.py", "drama3/model.py"),
+        ref=DRAMA3_REF, required_paths=(
+            "__init__.py", "nodes.py", "drama3/model.py",
+            "drama3/fish/line_head.safetensors",
+        ),
     )
     sync_git_repo(
         H3_AUDIO_T8_REPO,

@@ -697,6 +697,17 @@ class UiContractTests(unittest.TestCase):
 
         labels = {c["id"]: c.get("props", {}).get("label") for c in self.config["components"]}
         endpoints = {d.get("api_name"): d for d in self.config["dependencies"]}
+        top_k = next(self.components[i] for i in endpoints["generate_drama3"]["inputs"]
+                     if labels[i] == "Top-k")
+        self.assertEqual((top_k["props"]["minimum"], top_k["props"]["value"]), (0, 0))
+        preset = next(c for c in self.config["components"]
+                      if c.get("props", {}).get("label") == "Speech preset")
+        apply_preset = next(fn.fn for fn in self.demo.fns.values()
+                            if [c._id for c in fn.inputs] == [preset["id"]]
+                            and top_k["id"] in [c._id for c in fn.outputs])
+        self.assertEqual(apply_preset("Balance"), (1.0, 0.9, 0))
+        self.assertEqual(apply_preset("Expressive"), (2.0, 1.0, 0))
+        self.assertEqual(apply_preset("Strict"), (0.7, 0.7, 30))
         self.assertIn("Expand the prompt locally",
                       [labels[i] for i in endpoints["enhance_flux3_prompt"]["outputs"]])
         transcribe = endpoints["transcribe_drama3_voice"]
