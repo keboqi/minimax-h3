@@ -2684,38 +2684,46 @@ def _drama3_voices(slots):
     return tuple(voices), names
 
 
-def generate_drama3(
-    text,
-    speaker_0_voice, speaker_0_audio, speaker_0_transcript,
-    speaker_1_voice, speaker_1_audio, speaker_1_transcript,
-    speaker_2_voice, speaker_2_audio, speaker_2_transcript,
-    speaker_3_voice, speaker_3_audio, speaker_3_transcript,
-    seed, temperature, top_p, top_k, max_frames, split_long_text, experts, expert_cache_gb,
-    backend="ComfyUI", parallel=8, retries=2,
-    progress=gr.Progress(track_tqdm=False),
-):
+def generate_drama3(*values, progress=gr.Progress(track_tqdm=False)):
+    """Inputs: text, then (voice, audio, transcript) per speaker slot, then settings.
+
+    The parameter list is generated from the slot count; see ``_drama3_signature``.
+    """
     from h3_app.generation.optional_engines import generate_optional_engine, validate_request
+    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES
     from dataclasses import replace
-    voices, names = _drama3_voices((
-        speaker_0_voice, speaker_0_audio, speaker_0_transcript,
-        speaker_1_voice, speaker_1_audio, speaker_1_transcript,
-        speaker_2_voice, speaker_2_audio, speaker_2_transcript,
-        speaker_3_voice, speaker_3_audio, speaker_3_transcript,
-    ))
+    slot_count = len(DRAMA3_SLOT_INPUT_NAMES)
+    text, slots, settings = values[0], values[1:1 + slot_count], list(values[1 + slot_count:])
+    settings += ["ComfyUI", 8, 2][len(settings) - 8:]  # backend, parallel, retries default for older callers
+    (seed, temperature, top_p, top_k, max_frames, split_long_text, experts, expert_cache_gb,
+     backend, parallel, retries) = settings[:11]
+    voices, names = _drama3_voices(slots)
     request = generation_requests.Drama3Request(text, voices, seed, temperature, top_p, top_k,
                                                 max_frames, split_long_text, experts, expert_cache_gb,
                                                 backend, parallel, retries, tuple(names))
     validate_request(request)
-    vllm = request.backend == "vLLM-Omni"
+    served = request.backend != "ComfyUI"
     input_dir = _runtime_config().input_dir
     request = replace(request, voices=tuple(
-        # ComfyUI loads inputs by relative name; the vLLM route reads the file itself.
-        (speaker, str(input_dir / staged) if vllm else staged, transcript)
+        # ComfyUI loads inputs by relative name; the served backends read the file themselves.
+        (speaker, str(input_dir / staged) if served else staged, transcript)
         for speaker, audio, transcript in request.voices
         for staged in (stage_file(audio, "drama3_voices", reuse=True),)
     ))
     yield from generate_optional_engine(request, _generation_services(), _runtime_config(),
                                         progress=progress, free_gpu=free_comfy_vram)
+
+
+def _drama3_signature(leading, trailing):
+    """Named API parameters around the generated per-slot inputs."""
+    import inspect
+    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES
+
+    positional = inspect.Parameter.POSITIONAL_OR_KEYWORD
+    parameters = [inspect.Parameter(name, positional) for name in (*leading, *DRAMA3_SLOT_INPUT_NAMES)]
+    parameters += [inspect.Parameter(name, positional, **({"default": default} if default is not inspect.Parameter.empty else {}))
+                   for name, default in trailing]
+    return parameters
 
 
 def enhance_flux3_prompt(prompt, reference_images, width, height, model, temporary_api_key,
@@ -2731,20 +2739,11 @@ def enhance_flux3_prompt(prompt, reference_images, width, height, model, tempora
     return enhanced, status, gr.skip() if failed else False
 
 
-def enhance_drama3_text(
-    text, speaker_mode, model, temporary_api_key, backend, lightning_api_key, lightning_model,
-    speaker_0_voice, speaker_0_audio, speaker_0_transcript,
-    speaker_1_voice, speaker_1_audio, speaker_1_transcript,
-    speaker_2_voice, speaker_2_audio, speaker_2_transcript,
-    speaker_3_voice, speaker_3_audio, speaker_3_transcript,
-):
+def enhance_drama3_text(text, speaker_mode, model, temporary_api_key, backend, lightning_api_key,
+                        lightning_model, *slots):
+    """Rewrite with the voice slots as context; parameters generated like ``generate_drama3``."""
     try:
-        _voices, names = _drama3_voices((
-            speaker_0_voice, speaker_0_audio, speaker_0_transcript,
-            speaker_1_voice, speaker_1_audio, speaker_1_transcript,
-            speaker_2_voice, speaker_2_audio, speaker_2_transcript,
-            speaker_3_voice, speaker_3_audio, speaker_3_transcript,
-        ))
+        _voices, names = _drama3_voices(slots)
     except H3Error as exc:
         return text, f"Prompt enhancement failed: {exc}"
     return prompt_service.enhance_drama3_text(
@@ -2752,6 +2751,26 @@ def enhance_drama3_text(
         lightning_api_key=lightning_api_key, lightning_model=lightning_model,
         speaker_mode=speaker_mode, runtime=_runtime_config(),
     )
+
+
+def _publish_drama3_signatures():
+    import inspect
+
+    empty = inspect.Parameter.empty
+    generate_drama3.__signature__ = inspect.Signature([
+        *_drama3_signature(("text",), (
+            ("seed", empty), ("temperature", empty), ("top_p", empty), ("top_k", empty),
+            ("max_frames", empty), ("split_long_text", empty), ("experts", empty),
+            ("expert_cache_gb", empty), ("backend", "ComfyUI"), ("parallel", 8), ("retries", 2),
+        )),
+        inspect.Parameter("progress", inspect.Parameter.KEYWORD_ONLY, default=gr.Progress(track_tqdm=False)),
+    ])
+    enhance_drama3_text.__signature__ = inspect.Signature(_drama3_signature(
+        ("text", "speaker_mode", "model", "temporary_api_key", "backend", "lightning_api_key",
+         "lightning_model"), ()))
+
+
+_publish_drama3_signatures()
 
 
 def transcribe_drama3_voice(audio):

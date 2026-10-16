@@ -674,7 +674,7 @@ class UiContractTests(unittest.TestCase):
     def test_optional_engine_writers_voices_and_transcription_are_bound(self) -> None:
         api = self.demo.get_api_info()["named_endpoints"]
         drama = [row["parameter_name"] for row in api["/generate_drama3"]["parameters"]]
-        slots = [f"speaker_{n}_{field}" for n in range(4) for field in ("voice", "audio", "transcript")]
+        slots = [f"speaker_{n}_{field}" for n in range(16) for field in ("voice", "audio", "transcript")]
         self.assertEqual(drama, ["text", *slots, "seed", "temperature", "top_p", "top_k",
                                  "max_frames", "split_long_text", "experts", "expert_cache_gb",
                                  "backend", "parallel", "retries"])
@@ -706,12 +706,17 @@ class UiContractTests(unittest.TestCase):
                   if str(c.get("props", {}).get("label", "")).startswith("Speaker ")
                   and str(c["props"]["label"]).endswith("|>")]
         self.assertEqual([c["props"]["label"] for c in voices],
-                         [f"Speaker {n} voice · <|speaker:{n}|>" for n in range(4)])
+                         [f"Speaker {n} voice · <|speaker:{n}|>" for n in range(16)])
         for dropdown in voices:
             self.assertEqual(dropdown["props"]["value"], "Upload a clip")
         auto = [c for c in self.config["components"]
                 if c["type"] == "button" and c.get("props", {}).get("value") == "Auto transcribe"]
-        self.assertEqual(len(auto), 4)
+        self.assertEqual(len(auto), 16)
+        add = next(c for c in self.config["components"]
+                   if c["type"] == "button" and c.get("props", {}).get("value") == "Add speaker")
+        add_event = next(d for d in self.config["dependencies"]
+                         if d["targets"] and d["targets"][0][0] == add["id"])
+        self.assertEqual(len(add_event["outputs"]), 1 + 16 + 2)  # count, slot groups, both buttons
 
     def test_qwen_edit_size_is_one_radio_input(self) -> None:
         controls = self.qwen_controls()

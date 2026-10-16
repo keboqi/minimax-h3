@@ -224,5 +224,31 @@ class Drama3WriterTests(unittest.TestCase):
         self.assertIn("Unsupported Lightning AI prompt model", status)
 
 
+class Drama3AppInputTests(unittest.TestCase):
+    def run_app(self, backend):
+        from h3_ui import application
+
+        captured = {}
+
+        def engine(request, *args, **kwargs):
+            captured["request"] = request
+            yield None
+
+        slots = ["Upload a clip", None, ""] * 16
+        slots[3 * 5:3 * 5 + 3] = ["Upload a clip", "/uploads/five.wav", "Line five."]
+        values = ["<|speaker:5|> Hi.", *slots, -1, 1.0, 0.9, 30, 8192, False, "in RAM", 0.0, backend]
+        with patch.object(application, "stage_file", return_value="h3_gradio/drama3_voices/five.wav"),                 patch.object(application, "_runtime_config", return_value=SimpleNamespace(input_dir=Path("/in"))),                 patch.object(application, "_generation_services"),                 patch("h3_app.generation.optional_engines.generate_optional_engine", engine),                 patch("h3_app.generation.optional_engines.validate_request"):
+            list(application.generate_drama3(*values))
+        return captured["request"]
+
+    def test_slot_values_map_to_speakers_and_served_backends_get_absolute_paths(self):
+        for backend in ("vLLM-Omni", "SGLang-Omni"):
+            with self.subTest(backend=backend):
+                request = self.run_app(backend)
+                self.assertEqual(request.voices, ((5, str(Path("/in") / "h3_gradio/drama3_voices/five.wav"), "Line five."),))
+                self.assertEqual((request.backend, request.parallel, request.retries), (backend, 8, 2))
+        self.assertEqual(self.run_app("ComfyUI").voices, ((5, "h3_gradio/drama3_voices/five.wav", "Line five."),))
+
+
 if __name__ == "__main__":
     unittest.main()

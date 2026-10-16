@@ -19,7 +19,11 @@ from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation,
 from .prompt_writer_controls import RemotePromptWriterControls, build_remote_prompt_writer_controls
 
 # Speakers 0..3 get reference-voice slots; the script may still cast up to 16 speakers.
-DRAMA3_VOICE_SLOTS = 4
+# Drama 3 voices speakers 0..15; the first few slots show, more on demand.
+DRAMA3_VOICE_SLOTS = 16
+DRAMA3_VISIBLE_SLOTS = 4
+DRAMA3_SLOT_INPUT_NAMES = tuple(f"speaker_{speaker}_{field}" for speaker in range(DRAMA3_VOICE_SLOTS)
+                                for field in ("voice", "audio", "transcript"))
 UPLOAD_VOICE = "Upload a clip"
 
 
@@ -60,6 +64,7 @@ class Flux3View:
 @dataclass(frozen=True)
 class Drama3VoiceSlot:
     speaker: int
+    group: gr.Group
     preset: gr.Dropdown
     upload: gr.Group
     audio: gr.Audio
@@ -79,6 +84,9 @@ class Drama3View:
     enhance: gr.Button
     enhance_status: gr.Textbox
     voices: tuple[Drama3VoiceSlot, ...]
+    shown_slots: gr.State
+    add_speaker: gr.Button
+    remove_speaker: gr.Button
     voice_status: gr.Markdown
     seed: gr.Number
     temperature: gr.Slider
@@ -155,7 +163,7 @@ def build_flux3_view(root):
 
 
 def _voice_slot(speaker, names):
-    with gr.Group():
+    with gr.Group(visible=speaker < DRAMA3_VISIBLE_SLOTS) as group:
         preset = gr.Dropdown([UPLOAD_VOICE, *names], value=UPLOAD_VOICE,
                              label=f"Speaker {speaker} voice · <|speaker:{speaker}|>")
         with gr.Group() as upload:
@@ -167,7 +175,7 @@ def _voice_slot(speaker, names):
             save_name = gr.Textbox(label=f"Save speaker {speaker} as", placeholder="Name")
             save = gr.Button("Save speaker", size="sm")
         delete = gr.Button("Delete saved speaker", size="sm", visible=False)
-    return Drama3VoiceSlot(speaker, preset, upload, audio, transcribe, transcript,
+    return Drama3VoiceSlot(speaker, group, preset, upload, audio, transcribe, transcript,
                            save_row, save_name, save, delete)
 
 
@@ -192,11 +200,15 @@ def build_drama3_view(root, speaker_names=()):
                     )
                     writer, enhance, enhance_status = _writer("Rewrite script")
                 with gr.Accordion("Speaker voices (optional)", open=False):
-                    gr.Markdown("Clone a voice for any of the first four speakers. Speakers without a "
-                                "reference get a voice from the seed and the script's style cues. Saved "
-                                "speakers are reusable by name.")
+                    gr.Markdown("Clone a voice for any speaker, up to 16. Speakers without a reference "
+                                "get a voice from the seed and the script's style cues. Saved speakers are "
+                                "reusable by name.")
                     voices = tuple(_voice_slot(speaker, list(speaker_names))
                                    for speaker in range(DRAMA3_VOICE_SLOTS))
+                    shown_slots = gr.State(DRAMA3_VISIBLE_SLOTS)
+                    with gr.Row():
+                        add_speaker = gr.Button("Add speaker", size="sm")
+                        remove_speaker = gr.Button("Remove last speaker", size="sm")
                     voice_status = gr.Markdown("")
                 seed = gr.Number(value=-1, precision=0, label="Seed (-1 random)")
                 with gr.Accordion("Speech and memory settings", open=False):
@@ -233,7 +245,8 @@ def build_drama3_view(root, speaker_names=()):
                 output = gr.Audio(label="Generated speech", type="filepath", interactive=False)
                 output.h3_metadata_root = gr.Column()
                 run, stop, status = _actions("Generate speech")
-    return Drama3View(text, speaker_mode, writer, enhance, enhance_status, voices, voice_status, seed, temperature,
+    return Drama3View(text, speaker_mode, writer, enhance, enhance_status, voices, shown_slots, add_speaker,
+                      remove_speaker, voice_status, seed, temperature,
                       top_p, top_k, max_frames, split, experts, cache, backend, parallel, retries,
                       output, run, stop, status)
 
@@ -286,8 +299,34 @@ def refresh_drama3_presets_on_load(demo, view, actions):
     )
 
 
+def _slot_visibility(count):
+    """Show ``count`` slots; disable Add at the limit and Remove at one slot."""
+    count = max(1, min(DRAMA3_VOICE_SLOTS, int(count)))
+    return (count, *[gr.update(visible=index < count) for index in range(DRAMA3_VOICE_SLOTS)],
+            gr.update(interactive=count < DRAMA3_VOICE_SLOTS), gr.update(interactive=count > 1))
+
+
 def bind_drama3(view, actions):
     presets = [slot.preset for slot in view.voices]
+    groups = [slot.group for slot in view.voices]
+    view.add_speaker.click(lambda count: _slot_visibility(count + 1), inputs=view.shown_slots,
+                           outputs=[view.shown_slots, *groups, view.add_speaker, view.remove_speaker],
+                           queue=False, show_progress="hidden", api_name=False)
+    def remove(count):
+        # Removing a slot clears it, so a hidden slot never sends a voice.
+        count = max(1, min(DRAMA3_VOICE_SLOTS, int(count)))
+        cleared = [gr.update()] * (3 * DRAMA3_VOICE_SLOTS)
+        if count > 1:
+            cleared[3 * (count - 1):3 * count] = [gr.update(value=UPLOAD_VOICE), gr.update(value=None),
+                                                  gr.update(value="")]
+        return (*_slot_visibility(count - 1), *cleared)
+
+    view.remove_speaker.click(
+        remove, inputs=view.shown_slots,
+        outputs=[view.shown_slots, *groups, view.add_speaker, view.remove_speaker,
+                 *drama3_voice_inputs(view)],
+        queue=False, show_progress="hidden", api_name=False,
+    )
     bind_prompt_action(
         view.enhance.click, actions.enhance_drama3_text,
         inputs=[view.text, view.speaker_mode, *_writer_inputs(view.writer), *drama3_voice_inputs(view)],
