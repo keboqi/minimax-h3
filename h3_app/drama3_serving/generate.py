@@ -34,7 +34,7 @@ class Take:
     samples: np.ndarray
     rate: int
     attempts: int
-    check: audio.TakeCheck
+    check: audio.TakeCheck | None
 
 
 def frame_budget(text: str, limit: int) -> int:
@@ -77,7 +77,7 @@ def _with_heartbeat(label: str, work: Callable[[Callable[[str], None]], object])
 
 def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf_token=None,
                            progress=lambda *args, **kwargs: None) -> Iterator[GenerationUpdate]:
-    """Plan speaker chunks, send each with its speaker's reference, check, retry, join."""
+    """Generate speaker chunks, optionally check/retry them, then join."""
     settings = ServerSettings.from_environment(runtime)
     server = shared_server(settings)
     started = time.monotonic()
@@ -118,6 +118,8 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                                      max_new_tokens=frame_budget(chunk.text, int(request.max_frames)),
                                      sampling=sampling)
             samples, rate = audio.decode_wav(server.speech(payload))
+            if not request.retries:
+                return Take(chunk, samples, rate, attempt + 1, None)
             check = audio.check_take(samples, rate, expected_seconds(chunk.text))
             take = Take(chunk, samples, rate, attempt + 1, check)
             if check.ok:
@@ -156,7 +158,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     result = runtime.output_dir / "drama3" / f"Drama3_sglang_{stamp}_{uuid.uuid4().hex[:6]}.mp3"
     result.parent.mkdir(parents=True, exist_ok=True)
     audio.save_mp3(joined, rate, result)
-    failed = [take for take in ordered if not take.check.ok]
+    failed = [take for take in ordered if take.check is not None and not take.check.ok]
     write_snapshot(result, {
         "family": "Drama 3",
         "settings": {
@@ -165,8 +167,9 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
             "retries": request.retries, "reference_count": len(request.voices),
             "chunks": [{"speaker": t.chunk.speaker, "name": names.get(t.chunk.speaker, ""),
                         "seed": None, "attempts": t.attempts,
-                        "check": t.check.reason, "warnings": list(t.check.warnings),
-                        "seconds": round(t.check.seconds, 2)} for t in ordered],
+                        "check": t.check.reason if t.check is not None else "skipped",
+                        "warnings": list(t.check.warnings) if t.check is not None else [],
+                        "seconds": round(len(t.samples) / t.rate, 2)} for t in ordered],
         },
     })
     persist_caches()  # kernels JIT-compiled for this job's shapes survive restarts too
@@ -174,7 +177,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     note = (f"\n{len(failed)} chunk(s) kept their best take after {int(request.retries) + 1} attempt(s) failed a check: "
             + "; ".join(f"chunk {t.chunk.index + 1} ({names.get(t.chunk.speaker, t.chunk.speaker)}) "
                         f"{t.check.reason}" for t in failed)) if failed else ""
-    advised = [take for take in ordered if take.check.warnings]
+    advised = [take for take in ordered if take.check is not None and take.check.warnings]
     if advised:
         note += "\nAudio advisories (takes kept): " + "; ".join(
             f"chunk {t.chunk.index + 1}: {t.check.reason}" for t in advised)

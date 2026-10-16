@@ -923,7 +923,8 @@ Drama 3 offers ComfyUI for one-take generation and SGLang-Omni for parallel,
 speaker-based chunks on Linux. SGLang uses an isolated environment, stays loaded
 between TTS jobs, and stops when another engine needs the GPU. The app defaults
 to 8 parallel chunks and no automatic retries; the server allows 32 concurrent
-requests. Completed speech is saved as MP3.
+requests. Chunk quality checks and advisories are skipped when retries is zero;
+enabling retries also enables those checks. Completed speech is saved as MP3.
 
 SGLang configuration uses these environment variables:
 

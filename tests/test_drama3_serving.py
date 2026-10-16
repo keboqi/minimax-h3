@@ -392,10 +392,17 @@ class GenerateTests(unittest.TestCase):
     def test_default_retries_are_disabled(self):
         request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),), backend="SGLang-Omni")
         self.assertEqual(request.retries, 0)
-        fake, updates, snapshot = self.run_route(request, lambda payload: float_wav(tone(1.0)),
-                                                 server_class=server.SglangOmniServer)
+        with patch.object(audio, "check_take", side_effect=AssertionError("Zero retries must skip take checks")):
+            fake, updates, snapshot = self.run_route(request, lambda payload: float_wav(tone(1.0)),
+                                                     server_class=server.SglangOmniServer)
         self.assertEqual(fake.speech.call_count, 1)
         self.assertEqual(snapshot.call_args.args[1]["settings"]["retries"], 0)
+        chunk = snapshot.call_args.args[1]["settings"]["chunks"][0]
+        self.assertEqual(chunk["check"], "skipped")
+        self.assertEqual(chunk["warnings"], [])
+        self.assertAlmostEqual(chunk["seconds"], 1.0)
+        self.assertNotIn("failed a check", updates[-1].status)
+        self.assertNotIn("Audio advisories", updates[-1].status)
     def test_every_speaker_needs_a_reference_voice(self):
         for backend in ("SGLang-Omni",):
             request = self.request("<|speaker:0|> Hi.\n<|speaker:3|> Who am I?", backend=backend)
