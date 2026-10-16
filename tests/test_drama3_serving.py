@@ -115,9 +115,11 @@ class EnvironmentTests(unittest.TestCase):
         from h3_requirements import drama3_sglang_install_commands
 
         commands = drama3_sglang_install_commands(PurePosixPath("/opt/h3/drama3-sglang-venv"))
-        self.assertIn("--prerelease=allow", commands[1])
-        self.assertIn("--torch-backend=cu130", commands[1])
-        self.assertTrue(commands[1][-1].startswith("sglang-omni[fishaudio] @ git+https://github.com/sgl-project/sglang-omni.git@caae7eb"))
+        self.assertIn("protobuf>=6.31.1,<7.0.0", commands[1][-1])
+        self.assertEqual(commands[2][commands[2].index("--overrides") + 1], "/opt/h3/drama3-sglang-venv/h3-overrides.txt")
+        self.assertIn("--prerelease=allow", commands[2])
+        self.assertIn("--torch-backend=cu130", commands[2])
+        self.assertTrue(commands[2][-1].startswith("sglang-omni[fishaudio] @ git+https://github.com/sgl-project/sglang-omni.git@caae7eb"))
         self.assertEqual(environment.default_venv(Path("/app"), "sglang"), Path("/app/h3/drama3-sglang-venv"))
 
     def test_readiness_requires_the_current_fingerprint(self):
