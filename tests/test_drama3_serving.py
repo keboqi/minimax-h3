@@ -222,6 +222,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(command[command.index("--tts_engine.gpu_memory_fraction") + 1], "0.55")
         self.assertEqual(command[command.index("--vocoder.gpu_memory_fraction") + 1], "0.08")
         self.assertEqual(command[command.index("--tts_engine.factory.max_running_requests") + 1], "32")
+        self.assertEqual(command[command.index("--vocoder.factory.codec_path") + 1],
+                         str(settings.model_dir / "codec.pth"))  # offline: no S2-Pro Hub download
         self.assertEqual(settings.runtime_dir, settings.data_dir / "sglang")
         payload = instance.payload(text="Hi.", reference=Path(self.temp.name) / "a.wav", transcript="Ref.", seed=7,
                                    max_new_tokens=300, sampling={"temperature": 1.0, "top_p": 0.9, "top_k": 30})

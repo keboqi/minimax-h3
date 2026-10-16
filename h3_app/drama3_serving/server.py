@@ -448,6 +448,10 @@ class SglangOmniServer(ManagedServer):
             "--tts_engine.gpu_memory_fraction", str(settings.engine_memory),
             "--vocoder.gpu_memory_fraction", str(settings.codec_memory),
             "--tts_engine.factory.max_running_requests", str(settings.max_seqs),
+            # SGLang-Omni defaults to fishaudio/s2-pro's codec.pth from the Hub; the
+            # checkpoint ships the byte-identical file (sha256 74fc41c5...), so use it
+            # and keep startup offline.
+            "--vocoder.factory.codec_path", str(settings.model_dir / "codec.pth"),
         ]
 
     def payload(self, *, text, reference, transcript, seed, max_new_tokens, sampling) -> dict:
