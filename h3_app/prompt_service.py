@@ -678,6 +678,12 @@ def validate_drama3_script(text: str) -> str:
     return validate_drama3_text(text, "The writer's script")
 
 
+DRAMA3_SPEAKER_AUTO = "Auto"
+DRAMA3_SPEAKER_ADAPT = "Adapt to voices"
+DRAMA3_SPEAKER_SINGLE = "Single"
+DRAMA3_SPEAKER_MODES = (DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_ADAPT, DRAMA3_SPEAKER_SINGLE)
+
+
 def drama3_voice_context(voices: Iterable[tuple[int, str]]) -> str:
     """Describe cloned-voice slots by speaker number and saved name only."""
     lines = [
@@ -694,6 +700,49 @@ def drama3_voice_context(voices: Iterable[tuple[int, str]]) -> str:
     )
 
 
+def drama3_speaker_plan(mode: str, voices: Iterable[tuple[int, str]]) -> tuple[tuple[int, ...] | None, str]:
+    """Return the allowed speaker numbers (None for any) and the writer instruction."""
+    cloned = sorted({int(speaker) for speaker, _name in voices})
+    if mode == DRAMA3_SPEAKER_AUTO:
+        return None, "Speaker count: decide from the text as described in your instructions."
+    if mode == DRAMA3_SPEAKER_SINGLE:
+        speaker = cloned[0] if cloned else 0
+        return (speaker,), (
+            f"Speaker count: exactly ONE speaker. Tag every line <|speaker:{speaker}|>. "
+            "Do not split the text between characters or add a narrator; one voice performs "
+            "everything, including any quoted dialogue, changing only its delivery."
+        )
+    if mode == DRAMA3_SPEAKER_ADAPT:
+        if not cloned:
+            raise H3Error("Adapt to voices needs at least one reference voice or saved speaker; "
+                          "add one or choose Auto or Single.")
+        tags = ", ".join(f"<|speaker:{speaker}|>" for speaker in cloned)
+        return tuple(cloned), (
+            f"Speaker count: exactly {len(cloned)} speaker(s), one per reference voice: {tags}. "
+            "Use only these speaker numbers. Distribute the lines among them by role; when the "
+            "text has more characters than voices, give the extra characters' lines to the "
+            "closest-fitting voice instead of inventing new speakers."
+        )
+    raise H3Error(f"Unsupported Drama 3 speaker mode: {mode}")
+
+
+def enforce_drama3_speakers(script: str, allowed: tuple[int, ...] | None) -> str:
+    """Fold a single-speaker script onto its tag; reject other speakers otherwise."""
+    from h3_app.workflows.drama3 import SPEAKER_TAG, text_speakers
+
+    if allowed is None:
+        return script
+    if len(allowed) == 1:
+        tag = f"<|speaker:{allowed[0]}|>"
+        lines = [SPEAKER_TAG.sub("", line).strip() for line in script.splitlines()]
+        return "\n".join(f"{tag} {line}" for line in lines if line)
+    extra = sorted(text_speakers(script) - set(allowed))
+    if extra:
+        raise H3Error("The writer used speakers without a reference voice: "
+                      + ", ".join(f"<|speaker:{speaker}|>" for speaker in extra) + ".")
+    return script
+
+
 def enhance_drama3_text(
     text: str,
     model: str,
@@ -702,13 +751,19 @@ def enhance_drama3_text(
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
     lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    speaker_mode: str = DRAMA3_SPEAKER_AUTO,
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str]:
     """Rewrite text into a Drama 3 script with speaker tags and delivery controls."""
     original = str(text or "")
+    voices = tuple(voices)
     if not original.strip():
         return original, "Prompt enhancement failed: write the speech text or a scene brief first."
+    try:
+        allowed, speaker_instruction = drama3_speaker_plan(speaker_mode, voices)
+    except H3Error as exc:
+        return original, f"Prompt enhancement failed: {exc}"
     script, status = _enhance_prompt_from_media(
         prompt=original,
         model=model,
@@ -719,12 +774,13 @@ def enhance_drama3_text(
         lightning_api_key=lightning_api_key,
         lightning_model=lightning_model,
         media_values=(),
-        context=drama3_voice_context(voices),
+        context=drama3_voice_context(voices) + "\n" + speaker_instruction,
     )
     if status.startswith("Prompt enhancement failed:"):
         return original, status
     try:
-        return validate_drama3_script(script), status.replace(" prompt ", " script ", 1)
+        script = enforce_drama3_speakers(validate_drama3_script(script), allowed)
+        return script, status.replace(" prompt ", " script ", 1)
     except H3Error as exc:
         return original, f"Prompt enhancement failed: {exc} Your text was kept; retry."
 

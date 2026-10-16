@@ -678,9 +678,14 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(drama, ["text", *slots, "seed", "temperature", "top_p", "top_k",
                                  "max_frames", "split_long_text", "experts", "expert_cache_gb"])
         enhance = [row["parameter_name"] for row in api["/enhance_drama3_text"]["parameters"]]
-        self.assertEqual(enhance[:6], ["text", "model", "temporary_api_key", "backend",
-                                       "lightning_api_key", "lightning_model"])
-        self.assertEqual(enhance[6:], slots)
+        self.assertEqual(enhance[:7], ["text", "speaker_mode", "model", "temporary_api_key",
+                                       "backend", "lightning_api_key", "lightning_model"])
+        self.assertEqual(enhance[7:], slots)
+        speakers = next(c for c in self.config["components"]
+                        if c.get("props", {}).get("label") == "Speakers")
+        self.assertEqual(speakers["props"]["value"], "Auto")
+        self.assertEqual([choice[1] for choice in speakers["props"]["choices"]],
+                         ["Auto", "Adapt to voices", "Single"])
         flux = [row["parameter_name"] for row in api["/enhance_flux3_prompt"]["parameters"]]
         self.assertEqual(flux, ["prompt", "reference_images", "width", "height", "model",
                                 "temporary_api_key", "backend", "lightning_api_key", "lightning_model"])

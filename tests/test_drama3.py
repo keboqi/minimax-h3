@@ -164,6 +164,48 @@ class Drama3WriterTests(unittest.TestCase):
         self.assertEqual(script, "hi")
         self.assertIn("audio_separator", status)
 
+    def rewrite(self, client, reply, mode, voices=()):
+        client.return_value.chat.completions.create.return_value = completion(reply)
+        result = prompt_service.enhance_drama3_text(
+            "ALICE: Hi.\nBOB: Yo.", "unused", "", voices, "Lightning AI", "key",
+            speaker_mode=mode, runtime=self.runtime,
+        )
+        request = client.return_value.chat.completions.create.call_args
+        user = request.kwargs["messages"][1]["content"][0]["text"] if request else ""
+        return (*result, user)
+
+    @patch("openai.OpenAI")
+    def test_single_mode_instructs_and_folds_onto_one_speaker(self, client):
+        script, _status, user = self.rewrite(
+            client, "<|speaker:0|> [warm] Hi.\n<|speaker:1|> [laughs] Yo.", "Single")
+        self.assertIn("exactly ONE speaker", user)
+        self.assertEqual(script, "<|speaker:0|> [warm] Hi.\n<|speaker:0|> [laughs] Yo.")
+        script, _status, user = self.rewrite(client, "<|speaker:0|> Hi.", "Single", [(2, "Bob")])
+        self.assertIn("<|speaker:2|>", user)
+        self.assertEqual(script, "<|speaker:2|> Hi.")
+
+    @patch("openai.OpenAI")
+    def test_adapt_mode_limits_speakers_to_reference_voices(self, client):
+        voices = [(0, "Alice"), (2, "")]
+        script, _status, user = self.rewrite(
+            client, "<|speaker:0|> Hi.\n<|speaker:2|> Yo.", "Adapt to voices", voices)
+        self.assertIn("exactly 2 speaker(s)", user)
+        self.assertEqual(script, "<|speaker:0|> Hi.\n<|speaker:2|> Yo.")
+        script, status, _user = self.rewrite(
+            client, "<|speaker:0|> Hi.\n<|speaker:1|> Yo.", "Adapt to voices", voices)
+        self.assertEqual(script, "ALICE: Hi.\nBOB: Yo.")
+        self.assertIn("<|speaker:1|>", status)
+
+    @patch("openai.OpenAI")
+    def test_adapt_needs_a_voice_and_auto_allows_any_speakers(self, client):
+        script, status, _user = self.rewrite(client, "<|speaker:0|> Hi.", "Adapt to voices")
+        self.assertEqual(script, "ALICE: Hi.\nBOB: Yo.")
+        self.assertIn("needs at least one reference voice", status)
+        client.return_value.chat.completions.create.assert_not_called()
+        script, _status, user = self.rewrite(client, "<|speaker:0|> Hi.\n<|speaker:5|> Yo.", "Auto")
+        self.assertIn("decide from the text", user)
+        self.assertEqual(script, "<|speaker:0|> Hi.\n<|speaker:5|> Yo.")
+
     def test_unknown_lightning_model_is_rejected(self):
         script, status = prompt_service.enhance_drama3_text(
             "hi", "unused", "", (), "Lightning AI", "key", "openai/unknown", runtime=self.runtime,

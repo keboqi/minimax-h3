@@ -2699,7 +2699,7 @@ def enhance_flux3_prompt(prompt, reference_images, width, height, model, tempora
 
 
 def enhance_drama3_text(
-    text, model, temporary_api_key, backend, lightning_api_key, lightning_model,
+    text, speaker_mode, model, temporary_api_key, backend, lightning_api_key, lightning_model,
     speaker_0_voice, speaker_0_audio, speaker_0_transcript,
     speaker_1_voice, speaker_1_audio, speaker_1_transcript,
     speaker_2_voice, speaker_2_audio, speaker_2_transcript,
@@ -2717,7 +2717,7 @@ def enhance_drama3_text(
     return prompt_service.enhance_drama3_text(
         text, model, temporary_api_key, names, backend=backend,
         lightning_api_key=lightning_api_key, lightning_model=lightning_model,
-        runtime=_runtime_config(),
+        speaker_mode=speaker_mode, runtime=_runtime_config(),
     )
 
 

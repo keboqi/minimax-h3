@@ -11,6 +11,7 @@ from h3_app.catalog import (
     QWEN_EDIT_SIZE_MATCH,
     QWEN_EDIT_SIZE_MAX,
 )
+from h3_app.prompt_service import DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES
 from h3_models import FLUX3_MODEL_CHOICES
 from .image_library import build_image_file_input
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
@@ -72,6 +73,7 @@ class Drama3VoiceSlot:
 @dataclass(frozen=True)
 class Drama3View:
     text: gr.Textbox
+    speaker_mode: gr.Radio
     writer: RemotePromptWriterControls
     enhance: gr.Button
     enhance_status: gr.Textbox
@@ -179,6 +181,11 @@ def build_drama3_view(root, speaker_names=()):
                 with gr.Accordion("Rewrite as a Drama 3 script", open=False):
                     gr.Markdown("Detects the speakers, adds `<|speaker:N|>` tags and expression cues, and "
                                 "keeps your lines. Speakers with a reference voice keep their numbers.")
+                    speaker_mode = gr.Radio(
+                        list(DRAMA3_SPEAKER_MODES), value=DRAMA3_SPEAKER_AUTO, label="Speakers",
+                        info="Auto decides from the text. Adapt to voices uses exactly one speaker per "
+                             "reference voice or saved speaker below. Single keeps one voice throughout.",
+                    )
                     writer, enhance, enhance_status = _writer("Rewrite script")
                 with gr.Accordion("Speaker voices (optional)", open=False):
                     gr.Markdown("Clone a voice for any of the first four speakers. Speakers without a "
@@ -202,7 +209,7 @@ def build_drama3_view(root, speaker_names=()):
                 output = gr.Audio(label="Generated speech", type="filepath", interactive=False)
                 output.h3_metadata_root = gr.Column()
                 run, stop, status = _actions("Generate speech")
-    return Drama3View(text, writer, enhance, enhance_status, voices, voice_status, seed, temperature,
+    return Drama3View(text, speaker_mode, writer, enhance, enhance_status, voices, voice_status, seed, temperature,
                       top_p, top_k, max_frames, split, experts, cache, output, run, stop, status)
 
 
@@ -258,7 +265,7 @@ def bind_drama3(view, actions):
     presets = [slot.preset for slot in view.voices]
     bind_prompt_action(
         view.enhance.click, actions.enhance_drama3_text,
-        inputs=[view.text, *_writer_inputs(view.writer), *drama3_voice_inputs(view)],
+        inputs=[view.text, view.speaker_mode, *_writer_inputs(view.writer), *drama3_voice_inputs(view)],
         outputs=[view.text, view.enhance_status],
         show_progress="minimal", api_name="enhance_drama3_text",
     )

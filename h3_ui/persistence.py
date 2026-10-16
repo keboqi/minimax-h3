@@ -30,7 +30,8 @@ EXTRA_FIELDS = {
     "flux3": ("model", "width", "height", "edit_size", "seed", "steps", "expand_prompt",
               "prompt_backend", "prompt_model", "lightning_model"),
     "drama3": ("seed", "temperature", "top_p", "top_k", "max_frames", "split_long_text", "experts",
-               "expert_cache_gb", "prompt_backend", "prompt_model", "lightning_model"),
+               "expert_cache_gb", "prompt_backend", "prompt_model", "lightning_model",
+               "speaker_mode"),
     "workspace": ("task", "engine"),
     "qwen_image21": (
         "mode",
