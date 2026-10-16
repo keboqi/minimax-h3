@@ -99,6 +99,10 @@ def install_env(venv: Path) -> dict[str, str]:
         PYTHONUNBUFFERED="1",
         PATH=str(Path(venv) / "bin") + os.pathsep + os.environ.get("PATH", ""),
     )
+    # Standalone Python builds name clang as their C compiler; fall back to gcc
+    # for dependencies that compile extensions (cdifflib) when clang is absent.
+    if "CC" not in env and not shutil.which("clang") and shutil.which("gcc"):
+        env.update(CC="gcc", CXX="g++")
     return env
 
 

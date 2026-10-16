@@ -670,9 +670,12 @@ image = image.run_commands(
     f"echo {drama3_vllm_fingerprint()} > "
     f"{(DRAMA3_VLLM_VENV / DRAMA3_VLLM_READY_MARKER).as_posix()}",
 )
-# SGLang-Omni, the alternative Drama 3 backend, in a layer of its own.
+# SGLang-Omni, the alternative Drama 3 backend, in a layer of its own. Some of
+# its dependencies (cdifflib) compile C extensions; the standalone Python asks
+# for clang, which the image lacks, so build them with the installed gcc.
 image = image.run_commands(
-    *(shlex.join(command) for command in drama3_sglang_install_commands(DRAMA3_SGLANG_VENV)),
+    *(f"CC=gcc CXX=g++ {shlex.join(command)}"
+      for command in drama3_sglang_install_commands(DRAMA3_SGLANG_VENV)),
     f"echo {drama3_sglang_fingerprint()} > "
     f"{(DRAMA3_SGLANG_VENV / DRAMA3_VLLM_READY_MARKER).as_posix()}",
 )
