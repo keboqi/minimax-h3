@@ -792,6 +792,8 @@ def service_env() -> dict[str, str]:
             "H3_DRAMA3_SGLANG_VENV": DRAMA3_SGLANG_VENV.as_posix(),
             "H3_DRAMA3_VLLM_DATA": DRAMA3_VLLM_DATA.as_posix(),
             "H3_DRAMA3_VLLM_MODELS": (MODELS / "drama3_vllm").as_posix(),
+            # The Drama 3 servers commit their compile caches to this volume.
+            "H3_MODAL_COMMIT_VOLUME": VOL,
             "SERVER_ATTENTION_BACKEND": "sol",
             "SERVER_DENSE_ATTENTION_BACKEND": "comfy-kitchen",
             # Modal already provides the public endpoint.

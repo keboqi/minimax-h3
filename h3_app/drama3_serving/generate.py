@@ -22,7 +22,7 @@ from h3_app.workflows.drama3 import MAX_FRAMES, SPEAKER_TAG
 
 from . import audio, environment
 from .planner import Chunk, expected_seconds, plan_chunks
-from .server import ServerSettings, ensure_model, release_all, shared_server
+from .server import ServerSettings, ensure_model, persist_caches, release_all, shared_server
 
 BACKEND_KINDS = {"vLLM-Omni": "vllm", "SGLang-Omni": "sglang"}
 
@@ -178,6 +178,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                         "check": t.check.reason, "seconds": round(t.check.seconds, 2)} for t in ordered],
         },
     })
+    persist_caches()  # kernels JIT-compiled for this job's shapes survive restarts too
     progress(1, desc="Complete")
     note = (f"\n{len(failed)} chunk(s) kept their best take after every retry failed a check: "
             + "; ".join(f"chunk {t.chunk.index + 1} ({names.get(t.chunk.speaker, t.chunk.speaker)}) "

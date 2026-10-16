@@ -48,9 +48,10 @@ DRAMA3_VLLM_OMNI_REPO = "https://github.com/vllm-project/vllm-omni.git"
 DRAMA3_VLLM_OMNI_REF = "c4871a09b006507ed38e3f4eb2e5db81d18f1191"
 DRAMA3_VLLM_TORCH_BACKEND = "cu130"
 DRAMA3_VLLM_PYTHON = "3.12"
-# Alternative parallel Drama 3 backend for comparison: SGLang-Omni v0.1.8.
+# Alternative parallel Drama 3 backend for comparison: SGLang-Omni main. Drama 3
+# (FishOmniModel) landed after v0.1.8 (#2763, 2026-10-13); pin a main commit.
 DRAMA3_SGLANG_OMNI_REPO = "https://github.com/sgl-project/sglang-omni.git"
-DRAMA3_SGLANG_OMNI_REF = "870d77446b3fae6e4f4f2a6964f7eae2f75e663a"
+DRAMA3_SGLANG_OMNI_REF = "caae7eb18d8c8d22643d4cf8e377226a3b1259e9"
 DRAMA3_HF_REPO = "fishaudio/drama-3"
 DRAMA3_HF_REVISION = "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
 COMFY_KITCHEN_VERSION = "0.2.37"

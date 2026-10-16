@@ -11,6 +11,7 @@ engine woke in a second and then never scheduled another request.
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
 import os
 import re
@@ -122,6 +123,28 @@ def ensure_model(settings: ServerSettings, *, token=None, log=print) -> Path:
     return target
 
 
+def persist_caches() -> None:
+    """Commit the Modal volume in the background so compile caches outlive the container.
+
+    Writes to a Modal volume are only kept once committed; without this, every
+    container restart or redeploy recompiled from scratch. No-op elsewhere.
+    """
+    name = os.getenv("H3_MODAL_COMMIT_VOLUME")
+    if not name:
+        return
+
+    def commit():
+        try:
+            import modal
+
+            modal.Volume.from_name(name).commit()
+            print("[drama3-serving] Committed compile caches to the volume.", flush=True)
+        except Exception as exc:  # never fail a job over cache persistence
+            print(f"[drama3-serving] Could not commit compile caches: {exc}", flush=True)
+
+    threading.Thread(target=commit, name="drama3-cache-commit", daemon=True).start()
+
+
 def gpu_memory():
     """(free MiB, total MiB, holder summary) for GPU 0 from nvidia-smi, or None."""
     try:
@@ -168,6 +191,9 @@ class ManagedServer:
         raise NotImplementedError
 
     def server_env(self) -> dict[str, str]:
+        # Every compile and JIT cache lives with the persistent data, so a later
+        # start reuses torch.compile output, Triton/Inductor kernels and
+        # FlashInfer's JIT modules instead of rebuilding them (minutes each).
         cache = self.settings.runtime_dir / "cache"
         env = environment.install_env(self.settings.venv)
         env.update(
@@ -175,12 +201,14 @@ class ManagedServer:
             TORCHINDUCTOR_CACHE_DIR=str(cache / "torchinductor"),
             TRITON_CACHE_DIR=str(cache / "triton"),
             CUDA_CACHE_PATH=str(cache / "cuda"),
+            FLASHINFER_WORKSPACE_BASE=str(cache / "flashinfer"),
+            XDG_CACHE_HOME=str(cache / "xdg"),
         )
         return env
 
-    def log_line(self, text: str) -> None:
+    def log_line(self, text: str, *, to_file: bool = True) -> None:
         print(f"[drama3-serving] {text}", flush=True)
-        if self._log is not None:
+        if to_file and self._log is not None:
             self._log.write((text + "\n").encode("utf-8", errors="replace"))
 
     def check_free_vram(self, progress: Callable[[str], None]) -> None:
@@ -231,6 +259,7 @@ class ManagedServer:
         while time.monotonic() - started < self.settings.start_timeout:
             if self.healthy():
                 self.log_line(f"{self.label} ready after {time.monotonic() - started:.0f}s")
+                persist_caches()
                 return
             if self.process is not None and self.process.poll() is not None:
                 raise H3Error(f"{self.label} exited during startup (code {self.process.returncode}). "
@@ -239,7 +268,7 @@ class ManagedServer:
             message = f"Starting {self.label} ({elapsed:.0f}s): {self.last_log_line()}"
             progress(message)
             if elapsed - reported >= 30:  # Modal logs show startup without the UI
-                self.log_line(message)
+                self.log_line(message, to_file=False)  # never echo back into the tailed log
                 reported = elapsed
             time.sleep(3)
         raise H3Error(f"{self.label} did not become ready in {self.settings.start_timeout:.0f}s. "
@@ -311,14 +340,22 @@ class VllmOmniServer(ManagedServer):
             return False
 
     def write_deploy_config(self) -> Path:
+        """Generate once per settings and environment; importing vllm_omni takes ~15 s."""
         settings = self.settings
-        target = settings.runtime_dir / "deploy" / "fish_omni.json"
-        target.parent.mkdir(parents=True, exist_ok=True)
         options = {"engine_memory": settings.engine_memory, "codec_memory": settings.codec_memory,
-                   "max_seqs": settings.max_seqs, "cuda_mps": settings.cuda_mps}
+                   "max_seqs": settings.max_seqs, "cuda_mps": settings.cuda_mps,
+                   "environment": environment.fingerprint("vllm"),
+                   "script": hashlib.sha256(DEPLOY_CONFIG_SCRIPT.encode("utf-8")).hexdigest()}
+        digest = hashlib.sha256(json.dumps(options, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        target = settings.runtime_dir / "deploy" / f"fish_omni-{digest}.json"
+        if target.is_file():
+            return target
+        target.parent.mkdir(parents=True, exist_ok=True)
+        partial = target.with_suffix(".partial")
         subprocess.run([str(environment.python_path(settings.venv)), "-c", DEPLOY_CONFIG_SCRIPT,
-                        str(target), json.dumps(options)],
+                        str(partial), json.dumps(options)],
                        check=True, env=environment.install_env(settings.venv), capture_output=True, text=True)
+        partial.replace(target)
         return target
 
     def command(self, deploy_config: Path | None = None) -> list[str]:

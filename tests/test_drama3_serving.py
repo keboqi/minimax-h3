@@ -117,7 +117,7 @@ class EnvironmentTests(unittest.TestCase):
         commands = drama3_sglang_install_commands(PurePosixPath("/opt/h3/drama3-sglang-venv"))
         self.assertIn("--prerelease=allow", commands[1])
         self.assertIn("--torch-backend=cu130", commands[1])
-        self.assertTrue(commands[1][-1].startswith("sglang-omni[fishaudio] @ git+https://github.com/sgl-project/sglang-omni.git@870d774"))
+        self.assertTrue(commands[1][-1].startswith("sglang-omni[fishaudio] @ git+https://github.com/sgl-project/sglang-omni.git@caae7eb"))
         self.assertEqual(environment.default_venv(Path("/app"), "sglang"), Path("/app/h3/drama3-sglang-venv"))
 
     def test_readiness_requires_the_current_fingerprint(self):
@@ -166,6 +166,47 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(str(self.settings.model_dir).endswith("fishaudio--drama-3--e0a9218aa488"))
         sleepy = server.VllmOmniServer(self.settings_for(release="sleep")).command(Path("deploy.json"))
         self.assertIn("--enable-sleep-mode", sleepy)
+
+    def test_compile_and_jit_caches_live_with_the_persistent_data(self):
+        env = server.VllmOmniServer(self.settings).server_env()
+        cache = self.settings.runtime_dir / "cache"
+        for key, folder in (("FLASHINFER_WORKSPACE_BASE", "flashinfer"), ("XDG_CACHE_HOME", "xdg"),
+                            ("TORCHINDUCTOR_CACHE_DIR", "torchinductor"), ("TRITON_CACHE_DIR", "triton"),
+                            ("VLLM_CACHE_ROOT", "vllm")):
+            self.assertEqual(env[key], str(cache / folder))
+
+    def test_volume_commit_runs_only_on_modal(self):
+        with patch.dict("os.environ", {}, clear=True), patch.object(server.threading, "Thread") as thread:
+            server.persist_caches()
+            thread.assert_not_called()
+        with patch.dict("os.environ", {"H3_MODAL_COMMIT_VOLUME": "vol"}), \
+                patch.object(server.threading, "Thread") as thread:
+            server.persist_caches()
+            thread.return_value.start.assert_called_once()
+
+    def test_deploy_config_is_generated_once_per_settings(self):
+        instance = server.VllmOmniServer(self.settings)
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            Path(command[3]).write_text("{}", encoding="utf-8")
+
+        with patch.object(server.subprocess, "run", side_effect=fake_run):
+            first = instance.write_deploy_config()
+            again = instance.write_deploy_config()
+            other = server.VllmOmniServer(self.settings_for(max_seqs=16)).write_deploy_config()
+        self.assertEqual(first, again)
+        self.assertNotEqual(first, other)
+        self.assertEqual(len(calls), 2)
+
+    def test_startup_progress_is_not_written_back_into_the_server_log(self):
+        instance = server.VllmOmniServer(self.settings)
+        instance._log = MagicMock()
+        instance.log_line("Starting vLLM-Omni (30s): loading", to_file=False)
+        instance._log.write.assert_not_called()
+        instance.log_line("vLLM-Omni ready after 40s")
+        instance._log.write.assert_called_once()
 
     def test_deploy_config_captures_only_the_batch_sizes_used(self):
         self.assertIn("cudagraph_capture_sizes=sizes", server.DEPLOY_CONFIG_SCRIPT)

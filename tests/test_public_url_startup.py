@@ -91,7 +91,7 @@ class PublicUrlStartupTests(unittest.TestCase):
         tree = ast.parse((ROOT / "modal_h3.py").read_text(encoding="utf-8"))
         function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "service_env")
         namespace = dict(os=os, ROOT=ROOT, COMFY=ROOT, CONFIG=ROOT, OUTPUT=ROOT, DATA=ROOT, COMFY_PORT=8188,
-                         DRAMA3_VLLM_VENV=ROOT, DRAMA3_SGLANG_VENV=ROOT, DRAMA3_VLLM_DATA=ROOT, MODELS=ROOT)
+                         DRAMA3_VLLM_VENV=ROOT, DRAMA3_SGLANG_VENV=ROOT, DRAMA3_VLLM_DATA=ROOT, MODELS=ROOT, VOL="test-volume")
         exec(compile(ast.Module(body=[function], type_ignores=[]), "<modal env>", "exec"), namespace)
         environment = namespace["service_env"]()
         self.assertEqual(environment["ENABLE_CLOUDFLARE_TUNNEL"], "false")
