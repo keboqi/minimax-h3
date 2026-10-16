@@ -57,11 +57,10 @@ LOCAL_PROMPT_FLUX3_I2I = LOCAL / "prompt_flux3_i2i.txt"
 LOCAL_PROMPT_DRAMA3 = LOCAL / "prompt_drama3.txt"
 
 DATA = PurePosixPath("/data")
-# Optional Drama 3 backend: an isolated vLLM-Omni environment in the image, with
+# Optional Drama 3 backend: an isolated SGLang-Omni environment in the image, with
 # its checkpoint under ComfyUI's models link and caches/logs on the volume.
-DRAMA3_VLLM_VENV = ROOT / "drama3-vllm-venv"
 DRAMA3_SGLANG_VENV = ROOT / "drama3-sglang-venv"
-DRAMA3_VLLM_DATA = DATA / "drama3-vllm"
+DRAMA3_SGLANG_DATA = DATA / "drama3-serving"
 MODELS = DATA / "models"
 INPUT = DATA / "input"
 OUTPUT = DATA / "output"
@@ -118,11 +117,9 @@ from h3_sources import (  # noqa: E402
     VIDEO_DEPTH_REPO,
 )
 from h3_requirements import (  # noqa: E402
-    DRAMA3_VLLM_READY_MARKER,
+    DRAMA3_SGLANG_READY_MARKER,
     drama3_sglang_fingerprint,
     drama3_sglang_install_commands,
-    drama3_vllm_fingerprint,
-    drama3_vllm_install_commands,
     H3_AUDIO_T8_REPO,
     H3_AUDIO_T8_REF,
     DRAMA3_REPO,
@@ -661,23 +658,14 @@ image = (
 )
 
 
-# Its own layer before the ComfyUI build, so ComfyUI rebuilds keep this cached.
-image = image.run_commands(
-    *(
-        f"VLLM_OMNI_TARGET_DEVICE=cuda {shlex.join(command)}"
-        for command in drama3_vllm_install_commands(DRAMA3_VLLM_VENV)
-    ),
-    f"echo {drama3_vllm_fingerprint()} > "
-    f"{(DRAMA3_VLLM_VENV / DRAMA3_VLLM_READY_MARKER).as_posix()}",
-)
-# SGLang-Omni, the alternative Drama 3 backend, in a layer of its own. Some of
+# SGLang-Omni in its own cached layer before ComfyUI. Some of
 # its dependencies (cdifflib) compile C extensions; the standalone Python asks
 # for clang, which the image lacks, so build them with the installed gcc.
 image = image.run_commands(
     *(f"CC=gcc CXX=g++ {shlex.join(command)}"
       for command in drama3_sglang_install_commands(DRAMA3_SGLANG_VENV)),
     f"echo {drama3_sglang_fingerprint()} > "
-    f"{(DRAMA3_SGLANG_VENV / DRAMA3_VLLM_READY_MARKER).as_posix()}",
+    f"{(DRAMA3_SGLANG_VENV / DRAMA3_SGLANG_READY_MARKER).as_posix()}",
 )
 
 if IS_LOCAL:
@@ -788,11 +776,10 @@ def service_env() -> dict[str, str]:
             "MODELS_CONFIG": CONFIG.as_posix(),
             "GRADIO_OUTPUT_DIR": OUTPUT.as_posix(),
             "H3_WORKSPACE_DIR": (DATA / "h3-workspace").as_posix(),
-            "H3_DRAMA3_VLLM_VENV": DRAMA3_VLLM_VENV.as_posix(),
             "H3_DRAMA3_SGLANG_VENV": DRAMA3_SGLANG_VENV.as_posix(),
-            "H3_DRAMA3_VLLM_DATA": DRAMA3_VLLM_DATA.as_posix(),
-            "H3_DRAMA3_VLLM_MODELS": (MODELS / "drama3_vllm").as_posix(),
-            # The Drama 3 servers commit their compile caches to this volume.
+            "H3_DRAMA3_SGLANG_DATA": DRAMA3_SGLANG_DATA.as_posix(),
+            "H3_DRAMA3_SGLANG_MODELS": (MODELS / "drama3_serving").as_posix(),
+            # The Drama 3 server commits its kernel caches to this volume.
             "H3_MODAL_COMMIT_VOLUME": VOL,
             "SERVER_ATTENTION_BACKEND": "sol",
             "SERVER_DENSE_ATTENTION_BACKEND": "comfy-kitchen",

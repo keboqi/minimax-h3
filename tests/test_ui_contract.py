@@ -681,7 +681,7 @@ class UiContractTests(unittest.TestCase):
         backend = next(c for c in self.config["components"]
                        if c.get("props", {}).get("label") == "Backend")
         self.assertEqual(backend["props"]["value"], "ComfyUI")
-        self.assertEqual([choice[1] for choice in backend["props"]["choices"]], ["ComfyUI", "vLLM-Omni", "SGLang-Omni"])
+        self.assertEqual([choice[1] for choice in backend["props"]["choices"]], ["ComfyUI", "SGLang-Omni"])
         enhance = [row["parameter_name"] for row in api["/enhance_drama3_text"]["parameters"]]
         self.assertEqual(enhance[:7], ["text", "speaker_mode", "model", "temporary_api_key",
                                        "backend", "lightning_api_key", "lightning_model"])
@@ -1470,6 +1470,7 @@ class UiContractTests(unittest.TestCase):
             "generate_qwen_image21",
             "generate_yue2",
             "unload_all_models",
+            "switch_drama3_backend",
         }
         found = set()
         for event in self.demo.fns.values():

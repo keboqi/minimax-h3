@@ -26,7 +26,7 @@ SAME_SPEAKER_GAP = 0.12  # between chunks of one speaker
 def decode_wav(data: bytes) -> tuple[np.ndarray, int]:
     """Mono float32 samples from PCM16/24/32 or float32 WAV, including WAVE_FORMAT_EXTENSIBLE."""
     if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
-        raise ValueError("vLLM-Omni did not return a WAV file.")
+        raise ValueError("SGLang-Omni did not return a WAV file.")
     position, fmt, payload = 12, None, None
     while position + 8 <= len(data):
         tag, size = data[position:position + 4], struct.unpack("<I", data[position + 4:position + 8])[0]

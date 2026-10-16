@@ -1,18 +1,11 @@
-"""Lifecycle of the managed Drama 3 servers (vLLM-Omni and SGLang-Omni).
+"""Managed SGLang-Omni Drama 3 server, kept loaded between TTS jobs.
 
-A server starts lazily inside a Drama 3 job, which already holds the app's GPU
-lease, after ComfyUI frees its VRAM. It then stays loaded, so the next Drama 3
-job starts generating at once. When any other engine takes the GPU lease the
-server is released: stopped by default. vLLM-Omni's level-1 sleep is available
-behind H3_DRAMA3_VLLM_RELEASE=sleep, but with Drama 3 (vllm-omni c4871a0) the
-engine woke in a second and then never scheduled another request.
+Other engines stop the server to reclaim VRAM; the next TTS job restarts it.
 """
 
 from __future__ import annotations
 
 import atexit
-import hashlib
-import json
 import os
 import re
 import signal
@@ -31,30 +24,7 @@ from h3_app.errors import H3Error
 
 from . import environment
 
-SERVED_MODEL = "drama-3"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
-TRUTHY = {"1", "true", "yes"}
-# Generated from the package's fish_omni.yaml with the venv's PyYAML, so the main
-# environment needs no YAML dependency. JSON output is valid YAML for vLLM.
-DEPLOY_CONFIG_SCRIPT = r"""
-import json, pathlib, sys, yaml
-import vllm_omni
-settings = json.loads(sys.argv[2])
-base = pathlib.Path(vllm_omni.__file__).parent / "deploy" / "fish_omni.yaml"
-config = yaml.safe_load(base.read_text(encoding="utf-8"))
-stages = {stage["stage_id"]: stage for stage in config["stages"]}
-if set(stages) != {0, 1}:
-    raise SystemExit("Unexpected fish_omni deploy schema; expected stages 0 and 1")
-stages[0].update(gpu_memory_utilization=settings["engine_memory"], max_num_seqs=settings["max_seqs"])
-stages[1].update(gpu_memory_utilization=settings["codec_memory"], max_num_seqs=settings["max_seqs"])
-# The shipped config captures 39 graph sizes up to 4096 tokens: minutes at startup.
-# Capture only batch sizes this app sends; larger prefill steps run eagerly.
-sizes = [size for size in (1, 2, 4, 8, 16, 24, 32, 48, 64) if size <= settings["max_seqs"]]
-compilation = stages[0].setdefault("compilation_config", {})
-compilation.update(cudagraph_capture_sizes=sizes, max_cudagraph_capture_size=max(sizes))
-config.setdefault("platforms", {}).setdefault("cuda", {})["cuda_mps"] = settings["cuda_mps"]
-pathlib.Path(sys.argv[1]).write_text(json.dumps(config, indent=2), encoding="utf-8")
-"""
 
 
 @dataclass(frozen=True)
@@ -62,41 +32,39 @@ class ServerSettings:
     venv: Path
     data_dir: Path
     model_root: Path
-    kind: str = "vllm"  # "vllm" or "sglang"
-    port: int = 8095
+    port: int = 8096
     # The engine's share of total GPU memory: 37 GB of weights plus KV cache.
     engine_memory: float = 0.55
     codec_memory: float = 0.08
     max_seqs: int = 32
-    cuda_mps: bool = False
-    # DeepGEMM requantizes every FP8 expert through float32 at load time; under
-    # sleep mode's dedicated weights pool that exhausted 95 GiB on an RTX PRO 6000.
-    deep_gemm: bool = False
-    release: str = "stop"  # vLLM-Omni only: "stop" or "sleep"
     start_timeout: float = 1800.0
     request_timeout: float = 900.0
 
     @classmethod
-    def from_environment(cls, runtime, kind: str = "vllm") -> "ServerSettings":
+    def from_environment(cls, runtime) -> "ServerSettings":
         env = os.environ
-        sglang = kind == "sglang"
         return cls(
-            venv=environment.default_venv(runtime.script_dir, kind),
-            data_dir=Path(env.get("H3_DRAMA3_VLLM_DATA") or runtime.comfy_dir.parent / "drama3-vllm"),
-            model_root=Path(env.get("H3_DRAMA3_VLLM_MODELS") or runtime.comfy_dir / "models" / "drama3_vllm"),
-            kind=kind,
-            port=int(env.get("H3_DRAMA3_SGLANG_PORT", "8096") if sglang else env.get("H3_DRAMA3_VLLM_PORT", "8095")),
-            engine_memory=float(env.get("H3_DRAMA3_VLLM_ENGINE_MEMORY", "0.55")),
-            codec_memory=float(env.get("H3_DRAMA3_VLLM_CODEC_MEMORY", "0.08")),
-            max_seqs=int(env.get("H3_DRAMA3_VLLM_MAX_SEQS", "32")),
-            cuda_mps=env.get("H3_DRAMA3_VLLM_CUDA_MPS", "0").lower() in TRUTHY,
-            deep_gemm=env.get("H3_DRAMA3_VLLM_DEEP_GEMM", "0").lower() in TRUTHY,
-            release="stop" if sglang else env.get("H3_DRAMA3_VLLM_RELEASE", "stop").lower(),
+            venv=environment.default_venv(runtime.script_dir),
+            data_dir=Path(env.get("H3_DRAMA3_SGLANG_DATA") or runtime.comfy_dir.parent / "drama3-serving"),
+            model_root=Path(env.get("H3_DRAMA3_SGLANG_MODELS") or runtime.comfy_dir / "models" / "drama3_serving"),
+            port=int(env.get("H3_DRAMA3_SGLANG_PORT", "8096")),
+            engine_memory=float(env.get("H3_DRAMA3_SGLANG_ENGINE_MEMORY", "0.55")),
+            codec_memory=float(env.get("H3_DRAMA3_SGLANG_CODEC_MEMORY", "0.08")),
+            max_seqs=int(env.get("H3_DRAMA3_SGLANG_MAX_SEQS", "32")),
         )
 
     @property
     def model_dir(self) -> Path:
-        return self.model_root / f"{DRAMA3_HF_REPO.replace('/', '--')}--{DRAMA3_HF_REVISION[:12]}"
+        target = self.model_root / f"{DRAMA3_HF_REPO.replace('/', '--')}--{DRAMA3_HF_REVISION[:12]}"
+        if not target.exists():
+            # Reuse the pinned checkpoint in an earlier sibling serving directory.
+            # Removing a backend must not force another 44 GB download.
+            candidates = sorted(self.model_root.parent.glob(f"*/{target.name}"))
+            for candidate in candidates:
+                marker = candidate / ".h3-complete"
+                if marker.is_file() and marker.read_text(encoding="utf-8").strip() == DRAMA3_HF_REVISION:
+                    return candidate
+        return target
 
     @property
     def media_dir(self) -> Path:
@@ -105,12 +73,18 @@ class ServerSettings:
 
     @property
     def runtime_dir(self) -> Path:
-        """Logs, caches and generated config for this backend."""
-        return self.data_dir if self.kind == "vllm" else self.data_dir / "sglang"
+        """Persistent SGLang logs and kernel caches."""
+        if not (self.data_dir / "cache").is_dir():
+            # Keep the existing SGLang kernel cache after renaming serving storage.
+            candidates = sorted(path for path in self.data_dir.parent.glob("*/sglang")
+                                if (path / "cache").is_dir())
+            if len(candidates) == 1:
+                return candidates[0]
+        return self.data_dir
 
 
 def ensure_model(settings: ServerSettings, *, token=None, log=print) -> Path:
-    """Download the pinned official checkpoint once (shared by both backends)."""
+    """Download the pinned official checkpoint once."""
     target = settings.model_dir
     marker = target / ".h3-complete"
     if marker.is_file():
@@ -162,14 +136,13 @@ def gpu_memory():
         return None
 
 
-class ManagedServer:
-    label = "Drama 3 server"
+class SglangOmniServer:
+    label = "SGLang-Omni"
     health_path = "/health"
 
     def __init__(self, settings: ServerSettings):
         self.settings = settings
         self.process: subprocess.Popen | None = None
-        self.sleeping = False
         self.log_path: Path | None = None
         self._log = None
         self._lock = threading.RLock()
@@ -186,9 +159,6 @@ class ManagedServer:
             return requests.get(f"{self.base_url}{self.health_path}", timeout=timeout).ok
         except requests.RequestException:
             return False
-
-    def command(self) -> list[str]:
-        raise NotImplementedError
 
     def server_env(self) -> dict[str, str]:
         # Every compile and JIT cache lives with the persistent data, so a later
@@ -224,7 +194,7 @@ class ManagedServer:
         if free < needed:
             raise H3Error(
                 f"{message}, but {self.label} needs about {needed / 1024:.1f} GiB "
-                f"(H3_DRAMA3_VLLM_ENGINE_MEMORY + CODEC_MEMORY). Still holding VRAM: {holders or 'unknown'}. "
+                f"(H3_DRAMA3_SGLANG_ENGINE_MEMORY + CODEC_MEMORY). Still holding VRAM: {holders or 'unknown'}. "
                 "Unload models from System and retry."
             )
 
@@ -233,13 +203,12 @@ class ManagedServer:
         settings.media_dir.mkdir(parents=True, exist_ok=True)
         logs = settings.runtime_dir / "logs"
         logs.mkdir(parents=True, exist_ok=True)
-        self.log_path = logs / f"{settings.kind}-omni-{time.strftime('%Y%m%d-%H%M%S')}.log"
+        self.log_path = logs / f"sglang-omni-{time.strftime('%Y%m%d-%H%M%S')}.log"
         self._log = self.log_path.open("ab", buffering=0)
         command = self.command()
         self.log_line(f"Starting {self.label}: {' '.join(command)}")
         self.process = subprocess.Popen(command, env=self.server_env(), stdin=subprocess.DEVNULL,
                                         stdout=self._log, stderr=subprocess.STDOUT, start_new_session=True)
-        self.sleeping = False
         atexit.register(self.stop)
 
     def last_log_line(self) -> str:
@@ -277,9 +246,9 @@ class ManagedServer:
     def ensure_ready(self, free_gpu: Callable[[], None], progress: Callable[[str], None] = lambda _m: None) -> None:
         """Reuse a loaded server; otherwise free ComfyUI's VRAM and start it."""
         with self._lock:
-            if self.running() and not self.sleeping and self.healthy():
-                return
             free_gpu()
+            if self.running() and self.healthy():
+                return
             self.check_free_vram(progress)
             if self.running():
                 self.stop()  # alive but unhealthy: restart cleanly
@@ -293,7 +262,6 @@ class ManagedServer:
     def stop(self) -> None:
         with self._lock:
             process, self.process = self.process, None
-            self.sleeping = False
             if process is not None and process.poll() is None:
                 self.log_line(f"Stopping {self.label}")
                 try:
@@ -316,129 +284,12 @@ class ManagedServer:
         except (OSError, AttributeError):
             return "(no log)"
 
-    def payload(self, *, text, reference, transcript, seed, max_new_tokens, sampling) -> dict:
-        raise NotImplementedError
-
     def speech(self, payload: dict) -> bytes:
         response = requests.post(f"{self.base_url}/v1/audio/speech", json=payload,
                                  timeout=self.settings.request_timeout)
         if not response.ok:
             raise H3Error(f"{self.label} speech request failed (HTTP {response.status_code}): {response.text[:500]}")
         return response.content
-
-
-class VllmOmniServer(ManagedServer):
-    label = "vLLM-Omni"
-    health_path = "/v1/models"
-
-    def healthy(self, timeout: float = 2.0) -> bool:
-        try:
-            response = requests.get(f"{self.base_url}/v1/models", timeout=timeout)
-            models = {str(item.get("id")) for item in response.json().get("data", [])}
-            return response.ok and SERVED_MODEL in models
-        except (requests.RequestException, ValueError, AttributeError):
-            return False
-
-    def write_deploy_config(self) -> Path:
-        """Generate once per settings and environment; importing vllm_omni takes ~15 s."""
-        settings = self.settings
-        options = {"engine_memory": settings.engine_memory, "codec_memory": settings.codec_memory,
-                   "max_seqs": settings.max_seqs, "cuda_mps": settings.cuda_mps,
-                   "environment": environment.fingerprint("vllm"),
-                   "script": hashlib.sha256(DEPLOY_CONFIG_SCRIPT.encode("utf-8")).hexdigest()}
-        digest = hashlib.sha256(json.dumps(options, sort_keys=True).encode("utf-8")).hexdigest()[:16]
-        target = settings.runtime_dir / "deploy" / f"fish_omni-{digest}.json"
-        if target.is_file():
-            return target
-        target.parent.mkdir(parents=True, exist_ok=True)
-        partial = target.with_suffix(".partial")
-        subprocess.run([str(environment.python_path(settings.venv)), "-c", DEPLOY_CONFIG_SCRIPT,
-                        str(partial), json.dumps(options)],
-                       check=True, env=environment.install_env(settings.venv), capture_output=True, text=True)
-        partial.replace(target)
-        return target
-
-    def command(self, deploy_config: Path | None = None) -> list[str]:
-        settings = self.settings
-        deploy_config = deploy_config or self.write_deploy_config()
-        command = [
-            str(environment.executable(settings.venv, "vllm")), "serve", str(settings.model_dir), "--omni",
-            "--host", "127.0.0.1", "--port", str(settings.port),
-            "--served-model-name", SERVED_MODEL,
-            "--deploy-config", str(deploy_config),
-            "--allowed-local-media-path", str(settings.media_dir),
-        ]
-        if settings.release == "sleep":
-            command.append("--enable-sleep-mode")
-        return command
-
-    def server_env(self) -> dict[str, str]:
-        env = super().server_env()
-        env["VLLM_CACHE_ROOT"] = str(self.settings.runtime_dir / "cache" / "vllm")
-        if not self.settings.deep_gemm:
-            env.update(VLLM_USE_DEEP_GEMM="0", VLLM_MOE_USE_DEEP_GEMM="0")
-        return env
-
-    def _post(self, path: str, payload: dict, timeout: float = 120.0):
-        response = requests.post(f"{self.base_url}{path}", json=payload, timeout=timeout)
-        if not response.ok:
-            raise H3Error(f"vLLM-Omni {path} failed (HTTP {response.status_code}): {response.text[:500]}")
-        return response.json() if response.content else {}
-
-    @staticmethod
-    def _succeeded(result) -> bool:
-        acks = result if isinstance(result, list) else result.get("acks", [result])
-        return all(str(ack.get("status", "SUCCESS")).upper() in {"SUCCESS", "SKIPPED"} for ack in acks)
-
-    def _responds(self, timeout: float = 120.0) -> bool:
-        """A woken engine must finish a tiny request; Drama 3 hung after wake-up in testing."""
-        try:
-            response = requests.post(f"{self.base_url}/v1/audio/speech", timeout=timeout,
-                                     json={"model": SERVED_MODEL, "input": "Hello.", "response_format": "wav",
-                                           "max_new_tokens": 32})
-            return response.ok and len(response.content) > 44
-        except requests.RequestException:
-            return False
-
-    def ensure_ready(self, free_gpu: Callable[[], None], progress: Callable[[str], None] = lambda _m: None) -> None:
-        with self._lock:
-            if self.running() and self.sleeping:
-                free_gpu()
-                self.check_free_vram(progress)
-                progress("Waking vLLM-Omni")
-                result = self._post("/v1/omni/wakeup", {"stage_ids": [0, 1]}, timeout=600)
-                self.sleeping = False
-                if self._succeeded(result) and self._responds():
-                    return
-                self.log_line("vLLM-Omni did not respond after waking; restarting it.")
-                self.stop()
-            super().ensure_ready(free_gpu, progress)
-
-    def release(self) -> None:
-        with self._lock:
-            if self.settings.release != "sleep":
-                self.stop()
-                return
-            if not self.running() or self.sleeping:
-                return
-            try:
-                result = self._post("/v1/omni/sleep", {"stage_ids": [0, 1], "level": 1}, timeout=300)
-                if not self._succeeded(result):
-                    raise H3Error(f"vLLM-Omni sleep failed: {result}")
-                self.sleeping = True
-                self.log_line("vLLM-Omni is sleeping (weights in host RAM).")
-            except (H3Error, requests.RequestException) as exc:
-                self.log_line(f"Sleep failed ({exc}); stopping the server to free the GPU.")
-                self.stop()
-
-    def payload(self, *, text, reference, transcript, seed, max_new_tokens, sampling) -> dict:
-        return {"model": SERVED_MODEL, "input": text, "response_format": "wav", "seed": seed,
-                "max_new_tokens": max_new_tokens, "extra_params": sampling,
-                "ref_audio": Path(reference).resolve().as_uri(), "ref_text": transcript}
-
-
-class SglangOmniServer(ManagedServer):
-    label = "SGLang-Omni"
 
     def command(self) -> list[str]:
         settings = self.settings
@@ -454,44 +305,38 @@ class SglangOmniServer(ManagedServer):
             "--vocoder.factory.codec_path", str(settings.model_dir / "codec.pth"),
         ]
 
-    def payload(self, *, text, reference, transcript, seed, max_new_tokens, sampling) -> dict:
+    def payload(self, *, text, reference, transcript, max_new_tokens, sampling) -> dict:
         # FishOmni rejects per-request seeds on SGLang-Omni's speech endpoint.
         return {"input": text, "response_format": "wav", "max_new_tokens": max_new_tokens,
                 **sampling, "references": [{"audio_path": str(Path(reference).resolve()), "text": transcript}]}
 
 
-SERVER_CLASSES = {"vllm": VllmOmniServer, "sglang": SglangOmniServer}
-_SERVERS: dict[str, ManagedServer] = {}
-_SERVERS_LOCK = threading.Lock()
+_SERVER: SglangOmniServer | None = None
+_SERVER_LOCK = threading.Lock()
 
 
-def shared_server(settings: ServerSettings) -> ManagedServer:
-    """One managed server per backend per app process."""
+def shared_server(settings: ServerSettings) -> SglangOmniServer:
+    """Reuse the app's SGLang server while its configuration stays unchanged."""
+    global _SERVER
     from h3_app.jobs import JOBS
 
     JOBS.add_gpu_claim_hook(release_for_job)
-    with _SERVERS_LOCK:
-        current = _SERVERS.get(settings.kind)
-        if current is None or current.settings != settings:
-            if current is not None:
-                current.stop()
-            current = _SERVERS[settings.kind] = SERVER_CLASSES[settings.kind](settings)
-        return current
+    with _SERVER_LOCK:
+        if _SERVER is None or _SERVER.settings != settings:
+            if _SERVER is not None:
+                _SERVER.stop()
+            _SERVER = SglangOmniServer(settings)
+        return _SERVER
 
 
 def release_for_job(family: str) -> None:
-    """GPU-claim hook: every job but Drama 3 releases the servers.
-
-    Drama 3 jobs decide for themselves: the served route keeps its own backend
-    loaded, and the ComfyUI route releases both before running.
-    """
+    """Other engines reclaim the GPU; ComfyUI TTS releases the server itself."""
     if family != "drama3":
         release_all()
 
 
-def release_all(except_kind: str | None = None) -> None:
-    """Free the GPU from every Drama 3 server, optionally keeping one backend."""
-    with _SERVERS_LOCK:
-        servers = [server for kind, server in _SERVERS.items() if kind != except_kind]
-    for server in servers:
-        server.release()
+def release_all() -> None:
+    """Release the GPU held by the managed SGLang server."""
+    with _SERVER_LOCK:
+        if _SERVER is not None:
+            _SERVER.release()

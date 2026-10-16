@@ -30,9 +30,9 @@ class Drama3Request:
     top_k: int = 30
     max_frames: int = 8192
     split_long_text: bool = False
-    experts: str = "in RAM"
+    experts: str = "in VRAM"
     expert_cache_gb: float = 0.0
-    backend: str = "ComfyUI"  # or "vLLM-Omni": speaker chunks generated in parallel
+    backend: str = "ComfyUI"  # or "SGLang-Omni": speaker chunks generated in parallel
     parallel: int = 8
     retries: int = 0
     # (speaker number, saved speaker name or "") for status and provenance.

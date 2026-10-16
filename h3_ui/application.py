@@ -1834,30 +1834,53 @@ def unload_comfy_models() -> None:
     api_post("/free", json={"unload_models": True, "free_memory": True})
 
 
-def free_comfy_vram(timeout: float = 30.0) -> None:
+def free_comfy_vram(timeout: float = 60.0) -> None:
     """Unload ComfyUI models before another process takes the GPU, and wait for it.
 
-    ComfyUI applies /free on its queue worker's next pass, so poll until the free
-    VRAM it reports stops rising instead of assuming the request took effect.
+    /free only queues flags. Unchanged global free VRAM is not acknowledgement:
+    wait for ComfyUI's own reported Torch allocation to clear instead.
     """
     unload_prompt_rewriter()
     unload_comfy_models()
 
-    def free_bytes():
-        try:
-            devices = api_get("/system_stats").json().get("devices") or [{}]
-            return int(devices[0].get("vram_free") or 0)
-        except (requests.RequestException, ValueError, TypeError):
-            return 0
-
-    deadline, previous, steady = time.monotonic() + timeout, -1, 0
+    deadline, cleared = time.monotonic() + timeout, 0
+    detail = "GPU allocation statistics unavailable"
     while time.monotonic() < deadline:
-        current = free_bytes()
-        steady = steady + 1 if current and abs(current - previous) < 256 * 2**20 else 0
-        if steady >= 2:
+        job = CURRENT_JOB.get()
+        if job is not None:
+            job.check()
+        try:
+            devices = api_get("/system_stats", timeout=min(5.0, max(0.1, deadline - time.monotonic()))).json().get("devices")
+            if not devices:
+                raise ValueError("no device statistics returned")
+            gpu_devices = [device for device in devices if device.get("type") != "cpu"]
+            reserved = [int(device["torch_vram_total"]) for device in gpu_devices]
+            if any(value < 0 for value in reserved):
+                raise ValueError("invalid GPU allocation statistics")
+            detail = f"{sum(reserved) / 2**30:.2f} GiB still reserved by ComfyUI's Torch allocator"
+            cleared = cleared + 1 if all(value <= 256 * 2**20 for value in reserved) else 0
+        except (requests.RequestException, ValueError, TypeError, KeyError, AttributeError) as exc:
+            cleared = 0
+            detail = f"GPU allocation statistics unavailable: {exc}"
+        if cleared >= 2:
             return
-        previous = current
         time.sleep(1.0)
+    raise H3Error(f"ComfyUI VRAM release did not complete within {timeout:g}s: {detail}. "
+                  "SGLang startup was not allowed to continue.")
+
+
+@gpu_maintenance("drama3")
+def switch_drama3_backend(backend: str) -> str:
+    """Release the previous backend on an explicit selection, under the GPU lease."""
+    if backend == "SGLang-Omni":
+        free_comfy_vram()
+        return "ComfyUI models and cached Torch VRAM released. SGLang starts when you generate speech."
+    if backend == "ComfyUI":
+        from h3_app.drama3_serving.server import release_all
+
+        release_all()
+        return "SGLang stopped and its GPU memory released. ComfyUI is selected."
+    raise H3Error("Choose the ComfyUI or SGLang-Omni Drama 3 backend.")
 
 
 @gpu_maintenance("unload")
@@ -2840,6 +2863,7 @@ def _optional_engine_actions():
     return OptionalEngineActions(
         generate_flux3=generate_flux3,
         generate_drama3=generate_drama3,
+        switch_drama3_backend=switch_drama3_backend,
         enhance_flux3_prompt=enhance_flux3_prompt,
         enhance_drama3_text=enhance_drama3_text,
         transcribe_drama3_voice=transcribe_drama3_voice,

@@ -36,6 +36,7 @@ DRAMA3_SAMPLING_PRESETS = {
 class OptionalEngineActions:
     generate_flux3: Callable
     generate_drama3: Callable
+    switch_drama3_backend: Callable
     enhance_flux3_prompt: Callable
     enhance_drama3_text: Callable
     transcribe_drama3_voice: Callable
@@ -225,12 +226,12 @@ def build_drama3_view(root, speaker_names=()):
                 with gr.Accordion("Speech and memory settings", open=False):
                     backend = gr.Radio(list(DRAMA3_BACKENDS), value=DRAMA3_BACKENDS[0], label="Backend",
                         info="ComfyUI generates the whole text in one take and can invent voices. "
-                             "vLLM-Omni and SGLang-Omni (Linux) are for long scripts where every speaker has a "
+                             "SGLang-Omni (Linux) is for long scripts where every speaker has a "
                              "voice below: each speaker's lines go out with that speaker's clip, in parallel, and "
                              "near-silent takes can be retried when retries are enabled. First use installs the backend and downloads a "
                              "44 GB checkpoint; the server then stays loaded between Drama 3 jobs and stops when "
                              "another engine needs the GPU. SGLang-Omni does not support seed control.")
-                    with gr.Group(visible=False) as vllm_settings:
+                    with gr.Group(visible=False) as served_settings:
                         parallel = gr.Slider(1, 32, value=8, step=1, label="Parallel requests")
                         retries = gr.Slider(0, 4, value=0, step=1, label="Retries per chunk",
                             info="Default 0 keeps the first take. Enable to retry near-silent audio; duration warnings do not trigger retries.")
@@ -243,13 +244,13 @@ def build_drama3_view(root, speaker_names=()):
                     with gr.Group() as comfy_settings:
                         split = gr.Checkbox(value=False, label="Split long text into connected chunks",
                             info="Off generates the whole text in one take, avoiding silent gaps at chunk joins.")
-                        experts = gr.Dropdown(["in RAM", "in VRAM"], value="in RAM", label="Expert weights",
+                        experts = gr.Dropdown(["in RAM", "in VRAM"], value="in VRAM", label="Expert weights",
                             info="In VRAM requires room for the whole model plus working memory.")
                         cache = gr.Slider(0, 256, value=0, step=0.5, label="Expert VRAM cache (GB, 0 automatic)")
                     backend.change(
                         lambda choice: (gr.update(visible=choice != "ComfyUI"),
                                         gr.update(visible=choice == "ComfyUI")),
-                        inputs=backend, outputs=[vllm_settings, comfy_settings],
+                        inputs=backend, outputs=[served_settings, comfy_settings],
                         queue=False, show_progress="hidden", api_name=False,
                     )
                 sampling_controls = [temperature, top_p, top_k]
@@ -336,6 +337,11 @@ def _slot_visibility(count):
 
 
 def bind_drama3(view, actions):
+    bind_gpu_action(
+        view.backend.input, actions.switch_drama3_backend,
+        inputs=view.backend, outputs=view.status,
+        show_progress="minimal", api_name=False,
+    )
     presets = [slot.preset for slot in view.voices]
     groups = [slot.group for slot in view.voices]
     view.add_speaker.click(lambda count: _slot_visibility(count + 1), inputs=view.shown_slots,

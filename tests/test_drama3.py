@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -242,12 +243,50 @@ class Drama3AppInputTests(unittest.TestCase):
         return captured["request"]
 
     def test_slot_values_map_to_speakers_and_served_backends_get_absolute_paths(self):
-        for backend in ("vLLM-Omni", "SGLang-Omni"):
+        for backend in ("SGLang-Omni",):
             with self.subTest(backend=backend):
                 request = self.run_app(backend)
                 self.assertEqual(request.voices, ((5, str(Path("/in") / "h3_gradio/drama3_voices/five.wav"), "Line five."),))
                 self.assertEqual((request.backend, request.parallel, request.retries), (backend, 8, 0))
         self.assertEqual(self.run_app("ComfyUI").voices, ((5, "h3_gradio/drama3_voices/five.wav", "Line five."),))
+
+
+class Drama3VramHandoffTests(unittest.TestCase):
+    def run_release(self, allocations, timeout=60):
+        from h3_ui import application
+
+        clock = [0.0]
+        response = Mock()
+        response.json.side_effect = [{"devices": [{"type": "cuda", "torch_vram_total": allocation,
+                                                   "vram_free": 50 * 2**30}]} for allocation in allocations]
+        with patch.object(application, "unload_prompt_rewriter"), \
+                patch.object(application, "unload_comfy_models") as unload, \
+                patch.object(application, "api_get", return_value=response) as get, \
+                patch.object(application.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(application.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            application.free_comfy_vram(timeout=timeout)
+        unload.assert_called_once()
+        return get.call_count
+
+    def test_unchanged_free_vram_does_not_acknowledge_a_pending_unload(self):
+        self.assertEqual(self.run_release([40 * 2**30] * 5 + [0, 0]), 7)
+
+    def test_incomplete_unload_times_out_instead_of_starting_sglang(self):
+        with self.assertRaisesRegex(H3Error, "40.00 GiB still reserved"):
+            self.run_release([40 * 2**30] * 3, timeout=3)
+
+    def test_explicit_backend_switch_releases_previous_backend_under_gpu_lease(self):
+        from h3_ui import application
+
+        with patch.object(application.JOBS, "maintenance", side_effect=lambda family: nullcontext()) as lease, \
+                patch.object(application, "free_comfy_vram") as free, \
+                patch("h3_app.drama3_serving.server.release_all") as release:
+            self.assertIn("ComfyUI models", application.switch_drama3_backend("SGLang-Omni"))
+            free.assert_called_once()
+            release.assert_not_called()
+            self.assertIn("SGLang stopped", application.switch_drama3_backend("ComfyUI"))
+            release.assert_called_once()
+        self.assertEqual([call.args for call in lease.call_args_list], [("drama3",), ("drama3",)])
 
 
 if __name__ == "__main__":

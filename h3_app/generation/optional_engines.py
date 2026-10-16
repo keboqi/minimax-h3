@@ -22,7 +22,7 @@ from .requests import Flux3Request, Drama3Request
 from .results import GenerationUpdate, fresh_audio
 
 
-DRAMA3_BACKENDS = ("ComfyUI", "vLLM-Omni", "SGLang-Omni")
+DRAMA3_BACKENDS = ("ComfyUI", "SGLang-Omni")
 DRAMA3_SERVED_BACKENDS = DRAMA3_BACKENDS[1:]
 FLUX3_EDIT_SIZES = (QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX, QWEN_EDIT_SIZE_MANUAL)
 FLUX3_MAX_PIXELS, FLUX3_MIN_SIDE, FLUX3_MAX_SIDE, FLUX3_GRID = 4_194_304, 256, 4096, 16
@@ -105,7 +105,7 @@ def validate_request(request):
         if request.experts not in {"in RAM", "in VRAM"}:
             raise H3Error("Choose experts in RAM or in VRAM.")
         if request.backend not in DRAMA3_BACKENDS:
-            raise H3Error("Choose the ComfyUI, vLLM-Omni or SGLang-Omni Drama 3 backend.")
+            raise H3Error("Choose the ComfyUI or SGLang-Omni Drama 3 backend.")
         _integer(request.parallel, 1, 32, "Parallel requests")
         _integer(request.retries, 0, 4, "Retries per chunk")
         if request.backend in DRAMA3_SERVED_BACKENDS:
@@ -129,7 +129,7 @@ def validate_request(request):
 def generate_optional_engine(request, services, runtime, *, progress=no_progress, free_gpu=None):
     """Validate before downloads, retain retry seeds, and resolve only this job's output.
 
-    ``free_gpu`` releases ComfyUI's VRAM before the optional vLLM-Omni Drama 3 route runs.
+    ``free_gpu`` releases ComfyUI's VRAM before the optional SGLang-Omni Drama 3 route runs.
     """
     image = isinstance(request, Flux3Request)
     family = "FLUX 3 Image Klein" if image else "Drama 3"
@@ -149,7 +149,7 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
             timings.transition(f"{request.backend} Drama 3")
             yield from generate_drama3_served(
                 request, runtime=runtime, free_gpu=free_gpu or (lambda: None),
-                hf_token=resolve_hf_token(), seed=seed, progress=progress,
+                hf_token=resolve_hf_token(), progress=progress,
             )
             return
         if image:

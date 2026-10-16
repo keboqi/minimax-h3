@@ -917,6 +917,29 @@ Features in the Colab notebook:
 - **On-demand model provisioning**: No heavy pre-downloads at startup. Checkpoints, text encoders, VAEs, and LoRAs download automatically on first use.
 - **Public access via Cloudflare Tunnel**: Generates a `*.trycloudflare.com` URL by default. Enable the independent `ENABLE_GRADIO_SHARE` checkbox in launch cell 6 to add a Gradio public URL alongside Cloudflare; it defaults to off.
 
+## Drama 3 TTS backends
+
+Drama 3 offers ComfyUI for one-take generation and SGLang-Omni for parallel,
+speaker-based chunks on Linux. SGLang uses an isolated environment, stays loaded
+between TTS jobs, and stops when another engine needs the GPU. The app defaults
+to 8 parallel chunks and no automatic retries; the server allows 32 concurrent
+requests. Completed speech is saved as MP3.
+
+SGLang configuration uses these environment variables:
+
+| Variable | Default |
+| --- | --- |
+| `H3_DRAMA3_SGLANG_ENGINE_MEMORY` | `0.55` of GPU memory |
+| `H3_DRAMA3_SGLANG_CODEC_MEMORY` | `0.08` of GPU memory |
+| `H3_DRAMA3_SGLANG_MAX_SEQS` | `32` |
+| `H3_DRAMA3_SGLANG_PORT` | `8096` |
+| `H3_DRAMA3_SGLANG_VENV` | `h3/drama3-sglang-venv` under the app directory |
+| `H3_DRAMA3_SGLANG_DATA` | `drama3-serving` beside ComfyUI |
+| `H3_DRAMA3_SGLANG_MODELS` | `ComfyUI/models/drama3_serving` |
+
+Previously downloaded copies of the pinned checkpoint and existing SGLang
+kernel caches in sibling serving directories are reused when available.
+
 ## Deploy with Modal
 
 Install and authenticate the Modal CLI, then run:

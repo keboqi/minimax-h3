@@ -1,4 +1,4 @@
-"""Chunked, parallel Drama 3 generation through a managed vLLM-Omni or SGLang-Omni server."""
+"""Chunked, parallel Drama 3 generation through a managed SGLang-Omni server."""
 
 from __future__ import annotations
 
@@ -22,9 +22,7 @@ from h3_app.workflows.drama3 import MAX_FRAMES, SPEAKER_TAG
 
 from . import audio, environment
 from .planner import Chunk, expected_seconds, plan_chunks
-from .server import ServerSettings, ensure_model, persist_caches, release_all, shared_server
-
-BACKEND_KINDS = {"vLLM-Omni": "vllm", "SGLang-Omni": "sglang"}
+from .server import ServerSettings, ensure_model, persist_caches, shared_server
 
 FRAMES_PER_SECOND = 21.5
 HEARTBEAT_SECONDS = 5.0
@@ -35,7 +33,6 @@ class Take:
     chunk: Chunk
     samples: np.ndarray
     rate: int
-    seed: int | None
     attempts: int
     check: audio.TakeCheck
 
@@ -44,10 +41,6 @@ def frame_budget(text: str, limit: int) -> int:
     """Stop a runaway take early: generous for the text, never above the request's cap."""
     seconds = expected_seconds(text) * 2.5 + 5.0
     return int(max(256, min(limit, MAX_FRAMES, seconds * FRAMES_PER_SECOND)))
-
-
-def chunk_seed(base: int, index: int, attempt: int) -> int:
-    return (int(base) + index * 7919 + attempt * 104729) % (2**63 - 1)
 
 
 def _staged_reference(path: str, media_dir: Path) -> Path:
@@ -83,10 +76,9 @@ def _with_heartbeat(label: str, work: Callable[[Callable[[str], None]], object])
 
 
 def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf_token=None,
-                           seed: int, progress=lambda *args, **kwargs: None) -> Iterator[GenerationUpdate]:
+                           progress=lambda *args, **kwargs: None) -> Iterator[GenerationUpdate]:
     """Plan speaker chunks, send each with its speaker's reference, check, retry, join."""
-    kind = BACKEND_KINDS[request.backend]
-    settings = ServerSettings.from_environment(runtime, kind)
+    settings = ServerSettings.from_environment(runtime)
     server = shared_server(settings)
     started = time.monotonic()
     chunks = plan_chunks(request.text)
@@ -104,10 +96,9 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
 
     label = request.backend
     yield from _with_heartbeat(f"Preparing the {label} environment",
-                               lambda _progress: environment.prepare(settings.venv, kind=kind))
+                               lambda _progress: environment.prepare(settings.venv))
     yield from _with_heartbeat("Downloading the Drama 3 checkpoint",
                                lambda _progress: ensure_model(settings, token=hf_token))
-    release_all(except_kind=kind)  # only one Drama 3 server holds the GPU
     yield from _with_heartbeat(f"Freeing ComfyUI VRAM and starting {label}",
                                lambda report: server.ensure_ready(free_gpu, report))
     # The server stays loaded after the job; release_all() frees it for other engines.
@@ -122,14 +113,13 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     def synthesize(chunk: Chunk) -> Take:
         best = None
         for attempt in range(int(request.retries) + 1):
-            take_seed = chunk_seed(seed, chunk.index, attempt)
             clip, transcript = references[chunk.speaker]
-            payload = server.payload(text=chunk.text, reference=clip, transcript=transcript, seed=take_seed,
+            payload = server.payload(text=chunk.text, reference=clip, transcript=transcript,
                                      max_new_tokens=frame_budget(chunk.text, int(request.max_frames)),
                                      sampling=sampling)
             samples, rate = audio.decode_wav(server.speech(payload))
             check = audio.check_take(samples, rate, expected_seconds(chunk.text))
-            take = Take(chunk, samples, rate, take_seed if kind == "vllm" else None, attempt + 1, check)
+            take = Take(chunk, samples, rate, attempt + 1, check)
             if check.ok:
                 return take
             if best is None or check.score < best.check.score:
@@ -139,7 +129,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     takes: dict[int, Take] = {}
     total = len(chunks)
     workers = max(1, min(int(request.parallel), total))
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="drama3-vllm") as pool:
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="drama3-sglang") as pool:
         def run_all(batch: list[Chunk], stage: str) -> Iterator[GenerationUpdate]:
             pending = {pool.submit(synthesize, chunk): chunk for chunk in batch}
             while pending:
@@ -163,18 +153,18 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     joined = audio.join_takes([(take.chunk.speaker, audio.tidy_take(take.samples, take.rate)) for take in ordered],
                               rate)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    result = runtime.output_dir / "drama3" / f"Drama3_vllm_{stamp}_{uuid.uuid4().hex[:6]}.mp3"
+    result = runtime.output_dir / "drama3" / f"Drama3_sglang_{stamp}_{uuid.uuid4().hex[:6]}.mp3"
     result.parent.mkdir(parents=True, exist_ok=True)
     audio.save_mp3(joined, rate, result)
     failed = [take for take in ordered if not take.check.ok]
     write_snapshot(result, {
         "family": "Drama 3",
         "settings": {
-            "backend": request.backend, "seed": seed if kind == "vllm" else None, "temperature": request.temperature,
+            "backend": request.backend, "seed": None, "temperature": request.temperature,
             "top_p": request.top_p, "top_k": request.top_k, "parallel": request.parallel,
             "retries": request.retries, "reference_count": len(request.voices),
             "chunks": [{"speaker": t.chunk.speaker, "name": names.get(t.chunk.speaker, ""),
-                        "seed": t.seed, "attempts": t.attempts,
+                        "seed": None, "attempts": t.attempts,
                         "check": t.check.reason, "warnings": list(t.check.warnings),
                         "seconds": round(t.check.seconds, 2)} for t in ordered],
         },
@@ -188,6 +178,5 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     if advised:
         note += "\nAudio advisories (takes kept): " + "; ".join(
             f"chunk {t.chunk.index + 1}: {t.check.reason}" for t in advised)
-    seed_note = f"seed {seed}" if kind == "vllm" else "seed control unavailable"
-    yield GenerationUpdate(fresh_audio(result), f"Drama 3 ({label}) complete · {len(chunks)} chunks · {seed_note} · "
+    yield GenerationUpdate(fresh_audio(result), f"Drama 3 ({label}) complete · {len(chunks)} chunks · seed control unavailable · "
                                         f"{len(joined) / rate:.1f}s in {time.monotonic() - started:.0f}s{note}")

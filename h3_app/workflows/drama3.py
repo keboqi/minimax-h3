@@ -48,7 +48,7 @@ def speaker_transcript(speaker, transcript):
 
 def build_drama3_graph(*, text, voices=(), seed=0, temperature=1.0, top_p=0.9,
                        top_k=30, max_frames=MAX_FRAMES, split_long_text=False,
-                       experts="in RAM", expert_cache_gb=0.0):
+                       experts="in VRAM", expert_cache_gb=0.0):
     """``voices`` holds (speaker, staged audio, transcript); each clones <|speaker:N|>."""
     g = Graph()
     def add(kind, **inputs):
