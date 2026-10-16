@@ -254,7 +254,7 @@ def drama3_vllm_fingerprint() -> str:
     return hashlib.sha256(pins.encode("utf-8")).hexdigest()
 
 
-def drama3_vllm_install_commands(venv: str | Path, uv: str = "uv") -> list[list[str]]:
+def drama3_vllm_install_commands(venv: str | Path, uv: str | list[str] = "uv") -> list[list[str]]:
     """Install steps shared by the Modal image build and first-use setup.
 
     Run them with VLLM_OMNI_TARGET_DEVICE=cuda: vllm-omni's setup.py otherwise
@@ -264,12 +264,13 @@ def drama3_vllm_install_commands(venv: str | Path, uv: str = "uv") -> list[list[
     base = venv if isinstance(venv, PurePath) else Path(venv)
     python = str(base / "bin" / "python")
     venv = str(base)
+    uv = [uv] if isinstance(uv, str) else list(uv)  # "uv", or [python, "-m", "uv"]
     return [
-        [uv, "venv", "--python", DRAMA3_VLLM_PYTHON, "--seed", str(venv)],
+        [*uv, "venv", "--python", DRAMA3_VLLM_PYTHON, "--seed", str(venv)],
         # Name the CUDA Torch wheel; GPU-less builders would otherwise get CPU Torch.
-        [uv, "pip", "install", "--python", python, f"vllm=={DRAMA3_VLLM_VERSION}",
+        [*uv, "pip", "install", "--python", python, f"vllm=={DRAMA3_VLLM_VERSION}",
          f"--torch-backend={DRAMA3_VLLM_TORCH_BACKEND}"],
-        [uv, "pip", "install", "--python", python,
+        [*uv, "pip", "install", "--python", python,
          f"vllm-omni @ git+{DRAMA3_VLLM_OMNI_REPO}@{DRAMA3_VLLM_OMNI_REF}"],
         [python, "-c", DRAMA3_VLLM_SMOKE],
     ]

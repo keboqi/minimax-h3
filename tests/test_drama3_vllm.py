@@ -99,6 +99,18 @@ class EnvironmentTests(unittest.TestCase):
         self.assertTrue(commands[2][-1].startswith("vllm-omni @ git+https://github.com/vllm-project/vllm-omni.git@"))
         self.assertEqual(commands[3][0], "/opt/h3/drama3-vllm-venv/bin/python")
 
+    def test_uv_runs_as_a_module_when_no_executable_is_on_path(self):
+        with patch.object(environment.shutil, "which", return_value=None), \
+                patch("importlib.util.find_spec", return_value=object()):
+            uv = environment.uv_command()
+        self.assertEqual(uv[1:], ["-m", "uv"])
+        commands = drama3_vllm_install_commands(PurePosixPath("/v"), uv)
+        self.assertEqual(commands[0][:4], [uv[0], "-m", "uv", "venv"])
+        self.assertEqual(commands[1][:4], [uv[0], "-m", "uv", "pip"])
+        with patch.object(environment.shutil, "which", return_value=None), \
+                patch("importlib.util.find_spec", return_value=None):
+            self.assertIsNone(environment.uv_command())
+
     def test_readiness_requires_the_current_fingerprint(self):
         with tempfile.TemporaryDirectory() as root:
             venv = Path(root) / "venv"
@@ -128,6 +140,9 @@ class ServerTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
         self.settings = server.ServerSettings(venv=root / "venv", data_dir=root / "data", model_root=root / "models")
+        no_gpu_query = patch.object(server, "gpu_memory", return_value=None)  # never call the real nvidia-smi
+        no_gpu_query.start()
+        self.addCleanup(no_gpu_query.stop)
 
     def test_command_enables_sleep_and_local_reference_media(self):
         command = server.Drama3VllmServer(self.settings).command(Path("deploy.json"))
@@ -167,6 +182,24 @@ class ServerTests(unittest.TestCase):
         instance._wait_healthy = lambda progress: order.append("ready")
         instance.ensure_awake(lambda: order.append("free"))
         self.assertEqual(order, ["free", "start", "ready"])
+
+    def test_deep_gemm_is_off_unless_requested(self):
+        env = server.Drama3VllmServer(self.settings).server_env()
+        self.assertEqual((env["VLLM_USE_DEEP_GEMM"], env["VLLM_MOE_USE_DEEP_GEMM"]), ("0", "0"))
+        enabled = server.ServerSettings(**{**self.settings.__dict__, "deep_gemm": True})
+        self.assertNotIn("VLLM_USE_DEEP_GEMM", server.Drama3VllmServer(enabled).server_env())
+
+    def test_start_is_refused_when_the_gpu_is_still_occupied(self):
+        instance = server.Drama3VllmServer(self.settings)
+        instance._start = MagicMock()
+        with patch.object(server, "gpu_memory", return_value=(1024.0, 97280.0, "1, python, 94000 MiB")), \
+                self.assertRaisesRegex(H3Error, "Still holding VRAM: 1, python, 94000 MiB"):
+            instance.ensure_awake(lambda: None)
+        instance._start.assert_not_called()
+        instance._wait_healthy = MagicMock()
+        with patch.object(server, "gpu_memory", return_value=(90000.0, 97280.0, "")):
+            instance.ensure_awake(lambda: None)
+        instance._start.assert_called_once()
 
     def test_failed_sleep_stops_the_server_so_the_gpu_is_released(self):
         instance = server.Drama3VllmServer(self.settings)

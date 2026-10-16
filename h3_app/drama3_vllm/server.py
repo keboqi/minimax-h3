@@ -57,6 +57,9 @@ class ServerSettings:
     codec_memory: float = 0.08
     max_seqs: int = 32
     cuda_mps: bool = False
+    # DeepGEMM requantizes every FP8 expert through float32 at load time; under
+    # sleep mode's dedicated weights pool that exhausted 95 GiB on an RTX PRO 6000.
+    deep_gemm: bool = False
     start_timeout: float = 1800.0
     request_timeout: float = 900.0
 
@@ -73,6 +76,7 @@ class ServerSettings:
             codec_memory=float(env.get("H3_DRAMA3_VLLM_CODEC_MEMORY", "0.08")),
             max_seqs=int(env.get("H3_DRAMA3_VLLM_MAX_SEQS", "32")),
             cuda_mps=env.get("H3_DRAMA3_VLLM_CUDA_MPS", "0").lower() in {"1", "true", "yes"},
+            deep_gemm=env.get("H3_DRAMA3_VLLM_DEEP_GEMM", "0").lower() in {"1", "true", "yes"},
         )
 
     @property
@@ -155,6 +159,8 @@ class Drama3VllmServer:
             TRITON_CACHE_DIR=str(cache / "triton"),
             CUDA_CACHE_PATH=str(cache / "cuda"),
         )
+        if not self.settings.deep_gemm:
+            env.update(VLLM_USE_DEEP_GEMM="0", VLLM_MOE_USE_DEEP_GEMM="0")
         return env
 
     def _start(self) -> None:
@@ -195,12 +201,31 @@ class Drama3VllmServer:
         acks = result if isinstance(result, list) else result.get("acks", [result])
         return all(str(ack.get("status", "SUCCESS")).upper() in {"SUCCESS", "SKIPPED"} for ack in acks)
 
+    def check_free_vram(self, progress: Callable[[str], None]) -> None:
+        """Fail fast, naming the holders, when the GPU lacks room for the configured share."""
+        memory = gpu_memory()
+        if memory is None:
+            return
+        free, total, holders = memory
+        needed = (self.settings.engine_memory + self.settings.codec_memory) * total
+        message = f"GPU memory before vLLM-Omni: {free / 1024:.1f} of {total / 1024:.1f} GiB free"
+        progress(message)
+        if self._log is not None:
+            self._log.write((message + f"; holders: {holders}\n").encode("utf-8"))
+        if free < needed:
+            raise H3Error(
+                f"{message}, but vLLM-Omni needs about {needed / 1024:.1f} GiB "
+                f"(H3_DRAMA3_VLLM_ENGINE_MEMORY + CODEC_MEMORY). Still holding VRAM: {holders or 'unknown'}. "
+                "Unload models from System and retry."
+            )
+
     def ensure_awake(self, free_gpu: Callable[[], None], progress: Callable[[str], None] = lambda _m: None) -> None:
         """Start or wake the server after ComfyUI has released its VRAM."""
         with self._lock:
             if self.running() and not self.sleeping and self.healthy():
                 return
             free_gpu()
+            self.check_free_vram(progress)
             if self.running() and self.sleeping:
                 progress("Waking vLLM-Omni")
                 result = self._post("/v1/omni/wakeup", {"stage_ids": [0, 1]}, timeout=600)
@@ -257,6 +282,23 @@ class Drama3VllmServer:
         if not response.ok:
             raise H3Error(f"vLLM-Omni speech request failed (HTTP {response.status_code}): {response.text[:500]}")
         return response.content
+
+
+def gpu_memory():
+    """(free MiB, total MiB, holder summary) for GPU 0 from nvidia-smi, or None."""
+    try:
+        query = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits", "-i", "0"],
+            check=True, capture_output=True, text=True, timeout=15,
+        ).stdout.strip().splitlines()[0]
+        free, total = (float(part) for part in query.split(","))
+        apps = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=15,
+        ).stdout.strip()
+        return free, total, "; ".join(line.strip() for line in apps.splitlines() if line.strip())
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return None
 
 
 _SERVER: Drama3VllmServer | None = None

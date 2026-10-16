@@ -145,6 +145,7 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
             from h3_models import resolve_hf_token
 
             services.models.unload_prompt_rewriter()
+            timings.transition("vLLM-Omni Drama 3")
             yield from generate_drama3_vllm(
                 request, runtime=runtime, free_gpu=free_gpu or (lambda: None),
                 hf_token=resolve_hf_token(), seed=seed, progress=progress,

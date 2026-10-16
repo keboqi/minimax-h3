@@ -12,6 +12,7 @@ import contextlib
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from h3_requirements import (
@@ -47,7 +48,17 @@ def is_ready(venv: Path) -> bool:
         return False
 
 
-def install_commands(venv: Path, uv: str = "uv") -> list[list[str]]:
+def uv_command() -> list[str] | None:
+    """The uv executable, or uv run as a module of this interpreter (Colab, setup_h3.py)."""
+    executable = shutil.which("uv")
+    if executable:
+        return [executable]
+    import importlib.util
+
+    return [sys.executable, "-m", "uv"] if importlib.util.find_spec("uv") else None
+
+
+def install_commands(venv: Path, uv: str | list[str] = "uv") -> list[list[str]]:
     """The install steps, shared with the Modal image build."""
     return drama3_vllm_install_commands(venv, uv)
 
@@ -84,9 +95,10 @@ def prepare(venv: Path, *, force: bool = False, run=None, log=print) -> Path:
     with _setup_lock(venv.parent / f".{venv.name}.lock"):
         if not force and is_ready(venv):
             return python_path(venv)
-        uv = shutil.which("uv")
+        uv = uv_command()
         if not uv:
-            raise H3Error("uv is required to set up the vLLM-Omni Drama 3 backend; install it and retry.")
+            raise H3Error("uv is required to set up the vLLM-Omni Drama 3 backend; "
+                          "run `pip install uv` and retry.")
         marker = venv / READY_MARKER
         marker.unlink(missing_ok=True)
         log("[drama3-vllm] Preparing the isolated vLLM-Omni environment (first use takes several minutes).")
