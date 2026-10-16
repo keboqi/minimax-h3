@@ -37,7 +37,10 @@ LTX_HDR_REQUIREMENTS = ("colour-science==0.4.6", "openimageio==3.0.12.0")
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "6063fafbd9c3b85c5ff40aef435ae11b2844e558"
 
-COMFY_REF = "3541246a9c997f4b8c32f9f88f3c985d02021c79"
+# v0.41.0 adds the native FLUX 3 model and text encoder.
+COMFY_REF = "98cc0bf84b7cb1383654c5b402e7612d875d6d22"
+DRAMA3_REPO = "https://github.com/PedroMarinhoDev/ComfyUI-Drama3.git"
+DRAMA3_REF = "66c4fb9cd3c0151e1e2ccd207847cb8335e87ab4"
 COMFY_KITCHEN_VERSION = "0.2.37"
 COMFY_FRONTEND_VERSION = "1.55.17"
 WSPROTO_VERSION = "1.2.0"
@@ -272,7 +275,7 @@ def selftest() -> None:
     assert KORNIA_RS_VERSION == "0.1.14"
     assert LTX_HDR_REQUIREMENTS == ("colour-science==0.4.6", "openimageio==3.0.12.0")
     assert KERNELS_VERSION == "0.16.0"
-    assert COMFY_REF == "3541246a9c997f4b8c32f9f88f3c985d02021c79"
+    assert COMFY_REF == "98cc0bf84b7cb1383654c5b402e7612d875d6d22"
     assert COMFY_KITCHEN_VERSION == "0.2.37"
     assert COMFY_FRONTEND_VERSION == "1.55.17"
     assert WSPROTO_VERSION == "1.2.0"

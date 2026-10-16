@@ -305,3 +305,8 @@ class ModelController:
         return self.services.model_service.ensure_yue2_models(
             model_choice, runtime=self.services._runtime_config()
         )
+
+    def ensure_model_keys(self, keys: tuple[str, ...]) -> bool:
+        return self.services.model_service.ensure_model_keys(
+            keys, runtime=self.services._runtime_config()
+        )

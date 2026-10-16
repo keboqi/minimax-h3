@@ -108,6 +108,8 @@ from h3_sources import (  # noqa: E402
 from h3_requirements import (  # noqa: E402
     H3_AUDIO_T8_REPO,
     H3_AUDIO_T8_REF,
+    DRAMA3_REPO,
+    DRAMA3_REF,
     COMFY_FRONTEND_VERSION,
     COMFY_REF,
     GRADIO_VERSION,
@@ -245,6 +247,9 @@ def build(revision: str) -> None:
     _print_git_revision(swiftvr_dir)
 
     audio_t8_dir = Path(COMFY) / "custom_nodes" / "minimax-h3-audio-T8"
+    drama3_dir = Path(COMFY) / "custom_nodes" / "ComfyUI-Drama3"
+    _clone(DRAMA3_REPO, drama3_dir, ref=DRAMA3_REF)
+    _print_git_revision(drama3_dir)
     _clone(H3_AUDIO_T8_REPO, audio_t8_dir, ref=H3_AUDIO_T8_REF)
     _print_git_revision(audio_t8_dir)
 

@@ -2236,6 +2236,7 @@ def _generation_services() -> generation_services.GenerationServices:
             ensure_music3_models=ensure_music3_models,
             ensure_qwen_image21_models=ensure_qwen_image21_models,
             ensure_yue2_models=ensure_yue2_models,
+            ensure_model_keys=lambda keys: _modelcontroller().ensure_model_keys(keys),
             ensure_profile_model=ensure_profile_model,
             ensure_seedvr2_upscale_models=ensure_seedvr2_upscale_models,
             ensure_single_frame_image_vae=ensure_single_frame_image_vae,
@@ -2606,6 +2607,37 @@ def generate_qwen_image21(
     yield from qwen_generation.generate_qwen_image21(
         request, _generation_services(), _runtime_config(), progress=progress
     )
+
+
+def generate_flux3(prompt, model_choice, reference_images, width, height, edit_size, seed, steps,
+                   expand_prompt, progress=gr.Progress(track_tqdm=False)):
+    from h3_app.generation.optional_engines import generate_optional_engine, validate_request
+    from dataclasses import replace
+    paths = reference_images or []
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    request = generation_requests.Flux3Request(
+        prompt, model_choice, tuple(str(path) for path in paths), width, height, edit_size, seed, steps,
+        expand_prompt,
+    )
+    validate_request(request)
+    request = replace(request, reference_images=tuple(
+        stage_file(path, "flux3_references", reuse=True) for path in request.reference_images
+    ))
+    yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
+
+
+def generate_drama3(text, reference_audio, transcript, seed, temperature, top_p, top_k,
+                    max_frames, split_long_text, experts, expert_cache_gb,
+                    progress=gr.Progress(track_tqdm=False)):
+    from h3_app.generation.optional_engines import generate_optional_engine, validate_request
+    from dataclasses import replace
+    request = generation_requests.Drama3Request(text, reference_audio, transcript, seed,
+        temperature, top_p, top_k, max_frames, split_long_text, experts, expert_cache_gb)
+    validate_request(request)
+    if reference_audio:
+        request = replace(request, reference_audio=stage_file(reference_audio, "drama3_voices", reuse=True))
+    yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
 
 
 def generate_yue2(
@@ -3127,6 +3159,8 @@ def build_ui() -> gr.Blocks:
             generate_qwen_image21=generate_qwen_image21,
             generate_with_ui_defaults=generate_with_ui_defaults,
             generate_yue2=generate_yue2,
+            generate_flux3=generate_flux3,
+            generate_drama3=generate_drama3,
             generation_readiness_state=generation_readiness_state,
             image_vae_frame_updates=image_vae_frame_updates,
             import_gallery_media=import_gallery_media,

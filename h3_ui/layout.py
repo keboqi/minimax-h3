@@ -32,6 +32,8 @@ class AppViews:
     engine_help: gr.Markdown | None = None
     jobs_count: gr.HTML | None = None
     generation_settings: gr.Accordion | None = None
+    flux3: gr.Group | None = None
+    drama3: gr.Group | None = None
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,7 @@ FORMAT_LAYOUT_OUTPUTS = (
     ("audio_output", 9),
     ("resolution_info", 14),
 )
-FORMAT_FOR_TASK = {"Video": "Video", "Image": "Image", "Audio / Music": "Audio"}
+FORMAT_FOR_TASK = {"Video": "Video", "Image": "Image", "Audio / Music": "Audio", "TTS": "Audio"}
 
 
 def create_app_views(*, summary_root=None) -> AppViews:
@@ -103,6 +105,10 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
                     music = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("YuE2", id="yue2"):
                     yue2 = gr.Group(elem_classes=["h3-engine-view"])
+                with gr.Tab("FLUX 3 Image Klein", id="flux3"):
+                    flux3 = gr.Group(elem_classes=["h3-engine-view"])
+                with gr.Tab("Drama 3 TTS", id="drama3"):
+                    drama3 = gr.Group(elem_classes=["h3-engine-view"])
         with gr.Tab("Media", id="media") as gallery_tab:
             gallery = gr.Column(elem_classes=["h3-gallery-shell"])
         with gr.Tab("Jobs", id="jobs"):
@@ -129,6 +135,8 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
         engine_help,
         jobs_count,
         generation_settings,
+        flux3,
+        drama3,
     )
 
 

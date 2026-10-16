@@ -1071,6 +1071,17 @@ def ensure_qwen_image21_models(
     return True
 
 
+def ensure_model_keys(keys: tuple[str, ...], *, runtime: RuntimeConfig) -> bool:
+    """Provision selected optional engine assets using the shared manifest lock."""
+    manifest = runtime.models_config.parent / "h3_model_manifest.json"
+    root = runtime.comfy_dir / "models"
+    if not stale_model_keys(root=root, manifest_path=manifest, model_keys=keys):
+        return False
+    sync_models(root=root, manifest_path=manifest, model_keys=keys,
+                token=resolve_hf_token(), log_prefix="[engine-on-demand]", download_workers=1)
+    return True
+
+
 def missing_yue2_model_names(model_choice: str, *, runtime: RuntimeConfig) -> list[str]:
     missing = stale_model_keys(
         root=runtime.comfy_dir / "models",

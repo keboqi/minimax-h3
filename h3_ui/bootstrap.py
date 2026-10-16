@@ -20,6 +20,7 @@ from .media_view import build_gallery_view
 from .music_view import build_music_view
 from .qwen_view import build_qwen_image21_view
 from .yue2_view import build_yue2_view
+from .optional_engine_views import build_flux3_view, build_drama3_view, bind_optional_engine
 
 # Ctrl/Cmd+Enter presses the visible engine's generate button. Disabled
 # buttons swallow the shortcut so it never falls through to other handlers.
@@ -118,6 +119,8 @@ class BootstrapServices:
     generate_qwen_image21: Callable
     generate_with_ui_defaults: Callable
     generate_yue2: Callable
+    generate_flux3: Callable
+    generate_drama3: Callable
     generation_readiness_state: Callable
     gallery_media_download_path: Callable
     image_vae_frame_updates: Callable
@@ -286,6 +289,10 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             model_choices=catalog.YUE2_MODEL_CHOICES,
             defaults=catalog.YUE2_DEFAULTS,
         )
+        flux3_components = build_flux3_view(app_views.flux3)
+        drama3_components = build_drama3_view(app_views.drama3)
+        bind_optional_engine(flux3_components, "flux3", services.generate_flux3, services.interrupt)
+        bind_optional_engine(drama3_components, "drama3", services.generate_drama3, services.interrupt)
         gallery_components = build_gallery_view(
             gallery_view,
             postprocess_options=catalog.POSTPROCESS_OPTIONS,
@@ -328,6 +335,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             *vars(ltx25_components).values(),
             *vars(qwen_image21_components).values(),
             *music3_components.reference_images,
+            flux3_components.reference_images,
         ]
         for component in image_inputs:
             if hasattr(component, "h3_library_picker"):
@@ -347,6 +355,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             ("H3", h3_components.values.values()),
             ("LTX", vars(ltx25_components).values()),
             ("Qwen", vars(qwen_image21_components).values()),
+            ("FLUX 3", vars(flux3_components).values()),
         ):
             for component in inputs:
                 if hasattr(component, "h3_library_picker") and not hasattr(component, "h3_reference_slot"):
@@ -361,6 +370,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             (music3_view, music3_components),
             (qwen_image21_view, qwen_image21_components),
             (yue2_view, yue2_components),
+            (app_views.flux3, flux3_components),
+            (app_views.drama3, drama3_components),
         ):
             with view.output.h3_metadata_root:
                 metadata_view = gr.HTML(
@@ -463,6 +474,14 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             **{
                 f"yue2.{name}": component
                 for name, component in vars(yue2_components).items()
+            },
+            **{
+                f"flux3.{name}": component
+                for name, component in vars(flux3_components).items()
+            },
+            **{
+                f"drama3.{name}": component
+                for name, component in vars(drama3_components).items()
             },
             **{
                 f"gallery.{name}": component

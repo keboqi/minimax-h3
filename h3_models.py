@@ -81,6 +81,38 @@ class ModelSpec:
 
 
 MODEL_SPECS: dict[str, ModelSpec] = {
+    "flux3_nvfp4": ModelSpec(
+        "black-forest-labs/flux-3-image-klein-comfy", "diffusion_models",
+        "diffusion_models/flux3_image_klein_sd_nvfp4.safetensors", "FLUX 3 Klein distilled NVFP4",
+        expected_sha256="15d421e2558443fcf83ba46f3cd884d9d181c2c7a0a7bdcd2974af234a2d4f5c",
+    ),
+    "flux3_bf16": ModelSpec(
+        "black-forest-labs/flux-3-image-klein-comfy", "diffusion_models",
+        "diffusion_models/flux3_image_klein_sd_bf16.safetensors", "FLUX 3 Klein distilled BF16",
+        expected_sha256="c3e9813cdd049c831c836b2e9db61150e49a93fc1a4c63b256494642fee0bd7c",
+    ),
+    "flux3_text_encoder": ModelSpec(
+        "black-forest-labs/flux-3-image-klein-comfy", "text_encoders",
+        "text_encoders/qwen3vl_4b_int8_convrot.safetensors", "FLUX 3 Qwen3-VL 4B INT8",
+        expected_sha256="32de113cbf8282b02cbff0794b637b9d6676da09314a1db5a30bcea9bf4ee01c",
+    ),
+    "flux3_vae": ModelSpec(
+        "black-forest-labs/flux-3-image-klein-comfy", "vae", "vae/flux2-vae.safetensors", "FLUX VAE",
+        expected_sha256="868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3",
+    ),
+    "flux3_upsampler": ModelSpec(
+        "black-forest-labs/flux-3-image-klein-comfy", "text_encoders",
+        "text_encoders/qwen3.5_9b_flux3_prompt_upsampler_int8_convrot.safetensors", "FLUX 3 prompt upsampler INT8",
+        expected_sha256="cb8cb9b9dcd2569509de755dca54d96fd93a16a7aabfd2f4051f0a144230620f",
+    ),
+    "drama3_fp8": ModelSpec(
+        "PedroMarinhoDev/Drama-3-ComfyUI", "diffusion_models", "drama3_fp8experts_bf16.safetensors", "Drama 3 FP8 experts / BF16",
+        expected_sha256="5d053a200cf0f77faa13c087c78ef200c3b53f288451a6b9e7a8fa421c03a67b",
+    ),
+    "drama3_codec": ModelSpec(
+        "PedroMarinhoDev/Drama-3-ComfyUI", "vae", "drama3_codec.safetensors", "Drama 3 audio codec",
+        expected_sha256="4fecf102907a48414230da9a74d72d07c3a92368eab53fab655797837bddf5ae",
+    ),
     "lightvae_encoder": ModelSpec(
         "lightx2v/LightVAE", "vae/LightVAE", "lightvae-lite-h3-encoder.safetensors", "LightVAE Lite H3 encoder",
         expected_sha256="4b0e5af102da19324c64df40abbd95008d8acb0b9cf76e4704d74c8ac20cefac",
@@ -756,7 +788,12 @@ QWEN_IMAGE21_MODEL_KEYS = (
     "qwen_image21_viggle_v02_lora",
     "qwen_image21_viggle_v03_lora",
 )
+FLUX3_MODEL_CHOICES = {"NVFP4 (Blackwell)": "flux3_nvfp4", "BF16": "flux3_bf16"}
+FLUX3_MODEL_KEYS = (*FLUX3_MODEL_CHOICES.values(), "flux3_text_encoder", "flux3_vae", "flux3_upsampler")
+DRAMA3_MODEL_KEYS = ("drama3_fp8", "drama3_codec")
 LAZY_OPTIONAL_MODEL_KEYS = (
+    *FLUX3_MODEL_KEYS,
+    *DRAMA3_MODEL_KEYS,
     "lightvae_encoder",
     "lightvae_decoder",
     "lightvae_decoder_int8",
@@ -1580,6 +1617,7 @@ def selftest() -> None:
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert set(MODEL_SPECS) == {
+        *FLUX3_MODEL_KEYS, *DRAMA3_MODEL_KEYS,
         "lightvae_encoder", "lightvae_decoder", "lightvae_decoder_int8",
         "veda_t2va",
         "veda_r2va",

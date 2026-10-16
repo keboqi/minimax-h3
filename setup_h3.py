@@ -50,6 +50,8 @@ from h3_node_patches import (
 from h3_requirements import (
     H3_AUDIO_T8_REPO,
     H3_AUDIO_T8_REF,
+    DRAMA3_REPO,
+    DRAMA3_REF,
     COMFY_FRONTEND_VERSION,
     COMFY_REF,
     GRADIO_VERSION,
@@ -747,7 +749,11 @@ def sync_external_nodes(
     *,
     install_requirements: bool,
 ) -> None:
-    # Base T8 conditioning uses only ComfyUI dependencies.
+    # Drama 3 and base T8 conditioning use only ComfyUI dependencies.
+    sync_git_repo(
+        DRAMA3_REPO, comfy / "custom_nodes" / "ComfyUI-Drama3",
+        ref=DRAMA3_REF, required_paths=("__init__.py", "nodes.py", "drama3/model.py"),
+    )
     sync_git_repo(
         H3_AUDIO_T8_REPO,
         comfy / "custom_nodes" / "minimax-h3-audio-T8",

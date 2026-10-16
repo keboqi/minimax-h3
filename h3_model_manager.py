@@ -42,6 +42,8 @@ def catalog_groups() -> dict[str, tuple[str, ...]]:
         "LTX 2.5": ("ltx25_",),
         "Music 3": ("music3_",),
         "YuE2": ("yue2_",),
+        "FLUX 3 Image Klein": ("flux3_",),
+        "Drama 3": ("drama3_",),
         "SeedVR2": ("seedvr2_",),
     }
     groups = {family: [] for family in prefixes}
@@ -88,6 +90,8 @@ def model_presets() -> dict[str, tuple[str, ...]]:
             MUSIC3_MODEL_CHOICES[DEFAULT_MUSIC3_MODEL], *MUSIC3_SHARED_MODEL_KEYS,
         ),
         "YuE2 defaults": (YUE2_MODEL_CHOICES[DEFAULT_YUE2_MODEL],),
+        "FLUX 3 defaults": ("flux3_nvfp4", "flux3_text_encoder", "flux3_vae", "flux3_upsampler"),
+        "Drama 3 defaults": ("drama3_fp8", "drama3_codec"),
     }
 
 

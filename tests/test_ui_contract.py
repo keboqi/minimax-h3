@@ -82,10 +82,22 @@ class UiContractTests(unittest.TestCase):
 
         return visit(cls.config["layout"])
 
-    def test_qwen_preset_is_wired_to_generation_controls(self):
+    def qwen_controls(self):
+        """Label lookup scoped to the Qwen endpoint; other engines reuse labels such as Steps."""
+        qwen_inputs = set(next(
+            d for d in self.config["dependencies"] if d.get("api_name") == "generate_qwen_image21"
+        )["inputs"])
         controls = {
             c.get("props", {}).get("label"): c for c in self.config["components"]
         }
+        controls.update({
+            c.get("props", {}).get("label"): c
+            for c in self.config["components"] if c["id"] in qwen_inputs
+        })
+        return controls
+
+    def test_qwen_preset_is_wired_to_generation_controls(self):
+        controls = self.qwen_controls()
         preset = controls["Qwen preset"]
         self.assertEqual(preset["props"]["value"], "Fast")
         self.assertEqual(
@@ -157,7 +169,7 @@ class UiContractTests(unittest.TestCase):
             if (c["type"] == "image" and c["props"].get("interactive") is not False)
             or (c["type"] == "file" and c["props"].get("file_types") == ["image"])
         ]
-        self.assertEqual(len(image_inputs), 19)
+        self.assertEqual(len(image_inputs), 20)
         pickers = [
             c for c in self.config["components"]
             if c["type"] == "gallery" and c["props"].get("label") == "Library images"
@@ -181,7 +193,8 @@ class UiContractTests(unittest.TestCase):
             if c["type"] == "dropdown" and c["props"].get("label") == "Set as"
         )
         choices = [choice[0] for choice in dropdown["props"]["choices"]]
-        self.assertEqual(len(choices), 9)
+        self.assertEqual(len(choices), 10)
+        self.assertIn("FLUX 3 · Reference images (optional, up to 10)", choices)
         self.assertIn("H3 · First frame (auto resolution)", choices)
         self.assertIn("H3 · Reference images", choices)
         self.assertIn("LTX · End keyframe", choices)
@@ -574,7 +587,8 @@ class UiContractTests(unittest.TestCase):
         children = self.find_layout_node(engine_tabs["id"])["children"]
         self.assertEqual(
             [self.components[n["id"]]["props"]["label"] for n in children],
-            ["MiniMax H3", "LTX 2.5", "Qwen Image 2.1", "MiniMax Music 3", "YuE2"],
+            ["MiniMax H3", "LTX 2.5", "Qwen Image 2.1", "MiniMax Music 3", "YuE2",
+             "FLUX 3 Image Klein", "Drama 3 TTS"],
         )
 
     def test_non_h3_generated_media_outputs_are_display_only(self) -> None:
@@ -583,13 +597,14 @@ class UiContractTests(unittest.TestCase):
             "Generated images",
             "Generated LTX-2.5 video",
             "Generated song",
+            "Generated speech",
         }
         outputs = [
             component
             for component in self.config["components"]
             if component.get("props", {}).get("label") in labels
         ]
-        self.assertEqual(len(outputs), 4)
+        self.assertEqual(len(outputs), 6)  # Qwen and FLUX 3 both show "Generated image"
         for output in outputs:
             self.assertFalse(output["props"]["interactive"], output["props"]["label"])
 
@@ -644,10 +659,7 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(qwen_parameters[-3]["parameter_default"], "Lightning AI")
 
     def test_qwen_edit_size_is_one_radio_input(self) -> None:
-        controls = {
-            component.get("props", {}).get("label"): component
-            for component in self.config["components"]
-        }
+        controls = self.qwen_controls()
         edit_size = controls["Edit output size"]
         self.assertEqual(edit_size["type"], "radio")
         self.assertEqual(

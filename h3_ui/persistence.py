@@ -27,6 +27,8 @@ RESET_BROWSER_SETTINGS_JS = """
 }
 """
 EXTRA_FIELDS = {
+    "flux3": ("model", "width", "height", "edit_size", "seed", "steps", "expand_prompt"),
+    "drama3": ("seed", "temperature", "top_p", "top_k", "max_frames", "split_long_text", "experts", "expert_cache_gb"),
     "workspace": ("task", "engine"),
     "qwen_image21": (
         "mode",

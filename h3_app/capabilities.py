@@ -43,7 +43,13 @@ ENGINES = (
         "Music and song generation with lyrics and score-specific controls.",
     ),
 )
-TASKS = ("Video", "Image", "Audio / Music")
+ENGINES += (
+    EngineCapability("flux3", "FLUX 3 Image Klein", ("Image",),
+                     "Distilled image generation and editing with up to ten references."),
+    EngineCapability("drama3", "Drama 3 (experimental)", ("TTS",),
+                     "Expressive speech and voice cloning. Built with Fish Audio."),
+)
+TASKS = ("Video", "Image", "Audio / Music", "TTS")
 
 
 def engines_for_task(task: str) -> tuple[EngineCapability, ...]:

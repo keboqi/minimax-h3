@@ -453,6 +453,7 @@ class ModelsServices:
     h3_text_encoder_settings: H3TextEncoderSettings
     model_file_is_ready: ModelFileIsReady
     unload_prompt_rewriter: UnloadPromptRewriter
+    ensure_model_keys: Callable[[tuple[str, ...]], bool]
 
 
 @dataclass(frozen=True)

@@ -6,6 +6,34 @@ from dataclasses import asdict, dataclass, replace
 from typing import Any, Mapping
 
 
+@dataclass(frozen=True)
+class Flux3Request:
+    prompt: str
+    model_choice: str = "NVFP4 (Blackwell)"
+    reference_images: tuple[str, ...] = ()
+    width: int = 1024
+    height: int = 1024
+    edit_size: str = "Match first image size"
+    seed: int = -1
+    steps: int = 16
+    expand_prompt: bool = True
+
+
+@dataclass(frozen=True)
+class Drama3Request:
+    text: str
+    reference_audio: str | None = None
+    transcript: str = ""
+    seed: int = -1
+    temperature: float = 1.0
+    top_p: float = 0.9
+    top_k: int = 30
+    max_frames: int = 600
+    split_long_text: bool = True
+    experts: str = "in RAM"
+    expert_cache_gb: float = 0.0
+
+
 @dataclass
 class H3MediaInputs:
     mode: str
