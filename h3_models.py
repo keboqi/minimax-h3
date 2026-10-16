@@ -113,6 +113,11 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "PedroMarinhoDev/Drama-3-ComfyUI", "vae", "drama3_codec.safetensors", "Drama 3 audio codec",
         expected_sha256="4fecf102907a48414230da9a74d72d07c3a92368eab53fab655797837bddf5ae",
     ),
+    "drama3_asr": ModelSpec(
+        "PedroMarinhoDev/Qwen3-ASR-ComfyUI", "asr", "qwen3_asr_1.7b_bf16.safetensors",
+        "Qwen3-ASR 1.7B for Drama 3 voice transcripts",
+        expected_sha256="958ac49a7015ad546206e87fbcf390ac567b81d1cc7d613a1255a41033b8345f",
+    ),
     "lightvae_encoder": ModelSpec(
         "lightx2v/LightVAE", "vae/LightVAE", "lightvae-lite-h3-encoder.safetensors", "LightVAE Lite H3 encoder",
         expected_sha256="4b0e5af102da19324c64df40abbd95008d8acb0b9cf76e4704d74c8ac20cefac",
@@ -791,9 +796,11 @@ QWEN_IMAGE21_MODEL_KEYS = (
 FLUX3_MODEL_CHOICES = {"NVFP4 (Blackwell)": "flux3_nvfp4", "BF16": "flux3_bf16"}
 FLUX3_MODEL_KEYS = (*FLUX3_MODEL_CHOICES.values(), "flux3_text_encoder", "flux3_vae", "flux3_upsampler")
 DRAMA3_MODEL_KEYS = ("drama3_fp8", "drama3_codec")
+DRAMA3_ASR_MODEL_KEYS = ("drama3_asr",)
 LAZY_OPTIONAL_MODEL_KEYS = (
     *FLUX3_MODEL_KEYS,
     *DRAMA3_MODEL_KEYS,
+    *DRAMA3_ASR_MODEL_KEYS,
     "lightvae_encoder",
     "lightvae_decoder",
     "lightvae_decoder_int8",
@@ -1617,7 +1624,7 @@ def selftest() -> None:
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert set(MODEL_SPECS) == {
-        *FLUX3_MODEL_KEYS, *DRAMA3_MODEL_KEYS,
+        *FLUX3_MODEL_KEYS, *DRAMA3_MODEL_KEYS, *DRAMA3_ASR_MODEL_KEYS,
         "lightvae_encoder", "lightvae_decoder", "lightvae_decoder_int8",
         "veda_t2va",
         "veda_r2va",

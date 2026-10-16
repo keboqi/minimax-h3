@@ -13,8 +13,10 @@ from h3_app.progress import no_progress
 from h3_app.provenance import write_snapshot
 from h3_app.status import StageTimings, progress_status
 from h3_app.workflows.flux3 import build_flux3_graph, flux3_model_keys
-from h3_app.workflows.drama3 import build_drama3_graph
-from h3_models import DRAMA3_MODEL_KEYS
+from h3_app.workflows.drama3 import (
+    MAX_SPEAKER, build_drama3_asr_graph, build_drama3_graph, text_speakers, validate_drama3_text,
+)
+from h3_models import DRAMA3_ASR_MODEL_KEYS, DRAMA3_MODEL_KEYS
 from .qwen import first_reference_dimensions
 from .requests import Flux3Request, Drama3Request
 from .results import GenerationUpdate
@@ -89,10 +91,15 @@ def validate_request(request):
         if request.reference_images and request.expand_prompt:
             raise H3Error("Disable prompt expansion for edits and write a full scene caption including your changes.")
     elif isinstance(request, Drama3Request):
-        if not request.text.strip():
-            raise H3Error("Speech text is required.")
-        if bool(request.reference_audio) != bool(request.transcript.strip()):
-            raise H3Error("Voice cloning requires both a reference clip and its exact transcript.")
+        validate_drama3_text(request.text)
+        speakers = [speaker for speaker, _audio, _transcript in request.voices]
+        if len(set(speakers)) != len(speakers):
+            raise H3Error("Each speaker can have only one reference voice.")
+        for speaker, audio, transcript in request.voices:
+            _integer(speaker, 0, MAX_SPEAKER, "Speaker number")
+            if not audio or not str(transcript).strip():
+                raise H3Error(f"Speaker {speaker} needs both a reference clip and its exact transcript.")
+            validate_drama3_text(transcript, f"Speaker {speaker}'s transcript")
         if request.experts not in {"in RAM", "in VRAM"}:
             raise H3Error("Choose experts in RAM or in VRAM.")
         for name, low, high in (("temperature", 0, 2), ("top_p", 0.05, 1), ("expert_cache_gb", 0, 256)):
@@ -119,8 +126,11 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
         if image:
             values["width"], values["height"] = resolve_flux3_dimensions(request, input_dir=runtime.input_dir)
             # The shared image resolver only reads the managed staging directory.
-            graph = build_flux3_graph(**{k: v for k, v in values.items() if k != "edit_size"},
-                                      output_stamp=str(int(time.time())), output_nonce=uuid.uuid4().hex[:8])
+            graph = build_flux3_graph(
+                **{k: v for k, v in values.items() if k != "edit_size"},
+                output_stamp=str(int(time.time())), output_nonce=uuid.uuid4().hex[:8],
+                system_prompt=runtime.prompt_systems["FLUX 3 Image Klein"].read_text(encoding="utf-8").strip(),
+            )
         else:
             graph = build_drama3_graph(**values)
         info = services.execution.object_info()
@@ -151,8 +161,13 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
         result = (services.media.resolve_image_outputs(history, queued_at, 1)[0] if image
                   else services.media.resolve_audio_output(history, queued_at))
         settings = {key: value for key, value in values.items()
-                    if key not in {"prompt", "text", "transcript", "reference_audio", "reference_images"}}
-        settings["reference_count"] = len(request.reference_images) if image else int(bool(request.reference_audio))
+                    if key not in {"prompt", "text", "voices", "reference_images"}}
+        if image:
+            settings["reference_count"] = len(request.reference_images)
+        else:
+            settings["reference_count"] = len(request.voices)
+            settings["cloned_speakers"] = sorted(speaker for speaker, _a, _t in request.voices)
+            settings["text_speakers"] = sorted(text_speakers(request.text))
         write_snapshot(result, {"job_id": prompt_id, "family": family, "settings": settings})
         progress(1, desc="Complete")
         yield GenerationUpdate([str(result)] if image else str(result),
@@ -162,3 +177,22 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
         yield GenerationUpdate(None, f"Error: {exc}\n\n{timings.summary()}")
     finally:
         timings.finish()
+
+
+def transcribe_drama3_audio(audio, services, *, language="auto"):
+    """Transcribe a staged clip with Qwen3-ASR through ComfyUI; returns the text."""
+    graph, preview = build_drama3_asr_graph(audio=audio, language=language)
+    missing = {node["class_type"] for node in graph.values()} - set(services.execution.object_info())
+    if missing:
+        raise H3Error("Update setup and restart ComfyUI (pinned Drama 3 nodes with Qwen3-ASR required). "
+                      f"Missing nodes: {', '.join(sorted(missing))}")
+    services.models.ensure_model_keys(DRAMA3_ASR_MODEL_KEYS)
+    prompt_id = services.execution.submit_prompt(graph, str(uuid.uuid4()))
+    for _update in services.execution.poll_comfy_progress(prompt_id, graph):
+        pass
+    history = services.execution.wait_for_history(prompt_id)
+    texts = history.get("outputs", {}).get(preview, {}).get("text") or []
+    transcript = " ".join(str(text).strip() for text in texts if str(text).strip())
+    if not transcript or transcript == "None":
+        raise H3Error("Qwen3-ASR heard no speech in this clip. Use a few seconds of clean speech.")
+    return transcript

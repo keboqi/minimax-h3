@@ -87,6 +87,7 @@ def bind_ltx_view(
             view.height,
             view.prompt_backend,
             view.lightning_api_key,
+            view.lightning_model,
         ],
         outputs=[view.prompt, view.enhance_status],
         show_progress="minimal",

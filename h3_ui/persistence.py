@@ -27,8 +27,10 @@ RESET_BROWSER_SETTINGS_JS = """
 }
 """
 EXTRA_FIELDS = {
-    "flux3": ("model", "width", "height", "edit_size", "seed", "steps", "expand_prompt"),
-    "drama3": ("seed", "temperature", "top_p", "top_k", "max_frames", "split_long_text", "experts", "expert_cache_gb"),
+    "flux3": ("model", "width", "height", "edit_size", "seed", "steps", "expand_prompt",
+              "prompt_backend", "prompt_model", "lightning_model"),
+    "drama3": ("seed", "temperature", "top_p", "top_k", "max_frames", "split_long_text", "experts",
+               "expert_cache_gb", "prompt_backend", "prompt_model", "lightning_model"),
     "workspace": ("task", "engine"),
     "qwen_image21": (
         "mode",
@@ -52,6 +54,7 @@ EXTRA_FIELDS = {
         "preset",
         "prompt_model",
         "prompt_backend",
+        "lightning_model",
     ),
     "h3": (
         "ref_size",
@@ -63,6 +66,7 @@ EXTRA_FIELDS = {
         "local_prompt_seed",
         "gemini_prompt_model",
         "prompt_writer_backend",
+        "lightning_model",
         "input_upscale_model",
         "input_upscale_seed",
         "input_upscale_force_offload",
@@ -86,6 +90,7 @@ EXTRA_FIELDS = {
         "middle_strength",
         "end_strength",
         "prompt_model",
+        "lightning_model",
     ),
     "music3": (
         "model",
@@ -97,6 +102,7 @@ EXTRA_FIELDS = {
         "ar_cfg",
         "top_k",
         "prompt_model",
+        "lightning_model",
     ),
     "yue2": (
         "model",
@@ -116,6 +122,7 @@ EXTRA_FIELDS = {
         "abc_repetition_penalty",
         "abc_penalty_window",
         "tiled",
+        "lightning_model",
     ),
     "gallery": (
         "ltx25_model",

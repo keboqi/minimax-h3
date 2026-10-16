@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 from h3_app.catalog import (
+    DEFAULT_LIGHTNING_PROMPT_MODEL,
     DEFAULT_IMAGE_FRAMES,
     DEFAULT_RESULT_FORMAT,
     QWEN_EDIT_SIZE_MATCH,
@@ -42,6 +43,7 @@ class PromptController:
         ref_image_3: Any,
         backend: str = "Lightning AI",
         lightning_api_key: str = "",
+        lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     ) -> tuple[str, str, str]:
         return self.services.prompt_service.enhance_music3_prompt(
             prompt,
@@ -53,6 +55,7 @@ class PromptController:
             ref_image_3,
             backend=backend,
             lightning_api_key=lightning_api_key,
+            lightning_model=lightning_model,
             runtime=self.services._runtime_config(),
         )
 
@@ -70,6 +73,7 @@ class PromptController:
         height: int,
         backend: str = "Lightning AI",
         lightning_api_key: str = "",
+        lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     ) -> tuple[str, str]:
         return self.services.prompt_service.enhance_ltx25_prompt(
             prompt,
@@ -84,6 +88,7 @@ class PromptController:
             height,
             backend=backend,
             lightning_api_key=lightning_api_key,
+            lightning_model=lightning_model,
             runtime=self.services._runtime_config(),
         )
 
@@ -112,6 +117,7 @@ class PromptController:
         backend: str = "Lightning AI",
         lightning_api_key: str = "",
         edit_size: str = QWEN_EDIT_SIZE_MATCH,
+        lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     ) -> tuple[str, str]:
         match_input_size, max_resolution = self.services.qwen_edit_size_flags(edit_size)
         if (match_input_size or max_resolution) and str(
@@ -143,6 +149,7 @@ class PromptController:
             height,
             backend=backend,
             lightning_api_key=lightning_api_key,
+            lightning_model=lightning_model,
             runtime=self.services._runtime_config(),
         )
 
@@ -156,6 +163,7 @@ class PromptController:
         duration: float,
         backend: str = "Lightning AI",
         lightning_api_key: str = "",
+        lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     ) -> tuple[str, str, str]:
         return self.services.prompt_service.enhance_yue2_prompt(
             style,
@@ -166,6 +174,7 @@ class PromptController:
             duration,
             backend=backend,
             lightning_api_key=lightning_api_key,
+            lightning_model=lightning_model,
             runtime=self.services._runtime_config(),
         )
 
@@ -208,6 +217,7 @@ class PromptController:
         fl2va_audio_1: Any = None,
         fl2va_audio_2: Any = None,
         fl2va_audio_3: Any = None,
+        lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     ) -> tuple[str, str]:
         lease = (
             self.services.JOBS.maintenance("prompt-enhance")
@@ -253,6 +263,7 @@ class PromptController:
                 fl2va_audio_1,
                 fl2va_audio_2,
                 fl2va_audio_3,
+                lightning_model=lightning_model,
                 runtime=self.services._runtime_config(),
             )
 

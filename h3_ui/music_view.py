@@ -21,6 +21,7 @@ class MusicView:
     api_key: gr.Textbox
     prompt_backend: gr.Radio
     lightning_api_key: gr.Textbox
+    lightning_model: gr.Dropdown
     reference_images: tuple[gr.Image, gr.Image, gr.Image]
     enhance: gr.Button
     enhance_status: gr.Textbox
@@ -88,6 +89,7 @@ def build_music_view(
                     api_key = writer.gemini_api_key
                     prompt_backend = writer.backend
                     lightning_api_key = writer.lightning_api_key
+                    lightning_model = writer.lightning_model
                     with gr.Row():
                         references = tuple(
                             build_image_input(type="filepath", label=f"Reference image {index}")
@@ -191,6 +193,7 @@ def build_music_view(
         api_key,
         prompt_backend,
         lightning_api_key,
+        lightning_model,
         references,
         enhance,
         enhance_status,

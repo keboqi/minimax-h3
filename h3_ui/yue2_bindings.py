@@ -29,6 +29,7 @@ def bind_yue2_view(
             view.duration,
             view.prompt_backend,
             view.lightning_api_key,
+            view.lightning_model,
         ],
         outputs=[view.style, view.lyrics, view.enhance_status],
         show_progress="minimal",

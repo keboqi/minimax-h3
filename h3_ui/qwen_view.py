@@ -53,6 +53,7 @@ class QwenImage21View:
     api_key: gr.Textbox
     prompt_backend: gr.Radio
     lightning_api_key: gr.Textbox
+    lightning_model: gr.Dropdown
     enhance: gr.Button
     enhance_status: gr.Textbox
     output: gr.Gallery
@@ -162,6 +163,7 @@ def build_qwen_image21_view(
                     api_key = writer.gemini_api_key
                     prompt_backend = writer.backend
                     lightning_api_key = writer.lightning_api_key
+                    lightning_model = writer.lightning_model
                     enhance = gr.Button("Generate / enhance Qwen prompt")
                     enhance.h3_review = build_prompt_review()
                     enhance_status = gr.Textbox(
@@ -380,6 +382,7 @@ def build_qwen_image21_view(
         api_key,
         prompt_backend,
         lightning_api_key,
+        lightning_model,
         enhance,
         enhance_status,
         output,

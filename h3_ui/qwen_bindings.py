@@ -126,6 +126,7 @@ def bind_qwen_image21_view(
             view.prompt_backend,
             view.lightning_api_key,
             view.edit_size,
+            view.lightning_model,
         ],
         outputs=[view.prompt, view.enhance_status],
         show_progress="minimal",

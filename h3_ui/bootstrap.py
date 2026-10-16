@@ -20,7 +20,10 @@ from .media_view import build_gallery_view
 from .music_view import build_music_view
 from .qwen_view import build_qwen_image21_view
 from .yue2_view import build_yue2_view
-from .optional_engine_views import build_flux3_view, build_drama3_view, bind_optional_engine
+from .optional_engine_views import (
+    bind_drama3, bind_flux3, build_drama3_view, build_flux3_view,
+    refresh_drama3_presets_on_load, settings_components,
+)
 
 # Ctrl/Cmd+Enter presses the visible engine's generate button. Disabled
 # buttons swallow the shortcut so it never falls through to other handlers.
@@ -119,8 +122,7 @@ class BootstrapServices:
     generate_qwen_image21: Callable
     generate_with_ui_defaults: Callable
     generate_yue2: Callable
-    generate_flux3: Callable
-    generate_drama3: Callable
+    optional_engine_actions: Any
     generation_readiness_state: Callable
     gallery_media_download_path: Callable
     image_vae_frame_updates: Callable
@@ -289,10 +291,13 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             model_choices=catalog.YUE2_MODEL_CHOICES,
             defaults=catalog.YUE2_DEFAULTS,
         )
+        engine_actions = services.optional_engine_actions
         flux3_components = build_flux3_view(app_views.flux3)
-        drama3_components = build_drama3_view(app_views.drama3)
-        bind_optional_engine(flux3_components, "flux3", services.generate_flux3, services.interrupt)
-        bind_optional_engine(drama3_components, "drama3", services.generate_drama3, services.interrupt)
+        drama3_components = build_drama3_view(
+            app_views.drama3, engine_actions.drama3_speaker_names()
+        )
+        bind_flux3(flux3_components, engine_actions)
+        bind_drama3(drama3_components, engine_actions)
         gallery_components = build_gallery_view(
             gallery_view,
             postprocess_options=catalog.POSTPROCESS_OPTIONS,
@@ -477,11 +482,11 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             },
             **{
                 f"flux3.{name}": component
-                for name, component in vars(flux3_components).items()
+                for name, component in settings_components(flux3_components).items()
             },
             **{
                 f"drama3.{name}": component
-                for name, component in vars(drama3_components).items()
+                for name, component in settings_components(drama3_components).items()
             },
             **{
                 f"gallery.{name}": component
@@ -503,5 +508,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             navigation=navigation,
         )
         demo.load(None, js=GENERATE_SHORTCUT_JS, api_name=False)
+        refresh_drama3_presets_on_load(demo, drama3_components, engine_actions)
     demo.h3_css = H3_SETUP_CSS + H3_WORKSPACE_CSS
     return demo

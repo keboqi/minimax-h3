@@ -1,5 +1,7 @@
 """FLUX 3 distilled graphs for ComfyUI v0.41.0."""
 
+from pathlib import Path
+
 from h3_app.graph import Graph
 from h3_models import FLUX3_MODEL_CHOICES, MODEL_SPECS
 
@@ -8,12 +10,13 @@ from h3_models import FLUX3_MODEL_CHOICES, MODEL_SPECS
 # seed keeps the upsampler inputs identical across image-seed rerolls, letting
 # ComfyUI reuse the cached expansion instead of reloading the 9B upsampler.
 UPSAMPLER_SEED = 0
-UPSAMPLER_SYSTEM = (
-    "Expand the user's image request into one detailed, self-contained scene caption. "
-    "Preserve the requested subjects, counts, relationships, text and style. Describe "
-    "framing, appearance, placement, background and lighting. Output only the caption, "
-    "without commentary, headings, quotes or Markdown."
-)
+# BFL's official text-to-image upsampler instructions, shared with the remote writers.
+UPSAMPLER_SYSTEM_PATH = Path(__file__).resolve().parents[2] / "prompt_flux3_t2i.txt"
+UPSAMPLER_MAX_LENGTH = 3584
+
+
+def upsampler_system(path=UPSAMPLER_SYSTEM_PATH):
+    return Path(path).read_text(encoding="utf-8").strip()
 
 
 def flux3_model_keys(model_choice, expand_prompt):
@@ -25,7 +28,7 @@ def flux3_model_keys(model_choice, expand_prompt):
 
 def build_flux3_graph(*, model_choice, prompt, reference_images=(), width=1024,
                       height=1024, seed=0, steps=16, expand_prompt=True,
-                      output_stamp="0", output_nonce="flux3"):
+                      output_stamp="0", output_nonce="flux3", system_prompt=None):
     flux3_model_keys(model_choice, expand_prompt)
     if reference_images and expand_prompt:
         raise ValueError("For editing, disable prompt expansion and supply a complete scene caption with the edit included.")
@@ -37,8 +40,9 @@ def build_flux3_graph(*, model_choice, prompt, reference_images=(), width=1024,
     vae = add("VAELoader", vae_name=MODEL_SPECS["flux3_vae"].local_name)
     if expand_prompt:
         writer = add("CLIPLoader", clip_name=MODEL_SPECS["flux3_upsampler"].local_name, type="flux3", device="default")
-        prompt = add("TextGenerate", clip=writer, prompt=prompt, system_prompt=UPSAMPLER_SYSTEM,
-                     max_length=1024, sampling_mode="on", thinking=False,
+        prompt = add("TextGenerate", clip=writer, prompt=prompt,
+                     system_prompt=system_prompt or upsampler_system(),
+                     max_length=UPSAMPLER_MAX_LENGTH, sampling_mode="on", thinking=False,
                      use_default_template=True, mtp="auto", **{
                          "sampling_mode.temperature": 1.0, "sampling_mode.top_k": 1,
                          "sampling_mode.top_p": 0.95, "sampling_mode.min_p": 0.0,

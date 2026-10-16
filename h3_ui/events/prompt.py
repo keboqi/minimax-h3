@@ -63,6 +63,7 @@ def bind_prompt(components: AppComponents, services: BootstrapServices) -> None:
         components.fl2va_audio_1,
         components.fl2va_audio_2,
         components.fl2va_audio_3,
+        components.lightning_model,
     ]
     api_trigger = gr.Button(visible=False).click
     bind_prompt_action(
@@ -114,6 +115,7 @@ def bind_prompt(components: AppComponents, services: BootstrapServices) -> None:
             "fl2va_audio_1",
             "fl2va_audio_2",
             "fl2va_audio_3",
+            "lightning_model",
         ],
         inputs,
     )

@@ -614,7 +614,7 @@ class UiContractTests(unittest.TestCase):
             for component in self.config["components"]
             if component.get("props", {}).get("label") == "Gemini model"
         ]
-        self.assertEqual(len(models), 5)
+        self.assertEqual(len(models), 7)  # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, Drama 3
         for model in models:
             self.assertEqual(model["props"]["value"], "gemini-3.5-flash-lite")
 
@@ -624,7 +624,7 @@ class UiContractTests(unittest.TestCase):
             for component in self.config["components"]
             if component.get("props", {}).get("label") == "Prompt writer"
         ]
-        self.assertEqual(len(writers), 5)
+        self.assertEqual(len(writers), 7)
         for writer in writers:
             self.assertEqual(writer["props"]["value"], "Lightning AI")
 
@@ -639,24 +639,69 @@ class UiContractTests(unittest.TestCase):
         ):
             inputs = endpoints[endpoint]["inputs"]
             self.assertEqual(
-                [self.components[id]["props"]["label"] for id in inputs[-2:]],
-                ["Prompt writer", "Temporary Lightning API key"],
+                [self.components[id]["props"]["label"] for id in inputs[-3:]],
+                ["Prompt writer", "Temporary Lightning API key", "Lightning model"],
             )
             parameters = self.demo.get_api_info()["named_endpoints"][f"/{endpoint}"][
                 "parameters"
             ]
-            self.assertEqual(parameters[-2]["parameter_default"], "Lightning AI")
+            self.assertEqual(parameters[-3]["parameter_default"], "Lightning AI")
+            # Appended with a default so existing API clients keep working.
+            self.assertEqual(parameters[-1]["parameter_default"], "openai/gpt-5.6-luna")
 
         qwen_endpoint = "enhance_qwen_image21_prompt"
         qwen_inputs = endpoints[qwen_endpoint]["inputs"]
         self.assertEqual(
-            [self.components[id]["props"]["label"] for id in qwen_inputs[-3:]],
-            ["Prompt writer", "Temporary Lightning API key", "Edit output size"],
+            [self.components[id]["props"]["label"] for id in qwen_inputs[-4:]],
+            ["Prompt writer", "Temporary Lightning API key", "Edit output size", "Lightning model"],
         )
         qwen_parameters = self.demo.get_api_info()["named_endpoints"][
             f"/{qwen_endpoint}"
         ]["parameters"]
-        self.assertEqual(qwen_parameters[-3]["parameter_default"], "Lightning AI")
+        self.assertEqual(qwen_parameters[-4]["parameter_default"], "Lightning AI")
+        self.assertEqual(qwen_parameters[-1]["parameter_default"], "openai/gpt-5.6-luna")
+
+        lightning_models = [
+            component for component in self.config["components"]
+            if component.get("props", {}).get("label") == "Lightning model"
+        ]
+        self.assertEqual(len(lightning_models), len(writers))
+        for dropdown in lightning_models:
+            self.assertEqual(dropdown["props"]["value"], "openai/gpt-5.6-luna")
+            self.assertEqual([choice[1] for choice in dropdown["props"]["choices"]],
+                             ["openai/gpt-5.6-luna", "openai/gpt-6.1-sol"])
+
+    def test_optional_engine_writers_voices_and_transcription_are_bound(self) -> None:
+        api = self.demo.get_api_info()["named_endpoints"]
+        drama = [row["parameter_name"] for row in api["/generate_drama3"]["parameters"]]
+        slots = [f"speaker_{n}_{field}" for n in range(4) for field in ("voice", "audio", "transcript")]
+        self.assertEqual(drama, ["text", *slots, "seed", "temperature", "top_p", "top_k",
+                                 "max_frames", "split_long_text", "experts", "expert_cache_gb"])
+        enhance = [row["parameter_name"] for row in api["/enhance_drama3_text"]["parameters"]]
+        self.assertEqual(enhance[:6], ["text", "model", "temporary_api_key", "backend",
+                                       "lightning_api_key", "lightning_model"])
+        self.assertEqual(enhance[6:], slots)
+        flux = [row["parameter_name"] for row in api["/enhance_flux3_prompt"]["parameters"]]
+        self.assertEqual(flux, ["prompt", "reference_images", "width", "height", "model",
+                                "temporary_api_key", "backend", "lightning_api_key", "lightning_model"])
+
+        labels = {c["id"]: c.get("props", {}).get("label") for c in self.config["components"]}
+        endpoints = {d.get("api_name"): d for d in self.config["dependencies"]}
+        self.assertIn("Expand the prompt locally",
+                      [labels[i] for i in endpoints["enhance_flux3_prompt"]["outputs"]])
+        transcribe = endpoints["transcribe_drama3_voice"]
+        self.assertEqual([labels[i] for i in transcribe["inputs"]], ["Speaker 0 reference clip"])
+        self.assertEqual(labels[transcribe["outputs"][0]], "Speaker 0 exact transcript")
+        voices = [c for c in self.config["components"]
+                  if str(c.get("props", {}).get("label", "")).startswith("Speaker ")
+                  and str(c["props"]["label"]).endswith("|>")]
+        self.assertEqual([c["props"]["label"] for c in voices],
+                         [f"Speaker {n} voice · <|speaker:{n}|>" for n in range(4)])
+        for dropdown in voices:
+            self.assertEqual(dropdown["props"]["value"], "Upload a clip")
+        auto = [c for c in self.config["components"]
+                if c["type"] == "button" and c.get("props", {}).get("value") == "Auto transcribe"]
+        self.assertEqual(len(auto), 4)
 
     def test_qwen_edit_size_is_one_radio_input(self) -> None:
         controls = self.qwen_controls()

@@ -22,8 +22,8 @@ class Flux3Request:
 @dataclass(frozen=True)
 class Drama3Request:
     text: str
-    reference_audio: str | None = None
-    transcript: str = ""
+    # (speaker number, audio path, exact transcript) per cloned voice.
+    voices: tuple[tuple[int, str, str], ...] = ()
     seed: int = -1
     temperature: float = 1.0
     top_p: float = 0.9

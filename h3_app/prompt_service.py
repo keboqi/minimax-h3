@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import math
 import mimetypes
 import os
 import re
@@ -17,8 +18,9 @@ from h3_app.catalog import (
     DEFAULT_RESULT_FORMAT,
     GEMINI_API_ROOT,
     GEMINI_PROMPT_MODELS,
+    DEFAULT_LIGHTNING_PROMPT_MODEL,
     LIGHTNING_API_ROOT,
-    LIGHTNING_PROMPT_MODEL,
+    LIGHTNING_PROMPT_MODELS,
     MAX_REFERENCE_AUDIOS,
 )
 from h3_app.config import RuntimeConfig
@@ -51,6 +53,13 @@ def _lightning_api_key(temporary_key: str | None) -> str:
             "Lightning API key in Prompt enhancer."
         )
     return key
+
+
+def _lightning_model(model: str | None) -> str:
+    selected = str(model or "").strip() or DEFAULT_LIGHTNING_PROMPT_MODEL
+    if selected not in LIGHTNING_PROMPT_MODELS:
+        raise H3Error(f"Unsupported Lightning AI prompt model: {selected}")
+    return selected
 
 
 def _uploaded_media_path(value: Any) -> Path | None:
@@ -219,11 +228,20 @@ def _enhance_prompt_from_media(
     context: str,
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    temperature: float = 0.6,
+    request_text: str | None = None,
 ) -> tuple[str, str]:
-    """Generate a model-specific prompt from text and optional image inputs."""
+    """Generate a model-specific prompt from text and optional image inputs.
+
+    ``request_text`` replaces the generic wrapper when a writer prompt expects
+    the request in its own format, such as FLUX 3's TARGET CANVAS line.
+    """
     if backend == "Lightning AI":
         return _enhance_prompt_from_media_lightning(
             prompt=prompt,
+            model=lightning_model,
+            request_text=request_text,
             temporary_api_key=lightning_api_key,
             target=target,
             system_path=system_path,
@@ -252,7 +270,7 @@ def _enhance_prompt_from_media(
             raise H3Error("Enter a prompt or upload an image before enhancing.")
         parts: list[dict[str, Any]] = [
             {
-                "text": (
+                "text": request_text if request_text is not None else (
                     f"Create the final {target} prompt from the following user input.\n"
                     f"{context}\nUser text:\n"
                     f"{rough_prompt or '(No text supplied; infer only from the images.)'}"
@@ -283,7 +301,7 @@ def _enhance_prompt_from_media(
                         "systemInstruction": {"parts": [{"text": system_prompt}]},
                         "contents": [{"role": "user", "parts": parts}],
                         "generationConfig": {
-                            "temperature": 0.6,
+                            "temperature": float(temperature),
                             "maxOutputTokens": 16384,
                         },
                     },
@@ -334,6 +352,8 @@ def _enhance_prompt_from_media(
 def _enhance_prompt_from_media_lightning(
     *,
     prompt: str,
+    model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    request_text: str | None = None,
     temporary_api_key: str,
     target: str,
     system_path: Path,
@@ -344,6 +364,7 @@ def _enhance_prompt_from_media_lightning(
     from openai import OpenAI, OpenAIError
 
     try:
+        model = _lightning_model(model)
         key = _lightning_api_key(temporary_api_key)
         if not system_path.is_file():
             raise H3Error(f"Missing {target} system prompt: {system_path}")
@@ -364,7 +385,7 @@ def _enhance_prompt_from_media_lightning(
 
         content: list[dict[str, Any]] = [{
             "type": "text",
-            "text": (
+            "text": request_text if request_text is not None else (
                 f"Create the final {target} prompt from the following user input.\n"
                 f"{context}\nUser text:\n"
                 f"{rough_prompt or '(No text supplied; infer only from the images.)'}"
@@ -385,7 +406,7 @@ def _enhance_prompt_from_media_lightning(
             ))
         client = OpenAI(base_url=LIGHTNING_API_ROOT, api_key=key, timeout=600.0)
         completion = client.chat.completions.create(
-            model=LIGHTNING_PROMPT_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": content},
@@ -399,7 +420,7 @@ def _enhance_prompt_from_media_lightning(
             raise H3Error("Lightning AI returned no enhanced prompt.")
         return (
             enhanced,
-            f"Enhanced {target} prompt with {LIGHTNING_PROMPT_MODEL} "
+            f"Enhanced {target} prompt with {model} "
             f"using {len(media)} image(s).",
         )
     except (H3Error, OpenAIError, OSError, ValueError, IndexError) as exc:
@@ -416,6 +437,7 @@ def enhance_music3_prompt(
     ref_image_3: Any,
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str, str]:
@@ -427,6 +449,7 @@ def enhance_music3_prompt(
         system_path=runtime.prompt_systems["MiniMax Music 3"],
         backend=backend,
         lightning_api_key=lightning_api_key,
+        lightning_model=lightning_model,
         media_values=(
             ("Music reference image 1", ref_image_1),
             ("Music reference image 2", ref_image_2),
@@ -460,6 +483,7 @@ def enhance_ltx25_prompt(
     height: int,
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str]:
@@ -471,6 +495,7 @@ def enhance_ltx25_prompt(
         system_path=runtime.prompt_systems["LTX-2.5"],
         backend=backend,
         lightning_api_key=lightning_api_key,
+        lightning_model=lightning_model,
         media_values=(
             ("Start keyframe", start_image),
             ("Middle keyframe", middle_image),
@@ -490,6 +515,7 @@ def enhance_qwen_image21_prompt(
     height: int,
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str]:
@@ -521,6 +547,7 @@ def enhance_qwen_image21_prompt(
         system_path=runtime.prompt_systems["Qwen Image 2.1"],
         backend=backend,
         lightning_api_key=lightning_api_key,
+        lightning_model=lightning_model,
         media_values=media_values,
         context=(
             f"Mode: {mode}\nOutput: {int(width)}x{int(height)}\n"
@@ -538,6 +565,7 @@ def enhance_yue2_prompt(
     duration: float,
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str, str]:
@@ -554,6 +582,7 @@ def enhance_yue2_prompt(
         system_path=runtime.prompt_systems["YuE2"],
         backend=backend,
         lightning_api_key=lightning_api_key,
+        lightning_model=lightning_model,
         media_values=(),
         context=(
             f"Score mode: {mode}\nMaximum duration: {float(duration):.0f} seconds\n"
@@ -572,6 +601,132 @@ def enhance_yue2_prompt(
         if candidate_lyrics.upper() != "N/A":
             generated_lyrics = candidate_lyrics
     return generated, generated_lyrics, status
+
+
+COMMON_CANVAS_RATIOS = ((1, 1), (5, 4), (4, 3), (3, 2), (16, 9), (2, 1), (21, 9))
+
+
+def _canvas_ratio(width: int, height: int) -> str:
+    """Name the canvas as a common W:H when within 2%, else the exact reduced ratio."""
+    width, height = int(width), int(height)
+    ratio = width / height
+    candidates = [*COMMON_CANVAS_RATIOS, *((h, w) for w, h in COMMON_CANVAS_RATIOS)]
+    w, h = min(candidates, key=lambda pair: abs(math.log(ratio * pair[1] / pair[0])))
+    if abs(math.log(ratio * h / w)) <= 0.02:
+        return f"{w}:{h}"
+    divisor = math.gcd(width, height) or 1
+    return f"{width // divisor}:{height // divisor}"
+
+
+FLUX3_REFERENCE_ORDINALS = (
+    "first", "second", "third", "fourth", "fifth",
+    "sixth", "seventh", "eighth", "ninth", "tenth",
+)
+
+
+def enhance_flux3_prompt(
+    prompt: str,
+    model: str,
+    temporary_api_key: str,
+    reference_images: Any,
+    width: int,
+    height: int,
+    backend: str = "Lightning AI",
+    lightning_api_key: str = "",
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    *,
+    runtime: RuntimeConfig,
+) -> tuple[str, str]:
+    """Expand a FLUX 3 request with BFL's official upsampler instructions."""
+    references = reference_images or []
+    if isinstance(references, (str, Path, dict)):
+        references = [references]
+    if len(references) > len(FLUX3_REFERENCE_ORDINALS):
+        return str(prompt or ""), "Prompt enhancement failed: FLUX 3 supports at most ten reference images."
+    request = str(prompt or "").strip()
+    if references:
+        # The official edit upsampler sees the references in order.
+        target = "FLUX 3 Image Klein edit"
+        request_text = request or "Make the most plausible improvement to the supplied images."
+    else:
+        if not request:
+            return str(prompt or ""), "Prompt enhancement failed: write an image request first."
+        target = "FLUX 3 Image Klein"
+        request_text = f"TARGET CANVAS: {_canvas_ratio(width, height)}\n{request}"
+    return _enhance_prompt_from_media(
+        prompt=prompt,
+        model=model,
+        temporary_api_key=temporary_api_key,
+        target=target,
+        system_path=runtime.prompt_systems[target],
+        backend=backend,
+        lightning_api_key=lightning_api_key,
+        lightning_model=lightning_model,
+        media_values=tuple(
+            (f"the {FLUX3_REFERENCE_ORDINALS[index]} image", image)
+            for index, image in enumerate(references)
+        ),
+        context="",
+        request_text=request_text,
+    )
+
+
+def validate_drama3_script(text: str) -> str:
+    """Reject scripts the Drama 3 prompt builder would refuse or speak wrongly."""
+    from h3_app.workflows.drama3 import validate_drama3_text
+
+    return validate_drama3_text(text, "The writer's script")
+
+
+def drama3_voice_context(voices: Iterable[tuple[int, str]]) -> str:
+    """Describe cloned-voice slots by speaker number and saved name only."""
+    lines = [
+        f"- <|speaker:{speaker}|> uses a cloned reference voice"
+        + (f' saved as "{name}"' if name else "")
+        + "; direct its delivery only."
+        for speaker, name in voices
+    ]
+    if not lines:
+        return "Voice context: no reference voices; cast every voice with a style prefix."
+    return (
+        "Voice context (give these numbers to the matching speakers; any other speaker "
+        "gets an invented voice cast with a style prefix):\n" + "\n".join(lines)
+    )
+
+
+def enhance_drama3_text(
+    text: str,
+    model: str,
+    temporary_api_key: str,
+    voices: Iterable[tuple[int, str]] = (),
+    backend: str = "Lightning AI",
+    lightning_api_key: str = "",
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    *,
+    runtime: RuntimeConfig,
+) -> tuple[str, str]:
+    """Rewrite text into a Drama 3 script with speaker tags and delivery controls."""
+    original = str(text or "")
+    if not original.strip():
+        return original, "Prompt enhancement failed: write the speech text or a scene brief first."
+    script, status = _enhance_prompt_from_media(
+        prompt=original,
+        model=model,
+        temporary_api_key=temporary_api_key,
+        target="Drama 3",
+        system_path=runtime.prompt_systems["Drama 3"],
+        backend=backend,
+        lightning_api_key=lightning_api_key,
+        lightning_model=lightning_model,
+        media_values=(),
+        context=drama3_voice_context(voices),
+    )
+    if status.startswith("Prompt enhancement failed:"):
+        return original, status
+    try:
+        return validate_drama3_script(script), status.replace(" prompt ", " script ", 1)
+    except H3Error as exc:
+        return original, f"Prompt enhancement failed: {exc} Your text was kept; retry."
 
 
 def _enhance_h3_prompt_with_gemini(
@@ -758,6 +913,7 @@ def _enhance_h3_prompt_with_lightning(
     height: int,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str]:
@@ -765,6 +921,7 @@ def _enhance_h3_prompt_with_lightning(
     from openai import OpenAI, OpenAIError
 
     try:
+        lightning_model = _lightning_model(lightning_model)
         key = _lightning_api_key(temporary_api_key)
         if not runtime.prompt_system_path.is_file():
             raise H3Error(
@@ -850,7 +1007,7 @@ def _enhance_h3_prompt_with_lightning(
             timeout=600.0,
         )
         completion = client.chat.completions.create(
-            model=LIGHTNING_PROMPT_MODEL,
+            model=lightning_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": content},
@@ -864,7 +1021,7 @@ def _enhance_h3_prompt_with_lightning(
             raise H3Error("Lightning AI returned no enhanced prompt.")
         return (
             enhanced,
-            f"Enhanced with {LIGHTNING_PROMPT_MODEL} using {len(media)} image(s).",
+            f"Enhanced with {lightning_model} using {len(media)} image(s).",
         )
     except (H3Error, OpenAIError, OSError, ValueError, IndexError) as exc:
         return str(prompt or ""), f"Lightning AI prompt enhancement failed: {exc}"
@@ -943,6 +1100,7 @@ def enhance_h3_prompt(
     fl2va_audio_1: Any = None,
     fl2va_audio_2: Any = None,
     fl2va_audio_3: Any = None,
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str]:
@@ -1031,6 +1189,7 @@ def enhance_h3_prompt(
                 height,
                 result_format,
                 image_frames,
+                lightning_model,
                 runtime=runtime,
             )
         )

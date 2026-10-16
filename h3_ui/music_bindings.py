@@ -28,6 +28,7 @@ def bind_music_view(
             *view.reference_images,
             view.prompt_backend,
             view.lightning_api_key,
+            view.lightning_model,
         ],
         outputs=[view.caption, view.lyrics, view.enhance_status],
         show_progress="minimal",

@@ -1,25 +1,77 @@
 """Graph contract for ComfyUI-Drama3 revision 66c4fb9."""
 
+import re
+
+from h3_app.errors import H3Error
 from h3_app.graph import Graph
 from h3_models import MODEL_SPECS
 
+MAX_SPEAKER = 15
+SPEAKER_TAG = re.compile(r"<\|speaker:([0-9]+)\|>")
+TOKEN = re.compile(r"<\|[^|>]*\|>")
 
-def build_drama3_graph(*, text, reference_audio=None, transcript="", seed=0,
-                       temperature=1.0, top_p=0.9, top_k=30, max_frames=600,
-                       split_long_text=True, experts="in RAM", expert_cache_gb=0.0):
+
+def validate_drama3_text(text, location="Speech text"):
+    """Mirror the node pack's check_text: only <|speaker:0..15|> structural tokens."""
+    text = str(text or "").strip()
+    if not text:
+        raise H3Error(f"{location} is empty.")
+    for match in TOKEN.finditer(text):
+        tag = SPEAKER_TAG.fullmatch(match.group(0))
+        if tag is None:
+            raise H3Error(f"{location} contains {match.group(0)}; Drama 3 only accepts speaker tags there.")
+        digits = tag.group(1)
+        if str(int(digits)) != digits or int(digits) > MAX_SPEAKER:
+            raise H3Error(f"Drama 3 speaker tags are <|speaker:0|> to <|speaker:{MAX_SPEAKER}|>.")
+    if len(re.findall(r"<\|", text)) != len(TOKEN.findall(text)):
+        raise H3Error(f"{location} has an unterminated <| token.")
+    return text
+
+
+def text_speakers(text):
+    """Speaker numbers the text uses; untagged text is speaker 0."""
+    speakers = {int(digits) for digits in SPEAKER_TAG.findall(str(text or ""))}
+    leading = SPEAKER_TAG.split(str(text or ""))[0]
+    return speakers | ({0} if leading.strip() or not speakers else set())
+
+
+def speaker_transcript(speaker, transcript):
+    """Lead a reference transcript with its slot's speaker tag, replacing any typed one."""
+    body = SPEAKER_TAG.sub("", str(transcript), count=1) if SPEAKER_TAG.match(str(transcript).strip()) else str(transcript)
+    return f"<|speaker:{int(speaker)}|> {body.strip()}"
+
+
+def build_drama3_graph(*, text, voices=(), seed=0, temperature=1.0, top_p=0.9,
+                       top_k=30, max_frames=600, split_long_text=True,
+                       experts="in RAM", expert_cache_gb=0.0):
+    """``voices`` holds (speaker, staged audio, transcript); each clones <|speaker:N|>."""
     g = Graph()
     def add(kind, **inputs):
         return Graph.out(g.add(kind, **inputs))
     model = add("Drama3Loader", model_name=MODEL_SPECS["drama3_fp8"].local_name,
                 experts=experts, expert_cache_gb=expert_cache_gb, second_gpu="none", split_layer=0)
     codec = add("Drama3CodecLoader", codec_name=MODEL_SPECS["drama3_codec"].local_name)
-    voices = {}
-    if reference_audio:
-        audio = add("LoadAudio", audio=reference_audio)
-        voices["voices.voice0"] = add("Drama3EncodeVoice", codec=codec, audio=audio, transcript=transcript)
+    references = {}
+    for index, (speaker, audio, transcript) in enumerate(voices):
+        clip = add("LoadAudio", audio=audio)
+        references[f"voices.voice{index}"] = add(
+            "Drama3EncodeVoice", codec=codec, audio=clip,
+            transcript=speaker_transcript(speaker, transcript),
+        )
     codes = add("Drama3Generate", model=model, text=text, seed=seed,
                 temperature=temperature, top_p=top_p, top_k=top_k,
-                max_frames=max_frames, split_long_text=split_long_text, **voices)
+                max_frames=max_frames, split_long_text=split_long_text, **references)
     audio = add("Drama3Decode", codec=codec, codes=codes)
     add("SaveAudio", audio=audio, filename_prefix="drama3/Drama3")
     return g.nodes
+
+
+def build_drama3_asr_graph(*, audio, language="auto"):
+    """Transcribe one staged clip; PreviewAny returns the text in the job history."""
+    g = Graph()
+    model = g.add("Qwen3ASRLoader", model_name=MODEL_SPECS["drama3_asr"].local_name)
+    clip = g.add("LoadAudio", audio=audio)
+    transcript = g.add("Qwen3ASRTranscribe", model=Graph.out(model), audio=Graph.out(clip),
+                       language=language, context="", max_new_tokens=4096)
+    preview = g.add("PreviewAny", source=Graph.out(transcript))
+    return g.nodes, preview

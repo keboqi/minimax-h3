@@ -146,7 +146,8 @@
         {"parameter_name": "image_frames", "parameter_has_default": true, "parameter_default": 5, "type": "type_44"},
         {"parameter_name": "fl2va_audio_1", "parameter_has_default": true, "parameter_default": null, "type": "type_10"},
         {"parameter_name": "fl2va_audio_2", "parameter_has_default": true, "parameter_default": null, "type": "type_10"},
-        {"parameter_name": "fl2va_audio_3", "parameter_has_default": true, "parameter_default": null, "type": "type_10"}
+        {"parameter_name": "fl2va_audio_3", "parameter_has_default": true, "parameter_default": null, "type": "type_10"},
+        {"parameter_name": "lightning_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"}
       ],
       "returns": [
         {"type": "type_1", "component": "Textbox"},
@@ -238,7 +239,8 @@
         {"parameter_name": "width", "parameter_has_default": true, "parameter_default": 960, "type": "type_12"},
         {"parameter_name": "height", "parameter_has_default": true, "parameter_default": 544, "type": "type_12"},
         {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_61"},
-        {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"}
+        {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "lightning_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"}
       ],
       "returns": [
         {"type": "type_1", "component": "Textbox"},
@@ -288,7 +290,8 @@
         {"parameter_name": "height", "parameter_has_default": true, "parameter_default": 1024, "type": "type_65"},
         {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_61"},
         {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
-        {"parameter_name": "edit_size", "parameter_has_default": true, "parameter_default": "Match first image size", "type": "type_67"}
+        {"parameter_name": "edit_size", "parameter_has_default": true, "parameter_default": "Match first image size", "type": "type_67"},
+        {"parameter_name": "lightning_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"}
       ],
       "returns": [
         {"type": "type_1", "component": "Textbox"},
@@ -323,7 +326,8 @@
         {"parameter_name": "ref_image_2", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
         {"parameter_name": "ref_image_3", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
         {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_61"},
-        {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"}
+        {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "lightning_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"}
       ],
       "returns": [
         {"type": "type_1", "component": "Textbox"},
@@ -368,7 +372,8 @@
         {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "full", "type": "type_83"},
         {"parameter_name": "duration", "parameter_has_default": true, "parameter_default": 180, "type": "type_84"},
         {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_61"},
-        {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"}
+        {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
+        {"parameter_name": "lightning_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"}
       ],
       "returns": [
         {"type": "type_1", "component": "Textbox"},
@@ -1462,6 +1467,13 @@
     "type_89": {
       "type": "number",
       "description": "numeric value between 1 and 20000"
+    },
+    "type_90": {
+      "type": "string",
+      "enum": [
+        "openai/gpt-5.6-luna",
+        "openai/gpt-6.1-sol"
+      ]
     }
   }
 }

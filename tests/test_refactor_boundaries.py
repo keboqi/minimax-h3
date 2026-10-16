@@ -89,6 +89,9 @@ class ConfigurationTests(unittest.TestCase):
             "prompt_music3.txt",
             "prompt_qwen_image21.txt",
             "prompt_yue2.txt",
+            "prompt_flux3_t2i.txt",
+            "prompt_flux3_i2i.txt",
+            "prompt_drama3.txt",
         ):
             self.assertIn(f'LOCAL / "{prompt_name}"', modal)
 

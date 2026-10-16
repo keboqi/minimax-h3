@@ -61,7 +61,14 @@ DEFAULT_GEMINI_PROMPT_MODEL = "gemini-3.5-flash-lite"
 GEMINI_API_ROOT = "https://generativelanguage.googleapis.com"
 
 
-LIGHTNING_PROMPT_MODEL = "openai/gpt-5.6-luna"
+LIGHTNING_PROMPT_MODELS = ("openai/gpt-5.6-luna", "openai/gpt-6.1-sol")
+
+
+DEFAULT_LIGHTNING_PROMPT_MODEL = LIGHTNING_PROMPT_MODELS[0]
+
+
+# Legacy name for the default Lightning writer.
+LIGHTNING_PROMPT_MODEL = DEFAULT_LIGHTNING_PROMPT_MODEL
 
 
 LIGHTNING_API_ROOT = "https://lightning.ai/api/v1/"

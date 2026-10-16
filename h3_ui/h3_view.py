@@ -162,6 +162,7 @@ class H3View:
     latent_upscale_settings: gr.components.Component
     latent_upscaler_model: gr.components.Component
     lightning_api_key: gr.components.Component
+    lightning_model: gr.components.Component
     lightning_prompt_writer_group: gr.components.Component
     local_prompt_base_model: gr.components.Component
     local_prompt_greedy: gr.components.Component
@@ -316,6 +317,7 @@ H3_COMPONENT_ORDER = (
     "latent_upscale_settings",
     "latent_upscaler_model",
     "lightning_api_key",
+    "lightning_model",
     "lightning_prompt_writer_group",
     "local_prompt_base_model",
     "local_prompt_greedy",
@@ -523,6 +525,7 @@ def build_h3_view(
             "latent_upscale_settings": finishing_controls.latent_upscale_settings,
             "latent_upscaler_model": finishing_controls.latent_upscaler_model,
             "lightning_api_key": prompt_section.lightning_api_key,
+            "lightning_model": prompt_section.lightning_model,
             "lightning_prompt_writer_group": prompt_section.lightning_prompt_writer_group,
             "local_prompt_base_model": prompt_section.local_prompt_base_model,
             "local_prompt_greedy": prompt_section.local_prompt_greedy,

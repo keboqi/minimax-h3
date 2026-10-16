@@ -79,6 +79,7 @@ from h3_app.provenance import (
 from h3_ui.settings_presentation import render_settings
 from h3_app.errors import H3Error
 from h3_app.catalog import (
+    DEFAULT_LIGHTNING_PROMPT_MODEL,
     AUDIO_EXTENSIONS,
     AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
     AUTO_SOL_TOKEN_THRESHOLD,
@@ -401,6 +402,7 @@ def enhance_music3_prompt(
     ref_image_3: Any,
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
 ) -> tuple[str, str, str]:
     return _promptcontroller().enhance_music3_prompt(
         prompt,
@@ -412,6 +414,7 @@ def enhance_music3_prompt(
         ref_image_3,
         backend,
         lightning_api_key,
+        lightning_model,
     )
 
 
@@ -428,6 +431,7 @@ def enhance_ltx25_prompt(
     height: int,
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
 ) -> tuple[str, str]:
     return _promptcontroller().enhance_ltx25_prompt(
         prompt,
@@ -442,6 +446,7 @@ def enhance_ltx25_prompt(
         height,
         backend,
         lightning_api_key,
+        lightning_model,
     )
 
 
@@ -460,6 +465,7 @@ def enhance_qwen_image21_prompt(
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
     edit_size: str = QWEN_EDIT_SIZE_MATCH,
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
 ) -> tuple[str, str]:
     return _promptcontroller().enhance_qwen_image21_prompt(
         prompt,
@@ -472,6 +478,7 @@ def enhance_qwen_image21_prompt(
         backend,
         lightning_api_key,
         edit_size,
+        lightning_model,
     )
 
 
@@ -484,6 +491,7 @@ def enhance_yue2_prompt(
     duration: float,
     backend: str = "Lightning AI",
     lightning_api_key: str = "",
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
 ) -> tuple[str, str, str]:
     return _promptcontroller().enhance_yue2_prompt(
         style,
@@ -494,6 +502,7 @@ def enhance_yue2_prompt(
         duration,
         backend,
         lightning_api_key,
+        lightning_model,
     )
 
 
@@ -535,6 +544,7 @@ def enhance_h3_prompt(
     fl2va_audio_1: Any = None,
     fl2va_audio_2: Any = None,
     fl2va_audio_3: Any = None,
+    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
 ) -> tuple[str, str]:
     return _promptcontroller().enhance_h3_prompt(
         prompt,
@@ -574,6 +584,7 @@ def enhance_h3_prompt(
         fl2va_audio_1,
         fl2va_audio_2,
         fl2va_audio_3,
+        lightning_model,
     )
 
 
@@ -2627,17 +2638,165 @@ def generate_flux3(prompt, model_choice, reference_images, width, height, edit_s
     yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
 
 
-def generate_drama3(text, reference_audio, transcript, seed, temperature, top_p, top_k,
-                    max_frames, split_long_text, experts, expert_cache_gb,
-                    progress=gr.Progress(track_tqdm=False)):
+def _drama3_voices(slots):
+    """Resolve (preset, clip, transcript) slot triples to (speaker, clip, transcript)."""
+    from h3_app import drama3_speakers
+    from h3_ui.optional_engine_views import UPLOAD_VOICE
+
+    voices, names = [], []
+    for speaker in range(len(slots) // 3):
+        preset, audio, transcript = slots[3 * speaker:3 * speaker + 3]
+        if preset and preset != UPLOAD_VOICE:
+            saved = drama3_speakers.load_speaker(preset, _runtime_config())
+            voices.append((speaker, str(saved.audio), saved.transcript))
+            names.append((speaker, saved.name))
+        elif audio or str(transcript or "").strip():
+            if not audio:
+                raise H3Error(f"Speaker {speaker} has a transcript but no reference clip.")
+            voices.append((speaker, str(audio), str(transcript or "")))
+            names.append((speaker, ""))
+    return tuple(voices), names
+
+
+def generate_drama3(
+    text,
+    speaker_0_voice, speaker_0_audio, speaker_0_transcript,
+    speaker_1_voice, speaker_1_audio, speaker_1_transcript,
+    speaker_2_voice, speaker_2_audio, speaker_2_transcript,
+    speaker_3_voice, speaker_3_audio, speaker_3_transcript,
+    seed, temperature, top_p, top_k, max_frames, split_long_text, experts, expert_cache_gb,
+    progress=gr.Progress(track_tqdm=False),
+):
     from h3_app.generation.optional_engines import generate_optional_engine, validate_request
     from dataclasses import replace
-    request = generation_requests.Drama3Request(text, reference_audio, transcript, seed,
-        temperature, top_p, top_k, max_frames, split_long_text, experts, expert_cache_gb)
+    voices, _names = _drama3_voices((
+        speaker_0_voice, speaker_0_audio, speaker_0_transcript,
+        speaker_1_voice, speaker_1_audio, speaker_1_transcript,
+        speaker_2_voice, speaker_2_audio, speaker_2_transcript,
+        speaker_3_voice, speaker_3_audio, speaker_3_transcript,
+    ))
+    request = generation_requests.Drama3Request(text, voices, seed, temperature, top_p, top_k,
+                                                max_frames, split_long_text, experts, expert_cache_gb)
     validate_request(request)
-    if reference_audio:
-        request = replace(request, reference_audio=stage_file(reference_audio, "drama3_voices", reuse=True))
+    request = replace(request, voices=tuple(
+        (speaker, stage_file(audio, "drama3_voices", reuse=True), transcript)
+        for speaker, audio, transcript in request.voices
+    ))
     yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
+
+
+def enhance_flux3_prompt(prompt, reference_images, width, height, model, temporary_api_key,
+                         backend="Lightning AI", lightning_api_key="",
+                         lightning_model=DEFAULT_LIGHTNING_PROMPT_MODEL):
+    """Rewrite with the official upsampler prompt; turn local expansion off on success."""
+    enhanced, status = prompt_service.enhance_flux3_prompt(
+        prompt, model, temporary_api_key, reference_images, width, height,
+        backend=backend, lightning_api_key=lightning_api_key,
+        lightning_model=lightning_model, runtime=_runtime_config(),
+    )
+    failed = status.startswith("Prompt enhancement failed:")
+    return enhanced, status, gr.skip() if failed else False
+
+
+def enhance_drama3_text(
+    text, model, temporary_api_key, backend, lightning_api_key, lightning_model,
+    speaker_0_voice, speaker_0_audio, speaker_0_transcript,
+    speaker_1_voice, speaker_1_audio, speaker_1_transcript,
+    speaker_2_voice, speaker_2_audio, speaker_2_transcript,
+    speaker_3_voice, speaker_3_audio, speaker_3_transcript,
+):
+    try:
+        _voices, names = _drama3_voices((
+            speaker_0_voice, speaker_0_audio, speaker_0_transcript,
+            speaker_1_voice, speaker_1_audio, speaker_1_transcript,
+            speaker_2_voice, speaker_2_audio, speaker_2_transcript,
+            speaker_3_voice, speaker_3_audio, speaker_3_transcript,
+        ))
+    except H3Error as exc:
+        return text, f"Prompt enhancement failed: {exc}"
+    return prompt_service.enhance_drama3_text(
+        text, model, temporary_api_key, names, backend=backend,
+        lightning_api_key=lightning_api_key, lightning_model=lightning_model,
+        runtime=_runtime_config(),
+    )
+
+
+def transcribe_drama3_voice(audio):
+    """Fill a voice slot's transcript with Qwen3-ASR running in ComfyUI."""
+    from h3_app.generation.optional_engines import transcribe_drama3_audio
+    if not audio:
+        return gr.skip(), "Upload a reference clip first."
+    try:
+        staged = stage_file(audio, "drama3_asr")
+        transcript = transcribe_drama3_audio(staged, _generation_services())
+    except Exception as exc:
+        return gr.skip(), f"Transcription failed: {exc}"
+    return transcript, "Transcribed with Qwen3-ASR. Check names and punctuation before generating."
+
+
+def drama3_speaker_names():
+    from h3_app import drama3_speakers
+    return drama3_speakers.speaker_names(_runtime_config())
+
+
+def _drama3_preset_updates(count, selected_slot=None, selected=None):
+    from h3_ui.optional_engine_views import UPLOAD_VOICE
+    choices = [UPLOAD_VOICE, *drama3_speaker_names()]
+    return [
+        gr.update(choices=choices, value=selected) if slot == selected_slot else gr.update(choices=choices)
+        for slot in range(count)
+    ]
+
+
+def select_drama3_speaker(name):
+    """Show the upload controls, or a saved speaker's transcript in their place."""
+    from h3_app import drama3_speakers
+    from h3_ui.optional_engine_views import UPLOAD_VOICE
+    if not name or name == UPLOAD_VOICE:
+        return (gr.update(visible=True), gr.update(value="", interactive=True),
+                gr.update(visible=True), gr.update(visible=False), "")
+    try:
+        saved = drama3_speakers.load_speaker(name, _runtime_config())
+    except H3Error as exc:
+        return (gr.update(visible=True), gr.update(interactive=True),
+                gr.update(visible=True), gr.update(visible=False), str(exc))
+    return (gr.update(visible=False), gr.update(value=saved.transcript, interactive=False),
+            gr.update(visible=False), gr.update(visible=True), f'Using saved speaker "{saved.name}".')
+
+
+def save_drama3_speaker(slot, name, audio, transcript, count):
+    from h3_app import drama3_speakers
+    try:
+        saved = drama3_speakers.save_speaker(name, audio, transcript, _runtime_config())
+    except H3Error as exc:
+        return [str(exc), *[gr.skip()] * count]
+    return [f'Saved speaker "{saved.name}".', *_drama3_preset_updates(count, slot, saved.name)]
+
+
+def delete_drama3_speaker(slot, name, count):
+    from h3_app import drama3_speakers
+    from h3_ui.optional_engine_views import UPLOAD_VOICE
+    try:
+        drama3_speakers.delete_speaker(name, _runtime_config())
+    except H3Error as exc:
+        return [str(exc), *[gr.skip()] * count]
+    return [f'Deleted saved speaker "{name}".', *_drama3_preset_updates(count, slot, UPLOAD_VOICE)]
+
+
+def _optional_engine_actions():
+    from h3_ui.optional_engine_views import OptionalEngineActions
+    return OptionalEngineActions(
+        generate_flux3=generate_flux3,
+        generate_drama3=generate_drama3,
+        enhance_flux3_prompt=enhance_flux3_prompt,
+        enhance_drama3_text=enhance_drama3_text,
+        transcribe_drama3_voice=transcribe_drama3_voice,
+        drama3_speaker_names=drama3_speaker_names,
+        select_drama3_speaker=select_drama3_speaker,
+        save_drama3_speaker=save_drama3_speaker,
+        delete_drama3_speaker=delete_drama3_speaker,
+        interrupt=interrupt,
+    )
 
 
 def generate_yue2(
@@ -3159,8 +3318,7 @@ def build_ui() -> gr.Blocks:
             generate_qwen_image21=generate_qwen_image21,
             generate_with_ui_defaults=generate_with_ui_defaults,
             generate_yue2=generate_yue2,
-            generate_flux3=generate_flux3,
-            generate_drama3=generate_drama3,
+            optional_engine_actions=_optional_engine_actions(),
             generation_readiness_state=generation_readiness_state,
             image_vae_frame_updates=image_vae_frame_updates,
             import_gallery_media=import_gallery_media,

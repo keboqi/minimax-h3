@@ -7,7 +7,7 @@ from typing import Sequence
 
 import gradio as gr
 
-from h3_app.catalog import LIGHTNING_PROMPT_MODEL
+from h3_app.catalog import DEFAULT_LIGHTNING_PROMPT_MODEL, LIGHTNING_PROMPT_MODELS
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,15 @@ class RemotePromptWriterControls:
     model: gr.Dropdown
     gemini_api_key: gr.Textbox
     lightning_api_key: gr.Textbox
+    lightning_model: gr.Dropdown
+
+
+def build_lightning_model_dropdown() -> gr.Dropdown:
+    return gr.Dropdown(
+        choices=list(LIGHTNING_PROMPT_MODELS),
+        value=DEFAULT_LIGHTNING_PROMPT_MODEL,
+        label="Lightning model",
+    )
 
 
 def build_remote_prompt_writer_controls(
@@ -40,14 +49,16 @@ def build_remote_prompt_writer_controls(
             )
     with gr.Group(visible=True) as lightning_group:
         gr.Markdown(
-            f"Uses `{LIGHTNING_PROMPT_MODEL}`. Set `LIGHTNING_API_KEY` on the "
-            "server or enter a temporary key; UI keys are not stored."
+            "Set `LIGHTNING_API_KEY` on the server or enter a temporary key; "
+            "UI keys are not stored."
         )
-        lightning_api_key = gr.Textbox(
-            label="Temporary Lightning API key",
-            type="password",
-            placeholder="Uses LIGHTNING_API_KEY when blank",
-        )
+        with gr.Row():
+            lightning_model = build_lightning_model_dropdown()
+            lightning_api_key = gr.Textbox(
+                label="Temporary Lightning API key",
+                type="password",
+                placeholder="Uses LIGHTNING_API_KEY when blank",
+            )
     backend.change(
         lambda value: (
             gr.update(visible=value == "Gemini"),
@@ -59,4 +70,6 @@ def build_remote_prompt_writer_controls(
         show_progress="hidden",
         api_name=False,
     )
-    return RemotePromptWriterControls(backend, model, gemini_api_key, lightning_api_key)
+    return RemotePromptWriterControls(
+        backend, model, gemini_api_key, lightning_api_key, lightning_model
+    )

@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 import gradio as gr
+from h3_ui.prompt_writer_controls import build_lightning_model_dropdown
 
 if TYPE_CHECKING:
     from ..h3_view import H3ViewServices
@@ -24,6 +25,7 @@ class PromptSection:
     gemini_prompt_writer_group: gr.components.Component
     help_text: gr.components.Component
     lightning_api_key: gr.components.Component
+    lightning_model: gr.components.Component
     lightning_prompt_writer_group: gr.components.Component
     local_prompt_base_model: gr.components.Component
     local_prompt_greedy: gr.components.Component
@@ -99,13 +101,15 @@ def build_prompt_section(
             visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "Lightning AI"
         ) as lightning_prompt_writer_group:
             gr.Markdown(
-                f"Uses `{services.LIGHTNING_PROMPT_MODEL}` with the active text and images plus `prompt.txt`. Video and audio references require Gemini. Set `LIGHTNING_API_KEY` on the server or enter a temporary key; the server does not store UI keys."
+                "Uses the active text and images plus `prompt.txt`. Video and audio references require Gemini. Set `LIGHTNING_API_KEY` on the server or enter a temporary key; the server does not store UI keys."
             )
-            lightning_api_key = gr.Textbox(
-                label="Temporary Lightning API key",
-                type="password",
-                placeholder="Uses LIGHTNING_API_KEY when blank",
-            )
+            with gr.Row():
+                lightning_model = build_lightning_model_dropdown()
+                lightning_api_key = gr.Textbox(
+                    label="Temporary Lightning API key",
+                    type="password",
+                    placeholder="Uses LIGHTNING_API_KEY when blank",
+                )
         enhance_prompt_button = gr.Button("Generate / enhance prompt")
         enhance_prompt_status = gr.Textbox(
             label="Prompt enhancer status", lines=2, interactive=False
@@ -134,6 +138,7 @@ def build_prompt_section(
         gemini_prompt_writer_group=gemini_prompt_writer_group,
         help_text=help_text,
         lightning_api_key=lightning_api_key,
+        lightning_model=lightning_model,
         lightning_prompt_writer_group=lightning_prompt_writer_group,
         local_prompt_base_model=local_prompt_base_model,
         local_prompt_greedy=local_prompt_greedy,

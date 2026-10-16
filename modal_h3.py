@@ -32,6 +32,9 @@ PROMPT_MUSIC3 = ROOT / "prompt_music3.txt"
 PROMPT_LTX25 = ROOT / "prompt_ltx25.txt"
 PROMPT_QWEN_IMAGE21 = ROOT / "prompt_qwen_image21.txt"
 PROMPT_YUE2 = ROOT / "prompt_yue2.txt"
+PROMPT_FLUX3_T2I = ROOT / "prompt_flux3_t2i.txt"
+PROMPT_FLUX3_I2I = ROOT / "prompt_flux3_i2i.txt"
+PROMPT_DRAMA3 = ROOT / "prompt_drama3.txt"
 ACCEL_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
 LOCAL_UI = LOCAL / "gradio_app.py"
@@ -48,6 +51,9 @@ LOCAL_PROMPT_MUSIC3 = LOCAL / "prompt_music3.txt"
 LOCAL_PROMPT_LTX25 = LOCAL / "prompt_ltx25.txt"
 LOCAL_PROMPT_QWEN_IMAGE21 = LOCAL / "prompt_qwen_image21.txt"
 LOCAL_PROMPT_YUE2 = LOCAL / "prompt_yue2.txt"
+LOCAL_PROMPT_FLUX3_T2I = LOCAL / "prompt_flux3_t2i.txt"
+LOCAL_PROMPT_FLUX3_I2I = LOCAL / "prompt_flux3_i2i.txt"
+LOCAL_PROMPT_DRAMA3 = LOCAL / "prompt_drama3.txt"
 
 DATA = PurePosixPath("/data")
 MODELS = DATA / "models"
@@ -162,6 +168,9 @@ _RUNTIME_LOCAL_MOUNTS = (
     (LOCAL_PROMPT_LTX25, PROMPT_LTX25),
     (LOCAL_PROMPT_QWEN_IMAGE21, PROMPT_QWEN_IMAGE21),
     (LOCAL_PROMPT_YUE2, PROMPT_YUE2),
+    (LOCAL_PROMPT_FLUX3_T2I, PROMPT_FLUX3_T2I),
+    (LOCAL_PROMPT_FLUX3_I2I, PROMPT_FLUX3_I2I),
+    (LOCAL_PROMPT_DRAMA3, PROMPT_DRAMA3),
 )
 _BUILD_LOCAL_FILES = tuple(local for local, _ in _BUILD_LOCAL_MOUNTS)
 _RUNTIME_LOCAL_FILES = tuple(local for local, _ in _RUNTIME_LOCAL_MOUNTS)
