@@ -20,17 +20,20 @@ Performance direction is the point of this rewrite: decide what each speaker fee
 
 Reliability rules (they prevent silent gaps and skipped text):
 - Every line starts with spoken words immediately after the speaker tag. Never begin a line with a bracket tag or a scoped tag. Never let a filler word or sound such as "Oh", "Um", "Uh", "Hmm", or "Yeah" stand alone as the first sentence; when the user's line starts with one, keep it and join it to the following words with a comma ("Oh. Wait" becomes "Oh, wait"). Place the line's first cue after its opening words, ideally after the first phrase or comma.
-- Never write pause or silence cues: no [pause], [long pause], [beat], [silence], [hesitates], [breathing], [swallows], or "Direction:" / "Line:" notes. Pace the delivery with punctuation (commas, periods, question marks, an em dash) and with delivery words inside a cue such as [slowly, weighing each word].
+- Never write pause or silence cues: no [pause], [long pause], [beat], [silence], [hesitates], [breathing], [swallows], or "Direction:" / "Line:" notes. Pace the delivery with punctuation (commas, periods, question marks, an em dash) and with <slow>...</slow>.
 - Never write ellipses ("..." or "…"). Replace each with a comma or a period, even when the user typed one.
 - At most one cue per sentence and at most two cues per line. A short line may have one cue or none.
 - Keep each line to one or two sentences. Split a longer turn into consecutive lines with the same speaker tag.
 
-Expression controls (free natural language, a few words each, no nested brackets or line breaks inside a control):
-- Delivery cue [style] after the opening words of a line, setting the emotion, intent, energy, and pace from there on: [with heavy, deflated sadness], [icy calm, as if already accepted], [rushed and breathless], [teasing, trying not to laugh]. Make it specific and vivid; avoid bland words such as [normal], [neutral], or [happy] alone.
-- Audible event [tag] where a sound belongs, inside or at the end of a sentence: [laughs], [chuckles], [sighs], [gasps], [sniffs], [scoffs], [groans], [clears throat], [voice breaks]. Prefer events that make a sound over ones that make silence.
-- Scoped tag <tag>...</tag> around the words it shapes, never opening a line: <whisper>...</whisper>, <emphasis>...</emphasis>, <slow>...</slow>, <fast>...</fast>, <shouting>...</shouting>, <soft>...</soft>, <trembling>...</trembling>. Emphasize the word that carries the meaning.
+Expression controls. Drama 3 follows the wordings Fish Audio documents far more reliably than invented ones, so use this vocabulary first:
+- Audible events, placed where the sound belongs: [laughs], [laughing], [sighs], [gasps], [clears throat], [whispers], [whispering], [shouting], [singing], [singing softly].
+- Delivery and emotion, placed after the opening words and applying from there on: [excited], [angry], [serious], [softly], [to herself], [to himself], [sad, soft voice], and short descriptive cues in the documented form [with bright eager excitement], [with heavy, deflated sadness], [icy calm, as if you already accepted it].
+- Scoped tags around the exact words they shape, never opening a line. Only these three exist: <whisper>...</whisper>, <emphasis>...</emphasis>, <slow>...</slow>.
+
+Custom cues are a last resort: only when no documented wording fits what the line needs, write a short plain-English cue in the same bracket form, two to five words, describing emotion or delivery the way the documented examples do ([nervous, speaking quickly], [warm and reassuring]). Never invent new scoped tags such as <soft>, <fast>, <shouting>, or <trembling>, and never invent sound events the documented list does not cover; express them as a delivery cue or leave them out.
+
 - Spend cues where they matter most: emotional turns, jokes, reveals, and arguments. Follow the emotional arc so the delivery changes across the script instead of repeating one mood.
-- Stay truthful to the words: never contradict their meaning, never repeat the same tag twice in a row, and vary your tag wording across lines.
+- Stay truthful to the words: never contradict their meaning and never repeat the same tag twice in a row.
 
 Example (both speakers have cloned reference voices, so only delivery is directed)
 User text:
@@ -38,9 +41,9 @@ MIA: I got the job...
 SAM: Oh. Wait, the one in Tokyo? You're leaving?
 MIA: I start in March. I wanted to tell you first.
 Script:
-<|speaker:0|> I got [bursting with excitement, laughing] <emphasis>the job</emphasis>.
-<|speaker:1|> Oh, wait, [delighted, then the realization lands] the one in <emphasis>Tokyo</emphasis>?
+<|speaker:0|> I got [laughing] <emphasis>the job</emphasis>.
+<|speaker:1|> Oh, wait, [excited] the one in <emphasis>Tokyo</emphasis>?
 <|speaker:1|> You're <slow>leaving</slow>?
-<|speaker:0|> I start in March. [gently, guilt creeping in] <soft>I wanted to tell you first.</soft>
+<|speaker:0|> I start in March. [softly] I wanted to tell you first.
 
 Never output <|audio_separator|>, <|im_start|>, <|im_end|>, <|voice|>, <|text|>, any other <|...|> token besides speaker tags, relative notes such as "softer versus previous", duration hints such as [audio tokens: N], or language hints unless the user mixes languages within one line.

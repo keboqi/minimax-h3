@@ -32,6 +32,11 @@ class Drama3Request:
     split_long_text: bool = False
     experts: str = "in RAM"
     expert_cache_gb: float = 0.0
+    backend: str = "ComfyUI"  # or "vLLM-Omni": speaker chunks generated in parallel
+    parallel: int = 8
+    retries: int = 2
+    # (speaker number, saved speaker name or "") for status and provenance.
+    voice_names: tuple[tuple[int, str], ...] = ()
 
 
 @dataclass

@@ -8,7 +8,7 @@ import shutil
 from collections.abc import Iterable
 from importlib import resources
 from importlib.metadata import PackageNotFoundError, version
-from pathlib import Path
+from pathlib import Path, PurePath
 from urllib.parse import quote, urljoin, urlsplit
 from urllib.request import urlopen
 
@@ -41,6 +41,15 @@ H3_AUDIO_T8_REF = "6063fafbd9c3b85c5ff40aef435ae11b2844e558"
 COMFY_REF = "98cc0bf84b7cb1383654c5b402e7612d875d6d22"
 DRAMA3_REPO = "https://github.com/PedroMarinhoDev/ComfyUI-Drama3.git"
 DRAMA3_REF = "66c4fb9cd3c0151e1e2ccd207847cb8335e87ab4"
+# Optional parallel Drama 3 backend, isolated from ComfyUI's Torch stack.
+# Drama 3 support is on vLLM-Omni main only (added 2026-10-14); pin that commit.
+DRAMA3_VLLM_VERSION = "0.31.0"
+DRAMA3_VLLM_OMNI_REPO = "https://github.com/vllm-project/vllm-omni.git"
+DRAMA3_VLLM_OMNI_REF = "c4871a09b006507ed38e3f4eb2e5db81d18f1191"
+DRAMA3_VLLM_TORCH_BACKEND = "cu130"
+DRAMA3_VLLM_PYTHON = "3.12"
+DRAMA3_HF_REPO = "fishaudio/drama-3"
+DRAMA3_HF_REVISION = "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
 COMFY_KITCHEN_VERSION = "0.2.37"
 COMFY_FRONTEND_VERSION = "1.55.17"
 WSPROTO_VERSION = "1.2.0"
@@ -226,6 +235,44 @@ def filter_pinned_requirements(
         else:
             filtered.append(line)
     return filtered, skipped
+
+
+DRAMA3_VLLM_READY_MARKER = "h3-drama3-ready.txt"
+DRAMA3_VLLM_SMOKE = (
+    "import importlib.metadata as m, torch; "
+    "assert torch.version.cuda, 'vLLM-Omni installed CPU-only Torch'; "
+    "print('vllm', m.version('vllm'), 'vllm-omni', m.version('vllm-omni'), 'cuda', torch.version.cuda)"
+)
+
+
+def drama3_vllm_fingerprint() -> str:
+    """Identifies an installed vLLM-Omni environment built from these exact pins."""
+    import hashlib
+
+    pins = "|".join((DRAMA3_VLLM_PYTHON, DRAMA3_VLLM_VERSION, DRAMA3_VLLM_OMNI_REPO,
+                     DRAMA3_VLLM_OMNI_REF, DRAMA3_VLLM_TORCH_BACKEND))
+    return hashlib.sha256(pins.encode("utf-8")).hexdigest()
+
+
+def drama3_vllm_install_commands(venv: str | Path, uv: str = "uv") -> list[list[str]]:
+    """Install steps shared by the Modal image build and first-use setup.
+
+    Run them with VLLM_OMNI_TARGET_DEVICE=cuda: vllm-omni's setup.py otherwise
+    picks platform requirements by probing for a GPU, which builders lack.
+    """
+    # Keep a PurePosixPath as given: Modal builds these commands on any OS for Linux.
+    base = venv if isinstance(venv, PurePath) else Path(venv)
+    python = str(base / "bin" / "python")
+    venv = str(base)
+    return [
+        [uv, "venv", "--python", DRAMA3_VLLM_PYTHON, "--seed", str(venv)],
+        # Name the CUDA Torch wheel; GPU-less builders would otherwise get CPU Torch.
+        [uv, "pip", "install", "--python", python, f"vllm=={DRAMA3_VLLM_VERSION}",
+         f"--torch-backend={DRAMA3_VLLM_TORCH_BACKEND}"],
+        [uv, "pip", "install", "--python", python,
+         f"vllm-omni @ git+{DRAMA3_VLLM_OMNI_REPO}@{DRAMA3_VLLM_OMNI_REF}"],
+        [python, "-c", DRAMA3_VLLM_SMOKE],
+    ]
 
 
 def selftest() -> None:

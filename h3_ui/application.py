@@ -1834,6 +1834,32 @@ def unload_comfy_models() -> None:
     api_post("/free", json={"unload_models": True, "free_memory": True})
 
 
+def free_comfy_vram(timeout: float = 30.0) -> None:
+    """Unload ComfyUI models before another process takes the GPU, and wait for it.
+
+    ComfyUI applies /free on its queue worker's next pass, so poll until the free
+    VRAM it reports stops rising instead of assuming the request took effect.
+    """
+    unload_prompt_rewriter()
+    unload_comfy_models()
+
+    def free_bytes():
+        try:
+            devices = api_get("/system_stats").json().get("devices") or [{}]
+            return int(devices[0].get("vram_free") or 0)
+        except (requests.RequestException, ValueError, TypeError):
+            return 0
+
+    deadline, previous, steady = time.monotonic() + timeout, -1, 0
+    while time.monotonic() < deadline:
+        current = free_bytes()
+        steady = steady + 1 if current and abs(current - previous) < 256 * 2**20 else 0
+        if steady >= 2:
+            return
+        previous = current
+        time.sleep(1.0)
+
+
 @gpu_maintenance("unload")
 def unload_all_models() -> tuple[str, str]:
     """Unload every resident ComfyUI model and refresh the backend summary."""
@@ -2665,24 +2691,31 @@ def generate_drama3(
     speaker_2_voice, speaker_2_audio, speaker_2_transcript,
     speaker_3_voice, speaker_3_audio, speaker_3_transcript,
     seed, temperature, top_p, top_k, max_frames, split_long_text, experts, expert_cache_gb,
+    backend="ComfyUI", parallel=8, retries=2,
     progress=gr.Progress(track_tqdm=False),
 ):
     from h3_app.generation.optional_engines import generate_optional_engine, validate_request
     from dataclasses import replace
-    voices, _names = _drama3_voices((
+    voices, names = _drama3_voices((
         speaker_0_voice, speaker_0_audio, speaker_0_transcript,
         speaker_1_voice, speaker_1_audio, speaker_1_transcript,
         speaker_2_voice, speaker_2_audio, speaker_2_transcript,
         speaker_3_voice, speaker_3_audio, speaker_3_transcript,
     ))
     request = generation_requests.Drama3Request(text, voices, seed, temperature, top_p, top_k,
-                                                max_frames, split_long_text, experts, expert_cache_gb)
+                                                max_frames, split_long_text, experts, expert_cache_gb,
+                                                backend, parallel, retries, tuple(names))
     validate_request(request)
+    vllm = request.backend == "vLLM-Omni"
+    input_dir = _runtime_config().input_dir
     request = replace(request, voices=tuple(
-        (speaker, stage_file(audio, "drama3_voices", reuse=True), transcript)
+        # ComfyUI loads inputs by relative name; the vLLM route reads the file itself.
+        (speaker, str(input_dir / staged) if vllm else staged, transcript)
         for speaker, audio, transcript in request.voices
+        for staged in (stage_file(audio, "drama3_voices", reuse=True),)
     ))
-    yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
+    yield from generate_optional_engine(request, _generation_services(), _runtime_config(),
+                                        progress=progress, free_gpu=free_comfy_vram)
 
 
 def enhance_flux3_prompt(prompt, reference_images, width, height, model, temporary_api_key,

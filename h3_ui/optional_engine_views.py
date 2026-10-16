@@ -12,6 +12,7 @@ from h3_app.catalog import (
     QWEN_EDIT_SIZE_MAX,
 )
 from h3_app.prompt_service import DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES
+from h3_app.generation.optional_engines import DRAMA3_BACKENDS
 from h3_models import FLUX3_MODEL_CHOICES
 from .image_library import build_image_file_input
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
@@ -87,6 +88,9 @@ class Drama3View:
     split_long_text: gr.Checkbox
     experts: gr.Dropdown
     expert_cache_gb: gr.Slider
+    backend: gr.Radio
+    parallel: gr.Slider
+    retries: gr.Slider
     output: gr.Audio
     run: gr.Button
     stop: gr.Button
@@ -196,23 +200,41 @@ def build_drama3_view(root, speaker_names=()):
                     voice_status = gr.Markdown("")
                 seed = gr.Number(value=-1, precision=0, label="Seed (-1 random)")
                 with gr.Accordion("Speech and memory settings", open=False):
+                    backend = gr.Radio(list(DRAMA3_BACKENDS), value=DRAMA3_BACKENDS[0], label="Backend",
+                        info="ComfyUI generates the whole text in one take and can invent voices. "
+                             "vLLM-Omni (Linux) is for long scripts where every speaker has a voice below: "
+                             "it sends each speaker's lines with that speaker's clip, in parallel, checks each "
+                             "take and retries silent or runaway ones. First use installs its environment and "
+                             "downloads a 44 GB checkpoint; between jobs it sleeps to free the GPU.")
+                    with gr.Group(visible=False) as vllm_settings:
+                        parallel = gr.Slider(1, 32, value=8, step=1, label="Parallel requests")
+                        retries = gr.Slider(0, 4, value=2, step=1, label="Retries per chunk",
+                            info="New seeds for a chunk that is mostly silent or far too short or long.")
                     temperature = gr.Slider(0, 2, value=1, step=0.05, label="Temperature")
                     top_p = gr.Slider(0.05, 1, value=0.9, step=0.05, label="Top-p")
                     top_k = gr.Slider(1, 4096, value=30, step=1, label="Top-k")
-                    split = gr.Checkbox(value=False, label="Split long text into connected chunks",
-                        info="Off generates the whole text in one take, avoiding silent gaps at chunk joins.")
                     max_frames = gr.Slider(1, 8192, value=8192, step=1, label="Maximum audio frames per take",
                         info="21.5 frames per second; 8192 is about 6.3 minutes. A take stops when the "
                              "speech ends, so this only limits a take that runs on.")
-                    experts = gr.Dropdown(["in RAM", "in VRAM"], value="in RAM", label="Expert weights",
-                        info="In VRAM requires room for the whole model plus working memory.")
-                    cache = gr.Slider(0, 256, value=0, step=0.5, label="Expert VRAM cache (GB, 0 automatic)")
+                    with gr.Group() as comfy_settings:
+                        split = gr.Checkbox(value=False, label="Split long text into connected chunks",
+                            info="Off generates the whole text in one take, avoiding silent gaps at chunk joins.")
+                        experts = gr.Dropdown(["in RAM", "in VRAM"], value="in RAM", label="Expert weights",
+                            info="In VRAM requires room for the whole model plus working memory.")
+                        cache = gr.Slider(0, 256, value=0, step=0.5, label="Expert VRAM cache (GB, 0 automatic)")
+                    backend.change(
+                        lambda choice: (gr.update(visible=choice == "vLLM-Omni"),
+                                        gr.update(visible=choice != "vLLM-Omni")),
+                        inputs=backend, outputs=[vllm_settings, comfy_settings],
+                        queue=False, show_progress="hidden", api_name=False,
+                    )
             with gr.Column(scale=2, min_width=320, elem_classes=["h3-preview-panel"]):
                 output = gr.Audio(label="Generated speech", type="filepath", interactive=False)
                 output.h3_metadata_root = gr.Column()
                 run, stop, status = _actions("Generate speech")
     return Drama3View(text, speaker_mode, writer, enhance, enhance_status, voices, voice_status, seed, temperature,
-                      top_p, top_k, max_frames, split, experts, cache, output, run, stop, status)
+                      top_p, top_k, max_frames, split, experts, cache, backend, parallel, retries,
+                      output, run, stop, status)
 
 
 def settings_components(view):
@@ -295,4 +317,5 @@ def bind_drama3(view, actions):
     return _bind_generation(view, "drama3", actions.generate_drama3, actions.interrupt, [
         view.text, *drama3_voice_inputs(view), view.seed, view.temperature, view.top_p, view.top_k,
         view.max_frames, view.split_long_text, view.experts, view.expert_cache_gb,
+        view.backend, view.parallel, view.retries,
     ])

@@ -676,7 +676,12 @@ class UiContractTests(unittest.TestCase):
         drama = [row["parameter_name"] for row in api["/generate_drama3"]["parameters"]]
         slots = [f"speaker_{n}_{field}" for n in range(4) for field in ("voice", "audio", "transcript")]
         self.assertEqual(drama, ["text", *slots, "seed", "temperature", "top_p", "top_k",
-                                 "max_frames", "split_long_text", "experts", "expert_cache_gb"])
+                                 "max_frames", "split_long_text", "experts", "expert_cache_gb",
+                                 "backend", "parallel", "retries"])
+        backend = next(c for c in self.config["components"]
+                       if c.get("props", {}).get("label") == "Backend")
+        self.assertEqual(backend["props"]["value"], "ComfyUI")
+        self.assertEqual([choice[1] for choice in backend["props"]["choices"]], ["ComfyUI", "vLLM-Omni"])
         enhance = [row["parameter_name"] for row in api["/enhance_drama3_text"]["parameters"]]
         self.assertEqual(enhance[:7], ["text", "speaker_mode", "model", "temporary_api_key",
                                        "backend", "lightning_api_key", "lightning_model"])
