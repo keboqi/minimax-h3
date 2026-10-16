@@ -28,8 +28,8 @@ class Drama3Request:
     temperature: float = 1.0
     top_p: float = 0.9
     top_k: int = 30
-    max_frames: int = 600
-    split_long_text: bool = True
+    max_frames: int = 8192
+    split_long_text: bool = False
     experts: str = "in RAM"
     expert_cache_gb: float = 0.0
 

@@ -56,6 +56,16 @@ class Drama3GraphTests(unittest.TestCase):
         self.assertEqual(text_speakers("<|speaker:1|> a\n<|speaker:3|> b"), {1, 3})
         self.assertEqual(speaker_transcript(3, "  words "), "<|speaker:3|> words")
 
+    def test_default_is_one_take_with_the_full_frame_cap(self):
+        request = Drama3Request("Hello")
+        self.assertEqual((request.split_long_text, request.max_frames), (False, 8192))
+        generate = next(n for n in build_drama3_graph(text="Hello").values()
+                        if n["class_type"] == "Drama3Generate")["inputs"]
+        self.assertEqual((generate["split_long_text"], generate["max_frames"]), (False, 8192))
+        for frames in (0, 8193):
+            with self.subTest(frames=frames), self.assertRaises(H3Error):
+                validate_request(Drama3Request("Hello", max_frames=frames))
+
     def test_request_validation_for_voice_slots(self):
         validate_request(Drama3Request("<|speaker:0|> a <|speaker:1|> b",
                                        voices=((0, "a", "t"), (1, "b", "u"))))

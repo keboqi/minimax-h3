@@ -35,6 +35,11 @@ def text_speakers(text):
     return speakers | ({0} if leading.strip() or not speakers else set())
 
 
+# The node's cap, about 6.3 minutes. A take stops at its end-of-speech token,
+# so the cap only bounds a take that never ends.
+MAX_FRAMES = 8192
+
+
 def speaker_transcript(speaker, transcript):
     """Lead a reference transcript with its slot's speaker tag, replacing any typed one."""
     body = SPEAKER_TAG.sub("", str(transcript), count=1) if SPEAKER_TAG.match(str(transcript).strip()) else str(transcript)
@@ -42,7 +47,7 @@ def speaker_transcript(speaker, transcript):
 
 
 def build_drama3_graph(*, text, voices=(), seed=0, temperature=1.0, top_p=0.9,
-                       top_k=30, max_frames=600, split_long_text=True,
+                       top_k=30, max_frames=MAX_FRAMES, split_long_text=False,
                        experts="in RAM", expert_cache_gb=0.0):
     """``voices`` holds (speaker, staged audio, transcript); each clones <|speaker:N|>."""
     g = Graph()

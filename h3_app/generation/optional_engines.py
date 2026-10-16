@@ -14,7 +14,7 @@ from h3_app.provenance import write_snapshot
 from h3_app.status import StageTimings, progress_status
 from h3_app.workflows.flux3 import build_flux3_graph, flux3_model_keys
 from h3_app.workflows.drama3 import (
-    MAX_SPEAKER, build_drama3_asr_graph, build_drama3_graph, text_speakers, validate_drama3_text,
+    MAX_FRAMES, MAX_SPEAKER, build_drama3_asr_graph, build_drama3_graph, text_speakers, validate_drama3_text,
 )
 from h3_models import DRAMA3_ASR_MODEL_KEYS, DRAMA3_MODEL_KEYS
 from .qwen import first_reference_dimensions
@@ -106,7 +106,7 @@ def validate_request(request):
             if not low <= float(getattr(request, name)) <= high:
                 raise H3Error(f"{name} must be between {low} and {high}.")
         _integer(request.top_k, 1, 4096, "Top-k")
-        _integer(request.max_frames, 1, 8192, "Maximum frames per chunk")
+        _integer(request.max_frames, 1, MAX_FRAMES, "Maximum audio frames")
     else:
         raise TypeError("Unsupported generation request.")
 

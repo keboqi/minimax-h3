@@ -199,9 +199,11 @@ def build_drama3_view(root, speaker_names=()):
                     temperature = gr.Slider(0, 2, value=1, step=0.05, label="Temperature")
                     top_p = gr.Slider(0.05, 1, value=0.9, step=0.05, label="Top-p")
                     top_k = gr.Slider(1, 4096, value=30, step=1, label="Top-k")
-                    max_frames = gr.Slider(1, 8192, value=600, step=1, label="Maximum audio frames per chunk",
-                        info="21.5 frames per second; 600 caps each chunk at about 28 seconds.")
-                    split = gr.Checkbox(value=True, label="Split long text into connected chunks")
+                    split = gr.Checkbox(value=False, label="Split long text into connected chunks",
+                        info="Off generates the whole text in one take, avoiding silent gaps at chunk joins.")
+                    max_frames = gr.Slider(1, 8192, value=8192, step=1, label="Maximum audio frames per take",
+                        info="21.5 frames per second; 8192 is about 6.3 minutes. A take stops when the "
+                             "speech ends, so this only limits a take that runs on.")
                     experts = gr.Dropdown(["in RAM", "in VRAM"], value="in RAM", label="Expert weights",
                         info="In VRAM requires room for the whole model plus working memory.")
                     cache = gr.Slider(0, 256, value=0, step=0.5, label="Expert VRAM cache (GB, 0 automatic)")
