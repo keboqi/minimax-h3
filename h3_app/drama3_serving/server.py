@@ -455,7 +455,8 @@ class SglangOmniServer(ManagedServer):
         ]
 
     def payload(self, *, text, reference, transcript, seed, max_new_tokens, sampling) -> dict:
-        return {"input": text, "response_format": "wav", "seed": seed, "max_new_tokens": max_new_tokens,
+        # FishOmni rejects per-request seeds on SGLang-Omni's speech endpoint.
+        return {"input": text, "response_format": "wav", "max_new_tokens": max_new_tokens,
                 **sampling, "references": [{"audio_path": str(Path(reference).resolve()), "text": transcript}]}
 
 

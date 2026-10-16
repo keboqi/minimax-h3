@@ -25,6 +25,11 @@ DRAMA3_VISIBLE_SLOTS = 4
 DRAMA3_SLOT_INPUT_NAMES = tuple(f"speaker_{speaker}_{field}" for speaker in range(DRAMA3_VOICE_SLOTS)
                                 for field in ("voice", "audio", "transcript"))
 UPLOAD_VOICE = "Upload a clip"
+DRAMA3_SAMPLING_PRESETS = {
+    "Strict": (0.7, 0.7, 30),
+    "Balance": (1.0, 0.9, 30),
+    "Expressive": (2.0, 1.0, 30),
+}
 
 
 @dataclass(frozen=True)
@@ -188,6 +193,12 @@ def build_drama3_view(root, speaker_names=()):
                     "approximately 48 GB system RAM. [Model and license](https://huggingface.co/fishaudio/drama-3)")
         with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
             with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
+                sampling_preset = gr.Radio(
+                    list(DRAMA3_SAMPLING_PRESETS), value="Balance", label="Speech preset",
+                    info="Temperature / top-p / top-k: Strict 0.7 / 0.7 / 30 · "
+                         "Balance 1.0 / 0.9 / 30 · Expressive 2.0 / 1.0 / 30. "
+                         "Custom slider values clear the selection.",
+                )
                 text = gr.Textbox(label="Speech text", lines=8,
                     placeholder="<|speaker:0|> [with warm excitement] Welcome back!\n<|speaker:1|> [laughs] Took you long enough.")
                 with gr.Accordion("Rewrite as a Drama 3 script", open=False):
@@ -216,13 +227,13 @@ def build_drama3_view(root, speaker_names=()):
                         info="ComfyUI generates the whole text in one take and can invent voices. "
                              "vLLM-Omni and SGLang-Omni (Linux) are for long scripts where every speaker has a "
                              "voice below: each speaker's lines go out with that speaker's clip, in parallel, and "
-                             "silent or runaway takes are retried. First use installs the backend and downloads a "
+                             "near-silent takes can be retried when retries are enabled. First use installs the backend and downloads a "
                              "44 GB checkpoint; the server then stays loaded between Drama 3 jobs and stops when "
-                             "another engine needs the GPU.")
+                             "another engine needs the GPU. SGLang-Omni does not support seed control.")
                     with gr.Group(visible=False) as vllm_settings:
                         parallel = gr.Slider(1, 32, value=8, step=1, label="Parallel requests")
-                        retries = gr.Slider(0, 4, value=2, step=1, label="Retries per chunk",
-                            info="New seeds for a chunk that is mostly silent or far too short or long.")
+                        retries = gr.Slider(0, 4, value=0, step=1, label="Retries per chunk",
+                            info="Default 0 keeps the first take. Enable to retry near-silent audio; duration warnings do not trigger retries.")
                     temperature = gr.Slider(0, 2, value=1, step=0.05, label="Temperature")
                     top_p = gr.Slider(0.05, 1, value=0.9, step=0.05, label="Top-p")
                     top_k = gr.Slider(1, 4096, value=30, step=1, label="Top-k")
@@ -239,6 +250,24 @@ def build_drama3_view(root, speaker_names=()):
                         lambda choice: (gr.update(visible=choice != "ComfyUI"),
                                         gr.update(visible=choice == "ComfyUI")),
                         inputs=backend, outputs=[vllm_settings, comfy_settings],
+                        queue=False, show_progress="hidden", api_name=False,
+                    )
+                sampling_controls = [temperature, top_p, top_k]
+                sampling_preset.input(
+                    lambda name: DRAMA3_SAMPLING_PRESETS[name],
+                    inputs=sampling_preset, outputs=sampling_controls,
+                    queue=False, show_progress="hidden", api_name=False,
+                )
+                # Derive the label from the sliders, including restored browser settings.
+                # Only user input on the preset applies values, avoiding a feedback loop.
+                def matching_preset(temperature, top_p, top_k):
+                    values = (temperature, top_p, top_k)
+                    return next((name for name, preset in DRAMA3_SAMPLING_PRESETS.items()
+                                 if values == preset), None)
+
+                for control in sampling_controls:
+                    control.change(
+                        matching_preset, inputs=sampling_controls, outputs=sampling_preset,
                         queue=False, show_progress="hidden", api_name=False,
                     )
             with gr.Column(scale=2, min_width=320, elem_classes=["h3-preview-panel"]):

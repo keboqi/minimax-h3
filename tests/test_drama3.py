@@ -246,7 +246,7 @@ class Drama3AppInputTests(unittest.TestCase):
             with self.subTest(backend=backend):
                 request = self.run_app(backend)
                 self.assertEqual(request.voices, ((5, str(Path("/in") / "h3_gradio/drama3_voices/five.wav"), "Line five."),))
-                self.assertEqual((request.backend, request.parallel, request.retries), (backend, 8, 2))
+                self.assertEqual((request.backend, request.parallel, request.retries), (backend, 8, 0))
         self.assertEqual(self.run_app("ComfyUI").voices, ((5, "h3_gradio/drama3_voices/five.wav", "Line five."),))
 
 

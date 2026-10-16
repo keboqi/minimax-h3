@@ -78,6 +78,30 @@ class AudioTests(unittest.TestCase):
         self.assertIn("too short", audio.check_take(tone(1.0, silent_tail=9.0), RATE, 10.0).reason)
         self.assertIn("runs on", audio.check_take(tone(30.0), RATE, 4.0).reason)
 
+    def test_quiet_short_speech_and_edge_padding_are_not_failures(self):
+        quiet = tone(0.12) * 0.001
+        padded = np.concatenate([np.zeros(2 * RATE), quiet, np.zeros(3 * RATE)]).astype(np.float32)
+        check = audio.check_take(padded, RATE, 0.8)
+        self.assertTrue(check.ok)
+        self.assertFalse(check.warnings)
+        self.assertGreater(len(audio.tidy_take(padded, RATE)), 0)
+
+    def test_duration_and_internal_pause_heuristics_are_advisory(self):
+        for samples, expected, warning in (
+            (tone(1.0), 10.0, "too short"),
+            (tone(30.0), 4.0, "runs on"),
+            (np.concatenate([tone(1.0), np.zeros(5 * RATE), tone(1.0)]), 2.0, "internal pauses"),
+        ):
+            with self.subTest(warning=warning):
+                check = audio.check_take(samples, RATE, expected)
+                self.assertTrue(check.ok)
+                self.assertIn(warning, " ".join(check.warnings))
+
+    def test_invalid_audio_is_not_scored_as_a_good_take(self):
+        for samples, rate in ((tone(1.0), 0), (np.array([np.nan], dtype=np.float32), RATE)):
+            with self.subTest(rate=rate), self.assertRaises(ValueError):
+                audio.check_take(samples, rate, 1.0)
+
     def test_tidy_trims_edges_and_shortens_long_silences(self):
         take = np.concatenate([np.zeros(RATE), tone(1.0), np.zeros(4 * RATE), tone(1.0), np.zeros(RATE)])
         tidied = audio.tidy_take(take.astype(np.float32), RATE)
@@ -229,7 +253,8 @@ class ServerTests(unittest.TestCase):
                                    max_new_tokens=300, sampling={"temperature": 1.0, "top_p": 0.9, "top_k": 30})
         self.assertEqual(payload["references"], [{"audio_path": str((Path(self.temp.name) / "a.wav").resolve()),
                                                   "text": "Ref."}])
-        self.assertEqual((payload["top_k"], payload["seed"], payload["max_new_tokens"]), (30, 7, 300))
+        self.assertNotIn("seed", payload)
+        self.assertEqual((payload["top_k"], payload["max_new_tokens"]), (30, 300))
 
     def test_settings_come_from_environment(self):
         runtime = SimpleNamespace(script_dir=Path("/app"), comfy_dir=Path("/app/ComfyUI"))
@@ -384,14 +409,22 @@ class GenerateTests(unittest.TestCase):
         self.assertEqual(chunks[0]["name"], "Alice")
 
     def test_sglang_route_sends_references_inline(self):
+        def speech(payload):
+            if "seed" in payload:
+                raise H3Error("seed is not supported by this model")
+            return float_wav(tone(2.0))
+
         fake, updates, snapshot = self.run_route(
             self.request("<|speaker:1|> Hi there.", backend="SGLang-Omni"),
-            lambda payload: float_wav(tone(2.0)), server_class=server.SglangOmniServer)
+            speech, server_class=server.SglangOmniServer)
         payload = fake.speech.call_args.args[0]
         self.assertEqual(payload["references"][0]["text"], "Reference 1.")
         self.assertEqual(payload["temperature"], 1.0)
         fake.release_all.assert_called_once_with(except_kind="sglang")
         self.assertEqual(snapshot.call_args.args[1]["settings"]["backend"], "SGLang-Omni")
+        self.assertIsNone(snapshot.call_args.args[1]["settings"]["seed"])
+        self.assertIsNone(snapshot.call_args.args[1]["settings"]["chunks"][0]["seed"])
+        self.assertIn("seed control unavailable", updates[-1].status)
 
     def test_silent_takes_are_retried_with_new_seeds(self):
         seeds = []
@@ -411,6 +444,22 @@ class GenerateTests(unittest.TestCase):
 
         with self.assertRaisesRegex(H3Error, "boom"):
             self.run_route(self.request("<|speaker:0|> Hello."), speech)
+
+    def test_duration_advisory_keeps_the_first_take_even_when_retries_enabled(self):
+        fake, updates, snapshot = self.run_route(
+            self.request("<|speaker:0|> One two three four five."),
+            lambda payload: float_wav(tone(12.0)))
+        self.assertEqual(fake.speech.call_count, 1)
+        self.assertIn("Audio advisories (takes kept)", updates[-1].status)
+        self.assertTrue(snapshot.call_args.args[1]["settings"]["chunks"][0]["warnings"])
+
+    def test_default_retries_are_disabled(self):
+        request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),), backend="SGLang-Omni")
+        self.assertEqual(request.retries, 0)
+        fake, updates, snapshot = self.run_route(request, lambda payload: float_wav(tone(1.0)),
+                                                 server_class=server.SglangOmniServer)
+        self.assertEqual(fake.speech.call_count, 1)
+        self.assertEqual(snapshot.call_args.args[1]["settings"]["retries"], 0)
 
     def test_every_speaker_needs_a_reference_voice(self):
         for backend in ("vLLM-Omni", "SGLang-Omni"):

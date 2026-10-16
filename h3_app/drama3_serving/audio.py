@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import io
 import struct
+import tempfile
 import wave
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+
+from h3_app.errors import H3Error
+from h3_app.processes import run_media_process
 
 SILENCE_DBFS = -45.0
 FRAME_SECONDS = 0.02
@@ -64,13 +69,36 @@ def encode_wav(samples: np.ndarray, rate: int) -> bytes:
     return buffer.getvalue()
 
 
+def save_mp3(samples: np.ndarray, rate: int, target: Path) -> None:
+    """Encode the joined PCM once, publishing only a complete MP3."""
+    pending = target.with_suffix(".mp3.partial")
+    try:
+        with tempfile.TemporaryDirectory(prefix="drama3-audio-") as directory:
+            source = Path(directory) / "joined.wav"
+            source.write_bytes(encode_wav(samples, rate))
+            proc = run_media_process(
+                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(source),
+                 "-c:a", "libmp3lame", "-q:a", "0", "-f", "mp3", str(pending)],
+                partial_outputs=(pending,),
+            )
+            if proc.returncode != 0 or not pending.is_file() or pending.stat().st_size == 0:
+                raise H3Error(f"TTS MP3 encoding failed: {proc.stderr.strip()}")
+            pending.replace(target)
+    finally:
+        pending.unlink(missing_ok=True)
+
+
 def _silent_frames(samples: np.ndarray, rate: int) -> np.ndarray:
     size = max(1, int(rate * FRAME_SECONDS))
     frames = samples[: len(samples) // size * size].reshape(-1, size)
     if not len(frames):
         return np.zeros(0, dtype=bool)
     rms = np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1))
-    return rms < 10 ** (SILENCE_DBFS / 20)
+    # Quiet/whispered takes need a lower threshold, including when trimming.
+    # This is an activity detector, not a speech recognizer.
+    peak = float(rms.max())
+    threshold = max(10 ** (-75 / 20), min(10 ** (SILENCE_DBFS / 20), peak * 10 ** (-30 / 20)))
+    return rms < threshold
 
 
 def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
@@ -86,25 +114,32 @@ class TakeCheck:
     seconds: float
     voiced_seconds: float
     score: float  # lower is better; ranks failed takes when every retry fails
+    warnings: tuple[str, ...] = ()  # uncertain heuristics never trigger regeneration
 
 
 def check_take(samples: np.ndarray, rate: int, expected_seconds: float) -> TakeCheck:
-    """Reject takes that are mostly silent or far too short/long for their text."""
+    """Retry near-silent takes; report uncertain duration estimates as advice only."""
+    if rate <= 0 or not np.isfinite(samples).all():
+        raise ValueError("TTS audio has an invalid sample rate or non-finite samples.")
     silent = _silent_frames(samples, rate)
     seconds = len(samples) / rate
     voiced = float((~silent).sum()) * FRAME_SECONDS
     expected = max(0.8, expected_seconds)
     ratio = voiced / expected
     score = abs(np.log(max(ratio, 1e-3)))
-    if voiced < 0.3:
+    if voiced < 0.08:
         return TakeCheck(False, "no speech", seconds, voiced, 99.0)
+    warnings = []
     if voiced < 0.35 * expected - 1.0:
-        return TakeCheck(False, f"too short ({voiced:.1f}s of speech for ~{expected:.1f}s of text)", seconds, voiced, score)
+        warnings.append(f"possibly too short ({voiced:.1f}s of activity for ~{expected:.1f}s of text)")
     if voiced > 2.5 * expected + 3.0:
-        return TakeCheck(False, f"runs on ({voiced:.1f}s of speech for ~{expected:.1f}s of text)", seconds, voiced, score)
-    if seconds > 1.5 and silent.mean() > 0.6:
-        return TakeCheck(False, "mostly silent", seconds, voiced, score + 1.0)
-    return TakeCheck(True, "ok", seconds, voiced, score)
+        warnings.append(f"possibly runs on ({voiced:.1f}s of activity for ~{expected:.1f}s of text)")
+    # Padding is trimmed later; only assess gaps between the first and last activity.
+    active = np.flatnonzero(~silent)
+    interior = silent[active[0]:active[-1] + 1]
+    if len(interior) * FRAME_SECONDS > 1.5 and interior.mean() > 0.6:
+        warnings.append("long internal pauses")
+    return TakeCheck(True, "; ".join(warnings) or "ok", seconds, voiced, score, tuple(warnings))
 
 
 def tidy_take(samples: np.ndarray, rate: int) -> np.ndarray:

@@ -2694,7 +2694,7 @@ def generate_drama3(*values, progress=gr.Progress(track_tqdm=False)):
     from dataclasses import replace
     slot_count = len(DRAMA3_SLOT_INPUT_NAMES)
     text, slots, settings = values[0], values[1:1 + slot_count], list(values[1 + slot_count:])
-    settings += ["ComfyUI", 8, 2][len(settings) - 8:]  # backend, parallel, retries default for older callers
+    settings += ["ComfyUI", 8, 0][len(settings) - 8:]  # backend, parallel, retries default for older callers
     (seed, temperature, top_p, top_k, max_frames, split_long_text, experts, expert_cache_gb,
      backend, parallel, retries) = settings[:11]
     voices, names = _drama3_voices(slots)
@@ -2761,7 +2761,7 @@ def _publish_drama3_signatures():
         *_drama3_signature(("text",), (
             ("seed", empty), ("temperature", empty), ("top_p", empty), ("top_k", empty),
             ("max_frames", empty), ("split_long_text", empty), ("experts", empty),
-            ("expert_cache_gb", empty), ("backend", "ComfyUI"), ("parallel", 8), ("retries", 2),
+            ("expert_cache_gb", empty), ("backend", "ComfyUI"), ("parallel", 8), ("retries", 0),
         )),
         inspect.Parameter("progress", inspect.Parameter.KEYWORD_ONLY, default=gr.Progress(track_tqdm=False)),
     ])

@@ -35,7 +35,7 @@ class Take:
     chunk: Chunk
     samples: np.ndarray
     rate: int
-    seed: int
+    seed: int | None
     attempts: int
     check: audio.TakeCheck
 
@@ -129,7 +129,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                                      sampling=sampling)
             samples, rate = audio.decode_wav(server.speech(payload))
             check = audio.check_take(samples, rate, expected_seconds(chunk.text))
-            take = Take(chunk, samples, rate, take_seed, attempt + 1, check)
+            take = Take(chunk, samples, rate, take_seed if kind == "vllm" else None, attempt + 1, check)
             if check.ok:
                 return take
             if best is None or check.score < best.check.score:
@@ -163,25 +163,31 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     joined = audio.join_takes([(take.chunk.speaker, audio.tidy_take(take.samples, take.rate)) for take in ordered],
                               rate)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    result = runtime.output_dir / "drama3" / f"Drama3_vllm_{stamp}_{uuid.uuid4().hex[:6]}.wav"
+    result = runtime.output_dir / "drama3" / f"Drama3_vllm_{stamp}_{uuid.uuid4().hex[:6]}.mp3"
     result.parent.mkdir(parents=True, exist_ok=True)
-    result.write_bytes(audio.encode_wav(joined, rate))
+    audio.save_mp3(joined, rate, result)
     failed = [take for take in ordered if not take.check.ok]
     write_snapshot(result, {
         "family": "Drama 3",
         "settings": {
-            "backend": request.backend, "seed": seed, "temperature": request.temperature,
+            "backend": request.backend, "seed": seed if kind == "vllm" else None, "temperature": request.temperature,
             "top_p": request.top_p, "top_k": request.top_k, "parallel": request.parallel,
             "retries": request.retries, "reference_count": len(request.voices),
             "chunks": [{"speaker": t.chunk.speaker, "name": names.get(t.chunk.speaker, ""),
                         "seed": t.seed, "attempts": t.attempts,
-                        "check": t.check.reason, "seconds": round(t.check.seconds, 2)} for t in ordered],
+                        "check": t.check.reason, "warnings": list(t.check.warnings),
+                        "seconds": round(t.check.seconds, 2)} for t in ordered],
         },
     })
     persist_caches()  # kernels JIT-compiled for this job's shapes survive restarts too
     progress(1, desc="Complete")
-    note = (f"\n{len(failed)} chunk(s) kept their best take after every retry failed a check: "
+    note = (f"\n{len(failed)} chunk(s) kept their best take after {int(request.retries) + 1} attempt(s) failed a check: "
             + "; ".join(f"chunk {t.chunk.index + 1} ({names.get(t.chunk.speaker, t.chunk.speaker)}) "
                         f"{t.check.reason}" for t in failed)) if failed else ""
-    yield GenerationUpdate(fresh_audio(result), f"Drama 3 ({label}) complete · {len(chunks)} chunks · seed {seed} · "
+    advised = [take for take in ordered if take.check.warnings]
+    if advised:
+        note += "\nAudio advisories (takes kept): " + "; ".join(
+            f"chunk {t.chunk.index + 1}: {t.check.reason}" for t in advised)
+    seed_note = f"seed {seed}" if kind == "vllm" else "seed control unavailable"
+    yield GenerationUpdate(fresh_audio(result), f"Drama 3 ({label}) complete · {len(chunks)} chunks · {seed_note} · "
                                         f"{len(joined) / rate:.1f}s in {time.monotonic() - started:.0f}s{note}")

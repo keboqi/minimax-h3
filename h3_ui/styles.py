@@ -132,6 +132,9 @@ H3_WORKSPACE_CSS = """
   --h3-border: #dbe3df;
   --h3-accent: #087f6c;
   --h3-focus: #087f6c;
+  --h3-disclosure: #edf4f1;
+  --h3-disclosure-hover: #e0eee7;
+  --h3-disclosure-border: #b7ccc2;
   --body-text-color: var(--h3-text);
   --body-text-color-subdued: var(--h3-muted);
   --input-placeholder-color: #65766e;
@@ -168,6 +171,9 @@ H3_WORKSPACE_CSS = """
   --h3-muted: #a9bdb3;
   --h3-border: #34463e;
   --h3-accent: #66d8bb; --h3-focus: #66d8bb;
+  --h3-disclosure: #20362f;
+  --h3-disclosure-hover: #2b473e;
+  --h3-disclosure-border: #4b6b5e;
   --input-placeholder-color: #94a3b8;
 }
 body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f5f3; }
@@ -209,6 +215,71 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-workspace .h3-result-player .empty { flex-direction: column; gap: 10px; color: var(--h3-muted); }
 .h3-workspace .h3-result-player .empty::after { content: "Your video will appear here"; font-size: 13px; }
 .h3-workspace #h3-advanced-settings { border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-surface); margin-top: 6px; }
+/* Give every Gradio disclosure the same visible, clickable header. */
+.h3-workspace .gr-accordion,
+.h3-workspace #h3-advanced-settings.gr-accordion {
+  padding: 0;
+  border: 1px solid var(--h3-disclosure-border);
+  border-radius: 10px;
+  background: var(--h3-surface);
+}
+.h3-workspace .gr-accordion > button.label-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 0;
+  border-inline-start: 3px solid var(--h3-accent);
+  border-radius: 9px;
+  background: var(--h3-disclosure);
+  color: var(--h3-accent);
+  text-align: start;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.h3-workspace .gr-accordion > button.label-wrap > span:first-child {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+.h3-workspace .gr-accordion > button.label-wrap > .icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--h3-disclosure-border);
+  border-radius: 50%;
+  background: var(--h3-surface);
+  color: var(--h3-accent);
+  font-size: 11px;
+  transform: rotate(-90deg) !important;
+}
+.h3-workspace .gr-accordion > button.label-wrap.open > .icon {
+  transform: rotate(0deg) !important;
+}
+.h3-workspace .gr-accordion > button.label-wrap:hover {
+  background: var(--h3-disclosure-hover);
+}
+.h3-workspace .gr-accordion > button.label-wrap.open {
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+  box-shadow: 0 1px var(--h3-disclosure-border);
+}
+.h3-workspace .gr-accordion > button.label-wrap:focus-visible {
+  outline: 2px solid var(--h3-focus);
+  outline-offset: -3px;
+}
+.h3-workspace .gr-accordion > div[data-testid="accordion-content"] {
+  padding: 14px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .h3-workspace .gr-accordion > button.label-wrap { transition: none; }
+}
 .h3-workspace .h3-engine-view { padding: 20px; border: 1px solid var(--h3-border); border-radius: 16px; background: var(--h3-surface); }
 .h3-workspace .h3-essentials { border: 1px solid var(--h3-border); border-radius: 12px; padding: 12px; background: var(--h3-surface); }
 .h3-workspace .h3-action-dock { padding: 14px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }

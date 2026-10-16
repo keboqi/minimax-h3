@@ -67,7 +67,7 @@ def build_drama3_graph(*, text, voices=(), seed=0, temperature=1.0, top_p=0.9,
                 temperature=temperature, top_p=top_p, top_k=top_k,
                 max_frames=max_frames, split_long_text=split_long_text, **references)
     audio = add("Drama3Decode", codec=codec, codes=codes)
-    add("SaveAudio", audio=audio, filename_prefix="drama3/Drama3")
+    add("SaveAudioMP3", audio=audio, filename_prefix="drama3/Drama3", quality="V0")
     return g.nodes
 
 
