@@ -60,6 +60,7 @@ DATA = PurePosixPath("/data")
 # Optional Drama 3 backend: an isolated vLLM-Omni environment in the image, with
 # its checkpoint under ComfyUI's models link and caches/logs on the volume.
 DRAMA3_VLLM_VENV = ROOT / "drama3-vllm-venv"
+DRAMA3_SGLANG_VENV = ROOT / "drama3-sglang-venv"
 DRAMA3_VLLM_DATA = DATA / "drama3-vllm"
 MODELS = DATA / "models"
 INPUT = DATA / "input"
@@ -118,6 +119,8 @@ from h3_sources import (  # noqa: E402
 )
 from h3_requirements import (  # noqa: E402
     DRAMA3_VLLM_READY_MARKER,
+    drama3_sglang_fingerprint,
+    drama3_sglang_install_commands,
     drama3_vllm_fingerprint,
     drama3_vllm_install_commands,
     H3_AUDIO_T8_REPO,
@@ -667,6 +670,12 @@ image = image.run_commands(
     f"echo {drama3_vllm_fingerprint()} > "
     f"{(DRAMA3_VLLM_VENV / DRAMA3_VLLM_READY_MARKER).as_posix()}",
 )
+# SGLang-Omni, the alternative Drama 3 backend, in a layer of its own.
+image = image.run_commands(
+    *(shlex.join(command) for command in drama3_sglang_install_commands(DRAMA3_SGLANG_VENV)),
+    f"echo {drama3_sglang_fingerprint()} > "
+    f"{(DRAMA3_SGLANG_VENV / DRAMA3_VLLM_READY_MARKER).as_posix()}",
+)
 
 if IS_LOCAL:
     for local_path, remote_path in _BUILD_LOCAL_MOUNTS:
@@ -777,6 +786,7 @@ def service_env() -> dict[str, str]:
             "GRADIO_OUTPUT_DIR": OUTPUT.as_posix(),
             "H3_WORKSPACE_DIR": (DATA / "h3-workspace").as_posix(),
             "H3_DRAMA3_VLLM_VENV": DRAMA3_VLLM_VENV.as_posix(),
+            "H3_DRAMA3_SGLANG_VENV": DRAMA3_SGLANG_VENV.as_posix(),
             "H3_DRAMA3_VLLM_DATA": DRAMA3_VLLM_DATA.as_posix(),
             "H3_DRAMA3_VLLM_MODELS": (MODELS / "drama3_vllm").as_posix(),
             "SERVER_ATTENTION_BACKEND": "sol",

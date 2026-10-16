@@ -176,6 +176,13 @@ class JobCoordinator:
         self.callbacks = {}
         self.finishing_factory = None
         self.history_outputs = None
+        # Called with the family of each job that takes the GPU, before it runs;
+        # lets out-of-process engines (Drama 3 servers) hand their VRAM back.
+        self.gpu_claim_hooks = []
+
+    def add_gpu_claim_hook(self, hook):
+        if hook not in self.gpu_claim_hooks:
+            self.gpu_claim_hooks.append(hook)
 
     def configure(self, store):
         """Restore technical records; never dispatch work during recovery."""
@@ -627,6 +634,8 @@ class JobCoordinator:
                 job.check()
                 job.state = "preparing"
                 job.stage = "Preparing inputs and models"
+                for hook in list(self.gpu_claim_hooks):
+                    hook(job.family)
                 job.has_gpu = True
                 try:
                     yield job

@@ -22,7 +22,8 @@ from .requests import Flux3Request, Drama3Request
 from .results import GenerationUpdate, fresh_audio
 
 
-DRAMA3_BACKENDS = ("ComfyUI", "vLLM-Omni")
+DRAMA3_BACKENDS = ("ComfyUI", "vLLM-Omni", "SGLang-Omni")
+DRAMA3_SERVED_BACKENDS = DRAMA3_BACKENDS[1:]
 FLUX3_EDIT_SIZES = (QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX, QWEN_EDIT_SIZE_MANUAL)
 FLUX3_MAX_PIXELS, FLUX3_MIN_SIDE, FLUX3_MAX_SIDE, FLUX3_GRID = 4_194_304, 256, 4096, 16
 
@@ -104,15 +105,15 @@ def validate_request(request):
         if request.experts not in {"in RAM", "in VRAM"}:
             raise H3Error("Choose experts in RAM or in VRAM.")
         if request.backend not in DRAMA3_BACKENDS:
-            raise H3Error("Choose the ComfyUI or vLLM-Omni Drama 3 backend.")
+            raise H3Error("Choose the ComfyUI, vLLM-Omni or SGLang-Omni Drama 3 backend.")
         _integer(request.parallel, 1, 32, "Parallel requests")
         _integer(request.retries, 0, 4, "Retries per chunk")
-        if request.backend == "vLLM-Omni":
+        if request.backend in DRAMA3_SERVED_BACKENDS:
             # Each chunk is sent with its speaker's own clip, so every voice must be given.
             missing = sorted(text_speakers(request.text) - {speaker for speaker, _a, _t in request.voices})
             if missing:
                 raise H3Error(
-                    "The vLLM-Omni backend sends each speaker's lines with that speaker's reference voice. "
+                    f"The {request.backend} backend sends each speaker's lines with that speaker's reference voice. "
                     "Add a clip or saved speaker for " + ", ".join(f"<|speaker:{n}|>" for n in missing)
                     + ", or use the ComfyUI backend to let Drama 3 create voices in one take."
                 )
@@ -140,13 +141,13 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
         seed = variant_seed(job.variant if job else 0,
                             lambda: random.randrange(2**63 - 1) if request.seed < 0 else int(request.seed))
         values = {**asdict(request), "seed": seed}
-        if not image and request.backend == "vLLM-Omni":
-            from h3_app.drama3_vllm.generate import generate_drama3_vllm
+        if not image and request.backend in DRAMA3_SERVED_BACKENDS:
+            from h3_app.drama3_serving.generate import generate_drama3_served
             from h3_models import resolve_hf_token
 
             services.models.unload_prompt_rewriter()
-            timings.transition("vLLM-Omni Drama 3")
-            yield from generate_drama3_vllm(
+            timings.transition(f"{request.backend} Drama 3")
+            yield from generate_drama3_served(
                 request, runtime=runtime, free_gpu=free_gpu or (lambda: None),
                 hf_token=resolve_hf_token(), seed=seed, progress=progress,
             )
@@ -160,6 +161,9 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
                 system_prompt=runtime.prompt_systems["FLUX 3 Image Klein"].read_text(encoding="utf-8").strip(),
             )
         else:
+            from h3_app.drama3_serving.server import release_all
+
+            release_all()  # the ComfyUI route needs the VRAM a served backend holds
             graph = build_drama3_graph(**{key: value for key, value in values.items()
                                           if key not in {"backend", "parallel", "retries", "voice_names"}})
         info = services.execution.object_info()

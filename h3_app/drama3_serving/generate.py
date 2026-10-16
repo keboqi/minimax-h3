@@ -1,4 +1,4 @@
-"""Chunked, parallel Drama 3 generation through the managed vLLM-Omni server."""
+"""Chunked, parallel Drama 3 generation through a managed vLLM-Omni or SGLang-Omni server."""
 
 from __future__ import annotations
 
@@ -22,7 +22,9 @@ from h3_app.workflows.drama3 import MAX_FRAMES, SPEAKER_TAG
 
 from . import audio, environment
 from .planner import Chunk, expected_seconds, plan_chunks
-from .server import ServerSettings, ensure_model, shared_server
+from .server import ServerSettings, ensure_model, release_all, shared_server
+
+BACKEND_KINDS = {"vLLM-Omni": "vllm", "SGLang-Omni": "sglang"}
 
 FRAMES_PER_SECOND = 21.5
 HEARTBEAT_SECONDS = 5.0
@@ -59,13 +61,13 @@ def _staged_reference(path: str, media_dir: Path) -> Path:
     return target
 
 
-def _with_heartbeat(label: str, work: Callable[[], object]) -> Iterator[GenerationUpdate]:
-    """Run blocking setup in a thread while reporting that it is still going."""
-    result, error = [], []
+def _with_heartbeat(label: str, work: Callable[[Callable[[str], None]], object]) -> Iterator[GenerationUpdate]:
+    """Run blocking setup in a thread, reporting its latest progress message."""
+    result, error, latest = [], [], [label]
 
     def run():
         try:
-            result.append(work())
+            result.append(work(lambda message: latest.__setitem__(0, message)))
         except BaseException as exc:  # surfaced on the generator's thread
             error.append(exc)
 
@@ -75,15 +77,16 @@ def _with_heartbeat(label: str, work: Callable[[], object]) -> Iterator[Generati
     while thread.is_alive():
         thread.join(HEARTBEAT_SECONDS)
         if thread.is_alive():
-            yield GenerationUpdate(None, f"{label} ({time.monotonic() - started:.0f}s)")
+            yield GenerationUpdate(None, f"{latest[0]} ({time.monotonic() - started:.0f}s)")
     if error:
         raise error[0]
 
 
-def generate_drama3_vllm(request, *, runtime, free_gpu: Callable[[], None], hf_token=None,
-                         seed: int, progress=lambda *args, **kwargs: None) -> Iterator[GenerationUpdate]:
+def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf_token=None,
+                           seed: int, progress=lambda *args, **kwargs: None) -> Iterator[GenerationUpdate]:
     """Plan speaker chunks, send each with its speaker's reference, check, retry, join."""
-    settings = ServerSettings.from_environment(runtime)
+    kind = BACKEND_KINDS[request.backend]
+    settings = ServerSettings.from_environment(runtime, kind)
     server = shared_server(settings)
     started = time.monotonic()
     chunks = plan_chunks(request.text)
@@ -93,68 +96,67 @@ def generate_drama3_vllm(request, *, runtime, free_gpu: Callable[[], None], hf_t
     references = {speaker: (path, transcript) for speaker, path, transcript in request.voices}
     unvoiced = sorted({chunk.speaker for chunk in chunks} - set(references))
     if unvoiced:
-        raise H3Error("Every speaker needs a reference voice on the vLLM-Omni backend; missing "
+        raise H3Error(f"Every speaker needs a reference voice on the {request.backend} backend; missing "
                       + ", ".join(f"<|speaker:{n}|>" for n in unvoiced) + ".")
     cast = ", ".join(f"{names.get(s, f'Speaker {s}')}: {sum(c.speaker == s for c in chunks)}"
                      for s in sorted({c.speaker for c in chunks}))
     yield GenerationUpdate(None, f"Planned {len(chunks)} chunk(s) · {cast}")
 
-    yield from _with_heartbeat("Preparing the vLLM-Omni environment",
-                               lambda: environment.prepare(settings.venv))
-    yield from _with_heartbeat("Downloading the Drama 3 checkpoint for vLLM-Omni",
-                               lambda: ensure_model(settings, token=hf_token))
-    try:
-        yield from _with_heartbeat("Freeing ComfyUI VRAM and starting vLLM-Omni",
-                                   lambda: server.ensure_awake(free_gpu))
-        # Each request has one voice; the server tags its transcript as speaker 0 itself.
-        references = {
-            speaker: (_staged_reference(path, settings.media_dir), SPEAKER_TAG.sub("", transcript).strip())
-            for speaker, (path, transcript) in references.items()
-        }
-        sampling = {"temperature": float(request.temperature), "top_p": float(request.top_p),
-                    "top_k": int(request.top_k)}
+    label = request.backend
+    yield from _with_heartbeat(f"Preparing the {label} environment",
+                               lambda _progress: environment.prepare(settings.venv, kind=kind))
+    yield from _with_heartbeat("Downloading the Drama 3 checkpoint",
+                               lambda _progress: ensure_model(settings, token=hf_token))
+    release_all(except_kind=kind)  # only one Drama 3 server holds the GPU
+    yield from _with_heartbeat(f"Freeing ComfyUI VRAM and starting {label}",
+                               lambda report: server.ensure_ready(free_gpu, report))
+    # The server stays loaded after the job; release_all() frees it for other engines.
+    # Each request has one voice; the server tags its transcript as speaker 0 itself.
+    references = {
+        speaker: (_staged_reference(path, settings.media_dir), SPEAKER_TAG.sub("", transcript).strip())
+        for speaker, (path, transcript) in references.items()
+    }
+    sampling = {"temperature": float(request.temperature), "top_p": float(request.top_p),
+                "top_k": int(request.top_k)}
 
-        def synthesize(chunk: Chunk) -> Take:
-            best = None
-            for attempt in range(int(request.retries) + 1):
-                take_seed = chunk_seed(seed, chunk.index, attempt)
-                payload = {"input": chunk.text, "response_format": "wav", "seed": take_seed,
-                           "max_new_tokens": frame_budget(chunk.text, int(request.max_frames)),
-                           "extra_params": sampling}
-                clip, transcript = references[chunk.speaker]
-                payload.update(ref_audio=clip.resolve().as_uri(), ref_text=transcript)
-                samples, rate = audio.decode_wav(server.speech(payload))
-                check = audio.check_take(samples, rate, expected_seconds(chunk.text))
-                take = Take(chunk, samples, rate, take_seed, attempt + 1, check)
-                if check.ok:
-                    return take
-                if best is None or check.score < best.check.score:
-                    best = take
-            return best
+    def synthesize(chunk: Chunk) -> Take:
+        best = None
+        for attempt in range(int(request.retries) + 1):
+            take_seed = chunk_seed(seed, chunk.index, attempt)
+            clip, transcript = references[chunk.speaker]
+            payload = server.payload(text=chunk.text, reference=clip, transcript=transcript, seed=take_seed,
+                                     max_new_tokens=frame_budget(chunk.text, int(request.max_frames)),
+                                     sampling=sampling)
+            samples, rate = audio.decode_wav(server.speech(payload))
+            check = audio.check_take(samples, rate, expected_seconds(chunk.text))
+            take = Take(chunk, samples, rate, take_seed, attempt + 1, check)
+            if check.ok:
+                return take
+            if best is None or check.score < best.check.score:
+                best = take
+        return best
 
-        takes: dict[int, Take] = {}
-        total = len(chunks)
-        workers = max(1, min(int(request.parallel), total))
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="drama3-vllm") as pool:
-            def run_all(batch: list[Chunk], stage: str) -> Iterator[GenerationUpdate]:
-                pending = {pool.submit(synthesize, chunk): chunk for chunk in batch}
-                while pending:
-                    done, _ = wait(pending, timeout=HEARTBEAT_SECONDS, return_when=FIRST_COMPLETED)
-                    job = CURRENT_JOB.get()
-                    if job is not None and job.cancelled.is_set():
-                        for future in pending:
-                            future.cancel()
-                        job.check()
-                    for future in done:
-                        chunk = pending.pop(future)
-                        takes[chunk.index] = future.result()
-                    progress((len(takes), total), desc=stage)
-                    yield GenerationUpdate(None, f"{stage}: {len(takes)}/{total} chunks "
-                                                 f"({time.monotonic() - started:.0f}s)")
+    takes: dict[int, Take] = {}
+    total = len(chunks)
+    workers = max(1, min(int(request.parallel), total))
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="drama3-vllm") as pool:
+        def run_all(batch: list[Chunk], stage: str) -> Iterator[GenerationUpdate]:
+            pending = {pool.submit(synthesize, chunk): chunk for chunk in batch}
+            while pending:
+                done, _ = wait(pending, timeout=HEARTBEAT_SECONDS, return_when=FIRST_COMPLETED)
+                job = CURRENT_JOB.get()
+                if job is not None and job.cancelled.is_set():
+                    for future in pending:
+                        future.cancel()
+                    job.check()
+                for future in done:
+                    chunk = pending.pop(future)
+                    takes[chunk.index] = future.result()
+                progress((len(takes), total), desc=stage)
+                yield GenerationUpdate(None, f"{stage}: {len(takes)}/{total} chunks "
+                                             f"({time.monotonic() - started:.0f}s)")
 
-            yield from run_all(chunks, "Generating speech")
-    finally:
-        server.sleep()
+        yield from run_all(chunks, "Generating speech")
 
     ordered = [takes[chunk.index] for chunk in chunks]
     rate = ordered[0].rate
@@ -168,7 +170,7 @@ def generate_drama3_vllm(request, *, runtime, free_gpu: Callable[[], None], hf_t
     write_snapshot(result, {
         "family": "Drama 3",
         "settings": {
-            "backend": "vLLM-Omni", "seed": seed, "temperature": request.temperature,
+            "backend": request.backend, "seed": seed, "temperature": request.temperature,
             "top_p": request.top_p, "top_k": request.top_k, "parallel": request.parallel,
             "retries": request.retries, "reference_count": len(request.voices),
             "chunks": [{"speaker": t.chunk.speaker, "name": names.get(t.chunk.speaker, ""),
@@ -180,5 +182,5 @@ def generate_drama3_vllm(request, *, runtime, free_gpu: Callable[[], None], hf_t
     note = (f"\n{len(failed)} chunk(s) kept their best take after every retry failed a check: "
             + "; ".join(f"chunk {t.chunk.index + 1} ({names.get(t.chunk.speaker, t.chunk.speaker)}) "
                         f"{t.check.reason}" for t in failed)) if failed else ""
-    yield GenerationUpdate(fresh_audio(result), f"Drama 3 (vLLM-Omni) complete · {len(chunks)} chunks · seed {seed} · "
+    yield GenerationUpdate(fresh_audio(result), f"Drama 3 ({label}) complete · {len(chunks)} chunks · seed {seed} · "
                                         f"{len(joined) / rate:.1f}s in {time.monotonic() - started:.0f}s{note}")

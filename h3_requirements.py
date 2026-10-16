@@ -48,6 +48,9 @@ DRAMA3_VLLM_OMNI_REPO = "https://github.com/vllm-project/vllm-omni.git"
 DRAMA3_VLLM_OMNI_REF = "c4871a09b006507ed38e3f4eb2e5db81d18f1191"
 DRAMA3_VLLM_TORCH_BACKEND = "cu130"
 DRAMA3_VLLM_PYTHON = "3.12"
+# Alternative parallel Drama 3 backend for comparison: SGLang-Omni v0.1.8.
+DRAMA3_SGLANG_OMNI_REPO = "https://github.com/sgl-project/sglang-omni.git"
+DRAMA3_SGLANG_OMNI_REF = "870d77446b3fae6e4f4f2a6964f7eae2f75e663a"
 DRAMA3_HF_REPO = "fishaudio/drama-3"
 DRAMA3_HF_REVISION = "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
 COMFY_KITCHEN_VERSION = "0.2.37"
@@ -273,6 +276,37 @@ def drama3_vllm_install_commands(venv: str | Path, uv: str | list[str] = "uv") -
         [*uv, "pip", "install", "--python", python,
          f"vllm-omni @ git+{DRAMA3_VLLM_OMNI_REPO}@{DRAMA3_VLLM_OMNI_REF}"],
         [python, "-c", DRAMA3_VLLM_SMOKE],
+    ]
+
+
+DRAMA3_SGLANG_SMOKE = (
+    "import importlib.metadata as m, torch; "
+    "assert torch.version.cuda, 'SGLang-Omni installed CPU-only Torch'; "
+    "print('sglang', m.version('sglang'), 'sglang-omni', m.version('sglang-omni'), 'cuda', torch.version.cuda)"
+)
+
+
+def drama3_sglang_fingerprint() -> str:
+    """Identifies an installed SGLang-Omni environment built from these exact pins."""
+    import hashlib
+
+    pins = "|".join((DRAMA3_VLLM_PYTHON, DRAMA3_SGLANG_OMNI_REPO, DRAMA3_SGLANG_OMNI_REF,
+                     DRAMA3_VLLM_TORCH_BACKEND))
+    return hashlib.sha256(pins.encode("utf-8")).hexdigest()
+
+
+def drama3_sglang_install_commands(venv: str | Path, uv: str | list[str] = "uv") -> list[list[str]]:
+    """Install steps for the SGLang-Omni Drama 3 environment (image build and first use)."""
+    base = venv if isinstance(venv, PurePath) else Path(venv)
+    python = str(base / "bin" / "python")
+    uv = [uv] if isinstance(uv, str) else list(uv)
+    return [
+        [*uv, "venv", "--python", DRAMA3_VLLM_PYTHON, "--seed", str(base)],
+        # SGLang pins Torch 2.13; name the CUDA wheel because builders have no GPU.
+        [*uv, "pip", "install", "--python", python, "--prerelease=allow",
+         f"--torch-backend={DRAMA3_VLLM_TORCH_BACKEND}",
+         f"sglang-omni[fishaudio] @ git+{DRAMA3_SGLANG_OMNI_REPO}@{DRAMA3_SGLANG_OMNI_REF}"],
+        [python, "-c", DRAMA3_SGLANG_SMOKE],
     ]
 
 

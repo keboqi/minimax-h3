@@ -202,10 +202,11 @@ def build_drama3_view(root, speaker_names=()):
                 with gr.Accordion("Speech and memory settings", open=False):
                     backend = gr.Radio(list(DRAMA3_BACKENDS), value=DRAMA3_BACKENDS[0], label="Backend",
                         info="ComfyUI generates the whole text in one take and can invent voices. "
-                             "vLLM-Omni (Linux) is for long scripts where every speaker has a voice below: "
-                             "it sends each speaker's lines with that speaker's clip, in parallel, checks each "
-                             "take and retries silent or runaway ones. First use installs its environment and "
-                             "downloads a 44 GB checkpoint; between jobs it sleeps to free the GPU.")
+                             "vLLM-Omni and SGLang-Omni (Linux) are for long scripts where every speaker has a "
+                             "voice below: each speaker's lines go out with that speaker's clip, in parallel, and "
+                             "silent or runaway takes are retried. First use installs the backend and downloads a "
+                             "44 GB checkpoint; the server then stays loaded between Drama 3 jobs and stops when "
+                             "another engine needs the GPU.")
                     with gr.Group(visible=False) as vllm_settings:
                         parallel = gr.Slider(1, 32, value=8, step=1, label="Parallel requests")
                         retries = gr.Slider(0, 4, value=2, step=1, label="Retries per chunk",
@@ -223,8 +224,8 @@ def build_drama3_view(root, speaker_names=()):
                             info="In VRAM requires room for the whole model plus working memory.")
                         cache = gr.Slider(0, 256, value=0, step=0.5, label="Expert VRAM cache (GB, 0 automatic)")
                     backend.change(
-                        lambda choice: (gr.update(visible=choice == "vLLM-Omni"),
-                                        gr.update(visible=choice != "vLLM-Omni")),
+                        lambda choice: (gr.update(visible=choice != "ComfyUI"),
+                                        gr.update(visible=choice == "ComfyUI")),
                         inputs=backend, outputs=[vllm_settings, comfy_settings],
                         queue=False, show_progress="hidden", api_name=False,
                     )

@@ -13,8 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from h3_app.drama3_vllm import audio, environment, generate, server
-from h3_app.drama3_vllm.planner import expected_seconds, parse_turns, plan_chunks, spoken_text
+from h3_app.drama3_serving import audio, environment, generate, server
+from h3_app.drama3_serving.planner import expected_seconds, parse_turns, plan_chunks, spoken_text
 from h3_app.errors import H3Error
 from h3_app.generation.optional_engines import validate_request
 from h3_app.generation.requests import Drama3Request
@@ -111,6 +111,15 @@ class EnvironmentTests(unittest.TestCase):
                 patch("importlib.util.find_spec", return_value=None):
             self.assertIsNone(environment.uv_command())
 
+    def test_sglang_install_pins_the_release_with_fishaudio_extras(self):
+        from h3_requirements import drama3_sglang_install_commands
+
+        commands = drama3_sglang_install_commands(PurePosixPath("/opt/h3/drama3-sglang-venv"))
+        self.assertIn("--prerelease=allow", commands[1])
+        self.assertIn("--torch-backend=cu130", commands[1])
+        self.assertTrue(commands[1][-1].startswith("sglang-omni[fishaudio] @ git+https://github.com/sgl-project/sglang-omni.git@870d774"))
+        self.assertEqual(environment.default_venv(Path("/app"), "sglang"), Path("/app/h3/drama3-sglang-venv"))
+
     def test_readiness_requires_the_current_fingerprint(self):
         with tempfile.TemporaryDirectory() as root:
             venv = Path(root) / "venv"
@@ -121,6 +130,7 @@ class EnvironmentTests(unittest.TestCase):
             self.assertFalse(environment.is_ready(venv))
             (venv / environment.READY_MARKER).write_text(environment.fingerprint())
             self.assertTrue(environment.is_ready(venv))
+            self.assertFalse(environment.is_ready(venv, "sglang"))  # each backend has its own pins
 
     def test_install_env_scrubs_inherited_python_settings(self):
         with patch.dict("os.environ", {"PYTHONPATH": "/comfy", "VIRTUAL_ENV": "/main"}):
@@ -144,70 +154,134 @@ class ServerTests(unittest.TestCase):
         no_gpu_query.start()
         self.addCleanup(no_gpu_query.stop)
 
-    def test_command_enables_sleep_and_local_reference_media(self):
-        command = server.Drama3VllmServer(self.settings).command(Path("deploy.json"))
+    def settings_for(self, **changes):
+        return server.ServerSettings(**{**self.settings.__dict__, **changes})
+
+    def test_vllm_command_uses_local_media_and_sleep_mode_only_when_requested(self):
+        command = server.VllmOmniServer(self.settings).command(Path("deploy.json"))
         self.assertIn("--omni", command)
-        self.assertIn("--enable-sleep-mode", command)
+        self.assertNotIn("--enable-sleep-mode", command)
         self.assertEqual(command[command.index("--allowed-local-media-path") + 1], str(self.settings.media_dir))
         self.assertEqual(command[command.index("--served-model-name") + 1], server.SERVED_MODEL)
         self.assertTrue(str(self.settings.model_dir).endswith("fishaudio--drama-3--e0a9218aa488"))
+        sleepy = server.VllmOmniServer(self.settings_for(release="sleep")).command(Path("deploy.json"))
+        self.assertIn("--enable-sleep-mode", sleepy)
+
+    def test_deploy_config_captures_only_the_batch_sizes_used(self):
+        self.assertIn("cudagraph_capture_sizes=sizes", server.DEPLOY_CONFIG_SCRIPT)
+        self.assertIn('if size <= settings["max_seqs"]', server.DEPLOY_CONFIG_SCRIPT)
+
+    def test_sglang_command_and_payload(self):
+        settings = self.settings_for(kind="sglang", port=8096)
+        instance = server.SglangOmniServer(settings)
+        command = instance.command()
+        self.assertEqual(command[1:3], ["serve", "--model-path"])
+        self.assertEqual(command[command.index("--tts_engine.gpu_memory_fraction") + 1], "0.55")
+        self.assertEqual(command[command.index("--vocoder.gpu_memory_fraction") + 1], "0.08")
+        self.assertEqual(command[command.index("--tts_engine.factory.max_running_requests") + 1], "32")
+        self.assertEqual(settings.runtime_dir, settings.data_dir / "sglang")
+        payload = instance.payload(text="Hi.", reference=Path(self.temp.name) / "a.wav", transcript="Ref.", seed=7,
+                                   max_new_tokens=300, sampling={"temperature": 1.0, "top_p": 0.9, "top_k": 30})
+        self.assertEqual(payload["references"], [{"audio_path": str((Path(self.temp.name) / "a.wav").resolve()),
+                                                  "text": "Ref."}])
+        self.assertEqual((payload["top_k"], payload["seed"], payload["max_new_tokens"]), (30, 7, 300))
 
     def test_settings_come_from_environment(self):
         runtime = SimpleNamespace(script_dir=Path("/app"), comfy_dir=Path("/app/ComfyUI"))
         with patch.dict("os.environ", {"H3_DRAMA3_VLLM_DATA": "/data/d3", "H3_DRAMA3_VLLM_ENGINE_MEMORY": "0.6",
-                                       "H3_DRAMA3_VLLM_CUDA_MPS": "true"}):
-            settings = server.ServerSettings.from_environment(runtime)
-        self.assertEqual(settings.data_dir, Path("/data/d3"))
-        self.assertEqual((settings.engine_memory, settings.cuda_mps), (0.6, True))
-        self.assertEqual(settings.model_root, Path("/app/ComfyUI/models/drama3_vllm"))
+                                       "H3_DRAMA3_VLLM_CUDA_MPS": "true", "H3_DRAMA3_VLLM_RELEASE": "sleep"}):
+            vllm = server.ServerSettings.from_environment(runtime)
+            sglang = server.ServerSettings.from_environment(runtime, "sglang")
+        self.assertEqual(vllm.data_dir, Path("/data/d3"))
+        self.assertEqual((vllm.engine_memory, vllm.cuda_mps, vllm.release), (0.6, True, "sleep"))
+        self.assertEqual(vllm.model_root, Path("/app/ComfyUI/models/drama3_vllm"))
+        self.assertEqual((sglang.kind, sglang.port, sglang.release), ("sglang", 8096, "stop"))
+        self.assertEqual(sglang.model_dir, vllm.model_dir)  # one checkpoint for both backends
 
-    def test_wake_frees_the_gpu_first_and_sleep_parks_both_stages(self):
-        instance = server.Drama3VllmServer(self.settings)
-        calls = []
+    def test_a_loaded_server_is_reused_without_touching_comfyui(self):
+        instance = server.VllmOmniServer(self.settings)
         instance.running = lambda: True
         instance.healthy = lambda timeout=2.0: True
-        instance.sleeping = True
-        instance._post = lambda path, payload, timeout=120: calls.append((path, payload)) or {"status": "SUCCESS"}
-        instance.ensure_awake(lambda: calls.append("free"))
-        self.assertEqual(calls, ["free", ("/v1/omni/wakeup", {"stage_ids": [0, 1]})])
-        self.assertFalse(instance.sleeping)
-        instance.sleep()
-        self.assertEqual(calls[-1], ("/v1/omni/sleep", {"stage_ids": [0, 1], "level": 1}))
-        self.assertTrue(instance.sleeping)
+        free = MagicMock()
+        instance.ensure_ready(free)
+        free.assert_not_called()
 
     def test_cold_start_frees_gpu_then_waits_for_health(self):
-        instance = server.Drama3VllmServer(self.settings)
+        instance = server.SglangOmniServer(self.settings_for(kind="sglang"))
         order = []
         instance._start = lambda: order.append("start")
         instance._wait_healthy = lambda progress: order.append("ready")
-        instance.ensure_awake(lambda: order.append("free"))
+        instance.ensure_ready(lambda: order.append("free"))
         self.assertEqual(order, ["free", "start", "ready"])
 
+    def test_release_stops_by_default_and_sleeps_only_when_configured(self):
+        instance = server.VllmOmniServer(self.settings)
+        instance.stop = MagicMock()
+        instance.release()
+        instance.stop.assert_called_once()
+        sleepy = server.VllmOmniServer(self.settings_for(release="sleep"))
+        sleepy.running = lambda: True
+        sleepy._post = MagicMock(return_value={"status": "SUCCESS"})
+        sleepy.release()
+        sleepy._post.assert_called_once_with("/v1/omni/sleep", {"stage_ids": [0, 1], "level": 1}, timeout=300)
+        self.assertTrue(sleepy.sleeping)
+
+    def test_a_woken_server_that_does_not_respond_is_restarted(self):
+        instance = server.VllmOmniServer(self.settings_for(release="sleep"))
+        instance.running = lambda: True
+        instance.sleeping = True
+        instance._post = MagicMock(return_value={"status": "SUCCESS"})
+        instance._responds = MagicMock(return_value=False)
+        instance.stop = MagicMock()
+        instance._start = MagicMock()
+        instance._wait_healthy = MagicMock()
+        instance.healthy = lambda timeout=2.0: False
+        instance.ensure_ready(lambda: None)
+        instance._post.assert_called_once_with("/v1/omni/wakeup", {"stage_ids": [0, 1]}, timeout=600)
+        instance.stop.assert_called()
+        instance._start.assert_called_once()
+        healthy_wake = server.VllmOmniServer(self.settings_for(release="sleep"))
+        healthy_wake.running = lambda: True
+        healthy_wake.sleeping = True
+        healthy_wake._post = MagicMock(return_value={"status": "SUCCESS"})
+        healthy_wake._responds = MagicMock(return_value=True)
+        healthy_wake._start = MagicMock()
+        healthy_wake.ensure_ready(lambda: None)
+        healthy_wake._start.assert_not_called()
+
     def test_deep_gemm_is_off_unless_requested(self):
-        env = server.Drama3VllmServer(self.settings).server_env()
+        env = server.VllmOmniServer(self.settings).server_env()
         self.assertEqual((env["VLLM_USE_DEEP_GEMM"], env["VLLM_MOE_USE_DEEP_GEMM"]), ("0", "0"))
-        enabled = server.ServerSettings(**{**self.settings.__dict__, "deep_gemm": True})
-        self.assertNotIn("VLLM_USE_DEEP_GEMM", server.Drama3VllmServer(enabled).server_env())
+        self.assertNotIn("VLLM_USE_DEEP_GEMM", server.VllmOmniServer(self.settings_for(deep_gemm=True)).server_env())
 
     def test_start_is_refused_when_the_gpu_is_still_occupied(self):
-        instance = server.Drama3VllmServer(self.settings)
+        instance = server.VllmOmniServer(self.settings)
         instance._start = MagicMock()
         with patch.object(server, "gpu_memory", return_value=(1024.0, 97280.0, "1, python, 94000 MiB")), \
                 self.assertRaisesRegex(H3Error, "Still holding VRAM: 1, python, 94000 MiB"):
-            instance.ensure_awake(lambda: None)
+            instance.ensure_ready(lambda: None)
         instance._start.assert_not_called()
         instance._wait_healthy = MagicMock()
         with patch.object(server, "gpu_memory", return_value=(90000.0, 97280.0, "")):
-            instance.ensure_awake(lambda: None)
+            instance.ensure_ready(lambda: None)
         instance._start.assert_called_once()
 
-    def test_failed_sleep_stops_the_server_so_the_gpu_is_released(self):
-        instance = server.Drama3VllmServer(self.settings)
-        instance.running = lambda: True
-        instance.stop = MagicMock()
-        instance._post = MagicMock(return_value=[{"status": "ERROR"}])
-        instance.sleep()
-        instance.stop.assert_called_once()
+    def test_other_engines_release_the_servers_when_they_take_the_gpu(self):
+        with patch.object(server, "release_all") as release_all:
+            server.release_for_job("drama3")
+            release_all.assert_not_called()
+            server.release_for_job("qwen_image21")
+            release_all.assert_called_once_with()
+
+    def test_the_job_lock_runs_claim_hooks_before_the_job(self):
+        from h3_app.jobs import JobCoordinator
+
+        coordinator = JobCoordinator()
+        seen = []
+        coordinator.add_gpu_claim_hook(seen.append)
+        coordinator.add_gpu_claim_hook(seen.append)  # registered once
+        with coordinator.run("owner", "flux3"):
+            self.assertEqual(seen, ["flux3"])
 
 
 class GenerateTests(unittest.TestCase):
@@ -222,23 +296,26 @@ class GenerateTests(unittest.TestCase):
             clip.write_bytes(audio.encode_wav(tone(1.0), RATE))
             self.clips[speaker] = str(clip)
 
-    def run_route(self, request, speech):
+    def run_route(self, request, speech, server_class=server.VllmOmniServer):
         fake = MagicMock()
         fake.speech.side_effect = speech
+        fake.payload.side_effect = server_class(None).payload
         with patch.dict("os.environ", {"H3_DRAMA3_VLLM_DATA": str(Path(self.temp.name) / "data")}), \
                 patch.object(generate, "shared_server", return_value=fake), \
+                patch.object(generate, "release_all") as release_all, \
                 patch.object(generate.environment, "prepare"), patch.object(generate, "ensure_model"), \
                 patch.object(generate, "write_snapshot") as snapshot:
-            updates = list(generate.generate_drama3_vllm(request, runtime=self.runtime, free_gpu=lambda: None,
-                                                          seed=42))
+            updates = list(generate.generate_drama3_served(request, runtime=self.runtime, free_gpu=lambda: None,
+                                                            seed=42))
+        fake.release_all = release_all
         return fake, updates, snapshot
 
-    def request(self, text, **overrides):
+    def request(self, text, backend="vLLM-Omni", **overrides):
         voices = tuple((speaker, path, f"<|speaker:{speaker}|> Reference {speaker}.") for speaker, path in self.clips.items())
-        return Drama3Request(text, voices=voices, backend="vLLM-Omni", parallel=4, retries=2,
+        return Drama3Request(text, voices=voices, backend=backend, parallel=4, retries=2,
                              voice_names=((0, "Alice"), (1, "")), **overrides)
 
-    def test_each_chunk_uses_its_speakers_voice_and_the_result_is_joined_in_order(self):
+    def test_each_chunk_uses_its_speakers_voice_and_the_server_stays_loaded(self):
         script = "<|speaker:0|> Hello there, friend.\n<|speaker:1|> [laughs] Hi Alice.\n<|speaker:0|> Ready to go?"
         fake, updates, snapshot = self.run_route(self.request(script),
                                                  lambda payload: float_wav(tone(expected_seconds(payload["input"]))))
@@ -250,8 +327,9 @@ class GenerateTests(unittest.TestCase):
             self.assertEqual(payload["ref_text"], f"Reference {speaker}.")
             self.assertEqual(payload["extra_params"], {"temperature": 1.0, "top_p": 0.9, "top_k": 30})
             self.assertLessEqual(payload["max_new_tokens"], 8192)
-        fake.ensure_awake.assert_called_once()
-        fake.sleep.assert_called_once()
+        fake.ensure_ready.assert_called_once()
+        fake.release.assert_not_called()  # kept loaded for the next Drama 3 job
+        fake.release_all.assert_called_once_with(except_kind="vllm")
         self.assertIn("Alice: 2, Speaker 1: 1", updates[0].status)
         result = Path(updates[-1].output["value"])
         self.assertEqual(updates[-1].output["playback_position"], 0)
@@ -259,6 +337,16 @@ class GenerateTests(unittest.TestCase):
         chunks = snapshot.call_args.args[1]["settings"]["chunks"]
         self.assertEqual([c["speaker"] for c in chunks], [0, 1, 0])
         self.assertEqual(chunks[0]["name"], "Alice")
+
+    def test_sglang_route_sends_references_inline(self):
+        fake, updates, snapshot = self.run_route(
+            self.request("<|speaker:1|> Hi there.", backend="SGLang-Omni"),
+            lambda payload: float_wav(tone(2.0)), server_class=server.SglangOmniServer)
+        payload = fake.speech.call_args.args[0]
+        self.assertEqual(payload["references"][0]["text"], "Reference 1.")
+        self.assertEqual(payload["temperature"], 1.0)
+        fake.release_all.assert_called_once_with(except_kind="sglang")
+        self.assertEqual(snapshot.call_args.args[1]["settings"]["backend"], "SGLang-Omni")
 
     def test_silent_takes_are_retried_with_new_seeds(self):
         seeds = []
@@ -272,19 +360,18 @@ class GenerateTests(unittest.TestCase):
         self.assertNotEqual(seeds[0], seeds[1])
         self.assertEqual(snapshot.call_args.args[1]["settings"]["chunks"][0]["attempts"], 2)
 
-    def test_server_sleeps_even_when_a_request_fails(self):
-        fake = None
-
+    def test_request_errors_surface(self):
         def speech(payload):
             raise H3Error("boom")
 
         with self.assertRaisesRegex(H3Error, "boom"):
-            fake, _updates, _snapshot = self.run_route(self.request("<|speaker:0|> Hello."), speech)
+            self.run_route(self.request("<|speaker:0|> Hello."), speech)
 
     def test_every_speaker_needs_a_reference_voice(self):
-        request = self.request("<|speaker:0|> Hi.\n<|speaker:3|> Who am I?")
-        with self.assertRaisesRegex(H3Error, r"<\|speaker:3\|>"):
-            validate_request(request)
+        for backend in ("vLLM-Omni", "SGLang-Omni"):
+            request = self.request("<|speaker:0|> Hi.\n<|speaker:3|> Who am I?", backend=backend)
+            with self.subTest(backend=backend), self.assertRaisesRegex(H3Error, r"<\|speaker:3\|>"):
+                validate_request(request)
         validate_request(Drama3Request("<|speaker:0|> Hi.\n<|speaker:3|> Who am I?"))  # ComfyUI invents voices
 
 
