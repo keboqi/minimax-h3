@@ -527,6 +527,8 @@ def generated_image_family(image: str | Path, *, runtime: RuntimeConfig) -> str:
         lowered = "/".join(relative.parts).lower()
         if "qwen_image21" in resolved.name.lower():
             return "Qwen Image 2.1"
+        if resolved.name.lower().startswith("flux3_"):
+            return "FLUX 3 Image Klein"
         if "/input_upscale/" in f"/{lowered}/":
             # CQ and SeedVR2 share this directory. Prefer provenance so older
             # CQ outputs also receive their actual processing family.
@@ -558,6 +560,8 @@ def generated_audio_family(audio: str | Path, *, runtime: RuntimeConfig) -> str:
         return "MiniMax Music 3"
     if "yue2" in name:
         return "YuE2"
+    if "drama3" in name:
+        return "Drama 3"
     outputs_root = runtime.outputs_dir.resolve()
     if resolved.is_relative_to(outputs_root):
         relative = resolved.relative_to(outputs_root)

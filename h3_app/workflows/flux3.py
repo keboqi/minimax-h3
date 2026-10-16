@@ -4,6 +4,10 @@ from h3_app.graph import Graph
 from h3_models import FLUX3_MODEL_CHOICES, MODEL_SPECS
 
 
+# top_k=1 decodes greedily, so the seed cannot change the caption. A constant
+# seed keeps the upsampler inputs identical across image-seed rerolls, letting
+# ComfyUI reuse the cached expansion instead of reloading the 9B upsampler.
+UPSAMPLER_SEED = 0
 UPSAMPLER_SYSTEM = (
     "Expand the user's image request into one detailed, self-contained scene caption. "
     "Preserve the requested subjects, counts, relationships, text and style. Describe "
@@ -20,7 +24,8 @@ def flux3_model_keys(model_choice, expand_prompt):
 
 
 def build_flux3_graph(*, model_choice, prompt, reference_images=(), width=1024,
-                      height=1024, seed=0, steps=16, expand_prompt=True):
+                      height=1024, seed=0, steps=16, expand_prompt=True,
+                      output_stamp="0", output_nonce="flux3"):
     flux3_model_keys(model_choice, expand_prompt)
     if reference_images and expand_prompt:
         raise ValueError("For editing, disable prompt expansion and supply a complete scene caption with the edit included.")
@@ -38,7 +43,7 @@ def build_flux3_graph(*, model_choice, prompt, reference_images=(), width=1024,
                          "sampling_mode.temperature": 1.0, "sampling_mode.top_k": 1,
                          "sampling_mode.top_p": 0.95, "sampling_mode.min_p": 0.0,
                          "sampling_mode.repetition_penalty": 1.05,
-                         "sampling_mode.presence_penalty": 1.5, "sampling_mode.seed": seed,
+                         "sampling_mode.presence_penalty": 1.5, "sampling_mode.seed": UPSAMPLER_SEED,
                      })
     positive = add("CLIPTextEncode", clip=clip, text=prompt)
     negative = add("ConditioningZeroOut", conditioning=positive)
@@ -54,5 +59,5 @@ def build_flux3_graph(*, model_choice, prompt, reference_images=(), width=1024,
                   latent_image=latent, seed=seed, steps=steps, cfg=1.0,
                   sampler_name="euler", scheduler="simple", denoise=1.0)
     image = add("VAEDecode", samples=samples, vae=vae)
-    add("SaveImage", images=image, filename_prefix="flux3/FLUX3")
+    add("SaveImage", images=image, filename_prefix=f"h3/image_staging/flux3_{output_stamp}_{output_nonce}")
     return g.nodes

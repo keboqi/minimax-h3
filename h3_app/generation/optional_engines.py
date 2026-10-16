@@ -118,7 +118,9 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
         values = {**asdict(request), "seed": seed}
         if image:
             values["width"], values["height"] = resolve_flux3_dimensions(request, input_dir=runtime.input_dir)
-            graph = build_flux3_graph(**{k: v for k, v in values.items() if k != "edit_size"})
+            # The shared image resolver only reads the managed staging directory.
+            graph = build_flux3_graph(**{k: v for k, v in values.items() if k != "edit_size"},
+                                      output_stamp=str(int(time.time())), output_nonce=uuid.uuid4().hex[:8])
         else:
             graph = build_drama3_graph(**values)
         info = services.execution.object_info()

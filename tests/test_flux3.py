@@ -63,5 +63,19 @@ class Flux3EditSizeTests(unittest.TestCase):
         self.assertEqual((latent["inputs"]["width"], latent["inputs"]["height"]), (1536, 1024))
 
 
+    def test_upsampler_seed_is_constant_so_rerolls_reuse_the_expansion(self):
+        def upsampler(seed):
+            graph = build_flux3_graph(model_choice="BF16", prompt="a fox", seed=seed)
+            return next(n for n in graph.values() if n["class_type"] == "TextGenerate")["inputs"]
+        self.assertEqual(upsampler(1), upsampler(987654321))
+        self.assertEqual(upsampler(1)["sampling_mode.top_k"], 1)
+
+    def test_image_is_saved_where_the_shared_resolver_and_gallery_look(self):
+        graph = build_flux3_graph(model_choice="BF16", prompt="x", expand_prompt=False,
+                                  output_stamp="123", output_nonce="abcd")
+        save = next(n for n in graph.values() if n["class_type"] == "SaveImage")
+        self.assertEqual(save["inputs"]["filename_prefix"], "h3/image_staging/flux3_123_abcd")
+
+
 if __name__ == "__main__":
     unittest.main()
