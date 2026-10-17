@@ -967,7 +967,8 @@ and **Unload all models** discards it.
 Sleep requires **Linux x86_64 and NVIDIA driver 610+** (for Omni's cross-process
 CUDA IPC). The driver belongs to the host, so where it is older (as on Colab
 at the time of writing) the app logs the detected version and uses
-stop/restart. The app downloads a SHA-256-verified, commit-pinned NVIDIA
+stop/restart. `run_h3.sh` (also used by Colab) prints an `SGLang sleep:` line
+at startup saying which mode applies. The app downloads a SHA-256-verified, commit-pinned NVIDIA
 [`cuda-checkpoint`](https://github.com/NVIDIA/cuda-checkpoint/tree/00d5cce84c628088d6caa203fc4af40c1538b6f7)
 helper into the persistent cache and launches Omni in a fresh checkpoint job.
 Workers are found through GPU device handles in their `/proc` process group,

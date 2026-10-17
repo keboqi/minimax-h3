@@ -71,6 +71,34 @@ ensure_ffmpeg() {
   command -v ffprobe >/dev/null 2>&1 || die "ffmpeg installation did not provide ffprobe"
 }
 
+# Report up front whether Drama 3's SGLang server can sleep (CUDA checkpoint)
+# or will stop/restart. The host owns the driver, so this only informs.
+report_sglang_sleep() {
+  local mode="${H3_DRAMA3_SGLANG_SLEEP:-auto}"
+  if [[ "${mode,,}" == "off" ]]; then
+    log "SGLang sleep: off (H3_DRAMA3_SGLANG_SLEEP=off); Drama 3 SGLang will stop/restart"
+    return
+  fi
+  if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
+    log "SGLang sleep: unavailable (requires Linux x86_64); Drama 3 SGLang will stop/restart"
+    return
+  fi
+  local versions
+  versions="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null)" || versions=""
+  if [[ -z "$versions" ]]; then
+    log "SGLang sleep: unavailable (nvidia-smi not found); Drama 3 SGLang will stop/restart"
+    return
+  fi
+  local version
+  while read -r version; do
+    if (( ${version%%.*} < 610 )); then
+      log "SGLang sleep: unavailable (NVIDIA driver $version; 610+ needed for CUDA IPC checkpointing); Drama 3 SGLang will stop/restart"
+      return
+    fi
+  done <<< "$versions"
+  log "SGLang sleep: available (NVIDIA driver ${versions//$'\n'/, })"
+}
+
 environment_is_current() {
   [[ -d "$COMFY_DIR/.git" ]] || return 1
 
@@ -319,6 +347,7 @@ if [[ "$PYTHON_BIN" == */.venv/bin/python3 ]]; then
 fi
 log "Runtime Python: $PYTHON_BIN"
 ensure_ffmpeg
+report_sglang_sleep
 
 if [[ ! -f "$COMFY_DIR/main.py" || ! -f "$MODELS_CONFIG" ]]; then
   log "Installation or models are missing; running automatic setup"
