@@ -1,6 +1,7 @@
 """Managed SGLang-Omni Drama 3 server, kept loaded between TTS jobs.
 
-Other engines stop the server to reclaim VRAM; the next TTS job restarts it.
+Other engines checkpoint idle CUDA workers to RAM when supported, otherwise
+stop the server. The next TTS job restores the workers or restarts the server.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from h3_requirements import DRAMA3_HF_REPO, DRAMA3_HF_REVISION
 
 from h3_app.errors import H3Error
 
-from . import environment
+from . import checkpoint, environment
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -39,6 +40,11 @@ class ServerSettings:
     max_seqs: int = 32
     start_timeout: float = 1800.0
     request_timeout: float = 900.0
+    sleep_mode: str = "auto"
+
+    def __post_init__(self):
+        if self.sleep_mode not in {"auto", "off"}:
+            raise ValueError("H3_DRAMA3_SGLANG_SLEEP must be auto or off")
 
     @classmethod
     def from_environment(cls, runtime) -> "ServerSettings":
@@ -51,6 +57,7 @@ class ServerSettings:
             engine_memory=float(env.get("H3_DRAMA3_SGLANG_ENGINE_MEMORY", "0.55")),
             codec_memory=float(env.get("H3_DRAMA3_SGLANG_CODEC_MEMORY", "0.08")),
             max_seqs=int(env.get("H3_DRAMA3_SGLANG_MAX_SEQS", "32")),
+            sleep_mode=env.get("H3_DRAMA3_SGLANG_SLEEP", "auto").lower(),
         )
 
     @property
@@ -146,6 +153,16 @@ class SglangOmniServer:
         self.log_path: Path | None = None
         self._log = None
         self._lock = threading.RLock()
+        self._checkpoint_helper: Path | None = None
+        self._checkpoint_baseline = 0
+        self._checkpoint: checkpoint.CudaCheckpoint | None = None
+        self._sleep_disabled = False
+        self._active_requests = 0
+        self._uncertain_request = False
+
+    @property
+    def sleeping(self) -> bool:
+        return self._checkpoint is not None
 
     @property
     def base_url(self) -> str:
@@ -206,6 +223,18 @@ class SglangOmniServer:
         self.log_path = logs / f"sglang-omni-{time.strftime('%Y%m%d-%H%M%S')}.log"
         self._log = self.log_path.open("ab", buffering=0)
         command = self.command()
+        self._checkpoint_helper = None
+        self._checkpoint_baseline = 0
+        if settings.sleep_mode == "auto" and not self._sleep_disabled:
+            try:
+                self._checkpoint_helper = checkpoint.prepare_helper(settings.runtime_dir / "cache")
+                self._checkpoint_baseline = checkpoint.device_memory()[0]
+                # A fresh driver job per launch is required for inter-worker IPC.
+                command = [str(self._checkpoint_helper), "--launch-job", *command]
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError, requests.RequestException) as exc:
+                self._sleep_disabled = True
+                self.log_line(f"Sleep unavailable; using stop/restart: {exc}")
+        self._uncertain_request = False
         self.log_line(f"Starting {self.label}: {' '.join(command)}")
         self.process = subprocess.Popen(command, env=self.server_env(), stdin=subprocess.DEVNULL,
                                         stdout=self._log, stderr=subprocess.STDOUT, start_new_session=True)
@@ -244,35 +273,109 @@ class SglangOmniServer:
                       f"Last log lines:\n{self.log_tail()}")
 
     def ensure_ready(self, free_gpu: Callable[[], None], progress: Callable[[str], None] = lambda _m: None) -> None:
-        """Reuse a loaded server; otherwise free ComfyUI's VRAM and start it."""
+        """Free ComfyUI's VRAM, then restore, reuse, or start the server."""
         with self._lock:
             free_gpu()
+            if self.sleeping and self.running():
+                # Leave it asleep on insufficient VRAM so the user can unload
+                # other models and retry without losing the checkpoint.
+                memory = gpu_memory()
+                if memory is not None and memory[0] * 2**20 < self._checkpoint.required_vram:
+                    raise H3Error("Not enough free GPU memory to wake SGLang; unload other models and retry.")
+                started = time.monotonic()
+                progress("Waking SGLang-Omni from host RAM")
+                try:
+                    self._checkpoint.wake()
+                    if not self.healthy(timeout=10):
+                        raise RuntimeError("Server is unhealthy after CUDA restore")
+                    self._checkpoint = None
+                    self.log_line(f"{self.label} awake after {time.monotonic() - started:.1f}s")
+                    return
+                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+                    self.log_line(f"Wake failed; restarting: {exc}")
+                    self._sleep_disabled = True
+                    self.stop()
             if self.running() and self.healthy():
                 return
+            # Also clean up surviving workers when the parent has exited.
+            if self.process is not None:
+                self.stop()
             self.check_free_vram(progress)
-            if self.running():
-                self.stop()  # alive but unhealthy: restart cleanly
+            try:
+                self._launch(progress)
+            except (H3Error, OSError):
+                # Only a checkpoint-wrapped launch earns an ordinary retry.
+                if self._sleep_disabled or self.settings.sleep_mode != "auto":
+                    raise
+                self._sleep_disabled = True
+                self.log_line("Checkpoint-enabled launch failed; retrying ordinary startup once")
+                self.check_free_vram(progress)
+                self._launch(progress)
+
+    def _launch(self, progress: Callable[[str], None]) -> None:
+        try:
             self._start()
             self._wait_healthy(progress)
+        except (H3Error, OSError):
+            self.stop()
+            raise
 
     def release(self) -> None:
-        """Give the GPU back to other engines."""
-        self.stop()
+        """Sleep an idle pipeline; a failed transition destroys the whole group."""
+        with self._lock:
+            if self._active_requests:
+                raise H3Error("SGLang is still generating speech; GPU release was refused.")
+            if self.sleeping and self.running():
+                return
+            if (self.running() and self._checkpoint_helper is not None
+                    and not self._uncertain_request and not self._sleep_disabled):
+                started = time.monotonic()
+                self.log_line("Putting SGLang-Omni to sleep; preserving CUDA state in host RAM")
+                self._checkpoint = checkpoint.CudaCheckpoint(
+                    self._checkpoint_helper, self.process.pid,
+                    baseline_used=self._checkpoint_baseline, log=self.log_line,
+                )
+                try:
+                    self._checkpoint.sleep()
+                    self.log_line(f"{self.label} asleep after {time.monotonic() - started:.1f}s; GPU state kept in host RAM")
+                    return
+                except (OSError, RuntimeError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+                    self.log_line(f"Sleep unavailable; stopping instead: {exc}")
+                    # Precondition misses (RAM headroom, topology) can pass on a
+                    # later launch; a driver transition failure is not retried.
+                    self._sleep_disabled = self._checkpoint.transition_started
+            self.stop()
 
     def stop(self) -> None:
         with self._lock:
-            process, self.process = self.process, None
-            if process is not None and process.poll() is None:
+            process = self.process
+            if process is not None:
                 self.log_line(f"Stopping {self.label}")
+                # A checkpoint failure can leave CUDA APIs locked. SIGTERM may
+                # deadlock cleanup; destroy the group instead of trying to reuse it.
+                force = self._checkpoint is not None and self._checkpoint.transition_started
                 try:
-                    os.killpg(process.pid, signal.SIGTERM)
+                    os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
                     process.wait(timeout=30)
                 except (ProcessLookupError, subprocess.TimeoutExpired):
+                    pass
+                # The parent may exit before its workers, including after a crash.
+                # Do not hand the GPU over until remaining group members are killed.
+                if os.name == "posix":
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
-                    process.wait()
+                    deadline = time.monotonic() + 10
+                    while checkpoint.group_processes(process.pid):
+                        if time.monotonic() >= deadline:
+                            raise H3Error("SGLang workers did not exit; GPU handoff was refused.")
+                        time.sleep(0.1)
+                process.wait(timeout=30)
+            self.process = None
+            self._checkpoint = None
+            self._checkpoint_helper = None
+            self._uncertain_request = False
             if self._log is not None:
                 self._log.close()
                 self._log = None
@@ -285,11 +388,24 @@ class SglangOmniServer:
             return "(no log)"
 
     def speech(self, payload: dict) -> bytes:
-        response = requests.post(f"{self.base_url}/v1/audio/speech", json=payload,
-                                 timeout=self.settings.request_timeout)
-        if not response.ok:
-            raise H3Error(f"{self.label} speech request failed (HTTP {response.status_code}): {response.text[:500]}")
-        return response.content
+        with self._lock:
+            if self.sleeping:
+                raise H3Error("SGLang is asleep; wake it before generating speech.")
+            self._active_requests += 1
+        try:
+            response = requests.post(f"{self.base_url}/v1/audio/speech", json=payload,
+                                     timeout=self.settings.request_timeout)
+            if not response.ok:
+                raise H3Error(f"{self.label} speech request failed (HTTP {response.status_code}): {response.text[:500]}")
+            return response.content
+        except requests.RequestException:
+            # A client timeout does not prove GPU work has stopped remotely.
+            with self._lock:
+                self._uncertain_request = True
+            raise
+        finally:
+            with self._lock:
+                self._active_requests -= 1
 
     def command(self) -> list[str]:
         settings = self.settings
@@ -299,6 +415,11 @@ class SglangOmniServer:
             "--tts_engine.gpu_memory_fraction", str(settings.engine_memory),
             "--vocoder.gpu_memory_fraction", str(settings.codec_memory),
             "--tts_engine.factory.max_running_requests", str(settings.max_seqs),
+            # Reduce per-process graph capture on restart; keep decode graphs.
+            "--tts_engine.engine.cuda_graph_backend_prefill", "disabled",
+            "--tts_engine.factory.first_frame_cuda_graph_max_requests", "8",
+            # This route requests complete WAVs, not streaming codec windows.
+            "--vocoder.factory.window_cuda_graphs", "false",
             # SGLang-Omni defaults to fishaudio/s2-pro's codec.pth from the Hub; the
             # checkpoint ships the byte-identical file (sha256 74fc41c5...), so use it
             # and keep startup offline.
@@ -336,7 +457,9 @@ def shared_server(settings: ServerSettings) -> SglangOmniServer:
 
 def release_for_job(family: str) -> None:
     """Other engines reclaim the GPU; ComfyUI TTS releases the server itself."""
-    if family != "drama3":
+    if family == "unload":
+        stop_all()
+    elif family != "drama3":
         release_all()
 
 
@@ -345,3 +468,10 @@ def release_all() -> None:
     with _SERVER_LOCK:
         if _SERVER is not None:
             _SERVER.release()
+
+
+def stop_all() -> None:
+    """Explicit unload/shutdown also discards sleeping CPU state."""
+    with _SERVER_LOCK:
+        if _SERVER is not None:
+            _SERVER.stop()

@@ -163,6 +163,11 @@ class ServerTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             defaults = server.ServerSettings.from_environment(runtime)
         self.assertEqual(defaults.port, 8096)
+        self.assertEqual(defaults.sleep_mode, "auto")
+        with patch.dict("os.environ", {"H3_DRAMA3_SGLANG_SLEEP": "off"}):
+            self.assertEqual(server.ServerSettings.from_environment(runtime).sleep_mode, "off")
+        with self.assertRaisesRegex(ValueError, "auto or off"):
+            self.settings_for(sleep_mode="invalid")
         self.assertEqual(defaults.data_dir, Path("/app/drama3-serving"))
         self.assertEqual(defaults.model_root, Path("/app/ComfyUI/models/drama3_serving"))
         with patch.dict("os.environ", {"H3_DRAMA3_SGLANG_DATA": "/data/d3",
@@ -238,6 +243,9 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(command[command.index("--tts_engine.gpu_memory_fraction") + 1], "0.55")
         self.assertEqual(command[command.index("--vocoder.gpu_memory_fraction") + 1], "0.08")
         self.assertEqual(command[command.index("--tts_engine.factory.max_running_requests") + 1], "32")
+        self.assertEqual(command[command.index("--tts_engine.engine.cuda_graph_backend_prefill") + 1], "disabled")
+        self.assertEqual(command[command.index("--tts_engine.factory.first_frame_cuda_graph_max_requests") + 1], "8")
+        self.assertEqual(command[command.index("--vocoder.factory.window_cuda_graphs") + 1], "false")
         self.assertEqual(command[command.index("--vocoder.factory.codec_path") + 1],
                          str(settings.model_dir / "codec.pth"))  # offline: no S2-Pro Hub download
         self.assertEqual(settings.runtime_dir, settings.data_dir)

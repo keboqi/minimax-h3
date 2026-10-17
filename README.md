@@ -921,7 +921,7 @@ Features in the Colab notebook:
 
 Drama 3 offers ComfyUI for one-take generation and SGLang-Omni for parallel,
 speaker-based chunks on Linux. SGLang uses an isolated environment, stays loaded
-between TTS jobs, and stops when another engine needs the GPU. The app defaults
+between TTS jobs, and sleeps or stops when another engine needs the GPU. The app defaults
 to 8 parallel chunks and no automatic retries; the server allows 32 concurrent
 requests. Chunk quality checks and advisories are skipped when retries is zero;
 enabling retries also enables those checks. Completed speech is saved as MP3.
@@ -947,9 +947,42 @@ SGLang configuration uses these environment variables:
 | `H3_DRAMA3_SGLANG_VENV` | `h3/drama3-sglang-venv` under the app directory |
 | `H3_DRAMA3_SGLANG_DATA` | `drama3-serving` beside ComfyUI |
 | `H3_DRAMA3_SGLANG_MODELS` | `ComfyUI/models/drama3_serving` |
+| `H3_DRAMA3_SGLANG_SLEEP` | `auto`; use `off` for stop/restart only |
 
 Previously downloaded copies of the pinned checkpoint and existing SGLang
 kernel caches in sibling serving directories are reused when available.
+To reduce graph capture work on startup, the launcher disables prefill CUDA
+graphs and streaming vocoder window graphs, and caps first-frame graph coverage
+at 8 requests. Decode CUDA graphs remain enabled; the server still allows 32
+concurrent requests by default. Prefill runs eagerly, which may increase time
+to first audio.
+
+When another engine needs the GPU, SGLang sleeps instead of stopping: NVIDIA
+CUDA process checkpointing moves every Omni worker's GPU state to host RAM while
+the processes stay alive, and the next speech job unloads ComfyUI and restores
+them. On Modal's RTX PRO 6000 this freed 73 GiB in 8.5s and woke in 5.8s,
+versus a 156s cold start. Sleeping state does not survive app/container exit,
+and **Unload all models** discards it.
+
+Sleep requires **Linux x86_64 and NVIDIA driver 610+** (for Omni's cross-process
+CUDA IPC). The app downloads a SHA-256-verified, commit-pinned NVIDIA
+[`cuda-checkpoint`](https://github.com/NVIDIA/cuda-checkpoint/tree/00d5cce84c628088d6caa203fc4af40c1538b6f7)
+helper into the persistent cache and launches Omni in a fresh checkpoint job.
+Workers are found through GPU device handles in their `/proc` process group,
+since Modal's gVisor attributes all GPU usage to PID 1 in NVML. Before sleeping
+the app requires free host/container RAM (cgroup limits included) of the
+server's GPU usage plus the greater of 10% or 2 GiB; afterwards it requires
+every worker to report `checkpointed` and device memory to return near the
+pre-launch baseline. Wake requires every worker to report `running` and the
+server to pass a health check.
+
+Otherwise the app stops SGLang as before and logs the reason. Missing RAM
+headroom is retried on the next launch; a failed driver transition disables
+sleep for the rest of the app session. Set `H3_DRAMA3_SGLANG_SLEEP=off` to opt
+out. `modal run tests/modal_drama3_checkpoint.py` is a manual model-free probe
+that checks three sleep/wake cycles with CUDA graph replay and IPC buffers on a
+temporary Modal GPU. In the server log, `asleep after` / `awake after` confirm
+a sleep/wake cycle; `Sleep unavailable` means an ordinary restart.
 
 ## Deploy with Modal
 

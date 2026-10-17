@@ -229,7 +229,7 @@ def build_drama3_view(root, speaker_names=()):
                              "SGLang-Omni (Linux) is for long scripts where every speaker has a "
                              "voice below: each speaker's lines go out with that speaker's clip, in parallel, and "
                              "near-silent takes can be retried when retries are enabled. First use installs the backend and downloads a "
-                             "44 GB checkpoint; the server then stays loaded between Drama 3 jobs and stops when "
+                             "44 GB checkpoint; the server then stays loaded between Drama 3 jobs and sleeps or stops when "
                              "another engine needs the GPU. SGLang-Omni does not support seed control.")
                     with gr.Group(visible=False) as served_settings:
                         parallel = gr.Slider(1, 32, value=8, step=1, label="Parallel requests")

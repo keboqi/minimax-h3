@@ -301,7 +301,7 @@ class Drama3VramHandoffTests(unittest.TestCase):
             self.assertIn("ComfyUI models", application.switch_drama3_backend("SGLang-Omni"))
             free.assert_called_once()
             release.assert_not_called()
-            self.assertIn("SGLang stopped", application.switch_drama3_backend("ComfyUI"))
+            self.assertIn("SGLang GPU memory released", application.switch_drama3_backend("ComfyUI"))
             release.assert_called_once()
         self.assertEqual([call.args for call in lease.call_args_list], [("drama3",), ("drama3",)])
 

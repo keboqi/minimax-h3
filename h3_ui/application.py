@@ -1874,12 +1874,12 @@ def switch_drama3_backend(backend: str) -> str:
     """Release the previous backend on an explicit selection, under the GPU lease."""
     if backend == "SGLang-Omni":
         free_comfy_vram()
-        return "ComfyUI models and cached Torch VRAM released. SGLang starts when you generate speech."
+        return "ComfyUI models and cached Torch VRAM released. SGLang starts or wakes when you generate speech."
     if backend == "ComfyUI":
         from h3_app.drama3_serving.server import release_all
 
         release_all()
-        return "SGLang stopped and its GPU memory released. ComfyUI is selected."
+        return "SGLang GPU memory released (sleep or stop). ComfyUI is selected."
     raise H3Error("Choose the ComfyUI or SGLang-Omni Drama 3 backend.")
 
 
