@@ -28,6 +28,7 @@ from h3_models import (
     DEFAULT_QWEN_IMAGE21_TEXT_ENCODER,
     MODEL_SPECS,
     QWEN_IMAGE21_LIGHTNING,
+    QWEN_IMAGE21_LIGHTNING_6STEP,
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_OFFICIAL_TURBO,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
@@ -694,6 +695,40 @@ class QwenImage21WorkflowTests(unittest.TestCase):
                                   ({"accelerator": "Spectrum (Quality)"}, "accelerator Off")):
             with self.subTest(settings=settings), self.assertRaisesRegex(ValueError, message):
                 self._build(**{"steps": 4, "turbo_variant": QWEN_IMAGE21_LIGHTNING, **settings})
+
+    def test_lightning_six_step_uses_reduced_strength_and_fixed_community_sigmas(self):
+        from h3_app.model_service import qwen_image21_model_keys
+
+        key = "qwen_image21_lightning_lora"
+        self.assertEqual(qwen_turbo_defaults(QWEN_IMAGE21_LIGHTNING_6STEP), (6, 1., "euler", "Off"))
+        self.assertEqual(qwen_image21_model_keys("BF16", "BF16", QWEN_IMAGE21_LIGHTNING_6STEP),
+                         (*qwen_image21_model_keys("BF16", "BF16"), key))
+        for references, match in (((), False), (("target.png", "ref.png"), True)):
+            with self.subTest(references=references):
+                graph = self._build(references, match, steps=6,
+                                    turbo_variant=QWEN_IMAGE21_LIGHTNING_6STEP)
+                lora_id, lora = self._by_type(graph, "LoraLoaderModelOnly")[0]
+                self.assertEqual(lora["inputs"]["lora_name"], MODEL_SPECS[key].local_name)
+                self.assertEqual(lora["inputs"]["strength_model"], .45)
+                sigma_id, sigma = self._by_type(graph, "ManualSigmas")[0]
+                self.assertEqual([float(value) for value in sigma["inputs"]["sigmas"].split(",")],
+                                 [1., .978453, .95418, .926626, .89508, .55, 0.])
+                sampler = self._by_type(graph, "SamplerCustomAdvanced")[0][1]
+                self.assertEqual(sampler["inputs"]["sigmas"], [sigma_id, 0])
+                guider = self._by_type(graph, "CFGGuider")[0][1]
+                self.assertEqual(guider["inputs"]["model"], [lora_id, 0])
+                nodes = required_qwen_image21_nodes(editing=bool(references), turbo=True,
+                                                     lightning=True, lightning_6step=True)
+                self.assertTrue({node["class_type"] for node in graph.values()} <= nodes)
+                self.assertNotIn("H3Qwen21LightningSigmas", nodes)
+                self.assertFalse(self._by_type(graph, "H3Qwen21LightningSigmas"))
+                if references:
+                    cache = self._by_type(graph, "QwenImage21Cache")[0][1]
+                    self.assertEqual(cache["inputs"]["device"], "off")
+        for settings, message in (({"steps": 4}, "requires 6 steps"),
+                                  ({"sampler_name": "heun"}, "Euler")):
+            with self.subTest(settings=settings), self.assertRaisesRegex(ValueError, message):
+                self._build(**{"steps": 6, "turbo_variant": QWEN_IMAGE21_LIGHTNING_6STEP, **settings})
 
     def test_lightning_requests_validate_and_execute_without_viggle_requirements(self):
         request = QwenImage21Request(

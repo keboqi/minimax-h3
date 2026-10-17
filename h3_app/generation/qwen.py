@@ -15,6 +15,7 @@ from typing import Iterator
 from PIL import Image
 from h3_models import (
     QWEN_IMAGE21_LIGHTNING,
+    QWEN_IMAGE21_LIGHTNING_6STEP,
     QWEN_IMAGE21_OFFICIAL_TURBO,
     QWEN_IMAGE21_TURBO_MODES,
 )
@@ -159,7 +160,8 @@ def generate_qwen_image21(
         ):
             raise H3Error(f"Unknown Qwen Turbo variant: {request.turbo_variant}")
         official_turbo = request.turbo_variant == QWEN_IMAGE21_OFFICIAL_TURBO
-        lightning = request.turbo_variant == QWEN_IMAGE21_LIGHTNING
+        lightning_6step = request.turbo_variant == QWEN_IMAGE21_LIGHTNING_6STEP
+        lightning = request.turbo_variant == QWEN_IMAGE21_LIGHTNING or lightning_6step
         viggle = turbo and not (official_turbo or lightning)
         reference_limit = 3 if viggle else 10
         separate_inputs = editing and bool(request.batch_edit_inputs)
@@ -258,6 +260,7 @@ def generate_qwen_image21(
                 nine_step=nine_step,
                 official_turbo=official_turbo,
                 lightning=lightning,
+                lightning_6step=lightning_6step,
                 scheduler=request.scheduler,
             )
             - available

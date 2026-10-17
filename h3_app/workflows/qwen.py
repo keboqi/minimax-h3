@@ -14,6 +14,7 @@ from h3_app.graph import Graph
 from h3_models import (
     MODEL_SPECS,
     QWEN_IMAGE21_LIGHTNING,
+    QWEN_IMAGE21_LIGHTNING_6STEP,
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_OFFICIAL_TURBO,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
@@ -27,6 +28,13 @@ QWEN_IMAGE21_OFFICIAL_TURBO_SIGMAS = (
     1.0, 0.978453, 0.95418, 0.926626,
     0.89508, 0.845148, 0.704534, 0.414568, 0.0,
 )
+# Community six-step Lightning schedule from
+# https://huggingface.co/lightx2v/Qwen-Image-2.1-Lightning/discussions/5.
+# Final sigmas, used with the Lightning LoRA at reduced strength.
+QWEN_IMAGE21_LIGHTNING_6STEP_SIGMAS = (
+    1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.55, 0.0,
+)
+QWEN_IMAGE21_LIGHTNING_6STEP_STRENGTH = 0.45
 
 
 def required_qwen_image21_nodes(
@@ -38,6 +46,7 @@ def required_qwen_image21_nodes(
     nine_step: bool = False,
     official_turbo: bool = False,
     lightning: bool = False,
+    lightning_6step: bool = False,
     scheduler: str = QWEN_IMAGE21_DYNAMIC_SCHEDULER,
 ) -> set[str]:
     nodes = {
@@ -71,7 +80,10 @@ def required_qwen_image21_nodes(
     if official_turbo:
         nodes |= {"LoraLoaderModelOnly", "ManualSigmas"}
     if lightning:
-        nodes |= {"LoraLoaderModelOnly", "H3Qwen21LightningSigmas"}
+        nodes |= {
+            "LoraLoaderModelOnly",
+            "ManualSigmas" if lightning_6step else "H3Qwen21LightningSigmas",
+        }
     if nine_step:
         nodes |= {"SplitSigmas", "DisableNoise"}
     return nodes
@@ -120,7 +132,8 @@ def build_qwen_image21_graph(
     )
     turbo = turbo_variant in QWEN_IMAGE21_TURBO_MODES
     official_turbo = turbo_variant == QWEN_IMAGE21_OFFICIAL_TURBO
-    lightning = turbo_variant == QWEN_IMAGE21_LIGHTNING
+    lightning_6step = turbo_variant == QWEN_IMAGE21_LIGHTNING_6STEP
+    lightning = turbo_variant == QWEN_IMAGE21_LIGHTNING or lightning_6step
     viggle = turbo and not (official_turbo or lightning)
     nine_step = viggle and QWEN_IMAGE21_TURBO_MODES[turbo_variant][1] == 9
     if turbo:
@@ -207,7 +220,9 @@ def build_qwen_image21_graph(
             "LoraLoaderModelOnly",
             model=sampled_model,
             lora_name=MODEL_SPECS[lora_key].local_name,
-            strength_model=1.0,
+            strength_model=(
+                QWEN_IMAGE21_LIGHTNING_6STEP_STRENGTH if lightning_6step else 1.0
+            ),
         )
         sampled_model = Graph.out(lora_model)
     accelerator_key = str(accelerator).strip().lower()
@@ -239,6 +254,11 @@ def build_qwen_image21_graph(
             sigmas = graph.add(
                 "ManualSigmas",
                 sigmas=", ".join(map(str, QWEN_IMAGE21_OFFICIAL_TURBO_SIGMAS)),
+            )
+        elif lightning_6step:
+            sigmas = graph.add(
+                "ManualSigmas",
+                sigmas=", ".join(map(str, QWEN_IMAGE21_LIGHTNING_6STEP_SIGMAS)),
             )
         elif lightning:
             sigmas = graph.add("H3Qwen21LightningSigmas", latent_image=latent)

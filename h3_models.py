@@ -777,9 +777,11 @@ QWEN_IMAGE21_TEXT_ENCODER_CHOICES = {
 DEFAULT_QWEN_IMAGE21_TEXT_ENCODER = "BF16"
 QWEN_IMAGE21_OFFICIAL_TURBO = "Official Turbo (8-step)"
 QWEN_IMAGE21_LIGHTNING = "LightX2V Lightning (4-step)"
+QWEN_IMAGE21_LIGHTNING_6STEP = "LightX2V Lightning (6-step, community)"
 QWEN_IMAGE21_TURBO_MODES = {
     QWEN_IMAGE21_OFFICIAL_TURBO: ("qwen_image21_official_turbo_lora", 8),
     QWEN_IMAGE21_LIGHTNING: ("qwen_image21_lightning_lora", 4),
+    QWEN_IMAGE21_LIGHTNING_6STEP: ("qwen_image21_lightning_lora", 6),
     "Viggle Turbo v0.2.1 (6-step)": ("qwen_image21_viggle_v02_lora", 6),
     "Viggle Turbo v0.3 (6-step)": ("qwen_image21_viggle_v03_lora", 6),
     "Viggle Turbo v0.3 (9-step)": ("qwen_image21_viggle_v03_lora", 9),
