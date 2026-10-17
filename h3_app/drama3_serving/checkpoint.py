@@ -40,7 +40,8 @@ def prepare_helper(cache: Path) -> Path:
         raise RuntimeError("CUDA sleep requires Linux x86_64")
     versions = run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"])
     if not versions or any(int(v.split(".")[0]) < 610 for v in versions.splitlines()):
-        raise RuntimeError("CUDA sleep requires NVIDIA driver 610+ for Omni's CUDA IPC")
+        found = ", ".join(versions.splitlines()) or "unknown"
+        raise RuntimeError(f"CUDA sleep requires NVIDIA driver 610+ for Omni's CUDA IPC (found {found})")
     target = cache / "cuda-checkpoint" / NVIDIA_REF / "cuda-checkpoint"
     if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != HELPER_SHA256:
         response = requests.get(HELPER_URL, timeout=30)
