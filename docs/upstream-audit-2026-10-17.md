@@ -83,8 +83,8 @@ This assessment checks configured source and dependency policy, not a live deplo
 Adopted ComfyUI-Drama3 `bc9b04a2` through the shared local/Modal source pin.
 The graph explicitly uses `speakers="together"` and
 `shorten_long_pauses=False`, preserving joint dialogue and authored pauses.
-Balance/Expressive and new requests default to uncapped top-k 0; Strict
-retains 30. The SGLang payload translates zero to its positive
+Balance and new requests default to uncapped top-k 0; Strict and Expressive
+use 30. The SGLang payload translates zero to its positive
 whole-vocabulary sentinel (`1 << 30`) because the pinned Drama request builder
 rejects zero. Saved explicit sampling values remain supported. Local setup
 now checks for the new line-head asset; its pinned 8,456-byte file was verified

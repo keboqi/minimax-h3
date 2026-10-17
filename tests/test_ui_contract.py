@@ -706,7 +706,7 @@ class UiContractTests(unittest.TestCase):
                             if [c._id for c in fn.inputs] == [preset["id"]]
                             and top_k["id"] in [c._id for c in fn.outputs])
         self.assertEqual(apply_preset("Balance"), (1.0, 0.9, 0))
-        self.assertEqual(apply_preset("Expressive"), (2.0, 1.0, 0))
+        self.assertEqual(apply_preset("Expressive"), (2.0, 1.0, 30))
         self.assertEqual(apply_preset("Strict"), (0.7, 0.7, 30))
         self.assertIn("Expand the prompt locally",
                       [labels[i] for i in endpoints["enhance_flux3_prompt"]["outputs"]])

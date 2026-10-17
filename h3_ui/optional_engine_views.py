@@ -28,7 +28,7 @@ UPLOAD_VOICE = "Upload a clip"
 DRAMA3_SAMPLING_PRESETS = {
     "Strict": (0.7, 0.7, 30),
     "Balance": (1.0, 0.9, 0),
-    "Expressive": (2.0, 1.0, 0),
+    "Expressive": (2.0, 1.0, 30),
 }
 
 
@@ -197,7 +197,7 @@ def build_drama3_view(root, speaker_names=()):
                 sampling_preset = gr.Radio(
                     list(DRAMA3_SAMPLING_PRESETS), value="Balance", label="Speech preset",
                     info="Temperature / top-p / top-k: Strict 0.7 / 0.7 / 30 · "
-                         "Balance 1.0 / 0.9 / 0 · Expressive 2.0 / 1.0 / 0 (uncapped). "
+                         "Balance 1.0 / 0.9 / 0 (uncapped) · Expressive 2.0 / 1.0 / 30. "
                          "Custom slider values clear the selection.",
                 )
                 text = gr.Textbox(label="Speech text", lines=8,
