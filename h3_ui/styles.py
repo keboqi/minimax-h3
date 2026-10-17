@@ -215,25 +215,34 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-workspace .h3-result-player .empty { flex-direction: column; gap: 10px; color: var(--h3-muted); }
 .h3-workspace .h3-result-player .empty::after { content: "Your video will appear here"; font-size: 13px; }
 .h3-workspace #h3-advanced-settings { border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-surface); margin-top: 6px; }
-/* Give every Gradio disclosure the same visible, clickable header. */
+/* Give every Gradio disclosure the same visible, clickable header. The accent
+   rail lives on the container so it runs down the open content too, tying the
+   revealed controls to their header instead of the surrounding page. */
 .h3-workspace .gr-accordion,
 .h3-workspace #h3-advanced-settings.gr-accordion {
   padding: 0;
+  overflow: hidden;
   border: 1px solid var(--h3-disclosure-border);
   border-radius: 10px;
   background: var(--h3-surface);
+  box-shadow: inset 3px 0 var(--h3-accent), 0 1px 2px #122e210d;
+  transition: box-shadow 120ms ease;
 }
+.h3-workspace .gr-accordion:has(> button.label-wrap:hover) {
+  box-shadow: inset 3px 0 var(--h3-accent), 0 3px 10px #122e211a;
+}
+.h3-workspace .gr-accordion + .gr-accordion { margin-top: 2px; }
 .h3-workspace .gr-accordion > button.label-wrap {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
   min-height: 48px;
-  padding: 10px 14px;
+  padding: 10px 12px 10px 17px;
   border: 0;
-  border-inline-start: 3px solid var(--h3-accent);
-  border-radius: 9px;
+  border-radius: 0;
   background: var(--h3-disclosure);
+  box-shadow: inset 3px 0 var(--h3-accent);
   color: var(--h3-accent);
   text-align: start;
   cursor: pointer;
@@ -246,39 +255,53 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
   font-weight: 650;
   line-height: 1.45;
 }
+/* Spell out the action; the empty alt text keeps it out of the accessible name. */
+.h3-workspace .gr-accordion > button.label-wrap::after {
+  content: "Show" / "";
+  order: 1;
+  color: var(--h3-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.h3-workspace .gr-accordion > button.label-wrap.open::after { content: "Hide" / ""; }
 .h3-workspace .gr-accordion > button.label-wrap > .icon {
   display: grid;
   place-items: center;
+  order: 2;
   flex: 0 0 26px;
   width: 26px;
   height: 26px;
-  border: 1px solid var(--h3-disclosure-border);
+  border: 1px solid var(--h3-accent);
   border-radius: 50%;
-  background: var(--h3-surface);
-  color: var(--h3-accent);
+  background: var(--h3-accent);
+  color: var(--h3-surface);
   font-size: 11px;
   transform: rotate(-90deg) !important;
+  transition: transform 160ms ease, background-color 120ms ease, color 120ms ease;
 }
 .h3-workspace .gr-accordion > button.label-wrap.open > .icon {
+  background: var(--h3-surface);
+  color: var(--h3-accent);
   transform: rotate(0deg) !important;
 }
 .h3-workspace .gr-accordion > button.label-wrap:hover {
   background: var(--h3-disclosure-hover);
 }
+.h3-workspace .gr-accordion > button.label-wrap:hover::after { color: var(--h3-accent); }
 .h3-workspace .gr-accordion > button.label-wrap.open {
-  border-end-start-radius: 0;
-  border-end-end-radius: 0;
-  box-shadow: 0 1px var(--h3-disclosure-border);
+  box-shadow: inset 3px 0 var(--h3-accent), 0 1px var(--h3-disclosure-border);
 }
 .h3-workspace .gr-accordion > button.label-wrap:focus-visible {
   outline: 2px solid var(--h3-focus);
   outline-offset: -3px;
 }
 .h3-workspace .gr-accordion > div[data-testid="accordion-content"] {
-  padding: 14px;
+  padding: 14px 14px 14px 17px;
 }
 @media (prefers-reduced-motion: reduce) {
-  .h3-workspace .gr-accordion > button.label-wrap { transition: none; }
+  .h3-workspace .gr-accordion,
+  .h3-workspace .gr-accordion > button.label-wrap,
+  .h3-workspace .gr-accordion > button.label-wrap > .icon { transition: none; }
 }
 .h3-workspace .h3-engine-view { padding: 20px; border: 1px solid var(--h3-border); border-radius: 16px; background: var(--h3-surface); }
 .h3-workspace .h3-essentials { border: 1px solid var(--h3-border); border-radius: 12px; padding: 12px; background: var(--h3-surface); }
@@ -313,8 +336,13 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-workspace .h3-setup-heading > span { color: var(--h3-accent); background: var(--h3-surface); border-color: var(--h3-border); }
 .h3-workspace .h3-setup-card dt, .h3-workspace .h3-setup-context, .h3-workspace .h3-setup-card ul { color: var(--h3-muted); font-size: 13px; }
 .h3-workspace .h3-setup-card .h3-setup-disclosure, .h3-workspace .h3-setup-metrics .h3-setup-detail, .h3-workspace .h3-setup-detail-grid .h3-setup-detail, .h3-workspace .h3-setup-changes .h3-setup-detail { border-color: var(--h3-border); }
-.h3-workspace .h3-setup-card .h3-setup-disclosure summary { color: var(--h3-text); font-size: 13px; }
-.h3-workspace .h3-setup-card .h3-setup-disclosure summary:hover { color: var(--h3-accent); background: var(--h3-muted-surface); }
+.h3-workspace .h3-setup-card .h3-setup-disclosure summary { min-height: 40px; color: var(--h3-accent); background: var(--h3-disclosure); font-size: 13px; font-weight: 600; box-shadow: inset 3px 0 var(--h3-accent); }
+.h3-workspace .h3-setup-card .h3-setup-disclosure summary:hover { background: var(--h3-disclosure-hover); }
+.h3-workspace .h3-setup-disclosure summary::after { content: "▾" / ""; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; color: var(--h3-surface); background: var(--h3-accent); font-size: 11px; transform: rotate(-90deg); transition: transform 160ms ease; }
+.h3-workspace .h3-setup-disclosure[open] summary::after { content: "▾" / ""; color: var(--h3-accent); background: var(--h3-surface); box-shadow: inset 0 0 0 1px var(--h3-accent); transform: none; }
+.h3-workspace .h3-setup-disclosure[open] summary { box-shadow: inset 3px 0 var(--h3-accent), 0 1px var(--h3-disclosure-border); }
+.h3-workspace .h3-setup-disclosure[open] > :not(summary) { padding-top: 10px; box-shadow: inset 3px 0 var(--h3-accent); }
+@media (prefers-reduced-motion: reduce) { .h3-workspace .h3-setup-disclosure summary::after { transition: none; } }
 .h3-workspace :is(button, input, textarea, select, summary, a):focus-visible { outline: 2px solid var(--h3-focus); outline-offset: 3px; scroll-margin: 100px 0; }
 .h3-workspace .h3-job-table { overflow-x: auto; }
 .h3-workspace .h3-job-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
