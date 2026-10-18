@@ -68,6 +68,42 @@ for callback, family in (
 ):
     setattr(app, callback, fake_engine(getattr(app, callback), family))
 
+def fake_voice_clip():
+    """A tone clip in the real output location."""
+    import math
+    import struct
+    import wave
+
+    target = app.OUTPUT_DIR / "drama3_voices" / f"Fixture_{time.time_ns()}.wav"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(target), "wb") as clip:
+        clip.setnchannels(1), clip.setsampwidth(2), clip.setframerate(16000)
+        clip.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(i / 8))) for i in range(16000)))
+    return str(target)
+
+
+def fake_drama3_voice(description, preview_text, *args):
+    yield gr.skip(), gr.skip(), "Fixture voice generation"
+    time.sleep(0.3)
+    yield fake_voice_clip(), gr.update(value=preview_text, interactive=True), "Fixture voice generated"
+
+
+def fake_drama3_references(briefs, request, *args, **kwargs):
+    from h3_app.drama3_voice_design import DesignResult
+    from h3_app.generation.results import GenerationUpdate
+
+    yield GenerationUpdate(None, f"Fixture batch of {len(briefs)}, {request.parallel} at a time")
+    time.sleep(0.3)
+    for key, (_description, preview) in briefs.items():
+        yield DesignResult(key, fake_voice_clip(), preview)
+
+
+fake_drama3_voice.__signature__ = inspect.signature(app.generate_drama3_voice)
+app.generate_drama3_voice = fake_drama3_voice
+from h3_app import drama3_voice_design  # noqa: E402
+
+drama3_voice_design.generate_drama3_references = fake_drama3_references
+
 app.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 for name, color in (("alpha.png", "red"), ("beta.png", "blue")):
     Image.new("RGB", (320, 256), color).save(app.OUTPUTS_DIR / name)

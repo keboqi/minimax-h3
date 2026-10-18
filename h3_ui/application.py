@@ -68,7 +68,7 @@ from h3_app.settings import GenerationRequest, ResolutionContext, resolve_settin
 from h3_app.contracts import GenerationArguments
 from h3_app import server as server_routes
 from h3_app.comfy import ComfyClient
-from h3_app.jobs import gpu_maintenance, JOBS, CURRENT_JOB
+from h3_app.jobs import gpu_maintenance, JOBS, CURRENT_JOB, JobCancelled
 from h3_app.provenance import (
     RUN_CONTEXT,
     write_snapshot,
@@ -2882,9 +2882,8 @@ def generate_drama3_voice(description, preview_text, language, engine="Drama 3",
         elif engine == ENGINE_DRAMA3:
             from h3_models import resolve_hf_token
 
-            request = generation_requests.Drama3Request(
-                "", (), seed, temperature, top_p, top_k, max_frames, False, experts, expert_cache_gb,
-                backend, model_choice=model_choice)
+            request = _drama3_design_request(backend, seed, temperature, top_p, top_k, max_frames,
+                                             experts, expert_cache_gb, model_choice)
             yield gr.skip(), gr.skip(), f"Preparing Drama 3 voice design on {backend}."
             audio = transcript = None
             for update in generate_drama3_reference(description, preview_text, request, _runtime_config(),
@@ -2900,6 +2899,129 @@ def generate_drama3_voice(description, preview_text, language, engine="Drama 3",
         yield gr.skip(), gr.skip(), f"Voice generation failed: {exc}"
         return
     yield str(audio), gr.update(value=transcript, interactive=True), "Voice generated. Preview speech copied as its exact transcript; ready to save."
+
+
+DRAMA3_VOICE_DESIGN_SETTINGS = ("engine", "backend", "seed", "temperature", "top_p", "top_k", "max_frames",
+                                "experts", "expert_cache_gb", "model_choice")
+
+
+def _drama3_design_request(backend, seed, temperature, top_p, top_k, max_frames, experts, expert_cache_gb,
+                           model_choice, parallel=8):
+    """The tab's backend, model and sampling for voice design; text and voices are filled per take."""
+    return generation_requests.Drama3Request(
+        "", (), seed, temperature, top_p, top_k, max_frames, False, experts, expert_cache_gb,
+        backend, int(parallel or 1), model_choice=model_choice)
+
+
+def generate_drama3_voices(*values):
+    """Generate each shown upload slot that has a design brief and no clip yet.
+
+    Inputs: the voice-design settings, parallel requests, the shown slot count, then
+    (preset, has_clip, description, preview_text, language) per slot. Outputs:
+    (audio, transcript, status) per slot, then the overall status. Drama 3 on
+    SGLang-Omni generates up to ``parallel`` voices at once; other routes run in turn.
+    """
+    from h3_app.drama3_voice_design import ENGINE_DRAMA3
+    from h3_ui.optional_engine_views import DRAMA3_VOICE_SLOTS, UPLOAD_VOICE
+
+    settings = values[:len(DRAMA3_VOICE_DESIGN_SETTINGS)]
+    parallel = values[len(settings)]
+    shown = int(values[len(settings) + 1] or 0)
+    slots = values[len(settings) + 2:]
+    updates = [gr.skip()] * (3 * DRAMA3_VOICE_SLOTS)
+
+    def frame(status):
+        current = list(updates)
+        updates[:] = [gr.skip()] * len(updates)  # each clip is sent once; shared with helpers
+        return (*current, status)
+
+    targets = []
+    for speaker in range(max(0, min(shown, DRAMA3_VOICE_SLOTS))):
+        preset, has_clip, description, preview, language = slots[5 * speaker:5 * speaker + 5]
+        if preset and preset != UPLOAD_VOICE:
+            continue
+        if has_clip:
+            updates[3 * speaker + 2] = "Skipped: this speaker already has a clip. Clear it to regenerate."
+        elif not str(description or "").strip() or not str(preview or "").strip():
+            updates[3 * speaker + 2] = "Skipped: add a voice description and preview speech first."
+        else:
+            targets.append((speaker, description, preview, language))
+    if not targets:
+        yield frame("No speaker voices to generate. Shown speakers without a clip need a voice description "
+                    "and preview speech.")
+        return
+    failed = []
+    if settings[0] == ENGINE_DRAMA3:
+        yield from _generate_drama3_designs(targets, settings, parallel, updates, frame, failed)
+    else:
+        for index, (speaker, description, preview, language) in enumerate(targets, 1):
+            progress = f"Generating speaker voices: {index}/{len(targets)} (speaker {speaker})"
+            updates[3 * speaker + 2] = "Waiting for voice generation…"
+            yield frame(progress)
+            status = ""
+            for audio, transcript, status in generate_drama3_voice(description, preview, language, *settings):
+                if isinstance(audio, str):
+                    updates[3 * speaker:3 * speaker + 2] = [audio, transcript]
+                updates[3 * speaker + 2] = status
+                yield frame(progress)
+            if status.startswith("Voice generation failed"):
+                failed.append(speaker)
+    done = len(targets) - len(failed)
+    summary = f"Generated {done} of {len(targets)} speaker voices."
+    if failed:
+        summary += " Failed: " + ", ".join(f"speaker {speaker}" for speaker in failed) + "; see each speaker's panel."
+    yield frame(summary)
+
+
+def _generate_drama3_designs(targets, settings, parallel, updates, frame, failed):
+    from h3_app import drama3_voice_design
+    from h3_models import resolve_hf_token
+
+    _engine, backend, *request_settings = settings
+    request = _drama3_design_request(backend, *request_settings, parallel=parallel)
+    for speaker, *_brief in targets:
+        updates[3 * speaker + 2] = f"Waiting for Drama 3 voice design on {backend}…"
+    yield frame(f"Preparing Drama 3 voice design for {len(targets)} speaker(s) on {backend}.")
+    pending = {speaker for speaker, *_brief in targets}
+    try:
+        for result in drama3_voice_design.generate_drama3_references(
+                {speaker: (description, preview) for speaker, description, preview, _language in targets},
+                request, _runtime_config(), _generation_services(), free_gpu=free_comfy_vram,
+                hf_token=resolve_hf_token()):
+            if isinstance(result, drama3_voice_design.DesignResult):
+                speaker = result.key
+                pending.discard(speaker)
+                if result.audio:
+                    updates[3 * speaker:3 * speaker + 3] = [
+                        result.audio, gr.update(value=result.transcript, interactive=True),
+                        "Voice generated. Preview speech copied as its exact transcript; ready to save."]
+                else:
+                    failed.append(speaker)
+                    updates[3 * speaker + 2] = f"Voice generation failed: {result.error}"
+                yield frame(f"Designed {len(targets) - len(pending)}/{len(targets)} speaker voices on {backend}.")
+            else:
+                yield frame(result.status)
+    except JobCancelled:
+        raise
+    except Exception as exc:
+        for speaker in sorted(pending):
+            failed.append(speaker)
+            updates[3 * speaker + 2] = f"Voice generation failed: {exc}"
+        yield frame(f"Voice generation failed: {exc}")
+
+
+def _publish_drama3_voices_signature():
+    import inspect
+    from h3_ui.optional_engine_views import DRAMA3_VOICE_SLOTS
+
+    names = [*DRAMA3_VOICE_DESIGN_SETTINGS, "parallel", "shown_slots",
+             *[f"speaker_{speaker}_{field}" for speaker in range(DRAMA3_VOICE_SLOTS)
+               for field in ("voice", "has_clip", "description", "preview_text", "language")]]
+    generate_drama3_voices.__signature__ = inspect.Signature(
+        [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in names])
+
+
+_publish_drama3_voices_signature()
 
 
 def drama3_speaker_names():
@@ -2968,6 +3090,7 @@ def _optional_engine_actions():
         save_drama3_speaker=save_drama3_speaker,
         delete_drama3_speaker=delete_drama3_speaker,
         generate_drama3_voice=generate_drama3_voice,
+        generate_drama3_voices=generate_drama3_voices,
         interrupt=interrupt,
     )
 

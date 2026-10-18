@@ -278,6 +278,72 @@ class CastSlotTests(unittest.TestCase):
         self.assertEqual(updates[-1][1]["value"], "Hello.")
 
 
+    def test_generate_all_fills_only_shown_upload_slots_with_a_brief_and_no_clip(self):
+        from h3_ui import application
+        from h3_ui.optional_engine_views import UPLOAD_VOICE, drama3_slot_title
+        calls = []
+
+        def single(description, preview, language, *settings):
+            calls.append((description, preview, settings))
+            yield {"__type__": "update"}, {"__type__": "update"}, "Preparing"
+            if description == "Broken":
+                yield {"__type__": "update"}, {"__type__": "update"}, "Voice generation failed: no GPU"
+                return
+            yield f"{description}.wav", {"__type__": "update", "value": preview}, "Voice generated."
+        settings = ("Qwen3-TTS VoiceDesign", "ComfyUI", -1, 1.0, 0.9, 0, 8192, "in VRAM", 0.0,
+                    "FP8 (original weights)")
+        slots = [[UPLOAD_VOICE, False, "", "", "Auto"] for _ in range(16)]
+        slots[0] = [UPLOAD_VOICE, False, "Warm", "Hello there.", "Auto"]
+        slots[1] = ["Saved Alice", False, "Bright", "Hi.", "Auto"]
+        slots[2] = [UPLOAD_VOICE, True, "Deep", "Hey.", "Auto"]
+        slots[3] = [UPLOAD_VOICE, False, "Broken", "Oops.", "Auto"]
+        slots[5] = [UPLOAD_VOICE, False, "Hidden", "Not shown.", "Auto"]
+        with patch.object(application, "generate_drama3_voice", side_effect=single):
+            updates = list(application.generate_drama3_voices(*settings, 8, 4, *[v for slot in slots for v in slot]))
+        self.assertEqual([call[0] for call in calls], ["Warm", "Broken"])
+        self.assertEqual(calls[0][2], settings)
+        self.assertEqual(len(updates[-1]), 49)
+        clips = [update[0] for update in updates if isinstance(update[0], str)]
+        self.assertEqual(clips, ["Warm.wav"])  # sent once, never re-sent in later frames
+        self.assertIn("already has a clip", updates[0][3 * 2 + 2])
+        self.assertIn("Generated 1 of 2", updates[-1][-1])
+        self.assertIn("speaker 3", updates[-1][-1])
+        self.assertEqual(drama3_slot_title(2), "Speaker 2")
+        self.assertEqual(drama3_slot_title(2, " Mia ", UPLOAD_VOICE, True), "Speaker 2 · Mia · voice ready")
+        self.assertEqual(drama3_slot_title(3, "Alice", "Alice"), "Speaker 3 · Alice · saved voice")
+
+    def test_generate_all_with_drama3_sends_every_brief_in_one_batch_with_the_parallel_setting(self):
+        from h3_ui import application
+        from h3_app import drama3_voice_design
+        from h3_app.drama3_voice_design import DesignResult
+        from h3_app.generation.results import GenerationUpdate
+        from h3_ui.optional_engine_views import UPLOAD_VOICE
+        seen = {}
+
+        def batch(briefs, request, *args, **kwargs):
+            seen.update(briefs=briefs, request=request)
+            yield GenerationUpdate(None, "Generated 1/2 voice(s)")
+            yield DesignResult(1, "one.wav", "Hi there.")
+            yield DesignResult(0, None, "Hello.", "silent take")
+        settings = ("Drama 3", "SGLang-Omni", -1, 0.7, 0.7, 30, 8192, "in VRAM", 0.0, "FP8 (original weights)")
+        slots = [[UPLOAD_VOICE, False, "", "", "Auto"] for _ in range(16)]
+        slots[0] = [UPLOAD_VOICE, False, "Warm", "Hello.", "Auto"]
+        slots[1] = [UPLOAD_VOICE, False, "Bright", "Hi there.", "Auto"]
+        with patch.object(application, "_runtime_config"), patch.object(application, "_generation_services"), \
+                patch("h3_models.resolve_hf_token", return_value=None), \
+                patch.object(application, "generate_drama3_voice") as single, \
+                patch.object(drama3_voice_design, "generate_drama3_references", side_effect=batch):
+            updates = list(application.generate_drama3_voices(*settings, 6, 2, *[v for slot in slots for v in slot]))
+        single.assert_not_called()
+        self.assertEqual(seen["briefs"], {0: ("Warm", "Hello."), 1: ("Bright", "Hi there.")})
+        self.assertEqual((seen["request"].backend, seen["request"].parallel, seen["request"].top_k),
+                         ("SGLang-Omni", 6, 30))
+        clip = next(update for update in updates if update[3] == "one.wav")
+        self.assertEqual(clip[4]["value"], "Hi there.")
+        self.assertTrue(any("silent take" in str(update[2]) for update in updates))
+        self.assertIn("Generated 1 of 2", updates[-1][-1])
+
+
 class Drama3VoiceDesignTests(unittest.TestCase):
     def setUp(self):
         from h3_app.generation.requests import Drama3Request
@@ -331,6 +397,38 @@ class Drama3VoiceDesignTests(unittest.TestCase):
             with self.assertRaisesRegex(H3Error, "^missing nodes$"):
                 list(drama3_voice_design.generate_drama3_reference(
                     "Warm", "Hello there.", self.request, self.runtime, self.services, free_gpu=Mock()))
+
+    def test_sglang_batch_runs_takes_concurrently_and_keeps_failures_per_voice(self):
+        import threading
+        import numpy as np
+        from dataclasses import replace
+        from h3_app import drama3_voice_design
+        from h3_app.drama3_serving import audio, generate, server as served
+        clip = audio.encode_wav(np.full(24000, 0.2, dtype=np.float32), 24000)
+        barrier = threading.Barrier(2, timeout=5)  # both requests must be in flight at once
+
+        def speech(payload):
+            barrier.wait()
+            if "Broken" in payload["input"]:
+                raise H3Error("HTTP 500")
+            return clip
+        fake = Mock()
+        fake.payload.side_effect = lambda **kwargs: served.SglangOmniServer.payload(None, **kwargs)
+        fake.speech.side_effect = speech
+        with patch.object(generate, "ServerSettings"), patch.object(generate, "shared_server", return_value=fake), \
+                patch.object(generate, "_ready_server", return_value=iter(())) as ready, \
+                patch.object(generate, "persist_caches"):
+            results = [update for update in drama3_voice_design.generate_drama3_references(
+                {0: ("Warm", "Hello there."), 1: ("Broken", "Oh no, again."), 2: ("[bad]", "Hi.")},
+                replace(self.request, backend="SGLang-Omni", parallel=4), self.runtime, self.services,
+                free_gpu=Mock()) if isinstance(update, drama3_voice_design.DesignResult)]
+        ready.assert_called_once()
+        by_key = {result.key: result for result in results}
+        self.assertTrue(Path(by_key[0].audio).is_file())
+        self.assertEqual(by_key[0].transcript, "Hello there.")
+        self.assertEqual((by_key[1].audio, by_key[1].error), (None, "HTTP 500"))
+        self.assertIn("brackets", by_key[2].error)
+        self.assertEqual(fake.speech.call_count, 2)
 
     def test_sglang_backend_sends_no_reference_and_writes_the_clip(self):
         import numpy as np

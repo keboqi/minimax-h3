@@ -7,7 +7,7 @@ the clip's exact transcript.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import re
 import uuid
 
@@ -77,3 +77,59 @@ def generate_drama3_reference(description, text, request, runtime, services, *, 
     if not result:
         raise H3Error("Drama 3 returned no voice clip.")
     yield GenerationUpdate(str(result), transcript)
+
+
+@dataclass(frozen=True)
+class DesignResult:
+    key: object
+    audio: str | None
+    transcript: str
+    error: str = ""
+
+
+def generate_drama3_references(briefs, request, runtime, services, *, free_gpu, hf_token=None):
+    """Design ``{key: (description, preview)}``; yield status updates and one ``DesignResult`` each.
+
+    SGLang-Omni sends the takes concurrently, up to ``request.parallel``; ComfyUI
+    runs them one after another on its single queue. Failures stay per voice.
+    """
+    from h3_app.drama3_serving.generate import DesignedVoice, design_voices_served
+    from h3_app.generation.optional_engines import DRAMA3_SERVED_BACKENDS
+
+    scripts = {}
+    for key, (description, text) in briefs.items():
+        try:
+            scripts[key] = (design_script(description, text), " ".join(str(text).split()))
+        except H3Error as exc:
+            yield DesignResult(key, None, "", str(exc))
+    if not scripts:
+        return
+    if request.backend in DRAMA3_SERVED_BACKENDS:
+        folder = runtime.output_dir / "drama3_voices"
+        takes = {key: (script, folder / f"Drama3VoiceDesign_{uuid.uuid4().hex}.wav")
+                 for key, (script, _transcript) in scripts.items()}
+        services.models.unload_prompt_rewriter()
+        sampling = {"temperature": float(request.temperature), "top_p": float(request.top_p),
+                    "top_k": int(request.top_k)}
+        for update in design_voices_served(takes, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token,
+                                           sampling=sampling, max_frames=int(request.max_frames),
+                                           parallel=int(request.parallel), label=request.backend):
+            if isinstance(update, DesignedVoice):
+                transcript = scripts[update.key][1]
+                yield (DesignResult(update.key, str(takes[update.key][1]), transcript) if update.error is None
+                       else DesignResult(update.key, None, transcript, str(update.error)))
+            else:
+                yield update
+        return
+    for key, (description, text) in briefs.items():
+        if key not in scripts:
+            continue
+        try:
+            for update in generate_drama3_reference(description, text, request, runtime, services,
+                                                    free_gpu=free_gpu, hf_token=hf_token):
+                if update.output:
+                    yield DesignResult(key, update.output, update.status)
+                else:
+                    yield GenerationUpdate(None, update.status)
+        except H3Error as exc:
+            yield DesignResult(key, None, scripts[key][1], str(exc))

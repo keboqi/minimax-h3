@@ -926,10 +926,18 @@ descriptions, and preview speech. Each slot keeps the exact number used in
 `<|speaker:N|>`; existing references and sparse IDs are preserved. Invalid or
 inconsistent writer responses leave the current script and slots in place.
 
-In **Speaker voices**, upload and transcribe a reference clip, or open
-**Generate a reference voice from description**. Edit the voice description and
-preview speech, then click **Generate voice**. Its synthesis text becomes the
-reference transcript automatically. **Voice generator** picks the engine:
+In **Speaker voices**, each speaker has a collapsible panel titled with its
+index, name, and whether a voice is ready (for example `Speaker 2 · Mia · voice
+ready`). Upload and transcribe a reference clip, or edit the voice description
+and preview speech and click **Generate voice**. Its synthesis text becomes the
+reference transcript automatically, and each panel shows its own progress and
+errors. **Generate all speaker voices** designs every shown speaker in one job;
+it skips saved speakers, speakers that already have a clip, and speakers
+without a description and preview speech. With Drama 3 on SGLang-Omni, the
+server is prepared once and up to **Parallel requests** voices generate at the
+same time; a failed voice does not stop the others. ComfyUI and Qwen run the
+voices one after another. **Voice generator** picks the
+engine:
 
 - **Drama 3** (default) generates one take with no reference on the Drama 3
   backend selected under **Speech and memory settings** (ComfyUI or

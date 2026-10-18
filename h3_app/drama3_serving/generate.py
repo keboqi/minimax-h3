@@ -84,22 +84,63 @@ def _ready_server(settings, server, label, free_gpu, hf_token) -> Iterator[Gener
                                lambda report: server.ensure_ready(free_gpu, report))
 
 
-def design_voice_served(text: str, target: Path, *, runtime, free_gpu: Callable[[], None], hf_token=None,
-                        sampling: dict, max_frames: int, label: str = "SGLang-Omni") -> Iterator[GenerationUpdate]:
-    """One unchunked take without references, so a single invented voice speaks all of it."""
+@dataclass(frozen=True)
+class DesignedVoice:
+    key: object
+    error: Exception | None = None  # None: the clip was written to its target
+
+
+def design_voices_served(takes: dict, *, runtime, free_gpu: Callable[[], None], hf_token=None,
+                         sampling: dict, max_frames: int, parallel: int = 1,
+                         label: str = "SGLang-Omni") -> Iterator[GenerationUpdate | DesignedVoice]:
+    """Generate ``{key: (text, target)}`` concurrently after one server preparation.
+
+    Each take is one unchunked request without references, so a single invented
+    voice speaks all of it. Yields status updates and one ``DesignedVoice`` per take;
+    a failed take does not stop the others.
+    """
     settings = ServerSettings.from_environment(runtime)
     server = shared_server(settings)
     yield from _ready_server(settings, server, label, free_gpu, hf_token)
-    yield GenerationUpdate(None, f"Generating the voice on {label}")
-    payload = server.payload(text=text, reference=None, transcript=None,
-                             max_new_tokens=frame_budget(text, max_frames), sampling=sampling)
-    samples, rate = audio.decode_wav(server.speech(payload))
-    samples = audio.tidy_take(samples, rate)
-    if not samples.size:
-        raise H3Error(f"Drama 3 ({label}) returned a silent voice take; generate again.")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(audio.encode_wav(samples, rate))
+
+    def synthesize(text: str, target: Path) -> None:
+        payload = server.payload(text=text, reference=None, transcript=None,
+                                 max_new_tokens=frame_budget(text, max_frames), sampling=sampling)
+        samples, rate = audio.decode_wav(server.speech(payload))
+        samples = audio.tidy_take(samples, rate)
+        if not samples.size:
+            raise H3Error(f"Drama 3 ({label}) returned a silent voice take; generate again.")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(audio.encode_wav(samples, rate))
+
+    total, done, started = len(takes), 0, time.monotonic()
+    workers = max(1, min(int(parallel), total))
+    yield GenerationUpdate(None, f"Generating {total} voice(s) on {label}, {workers} at a time")
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="drama3-voice") as pool:
+        pending = {pool.submit(synthesize, text, target): key for key, (text, target) in takes.items()}
+        while pending:
+            finished, _ = wait(pending, timeout=HEARTBEAT_SECONDS, return_when=FIRST_COMPLETED)
+            job = CURRENT_JOB.get()
+            if job is not None and job.cancelled.is_set():
+                for future in pending:
+                    future.cancel()
+                job.check()
+            for future in finished:
+                done += 1
+                yield DesignedVoice(pending.pop(future), future.exception())
+            yield GenerationUpdate(None, f"Generated {done}/{total} voice(s) on {label} "
+                                         f"({time.monotonic() - started:.0f}s)")
     persist_caches()
+
+
+def design_voice_served(text: str, target: Path, **kwargs) -> Iterator[GenerationUpdate]:
+    """One voice take; raises its failure."""
+    for update in design_voices_served({0: (text, target)}, **kwargs):
+        if isinstance(update, DesignedVoice):
+            if update.error is not None:
+                raise update.error
+        else:
+            yield update
 
 
 def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf_token=None,
