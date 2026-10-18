@@ -919,6 +919,13 @@ Features in the Colab notebook:
 
 ## Drama 3 TTS backends
 
+To use a chat model outside the app, open **Use another chat model** under
+**Rewrite as a Drama 3 script**, click **Show full writer prompt**, and copy it.
+It contains the system prompt, the current speaker slots, and the speech text.
+Paste the model's JSON reply (code fences and surrounding chat text are fine)
+and click **Apply pasted reply**; it is validated like the built-in writer
+before the script and speaker slots change.
+
 The script writer returns a Drama 3 script plus an indexed cast. It separates
 narration and dialogue, resolves character aliases, preserves supplied dialogue
 and story order, and fills the corresponding speaker slots with names, voice
@@ -931,9 +938,12 @@ index, name, and whether a voice is ready (for example `Speaker 2 · Mia · voic
 ready`). Upload and transcribe a reference clip, or edit the voice description
 and preview speech and click **Generate voice**. Its synthesis text becomes the
 reference transcript automatically, and each panel shows its own progress and
-errors. **Generate all speaker voices** designs every shown speaker in one job;
-it skips saved speakers, speakers that already have a clip, and speakers
-without a description and preview speech. With Drama 3 on SGLang-Omni, the
+errors. The **Speaker voices** title counts the shown speakers and how many
+have a voice. **Generate all speaker voices** designs every shown speaker in one
+job; it skips saved speakers and speakers without a description and preview
+speech. **Skip speakers with a voice** (on by default) also skips speakers that
+already have a clip; uncheck it to regenerate them, for example after changing
+the backend. With Drama 3 on SGLang-Omni, the
 server is prepared once and up to **Parallel requests** voices generate at the
 same time; a failed voice does not stop the others. ComfyUI and Qwen run the
 voices one after another. **Voice generator** picks the

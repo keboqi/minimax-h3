@@ -2766,13 +2766,14 @@ def enhance_flux3_prompt(prompt, reference_images, width, height, model, tempora
     return enhanced, status, gr.skip() if failed else False
 
 
-def enhance_drama3_text(text, speaker_mode, model, temporary_api_key, backend, lightning_api_key,
-                        lightning_model, *slots):
-    """Apply indexed cast metadata and slot visibility only after validating the complete result."""
+def _drama3_writer_slots(slots):
+    """Split writer inputs into voice triples, cast metadata and the shown slot count.
+
+    Returns (names, existing, cast_context, shown): reference speaker names for the
+    voice context, known slot identities by ID, and the JSON slot context line.
+    """
     import json
-    from h3_ui.optional_engine_views import (
-        DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VOICE_SLOTS, DRAMA3_VISIBLE_SLOTS, _slot_visibility,
-    )
+    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VOICE_SLOTS, DRAMA3_VISIBLE_SLOTS
     from h3_app.drama3_speakers import load_speaker, normalize_name
 
     count = len(DRAMA3_SLOT_INPUT_NAMES)
@@ -2780,49 +2781,94 @@ def enhance_drama3_text(text, speaker_mode, model, temporary_api_key, backend, l
     metadata = list(slots[count:count * 2])
     metadata += [""] * (count - len(metadata))
     shown = slots[count * 2] if len(slots) > count * 2 else DRAMA3_VISIBLE_SLOTS
-    unchanged = [gr.skip()] * (count + DRAMA3_VOICE_SLOTS + 3)
+    voices, names = _drama3_voices(voice_values)
+    references = {speaker for speaker, _audio, _transcript in voices}
+    saved_names = dict(names)
+    context = []
+    for speaker in range(DRAMA3_VOICE_SLOTS):
+        name, description, _preview = metadata[3 * speaker:3 * speaker + 3]
+        preset = voice_values[3 * speaker] if len(voice_values) > 3 * speaker else None
+        if speaker in references and saved_names.get(speaker):
+            description = load_speaker(preset, _runtime_config()).description or description
+        name = saved_names.get(speaker) or name or ""
+        name = normalize_name(name) if str(name).strip() else ""
+        if speaker in references or name or description:
+            context.append({"speaker_id": speaker, "name": name,
+                            "description": description or "", "has_reference": speaker in references})
+    existing = {entry["speaker_id"]: entry for entry in context}
+    names = [(speaker, existing[speaker]["name"]) for speaker in sorted(references)]
+    cast_context = ("Existing slot identities (preserve IDs and known names/descriptions; "
+                    "has_reference=false is a design brief, not a cloned voice):\n"
+                    + json.dumps(context, ensure_ascii=False))
+    return names, existing, cast_context, shown
+
+
+def _drama3_unchanged_outputs():
+    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VOICE_SLOTS
+    return [gr.skip()] * (len(DRAMA3_SLOT_INPUT_NAMES) + DRAMA3_VOICE_SLOTS + 3)
+
+
+def _drama3_apply_cast(script, status, cast, existing, shown):
+    """Script, status, slot metadata and visibility for a validated cast; raises on reassignment."""
+    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES, _slot_visibility
+
+    updates = [gr.skip()] * len(DRAMA3_SLOT_INPUT_NAMES)
+    for entry in cast:
+        speaker = entry["speaker_id"]
+        previous = existing.get(speaker, {})
+        if previous.get("name") and previous["name"].casefold() != entry["name"].casefold():
+            raise H3Error(f"The writer reassigned speaker {speaker} from {previous['name']} to {entry['name']}.")
+        # A reference's authored metadata remains authoritative; the writer has not heard the clip.
+        name = previous.get("name") or entry["name"]
+        description = previous.get("description") or entry["description"]
+        updates[3 * speaker:3 * speaker + 3] = [name, description, entry["preview_text"]]
+    if not cast:
+        return (script, status, *updates, *[gr.skip()] * (len(_slot_visibility(shown))))
+    shown = max(int(shown), max(entry["speaker_id"] for entry in cast) + 1)
+    return (script, status + f" Filled {len(cast)} matching speaker slots; "
+            "open Speaker voices to upload or generate references.", *updates, *_slot_visibility(shown))
+
+
+def enhance_drama3_text(text, speaker_mode, model, temporary_api_key, backend, lightning_api_key,
+                        lightning_model, *slots):
+    """Apply indexed cast metadata and slot visibility only after validating the complete result."""
     try:
-        voices, names = _drama3_voices(voice_values)
-        references = {speaker for speaker, _audio, _transcript in voices}
-        saved_names = dict(names)
-        context = []
-        for speaker in range(DRAMA3_VOICE_SLOTS):
-            name, description, _preview = metadata[3 * speaker:3 * speaker + 3]
-            preset = voice_values[3 * speaker] if len(voice_values) > 3 * speaker else None
-            if speaker in references and saved_names.get(speaker):
-                description = load_speaker(preset, _runtime_config()).description or description
-            name = saved_names.get(speaker) or name or ""
-            name = normalize_name(name) if str(name).strip() else ""
-            if speaker in references or name or description:
-                context.append({"speaker_id": speaker, "name": name,
-                                "description": description or "", "has_reference": speaker in references})
-        existing = {entry["speaker_id"]: entry for entry in context}
-        names = [(speaker, existing[speaker]["name"]) for speaker in sorted(references)]
+        names, existing, cast_context, shown = _drama3_writer_slots(slots)
         script, status, cast = prompt_service.enhance_drama3_text(
             text, model, temporary_api_key, names, backend=backend,
             lightning_api_key=lightning_api_key, lightning_model=lightning_model,
             speaker_mode=speaker_mode, runtime=_runtime_config(), return_cast=True,
-            cast_context="Existing slot identities (preserve IDs and known names/descriptions; "
-                         "has_reference=false is a design brief, not a cloned voice):\n"
-                         + json.dumps(context, ensure_ascii=False),
+            cast_context=cast_context,
         )
         if status.startswith("Prompt enhancement failed:"):
-            return text, status, *unchanged
-        updates = [gr.skip()] * count
-        for entry in cast:
-            speaker = entry["speaker_id"]
-            previous = existing.get(speaker, {})
-            if previous.get("name") and previous["name"].casefold() != entry["name"].casefold():
-                raise H3Error(f"The writer reassigned speaker {speaker} from {previous['name']} to {entry['name']}.")
-            # A reference's authored metadata remains authoritative; the writer has not heard the clip.
-            name = previous.get("name") or entry["name"]
-            description = previous.get("description") or entry["description"]
-            updates[3 * speaker:3 * speaker + 3] = [name, description, entry["preview_text"]]
-        shown = max(int(shown), max(entry["speaker_id"] for entry in cast) + 1)
-        return (script, status + f" Filled {len(cast)} matching speaker slots; "
-                "open Speaker voices to upload or generate references.", *updates, *_slot_visibility(shown))
+            return text, status, *_drama3_unchanged_outputs()
+        return _drama3_apply_cast(script, status, cast, existing, shown)
     except H3Error as exc:
-        return text, f"Prompt enhancement failed: {exc}", *unchanged
+        return text, f"Prompt enhancement failed: {exc}", *_drama3_unchanged_outputs()
+
+
+def copy_drama3_writer_prompt(text, speaker_mode, *slots):
+    """The full writer prompt (system prompt, slot context and speech text) for an external chat model."""
+    try:
+        names, _existing, cast_context, _shown = _drama3_writer_slots(slots)
+        prompt = prompt_service.drama3_full_prompt(text, names, speaker_mode, runtime=_runtime_config(),
+                                                   cast_context=cast_context)
+    except H3Error as exc:
+        return gr.skip(), f"Could not build the writer prompt: {exc}"
+    return (gr.update(value=prompt, visible=True),
+            "Copy the full prompt into any chat model, then paste its JSON reply below and apply it.")
+
+
+def apply_drama3_writer_reply(reply, text, speaker_mode, *slots):
+    """Validate a pasted reply like the built-in writer, then fill the script and speaker slots."""
+    try:
+        names, existing, _cast_context, shown = _drama3_writer_slots(slots)
+        script, status, cast = prompt_service.apply_drama3_reply(reply, text, names, speaker_mode)
+        if status.startswith("Prompt enhancement failed:"):
+            return text, status, *_drama3_unchanged_outputs()
+        return _drama3_apply_cast(script, status, cast, existing, shown)
+    except H3Error as exc:
+        return text, f"Prompt enhancement failed: {exc}", *_drama3_unchanged_outputs()
 
 
 def _publish_drama3_signatures():
@@ -2916,8 +2962,9 @@ def _drama3_design_request(backend, seed, temperature, top_p, top_k, max_frames,
 def generate_drama3_voices(*values):
     """Generate each shown upload slot that has a design brief and no clip yet.
 
-    Inputs: the voice-design settings, parallel requests, the shown slot count, then
-    (preset, has_clip, description, preview_text, language) per slot. Outputs:
+    Inputs: the voice-design settings, parallel requests, the shown slot count,
+    whether to skip speakers that have a clip, then (preset, has_clip,
+    description, preview_text, language) per slot. Outputs:
     (audio, transcript, status) per slot, then the overall status. Drama 3 on
     SGLang-Omni generates up to ``parallel`` voices at once; other routes run in turn.
     """
@@ -2927,7 +2974,8 @@ def generate_drama3_voices(*values):
     settings = values[:len(DRAMA3_VOICE_DESIGN_SETTINGS)]
     parallel = values[len(settings)]
     shown = int(values[len(settings) + 1] or 0)
-    slots = values[len(settings) + 2:]
+    skip_existing = values[len(settings) + 2] is not False
+    slots = values[len(settings) + 3:]
     updates = [gr.skip()] * (3 * DRAMA3_VOICE_SLOTS)
 
     def frame(status):
@@ -2940,8 +2988,9 @@ def generate_drama3_voices(*values):
         preset, has_clip, description, preview, language = slots[5 * speaker:5 * speaker + 5]
         if preset and preset != UPLOAD_VOICE:
             continue
-        if has_clip:
-            updates[3 * speaker + 2] = "Skipped: this speaker already has a clip. Clear it to regenerate."
+        if has_clip and skip_existing:
+            updates[3 * speaker + 2] = ("Skipped: this speaker already has a clip. Uncheck "
+                                        "Skip speakers with a voice to regenerate it.")
         elif not str(description or "").strip() or not str(preview or "").strip():
             updates[3 * speaker + 2] = "Skipped: add a voice description and preview speech first."
         else:
@@ -3014,7 +3063,7 @@ def _publish_drama3_voices_signature():
     import inspect
     from h3_ui.optional_engine_views import DRAMA3_VOICE_SLOTS
 
-    names = [*DRAMA3_VOICE_DESIGN_SETTINGS, "parallel", "shown_slots",
+    names = [*DRAMA3_VOICE_DESIGN_SETTINGS, "parallel", "shown_slots", "skip_existing",
              *[f"speaker_{speaker}_{field}" for speaker in range(DRAMA3_VOICE_SLOTS)
                for field in ("voice", "has_clip", "description", "preview_text", "language")]]
     generate_drama3_voices.__signature__ = inspect.Signature(
@@ -3091,6 +3140,8 @@ def _optional_engine_actions():
         delete_drama3_speaker=delete_drama3_speaker,
         generate_drama3_voice=generate_drama3_voice,
         generate_drama3_voices=generate_drama3_voices,
+        copy_drama3_writer_prompt=copy_drama3_writer_prompt,
+        apply_drama3_writer_reply=apply_drama3_writer_reply,
         interrupt=interrupt,
     )
 

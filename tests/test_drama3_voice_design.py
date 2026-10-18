@@ -246,6 +246,61 @@ class CastSlotTests(unittest.TestCase):
             self.assertIn("failed", result[1])
             self.assertTrue(all(value == {"__type__": "update"} for value in result[2:]))
 
+    def test_copied_prompt_contains_system_prompt_slot_context_and_speech_text(self):
+        from h3_ui import application
+        voices = ["Upload a clip", None, ""] * 16
+        metadata = [""] * 48
+        metadata[6:9] = ["Mia", "Bright young voice", ""]
+        runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompt_drama3.txt")})
+        with patch.object(application, "_runtime_config", return_value=runtime):
+            prompt, status = application.copy_drama3_writer_prompt("MIA: Hello there.", "Auto",
+                                                                   *voices, *metadata, 4)
+            _skip, failed = application.copy_drama3_writer_prompt("  ", "Auto", *voices, *metadata, 4)
+        text = prompt["value"]
+        self.assertTrue(text.startswith(Path("prompt_drama3.txt").read_text(encoding="utf-8").strip()[:80]))
+        self.assertIn('"speaker_id": 2, "name": "Mia"', text)
+        self.assertTrue(text.rstrip().endswith("User text:\nMIA: Hello there."))
+        self.assertTrue(prompt["visible"])
+        self.assertIn("paste", status)
+        self.assertIn("speech text", failed)
+
+    def test_pasted_reply_fills_slots_like_the_built_in_writer(self):
+        from h3_ui import application
+        voices = ["Upload a clip", None, ""] * 16
+        runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompt_drama3.txt")})
+        fenced = "Here is the result:\n```json\n" + writer_reply(5) + "\n```"
+        with patch.object(application, "_runtime_config", return_value=runtime):
+            result = application.apply_drama3_writer_reply(fenced, "Original", "Auto", *voices, *[""] * 48, 4)
+            bad = application.apply_drama3_writer_reply("not json", "Original", "Auto", *voices, *[""] * 48, 4)
+        self.assertEqual(result[0], "<|speaker:5|> Hello there.")
+        self.assertIn("Applied the pasted", result[1])
+        self.assertEqual(result[17:20], ("Character 5", cast_entry(5)["description"], cast_entry(5)["preview_text"]))
+        self.assertEqual(result[50], 6)
+        self.assertEqual(bad[0], "Original")
+        self.assertIn("kept", bad[1])
+        self.assertTrue(all(value == {"__type__": "update"} for value in bad[2:]))
+
+    def test_unchecked_skip_regenerates_speakers_that_already_have_a_clip(self):
+        from h3_ui import application
+        from h3_ui.optional_engine_views import UPLOAD_VOICE, drama3_voices_title
+        calls = []
+
+        def single(description, *args):
+            calls.append(description)
+            yield "new.wav", {"__type__": "update", "value": "Hey."}, "Voice generated."
+        settings = ("Qwen3-TTS VoiceDesign", "ComfyUI", -1, 1.0, 0.9, 0, 8192, "in VRAM", 0.0,
+                    "FP8 (original weights)")
+        slots = [[UPLOAD_VOICE, False, "", "", "Auto"] for _ in range(16)]
+        slots[0] = [UPLOAD_VOICE, True, "Deep", "Hey.", "Auto"]
+        slots[1] = ["Saved Alice", True, "Bright", "Hi.", "Auto"]
+        with patch.object(application, "generate_drama3_voice", side_effect=single):
+            list(application.generate_drama3_voices(*settings, 8, 2, False, *[v for slot in slots for v in slot]))
+        self.assertEqual(calls, ["Deep"])  # saved speakers are never overwritten
+        self.assertEqual(drama3_voices_title(3, ["Saved Alice", UPLOAD_VOICE, UPLOAD_VOICE], [False, True, False]),
+                         "Speaker voices (optional) · 3 speakers · 2 with a voice")
+        self.assertEqual(drama3_voices_title(1, [UPLOAD_VOICE], [True, True]),
+                         "Speaker voices (optional) · 1 speaker · 1 with a voice")
+
     def test_generation_failure_preserves_current_audio_and_transcript(self):
         from h3_ui import application
         with patch.object(application, "_runtime_config"), \
@@ -299,7 +354,7 @@ class CastSlotTests(unittest.TestCase):
         slots[3] = [UPLOAD_VOICE, False, "Broken", "Oops.", "Auto"]
         slots[5] = [UPLOAD_VOICE, False, "Hidden", "Not shown.", "Auto"]
         with patch.object(application, "generate_drama3_voice", side_effect=single):
-            updates = list(application.generate_drama3_voices(*settings, 8, 4, *[v for slot in slots for v in slot]))
+            updates = list(application.generate_drama3_voices(*settings, 8, 4, True, *[v for slot in slots for v in slot]))
         self.assertEqual([call[0] for call in calls], ["Warm", "Broken"])
         self.assertEqual(calls[0][2], settings)
         self.assertEqual(len(updates[-1]), 49)
@@ -333,7 +388,7 @@ class CastSlotTests(unittest.TestCase):
                 patch("h3_models.resolve_hf_token", return_value=None), \
                 patch.object(application, "generate_drama3_voice") as single, \
                 patch.object(drama3_voice_design, "generate_drama3_references", side_effect=batch):
-            updates = list(application.generate_drama3_voices(*settings, 6, 2, *[v for slot in slots for v in slot]))
+            updates = list(application.generate_drama3_voices(*settings, 6, 2, True, *[v for slot in slots for v in slot]))
         single.assert_not_called()
         self.assertEqual(seen["briefs"], {0: ("Warm", "Hello."), 1: ("Bright", "Hi there.")})
         self.assertEqual((seen["request"].backend, seen["request"].parallel, seen["request"].top_k),

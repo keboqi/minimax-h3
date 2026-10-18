@@ -57,6 +57,8 @@ class OptionalEngineActions:
     interrupt: Callable
     generate_drama3_voice: Callable
     generate_drama3_voices: Callable
+    copy_drama3_writer_prompt: Callable
+    apply_drama3_writer_reply: Callable
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,12 @@ class Drama3View:
     voice_engine: gr.Radio
     generate_voices: gr.Button
     stop_voices: gr.Button
+    skip_existing: gr.Checkbox
+    voices_panel: gr.Accordion
+    copy_prompt: gr.Button
+    writer_prompt: gr.Textbox
+    pasted_reply: gr.Textbox
+    apply_reply: gr.Button
 
 
 def _actions(label):
@@ -221,6 +229,15 @@ def drama3_slot_title(speaker, name="", preset=UPLOAD_VOICE, has_clip=False):
     return title
 
 
+def drama3_voices_title(shown=DRAMA3_VISIBLE_SLOTS, presets=(), has_clips=()):
+    """Speaker voices panel title with the shown speaker count and how many have a voice."""
+    shown = max(1, min(DRAMA3_VOICE_SLOTS, int(shown or 1)))
+    ready = sum(1 for speaker in range(shown)
+                if (speaker < len(presets) and presets[speaker] and presets[speaker] != UPLOAD_VOICE)
+                or (speaker < len(has_clips) and has_clips[speaker]))
+    return f"Speaker voices (optional) \u00b7 {shown} speaker{'s' if shown != 1 else ''} \u00b7 {ready} with a voice"
+
+
 def _voice_slot(speaker, names):
     with gr.Accordion(drama3_slot_title(speaker), open=speaker == 0,
                       visible=speaker < DRAMA3_VISIBLE_SLOTS) as group:
@@ -281,7 +298,17 @@ def build_drama3_view(root, speaker_names=()):
                              "reference voice or saved speaker below. Single keeps one voice throughout.",
                     )
                     writer, enhance, enhance_status = _writer("Rewrite script")
-                with gr.Accordion("Speaker voices (optional)", open=False):
+                    with gr.Accordion("Use another chat model", open=False):
+                        gr.Markdown("Copy the full writer prompt (system prompt, speaker slots and speech text) "
+                                    "into any chat model. Paste its JSON reply here; it is checked like the "
+                                    "built-in writer before the script and speaker slots change.")
+                        copy_prompt = gr.Button("Show full writer prompt", size="sm")
+                        writer_prompt = gr.Textbox(label="Full writer prompt", lines=8, max_lines=20,
+                                                   interactive=False, visible=False, buttons=["copy"])
+                        pasted_reply = gr.Textbox(label="Pasted writer reply", lines=6, max_lines=20,
+                                                  placeholder='{"script": "<|speaker:0|> ...", "speakers": [...]}')
+                        apply_reply = gr.Button("Apply pasted reply", size="sm")
+                with gr.Accordion(drama3_voices_title(), open=False) as voices_panel:
                     gr.Markdown("Each speaker has its own panel. Upload a reference clip or generate one from "
                                 "the voice description and preview speech; a generated clip uses the preview speech "
                                 "as its transcript. Save either kind as a reusable speaker preset. Speakers without "
@@ -293,6 +320,14 @@ def build_drama3_view(root, speaker_names=()):
                              "[Qwen3-TTS VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign) "
                              "runs in its own isolated runtime, downloaded on first use.",
                     )
+                    with gr.Row(equal_height=True):
+                        skip_existing = gr.Checkbox(
+                            True, label="Skip speakers with a voice",
+                            info="Uncheck to regenerate clips, for example after changing the backend.")
+                        asr_model = gr.Dropdown(list(DRAMA3_ASR_CHOICES), value=DEFAULT_DRAMA3_ASR,
+                                                label="Voice transcript model",
+                                                info="For Auto transcribe. 0.6B uses less memory. "
+                                                     "Check names and every spoken word.")
                     with gr.Row():
                         generate_voices = gr.Button("Generate all speaker voices", size="sm")
                         stop_voices = gr.Button("Interrupt", size="sm", interactive=False)
@@ -300,9 +335,6 @@ def build_drama3_view(root, speaker_names=()):
                     voice_status = gr.Markdown("")
                     voices = tuple(_voice_slot(speaker, list(speaker_names))
                                    for speaker in range(DRAMA3_VOICE_SLOTS))
-                    asr_model = gr.Dropdown(list(DRAMA3_ASR_CHOICES), value=DEFAULT_DRAMA3_ASR,
-                                            label="Voice transcript model",
-                                            info="0.6B uses less memory. Check names and every spoken word after transcription.")
                     shown_slots = gr.State(DRAMA3_VISIBLE_SLOTS)
                     with gr.Row():
                         add_speaker = gr.Button("Add speaker", size="sm")
@@ -369,7 +401,8 @@ def build_drama3_view(root, speaker_names=()):
                       remove_speaker, voice_status, seed, temperature,
                       top_p, top_k, max_frames, split, experts, cache, backend, parallel, retries,
                       output, run, stop, status, model, asr_model, voice_engine,
-                      generate_voices, stop_voices)
+                      generate_voices, stop_voices, skip_existing, voices_panel, copy_prompt, writer_prompt,
+                      pasted_reply, apply_reply)
 
 
 def settings_components(view):
@@ -460,6 +493,23 @@ def bind_drama3(view, actions):
                  *drama3_voice_inputs(view), *drama3_cast_inputs(view)],
         queue=False, show_progress="hidden", api_name=False,
     )
+    writer_outputs = [view.text, view.enhance_status, *drama3_cast_inputs(view),
+                      view.shown_slots, *groups, view.add_speaker, view.remove_speaker]
+    writer_slots = [*drama3_voice_inputs(view), *drama3_cast_inputs(view), view.shown_slots]
+    view.copy_prompt.click(actions.copy_drama3_writer_prompt,
+                           inputs=[view.text, view.speaker_mode, *writer_slots],
+                           outputs=[view.writer_prompt, view.enhance_status],
+                           queue=False, show_progress="hidden", api_name=False)
+    view.apply_reply.click(actions.apply_drama3_writer_reply,
+                           inputs=[view.pasted_reply, view.text, view.speaker_mode, *writer_slots],
+                           outputs=writer_outputs, queue=False, show_progress="hidden", api_name=False)
+    counted = [view.shown_slots, *presets, *[slot.has_clip for slot in view.voices]]
+    for trigger in (view.shown_slots.change, *[slot.preset.change for slot in view.voices],
+                    *[slot.has_clip.change for slot in view.voices]):
+        trigger(lambda shown, *values: gr.update(label=drama3_voices_title(
+                    shown, values[:DRAMA3_VOICE_SLOTS], values[DRAMA3_VOICE_SLOTS:])),
+                inputs=counted, outputs=view.voices_panel,
+                queue=False, show_progress="hidden", api_name=False)
     bind_prompt_action(
         view.enhance.click, actions.enhance_drama3_text,
         inputs=[view.text, view.speaker_mode, *_writer_inputs(view.writer), *drama3_voice_inputs(view),
@@ -472,7 +522,7 @@ def bind_drama3(view, actions):
                       view.max_frames, view.experts, view.expert_cache_gb, view.model]
     generated_all = bind_gpu_action(
         view.generate_voices.click, owned_generation(actions.generate_drama3_voices, "drama3_voice"),
-        inputs=[*voice_settings, view.parallel, view.shown_slots,
+        inputs=[*voice_settings, view.parallel, view.shown_slots, view.skip_existing,
                 *[component for slot in view.voices
                   for component in (slot.preset, slot.has_clip, slot.description, slot.preview_text, slot.language)]],
         outputs=[*[component for slot in view.voices for component in (slot.audio, slot.transcript, slot.status)],

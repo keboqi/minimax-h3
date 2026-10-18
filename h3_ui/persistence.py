@@ -32,7 +32,7 @@ EXTRA_FIELDS = {
     "drama3": ("seed", "temperature", "top_p", "top_k", "max_frames", "split_long_text", "experts",
                "expert_cache_gb", "prompt_backend", "prompt_model", "lightning_model",
                "speaker_mode", "backend", "parallel", "retries", "model", "asr_model",
-               "voice_engine"),
+               "voice_engine", "skip_existing"),
     "workspace": ("task", "engine"),
     "qwen_image21": (
         "prompt_enhancer",

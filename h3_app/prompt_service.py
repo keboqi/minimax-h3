@@ -743,6 +743,76 @@ def enforce_drama3_speakers(script: str, allowed: tuple[int, ...] | None) -> str
     return script
 
 
+DRAMA3_PROMPT_FAILED = "Prompt enhancement failed:"
+
+
+def drama3_writer_context(voices: Iterable[tuple[int, str]], speaker_mode: str,
+                          cast_context: str = "") -> tuple[tuple[int, ...] | None, str]:
+    """The allowed speaker IDs and the context lines sent with the user's text."""
+    voices = tuple(voices)
+    allowed, speaker_instruction = drama3_speaker_plan(speaker_mode, voices)
+    return allowed, drama3_voice_context(voices) + "\n" + speaker_instruction + "\n" + cast_context
+
+
+def drama3_full_prompt(text: str, voices: Iterable[tuple[int, str]] = (), speaker_mode: str = DRAMA3_SPEAKER_AUTO,
+                       *, runtime: RuntimeConfig, cast_context: str = "") -> str:
+    """The exact system prompt and request the built-in writer sends, for use in another chat model."""
+    original = str(text or "").strip()
+    if not original:
+        raise H3Error("Write the speech text or a scene brief first.")
+    _allowed, context = drama3_writer_context(voices, speaker_mode, cast_context)
+    system_prompt = runtime.prompt_systems["Drama 3"].read_text(encoding="utf-8").strip()
+    # Same wording as the built-in request, so pasted replies follow the same contract.
+    request = (f"Create the final Drama 3 prompt from the following user input.\n"
+               f"{context}\nUser text:\n{original}")
+    return f"{system_prompt}\n\n----- USER REQUEST -----\n\n{request}\n"
+
+
+def _strip_reply_wrapping(reply: str) -> str:
+    """Accept a pasted JSON reply wrapped in a code fence or a sentence of chat."""
+    reply = str(reply or "").strip()
+    fenced = re.search(r"```[A-Za-z0-9_-]*\s*(.*?)\s*```", reply, flags=re.S)
+    if fenced:
+        reply = fenced.group(1).strip()
+    if not reply.startswith("{") and "{" in reply and "}" in reply:
+        reply = reply[reply.index("{"):reply.rindex("}") + 1]
+    return reply
+
+
+def parse_drama3_reply(reply: str, original: str, allowed: tuple[int, ...] | None, speaker_mode: str,
+                       *, require_cast: bool) -> tuple[str, list[dict]]:
+    """Validate a writer reply exactly as the built-in writer does; raises ``H3Error``."""
+    from h3_app.drama3_cast import parse_script_cast
+
+    if require_cast or reply.lstrip().startswith("{"):
+        script, cast = parse_script_cast(reply)
+        if speaker_mode == DRAMA3_SPEAKER_AUTO:
+            from h3_app.workflows.drama3 import SPEAKER_TAG, text_speakers
+            existing_ids = {int(value) for value in SPEAKER_TAG.findall(str(original or ""))}
+            if not existing_ids <= text_speakers(script):
+                raise H3Error("The writer removed or renumbered existing script speaker IDs.")
+        if allowed is not None and {entry["speaker_id"] for entry in cast} != set(allowed):
+            raise H3Error("The writer's cast does not match the selected speaker mode and reference IDs.")
+        return script, cast
+    # Compatibility for callers with older custom, plain-script system prompts.
+    return enforce_drama3_speakers(validate_drama3_script(reply), allowed), []
+
+
+def apply_drama3_reply(reply: str, text: str, voices: Iterable[tuple[int, str]] = (),
+                       speaker_mode: str = DRAMA3_SPEAKER_AUTO) -> tuple[str, str, list[dict]]:
+    """Validate a reply pasted from another chat model; the text is kept on failure."""
+    original = str(text or "")
+    if not str(reply or "").strip():
+        return original, f"{DRAMA3_PROMPT_FAILED} paste the writer's JSON reply first.", []
+    try:
+        allowed, _context = drama3_writer_context(voices, speaker_mode)
+        script, cast = parse_drama3_reply(_strip_reply_wrapping(reply), original, allowed, speaker_mode,
+                                          require_cast=True)
+    except H3Error as exc:
+        return original, f"{DRAMA3_PROMPT_FAILED} {exc} Your text was kept.", []
+    return script, "Applied the pasted Drama 3 script.", cast
+
+
 def enhance_drama3_text(
     text: str,
     model: str,
@@ -758,8 +828,6 @@ def enhance_drama3_text(
     cast_context: str = "",
 ) -> tuple:
     """Rewrite a script and validate its cast as one result before updating the UI."""
-    from h3_app.drama3_cast import parse_script_cast
-
     original = str(text or "")
     voices = tuple(voices)
 
@@ -767,11 +835,11 @@ def enhance_drama3_text(
         return (script, status, cast or []) if return_cast else (script, status)
 
     if not original.strip():
-        return result(original, "Prompt enhancement failed: write the speech text or a scene brief first.")
+        return result(original, f"{DRAMA3_PROMPT_FAILED} write the speech text or a scene brief first.")
     try:
-        allowed, speaker_instruction = drama3_speaker_plan(speaker_mode, voices)
+        allowed, context = drama3_writer_context(voices, speaker_mode, cast_context)
     except H3Error as exc:
-        return result(original, f"Prompt enhancement failed: {exc}")
+        return result(original, f"{DRAMA3_PROMPT_FAILED} {exc}")
     script, status = _enhance_prompt_from_media(
         prompt=original,
         model=model,
@@ -782,27 +850,15 @@ def enhance_drama3_text(
         lightning_api_key=lightning_api_key,
         lightning_model=lightning_model,
         media_values=(),
-        context=drama3_voice_context(voices) + "\n" + speaker_instruction + "\n" + cast_context,
+        context=context,
     )
-    if status.startswith("Prompt enhancement failed:"):
+    if status.startswith(DRAMA3_PROMPT_FAILED):
         return result(original, status)
     try:
-        cast = []
-        if return_cast or script.lstrip().startswith("{"):
-            script, cast = parse_script_cast(script)
-            if speaker_mode == DRAMA3_SPEAKER_AUTO:
-                from h3_app.workflows.drama3 import SPEAKER_TAG, text_speakers
-                existing_ids = {int(value) for value in SPEAKER_TAG.findall(original)}
-                if not existing_ids <= text_speakers(script):
-                    raise H3Error("The writer removed or renumbered existing script speaker IDs.")
-            if allowed is not None and {entry["speaker_id"] for entry in cast} != set(allowed):
-                raise H3Error("The writer's cast does not match the selected speaker mode and reference IDs.")
-        else:
-            # Compatibility for callers with older custom, plain-script system prompts.
-            script = enforce_drama3_speakers(validate_drama3_script(script), allowed)
+        script, cast = parse_drama3_reply(script, original, allowed, speaker_mode, require_cast=return_cast)
         return result(script, status.replace(" prompt ", " script ", 1), cast)
     except H3Error as exc:
-        return result(original, f"Prompt enhancement failed: {exc} Your text was kept; retry.")
+        return result(original, f"{DRAMA3_PROMPT_FAILED} {exc} Your text was kept; retry.")
 
 
 def _enhance_h3_prompt_with_gemini(
