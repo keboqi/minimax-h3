@@ -507,6 +507,9 @@ on first use from [Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-I
 at 8 Euler steps and CFG 1. **Balanced** and **Quality** run the SFT model without a LoRA for
 25 or 50 steps at CFG 3, skipping layer 22 in the empty negative pass as in OpenMOSS's
 reference sampler. Other step-distilled LoRAs can be added to the **Turbo LoRA** list.
+**1M** and **2M resolution presets**, OpenMOSS's recommended range, set common aspect
+ratios on the 16-pixel grid. The FLUX 3 tab has matching **1K** and **2K** presets up to its
+4 MP limit, and a FLUX 3 preset overrides edit size matching, as in Qwen Image 2.1.
 Optional layout boxes use the same JSON format as FLUX 3. **Rewrite with Lightning AI or
 Gemini** follows OpenMOSS's
 [prompt-enhancer skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer):

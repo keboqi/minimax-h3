@@ -122,6 +122,53 @@ class MossImageControlTests(unittest.TestCase):
         self.assertEqual(moss_image_turbo_defaults("Off", "Fast"), (25, 3.0))
 
 
+class ResolutionPresetTests(unittest.TestCase):
+    def test_every_preset_is_a_valid_request_size_for_its_engine(self):
+        from h3_app.generation.requests import Flux3Request
+        from h3_ui import optional_engine_views as views
+        from h3_ui.qwen_bindings import qwen_resolution_preset_values
+
+        for presets, request, megapixels in (
+            (views.FLUX3_1K_RESOLUTION_PRESETS, Flux3Request("a fox"), 1),
+            (views.FLUX3_2K_RESOLUTION_PRESETS, Flux3Request("a fox"), 4),
+            (views.MOSS_IMAGE_1M_RESOLUTION_PRESETS, MossImageRequest("a fox"), 1),
+            (views.MOSS_IMAGE_2M_RESOLUTION_PRESETS, MossImageRequest("a fox"), 2),
+        ):
+            for name in presets:
+                with self.subTest(preset=name):
+                    width, height = qwen_resolution_preset_values(name)
+                    validate_request(replace(request, width=width, height=height))
+                    self.assertLessEqual(width * height, 4_194_304)
+                    self.assertAlmostEqual(width * height / 2**20, megapixels, delta=0.08 * megapixels)
+                    ratio = name.split(" · ")[1].split(":")
+                    self.assertLess(abs(width / height * int(ratio[1]) / int(ratio[0]) - 1), 0.0075)
+
+    def test_presets_set_the_size_clear_each_other_and_flux_switches_to_manual_size(self):
+        import gradio as gr
+        from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
+        from h3_ui.optional_engine_views import (
+            bind_resolution_presets, build_flux3_view, build_moss_image_view,
+        )
+
+        with gr.Blocks() as demo:
+            flux, moss = build_flux3_view(gr.Group()), build_moss_image_view(gr.Group())
+            bind_resolution_presets(flux, extra_outputs=(flux.edit_size,), extra_values=(QWEN_EDIT_SIZE_MANUAL,))
+            bind_resolution_presets(moss)
+
+        def handler(trigger, outputs):
+            ids = [component._id for component in outputs]
+            return next(fn.fn for fn in demo.fns.values()
+                        if [block._id for block in fn.inputs] == ([trigger._id] if trigger else [])
+                        and [block._id for block in fn.outputs] == ids)
+
+        choose = handler(flux.resolution_large, [flux.width, flux.height, flux.resolution_small, flux.edit_size])
+        self.assertEqual(choose("2K · 16:9 · 2720×1536"), (2720, 1536, None, QWEN_EDIT_SIZE_MANUAL))
+        choose = handler(moss.resolution_small, [moss.width, moss.height, moss.resolution_large])
+        self.assertEqual(choose("1M · 3:2 · 1248×832"), (1248, 832, None))
+        clear = handler(None, [moss.resolution_small, moss.resolution_large])
+        self.assertEqual(clear(), (None, None))
+
+
 class MossImageRequestTests(unittest.TestCase):
     def test_validation_rejects_bad_requests_before_downloads(self):
         request = MossImageRequest("a fox")

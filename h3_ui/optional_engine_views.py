@@ -89,6 +89,46 @@ _QUIET = {"queue": False, "show_progress": "hidden", "api_name": False}
 _SKIP_JS = '{"__type__": "update"}'
 
 
+# Native-grid size presets, labelled like Qwen's so qwen_resolution_preset_values parses them.
+FLUX3_1K_RESOLUTION_PRESETS = (
+    "1K · 1:1 · 1024×1024", "1K · 4:3 · 1152×864", "1K · 3:2 · 1248×832", "1K · 16:9 · 1360×768",
+    "1K · 3:4 · 864×1152", "1K · 2:3 · 832×1248", "1K · 9:16 · 768×1360",
+)
+# FLUX 3's 4 MP cap.
+FLUX3_2K_RESOLUTION_PRESETS = (
+    "2K · 1:1 · 2048×2048", "2K · 4:3 · 2304×1728", "2K · 3:2 · 2448×1632", "2K · 16:9 · 2720×1536",
+    "2K · 3:4 · 1728×2304", "2K · 2:3 · 1632×2448", "2K · 9:16 · 1536×2720",
+)
+# OpenMOSS recommends 1M to 2M pixels.
+MOSS_IMAGE_1M_RESOLUTION_PRESETS = tuple(name.replace("1K", "1M", 1) for name in FLUX3_1K_RESOLUTION_PRESETS)
+MOSS_IMAGE_2M_RESOLUTION_PRESETS = (
+    "2M · 1:1 · 1456×1456", "2M · 4:3 · 1664×1248", "2M · 3:2 · 1776×1184", "2M · 16:9 · 1920×1088",
+    "2M · 3:4 · 1248×1664", "2M · 2:3 · 1184×1776", "2M · 9:16 · 1088×1920",
+)
+
+
+def _resolution_presets(small, large, small_label, large_label, small_info, large_info):
+    with gr.Row():
+        first = gr.Dropdown(list(small), value=None, label=small_label, info=small_info)
+        second = gr.Dropdown(list(large), value=None, label=large_label, info=large_info)
+    return first, second
+
+
+def bind_resolution_presets(view, *, extra_outputs=(), extra_values=()):
+    """Mirror Qwen: a preset sets the size and clears the other; a manual size clears both."""
+    from .qwen_bindings import qwen_resolution_preset_values
+
+    pairs = ((view.resolution_small, view.resolution_large), (view.resolution_large, view.resolution_small))
+    for chosen, other in pairs:
+        chosen.input(
+            lambda name: ((*qwen_resolution_preset_values(name), None, *extra_values) if name
+                          else tuple(gr.update() for _ in range(3 + len(extra_outputs)))),
+            inputs=chosen, outputs=[view.width, view.height, other, *extra_outputs], **_QUIET,
+        )
+    for dimension in (view.width, view.height):
+        dimension.input(lambda: (None, None), outputs=[view.resolution_small, view.resolution_large], **_QUIET)
+
+
 def drama3_voice_choices(names):
     # Keep the existing API value while showing both ways to supply a reference.
     return [("Upload or generate a voice", UPLOAD_VOICE), *names]
@@ -148,6 +188,8 @@ class Flux3View:
     upsampler: gr.Dropdown
     cfg: gr.Slider
     layout: gr.Textbox
+    resolution_small: gr.Dropdown
+    resolution_large: gr.Dropdown
 
 
 @dataclass(frozen=True)
@@ -171,6 +213,8 @@ class MossImageView:
     writer: RemotePromptWriterControls
     enhance: gr.Button
     enhance_status: gr.Textbox
+    resolution_small: gr.Dropdown
+    resolution_large: gr.Dropdown
 
 
 def moss_image_preset_values(preset):
@@ -312,6 +356,10 @@ def build_flux3_view(root):
                     gr.Markdown("Uses BFL's official upsampler instructions. Edits send the reference "
                                 "images and return a full edit caption.")
                     writer, enhance, enhance_status = _writer("Rewrite prompt")
+                resolution_small, resolution_large = _resolution_presets(
+                    FLUX3_1K_RESOLUTION_PRESETS, FLUX3_2K_RESOLUTION_PRESETS,
+                    "1K resolution preset", "2K resolution preset",
+                    "Native 1K sizes.", "Native 2K sizes, up to 4 MP. Edits use these instead of the first image size.")
                 with gr.Row():
                     width = gr.Slider(256, 4096, value=1024, step=16, label="Width")
                     height = gr.Slider(256, 4096, value=1024, step=16, label="Height")
@@ -345,7 +393,8 @@ def build_flux3_view(root):
                 output.h3_metadata_root = gr.Column()
                 run, stop, status = _actions("Generate image")
     return Flux3View(prompt, model, refs, width, height, edit_size, seed, steps, expand,
-                     writer, enhance, enhance_status, output, run, stop, status, upsampler, cfg, layout)
+                     writer, enhance, enhance_status, output, run, stop, status, upsampler, cfg, layout,
+                     resolution_small, resolution_large)
 
 
 def build_moss_image_view(root):
@@ -368,6 +417,10 @@ def build_moss_image_view(root):
                 preset = gr.Radio(list(MOSS_IMAGE_PRESETS), value=DEFAULT_MOSS_IMAGE_PRESET, label="MOSS-Image preset",
                     info="Fast uses the 8-step DMD Turbo LoRA at CFG 1. Balanced and Quality run the SFT "
                          "model for 25 or 50 steps at CFG 3.")
+                resolution_small, resolution_large = _resolution_presets(
+                    MOSS_IMAGE_1M_RESOLUTION_PRESETS, MOSS_IMAGE_2M_RESOLUTION_PRESETS,
+                    "1M resolution preset", "2M resolution preset",
+                    "About one megapixel, the default.", "About two megapixels, the top of OpenMOSS's recommended range.")
                 with gr.Row():
                     width = gr.Slider(256, 2048, value=1024, step=16, label="Width")
                     height = gr.Slider(256, 2048, value=1024, step=16, label="Height")
@@ -393,7 +446,8 @@ def build_moss_image_view(root):
                 output.h3_metadata_root = gr.Column()
                 run, stop, status = _actions("Generate image")
     return MossImageView(prompt, preset, turbo_variant, model, text_encoder, width, height, seed, steps, cfg,
-                         layout, output, run, stop, status, rewrite_mode, writer, enhance, enhance_status)
+                         layout, output, run, stop, status, rewrite_mode, writer, enhance, enhance_status,
+                         resolution_small, resolution_large)
 
 
 @dataclass(frozen=True)
@@ -805,6 +859,8 @@ def _bind_generation(view, family, generate, interrupt, inputs):
 
 
 def bind_flux3(view, actions):
+    # As in Qwen, a chosen preset takes priority over matching the first reference's size.
+    bind_resolution_presets(view, extra_outputs=(view.edit_size,), extra_values=(QWEN_EDIT_SIZE_MANUAL,))
     bind_prompt_action(
         view.enhance.click, actions.enhance_flux3_prompt,
         inputs=[view.prompt, view.reference_images, view.width, view.height, *_writer_inputs(view.writer)],
@@ -818,6 +874,7 @@ def bind_flux3(view, actions):
 
 
 def bind_moss_image(view, actions):
+    bind_resolution_presets(view)
     bind_prompt_action(
         view.enhance.click, actions.enhance_moss_image_prompt,
         inputs=[view.prompt, view.width, view.height, view.rewrite_mode, *_writer_inputs(view.writer)],
