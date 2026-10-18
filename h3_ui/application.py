@@ -2691,13 +2691,40 @@ def generate_flux3(prompt, model_choice, reference_images, width, height, edit_s
 
 
 def generate_moss_image(prompt, preset, turbo_variant, model_choice, text_encoder_choice, width, height,
-                        seed, steps, cfg, layout="", progress=gr.Progress(track_tqdm=False)):
-    from h3_app.generation.optional_engines import generate_optional_engine
+                        seed, steps, cfg, layout="", reference_images=None, edit_lora="", edit_lora_strength=1.0,
+                        kv_cache=True, edit_size=QWEN_EDIT_SIZE_MATCH, progress=gr.Progress(track_tqdm=False)):
+    from h3_app.generation.optional_engines import generate_optional_engine, validate_request
+    from dataclasses import replace
+    paths = reference_images or []
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
     request = generation_requests.MossImageRequest(
         prompt, preset, turbo_variant, model_choice, text_encoder_choice, width, height, seed, steps, cfg,
-        layout or "",
+        layout or "", tuple(str(path) for path in paths),
+        # A remembered edit LoRA must not turn plain text-to-image into an error.
+        (edit_lora or "") if paths else "", float(edit_lora_strength), bool(kv_cache),
+        edit_size or QWEN_EDIT_SIZE_MATCH,
     )
+    validate_request(request)
+    request = replace(request, reference_images=tuple(
+        stage_file(path, "moss_image_references", reuse=True) for path in request.reference_images
+    ))
     yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
+
+
+def moss_image_edit_loras():
+    from h3_app.moss_image_loras import list_edit_loras
+    return list_edit_loras(_runtime_config())
+
+
+def upload_moss_image_edit_lora(path):
+    from h3_app.moss_image_loras import store_edit_lora
+    if not path:
+        return None
+    try:
+        return store_edit_lora(path, _runtime_config())
+    except H3Error as exc:
+        raise gr.Error(str(exc)) from exc
 
 
 def _drama3_voices(slots, saved_presets=None):
@@ -3517,6 +3544,8 @@ def _optional_engine_actions():
         generate_flux3=generate_flux3,
         generate_moss_image=generate_moss_image,
         enhance_moss_image_prompt=enhance_moss_image_prompt,
+        moss_image_edit_loras=moss_image_edit_loras,
+        upload_moss_image_edit_lora=upload_moss_image_edit_lora,
         generate_drama3=generate_drama3,
         switch_drama3_backend=switch_drama3_backend,
         enhance_flux3_prompt=enhance_flux3_prompt,

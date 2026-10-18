@@ -43,7 +43,8 @@ backends; GPU inference and deployment are validated separately.
 - A dedicated Qwen Image 2.1 tab for native text-to-image generation and
   multi-reference image editing
 - A MOSS-Image tab for OpenMOSS MOSS-Image SFT text-to-image generation with
-  Fast (8-step Turbo LoRA), Balanced and Quality presets
+  Fast (8-step Turbo LoRA), Balanced and Quality presets, and reference-image
+  edits with an ai-toolkit MOSS-Image edit LoRA
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
 - A dedicated MiniMax Music 3 tab for caption-and-lyrics song generation
 - A dedicated YuE2 tab for score-planned or direct lyrics-to-song generation
@@ -515,6 +516,19 @@ Gemini** follows OpenMOSS's
 [prompt-enhancer skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer):
 the selected LLM returns a caption or a pixel Layout draft for the current width and height,
 and the app validates and compiles it with a port of the skill's `compile_prompt.py`.
+
+MOSS-Image is text-to-image only. **Edit with reference images** adds up to three
+references through ostris's pinned
+[ComfyUI-MOSS-Image-Ostris-Edit](https://github.com/ostris/ComfyUI-MOSS-Image-Ostris-Edit)
+nodes. The Qwen3.5 vision tower sees each reference, and each is also attached as a t=0
+reference latent at about 1 MP. This only works with an edit LoRA trained with
+[ai-toolkit](https://github.com/ostris/ai-toolkit)'s *MOSS-Image [Edit Training]*. No edit
+LoRA ships with the app: put one in ComfyUI's `models/loras` folder, or upload it in the
+tab, then pick it from **Edit LoRA**. **Cached reference attention** matches ai-toolkit's
+default `kv_cache: true`; turn it off only for LoRAs trained without it. Edits keep the
+first reference's aspect ratio at about 1 MP unless a resolution preset or **Manual size**
+is chosen. The Turbo LoRA can be combined with an edit LoRA, but it was never trained with
+references, so Balanced or Quality is the reliable choice.
 
 Reference PNGs retain their alpha channels through native RGBA reconstruction
 before Qwen encoding. The scheduler counts the output latent's native 16× grid

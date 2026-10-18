@@ -301,7 +301,9 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         )
 
         bind_flux3(flux3_components, engine_actions)
-        moss_image_components = build_moss_image_view(app_views.moss_image)
+        moss_image_components = build_moss_image_view(
+            app_views.moss_image, getattr(engine_actions, "moss_image_edit_loras", lambda: [])(),
+        )
         bind_moss_image(moss_image_components, engine_actions)
         bind_drama3(drama3_components, engine_actions)
         gallery_components = build_gallery_view(

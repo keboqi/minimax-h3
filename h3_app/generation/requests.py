@@ -35,6 +35,12 @@ class MossImageRequest:
     steps: int = 8
     cfg: float = 1.0
     layout: str = ""
+    # Edit mode: up to three references plus an ai-toolkit MOSS-Image edit LoRA.
+    reference_images: tuple[str, ...] = ()
+    edit_lora: str = ""
+    edit_lora_strength: float = 1.0
+    kv_cache: bool = True
+    edit_size: str = "Match first image size"
 
 
 @dataclass(frozen=True)

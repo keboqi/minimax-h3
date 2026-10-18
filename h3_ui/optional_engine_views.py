@@ -165,6 +165,8 @@ class OptionalEngineActions:
     switch_drama3_script_mode: Callable | None = None
     generate_moss_image: Callable | None = None
     enhance_moss_image_prompt: Callable | None = None
+    moss_image_edit_loras: Callable[[], list[str]] = lambda: []
+    upload_moss_image_edit_lora: Callable | None = None
 
 
 @dataclass(frozen=True)
@@ -215,6 +217,13 @@ class MossImageView:
     enhance_status: gr.Textbox
     resolution_small: gr.Dropdown
     resolution_large: gr.Dropdown
+    reference_images: gr.File | None = None
+    edit_lora: gr.Dropdown | None = None
+    refresh_edit_loras: gr.Button | None = None
+    upload_edit_lora: gr.File | None = None
+    edit_lora_strength: gr.Slider | None = None
+    kv_cache: gr.Checkbox | None = None
+    edit_size: gr.Radio | None = None
 
 
 def moss_image_preset_values(preset):
@@ -397,16 +406,39 @@ def build_flux3_view(root):
                      resolution_small, resolution_large)
 
 
-def build_moss_image_view(root):
+def build_moss_image_view(root, edit_loras=()):
     turbo, steps_default, cfg_default = MOSS_IMAGE_PRESETS[DEFAULT_MOSS_IMAGE_PRESET]
     with root:
         gr.Markdown("## MOSS-Image\nOpenMOSS MOSS-Image SFT text-to-image with strong text rendering and "
-                    "optional layout boxes. Weights download on first use from "
-                    "[Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image).")
+                    "optional layout boxes, plus edits with an ai-toolkit edit LoRA. Weights download on "
+                    "first use from [Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image).")
         with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
             with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
                 prompt = gr.Textbox(label="Image prompt", lines=7,
-                    placeholder="Describe the scene, including any text to render in quotes.")
+                    placeholder="Describe the scene, including any text to render in quotes, "
+                                "or the change to make to the references.")
+                with gr.Accordion("Edit with reference images (edit LoRA)", open=False):
+                    gr.Markdown("MOSS-Image itself is text-to-image only. Edits use "
+                                "[ostris's reference conditioning](https://github.com/ostris/ComfyUI-MOSS-Image-Ostris-Edit) "
+                                "and need a LoRA trained with ai-toolkit's MOSS-Image Edit Training. The Turbo "
+                                "LoRA was never trained with references, so Balanced or Quality is the safe preset.")
+                    refs = build_image_file_input(label="Reference images (edit, up to 3)", file_count="multiple",
+                                                  file_types=["image"], type="filepath")
+                    with gr.Row():
+                        edit_lora = gr.Dropdown(list(edit_loras), value=None, label="Edit LoRA", scale=4,
+                                                info="LoRA files in ComfyUI's models/loras folder.")
+                        refresh_edit_loras = gr.Button("Refresh", scale=1, min_width=80)
+                    upload_edit_lora = gr.File(label="Upload edit LoRA (.safetensors)", file_types=[".safetensors"],
+                                               type="filepath")
+                    edit_lora_strength = gr.Slider(0.05, 2, value=1.0, step=0.05, label="Edit LoRA strength")
+                    kv_cache = gr.Checkbox(value=True, label="Cached reference attention (kv_cache)",
+                        info="ai-toolkit's default and about 2x faster. Turn off only for a LoRA trained "
+                             "with kv_cache: false.")
+                    edit_size = gr.Radio([QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MANUAL], value=QWEN_EDIT_SIZE_MATCH,
+                        label="Edit output size", visible=False,
+                        info="Keep the first reference's aspect ratio at about 1 MP, or use the width and height below.")
+                    refs.change(lambda paths: gr.update(visible=bool(paths)), inputs=refs, outputs=edit_size,
+                                queue=False, api_name=False)
                 with gr.Accordion("Rewrite with Lightning AI or Gemini", open=False):
                     gr.Markdown("Follows OpenMOSS's official prompt-enhancer skill. The writer returns a detailed "
                                 "caption or a Layout with boxes for the width and height below; keep that size "
@@ -447,7 +479,8 @@ def build_moss_image_view(root):
                 run, stop, status = _actions("Generate image")
     return MossImageView(prompt, preset, turbo_variant, model, text_encoder, width, height, seed, steps, cfg,
                          layout, output, run, stop, status, rewrite_mode, writer, enhance, enhance_status,
-                         resolution_small, resolution_large)
+                         resolution_small, resolution_large, refs, edit_lora, refresh_edit_loras,
+                         upload_edit_lora, edit_lora_strength, kv_cache, edit_size)
 
 
 @dataclass(frozen=True)
@@ -874,7 +907,16 @@ def bind_flux3(view, actions):
 
 
 def bind_moss_image(view, actions):
-    bind_resolution_presets(view)
+    # As in FLUX 3, a chosen preset takes priority over matching the first reference's size.
+    bind_resolution_presets(view, extra_outputs=(view.edit_size,), extra_values=(QWEN_EDIT_SIZE_MANUAL,))
+    view.refresh_edit_loras.click(lambda selected: _edit_lora_choices(actions.moss_image_edit_loras(), selected),
+                                  inputs=view.edit_lora, outputs=view.edit_lora, **_QUIET)
+    if actions.upload_moss_image_edit_lora is not None:
+        def upload(path):
+            stored = actions.upload_moss_image_edit_lora(path)
+            return _edit_lora_choices(actions.moss_image_edit_loras(), stored), None
+        view.upload_edit_lora.upload(upload, inputs=view.upload_edit_lora,
+                                     outputs=[view.edit_lora, view.upload_edit_lora], api_name=False)
     bind_prompt_action(
         view.enhance.click, actions.enhance_moss_image_prompt,
         inputs=[view.prompt, view.width, view.height, view.rewrite_mode, *_writer_inputs(view.writer)],
@@ -887,8 +929,14 @@ def bind_moss_image(view, actions):
                              outputs=[view.steps, view.cfg], **_QUIET)
     return _bind_generation(view, "moss_image", actions.generate_moss_image, actions.interrupt, [
         view.prompt, view.preset, view.turbo_variant, view.model, view.text_encoder, view.width, view.height,
-        view.seed, view.steps, view.cfg, view.layout,
+        view.seed, view.steps, view.cfg, view.layout, view.reference_images, view.edit_lora,
+        view.edit_lora_strength, view.kv_cache, view.edit_size,
     ])
+
+
+def _edit_lora_choices(names, selected):
+    names = list(names)
+    return gr.update(choices=names, value=selected if selected in names else None)
 
 
 def drama3_voice_inputs(view):
