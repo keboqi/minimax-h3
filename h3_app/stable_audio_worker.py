@@ -123,7 +123,9 @@ def synthesize(request: dict) -> None:
             steps = int(item.get("steps", 8))
             cfg_scale = float(item.get("cfg_scale", 1.0))
 
-            conditioning = [{"prompt": prompt, "seconds_total": duration}]
+            conditioning = [{"prompt": prompt, "seconds_start": 0, "seconds_total": duration}]
+            # Unknown keywords pass through **sampler_kwargs down to the transformer blocks,
+            # so only the function's own parameters and the sampler's go here.
             output = generate_diffusion_cond_inpaint(
                 model,
                 steps=steps,
@@ -135,9 +137,9 @@ def synthesize(request: dict) -> None:
                 device=str(device),
                 seed=seed,
                 apg_scale=1.0,
-                cut_to_seconds_total=True,
             )
-            output = output.squeeze(0).to(torch.float32)
+            # Generation runs about six seconds past seconds_total; keep only the requested length.
+            output = output[..., : duration * sample_rate].squeeze(0).to(torch.float32)
             peak = torch.max(torch.abs(output))
             if peak > 0:
                 output = output.div(peak).clamp(-1.0, 1.0)
