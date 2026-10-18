@@ -293,7 +293,7 @@ def speech_duck_gain(speech: np.ndarray, rate: int, *, depth_db: float = DUCK_DE
 
 
 def mix_parallel_tracks(tracks: list[dict | tuple], rate: int) -> np.ndarray:
-    """Mix speech and sound tracks: loop, level sounds to speech RMS, duck them under speech, fade, limit."""
+    """Mix speech and sound tracks: loop, level sounds to speech RMS, duck looped beds under speech, fade, limit."""
     normalized: list[dict] = []
     for item in tracks:
         if isinstance(item, dict):
@@ -323,7 +323,7 @@ def mix_parallel_tracks(tracks: list[dict | tuple], rate: int) -> np.ndarray:
     ]
     avg_speech_rms = float(np.mean(speech_rms_values)) if speech_rms_values else 0.0
 
-    processed: list[tuple[np.ndarray, bool]] = []
+    processed: list[tuple[np.ndarray, bool, bool]] = []
     for track in valid:
         samples = np.asarray(track["audio"], dtype=np.float32).reshape(-1).copy()
         is_sound = bool(track.get("is_sound", False))
@@ -346,18 +346,20 @@ def mix_parallel_tracks(tracks: list[dict | tuple], rate: int) -> np.ndarray:
             if volume != 1.0:
                 samples = samples * volume
 
-        processed.append((samples.astype(np.float32, copy=False), is_sound))
+        processed.append((samples.astype(np.float32, copy=False), is_sound, is_sound and loop))
 
-    max_len = max(len(arr) for arr, _is_sound in processed)
+    max_len = max(len(arr) for arr, _is_sound, _bed in processed)
     speech = np.zeros(max_len, dtype=np.float32)
-    for arr, is_sound in processed:
+    for arr, is_sound, _bed in processed:
         if not is_sound:
             speech[: len(arr)] += arr
+    # Only looped beds (ambience, music) dip under speech; a one-shot effect or stinger
+    # is usually anchored to the sentence that narrates it and must stay in front.
     duck = speech_duck_gain(speech, rate) if speech_lengths else None
     mixed = speech.copy()
-    for arr, is_sound in processed:
+    for arr, is_sound, bed in processed:
         if is_sound:
-            mixed[: len(arr)] += arr if duck is None else arr * duck[: len(arr)]
+            mixed[: len(arr)] += arr * duck[: len(arr)] if bed and duck is not None else arr
 
     if max_speech_length > 0 and mixed.size > max_speech_length + rate:
         target_len = max_speech_length + rate

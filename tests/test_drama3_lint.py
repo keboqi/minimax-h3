@@ -75,5 +75,25 @@ class CoverageTests(unittest.TestCase):
         self.assertIn("教室里顿时鸦雀无声", status)
 
 
+class PromptExampleTests(unittest.TestCase):
+    def test_advanced_example_is_a_clean_parseable_script(self):
+        from pathlib import Path
+
+        from h3_app.drama3_serving.tree import iter_sound_nodes, iter_speech_nodes, parse_drama3_tree
+
+        prompt = (Path(__file__).resolve().parents[1] / "prompt_drama3.txt").read_text(encoding="utf-8")
+        example = prompt.split("Advanced script-field example", 1)[1]
+        script = example.split("Script:\n", 1)[1].split("\nWhy:", 1)[0].strip()
+        self.assertEqual(lint_drama3_script(script), (script, []))
+        tree = parse_drama3_tree(script)
+        turns = [turn for node in iter_speech_nodes(tree) for turn in node.turns]
+        self.assertTrue(all(not turn.speaker_effects for turn in turns if turn.speaker == 0))  # narrator stays dry
+        self.assertIn(("fairy_tiny", "reverb_small_room"), {turn.speaker_effects for turn in turns})
+        sounds = iter_sound_nodes(tree)
+        self.assertTrue(all(sound.duration for sound in sounds))
+        self.assertEqual({sound.name for sound in sounds if sound.loop},
+                         {"temple_rumble", "tense_strings", "mystery_pad"})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -30,6 +30,7 @@ Speakers:
 - Number speakers in order of first appearance from 0, unless the voice context assigns a speaker number to a name or role; then use that number for that speaker and give new speakers the lowest unused numbers.
 - Prose with quoted dialogue becomes a narrator who reads the narration plus one speaker per character who reads their quoted words. Keep dialogue attributions such as "he said" in narration; do not silently remove source prose.
 - A text with a single voice uses its existing assigned ID, or 0 when no ID is assigned.
+- Labelled scripts such as `林夕(anxious): <phone_call>"喂？"` or `Narration: ...`: the label becomes a speaker tag (Narration, Narrator, and 旁白 are the narrator), a parenthesized emotion becomes a delivery cue after the opening words, and quotation marks around the speech are dropped. In Advanced mode keep the user's staging, sound, pause, and effect tags where they are, corrected to the rules below (for example, add `loop="true"` to un-looped music and move a phone filter off the person holding the phone). Labels for the same character, such as 导师陈教授 and 陈教授, or a 神秘声音 the text later reveals as 创世之神, share one ID.
 
 Voices:
 - In script, direct only delivery for speakers with a reference voice; their clip sets their timbre. In cast metadata preserve their provided name and voice description. Audio is not sent to the writer: never claim to have heard it or infer its acoustic properties. If no description was supplied, describe the story role and desired delivery, explicitly stating that the existing reference defines the timbre.
@@ -59,29 +60,38 @@ Custom cues are a last resort: only when no documented wording fits what the lin
 - Stay truthful to the words: never contradict their meaning and never repeat the same tag twice in a row.
 
 Advanced Sound & Vocal Staging (USE ONLY WHEN Script mode is "Advanced (sound enhanced)"):
-1. Sound Effects & Atmosphere Music (`<sound>`):
-   - Standalone line format: `<sound [loop="true"] [volume="0.2"] name="short_name">detailed English acoustic prompt for Stable Audio 3</sound>`
+0. Plan the soundscape before writing:
+   - Split the story into scenes at each change of place or time. Give each scene a master `<parallel>` holding at most one ambience loop and one music loop, beside a `<sequential>` timeline of that scene's lines.
+   - Separate scene blocks with a `<#0.5#>` to `<#1.5#>` pause.
+   - Inside the timeline, anchor one-shot effects only to story-relevant events, usually one to four per scene, each on the exact sentence where it happens. Do not score every line; quiet stretches let the important sounds land.
+   - Decide which place effect (see 3) the scene's in-world speakers carry.
+
+1. Sound Effects, Stingers & Music (`<sound>`):
+   - Standalone line format: `<sound [loop="true"] [volume="0.4"] [duration="N"] name="short_name">English acoustic prompt for Stable Audio 3</sound>`
    - Always give each distinct sound a concise `name="..."` (1–32 chars, e.g. `name="rain"`, `name="wooden_door"`). If the user request lists Saved sounds, reuse matching saved sound names verbatim.
-   - Write `<sound>` prompts in English describing acoustic texture, instruments, or Foley clearly.
-   - Foreground SFX (`<sound name="thunder">Loud thunderclap</sound>`): plays once (`loop` omitted).
-   - Continuous ambience (`<sound loop="true" volume="0.4" duration="25" name="rain">Steady rain and wind</sound>`): loops for the duration of the parallel dialogue block and ducks automatically under speech. Use volume 0.3–0.5 and duration 20–30 so the repeat is not obvious.
-   - Atmosphere / Background Music (`<sound loop="true" volume="0.2" duration="40" name="tense_cello">Slow minor-key cello drone</sound>`): MUST include `loop="true"` with volume 0.15–0.25 and duration 30–47, and describe non-vocal instrumental music matching the emotional arc.
-   - `duration="N"` is the clip length in whole seconds (1–47). One-shot SFX are usually 2–6 seconds. Keep at most two looping sounds active at once (one ambience, one music bed).
+   - One name means one sound: reuse the same name, with the same loop and duration, wherever that sound recurs, and never give two different sounds the same name.
+   - Write each prompt as one specific English phrase naming the source, its material or instruments, the space, distance, and intensity: `Smartphone ringtone, bright marimba melody, close and dry indoors`, not `Phone ringtone`. Music prompts name instruments, tempo, and mood and end with `no vocals`. Put the length in `duration`, not in the prompt.
+   - `duration="N"` is the clip length in whole seconds (1–47). Choose the category first:
+     * One-shot effect (`<sound name="thunder" duration="4">Loud close thunderclap rolling into distant rumble</sound>`): `loop` omitted, default volume, 2–6 seconds. Plays once at full level.
+     * Stinger (`<sound name="reveal_sting" volume="0.4" duration="6">Short rising orchestral swell with shimmering bells, single hit, no vocals</sound>`): a one-shot musical hit for a reveal or turning point, `loop` omitted, volume 0.3–0.5, 3–8 seconds.
+     * Ambience loop (`<sound loop="true" volume="0.4" duration="25" name="rain">Steady rain and wind on a window</sound>`): volume 0.3–0.5, 20–30 seconds.
+     * Music loop (`<sound loop="true" volume="0.2" duration="40" name="tense_cello">Slow minor-key cello drone, no vocals</sound>`): volume 0.15–0.25, 30–47 seconds, matching the emotional arc. A music bed is ALWAYS `loop="true"`: a sound without it plays once and stops, so un-looped music cuts out under the lines that follow.
+   - Loops repeat until their block's speech ends and dip automatically under speech; one-shot effects and stingers are not dipped. Keep at most two loops active at once (one ambience, one music).
    - Pause tags (`<#seconds#>`): e.g. `<#1.5#>` for a 1.5s dramatic beat or Foley gap.
 
 2. Arbitrarily Nested `<parallel>` and `<sequential>` Staging (6 Mixing Paradigms):
    - `<parallel>`, `</parallel>`, `<sequential>`, `</sequential>`, and `<sound ...>...</sound>` MUST each be placed on their own line.
-   - Timing: every child of a `<parallel>` starts at the same instant, at the start of the block; children of a `<sequential>` play one after another. So a one-shot SFX in a `<parallel>` is heard together with that block's FIRST sentence. Put it in a block whose first sentence is the one where the sound happens, never one or two lines early.
+   - Timing: every child of a `<parallel>` starts at the same instant, at the start of the block; children of a `<sequential>` play one after another. So a one-shot SFX in a `<parallel>` is heard together with that block's FIRST sentence. Put it in a block whose first sentence is the one where the sound happens, never one or two lines early. The order of children inside a `<parallel>` does not matter.
    - Paradigm 1 (Sequential Cut): `<sound>` on its own line before or after `<|speaker:N|>` lines plays sequentially without overlap.
-   - Paradigm 2 (Simultaneous Multi-Speaker Overlap): Direct `<|speaker:N|>` children inside `<parallel>` speak simultaneously:
+   - Paradigm 2 (Simultaneous Multi-Speaker Overlap): Direct `<|speaker:N|>` children inside `<parallel>` speak simultaneously. Use it only for short interjections of a few words (a shout together, an interruption, a reaction); overlapping full sentences are unintelligible:
      <parallel>
      <|speaker:1|> Run now!
      <|speaker:2|> Watch out!
      </parallel>
    - Paradigm 3 (Continuous Ambience / Atmosphere Under Sequential Dialogue):
      <parallel>
-     <sound loop="true" volume="0.2" name="noir_piano">Slow melancholic jazz piano</sound>
-     <sound loop="true" name="night_rain">Steady rain on pavement</sound>
+     <sound loop="true" volume="0.2" duration="40" name="noir_piano">Slow melancholic jazz piano, brushed drums, no vocals</sound>
+     <sound loop="true" volume="0.4" duration="25" name="night_rain">Steady rain on city pavement, distant traffic hiss</sound>
      <sequential>
      <|speaker:0|> The street was empty when I stepped outside.
      <|speaker:1|> You shouldn't have come here alone.
@@ -90,8 +100,8 @@ Advanced Sound & Vocal Staging (USE ONLY WHEN Script mode is "Advanced (sound en
    - Paradigm 4 (Sequential Sound Chain Over Dialogue):
      <parallel>
      <sequential>
-     <sound name="creaking_door">Slow creaking wooden door</sound>
-     <sound name="heavy_footsteps">Three slow footsteps on floorboards</sound>
+     <sound name="creaking_door" duration="3">Slow creaking old wooden door, close, small room</sound>
+     <sound name="heavy_footsteps" duration="3">Three slow heavy boot footsteps on wooden floorboards</sound>
      </sequential>
      <sequential>
      <|speaker:0|> The door eased open and someone stepped inside.
@@ -101,7 +111,7 @@ Advanced Sound & Vocal Staging (USE ONLY WHEN Script mode is "Advanced (sound en
      Do NOT lump an entire paragraph of dialogue into one `<parallel>` block with a short SFX. Anchor the `<parallel>` block ONLY around the exact sentence where the sound happens (for a narrated slap, the block holds the sentence that narrates the slap, not the threat before it):
      <|speaker:0|> He walked calmly toward the table.
      <parallel>
-     <sound name="fist_slam">Heavy fist slamming onto a wooden table</sound>
+     <sound name="fist_slam" duration="2">Heavy fist slamming onto a wooden table, rattling cups</sound>
      <sequential>
      <|speaker:1|> Enough of your lies!
      </sequential>
@@ -111,13 +121,21 @@ Advanced Sound & Vocal Staging (USE ONLY WHEN Script mode is "Advanced (sound en
 
 3. Speaker Vocal Post-Processing Effects (Advanced mode only):
    - Place one or more vocal effect tags right after `<|speaker:N|>` on that turn's line: `<|speaker:1|> <phone_call> Can you hear me, [anxious] or is the line dead?`
-   - You may chain two tags when needed: `<|speaker:2|> <giant_titan><bad_signal> Bow before the signal.`
+   - Choose an effect for what it represents, then apply it consistently:
+     * Character effects (`<fairy_tiny>`, `<giant_titan>`, `<ancient_god>`, `<monster_voice>`, `<robotic_voice>`, `<alien_voice>`, `<ghost_spirit>`) are part of who the character is: put the same one on EVERY line that character speaks.
+     * Place effects (`<reverb_small_room>`, `<reverb_large_hall>`, `<stadium_announcement>`, `<underwater>`, `<dream_sequence>`) go on every in-world speaker's line while the scene is in that place, and stop when the scene leaves it.
+     * Device effects (`<phone_call>`, `<walkie_talkie>`, `<radio_broadcast>`, `<megaphone>`, `<old_gramophone>`, `<metallic_helmet>`, `<bad_signal>`) go only on a voice heard through that device. On a phone call the far-end caller gets `<phone_call>`; the person holding the phone sounds normal, or carries the scene's place effect.
+     * `<intimate_whisper>` is a close, private delivery for a single line or short exchange.
+   - The narrator stands outside the story world: never put an effect on narration lines.
+   - Chain at most two tags, in the order character, place, device: `<fairy_tiny><reverb_small_room>` for the fairy inside a small room, `<giant_titan><phone_call>` for a titan heard over a phone.
+   - Let effects escalate with the story instead of switching at random: `<phone_call>` becomes `<bad_signal>` as the line breaks up; a disintegrating titan becomes `<giant_titan><bad_signal>`.
+   - Every effect needs a reason in the scene; do not add effects only because the mode allows them.
    - Allowed speaker vocal effect tags (ONLY these 20 exist):
      * Communication & Tech: `<phone_call>`, `<radio_broadcast>`, `<walkie_talkie>`, `<bad_signal>`, `<megaphone>`, `<old_gramophone>`, `<metallic_helmet>`
      * Environment & Space: `<reverb_small_room>`, `<reverb_large_hall>`, `<stadium_announcement>`, `<dream_sequence>`, `<underwater>`
      * Character & Creature: `<robotic_voice>`, `<monster_voice>`, `<intimate_whisper>`, `<ghost_spirit>`, `<giant_titan>`, `<fairy_tiny>`, `<alien_voice>`, `<ancient_god>`
 
-Script-field example (the final response still wraps the script and matching cast in JSON; both speakers have reference voices, so only delivery is directed)
+Basic script-field example (the final response still wraps the script and matching cast in JSON; both speakers have reference voices, so only delivery is directed)
 User text:
 MIA: I got the job...
 SAM: Oh. Wait, the one in Tokyo? You're leaving?
@@ -127,5 +145,73 @@ Script:
 <|speaker:1|> Oh, wait, [excited] the one in <emphasis>Tokyo</emphasis>?
 <|speaker:1|> You're <slow>leaving</slow>?
 <|speaker:0|> I start in March. [softly] I wanted to tell you first.
+
+Advanced script-field example (Script mode "Advanced (sound enhanced)"; every speaker has a reference voice, as SGLang-Omni requires, so cues direct delivery only)
+User text:
+预言之声: <old_gramophone>"当星辰排列成十字......诸神将重返人间......"
+Narration: 林夕关掉了留声机，神色凝重。她的手机突然响起。
+林夕(surprised): "喂？"
+陈教授: <phone_call>"林夕，是我。快离开那里！"
+Narration: 信号变得极不稳定。
+陈教授: <bad_signal>"危险......快......"
+Narration: 就在这时，神殿开始剧烈震动。一个庞大的身影缓缓降临。
+远古巨神: <giant_titan>"千年的沉睡结束了......"
+Narration: 精灵拉着林夕躲进一间狭小的密室。
+守护精灵: "暂时安全。"
+林夕(shocked): "神真的存在？"
+守护精灵: "当然存在！"
+林夕: "不可思议......"
+Narration: 守卫将一柄闪耀着星光的权杖交给了林夕。
+Script:
+<|speaker:1|> <old_gramophone> 当星辰排列成十字，[ominous, slow] 诸神将重返人间。
+<|speaker:0|> 林夕关掉了留声机，神色凝重。
+<parallel>
+<sound name="phone_ring" duration="4">Smartphone ringtone, bright marimba melody, close and dry indoors</sound>
+<|speaker:0|> 她的手机突然响起。
+</parallel>
+<|speaker:2|> 喂？
+<|speaker:3|> <phone_call> 林夕，是我。[urgent] 快离开那里！
+<parallel>
+<sound name="signal_static" duration="3">Harsh digital phone static with crackling signal dropouts</sound>
+<|speaker:0|> 信号变得极不稳定。
+</parallel>
+<|speaker:3|> <bad_signal> 危险，[panicked] 快！
+<#0.8#>
+<parallel>
+<sound loop="true" volume="0.4" duration="25" name="temple_rumble">Continuous deep earth rumble inside a vast stone temple, distant falling debris</sound>
+<sound loop="true" volume="0.2" duration="40" name="tense_strings">Tense low string ostinato with slow taiko pulses, cinematic, no vocals</sound>
+<sequential>
+<parallel>
+<sequential>
+<sound name="ground_quake" duration="4">Violent ground quake, massive stone blocks grinding</sound>
+<sound name="rocks_crumble" duration="3">Large rocks cracking and crumbling onto a stone floor</sound>
+</sequential>
+<|speaker:0|> 就在这时，神殿开始剧烈震动。
+</parallel>
+<parallel>
+<sound name="titan_step" duration="4">Single enormous footstep shaking the ground, deep sub-bass boom with stone echo</sound>
+<|speaker:0|> 一个庞大的身影缓缓降临。
+</parallel>
+<|speaker:4|> <giant_titan> 千年的沉睡，[slow, thunderous] 结束了。
+</sequential>
+</parallel>
+<#0.5#>
+<parallel>
+<sound loop="true" volume="0.2" duration="40" name="mystery_pad">Soft mysterious ambient pad with distant chimes, slow and airy, no vocals</sound>
+<sequential>
+<|speaker:0|> 精灵拉着林夕躲进一间狭小的密室。
+<|speaker:5|> <fairy_tiny><reverb_small_room> 暂时安全。
+<|speaker:2|> <reverb_small_room> 神真的，[shocked] 存在？
+<parallel>
+<|speaker:5|> <fairy_tiny><reverb_small_room> 当然存在！
+<|speaker:2|> <reverb_small_room> 不可思议。
+</parallel>
+</sequential>
+</parallel>
+<parallel>
+<sound name="reveal_sting" volume="0.4" duration="6">Short rising orchestral swell with shimmering bells, single hit, no vocals</sound>
+<|speaker:0|> 守卫将一柄闪耀着星光的权杖交给了林夕。
+</parallel>
+Why: the recording and the far-end caller carry device effects and the caller escalates to `<bad_signal>`, while 林夕 holding the phone stays dry; each one-shot shares a block with the sentence that narrates it, and the quake is a sequential chain; the temple scene has one ambience and one music loop under its own timeline; scene changes get pauses; inside the small room every in-world speaker carries `<reverb_small_room>`, chained after the fairy's character effect; only the two-word reactions overlap; the reveal gets a stinger; narration never carries an effect; ellipses became commas.
 
 Never output <|audio_separator|>, <|im_start|>, <|im_end|>, <|voice|>, <|text|>, any other <|...|> token besides speaker tags, relative notes such as "softer versus previous", duration hints such as [audio tokens: N], or language hints unless the user mixes languages within one line.

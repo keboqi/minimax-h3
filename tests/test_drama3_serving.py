@@ -591,12 +591,16 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         self.assertAlmostEqual(level(2.8, 3.0), 1.0, places=1)  # released
 
         noise = np.random.default_rng(0).uniform(-0.1, 0.1, 3 * RATE).astype(np.float32)
-        mixed = audio.mix_parallel_tracks(
-            [{"audio": speech, "is_sound": False}, {"audio": noise, "is_sound": True}], RATE)
-        bed = mixed - speech[:len(mixed)]
-        quiet = float(np.sqrt(np.mean(bed[:int(0.9 * RATE)] ** 2)))
-        ducked = float(np.sqrt(np.mean(bed[int(1.3 * RATE):int(1.9 * RATE)] ** 2)))
-        self.assertLess(ducked, quiet / 3)
+
+        def under_speech_ratio(loop):
+            mixed = audio.mix_parallel_tracks(
+                [{"audio": speech, "is_sound": False}, {"audio": noise, "is_sound": True, "loop": loop}], RATE)
+            bed = mixed[:3 * RATE] - speech
+            quiet = float(np.sqrt(np.mean(bed[:int(0.9 * RATE)] ** 2)))
+            return float(np.sqrt(np.mean(bed[int(1.3 * RATE):int(1.9 * RATE)] ** 2))) / quiet
+
+        self.assertLess(under_speech_ratio(loop=True), 1 / 3)  # a looped bed ducks
+        self.assertAlmostEqual(under_speech_ratio(loop=False), 1.0, delta=0.1)  # a one-shot SFX stays in front
 
     def test_loops_crossfade_their_seams(self):
         clip = np.linspace(0.0, 0.5, RATE, dtype=np.float32)  # ends far from where it starts
