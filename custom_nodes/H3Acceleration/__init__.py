@@ -1731,6 +1731,154 @@ def _qwen21_target_tokens(latent_image):
     return height * width
 
 
+class H3Drama3CachedVoice:
+    """Persist codec codes in the same private workspace as saved speakers."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"codec": ("DRAMA3_CODEC",), "audio": ("AUDIO",),
+            "transcript": ("STRING", {"multiline": True}),
+            "codec_revision": ("STRING",), "encoder_revision": ("STRING",)}}
+
+    RETURN_TYPES = ("DRAMA3_VOICE",)
+    FUNCTION = "encode"
+    CATEGORY = "audio/drama3"
+
+    def encode(self, codec, audio, transcript, codec_revision, encoder_revision):
+        import nodes
+        from safetensors import safe_open
+        from safetensors.torch import save_file
+
+        waveform = audio["waveform"].detach().float().cpu().contiguous()
+        identity = {"schema": 1, "transcript": transcript, "codec": codec_revision,
+                    "encoder": encoder_revision, "rate": audio["sample_rate"], "shape": list(waveform.shape)}
+        digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8"))
+        digest.update(waveform.numpy().tobytes())
+        key = digest.hexdigest()
+        outputs = os.environ.get("GRADIO_OUTPUT_DIR") or os.path.join(os.path.dirname(folder_paths.base_path), "gradio_outputs")
+        workspace = os.environ.get("H3_WORKSPACE_DIR") or os.path.join(outputs, ".h3-workspace")
+        directory = os.path.join(workspace, "drama3_voice_cache")
+        path = os.path.join(directory, key + ".safetensors")
+        try:
+            if os.path.isfile(path):
+                with safe_open(path, framework="pt", device="cpu") as cached:
+                    metadata = cached.metadata() or {}
+                    codes = cached.get_tensor("codes")
+                if (metadata.get("identity") == key and metadata.get("transcript") == transcript
+                        and codes.ndim == 2 and codes.numel() and codes.dtype == torch.int16):
+                    return ({"transcript": transcript, "codes": codes.long()},)
+        except Exception as exc:
+            logging.warning("Drama voice cache unreadable; encoding again: %s", exc)
+
+        # Delegate preprocessing/resampling to the pinned upstream node.
+        voice = nodes.NODE_CLASS_MAPPINGS["Drama3EncodeVoice"].execute(codec, audio, transcript).result[0]
+        temporary = path + f".{os.getpid()}.{threading.get_ident()}.tmp"
+        try:
+            os.makedirs(directory, mode=0o700, exist_ok=True)
+            save_file({"codes": voice["codes"].to(torch.int16).contiguous()}, temporary,
+                      metadata={"identity": key, "transcript": transcript})
+            os.replace(temporary, path)
+        except Exception as exc:
+            logging.warning("Drama voice cache write skipped: %s", exc)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                logging.warning("Could not remove temporary Drama voice cache file")
+        return (voice,)
+
+
+class H3Flux3LayoutElements:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"layout": ("STRING", {"multiline": True})}}
+
+    RETURN_TYPES = ("ARRAY",)
+    FUNCTION = "parse"
+    CATEGORY = "model/conditioning/flux"
+
+    def parse(self, layout):
+        elements = json.loads(layout)
+        if not isinstance(elements, list):
+            raise ValueError("FLUX layout must be a JSON list.")
+        return (elements,)
+
+
+class H3Flux3EditPrompt:
+    """BFL's image-aware edit upsampler with ordered, independently sized references."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "clip": ("CLIP",),
+            "prompt": ("STRING", {"multiline": True}),
+            "system_prompt": ("STRING", {"multiline": True}),
+            "max_length": ("INT", {"default": 3584, "min": 1, "max": 32768}),
+            "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+            "image0": ("IMAGE",),
+        }, "optional": {f"image{i}": ("IMAGE",) for i in range(1, 10)}}
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "generate"
+    CATEGORY = "text"
+
+    def generate(self, clip, prompt, system_prompt, max_length, seed, image0, **references):
+        # Native Qwen3.5 accepts a list of different-sized images. Each is a
+        # distinct vision block, in the same order as ReferenceMultiLatent.
+        images = [image0] + [references[f"image{i}"] for i in range(1, 10)
+                             if references.get(f"image{i}") is not None]
+        images = [image[:, :, :, :3] for image in images]
+        tokens = clip.tokenize(prompt, images=images, skip_template=False, min_length=1,
+                               thinking=False, system_prompt=system_prompt)
+        generated_ids = clip.generate(tokens, do_sample=True, max_length=max_length,
+                                      temperature=1.0, top_k=1, top_p=0.95, min_p=0.0,
+                                      seed=seed, repetition_penalty=1.05,
+                                      presence_penalty=0.0, mtp=False)
+        text = clip.decode(generated_ids)
+        if "</think>" in text:
+            text = text.split("</think>", 1)[1]
+        elif text.lstrip().startswith("<think>"):
+            text = ""
+        if not text.strip():
+            raise ValueError("FLUX 3 edit upsampler returned no instruction. Retry or use the remote prompt rewrite.")
+        return (text.strip(),)
+
+
+class H3Qwen21PromptEnhance:
+    """Native Qwen 2.1 PE models: explicit reasoning and independent image inputs."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "clip": ("CLIP",), "prompt": ("STRING", {"multiline": True}),
+            "system_prompt": ("STRING", {"multiline": True}),
+            "max_length": ("INT", {"default": 4096, "min": 1, "max": 32768}),
+            "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+        }, "optional": {f"image{i}": ("IMAGE",) for i in range(10)}}
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "generate"
+    CATEGORY = "text"
+
+    def generate(self, clip, prompt, system_prompt, max_length, seed, **references):
+        images = [references[f"image{i}"][:, :, :, :3] for i in range(10)
+                  if references.get(f"image{i}") is not None]
+        tokens = clip.tokenize(prompt, images=images, skip_template=False, min_length=1,
+                               thinking=True, system_prompt=system_prompt)
+        ids = clip.generate(tokens, do_sample=True, max_length=max_length,
+                            temperature=1.0, top_k=20, top_p=0.95, min_p=0.0,
+                            seed=seed, repetition_penalty=1.0,
+                            presence_penalty=0.0 if images else 1.5, mtp=True)
+        # The native Qwen3.5 thinking template opens <think> before generation.
+        # Without a close marker, max_length ended during reasoning, not a prompt.
+        _reasoning, closed, text = clip.decode(ids).partition("</think>")
+        if not closed or not text.strip():
+            raise ValueError("Qwen prompt enhancer did not finish its final prompt. Retry or turn native enhancement off.")
+        return (text.strip(),)
+
+
 class H3Qwen21Sigmas:
     """Official base flow schedule: dynamic resolution shift and 0.02 terminal."""
 
@@ -1991,6 +2139,10 @@ class H3LTXHDRConditioning:
 
 NODE_CLASS_MAPPINGS = {
     "H3LTXPadVideoFrames": H3LTXPadVideoFrames,
+    "H3Flux3EditPrompt": H3Flux3EditPrompt,
+    "H3Flux3LayoutElements": H3Flux3LayoutElements,
+    "H3Drama3CachedVoice": H3Drama3CachedVoice,
+    "H3Qwen21PromptEnhance": H3Qwen21PromptEnhance,
     "H3Qwen21Sigmas": H3Qwen21Sigmas,
     "H3LTXHDRConditioning": H3LTXHDRConditioning,
     "H3Qwen21TurboSigmas": H3Qwen21TurboSigmas,
@@ -2012,6 +2164,10 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3LTXPadVideoFrames": "LTX Pad Video Frames",
+    "H3Flux3EditPrompt": "FLUX 3 Image Edit Prompt Upsampler",
+    "H3Flux3LayoutElements": "FLUX 3 Layout Elements",
+    "H3Drama3CachedVoice": "Drama 3 Cached Reference Voice",
+    "H3Qwen21PromptEnhance": "Qwen Image 2.1 Native Prompt Enhancer",
     "H3Qwen21Sigmas": "Qwen Image 2.1 Resolution-Aware Sigmas",
     "H3Qwen21TurboSigmas": "Qwen Image 2.1 Viggle Turbo Sigmas",
     "H3Qwen21LightningSigmas": "Qwen Image 2.1 LightX2V Lightning Sigmas",

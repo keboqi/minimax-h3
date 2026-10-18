@@ -17,6 +17,9 @@ class Flux3Request:
     seed: int = -1
     steps: int = 16
     expand_prompt: bool = True
+    upsampler_choice: str = "INT8 ConvRot"
+    cfg: float | None = None
+    layout: str = ""
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,7 @@ class Drama3Request:
     retries: int = 0
     # (speaker number, saved speaker name or "") for status and provenance.
     voice_names: tuple[tuple[int, str], ...] = ()
+    model_choice: str = "FP8 (original weights)"
 
 
 @dataclass
@@ -243,6 +247,7 @@ class QwenImage21Request:
     accelerator: str = "Off"
     turbo_variant: str = "Off"
     max_resolution: bool = False
+    prompt_enhancer: str = "Off"
 
 
 @dataclass(frozen=True)

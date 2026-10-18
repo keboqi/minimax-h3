@@ -1,3 +1,5 @@
+import ast
+import math
 import tempfile
 import unittest
 from dataclasses import replace
@@ -5,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import numpy as np
 from PIL import Image
 
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX
@@ -17,8 +20,127 @@ from h3_app.generation.optional_engines import (
 from h3_app.generation.requests import Flux3Request
 from h3_app import prompt_service
 from h3_app.workflows.flux3 import UPSAMPLER_MAX_LENGTH, build_flux3_graph, upsampler_system
+from h3_models import (
+    FLUX3_MODEL_CHOICES, MODEL_SPECS, MIN_VALID_MODEL_BYTES,
+    _plan_model, model_file_matches_manifest, model_manifest_key,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class Flux3OfficialUpdateTests(unittest.TestCase):
+    def test_local_edit_expansion_sees_the_same_ten_ordered_references_as_the_dit(self):
+        paths = tuple(f"ref{i}.png" for i in range(10))
+        validate_request(Flux3Request("change the sky", reference_images=paths, expand_prompt=True))
+        graph = build_flux3_graph(model_choice="BF16", prompt="change the sky", reference_images=paths)
+        writer_id, writer = next((k, n) for k, n in graph.items()
+                                 if n["class_type"] == "H3Flux3EditPrompt")
+        refs = next(n["inputs"] for n in graph.values() if n["class_type"] == "ReferenceMultiLatent")
+        for i, path in enumerate(paths):
+            image = writer["inputs"][f"image{i}"]
+            self.assertEqual(image, refs[f"images.image{i}"])
+            self.assertEqual(graph[image[0]]["inputs"]["image"], path)
+        self.assertEqual(writer["inputs"]["system_prompt"], (ROOT / "prompt_flux3_i2i.txt").read_text(encoding="utf-8").strip())
+        encoded = next(n["inputs"] for n in graph.values() if n["class_type"] == "CLIPTextEncode")
+        self.assertEqual(encoded["text"], [writer_id, 0])
+
+    def test_bfl_alpha_16_reaches_the_sampler_at_every_canvas_size(self):
+        # BFL 62e90b9278: alpha*t/(1+(alpha-1)*t). Comfy takes mu=ln(alpha),
+        # then interpolates by canvas size; equal anchors make that constant.
+        for size in ((256, 256), (1024, 1024), (2048, 2048), (4096, 1024)):
+            graph = build_flux3_graph(model_choice="BF16", prompt="a fox",
+                                      width=size[0], height=size[1], expand_prompt=False)
+            node_id, node = next((k, n) for k, n in graph.items()
+                                 if n["class_type"] == "ModelSamplingFlux")
+            values = node["inputs"]
+            slope = (values["max_shift"] - values["base_shift"]) / (4096 - 256)
+            mu = size[0] * size[1] / 256 * slope + values["base_shift"] - 256 * slope
+            self.assertAlmostEqual(math.exp(mu), 16)
+            self.assertAlmostEqual(math.exp(mu) / (math.exp(mu) + 1), 16 / 17)
+            sampler = next(n["inputs"] for n in graph.values() if n["class_type"] == "KSampler")
+            self.assertEqual(sampler["model"], [node_id, 0])
+            self.assertEqual((sampler["steps"], sampler["cfg"], sampler["sampler_name"]), (16, 1.0, "euler"))
+
+    def test_corrected_workflow_disables_speculative_caption_decoding(self):
+        graph = build_flux3_graph(model_choice="BF16", prompt="a fox")
+        writer = next(n["inputs"] for n in graph.values() if n["class_type"] == "TextGenerate")
+        self.assertEqual(writer["mtp"], "off")
+        self.assertEqual(writer["sampling_mode.top_k"], 1)
+
+    def test_renamed_pinned_weights_reuse_old_local_files_and_download_identity(self):
+        for key in ("flux3_nvfp4", "flux3_bf16"):
+            spec = MODEL_SPECS[key]
+            old_filename = "diffusion_models/" + spec.local_name
+            self.assertNotEqual(old_filename, spec.filename)
+            self.assertTrue(spec.filename.startswith("diffusion_models/flux3-image-klein-"))
+            with tempfile.TemporaryDirectory() as root:
+                root = Path(root)
+                dest = root / spec.folder / spec.local_name
+                dest.parent.mkdir()
+                size = MIN_VALID_MODEL_BYTES + 1
+                with dest.open("wb") as stream:
+                    stream.truncate(size)
+                entry = dict(repo_id=spec.repo_id, filename=old_filename, size=size,
+                             sha256=spec.expected_sha256, remote_identity=spec.expected_sha256)
+                manifest = {"files": {model_manifest_key(spec): entry}}
+                self.assertTrue(model_file_matches_manifest(root, manifest, spec))
+                sibling = SimpleNamespace(size=size, lfs={"sha256": spec.expected_sha256})
+                plan = _plan_model(root=root, manifest=manifest, key=key, spec=spec,
+                    repo_results={spec.repo_id: ("new-revision", {spec.filename: sibling})}, log_prefix="[test]")
+                self.assertFalse(plan["needs_download"])
+                self.assertEqual(plan["dest"], dest)
+                entry["sha256"] = "wrong"
+                self.assertFalse(model_file_matches_manifest(root, manifest, spec))
+                entry["sha256"] = spec.expected_sha256
+                entry["repo_id"] = "different/repo"
+                self.assertFalse(model_file_matches_manifest(root, manifest, spec))
+                entry["repo_id"] = spec.repo_id
+                self.assertFalse(model_file_matches_manifest(root, manifest, replace(spec, expected_sha256=None)))
+
+    def test_int8_selection_uses_distilled_checkpoint_and_cfg_one(self):
+        choice = "INT8 ConvRot (lower VRAM)"
+        self.assertEqual(FLUX3_MODEL_CHOICES[choice], "flux3_int8")
+        graph = build_flux3_graph(model_choice=choice, prompt="a fox", expand_prompt=False)
+        loader = next(n["inputs"] for n in graph.values() if n["class_type"] == "UNETLoader")
+        self.assertEqual(loader["unet_name"], "flux3-image-klein-int8-convrot.safetensors")
+        self.assertEqual(next(n["inputs"]["cfg"] for n in graph.values()
+                              if n["class_type"] == "KSampler"), 1.0)
+
+
+class Flux3EditUpsamplerTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        source = ROOT / "custom_nodes/H3Acceleration/__init__.py"
+        node = next(n for n in ast.parse(source.read_text(encoding="utf-8")).body
+                    if isinstance(n, ast.ClassDef) and n.name == "H3Flux3EditPrompt")
+        namespace = {}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), "exec"), namespace)
+        cls.upsampler = namespace["H3Flux3EditPrompt"]()
+
+    def test_unequal_size_rgba_references_reach_the_native_tokenizer_in_order(self):
+        images = [np.zeros((1, 48, 96, 4)), np.ones((1, 120, 60, 3))]
+        clip = Mock()
+        clip.decode.return_value = "<think>analysis</think> Replace the sky. "
+        result = self.upsampler.generate(clip, "change sky", "edit instructions", 3584, 0,
+                                        images[0], image1=images[1])
+        self.assertEqual(result, ("Replace the sky.",))
+        params = clip.tokenize.call_args.kwargs
+        self.assertEqual([x.shape for x in params["images"]], [(1, 48, 96, 3), (1, 120, 60, 3)])
+        for actual, original in zip(params["images"], images):
+            self.assertTrue(np.shares_memory(actual, original))
+            np.testing.assert_array_equal(actual, original[:, :, :, :3])
+        self.assertEqual(params["system_prompt"], "edit instructions")
+        generation = clip.generate.call_args
+        self.assertEqual(generation.args, (clip.tokenize.return_value,))
+        self.assertEqual((generation.kwargs["top_k"], generation.kwargs["presence_penalty"],
+                          generation.kwargs["mtp"]), (1, 0.0, False))
+
+    def test_empty_or_truncated_reasoning_never_becomes_an_unconditional_edit(self):
+        for text in ("", "   ", "<think>unfinished reasoning", "<think>x</think> "):
+            clip = Mock()
+            clip.decode.return_value = text
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, "no instruction"):
+                self.upsampler.generate(clip, "edit", "rules", 3584, 0, np.zeros((1, 4, 4, 3)))
 
 
 class Flux3EditSizeTests(unittest.TestCase):

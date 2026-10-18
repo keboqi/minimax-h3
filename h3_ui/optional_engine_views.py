@@ -13,7 +13,9 @@ from h3_app.catalog import (
 )
 from h3_app.prompt_service import DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES
 from h3_app.generation.optional_engines import DRAMA3_BACKENDS
-from h3_models import FLUX3_MODEL_CHOICES
+from h3_app.workflows.flux3 import flux3_sampling_defaults
+from h3_models import (FLUX3_MODEL_CHOICES, FLUX3_UPSAMPLER_CHOICES, DEFAULT_FLUX3_UPSAMPLER,
+                       DRAMA3_MODEL_CHOICES, DEFAULT_DRAMA3_MODEL, DRAMA3_ASR_CHOICES, DEFAULT_DRAMA3_ASR)
 from .image_library import build_image_file_input
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
 from .prompt_writer_controls import RemotePromptWriterControls, build_remote_prompt_writer_controls
@@ -65,6 +67,9 @@ class Flux3View:
     run: gr.Button
     stop: gr.Button
     status: gr.Textbox
+    upsampler: gr.Dropdown
+    cfg: gr.Slider
+    layout: gr.Textbox
 
 
 @dataclass(frozen=True)
@@ -109,6 +114,8 @@ class Drama3View:
     run: gr.Button
     stop: gr.Button
     status: gr.Textbox
+    model: gr.Dropdown
+    asr_model: gr.Dropdown
 
 
 def _actions(label):
@@ -135,13 +142,13 @@ def build_flux3_view(root):
                     "using your Hugging Face account and configure its token on the server.")
         with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
             with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
-                prompt = gr.Textbox(label="Image prompt / complete edit caption", lines=7,
-                    placeholder="Describe the scene, composition, subjects and lighting.")
+                prompt = gr.Textbox(label="Image prompt / edit request", lines=7,
+                    placeholder="Describe a scene or the changes to make to your references.")
                 refs = build_image_file_input(label="Reference images (optional, up to 10)", file_count="multiple",
                                               file_types=["image"], type="filepath")
                 expand = gr.Checkbox(value=True, label="Expand the prompt locally",
-                    info="Runs BFL's built-in upsampler on the GPU before text-to-image. Turned off for edits "
-                         "and after a remote rewrite, which already returns a full caption.")
+                    info="Runs BFL's upsampler on the GPU for generation and edits, using all reference images. "
+                         "Turned off after a remote rewrite, which already returns an expanded prompt.")
                 with gr.Accordion("Rewrite with Lightning AI or Gemini", open=False):
                     gr.Markdown("Uses BFL's official upsampler instructions. Edits send the reference "
                                 "images and return a full edit caption.")
@@ -153,19 +160,33 @@ def build_flux3_view(root):
                     value=QWEN_EDIT_SIZE_MATCH, label="Edit output size", visible=False,
                     info="Keep the first reference's aspect ratio at its own size (capped at 4 MP), "
                          "scale it toward 4 MP, or use the width and height above. Applies only to edits.")
-                refs.change(lambda paths: (gr.update(value=not bool(paths), interactive=not bool(paths)),
+                refs.change(lambda paths: (gr.update(value=True, interactive=True),
                                            gr.update(visible=bool(paths))),
                             inputs=refs, outputs=[expand, edit_size], queue=False, api_name=False)
                 with gr.Accordion("Model and sampling", open=False):
-                    model = gr.Dropdown(list(FLUX3_MODEL_CHOICES), value="NVFP4 (Blackwell)", label="Distilled model")
+                    model = gr.Dropdown(list(FLUX3_MODEL_CHOICES), value="NVFP4 (Blackwell)", label="Image model",
+                                        info="Distilled uses 16 steps and CFG 1. Base uses 50 steps and CFG 4.")
+                    upsampler = gr.Dropdown(list(FLUX3_UPSAMPLER_CHOICES), value=DEFAULT_FLUX3_UPSAMPLER,
+                                             label="Prompt upsampler",
+                                             info="W4A8 uses less VRAM. Used only when local expansion is enabled.")
                     steps = gr.Slider(1, 100, value=16, step=1, label="Steps")
+                    cfg = gr.Slider(1, 20, value=1, step=0.1, label="Base CFG", visible=False)
+                    model.change(lambda choice: (flux3_sampling_defaults(choice)[0],
+                        gr.update(value=flux3_sampling_defaults(choice)[1], visible=choice.startswith("Base "))),
+                        inputs=model, outputs=[steps, cfg], queue=False, api_name=False)
                     seed = gr.Number(value=-1, precision=0, label="Seed (-1 random)")
+                with gr.Accordion("Layout boxes (optional)", open=False):
+                    layout = gr.Textbox(label="Layout boxes", lines=4,
+                        placeholder='[{"bbox": [100, 100, 700, 450], "desc": "a red bicycle"}]',
+                        info="JSON list. bbox is [top, left, bottom, right] on a 0–1000 grid. "
+                             "Boxes guide placement; they are not pixel masks. Use type text and text for lettering. "
+                             "Descriptions can name <ref_image_0>, <ref_image_1>, etc. for reference-guided layouts.")
             with gr.Column(scale=2, min_width=320, elem_classes=["h3-preview-panel"]):
                 output = gr.Gallery(label="Generated image", columns=1, interactive=False)
                 output.h3_metadata_root = gr.Column()
                 run, stop, status = _actions("Generate image")
     return Flux3View(prompt, model, refs, width, height, edit_size, seed, steps, expand,
-                     writer, enhance, enhance_status, output, run, stop, status)
+                     writer, enhance, enhance_status, output, run, stop, status, upsampler, cfg, layout)
 
 
 def _voice_slot(speaker, names):
@@ -190,8 +211,9 @@ def build_drama3_view(root, speaker_names=()):
         gr.Markdown("## Drama 3 TTS (experimental)\nBuilt with Fish Audio. "
                     "Start each line with `<|speaker:N|>` for multi-speaker scenes, and place cues such as "
                     "`[sighs]`, `[laughs]` or `<whisper>…</whisper>` in the text. "
-                    "The FP8 model and codec download on first use (~40 GB). With experts in RAM, allow "
-                    "approximately 48 GB system RAM. [Model and license](https://huggingface.co/fishaudio/drama-3)")
+                    "The selected model and codec download on first use (~40 GB for FP8/INT8). With experts in RAM, allow "
+                    "approximately 48 GB system RAM for FP8/INT8 or 40 GB for W6A8. "
+                    "[Model and license](https://huggingface.co/fishaudio/drama-3)")
         with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
             with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
                 sampling_preset = gr.Radio(
@@ -217,6 +239,9 @@ def build_drama3_view(root, speaker_names=()):
                                 "reusable by name.")
                     voices = tuple(_voice_slot(speaker, list(speaker_names))
                                    for speaker in range(DRAMA3_VOICE_SLOTS))
+                    asr_model = gr.Dropdown(list(DRAMA3_ASR_CHOICES), value=DEFAULT_DRAMA3_ASR,
+                                            label="Voice transcript model",
+                                            info="0.6B uses less memory. Check names and every spoken word after transcription.")
                     shown_slots = gr.State(DRAMA3_VISIBLE_SLOTS)
                     with gr.Row():
                         add_speaker = gr.Button("Add speaker", size="sm")
@@ -243,6 +268,10 @@ def build_drama3_view(root, speaker_names=()):
                         info="21.5 frames per second; 8192 is about 6.3 minutes. A take stops when the "
                              "speech ends, so this only limits a take that runs on.")
                     with gr.Group() as comfy_settings:
+                        model = gr.Dropdown(list(DRAMA3_MODEL_CHOICES), value=DEFAULT_DRAMA3_MODEL,
+                                            label="Drama model",
+                                            info="FP8 preserves the original weights. INT8 is useful with RAM experts; "
+                                                 "W6A8 reduces model RAM to about 40 GB including working memory.")
                         split = gr.Checkbox(value=False, label="Split long text into connected chunks",
                             info="Off generates the whole text in one take, avoiding silent gaps at chunk joins.")
                         experts = gr.Dropdown(["in RAM", "in VRAM"], value="in VRAM", label="Expert weights",
@@ -279,7 +308,7 @@ def build_drama3_view(root, speaker_names=()):
     return Drama3View(text, speaker_mode, writer, enhance, enhance_status, voices, shown_slots, add_speaker,
                       remove_speaker, voice_status, seed, temperature,
                       top_p, top_k, max_frames, split, experts, cache, backend, parallel, retries,
-                      output, run, stop, status)
+                      output, run, stop, status, model, asr_model)
 
 
 def settings_components(view):
@@ -313,7 +342,7 @@ def bind_flux3(view, actions):
     )
     return _bind_generation(view, "flux3", actions.generate_flux3, actions.interrupt, [
         view.prompt, view.model, view.reference_images, view.width, view.height,
-        view.edit_size, view.seed, view.steps, view.expand_prompt,
+        view.edit_size, view.seed, view.steps, view.expand_prompt, view.upsampler, view.cfg, view.layout,
     ])
 
 
@@ -371,7 +400,7 @@ def bind_drama3(view, actions):
     )
     for slot in view.voices:
         bind_gpu_action(
-            slot.transcribe.click, actions.transcribe_drama3_voice, inputs=[slot.audio],
+            slot.transcribe.click, actions.transcribe_drama3_voice, inputs=[slot.audio, view.asr_model],
             outputs=[slot.transcript, view.voice_status], show_progress="minimal",
             api_name="transcribe_drama3_voice" if slot.speaker == 0 else False,
         )
@@ -393,5 +422,5 @@ def bind_drama3(view, actions):
     return _bind_generation(view, "drama3", actions.generate_drama3, actions.interrupt, [
         view.text, *drama3_voice_inputs(view), view.seed, view.temperature, view.top_p, view.top_k,
         view.max_frames, view.split_long_text, view.experts, view.expert_cache_gb,
-        view.backend, view.parallel, view.retries,
+        view.backend, view.parallel, view.retries, view.model,
     ])

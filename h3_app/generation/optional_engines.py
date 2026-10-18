@@ -13,10 +13,13 @@ from h3_app.progress import no_progress
 from h3_app.provenance import write_snapshot
 from h3_app.status import StageTimings, progress_status
 from h3_app.workflows.flux3 import build_flux3_graph, flux3_model_keys
+from h3_app.workflows.flux3_layout import parse_flux3_layout
+from h3_models import FLUX3_BASE_MODEL_CHOICES
 from h3_app.workflows.drama3 import (
     MAX_FRAMES, MAX_SPEAKER, build_drama3_asr_graph, build_drama3_graph, text_speakers, validate_drama3_text,
+    drama3_model_keys, drama3_asr_model_keys,
 )
-from h3_models import DRAMA3_ASR_MODEL_KEYS, DRAMA3_MODEL_KEYS
+from h3_models import DEFAULT_DRAMA3_ASR
 from .qwen import first_reference_dimensions
 from .requests import Flux3Request, Drama3Request
 from .results import GenerationUpdate, fresh_audio
@@ -81,18 +84,23 @@ def validate_request(request):
     _integer(request.seed, -1, 2**63 - 2, "Seed")
     if isinstance(request, Flux3Request):
         if not request.prompt.strip():
-            raise H3Error("Write an image prompt or complete edit caption.")
-        flux3_model_keys(request.model_choice, request.expand_prompt)
+            raise H3Error("Write an image prompt or edit request.")
+        flux3_model_keys(request.model_choice, request.expand_prompt, request.upsampler_choice)
         _integer(request.width, 256, 4096, "Width", 16)
         _integer(request.height, 256, 4096, "Height", 16)
         _integer(request.steps, 1, 100, "Steps")
+        if request.cfg is not None:
+            if isinstance(request.cfg, bool) or not math.isfinite(request.cfg) or not 1 <= request.cfg <= 20:
+                raise H3Error("FLUX CFG must be between 1 and 20.")
+            if request.model_choice not in FLUX3_BASE_MODEL_CHOICES and request.cfg != 1:
+                raise H3Error("Distilled FLUX 3 requires CFG 1.")
+        parse_flux3_layout(request.layout)
         if request.edit_size not in FLUX3_EDIT_SIZES:
             raise H3Error("Choose a valid FLUX 3 edit output size.")
         if len(request.reference_images) > 10:
             raise H3Error("FLUX 3 supports at most ten reference images.")
-        if request.reference_images and request.expand_prompt:
-            raise H3Error("Disable prompt expansion for edits and write a full scene caption including your changes.")
     elif isinstance(request, Drama3Request):
+        drama3_model_keys(request.model_choice)
         validate_drama3_text(request.text)
         speakers = [speaker for speaker, _audio, _transcript in request.voices]
         if len(set(speakers)) != len(speakers):
@@ -158,7 +166,9 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
             graph = build_flux3_graph(
                 **{k: v for k, v in values.items() if k != "edit_size"},
                 output_stamp=str(int(time.time())), output_nonce=uuid.uuid4().hex[:8],
-                system_prompt=runtime.prompt_systems["FLUX 3 Image Klein"].read_text(encoding="utf-8").strip(),
+                system_prompt=runtime.prompt_systems[
+                    "FLUX 3 Image Klein edit" if request.reference_images else "FLUX 3 Image Klein"
+                ].read_text(encoding="utf-8").strip(),
             )
         else:
             from h3_app.drama3_serving.server import release_all
@@ -169,14 +179,15 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
         info = services.execution.object_info()
         missing = {node["class_type"] for node in graph.values()} - set(info)
         if missing:
-            raise H3Error(f"Update setup and restart ComfyUI (v0.41.0 and pinned Drama 3 nodes required). Missing nodes: {', '.join(sorted(missing))}")
+            raise H3Error(f"Update setup and restart ComfyUI (the pinned Core and Drama 3 nodes are required). Missing nodes: {', '.join(sorted(missing))}")
         if image:
             clip_types = info.get("CLIPLoader", {}).get("input", {}).get("required", {}).get("type", [[]])[0]
             if "flux3" not in clip_types:
                 raise H3Error("This backend lacks the FLUX 3 text encoder. Update setup and restart ComfyUI.")
         services.models.unload_prompt_rewriter()
         yield GenerationUpdate(None, f"Preparing {family} models; missing weights download on first use.")
-        keys = flux3_model_keys(request.model_choice, request.expand_prompt) if image else DRAMA3_MODEL_KEYS
+        keys = (flux3_model_keys(request.model_choice, request.expand_prompt, request.upsampler_choice)
+                if image else drama3_model_keys(request.model_choice))
         services.models.ensure_model_keys(keys)
         queued_at = time.time()
         prompt_id = services.execution.submit_prompt(graph, str(uuid.uuid4()))
@@ -194,9 +205,10 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
         result = (services.media.resolve_image_outputs(history, queued_at, 1)[0] if image
                   else services.media.resolve_audio_output(history, queued_at))
         settings = {key: value for key, value in values.items()
-                    if key not in {"prompt", "text", "voices", "reference_images"}}
+                    if key not in {"prompt", "text", "voices", "reference_images", "layout"}}
         if image:
             settings["reference_count"] = len(request.reference_images)
+            settings["layout_box_count"] = len(parse_flux3_layout(request.layout))
         else:
             settings["reference_count"] = len(request.voices)
             settings["cloned_speakers"] = sorted(speaker for speaker, _a, _t in request.voices)
@@ -212,14 +224,14 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
         timings.finish()
 
 
-def transcribe_drama3_audio(audio, services, *, language="auto"):
+def transcribe_drama3_audio(audio, services, *, language="auto", model_choice=DEFAULT_DRAMA3_ASR):
     """Transcribe a staged clip with Qwen3-ASR through ComfyUI; returns the text."""
-    graph, preview = build_drama3_asr_graph(audio=audio, language=language)
+    graph, preview = build_drama3_asr_graph(audio=audio, language=language, model_choice=model_choice)
     missing = {node["class_type"] for node in graph.values()} - set(services.execution.object_info())
     if missing:
         raise H3Error("Update setup and restart ComfyUI (pinned Drama 3 nodes with Qwen3-ASR required). "
                       f"Missing nodes: {', '.join(sorted(missing))}")
-    services.models.ensure_model_keys(DRAMA3_ASR_MODEL_KEYS)
+    services.models.ensure_model_keys(drama3_asr_model_keys(model_choice))
     prompt_id = services.execution.submit_prompt(graph, str(uuid.uuid4()))
     for _update in services.execution.poll_comfy_progress(prompt_id, graph):
         pass

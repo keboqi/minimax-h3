@@ -19,6 +19,7 @@ from h3_models import (
     QWEN_IMAGE21_OFFICIAL_TURBO,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
     QWEN_IMAGE21_TURBO_MODES,
+    QWEN_IMAGE21_PROMPT_ENHANCERS,
 )
 
 
@@ -37,6 +38,15 @@ QWEN_IMAGE21_LIGHTNING_6STEP_SIGMAS = (
 QWEN_IMAGE21_LIGHTNING_6STEP_STRENGTH = 0.45
 
 
+def qwen_prompt_enhancer_key(choice, *, editing):
+    if choice == "Off":
+        return None
+    try:
+        return QWEN_IMAGE21_PROMPT_ENHANCERS[choice][int(editing)]
+    except KeyError as exc:
+        raise ValueError("Choose a valid native Qwen prompt enhancer.") from exc
+
+
 def required_qwen_image21_nodes(
     *,
     editing: bool,
@@ -48,6 +58,7 @@ def required_qwen_image21_nodes(
     lightning: bool = False,
     lightning_6step: bool = False,
     scheduler: str = QWEN_IMAGE21_DYNAMIC_SCHEDULER,
+    prompt_enhancer: str = "Off",
 ) -> set[str]:
     nodes = {
         "UNETLoader",
@@ -62,6 +73,8 @@ def required_qwen_image21_nodes(
     }
     if editing:
         nodes |= {"LoadImage", "JoinImageWithAlpha", "QwenImage21Cache"}
+    if qwen_prompt_enhancer_key(prompt_enhancer, editing=editing):
+        nodes.add("H3Qwen21PromptEnhance")
     if use_spectrum:
         nodes.add("QwenSpectrumModelPatcher")
     if turbo or scheduler == QWEN_IMAGE21_DYNAMIC_SCHEDULER:
@@ -112,6 +125,7 @@ def build_qwen_image21_graph(
     output_stamp: str,
     output_nonce: str,
     turbo_variant: str = "Off",
+    prompt_enhancer: str = "Off",
 ) -> dict[str, Any]:
     """Build the official native Qwen Image 2.1 graph.
 
@@ -163,10 +177,12 @@ def build_qwen_image21_graph(
         "negative_prompt": str(negative_prompt),
         "resolution": int(reference_resolution),
     }
+    writer_images = {}
     if editing:
         conditioning_inputs["vae"] = Graph.out(vae)
         for index, image in enumerate(reference_images, start=1):
             loaded = graph.add("LoadImage", image=str(image))
+            writer_images[f"image{index - 1}"] = Graph.out(loaded)
             # LoadImage separates RGB and inverse alpha. The native join node
             # restores straight RGBA for Qwen's alpha-aware reference VAE.
             rgba = graph.add(
@@ -174,6 +190,17 @@ def build_qwen_image21_graph(
                 alpha=Graph.out(loaded, 1),
             )
             conditioning_inputs[f"images.image_{index}"] = Graph.out(rgba)
+    enhancer_key = qwen_prompt_enhancer_key(prompt_enhancer, editing=editing)
+    if enhancer_key:
+        from .qwen_prompt_instructions import T2I_SYSTEM, I2I_SYSTEM
+
+        writer = graph.add("CLIPLoader", clip_name=MODEL_SPECS[enhancer_key].local_name,
+                           type="qwen_image" if editing else "stable_diffusion", device="default")
+        enhanced = graph.add("H3Qwen21PromptEnhance", clip=Graph.out(writer),
+                             prompt=str(prompt) if editing else f"Requested aspect ratio: {width}:{height}.\n{prompt}",
+                             system_prompt=I2I_SYSTEM if editing else T2I_SYSTEM,
+                             max_length=4096, seed=0, **writer_images)
+        conditioning_inputs["prompt"] = Graph.out(enhanced)
     conditioning = graph.add("TextEncodeQwenImage21", **conditioning_inputs)
 
     if editing and bool(match_input_size):

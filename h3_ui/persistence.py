@@ -28,12 +28,13 @@ RESET_BROWSER_SETTINGS_JS = """
 """
 EXTRA_FIELDS = {
     "flux3": ("model", "width", "height", "edit_size", "seed", "steps", "expand_prompt",
-              "prompt_backend", "prompt_model", "lightning_model"),
+              "prompt_backend", "prompt_model", "lightning_model", "upsampler", "cfg"),
     "drama3": ("seed", "temperature", "top_p", "top_k", "max_frames", "split_long_text", "experts",
                "expert_cache_gb", "prompt_backend", "prompt_model", "lightning_model",
-               "speaker_mode", "backend", "parallel", "retries"),
+               "speaker_mode", "backend", "parallel", "retries", "model", "asr_model"),
     "workspace": ("task", "engine"),
     "qwen_image21": (
+        "prompt_enhancer",
         "mode",
         "model",
         "text_encoder",

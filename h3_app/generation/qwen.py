@@ -28,6 +28,7 @@ from h3_app.status import StageTimings, progress_status
 from h3_app.workflows.qwen import (
     build_qwen_image21_graph,
     required_qwen_image21_nodes,
+    qwen_prompt_enhancer_key,
 )
 
 from .requests import QwenImage21Request
@@ -234,6 +235,7 @@ def generate_qwen_image21(
         if base_seed >= 0 and base_seed + total_jobs - 1 >= 2**63 - 1:
             raise H3Error("Seed is too large for this batch count.")
 
+        enhancer_key = qwen_prompt_enhancer_key(request.prompt_enhancer, editing=editing)
         missing_files = services.models.missing_qwen_image21_model_names(
             request.model_choice, request.text_encoder_choice, request.turbo_variant
         )
@@ -249,7 +251,6 @@ def generate_qwen_image21(
         services.models.ensure_qwen_image21_models(
             request.model_choice, request.text_encoder_choice, request.turbo_variant
         )
-
         available = set(services.execution.object_info())
         missing_nodes = (
             required_qwen_image21_nodes(
@@ -262,6 +263,7 @@ def generate_qwen_image21(
                 lightning=lightning,
                 lightning_6step=lightning_6step,
                 scheduler=request.scheduler,
+                prompt_enhancer=request.prompt_enhancer,
             )
             - available
         )
@@ -270,6 +272,8 @@ def generate_qwen_image21(
                 "Qwen Image 2.1 requires the latest ComfyUI; missing nodes: "
                 + ", ".join(sorted(missing_nodes))
             )
+        if enhancer_key:
+            services.models.ensure_model_keys((enhancer_key,))
         sampling_detail = f"{steps} steps"
         for index in variant_indices(total_jobs):
             input_index, _ = divmod(index, batch_count)
@@ -311,6 +315,7 @@ def generate_qwen_image21(
                 output_stamp=str(int(queued_at)),
                 output_nonce=uuid.uuid4().hex[:8],
                 turbo_variant=request.turbo_variant,
+                prompt_enhancer=request.prompt_enhancer,
             )
             client_id = str(uuid.uuid4())
             prompt_id = services.execution.submit_prompt(graph, client_id)

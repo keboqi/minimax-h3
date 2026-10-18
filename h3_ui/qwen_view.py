@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 import gradio as gr
-from h3_models import QWEN_IMAGE21_TURBO_MODES
+from h3_models import QWEN_IMAGE21_TURBO_MODES, QWEN_IMAGE21_PROMPT_ENHANCERS
 
 from h3_app.catalog import (
     QWEN_EDIT_SIZE_MATCH,
@@ -80,6 +80,7 @@ class QwenImage21View:
     accelerator: gr.Dropdown
     turbo_variant: gr.Dropdown
     preset: gr.Radio
+    prompt_enhancer: gr.Dropdown
 
     @property
     def output_resolution(self) -> gr.Dropdown:
@@ -168,6 +169,11 @@ def build_qwen_image21_view(
                     enhance.h3_review = build_prompt_review()
                     enhance_status = gr.Textbox(
                         label="Prompt writer status", lines=2, interactive=False
+                    )
+                    prompt_enhancer = gr.Dropdown(
+                        ["Off", *QWEN_IMAGE21_PROMPT_ENHANCERS], value="Off", label="Native prompt enhancer",
+                        info="Runs Qwen's local T2I or image-aware edit enhancer before generation. "
+                             "Downloads the selected enhancer on first use. Keep Off after a remote rewrite.",
                     )
                 action_root = gr.Column(elem_classes=["h3-action-dock"])
                 settings_root = gr.Column(elem_classes=["h3-essentials"])
@@ -409,4 +415,5 @@ def build_qwen_image21_view(
         accelerator,
         turbo_variant,
         preset,
+        prompt_enhancer,
     )

@@ -2620,6 +2620,7 @@ def generate_qwen_image21(
     output_resolution_2k: str | None = None,
     batch_count: int = 1,
     batch_edit_inputs: bool = False,
+    prompt_enhancer: str = "Off",
     *,
     output_resolution: str | None = None,
     progress=gr.Progress(track_tqdm=False),
@@ -2663,6 +2664,7 @@ def generate_qwen_image21(
         accelerator=accelerator,
         turbo_variant=turbo_variant,
         max_resolution=bool(max_resolution),
+        prompt_enhancer=prompt_enhancer,
     )
     yield from qwen_generation.generate_qwen_image21(
         request, _generation_services(), _runtime_config(), progress=progress
@@ -2670,7 +2672,8 @@ def generate_qwen_image21(
 
 
 def generate_flux3(prompt, model_choice, reference_images, width, height, edit_size, seed, steps,
-                   expand_prompt, progress=gr.Progress(track_tqdm=False)):
+                   expand_prompt, upsampler_choice="INT8 ConvRot", cfg=None, layout="",
+                   progress=gr.Progress(track_tqdm=False)):
     from h3_app.generation.optional_engines import generate_optional_engine, validate_request
     from dataclasses import replace
     paths = reference_images or []
@@ -2678,7 +2681,7 @@ def generate_flux3(prompt, model_choice, reference_images, width, height, edit_s
         paths = [paths]
     request = generation_requests.Flux3Request(
         prompt, model_choice, tuple(str(path) for path in paths), width, height, edit_size, seed, steps,
-        expand_prompt,
+        expand_prompt, upsampler_choice, cfg, layout,
     )
     validate_request(request)
     request = replace(request, reference_images=tuple(
@@ -2717,13 +2720,14 @@ def generate_drama3(*values, progress=gr.Progress(track_tqdm=False)):
     from dataclasses import replace
     slot_count = len(DRAMA3_SLOT_INPUT_NAMES)
     text, slots, settings = values[0], values[1:1 + slot_count], list(values[1 + slot_count:])
-    settings += ["ComfyUI", 8, 0][len(settings) - 8:]  # backend, parallel, retries default for older callers
+    defaults = [-1, 1.0, 0.9, 0, 8192, False, "in VRAM", 0.0, "ComfyUI", 8, 0, "FP8 (original weights)"]
+    settings += defaults[len(settings):]
     (seed, temperature, top_p, top_k, max_frames, split_long_text, experts, expert_cache_gb,
-     backend, parallel, retries) = settings[:11]
+     backend, parallel, retries, model_choice) = settings[:12]
     voices, names = _drama3_voices(slots)
     request = generation_requests.Drama3Request(text, voices, seed, temperature, top_p, top_k,
                                                 max_frames, split_long_text, experts, expert_cache_gb,
-                                                backend, parallel, retries, tuple(names))
+                                                backend, parallel, retries, tuple(names), model_choice)
     validate_request(request)
     served = request.backend != "ComfyUI"
     input_dir = _runtime_config().input_dir
@@ -2785,6 +2789,7 @@ def _publish_drama3_signatures():
             ("seed", empty), ("temperature", empty), ("top_p", empty), ("top_k", empty),
             ("max_frames", empty), ("split_long_text", empty), ("experts", empty),
             ("expert_cache_gb", empty), ("backend", "ComfyUI"), ("parallel", 8), ("retries", 0),
+            ("model_choice", "FP8 (original weights)"),
         )),
         inspect.Parameter("progress", inspect.Parameter.KEYWORD_ONLY, default=gr.Progress(track_tqdm=False)),
     ])
@@ -2796,14 +2801,14 @@ def _publish_drama3_signatures():
 _publish_drama3_signatures()
 
 
-def transcribe_drama3_voice(audio):
+def transcribe_drama3_voice(audio, model_choice="1.7B (quality)"):
     """Fill a voice slot's transcript with Qwen3-ASR running in ComfyUI."""
     from h3_app.generation.optional_engines import transcribe_drama3_audio
     if not audio:
         return gr.skip(), "Upload a reference clip first."
     try:
         staged = stage_file(audio, "drama3_asr")
-        transcript = transcribe_drama3_audio(staged, _generation_services())
+        transcript = transcribe_drama3_audio(staged, _generation_services(), model_choice=model_choice)
     except Exception as exc:
         return gr.skip(), f"Transcription failed: {exc}"
     return transcript, "Transcribed with Qwen3-ASR. Check names and punctuation before generating."

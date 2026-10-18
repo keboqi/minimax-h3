@@ -268,11 +268,12 @@
         {"parameter_name": "cache_dtype", "parameter_has_default": true, "parameter_default": "default", "type": "type_73"},
         {"parameter_name": "attention_backend", "parameter_has_default": true, "parameter_default": "pytorch attention", "type": "type_74"},
         {"parameter_name": "accelerator", "parameter_has_default": true, "parameter_default": "Off", "type": "type_75"},
-        {"parameter_name": "turbo_variant", "parameter_has_default": true, "parameter_default": "Official Turbo (8-step)", "type": "type_76"},
+        {"parameter_name": "turbo_variant", "parameter_has_default": true, "parameter_default": "Official Turbo (8-step)", "type": "type_91"},
         {"parameter_name": "output_resolution_1k", "parameter_has_default": false, "parameter_default": null, "type": "type_77"},
         {"parameter_name": "output_resolution_2k", "parameter_has_default": false, "parameter_default": null, "type": "type_78"},
         {"parameter_name": "batch_count", "parameter_has_default": true, "parameter_default": 1, "type": "type_2"},
-        {"parameter_name": "batch_edit_inputs", "parameter_has_default": true, "parameter_default": false, "type": "type_6"}
+        {"parameter_name": "batch_edit_inputs", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
+        {"parameter_name": "prompt_enhancer", "parameter_has_default": true, "parameter_default": "Off", "type": "type_92"}
       ],
       "returns": [
         {"type": "type_46", "component": "Gallery"},
@@ -1473,6 +1474,26 @@
       "enum": [
         "openai/gpt-5.6-luna",
         "openai/gpt-6.1-sol"
+      ]
+    },
+    "type_91": {
+      "type": "string",
+      "enum": [
+        "Off",
+        "Official Turbo (8-step)",
+        "LightX2V Lightning (4-step)",
+        "LightX2V Lightning (6-step, community)",
+        "Viggle Turbo v0.2.1 (6-step)",
+        "Viggle Turbo v0.3 (6-step)",
+        "Viggle Turbo v0.3 (9-step)"
+      ]
+    },
+    "type_92": {
+      "type": "string",
+      "enum": [
+        "Off",
+        "INT8 ConvRot",
+        "W4A8 (lower VRAM)"
       ]
     }
   }

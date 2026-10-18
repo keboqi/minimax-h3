@@ -1,10 +1,12 @@
-"""Graph contract for ComfyUI-Drama3 revision bc9b04a."""
+"""Graph contract for ComfyUI-Drama3 revision 67a733a."""
 
 import re
 
 from h3_app.errors import H3Error
 from h3_app.graph import Graph
-from h3_models import MODEL_SPECS
+from h3_models import (MODEL_SPECS, DRAMA3_MODEL_CHOICES, DEFAULT_DRAMA3_MODEL,
+                       DRAMA3_ASR_CHOICES, DEFAULT_DRAMA3_ASR)
+from h3_requirements import DRAMA3_REF
 
 MAX_SPEAKER = 15
 SPEAKER_TAG = re.compile(r"<\|speaker:([0-9]+)\|>")
@@ -40,6 +42,20 @@ def text_speakers(text):
 MAX_FRAMES = 8192
 
 
+def drama3_model_keys(model_choice=DEFAULT_DRAMA3_MODEL):
+    try:
+        return (DRAMA3_MODEL_CHOICES[model_choice], "drama3_codec")
+    except KeyError as exc:
+        raise H3Error("Choose a valid Drama 3 model.") from exc
+
+
+def drama3_asr_model_keys(model_choice=DEFAULT_DRAMA3_ASR):
+    try:
+        return (DRAMA3_ASR_CHOICES[model_choice],)
+    except KeyError as exc:
+        raise H3Error("Choose a valid Qwen3-ASR model.") from exc
+
+
 def speaker_transcript(speaker, transcript):
     """Lead a reference transcript with its slot's speaker tag, replacing any typed one."""
     body = SPEAKER_TAG.sub("", str(transcript), count=1) if SPEAKER_TAG.match(str(transcript).strip()) else str(transcript)
@@ -48,20 +64,22 @@ def speaker_transcript(speaker, transcript):
 
 def build_drama3_graph(*, text, voices=(), seed=0, temperature=1.0, top_p=0.9,
                        top_k=0, max_frames=MAX_FRAMES, split_long_text=False,
-                       experts="in VRAM", expert_cache_gb=0.0):
+                       experts="in VRAM", expert_cache_gb=0.0, model_choice=DEFAULT_DRAMA3_MODEL):
     """``voices`` holds (speaker, staged audio, transcript); each clones <|speaker:N|>."""
     g = Graph()
     def add(kind, **inputs):
         return Graph.out(g.add(kind, **inputs))
-    model = add("Drama3Loader", model_name=MODEL_SPECS["drama3_fp8"].local_name,
+    model = add("Drama3Loader", model_name=MODEL_SPECS[drama3_model_keys(model_choice)[0]].local_name,
                 experts=experts, expert_cache_gb=expert_cache_gb, second_gpu="none", split_layer=0)
     codec = add("Drama3CodecLoader", codec_name=MODEL_SPECS["drama3_codec"].local_name)
     references = {}
     for index, (speaker, audio, transcript) in enumerate(voices):
         clip = add("LoadAudio", audio=audio)
         references[f"voices.voice{index}"] = add(
-            "Drama3EncodeVoice", codec=codec, audio=clip,
+            "H3Drama3CachedVoice", codec=codec, audio=clip,
             transcript=speaker_transcript(speaker, transcript),
+            codec_revision=MODEL_SPECS["drama3_codec"].expected_sha256,
+            encoder_revision=DRAMA3_REF,
         )
     codes = add("Drama3Generate", model=model, text=text, seed=seed,
                 temperature=temperature, top_p=top_p, top_k=top_k,
@@ -74,10 +92,10 @@ def build_drama3_graph(*, text, voices=(), seed=0, temperature=1.0, top_p=0.9,
     return g.nodes
 
 
-def build_drama3_asr_graph(*, audio, language="auto"):
+def build_drama3_asr_graph(*, audio, language="auto", model_choice=DEFAULT_DRAMA3_ASR):
     """Transcribe one staged clip; PreviewAny returns the text in the job history."""
     g = Graph()
-    model = g.add("Qwen3ASRLoader", model_name=MODEL_SPECS["drama3_asr"].local_name)
+    model = g.add("Qwen3ASRLoader", model_name=MODEL_SPECS[drama3_asr_model_keys(model_choice)[0]].local_name)
     clip = g.add("LoadAudio", audio=audio)
     transcript = g.add("Qwen3ASRTranscribe", model=Graph.out(model), audio=Graph.out(clip),
                        language=language, context="", max_new_tokens=4096)

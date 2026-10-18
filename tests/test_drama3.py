@@ -35,7 +35,7 @@ class Drama3GraphTests(unittest.TestCase):
     def test_each_voice_is_encoded_with_its_speaker_tag(self):
         graph = build_drama3_graph(text="<|speaker:0|> Hi\n<|speaker:2|> Yo",
                                    voices=((0, "a.wav", "Hello there."), (2, "b.wav", "<|speaker:7|> Hey.")))
-        encoders = [n for n in graph.values() if n["class_type"] == "Drama3EncodeVoice"]
+        encoders = [n for n in graph.values() if n["class_type"] == "H3Drama3CachedVoice"]
         self.assertEqual([n["inputs"]["transcript"] for n in encoders],
                          ["<|speaker:0|> Hello there.", "<|speaker:2|> Hey."])
         generate = next(n for n in graph.values() if n["class_type"] == "Drama3Generate")
@@ -44,7 +44,7 @@ class Drama3GraphTests(unittest.TestCase):
 
     def test_without_voices_the_model_casts_from_the_seed(self):
         graph = build_drama3_graph(text="Hello")
-        self.assertFalse(any(n["class_type"] == "Drama3EncodeVoice" for n in graph.values()))
+        self.assertFalse(any(n["class_type"] == "H3Drama3CachedVoice" for n in graph.values()))
 
     def test_text_validation_matches_the_node_pack(self):
         self.assertEqual(validate_drama3_text(" <|speaker:15|> [sighs] fine "), "<|speaker:15|> [sighs] fine")

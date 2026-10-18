@@ -677,7 +677,7 @@ class UiContractTests(unittest.TestCase):
         slots = [f"speaker_{n}_{field}" for n in range(16) for field in ("voice", "audio", "transcript")]
         self.assertEqual(drama, ["text", *slots, "seed", "temperature", "top_p", "top_k",
                                  "max_frames", "split_long_text", "experts", "expert_cache_gb",
-                                 "backend", "parallel", "retries"])
+                                 "backend", "parallel", "retries", "model_choice"])
         backend = next(c for c in self.config["components"]
                        if c.get("props", {}).get("label") == "Backend")
         self.assertEqual(backend["props"]["value"], "ComfyUI")
@@ -711,7 +711,7 @@ class UiContractTests(unittest.TestCase):
         self.assertIn("Expand the prompt locally",
                       [labels[i] for i in endpoints["enhance_flux3_prompt"]["outputs"]])
         transcribe = endpoints["transcribe_drama3_voice"]
-        self.assertEqual([labels[i] for i in transcribe["inputs"]], ["Speaker 0 reference clip"])
+        self.assertEqual([labels[i] for i in transcribe["inputs"]], ["Speaker 0 reference clip", "Voice transcript model"])
         self.assertEqual(labels[transcribe["outputs"][0]], "Speaker 0 exact transcript")
         voices = [c for c in self.config["components"]
                   if str(c.get("props", {}).get("label", "")).startswith("Speaker ")
@@ -728,6 +728,38 @@ class UiContractTests(unittest.TestCase):
         add_event = next(d for d in self.config["dependencies"]
                          if d["targets"] and d["targets"][0][0] == add["id"])
         self.assertEqual(len(add_event["outputs"]), 1 + 16 + 2)  # count, slot groups, both buttons
+
+    def test_new_engine_model_options_are_bound_and_persisted(self):
+        endpoints = {d.get("api_name"): d for d in self.config["dependencies"]}
+        def labels(endpoint):
+            return {self.components[i].get("props", {}).get("label"): i for i in endpoints[endpoint]["inputs"]}
+        qwen = labels("generate_qwen_image21")
+        self.assertIn("Native prompt enhancer", qwen)
+        self.assertEqual(self.components[qwen["Native prompt enhancer"]]["props"]["value"], "Off")
+        flux = labels("generate_flux3")
+        self.assertIn("Prompt upsampler", flux)
+        drama = labels("generate_drama3")
+        self.assertIn("Drama model", drama)
+        asr = labels("transcribe_drama3_voice")
+        self.assertIn("Voice transcript model", asr)
+        from h3_ui.persistence import EXTRA_FIELDS
+        self.assertIn("prompt_enhancer", EXTRA_FIELDS["qwen_image21"])
+        self.assertIn("upsampler", EXTRA_FIELDS["flux3"])
+        self.assertIn("model", EXTRA_FIELDS["drama3"])
+        self.assertIn("asr_model", EXTRA_FIELDS["drama3"])
+
+    def test_flux_references_keep_local_edit_upsampling_available(self):
+        endpoint = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_flux3")
+        refs = next(i for i in endpoint["inputs"]
+                    if self.components[i].get("props", {}).get("label") == "Reference images (optional, up to 10)")
+        expand = next(i for i in endpoint["inputs"]
+                      if self.components[i].get("props", {}).get("label") == "Expand the prompt locally")
+        event = next(d for d in self.config["dependencies"]
+                     if d["inputs"] == [refs] and expand in d["outputs"])
+        callback = self.demo.fns[event["id"]].fn
+        expansion, size = callback(["portrait.png", "landscape.png"])
+        self.assertEqual((expansion["value"], expansion["interactive"], size["visible"]), (True, True, True))
+        self.assertTrue(callback([])[0]["value"])
 
     def test_qwen_edit_size_is_one_radio_input(self) -> None:
         controls = self.qwen_controls()

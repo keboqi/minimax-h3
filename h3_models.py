@@ -83,13 +83,35 @@ class ModelSpec:
 MODEL_SPECS: dict[str, ModelSpec] = {
     "flux3_nvfp4": ModelSpec(
         "black-forest-labs/flux-3-image-klein-comfy", "diffusion_models",
-        "diffusion_models/flux3_image_klein_sd_nvfp4.safetensors", "FLUX 3 Klein distilled NVFP4",
+        "diffusion_models/flux3-image-klein-nvfp4.safetensors", "FLUX 3 Klein distilled NVFP4",
+        local_filename="flux3_image_klein_sd_nvfp4.safetensors",
         expected_sha256="15d421e2558443fcf83ba46f3cd884d9d181c2c7a0a7bdcd2974af234a2d4f5c",
     ),
     "flux3_bf16": ModelSpec(
         "black-forest-labs/flux-3-image-klein-comfy", "diffusion_models",
-        "diffusion_models/flux3_image_klein_sd_bf16.safetensors", "FLUX 3 Klein distilled BF16",
+        "diffusion_models/flux3-image-klein-bf16.safetensors", "FLUX 3 Klein distilled BF16",
+        local_filename="flux3_image_klein_sd_bf16.safetensors",
         expected_sha256="c3e9813cdd049c831c836b2e9db61150e49a93fc1a4c63b256494642fee0bd7c",
+    ),
+    "flux3_base_bf16": ModelSpec(
+        "black-forest-labs/flux-3-image-klein-comfy", "diffusion_models",
+        "diffusion_models/flux3-image-klein-base-bf16.safetensors", "FLUX 3 Klein Base BF16",
+        expected_sha256="5c921759dc03663dbb67df11d8e3d317d2d5b893b31b969c95dc77ebf861b19c",
+    ),
+    "flux3_base_int8": ModelSpec(
+        "black-forest-labs/flux-3-image-klein-comfy", "diffusion_models",
+        "diffusion_models/flux3-image-klein-base-int8-convrot.safetensors", "FLUX 3 Klein Base INT8 ConvRot",
+        expected_sha256="8949ecfc1bf3871b08be02cf43ec7276a4914e1a86eade6b5eb8f4204426bc92",
+    ),
+    "flux3_base_nvfp4": ModelSpec(
+        "black-forest-labs/flux-3-image-klein-comfy", "diffusion_models",
+        "diffusion_models/flux3-image-klein-base-nvfp4.safetensors", "FLUX 3 Klein Base NVFP4",
+        expected_sha256="f99714a57ada7b7f39ebb7d916a1b842324c8ec483943816f5b3ea5c062b08a9",
+    ),
+    "flux3_int8": ModelSpec(
+        "black-forest-labs/flux-3-image-klein-comfy", "diffusion_models",
+        "diffusion_models/flux3-image-klein-int8-convrot.safetensors", "FLUX 3 Klein distilled INT8 ConvRot",
+        expected_sha256="847d8933548afd93df4af2cac2498e70891bf28d9dae06d695f536992e168fe2",
     ),
     "flux3_text_encoder": ModelSpec(
         "black-forest-labs/flux-3-image-klein-comfy", "text_encoders",
@@ -105,6 +127,11 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "text_encoders/qwen3.5_9b_flux3_prompt_upsampler_int8_convrot.safetensors", "FLUX 3 prompt upsampler INT8",
         expected_sha256="cb8cb9b9dcd2569509de755dca54d96fd93a16a7aabfd2f4051f0a144230620f",
     ),
+    "flux3_upsampler_w4a8": ModelSpec(
+        "black-forest-labs/flux-3-image-klein-comfy", "text_encoders",
+        "text_encoders/qwen3.5_9b_flux3_prompt_upsampler_w4a8.safetensors", "FLUX 3 prompt upsampler W4A8",
+        expected_sha256="e5d85a7421d197bf5a12474511936ecabce19a833252f16e9310a983194a4458",
+    ),
     "drama3_fp8": ModelSpec(
         "PedroMarinhoDev/Drama-3-ComfyUI", "diffusion_models", "drama3_fp8experts_bf16.safetensors", "Drama 3 FP8 experts / BF16",
         expected_sha256="5d053a200cf0f77faa13c087c78ef200c3b53f288451a6b9e7a8fa421c03a67b",
@@ -113,10 +140,23 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "PedroMarinhoDev/Drama-3-ComfyUI", "vae", "drama3_codec.safetensors", "Drama 3 audio codec",
         expected_sha256="4fecf102907a48414230da9a74d72d07c3a92368eab53fab655797837bddf5ae",
     ),
+    "drama3_int8": ModelSpec(
+        "PedroMarinhoDev/Drama-3-ComfyUI", "diffusion_models", "drama3_int8experts_bf16.safetensors", "Drama 3 INT8 experts / BF16",
+        expected_sha256="f407996b17583ba857ace14e0330a13788cf89f4d47cfdcd4766ad5106576899",
+    ),
+    "drama3_w6a8": ModelSpec(
+        "PedroMarinhoDev/Drama-3-ComfyUI", "diffusion_models", "drama3_w6a8experts_bf16.safetensors", "Drama 3 W6A8 experts / BF16",
+        expected_sha256="09d063f2667edae5baab63a8aa583d5445fc6693658b676a490d3cec827fb785",
+    ),
     "drama3_asr": ModelSpec(
         "PedroMarinhoDev/Qwen3-ASR-ComfyUI", "asr", "qwen3_asr_1.7b_bf16.safetensors",
         "Qwen3-ASR 1.7B for Drama 3 voice transcripts",
         expected_sha256="958ac49a7015ad546206e87fbcf390ac567b81d1cc7d613a1255a41033b8345f",
+    ),
+    "drama3_asr_small": ModelSpec(
+        "PedroMarinhoDev/Qwen3-ASR-ComfyUI", "asr", "qwen3_asr_0.6b_bf16.safetensors",
+        "Qwen3-ASR 0.6B for Drama 3 voice transcripts",
+        expected_sha256="eb350ce7510a538eb136d8320db470a0761713c47de6e12b0fca090d4fc15ecf",
     ),
     "lightvae_encoder": ModelSpec(
         "lightx2v/LightVAE", "vae/LightVAE", "lightvae-lite-h3-encoder.safetensors", "LightVAE Lite H3 encoder",
@@ -586,6 +626,26 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "checkpoints/yue2_3b_bf16.safetensors",
         "YuE2 3B BF16",
     ),
+    "qwen_image21_pe_t2i_int8": ModelSpec(
+        QWEN_IMAGE21_REPO, "text_encoders", "text_encoders/qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors",
+        "Qwen Image 2.1 native T2I prompt enhancer INT8",
+        expected_sha256="9182abae56fe05459840a86d22abd21f972061c92fce032630af680c8c5178d3",
+    ),
+    "qwen_image21_pe_t2i_w4a8": ModelSpec(
+        QWEN_IMAGE21_REPO, "text_encoders", "text_encoders/qwen3.5_9b_qwen_image_2.1_pe_t2i_w4a8.safetensors",
+        "Qwen Image 2.1 native T2I prompt enhancer W4A8",
+        expected_sha256="bdc244869e71e91f9e66638dd85872d8906ac26ce24ef9f32fecbc488e6bc708",
+    ),
+    "qwen_image21_pe_i2i_int8": ModelSpec(
+        QWEN_IMAGE21_REPO, "text_encoders", "text_encoders/qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors",
+        "Qwen Image 2.1 native edit prompt enhancer INT8",
+        expected_sha256="32707d01b427e488af252b95c551989aad59f9fec611a694f5db6bde7f0f1f6c",
+    ),
+    "qwen_image21_pe_i2i_w4a8": ModelSpec(
+        QWEN_IMAGE21_REPO, "text_encoders", "text_encoders/qwen3.5_9b_qwen_image_2.1_pe_i2i_w4a8.safetensors",
+        "Qwen Image 2.1 native edit prompt enhancer W4A8",
+        expected_sha256="3c7c88f786f1bac5baf2c4b314fe28172cc03d93b29dfc8b445e85a655cbabb1",
+    ),
     "qwen_image21_dit_int8": ModelSpec(
         QWEN_IMAGE21_REPO,
         "diffusion_models",
@@ -786,7 +846,12 @@ QWEN_IMAGE21_TURBO_MODES = {
     "Viggle Turbo v0.3 (6-step)": ("qwen_image21_viggle_v03_lora", 6),
     "Viggle Turbo v0.3 (9-step)": ("qwen_image21_viggle_v03_lora", 9),
 }
+QWEN_IMAGE21_PROMPT_ENHANCERS = {
+    "INT8 ConvRot": ("qwen_image21_pe_t2i_int8", "qwen_image21_pe_i2i_int8"),
+    "W4A8 (lower VRAM)": ("qwen_image21_pe_t2i_w4a8", "qwen_image21_pe_i2i_w4a8"),
+}
 QWEN_IMAGE21_MODEL_KEYS = (
+    *(key for pair in QWEN_IMAGE21_PROMPT_ENHANCERS.values() for key in pair),
     *QWEN_IMAGE21_MODEL_CHOICES.values(),
     *QWEN_IMAGE21_TEXT_ENCODER_CHOICES.values(),
     "qwen_image21_vae",
@@ -795,10 +860,19 @@ QWEN_IMAGE21_MODEL_KEYS = (
     "qwen_image21_viggle_v02_lora",
     "qwen_image21_viggle_v03_lora",
 )
-FLUX3_MODEL_CHOICES = {"NVFP4 (Blackwell)": "flux3_nvfp4", "BF16": "flux3_bf16"}
-FLUX3_MODEL_KEYS = (*FLUX3_MODEL_CHOICES.values(), "flux3_text_encoder", "flux3_vae", "flux3_upsampler")
-DRAMA3_MODEL_KEYS = ("drama3_fp8", "drama3_codec")
-DRAMA3_ASR_MODEL_KEYS = ("drama3_asr",)
+FLUX3_BASE_MODEL_CHOICES = {"Base BF16": "flux3_base_bf16", "Base INT8 ConvRot": "flux3_base_int8",
+                            "Base NVFP4 (Blackwell)": "flux3_base_nvfp4"}
+FLUX3_MODEL_CHOICES = {"NVFP4 (Blackwell)": "flux3_nvfp4", "BF16": "flux3_bf16",
+                       "INT8 ConvRot (lower VRAM)": "flux3_int8", **FLUX3_BASE_MODEL_CHOICES}
+FLUX3_UPSAMPLER_CHOICES = {"INT8 ConvRot": "flux3_upsampler", "W4A8 (lower VRAM)": "flux3_upsampler_w4a8"}
+DEFAULT_FLUX3_UPSAMPLER = "INT8 ConvRot"
+FLUX3_MODEL_KEYS = (*FLUX3_MODEL_CHOICES.values(), "flux3_text_encoder", "flux3_vae", *FLUX3_UPSAMPLER_CHOICES.values())
+DRAMA3_MODEL_CHOICES = {"FP8 (original weights)": "drama3_fp8", "INT8 ConvRot": "drama3_int8", "W6A8 (lower RAM)": "drama3_w6a8"}
+DEFAULT_DRAMA3_MODEL = "FP8 (original weights)"
+DRAMA3_ASR_CHOICES = {"1.7B (quality)": "drama3_asr", "0.6B (smaller)": "drama3_asr_small"}
+DEFAULT_DRAMA3_ASR = "1.7B (quality)"
+DRAMA3_MODEL_KEYS = (*DRAMA3_MODEL_CHOICES.values(), "drama3_codec")
+DRAMA3_ASR_MODEL_KEYS = tuple(DRAMA3_ASR_CHOICES.values())
 LAZY_OPTIONAL_MODEL_KEYS = (
     *FLUX3_MODEL_KEYS,
     *DRAMA3_MODEL_KEYS,
@@ -931,7 +1005,12 @@ def model_file_matches_manifest(
     recorded_size = entry.get("size")
     return (
         entry.get("repo_id") == spec.repo_id
-        and entry.get("filename") == spec.filename
+        # A renamed remote file with the same pinned content can keep its local
+        # name and manifest. Unpinned models still require an exact source path.
+        and (entry.get("filename") == spec.filename or (
+            spec.expected_sha256 is not None
+            and entry.get("sha256") == spec.expected_sha256
+        ))
         and isinstance(recorded_size, int)
         and recorded_size == size
         and (
@@ -1627,6 +1706,7 @@ def selftest() -> None:
     )
     assert set(MODEL_SPECS) == {
         *FLUX3_MODEL_KEYS, *DRAMA3_MODEL_KEYS, *DRAMA3_ASR_MODEL_KEYS,
+        *(key for pair in QWEN_IMAGE21_PROMPT_ENHANCERS.values() for key in pair),
         "lightvae_encoder", "lightvae_decoder", "lightvae_decoder_int8",
         "veda_t2va",
         "veda_r2va",
