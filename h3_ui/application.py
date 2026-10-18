@@ -2864,14 +2864,38 @@ def transcribe_drama3_voice(audio, model_choice="1.7B (quality)"):
     return transcript, "Transcribed with Qwen3-ASR. Check names and punctuation before generating."
 
 
-def generate_drama3_voice(description, preview_text, language):
-    """A generated reference and its synthesis text always update the same slot together."""
+def generate_drama3_voice(description, preview_text, language, engine="Drama 3", backend="ComfyUI",
+                          seed=-1, temperature=1.0, top_p=0.9, top_k=0, max_frames=8192,
+                          experts="in VRAM", expert_cache_gb=0.0, model_choice="FP8 (original weights)"):
+    """A generated reference and its synthesis text always update the same slot together.
+
+    Drama 3 designs on the tab's selected backend and settings; Qwen uses its isolated runtime.
+    """
+    from h3_app.drama3_voice_design import ENGINE_DRAMA3, ENGINE_QWEN, generate_drama3_reference
     from h3_app.voice_design import generate_reference
 
-    yield gr.skip(), gr.skip(), "Preparing Qwen VoiceDesign; runtime and weights download on first use."
     try:
-        audio, transcript = generate_reference(description, preview_text, language, _runtime_config(),
-                                               free_gpu=free_comfy_vram)
+        if engine == ENGINE_QWEN:
+            yield gr.skip(), gr.skip(), "Preparing Qwen VoiceDesign; runtime and weights download on first use."
+            audio, transcript = generate_reference(description, preview_text, language, _runtime_config(),
+                                                   free_gpu=free_comfy_vram)
+        elif engine == ENGINE_DRAMA3:
+            from h3_models import resolve_hf_token
+
+            request = generation_requests.Drama3Request(
+                "", (), seed, temperature, top_p, top_k, max_frames, False, experts, expert_cache_gb,
+                backend, model_choice=model_choice)
+            yield gr.skip(), gr.skip(), f"Preparing Drama 3 voice design on {backend}."
+            audio = transcript = None
+            for update in generate_drama3_reference(description, preview_text, request, _runtime_config(),
+                                                    _generation_services(), free_gpu=free_comfy_vram,
+                                                    hf_token=resolve_hf_token()):
+                if update.output:
+                    audio, transcript = update.output, update.status
+                else:
+                    yield gr.skip(), gr.skip(), update.status
+        else:
+            raise H3Error("Choose Drama 3 or Qwen3-TTS VoiceDesign to generate a voice.")
     except Exception as exc:
         yield gr.skip(), gr.skip(), f"Voice generation failed: {exc}"
         return

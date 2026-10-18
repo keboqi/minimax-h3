@@ -15,6 +15,7 @@ from h3_app.prompt_service import DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES
 from h3_app.generation.optional_engines import DRAMA3_BACKENDS
 from h3_app.workflows.flux3 import flux3_sampling_defaults
 from h3_app.voice_design import LANGUAGES as VOICE_DESIGN_LANGUAGES
+from h3_app.drama3_voice_design import ENGINE_DRAMA3, ENGINE_QWEN, VOICE_DESIGN_ENGINES
 from h3_models import (FLUX3_MODEL_CHOICES, FLUX3_UPSAMPLER_CHOICES, DEFAULT_FLUX3_UPSAMPLER,
                        DRAMA3_MODEL_CHOICES, DEFAULT_DRAMA3_MODEL, DRAMA3_ASR_CHOICES, DEFAULT_DRAMA3_ASR)
 from .image_library import build_image_file_input
@@ -129,6 +130,7 @@ class Drama3View:
     status: gr.Textbox
     model: gr.Dropdown
     asr_model: gr.Dropdown
+    voice_engine: gr.Radio
 
 
 def _actions(label):
@@ -214,7 +216,8 @@ def _voice_slot(speaker, names):
             with gr.Accordion("Generate a reference voice from description", open=False):
                 preview_text = gr.Textbox(label=f"Speaker {speaker} preview speech", lines=3,
                                          placeholder="Words the generated reference clip will speak.")
-                language = gr.Dropdown(list(VOICE_DESIGN_LANGUAGES), value="Auto", label="Preview language")
+                language = gr.Dropdown(list(VOICE_DESIGN_LANGUAGES), value="Auto", label="Preview language",
+                                       visible=False)
                 with gr.Row():
                     generate = gr.Button("Generate voice", size="sm")
                     stop = gr.Button("Interrupt voice generation", size="sm", interactive=False)
@@ -258,11 +261,17 @@ def build_drama3_view(root, speaker_names=()):
                     )
                     writer, enhance, enhance_status = _writer("Rewrite script")
                 with gr.Accordion("Speaker voices (optional)", open=False):
-                    gr.Markdown("Upload a reference clip or generate one from a voice description with "
-                                "[Qwen3-TTS VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign). "
+                    gr.Markdown("Upload a reference clip or generate one from a voice description. "
                                 "Generated clips use the preview speech as their transcript automatically. "
-                                "Save either kind as a reusable speaker preset. VoiceDesign downloads its isolated "
-                                "runtime and model on first use. Speakers without clips use Drama 3's invented voices.")
+                                "Save either kind as a reusable speaker preset. Speakers without clips use "
+                                "Drama 3's invented voices.")
+                    voice_engine = gr.Radio(
+                        list(VOICE_DESIGN_ENGINES), value=ENGINE_DRAMA3, label="Voice generator",
+                        info="Drama 3 casts the voice from the description as a delivery cue, on the selected "
+                             "backend with the model and sampling settings below. "
+                             "[Qwen3-TTS VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign) "
+                             "runs in its own isolated runtime, downloaded on first use.",
+                    )
                     voices = tuple(_voice_slot(speaker, list(speaker_names))
                                    for speaker in range(DRAMA3_VOICE_SLOTS))
                     asr_model = gr.Dropdown(list(DRAMA3_ASR_CHOICES), value=DEFAULT_DRAMA3_ASR,
@@ -334,7 +343,7 @@ def build_drama3_view(root, speaker_names=()):
     return Drama3View(text, speaker_mode, writer, enhance, enhance_status, voices, shown_slots, add_speaker,
                       remove_speaker, voice_status, seed, temperature,
                       top_p, top_k, max_frames, split, experts, cache, backend, parallel, retries,
-                      output, run, stop, status, model, asr_model)
+                      output, run, stop, status, model, asr_model, voice_engine)
 
 
 def settings_components(view):
@@ -433,10 +442,16 @@ def bind_drama3(view, actions):
                  view.shown_slots, *groups, view.add_speaker, view.remove_speaker],
         show_progress="minimal", api_name="enhance_drama3_text",
     )
+    languages = [slot.language for slot in view.voices]
+    view.voice_engine.change(lambda engine: [gr.update(visible=engine == ENGINE_QWEN)] * len(languages),
+                             inputs=view.voice_engine, outputs=languages,
+                             queue=False, show_progress="hidden", api_name=False)
     for slot in view.voices:
         generated = bind_gpu_action(
             slot.generate.click, owned_generation(actions.generate_drama3_voice, "drama3_voice"),
-            inputs=[slot.description, slot.preview_text, slot.language],
+            inputs=[slot.description, slot.preview_text, slot.language, view.voice_engine, view.backend,
+                    view.seed, view.temperature, view.top_p, view.top_k, view.max_frames, view.experts,
+                    view.expert_cache_gb, view.model],
             outputs=[slot.audio, slot.transcript, view.voice_status], show_progress="minimal",
             api_name="generate_drama3_voice" if slot.speaker == 0 else False,
         )

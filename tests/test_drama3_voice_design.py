@@ -250,9 +250,118 @@ class CastSlotTests(unittest.TestCase):
         from h3_ui import application
         with patch.object(application, "_runtime_config"), \
                 patch.object(voice_design, "generate_reference", side_effect=H3Error("broken")):
-            updates = list(application.generate_drama3_voice("Warm", "Hello.", "Auto"))
+            updates = list(application.generate_drama3_voice("Warm", "Hello.", "Auto", "Qwen3-TTS VoiceDesign"))
         self.assertEqual(updates[-1][:2], ({"__type__": "update"}, {"__type__": "update"}))
         self.assertIn("failed", updates[-1][2])
+
+    def test_drama3_is_the_default_generator_and_uses_the_tab_backend_and_settings(self):
+        from h3_ui import application
+        from h3_app import drama3_voice_design
+        from h3_app.generation.results import GenerationUpdate
+        seen = {}
+
+        def design(description, text, request, runtime, services, **kwargs):
+            seen.update(description=description, text=text, request=request)
+            yield GenerationUpdate(None, "Generating")
+            yield GenerationUpdate("voice.wav", "Hello.")
+        with patch.object(application, "_runtime_config"), patch.object(application, "_generation_services"), \
+                patch("h3_models.resolve_hf_token", return_value=None), \
+                patch.object(voice_design, "generate_reference") as qwen, \
+                patch.object(drama3_voice_design, "generate_drama3_reference", side_effect=design):
+            updates = list(application.generate_drama3_voice(
+                "Warm", "Hello.", "Auto", backend="SGLang-Omni", temperature=0.7, top_k=30,
+                model_choice="INT8"))
+        qwen.assert_not_called()
+        self.assertEqual((seen["request"].backend, seen["request"].temperature, seen["request"].top_k,
+                          seen["request"].model_choice), ("SGLang-Omni", 0.7, 30, "INT8"))
+        self.assertEqual(updates[-1][0], "voice.wav")
+        self.assertEqual(updates[-1][1]["value"], "Hello.")
+
+
+class Drama3VoiceDesignTests(unittest.TestCase):
+    def setUp(self):
+        from h3_app.generation.requests import Drama3Request
+        self.temp = tempfile.TemporaryDirectory()
+        self.runtime = SimpleNamespace(output_dir=Path(self.temp.name))
+        self.services = SimpleNamespace(models=Mock())
+        self.request = Drama3Request("", (), 7, 0.7, 0.7, 30, 8192, True, "in VRAM", 0.0, "ComfyUI")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_description_cue_follows_the_opening_phrase(self):
+        from h3_app.drama3_voice_design import design_script
+        self.assertEqual(design_script(" Gravelly  old sailor ", "Well now, the  tide is turning."),
+                         "<|speaker:0|> Well now, [Gravelly old sailor] the tide is turning.")
+        self.assertEqual(design_script("Warm", "Hello world"), "<|speaker:0|> Hello [Warm] world")
+        self.assertEqual(design_script("Warm", "你好，今天我们一起出发。"),
+                         "<|speaker:0|> 你好， [Warm] 今天我们一起出发。")
+        for description, text in (("A [bright] voice", "Hello there."), ("Warm", "Hello [laughs] there."),
+                                  ("", "Hello."), ("Warm", "")):
+            with self.subTest(description=description, text=text), self.assertRaises(H3Error):
+                design_script(description, text)
+
+    def test_comfyui_backend_generates_one_unreferenced_take(self):
+        from h3_app import drama3_voice_design
+        from h3_app.generation.results import GenerationUpdate, fresh_audio
+        captured = []
+
+        def engine(request, services, runtime, **kwargs):
+            captured.append(request)
+            yield GenerationUpdate(None, "Queued")
+            yield GenerationUpdate(fresh_audio("out/drama3/Drama3.mp3"), "Drama 3 complete")
+        with patch("h3_app.generation.optional_engines.generate_optional_engine", side_effect=engine), \
+                patch("h3_app.drama3_serving.generate.design_voice_served") as served:
+            updates = list(drama3_voice_design.generate_drama3_reference(
+                "Warm narrator", "Hello there, friend.", self.request, self.runtime, self.services,
+                free_gpu=Mock()))
+        served.assert_not_called()
+        request = captured[0]
+        self.assertEqual(request.text, "<|speaker:0|> Hello there, [Warm narrator] friend.")
+        self.assertEqual((request.voices, request.split_long_text, request.backend, request.top_k),
+                         ((), False, "ComfyUI", 30))
+        self.assertLess(request.max_frames, 8192)
+        self.assertEqual(updates[-1], GenerationUpdate("out/drama3/Drama3.mp3", "Hello there, friend."))
+
+    def test_comfyui_failure_raises(self):
+        from h3_app import drama3_voice_design
+        from h3_app.generation.results import GenerationUpdate
+        with patch("h3_app.generation.optional_engines.generate_optional_engine",
+                   return_value=iter([GenerationUpdate(None, "Error: missing nodes\n\ntimings")])):
+            with self.assertRaisesRegex(H3Error, "^missing nodes$"):
+                list(drama3_voice_design.generate_drama3_reference(
+                    "Warm", "Hello there.", self.request, self.runtime, self.services, free_gpu=Mock()))
+
+    def test_sglang_backend_sends_no_reference_and_writes_the_clip(self):
+        import numpy as np
+        from dataclasses import replace
+        from h3_app import drama3_voice_design
+        from h3_app.drama3_serving import audio, generate, server as served
+        clip = audio.encode_wav(np.full(24000, 0.2, dtype=np.float32), 24000)
+        fake = Mock()
+        fake.payload.side_effect = lambda **kwargs: served.SglangOmniServer.payload(None, **kwargs)
+        fake.speech.return_value = clip
+        with patch.object(generate, "ServerSettings"), patch.object(generate, "shared_server", return_value=fake), \
+                patch.object(generate, "_ready_server", return_value=iter(())), \
+                patch.object(generate, "persist_caches"), \
+                patch("h3_app.generation.optional_engines.generate_optional_engine") as comfy:
+            updates = list(drama3_voice_design.generate_drama3_reference(
+                "Warm", "Hello there.", replace(self.request, backend="SGLang-Omni"), self.runtime,
+                self.services, free_gpu=Mock()))
+        comfy.assert_not_called()
+        payload = fake.speech.call_args.args[0]
+        self.assertEqual(payload["references"], [])
+        self.assertEqual(payload["input"], "<|speaker:0|> Hello [Warm] there.")
+        self.assertEqual((payload["temperature"], payload["top_k"]), (0.7, 30))
+        path = Path(updates[-1].output)
+        self.assertEqual((path.parent.name, updates[-1].status), ("drama3_voices", "Hello there."))
+        self.assertTrue(path.is_file())
+        # The voice-design job keeps the server it is about to use; other engines still release it.
+        with patch.object(served, "release_all") as release:
+            served.release_for_job("drama3_voice")
+            release.assert_not_called()
+            served.release_for_job("flux3")
+            release.assert_called_once()
 
 
 if __name__ == "__main__":

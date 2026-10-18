@@ -690,7 +690,12 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(enhance[7:], [*slots, *metadata])  # gr.State is not exposed in the API.
         voice = api["/generate_drama3_voice"]
         self.assertEqual([row["parameter_name"] for row in voice["parameters"]],
-                         ["description", "preview_text", "language"])
+                         ["description", "preview_text", "language", "engine", "backend", "seed",
+                          "temperature", "top_p", "top_k", "max_frames", "experts", "expert_cache_gb",
+                          "model_choice"])
+        engine = next(c for c in self.config["components"]
+                      if c.get("props", {}).get("label") == "Voice generator")
+        self.assertEqual(engine["props"]["value"], "Drama 3")
         speakers = next(c for c in self.config["components"]
                         if c.get("props", {}).get("label") == "Speakers")
         self.assertEqual(speakers["props"]["value"], "Auto")

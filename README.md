@@ -927,10 +927,20 @@ descriptions, and preview speech. Each slot keeps the exact number used in
 inconsistent writer responses leave the current script and slots in place.
 
 In **Speaker voices**, upload and transcribe a reference clip, or open
-**Generate a reference voice from description** to use
-[Qwen3-TTS-12Hz-1.7B-VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign).
-Edit the voice description, preview speech, and language, then click **Generate
-voice**. Its synthesis text becomes the reference transcript automatically.
+**Generate a reference voice from description**. Edit the voice description and
+preview speech, then click **Generate voice**. Its synthesis text becomes the
+reference transcript automatically. **Voice generator** picks the engine:
+
+- **Drama 3** (default) generates one take with no reference on the Drama 3
+  backend selected under **Speech and memory settings** (ComfyUI or
+  SGLang-Omni), with that tab's model and sampling settings. The description is
+  inserted as a delivery cue after the preview's opening phrase, for example
+  `<|speaker:0|> Well now, [gravelly old sailor, slow and amused] the tide is turning.`,
+  so it must not contain brackets. The cue is not part of the transcript.
+- **Qwen3-TTS VoiceDesign** uses
+  [Qwen3-TTS-12Hz-1.7B-VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign)
+  and also takes a preview language.
+
 Preview speech is separate from the current clip's transcript: editing a future
 preview does not change the words paired with an existing clip. Uploading a new
 clip clears the previous transcript. **Save speaker** stores either kind of clip

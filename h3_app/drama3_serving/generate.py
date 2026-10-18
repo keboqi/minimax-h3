@@ -75,6 +75,33 @@ def _with_heartbeat(label: str, work: Callable[[Callable[[str], None]], object])
         raise error[0]
 
 
+def _ready_server(settings, server, label, free_gpu, hf_token) -> Iterator[GenerationUpdate]:
+    yield from _with_heartbeat(f"Preparing the {label} environment",
+                               lambda _progress: environment.prepare(settings.venv))
+    yield from _with_heartbeat("Downloading the Drama 3 checkpoint",
+                               lambda _progress: ensure_model(settings, token=hf_token))
+    yield from _with_heartbeat(f"Freeing ComfyUI VRAM and starting {label}",
+                               lambda report: server.ensure_ready(free_gpu, report))
+
+
+def design_voice_served(text: str, target: Path, *, runtime, free_gpu: Callable[[], None], hf_token=None,
+                        sampling: dict, max_frames: int, label: str = "SGLang-Omni") -> Iterator[GenerationUpdate]:
+    """One unchunked take without references, so a single invented voice speaks all of it."""
+    settings = ServerSettings.from_environment(runtime)
+    server = shared_server(settings)
+    yield from _ready_server(settings, server, label, free_gpu, hf_token)
+    yield GenerationUpdate(None, f"Generating the voice on {label}")
+    payload = server.payload(text=text, reference=None, transcript=None,
+                             max_new_tokens=frame_budget(text, max_frames), sampling=sampling)
+    samples, rate = audio.decode_wav(server.speech(payload))
+    samples = audio.tidy_take(samples, rate)
+    if not samples.size:
+        raise H3Error(f"Drama 3 ({label}) returned a silent voice take; generate again.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(audio.encode_wav(samples, rate))
+    persist_caches()
+
+
 def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf_token=None,
                            progress=lambda *args, **kwargs: None) -> Iterator[GenerationUpdate]:
     """Generate speaker chunks, optionally check/retry them, then join."""
@@ -95,12 +122,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     yield GenerationUpdate(None, f"Planned {len(chunks)} chunk(s) · {cast}")
 
     label = request.backend
-    yield from _with_heartbeat(f"Preparing the {label} environment",
-                               lambda _progress: environment.prepare(settings.venv))
-    yield from _with_heartbeat("Downloading the Drama 3 checkpoint",
-                               lambda _progress: ensure_model(settings, token=hf_token))
-    yield from _with_heartbeat(f"Freeing ComfyUI VRAM and starting {label}",
-                               lambda report: server.ensure_ready(free_gpu, report))
+    yield from _ready_server(settings, server, label, free_gpu, hf_token)
     # The server stays loaded after the job; release_all() frees it for other engines.
     # Each request has one voice; the server tags its transcript as speaker 0 itself.
     references = {

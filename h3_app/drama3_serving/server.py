@@ -433,8 +433,10 @@ class SglangOmniServer:
         # 1 << 30 (TOP_K_ALL) to represent the whole vocabulary internally.
         if sampling.get("top_k") == 0:
             sampling["top_k"] = 1 << 30
+        # No reference lets Drama 3 invent the voice from the text's cues (voice design).
+        references = [] if reference is None else [{"audio_path": str(Path(reference).resolve()), "text": transcript}]
         return {"input": text, "response_format": "wav", "max_new_tokens": max_new_tokens,
-                **sampling, "references": [{"audio_path": str(Path(reference).resolve()), "text": transcript}]}
+                **sampling, "references": references}
 
 
 _SERVER: SglangOmniServer | None = None
@@ -456,10 +458,10 @@ def shared_server(settings: ServerSettings) -> SglangOmniServer:
 
 
 def release_for_job(family: str) -> None:
-    """Other engines reclaim the GPU; ComfyUI TTS releases the server itself."""
+    """Other engines reclaim the GPU; ComfyUI TTS and voice design release the server themselves."""
     if family == "unload":
         stop_all()
-    elif family != "drama3":
+    elif family not in {"drama3", "drama3_voice"}:
         release_all()
 
 
