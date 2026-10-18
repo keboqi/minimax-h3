@@ -41,10 +41,12 @@ def worker_env() -> dict[str, str]:
     return env
 
 
-def run_process(command: list[str], log: Path, *, timeout: float, env: dict[str, str] | None = None) -> None:
+def run_process(command: list[str], log: Path, *, timeout: float, env: dict[str, str] | None = None,
+                label: str = "Qwen VoiceDesign") -> None:
     """Drain output to disk; cancellation/timeout always reaps the GPU process.
 
-    ``env`` adds variables (such as a Hugging Face token) on top of :func:`worker_env`.
+    ``env`` adds variables (such as a Hugging Face token) on top of :func:`worker_env`;
+    ``label`` names the worker in failure messages.
     """
     check_cancelled()
     with log.open("ab") as stream:
@@ -56,11 +58,11 @@ def run_process(command: list[str], log: Path, *, timeout: float, env: dict[str,
             while process.poll() is None:
                 check_cancelled()
                 if time.monotonic() >= deadline:
-                    raise H3Error(f"Voice generation timed out. See {log}.")
+                    raise H3Error(f"{label} timed out. See {log}.")
                 time.sleep(0.25)
             check_cancelled()
             if process.returncode:
-                raise H3Error(f"Qwen VoiceDesign failed (exit {process.returncode}). See {log}.")
+                raise H3Error(f"{label} failed (exit {process.returncode}). See {log}.")
         finally:
             if process.poll() is None:
                 process.terminate()

@@ -318,6 +318,8 @@ def voice_design_install_commands(venv: str | Path, uv: str | list[str] = "uv") 
 STABLE_AUDIO_READY_MARKER = "h3-stable-audio-ready.txt"
 STABLE_AUDIO_PYTHON = "3.12"
 STABLE_AUDIO_TOOLS_REPO = "https://github.com/Stability-AI/stable-audio-tools.git"
+# Pinned: an unpinned main moved its imports without changing the fingerprint.
+STABLE_AUDIO_TOOLS_REF = "3241adba4fc2a85cf5b29d9eb68d42f40a28e820"
 STABLE_AUDIO_REQUIREMENTS = (
     f"torch=={TORCH_VERSION}",
     f"torchaudio=={TORCHAUDIO_VERSION}",
@@ -332,7 +334,11 @@ STABLE_AUDIO_REQUIREMENTS = (
     "importlib-resources",
     "nnAudio",
     "PyWavelets",
+    # Its models.lora package imports a Lightning checkpoint callback at model load.
+    "pytorch-lightning==2.5.5",
     "safetensors",
+    "sentencepiece",
+    "setuptools<81",
     "soundfile",
     "soxr",
     "torchsde",
@@ -343,6 +349,8 @@ STABLE_AUDIO_REQUIREMENTS = (
 )
 STABLE_AUDIO_SMOKE = (
     "import inspect, torch, soundfile; "
+    # The worker's own imports: model loading pulls in diffusion, DiT and LoRA modules.
+    "import stable_audio_tools.models.diffusion, stable_audio_tools.inference.generation; "
     "from stable_audio_tools.models.transformer import TransformerBlock; "
     "assert torch.version.cuda, 'Stable Audio installed CPU-only Torch'; "
     "assert 'local_add_cond_dim' in inspect.signature(TransformerBlock.__init__).parameters, "
@@ -359,6 +367,7 @@ def stable_audio_fingerprint() -> str:
             STABLE_AUDIO_PYTHON,
             *STABLE_AUDIO_REQUIREMENTS,
             STABLE_AUDIO_TOOLS_REPO,
+            STABLE_AUDIO_TOOLS_REF,
             TORCH_INDEX,
             STABLE_AUDIO_SMOKE,
         )
@@ -367,7 +376,7 @@ def stable_audio_fingerprint() -> str:
 
 
 def stable_audio_install_commands(venv: str | Path, uv: str | list[str] = "uv") -> list[list[str]]:
-    """Keep stable-audio-tools (--no-deps git main) in an isolated runtime."""
+    """Keep stable-audio-tools (--no-deps, pinned git commit) in an isolated runtime."""
     base = venv if isinstance(venv, PurePath) else Path(venv)
     python = str(base / ("Scripts/python.exe" if isinstance(base, PureWindowsPath) else "bin/python"))
     uv = [uv] if isinstance(uv, str) else list(uv)
@@ -392,7 +401,7 @@ def stable_audio_install_commands(venv: str | Path, uv: str | list[str] = "uv") 
             "--python",
             python,
             "--no-deps",
-            f"git+{STABLE_AUDIO_TOOLS_REPO}",
+            f"git+{STABLE_AUDIO_TOOLS_REPO}@{STABLE_AUDIO_TOOLS_REF}",
         ],
         [python, "-c", STABLE_AUDIO_SMOKE],
     ]

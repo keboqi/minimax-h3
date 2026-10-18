@@ -44,7 +44,7 @@ def prepare(runtime, log: Path) -> Path:
         if python_path(venv).is_file():
             commands = commands[1:]
         for command in commands:
-            run_process(command, log, timeout=1800)
+            run_process(command, log, timeout=1800, label="Stable Audio 3 Medium setup")
         marker.write_text(fingerprint(), encoding="utf-8")
     return python_path(venv)
 
@@ -149,6 +149,7 @@ def generate_sound_references(
                 timeout=runtime.generation_timeout,
                 # The model and its T5Gemma encoder are gated; the worker downloads them on first use.
                 env={"HF_TOKEN": hf_token} if hf_token else None,
+                label="Stable Audio 3 Medium",
             )
             for idx, item in zip(worker_indices, worker_items):
                 out_path = Path(item["output"])
