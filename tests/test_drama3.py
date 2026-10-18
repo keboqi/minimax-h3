@@ -427,14 +427,14 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
                 backend="ComfyUI",
                 script_mode=prompt_service.DRAMA3_SCRIPT_ADVANCED,
             ))
-        # Sound tags or speaker effects on ComfyUI are rejected even if script_mode is Basic
+        # Basic mode accepts tags left in the text on ComfyUI; generation ignores them
         for text in (
             '<sound name="rain">Steady rain, 4 seconds</sound>\n<|speaker:0|> Hello.',
             "<parallel>\n<|speaker:0|> Hello.\n</parallel>",
             "<|speaker:0|> <#1.5#> Hello.",
             "<|speaker:0|> <phone_call> Hello.",
         ):
-            with self.subTest(text=text), self.assertRaisesRegex(H3Error, "SGLang-Omni"):
+            with self.subTest(text=text):
                 validate_request(Drama3Request(text, voices=voices, backend="ComfyUI"))
         # All of the above are valid on SGLang-Omni
         validate_request(Drama3Request(
@@ -516,12 +516,13 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         self.assertEqual(list(synced[0:3]), ["cafe_bgm", "Warm jazz piano, 15 seconds", 15])
         self.assertEqual(list(synced[3:6]), ["door_bell", "Shop doorbell chime, 2 seconds", 2])
 
-        # Switching back to Basic strips all sound/staging and speaker_effect tags
-        cleaned_text, _backend_upd, basic_panel_upd, _basic_status = application.switch_drama3_script_mode(
+        # Switching back to Basic keeps the authored tags (they are ignored when generating)
+        basic_text, _backend_upd, basic_panel_upd, basic_status = application.switch_drama3_script_mode(
             prompt_service.DRAMA3_SCRIPT_BASIC, text, "SGLang-Omni"
         )
         self.assertFalse(basic_panel_upd["visible"])
-        self.assertEqual(cleaned_text, "<|speaker:0|> Hi! Meet me inside.")
+        self.assertEqual(basic_text, application.gr.skip())
+        self.assertIn("kept but ignored", basic_status)
 
     def test_job_admission_signatures_match_bound_inputs(self):
         from h3_ui import application

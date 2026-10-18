@@ -2946,8 +2946,7 @@ def apply_drama3_writer_reply(reply, text, speaker_mode, *slots):
 
 def switch_drama3_script_mode(script_mode, text, backend="ComfyUI"):
     """Toggle Basic vs Advanced (sound enhanced) script mode and enforce SGLang-Omni on Advanced."""
-    from h3_app.drama3_serving.speaker_effects import strip_speaker_effects
-    from h3_app.drama3_serving.tree import strip_drama3_sound_tags
+    from h3_app.drama3_serving.tree import has_drama3_sound_features
 
     if script_mode == prompt_service.DRAMA3_SCRIPT_ADVANCED:
         backend_update = gr.update(value="SGLang-Omni") if backend != "SGLang-Omni" else gr.skip()
@@ -2957,15 +2956,12 @@ def switch_drama3_script_mode(script_mode, text, backend="ComfyUI"):
             gr.update(visible=True),
             "Advanced sound-enhanced mode enabled (uses SGLang-Omni backend and Stable Audio 3 Medium).",
         )
-    raw = str(text or "")
-    cleaned = strip_speaker_effects(strip_drama3_sound_tags(raw))
-    text_update = cleaned if cleaned != raw else gr.skip()
-    return (
-        text_update,
-        gr.skip(),
-        gr.update(visible=False),
-        "Basic script mode enabled; sound and speaker vocal effect tags removed.",
-    )
+    # The script is left as authored, so switching back to Advanced restores its staging.
+    status = "Basic script mode enabled."
+    if has_drama3_sound_features(str(text or "")):
+        status += (" The script's sound, staging, pause and vocal effect tags are kept but ignored "
+                   "in Basic mode; switch back to Advanced to use them.")
+    return gr.skip(), gr.skip(), gr.update(visible=False), status
 
 
 def sync_drama3_script_sounds(text, script_mode, shown_sound_slots, *sound_meta_values):

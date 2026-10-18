@@ -538,6 +538,36 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
                 self.assertTrue(np.all(np.isfinite(processed)))
                 self.assertGreater(float(np.max(np.abs(processed))), 0.01)
 
+    def test_fallback_pitch_shift_keeps_length_and_shifts_cleanly_to_the_end(self):
+        from h3_app.drama3_serving.speaker_effects import _pitch_shift_preserve_len
+
+        def spectrum(samples):
+            magnitude = np.abs(np.fft.rfft(samples * np.hanning(samples.size))) ** 2
+            return np.fft.rfftfreq(samples.size, 1 / RATE), magnitude
+
+        for semitones in (6.0, -8.0):
+            with self.subTest(semitones=semitones):
+                source = tone(1.0)
+                shifted = _pitch_shift_preserve_len(source, semitones)
+                self.assertEqual(shifted.size, source.size)
+                expected = 220 * 2 ** (semitones / 12)
+                # A wrapped read position jumps the waveform; a clean shift never steps faster than the tone.
+                max_slope = 0.3 * 2 * np.pi * expected / RATE
+                self.assertLess(float(np.max(np.abs(np.diff(shifted[RATE // 10:-RATE // 10])))), 1.2 * max_slope)
+                for segment in (shifted[RATE // 4:3 * RATE // 4], shifted[-4096:]):  # body and tail
+                    freqs, power = spectrum(segment)
+                    self.assertAlmostEqual(float(freqs[np.argmax(power)]), expected, delta=12)
+                    # A wrapped read position spreads energy into buzz far from the shifted tone.
+                    near = power[np.abs(freqs - expected) < 30].sum()
+                    self.assertGreater(near / power.sum(), 0.9)
+
+    def test_pedalboard_output_is_peak_limited(self):
+        from h3_app.drama3_serving import speaker_effects
+
+        with patch.object(speaker_effects, "_try_apply_pedalboard", lambda samples, rate, effects: samples * 6):
+            processed = speaker_effects.apply_speaker_effects(tone(0.2), RATE, ("radio_broadcast",))
+        self.assertAlmostEqual(float(np.max(np.abs(processed))), 0.95, places=3)
+
     def test_mix_parallel_tracks_loops_bgm_ducks_under_speech_and_trims_sfx(self):
         speech_track = tone(2.0)
         bgm_track = tone(0.6)  # shorter than speech, with loop=True loops to speech + 1.0s fade-out
@@ -547,6 +577,26 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         )
         self.assertEqual(len(mixed), len(speech_track) + RATE)
         self.assertLessEqual(float(np.max(np.abs(mixed))), 0.901)
+
+    def test_sound_tracks_duck_while_speech_is_audible(self):
+        speech = np.concatenate([np.zeros(RATE, dtype=np.float32), tone(1.0), np.zeros(RATE, dtype=np.float32)])
+        gain = audio.speech_duck_gain(speech, RATE)
+
+        def level(start, end):
+            return float(np.mean(gain[int(start * RATE):int(end * RATE)]))
+
+        self.assertAlmostEqual(level(0.0, 0.9), 1.0, places=3)  # before speech
+        self.assertAlmostEqual(level(1.3, 1.9), 10 ** (-audio.DUCK_DEPTH_DB / 20), places=2)  # under speech
+        self.assertGreater(level(2.0, 2.1), level(1.3, 1.9))  # recovering after speech
+        self.assertAlmostEqual(level(2.8, 3.0), 1.0, places=1)  # released
+
+        noise = np.random.default_rng(0).uniform(-0.1, 0.1, 3 * RATE).astype(np.float32)
+        mixed = audio.mix_parallel_tracks(
+            [{"audio": speech, "is_sound": False}, {"audio": noise, "is_sound": True}], RATE)
+        bed = mixed - speech[:len(mixed)]
+        quiet = float(np.sqrt(np.mean(bed[:int(0.9 * RATE)] ** 2)))
+        ducked = float(np.sqrt(np.mean(bed[int(1.3 * RATE):int(1.9 * RATE)] ** 2)))
+        self.assertLess(ducked, quiet / 3)
 
 
 if __name__ == "__main__":

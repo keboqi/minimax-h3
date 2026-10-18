@@ -225,8 +225,43 @@ def load_audio_file(path: str | Path, target_rate: int) -> np.ndarray:
         return resample_audio(samples, rate, target_rate)
 
 
+DUCK_DEPTH_DB = 12.0
+DUCK_ATTACK_SECONDS = 0.05
+DUCK_RELEASE_SECONDS = 0.3
+DUCK_FRAME_SECONDS = 0.01
+
+
+def speech_duck_gain(speech: np.ndarray, rate: int, *, depth_db: float = DUCK_DEPTH_DB,
+                     attack: float = DUCK_ATTACK_SECONDS, release: float = DUCK_RELEASE_SECONDS) -> np.ndarray:
+    """Per-sample gain for sound tracks: ``depth_db`` lower while ``speech`` is audible.
+
+    A sidechain envelope follower: 10 ms frames above the silence floor pull the
+    gain down over ``attack`` and let it recover over ``release`` once speech stops.
+    """
+    samples = np.asarray(speech, dtype=np.float32).reshape(-1)
+    if samples.size == 0 or rate <= 0:
+        return np.ones(samples.size, dtype=np.float32)
+    frame = max(1, int(rate * DUCK_FRAME_SECONDS))
+    count = -(-samples.size // frame)
+    padded = np.zeros(count * frame, dtype=np.float64)
+    padded[: samples.size] = samples
+    rms = np.sqrt(np.mean(padded.reshape(count, frame) ** 2, axis=1))
+    speaking = 20.0 * np.log10(np.maximum(rms, 1e-10)) > SILENCE_DBFS
+    floor = float(10.0 ** (-abs(depth_db) / 20.0))
+    down = float(np.exp(-DUCK_FRAME_SECONDS / max(attack, 1e-4)))
+    up = float(np.exp(-DUCK_FRAME_SECONDS / max(release, 1e-4)))
+    gains = np.empty(count, dtype=np.float64)
+    gain = 1.0
+    for index, active in enumerate(speaking):
+        target = floor if active else 1.0
+        gain = target + (gain - target) * (down if target < gain else up)
+        gains[index] = gain
+    centers = (np.arange(count) + 0.5) * frame
+    return np.interp(np.arange(samples.size), centers, gains).astype(np.float32)
+
+
 def mix_parallel_tracks(tracks: list[dict | tuple], rate: int) -> np.ndarray:
-    """Mix parallel speech and sound tracks with looping, RMS speech ducking, fade-outs, and limiting."""
+    """Mix speech and sound tracks: loop, level sounds to speech RMS, duck them under speech, fade, limit."""
     normalized: list[dict] = []
     for item in tracks:
         if isinstance(item, dict):
@@ -256,7 +291,7 @@ def mix_parallel_tracks(tracks: list[dict | tuple], rate: int) -> np.ndarray:
     ]
     avg_speech_rms = float(np.mean(speech_rms_values)) if speech_rms_values else 0.0
 
-    processed: list[np.ndarray] = []
+    processed: list[tuple[np.ndarray, bool]] = []
     for track in valid:
         samples = np.asarray(track["audio"], dtype=np.float32).reshape(-1).copy()
         is_sound = bool(track.get("is_sound", False))
@@ -280,12 +315,18 @@ def mix_parallel_tracks(tracks: list[dict | tuple], rate: int) -> np.ndarray:
             if volume != 1.0:
                 samples = samples * volume
 
-        processed.append(samples.astype(np.float32, copy=False))
+        processed.append((samples.astype(np.float32, copy=False), is_sound))
 
-    max_len = max(len(arr) for arr in processed)
-    mixed = np.zeros(max_len, dtype=np.float32)
-    for arr in processed:
-        mixed[: len(arr)] += arr
+    max_len = max(len(arr) for arr, _is_sound in processed)
+    speech = np.zeros(max_len, dtype=np.float32)
+    for arr, is_sound in processed:
+        if not is_sound:
+            speech[: len(arr)] += arr
+    duck = speech_duck_gain(speech, rate) if speech_lengths else None
+    mixed = speech.copy()
+    for arr, is_sound in processed:
+        if is_sound:
+            mixed[: len(arr)] += arr if duck is None else arr * duck[: len(arr)]
 
     if max_speech_length > 0 and mixed.size > max_speech_length + rate:
         target_len = max_speech_length + rate

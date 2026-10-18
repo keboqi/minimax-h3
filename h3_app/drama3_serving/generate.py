@@ -9,7 +9,7 @@ from pathlib import Path
 import shutil
 import threading
 import time
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator
 import uuid
 
 import numpy as np
@@ -26,7 +26,7 @@ from .planner import Chunk, expected_seconds, plan_turns_chunks
 from .server import ServerSettings, ensure_model, persist_caches, shared_server
 from .speaker_effects import apply_speaker_effects
 from .tree import (
-     ParallelNode,
+    ParallelNode,
     PauseNode,
     SequentialNode,
     SoundNode,
@@ -322,9 +322,10 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     server = shared_server(settings)
     started = time.monotonic()
 
+    # Basic mode ignores staging, sound, pause and vocal-effect tags the text may still hold.
     script_text = (
         strip_drama3_sound_tags(request.text)
-        if getattr(request, "script_mode", "Basic") == "Basic" and not iter_sound_nodes(parse_drama3_tree(request.text))
+        if getattr(request, "script_mode", "Basic") == "Basic"
         else request.text
     )
     tree = parse_drama3_tree(script_text)

@@ -78,13 +78,12 @@ def apply_speaker_effects(
     if not active or audio.size == 0 or rate <= 0:
         return audio
 
-    pedalboard_audio = _try_apply_pedalboard(audio, rate, active)
-    if pedalboard_audio is not None:
-        return pedalboard_audio
-
-    out = audio.copy()
-    for effect_name in active:
-        out = _apply_scipy_effect(out, rate, effect_name)
+    out = _try_apply_pedalboard(audio, rate, active)
+    if out is None:
+        out = audio.copy()
+        for effect_name in active:
+            out = _apply_scipy_effect(out, rate, effect_name)
+    # Drive and gain stages can push either path past full scale.
     peak = float(np.max(np.abs(out))) if out.size else 0.0
     if peak > 1.0:
         out = out * (0.95 / peak)
@@ -331,29 +330,53 @@ def _ring_mod(audio: np.ndarray, rate: int, freq_hz: float, mix: float) -> np.nd
     return ((1.0 - mix) * audio + mix * (audio * mod)).astype(np.float32, copy=False)
 
 
+def _wsola_stretch(audio: np.ndarray, length: int, window: int = 1024) -> np.ndarray:
+    """Time-stretch ``audio`` to ``length`` samples without changing pitch (WSOLA).
+
+    Each 50%-overlapped Hann frame is taken near its nominal input position, at the
+    offset that best continues the previous frame, so waveforms join in phase.
+    """
+    source = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if length <= 0:
+        return np.zeros(0, dtype=np.float32)
+    if source.size < 2 * window:  # too short to overlap frames: plain resampling
+        positions = np.linspace(0, max(source.size - 1, 0), num=length)
+        return np.interp(positions, np.arange(source.size), source).astype(np.float32)
+    hop = window // 2
+    tolerance = hop // 2
+    padded = np.concatenate([source, np.zeros(window + 2 * tolerance, dtype=np.float32)])
+    last_start = padded.size - window
+    hann = np.hanning(window + 1)[:-1].astype(np.float32)  # periodic: 50% overlaps sum to one
+    frames = -(-length // hop) + 1
+    out = np.zeros(frames * hop + window, dtype=np.float32)
+    norm = np.zeros_like(out)
+    step = source.size / float(length)
+    previous = 0
+    for frame in range(frames):
+        nominal = min(int(round(frame * hop * step)), source.size - 1)
+        if frame == 0:
+            start = nominal
+        else:
+            natural = min(previous + hop, last_start)
+            low, high = max(0, nominal - tolerance), min(last_start, nominal + tolerance)
+            reference = padded[natural:natural + window]
+            score = np.correlate(padded[low:high + window], reference, mode="valid")
+            start = low + int(np.argmax(score))
+        out[frame * hop:frame * hop + window] += padded[start:start + window] * hann
+        norm[frame * hop:frame * hop + window] += hann
+        previous = start
+    return (out[:length] / np.maximum(norm[:length], 1e-3)).astype(np.float32)
+
+
 def _pitch_shift_preserve_len(audio: np.ndarray, semitones: float) -> np.ndarray:
+    """Shift pitch by resampling, then time-stretch back to the original length."""
     if abs(semitones) < 1e-3 or audio.size < 16:
         return audio
-    factor = float(2.0 ** (semitones / 12.0))
-    window_size = min(1024, max(64, audio.size // 4))
-    hop = max(16, window_size // 2)
-    indices = np.arange(audio.size, dtype=np.float32)
-    shifted = np.zeros_like(audio)
-    weights = np.zeros_like(audio)
-    win = np.hanning(window_size).astype(np.float32)
-    for start in range(0, max(1, audio.size - window_size + 1), hop):
-        end = start + window_size
-        segment = audio[start:end]
-        src_pos = np.linspace(0, segment.size - 1, num=segment.size, dtype=np.float32) * factor
-        src_pos = np.mod(src_pos, max(1, segment.size - 1))
-        resampled = np.interp(src_pos, np.arange(segment.size, dtype=np.float32), segment).astype(np.float32)
-        shifted[start:end] += resampled * win
-        weights[start:end] += win
-    mask = weights > 1e-6
-    out = audio.copy()
-    out[mask] = shifted[mask] / weights[mask]
-    _ = indices
-    return out.astype(np.float32, copy=False)
+    from fractions import Fraction
+
+    ratio = Fraction(2.0 ** (-semitones / 12.0)).limit_denominator(200)  # output/input length
+    resampled = signal.resample_poly(np.asarray(audio, dtype=np.float32), ratio.numerator, ratio.denominator)
+    return _wsola_stretch(resampled, audio.size)
 
 
 def _apply_scipy_effect(audio: np.ndarray, rate: int, effect_name: str) -> np.ndarray:

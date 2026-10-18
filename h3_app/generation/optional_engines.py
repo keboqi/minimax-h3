@@ -114,15 +114,12 @@ def validate_request(request):
             raise H3Error("Choose experts in RAM or in VRAM.")
         if request.backend not in DRAMA3_BACKENDS:
             raise H3Error("Choose the ComfyUI or SGLang-Omni Drama 3 backend.")
-        from h3_app.drama3_serving.tree import has_drama3_sound_features
         from h3_app.prompt_service import DRAMA3_SCRIPT_ADVANCED, DRAMA3_SCRIPT_MODES
 
         if request.script_mode not in DRAMA3_SCRIPT_MODES:
             raise H3Error("Choose Basic or Advanced (sound enhanced) Drama 3 script mode.")
-        if (
-            request.script_mode == DRAMA3_SCRIPT_ADVANCED
-            or has_drama3_sound_features(request.text)
-        ) and request.backend != "SGLang-Omni":
+        # Basic mode keeps any authored staging tags in the text but ignores them when generating.
+        if request.script_mode == DRAMA3_SCRIPT_ADVANCED and request.backend != "SGLang-Omni":
             raise H3Error(
                 "Advanced sound-enhanced Drama 3 scripts (with <sound>, <parallel>, <sequential>, "
                 "or speaker vocal effects) are only supported on the SGLang-Omni backend."
@@ -186,7 +183,10 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
         else:
             from h3_app.drama3_serving.server import release_all
 
+            from h3_app.drama3_serving.tree import strip_drama3_sound_tags
+
             release_all()  # the ComfyUI route needs the VRAM a served backend holds
+            values["text"] = validate_drama3_text(strip_drama3_sound_tags(request.text))  # Basic mode
             graph = build_drama3_graph(**{key: value for key, value in values.items()
                                           if key not in {"backend", "parallel", "retries", "voice_names", "script_mode", "sounds"}})
         info = services.execution.object_info()
