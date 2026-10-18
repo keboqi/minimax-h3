@@ -609,7 +609,16 @@ def _writer_inputs(writer):
 
 
 def _bind_generation(view, family, generate, interrupt, inputs):
-    event = bind_gpu_action(view.run.click, owned_generation(generate, family), inputs=inputs,
+    import inspect
+
+    sig_names = tuple(
+        name
+        for name, param in inspect.signature(generate).parameters.items()
+        if name not in {"request", "progress"}
+        and param.kind not in (inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
+    )
+    input_names = sig_names[: len(inputs)] if len(sig_names) >= len(inputs) and sig_names else None
+    event = bind_gpu_action(view.run.click, owned_generation(generate, family, input_names=input_names), inputs=inputs,
                             outputs=[view.output, view.status], api_name=f"generate_{family}",
                             show_progress="minimal")
     stopped = view.stop.click(owned_interrupt(interrupt, family), outputs=view.status, queue=False, api_name=False)

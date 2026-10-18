@@ -460,6 +460,19 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         self.assertFalse(basic_panel_upd["visible"])
         self.assertEqual(cleaned_text, "<|speaker:0|> Hi! Meet me inside.")
 
+    def test_job_admission_signatures_match_bound_inputs(self):
+        from h3_ui import application
+        from h3_ui.job_bindings import owned_generation
+
+        gen_drama = owned_generation(application.generate_drama3, "drama3")
+        # 1 text + 48 speaker inputs + 12 settings + 1 script_mode + 80 sound slot inputs = 142
+        self.assertEqual(len(gen_drama.job_input_names), 142)
+        gen_sounds = owned_generation(application.generate_drama3_sounds, "drama3_sound")
+        # 1 shown_sound_slots + 1 skip_existing_sounds + 80 sound slot inputs = 82
+        self.assertEqual(len(gen_sounds.job_input_names), 82)
+        gen_sound = owned_generation(application.generate_drama3_sound, "drama3_sound")
+        self.assertEqual(len(gen_sound.job_input_names), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

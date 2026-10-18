@@ -675,9 +675,10 @@ class UiContractTests(unittest.TestCase):
         api = self.demo.get_api_info()["named_endpoints"]
         drama = [row["parameter_name"] for row in api["/generate_drama3"]["parameters"]]
         slots = [f"speaker_{n}_{field}" for n in range(16) for field in ("voice", "audio", "transcript")]
+        sound_slots = [f"sound_{n}_{field}" for n in range(16) for field in ("preset", "audio", "name", "description", "duration")]
         self.assertEqual(drama, ["text", *slots, "seed", "temperature", "top_p", "top_k",
                                  "max_frames", "split_long_text", "experts", "expert_cache_gb",
-                                 "backend", "parallel", "retries", "model_choice"])
+                                 "backend", "parallel", "retries", "model_choice", "script_mode", *sound_slots])
         backend = next(c for c in self.config["components"]
                        if c.get("props", {}).get("label") == "Backend")
         self.assertEqual(backend["props"]["value"], "ComfyUI")
@@ -687,7 +688,7 @@ class UiContractTests(unittest.TestCase):
                                        "backend", "lightning_api_key", "lightning_model"])
         metadata = [f"speaker_{n}_{field}" for n in range(16)
                     for field in ("name", "description", "preview_text")]
-        self.assertEqual(enhance[7:], [*slots, *metadata])  # gr.State is not exposed in the API.
+        self.assertEqual(enhance[7:], [*slots, *metadata, "script_mode"])  # gr.State is not exposed in the API.
         voice = api["/generate_drama3_voice"]
         self.assertEqual([row["parameter_name"] for row in voice["parameters"]],
                          ["description", "preview_text", "language", "engine", "backend", "seed",

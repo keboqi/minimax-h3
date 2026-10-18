@@ -3020,18 +3020,35 @@ def sync_drama3_script_sounds(text, script_mode, shown_sound_slots, *sound_meta_
 
 def _publish_drama3_signatures():
     import inspect
+    from h3_ui.optional_engine_views import (
+        DRAMA3_CAST_INPUT_NAMES,
+        DRAMA3_SOUND_SLOT_INPUT_NAMES,
+        DRAMA3_VISIBLE_SLOTS,
+        UPLOAD_SOUND,
+    )
 
     empty = inspect.Parameter.empty
+    sound_defaults = []
+    for name in DRAMA3_SOUND_SLOT_INPUT_NAMES:
+        if name.endswith("_preset"):
+            sound_defaults.append((name, UPLOAD_SOUND))
+        elif name.endswith("_audio"):
+            sound_defaults.append((name, None))
+        elif name.endswith("_duration"):
+            sound_defaults.append((name, 5))
+        else:
+            sound_defaults.append((name, ""))
     generate_drama3.__signature__ = inspect.Signature([
         *_drama3_signature(("text",), (
             ("seed", empty), ("temperature", empty), ("top_p", empty), ("top_k", empty),
             ("max_frames", empty), ("split_long_text", empty), ("experts", empty),
             ("expert_cache_gb", empty), ("backend", "ComfyUI"), ("parallel", 8), ("retries", 0),
             ("model_choice", "FP8 (original weights)"),
+            ("script_mode", "Basic"),
+            *sound_defaults,
         )),
         inspect.Parameter("progress", inspect.Parameter.KEYWORD_ONLY, default=gr.Progress(track_tqdm=False)),
     ])
-    from h3_ui.optional_engine_views import DRAMA3_CAST_INPUT_NAMES, DRAMA3_VISIBLE_SLOTS
     enhance_drama3_text.__signature__ = inspect.Signature([*_drama3_signature(
         ("text", "speaker_mode", "model", "temporary_api_key", "backend", "lightning_api_key",
          "lightning_model"), ()),
@@ -3434,6 +3451,27 @@ def generate_drama3_sounds(*values):
         return
 
     yield frame(f"Generated {len(targets)} of {len(targets)} sound clips.")
+
+
+def _publish_drama3_sounds_signature():
+    import inspect
+    from h3_ui.optional_engine_views import DRAMA3_SOUND_SLOTS
+
+    names = [
+        "shown_sound_slots",
+        "skip_existing_sounds",
+        *[
+            f"sound_{index}_{field}"
+            for index in range(DRAMA3_SOUND_SLOTS)
+            for field in ("preset", "has_clip", "name", "description", "duration")
+        ],
+    ]
+    generate_drama3_sounds.__signature__ = inspect.Signature(
+        [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in names]
+    )
+
+
+_publish_drama3_sounds_signature()
 
 
 def _optional_engine_actions():
