@@ -16,7 +16,12 @@ CHUNK_BYTES = 400
 CONTROL = re.compile(r"<\|[^|>]*\|>|\[[^\[\]]*\]|</?[A-Za-z][\w-]*>")
 WIDE_CHAR = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]")
 # A sentence ends at terminal punctuation outside a cue; cues never contain line breaks.
-SENTENCE_END = re.compile(r"(?<=[.!?;。！？；])(?![^\[]*\])\s+")
+# Full-width punctuation needs no following space (Chinese/Japanese) and keeps a closing quote.
+CJK_CLOSE = "”’」』）)"
+SENTENCE_END = re.compile(rf"(?:(?<=[.!?;])\s+|(?<=[。！？；])(?![{CJK_CLOSE}])\s*|(?<=[。！？；][{CJK_CLOSE}])\s*)(?![^\[]*\])")
+# Fallback cut points for a single sentence longer than the chunk limit.
+CLAUSE_END = re.compile(r"(?:(?<=[,:])\s+|(?<=[，、：])\s*)(?![^\[]*\])")
+CJK_JOIN = re.compile(rf"[。！？；，、：{CJK_CLOSE}]$")
 
 
 @dataclass(frozen=True)
@@ -44,10 +49,20 @@ def parse_turns_with_effects(script: str) -> list[SpeechTurn]:
     return turns
 
 
+def _sentences(text: str, limit: int) -> list[str]:
+    pieces = []
+    for sentence in filter(None, SENTENCE_END.split(text)):
+        too_long = len(sentence.encode("utf-8")) > limit
+        pieces.extend(filter(None, CLAUSE_END.split(sentence)) if too_long else [sentence])
+    return pieces
+
+
 def _pack(sentences: list[str], limit: int) -> list[str]:
     chunks, current = [], ""
     for sentence in sentences:
-        candidate = f"{current} {sentence}".strip()
+        # CJK text has no spaces between sentences; don't add any when rejoining.
+        separator = "" if CJK_JOIN.search(current) else " "
+        candidate = f"{current}{separator}{sentence}".strip()
         if current and len(candidate.encode("utf-8")) > limit:
             chunks.append(current)
             candidate = sentence
@@ -74,7 +89,7 @@ def plan_turns_chunks(
     pieces = [
         (speaker, piece, effects)
         for speaker, text, effects in merged
-        for piece in _pack(SENTENCE_END.split(text), limit)
+        for piece in _pack(_sentences(text, limit), limit)
     ]
     return [
         Chunk(start_index + offset, speaker, text, effects)

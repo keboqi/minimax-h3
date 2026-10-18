@@ -40,6 +40,8 @@ from .tree import (
 )
 
 FRAMES_PER_SECOND = 21.5
+# SGLang-Omni's Drama 3 request builder rejects max_new_tokens above this (~95 s of speech).
+SERVER_MAX_NEW_TOKENS = 2048
 HEARTBEAT_SECONDS = 5.0
 
 
@@ -55,7 +57,7 @@ class Take:
 def frame_budget(text: str, limit: int) -> int:
     """Stop a runaway take early: generous for the text, never above the request's cap."""
     seconds = expected_seconds(text) * 2.5 + 5.0
-    return int(max(256, min(limit, MAX_FRAMES, seconds * FRAMES_PER_SECOND)))
+    return int(max(256, min(limit, MAX_FRAMES, SERVER_MAX_NEW_TOKENS, seconds * FRAMES_PER_SECOND)))
 
 
 def _staged_reference(path: str, media_dir: Path) -> Path:

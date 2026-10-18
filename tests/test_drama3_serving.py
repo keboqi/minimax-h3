@@ -12,7 +12,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 from h3_app.drama3_serving import audio, environment, generate, server
-from h3_app.drama3_serving.planner import expected_seconds, parse_turns, plan_chunks, spoken_text
+from h3_app.drama3_serving.generate import frame_budget
+from h3_app.drama3_serving.planner import CHUNK_BYTES, expected_seconds, parse_turns, plan_chunks, spoken_text
 from h3_app.errors import H3Error
 from h3_app.generation.optional_engines import validate_request
 from h3_app.generation.requests import Drama3Request
@@ -51,6 +52,18 @@ class PlannerTests(unittest.TestCase):
             self.assertEqual(chunk.speaker, 2)
             self.assertEqual(chunk.text.count("["), chunk.text.count("]"))
             self.assertLessEqual(len(chunk.text.encode()), 200 + len(sentence))
+    def test_cjk_turns_split_without_spaces_and_stay_under_the_server_budget(self):
+        paragraph = ("今天的 AI 基础设施热潮，得益于当今顶尖科技公司空前惊人的利润。正如塞姆巴莱斯特所解释的，"
+                     "这些公司的盈利能力如此之强。“它们正在产生前所未有的自由现金流，”塞姆巴莱斯特告诉我。"
+                     "“它们赚得盆满钵满，这就是为什么它们有能力每年投入数千亿美元的资本支出。”") * 3
+        chunks = plan_chunks("<|speaker:0|> " + paragraph)
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual("".join(c.text for c in chunks), paragraph.replace("。 ", "。"))
+        for chunk in chunks:
+            self.assertFalse(chunk.text.startswith("”"))
+            self.assertLessEqual(len(chunk.text.encode()), CHUNK_BYTES * 2)
+            self.assertLessEqual(frame_budget(chunk.text, 8192), 2048)
+        self.assertEqual(frame_budget("字" * 2000, 8192), 2048)
     def test_spoken_text_and_expected_length(self):
         self.assertEqual(spoken_text("<|speaker:0|> I got [laughing] <emphasis>the job</emphasis>."), "I got the job .")
         self.assertAlmostEqual(expected_seconds("one two three four five [sighs]"), 2.5)
@@ -350,7 +363,7 @@ class GenerateTests(unittest.TestCase):
             self.assertEqual(payload["references"][0]["text"], f"Reference {speaker}.")
             self.assertEqual({k: payload[k] for k in ("temperature", "top_p", "top_k")},
                              {"temperature": 1.0, "top_p": 0.9, "top_k": 1 << 30})
-            self.assertLessEqual(payload["max_new_tokens"], 8192)
+            self.assertLessEqual(payload["max_new_tokens"], 2048)
         fake.ensure_ready.assert_called_once()
         fake.release.assert_not_called()  # kept loaded for the next Drama 3 job
         self.assertIn("Alice: 2, Speaker 1: 1", updates[0].status)
