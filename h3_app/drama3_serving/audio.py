@@ -225,6 +225,38 @@ def load_audio_file(path: str | Path, target_rate: int) -> np.ndarray:
         return resample_audio(samples, rate, target_rate)
 
 
+LOOP_CROSSFADE_SECONDS = 0.5
+
+
+def loop_to_length(samples: np.ndarray, length: int, rate: int,
+                   crossfade: float = LOOP_CROSSFADE_SECONDS) -> np.ndarray:
+    """Repeat a clip to ``length`` samples, equal-power crossfading each seam instead of hard-cutting.
+
+    Generated clips do not end where they begin, so a plain tile clicks at every repeat.
+    """
+    clip = np.asarray(samples, dtype=np.float32).reshape(-1)
+    if clip.size == 0 or length <= 0:
+        return np.zeros(max(0, length), dtype=np.float32)
+    if clip.size >= length:
+        return clip[:length].copy()
+    overlap = min(int(crossfade * rate), clip.size // 4)
+    if overlap <= 0:
+        return np.tile(clip, -(-length // clip.size))[:length].astype(np.float32)
+    ramp = np.linspace(0.0, np.pi / 2, overlap, dtype=np.float32)
+    fade_in, fade_out = np.sin(ramp), np.cos(ramp)
+    step = clip.size - overlap
+    repeats = -(-(length - overlap) // step)
+    out = np.zeros(repeats * step + overlap, dtype=np.float32)
+    for index in range(repeats):
+        piece = clip.copy()
+        if index:
+            piece[:overlap] *= fade_in
+        if index < repeats - 1:
+            piece[-overlap:] *= fade_out
+        out[index * step:index * step + clip.size] += piece
+    return out[:length]
+
+
 DUCK_DEPTH_DB = 12.0
 DUCK_ATTACK_SECONDS = 0.05
 DUCK_RELEASE_SECONDS = 0.3
@@ -300,8 +332,7 @@ def mix_parallel_tracks(tracks: list[dict | tuple], rate: int) -> np.ndarray:
 
         if loop and max_speech_length > 0 and samples.size > 0:
             target_len = max_speech_length + rate
-            repeats = int(np.ceil(target_len / float(samples.size)))
-            samples = np.tile(samples, max(1, repeats))[:target_len].copy()
+            samples = loop_to_length(samples, target_len, rate)
             fade_len = min(rate, samples.size)
             if fade_len > 0:
                 samples[-fade_len:] *= np.linspace(1.0, 0.0, fade_len, dtype=np.float32)

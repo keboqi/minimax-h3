@@ -598,6 +598,14 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         ducked = float(np.sqrt(np.mean(bed[int(1.3 * RATE):int(1.9 * RATE)] ** 2)))
         self.assertLess(ducked, quiet / 3)
 
+    def test_loops_crossfade_their_seams(self):
+        clip = np.linspace(0.0, 0.5, RATE, dtype=np.float32)  # ends far from where it starts
+        looped = audio.loop_to_length(clip, 5 * RATE + 123, RATE)
+        self.assertEqual(looped.size, 5 * RATE + 123)
+        self.assertGreater(float(np.max(np.abs(np.diff(np.tile(clip, 2))))), 0.4)  # a hard cut jumps
+        self.assertLess(float(np.max(np.abs(np.diff(looped)))), 0.01)
+        np.testing.assert_allclose(looped[:RATE // 2], clip[:RATE // 2])  # first pass starts untouched
+
 
 if __name__ == "__main__":
     unittest.main()

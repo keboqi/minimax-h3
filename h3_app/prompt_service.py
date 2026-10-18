@@ -849,16 +849,33 @@ def parse_drama3_reply(
     require_cast: bool,
     script_mode: str = DRAMA3_SCRIPT_BASIC,
     return_sounds: bool = False,
+    notes: list[str] | None = None,
 ) -> tuple:
-    """Validate a writer reply exactly as the built-in writer does; raises ``H3Error``."""
+    """Validate a writer reply exactly as the built-in writer does; raises ``H3Error``.
+
+    Risky cue placements are repaired; what was repaired, and source phrases the
+    script dropped, are appended to ``notes`` for the status line.
+    """
     from h3_app.drama3_cast import parse_script_cast_and_sounds
     from h3_app.drama3_serving.tree import extract_script_sounds, strip_drama3_sound_tags
+
+    def review(script):
+        from h3_app.drama3_lint import coverage_note, lint_drama3_script
+
+        script, messages = lint_drama3_script(script)
+        if notes is not None:
+            notes.extend(message[0].upper() + message[1:] + "." for message in messages)
+            coverage = coverage_note(original, script)
+            if coverage:
+                notes.append(coverage)
+        return script
 
     if require_cast or reply.lstrip().startswith("{"):
         script, cast, sounds = parse_script_cast_and_sounds(reply)
         if script_mode == DRAMA3_SCRIPT_BASIC:
             script = strip_drama3_sound_tags(script)
             sounds = []
+        script = review(script)
         if speaker_mode == DRAMA3_SPEAKER_AUTO:
             from h3_app.workflows.drama3 import SPEAKER_TAG, text_speakers
             existing_ids = {int(value) for value in SPEAKER_TAG.findall(str(original or ""))}
@@ -869,7 +886,7 @@ def parse_drama3_reply(
         return (script, cast, sounds) if return_sounds else (script, cast)
     # Compatibility for callers with older custom, plain-script system prompts.
     cleaned_reply = strip_drama3_sound_tags(reply) if script_mode == DRAMA3_SCRIPT_BASIC else reply
-    script = enforce_drama3_speakers(validate_drama3_script(cleaned_reply), allowed)
+    script = review(enforce_drama3_speakers(validate_drama3_script(cleaned_reply), allowed))
     sounds = [] if script_mode == DRAMA3_SCRIPT_BASIC else extract_script_sounds(script)
     return (script, [], sounds) if return_sounds else (script, [])
 
@@ -888,6 +905,7 @@ def apply_drama3_reply(
     empty_sounds = ([],) if return_sounds else ()
     if not str(reply or "").strip():
         return (original, f"{DRAMA3_PROMPT_FAILED} paste the writer's JSON reply first.", [], *empty_sounds)
+    notes: list[str] = []
     try:
         allowed, _context = drama3_writer_context(voices, speaker_mode, script_mode=script_mode)
         parsed = parse_drama3_reply(
@@ -898,14 +916,20 @@ def apply_drama3_reply(
             require_cast=True,
             script_mode=script_mode,
             return_sounds=return_sounds,
+            notes=notes,
         )
     except H3Error as exc:
         return (original, f"{DRAMA3_PROMPT_FAILED} {exc} Your text was kept.", [], *empty_sounds)
+    status = _with_writer_notes("Applied the pasted Drama 3 script.", notes)
     if return_sounds:
         script, cast, sounds = parsed
-        return script, "Applied the pasted Drama 3 script.", cast, sounds
+        return script, status, cast, sounds
     script, cast = parsed
-    return script, "Applied the pasted Drama 3 script.", cast
+    return script, status, cast
+
+
+def _with_writer_notes(status: str, notes: list[str]) -> str:
+    return f"{status} Writer check: {' '.join(notes)}" if notes else status
 
 
 def enhance_drama3_text(
@@ -960,6 +984,7 @@ def enhance_drama3_text(
     )
     if status.startswith(DRAMA3_PROMPT_FAILED):
         return result(original, status)
+    notes: list[str] = []
     try:
         parsed = parse_drama3_reply(
             script,
@@ -969,12 +994,14 @@ def enhance_drama3_text(
             require_cast=return_cast or return_sounds,
             script_mode=script_mode,
             return_sounds=return_sounds,
+            notes=notes,
         )
+        status = _with_writer_notes(status.replace(" prompt ", " script ", 1), notes)
         if return_sounds:
             script, cast, sounds = parsed
-            return result(script, status.replace(" prompt ", " script ", 1), cast, sounds)
+            return result(script, status, cast, sounds)
         script, cast = parsed
-        return result(script, status.replace(" prompt ", " script ", 1), cast)
+        return result(script, status, cast)
     except H3Error as exc:
         return result(original, f"{DRAMA3_PROMPT_FAILED} {exc} Your text was kept; retry.")
 
