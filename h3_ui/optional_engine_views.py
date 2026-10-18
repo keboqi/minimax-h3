@@ -14,24 +14,31 @@ from h3_app.catalog import (
 from h3_app.prompt_service import DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES
 from h3_app.generation.optional_engines import DRAMA3_BACKENDS
 from h3_app.workflows.flux3 import flux3_sampling_defaults
+from h3_app.voice_design import LANGUAGES as VOICE_DESIGN_LANGUAGES
 from h3_models import (FLUX3_MODEL_CHOICES, FLUX3_UPSAMPLER_CHOICES, DEFAULT_FLUX3_UPSAMPLER,
                        DRAMA3_MODEL_CHOICES, DEFAULT_DRAMA3_MODEL, DRAMA3_ASR_CHOICES, DEFAULT_DRAMA3_ASR)
 from .image_library import build_image_file_input
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
 from .prompt_writer_controls import RemotePromptWriterControls, build_remote_prompt_writer_controls
 
-# Speakers 0..3 get reference-voice slots; the script may still cast up to 16 speakers.
 # Drama 3 voices speakers 0..15; the first few slots show, more on demand.
 DRAMA3_VOICE_SLOTS = 16
 DRAMA3_VISIBLE_SLOTS = 4
 DRAMA3_SLOT_INPUT_NAMES = tuple(f"speaker_{speaker}_{field}" for speaker in range(DRAMA3_VOICE_SLOTS)
                                 for field in ("voice", "audio", "transcript"))
+DRAMA3_CAST_INPUT_NAMES = tuple(f"speaker_{speaker}_{field}" for speaker in range(DRAMA3_VOICE_SLOTS)
+                               for field in ("name", "description", "preview_text"))
 UPLOAD_VOICE = "Upload a clip"
 DRAMA3_SAMPLING_PRESETS = {
     "Strict": (0.7, 0.7, 30),
     "Balance": (1.0, 0.9, 0),
     "Expressive": (2.0, 1.0, 30),
 }
+
+
+def drama3_voice_choices(names):
+    # Keep the existing API value while showing both ways to supply a reference.
+    return [("Upload or generate a voice", UPLOAD_VOICE), *names]
 
 
 @dataclass(frozen=True)
@@ -47,6 +54,7 @@ class OptionalEngineActions:
     save_drama3_speaker: Callable
     delete_drama3_speaker: Callable
     interrupt: Callable
+    generate_drama3_voice: Callable
 
 
 @dataclass(frozen=True)
@@ -85,6 +93,11 @@ class Drama3VoiceSlot:
     save_name: gr.Textbox
     save: gr.Button
     delete: gr.Button
+    description: gr.Textbox
+    preview_text: gr.Textbox
+    language: gr.Dropdown
+    generate: gr.Button
+    stop: gr.Button
 
 
 @dataclass(frozen=True)
@@ -191,11 +204,21 @@ def build_flux3_view(root):
 
 def _voice_slot(speaker, names):
     with gr.Group(visible=speaker < DRAMA3_VISIBLE_SLOTS) as group:
-        preset = gr.Dropdown([UPLOAD_VOICE, *names], value=UPLOAD_VOICE,
+        preset = gr.Dropdown(drama3_voice_choices(names), value=UPLOAD_VOICE,
                              label=f"Speaker {speaker} voice · <|speaker:{speaker}|>")
+        description = gr.Textbox(label=f"Speaker {speaker} voice description", lines=3,
+                                  placeholder="Age range, pitch, timbre, accent, articulation and pace.")
         with gr.Group() as upload:
             audio = gr.Audio(label=f"Speaker {speaker} reference clip", type="filepath")
             transcribe = gr.Button("Auto transcribe", size="sm")
+            with gr.Accordion("Generate a reference voice from description", open=False):
+                preview_text = gr.Textbox(label=f"Speaker {speaker} preview speech", lines=3,
+                                         placeholder="Words the generated reference clip will speak.")
+                language = gr.Dropdown(list(VOICE_DESIGN_LANGUAGES), value="Auto", label="Preview language")
+                with gr.Row():
+                    generate = gr.Button("Generate voice", size="sm")
+                    stop = gr.Button("Interrupt voice generation", size="sm", interactive=False)
+                    generate.h3_stop = stop
         transcript = gr.Textbox(label=f"Speaker {speaker} exact transcript", lines=2,
                                 placeholder="Every word spoken in the clip.")
         with gr.Column() as save_row:
@@ -203,7 +226,7 @@ def _voice_slot(speaker, names):
             save = gr.Button("Save speaker", size="sm")
         delete = gr.Button("Delete saved speaker", size="sm", visible=False)
     return Drama3VoiceSlot(speaker, group, preset, upload, audio, transcribe, transcript,
-                           save_row, save_name, save, delete)
+                           save_row, save_name, save, delete, description, preview_text, language, generate, stop)
 
 
 def build_drama3_view(root, speaker_names=()):
@@ -225,8 +248,9 @@ def build_drama3_view(root, speaker_names=()):
                 text = gr.Textbox(label="Speech text", lines=8,
                     placeholder="<|speaker:0|> [with warm excitement] Welcome back!\n<|speaker:1|> [laughs] Took you long enough.")
                 with gr.Accordion("Rewrite as a Drama 3 script", open=False):
-                    gr.Markdown("Detects the speakers, adds `<|speaker:N|>` tags and expression cues, and "
-                                "keeps your lines. Speakers with a reference voice keep their numbers.")
+                    gr.Markdown("Separates narration and dialogue, adds `<|speaker:N|>` tags and expression cues, "
+                                "and fills matching voice slots with speaker names, descriptions and preview speech. "
+                                "Speakers keep their assigned numbers and existing reference clips.")
                     speaker_mode = gr.Radio(
                         list(DRAMA3_SPEAKER_MODES), value=DRAMA3_SPEAKER_AUTO, label="Speakers",
                         info="Auto decides from the text. Adapt to voices uses exactly one speaker per "
@@ -234,9 +258,11 @@ def build_drama3_view(root, speaker_names=()):
                     )
                     writer, enhance, enhance_status = _writer("Rewrite script")
                 with gr.Accordion("Speaker voices (optional)", open=False):
-                    gr.Markdown("Clone a voice for any speaker, up to 16. Speakers without a reference "
-                                "get a voice from the seed and the script's style cues. Saved speakers are "
-                                "reusable by name.")
+                    gr.Markdown("Upload a reference clip or generate one from a voice description with "
+                                "[Qwen3-TTS VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign). "
+                                "Generated clips use the preview speech as their transcript automatically. "
+                                "Save either kind as a reusable speaker preset. VoiceDesign downloads its isolated "
+                                "runtime and model on first use. Speakers without clips use Drama 3's invented voices.")
                     voices = tuple(_voice_slot(speaker, list(speaker_names))
                                    for speaker in range(DRAMA3_VOICE_SLOTS))
                     asr_model = gr.Dropdown(list(DRAMA3_ASR_CHOICES), value=DEFAULT_DRAMA3_ASR,
@@ -350,11 +376,16 @@ def drama3_voice_inputs(view):
     return [component for slot in view.voices for component in (slot.preset, slot.audio, slot.transcript)]
 
 
+def drama3_cast_inputs(view):
+    return [component for slot in view.voices
+            for component in (slot.save_name, slot.description, slot.preview_text)]
+
+
 def refresh_drama3_presets_on_load(demo, view, actions):
     """Show speakers saved from other sessions; saves and deletes refresh in place."""
     presets = [slot.preset for slot in view.voices]
     demo.load(
-        lambda: [gr.update(choices=[UPLOAD_VOICE, *actions.drama3_speaker_names()])] * len(presets),
+        lambda: [gr.update(choices=drama3_voice_choices(actions.drama3_speaker_names()))] * len(presets),
         outputs=presets, queue=False, show_progress="hidden", api_name=False,
     )
 
@@ -381,24 +412,39 @@ def bind_drama3(view, actions):
         # Removing a slot clears it, so a hidden slot never sends a voice.
         count = max(1, min(DRAMA3_VOICE_SLOTS, int(count)))
         cleared = [gr.update()] * (3 * DRAMA3_VOICE_SLOTS)
+        metadata = [gr.update()] * (3 * DRAMA3_VOICE_SLOTS)
         if count > 1:
             cleared[3 * (count - 1):3 * count] = [gr.update(value=UPLOAD_VOICE), gr.update(value=None),
                                                   gr.update(value="")]
-        return (*_slot_visibility(count - 1), *cleared)
+            metadata[3 * (count - 1):3 * count] = [gr.update(value="")] * 3
+        return (*_slot_visibility(count - 1), *cleared, *metadata)
 
     view.remove_speaker.click(
         remove, inputs=view.shown_slots,
         outputs=[view.shown_slots, *groups, view.add_speaker, view.remove_speaker,
-                 *drama3_voice_inputs(view)],
+                 *drama3_voice_inputs(view), *drama3_cast_inputs(view)],
         queue=False, show_progress="hidden", api_name=False,
     )
     bind_prompt_action(
         view.enhance.click, actions.enhance_drama3_text,
-        inputs=[view.text, view.speaker_mode, *_writer_inputs(view.writer), *drama3_voice_inputs(view)],
-        outputs=[view.text, view.enhance_status],
+        inputs=[view.text, view.speaker_mode, *_writer_inputs(view.writer), *drama3_voice_inputs(view),
+                *drama3_cast_inputs(view), view.shown_slots],
+        outputs=[view.text, view.enhance_status, *drama3_cast_inputs(view),
+                 view.shown_slots, *groups, view.add_speaker, view.remove_speaker],
         show_progress="minimal", api_name="enhance_drama3_text",
     )
     for slot in view.voices:
+        generated = bind_gpu_action(
+            slot.generate.click, owned_generation(actions.generate_drama3_voice, "drama3_voice"),
+            inputs=[slot.description, slot.preview_text, slot.language],
+            outputs=[slot.audio, slot.transcript, view.voice_status], show_progress="minimal",
+            api_name="generate_drama3_voice" if slot.speaker == 0 else False,
+        )
+        stopped = slot.stop.click(owned_interrupt(actions.interrupt, "drama3_voice"),
+                                  outputs=view.voice_status, queue=False, api_name=False)
+        stopped.then(fn=None, cancels=[generated], queue=False, api_name=False)
+        slot.audio.upload(lambda: gr.update(value="", interactive=True), outputs=slot.transcript,
+                          queue=False, show_progress="hidden", api_name=False)
         bind_gpu_action(
             slot.transcribe.click, actions.transcribe_drama3_voice, inputs=[slot.audio, view.asr_model],
             outputs=[slot.transcript, view.voice_status], show_progress="minimal",
@@ -406,13 +452,14 @@ def bind_drama3(view, actions):
         )
         slot.preset.change(
             actions.select_drama3_speaker, inputs=[slot.preset],
-            outputs=[slot.upload, slot.transcript, slot.save_row, slot.delete, view.voice_status],
+            outputs=[slot.upload, slot.transcript, slot.save_row, slot.delete, view.voice_status,
+                     slot.save_name, slot.description, slot.preview_text, slot.audio],
             queue=False, show_progress="hidden", api_name=False,
         )
         slot.save.click(
-            lambda name, audio, transcript, speaker=slot.speaker: actions.save_drama3_speaker(
-                speaker, name, audio, transcript, len(presets)),
-            inputs=[slot.save_name, slot.audio, slot.transcript],
+            lambda name, audio, transcript, description, speaker=slot.speaker: actions.save_drama3_speaker(
+                speaker, name, audio, transcript, len(presets), description),
+            inputs=[slot.save_name, slot.audio, slot.transcript, slot.description],
             outputs=[view.voice_status, *presets], queue=False, api_name=False,
         )
         slot.delete.click(

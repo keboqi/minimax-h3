@@ -754,16 +754,24 @@ def enhance_drama3_text(
     speaker_mode: str = DRAMA3_SPEAKER_AUTO,
     *,
     runtime: RuntimeConfig,
-) -> tuple[str, str]:
-    """Rewrite text into a Drama 3 script with speaker tags and delivery controls."""
+    return_cast: bool = False,
+    cast_context: str = "",
+) -> tuple:
+    """Rewrite a script and validate its cast as one result before updating the UI."""
+    from h3_app.drama3_cast import parse_script_cast
+
     original = str(text or "")
     voices = tuple(voices)
+
+    def result(script, status, cast=None):
+        return (script, status, cast or []) if return_cast else (script, status)
+
     if not original.strip():
-        return original, "Prompt enhancement failed: write the speech text or a scene brief first."
+        return result(original, "Prompt enhancement failed: write the speech text or a scene brief first.")
     try:
         allowed, speaker_instruction = drama3_speaker_plan(speaker_mode, voices)
     except H3Error as exc:
-        return original, f"Prompt enhancement failed: {exc}"
+        return result(original, f"Prompt enhancement failed: {exc}")
     script, status = _enhance_prompt_from_media(
         prompt=original,
         model=model,
@@ -774,15 +782,27 @@ def enhance_drama3_text(
         lightning_api_key=lightning_api_key,
         lightning_model=lightning_model,
         media_values=(),
-        context=drama3_voice_context(voices) + "\n" + speaker_instruction,
+        context=drama3_voice_context(voices) + "\n" + speaker_instruction + "\n" + cast_context,
     )
     if status.startswith("Prompt enhancement failed:"):
-        return original, status
+        return result(original, status)
     try:
-        script = enforce_drama3_speakers(validate_drama3_script(script), allowed)
-        return script, status.replace(" prompt ", " script ", 1)
+        cast = []
+        if return_cast or script.lstrip().startswith("{"):
+            script, cast = parse_script_cast(script)
+            if speaker_mode == DRAMA3_SPEAKER_AUTO:
+                from h3_app.workflows.drama3 import SPEAKER_TAG, text_speakers
+                existing_ids = {int(value) for value in SPEAKER_TAG.findall(original)}
+                if not existing_ids <= text_speakers(script):
+                    raise H3Error("The writer removed or renumbered existing script speaker IDs.")
+            if allowed is not None and {entry["speaker_id"] for entry in cast} != set(allowed):
+                raise H3Error("The writer's cast does not match the selected speaker mode and reference IDs.")
+        else:
+            # Compatibility for callers with older custom, plain-script system prompts.
+            script = enforce_drama3_speakers(validate_drama3_script(script), allowed)
+        return result(script, status.replace(" prompt ", " script ", 1), cast)
     except H3Error as exc:
-        return original, f"Prompt enhancement failed: {exc} Your text was kept; retry."
+        return result(original, f"Prompt enhancement failed: {exc} Your text was kept; retry.")
 
 
 def _enhance_h3_prompt_with_gemini(

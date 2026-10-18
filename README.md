@@ -919,6 +919,34 @@ Features in the Colab notebook:
 
 ## Drama 3 TTS backends
 
+The script writer returns a Drama 3 script plus an indexed cast. It separates
+narration and dialogue, resolves character aliases, preserves supplied dialogue
+and story order, and fills the corresponding speaker slots with names, voice
+descriptions, and preview speech. Each slot keeps the exact number used in
+`<|speaker:N|>`; existing references and sparse IDs are preserved. Invalid or
+inconsistent writer responses leave the current script and slots in place.
+
+In **Speaker voices**, upload and transcribe a reference clip, or open
+**Generate a reference voice from description** to use
+[Qwen3-TTS-12Hz-1.7B-VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign).
+Edit the voice description, preview speech, and language, then click **Generate
+voice**. Its synthesis text becomes the reference transcript automatically.
+Preview speech is separate from the current clip's transcript: editing a future
+preview does not change the words paired with an existing clip. Uploading a new
+clip clears the previous transcript. **Save speaker** stores either kind of clip
+with its exact transcript, name, and description; older presets still load.
+
+VoiceDesign requires a CUDA GPU. Its first use prepares a separate Python 3.12
+environment with `qwen-tts==0.1.1` and its pinned Transformers dependencies;
+ComfyUI's packages are unchanged. Set `H3_VOICE_DESIGN_VENV` to override the default
+`h3/voice-design-venv` under the app directory. Modal bakes that environment into
+the image, so existing deployments need rebuilding. Model snapshots, including
+the speech tokenizer and processor, cache under `ComfyUI/models/qwen3_tts` (on
+Modal's models volume). Each generation releases ComfyUI/SGLang GPU residency,
+then runs a worker that exits to release its own GPU memory. A slot's **Interrupt
+voice generation** button cancels that work. Clips and diagnostic logs are written
+under `ComfyUI/output/drama3_voices`.
+
 Drama 3 offers ComfyUI for one-take generation and SGLang-Omni for parallel,
 speaker-based chunks on Linux. SGLang uses an isolated environment, stays loaded
 between TTS jobs, and sleeps or stops when another engine needs the GPU. The app defaults

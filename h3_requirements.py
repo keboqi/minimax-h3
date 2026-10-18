@@ -8,7 +8,7 @@ import shutil
 from collections.abc import Iterable
 from importlib import resources
 from importlib.metadata import PackageNotFoundError, version
-from pathlib import Path, PurePath
+from pathlib import Path, PurePath, PureWindowsPath
 from urllib.parse import quote, urljoin, urlsplit
 from urllib.request import urlopen
 
@@ -279,6 +279,39 @@ def drama3_sglang_install_commands(venv: str | Path, uv: str | list[str] = "uv")
          f"--torch-backend={DRAMA3_SGLANG_TORCH_BACKEND}", "--overrides", overrides,
          f"sglang-omni[fishaudio] @ git+{DRAMA3_SGLANG_OMNI_REPO}@{DRAMA3_SGLANG_OMNI_REF}"],
         [python, "-c", DRAMA3_SGLANG_SMOKE],
+    ]
+
+
+VOICE_DESIGN_READY_MARKER = "h3-voice-design-ready.txt"
+VOICE_DESIGN_PYTHON = "3.12"
+VOICE_DESIGN_REQUIREMENTS = ("qwen-tts==0.1.1", f"torch=={TORCH_VERSION}",
+                             f"torchaudio=={TORCHAUDIO_VERSION}", f"numpy=={NUMPY_VERSION}")
+VOICE_DESIGN_SMOKE = (
+    "import torch, soundfile; from qwen_tts import Qwen3TTSModel; "
+    "assert torch.version.cuda, 'VoiceDesign installed CPU-only Torch'; "
+    "assert callable(Qwen3TTSModel.generate_voice_design)"
+)
+
+
+def voice_design_fingerprint() -> str:
+    """Match first-use installs and the prebuilt Modal VoiceDesign environment."""
+    import hashlib
+
+    pins = "|".join((VOICE_DESIGN_PYTHON, *VOICE_DESIGN_REQUIREMENTS, TORCH_INDEX, VOICE_DESIGN_SMOKE))
+    return hashlib.sha256(pins.encode("utf-8")).hexdigest()
+
+
+def voice_design_install_commands(venv: str | Path, uv: str | list[str] = "uv") -> list[list[str]]:
+    """Keep Qwen's Transformers 4.57.3 dependency outside ComfyUI's environment."""
+    base = venv if isinstance(venv, PurePath) else Path(venv)
+    python = str(base / ("Scripts/python.exe" if isinstance(base, PureWindowsPath) else "bin/python"))
+    uv = [uv] if isinstance(uv, str) else list(uv)
+    return [
+        [*uv, "venv", "--python", VOICE_DESIGN_PYTHON, "--seed", str(base)],
+        # Use the index URL: older uv releases do not recognize --torch-backend=cu130.
+        [*uv, "pip", "install", "--python", python, "--extra-index-url", TORCH_INDEX,
+         "--index-strategy", "unsafe-best-match", *VOICE_DESIGN_REQUIREMENTS],
+        [python, "-c", VOICE_DESIGN_SMOKE],
     ]
 
 

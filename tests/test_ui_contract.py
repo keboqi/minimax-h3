@@ -685,7 +685,12 @@ class UiContractTests(unittest.TestCase):
         enhance = [row["parameter_name"] for row in api["/enhance_drama3_text"]["parameters"]]
         self.assertEqual(enhance[:7], ["text", "speaker_mode", "model", "temporary_api_key",
                                        "backend", "lightning_api_key", "lightning_model"])
-        self.assertEqual(enhance[7:], slots)
+        metadata = [f"speaker_{n}_{field}" for n in range(16)
+                    for field in ("name", "description", "preview_text")]
+        self.assertEqual(enhance[7:], [*slots, *metadata])  # gr.State is not exposed in the API.
+        voice = api["/generate_drama3_voice"]
+        self.assertEqual([row["parameter_name"] for row in voice["parameters"]],
+                         ["description", "preview_text", "language"])
         speakers = next(c for c in self.config["components"]
                         if c.get("props", {}).get("label") == "Speakers")
         self.assertEqual(speakers["props"]["value"], "Auto")
@@ -720,6 +725,7 @@ class UiContractTests(unittest.TestCase):
                          [f"Speaker {n} voice · <|speaker:{n}|>" for n in range(16)])
         for dropdown in voices:
             self.assertEqual(dropdown["props"]["value"], "Upload a clip")
+            self.assertEqual(dropdown["props"]["choices"][0][0], "Upload or generate a voice")
         auto = [c for c in self.config["components"]
                 if c["type"] == "button" and c.get("props", {}).get("value") == "Auto transcribe"]
         self.assertEqual(len(auto), 16)

@@ -30,6 +30,7 @@ class SpeakerPreset:
     name: str
     audio: Path
     transcript: str
+    description: str = ""
 
 
 def speakers_root(runtime: RuntimeConfig) -> Path:
@@ -60,7 +61,8 @@ def _read(folder: Path) -> SpeakerPreset | None:
         audio = folder / str(data["audio"])
         if audio.parent != folder or not audio.is_file():
             return None
-        return SpeakerPreset(str(data["name"]), audio, str(data["transcript"]))
+        return SpeakerPreset(str(data["name"]), audio, str(data["transcript"]),
+                             str(data.get("description", "")))
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -84,15 +86,16 @@ def load_speaker(name: str, runtime: RuntimeConfig) -> SpeakerPreset:
     return preset
 
 
-def save_speaker(name: str, audio: str | Path, transcript: str, runtime: RuntimeConfig) -> SpeakerPreset:
-    """Create or replace a named preset from an uploaded clip and its transcript."""
+def save_speaker(name: str, audio: str | Path, transcript: str, runtime: RuntimeConfig,
+                 description: str = "") -> SpeakerPreset:
+    """Create or replace a preset from an uploaded or designed reference clip."""
     name = normalize_name(name)
     transcript = str(transcript or "").strip()
     if not transcript:
         raise H3Error("Add the clip's exact transcript (or auto-transcribe it) before saving.")
     source = Path(str(audio or ""))
     if not str(audio or "") or not source.is_file():
-        raise H3Error("Upload a reference clip before saving the speaker.")
+        raise H3Error("Upload or generate a reference clip before saving the speaker.")
     suffix = source.suffix.lower()
     if suffix not in AUDIO_SUFFIXES:
         raise H3Error("Save a WAV, FLAC, MP3, OGG, M4A, AAC, Opus or WebM clip.")
@@ -106,7 +109,8 @@ def save_speaker(name: str, audio: str | Path, transcript: str, runtime: Runtime
         try:
             shutil.copyfile(source, staging / f"voice{suffix}")
             (staging / "speaker.json").write_text(json.dumps(
-                {"name": name, "audio": f"voice{suffix}", "transcript": transcript, "saved": time.time()},
+                {"name": name, "audio": f"voice{suffix}", "transcript": transcript,
+                 "description": str(description or "").strip(), "saved": time.time()},
                 ensure_ascii=False, indent=2,
             ), encoding="utf-8")
             if folder.exists():

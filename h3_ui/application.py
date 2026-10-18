@@ -2768,16 +2768,61 @@ def enhance_flux3_prompt(prompt, reference_images, width, height, model, tempora
 
 def enhance_drama3_text(text, speaker_mode, model, temporary_api_key, backend, lightning_api_key,
                         lightning_model, *slots):
-    """Rewrite with the voice slots as context; parameters generated like ``generate_drama3``."""
-    try:
-        _voices, names = _drama3_voices(slots)
-    except H3Error as exc:
-        return text, f"Prompt enhancement failed: {exc}"
-    return prompt_service.enhance_drama3_text(
-        text, model, temporary_api_key, names, backend=backend,
-        lightning_api_key=lightning_api_key, lightning_model=lightning_model,
-        speaker_mode=speaker_mode, runtime=_runtime_config(),
+    """Apply indexed cast metadata and slot visibility only after validating the complete result."""
+    import json
+    from h3_ui.optional_engine_views import (
+        DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VOICE_SLOTS, DRAMA3_VISIBLE_SLOTS, _slot_visibility,
     )
+    from h3_app.drama3_speakers import load_speaker, normalize_name
+
+    count = len(DRAMA3_SLOT_INPUT_NAMES)
+    voice_values = slots[:count]
+    metadata = list(slots[count:count * 2])
+    metadata += [""] * (count - len(metadata))
+    shown = slots[count * 2] if len(slots) > count * 2 else DRAMA3_VISIBLE_SLOTS
+    unchanged = [gr.skip()] * (count + DRAMA3_VOICE_SLOTS + 3)
+    try:
+        voices, names = _drama3_voices(voice_values)
+        references = {speaker for speaker, _audio, _transcript in voices}
+        saved_names = dict(names)
+        context = []
+        for speaker in range(DRAMA3_VOICE_SLOTS):
+            name, description, _preview = metadata[3 * speaker:3 * speaker + 3]
+            preset = voice_values[3 * speaker] if len(voice_values) > 3 * speaker else None
+            if speaker in references and saved_names.get(speaker):
+                description = load_speaker(preset, _runtime_config()).description or description
+            name = saved_names.get(speaker) or name or ""
+            name = normalize_name(name) if str(name).strip() else ""
+            if speaker in references or name or description:
+                context.append({"speaker_id": speaker, "name": name,
+                                "description": description or "", "has_reference": speaker in references})
+        existing = {entry["speaker_id"]: entry for entry in context}
+        names = [(speaker, existing[speaker]["name"]) for speaker in sorted(references)]
+        script, status, cast = prompt_service.enhance_drama3_text(
+            text, model, temporary_api_key, names, backend=backend,
+            lightning_api_key=lightning_api_key, lightning_model=lightning_model,
+            speaker_mode=speaker_mode, runtime=_runtime_config(), return_cast=True,
+            cast_context="Existing slot identities (preserve IDs and known names/descriptions; "
+                         "has_reference=false is a design brief, not a cloned voice):\n"
+                         + json.dumps(context, ensure_ascii=False),
+        )
+        if status.startswith("Prompt enhancement failed:"):
+            return text, status, *unchanged
+        updates = [gr.skip()] * count
+        for entry in cast:
+            speaker = entry["speaker_id"]
+            previous = existing.get(speaker, {})
+            if previous.get("name") and previous["name"].casefold() != entry["name"].casefold():
+                raise H3Error(f"The writer reassigned speaker {speaker} from {previous['name']} to {entry['name']}.")
+            # A reference's authored metadata remains authoritative; the writer has not heard the clip.
+            name = previous.get("name") or entry["name"]
+            description = previous.get("description") or entry["description"]
+            updates[3 * speaker:3 * speaker + 3] = [name, description, entry["preview_text"]]
+        shown = max(int(shown), max(entry["speaker_id"] for entry in cast) + 1)
+        return (script, status + f" Filled {len(cast)} matching speaker slots; "
+                "open Speaker voices to upload or generate references.", *updates, *_slot_visibility(shown))
+    except H3Error as exc:
+        return text, f"Prompt enhancement failed: {exc}", *unchanged
 
 
 def _publish_drama3_signatures():
@@ -2793,9 +2838,14 @@ def _publish_drama3_signatures():
         )),
         inspect.Parameter("progress", inspect.Parameter.KEYWORD_ONLY, default=gr.Progress(track_tqdm=False)),
     ])
-    enhance_drama3_text.__signature__ = inspect.Signature(_drama3_signature(
+    from h3_ui.optional_engine_views import DRAMA3_CAST_INPUT_NAMES, DRAMA3_VISIBLE_SLOTS
+    enhance_drama3_text.__signature__ = inspect.Signature([*_drama3_signature(
         ("text", "speaker_mode", "model", "temporary_api_key", "backend", "lightning_api_key",
-         "lightning_model"), ()))
+         "lightning_model"), ()),
+        *[inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD, default="")
+          for name in DRAMA3_CAST_INPUT_NAMES],
+        inspect.Parameter("shown_slots", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=DRAMA3_VISIBLE_SLOTS),
+    ])
 
 
 _publish_drama3_signatures()
@@ -2814,14 +2864,28 @@ def transcribe_drama3_voice(audio, model_choice="1.7B (quality)"):
     return transcript, "Transcribed with Qwen3-ASR. Check names and punctuation before generating."
 
 
+def generate_drama3_voice(description, preview_text, language):
+    """A generated reference and its synthesis text always update the same slot together."""
+    from h3_app.voice_design import generate_reference
+
+    yield gr.skip(), gr.skip(), "Preparing Qwen VoiceDesign; runtime and weights download on first use."
+    try:
+        audio, transcript = generate_reference(description, preview_text, language, _runtime_config(),
+                                               free_gpu=free_comfy_vram)
+    except Exception as exc:
+        yield gr.skip(), gr.skip(), f"Voice generation failed: {exc}"
+        return
+    yield str(audio), gr.update(value=transcript, interactive=True), "Voice generated. Preview speech copied as its exact transcript; ready to save."
+
+
 def drama3_speaker_names():
     from h3_app import drama3_speakers
     return drama3_speakers.speaker_names(_runtime_config())
 
 
 def _drama3_preset_updates(count, selected_slot=None, selected=None):
-    from h3_ui.optional_engine_views import UPLOAD_VOICE
-    choices = [UPLOAD_VOICE, *drama3_speaker_names()]
+    from h3_ui.optional_engine_views import drama3_voice_choices
+    choices = drama3_voice_choices(drama3_speaker_names())
     return [
         gr.update(choices=choices, value=selected) if slot == selected_slot else gr.update(choices=choices)
         for slot in range(count)
@@ -2834,20 +2898,23 @@ def select_drama3_speaker(name):
     from h3_ui.optional_engine_views import UPLOAD_VOICE
     if not name or name == UPLOAD_VOICE:
         return (gr.update(visible=True), gr.update(value="", interactive=True),
-                gr.update(visible=True), gr.update(visible=False), "")
+                gr.update(visible=True), gr.update(visible=False), "", gr.skip(),
+                gr.update(interactive=True), gr.skip(), None)
     try:
         saved = drama3_speakers.load_speaker(name, _runtime_config())
     except H3Error as exc:
         return (gr.update(visible=True), gr.update(interactive=True),
-                gr.update(visible=True), gr.update(visible=False), str(exc))
+                gr.update(visible=True), gr.update(visible=False), str(exc), gr.skip(),
+                gr.update(interactive=True), gr.skip(), gr.skip())
     return (gr.update(visible=False), gr.update(value=saved.transcript, interactive=False),
-            gr.update(visible=False), gr.update(visible=True), f'Using saved speaker "{saved.name}".')
+            gr.update(visible=False), gr.update(visible=True), f'Using saved speaker "{saved.name}".',
+            saved.name, gr.update(value=saved.description, interactive=False), saved.transcript, None)
 
 
-def save_drama3_speaker(slot, name, audio, transcript, count):
+def save_drama3_speaker(slot, name, audio, transcript, count, description=""):
     from h3_app import drama3_speakers
     try:
-        saved = drama3_speakers.save_speaker(name, audio, transcript, _runtime_config())
+        saved = drama3_speakers.save_speaker(name, audio, transcript, _runtime_config(), description)
     except H3Error as exc:
         return [str(exc), *[gr.skip()] * count]
     return [f'Saved speaker "{saved.name}".', *_drama3_preset_updates(count, slot, saved.name)]
@@ -2876,6 +2943,7 @@ def _optional_engine_actions():
         select_drama3_speaker=select_drama3_speaker,
         save_drama3_speaker=save_drama3_speaker,
         delete_drama3_speaker=delete_drama3_speaker,
+        generate_drama3_voice=generate_drama3_voice,
         interrupt=interrupt,
     )
 

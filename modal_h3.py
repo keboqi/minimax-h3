@@ -61,6 +61,7 @@ DATA = PurePosixPath("/data")
 # its checkpoint under ComfyUI's models link and caches/logs on the volume.
 DRAMA3_SGLANG_VENV = ROOT / "drama3-sglang-venv"
 DRAMA3_SGLANG_DATA = DATA / "drama3-serving"
+VOICE_DESIGN_VENV = ROOT / "voice-design-venv"
 MODELS = DATA / "models"
 INPUT = DATA / "input"
 OUTPUT = DATA / "output"
@@ -120,6 +121,9 @@ from h3_requirements import (  # noqa: E402
     DRAMA3_SGLANG_READY_MARKER,
     drama3_sglang_fingerprint,
     drama3_sglang_install_commands,
+    VOICE_DESIGN_READY_MARKER,
+    voice_design_fingerprint,
+    voice_design_install_commands,
     H3_AUDIO_T8_REPO,
     H3_AUDIO_T8_REF,
     DRAMA3_REPO,
@@ -668,6 +672,14 @@ image = image.run_commands(
     f"{(DRAMA3_SGLANG_VENV / DRAMA3_SGLANG_READY_MARKER).as_posix()}",
 )
 
+# Qwen's pinned Transformers stack lives in a separate cached image layer.
+# Weights stay on the models volume and download only when a voice is requested.
+image = image.run_commands(
+    *(shlex.join(command) for command in voice_design_install_commands(VOICE_DESIGN_VENV)),
+    f"echo {voice_design_fingerprint()} > "
+    f"{(VOICE_DESIGN_VENV / VOICE_DESIGN_READY_MARKER).as_posix()}",
+)
+
 if IS_LOCAL:
     for local_path, remote_path in _BUILD_LOCAL_MOUNTS:
         image = image.add_local_file(
@@ -778,6 +790,7 @@ def service_env() -> dict[str, str]:
             "H3_WORKSPACE_DIR": (DATA / "h3-workspace").as_posix(),
             "H3_DRAMA3_SGLANG_VENV": DRAMA3_SGLANG_VENV.as_posix(),
             "H3_DRAMA3_SGLANG_DATA": DRAMA3_SGLANG_DATA.as_posix(),
+            "H3_VOICE_DESIGN_VENV": VOICE_DESIGN_VENV.as_posix(),
             "H3_DRAMA3_SGLANG_MODELS": (MODELS / "drama3_serving").as_posix(),
             # The Drama 3 server commits its kernel caches to this volume.
             "H3_MODAL_COMMIT_VOLUME": VOL,
