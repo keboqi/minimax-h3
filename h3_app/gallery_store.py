@@ -529,6 +529,8 @@ def generated_image_family(image: str | Path, *, runtime: RuntimeConfig) -> str:
             return "Qwen Image 2.1"
         if resolved.name.lower().startswith("flux3_"):
             return "FLUX 3 Image Klein"
+        if resolved.name.lower().startswith("moss_image_"):
+            return "MOSS-Image"
         if "/input_upscale/" in f"/{lowered}/":
             # CQ and SeedVR2 share this directory. Prefer provenance so older
             # CQ outputs also receive their actual processing family.

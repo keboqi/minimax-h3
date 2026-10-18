@@ -1,4 +1,4 @@
-"""FLUX 3 image and Drama 3 speech controls and owned job bindings."""
+"""FLUX 3 and MOSS-Image image and Drama 3 speech controls and owned job bindings."""
 
 from dataclasses import dataclass
 import json
@@ -7,7 +7,9 @@ from typing import Callable
 import gradio as gr
 from h3_app.catalog import (
     DEFAULT_GEMINI_PROMPT_MODEL,
+    DEFAULT_MOSS_IMAGE_PRESET,
     GEMINI_PROMPT_MODELS,
+    MOSS_IMAGE_PRESETS,
     QWEN_EDIT_SIZE_MANUAL,
     QWEN_EDIT_SIZE_MATCH,
     QWEN_EDIT_SIZE_MAX,
@@ -23,6 +25,7 @@ from h3_app.prompt_service import (
 )
 from h3_app.voice_design import LANGUAGES as VOICE_DESIGN_LANGUAGES
 from h3_app.workflows.flux3 import flux3_sampling_defaults
+from h3_app.workflows.moss_image_prompt import MOSS_IMAGE_REWRITE_MODES
 from h3_models import (
     DEFAULT_DRAMA3_ASR,
     DEFAULT_DRAMA3_MODEL,
@@ -31,6 +34,11 @@ from h3_models import (
     DRAMA3_MODEL_CHOICES,
     FLUX3_MODEL_CHOICES,
     FLUX3_UPSAMPLER_CHOICES,
+    DEFAULT_MOSS_IMAGE_MODEL,
+    DEFAULT_MOSS_IMAGE_TEXT_ENCODER,
+    MOSS_IMAGE_MODEL_CHOICES,
+    MOSS_IMAGE_TEXT_ENCODER_CHOICES,
+    MOSS_IMAGE_TURBO_MODES,
 )
 from .image_library import build_image_file_input
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
@@ -115,6 +123,8 @@ class OptionalEngineActions:
     generate_drama3_sounds: Callable | None = None
     sync_drama3_script_sounds: Callable | None = None
     switch_drama3_script_mode: Callable | None = None
+    generate_moss_image: Callable | None = None
+    enhance_moss_image_prompt: Callable | None = None
 
 
 @dataclass(frozen=True)
@@ -138,6 +148,42 @@ class Flux3View:
     upsampler: gr.Dropdown
     cfg: gr.Slider
     layout: gr.Textbox
+
+
+@dataclass(frozen=True)
+class MossImageView:
+    prompt: gr.Textbox
+    preset: gr.Radio
+    turbo_variant: gr.Dropdown
+    model: gr.Dropdown
+    text_encoder: gr.Dropdown
+    width: gr.Slider
+    height: gr.Slider
+    seed: gr.Number
+    steps: gr.Slider
+    cfg: gr.Slider
+    layout: gr.Textbox
+    output: gr.Gallery
+    run: gr.Button
+    stop: gr.Button
+    status: gr.Textbox
+    rewrite_mode: gr.Radio
+    writer: RemotePromptWriterControls
+    enhance: gr.Button
+    enhance_status: gr.Textbox
+
+
+def moss_image_preset_values(preset):
+    """Apply a MOSS-Image preset (Turbo LoRA, steps, CFG) without locking the controls."""
+    return MOSS_IMAGE_PRESETS[preset]
+
+
+def moss_image_turbo_defaults(variant, preset=DEFAULT_MOSS_IMAGE_PRESET):
+    """Turbo LoRAs fix their steps at CFG 1; Off restores the selected base preset."""
+    if variant in MOSS_IMAGE_TURBO_MODES:
+        return MOSS_IMAGE_TURBO_MODES[variant][1], 1.0
+    base = preset if MOSS_IMAGE_PRESETS.get(preset, ("",))[0] == "Off" else "Balanced"
+    return MOSS_IMAGE_PRESETS[base][1:]
 
 
 @dataclass(frozen=True)
@@ -300,6 +346,54 @@ def build_flux3_view(root):
                 run, stop, status = _actions("Generate image")
     return Flux3View(prompt, model, refs, width, height, edit_size, seed, steps, expand,
                      writer, enhance, enhance_status, output, run, stop, status, upsampler, cfg, layout)
+
+
+def build_moss_image_view(root):
+    turbo, steps_default, cfg_default = MOSS_IMAGE_PRESETS[DEFAULT_MOSS_IMAGE_PRESET]
+    with root:
+        gr.Markdown("## MOSS-Image\nOpenMOSS MOSS-Image SFT text-to-image with strong text rendering and "
+                    "optional layout boxes. Weights download on first use from "
+                    "[Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image).")
+        with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
+            with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
+                prompt = gr.Textbox(label="Image prompt", lines=7,
+                    placeholder="Describe the scene, including any text to render in quotes.")
+                with gr.Accordion("Rewrite with Lightning AI or Gemini", open=False):
+                    gr.Markdown("Follows OpenMOSS's official prompt-enhancer skill. The writer returns a detailed "
+                                "caption or a Layout with boxes for the width and height below; keep that size "
+                                "when generating a Layout.")
+                    rewrite_mode = gr.Radio(list(MOSS_IMAGE_REWRITE_MODES), value="Auto", label="Rewrite as",
+                        info="Auto picks a Layout for posters, panels or placed text, otherwise a caption.")
+                    writer, enhance, enhance_status = _writer("Rewrite prompt")
+                preset = gr.Radio(list(MOSS_IMAGE_PRESETS), value=DEFAULT_MOSS_IMAGE_PRESET, label="MOSS-Image preset",
+                    info="Fast uses the 8-step DMD Turbo LoRA at CFG 1. Balanced and Quality run the SFT "
+                         "model for 25 or 50 steps at CFG 3.")
+                with gr.Row():
+                    width = gr.Slider(256, 2048, value=1024, step=16, label="Width")
+                    height = gr.Slider(256, 2048, value=1024, step=16, label="Height")
+                with gr.Accordion("Model and sampling", open=False):
+                    turbo_variant = gr.Dropdown(["Off", *MOSS_IMAGE_TURBO_MODES], value=turbo, label="Turbo LoRA",
+                        info="A step-distilled LoRA sets its own step count and CFG 1.")
+                    model = gr.Dropdown(list(MOSS_IMAGE_MODEL_CHOICES), value=DEFAULT_MOSS_IMAGE_MODEL,
+                                        label="Image model")
+                    text_encoder = gr.Dropdown(list(MOSS_IMAGE_TEXT_ENCODER_CHOICES),
+                                               value=DEFAULT_MOSS_IMAGE_TEXT_ENCODER, label="Qwen3.5 9B text encoder")
+                    steps = gr.Slider(1, 100, value=steps_default, step=1, label="Steps")
+                    cfg = gr.Slider(1, 10, value=cfg_default, step=0.1, label="CFG",
+                        info="Above 1, the empty negative pass skips layer 22 as in OpenMOSS's reference sampler.")
+                    seed = gr.Number(value=-1, precision=0, label="Seed (-1 random)")
+                with gr.Accordion("Layout boxes (optional)", open=False):
+                    layout = gr.Textbox(label="Layout boxes", lines=4,
+                        placeholder='[{"bbox": [100, 100, 700, 450], "desc": "a red bicycle"}]',
+                        info="JSON list. bbox is [top, left, bottom, right] on a 0–1000 grid. "
+                             "Use type text and text for lettering. Leave empty when the prompt is a "
+                             "rewritten Layout, which carries its own boxes.")
+            with gr.Column(scale=2, min_width=320, elem_classes=["h3-preview-panel"]):
+                output = gr.Gallery(label="Generated image", columns=1, interactive=False)
+                output.h3_metadata_root = gr.Column()
+                run, stop, status = _actions("Generate image")
+    return MossImageView(prompt, preset, turbo_variant, model, text_encoder, width, height, seed, steps, cfg,
+                         layout, output, run, stop, status, rewrite_mode, writer, enhance, enhance_status)
 
 
 @dataclass(frozen=True)
@@ -681,8 +775,10 @@ def settings_components(view):
     """Persistable components by setting name; voice slots and nested groups excluded."""
     components = {name: value for name, value in vars(view).items()
                   if isinstance(value, gr.components.Component)}
-    components.update(prompt_backend=view.writer.backend, prompt_model=view.writer.model,
-                      lightning_model=view.writer.lightning_model)
+    writer = getattr(view, "writer", None)
+    if writer is not None:
+        components.update(prompt_backend=writer.backend, prompt_model=writer.model,
+                          lightning_model=writer.lightning_model)
     return components
 
 
@@ -718,6 +814,23 @@ def bind_flux3(view, actions):
     return _bind_generation(view, "flux3", actions.generate_flux3, actions.interrupt, [
         view.prompt, view.model, view.reference_images, view.width, view.height,
         view.edit_size, view.seed, view.steps, view.expand_prompt, view.upsampler, view.cfg, view.layout,
+    ])
+
+
+def bind_moss_image(view, actions):
+    bind_prompt_action(
+        view.enhance.click, actions.enhance_moss_image_prompt,
+        inputs=[view.prompt, view.width, view.height, view.rewrite_mode, *_writer_inputs(view.writer)],
+        outputs=[view.prompt, view.enhance_status, view.layout],
+        show_progress="minimal", api_name="enhance_moss_image_prompt",
+    )
+    view.preset.change(moss_image_preset_values, inputs=view.preset,
+                       outputs=[view.turbo_variant, view.steps, view.cfg], **_QUIET)
+    view.turbo_variant.input(moss_image_turbo_defaults, inputs=[view.turbo_variant, view.preset],
+                             outputs=[view.steps, view.cfg], **_QUIET)
+    return _bind_generation(view, "moss_image", actions.generate_moss_image, actions.interrupt, [
+        view.prompt, view.preset, view.turbo_variant, view.model, view.text_encoder, view.width, view.height,
+        view.seed, view.steps, view.cfg, view.layout,
     ])
 
 

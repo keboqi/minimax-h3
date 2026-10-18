@@ -36,6 +36,7 @@ PROMPT_YUE2 = ROOT / "prompt_yue2.txt"
 PROMPT_FLUX3_T2I = ROOT / "prompt_flux3_t2i.txt"
 PROMPT_FLUX3_I2I = ROOT / "prompt_flux3_i2i.txt"
 PROMPT_DRAMA3 = ROOT / "prompt_drama3.txt"
+PROMPT_MOSS_IMAGE = ROOT / "prompt_moss_image.txt"
 ACCEL_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
 LOCAL_UI = LOCAL / "gradio_app.py"
@@ -55,6 +56,7 @@ LOCAL_PROMPT_YUE2 = LOCAL / "prompt_yue2.txt"
 LOCAL_PROMPT_FLUX3_T2I = LOCAL / "prompt_flux3_t2i.txt"
 LOCAL_PROMPT_FLUX3_I2I = LOCAL / "prompt_flux3_i2i.txt"
 LOCAL_PROMPT_DRAMA3 = LOCAL / "prompt_drama3.txt"
+LOCAL_PROMPT_MOSS_IMAGE = LOCAL / "prompt_moss_image.txt"
 
 DATA = PurePosixPath("/data")
 # Optional Drama 3 backend: an isolated SGLang-Omni environment in the image, with
@@ -183,6 +185,7 @@ _RUNTIME_LOCAL_MOUNTS = (
     (LOCAL_PROMPT_FLUX3_T2I, PROMPT_FLUX3_T2I),
     (LOCAL_PROMPT_FLUX3_I2I, PROMPT_FLUX3_I2I),
     (LOCAL_PROMPT_DRAMA3, PROMPT_DRAMA3),
+    (LOCAL_PROMPT_MOSS_IMAGE, PROMPT_MOSS_IMAGE),
 )
 _BUILD_LOCAL_FILES = tuple(local for local, _ in _BUILD_LOCAL_MOUNTS)
 _RUNTIME_LOCAL_FILES = tuple(local for local, _ in _RUNTIME_LOCAL_MOUNTS)

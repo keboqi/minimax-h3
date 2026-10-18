@@ -34,6 +34,7 @@ class AppViews:
     generation_settings: gr.Accordion | None = None
     flux3: gr.Group | None = None
     drama3: gr.Group | None = None
+    moss_image: gr.Group | None = None
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,8 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
                     yue2 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("FLUX 3 Image Klein", id="flux3"):
                     flux3 = gr.Group(elem_classes=["h3-engine-view"])
+                with gr.Tab("MOSS-Image", id="moss_image"):
+                    moss_image = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Drama 3 TTS", id="drama3"):
                     drama3 = gr.Group(elem_classes=["h3-engine-view"])
         with gr.Tab("Media", id="media") as gallery_tab:
@@ -137,6 +140,7 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
         generation_settings,
         flux3,
         drama3,
+        moss_image,
     )
 
 

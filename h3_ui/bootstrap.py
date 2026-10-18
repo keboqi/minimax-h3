@@ -22,6 +22,7 @@ from .qwen_view import build_qwen_image21_view
 from .yue2_view import build_yue2_view
 from .optional_engine_views import (
     bind_drama3, bind_flux3, build_drama3_view, build_flux3_view,
+    bind_moss_image, build_moss_image_view,
     settings_components,
 )
 
@@ -300,6 +301,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         )
 
         bind_flux3(flux3_components, engine_actions)
+        moss_image_components = build_moss_image_view(app_views.moss_image)
+        bind_moss_image(moss_image_components, engine_actions)
         bind_drama3(drama3_components, engine_actions)
         gallery_components = build_gallery_view(
             gallery_view,
@@ -379,6 +382,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             (qwen_image21_view, qwen_image21_components),
             (yue2_view, yue2_components),
             (app_views.flux3, flux3_components),
+            (app_views.moss_image, moss_image_components),
             (app_views.drama3, drama3_components),
         ):
             with view.output.h3_metadata_root:
@@ -486,6 +490,10 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             **{
                 f"flux3.{name}": component
                 for name, component in settings_components(flux3_components).items()
+            },
+            **{
+                f"moss_image.{name}": component
+                for name, component in settings_components(moss_image_components).items()
             },
             **{
                 f"drama3.{name}": component

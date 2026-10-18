@@ -14,6 +14,7 @@ from h3_models import (
     DEFAULT_MUSIC3_MODEL,
     DEFAULT_QWEN_IMAGE21_TEXT_ENCODER,
     DEFAULT_YUE2_MODEL,
+    MOSS_IMAGE_DMD_8STEP,
     DEFAULT_SEEDVR2_MODEL,
     PROFILE_LABELS,
     QWEN_IMAGE21_OFFICIAL_TURBO,
@@ -239,6 +240,15 @@ QWEN_IMAGE21_PRESETS = {
     "Normal": ("BF16", "Off", 25, "Spectrum (Quality)"),
     "Quality": ("BF16", "Off", 40, "Spectrum (Quality)"),
 }
+
+
+# Preset -> (Turbo LoRA, steps, CFG). Base presets follow OpenMOSS's CFG 3 recipe.
+MOSS_IMAGE_PRESETS = {
+    "Fast": (MOSS_IMAGE_DMD_8STEP, 8, 1.0),
+    "Balanced": ("Off", 25, 3.0),
+    "Quality": ("Off", 50, 3.0),
+}
+DEFAULT_MOSS_IMAGE_PRESET = "Fast"
 
 
 QWEN_IMAGE21_DEFAULTS = {

@@ -23,6 +23,21 @@ class Flux3Request:
 
 
 @dataclass(frozen=True)
+class MossImageRequest:
+    prompt: str
+    preset: str = "Fast"
+    turbo_variant: str = "Lodestones DMD (8-step)"
+    model_choice: str = "BF16"
+    text_encoder_choice: str = "INT8 ConvRot (recommended)"
+    width: int = 1024
+    height: int = 1024
+    seed: int = -1
+    steps: int = 8
+    cfg: float = 1.0
+    layout: str = ""
+
+
+@dataclass(frozen=True)
 class Drama3Request:
     text: str
     # (speaker number, audio path, exact transcript) per cloned voice.

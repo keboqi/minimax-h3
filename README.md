@@ -42,6 +42,8 @@ backends; GPU inference and deployment are validated separately.
 - Audio results decode the native H3 stereo soundtrack without creating a video
 - A dedicated Qwen Image 2.1 tab for native text-to-image generation and
   multi-reference image editing
+- A MOSS-Image tab for OpenMOSS MOSS-Image SFT text-to-image generation with
+  Fast (8-step Turbo LoRA), Balanced and Quality presets
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
 - A dedicated MiniMax Music 3 tab for caption-and-lyrics song generation
 - A dedicated YuE2 tab for score-planned or direct lyrics-to-song generation
@@ -495,6 +497,21 @@ For image edits, **Edit output size** offers three exclusive choices:
 **Use width and height above**. Max resolution scales the first reference
 image's aspect ratio toward 4 MP, rounds the output to multiples of 32, and
 keeps both sides within 2752 pixels.
+
+The **MOSS-Image** tab runs [MOSS-Image SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT)
+on ComfyUI's native MOSS-Image support. The BF16 or INT8 ConvRot DiT, a Qwen3.5 9B text
+encoder (INT8 ConvRot by default, W4A8 or BF16 optional) and the small FLUX.2 VAE download
+on first use from [Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image).
+**Fast** (default) applies the
+[Lodestones 8-step DMD LoRA](https://huggingface.co/lodestones/MOSS-Image-SFT-8-steps-dmd)
+at 8 Euler steps and CFG 1. **Balanced** and **Quality** run the SFT model without a LoRA for
+25 or 50 steps at CFG 3, skipping layer 22 in the empty negative pass as in OpenMOSS's
+reference sampler. Other step-distilled LoRAs can be added to the **Turbo LoRA** list.
+Optional layout boxes use the same JSON format as FLUX 3. **Rewrite with Lightning AI or
+Gemini** follows OpenMOSS's
+[prompt-enhancer skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer):
+the selected LLM returns a caption or a pixel Layout draft for the current width and height,
+and the app validates and compiles it with a port of the skill's `compile_prompt.py`.
 
 Reference PNGs retain their alpha channels through native RGBA reconstruction
 before Qwen encoding. The scheduler counts the output latent's native 16× grid

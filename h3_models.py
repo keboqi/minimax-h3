@@ -40,6 +40,8 @@ YUE2_REPO = "Comfy-Org/YuE2"
 QWEN_IMAGE21_REPO = "Comfy-Org/Qwen-Image-2.1"
 QWEN_IMAGE21_LIGHTNING_REPO = "lightx2v/Qwen-Image-2.1-Lightning"
 QWEN_IMAGE21_VIGGLE_REPO = "Viggle/Qwen-Image-2.1-viggle-turbo"
+MOSS_IMAGE_REPO = "Comfy-Org/MOSS-Image"
+MOSS_IMAGE_DMD_REPO = "lodestones/MOSS-Image-SFT-8-steps-dmd"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -131,6 +133,42 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "black-forest-labs/flux-3-image-klein-comfy", "text_encoders",
         "text_encoders/qwen3.5_9b_flux3_prompt_upsampler_w4a8.safetensors", "FLUX 3 prompt upsampler W4A8",
         expected_sha256="e5d85a7421d197bf5a12474511936ecabce19a833252f16e9310a983194a4458",
+    ),
+    "moss_image_sft_bf16": ModelSpec(
+        MOSS_IMAGE_REPO, "diffusion_models", "diffusion_models/moss_image_sft_bf16.safetensors",
+        "MOSS-Image SFT BF16",
+        expected_sha256="f96738d8116d78b7316b57c663d8c98591ddafab7488f48e3099b7655e34ab6f",
+    ),
+    "moss_image_sft_int8": ModelSpec(
+        MOSS_IMAGE_REPO, "diffusion_models", "diffusion_models/moss_image_sft_int8_convrot.safetensors",
+        "MOSS-Image SFT INT8 ConvRot",
+        expected_sha256="b4d1475bc7eeffd7b809e82ea13a1fba1fb85c4e18365af3813722faa5c0fe4f",
+    ),
+    "moss_image_text_bf16": ModelSpec(
+        MOSS_IMAGE_REPO, "text_encoders", "text_encoders/qwen3.5_9b_bf16.safetensors",
+        "MOSS-Image Qwen3.5 9B BF16 text encoder",
+        expected_sha256="7e6e9f08d598f829cb940e60ac0c698e1f1c27a47daffd7e598cd78c78b4cc53",
+    ),
+    "moss_image_text_int8": ModelSpec(
+        MOSS_IMAGE_REPO, "text_encoders", "text_encoders/qwen3.5_9b_int8_convrot.safetensors",
+        "MOSS-Image Qwen3.5 9B INT8 ConvRot text encoder",
+        expected_sha256="32e3787472f708fa5f83624acbf5ef23f7fc89c439e05065ea57cfe5a97f025a",
+    ),
+    "moss_image_text_w4a8": ModelSpec(
+        MOSS_IMAGE_REPO, "text_encoders", "text_encoders/qwen3.5_9b_w4a8_gptq.safetensors",
+        "MOSS-Image Qwen3.5 9B W4A8 text encoder",
+        expected_sha256="4cc6a1543ad2061806da46f35f90cadb4801dcba246c44782cf42ec0feb6407c",
+    ),
+    # Upstream bundles the small FLUX.2 decoder; the full flux3_vae is a different file.
+    "moss_image_vae": ModelSpec(
+        MOSS_IMAGE_REPO, "vae", "vae/flux2-vae_small.safetensors", "MOSS-Image small FLUX.2 VAE",
+        expected_sha256="d8d52ba036475f5fb07c8b435e176d3d97ebfa82f0d1a1c317f9cc1e25bd013b",
+    ),
+    "moss_image_dmd_8step_lora": ModelSpec(
+        MOSS_IMAGE_DMD_REPO, "loras", "lora.safetensors",
+        "Lodestones MOSS-Image SFT 8-step DMD LoRA",
+        local_filename="moss_image_sft_dmd_8step_lora.safetensors",
+        expected_sha256="4abb14e39c1a59018907581e609f43616ec6810126144ec2b1d2e6f8969628fe",
     ),
     "drama3_fp8": ModelSpec(
         "PedroMarinhoDev/Drama-3-ComfyUI", "diffusion_models", "drama3_fp8experts_bf16.safetensors", "Drama 3 FP8 experts / BF16",
@@ -867,6 +905,25 @@ FLUX3_MODEL_CHOICES = {"NVFP4 (Blackwell)": "flux3_nvfp4", "BF16": "flux3_bf16",
 FLUX3_UPSAMPLER_CHOICES = {"INT8 ConvRot": "flux3_upsampler", "W4A8 (lower VRAM)": "flux3_upsampler_w4a8"}
 DEFAULT_FLUX3_UPSAMPLER = "INT8 ConvRot"
 FLUX3_MODEL_KEYS = (*FLUX3_MODEL_CHOICES.values(), "flux3_text_encoder", "flux3_vae", *FLUX3_UPSAMPLER_CHOICES.values())
+MOSS_IMAGE_MODEL_CHOICES = {"BF16": "moss_image_sft_bf16", "INT8 ConvRot (lower VRAM)": "moss_image_sft_int8"}
+DEFAULT_MOSS_IMAGE_MODEL = "BF16"
+MOSS_IMAGE_TEXT_ENCODER_CHOICES = {
+    "INT8 ConvRot (recommended)": "moss_image_text_int8",
+    "W4A8 (lowest VRAM)": "moss_image_text_w4a8",
+    "BF16": "moss_image_text_bf16",
+}
+DEFAULT_MOSS_IMAGE_TEXT_ENCODER = "INT8 ConvRot (recommended)"
+MOSS_IMAGE_DMD_8STEP = "Lodestones DMD (8-step)"
+# Turbo label -> (LoRA model key, required steps); add new step-distilled LoRAs here.
+MOSS_IMAGE_TURBO_MODES = {
+    MOSS_IMAGE_DMD_8STEP: ("moss_image_dmd_8step_lora", 8),
+}
+MOSS_IMAGE_MODEL_KEYS = (
+    *MOSS_IMAGE_MODEL_CHOICES.values(),
+    *MOSS_IMAGE_TEXT_ENCODER_CHOICES.values(),
+    "moss_image_vae",
+    *dict.fromkeys(key for key, _steps in MOSS_IMAGE_TURBO_MODES.values()),
+)
 DRAMA3_MODEL_CHOICES = {"FP8 (original weights)": "drama3_fp8", "INT8 ConvRot": "drama3_int8", "W6A8 (lower RAM)": "drama3_w6a8"}
 DEFAULT_DRAMA3_MODEL = "FP8 (original weights)"
 DRAMA3_ASR_CHOICES = {"1.7B (quality)": "drama3_asr", "0.6B (smaller)": "drama3_asr_small"}
@@ -875,6 +932,7 @@ DRAMA3_MODEL_KEYS = (*DRAMA3_MODEL_CHOICES.values(), "drama3_codec")
 DRAMA3_ASR_MODEL_KEYS = tuple(DRAMA3_ASR_CHOICES.values())
 LAZY_OPTIONAL_MODEL_KEYS = (
     *FLUX3_MODEL_KEYS,
+    *MOSS_IMAGE_MODEL_KEYS,
     *DRAMA3_MODEL_KEYS,
     *DRAMA3_ASR_MODEL_KEYS,
     "lightvae_encoder",
@@ -1705,7 +1763,7 @@ def selftest() -> None:
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert set(MODEL_SPECS) == {
-        *FLUX3_MODEL_KEYS, *DRAMA3_MODEL_KEYS, *DRAMA3_ASR_MODEL_KEYS,
+        *FLUX3_MODEL_KEYS, *MOSS_IMAGE_MODEL_KEYS, *DRAMA3_MODEL_KEYS, *DRAMA3_ASR_MODEL_KEYS,
         *(key for pair in QWEN_IMAGE21_PROMPT_ENHANCERS.values() for key in pair),
         "lightvae_encoder", "lightvae_decoder", "lightvae_decoder_int8",
         "veda_t2va",

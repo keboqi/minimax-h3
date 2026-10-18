@@ -2690,6 +2690,16 @@ def generate_flux3(prompt, model_choice, reference_images, width, height, edit_s
     yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
 
 
+def generate_moss_image(prompt, preset, turbo_variant, model_choice, text_encoder_choice, width, height,
+                        seed, steps, cfg, layout="", progress=gr.Progress(track_tqdm=False)):
+    from h3_app.generation.optional_engines import generate_optional_engine
+    request = generation_requests.MossImageRequest(
+        prompt, preset, turbo_variant, model_choice, text_encoder_choice, width, height, seed, steps, cfg,
+        layout or "",
+    )
+    yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
+
+
 def _drama3_voices(slots, saved_presets=None):
     """Resolve (preset, clip, transcript) slot triples to (speaker, clip, transcript).
 
@@ -2808,6 +2818,21 @@ def enhance_flux3_prompt(prompt, reference_images, width, height, model, tempora
     )
     failed = status.startswith("Prompt enhancement failed:")
     return enhanced, status, gr.skip() if failed else False
+
+
+def enhance_moss_image_prompt(prompt, width, height, rewrite_mode, model, temporary_api_key,
+                              backend="Lightning AI", lightning_api_key="",
+                              lightning_model=DEFAULT_LIGHTNING_PROMPT_MODEL):
+    """Rewrite with OpenMOSS's prompt-enhancer recipe; a Layout clears the manual boxes."""
+    from h3_app.workflows.moss_image_prompt import is_layout_prompt
+
+    enhanced, status = prompt_service.enhance_moss_image_prompt(
+        prompt, model, temporary_api_key, width, height, rewrite_mode,
+        backend=backend, lightning_api_key=lightning_api_key,
+        lightning_model=lightning_model, runtime=_runtime_config(),
+    )
+    failed = status.startswith("Prompt enhancement failed:")
+    return enhanced, status, "" if not failed and is_layout_prompt(enhanced) else gr.skip()
 
 
 def _drama3_writer_slots(slots):
@@ -3490,6 +3515,8 @@ def _optional_engine_actions():
     from h3_ui.optional_engine_views import OptionalEngineActions
     return OptionalEngineActions(
         generate_flux3=generate_flux3,
+        generate_moss_image=generate_moss_image,
+        enhance_moss_image_prompt=enhance_moss_image_prompt,
         generate_drama3=generate_drama3,
         switch_drama3_backend=switch_drama3_backend,
         enhance_flux3_prompt=enhance_flux3_prompt,

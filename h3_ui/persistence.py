@@ -29,6 +29,8 @@ RESET_BROWSER_SETTINGS_JS = """
 EXTRA_FIELDS = {
     "flux3": ("model", "width", "height", "edit_size", "seed", "steps", "expand_prompt",
               "prompt_backend", "prompt_model", "lightning_model", "upsampler", "cfg"),
+    "moss_image": ("preset", "turbo_variant", "model", "text_encoder", "width", "height", "seed", "steps",
+                   "cfg", "rewrite_mode", "prompt_backend", "prompt_model", "lightning_model"),
     "drama3": ("seed", "temperature", "top_p", "top_k", "max_frames", "split_long_text", "experts",
                "expert_cache_gb", "prompt_backend", "prompt_model", "lightning_model",
                "speaker_mode", "backend", "parallel", "retries", "model", "asr_model",

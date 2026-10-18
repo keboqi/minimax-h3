@@ -23,6 +23,11 @@ from h3_models import (
     PRELOAD_MODEL_KEYS,
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
+    DEFAULT_MOSS_IMAGE_MODEL,
+    DEFAULT_MOSS_IMAGE_TEXT_ENCODER,
+    MOSS_IMAGE_MODEL_CHOICES,
+    MOSS_IMAGE_TEXT_ENCODER_CHOICES,
+    MOSS_IMAGE_TURBO_MODES,
     YUE2_MODEL_CHOICES,
     build_model_config,
     model_file_matches_manifest,
@@ -43,6 +48,7 @@ def catalog_groups() -> dict[str, tuple[str, ...]]:
         "Music 3": ("music3_",),
         "YuE2": ("yue2_",),
         "FLUX 3 Image Klein": ("flux3_",),
+        "MOSS-Image": ("moss_image_",),
         "Drama 3": ("drama3_",),
         "SeedVR2": ("seedvr2_",),
     }
@@ -73,6 +79,11 @@ def model_presets() -> dict[str, tuple[str, ...]]:
         "qwen_image21_vae",
     )
     ltx = (LTX25_MODEL_CHOICES[DEFAULT_LTX25_MODEL], *LTX25_SHARED_MODEL_KEYS)
+    moss = (
+        MOSS_IMAGE_MODEL_CHOICES[DEFAULT_MOSS_IMAGE_MODEL],
+        MOSS_IMAGE_TEXT_ENCODER_CHOICES[DEFAULT_MOSS_IMAGE_TEXT_ENCODER],
+        "moss_image_vae",
+    )
     return {
         "MiniMax H3 defaults": tuple(dict.fromkeys((
             *PRELOAD_MODEL_KEYS, "turbo_lora", "video_vae_lynnreal_int8",
@@ -91,6 +102,10 @@ def model_presets() -> dict[str, tuple[str, ...]]:
         ),
         "YuE2 defaults": (YUE2_MODEL_CHOICES[DEFAULT_YUE2_MODEL],),
         "FLUX 3 defaults": ("flux3_nvfp4", "flux3_text_encoder", "flux3_vae", "flux3_upsampler"),
+        "MOSS-Image defaults": moss,
+        "MOSS-Image + Turbo LoRAs": (
+            *moss, *dict.fromkeys(key for key, _steps in MOSS_IMAGE_TURBO_MODES.values()),
+        ),
         "Drama 3 defaults": ("drama3_fp8", "drama3_codec"),
     }
 

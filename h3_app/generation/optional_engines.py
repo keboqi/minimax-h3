@@ -1,4 +1,4 @@
-"""FLUX 3 and Drama 3 requests over the shared, owned ComfyUI queue."""
+"""FLUX 3, MOSS-Image and Drama 3 requests over the shared, owned ComfyUI queue."""
 
 from dataclasses import asdict
 import math
@@ -14,6 +14,10 @@ from h3_app.provenance import write_snapshot
 from h3_app.status import StageTimings, progress_status
 from h3_app.workflows.flux3 import build_flux3_graph, flux3_model_keys
 from h3_app.workflows.flux3_layout import parse_flux3_layout
+from h3_app.workflows.moss_image import (
+    build_moss_image_graph, moss_image_model_keys, validate_moss_image_sampling,
+)
+from h3_app.workflows.moss_image_prompt import is_layout_prompt
 from h3_models import FLUX3_BASE_MODEL_CHOICES
 from h3_app.workflows.drama3 import (
     MAX_FRAMES, MAX_SPEAKER, build_drama3_asr_graph, build_drama3_graph, text_speakers, validate_drama3_text,
@@ -21,13 +25,14 @@ from h3_app.workflows.drama3 import (
 )
 from h3_models import DEFAULT_DRAMA3_ASR
 from .qwen import first_reference_dimensions
-from .requests import Flux3Request, Drama3Request
+from .requests import Flux3Request, Drama3Request, MossImageRequest
 from .results import GenerationUpdate, fresh_audio
 
 
 DRAMA3_BACKENDS = ("ComfyUI", "SGLang-Omni")
 DRAMA3_SERVED_BACKENDS = DRAMA3_BACKENDS[1:]
 FLUX3_EDIT_SIZES = (QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX, QWEN_EDIT_SIZE_MANUAL)
+MOSS_IMAGE_FAMILY = "MOSS-Image"
 FLUX3_MAX_PIXELS, FLUX3_MIN_SIDE, FLUX3_MAX_SIDE, FLUX3_GRID = 4_194_304, 256, 4096, 16
 
 
@@ -99,6 +104,22 @@ def validate_request(request):
             raise H3Error("Choose a valid FLUX 3 edit output size.")
         if len(request.reference_images) > 10:
             raise H3Error("FLUX 3 supports at most ten reference images.")
+    elif isinstance(request, MossImageRequest):
+        if not request.prompt.strip():
+            raise H3Error("Write an image prompt.")
+        _integer(request.width, 256, 2048, "Width", 16)
+        _integer(request.height, 256, 2048, "Height", 16)
+        _integer(request.steps, 1, 100, "Steps")
+        if isinstance(request.cfg, bool) or not math.isfinite(float(request.cfg)) or not 1 <= request.cfg <= 10:
+            raise H3Error("MOSS-Image CFG must be between 1 and 10.")
+        try:
+            moss_image_model_keys(request.model_choice, request.text_encoder_choice, request.turbo_variant)
+            validate_moss_image_sampling(request.turbo_variant, request.steps, request.cfg)
+            parse_flux3_layout(request.layout)
+        except ValueError as exc:
+            raise H3Error(str(exc)) from exc
+        if request.layout.strip() and is_layout_prompt(request.prompt):
+            raise H3Error("The prompt is already a MOSS-Image Layout with its own boxes. Clear the layout boxes.")
     elif isinstance(request, Drama3Request):
         drama3_model_keys(request.model_choice)
         validate_drama3_text(request.text)
@@ -149,8 +170,9 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
 
     ``free_gpu`` releases ComfyUI's VRAM before the optional SGLang-Omni Drama 3 route runs.
     """
-    image = isinstance(request, Flux3Request)
-    family = "FLUX 3 Image Klein" if image else "Drama 3"
+    moss = isinstance(request, MossImageRequest)
+    image = moss or isinstance(request, Flux3Request)
+    family = MOSS_IMAGE_FAMILY if moss else "FLUX 3 Image Klein" if image else "Drama 3"
     started = time.monotonic()
     timings = StageTimings(family, started, "Validating request")
     try:
@@ -170,7 +192,12 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
                 hf_token=resolve_hf_token(), progress=progress,
             )
             return
-        if image:
+        if moss:
+            graph = build_moss_image_graph(
+                **{k: v for k, v in values.items() if k != "preset"},
+                output_stamp=str(int(time.time())), output_nonce=uuid.uuid4().hex[:8],
+            )
+        elif image:
             values["width"], values["height"] = resolve_flux3_dimensions(request, input_dir=runtime.input_dir)
             # The shared image resolver only reads the managed staging directory.
             graph = build_flux3_graph(
@@ -198,11 +225,14 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
             raise H3Error(f"Update setup and restart ComfyUI (the pinned Core and Drama 3 nodes are required). Missing nodes: {', '.join(sorted(missing))}")
         if image:
             clip_types = info.get("CLIPLoader", {}).get("input", {}).get("required", {}).get("type", [[]])[0]
-            if "flux3" not in clip_types:
-                raise H3Error("This backend lacks the FLUX 3 text encoder. Update setup and restart ComfyUI.")
+            clip_type, label = ("moss_image", "MOSS-Image") if moss else ("flux3", "FLUX 3")
+            if clip_type not in clip_types:
+                raise H3Error(f"This backend lacks the {label} text encoder. Update setup and restart ComfyUI.")
         services.models.unload_prompt_rewriter()
         yield GenerationUpdate(None, f"Preparing {family} models; missing weights download on first use.")
-        keys = (flux3_model_keys(request.model_choice, request.expand_prompt, request.upsampler_choice)
+        keys = (moss_image_model_keys(request.model_choice, request.text_encoder_choice, request.turbo_variant)
+                if moss else
+                flux3_model_keys(request.model_choice, request.expand_prompt, request.upsampler_choice)
                 if image else drama3_model_keys(request.model_choice))
         services.models.ensure_model_keys(keys)
         queued_at = time.time()
@@ -222,7 +252,9 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
                   else services.media.resolve_audio_output(history, queued_at))
         settings = {key: value for key, value in values.items()
                     if key not in {"prompt", "text", "voices", "reference_images", "layout"}}
-        if image:
+        if moss:
+            settings["layout_box_count"] = len(parse_flux3_layout(request.layout))
+        elif image:
             settings["reference_count"] = len(request.reference_images)
             settings["layout_box_count"] = len(parse_flux3_layout(request.layout))
         else:

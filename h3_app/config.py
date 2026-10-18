@@ -68,6 +68,7 @@ class RuntimeConfig:
             "YuE2": self.script_dir / "prompt_yue2.txt",
             "FLUX 3 Image Klein": self.script_dir / "prompt_flux3_t2i.txt",
             "FLUX 3 Image Klein edit": self.script_dir / "prompt_flux3_i2i.txt",
+            "MOSS-Image": self.script_dir / "prompt_moss_image.txt",
             "Drama 3": self.script_dir / "prompt_drama3.txt",
         }
 

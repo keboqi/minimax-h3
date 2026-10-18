@@ -754,6 +754,10 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(self.components[qwen["Native prompt enhancer"]]["props"]["value"], "Off")
         flux = labels("generate_flux3")
         self.assertIn("Prompt upsampler", flux)
+        moss = labels("generate_moss_image")
+        self.assertEqual(self.components[moss["MOSS-Image preset"]]["props"]["value"], "Fast")
+        self.assertEqual(self.components[moss["Turbo LoRA"]]["props"]["value"], "Lodestones DMD (8-step)")
+        self.assertIn("Rewrite as", labels("enhance_moss_image_prompt"))
         drama = labels("generate_drama3")
         self.assertIn("Drama model", drama)
         asr = labels("transcribe_drama3_voice")
@@ -761,6 +765,8 @@ class UiContractTests(unittest.TestCase):
         from h3_ui.persistence import EXTRA_FIELDS
         self.assertIn("prompt_enhancer", EXTRA_FIELDS["qwen_image21"])
         self.assertIn("upsampler", EXTRA_FIELDS["flux3"])
+        self.assertIn("turbo_variant", EXTRA_FIELDS["moss_image"])
+        self.assertIn("rewrite_mode", EXTRA_FIELDS["moss_image"])
         self.assertIn("model", EXTRA_FIELDS["drama3"])
         self.assertIn("asr_model", EXTRA_FIELDS["drama3"])
 
