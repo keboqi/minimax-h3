@@ -360,8 +360,10 @@ class CastSlotTests(unittest.TestCase):
         self.assertEqual([call[0] for call in calls], ["Warm", "Broken"])
         self.assertEqual(calls[0][2], settings)
         self.assertEqual(len(updates[-1]), 49)
-        clips = [update[0] for update in updates if isinstance(update[0], str)]
-        self.assertEqual(clips, ["Warm.wav"])  # sent once, never re-sent in later frames
+        first = next(index for index, update in enumerate(updates) if update[0] == "Warm.wav")
+        # A clip repeats in every later frame; a skip after it would corrupt the Audio in the browser.
+        self.assertEqual({update[0] for update in updates[first:]}, {"Warm.wav"})
+        self.assertFalse(any(isinstance(update[3 * 3], str) for update in updates))
         self.assertIn("already has a clip", updates[0][3 * 2 + 2])
         self.assertIn("Generated 1 of 2", updates[-1][-1])
         self.assertIn("speaker 3", updates[-1][-1])
@@ -397,6 +399,7 @@ class CastSlotTests(unittest.TestCase):
                          ("SGLang-Omni", 6, 30))
         clip = next(update for update in updates if update[3] == "one.wav")
         self.assertEqual(clip[4]["value"], "Hi there.")
+        self.assertEqual(updates[-1][3], "one.wav")
         self.assertTrue(any("silent take" in str(update[2]) for update in updates))
         self.assertIn("Generated 1 of 2", updates[-1][-1])
 

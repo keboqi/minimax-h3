@@ -3152,8 +3152,12 @@ def generate_drama3_voices(*values):
     updates = [gr.skip()] * (3 * DRAMA3_VOICE_SLOTS)
 
     def frame(status):
+        # Transcripts and statuses are sent once, but a clip repeats in every later
+        # frame: Gradio's client applies streamed diffs in place to the value it gave
+        # the Audio, so a skip after a clip turns that value into {"__type__": "update"}
+        # and the next request reading the slot fails validation. Shared with helpers.
         current = list(updates)
-        updates[:] = [gr.skip()] * len(updates)  # each clip is sent once; shared with helpers
+        updates[:] = [value if index % 3 == 0 else gr.skip() for index, value in enumerate(current)]
         return (*current, status)
 
     targets = []
