@@ -49,7 +49,7 @@ def build_prompt_section(
         placeholder="A quiet seaside town at sunrise. The camera drifts over the rooftops as waves break in the distance…",
         elem_classes=["h3-prompt-editor"],
     )
-    with gr.Accordion("Prompt writer / enhancer", open=False):
+    with gr.Accordion("Prompt writer / enhancer", open=False) as writer:
         gr.Markdown(
             "The local MiniMax-H3 8B writer supports T2VA, I2VA, L2VA, and FL2VA. Gemini supports all Reference media; Lightning AI supports text and image enhancement."
         )
@@ -124,6 +124,7 @@ def build_prompt_section(
                 accept_prompt = gr.Button("Accept suggested prompt")
                 keep_prompt = gr.Button("Keep original")
                 undo_prompt = gr.Button("Undo accepted prompt")
+    prompt.h3_writer = writer
     return PromptSection(
         prompt_preview=prompt_preview,
         prompt_proposal=prompt_proposal,

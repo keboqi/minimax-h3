@@ -20,7 +20,7 @@ import uuid
 from contextlib import contextmanager, closing
 from starlette.requests import Request
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 COOKIE = "h3_workspace_owner"
 OWNER_TTL = 30 * 86400
 _INDEX_ASSET_SQL = (
@@ -65,6 +65,9 @@ class WorkspaceStore:
                 CREATE INDEX IF NOT EXISTS projects_owner ON projects(owner, created);
             """
             )
+            from .continuum_store import CONTINUUM_SCHEMA
+
+            db.executescript(CONTINUUM_SCHEMA)
             db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             db.execute(
                 "INSERT OR IGNORE INTO settings VALUES ('owner_secret', ?)",

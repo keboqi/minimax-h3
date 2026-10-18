@@ -143,6 +143,16 @@ def bind_accepted_action(
         mapping = values.pop() if reference_map is not None else None
         captured = dict(zip(names, values, strict=True))
         active_media = media_indices
+        # A family may validate at click time and select the media it uses,
+        # so unused uploads are never pinned into the job lease.
+        admission = getattr(callback, "job_admission", None)
+        if admission is not None:
+            keep = admission(captured)
+            active_media = tuple(i for i in media_indices if names[i] in keep)
+            for i in media_indices:
+                if i not in active_media:
+                    values[i] = None
+                    captured[names[i]] = None
         if callback.job_family == "h3":
             mode = captured["mode"]
             prefixes = (

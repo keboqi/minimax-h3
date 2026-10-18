@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Sequence
 import gradio as gr
 from .sections.finishing import build_finishing_section
@@ -409,6 +410,7 @@ def build_h3_view(
         performance_controls,
         finishing_controls,
         finishing_section,
+        sequence_roots,
     ) = _build_workspace_h3(
         generation_view,
         defaults,
@@ -416,6 +418,8 @@ def build_h3_view(
         advanced_root=advanced_root,
     )
     results_section.run.h3_canvas = output_section.canvas_controls
+    # Sequence mode attaches its controls to these containers (bootstrap).
+    results_section.run.h3_sequence_roots = sequence_roots
     from .canvas_controls import bind_image_canvas_preview
 
     bind_image_canvas_preview(
@@ -622,10 +626,12 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
                 '<div class="h3-panel-heading"><span class="h3-step" aria-hidden="true">01</span>'
                 '<div><h3>Compose</h3></div></div>'
             )
+            sequence_mode_root = gr.Column(elem_id="h3-video-mode")
             conditioning_root = gr.Group()
             references_section = build_references_section(defaults, services)
+            sequence_compose_root = gr.Column(visible=False, elem_id="h3-sequence-compose")
             prompt_section = build_prompt_section(defaults, services)
-            with gr.Column(elem_id="h3-output-settings"):
+            with gr.Column(elem_id="h3-output-settings") as output_settings_root:
                 gr.HTML(
                     '<div class="h3-panel-heading"><span class="h3-step" aria-hidden="true">02</span>'
                     '<div><h3>Make it fit</h3><p>Choose a recipe and your output settings.</p></div></div>'
@@ -658,6 +664,7 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
             elem_id="h3-preview",
             elem_classes=["h3-preview-panel"],
         ):
+            sequence_results_root = gr.Column(visible=False, elem_id="h3-sequence-results")
             results_root = gr.Column()
             action_root = gr.Column(
                 elem_id="h3-generate-actions", elem_classes=["h3-actions-slot"]
@@ -731,4 +738,15 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
         performance_controls,
         finishing_controls,
         finishing_section,
+        SimpleNamespace(
+            mode=sequence_mode_root,
+            compose=sequence_compose_root,
+            results=sequence_results_root,
+            # Clip-only composer controls that Sequence replaces while visible.
+            clip_prompt=(prompt_section.prompt, prompt_section.prompt.h3_writer),
+            clip_settings=output_settings_root,
+            clip_summary=settings_overview,
+            clip_results=results_root,
+            clip_actions=action_root,
+        ),
     )

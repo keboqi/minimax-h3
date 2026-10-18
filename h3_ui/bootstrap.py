@@ -155,6 +155,7 @@ class BootstrapServices:
     select_gallery_media: Callable
     unload_all_models: Callable
     upscale_selected_input_images: Callable
+    continuum_actions: Any = None
 
 
 def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Blocks:
@@ -426,6 +427,16 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             services,
             preferences=browser_state,
         )
+        if services.continuum_actions is not None:
+            from .continuum_view import bind_continuum_view, build_continuum_view
+
+            roots = h3_components.run.h3_sequence_roots
+            bind_continuum_view(
+                build_continuum_view(roots),
+                h3_components,
+                roots,
+                services.continuum_actions,
+            )
         navigation = bind_workspace_navigation(
             app_views,
             h3_components.result_format,
