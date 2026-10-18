@@ -22,7 +22,7 @@ from .qwen_view import build_qwen_image21_view
 from .yue2_view import build_yue2_view
 from .optional_engine_views import (
     bind_drama3, bind_flux3, build_drama3_view, build_flux3_view,
-    refresh_drama3_presets_on_load, settings_components,
+    settings_components,
 )
 
 # Ctrl/Cmd+Enter presses the visible engine's generate button. Disabled
@@ -511,6 +511,5 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             navigation=navigation,
         )
         demo.load(None, js=GENERATE_SHORTCUT_JS, api_name=False)
-        refresh_drama3_presets_on_load(demo, drama3_components, engine_actions)
     demo.h3_css = H3_SETUP_CSS + H3_WORKSPACE_CSS
     return demo

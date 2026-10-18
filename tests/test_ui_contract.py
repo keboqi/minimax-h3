@@ -20,6 +20,7 @@ from h3_ui.presentation import (
     result_format_presentation,
 )
 from h3_ui.styles import H3_SETUP_CSS
+from tests.node_js import run_js
 
 
 class UiContractTests(unittest.TestCase):
@@ -688,7 +689,8 @@ class UiContractTests(unittest.TestCase):
                                        "backend", "lightning_api_key", "lightning_model"])
         metadata = [f"speaker_{n}_{field}" for n in range(16)
                     for field in ("name", "description", "preview_text")]
-        self.assertEqual(enhance[7:], [*slots, *metadata, "script_mode"])  # gr.State is not exposed in the API.
+        # The shown slot count is a hidden Number so browser-side handlers can read it.
+        self.assertEqual(enhance[7:], [*slots, *metadata, "shown_slots", "script_mode"])
         voice = api["/generate_drama3_voice"]
         self.assertEqual([row["parameter_name"] for row in voice["parameters"]],
                          ["description", "preview_text", "language", "engine", "backend", "seed",
@@ -713,12 +715,14 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual((top_k["props"]["minimum"], top_k["props"]["value"]), (0, 0))
         preset = next(c for c in self.config["components"]
                       if c.get("props", {}).get("label") == "Speech preset")
-        apply_preset = next(fn.fn for fn in self.demo.fns.values()
+        apply_preset = next(fn for fn in self.demo.fns.values()
                             if [c._id for c in fn.inputs] == [preset["id"]]
                             and top_k["id"] in [c._id for c in fn.outputs])
-        self.assertEqual(apply_preset("Balance"), (1.0, 0.9, 0))
-        self.assertEqual(apply_preset("Expressive"), (2.0, 1.0, 30))
-        self.assertEqual(apply_preset("Strict"), (0.7, 0.7, 30))
+        # Presets apply in the browser, without a server round trip.
+        self.assertIsNone(apply_preset.fn)
+        self.assertEqual(run_js(apply_preset.js, "Balance"), [1.0, 0.9, 0])
+        self.assertEqual(run_js(apply_preset.js, "Expressive"), [2.0, 1.0, 30])
+        self.assertEqual(run_js(apply_preset.js, "Strict"), [0.7, 0.7, 30])
         self.assertIn("Expand the prompt locally",
                       [labels[i] for i in endpoints["enhance_flux3_prompt"]["outputs"]])
         transcribe = endpoints["transcribe_drama3_voice"]

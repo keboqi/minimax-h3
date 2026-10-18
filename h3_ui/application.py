@@ -2690,8 +2690,11 @@ def generate_flux3(prompt, model_choice, reference_images, width, height, edit_s
     yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
 
 
-def _drama3_voices(slots):
-    """Resolve (preset, clip, transcript) slot triples to (speaker, clip, transcript)."""
+def _drama3_voices(slots, saved_presets=None):
+    """Resolve (preset, clip, transcript) slot triples to (speaker, clip, transcript).
+
+    ``saved_presets``, when given, collects each loaded saved speaker by slot.
+    """
     from h3_app import drama3_speakers
     from h3_ui.optional_engine_views import UPLOAD_VOICE
 
@@ -2700,6 +2703,8 @@ def _drama3_voices(slots):
         preset, audio, transcript = slots[3 * speaker:3 * speaker + 3]
         if preset and preset != UPLOAD_VOICE:
             saved = drama3_speakers.load_speaker(preset, _runtime_config())
+            if saved_presets is not None:
+                saved_presets[speaker] = saved
             voices.append((speaker, str(saved.audio), saved.transcript))
             names.append((speaker, saved.name))
         elif audio or str(transcript or "").strip():
@@ -2813,22 +2818,22 @@ def _drama3_writer_slots(slots):
     """
     import json
     from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VOICE_SLOTS, DRAMA3_VISIBLE_SLOTS
-    from h3_app.drama3_speakers import load_speaker, normalize_name
+    from h3_app.drama3_speakers import normalize_name
 
     count = len(DRAMA3_SLOT_INPUT_NAMES)
     voice_values = slots[:count]
     metadata = list(slots[count:count * 2])
     metadata += [""] * (count - len(metadata))
     shown = slots[count * 2] if len(slots) > count * 2 else DRAMA3_VISIBLE_SLOTS
-    voices, names = _drama3_voices(voice_values)
+    saved_presets = {}
+    voices, names = _drama3_voices(voice_values, saved_presets)
     references = {speaker for speaker, _audio, _transcript in voices}
     saved_names = dict(names)
     context = []
     for speaker in range(DRAMA3_VOICE_SLOTS):
         name, description, _preview = metadata[3 * speaker:3 * speaker + 3]
-        preset = voice_values[3 * speaker] if len(voice_values) > 3 * speaker else None
-        if speaker in references and saved_names.get(speaker):
-            description = load_speaker(preset, _runtime_config()).description or description
+        if speaker in saved_presets:
+            description = saved_presets[speaker].description or description
         name = saved_names.get(speaker) or name or ""
         name = normalize_name(name) if str(name).strip() else ""
         if speaker in references or name or description:
@@ -2876,7 +2881,7 @@ def _drama3_unchanged_outputs():
 
 def _drama3_apply_cast(script, status, cast, existing, shown):
     """Script, status, slot metadata and visibility for a validated cast; raises on reassignment."""
-    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES, _slot_visibility
+    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VISIBLE_SLOTS, _slot_visibility
 
     updates = [gr.skip()] * len(DRAMA3_SLOT_INPUT_NAMES)
     for entry in cast:
@@ -2890,9 +2895,11 @@ def _drama3_apply_cast(script, status, cast, existing, shown):
         updates[3 * speaker:3 * speaker + 3] = [name, description, entry["preview_text"]]
     if not cast:
         return (script, status, *updates, *[gr.skip()] * (len(_slot_visibility(shown))))
-    shown = max(int(shown), max(entry["speaker_id"] for entry in cast) + 1)
+    previous = int(shown or DRAMA3_VISIBLE_SLOTS)
+    shown = max(previous, max(entry["speaker_id"] for entry in cast) + 1)
     return (script, status + f" Filled {len(cast)} matching speaker slots; "
-            "open Speaker voices to upload or generate references.", *updates, *_slot_visibility(shown))
+            "open Speaker voices to upload or generate references.", *updates,
+            *_slot_visibility(shown, previous))
 
 
 def enhance_drama3_text(text, speaker_mode, model, temporary_api_key, backend, lightning_api_key,
@@ -2976,11 +2983,12 @@ def sync_drama3_script_sounds(text, script_mode, shown_sound_slots, *sound_meta_
     total_meta = 3 * DRAMA3_SOUND_SLOTS
     updates = [gr.skip()] * total_meta
     shown = int(shown_sound_slots or DRAMA3_VISIBLE_SOUND_SLOTS)
+    unchanged = (*updates, *_sound_slot_visibility(shown, shown))
     if script_mode != prompt_service.DRAMA3_SCRIPT_ADVANCED:
-        return (*updates, *_sound_slot_visibility(shown))
+        return unchanged
     extracted = extract_script_sounds(str(text or ""))
     if not extracted:
-        return (*updates, *_sound_slot_visibility(shown))
+        return unchanged
 
     existing_by_name = {}
     used_slots = set()
@@ -3015,7 +3023,7 @@ def sync_drama3_script_sounds(text, script_mode, shown_sound_slots, *sound_meta_
         max_slot = max(max_slot, idx)
         updates[3 * idx:3 * idx + 3] = [name, desc, int(dur)]
 
-    return (*updates, *_sound_slot_visibility(max_slot + 1))
+    return (*updates, *_sound_slot_visibility(max_slot + 1, shown))
 
 
 def _publish_drama3_signatures():

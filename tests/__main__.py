@@ -48,6 +48,7 @@ def run(args):
             "browser_media_performance.py",
             "browser_media_deletion.py",
             "browser_ui_requests.py",
+            "browser_drama3.py",
         ):
             subprocess.run(
                 [sys.executable, "-m", "tests." + Path(script).stem],

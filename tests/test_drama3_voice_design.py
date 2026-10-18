@@ -237,7 +237,9 @@ class CastSlotTests(unittest.TestCase):
         self.assertEqual(result[17:20], ("Character 5", "Existing description", cast_entry(5)["preview_text"]))
         self.assertEqual(result[50], 6)
         self.assertTrue(result[56]["visible"])
-        self.assertFalse(result[57]["visible"])
+        # Slots already hidden are left alone; only slots that change visibility are sent.
+        self.assertEqual(result[57], {"__type__": "update"})
+        self.assertEqual(result[51:55], ({"__type__": "update"},) * 4)
 
     def test_invalid_or_reassigned_cast_keeps_all_slots_unchanged(self):
         for response in (writer_reply(5), "{broken"):
@@ -515,6 +517,59 @@ class Drama3VoiceDesignTests(unittest.TestCase):
             release.assert_not_called()
             served.release_for_job("flux3")
             release.assert_called_once()
+
+
+class BrowserSlotPresentationTests(unittest.TestCase):
+    """Slot titles, panel titles and Add/Remove run in the browser and must match their Python twins."""
+
+    def test_slot_titles_and_clip_flags_match_python(self):
+        from tests.node_js import run_js
+        from h3_ui.optional_engine_views import (
+            _SOUND_KIND, _VOICE_KIND, _slot_title_js, drama3_slot_title, drama3_sound_slot_title)
+        audio = {"path": "/tmp/voice.wav", "url": "/file=voice.wav"}
+        for name, preset, clip in ((None, None, None), (" Mia ", "Upload a clip", audio),
+                                   ("Alice", "Alice", None), ("", "Upload a clip", None)):
+            with self.subTest(name=name, preset=preset, clip=bool(clip)):
+                label, ready = run_js(_slot_title_js(_VOICE_KIND, 3), name, preset, clip)
+                self.assertEqual(label["label"], drama3_slot_title(3, name, preset, bool(clip)))
+                self.assertIs(ready, bool(clip))
+                label, _ready = run_js(_slot_title_js(_SOUND_KIND, 2), name, preset, clip)
+                self.assertEqual(label["label"], drama3_sound_slot_title(2, name, preset, bool(clip)))
+
+    def test_panel_titles_match_python(self):
+        from tests.node_js import run_js
+        from h3_ui.optional_engine_views import (
+            UPLOAD_VOICE, _VOICE_KIND, _SOUND_KIND, _panel_title_js, drama3_sounds_title, drama3_voices_title)
+        presets = ["Saved Alice", UPLOAD_VOICE, UPLOAD_VOICE] + [UPLOAD_VOICE] * 13
+        clips = [False, True, False, True] + [False] * 12
+        for shown in (1, 3, 4, 16, 0, None):
+            with self.subTest(shown=shown):
+                self.assertEqual(run_js(_panel_title_js(_VOICE_KIND), shown, *presets, *clips)["label"],
+                                 drama3_voices_title(shown, presets, clips))
+                self.assertEqual(run_js(_panel_title_js(_SOUND_KIND), shown, *presets, *clips)["label"],
+                                 drama3_sounds_title(shown, presets, clips))
+
+    def test_add_and_remove_send_only_changed_slots_and_clear_the_removed_one(self):
+        from tests.node_js import run_js
+        from h3_ui.optional_engine_views import _slot_count_js, _slot_visibility
+        skip = {"__type__": "update"}
+        added = run_js(_slot_count_js(16, 1), 4)
+        self.assertEqual(added, [{**value} if isinstance(value, dict) else value
+                                 for value in _slot_visibility(5, 4)])
+        self.assertEqual(added[1 + 4], {"__type__": "update", "visible": True})
+        self.assertEqual(added[1:5], [skip] * 4)
+        self.assertEqual(run_js(_slot_count_js(16, 1), 16)[0], 16)
+        removed = run_js(_slot_count_js(16, -1, [["Upload a clip", None, ""]]), 4)
+        self.assertEqual(removed[:19], [{**value} if isinstance(value, dict) else value
+                                        for value in _slot_visibility(3, 4)])
+        cleared = removed[19:]
+        self.assertEqual(len(cleared), 48)
+        self.assertEqual(cleared[9:12], [{"__type__": "update", "value": "Upload a clip"},
+                                         {"__type__": "update", "value": None},
+                                         {"__type__": "update", "value": ""}])
+        self.assertTrue(all(value == skip for index, value in enumerate(cleared) if not 9 <= index < 12))
+        # The last slot is never removed or cleared.
+        self.assertTrue(all(value == skip for value in run_js(_slot_count_js(16, -1, [["x"]]), 1)[19:]))
 
 
 if __name__ == "__main__":

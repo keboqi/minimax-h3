@@ -27,6 +27,7 @@ from fastapi.responses import (
 )
 
 from starlette.middleware.gzip import GZipMiddleware
+from .gradio_frontend import install_gradio_frontend_patch
 from .queue_transport import QueueTransportHeadMiddleware, install_queue_transport
 
 COMFY_PROXY_PATH = "/comfyui"
@@ -230,6 +231,7 @@ def build_server(
     app.add_middleware(GZipMiddleware, minimum_size=1000)
     app.add_middleware(ReverseProxySchemeMiddleware)
     install_queue_transport(app)
+    install_gradio_frontend_patch(app)
 
     @app.get("/media-previews/{filename}", include_in_schema=False)
     def media_preview(filename: str) -> FileResponse:

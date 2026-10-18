@@ -1,6 +1,7 @@
 """FLUX 3 image and Drama 3 speech controls and owned job bindings."""
 
 from dataclasses import dataclass
+import json
 from typing import Callable
 
 import gradio as gr
@@ -70,6 +71,14 @@ DRAMA3_SAMPLING_PRESETS = {
     "Balance": (1.0, 0.9, 0),
     "Expressive": (2.0, 1.0, 30),
 }
+
+# Unqueued, unlisted presentation events.
+_QUIET = {"queue": False, "show_progress": "hidden", "api_name": False}
+# On every server event, Gradio's frontend refreshes the loading status of each
+# component any earlier server event used, with a search of the whole layout per
+# component. Labels, flags and visibility derived from values the browser
+# already holds are therefore computed there (fn=None), never in a round trip.
+_SKIP_JS = '{"__type__": "update"}'
 
 
 def drama3_voice_choices(names):
@@ -180,7 +189,7 @@ class Drama3View:
     enhance: gr.Button
     enhance_status: gr.Textbox
     voices: tuple[Drama3VoiceSlot, ...]
-    shown_slots: gr.State
+    shown_slots: gr.Number
     add_speaker: gr.Button
     remove_speaker: gr.Button
     voice_status: gr.Markdown
@@ -213,7 +222,7 @@ class Drama3View:
     script_mode: gr.Radio | None = None
     sounds_panel: gr.Accordion | None = None
     sounds: tuple[Drama3SoundSlot, ...] = ()
-    shown_sound_slots: gr.State | None = None
+    shown_sound_slots: gr.Number | None = None
     add_sound: gr.Button | None = None
     remove_sound: gr.Button | None = None
     generate_sounds: gr.Button | None = None
@@ -293,49 +302,128 @@ def build_flux3_view(root):
                      writer, enhance, enhance_status, output, run, stop, status, upsampler, cfg, layout)
 
 
+@dataclass(frozen=True)
+class _SlotKind:
+    """Wording and limits shared by a slot list's titles and their browser twins."""
+    slot: str
+    upload: str
+    saved: str
+    ready: str
+    panel: str
+    noun: str
+    asset: str
+    total: int
+
+
+_VOICE_KIND = _SlotKind("Speaker", UPLOAD_VOICE, "saved voice", "voice ready",
+                        "Speaker voices (optional)", "speaker", "voice", DRAMA3_VOICE_SLOTS)
+_SOUND_KIND = _SlotKind("Sound", UPLOAD_SOUND, "saved sound", "clip ready",
+                        "Sound effects and music (SGLang-Omni)", "sound", "clip", DRAMA3_SOUND_SLOTS)
+
+
+def _clamp_count(count, total):
+    try:
+        return max(1, min(total, int(count or 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _slot_title(kind, index, name, preset, has_clip):
+    title = f"{kind.slot} {index}"
+    if str(name or "").strip():
+        title += f" \u00b7 {str(name).strip()}"
+    if preset and preset != kind.upload:
+        title += f" \u00b7 {kind.saved}"
+    elif has_clip:
+        title += f" \u00b7 {kind.ready}"
+    return title
+
+
+def _panel_title(kind, shown, presets, has_clips):
+    shown = _clamp_count(shown, kind.total)
+    ready = sum(1 for index in range(shown)
+                if (index < len(presets) and presets[index] and presets[index] != kind.upload)
+                or (index < len(has_clips) and has_clips[index]))
+    return f"{kind.panel} \u00b7 {shown} {kind.noun}{'s' if shown != 1 else ''} \u00b7 {ready} with a {kind.asset}"
+
+
+def _count_js(total):
+    return f"Math.max(1, Math.min({total}, Math.trunc(Number(shown)) || 1))"
+
+
+def _slot_title_js(kind, index):
+    """Browser twin of ``_slot_title``; also derives the slot's has_clip flag from its audio."""
+    return f"""(name, preset, audio) => {{
+  const ready = Boolean(audio);
+  const trimmed = String(name ?? "").trim();
+  let title = {json.dumps(f"{kind.slot} {index}")};
+  if (trimmed) title += " \u00b7 " + trimmed;
+  if (preset && preset !== {json.dumps(kind.upload)}) title += {json.dumps(f" · {kind.saved}")};
+  else if (ready) title += {json.dumps(f" · {kind.ready}")};
+  return [{{__type__: "update", label: title}}, ready];
+}}"""
+
+
+def _panel_title_js(kind):
+    """Browser twin of ``_panel_title``; inputs are the count, each preset, then each has_clip flag."""
+    return f"""(shown, ...values) => {{
+  const count = {_count_js(kind.total)};
+  let ready = 0;
+  for (let index = 0; index < count; index += 1) {{
+    const preset = values[index];
+    if ((preset && preset !== {json.dumps(kind.upload)}) || values[{kind.total} + index]) ready += 1;
+  }}
+  const label = {json.dumps(f"{kind.panel} · ")} + count + " " + {json.dumps(kind.noun)}
+    + (count === 1 ? "" : "s") + " \u00b7 " + ready + {json.dumps(f" with a {kind.asset}")};
+  return {{__type__: "update", label}};
+}}"""
+
+
+def _slot_count_js(total, step, cleared=()):
+    """Browser twin of ``_slot_visibility`` for Add (+1) and Remove (-1).
+
+    Outputs: the count, each slot group, Add, Remove, then one output per slot
+    for each field group in ``cleared``. A removed slot is reset to those values
+    so a hidden slot never sends anything.
+    """
+    return f"""(shown) => {{
+  const skip = {_SKIP_JS};
+  const before = {_count_js(total)};
+  const count = Math.max(1, Math.min({total}, before + ({step})));
+  const outputs = [count];
+  for (let index = 0; index < {total}; index += 1) {{
+    outputs.push((index < count) === (index < before) ? skip : {{__type__: "update", visible: index < count}});
+  }}
+  outputs.push({{__type__: "update", interactive: count < {total}}}, {{__type__: "update", interactive: count > 1}});
+  for (const fields of {json.dumps([list(group) for group in cleared])}) {{
+    for (let index = 0; index < {total}; index += 1) {{
+      for (const value of fields) {{
+        outputs.push(count < before && index === before - 1 ? {{__type__: "update", value}} : skip);
+      }}
+    }}
+  }}
+  return outputs;
+}}"""
+
+
 def drama3_slot_title(speaker, name="", preset=UPLOAD_VOICE, has_clip=False):
     """Panel title: index, character name, and whether a voice is ready."""
-    title = f"Speaker {speaker}"
-    if str(name or "").strip():
-        title += f" · {str(name).strip()}"
-    if preset and preset != UPLOAD_VOICE:
-        title += " · saved voice"
-    elif has_clip:
-        title += " · voice ready"
-    return title
+    return _slot_title(_VOICE_KIND, speaker, name, preset, has_clip)
 
 
 def drama3_voices_title(shown=DRAMA3_VISIBLE_SLOTS, presets=(), has_clips=()):
     """Speaker voices panel title with the shown speaker count and how many have a voice."""
-    shown = max(1, min(DRAMA3_VOICE_SLOTS, int(shown or 1)))
-    ready = sum(1 for speaker in range(shown)
-                if (speaker < len(presets) and presets[speaker] and presets[speaker] != UPLOAD_VOICE)
-                or (speaker < len(has_clips) and has_clips[speaker]))
-    return f"Speaker voices (optional) \u00b7 {shown} speaker{'s' if shown != 1 else ''} \u00b7 {ready} with a voice"
+    return _panel_title(_VOICE_KIND, shown, presets, has_clips)
 
 
 def drama3_sound_slot_title(index, name="", preset=UPLOAD_SOUND, has_clip=False):
     """Sound slot title: index, sound name, and whether a clip is ready."""
-    title = f"Sound {index}"
-    if str(name or "").strip():
-        title += f" · {str(name).strip()}"
-    if preset and preset != UPLOAD_SOUND:
-        title += " · saved sound"
-    elif has_clip:
-        title += " · clip ready"
-    return title
+    return _slot_title(_SOUND_KIND, index, name, preset, has_clip)
 
 
 def drama3_sounds_title(shown=DRAMA3_VISIBLE_SOUND_SLOTS, presets=(), has_clips=()):
     """Sound effects and music panel title with shown count and ready count."""
-    shown = max(1, min(DRAMA3_SOUND_SLOTS, int(shown or 1)))
-    ready = sum(
-        1
-        for idx in range(shown)
-        if (idx < len(presets) and presets[idx] and presets[idx] != UPLOAD_SOUND)
-        or (idx < len(has_clips) and has_clips[idx])
-    )
-    return f"Sound effects and music (SGLang-Omni) \u00b7 {shown} sound{'s' if shown != 1 else ''} \u00b7 {ready} with a clip"
+    return _panel_title(_SOUND_KIND, shown, presets, has_clips)
 
 
 def _voice_slot(speaker, names):
@@ -503,7 +591,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=()):
                     voice_status = gr.Markdown("")
                     voices = tuple(_voice_slot(speaker, list(speaker_names))
                                    for speaker in range(DRAMA3_VOICE_SLOTS))
-                    shown_slots = gr.State(DRAMA3_VISIBLE_SLOTS)
+                    shown_slots = gr.Number(DRAMA3_VISIBLE_SLOTS, precision=0, visible=False)
                     with gr.Row():
                         add_speaker = gr.Button("Add speaker", size="sm")
                         remove_speaker = gr.Button("Remove last speaker", size="sm")
@@ -525,7 +613,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=()):
                         generate_sounds.h3_stop = stop_sounds
                     sound_status = gr.Markdown("")
                     sounds = tuple(_sound_slot(i, list(sound_names)) for i in range(DRAMA3_SOUND_SLOTS))
-                    shown_sound_slots = gr.State(DRAMA3_VISIBLE_SOUND_SLOTS)
+                    shown_sound_slots = gr.Number(DRAMA3_VISIBLE_SOUND_SLOTS, precision=0, visible=False)
                     with gr.Row():
                         add_sound = gr.Button("Add sound", size="sm")
                         remove_sound = gr.Button("Remove last sound", size="sm")
@@ -559,27 +647,21 @@ def build_drama3_view(root, speaker_names=(), sound_names=()):
                             info="In VRAM requires room for the whole model plus working memory.")
                         cache = gr.Slider(0, 256, value=0, step=0.5, label="Expert VRAM cache (GB, 0 automatic)")
                     backend.change(
-                        lambda choice: (gr.update(visible=choice != "ComfyUI"),
-                                        gr.update(visible=choice == "ComfyUI")),
-                        inputs=backend, outputs=[served_settings, comfy_settings],
-                        queue=False, show_progress="hidden", api_name=False,
+                        fn=None,
+                        js="(choice) => [{__type__: 'update', visible: choice !== 'ComfyUI'}, "
+                           "{__type__: 'update', visible: choice === 'ComfyUI'}]",
+                        inputs=backend, outputs=[served_settings, comfy_settings], **_QUIET,
                     )
                 sampling_controls = [temperature, top_p, top_k]
-                sampling_preset.input(
-                    lambda name: DRAMA3_SAMPLING_PRESETS[name],
-                    inputs=sampling_preset, outputs=sampling_controls,
-                    queue=False, show_progress="hidden", api_name=False,
+                presets_js = json.dumps(DRAMA3_SAMPLING_PRESETS)
+                sampling_preset.input(fn=None, js=f"(name) => ({presets_js})[name]",
+                                      inputs=sampling_preset, outputs=sampling_controls, **_QUIET)
+                gr.on(
+                    [control.change for control in sampling_controls], fn=None,
+                    js=f"""(...values) => Object.entries({presets_js}).find(
+                        ([, preset]) => preset.every((value, index) => value === values[index]))?.[0] ?? null""",
+                    inputs=sampling_controls, outputs=sampling_preset, **_QUIET,
                 )
-                def matching_preset(temperature, top_p, top_k):
-                    values = (temperature, top_p, top_k)
-                    return next((name for name, preset in DRAMA3_SAMPLING_PRESETS.items()
-                                 if values == preset), None)
-
-                for control in sampling_controls:
-                    control.change(
-                        matching_preset, inputs=sampling_controls, outputs=sampling_preset,
-                        queue=False, show_progress="hidden", api_name=False,
-                    )
             with gr.Column(scale=2, min_width=320, elem_classes=["h3-preview-panel"]):
                 output = gr.Audio(label="Generated speech", type="filepath", interactive=False)
                 output.h3_metadata_root = gr.Column()
@@ -664,144 +746,115 @@ def drama3_sound_meta_inputs(view):
     ]
 
 
-def refresh_drama3_presets_on_load(demo, view, actions):
-    """Show speakers and sounds saved from other sessions; saves and deletes refresh in place."""
-    presets = [slot.preset for slot in view.voices]
-    demo.load(
-        lambda: [gr.update(choices=drama3_voice_choices(actions.drama3_speaker_names()))] * len(presets),
-        outputs=presets, queue=False, show_progress="hidden", api_name=False,
-    )
-    if view.sounds and getattr(actions, "drama3_sound_names", None):
-        sound_presets = [slot.preset for slot in view.sounds]
-        demo.load(
-            lambda: [gr.update(choices=drama3_sound_choices(actions.drama3_sound_names()))] * len(sound_presets),
-            outputs=sound_presets, queue=False, show_progress="hidden", api_name=False,
-        )
+def _refresh_choices_on_open(panel, presets, choices, names):
+    """Show presets saved from other sessions when the panel opens; saves and deletes refresh in place."""
+    def refresh():
+        current = choices(names())
+        # The page was served with the build-time choices; resend only when the store differs.
+        values = [choice[1] if isinstance(choice, tuple) else choice for choice in current]
+        if values == [choice[1] for choice in presets[0].choices]:
+            return [gr.skip()] * len(presets)
+        return [gr.update(choices=current)] * len(presets)
+
+    panel.expand(refresh, outputs=presets, **_QUIET)
 
 
-def _slot_visibility(count):
-    """Show ``count`` slots; disable Add at the limit and Remove at one slot."""
-    count = max(1, min(DRAMA3_VOICE_SLOTS, int(count)))
-    return (count, *[gr.update(visible=index < count) for index in range(DRAMA3_VOICE_SLOTS)],
-            gr.update(interactive=count < DRAMA3_VOICE_SLOTS), gr.update(interactive=count > 1))
+def _slot_visibility(count, previous=None, total=DRAMA3_VOICE_SLOTS):
+    """Show ``count`` slots; disable Add at the limit and Remove at one slot.
+
+    With the ``previous`` count only slots whose visibility changes are sent:
+    each visibility update of an unrendered slot makes Gradio re-walk its layout.
+    """
+    count = _clamp_count(count, total)
+    if previous is not None:
+        previous = _clamp_count(previous, total)
+        if previous == count:
+            return (gr.skip(),) * (total + 3)
+    groups = [gr.skip() if previous is not None and (index < count) == (index < previous)
+              else gr.update(visible=index < count) for index in range(total)]
+    return (count, *groups, gr.update(interactive=count < total), gr.update(interactive=count > 1))
 
 
-def _sound_slot_visibility(count):
+def _sound_slot_visibility(count, previous=None):
     """Show ``count`` sound slots; disable Add at the limit and Remove at one slot."""
-    count = max(1, min(DRAMA3_SOUND_SLOTS, int(count)))
-    return (
-        count,
-        *[gr.update(visible=index < count) for index in range(DRAMA3_SOUND_SLOTS)],
-        gr.update(interactive=count < DRAMA3_SOUND_SLOTS),
-        gr.update(interactive=count > 1),
-    )
+    return _slot_visibility(count, previous, DRAMA3_SOUND_SLOTS)
 
 
-def bind_drama3(view, actions):
+def _bind_slot_presentation(kind, slots, shown, panel, add, remove, cleared):
+    """Slot titles, has_clip flags, the panel title and Add/Remove, all in the browser.
+
+    ``cleared`` pairs a slot's field getter with the values a removed slot is reset to.
+    """
+    for index, slot in enumerate(slots):
+        gr.on([slot.save_name.change, slot.preset.change, slot.audio.change], fn=None,
+              js=_slot_title_js(kind, index), inputs=[slot.save_name, slot.preset, slot.audio],
+              outputs=[slot.group, slot.has_clip], **_QUIET)
+    presets = [slot.preset for slot in slots]
+    flags = [slot.has_clip for slot in slots]
+    gr.on([shown.change, *[preset.change for preset in presets], *[flag.change for flag in flags]],
+          fn=None, js=_panel_title_js(kind), inputs=[shown, *presets, *flags], outputs=panel, **_QUIET)
+    groups = [slot.group for slot in slots]
+    add.click(fn=None, js=_slot_count_js(kind.total, 1), inputs=shown,
+              outputs=[shown, *groups, add, remove], **_QUIET)
+    fields = [component for fields_of, _values in cleared for slot in slots for component in fields_of(slot)]
+    remove.click(fn=None, js=_slot_count_js(kind.total, -1, [values for _fields_of, values in cleared]),
+                 inputs=shown, outputs=[shown, *groups, add, remove, *fields], **_QUIET)
+
+
+def _bind_script_mode(view, actions):
     bind_gpu_action(
         view.backend.input, actions.switch_drama3_backend,
         inputs=view.backend, outputs=view.status,
         show_progress="minimal", api_name=False,
     )
-    if view.script_mode is not None and actions.switch_drama3_script_mode is not None:
-        view.script_mode.change(
-            actions.switch_drama3_script_mode,
-            inputs=[view.script_mode, view.text, view.backend],
-            outputs=[view.text, view.backend, view.sounds_panel, view.status],
-            queue=False, show_progress="hidden", api_name=False,
-        )
-        view.backend.input(
-            lambda choice, mode, text: (
-                actions.switch_drama3_script_mode(DRAMA3_SCRIPT_BASIC, text, choice)[:3]
-                if choice == "ComfyUI" and mode == DRAMA3_SCRIPT_ADVANCED
-                else (gr.skip(), gr.skip(), gr.skip())
-            ),
-            inputs=[view.backend, view.script_mode, view.text],
-            outputs=[view.text, view.backend, view.sounds_panel],
-            queue=False, show_progress="hidden", api_name=False,
-        )
-        view.backend.input(
-            lambda choice, mode: gr.update(value=DRAMA3_SCRIPT_BASIC)
-            if choice == "ComfyUI" and mode == DRAMA3_SCRIPT_ADVANCED
-            else gr.skip(),
-            inputs=[view.backend, view.script_mode],
-            outputs=view.script_mode,
-            queue=False, show_progress="hidden", api_name=False,
-        )
-
-    presets = [slot.preset for slot in view.voices]
-    groups = [slot.group for slot in view.voices]
-    view.add_speaker.click(lambda count: _slot_visibility(count + 1), inputs=view.shown_slots,
-                           outputs=[view.shown_slots, *groups, view.add_speaker, view.remove_speaker],
-                           queue=False, show_progress="hidden", api_name=False)
-    def remove(count):
-        # Removing a slot clears it, so a hidden slot never sends a voice.
-        count = max(1, min(DRAMA3_VOICE_SLOTS, int(count)))
-        cleared = [gr.update()] * (3 * DRAMA3_VOICE_SLOTS)
-        metadata = [gr.update()] * (3 * DRAMA3_VOICE_SLOTS)
-        if count > 1:
-            cleared[3 * (count - 1):3 * count] = [gr.update(value=UPLOAD_VOICE), gr.update(value=None),
-                                                  gr.update(value="")]
-            metadata[3 * (count - 1):3 * count] = [gr.update(value="")] * 3
-        return (*_slot_visibility(count - 1), *cleared, *metadata)
-
-    view.remove_speaker.click(
-        remove, inputs=view.shown_slots,
-        outputs=[view.shown_slots, *groups, view.add_speaker, view.remove_speaker,
-                 *drama3_voice_inputs(view), *drama3_cast_inputs(view)],
-        queue=False, show_progress="hidden", api_name=False,
+    if view.script_mode is None or actions.switch_drama3_script_mode is None:
+        return
+    view.script_mode.change(
+        actions.switch_drama3_script_mode,
+        inputs=[view.script_mode, view.text, view.backend],
+        outputs=[view.text, view.backend, view.sounds_panel, view.status], **_QUIET,
     )
-    writer_outputs = [view.text, view.enhance_status, *drama3_cast_inputs(view),
-                      view.shown_slots, *groups, view.add_speaker, view.remove_speaker]
+    # Advanced needs SGLang-Omni; choosing ComfyUI falls back to Basic, whose
+    # change event hides the sounds panel.
+    view.backend.input(
+        fn=None,
+        js=f"(choice, mode) => choice === 'ComfyUI' && mode === {json.dumps(DRAMA3_SCRIPT_ADVANCED)} "
+           f"? {json.dumps(DRAMA3_SCRIPT_BASIC)} : {_SKIP_JS}",
+        inputs=[view.backend, view.script_mode], outputs=view.script_mode, **_QUIET,
+    )
+
+
+def _bind_writer(view, actions):
+    """Rewrite, copy and paste; returns the events that may change the script."""
     mode_inputs = [view.script_mode] if view.script_mode is not None else []
     writer_slots = [*drama3_voice_inputs(view), *drama3_cast_inputs(view), view.shown_slots, *mode_inputs]
+    writer_outputs = [view.text, view.enhance_status, *drama3_cast_inputs(view),
+                      view.shown_slots, *[slot.group for slot in view.voices],
+                      view.add_speaker, view.remove_speaker]
     view.copy_prompt.click(actions.copy_drama3_writer_prompt,
                            inputs=[view.text, view.speaker_mode, *writer_slots],
-                           outputs=[view.writer_prompt, view.enhance_status],
-                           queue=False, show_progress="hidden", api_name=False)
-    applied_event = view.apply_reply.click(
+                           outputs=[view.writer_prompt, view.enhance_status], **_QUIET)
+    applied = view.apply_reply.click(
         actions.apply_drama3_writer_reply,
         inputs=[view.pasted_reply, view.text, view.speaker_mode, *writer_slots],
-        outputs=writer_outputs, queue=False, show_progress="hidden", api_name=False,
+        outputs=writer_outputs, **_QUIET,
     )
-    counted = [view.shown_slots, *presets, *[slot.has_clip for slot in view.voices]]
-    for trigger in (view.shown_slots.change, *[slot.preset.change for slot in view.voices],
-                    *[slot.has_clip.change for slot in view.voices]):
-        trigger(lambda shown, *values: gr.update(label=drama3_voices_title(
-                    shown, values[:DRAMA3_VOICE_SLOTS], values[DRAMA3_VOICE_SLOTS:])),
-                inputs=counted, outputs=view.voices_panel,
-                queue=False, show_progress="hidden", api_name=False)
-    enhanced_event = bind_prompt_action(
+    enhanced = bind_prompt_action(
         view.enhance.click, actions.enhance_drama3_text,
-        inputs=[view.text, view.speaker_mode, *_writer_inputs(view.writer), *drama3_voice_inputs(view),
-                *drama3_cast_inputs(view), view.shown_slots, *mode_inputs],
-        outputs=[view.text, view.enhance_status, *drama3_cast_inputs(view),
-                 view.shown_slots, *groups, view.add_speaker, view.remove_speaker],
-        show_progress="minimal", api_name="enhance_drama3_text",
+        inputs=[view.text, view.speaker_mode, *_writer_inputs(view.writer), *writer_slots],
+        outputs=writer_outputs, show_progress="minimal", api_name="enhance_drama3_text",
     )
-    if view.sounds and actions.sync_drama3_script_sounds is not None:
-        sound_groups = [slot.group for slot in view.sounds]
-        sound_sync_inputs = [view.text, view.script_mode, view.shown_sound_slots, *drama3_sound_meta_inputs(view)]
-        sound_sync_outputs = [
-            *drama3_sound_meta_inputs(view),
-            view.shown_sound_slots,
-            *sound_groups,
-            view.add_sound,
-            view.remove_sound,
-        ]
-        enhanced_event.then(
-            actions.sync_drama3_script_sounds,
-            inputs=sound_sync_inputs,
-            outputs=sound_sync_outputs,
-            queue=False, show_progress="hidden", api_name=False,
-        )
-        applied_event.then(
-            actions.sync_drama3_script_sounds,
-            inputs=sound_sync_inputs,
-            outputs=sound_sync_outputs,
-            queue=False, show_progress="hidden", api_name=False,
-        )
+    return enhanced, applied
 
+
+def _bind_voice_slots(view, actions):
+    presets = [slot.preset for slot in view.voices]
+    _bind_slot_presentation(
+        _VOICE_KIND, view.voices, view.shown_slots, view.voices_panel, view.add_speaker, view.remove_speaker,
+        cleared=[(lambda slot: (slot.preset, slot.audio, slot.transcript), (UPLOAD_VOICE, None, "")),
+                 (lambda slot: (slot.save_name, slot.description, slot.preview_text), ("", "", ""))],
+    )
+    _refresh_choices_on_open(view.voices_panel, presets, drama3_voice_choices, actions.drama3_speaker_names)
     voice_settings = [view.voice_engine, view.backend, view.seed, view.temperature, view.top_p, view.top_k,
                       view.max_frames, view.experts, view.expert_cache_gb, view.model]
     generated_all = bind_gpu_action(
@@ -816,10 +869,12 @@ def bind_drama3(view, actions):
     stopped_all = view.stop_voices.click(owned_interrupt(actions.interrupt, "drama3_voice"),
                                          outputs=view.voice_status, queue=False, api_name=False)
     stopped_all.then(fn=None, cancels=[generated_all], queue=False, api_name=False)
-    languages = [slot.language for slot in view.voices]
-    view.voice_engine.change(lambda engine: [gr.update(visible=engine == ENGINE_QWEN)] * len(languages),
-                             inputs=view.voice_engine, outputs=languages,
-                             queue=False, show_progress="hidden", api_name=False)
+    view.voice_engine.change(
+        fn=None,
+        js=f"(engine) => Array.from({{length: {len(view.voices)}}}, "
+           f"() => ({{__type__: 'update', visible: engine === {json.dumps(ENGINE_QWEN)}}}))",
+        inputs=view.voice_engine, outputs=[slot.language for slot in view.voices], **_QUIET,
+    )
     for slot in view.voices:
         generated = bind_gpu_action(
             slot.generate.click, owned_generation(actions.generate_drama3_voice, "drama3_voice"),
@@ -830,15 +885,9 @@ def bind_drama3(view, actions):
         stopped = slot.stop.click(owned_interrupt(actions.interrupt, "drama3_voice"),
                                   outputs=slot.status, queue=False, api_name=False)
         stopped.then(fn=None, cancels=[generated], queue=False, api_name=False)
-        slot.audio.change(lambda audio: bool(audio), inputs=slot.audio, outputs=slot.has_clip,
-                          queue=False, show_progress="hidden", api_name=False)
-        for trigger in (slot.save_name.change, slot.preset.change, slot.has_clip.change):
-            trigger(lambda name, preset, has_clip, speaker=slot.speaker: gr.update(
-                        label=drama3_slot_title(speaker, name, preset, has_clip)),
-                    inputs=[slot.save_name, slot.preset, slot.has_clip], outputs=slot.group,
-                    queue=False, show_progress="hidden", api_name=False)
-        slot.audio.upload(lambda: gr.update(value="", interactive=True), outputs=slot.transcript,
-                          queue=False, show_progress="hidden", api_name=False)
+        # A new upload needs its own transcript.
+        slot.audio.upload(fn=None, js="() => ({__type__: 'update', value: '', interactive: true})",
+                          outputs=slot.transcript, **_QUIET)
         bind_gpu_action(
             slot.transcribe.click, actions.transcribe_drama3_voice, inputs=[slot.audio, view.asr_model],
             outputs=[slot.transcript, slot.status], show_progress="minimal",
@@ -847,8 +896,7 @@ def bind_drama3(view, actions):
         slot.preset.change(
             actions.select_drama3_speaker, inputs=[slot.preset],
             outputs=[slot.upload, slot.transcript, slot.save_row, slot.delete, slot.status,
-                     slot.save_name, slot.description, slot.preview_text, slot.audio],
-            queue=False, show_progress="hidden", api_name=False,
+                     slot.save_name, slot.description, slot.preview_text, slot.audio], **_QUIET,
         )
         slot.save.click(
             lambda name, audio, transcript, description, speaker=slot.speaker: actions.save_drama3_speaker(
@@ -861,147 +909,74 @@ def bind_drama3(view, actions):
             inputs=[slot.preset], outputs=[slot.status, *presets], queue=False, api_name=False,
         )
 
+
+def _bind_sound_slots(view, actions, script_events):
+    presets = [slot.preset for slot in view.sounds]
+    _bind_slot_presentation(
+        _SOUND_KIND, view.sounds, view.shown_sound_slots, view.sounds_panel, view.add_sound, view.remove_sound,
+        cleared=[(lambda slot: (slot.preset, slot.audio, slot.save_name, slot.description, slot.duration),
+                  (UPLOAD_SOUND, None, "", "", 5))],
+    )
+    _refresh_choices_on_open(view.sounds_panel, presets, drama3_sound_choices, actions.drama3_sound_names)
+    if actions.sync_drama3_script_sounds is not None:
+        for event in script_events:
+            event.then(
+                actions.sync_drama3_script_sounds,
+                inputs=[view.text, view.script_mode, view.shown_sound_slots, *drama3_sound_meta_inputs(view)],
+                outputs=[*drama3_sound_meta_inputs(view), view.shown_sound_slots,
+                         *[slot.group for slot in view.sounds], view.add_sound, view.remove_sound],
+                **_QUIET,
+            )
+    if actions.generate_drama3_sounds is not None:
+        generated_all = bind_gpu_action(
+            view.generate_sounds.click, owned_generation(actions.generate_drama3_sounds, "drama3_sound"),
+            inputs=[view.shown_sound_slots, view.skip_existing_sounds,
+                    *[component for slot in view.sounds
+                      for component in (slot.preset, slot.has_clip, slot.save_name, slot.description,
+                                        slot.duration)]],
+            outputs=[*[component for slot in view.sounds for component in (slot.audio, slot.status)],
+                     view.sound_status],
+            show_progress="minimal", api_name=False,
+        )
+        stopped_all = view.stop_sounds.click(owned_interrupt(actions.interrupt, "drama3_sound"),
+                                             outputs=view.sound_status, queue=False, api_name=False)
+        stopped_all.then(fn=None, cancels=[generated_all], queue=False, api_name=False)
+    for slot in view.sounds:
+        if actions.generate_drama3_sound is not None:
+            generated = bind_gpu_action(
+                slot.generate.click, owned_generation(actions.generate_drama3_sound, "drama3_sound"),
+                inputs=[slot.description, slot.duration], outputs=[slot.audio, slot.status],
+                show_progress="minimal", api_name="generate_drama3_sound" if slot.index == 0 else False,
+            )
+            stopped = slot.stop.click(owned_interrupt(actions.interrupt, "drama3_sound"),
+                                      outputs=slot.status, queue=False, api_name=False)
+            stopped.then(fn=None, cancels=[generated], queue=False, api_name=False)
+        if actions.select_drama3_sound is not None:
+            slot.preset.change(
+                actions.select_drama3_sound, inputs=[slot.preset],
+                outputs=[slot.upload, slot.save_row, slot.delete, slot.status, slot.save_name,
+                         slot.description, slot.duration, slot.audio], **_QUIET,
+            )
+        if actions.save_drama3_sound is not None:
+            slot.save.click(
+                lambda name, audio, description, duration, index=slot.index: actions.save_drama3_sound(
+                    index, name, audio, description, duration, len(presets)),
+                inputs=[slot.save_name, slot.audio, slot.description, slot.duration],
+                outputs=[slot.status, *presets], queue=False, api_name=False,
+            )
+        if actions.delete_drama3_sound is not None:
+            slot.delete.click(
+                lambda name, index=slot.index: actions.delete_drama3_sound(index, name, len(presets)),
+                inputs=[slot.preset], outputs=[slot.status, *presets], queue=False, api_name=False,
+            )
+
+
+def bind_drama3(view, actions):
+    _bind_script_mode(view, actions)
+    script_events = _bind_writer(view, actions)
+    _bind_voice_slots(view, actions)
     if view.sounds:
-        sound_presets = [slot.preset for slot in view.sounds]
-        sound_groups = [slot.group for slot in view.sounds]
-        view.add_sound.click(
-            lambda count: _sound_slot_visibility(count + 1),
-            inputs=view.shown_sound_slots,
-            outputs=[view.shown_sound_slots, *sound_groups, view.add_sound, view.remove_sound],
-            queue=False, show_progress="hidden", api_name=False,
-        )
-
-        def remove_sound(count):
-            count = max(1, min(DRAMA3_SOUND_SLOTS, int(count)))
-            cleared = [gr.update()] * (5 * DRAMA3_SOUND_SLOTS)
-            if count > 1:
-                cleared[5 * (count - 1) : 5 * count] = [
-                    gr.update(value=UPLOAD_SOUND),
-                    gr.update(value=None),
-                    gr.update(value=""),
-                    gr.update(value=""),
-                    gr.update(value=5),
-                ]
-            return (*_sound_slot_visibility(count - 1), *cleared)
-
-        view.remove_sound.click(
-            remove_sound,
-            inputs=view.shown_sound_slots,
-            outputs=[
-                view.shown_sound_slots,
-                *sound_groups,
-                view.add_sound,
-                view.remove_sound,
-                *drama3_sound_inputs(view),
-            ],
-            queue=False, show_progress="hidden", api_name=False,
-        )
-        counted_sounds = [view.shown_sound_slots, *sound_presets, *[slot.has_clip for slot in view.sounds]]
-        for trigger in (
-            view.shown_sound_slots.change,
-            *[slot.preset.change for slot in view.sounds],
-            *[slot.has_clip.change for slot in view.sounds],
-        ):
-            trigger(
-                lambda shown, *values: gr.update(
-                    label=drama3_sounds_title(
-                        shown,
-                        values[:DRAMA3_SOUND_SLOTS],
-                        values[DRAMA3_SOUND_SLOTS:],
-                    )
-                ),
-                inputs=counted_sounds,
-                outputs=view.sounds_panel,
-                queue=False, show_progress="hidden", api_name=False,
-            )
-        if actions.generate_drama3_sounds is not None:
-            generated_all_sounds = bind_gpu_action(
-                view.generate_sounds.click,
-                owned_generation(actions.generate_drama3_sounds, "drama3_sound"),
-                inputs=[
-                    view.shown_sound_slots,
-                    view.skip_existing_sounds,
-                    *[
-                        component
-                        for slot in view.sounds
-                        for component in (slot.preset, slot.has_clip, slot.save_name, slot.description, slot.duration)
-                    ],
-                ],
-                outputs=[
-                    *[component for slot in view.sounds for component in (slot.audio, slot.status)],
-                    view.sound_status,
-                ],
-                show_progress="minimal", api_name=False,
-            )
-            stopped_all_sounds = view.stop_sounds.click(
-                owned_interrupt(actions.interrupt, "drama3_sound"),
-                outputs=view.sound_status, queue=False, api_name=False,
-            )
-            stopped_all_sounds.then(fn=None, cancels=[generated_all_sounds], queue=False, api_name=False)
-
-        for slot in view.sounds:
-            if actions.generate_drama3_sound is not None:
-                gen_sound = bind_gpu_action(
-                    slot.generate.click,
-                    owned_generation(actions.generate_drama3_sound, "drama3_sound"),
-                    inputs=[slot.description, slot.duration],
-                    outputs=[slot.audio, slot.status],
-                    show_progress="minimal",
-                    api_name="generate_drama3_sound" if slot.index == 0 else False,
-                )
-                stop_sound = slot.stop.click(
-                    owned_interrupt(actions.interrupt, "drama3_sound"),
-                    outputs=slot.status, queue=False, api_name=False,
-                )
-                stop_sound.then(fn=None, cancels=[gen_sound], queue=False, api_name=False)
-            slot.audio.change(
-                lambda audio: bool(audio),
-                inputs=slot.audio,
-                outputs=slot.has_clip,
-                queue=False, show_progress="hidden", api_name=False,
-            )
-            for trigger in (slot.save_name.change, slot.preset.change, slot.has_clip.change):
-                trigger(
-                    lambda name, preset, has_clip, idx=slot.index: gr.update(
-                        label=drama3_sound_slot_title(idx, name, preset, has_clip)
-                    ),
-                    inputs=[slot.save_name, slot.preset, slot.has_clip],
-                    outputs=slot.group,
-                    queue=False, show_progress="hidden", api_name=False,
-                )
-            if actions.select_drama3_sound is not None:
-                slot.preset.change(
-                    actions.select_drama3_sound,
-                    inputs=[slot.preset],
-                    outputs=[
-                        slot.upload,
-                        slot.save_row,
-                        slot.delete,
-                        slot.status,
-                        slot.save_name,
-                        slot.description,
-                        slot.duration,
-                        slot.audio,
-                    ],
-                    queue=False, show_progress="hidden", api_name=False,
-                )
-            if actions.save_drama3_sound is not None:
-                slot.save.click(
-                    lambda name, audio, description, duration, idx=slot.index: actions.save_drama3_sound(
-                        idx, name, audio, description, duration, len(sound_presets)
-                    ),
-                    inputs=[slot.save_name, slot.audio, slot.description, slot.duration],
-                    outputs=[slot.status, *sound_presets],
-                    queue=False, api_name=False,
-                )
-            if actions.delete_drama3_sound is not None:
-                slot.delete.click(
-                    lambda name, idx=slot.index: actions.delete_drama3_sound(idx, name, len(sound_presets)),
-                    inputs=[slot.preset],
-                    outputs=[slot.status, *sound_presets],
-                    queue=False, api_name=False,
-                )
-
+        _bind_sound_slots(view, actions, script_events)
     generation_inputs = [
         view.text, *drama3_voice_inputs(view), view.seed, view.temperature, view.top_p, view.top_k,
         view.max_frames, view.split_long_text, view.experts, view.expert_cache_gb,
