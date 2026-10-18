@@ -48,6 +48,14 @@ class Drama3GraphTests(unittest.TestCase):
 
     def test_text_validation_matches_the_node_pack(self):
         self.assertEqual(validate_drama3_text(" <|speaker:15|> [sighs] fine "), "<|speaker:15|> [sighs] fine")
+        # Fish Audio documents seven scoped tags; the writer prompt offers all of them and none is rejected.
+        prompt = (ROOT / "prompt_drama3.txt").read_text(encoding="utf-8")
+        for tag in ("whisper", "emphasis", "soft", "fast", "slow", "stress", "forceful"):
+            with self.subTest(tag=tag):
+                line = f"<|speaker:0|> Well, <{tag}>this matters</{tag}>."
+                self.assertEqual(validate_drama3_text(line), line)
+                self.assertIn(f"<{tag}>...</{tag}>", prompt)
+        self.assertIn("Only these seven exist", prompt)
         for bad in ("", "<|speaker:16|> x", "<|speaker:01|> x", "<|audio_separator|> x", "<|speaker:0 x"):
             with self.subTest(bad=bad), self.assertRaises(H3Error):
                 validate_drama3_text(bad)
