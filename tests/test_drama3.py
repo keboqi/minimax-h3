@@ -349,6 +349,69 @@ class SoundPresetTests(unittest.TestCase):
         with self.assertRaises(H3Error):
             self.drama3_sounds.load_sound("Heavy Thunder", self.runtime)
 
+    def test_failed_replacement_keeps_the_previous_preset(self):
+        self.drama3_sounds.save_sound("Rain", str(self.clip), "Light rain", 5, self.runtime)
+        real_rename = Path.rename
+
+        def rename(path, target):
+            if path.name.startswith(".saving-"):
+                raise PermissionError("clip is open")
+            return real_rename(path, target)
+
+        with patch.object(Path, "rename", rename), self.assertRaises(PermissionError):
+            self.drama3_sounds.save_sound("Rain", str(self.clip), "Heavy rain", 8, self.runtime)
+        kept = self.drama3_sounds.load_sound("Rain", self.runtime)
+        self.assertEqual((kept.description, kept.duration), ("Light rain", 5))
+        self.assertEqual(self.drama3_sounds.sound_names(self.runtime), ["Rain"])
+
+
+class Drama3CastSoundTests(unittest.TestCase):
+    def parse(self, sounds, script='<sound loop="true" name="rain">Rain</sound>\n<|speaker:0|> Hello there.'):
+        import json
+        from h3_app.drama3_cast import parse_script_cast_and_sounds
+
+        return parse_script_cast_and_sounds(json.dumps({
+            "script": script,
+            "speakers": [{"speaker_id": 0, "name": "Ann", "description": "Warm alto.",
+                          "preview_text": "Hello there."}],
+            "sounds": sounds,
+        }))
+
+    def test_unparsable_numbers_fall_back_instead_of_crashing(self):
+        _script, _cast, sounds = self.parse([
+            {"name": "rain", "duration": "10s"},
+            {"name": "thunder", "description": "Thunderclap", "duration": None, "volume": "loud"},
+            {"name": "music", "description": "Cello drone", "loop": True, "volume": 9, "duration": 900},
+        ])
+        by_name = {item["name"]: item for item in sounds}
+        self.assertEqual(by_name["rain"]["duration"], 10)
+        self.assertEqual((by_name["thunder"]["duration"], by_name["thunder"]["volume"]), (5, 1.0))
+        self.assertEqual((by_name["music"]["duration"], by_name["music"]["volume"]), (47, 2.0))
+
+    def test_writer_briefs_are_written_into_the_script_tags(self):
+        from h3_app.drama3_serving.tree import extract_script_sounds
+
+        script, _cast, _sounds = self.parse([
+            {"name": "rain", "description": "Steady rain on a <tin> roof", "duration": 20},
+        ])
+        self.assertIn('<sound name="rain" loop="true" duration="20">Steady rain on a tin roof</sound>', script)
+        (rain,) = extract_script_sounds(script)
+        self.assertEqual((rain["description"], rain["duration"], rain["loop"]),
+                         ("Steady rain on a tin roof", 20, True))
+
+    def test_script_is_unchanged_without_matching_briefs(self):
+        script, _cast, _sounds = self.parse([{"name": "other", "description": "Wind"}])
+        self.assertIn('<sound loop="true" name="rain">Rain</sound>', script)
+
+    def test_unnamed_sound_slot_matches_an_unnamed_tag(self):
+        from h3_app.drama3_serving.tree import parse_drama3_tree, iter_sound_nodes
+        from h3_ui import application
+        from h3_ui.optional_engine_views import UPLOAD_SOUND
+
+        (node,) = iter_sound_nodes(parse_drama3_tree("<sound>Distant church bells</sound>"))
+        (sound,) = application._drama3_sounds((UPLOAD_SOUND, None, "", "Distant church bells", 90))
+        self.assertEqual(sound, (node.name, "", "Distant church bells", 47))
+
 
 class Drama3SoundAndEffectValidationTests(unittest.TestCase):
     def setUp(self):

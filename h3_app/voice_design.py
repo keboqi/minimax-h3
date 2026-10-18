@@ -41,12 +41,15 @@ def worker_env() -> dict[str, str]:
     return env
 
 
-def run_process(command: list[str], log: Path, *, timeout: float) -> None:
-    """Drain output to disk; cancellation/timeout always reaps the GPU process."""
+def run_process(command: list[str], log: Path, *, timeout: float, env: dict[str, str] | None = None) -> None:
+    """Drain output to disk; cancellation/timeout always reaps the GPU process.
+
+    ``env`` adds variables (such as a Hugging Face token) on top of :func:`worker_env`.
+    """
     check_cancelled()
     with log.open("ab") as stream:
         kwargs = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
-        process = subprocess.Popen(command, env=worker_env(), stdin=subprocess.DEVNULL,
+        process = subprocess.Popen(command, env={**worker_env(), **(env or {})}, stdin=subprocess.DEVNULL,
                                    stdout=stream, stderr=subprocess.STDOUT, **kwargs)
         deadline = time.monotonic() + timeout
         try:

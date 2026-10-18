@@ -147,6 +147,8 @@ def generate_sound_references(
                 [str(python), str(worker), str(request_file)],
                 log,
                 timeout=runtime.generation_timeout,
+                # The model and its T5Gemma encoder are gated; the worker downloads them on first use.
+                env={"HF_TOKEN": hf_token} if hf_token else None,
             )
             for idx, item in zip(worker_indices, worker_items):
                 out_path = Path(item["output"])

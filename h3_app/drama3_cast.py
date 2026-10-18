@@ -93,37 +93,73 @@ def parse_script_cast_and_sounds(response: str) -> tuple[str, list[dict], list[d
 
     sounds = extract_script_sounds(script)
     by_name = {item["name"].casefold(): item for item in sounds}
+    briefs: dict[str, dict] = {}
     raw_sounds = data.get("sounds")
     if isinstance(raw_sounds, list):
         for entry in raw_sounds:
             if not isinstance(entry, dict):
                 continue
             raw_name = str(entry.get("name") or "").strip()
-            raw_desc = str(entry.get("description") or "").strip()
+            # Angle brackets would end the rewritten <sound> tag early.
+            raw_desc = " ".join(re.sub(r"[<>]", " ", str(entry.get("description") or "")).split())
             if not raw_name and not raw_desc:
                 continue
             try:
-                clean_name = normalize_sound_name(raw_name or re.sub(r"\s+", " ", raw_desc)[:32])
+                clean_name = normalize_sound_name(raw_name or raw_desc[:32])
             except H3Error:
                 continue
-            duration = max(1, min(int(entry.get("duration") or (10 if entry.get("loop") else 5)), 47))
+            loop = entry.get("loop") is True or str(entry.get("loop", "")).lower() in ("true", "1", "yes")
+            duration = _clamped_number(entry.get("duration"), 10 if loop else 5, 1, 47, integer=True)
             key = clean_name.casefold()
             if key in by_name:
                 if raw_desc:
                     by_name[key]["description"] = raw_desc
-                if "duration" in entry:
+                    briefs.setdefault(key, {})["description"] = raw_desc
+                if _clamped_number(entry.get("duration"), None, 1, 47) is not None:
                     by_name[key]["duration"] = duration
+                    briefs.setdefault(key, {})["duration"] = duration
             elif raw_desc:
                 item = {
                     "name": clean_name,
                     "description": raw_desc,
-                    "loop": bool(entry.get("loop", False)),
-                    "volume": float(entry.get("volume", 0.2 if entry.get("loop") else 1.0)),
+                    "loop": loop,
+                    "volume": _clamped_number(entry.get("volume"), 0.2 if loop else 1.0, 0.0, 2.0),
                     "duration": duration,
                 }
                 by_name[key] = item
                 sounds.append(item)
+    if briefs:
+        # The script is what the sound slots and the renderer read, so carry the briefs into its tags.
+        script = SOUND_BLOCK_RE.sub(lambda match: _apply_sound_brief(match.group(1), briefs), script)
     return script, sorted(cast, key=lambda entry: entry["speaker_id"]), sounds
+
+
+def _clamped_number(value, default, low, high, *, integer=False):
+    """A writer-supplied number within [low, high]; unparsable or missing values use ``default``."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = float("nan")
+    if number != number:  # NaN
+        if default is None:
+            return None
+        number = float(default)
+    number = max(low, min(number, high))
+    return int(round(number)) if integer else number
+
+
+def _apply_sound_brief(tag: str, briefs: dict[str, dict]) -> str:
+    node = _parse_sound_tag(tag)
+    brief = briefs.get(node.name.casefold()) if node is not None else None
+    if not brief:
+        return tag
+    attrs = [f'name="{node.name.replace(chr(34), chr(39))}"']
+    if node.loop:
+        attrs.append('loop="true"')
+    if node.volume != 1.0:
+        attrs.append(f'volume="{node.volume:g}"')
+    attrs.append(f'duration="{brief.get("duration", node.duration)}"')
+    return f"<sound {' '.join(attrs)}>{brief.get('description') or node.description}</sound>"
 
 
 def parse_script_cast(response: str) -> tuple[str, list[dict]]:

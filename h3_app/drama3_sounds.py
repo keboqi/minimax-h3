@@ -80,7 +80,8 @@ def list_sounds(runtime: RuntimeConfig) -> list[SoundPreset]:
     root = sounds_root(runtime)
     if not root.is_dir():
         return []
-    presets = (_read(folder) for folder in root.iterdir() if folder.is_dir())
+    # Dot folders are in-progress saves or replaced presets awaiting removal.
+    presets = (_read(folder) for folder in root.iterdir() if folder.is_dir() and not folder.name.startswith("."))
     return sorted((preset for preset in presets if preset), key=lambda preset: preset.name.casefold())
 
 
@@ -149,9 +150,17 @@ def save_sound(
                 ),
                 encoding="utf-8",
             )
+            # Move the old preset aside instead of deleting it, so a failed rename can restore it.
+            backup = root / f".replacing-{folder.name}-{time.time_ns()}"
             if folder.exists():
-                shutil.rmtree(folder)
-            staging.rename(folder)
+                folder.rename(backup)
+            try:
+                staging.rename(folder)
+            except OSError:
+                if backup.exists():
+                    backup.rename(folder)
+                raise
+            shutil.rmtree(backup, ignore_errors=True)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
     return load_sound(name, resolved_runtime)

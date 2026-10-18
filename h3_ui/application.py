@@ -2713,6 +2713,8 @@ def _drama3_voices(slots):
 def _drama3_sounds(slots):
     """Resolve (preset, audio, save_name, description, duration) sound slot 5-tuples."""
     from h3_app import drama3_sounds
+    from h3_app.drama3_serving.tree import _default_sound_name
+    from h3_app.stable_audio import MAX_DURATION_SECONDS as MAX_SOUND_SECONDS
     from h3_ui.optional_engine_views import UPLOAD_SOUND
 
     sounds = []
@@ -2722,10 +2724,12 @@ def _drama3_sounds(slots):
             saved = drama3_sounds.load_sound(preset, _runtime_config())
             sounds.append((saved.name, str(saved.audio), saved.description, int(saved.duration)))
         elif audio or str(save_name or "").strip() or str(description or "").strip():
-            name = str(save_name or "").strip() or f"sound_{index}"
-            desc = str(description or "").strip() or name
+            desc = str(description or "").strip()
+            # An unnamed slot takes the name an unnamed <sound> tag with this description gets.
+            name = str(save_name or "").strip() or (_default_sound_name(desc) if desc else f"sound_{index}")
+            desc = desc or name
             try:
-                dur = max(1, min(60, int(round(float(duration or 5)))))
+                dur = max(1, min(MAX_SOUND_SECONDS, int(round(float(duration or 5)))))
             except (TypeError, ValueError):
                 dur = 5
             sounds.append((name, str(audio or ""), desc, dur))

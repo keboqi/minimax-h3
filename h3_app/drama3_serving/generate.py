@@ -163,6 +163,7 @@ def _resolve_sounds_for_tree(
     request,
     runtime,
     free_gpu: Callable[[], None],
+    hf_token=None,
 ) -> Iterator[GenerationUpdate | dict[str, Path]]:
     """Resolve or generate audio files for all `<sound>` nodes in the script tree."""
     clip_by_key: dict[str, Path] = {}
@@ -216,6 +217,7 @@ def _resolve_sounds_for_tree(
                     runtime,
                     free_gpu=free_gpu,
                     use_cache=True,
+                    hf_token=hf_token,
                 )
             ),
         )
@@ -402,7 +404,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
 
     sound_clips: dict[str, Path] = {}
     if sound_nodes:
-        for item in _resolve_sounds_for_tree(sound_nodes, request, runtime, free_gpu):
+        for item in _resolve_sounds_for_tree(sound_nodes, request, runtime, free_gpu, hf_token):
             if isinstance(item, GenerationUpdate):
                 yield item
             else:
