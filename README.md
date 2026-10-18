@@ -964,16 +964,25 @@ preview does not change the words paired with an existing clip. Uploading a new
 clip clears the previous transcript. **Save speaker** stores either kind of clip
 with its exact transcript, name, and description; older presets still load.
 
-VoiceDesign requires a CUDA GPU. Its first use prepares a separate Python 3.12
-environment with `qwen-tts==0.1.1` and its pinned Transformers dependencies;
-ComfyUI's packages are unchanged. Set `H3_VOICE_DESIGN_VENV` to override the default
-`h3/voice-design-venv` under the app directory. Modal bakes that environment into
-the image, so existing deployments need rebuilding. Model snapshots, including
-the speech tokenizer and processor, cache under `ComfyUI/models/qwen3_tts` (on
-Modal's models volume). Each generation releases ComfyUI/SGLang GPU residency,
-then runs a worker that exits to release its own GPU memory. A slot's **Interrupt
-voice generation** button cancels that work. Clips and diagnostic logs are written
-under `ComfyUI/output/drama3_voices`.
+VoiceDesign and Stable Audio 3 Medium sound generation require a CUDA GPU. They
+share one separate Python 3.12 environment with `qwen-tts==0.1.1` and its pinned
+Transformers stack, a pinned `stable-audio-tools`, `hf_xet`, and a prebuilt
+FlashAttention 2.8.3 wheel; ComfyUI's packages are unchanged. Local installs
+prepare it on first use. Set `H3_AUDIO_TOOLS_VENV` to override the default
+`h3/audio-tools-venv` under the app directory. Modal bakes that environment into
+the image, so existing deployments need rebuilding.
+
+Weights download once over hf_xet: VoiceDesign snapshots cache under
+`ComfyUI/models/qwen3_tts`, and Stable Audio 3 Medium (gated; set a Hugging Face
+token) with its bundled T5Gemma encoder lands in `ComfyUI/models/stable_audio3/medium`
+(both on Modal's models volume). One worker serves both models with
+`HF_HUB_OFFLINE=1`; each model loads on its first request and stays in VRAM
+beside Drama 3. ComfyUI and SGLang are released only when the GPU lacks room for a
+model's first load. Other engines' jobs, **Unload**, the ComfyUI Drama 3 route, and
+an SGLang start or wake without enough free VRAM stop the worker. A slot's
+**Interrupt voice generation** button cancels the work and stops the worker. Clips
+are written under `ComfyUI/output/drama3_voices` and `ComfyUI/output/drama3_sounds`;
+worker and setup logs under `ComfyUI/output/audio_tools`.
 
 Drama 3 offers ComfyUI for one-take generation and SGLang-Omni for parallel,
 speaker-based chunks on Linux. SGLang uses an isolated environment, stays loaded

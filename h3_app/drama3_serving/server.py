@@ -143,6 +143,13 @@ def gpu_memory():
         return None
 
 
+def reclaim_audio_tools():
+    """Stop the resident VoiceDesign/Stable Audio worker; fresh GPU memory if it was running."""
+    from h3_app import audio_tools
+
+    return gpu_memory() if audio_tools.stop() else None
+
+
 class SglangOmniServer:
     label = "SGLang-Omni"
     health_path = "/health"
@@ -205,6 +212,9 @@ class SglangOmniServer:
             return
         free, total, holders = memory
         needed = (self.settings.engine_memory + self.settings.codec_memory) * total
+        if free < needed:
+            memory = reclaim_audio_tools() or memory
+            free, total, holders = memory
         message = f"GPU memory before {self.label}: {free / 1024:.1f} of {total / 1024:.1f} GiB free"
         progress(message)
         self.log_line(f"{message}; holders: {holders}")
@@ -280,6 +290,8 @@ class SglangOmniServer:
                 # Leave it asleep on insufficient VRAM so the user can unload
                 # other models and retry without losing the checkpoint.
                 memory = gpu_memory()
+                if memory is not None and memory[0] * 2**20 < self._checkpoint.required_vram:
+                    memory = reclaim_audio_tools() or memory
                 if memory is not None and memory[0] * 2**20 < self._checkpoint.required_vram:
                     raise H3Error("Not enough free GPU memory to wake SGLang; unload other models and retry.")
                 started = time.monotonic()
@@ -458,10 +470,13 @@ def shared_server(settings: ServerSettings) -> SglangOmniServer:
 
 
 def release_for_job(family: str) -> None:
-    """Other engines reclaim the GPU; ComfyUI TTS and voice design release the server themselves."""
+    """Other engines reclaim the GPU; ComfyUI TTS releases the server itself.
+
+    Voice and sound design share the GPU with a loaded server.
+    """
     if family == "unload":
         stop_all()
-    elif family not in {"drama3", "drama3_voice"}:
+    elif family not in {"drama3", "drama3_voice", "drama3_sound"}:
         release_all()
 
 

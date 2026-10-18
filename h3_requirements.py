@@ -282,55 +282,37 @@ def drama3_sglang_install_commands(venv: str | Path, uv: str | list[str] = "uv")
     ]
 
 
-VOICE_DESIGN_READY_MARKER = "h3-voice-design-ready.txt"
-VOICE_DESIGN_PYTHON = "3.12"
-VOICE_DESIGN_REQUIREMENTS = ("qwen-tts==0.1.1", f"torch=={TORCH_VERSION}",
-                             f"torchaudio=={TORCHAUDIO_VERSION}", f"numpy=={NUMPY_VERSION}")
-VOICE_DESIGN_SMOKE = (
-    "import torch, soundfile; from qwen_tts import Qwen3TTSModel; "
-    "assert torch.version.cuda, 'VoiceDesign installed CPU-only Torch'; "
-    "assert callable(Qwen3TTSModel.generate_voice_design)"
-)
-
-
-def voice_design_fingerprint() -> str:
-    """Match first-use installs and the prebuilt Modal VoiceDesign environment."""
-    import hashlib
-
-    pins = "|".join((VOICE_DESIGN_PYTHON, *VOICE_DESIGN_REQUIREMENTS, TORCH_INDEX, VOICE_DESIGN_SMOKE))
-    return hashlib.sha256(pins.encode("utf-8")).hexdigest()
-
-
-def voice_design_install_commands(venv: str | Path, uv: str | list[str] = "uv") -> list[list[str]]:
-    """Keep Qwen's Transformers 4.57.3 dependency outside ComfyUI's environment."""
-    base = venv if isinstance(venv, PurePath) else Path(venv)
-    python = str(base / ("Scripts/python.exe" if isinstance(base, PureWindowsPath) else "bin/python"))
-    uv = [uv] if isinstance(uv, str) else list(uv)
-    return [
-        [*uv, "venv", "--python", VOICE_DESIGN_PYTHON, "--seed", str(base)],
-        # Use the index URL: older uv releases do not recognize --torch-backend=cu130.
-        [*uv, "pip", "install", "--python", python, "--extra-index-url", TORCH_INDEX,
-         "--index-strategy", "unsafe-best-match", *VOICE_DESIGN_REQUIREMENTS],
-        [python, "-c", VOICE_DESIGN_SMOKE],
-    ]
-
-
-STABLE_AUDIO_READY_MARKER = "h3-stable-audio-ready.txt"
-STABLE_AUDIO_PYTHON = "3.12"
+AUDIO_TOOLS_READY_MARKER = "h3-audio-tools-ready.txt"
+AUDIO_TOOLS_PYTHON = "3.12"
 STABLE_AUDIO_TOOLS_REPO = "https://github.com/Stability-AI/stable-audio-tools.git"
 # Pinned: an unpinned main moved its imports without changing the fingerprint.
 STABLE_AUDIO_TOOLS_REF = "3241adba4fc2a85cf5b29d9eb68d42f40a28e820"
-STABLE_AUDIO_REQUIREMENTS = (
+# Community FlashAttention 2.8.3 builds for this exact Torch/CUDA/Python ABI;
+# Dao-AILab ships none for cu130 + Torch 2.11. Both models fall back to SDPA without it.
+_FLASH_ATTN_RELEASES = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download"
+FLASH_ATTN_WHEELS = {
+    "linux": (f"{_FLASH_ATTN_RELEASES}/v0.9.4/flash_attn-2.8.3%2Bcu130torch2.11-cp312-cp312-linux_x86_64.whl",
+              "173b0e1a5d6a0becb4ce11b755605c4b20289a6d17816a00cfd7a69078c3e612"),
+    "windows": (f"{_FLASH_ATTN_RELEASES}/v0.9.6/flash_attn-2.8.3%2Bcu130torch2.11-cp312-cp312-win_amd64.whl",
+                "c779503a38ec91f8fed4cfd8b3446c1d1724df03fad13dad3997dc5fbed5f5fd"),
+}
+# Qwen VoiceDesign and Stable Audio 3 Medium share one interpreter and one resident
+# worker. qwen-tts pins Transformers 4.57.3 (Hub < 1), which also provides
+# stable-audio-tools' T5Gemma encoder; keep both outside ComfyUI's environment.
+AUDIO_TOOLS_REQUIREMENTS = (
+    "qwen-tts==0.1.1",
     f"torch=={TORCH_VERSION}",
     f"torchaudio=={TORCHAUDIO_VERSION}",
     f"torchvision=={TORCHVISION_VERSION}",
     f"numpy=={NUMPY_VERSION}",
     f"scipy=={SCIPY_VERSION}",
+    "huggingface-hub>=0.34,<1",
+    "hf-xet>=1.1",
+    # stable-audio-tools' runtime imports (it installs with --no-deps).
     "alias-free-torch",
     "dill",
     "einops",
     "einops-exts",
-    HUGGINGFACE_HUB_REQUIREMENT,
     "importlib-resources",
     "nnAudio",
     "PyWavelets",
@@ -343,69 +325,55 @@ STABLE_AUDIO_REQUIREMENTS = (
     "soxr",
     "torchsde",
     "tqdm",
-    "transformers",
     "v-diffusion-pytorch",
     "vector-quantize-pytorch",
 )
-STABLE_AUDIO_SMOKE = (
-    "import inspect, torch, soundfile; "
+AUDIO_TOOLS_SMOKE = (
+    "import importlib.metadata as m, inspect, torch, soundfile, hf_xet; "
+    "from qwen_tts import Qwen3TTSModel; "
     # The worker's own imports: model loading pulls in diffusion, DiT and LoRA modules.
     "import stable_audio_tools.models.diffusion, stable_audio_tools.inference.generation; "
     "from stable_audio_tools.models.transformer import TransformerBlock; "
-    "assert torch.version.cuda, 'Stable Audio installed CPU-only Torch'; "
+    "from transformers import T5GemmaEncoderModel; "
+    "assert torch.version.cuda, 'Audio tools installed CPU-only Torch'; "
+    "assert callable(Qwen3TTSModel.generate_voice_design); "
     "assert 'local_add_cond_dim' in inspect.signature(TransformerBlock.__init__).parameters, "
-    "'stable-audio-tools is missing Stable Audio 3 local_add_cond_dim support'"
+    "'stable-audio-tools is missing Stable Audio 3 local_add_cond_dim support'; "
+    # Builders have no GPU, so check the wheel without loading its CUDA extension.
+    "print('flash-attn', m.version('flash-attn'))"
 )
 
 
-def stable_audio_fingerprint() -> str:
-    """Match first-use installs and the prebuilt Modal Stable Audio 3 Medium environment."""
+def flash_attn_wheel(windows: bool) -> str:
+    url, digest = FLASH_ATTN_WHEELS["windows" if windows else "linux"]
+    return f"flash-attn @ {url}#sha256={digest}"
+
+
+def audio_tools_fingerprint() -> str:
+    """Match first-use installs and the prebuilt Modal audio tools environment."""
     import hashlib
 
-    pins = "|".join(
-        (
-            STABLE_AUDIO_PYTHON,
-            *STABLE_AUDIO_REQUIREMENTS,
-            STABLE_AUDIO_TOOLS_REPO,
-            STABLE_AUDIO_TOOLS_REF,
-            TORCH_INDEX,
-            STABLE_AUDIO_SMOKE,
-        )
-    )
+    wheels = (part for wheel in FLASH_ATTN_WHEELS.values() for part in wheel)
+    pins = "|".join((AUDIO_TOOLS_PYTHON, *AUDIO_TOOLS_REQUIREMENTS, STABLE_AUDIO_TOOLS_REPO,
+                     STABLE_AUDIO_TOOLS_REF, *wheels, TORCH_INDEX, AUDIO_TOOLS_SMOKE))
     return hashlib.sha256(pins.encode("utf-8")).hexdigest()
 
 
-def stable_audio_install_commands(venv: str | Path, uv: str | list[str] = "uv") -> list[list[str]]:
-    """Keep stable-audio-tools (--no-deps, pinned git commit) in an isolated runtime."""
+def audio_tools_install_commands(venv: str | Path, uv: str | list[str] = "uv") -> list[list[str]]:
+    """Install VoiceDesign, stable-audio-tools (--no-deps, pinned) and FlashAttention together."""
     base = venv if isinstance(venv, PurePath) else Path(venv)
-    python = str(base / ("Scripts/python.exe" if isinstance(base, PureWindowsPath) else "bin/python"))
+    windows = isinstance(base, PureWindowsPath)
+    python = str(base / ("Scripts/python.exe" if windows else "bin/python"))
     uv = [uv] if isinstance(uv, str) else list(uv)
     return [
-        [*uv, "venv", "--python", STABLE_AUDIO_PYTHON, "--seed", str(base)],
-        [
-            *uv,
-            "pip",
-            "install",
-            "--python",
-            python,
-            "--extra-index-url",
-            TORCH_INDEX,
-            "--index-strategy",
-            "unsafe-best-match",
-            *STABLE_AUDIO_REQUIREMENTS,
-        ],
-        [
-            *uv,
-            "pip",
-            "install",
-            "--python",
-            python,
-            "--no-deps",
-            f"git+{STABLE_AUDIO_TOOLS_REPO}@{STABLE_AUDIO_TOOLS_REF}",
-        ],
-        [python, "-c", STABLE_AUDIO_SMOKE],
+        [*uv, "venv", "--python", AUDIO_TOOLS_PYTHON, "--seed", str(base)],
+        # Use the index URL: older uv releases do not recognize --torch-backend=cu130.
+        [*uv, "pip", "install", "--python", python, "--extra-index-url", TORCH_INDEX,
+         "--index-strategy", "unsafe-best-match", *AUDIO_TOOLS_REQUIREMENTS],
+        [*uv, "pip", "install", "--python", python, "--no-deps",
+         f"git+{STABLE_AUDIO_TOOLS_REPO}@{STABLE_AUDIO_TOOLS_REF}", flash_attn_wheel(windows)],
+        [python, "-c", AUDIO_TOOLS_SMOKE],
     ]
-
 
 
 def selftest() -> None:

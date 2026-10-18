@@ -185,7 +185,10 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
 
             from h3_app.drama3_serving.tree import strip_drama3_sound_tags
 
+            from h3_app import audio_tools
+
             release_all()  # the ComfyUI route needs the VRAM a served backend holds
+            audio_tools.stop()
             values["text"] = validate_drama3_text(strip_drama3_sound_tags(request.text))  # Basic mode
             graph = build_drama3_graph(**{key: value for key, value in values.items()
                                           if key not in {"backend", "parallel", "retries", "voice_names", "script_mode", "sounds"}})

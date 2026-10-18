@@ -91,10 +91,10 @@ class PublicUrlStartupTests(unittest.TestCase):
         tree = ast.parse((ROOT / "modal_h3.py").read_text(encoding="utf-8"))
         function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "service_env")
         namespace = dict(os=os, ROOT=ROOT, COMFY=ROOT, CONFIG=ROOT, OUTPUT=ROOT, DATA=ROOT, COMFY_PORT=8188,
-                         DRAMA3_SGLANG_VENV=ROOT, DRAMA3_SGLANG_DATA=ROOT, VOICE_DESIGN_VENV=ROOT,
+                         DRAMA3_SGLANG_VENV=ROOT, DRAMA3_SGLANG_DATA=ROOT, AUDIO_TOOLS_VENV=ROOT,
                          MODELS=ROOT, VOL="test-volume")
         exec(compile(ast.Module(body=[function], type_ignores=[]), "<modal env>", "exec"), namespace)
         environment = namespace["service_env"]()
         self.assertEqual(environment["ENABLE_CLOUDFLARE_TUNNEL"], "false")
         self.assertEqual(environment["GRADIO_SHARE"], "false")
-        self.assertEqual(environment["H3_VOICE_DESIGN_VENV"], ROOT.as_posix())
+        self.assertEqual(environment["H3_AUDIO_TOOLS_VENV"], ROOT.as_posix())

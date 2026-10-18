@@ -1,4 +1,4 @@
-"""Cast/script pairing, designed voice references and isolated worker lifecycle."""
+"""Cast/script pairing, designed voice references and the resident audio tools worker."""
 
 import json
 import os
@@ -10,12 +10,12 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from h3_app import drama3_speakers, prompt_service, voice_design
+from h3_app import audio_tools, drama3_speakers, prompt_service, voice_design
 from h3_app.config import RuntimeConfig
 from h3_app.drama3_cast import parse_script_cast
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
-from h3_requirements import voice_design_install_commands
+from h3_requirements import FLASH_ATTN_WHEELS, audio_tools_install_commands
 
 
 def cast_entry(speaker, name="Alice"):
@@ -87,63 +87,41 @@ class VoiceDesignTests(unittest.TestCase):
         for description, text, language in (("", "Hello", "Auto"), ("Warm", "", "Auto"),
                                             ("Warm", "<|speaker:5|> Hi", "Auto"),
                                             ("Warm", "Hi", "unsupported")):
-            with self.subTest(text=text), patch.object(voice_design, "prepare") as prepare:
+            with self.subTest(text=text), patch.object(audio_tools, "run") as run:
                 with self.assertRaises(H3Error):
                     voice_design.generate_reference(description, text, language, self.runtime, free_gpu=Mock())
-                prepare.assert_not_called()
+                run.assert_not_called()
 
     def test_runtime_recipe_targets_the_isolated_interpreter_on_windows_and_modal(self):
-        for venv, expected in ((PureWindowsPath("C:/h3/voice-design"), "C:\\h3\\voice-design\\Scripts\\python.exe"),
-                               (PurePosixPath("/opt/h3/voice-design"), "/opt/h3/voice-design/bin/python")):
+        for venv, expected, wheel in (
+                (PureWindowsPath("C:/h3/audio-tools"), "C:\\h3\\audio-tools\\Scripts\\python.exe", "windows"),
+                (PurePosixPath("/opt/h3/audio-tools"), "/opt/h3/audio-tools/bin/python", "linux")):
             with self.subTest(venv=venv):
-                commands = voice_design_install_commands(venv, ["python", "-m", "uv"])
+                commands = audio_tools_install_commands(venv, ["python", "-m", "uv"])
                 self.assertEqual(commands[1][commands[1].index("--python") + 1], expected)
                 self.assertIn("qwen-tts==0.1.1", commands[1])
+                self.assertIn("hf-xet>=1.1", commands[1])
                 self.assertIn("https://download.pytorch.org/whl/cu130", commands[1])
+                self.assertIn("--no-deps", commands[2])
+                url, digest = FLASH_ATTN_WHEELS[wheel]
+                self.assertIn(f"flash-attn @ {url}#sha256={digest}", commands[2])
                 self.assertEqual(commands[-1][0], expected)
 
-    def test_worker_passes_synthesis_text_and_design_verbatim_and_writes_audio(self):
-        from h3_app.voice_design_worker import synthesize
-        import numpy as np
-        model = Mock()
-        model.generate_voice_design.return_value = ([np.ones(2400, dtype=np.float32) * 0.1], 24000)
-        qwen = SimpleNamespace(Qwen3TTSModel=Mock())
-        qwen.Qwen3TTSModel.from_pretrained.return_value = model
-        torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True, is_bf16_supported=lambda: True),
-                                bfloat16="bf16", inference_mode=nullcontext)
-        soundfile = Mock()
-        hub = SimpleNamespace(snapshot_download=Mock(return_value="persistent/snapshot"))
-        request = {"model": voice_design.MODEL_ID, "text": "你好，出发吧。", "description": "温暖自然的女声。",
-                   "language": "Chinese", "cache_dir": str(self.root / "cache"), "output": str(self.root / "voice.wav")}
-        with patch.dict("sys.modules", {"qwen_tts": qwen, "torch": torch, "soundfile": soundfile,
-                                       "huggingface_hub": hub}), patch.dict(os.environ):
-            synthesize(request)
-            self.assertEqual(os.environ["HF_HUB_CACHE"], request["cache_dir"])
-        model.generate_voice_design.assert_called_once_with(text=request["text"], language="Chinese",
-                                                             instruct=request["description"], max_new_tokens=4096)
-        self.assertEqual(qwen.Qwen3TTSModel.from_pretrained.call_args.args, ("persistent/snapshot",))
-        self.assertEqual(soundfile.write.call_args.args[0], request["output"])
-        self.assertEqual(soundfile.write.call_args.args[2], 24000)
-
-    def test_generated_reference_uses_the_exact_synthesis_text_and_releases_other_engines(self):
-        events, requests = [], []
-        def run(command, log, **kwargs):
-            request_path = Path(command[-1])
-            request = json.loads(request_path.read_text(encoding="utf-8"))
-            requests.append((request_path, request))
-            Path(request["output"]).write_bytes(b"RIFF" + b"x" * 80)
-            events.append("worker")
-        with patch.object(voice_design, "prepare", return_value=Path("isolated/python")), \
-                patch.object(voice_design, "run_process", side_effect=run), \
-                patch("h3_app.drama3_serving.server.release_all", side_effect=lambda: events.append("release")):
+    def test_generated_reference_uses_the_exact_synthesis_text_and_keeps_drama3_loaded(self):
+        requests = []
+        def run(model, payload, runtime, **kwargs):
+            requests.append((model, payload))
+            Path(payload["output"]).write_bytes(b"RIFF" + b"x" * 80)
+            return {"ok": True}
+        with patch.object(audio_tools, "run", side_effect=run), \
+                patch("h3_app.drama3_serving.server.release_all") as release:
             audio, transcript = voice_design.generate_reference(
-                "Warm narrator", "你好，今天我们一起出发。", "Chinese", self.runtime,
-                free_gpu=lambda: events.append("free"))
-        self.assertEqual(events, ["release", "free", "worker"])
+                "Warm narrator", "你好，今天我们一起出发。", "Chinese", self.runtime, free_gpu=Mock())
+        release.assert_not_called()
+        self.assertEqual(requests[0][0], "voice_design")
         self.assertEqual(transcript, requests[0][1]["text"])
-        self.assertEqual(requests[0][1]["model"], voice_design.MODEL_ID)
+        self.assertEqual(requests[0][1]["description"], "Warm narrator")
         self.assertTrue(audio.is_file())
-        self.assertFalse(requests[0][0].exists())
         with patch.dict(os.environ, {"H3_WORKSPACE_DIR": str(self.root / "workspace")}):
             saved = drama3_speakers.save_speaker("Narrator", audio, transcript, self.runtime, "Warm narrator")
             self.assertEqual((saved.transcript, saved.description), (transcript, "Warm narrator"))
@@ -154,13 +132,10 @@ class VoiceDesignTests(unittest.TestCase):
             self.assertEqual(drama3_speakers.load_speaker("Narrator", self.runtime).description, "")
 
     def test_failed_worker_removes_partial_audio(self):
-        def run(command, log, **kwargs):
-            request = json.loads(Path(command[-1]).read_text(encoding="utf-8"))
-            Path(request["output"]).write_bytes(b"partial")
+        def run(model, payload, runtime, **kwargs):
+            Path(payload["output"]).write_bytes(b"partial")
             raise H3Error("failed")
-        with patch.object(voice_design, "prepare", return_value=Path("python")), \
-                patch.object(voice_design, "run_process", side_effect=run), \
-                patch("h3_app.drama3_serving.server.release_all"):
+        with patch.object(audio_tools, "run", side_effect=run):
             with self.assertRaises(H3Error):
                 voice_design.generate_reference("Warm", "Hello.", "Auto", self.runtime, free_gpu=Mock())
         self.assertEqual(list(self.runtime.output_dir.rglob("*.wav")), [])
@@ -186,35 +161,164 @@ class VoiceDesignTests(unittest.TestCase):
             self.assertIn("A measured baritone.", writer.call_args.kwargs["context"])
             self.assertEqual(drama3_speakers.load_speaker(saved.name, self.runtime).transcript, "Uploaded words.")
 
-    def test_cancelled_worker_is_terminated_and_reaped(self):
+    def test_cancelled_setup_step_is_terminated_and_reaped(self):
         process = Mock()
         process.poll.return_value = None
-        with patch.object(voice_design.subprocess, "Popen", return_value=process), \
-                patch.object(voice_design, "check_cancelled", side_effect=[None, JobCancelled("cancelled")]):
+        with patch.object(audio_tools.subprocess, "Popen", return_value=process), \
+                patch.object(audio_tools, "check_cancelled", side_effect=[None, JobCancelled("cancelled")]):
             with self.assertRaises(JobCancelled):
-                voice_design.run_process(["python"], self.root / "worker.log", timeout=10)
+                audio_tools.run_process(["python"], self.root / "worker.log", timeout=10)
         process.terminate.assert_called_once()
         process.wait.assert_called_once()
 
     def test_environment_is_ready_only_after_successful_smoke_test(self):
         venv = self.root / "venv"
-        interpreter = voice_design.python_path(venv)
+        interpreter = audio_tools.python_path(venv)
         interpreter.parent.mkdir(parents=True)
         interpreter.touch()
         log = self.root / "install.log"
-        with patch.dict(os.environ, {"H3_VOICE_DESIGN_VENV": str(venv)}), \
-                patch.object(voice_design, "uv_command", return_value=["uv"]), \
-                patch.object(voice_design, "run_process", side_effect=H3Error("install failed")):
+        with patch.dict(os.environ, {"H3_AUDIO_TOOLS_VENV": str(venv)}), \
+                patch.object(audio_tools, "uv_command", return_value=["uv"]), \
+                patch.object(audio_tools, "run_process", side_effect=H3Error("install failed")):
             with self.assertRaises(H3Error):
-                voice_design.prepare(self.runtime, log)
-        self.assertFalse((venv / voice_design.READY_MARKER).exists())
-        with patch.dict(os.environ, {"H3_VOICE_DESIGN_VENV": str(venv)}), \
-                patch.object(voice_design, "uv_command", return_value=["uv"]), \
-                patch.object(voice_design, "run_process") as run:
-            self.assertEqual(voice_design.prepare(self.runtime, log), interpreter)
-            self.assertEqual(run.call_count, 2)
-            voice_design.prepare(self.runtime, log)
-            self.assertEqual(run.call_count, 2)
+                audio_tools.prepare(self.runtime, log)
+        self.assertFalse((venv / audio_tools.READY_MARKER).exists())
+        with patch.dict(os.environ, {"H3_AUDIO_TOOLS_VENV": str(venv)}), \
+                patch.object(audio_tools, "uv_command", return_value=["uv"]), \
+                patch.object(audio_tools, "run_process") as run:
+            self.assertEqual(audio_tools.prepare(self.runtime, log), interpreter)
+            self.assertEqual(run.call_count, 3)
+            audio_tools.prepare(self.runtime, log)
+            self.assertEqual(run.call_count, 3)
+
+
+REAL_RESIDENT_WORKER = audio_tools.ResidentWorker
+
+
+class FakeResident:
+    instances = []
+
+    def __init__(self, python, models, log):
+        self.python, self.models, self.log_path = python, models, log
+        self.loaded, self.requests, self.stopped = set(), [], False
+        self.error = None
+        FakeResident.instances.append(self)
+
+    def running(self):
+        return not self.stopped
+
+    def request(self, payload, timeout):
+        self.requests.append(payload)
+        if self.error:
+            raise self.error
+        self.loaded.add(payload["op"])
+        return {"ok": True, "loaded": sorted(self.loaded)}
+
+    def stop(self):
+        self.stopped = True
+
+
+class ResidentAudioToolsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.runtime = RuntimeConfig(self.root, "http://x", self.root / "ComfyUI",
+                                     self.root / "models.json", self.root / "outputs")
+        FakeResident.instances = []
+        self.addCleanup(audio_tools.stop)
+        for name, replacement in (("ResidentWorker", FakeResident), ("ensure_weights", Mock()),
+                                  ("prepare", Mock(return_value=Path("python")))):
+            patcher = patch.object(audio_tools, name, replacement)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        for name in ("persist_caches", "release_all"):
+            patcher = patch(f"h3_app.drama3_serving.server.{name}")
+            setattr(self, name, patcher.start())
+            self.addCleanup(patcher.stop)
+
+    def gpu(self, *free_mib):
+        values = iter(free_mib)
+        return patch("h3_app.drama3_serving.server.gpu_memory",
+                     side_effect=lambda: (next(values), 98304.0, ""))
+
+    def test_one_worker_serves_both_models_without_freeing_a_roomy_gpu(self):
+        free_gpu = Mock()
+        with self.gpu(40000, 30000):
+            audio_tools.run("voice_design", {"text": "Hi"}, self.runtime, free_gpu=free_gpu)
+            audio_tools.run("stable_audio", {"items": []}, self.runtime, free_gpu=free_gpu)
+            audio_tools.run("voice_design", {"text": "Again"}, self.runtime, free_gpu=free_gpu)
+        self.assertEqual(len(FakeResident.instances), 1)
+        self.assertEqual([request["op"] for request in FakeResident.instances[0].requests],
+                         ["voice_design", "stable_audio", "voice_design"])
+        free_gpu.assert_not_called()
+        self.release_all.assert_not_called()
+        self.assertEqual(audio_tools.loaded_models(), {"voice_design", "stable_audio"})
+
+    def test_a_full_gpu_frees_comfyui_first_then_sleeps_sglang(self):
+        free_gpu = Mock()
+        with self.gpu(1000, 20000):
+            audio_tools.run("voice_design", {}, self.runtime, free_gpu=free_gpu)
+        free_gpu.assert_called_once()
+        self.release_all.assert_not_called()
+        audio_tools.stop()
+        free_gpu.reset_mock()
+        with self.gpu(1000, 1000):
+            audio_tools.run("stable_audio", {}, self.runtime, free_gpu=free_gpu)
+        free_gpu.assert_called_once()
+        self.release_all.assert_called_once()
+
+    def test_other_engines_and_unload_stop_the_worker_but_drama3_jobs_keep_it(self):
+        with self.gpu(40000):
+            audio_tools.run("voice_design", {}, self.runtime, free_gpu=Mock())
+        worker = FakeResident.instances[0]
+        for family in ("drama3", "drama3_voice", "drama3_sound"):
+            audio_tools.release_for_job(family)
+            self.assertFalse(worker.stopped)
+        audio_tools.release_for_job("h3")
+        self.assertTrue(worker.stopped)
+        self.assertEqual(audio_tools.loaded_models(), set())
+
+    def test_cancellation_reaps_the_worker_but_a_failed_request_keeps_it(self):
+        with self.gpu(40000, 40000, 40000):
+            audio_tools.run("voice_design", {}, self.runtime, free_gpu=Mock())
+            worker = FakeResident.instances[0]
+            worker.error = audio_tools.RequestFailed("CUDA out of memory")
+            with self.assertRaises(H3Error):
+                audio_tools.run("voice_design", {}, self.runtime, free_gpu=Mock())
+            self.assertFalse(worker.stopped)
+            worker.error = JobCancelled("cancelled")
+            with self.assertRaises(JobCancelled):
+                audio_tools.run("voice_design", {}, self.runtime, free_gpu=Mock())
+            self.assertTrue(worker.stopped)
+            audio_tools.run("voice_design", {}, self.runtime, free_gpu=Mock())
+        self.assertEqual(len(FakeResident.instances), 2)
+
+    def test_resident_worker_round_trips_requests_over_pipes(self):
+        import sys
+        script = self.root / "echo_worker.py"
+        script.write_text(
+            "import json, sys\n"
+            "for line in sys.stdin:\n"
+            "    request = json.loads(line)\n"
+            "    print('library noise', file=sys.stderr, flush=True)\n"
+            "    ok = request['op'] != 'fail'\n"
+            "    reply = {'id': request['id'], 'ok': ok, 'loaded': [request['op']], 'error': 'boom'}\n"
+            "    sys.stdout.write(json.dumps(reply) + '\\n'); sys.stdout.flush()\n",
+            encoding="utf-8")
+        log = self.root / "worker.log"
+        with patch.object(audio_tools, "WORKER", script):
+            worker = REAL_RESIDENT_WORKER(Path(sys.executable), self.root, log)
+        try:
+            self.assertTrue(worker.request({"op": "voice_design"}, timeout=30)["ok"])
+            self.assertEqual(worker.loaded, {"voice_design"})
+            with self.assertRaises(audio_tools.RequestFailed):
+                worker.request({"op": "fail"}, timeout=30)
+            self.assertTrue(worker.running())
+        finally:
+            worker.stop()
+        self.assertFalse(worker.running())
+        self.assertIn("library noise", log.read_text(encoding="utf-8"))
 
 
 class CastSlotTests(unittest.TestCase):
