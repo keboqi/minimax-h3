@@ -131,50 +131,6 @@ for name, rate, duration, color in (
         timeout=15,
         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
     )
-def fixture_continuum_actions():
-    """Sequence mode against an in-process imitation of Continuum's catalog."""
-    import shutil
-    from h3_ui.continuum_bindings import ContinuumActions
-    from h3_ui.job_admission import require_owner
-    from tests.test_continuum import FakeBackend, fake_services
-
-    class SlowBackend(FakeBackend):
-        states = {}
-
-        def submit(self, graph, client_id):
-            # Keep each sequence's takes separate, as upstream does per run.
-            project = graph["continuum_sampler"]["inputs"]["project_id"]
-            self.groups, self.chain = self.states.setdefault(project, ([], []))
-            prompt_id = super().submit(graph, client_id)
-            prefix = graph["continuum_save"]["inputs"]["filename_prefix"]
-            target = app.OUTPUT_DIR / f"{prefix}_{len(self.submitted):05d}.mp4"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(app.OUTPUTS_DIR / ("alpha.mp4" if len(self.submitted) % 2 else "beta.mp4"), target)
-            self.video = target
-            return prompt_id
-
-        def poll(self, prompt_id, graph):
-            for step in range(1, 4):
-                CURRENT_JOB.get().check()
-                time.sleep(0.4)
-                yield ("Generating video and audio", 1, len(graph), step, 3)
-
-    backends = {}
-
-    def services():
-        store = app._continuum_store()
-        backend = backends.setdefault("default", SlowBackend(store, app.OUTPUT_DIR))
-        return fake_services(store, backend)[0]
-
-    return ContinuumActions(
-        store=app._continuum_store,
-        services=services,
-        owner=require_owner,
-        interrupt=app.interrupt,
-    )
-
-
-app._continuum_actions = fixture_continuum_actions
 app.enhance_h3_prompt = lambda *args: (
     args[0] + " Enhanced fixture.",
     "Enhancement finished.",

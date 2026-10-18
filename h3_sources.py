@@ -1,9 +1,6 @@
 """Pinned external source catalog shared by local and Modal provisioning."""
 
 COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
-# Sequence mode samples, persists and assembles chunks through this exact release.
-CONTINUUM_REF = "58fbd855feb13fa67a0613614df04e2b6fe808e2"  # v3.9.8
-CONTINUUM_REPO = "https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum.git"
 CONTROLNET_AUX_REF = "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
 CONTROLNET_AUX_REPO = "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
 H3_LATENT_UPSCALER_NODE_REF = "d7c01b9011f2e8439493f6c02c29995a27df276f"

@@ -3482,59 +3482,6 @@ def _publish_drama3_sounds_signature():
 _publish_drama3_sounds_signature()
 
 
-_CONTINUUM_STORE = None
-
-
-def _continuum_store():
-    global _CONTINUUM_STORE
-    from h3_app.continuum_store import ContinuumStore
-
-    if JOBS.store is None:
-        raise H3Error("Sequence mode needs the workspace database.")
-    if _CONTINUUM_STORE is None or _CONTINUUM_STORE.workspace is not JOBS.store:
-        _CONTINUUM_STORE = ContinuumStore(JOBS.store, _runtime_config().output_dir)
-        # Settle operations whose outcome was lost in a restart; never resubmit.
-        _CONTINUUM_STORE.reconcile(
-            lambda prompt_id: api_get(f"/history/{prompt_id}").json().get(prompt_id)
-        )
-    return _CONTINUUM_STORE
-
-
-def _continuum_checkpoint(operation_id: str) -> None:
-    """Make committed chunks durable before the next group (Modal volume)."""
-    name = os.getenv("H3_MODAL_COMMIT_VOLUME")
-    if not name:
-        return
-    try:
-        import modal
-
-        modal.Volume.from_name(name).commit()
-    except Exception as exc:
-        raise H3Error(
-            f"Saved chunks could not be committed to the volume ({type(exc).__name__}). "
-            "They remain on this container; continue to retry persistence."
-        ) from exc
-
-
-def _continuum_actions():
-    from h3_app.generation.continuum import ContinuumServices
-    from h3_ui.continuum_bindings import ContinuumActions
-    from .job_admission import require_owner
-
-    return ContinuumActions(
-        store=_continuum_store,
-        services=lambda: ContinuumServices(
-            store=_continuum_store(),
-            generation=_generation_services(),
-            runtime=_runtime_config(),
-            stage=lambda path: stage_file(path, "continuum", reuse=True),
-            checkpoint=_continuum_checkpoint,
-        ),
-        owner=require_owner,
-        interrupt=interrupt,
-    )
-
-
 def _optional_engine_actions():
     from h3_ui.optional_engine_views import OptionalEngineActions
     return OptionalEngineActions(
@@ -4084,7 +4031,6 @@ def build_ui() -> gr.Blocks:
             generate_with_ui_defaults=generate_with_ui_defaults,
             generate_yue2=generate_yue2,
             optional_engine_actions=_optional_engine_actions(),
-            continuum_actions=_continuum_actions(),
             generation_readiness_state=generation_readiness_state,
             image_vae_frame_updates=image_vae_frame_updates,
             import_gallery_media=import_gallery_media,

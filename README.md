@@ -218,38 +218,6 @@ compare matched seeds before adopting it. Adapter weights retain the upstream
 [MiniMax H3 license](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE)
 and the author's [licensing notes](https://huggingface.co/speach1sdef178/MiniMax-H3-Semantic-Bridge/blob/main/LICENSE.md).
 
-## Sequence mode (experimental)
-
-The H3 composer has a **Video: Clip / Sequence** switch. **Clip** is the default
-and unchanged: one independent video of up to 15 seconds. **Sequence** builds one
-continuous video from up to four chunks (30 seconds total) with
-[H3 Continuum](https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum) v3.9.8,
-pinned in `h3_sources.py` and installed by local setup and Modal. Existing
-deployments need updated provisioning and a ComfyUI restart.
-
-A sequence has a shared scene/style prompt plus one action prompt per chunk. It
-is saved on its first generation (**Save sequence & generate**), then generated
-one chunk at a time: accept and generate the next chunk, retry the last chunk,
-generate all remaining, pick an earlier take, or regenerate from a chunk. Adding a
-chunk extends a finished sequence. Editing a saved chunk's prompt shows which
-chunks will regenerate before you submit. Saved sequences reopen after a browser
-reload or service restart; only completed sequences appear in Media.
-
-Sequence uses its own conservative recipe: Normal sampling (default 20 steps),
-native attention and VAE, and sizes up to 1024×576. Clip recipes, Turbo,
-SLA/Veda/Sol, caches, alternate decoders, latent upscale, Semantic Bridge and
-finishing are not applied, and the panel says so. Conditioning can be text, a
-first frame, or up to nine reference images in fixed `@R1`–`@R9` slots; last
-frames, reference video and reference audio stay in Clip. Size, seed, model and
-source images are locked once a sequence is saved; prompts and chunk count stay
-editable.
-
-After each chunk the app reads Continuum's reuse report. If a chunk that should
-have been reused was regenerated, the result is labelled and **Generate all
-remaining** stops. GPU acceptance (output quality, saved-chunk reuse on the
-exact runtime, memory at four chunks, Modal cold-start recovery) is still pending;
-see [the integration plan](docs/continuum-gradio-integration-plan.md).
-
 ## Requirements
 
 - Linux or WSL2 with Bash

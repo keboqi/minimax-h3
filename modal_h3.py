@@ -93,8 +93,6 @@ sys.path.insert(0, str(_shared_import_path()))
 # mounted after run_function() must be imported lazily inside runtime functions.
 from h3_sources import (  # noqa: E402
     COMFY_REPO,
-    CONTINUUM_REF,
-    CONTINUUM_REPO,
     CONTROLNET_AUX_REF,
     CONTROLNET_AUX_REPO,
     H3_LATENT_UPSCALER_NODE_REF,
@@ -297,10 +295,6 @@ def build(revision: str) -> None:
     )
     _clone(SPECTRUM_REPO, spectrum_dir, ref=SPECTRUM_REF)
     _print_git_revision(spectrum_dir)
-
-    continuum_dir = Path(COMFY) / "custom_nodes" / "ComfyUI-H3-Continuum"
-    _clone(CONTINUUM_REPO, continuum_dir, ref=CONTINUUM_REF)
-    _print_git_revision(continuum_dir)
 
     spectrum_qwen_dir = (
         Path(COMFY) / "custom_nodes" / "ComfyUI-Spectrum-Qwen-Proper"

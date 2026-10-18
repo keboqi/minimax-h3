@@ -14,8 +14,6 @@ from pathlib import Path
 
 from h3_sources import (
     COMFY_REPO,
-    CONTINUUM_REF,
-    CONTINUUM_REPO,
     CONTROLNET_AUX_REF,
     CONTROLNET_AUX_REPO,
     H3_LATENT_UPSCALER_NODE_REF,
@@ -809,14 +807,6 @@ def sync_external_nodes(
     )
     if install_requirements and (spectrum / "requirements.txt").is_file():
         install_custom_node_requirements(spectrum / "requirements.txt")
-
-    continuum = comfy / "custom_nodes" / "ComfyUI-H3-Continuum"
-    sync_git_repo(
-        CONTINUUM_REPO,
-        continuum,
-        ref=CONTINUUM_REF,
-        required_paths=("__init__.py", "nodes.py", "run_storage.py"),
-    )
 
     spectrum_qwen = comfy / "custom_nodes" / "ComfyUI-Spectrum-Qwen-Proper"
     sync_git_repo(
