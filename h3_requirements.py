@@ -315,6 +315,90 @@ def voice_design_install_commands(venv: str | Path, uv: str | list[str] = "uv") 
     ]
 
 
+STABLE_AUDIO_READY_MARKER = "h3-stable-audio-ready.txt"
+STABLE_AUDIO_PYTHON = "3.12"
+STABLE_AUDIO_TOOLS_REPO = "https://github.com/Stability-AI/stable-audio-tools.git"
+STABLE_AUDIO_REQUIREMENTS = (
+    f"torch=={TORCH_VERSION}",
+    f"torchaudio=={TORCHAUDIO_VERSION}",
+    f"torchvision=={TORCHVISION_VERSION}",
+    f"numpy=={NUMPY_VERSION}",
+    f"scipy=={SCIPY_VERSION}",
+    "alias-free-torch",
+    "dill",
+    "einops",
+    "einops-exts",
+    HUGGINGFACE_HUB_REQUIREMENT,
+    "importlib-resources",
+    "nnAudio",
+    "PyWavelets",
+    "safetensors",
+    "soundfile",
+    "soxr",
+    "torchsde",
+    "tqdm",
+    "transformers",
+    "v-diffusion-pytorch",
+    "vector-quantize-pytorch",
+)
+STABLE_AUDIO_SMOKE = (
+    "import inspect, torch, soundfile; "
+    "from stable_audio_tools.models.transformer import TransformerBlock; "
+    "assert torch.version.cuda, 'Stable Audio installed CPU-only Torch'; "
+    "assert 'local_add_cond_dim' in inspect.signature(TransformerBlock.__init__).parameters, "
+    "'stable-audio-tools is missing Stable Audio 3 local_add_cond_dim support'"
+)
+
+
+def stable_audio_fingerprint() -> str:
+    """Match first-use installs and the prebuilt Modal Stable Audio 3 Medium environment."""
+    import hashlib
+
+    pins = "|".join(
+        (
+            STABLE_AUDIO_PYTHON,
+            *STABLE_AUDIO_REQUIREMENTS,
+            STABLE_AUDIO_TOOLS_REPO,
+            TORCH_INDEX,
+            STABLE_AUDIO_SMOKE,
+        )
+    )
+    return hashlib.sha256(pins.encode("utf-8")).hexdigest()
+
+
+def stable_audio_install_commands(venv: str | Path, uv: str | list[str] = "uv") -> list[list[str]]:
+    """Keep stable-audio-tools (--no-deps git main) in an isolated runtime."""
+    base = venv if isinstance(venv, PurePath) else Path(venv)
+    python = str(base / ("Scripts/python.exe" if isinstance(base, PureWindowsPath) else "bin/python"))
+    uv = [uv] if isinstance(uv, str) else list(uv)
+    return [
+        [*uv, "venv", "--python", STABLE_AUDIO_PYTHON, "--seed", str(base)],
+        [
+            *uv,
+            "pip",
+            "install",
+            "--python",
+            python,
+            "--extra-index-url",
+            TORCH_INDEX,
+            "--index-strategy",
+            "unsafe-best-match",
+            *STABLE_AUDIO_REQUIREMENTS,
+        ],
+        [
+            *uv,
+            "pip",
+            "install",
+            "--python",
+            python,
+            "--no-deps",
+            f"git+{STABLE_AUDIO_TOOLS_REPO}",
+        ],
+        [python, "-c", STABLE_AUDIO_SMOKE],
+    ]
+
+
+
 def selftest() -> None:
     import tempfile
     from unittest.mock import patch

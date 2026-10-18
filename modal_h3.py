@@ -62,6 +62,7 @@ DATA = PurePosixPath("/data")
 DRAMA3_SGLANG_VENV = ROOT / "drama3-sglang-venv"
 DRAMA3_SGLANG_DATA = DATA / "drama3-serving"
 VOICE_DESIGN_VENV = ROOT / "voice-design-venv"
+STABLE_AUDIO_VENV = ROOT / "stable-audio-venv"
 MODELS = DATA / "models"
 INPUT = DATA / "input"
 OUTPUT = DATA / "output"
@@ -124,6 +125,9 @@ from h3_requirements import (  # noqa: E402
     VOICE_DESIGN_READY_MARKER,
     voice_design_fingerprint,
     voice_design_install_commands,
+    STABLE_AUDIO_READY_MARKER,
+    stable_audio_fingerprint,
+    stable_audio_install_commands,
     H3_AUDIO_T8_REPO,
     H3_AUDIO_T8_REF,
     DRAMA3_REPO,
@@ -680,6 +684,13 @@ image = image.run_commands(
     f"{(VOICE_DESIGN_VENV / VOICE_DESIGN_READY_MARKER).as_posix()}",
 )
 
+# Stable Audio 3 Medium's stable-audio-tools environment lives in its own cached layer.
+image = image.run_commands(
+    *(shlex.join(command) for command in stable_audio_install_commands(STABLE_AUDIO_VENV)),
+    f"echo {stable_audio_fingerprint()} > "
+    f"{(STABLE_AUDIO_VENV / STABLE_AUDIO_READY_MARKER).as_posix()}",
+)
+
 if IS_LOCAL:
     for local_path, remote_path in _BUILD_LOCAL_MOUNTS:
         image = image.add_local_file(
@@ -791,6 +802,7 @@ def service_env() -> dict[str, str]:
             "H3_DRAMA3_SGLANG_VENV": DRAMA3_SGLANG_VENV.as_posix(),
             "H3_DRAMA3_SGLANG_DATA": DRAMA3_SGLANG_DATA.as_posix(),
             "H3_VOICE_DESIGN_VENV": VOICE_DESIGN_VENV.as_posix(),
+            "H3_STABLE_AUDIO_VENV": STABLE_AUDIO_VENV.as_posix(),
             "H3_DRAMA3_SGLANG_MODELS": (MODELS / "drama3_serving").as_posix(),
             # The Drama 3 server commits its kernel caches to this volume.
             "H3_MODAL_COMMIT_VOLUME": VOL,

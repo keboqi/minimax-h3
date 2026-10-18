@@ -173,3 +173,129 @@ def join_takes(takes: list[tuple[int, np.ndarray]], rate: int) -> np.ndarray:
         pieces.append(samples.astype(np.float32))
         previous = speaker
     return np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
+
+
+def resample_audio(samples: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
+    """Resample 1D float32 audio from src_rate to dst_rate."""
+    audio = np.asarray(samples, dtype=np.float32).reshape(-1)
+    if src_rate <= 0 or dst_rate <= 0 or src_rate == dst_rate or audio.size == 0:
+        return audio
+    import math
+    from scipy import signal
+
+    divisor = math.gcd(int(src_rate), int(dst_rate))
+    up = int(dst_rate) // divisor
+    down = int(src_rate) // divisor
+    return signal.resample_poly(audio, up, down).astype(np.float32, copy=False)
+
+
+def load_audio_file(path: str | Path, target_rate: int) -> np.ndarray:
+    """Load an audio file (WAV or ffmpeg-decoded format) as mono float32 at target_rate."""
+    source = Path(path)
+    if not source.is_file():
+        raise H3Error(f"Sound audio file is missing: {source}")
+    raw = source.read_bytes()
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WAVE":
+        samples, rate = decode_wav(raw)
+        return resample_audio(samples, rate, target_rate)
+    with tempfile.TemporaryDirectory(prefix="drama3-sound-decode-") as directory:
+        decoded_wav = Path(directory) / "decoded.wav"
+        proc = run_media_process(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source),
+                "-ac",
+                "1",
+                "-ar",
+                str(int(target_rate)),
+                "-f",
+                "wav",
+                str(decoded_wav),
+            ],
+            partial_outputs=(decoded_wav,),
+        )
+        if proc.returncode != 0 or not decoded_wav.is_file():
+            raise H3Error(f"Failed to decode sound clip {source.name}: {proc.stderr.strip()}")
+        samples, rate = decode_wav(decoded_wav.read_bytes())
+        return resample_audio(samples, rate, target_rate)
+
+
+def mix_parallel_tracks(tracks: list[dict | tuple], rate: int) -> np.ndarray:
+    """Mix parallel speech and sound tracks with looping, RMS speech ducking, fade-outs, and limiting."""
+    normalized: list[dict] = []
+    for item in tracks:
+        if isinstance(item, dict):
+            normalized.append(item)
+        elif isinstance(item, (tuple, list)) and len(item) >= 1:
+            normalized.append({
+                "audio": item[0],
+                "is_sound": bool(item[1]) if len(item) > 1 else False,
+                "loop": bool(item[2]) if len(item) > 2 else False,
+                "volume": float(item[3]) if len(item) > 3 else 1.0,
+            })
+    valid = [t for t in normalized if t.get("audio") is not None and len(t["audio"]) > 0]
+    if not valid:
+        return np.zeros(0, dtype=np.float32)
+
+    speech_lengths = [
+        len(t["audio"])
+        for t in valid
+        if not t.get("is_sound", False)
+    ]
+    max_speech_length = max(speech_lengths) if speech_lengths else 0
+
+    speech_rms_values = [
+        float(np.sqrt(np.mean(np.asarray(t["audio"], dtype=np.float64) ** 2)))
+        for t in valid
+        if not t.get("is_sound", False) and len(t["audio"]) > 0
+    ]
+    avg_speech_rms = float(np.mean(speech_rms_values)) if speech_rms_values else 0.0
+
+    processed: list[np.ndarray] = []
+    for track in valid:
+        samples = np.asarray(track["audio"], dtype=np.float32).reshape(-1).copy()
+        is_sound = bool(track.get("is_sound", False))
+        loop = bool(track.get("loop", False))
+        volume = float(track.get("volume", 1.0))
+
+        if loop and max_speech_length > 0 and samples.size > 0:
+            target_len = max_speech_length + rate
+            repeats = int(np.ceil(target_len / float(samples.size)))
+            samples = np.tile(samples, max(1, repeats))[:target_len].copy()
+            fade_len = min(rate, samples.size)
+            if fade_len > 0:
+                samples[-fade_len:] *= np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
+
+        if is_sound and samples.size > 0:
+            current_rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+            if avg_speech_rms > 0.0 and current_rms > 1e-7:
+                target_sound_rms = avg_speech_rms * 0.7
+                scaling_factor = min(target_sound_rms / current_rms, 2.0)
+                samples = samples * float(scaling_factor)
+            if volume != 1.0:
+                samples = samples * volume
+
+        processed.append(samples.astype(np.float32, copy=False))
+
+    max_len = max(len(arr) for arr in processed)
+    mixed = np.zeros(max_len, dtype=np.float32)
+    for arr in processed:
+        mixed[: len(arr)] += arr
+
+    if max_speech_length > 0 and mixed.size > max_speech_length + rate:
+        target_len = max_speech_length + rate
+        mixed = mixed[:target_len].copy()
+        fade_len = min(rate, mixed.size)
+        if fade_len > 0:
+            mixed[-fade_len:] *= np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
+
+    peak = float(np.max(np.abs(mixed))) if mixed.size else 0.0
+    if peak > 1.0:
+        mixed = mixed * (0.9 / peak)
+    return mixed.astype(np.float32, copy=False)
+

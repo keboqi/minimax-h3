@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 import hashlib
+from pathlib import Path
 import shutil
 import threading
 import time
-import uuid
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable, Iterator
+import uuid
 
 import numpy as np
 
+from h3_app import drama3_sounds, stable_audio
 from h3_app.errors import H3Error
 from h3_app.generation.results import GenerationUpdate, fresh_audio
 from h3_app.jobs import CURRENT_JOB
@@ -21,8 +22,22 @@ from h3_app.provenance import write_snapshot
 from h3_app.workflows.drama3 import MAX_FRAMES, SPEAKER_TAG
 
 from . import audio, environment
-from .planner import Chunk, expected_seconds, plan_chunks
+from .planner import Chunk, expected_seconds, plan_turns_chunks
 from .server import ServerSettings, ensure_model, persist_caches, shared_server
+from .speaker_effects import apply_speaker_effects
+from .tree import (
+     ParallelNode,
+    PauseNode,
+    SequentialNode,
+    SoundNode,
+    SpeechNode,
+    TreeNode,
+    is_sound_only_node,
+    iter_sound_nodes,
+    iter_speech_nodes,
+    parse_drama3_tree,
+    strip_drama3_sound_tags,
+)
 
 FRAMES_PER_SECOND = 21.5
 HEARTBEAT_SECONDS = 5.0
@@ -143,13 +158,184 @@ def design_voice_served(text: str, target: Path, **kwargs) -> Iterator[Generatio
             yield update
 
 
+def _resolve_sounds_for_tree(
+    sound_nodes: list[SoundNode],
+    request,
+    runtime,
+    free_gpu: Callable[[], None],
+) -> Iterator[GenerationUpdate | dict[str, Path]]:
+    """Resolve or generate audio files for all `<sound>` nodes in the script tree."""
+    clip_by_key: dict[str, Path] = {}
+    override_meta: dict[str, tuple[str, int]] = {}
+
+    for name, audio_path, description, duration in getattr(request, "sounds", ()):
+        clean_name = str(name or "").strip().casefold()
+        clean_desc = str(description or "").strip()
+        dur = max(1, min(int(duration or 5), 47))
+        if clean_name and clean_desc:
+            override_meta[clean_name] = (clean_desc, dur)
+        if audio_path:
+            candidate = Path(str(audio_path))
+            if candidate.is_file():
+                if clean_name:
+                    clip_by_key[clean_name] = candidate
+                if clean_desc:
+                    clip_by_key[clean_desc.casefold()] = candidate
+
+    for node in sound_nodes:
+        for lookup_name in (node.name,):
+            if not lookup_name:
+                continue
+            key = lookup_name.strip().casefold()
+            if key in clip_by_key:
+                continue
+            preset = drama3_sounds.find_sound(lookup_name, runtime)
+            if preset is not None and preset.audio.is_file():
+                clip_by_key[key] = preset.audio
+
+    missing_keys: list[str] = []
+    missing_specs: list[tuple[str, int]] = []
+    for node in sound_nodes:
+        name_key = (node.name or "").strip().casefold()
+        desc_key = (node.description or "").strip().casefold()
+        if (name_key and name_key in clip_by_key) or (desc_key and desc_key in clip_by_key):
+            continue
+        effective_desc, effective_dur = override_meta.get(name_key, (node.description, node.duration))
+        target_key = name_key or desc_key
+        if target_key and target_key not in missing_keys:
+            missing_keys.append(target_key)
+            missing_specs.append((effective_desc, effective_dur))
+
+    if missing_specs:
+        generated_result: list[Any] = []
+        yield from _with_heartbeat(
+            f"Generating {len(missing_specs)} sound(s) with Stable Audio 3 Medium",
+            lambda _report: generated_result.append(
+                stable_audio.generate_sound_references(
+                    missing_specs,
+                    runtime,
+                    free_gpu=free_gpu,
+                    use_cache=True,
+                )
+            ),
+        )
+        batch = generated_result[0] if generated_result else []
+        if isinstance(batch, dict):
+            for key, path in batch.items():
+                clip_by_key[str(key).casefold()] = Path(path)
+        else:
+            for key, path in zip(missing_keys, batch):
+                clip_by_key[key] = Path(path)
+
+    yield clip_by_key
+
+
+def _render_ast(
+    node: TreeNode,
+    node_chunks: dict[int, list[Chunk]],
+    takes: dict[int, Take],
+    sound_clips: dict[str, Path],
+    rate: int,
+) -> np.ndarray:
+    """Recursively render a Drama 3 AST node into a 1D float32 audio array at ``rate``."""
+    if isinstance(node, SpeechNode):
+        chunks = node_chunks.get(id(node), [])
+        rendered_turns: list[tuple[int, np.ndarray]] = []
+        for chunk in chunks:
+            take = takes[chunk.index]
+            tidied = audio.tidy_take(take.samples, take.rate)
+            tidied = audio.resample_audio(tidied, take.rate, rate)
+            if chunk.speaker_effects:
+                tidied = apply_speaker_effects(tidied, rate, chunk.speaker_effects)
+            rendered_turns.append((chunk.speaker, tidied))
+        return audio.join_takes(rendered_turns, rate)
+
+    if isinstance(node, PauseNode):
+        return np.zeros(max(0, int(round(node.seconds * rate))), dtype=np.float32)
+
+    if isinstance(node, SoundNode):
+        name_key = (node.name or "").strip().casefold()
+        desc_key = (node.description or "").strip().casefold()
+        clip_path = sound_clips.get(name_key) or sound_clips.get(desc_key)
+        if clip_path is None:
+            raise H3Error(f'Missing sound clip for "{node.name or node.description}".')
+        samples = audio.load_audio_file(clip_path, rate)
+        if node.volume != 1.0:
+            samples = (samples * float(node.volume)).astype(np.float32, copy=False)
+        return samples
+
+    if isinstance(node, SequentialNode):
+        if len(node.children) == 1:
+            return _render_ast(node.children[0], node_chunks, takes, sound_clips, rate)
+        pieces: list[np.ndarray] = []
+        prev_was_speech = False
+        for child in node.children:
+            seg = _render_ast(child, node_chunks, takes, sound_clips, rate)
+            if seg.size == 0:
+                continue
+            is_speech = isinstance(child, SpeechNode)
+            if pieces and prev_was_speech and is_speech:
+                pieces.append(np.zeros(int(rate * audio.TURN_GAP), dtype=np.float32))
+            pieces.append(seg.astype(np.float32, copy=False))
+            prev_was_speech = is_speech
+        return np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
+
+    if isinstance(node, ParallelNode):
+        tracks: list[dict] = []
+        for child in node.children:
+            if isinstance(child, SoundNode):
+                name_key = (child.name or "").strip().casefold()
+                desc_key = (child.description or "").strip().casefold()
+                clip_path = sound_clips.get(name_key) or sound_clips.get(desc_key)
+                if clip_path is None:
+                    raise H3Error(f'Missing sound clip for "{child.name or child.description}".')
+                raw_samples = audio.load_audio_file(clip_path, rate)
+                tracks.append(
+                    {
+                        "audio": raw_samples,
+                        "loop": child.loop,
+                        "is_sound": True,
+                        "volume": child.volume,
+                    }
+                )
+            else:
+                child_audio = _render_ast(child, node_chunks, takes, sound_clips, rate)
+                tracks.append(
+                    {
+                        "audio": child_audio,
+                        "loop": False,
+                        "is_sound": is_sound_only_node(child),
+                        "volume": 1.0,
+                    }
+                )
+        return audio.mix_parallel_tracks(tracks, rate)
+
+    return np.zeros(0, dtype=np.float32)
+
+
 def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf_token=None,
                            progress=lambda *args, **kwargs: None) -> Iterator[GenerationUpdate]:
-    """Generate speaker chunks, optionally check/retry them, then join."""
+    """Generate speaker chunks, optionally check/retry them, render sounds/effects, then join/mix."""
     settings = ServerSettings.from_environment(runtime)
     server = shared_server(settings)
     started = time.monotonic()
-    chunks = plan_chunks(request.text)
+
+    script_text = (
+        strip_drama3_sound_tags(request.text)
+        if getattr(request, "script_mode", "Basic") == "Basic" and not iter_sound_nodes(parse_drama3_tree(request.text))
+        else request.text
+    )
+    tree = parse_drama3_tree(script_text)
+    speech_nodes = iter_speech_nodes(tree)
+    sound_nodes = iter_sound_nodes(tree)
+
+    chunks: list[Chunk] = []
+    node_chunks: dict[int, list[Chunk]] = {}
+    for speech_node in speech_nodes:
+        planned = plan_turns_chunks(speech_node.turns, start_index=len(chunks))
+        node_chunks[id(speech_node)] = planned
+        chunks.extend(planned)
+
     if not chunks:
         raise H3Error("Speech text is required.")
     names = {speaker: name or f"Speaker {speaker}" for speaker, name in request.voice_names}
@@ -160,7 +346,8 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                       + ", ".join(f"<|speaker:{n}|>" for n in unvoiced) + ".")
     cast = ", ".join(f"{names.get(s, f'Speaker {s}')}: {sum(c.speaker == s for c in chunks)}"
                      for s in sorted({c.speaker for c in chunks}))
-    yield GenerationUpdate(None, f"Planned {len(chunks)} chunk(s) · {cast}")
+    sound_summary = f" · {len(sound_nodes)} sound cue(s)" if sound_nodes else ""
+    yield GenerationUpdate(None, f"Planned {len(chunks)} chunk(s) · {cast}{sound_summary}")
 
     label = request.backend
     yield from _ready_server(settings, server, label, free_gpu, hf_token)
@@ -213,10 +400,17 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
 
         yield from run_all(chunks, "Generating speech")
 
+    sound_clips: dict[str, Path] = {}
+    if sound_nodes:
+        for item in _resolve_sounds_for_tree(sound_nodes, request, runtime, free_gpu):
+            if isinstance(item, GenerationUpdate):
+                yield item
+            else:
+                sound_clips = item
+
     ordered = [takes[chunk.index] for chunk in chunks]
     rate = ordered[0].rate
-    joined = audio.join_takes([(take.chunk.speaker, audio.tidy_take(take.samples, take.rate)) for take in ordered],
-                              rate)
+    joined = _render_ast(tree, node_chunks, takes, sound_clips, rate)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     result = runtime.output_dir / "drama3" / f"Drama3_sglang_{stamp}_{uuid.uuid4().hex[:6]}.mp3"
     result.parent.mkdir(parents=True, exist_ok=True)
@@ -228,8 +422,11 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
             "backend": request.backend, "seed": None, "temperature": request.temperature,
             "top_p": request.top_p, "top_k": request.top_k, "parallel": request.parallel,
             "retries": request.retries, "reference_count": len(request.voices),
+            "script_mode": getattr(request, "script_mode", "Basic"),
+            "sound_count": len(sound_nodes),
             "chunks": [{"speaker": t.chunk.speaker, "name": names.get(t.chunk.speaker, ""),
                         "seed": None, "attempts": t.attempts,
+                        "speaker_effects": list(t.chunk.speaker_effects),
                         "check": t.check.reason if t.check is not None else "skipped",
                         "warnings": list(t.check.warnings) if t.check is not None else [],
                         "seconds": round(len(t.samples) / t.rate, 2)} for t in ordered],

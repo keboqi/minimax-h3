@@ -41,6 +41,10 @@ class Drama3Request:
     # (speaker number, saved speaker name or "") for status and provenance.
     voice_names: tuple[tuple[int, str], ...] = ()
     model_choice: str = "FP8 (original weights)"
+    script_mode: str = "Basic"
+    # (sound name, audio path or "", description, duration_seconds)
+    sounds: tuple[tuple[str, str, str, int], ...] = ()
+
 
 
 @dataclass

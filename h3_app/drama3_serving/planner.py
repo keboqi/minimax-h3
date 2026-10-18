@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
+import re
+from typing import Iterable
 
 from h3_app.workflows.drama3 import SPEAKER_TAG
+
+from .speaker_effects import extract_speaker_effects
+from .tree import SpeechTurn
 
 # About one or two sentences of speech; Fish Audio's own chunker uses 300 bytes.
 CHUNK_BYTES = 400
@@ -20,6 +24,7 @@ class Chunk:
     index: int
     speaker: int
     text: str  # speech and cues for one speaker, without speaker tags
+    speaker_effects: tuple[str, ...] = ()
 
 
 def parse_turns(script: str) -> list[tuple[int, str]]:
@@ -27,6 +32,16 @@ def parse_turns(script: str) -> list[tuple[int, str]]:
     parts = SPEAKER_TAG.split(str(script or ""))
     turns = [(0, parts[0])] + [(int(speaker), body) for speaker, body in zip(parts[1::2], parts[2::2])]
     return [(speaker, " ".join(body.split())) for speaker, body in turns if body.strip()]
+
+
+def parse_turns_with_effects(script: str) -> list[SpeechTurn]:
+    """Ordered SpeechTurn items with speaker_effects extracted."""
+    turns: list[SpeechTurn] = []
+    for speaker, raw_body in parse_turns(script):
+        cleaned, effects = extract_speaker_effects(raw_body)
+        if cleaned:
+            turns.append(SpeechTurn(speaker=speaker, text=cleaned, speaker_effects=effects, raw_text=raw_body))
+    return turns
 
 
 def _pack(sentences: list[str], limit: int) -> list[str]:
@@ -40,17 +55,36 @@ def _pack(sentences: list[str], limit: int) -> list[str]:
     return [*chunks, current] if current else chunks
 
 
+def plan_turns_chunks(
+    turns: Iterable[SpeechTurn],
+    *,
+    start_index: int = 0,
+    limit: int = CHUNK_BYTES,
+) -> list[Chunk]:
+    """Merge consecutive turns of one speaker with identical speaker_effects, then cut near ``limit``."""
+    merged: list[tuple[int, str, tuple[str, ...]]] = []
+    for turn in turns:
+        text = " ".join((turn.text or "").split())
+        if not text:
+            continue
+        if merged and merged[-1][0] == turn.speaker and merged[-1][2] == turn.speaker_effects:
+            merged[-1] = (turn.speaker, f"{merged[-1][1]} {text}", turn.speaker_effects)
+        else:
+            merged.append((turn.speaker, text, turn.speaker_effects))
+    pieces = [
+        (speaker, piece, effects)
+        for speaker, text, effects in merged
+        for piece in _pack(SENTENCE_END.split(text), limit)
+    ]
+    return [
+        Chunk(start_index + offset, speaker, text, effects)
+        for offset, (speaker, text, effects) in enumerate(pieces)
+    ]
+
+
 def plan_chunks(script: str, limit: int = CHUNK_BYTES) -> list[Chunk]:
     """Merge consecutive lines of one speaker, then cut at sentence ends near ``limit``."""
-    merged: list[tuple[int, str]] = []
-    for speaker, text in parse_turns(script):
-        if merged and merged[-1][0] == speaker:
-            merged[-1] = (speaker, f"{merged[-1][1]} {text}")
-        else:
-            merged.append((speaker, text))
-    pieces = [(speaker, piece) for speaker, text in merged
-              for piece in _pack(SENTENCE_END.split(text), limit)]
-    return [Chunk(index, speaker, text) for index, (speaker, text) in enumerate(pieces)]
+    return plan_turns_chunks(parse_turns_with_effects(script), start_index=0, limit=limit)
 
 
 def spoken_text(text: str) -> str:

@@ -421,6 +421,134 @@ class GenerateTests(unittest.TestCase):
                 validate_request(request)
         validate_request(Drama3Request("<|speaker:0|> Hi.\n<|speaker:3|> Who am I?"))  # ComfyUI invents voices
 
+    def test_served_generation_renders_nested_sound_tree_pauses_and_speaker_effects(self):
+        sfx_clip = Path(self.temp.name) / "thunder.wav"
+        sfx_clip.write_bytes(audio.encode_wav(tone(0.5), RATE))
+        auto_bgm = Path(self.temp.name) / "rain_bgm.wav"
+        auto_bgm.write_bytes(audio.encode_wav(tone(1.0), RATE))
+
+        script = (
+            "<parallel>\n"
+            '<sound loop="true" volume="0.2" name="rain_bgm">Steady rain, 4 seconds</sound>\n'
+            "<sequential>\n"
+            "<|speaker:0|> <phone_call> Hello? <#0.5#> Is anyone there?\n"
+            "<parallel>\n"
+            '<sound name="thunder">Loud thunderclap, 2 seconds</sound>\n'
+            "<|speaker:1|> <robotic_voice> System online.\n"
+            "</parallel>\n"
+            "</sequential>\n"
+            "</parallel>"
+        )
+        req = self.request(
+            script,
+            script_mode="Advanced (sound enhanced)",
+            sounds=(("thunder", str(sfx_clip), "Loud thunderclap, 2 seconds", 2),),
+        )
+        with patch("h3_app.stable_audio.generate_sound_references", return_value={"rain_bgm": auto_bgm}) as gen_sounds:
+            fake, updates, snapshot = self.run_route(req, lambda payload: float_wav(tone(0.6)))
+        gen_sounds.assert_called_once()
+        # 3 speech chunks: "Hello?", "Is anyone there?" (split across <#0.5#>), and "System online."
+        self.assertEqual(fake.speech.call_count, 3)
+        result_path = Path(updates[-1].output["value"])
+        self.assertTrue(result_path.is_file())
+        mixed = audio.load_audio_file(result_path, RATE)
+        self.assertGreater(len(mixed) / RATE, 1.5)
+
+
+class TreeAndSpeakerEffectsTests(unittest.TestCase):
+    def test_nested_parallel_sequential_tree_and_pause_splitting(self):
+        from h3_app.drama3_serving.planner import plan_turns_chunks
+        from h3_app.drama3_serving.tree import (
+            ParallelNode,
+            PauseNode,
+            SequentialNode,
+            SoundNode,
+            SpeechNode,
+            extract_script_sounds,
+            iter_speech_nodes,
+            parse_drama3_tree,
+        )
+
+        script = (
+            "<parallel>\n"
+            '<sound loop="true" volume="0.2" name="tavern_bgm">Acoustic lute and tavern murmur, 15 seconds</sound>\n'
+            "<sequential>\n"
+            "<|speaker:0|> Welcome, traveler.\n"
+            "<parallel>\n"
+            '<sound name="mug_slam">Heavy wooden mug slamming on table, 2 seconds</sound>\n'
+            "<|speaker:1|> <phone_call> Can you hear me? <#1.25#> <robotic_voice> Over and out.\n"
+            "</parallel>\n"
+            "</sequential>\n"
+            "</parallel>"
+        )
+        root = parse_drama3_tree(script)
+        self.assertEqual(len(root.children), 1)
+        outer = root.children[0]
+        self.assertIsInstance(outer, ParallelNode)
+        self.assertIsInstance(outer.children[0], SoundNode)
+        self.assertTrue(outer.children[0].loop)
+        self.assertAlmostEqual(outer.children[0].volume, 0.2)
+        self.assertEqual(outer.children[0].duration, 15)
+
+        seq = outer.children[1]
+        self.assertIsInstance(seq, SequentialNode)
+        self.assertIsInstance(seq.children[0], SpeechNode)
+        inner_par = seq.children[1]
+        self.assertIsInstance(inner_par, ParallelNode)
+        self.assertIsInstance(inner_par.children[0], SoundNode)
+        inner_seq = inner_par.children[1]
+        self.assertIsInstance(inner_seq, SequentialNode)
+        self.assertIsInstance(inner_seq.children[0], SpeechNode)
+        self.assertIsInstance(inner_seq.children[1], PauseNode)
+        self.assertAlmostEqual(inner_seq.children[1].seconds, 1.25)
+        self.assertIsInstance(inner_seq.children[2], SpeechNode)
+
+        speech_nodes = iter_speech_nodes(root)
+        self.assertEqual(len(speech_nodes), 3)
+        self.assertEqual(speech_nodes[1].turns[0].speaker_effects, ("phone_call",))
+        self.assertEqual(speech_nodes[2].turns[0].speaker_effects, ("phone_call", "robotic_voice"))
+
+        # Planner does not merge turns with different speaker_effects
+        chunks = plan_turns_chunks([t for node in speech_nodes for t in node.turns])
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(chunks[1].speaker_effects, ("phone_call",))
+        self.assertEqual(chunks[2].speaker_effects, ("phone_call", "robotic_voice"))
+
+        sounds = extract_script_sounds(script)
+        self.assertEqual([s["name"] for s in sounds], ["tavern_bgm", "mug_slam"])
+        self.assertEqual([s["duration"] for s in sounds], [15, 2])
+
+    def test_all_twenty_speaker_effects_transform_audio_cleanly(self):
+        from h3_app.drama3_serving.speaker_effects import (
+            SPEAKER_EFFECTS,
+            apply_speaker_effects,
+            extract_speaker_effects,
+        )
+
+        self.assertEqual(len(SPEAKER_EFFECTS), 20)
+        sample = tone(0.4)
+        for effect in SPEAKER_EFFECTS:
+            with self.subTest(effect=effect):
+                cleaned, extracted = extract_speaker_effects(f"<{effect}> [calm] Testing {effect}.")
+                self.assertEqual(extracted, (effect,))
+                self.assertEqual(cleaned, f"[calm] Testing {effect}.")
+                processed = apply_speaker_effects(sample, RATE, (effect,))
+                self.assertEqual(processed.dtype, np.float32)
+                self.assertGreater(len(processed), 0)
+                self.assertTrue(np.all(np.isfinite(processed)))
+                self.assertGreater(float(np.max(np.abs(processed))), 0.01)
+
+    def test_mix_parallel_tracks_loops_bgm_ducks_under_speech_and_trims_sfx(self):
+        speech_track = tone(2.0)
+        bgm_track = tone(0.6)  # shorter than speech, with loop=True loops to speech + 1.0s fade-out
+        mixed = audio.mix_parallel_tracks(
+            [(speech_track, False, False, 1.0), (bgm_track, True, True, 0.2)],
+            RATE,
+        )
+        self.assertEqual(len(mixed), len(speech_track) + RATE)
+        self.assertLessEqual(float(np.max(np.abs(mixed))), 0.901)
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -2710,6 +2710,28 @@ def _drama3_voices(slots):
     return tuple(voices), names
 
 
+def _drama3_sounds(slots):
+    """Resolve (preset, audio, save_name, description, duration) sound slot 5-tuples."""
+    from h3_app import drama3_sounds
+    from h3_ui.optional_engine_views import UPLOAD_SOUND
+
+    sounds = []
+    for index in range(len(slots) // 5):
+        preset, audio, save_name, description, duration = slots[5 * index:5 * index + 5]
+        if preset and preset != UPLOAD_SOUND:
+            saved = drama3_sounds.load_sound(preset, _runtime_config())
+            sounds.append((saved.name, str(saved.audio), saved.description, int(saved.duration)))
+        elif audio or str(save_name or "").strip() or str(description or "").strip():
+            name = str(save_name or "").strip() or f"sound_{index}"
+            desc = str(description or "").strip() or name
+            try:
+                dur = max(1, min(60, int(round(float(duration or 5)))))
+            except (TypeError, ValueError):
+                dur = 5
+            sounds.append((name, str(audio or ""), desc, dur))
+    return tuple(sounds)
+
+
 def generate_drama3(*values, progress=gr.Progress(track_tqdm=False)):
     """Inputs: text, then (voice, audio, transcript) per speaker slot, then settings.
 
@@ -2721,13 +2743,20 @@ def generate_drama3(*values, progress=gr.Progress(track_tqdm=False)):
     slot_count = len(DRAMA3_SLOT_INPUT_NAMES)
     text, slots, settings = values[0], values[1:1 + slot_count], list(values[1 + slot_count:])
     defaults = [-1, 1.0, 0.9, 0, 8192, False, "in VRAM", 0.0, "ComfyUI", 8, 0, "FP8 (original weights)"]
-    settings += defaults[len(settings):]
+    if len(settings) < len(defaults):
+        settings += defaults[len(settings):]
     (seed, temperature, top_p, top_k, max_frames, split_long_text, experts, expert_cache_gb,
      backend, parallel, retries, model_choice) = settings[:12]
+    script_mode = settings[12] if len(settings) > 12 and settings[12] else "Basic"
+    sound_slots = settings[13:] if len(settings) > 13 else ()
     voices, names = _drama3_voices(slots)
-    request = generation_requests.Drama3Request(text, voices, seed, temperature, top_p, top_k,
-                                                max_frames, split_long_text, experts, expert_cache_gb,
-                                                backend, parallel, retries, tuple(names), model_choice)
+    sounds = _drama3_sounds(sound_slots)
+    request = generation_requests.Drama3Request(
+        text, voices, seed, temperature, top_p, top_k,
+        max_frames, split_long_text, experts, expert_cache_gb,
+        backend, parallel, retries, tuple(names), model_choice,
+        script_mode=script_mode, sounds=sounds,
+    )
     validate_request(request)
     served = request.backend != "ComfyUI"
     input_dir = _runtime_config().input_dir
@@ -2737,6 +2766,12 @@ def generate_drama3(*values, progress=gr.Progress(track_tqdm=False)):
         for speaker, audio, transcript in request.voices
         for staged in (stage_file(audio, "drama3_voices", reuse=True),)
     ))
+    if request.sounds:
+        request = replace(request, sounds=tuple(
+            (name, str(input_dir / stage_file(audio, "drama3_sounds", reuse=True)) if (audio and served) else str(audio or ""),
+             description, duration)
+            for name, audio, description, duration in request.sounds
+        ))
     yield from generate_optional_engine(request, _generation_services(), _runtime_config(),
                                         progress=progress, free_gpu=free_comfy_vram)
 
@@ -2803,6 +2838,33 @@ def _drama3_writer_slots(slots):
     return names, existing, cast_context, shown
 
 
+def _drama3_writer_mode_and_sounds(slots):
+    """Extract optional script_mode and saved sound preset context for writer prompts."""
+    import json
+    from h3_app import drama3_sounds
+    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES
+
+    count = len(DRAMA3_SLOT_INPUT_NAMES)
+    script_mode = (
+        slots[count * 2 + 1]
+        if len(slots) > count * 2 + 1 and slots[count * 2 + 1]
+        else prompt_service.DRAMA3_SCRIPT_BASIC
+    )
+    sound_context = ""
+    if script_mode == prompt_service.DRAMA3_SCRIPT_ADVANCED:
+        saved = drama3_sounds.list_sounds(_runtime_config())
+        if saved:
+            items = [
+                {"name": preset.name, "description": preset.description, "duration": preset.duration}
+                for preset in saved
+            ]
+            sound_context = (
+                "Existing saved sound presets (reuse matching names/descriptions when fitting):\n"
+                + json.dumps(items, ensure_ascii=False)
+            )
+    return script_mode, sound_context
+
+
 def _drama3_unchanged_outputs():
     from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VOICE_SLOTS
     return [gr.skip()] * (len(DRAMA3_SLOT_INPUT_NAMES) + DRAMA3_VOICE_SLOTS + 3)
@@ -2834,11 +2896,12 @@ def enhance_drama3_text(text, speaker_mode, model, temporary_api_key, backend, l
     """Apply indexed cast metadata and slot visibility only after validating the complete result."""
     try:
         names, existing, cast_context, shown = _drama3_writer_slots(slots)
+        script_mode, sound_context = _drama3_writer_mode_and_sounds(slots)
         script, status, cast = prompt_service.enhance_drama3_text(
             text, model, temporary_api_key, names, backend=backend,
             lightning_api_key=lightning_api_key, lightning_model=lightning_model,
             speaker_mode=speaker_mode, runtime=_runtime_config(), return_cast=True,
-            cast_context=cast_context,
+            cast_context=cast_context, script_mode=script_mode, sound_context=sound_context,
         )
         if status.startswith("Prompt enhancement failed:"):
             return text, status, *_drama3_unchanged_outputs()
@@ -2851,8 +2914,11 @@ def copy_drama3_writer_prompt(text, speaker_mode, *slots):
     """The full writer prompt (system prompt, slot context and speech text) for an external chat model."""
     try:
         names, _existing, cast_context, _shown = _drama3_writer_slots(slots)
-        prompt = prompt_service.drama3_full_prompt(text, names, speaker_mode, runtime=_runtime_config(),
-                                                   cast_context=cast_context)
+        script_mode, sound_context = _drama3_writer_mode_and_sounds(slots)
+        prompt = prompt_service.drama3_full_prompt(
+            text, names, speaker_mode, runtime=_runtime_config(),
+            cast_context=cast_context, script_mode=script_mode, sound_context=sound_context,
+        )
     except H3Error as exc:
         return gr.skip(), f"Could not build the writer prompt: {exc}"
     return (gr.update(value=prompt, visible=True),
@@ -2863,12 +2929,93 @@ def apply_drama3_writer_reply(reply, text, speaker_mode, *slots):
     """Validate a pasted reply like the built-in writer, then fill the script and speaker slots."""
     try:
         names, existing, _cast_context, shown = _drama3_writer_slots(slots)
-        script, status, cast = prompt_service.apply_drama3_reply(reply, text, names, speaker_mode)
+        script_mode, _sound_context = _drama3_writer_mode_and_sounds(slots)
+        script, status, cast = prompt_service.apply_drama3_reply(
+            reply, text, names, speaker_mode, script_mode=script_mode,
+        )
         if status.startswith("Prompt enhancement failed:"):
             return text, status, *_drama3_unchanged_outputs()
         return _drama3_apply_cast(script, status, cast, existing, shown)
     except H3Error as exc:
         return text, f"Prompt enhancement failed: {exc}", *_drama3_unchanged_outputs()
+
+
+def switch_drama3_script_mode(script_mode, text, backend="ComfyUI"):
+    """Toggle Basic vs Advanced (sound enhanced) script mode and enforce SGLang-Omni on Advanced."""
+    from h3_app.drama3_serving.speaker_effects import strip_speaker_effects
+    from h3_app.drama3_serving.tree import strip_drama3_sound_tags
+
+    if script_mode == prompt_service.DRAMA3_SCRIPT_ADVANCED:
+        backend_update = gr.update(value="SGLang-Omni") if backend != "SGLang-Omni" else gr.skip()
+        return (
+            gr.skip(),
+            backend_update,
+            gr.update(visible=True),
+            "Advanced sound-enhanced mode enabled (uses SGLang-Omni backend and Stable Audio 3 Medium).",
+        )
+    raw = str(text or "")
+    cleaned = strip_speaker_effects(strip_drama3_sound_tags(raw))
+    text_update = cleaned if cleaned != raw else gr.skip()
+    return (
+        text_update,
+        gr.skip(),
+        gr.update(visible=False),
+        "Basic script mode enabled; sound and speaker vocal effect tags removed.",
+    )
+
+
+def sync_drama3_script_sounds(text, script_mode, shown_sound_slots, *sound_meta_values):
+    """Populate sound slot names, descriptions, and durations from <sound> tags in the script."""
+    from h3_app.drama3_serving.tree import extract_script_sounds
+    from h3_ui.optional_engine_views import (
+        DRAMA3_SOUND_SLOTS,
+        DRAMA3_VISIBLE_SOUND_SLOTS,
+        _sound_slot_visibility,
+    )
+
+    total_meta = 3 * DRAMA3_SOUND_SLOTS
+    updates = [gr.skip()] * total_meta
+    shown = int(shown_sound_slots or DRAMA3_VISIBLE_SOUND_SLOTS)
+    if script_mode != prompt_service.DRAMA3_SCRIPT_ADVANCED:
+        return (*updates, *_sound_slot_visibility(shown))
+    extracted = extract_script_sounds(str(text or ""))
+    if not extracted:
+        return (*updates, *_sound_slot_visibility(shown))
+
+    existing_by_name = {}
+    used_slots = set()
+    for idx in range(DRAMA3_SOUND_SLOTS):
+        triple = sound_meta_values[3 * idx:3 * idx + 3] if len(sound_meta_values) >= 3 * (idx + 1) else ("", "", 5)
+        s_name = str(triple[0] or "").strip()
+        s_desc = str(triple[1] or "").strip()
+        s_dur = triple[2]
+        if s_name:
+            existing_by_name[s_name.casefold()] = (idx, s_name, s_desc, s_dur)
+            used_slots.add(idx)
+
+    max_slot = shown - 1
+    next_free = 0
+    for item in extracted:
+        key = item["name"].casefold()
+        if key in existing_by_name:
+            idx, prev_name, prev_desc, prev_dur = existing_by_name[key]
+            name = prev_name or item["name"]
+            desc = prev_desc or item["description"]
+            dur = prev_dur or item["duration"]
+        else:
+            while next_free < DRAMA3_SOUND_SLOTS and next_free in used_slots:
+                next_free += 1
+            if next_free >= DRAMA3_SOUND_SLOTS:
+                break
+            idx = next_free
+            used_slots.add(idx)
+            name = item["name"]
+            desc = item["description"]
+            dur = item["duration"]
+        max_slot = max(max_slot, idx)
+        updates[3 * idx:3 * idx + 3] = [name, desc, int(dur)]
+
+    return (*updates, *_sound_slot_visibility(max_slot + 1))
 
 
 def _publish_drama3_signatures():
@@ -2891,6 +3038,7 @@ def _publish_drama3_signatures():
         *[inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD, default="")
           for name in DRAMA3_CAST_INPUT_NAMES],
         inspect.Parameter("shown_slots", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=DRAMA3_VISIBLE_SLOTS),
+        inspect.Parameter("script_mode", inspect.Parameter.POSITIONAL_OR_KEYWORD, default="Basic"),
     ])
 
 
@@ -3125,6 +3273,169 @@ def delete_drama3_speaker(slot, name, count):
     return [f'Deleted saved speaker "{name}".', *_drama3_preset_updates(count, slot, UPLOAD_VOICE)]
 
 
+def drama3_sound_names():
+    from h3_app import drama3_sounds
+    return drama3_sounds.sound_names(_runtime_config())
+
+
+def _drama3_sound_preset_updates(count, selected_slot=None, selected=None):
+    from h3_ui.optional_engine_views import drama3_sound_choices
+    choices = drama3_sound_choices(drama3_sound_names())
+    return [
+        gr.update(choices=choices, value=selected) if slot == selected_slot else gr.update(choices=choices)
+        for slot in range(count)
+    ]
+
+
+def select_drama3_sound(name):
+    """Show the sound upload controls, or a saved sound preset's metadata in their place."""
+    from h3_app import drama3_sounds
+    from h3_ui.optional_engine_views import UPLOAD_SOUND
+    if not name or name == UPLOAD_SOUND:
+        return (
+            gr.update(visible=True),
+            gr.update(visible=True),
+            gr.update(visible=False),
+            "",
+            gr.skip(),
+            gr.update(interactive=True),
+            gr.update(interactive=True),
+            None,
+        )
+    try:
+        saved = drama3_sounds.load_sound(name, _runtime_config())
+    except H3Error as exc:
+        return (
+            gr.update(visible=True),
+            gr.update(visible=True),
+            gr.update(visible=False),
+            str(exc),
+            gr.skip(),
+            gr.update(interactive=True),
+            gr.update(interactive=True),
+            gr.skip(),
+        )
+    return (
+        gr.update(visible=False),
+        gr.update(visible=False),
+        gr.update(visible=True),
+        f'Using saved sound "{saved.name}".',
+        saved.name,
+        gr.update(value=saved.description, interactive=False),
+        gr.update(value=saved.duration, interactive=False),
+        str(saved.audio),
+    )
+
+
+def save_drama3_sound(slot, name, audio, description, duration, count):
+    from h3_app import drama3_sounds
+    try:
+        saved = drama3_sounds.save_sound(name, audio, description, duration, _runtime_config())
+    except H3Error as exc:
+        return [str(exc), *[gr.skip()] * count]
+    return [f'Saved sound "{saved.name}".', *_drama3_sound_preset_updates(count, slot, saved.name)]
+
+
+def delete_drama3_sound(slot, name, count):
+    from h3_app import drama3_sounds
+    from h3_ui.optional_engine_views import UPLOAD_SOUND
+    try:
+        drama3_sounds.delete_sound(name, _runtime_config())
+    except H3Error as exc:
+        return [str(exc), *[gr.skip()] * count]
+    return [f'Deleted saved sound "{name}".', *_drama3_sound_preset_updates(count, slot, UPLOAD_SOUND)]
+
+
+def generate_drama3_sound(description, duration=5):
+    """Generate a single sound effect or music clip with Stable Audio 3 Medium."""
+    from h3_app import stable_audio
+    from h3_models import resolve_hf_token
+
+    try:
+        yield gr.skip(), "Preparing Stable Audio 3 Medium; runtime and weights download on first use."
+        audio = stable_audio.generate_sound_reference(
+            description, duration, _runtime_config(),
+            free_gpu=free_comfy_vram, hf_token=resolve_hf_token(),
+        )
+    except Exception as exc:
+        yield gr.skip(), f"Sound generation failed: {exc}"
+        return
+    yield str(audio), "Sound generated with Stable Audio 3 Medium; ready to save."
+
+
+def generate_drama3_sounds(*values):
+    """Batch-generate shown upload sound slots that have a description and no clip yet."""
+    from h3_app import stable_audio
+    from h3_models import resolve_hf_token
+    from h3_ui.optional_engine_views import DRAMA3_SOUND_SLOTS, UPLOAD_SOUND
+
+    shown = int(values[0] or 0)
+    skip_existing = values[1] is not False
+    slots = values[2:]
+    updates = [gr.skip()] * (2 * DRAMA3_SOUND_SLOTS)
+
+    def frame(status):
+        current = list(updates)
+        updates[:] = [gr.skip()] * len(updates)
+        return (*current, status)
+
+    targets = []
+    for index in range(max(0, min(shown, DRAMA3_SOUND_SLOTS))):
+        preset, has_clip, save_name, description, duration = slots[5 * index:5 * index + 5]
+        if preset and preset != UPLOAD_SOUND:
+            continue
+        if has_clip and skip_existing:
+            updates[2 * index + 1] = (
+                "Skipped: this sound already has a clip. Uncheck "
+                "Skip sounds with a clip to regenerate it."
+            )
+        elif not str(description or "").strip():
+            updates[2 * index + 1] = "Skipped: add a sound description first."
+        else:
+            targets.append((index, str(save_name or f"sound_{index}"), str(description), duration))
+
+    if not targets:
+        yield frame("No sounds to generate. Shown sound slots without a clip need a sound description.")
+        return
+
+    for index, *_rest in targets:
+        updates[2 * index + 1] = "Waiting for Stable Audio 3 Medium…"
+    yield frame(f"Generating {len(targets)} sound(s) with Stable Audio 3 Medium…")
+
+    try:
+        items = [
+            (description, duration)
+            for _index, _name, description, duration in targets
+        ]
+        results = stable_audio.generate_sound_references(
+            items, _runtime_config(), free_gpu=free_comfy_vram, hf_token=resolve_hf_token(),
+        )
+        if isinstance(results, dict):
+            for index, _name, _description, _duration in targets:
+                audio = results.get(str(index))
+                if audio:
+                    updates[2 * index:2 * index + 2] = [
+                        str(audio),
+                        "Sound generated with Stable Audio 3 Medium; ready to save.",
+                    ]
+        else:
+            for (index, _name, _description, _duration), audio in zip(targets, results):
+                if audio:
+                    updates[2 * index:2 * index + 2] = [
+                        str(audio),
+                        "Sound generated with Stable Audio 3 Medium; ready to save.",
+                    ]
+    except JobCancelled:
+        raise
+    except Exception as exc:
+        for index, *_rest in targets:
+            updates[2 * index + 1] = f"Sound generation failed: {exc}"
+        yield frame(f"Sound generation failed: {exc}")
+        return
+
+    yield frame(f"Generated {len(targets)} of {len(targets)} sound clips.")
+
+
 def _optional_engine_actions():
     from h3_ui.optional_engine_views import OptionalEngineActions
     return OptionalEngineActions(
@@ -3143,6 +3454,14 @@ def _optional_engine_actions():
         copy_drama3_writer_prompt=copy_drama3_writer_prompt,
         apply_drama3_writer_reply=apply_drama3_writer_reply,
         interrupt=interrupt,
+        switch_drama3_script_mode=switch_drama3_script_mode,
+        sync_drama3_script_sounds=sync_drama3_script_sounds,
+        drama3_sound_names=drama3_sound_names,
+        select_drama3_sound=select_drama3_sound,
+        save_drama3_sound=save_drama3_sound,
+        delete_drama3_sound=delete_drama3_sound,
+        generate_drama3_sound=generate_drama3_sound,
+        generate_drama3_sounds=generate_drama3_sounds,
     )
 
 

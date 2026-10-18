@@ -294,8 +294,11 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         engine_actions = services.optional_engine_actions
         flux3_components = build_flux3_view(app_views.flux3)
         drama3_components = build_drama3_view(
-            app_views.drama3, engine_actions.drama3_speaker_names()
+            app_views.drama3,
+            engine_actions.drama3_speaker_names(),
+            getattr(engine_actions, "drama3_sound_names", lambda: [])(),
         )
+
         bind_flux3(flux3_components, engine_actions)
         bind_drama3(drama3_components, engine_actions)
         gallery_components = build_gallery_view(

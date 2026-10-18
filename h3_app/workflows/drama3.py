@@ -32,9 +32,14 @@ def validate_drama3_text(text, location="Speech text"):
 
 def text_speakers(text):
     """Speaker numbers the text uses; untagged text is speaker 0."""
-    speakers = {int(digits) for digits in SPEAKER_TAG.findall(str(text or ""))}
-    leading = SPEAKER_TAG.split(str(text or ""))[0]
+    from h3_app.drama3_serving.tree import strip_drama3_sound_tags
+
+    raw = str(text or "")
+    speakers = {int(digits) for digits in SPEAKER_TAG.findall(raw)}
+    cleaned = strip_drama3_sound_tags(raw)
+    leading = SPEAKER_TAG.split(cleaned)[0]
     return speakers | ({0} if leading.strip() or not speakers else set())
+
 
 
 # The node's cap, about 6.3 minutes. A take stops at its end-of-speech token,

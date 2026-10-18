@@ -114,6 +114,19 @@ def validate_request(request):
             raise H3Error("Choose experts in RAM or in VRAM.")
         if request.backend not in DRAMA3_BACKENDS:
             raise H3Error("Choose the ComfyUI or SGLang-Omni Drama 3 backend.")
+        from h3_app.drama3_serving.tree import has_drama3_sound_features
+        from h3_app.prompt_service import DRAMA3_SCRIPT_ADVANCED, DRAMA3_SCRIPT_MODES
+
+        if request.script_mode not in DRAMA3_SCRIPT_MODES:
+            raise H3Error("Choose Basic or Advanced (sound enhanced) Drama 3 script mode.")
+        if (
+            request.script_mode == DRAMA3_SCRIPT_ADVANCED
+            or has_drama3_sound_features(request.text)
+        ) and request.backend != "SGLang-Omni":
+            raise H3Error(
+                "Advanced sound-enhanced Drama 3 scripts (with <sound>, <parallel>, <sequential>, "
+                "or speaker vocal effects) are only supported on the SGLang-Omni backend."
+            )
         _integer(request.parallel, 1, 32, "Parallel requests")
         _integer(request.retries, 0, 4, "Retries per chunk")
         if request.backend in DRAMA3_SERVED_BACKENDS:
@@ -175,7 +188,7 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
 
             release_all()  # the ComfyUI route needs the VRAM a served backend holds
             graph = build_drama3_graph(**{key: value for key, value in values.items()
-                                          if key not in {"backend", "parallel", "retries", "voice_names"}})
+                                          if key not in {"backend", "parallel", "retries", "voice_names", "script_mode", "sounds"}})
         info = services.execution.object_info()
         missing = {node["class_type"] for node in graph.values()} - set(info)
         if missing:

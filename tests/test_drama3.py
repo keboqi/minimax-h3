@@ -314,5 +314,153 @@ class Drama3VramHandoffTests(unittest.TestCase):
         self.assertEqual([call.args for call in lease.call_args_list], [("drama3",), ("drama3",)])
 
 
+class SoundPresetTests(unittest.TestCase):
+    def setUp(self):
+        from h3_app import drama3_sounds
+
+        self.drama3_sounds = drama3_sounds
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        patcher = patch.dict(os.environ, {"H3_WORKSPACE_DIR": str(root / "workspace")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.runtime = RuntimeConfig(root, "http://x", root / "ComfyUI", root / "m.json", root / "outputs")
+        self.clip = root / "thunder.wav"
+        self.clip.write_bytes(b"RIFF....WAVE")
+
+    def test_save_reuse_replace_and_delete_sound_preset(self):
+        saved = self.drama3_sounds.save_sound(
+            "  Heavy   Thunder ", str(self.clip), "Loud thunderclap in a storm, 4 seconds", 4, self.runtime,
+        )
+        self.assertEqual(saved.name, "Heavy Thunder")
+        self.assertEqual(saved.duration, 4)
+        self.assertTrue(saved.audio.is_file())
+        self.assertTrue(saved.audio.is_relative_to(Path(self.temp.name) / "workspace" / "drama3_sounds"))
+        self.drama3_sounds.save_sound(
+            "heavy thunder", str(self.clip), "Updated storm rumble, 6 seconds", 6, self.runtime,
+        )
+        self.assertEqual(self.drama3_sounds.sound_names(self.runtime), ["heavy thunder"])
+        loaded = self.drama3_sounds.load_sound("HEAVY THUNDER", self.runtime)
+        self.assertEqual(loaded.description, "Updated storm rumble, 6 seconds")
+        self.assertEqual(loaded.duration, 6)
+        self.drama3_sounds.delete_sound("Heavy Thunder", self.runtime)
+        self.assertEqual(self.drama3_sounds.sound_names(self.runtime), [])
+        with self.assertRaises(H3Error):
+            self.drama3_sounds.load_sound("Heavy Thunder", self.runtime)
+
+
+class Drama3SoundAndEffectValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = SimpleNamespace(prompt_systems={"Drama 3": ROOT / "prompt_drama3.txt"})
+
+    def test_advanced_mode_and_sound_or_effect_tags_require_sglang_omni(self):
+        voices = ((0, "a.wav", "Ref 0."),)
+        # Advanced mode on ComfyUI is rejected
+        with self.assertRaisesRegex(H3Error, "SGLang-Omni"):
+            validate_request(Drama3Request(
+                "<|speaker:0|> Hello.",
+                voices=voices,
+                backend="ComfyUI",
+                script_mode=prompt_service.DRAMA3_SCRIPT_ADVANCED,
+            ))
+        # Sound tags or speaker effects on ComfyUI are rejected even if script_mode is Basic
+        for text in (
+            '<sound name="rain">Steady rain, 4 seconds</sound>\n<|speaker:0|> Hello.',
+            "<parallel>\n<|speaker:0|> Hello.\n</parallel>",
+            "<|speaker:0|> <#1.5#> Hello.",
+            "<|speaker:0|> <phone_call> Hello.",
+        ):
+            with self.subTest(text=text), self.assertRaisesRegex(H3Error, "SGLang-Omni"):
+                validate_request(Drama3Request(text, voices=voices, backend="ComfyUI"))
+        # All of the above are valid on SGLang-Omni
+        validate_request(Drama3Request(
+            '<parallel>\n<sound loop="true" volume="0.2" name="bgm">Dark synth drone, 15 seconds</sound>\n'
+            '<sequential>\n<|speaker:0|> <phone_call> [whispering] Hello? <#1.0#> Are you there?\n</sequential>\n</parallel>',
+            voices=voices,
+            backend="SGLang-Omni",
+            script_mode=prompt_service.DRAMA3_SCRIPT_ADVANCED,
+        ))
+
+    def test_basic_mode_strips_sound_and_speaker_effect_tags_while_advanced_keeps_them(self):
+        import json
+
+        raw_script = (
+            "<parallel>\n"
+            '<sound loop="true" volume="0.2" name="rain_ambience">Steady rain on window, 12 seconds</sound>\n'
+            "<sequential>\n"
+            "<|speaker:0|> <phone_call> [anxious] Hello? <#1.0#> Can you hear me?\n"
+            '<sound name="thunder">Loud thunderclap, 3 seconds</sound>\n'
+            "<|speaker:1|> <robotic_voice> Affirmative.\n"
+            "</sequential>\n"
+            "</parallel>"
+        )
+        reply = json.dumps({
+            "speakers": [
+                {"speaker_id": 0, "name": "Alice", "description": "Warm voice.", "preview_text": "One two three four five six."},
+                {"speaker_id": 1, "name": "Unit 7", "description": "Cold voice.", "preview_text": "One two three four five six."},
+            ],
+            "script": raw_script,
+        })
+        basic_script, basic_status, _cast = prompt_service.apply_drama3_reply(
+            reply, "Alice calls Unit 7.", (), "Auto", script_mode=prompt_service.DRAMA3_SCRIPT_BASIC,
+        )
+        self.assertFalse(basic_status.startswith("Prompt enhancement failed:"), basic_status)
+        self.assertNotIn("<parallel>", basic_script)
+        self.assertNotIn("<sequential>", basic_script)
+        self.assertNotIn("<sound", basic_script)
+        self.assertNotIn("<#1.0#>", basic_script)
+        self.assertNotIn("<phone_call>", basic_script)
+        self.assertNotIn("<robotic_voice>", basic_script)
+        self.assertIn("<|speaker:0|> [anxious] Hello? Can you hear me?", basic_script)
+        self.assertIn("<|speaker:1|> Affirmative.", basic_script)
+
+        adv_script, adv_status, _cast = prompt_service.apply_drama3_reply(
+            reply, "Alice calls Unit 7.", (), "Auto", script_mode=prompt_service.DRAMA3_SCRIPT_ADVANCED,
+        )
+        self.assertFalse(adv_status.startswith("Prompt enhancement failed:"), adv_status)
+        self.assertIn("<parallel>", adv_script)
+        self.assertIn('<sound loop="true" volume="0.2" name="rain_ambience">', adv_script)
+        self.assertIn("<phone_call>", adv_script)
+        self.assertIn("<robotic_voice>", adv_script)
+        self.assertIn("<#1.0#>", adv_script)
+
+    def test_switch_script_mode_and_sync_script_sounds_in_application(self):
+        from h3_ui import application
+
+        text = (
+            "<parallel>\n"
+            '<sound loop="true" volume="0.2" name="cafe_bgm">Warm jazz piano, 15 seconds</sound>\n'
+            "<sequential>\n"
+            "<|speaker:0|> <phone_call> Hi! <#1.0#> Meet me inside.\n"
+            '<sound name="door_bell">Shop doorbell chime, 2 seconds</sound>\n'
+            "</sequential>\n"
+            "</parallel>"
+        )
+        # Switching to Advanced switches backend to SGLang-Omni and reveals sounds_panel
+        text_upd, backend_upd, panel_upd, status = application.switch_drama3_script_mode(
+            prompt_service.DRAMA3_SCRIPT_ADVANCED, text, "ComfyUI"
+        )
+        self.assertEqual(backend_upd["value"], "SGLang-Omni")
+        self.assertTrue(panel_upd["visible"])
+        self.assertIn("SGLang-Omni", status)
+
+        # Syncing script sounds populates slot metadata
+        meta = ["", "", 5] * 16
+        synced = application.sync_drama3_script_sounds(
+            text, prompt_service.DRAMA3_SCRIPT_ADVANCED, 4, *meta
+        )
+        self.assertEqual(list(synced[0:3]), ["cafe_bgm", "Warm jazz piano, 15 seconds", 15])
+        self.assertEqual(list(synced[3:6]), ["door_bell", "Shop doorbell chime, 2 seconds", 2])
+
+        # Switching back to Basic strips all sound/staging and speaker_effect tags
+        cleaned_text, _backend_upd, basic_panel_upd, _basic_status = application.switch_drama3_script_mode(
+            prompt_service.DRAMA3_SCRIPT_BASIC, text, "SGLang-Omni"
+        )
+        self.assertFalse(basic_panel_upd["visible"])
+        self.assertEqual(cleaned_text, "<|speaker:0|> Hi! Meet me inside.")
+
+
 if __name__ == "__main__":
     unittest.main()
+
