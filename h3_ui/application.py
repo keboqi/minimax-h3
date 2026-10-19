@@ -3114,8 +3114,8 @@ def transcribe_drama3_voice(audio, model_choice="1.7B (quality)"):
     return transcript, "Transcribed with Qwen3-ASR. Check names and punctuation before generating."
 
 
-def generate_drama3_voice(description, preview_text, language, engine="Drama 3", backend="ComfyUI",
-                          seed=-1, temperature=1.0, top_p=0.9, top_k=0, max_frames=8192,
+def generate_drama3_voice(description, preview_text, language, engine="Qwen3-TTS VoiceDesign",
+                          backend="ComfyUI", seed=-1, temperature=1.0, top_p=0.9, top_k=0, max_frames=8192,
                           experts="in VRAM", expert_cache_gb=0.0, model_choice="FP8 (original weights)"):
     """A generated reference and its synthesis text always update the same slot together.
 

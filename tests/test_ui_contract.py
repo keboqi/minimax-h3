@@ -719,7 +719,7 @@ class UiContractTests(unittest.TestCase):
         metadata = [f"speaker_{n}_{field}" for n in range(16)
                     for field in ("name", "description", "preview_text")]
         # The shown slot count is a hidden Number so browser-side handlers can read it.
-        self.assertEqual(enhance[7:], [*slots, *metadata, "shown_slots", "script_mode"])
+        self.assertEqual(enhance[7:], [*slots, *metadata, "shown_slots", "script_mode", "speaker_group"])
         voice = api["/generate_drama3_voice"]
         self.assertEqual([row["parameter_name"] for row in voice["parameters"]],
                          ["description", "preview_text", "language", "engine", "backend", "seed",
@@ -727,7 +727,7 @@ class UiContractTests(unittest.TestCase):
                           "model_choice"])
         engine = next(c for c in self.config["components"]
                       if c.get("props", {}).get("label") == "Voice generator")
-        self.assertEqual(engine["props"]["value"], "Drama 3")
+        self.assertEqual(engine["props"]["value"], "Qwen3-TTS VoiceDesign")
         speakers = next(c for c in self.config["components"]
                         if c.get("props", {}).get("label") == "Speakers")
         self.assertEqual(speakers["props"]["value"], "Auto")
@@ -773,6 +773,16 @@ class UiContractTests(unittest.TestCase):
         add_event = next(d for d in self.config["dependencies"]
                          if d["targets"] and d["targets"][0][0] == add["id"])
         self.assertEqual(len(add_event["outputs"]), 1 + 16 + 2)  # count, slot groups, both buttons
+
+    def test_saved_speaker_list_follows_slot_and_bulk_saves(self):
+        library = next(c for c in self.config["components"]
+                       if c.get("props", {}).get("label") == "Saved speaker")
+        refreshes = [fn for fn in self.demo.fns.values()
+                     if getattr(fn.fn, "__name__", "") == "refresh_saved"]
+        # One per slot save and delete, plus Save all speakers to selected group.
+        self.assertEqual(len(refreshes), 2 * 16 + 1)
+        for fn in refreshes:
+            self.assertEqual(fn.outputs[0]._id, library["id"])
 
     def test_new_engine_model_options_are_bound_and_persisted(self):
         endpoints = {d.get("api_name"): d for d in self.config["dependencies"]}

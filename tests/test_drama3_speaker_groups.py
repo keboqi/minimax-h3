@@ -155,6 +155,20 @@ class SpeakerGroupTests(unittest.TestCase):
         self.assertEqual(deleted[2]["value"], "Upload a clip")
         self.assertEqual(actions.choices("Story"), [])
 
+    def test_library_list_follows_saves_and_keeps_its_selection(self):
+        from h3_ui.drama3_speaker_library import SpeakerLibraryActions
+        actions = SpeakerLibraryActions(lambda: self.runtime)
+        alice = self.save("Alice", "Story")
+        listed, groups = actions.refresh_saved("Story", alice.key)
+        self.assertEqual((listed["choices"], listed["value"]), ([("Alice", alice.key)], alice.key))
+        self.assertEqual(groups["choices"], ["Global", "Story"])
+        bob = self.save("Bob", "Story")
+        listed, _groups = actions.refresh_saved("Story", alice.key)
+        self.assertEqual(listed["choices"], [("Alice", alice.key), ("Bob", bob.key)])
+        self.assertEqual(listed["value"], alice.key)
+        speakers.delete_speaker(alice.key, self.runtime)
+        self.assertIsNone(actions.refresh_saved("Story", alice.key)[0]["value"])
+
     def test_group_deletion_removes_owned_voices_and_resets_selections(self):
         from h3_ui.drama3_speaker_library import SpeakerLibraryActions
         actions = SpeakerLibraryActions(lambda: self.runtime)

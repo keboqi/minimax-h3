@@ -161,7 +161,9 @@ def _bind_voice_batch(trigger, view, actions):
 
 
 def _bind_voice_slots(view, actions):
+    """Returns the events that save or delete speaker presets."""
     presets = [slot.preset for slot in view.voices]
+    store_events = []
     _bind_slot_presentation(
         _VOICE_KIND, view.voices, view.shown_slots, view.voices_panel, view.add_speaker, view.remove_speaker,
         cleared=[(lambda slot: (slot.preset, slot.audio, slot.transcript), (UPLOAD_VOICE, None, "")),
@@ -171,11 +173,11 @@ def _bind_voice_slots(view, actions):
     if actions.create_drama3_speaker_group is not None:
         view.create_speaker_group.click(actions.create_drama3_speaker_group,
             inputs=view.new_speaker_group, outputs=[view.speaker_group, view.speaker_group_status], **_QUIET)
-        view.save_all_speakers.click(actions.save_all_drama3_speakers,
+        store_events.append(view.save_all_speakers.click(actions.save_all_drama3_speakers,
             inputs=[view.speaker_group, view.shown_slots,
                     *[c for slot in view.voices for c in
                       (slot.preset, slot.save_name, slot.audio, slot.transcript, slot.description)]],
-            outputs=[view.speaker_group_status, *presets], **_QUIET)
+            outputs=[view.speaker_group_status, *presets], **_QUIET))
         view.speaker_group.change(actions.match_drama3_speakers,
             inputs=[view.speaker_group, *[c for slot in view.voices
                     for c in (slot.save_name, slot.preset, slot.audio)]], outputs=presets, **_QUIET)
@@ -217,16 +219,17 @@ def _bind_voice_slots(view, actions):
             outputs=[slot.upload, slot.transcript, slot.save_row, slot.delete, slot.status,
                      slot.save_name, slot.description, slot.preview_text, slot.audio], **_QUIET,
         )
-        slot.save.click(
+        store_events.append(slot.save.click(
             lambda name, audio, transcript, description, group, speaker=slot.speaker: actions.save_drama3_speaker(
                 speaker, name, audio, transcript, len(presets), description, group),
             inputs=[slot.save_name, slot.audio, slot.transcript, slot.description, view.speaker_group],
             outputs=[slot.status, *presets], queue=False, api_name=False,
-        )
-        slot.delete.click(
+        ))
+        store_events.append(slot.delete.click(
             lambda name, speaker=slot.speaker: actions.delete_drama3_speaker(speaker, name, len(presets)),
             inputs=[slot.preset], outputs=[slot.status, *presets], queue=False, api_name=False,
-        )
+        ))
+    return store_events
 
 
 def _sync_script_sounds(trigger, view, actions):
@@ -301,10 +304,10 @@ def _bind_sound_slots(view, actions, script_events):
 def bind_drama3(view, actions):
     _bind_script_mode(view, actions)
     script_events = _bind_writer(view, actions)
-    _bind_voice_slots(view, actions)
+    store_events = _bind_voice_slots(view, actions)
     if view.speaker_library is not None and actions.speaker_library_actions is not None:
         bind_speaker_library(view.speaker_library, view.speaker_group, view.voices,
-                             actions.speaker_library_actions, view.speaker_group_status)
+                             actions.speaker_library_actions, view.speaker_group_status, store_events)
     if view.sounds:
         _bind_sound_slots(view, actions, script_events)
     generation_inputs = [

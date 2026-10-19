@@ -10,7 +10,7 @@ from .settings_controller import SETTING_NAMES
 # Keep the transport key/secret so existing encrypted v3 values remain readable.
 _STORAGE_KEY = "minimax-h3:settings:v3"
 _BROWSER_STATE_SECRET = "minimax-h3-ui-settings-v3"
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 # Runs only in the browser: drop every saved H3 preference, then reload so the
 # page restores from the app defaults in a brand-new session.
 RESET_BROWSER_SETTINGS_JS = """
@@ -175,6 +175,10 @@ def restore_preferences(saved, components):
     values = payload.get("values", payload)
     if not isinstance(values, Mapping):
         values = {}
+    version = payload.get("schema_version") if isinstance(payload.get("schema_version"), int) else 0
+    if version < 7 and values.get("drama3.voice_engine") == "Drama 3":
+        # v7 made Qwen3-TTS VoiceDesign the default; older saves stored the previous default.
+        values = {name: value for name, value in values.items() if name != "drama3.voice_engine"}
     restored = {
         name: sanitize(component, values.get(name, component.value))
         for name, component in components.items()

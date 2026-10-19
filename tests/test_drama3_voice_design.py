@@ -415,7 +415,7 @@ class CastSlotTests(unittest.TestCase):
         self.assertEqual(updates[-1][:2], ({"__type__": "update"}, {"__type__": "update"}))
         self.assertIn("failed", updates[-1][2])
 
-    def test_drama3_is_the_default_generator_and_uses_the_tab_backend_and_settings(self):
+    def test_drama3_generator_uses_the_tab_backend_and_settings(self):
         from h3_ui import application
         from h3_app import drama3_voice_design
         from h3_app.generation.results import GenerationUpdate
@@ -430,7 +430,7 @@ class CastSlotTests(unittest.TestCase):
                 patch.object(voice_design, "generate_reference") as qwen, \
                 patch.object(drama3_voice_design, "generate_drama3_reference", side_effect=design):
             updates = list(application.generate_drama3_voice(
-                "Warm", "Hello.", "Auto", backend="SGLang-Omni", temperature=0.7, top_k=30,
+                "Warm", "Hello.", "Auto", "Drama 3", backend="SGLang-Omni", temperature=0.7, top_k=30,
                 model_choice="INT8"))
         qwen.assert_not_called()
         self.assertEqual((seen["request"].backend, seen["request"].temperature, seen["request"].top_k,

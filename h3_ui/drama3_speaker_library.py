@@ -66,6 +66,13 @@ class SpeakerLibraryActions:
                 gr.update(choices=speakers.list_groups(self.runtime())),
                 f'{len(choices)} saved speakers in "{group or "Global"}".')
 
+    def refresh_saved(self, group, selected):
+        """After a save elsewhere, list the group's speakers again and keep the selection when it still exists."""
+        choices = self.choices(group)
+        keep = selected if selected in {key for _name, key in choices} else None
+        return (gr.update(choices=choices, value=keep),
+                gr.update(choices=speakers.list_groups(self.runtime())))
+
     def select(self, key):
         if not key:
             return None, "", "", ""
@@ -121,9 +128,13 @@ class SpeakerLibraryActions:
                   for value in selected]]
 
 
-def bind_speaker_library(view, group, slots, actions, group_status):
+def bind_speaker_library(view, group, slots, actions, group_status, store_events=()):
+    """``store_events`` are Drama 3 events that save or delete presets; the library list follows them."""
     quiet = {"queue": False, "api_name": False, "show_progress": "hidden"}
     presets = [slot.preset for slot in slots]
+    for event in store_events:
+        event.then(actions.refresh_saved, inputs=[group, view.selected],
+                   outputs=[view.selected, view.destination], **quiet)
 
     def open_library(group):
         return gr.update(visible=True), *actions.refresh(group)

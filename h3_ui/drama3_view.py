@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import json
 import gradio as gr
 from h3_ui.drama3_speaker_library import SpeakerLibraryView, build_speaker_library
-from h3_app.drama3_voice_design import ENGINE_DRAMA3, VOICE_DESIGN_ENGINES
+from h3_app.drama3_voice_design import ENGINE_QWEN, VOICE_DESIGN_ENGINES
 from h3_app.generation.optional_engines import DRAMA3_BACKENDS
 from h3_app.prompt_service import DRAMA3_SCRIPT_BASIC, DRAMA3_SCRIPT_MODES, DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES
 from h3_app.voice_design import LANGUAGES as VOICE_DESIGN_LANGUAGES
@@ -145,8 +145,7 @@ def _voice_slot(speaker, names):
         with gr.Group() as upload:
             preview_text = gr.Textbox(label=f"Speaker {speaker} preview speech", lines=2,
                                      placeholder="Words a generated reference clip will speak.")
-            language = gr.Dropdown(list(VOICE_DESIGN_LANGUAGES), value="Auto", label="Preview language",
-                                   visible=False)
+            language = gr.Dropdown(list(VOICE_DESIGN_LANGUAGES), value="Auto", label="Preview language")
             with gr.Row():
                 generate = gr.Button("Generate voice", size="sm")
                 stop = gr.Button("Interrupt voice generation", size="sm", interactive=False)
@@ -300,11 +299,11 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                     speaker_group_status = gr.Markdown("Reuse the same group across chapters. Global voices remain available in every group.")
                     speaker_library = build_speaker_library(speaker_groups)
                     voice_engine = gr.Radio(
-                        list(VOICE_DESIGN_ENGINES), value=ENGINE_DRAMA3, label="Voice generator",
-                        info="Drama 3 casts the voice from the description as a delivery cue, on the selected "
-                             "backend with the model and sampling settings below. "
-                             "[Qwen3-TTS VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign) "
-                             "runs in its own isolated runtime, downloaded on first use.",
+                        list(VOICE_DESIGN_ENGINES), value=ENGINE_QWEN, label="Voice generator",
+                        info="[Qwen3-TTS VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign) "
+                             "(default) designs the voice from the description in its own isolated runtime, "
+                             "downloaded on first use. Drama 3 casts it as a delivery cue on the selected "
+                             "backend with the model and sampling settings below.",
                     )
                     with gr.Row(equal_height=True):
                         skip_existing = gr.Checkbox(

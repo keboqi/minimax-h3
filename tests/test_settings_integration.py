@@ -27,6 +27,14 @@ class MigrationTests(unittest.TestCase):
         restored, _ = restore_preferences({"h3.lightvae_decoder": "int8"}, components)
         self.assertEqual(restored["h3.lightvae_decoder"], "int8")
 
+    def test_drama3_voice_generator_moves_to_the_qwen_default_once(self):
+        engines = ("Drama 3", "Qwen3-TTS VoiceDesign")
+        components = {"drama3.voice_engine": SimpleNamespace(value=engines[1], choices=[(e, e) for e in engines])}
+        for version, expected in ((6, engines[1]), (7, engines[0])):
+            saved = {"schema_version": version, "values": {"drama3.voice_engine": "Drama 3"}}
+            restored, _ = restore_preferences(saved, components)
+            self.assertEqual(restored["drama3.voice_engine"], expected)
+
     def components(self):
         return {
             "h3.preset": SimpleNamespace(

@@ -50,15 +50,16 @@ same time; a failed voice does not stop the others. ComfyUI and Qwen run the
 voices one after another. **Voice generator** picks the
 engine:
 
-- **Drama 3** (default) generates one take with no reference on the Drama 3
+- **Qwen3-TTS VoiceDesign** (default) uses
+  [Qwen3-TTS-12Hz-1.7B-VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign)
+  and also takes a preview language. Browsers that saved the previous default
+  (Drama 3) switch to it once; choosing Drama 3 again is remembered.
+- **Drama 3** generates one take with no reference on the Drama 3
   backend selected under **Speech and memory settings** (ComfyUI or
   SGLang-Omni), with that tab's model and sampling settings. The description is
   inserted as a delivery cue after the preview's opening phrase, for example
   `<|speaker:0|> Well now, [gravelly old sailor, slow and amused] the tide is turning.`,
   so it must not contain brackets. The cue is not part of the transcript.
-- **Qwen3-TTS VoiceDesign** uses
-  [Qwen3-TTS-12Hz-1.7B-VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign)
-  and also takes a preview language.
 
 Preview speech is separate from the current clip's transcript: editing a future
 preview does not change the words paired with an existing clip. Uploading a new
@@ -76,7 +77,9 @@ action, including copies of selected presets from other groups. Saving the same
 name again replaces that group's preset; other groups are unaffected.
 
 **Manage saved speakers** opens the library inside **Speaker voices**.
-Search the current group's speakers, listen to a saved clip, edit its name,
+Its list follows the selected group and updates as soon as a speaker is saved
+or deleted from a slot or with **Save all speakers to selected group**, keeping
+the current selection when it still exists. Search the current group's speakers, listen to a saved clip, edit its name,
 description or exact transcript, copy it into another group, or delete it.
 Renaming or copying refuses to overwrite a different saved speaker. Renames and
 deletions also update any currently selected voice slots.
