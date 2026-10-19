@@ -980,6 +980,25 @@ preview does not change the words paired with an existing clip. Uploading a new
 clip clears the previous transcript. **Save speaker** stores either kind of clip
 with its exact transcript, name, and description; older presets still load.
 
+Use **Speaker preset group** above the script to select or create a story/series
+group and reuse it across chapters. Rewrites and newly named speaker slots select
+matching saved voices from that group first, then from **Global**. Existing global
+presets remain available, including a shared narrator; a group's narrator overrides
+the global match. The writer uses the canonical name `narrator`, and matching also
+recognizes legacy names such as `旁白` and `story teller`. **Save all speakers to
+selected group** saves every shown speaker with a clip and exact transcript in one
+action, including copies of selected presets from other groups. Saving the same
+name again replaces that group's preset; other groups are unaffected.
+
+**Manage saved speakers** opens the library directly from the main controls.
+Search the current group's speakers, listen to a saved clip, edit its name,
+description or exact transcript, copy it into another group, or delete it.
+Renaming or copying refuses to overwrite a different saved speaker. Renames and
+deletions also update any currently selected voice slots.
+**Delete group and all its speakers** removes the selected custom group together
+with its saved clips and presets, then switches back to Global. Copies saved in
+other groups are unaffected. Global itself cannot be deleted.
+
 VoiceDesign and Stable Audio 3 Medium sound generation require a CUDA GPU. They
 share one separate Python 3.12 environment with `qwen-tts==0.1.1` and its pinned
 Transformers stack, a pinned `stable-audio-tools`, `hf_xet`, and a prebuilt

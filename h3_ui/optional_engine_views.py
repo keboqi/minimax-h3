@@ -14,6 +14,7 @@ from h3_app.catalog import (
     QWEN_EDIT_SIZE_MATCH,
     QWEN_EDIT_SIZE_MAX,
 )
+from h3_ui.drama3_speaker_library import SpeakerLibraryView, build_speaker_library, bind_speaker_library
 from h3_app.drama3_voice_design import ENGINE_DRAMA3, ENGINE_QWEN, VOICE_DESIGN_ENGINES
 from h3_app.generation.optional_engines import DRAMA3_BACKENDS
 from h3_app.prompt_service import (
@@ -156,6 +157,12 @@ class OptionalEngineActions:
     generate_drama3_voices: Callable
     copy_drama3_writer_prompt: Callable
     apply_drama3_writer_reply: Callable
+    speaker_library_actions: object | None = None
+    drama3_speaker_groups: Callable = lambda: ["Global"]
+    create_drama3_speaker_group: Callable | None = None
+    match_drama3_speaker: Callable | None = None
+    match_drama3_speakers: Callable | None = None
+    save_all_drama3_speakers: Callable | None = None
     drama3_sound_names: Callable[[], list[str]] = lambda: []
     select_drama3_sound: Callable | None = None
     save_drama3_sound: Callable | None = None
@@ -325,6 +332,12 @@ class Drama3View:
     stop_auto: gr.Button | None = None
     auto_status: gr.Markdown | None = None
     auto_sound_slots: gr.Number | None = None
+    speaker_group: gr.Dropdown | None = None
+    new_speaker_group: gr.Textbox | None = None
+    create_speaker_group: gr.Button | None = None
+    save_all_speakers: gr.Button | None = None
+    speaker_group_status: gr.Markdown | None = None
+    speaker_library: SpeakerLibraryView | None = None
 
 
 def _actions(label):
@@ -675,7 +688,7 @@ def _sound_slot(index, names):
     )
 
 
-def build_drama3_view(root, speaker_names=(), sound_names=()):
+def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("Global",)):
     with root:
         gr.Markdown("## Drama 3 TTS (experimental)\nBuilt with Fish Audio. "
                     "Start each line with `<|speaker:N|>` for multi-speaker scenes, and place cues such as "
@@ -699,6 +712,14 @@ def build_drama3_view(root, speaker_names=(), sound_names=()):
                          "Advanced adds nested <parallel>/<sequential> sound effects, background music "
                          "(generated with Stable Audio 3 Medium), and speaker vocal effects (SGLang-Omni only).",
                 )
+                with gr.Row():
+                    speaker_group = gr.Dropdown(list(speaker_groups), value="Global", label="Speaker preset group",
+                        info="Save voices to this group. Matching names use this group first, then Global.")
+                    new_speaker_group = gr.Textbox(label="New speaker group", placeholder="Story or series name")
+                    create_speaker_group = gr.Button("Create group", size="sm")
+                save_all_speakers = gr.Button("Save all speakers to selected group", size="sm")
+                speaker_group_status = gr.Markdown("Reuse the same group across chapters. Global voices remain available in every group.")
+                speaker_library = build_speaker_library(speaker_groups)
                 text = gr.Textbox(label="Speech text", lines=8,
                     placeholder="<|speaker:0|> [with warm excitement] Welcome back!\n<|speaker:1|> [laughs] Took you long enough.")
                 with gr.Row():
@@ -841,6 +862,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=()):
         pasted_reply, apply_reply, script_mode, sounds_panel, sounds, shown_sound_slots,
         add_sound, remove_sound, generate_sounds, stop_sounds, skip_existing_sounds, sound_status,
         auto, stop_auto, auto_status, auto_sound_slots,
+        speaker_group, new_speaker_group, create_speaker_group, save_all_speakers, speaker_group_status, speaker_library,
     )
 
 
@@ -1020,13 +1042,15 @@ def _bind_script_mode(view, actions):
 
 def _writer_slot_inputs(view):
     mode_inputs = [view.script_mode] if view.script_mode is not None else []
-    return [*drama3_voice_inputs(view), *drama3_cast_inputs(view), view.shown_slots, *mode_inputs]
+    return [*drama3_voice_inputs(view), *drama3_cast_inputs(view), view.shown_slots, *mode_inputs,
+            *([view.speaker_group] if view.speaker_group is not None else [])]
 
 
 def _writer_outputs(view):
     return [view.text, view.enhance_status, *drama3_cast_inputs(view),
             view.shown_slots, *[slot.group for slot in view.voices],
-            view.add_speaker, view.remove_speaker]
+            view.add_speaker, view.remove_speaker,
+            *([slot.preset for slot in view.voices] if view.speaker_group is not None else [])]
 
 
 def _bind_writer(view, actions):
@@ -1074,6 +1098,21 @@ def _bind_voice_slots(view, actions):
                  (lambda slot: (slot.save_name, slot.description, slot.preview_text), ("", "", ""))],
     )
     _refresh_choices_on_open(view.voices_panel, presets, drama3_voice_choices, actions.drama3_speaker_names)
+    if actions.create_drama3_speaker_group is not None:
+        view.create_speaker_group.click(actions.create_drama3_speaker_group,
+            inputs=view.new_speaker_group, outputs=[view.speaker_group, view.speaker_group_status], **_QUIET)
+        view.save_all_speakers.click(actions.save_all_drama3_speakers,
+            inputs=[view.speaker_group, view.shown_slots,
+                    *[c for slot in view.voices for c in
+                      (slot.preset, slot.save_name, slot.audio, slot.transcript, slot.description)]],
+            outputs=[view.speaker_group_status, *presets], **_QUIET)
+        view.speaker_group.change(actions.match_drama3_speakers,
+            inputs=[view.speaker_group, *[c for slot in view.voices
+                    for c in (slot.save_name, slot.preset, slot.audio)]], outputs=presets, **_QUIET)
+        for slot in view.voices:
+            slot.save_name.blur(actions.match_drama3_speaker,
+                inputs=[view.speaker_group, slot.save_name, slot.preset, slot.audio],
+                outputs=slot.preset, **_QUIET)
     voice_settings = _voice_settings(view)
     generated_all = _bind_voice_batch(view.generate_voices.click, view, actions)
     stopped_all = view.stop_voices.click(owned_interrupt(actions.interrupt, "drama3_voice"),
@@ -1109,9 +1148,9 @@ def _bind_voice_slots(view, actions):
                      slot.save_name, slot.description, slot.preview_text, slot.audio], **_QUIET,
         )
         slot.save.click(
-            lambda name, audio, transcript, description, speaker=slot.speaker: actions.save_drama3_speaker(
-                speaker, name, audio, transcript, len(presets), description),
-            inputs=[slot.save_name, slot.audio, slot.transcript, slot.description],
+            lambda name, audio, transcript, description, group, speaker=slot.speaker: actions.save_drama3_speaker(
+                speaker, name, audio, transcript, len(presets), description, group),
+            inputs=[slot.save_name, slot.audio, slot.transcript, slot.description, view.speaker_group],
             outputs=[slot.status, *presets], queue=False, api_name=False,
         )
         slot.delete.click(
@@ -1193,6 +1232,9 @@ def bind_drama3(view, actions):
     _bind_script_mode(view, actions)
     script_events = _bind_writer(view, actions)
     _bind_voice_slots(view, actions)
+    if view.speaker_library is not None and actions.speaker_library_actions is not None:
+        bind_speaker_library(view.speaker_library, view.speaker_group, view.voices,
+                             actions.speaker_library_actions, view.speaker_group_status)
     if view.sounds:
         _bind_sound_slots(view, actions, script_events)
     generation_inputs = [
