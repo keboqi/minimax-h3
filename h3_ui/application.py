@@ -396,7 +396,7 @@ def enhance_music3_prompt(
     ref_image_1: Any,
     ref_image_2: Any,
     ref_image_3: Any,
-    backend: str = "Lightning AI",
+    backend: str = "Gemini",
     lightning_api_key: str = "",
     lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
 ) -> tuple[str, str, str]:
@@ -425,7 +425,7 @@ def enhance_ltx25_prompt(
     duration: float,
     width: int,
     height: int,
-    backend: str = "Lightning AI",
+    backend: str = "Gemini",
     lightning_api_key: str = "",
     lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
 ) -> tuple[str, str]:
@@ -458,7 +458,7 @@ def enhance_qwen_image21_prompt(
     reference_images: Any,
     width: int,
     height: int,
-    backend: str = "Lightning AI",
+    backend: str = "Gemini",
     lightning_api_key: str = "",
     edit_size: str = QWEN_EDIT_SIZE_MATCH,
     lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
@@ -485,7 +485,7 @@ def enhance_yue2_prompt(
     lyrics: str,
     mode: str,
     duration: float,
-    backend: str = "Lightning AI",
+    backend: str = "Gemini",
     lightning_api_key: str = "",
     lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
 ) -> tuple[str, str, str]:
@@ -2791,7 +2791,7 @@ def _drama3_signature(leading, trailing):
 
 
 def enhance_flux3_prompt(prompt, reference_images, width, height, model, temporary_api_key,
-                         backend="Lightning AI", lightning_api_key="",
+                         backend="Gemini", lightning_api_key="",
                          lightning_model=DEFAULT_LIGHTNING_PROMPT_MODEL):
     """Rewrite with the official upsampler prompt; turn local expansion off on success."""
     enhanced, status = prompt_service.enhance_flux3_prompt(
@@ -2804,7 +2804,7 @@ def enhance_flux3_prompt(prompt, reference_images, width, height, model, tempora
 
 
 def enhance_moss_image_prompt(prompt, width, height, rewrite_mode, model, temporary_api_key,
-                              backend="Lightning AI", lightning_api_key="",
+                              backend="Gemini", lightning_api_key="",
                               lightning_model=DEFAULT_LIGHTNING_PROMPT_MODEL):
     """Rewrite with OpenMOSS's prompt-enhancer recipe; a Layout clears the manual boxes."""
     from h3_app.workflows.moss_image_prompt import is_layout_prompt

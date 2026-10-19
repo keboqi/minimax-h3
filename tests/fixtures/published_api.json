@@ -111,14 +111,14 @@
     "/enhance_prompt": {
       "parameters": [
         {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
-        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_49"},
+        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Gemini", "type": "type_49"},
         {"parameter_name": "local_base_model", "parameter_has_default": true, "parameter_default": "Qwen3-VL 8B · BF16", "type": "type_50"},
         {"parameter_name": "local_max_new_tokens", "parameter_has_default": true, "parameter_default": 4096, "type": "type_51"},
         {"parameter_name": "local_temperature", "parameter_has_default": true, "parameter_default": 0.7, "type": "type_52"},
         {"parameter_name": "local_top_p", "parameter_has_default": true, "parameter_default": 0.8, "type": "type_53"},
         {"parameter_name": "local_greedy", "parameter_has_default": true, "parameter_default": true, "type": "type_6"},
         {"parameter_name": "local_seed", "parameter_has_default": true, "parameter_default": 42, "type": "type_12"},
-        {"parameter_name": "gemini_model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
+        {"parameter_name": "gemini_model", "parameter_has_default": true, "parameter_default": "gemini-3.8-flash", "type": "type_54"},
         {"parameter_name": "gemini_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "Text to video", "type": "type_3"},
@@ -229,7 +229,7 @@
     "/enhance_ltx25_prompt": {
       "parameters": [
         {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
-        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
+        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.8-flash", "type": "type_54"},
         {"parameter_name": "temporary_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "Text to video", "type": "type_56"},
         {"parameter_name": "start_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
@@ -238,7 +238,7 @@
         {"parameter_name": "duration", "parameter_has_default": true, "parameter_default": 5, "type": "type_44"},
         {"parameter_name": "width", "parameter_has_default": true, "parameter_default": 960, "type": "type_12"},
         {"parameter_name": "height", "parameter_has_default": true, "parameter_default": 544, "type": "type_12"},
-        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_61"},
+        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Gemini", "type": "type_61"},
         {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "lightning_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"}
       ],
@@ -283,13 +283,13 @@
     "/enhance_qwen_image21_prompt": {
       "parameters": [
         {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
-        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
+        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.8-flash", "type": "type_54"},
         {"parameter_name": "temporary_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "Text to image", "type": "type_62"},
         {"parameter_name": "reference_images", "parameter_has_default": false, "parameter_default": null, "type": "type_48"},
         {"parameter_name": "width", "parameter_has_default": true, "parameter_default": 1024, "type": "type_65"},
         {"parameter_name": "height", "parameter_has_default": true, "parameter_default": 1024, "type": "type_65"},
-        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_61"},
+        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Gemini", "type": "type_61"},
         {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "edit_size", "parameter_has_default": true, "parameter_default": "Match first image size", "type": "type_67"},
         {"parameter_name": "lightning_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"}
@@ -320,13 +320,13 @@
     "/enhance_music3_prompt": {
       "parameters": [
         {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
-        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
+        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.8-flash", "type": "type_54"},
         {"parameter_name": "temporary_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "lyrics", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "ref_image_1", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
         {"parameter_name": "ref_image_2", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
         {"parameter_name": "ref_image_3", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
-        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_61"},
+        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Gemini", "type": "type_61"},
         {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "lightning_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"}
       ],
@@ -367,12 +367,12 @@
     "/enhance_yue2_prompt": {
       "parameters": [
         {"parameter_name": "style", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
-        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.5-flash-lite", "type": "type_54"},
+        {"parameter_name": "model", "parameter_has_default": true, "parameter_default": "gemini-3.8-flash", "type": "type_54"},
         {"parameter_name": "temporary_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "lyrics", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "mode", "parameter_has_default": true, "parameter_default": "full", "type": "type_83"},
         {"parameter_name": "duration", "parameter_has_default": true, "parameter_default": 180, "type": "type_84"},
-        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Lightning AI", "type": "type_61"},
+        {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Gemini", "type": "type_61"},
         {"parameter_name": "lightning_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "lightning_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"}
       ],

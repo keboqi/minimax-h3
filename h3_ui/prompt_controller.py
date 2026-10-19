@@ -41,7 +41,7 @@ class PromptController:
         ref_image_1: Any,
         ref_image_2: Any,
         ref_image_3: Any,
-        backend: str = "Lightning AI",
+        backend: str = "Gemini",
         lightning_api_key: str = "",
         lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     ) -> tuple[str, str, str]:
@@ -71,7 +71,7 @@ class PromptController:
         duration: float,
         width: int,
         height: int,
-        backend: str = "Lightning AI",
+        backend: str = "Gemini",
         lightning_api_key: str = "",
         lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     ) -> tuple[str, str]:
@@ -114,7 +114,7 @@ class PromptController:
         reference_images: Any,
         width: int,
         height: int,
-        backend: str = "Lightning AI",
+        backend: str = "Gemini",
         lightning_api_key: str = "",
         edit_size: str = QWEN_EDIT_SIZE_MATCH,
         lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
@@ -161,7 +161,7 @@ class PromptController:
         lyrics: str,
         mode: str,
         duration: float,
-        backend: str = "Lightning AI",
+        backend: str = "Gemini",
         lightning_api_key: str = "",
         lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     ) -> tuple[str, str, str]:

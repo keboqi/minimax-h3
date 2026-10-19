@@ -60,7 +60,7 @@ GEMINI_PROMPT_MODELS = (
 )
 
 
-DEFAULT_GEMINI_PROMPT_MODEL = "gemini-3.5-flash-lite"
+DEFAULT_GEMINI_PROMPT_MODEL = "gemini-3.8-flash"
 
 
 GEMINI_API_ROOT = "https://generativelanguage.googleapis.com"
@@ -82,7 +82,7 @@ LIGHTNING_API_ROOT = "https://lightning.ai/api/v1/"
 PROMPT_WRITER_BACKENDS = ("Local MiniMax-H3 8B", "Gemini", "Lightning AI")
 
 
-DEFAULT_PROMPT_WRITER_BACKEND = "Lightning AI"
+DEFAULT_PROMPT_WRITER_BACKEND = "Gemini"
 
 
 DEFAULT_FBCACHE_PRESET = "Fast"

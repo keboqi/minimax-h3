@@ -609,25 +609,25 @@ class UiContractTests(unittest.TestCase):
         for output in outputs:
             self.assertFalse(output["props"]["interactive"], output["props"]["label"])
 
-    def test_all_gemini_prompt_writers_default_to_flash_lite(self) -> None:
+    def test_all_gemini_prompt_writers_default_to_flash_3_8(self) -> None:
         models = [
             component
             for component in self.config["components"]
             if component.get("props", {}).get("label") == "Gemini model"
         ]
-        self.assertEqual(len(models), 7)  # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, Drama 3
+        self.assertEqual(len(models), 8)  # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, MOSS-Image, Drama 3
         for model in models:
-            self.assertEqual(model["props"]["value"], "gemini-3.5-flash-lite")
+            self.assertEqual(model["props"]["value"], "gemini-3.8-flash")
 
-    def test_all_prompt_writers_default_to_lightning_and_bind_credentials(self) -> None:
+    def test_all_prompt_writers_default_to_gemini_and_bind_credentials(self) -> None:
         writers = [
             component
             for component in self.config["components"]
             if component.get("props", {}).get("label") == "Prompt writer"
         ]
-        self.assertEqual(len(writers), 7)
+        self.assertEqual(len(writers), 8)
         for writer in writers:
-            self.assertEqual(writer["props"]["value"], "Lightning AI")
+            self.assertEqual(writer["props"]["value"], "Gemini")
 
         endpoints = {
             dependency.get("api_name"): dependency
@@ -646,7 +646,7 @@ class UiContractTests(unittest.TestCase):
             parameters = self.demo.get_api_info()["named_endpoints"][f"/{endpoint}"][
                 "parameters"
             ]
-            self.assertEqual(parameters[-3]["parameter_default"], "Lightning AI")
+            self.assertEqual(parameters[-3]["parameter_default"], "Gemini")
             # Appended with a default so existing API clients keep working.
             self.assertEqual(parameters[-1]["parameter_default"], "openai/gpt-5.6-luna")
 
@@ -659,7 +659,7 @@ class UiContractTests(unittest.TestCase):
         qwen_parameters = self.demo.get_api_info()["named_endpoints"][
             f"/{qwen_endpoint}"
         ]["parameters"]
-        self.assertEqual(qwen_parameters[-4]["parameter_default"], "Lightning AI")
+        self.assertEqual(qwen_parameters[-4]["parameter_default"], "Gemini")
         self.assertEqual(qwen_parameters[-1]["parameter_default"], "openai/gpt-5.6-luna")
 
         lightning_models = [

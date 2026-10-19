@@ -538,6 +538,22 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         self.assertEqual(len(gen_sound.job_input_names), 2)
 
 
+class Drama3AutoTests(unittest.TestCase):
+    def test_failed_rewrite_stops_auto_with_the_writer_reason(self):
+        import gradio as gr
+        from h3_ui.optional_engine_views import drama3_auto_rewritten
+
+        with self.assertRaisesRegex(gr.Error, "no key"):
+            drama3_auto_rewritten("Prompt enhancement failed: no key")
+        self.assertIn("voices", drama3_auto_rewritten("Rewrote the script."))
+
+    def test_only_advanced_generates_sounds(self):
+        from h3_ui.optional_engine_views import drama3_auto_sound_slots
+
+        self.assertEqual(drama3_auto_sound_slots(prompt_service.DRAMA3_SCRIPT_BASIC, 4)[0], 0)
+        self.assertEqual(drama3_auto_sound_slots(prompt_service.DRAMA3_SCRIPT_ADVANCED, 4)[0], 4)
+
+
 if __name__ == "__main__":
     unittest.main()
 

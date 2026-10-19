@@ -603,7 +603,7 @@ malloc-graph incompatibility with SLA's high-resolution Triton specialization
 without slowing ordinary generation or tiled refinement.
 
 The **MiniMax H3** tab includes local, Gemini, and Lightning AI prompt writers,
-with Lightning AI selected by default. The local writer
+with Gemini selected by default. The local writer
 uses `lightx2v/MiniMax-H3-Prompt-Rewriter-LoRA-8B` with
 `Qwen/Qwen3-VL-8B-Instruct-FP8` by default; the BF16
 `Qwen/Qwen3-VL-8B-Instruct` base is selectable. It supports the four tasks used
@@ -616,7 +616,7 @@ repository or local path with `H3_PROMPT_REWRITER_ADAPTER` when needed.
 Gemini combines the current text, active first/last-frame or reference
 image/video/audio inputs, duration, and resolution with the bundled `prompt.txt`
 system instruction. It supports `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`,
-`gemini-3.5-flash`, and `gemini-3.5-flash-lite`, with `gemini-3.5-flash-lite`
+`gemini-3.5-flash`, and `gemini-3.5-flash-lite`, with `gemini-3.8-flash`
 selected by default. Use Gemini for the separate
 Reference media mode, which is not one of the four tasks supported by the local
 adapter. Set `GEMINI_API_KEY` in the server environment, or enter a temporary
@@ -672,10 +672,10 @@ trajectory when both request one image. Use the official VAE for multi-image
 results.
 
 The **Qwen Image 2.1**, **LTX-2.5**, **MiniMax Music 3**, and **YuE2** tabs
-also offer Lightning AI and Gemini prompt writers, with Lightning AI selected
-by default. Lightning AI uses the same fixed model, server environment key,
-and temporary key behavior as the H3 writer. Gemini remains selectable and
-uses `gemini-3.5-flash-lite` by default. Each writer uses its own bundled
+also offer Gemini and Lightning AI prompt writers, with Gemini
+(`gemini-3.8-flash`) selected by default. Lightning AI remains selectable and
+uses the same fixed model, server environment key, and temporary key behavior
+as the H3 writer. Each writer uses its own bundled
 system prompt: `prompt_qwen_image21.txt`, `prompt_ltx25.txt`,
 `prompt_music3.txt`, or `prompt_yue2.txt`.
 

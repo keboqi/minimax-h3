@@ -87,6 +87,15 @@ def execute_accepted(job_id: str, request: gr.Request):
                 close()
 
 
+GENERATING_LABEL = "Generating\u2026"
+
+
+def busy_label(component):
+    """A Generate button's original label, so it can read Generating… while its job runs."""
+    label = getattr(component, "value", None) if isinstance(component, gr.Button) else None
+    return label if isinstance(label, str) and label.startswith("Generate") else None
+
+
 def bind_accepted_action(
     trigger, callback, options, gpu_queue, *, reference_map=None, resolver=None
 ):
@@ -117,6 +126,15 @@ def bind_accepted_action(
     request_key = gr.Textbox(visible=False)
     canvas_controls = getattr(getattr(trigger, "__self__", None), "h3_canvas", ())
     stop_control = getattr(getattr(trigger, "__self__", None), "h3_stop", None)
+    busy_button = getattr(trigger, "__self__", None)
+    idle_label = busy_label(busy_button)
+    if idle_label is None:
+        busy_button = None
+    accept_outputs = [ticket]
+    if stop_control is not None:
+        accept_outputs.append(stop_control)
+    if busy_button is not None:
+        accept_outputs.append(busy_button)
 
     def capture(*args):
         request = args[-1]
@@ -192,13 +210,14 @@ def bind_accepted_action(
     def accept(*args):
         try:
             job_id = capture(*args)
-            return (
-                (job_id, gr.update(interactive=True))
-                if stop_control is not None
-                else job_id
-            )
         except (H3Error, ValueError) as exc:
             raise gr.Error(str(exc)) from exc
+        results = [job_id]
+        if stop_control is not None:
+            results.append(gr.update(interactive=True))
+        if busy_button is not None:
+            results.append(gr.update(value=GENERATING_LABEL))
+        return tuple(results) if len(results) > 1 else job_id
 
     # Preserve request injection even though acceptance has a variadic wrapper.
     parameters = [
@@ -232,7 +251,7 @@ def bind_accepted_action(
             *canvas_controls,
             request_key,
         ],
-        outputs=[ticket, stop_control] if stop_control is not None else ticket,
+        outputs=accept_outputs if len(accept_outputs) > 1 else ticket,
         queue=False,
         api_name=False,
         trigger_mode="multiple",
@@ -264,20 +283,30 @@ def bind_accepted_action(
         api_name=False,
         show_progress="hidden",
     )
-    if stop_control is not None:
+    idle_outputs = [
+        control for control in (stop_control, busy_button) if control is not None
+    ]
+    if idle_outputs:
 
         def stop_availability(request: gr.Request):
-            return gr.update(
-                interactive=any(
-                    job.family == callback.job_family and job.finished_at is None
-                    for job in JOBS.list_owned(require_owner(request))
-                )
+            # Queued jobs of the same family keep Interrupt and Generating… until the last one ends.
+            running = any(
+                job.family == callback.job_family and job.finished_at is None
+                for job in JOBS.list_owned(require_owner(request))
             )
+            updates = []
+            if stop_control is not None:
+                updates.append(gr.update(interactive=running))
+            if busy_button is not None:
+                updates.append(
+                    gr.update(value=GENERATING_LABEL if running else idle_label)
+                )
+            return tuple(updates) if len(updates) > 1 else updates[0]
 
         for completion in (event, failed):
             completion.then(
                 stop_availability,
-                outputs=stop_control,
+                outputs=idle_outputs,
                 queue=False,
                 api_name=False,
                 show_progress="hidden",

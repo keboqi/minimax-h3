@@ -32,10 +32,10 @@ def build_remote_prompt_writer_controls(
 ) -> RemotePromptWriterControls:
     backend = gr.Radio(
         choices=("Lightning AI", "Gemini"),
-        value="Lightning AI",
+        value="Gemini",
         label="Prompt writer",
     )
-    with gr.Group(visible=False) as gemini_group:
+    with gr.Group(visible=True) as gemini_group:
         with gr.Row():
             model = gr.Dropdown(
                 choices=list(prompt_models),
