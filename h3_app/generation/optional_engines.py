@@ -15,7 +15,7 @@ from h3_app.status import StageTimings, progress_status
 from h3_app.workflows.flux3 import build_flux3_graph, flux3_model_keys
 from h3_app.workflows.flux3_layout import parse_flux3_layout
 from h3_app.workflows.moss_image import (
-    build_moss_image_graph, moss_image_model_keys, validate_moss_image_edit, validate_moss_image_sampling,
+    build_moss_image_graph, moss_image_model_keys, validate_moss_image_sampling,
 )
 from h3_app.workflows.moss_image_prompt import is_layout_prompt
 from h3_models import FLUX3_BASE_MODEL_CHOICES
@@ -33,10 +33,7 @@ DRAMA3_BACKENDS = ("ComfyUI", "SGLang-Omni")
 DRAMA3_SERVED_BACKENDS = DRAMA3_BACKENDS[1:]
 FLUX3_EDIT_SIZES = (QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX, QWEN_EDIT_SIZE_MANUAL)
 MOSS_IMAGE_FAMILY = "MOSS-Image"
-MOSS_IMAGE_EDIT_SIZES = (QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MANUAL)
 FLUX3_MAX_PIXELS, FLUX3_MIN_SIDE, FLUX3_MAX_SIDE, FLUX3_GRID = 4_194_304, 256, 4096, 16
-# MOSS-Image edits match ai-toolkit's 1 MP training buckets.
-MOSS_IMAGE_EDIT_PIXELS, MOSS_IMAGE_MAX_SIDE = 1_048_576, 2048
 
 
 def _integer(value, low, high, name, multiple=1):
@@ -48,8 +45,7 @@ def _integer(value, low, high, name, multiple=1):
     return value
 
 
-def flux3_edit_dimensions(source_width, source_height, *, maximize=False,
-                          max_pixels=FLUX3_MAX_PIXELS, max_side=FLUX3_MAX_SIDE, label="FLUX 3"):
+def flux3_edit_dimensions(source_width, source_height, *, maximize=False):
     """Fit the first reference's aspect ratio on FLUX's 16-pixel grid.
 
     Match keeps the native area (downscaled to the 4 MP cap); Max scales toward 4 MP.
@@ -57,9 +53,9 @@ def flux3_edit_dimensions(source_width, source_height, *, maximize=False,
     source_width, source_height = int(source_width), int(source_height)
     if source_width <= 0 or source_height <= 0:
         raise H3Error("The first reference image has invalid dimensions.")
-    lo, hi, grid = FLUX3_MIN_SIDE, max_side, FLUX3_GRID
+    lo, hi, grid = FLUX3_MIN_SIDE, FLUX3_MAX_SIDE, FLUX3_GRID
     source_area = source_width * source_height
-    target_area = max_pixels if maximize else min(source_area, max_pixels)
+    target_area = FLUX3_MAX_PIXELS if maximize else min(source_area, FLUX3_MAX_PIXELS)
     scale = min(math.sqrt(target_area / source_area), hi / source_width, hi / source_height)
     target_area = max(lo * lo, min(hi, max(lo, source_width * scale)) * min(hi, max(lo, source_height * scale)))
     source_ratio = source_width / source_height
@@ -68,10 +64,10 @@ def flux3_edit_dimensions(source_width, source_height, *, maximize=False,
         (width, height)
         for width in range(lo, hi + 1, grid)
         for height in range(lo, hi + 1, grid)
-        if target_area * 0.85 <= width * height <= min(target_area, max_pixels)
+        if target_area * 0.85 <= width * height <= min(target_area, FLUX3_MAX_PIXELS)
     ]
     if not candidates:
-        raise H3Error(f"The first reference image's aspect ratio is outside {label}'s supported canvas.")
+        raise H3Error("The first reference image's aspect ratio is outside FLUX 3's supported canvas.")
     def drift(size):
         return abs(math.log((size[0] / size[1]) / source_ratio))
     # Up to 1% ratio drift is invisible; prefer the larger canvas within it (1920×1088, not 1792×1008).
@@ -87,15 +83,6 @@ def resolve_flux3_dimensions(request, *, input_dir=None):
         return int(request.width), int(request.height)
     size = first_reference_dimensions(request.reference_images[0], input_dir)
     return flux3_edit_dimensions(*size, maximize=request.edit_size == QWEN_EDIT_SIZE_MAX)
-
-
-def resolve_moss_image_dimensions(request, *, input_dir=None):
-    """Edits default to the first reference's aspect ratio at about 1 MP."""
-    if not request.reference_images or request.edit_size == QWEN_EDIT_SIZE_MANUAL:
-        return int(request.width), int(request.height)
-    size = first_reference_dimensions(request.reference_images[0], input_dir)
-    return flux3_edit_dimensions(*size, maximize=True, max_pixels=MOSS_IMAGE_EDIT_PIXELS,
-                                 max_side=MOSS_IMAGE_MAX_SIDE, label="MOSS-Image")
 
 
 def validate_request(request):
@@ -128,12 +115,9 @@ def validate_request(request):
         try:
             moss_image_model_keys(request.model_choice, request.text_encoder_choice, request.turbo_variant)
             validate_moss_image_sampling(request.turbo_variant, request.steps, request.cfg)
-            validate_moss_image_edit(request.reference_images, request.edit_lora, request.edit_lora_strength)
             parse_flux3_layout(request.layout)
         except ValueError as exc:
             raise H3Error(str(exc)) from exc
-        if request.edit_size not in MOSS_IMAGE_EDIT_SIZES:
-            raise H3Error("Choose a valid MOSS-Image edit output size.")
         if request.layout.strip() and is_layout_prompt(request.prompt):
             raise H3Error("The prompt is already a MOSS-Image Layout with its own boxes. Clear the layout boxes.")
     elif isinstance(request, Drama3Request):
@@ -209,10 +193,8 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
             )
             return
         if moss:
-            if request.reference_images:
-                values["width"], values["height"] = resolve_moss_image_dimensions(request, input_dir=runtime.input_dir)
             graph = build_moss_image_graph(
-                **{k: v for k, v in values.items() if k not in {"preset", "edit_size"}},
+                **{k: v for k, v in values.items() if k != "preset"},
                 output_stamp=str(int(time.time())), output_nonce=uuid.uuid4().hex[:8],
             )
         elif image:
@@ -246,11 +228,6 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
             clip_type, label = ("moss_image", "MOSS-Image") if moss else ("flux3", "FLUX 3")
             if clip_type not in clip_types:
                 raise H3Error(f"This backend lacks the {label} text encoder. Update setup and restart ComfyUI.")
-        if moss and request.edit_lora:
-            loras = info.get("LoraLoaderModelOnly", {}).get("input", {}).get("required", {}).get("lora_name", [[]])[0]
-            if request.edit_lora not in loras:
-                raise H3Error(f"ComfyUI cannot see the edit LoRA {request.edit_lora}. Put it in ComfyUI's "
-                              "models/loras folder (or upload it here) and refresh the list.")
         services.models.unload_prompt_rewriter()
         yield GenerationUpdate(None, f"Preparing {family} models; missing weights download on first use.")
         keys = (moss_image_model_keys(request.model_choice, request.text_encoder_choice, request.turbo_variant)
@@ -277,7 +254,6 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
                     if key not in {"prompt", "text", "voices", "reference_images", "layout"}}
         if moss:
             settings["layout_box_count"] = len(parse_flux3_layout(request.layout))
-            settings["reference_count"] = len(request.reference_images)
         elif image:
             settings["reference_count"] = len(request.reference_images)
             settings["layout_box_count"] = len(parse_flux3_layout(request.layout))

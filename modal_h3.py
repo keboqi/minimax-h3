@@ -104,8 +104,6 @@ from h3_sources import (  # noqa: E402
     LARRY_TURBO_REPO,
     LTXVIDEO_REF,
     LTXVIDEO_REPO,
-    MOSS_IMAGE_EDIT_NODE_REF,
-    MOSS_IMAGE_EDIT_NODE_REPO,
     SAGE_WHEEL_NAME,
     SAGE_WHEEL_URL,
     SLA_REF,
@@ -320,7 +318,6 @@ def build(revision: str) -> None:
         (KJNODES_REPO, KJNODES_REF, "ComfyUI-KJNodes"),
         (CONTROLNET_AUX_REPO, CONTROLNET_AUX_REF, "comfyui_controlnet_aux"),
         (VIDEO_DEPTH_REPO, VIDEO_DEPTH_REF, "ComfyUI-Video-Depth-Anything"),
-        (MOSS_IMAGE_EDIT_NODE_REPO, MOSS_IMAGE_EDIT_NODE_REF, "ComfyUI-MOSS-Image-Ostris-Edit"),
     )
     installed_nodes: dict[str, Path] = {}
     for repo, ref, directory_name in official_nodes:

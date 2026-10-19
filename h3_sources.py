@@ -15,9 +15,6 @@ LARRY_TURBO_REF = (
 LARRY_TURBO_REPO = "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git"
 LTXVIDEO_REF = "3bf3ca62595f1764c47d01c35c8e5dfe47e1a88f"
 LTXVIDEO_REPO = "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
-# Reference-image (edit) conditioning for ai-toolkit MOSS-Image edit LoRAs.
-MOSS_IMAGE_EDIT_NODE_REF = "8f9b50c0d2b28248ecd48a4d4905c815e726f146"
-MOSS_IMAGE_EDIT_NODE_REPO = "https://github.com/ostris/ComfyUI-MOSS-Image-Ostris-Edit.git"
 SAGE_WHEEL_NAME = "sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SAGE_WHEEL_URL = "https://huggingface.co/JahJedi/sageattention-flashattn-blackwell-cu130-torch211-cp312/resolve/main/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl"
 SLA_REF = "d58d006a4ea32c25c06499f2ff104f0852a045a6"
