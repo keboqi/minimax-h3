@@ -15,6 +15,10 @@ from h3_models import (
     DEFAULT_QWEN_IMAGE21_TEXT_ENCODER,
     DEFAULT_YUE2_MODEL,
     MOSS_IMAGE_DMD_8STEP,
+    MOSS_IMAGE_SFT_BF16,
+    MOSS_IMAGE_SFT_INT8,
+    MOSS_IMAGE_VAE_FULL,
+    MOSS_IMAGE_VAE_SMALL,
     DEFAULT_SEEDVR2_MODEL,
     PROFILE_LABELS,
     QWEN_IMAGE21_OFFICIAL_TURBO,
@@ -242,11 +246,12 @@ QWEN_IMAGE21_PRESETS = {
 }
 
 
-# Preset -> (Turbo LoRA, steps, CFG). Base presets follow OpenMOSS's CFG 3 recipe.
+# Preset -> (Turbo LoRA, steps, CFG, image model, VAE). Fast trades precision
+# for speed; Balanced and Quality follow OpenMOSS's CFG 3 recipe at full precision.
 MOSS_IMAGE_PRESETS = {
-    "Fast": (MOSS_IMAGE_DMD_8STEP, 8, 1.0),
-    "Balanced": ("Off", 25, 3.0),
-    "Quality": ("Off", 50, 3.0),
+    "Fast": (MOSS_IMAGE_DMD_8STEP, 8, 1.0, MOSS_IMAGE_SFT_INT8, MOSS_IMAGE_VAE_SMALL),
+    "Balanced": ("Off", 25, 3.0, MOSS_IMAGE_SFT_BF16, MOSS_IMAGE_VAE_FULL),
+    "Quality": ("Off", 50, 3.0, MOSS_IMAGE_SFT_BF16, MOSS_IMAGE_VAE_FULL),
 }
 DEFAULT_MOSS_IMAGE_PRESET = "Fast"
 

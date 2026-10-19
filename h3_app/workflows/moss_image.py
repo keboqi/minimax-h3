@@ -1,13 +1,15 @@
-"""MOSS-Image SFT graphs on ComfyUI's native MOSS-Image support."""
+"""MOSS-Image SFT and Base graphs on ComfyUI's native MOSS-Image support."""
 
 import json
 
 from h3_app.graph import Graph
 from h3_models import (
+    DEFAULT_MOSS_IMAGE_VAE,
     MODEL_SPECS,
     MOSS_IMAGE_MODEL_CHOICES,
     MOSS_IMAGE_TEXT_ENCODER_CHOICES,
     MOSS_IMAGE_TURBO_MODES,
+    MOSS_IMAGE_VAE_CHOICES,
 )
 from .flux3_layout import parse_flux3_layout
 
@@ -18,15 +20,20 @@ MOSS_IMAGE_BASE_CFG = 3.0
 MOSS_IMAGE_UNCOND_SKIP_LAYERS = "22"
 
 
-def moss_image_model_keys(model_choice, text_encoder_choice, turbo_variant="Off"):
+def moss_image_model_keys(model_choice, text_encoder_choice, turbo_variant="Off", vae_choice=None):
     if model_choice not in MOSS_IMAGE_MODEL_CHOICES:
         raise ValueError("Unknown MOSS-Image model choice.")
     if text_encoder_choice not in MOSS_IMAGE_TEXT_ENCODER_CHOICES:
         raise ValueError("Unknown MOSS-Image text encoder.")
+    vae_choice = DEFAULT_MOSS_IMAGE_VAE if vae_choice is None else vae_choice
+    if vae_choice not in MOSS_IMAGE_VAE_CHOICES:
+        raise ValueError("Unknown MOSS-Image VAE.")
     if turbo_variant != "Off" and turbo_variant not in MOSS_IMAGE_TURBO_MODES:
         raise ValueError(f"Unknown MOSS-Image Turbo LoRA: {turbo_variant}")
+    if turbo_variant != "Off" and "_base_" in MOSS_IMAGE_MODEL_CHOICES[model_choice]:
+        raise ValueError(f"{turbo_variant} is distilled from the SFT model; choose an SFT image model.")
     keys = (MOSS_IMAGE_MODEL_CHOICES[model_choice],
-            MOSS_IMAGE_TEXT_ENCODER_CHOICES[text_encoder_choice], "moss_image_vae")
+            MOSS_IMAGE_TEXT_ENCODER_CHOICES[text_encoder_choice], MOSS_IMAGE_VAE_CHOICES[vae_choice])
     if turbo_variant in MOSS_IMAGE_TURBO_MODES:
         keys += (MOSS_IMAGE_TURBO_MODES[turbo_variant][0],)
     return keys
@@ -45,9 +52,9 @@ def validate_moss_image_sampling(turbo_variant, steps, cfg):
 
 
 def build_moss_image_graph(*, model_choice, text_encoder_choice, prompt, turbo_variant="Off",
-                           width=1024, height=1024, seed=0, steps=50, cfg=MOSS_IMAGE_BASE_CFG,
-                           layout="", output_stamp="0", output_nonce="moss"):
-    moss_image_model_keys(model_choice, text_encoder_choice, turbo_variant)
+                           vae_choice=DEFAULT_MOSS_IMAGE_VAE, width=1024, height=1024, seed=0, steps=50,
+                           cfg=MOSS_IMAGE_BASE_CFG, layout="", output_stamp="0", output_nonce="moss"):
+    moss_image_model_keys(model_choice, text_encoder_choice, turbo_variant, vae_choice)
     validate_moss_image_sampling(turbo_variant, steps, cfg)
     elements = parse_flux3_layout(layout)
     g = Graph()
@@ -64,7 +71,7 @@ def build_moss_image_graph(*, model_choice, text_encoder_choice, prompt, turbo_v
                     single_layers=MOSS_IMAGE_UNCOND_SKIP_LAYERS, start_percent=0.0, end_percent=1.0)
     clip = add("CLIPLoader", clip_name=MODEL_SPECS[MOSS_IMAGE_TEXT_ENCODER_CHOICES[text_encoder_choice]].local_name,
                type="moss_image", device="default")
-    vae = add("VAELoader", vae_name=MODEL_SPECS["moss_image_vae"].local_name)
+    vae = add("VAELoader", vae_name=MODEL_SPECS[MOSS_IMAGE_VAE_CHOICES[vae_choice]].local_name)
     if elements:
         array = add("H3Flux3LayoutElements", layout=json.dumps(elements, ensure_ascii=False))
         prompt = add("MOSSImageLayoutPrompt", prompt=prompt, element=array, width=width, height=height,

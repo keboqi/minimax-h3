@@ -42,7 +42,7 @@ backends; GPU inference and deployment are validated separately.
 - Audio results decode the native H3 stereo soundtrack without creating a video
 - A dedicated Qwen Image 2.1 tab for native text-to-image generation and
   multi-reference image editing
-- A MOSS-Image tab for OpenMOSS MOSS-Image SFT text-to-image generation with
+- A MOSS-Image tab for OpenMOSS MOSS-Image SFT and Base text-to-image generation with
   Fast (8-step Turbo LoRA), Balanced and Quality presets
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
 - A dedicated MiniMax Music 3 tab for caption-and-lyrics song generation
@@ -497,13 +497,15 @@ image's aspect ratio toward 4 MP, rounds the output to multiples of 32, and
 keeps both sides within 2752 pixels.
 
 The **MOSS-Image** tab runs [MOSS-Image SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT)
-on ComfyUI's native MOSS-Image support. The BF16 or INT8 ConvRot DiT, a Qwen3.5 9B text
-encoder (INT8 ConvRot by default, W4A8 or BF16 optional) and the small FLUX.2 VAE download
-on first use from [Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image).
-**Fast** (default) applies the
+on ComfyUI's native MOSS-Image support. Every file in
+[Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image) is selectable and
+downloads on first use: the SFT or pretrained Base DiT in BF16 or INT8 ConvRot, a Qwen3.5 9B
+text encoder (INT8 ConvRot by default, W4A8 or BF16 optional) and the full or small FLUX.2
+VAE. The full VAE is the same file as FLUX 3's and is shared with it.
+**Fast** (default) uses INT8 SFT, the small VAE and the
 [Lodestones 8-step DMD LoRA](https://huggingface.co/lodestones/MOSS-Image-SFT-8-steps-dmd)
-at 8 Euler steps and CFG 1. **Balanced** and **Quality** run the SFT model without a LoRA for
-25 or 50 steps at CFG 3, skipping layer 22 in the empty negative pass as in OpenMOSS's
+at 8 Euler steps and CFG 1; the LoRA requires an SFT model. **Balanced** and **Quality** run
+BF16 SFT with the full VAE and no LoRA for 25 or 50 steps at CFG 3, skipping layer 22 in the empty negative pass as in OpenMOSS's
 reference sampler. Other step-distilled LoRAs can be added to the **Turbo LoRA** list.
 **1M** and **2M resolution presets**, OpenMOSS's recommended range, set common aspect
 ratios on the 16-pixel grid. The FLUX 3 tab has matching **1K** and **2K** presets up to its
@@ -1120,11 +1122,13 @@ hosted prompt enhancer available without entering a key in the UI, also store
 The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
-The deployment pins ComfyUI v0.40.0 at immutable revision
-`3541246a9c997f4b8c32f9f88f3c985d02021c79` with its required frontend
-package 1.55.17, Comfy Kitchen 0.2.37 and upstream aimdo 0.5.6.
-The source also pins workflow templates 0.11.82 and embedded docs 0.5.14.
-This release fixes Qwen Image 2.1 caching under low VRAM and updates shared
+The deployment pins ComfyUI v0.42.1 at immutable revision
+`63be2f9b82ad0dac88a7ceaa28a9cf3154125a18` with its required frontend
+package 1.55.18, Comfy Kitchen 0.2.39 and upstream aimdo 0.5.6.
+The source also pins workflow templates 0.11.89 and embedded docs 0.5.14.
+v0.42 adds native MOSS-Image, Qwen 3.x decode speedups, TextGenerate cleanup,
+baked-in H3 PDD heads and synchronized CUDA-graph teardown.
+v0.40.0 fixed Qwen Image 2.1 caching under low VRAM and updates shared
 Linear/fusion and bypass-LoRA dispatch. Our optional 500K decoder supplies the
 direct single-latent metadata required by the new native H3 still-image path.
 The asset system stays off by default for ordinary Linux/Modal launches;

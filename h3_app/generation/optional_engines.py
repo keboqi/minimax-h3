@@ -113,7 +113,8 @@ def validate_request(request):
         if isinstance(request.cfg, bool) or not math.isfinite(float(request.cfg)) or not 1 <= request.cfg <= 10:
             raise H3Error("MOSS-Image CFG must be between 1 and 10.")
         try:
-            moss_image_model_keys(request.model_choice, request.text_encoder_choice, request.turbo_variant)
+            moss_image_model_keys(request.model_choice, request.text_encoder_choice, request.turbo_variant,
+                                  request.vae_choice)
             validate_moss_image_sampling(request.turbo_variant, request.steps, request.cfg)
             parse_flux3_layout(request.layout)
         except ValueError as exc:
@@ -230,7 +231,8 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
                 raise H3Error(f"This backend lacks the {label} text encoder. Update setup and restart ComfyUI.")
         services.models.unload_prompt_rewriter()
         yield GenerationUpdate(None, f"Preparing {family} models; missing weights download on first use.")
-        keys = (moss_image_model_keys(request.model_choice, request.text_encoder_choice, request.turbo_variant)
+        keys = (moss_image_model_keys(request.model_choice, request.text_encoder_choice,
+                                      request.turbo_variant, request.vae_choice)
                 if moss else
                 flux3_model_keys(request.model_choice, request.expand_prompt, request.upsampler_choice)
                 if image else drama3_model_keys(request.model_choice))

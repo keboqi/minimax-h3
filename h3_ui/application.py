@@ -2673,12 +2673,12 @@ def generate_flux3(prompt, model_choice, reference_images, width, height, edit_s
     yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
 
 
-def generate_moss_image(prompt, preset, turbo_variant, model_choice, text_encoder_choice, width, height,
-                        seed, steps, cfg, layout="", progress=gr.Progress(track_tqdm=False)):
+def generate_moss_image(prompt, preset, turbo_variant, model_choice, text_encoder_choice, vae_choice, width,
+                        height, seed, steps, cfg, layout="", progress=gr.Progress(track_tqdm=False)):
     from h3_app.generation.optional_engines import generate_optional_engine
     request = generation_requests.MossImageRequest(
-        prompt, preset, turbo_variant, model_choice, text_encoder_choice, width, height, seed, steps, cfg,
-        layout or "",
+        prompt, preset, turbo_variant, model_choice, text_encoder_choice, vae_choice, width, height, seed, steps,
+        cfg, layout or "",
     )
     yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
 

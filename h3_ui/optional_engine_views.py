@@ -34,11 +34,11 @@ from h3_models import (
     DRAMA3_MODEL_CHOICES,
     FLUX3_MODEL_CHOICES,
     FLUX3_UPSAMPLER_CHOICES,
-    DEFAULT_MOSS_IMAGE_MODEL,
     DEFAULT_MOSS_IMAGE_TEXT_ENCODER,
     MOSS_IMAGE_MODEL_CHOICES,
     MOSS_IMAGE_TEXT_ENCODER_CHOICES,
     MOSS_IMAGE_TURBO_MODES,
+    MOSS_IMAGE_VAE_CHOICES,
 )
 from .image_library import build_image_file_input
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
@@ -199,6 +199,7 @@ class MossImageView:
     turbo_variant: gr.Dropdown
     model: gr.Dropdown
     text_encoder: gr.Dropdown
+    vae: gr.Dropdown
     width: gr.Slider
     height: gr.Slider
     seed: gr.Number
@@ -218,7 +219,7 @@ class MossImageView:
 
 
 def moss_image_preset_values(preset):
-    """Apply a MOSS-Image preset (Turbo LoRA, steps, CFG) without locking the controls."""
+    """Apply a MOSS-Image preset (Turbo LoRA, steps, CFG, model, VAE) without locking the controls."""
     return MOSS_IMAGE_PRESETS[preset]
 
 
@@ -227,7 +228,7 @@ def moss_image_turbo_defaults(variant, preset=DEFAULT_MOSS_IMAGE_PRESET):
     if variant in MOSS_IMAGE_TURBO_MODES:
         return MOSS_IMAGE_TURBO_MODES[variant][1], 1.0
     base = preset if MOSS_IMAGE_PRESETS.get(preset, ("",))[0] == "Off" else "Balanced"
-    return MOSS_IMAGE_PRESETS[base][1:]
+    return MOSS_IMAGE_PRESETS[base][1:3]
 
 
 @dataclass(frozen=True)
@@ -398,9 +399,9 @@ def build_flux3_view(root):
 
 
 def build_moss_image_view(root):
-    turbo, steps_default, cfg_default = MOSS_IMAGE_PRESETS[DEFAULT_MOSS_IMAGE_PRESET]
+    turbo, steps_default, cfg_default, model_default, vae_default = MOSS_IMAGE_PRESETS[DEFAULT_MOSS_IMAGE_PRESET]
     with root:
-        gr.Markdown("## MOSS-Image\nOpenMOSS MOSS-Image SFT text-to-image with strong text rendering and "
+        gr.Markdown("## MOSS-Image\nOpenMOSS MOSS-Image SFT and Base text-to-image with strong text rendering and "
                     "optional layout boxes. Weights download on first use from "
                     "[Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image).")
         with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
@@ -415,8 +416,8 @@ def build_moss_image_view(root):
                         info="Auto picks a Layout for posters, panels or placed text, otherwise a caption.")
                     writer, enhance, enhance_status = _writer("Rewrite prompt")
                 preset = gr.Radio(list(MOSS_IMAGE_PRESETS), value=DEFAULT_MOSS_IMAGE_PRESET, label="MOSS-Image preset",
-                    info="Fast uses the 8-step DMD Turbo LoRA at CFG 1. Balanced and Quality run the SFT "
-                         "model for 25 or 50 steps at CFG 3.")
+                    info="Fast uses INT8 SFT, the small VAE and the 8-step DMD Turbo LoRA at CFG 1. "
+                         "Balanced and Quality run BF16 SFT with the full VAE for 25 or 50 steps at CFG 3.")
                 resolution_small, resolution_large = _resolution_presets(
                     MOSS_IMAGE_1M_RESOLUTION_PRESETS, MOSS_IMAGE_2M_RESOLUTION_PRESETS,
                     "1M resolution preset", "2M resolution preset",
@@ -427,10 +428,14 @@ def build_moss_image_view(root):
                 with gr.Accordion("Model and sampling", open=False):
                     turbo_variant = gr.Dropdown(["Off", *MOSS_IMAGE_TURBO_MODES], value=turbo, label="Turbo LoRA",
                         info="A step-distilled LoRA sets its own step count and CFG 1.")
-                    model = gr.Dropdown(list(MOSS_IMAGE_MODEL_CHOICES), value=DEFAULT_MOSS_IMAGE_MODEL,
-                                        label="Image model")
+                    model = gr.Dropdown(list(MOSS_IMAGE_MODEL_CHOICES), value=model_default,
+                                        label="Image model",
+                                        info="SFT is the tuned release; Base is the pretrained checkpoint. "
+                                             "The Turbo LoRA needs SFT.")
                     text_encoder = gr.Dropdown(list(MOSS_IMAGE_TEXT_ENCODER_CHOICES),
                                                value=DEFAULT_MOSS_IMAGE_TEXT_ENCODER, label="Qwen3.5 9B text encoder")
+                    vae = gr.Dropdown(list(MOSS_IMAGE_VAE_CHOICES), value=vae_default, label="VAE",
+                                      info="The full VAE is shared with FLUX 3; the small one decodes faster.")
                     steps = gr.Slider(1, 100, value=steps_default, step=1, label="Steps")
                     cfg = gr.Slider(1, 10, value=cfg_default, step=0.1, label="CFG",
                         info="Above 1, the empty negative pass skips layer 22 as in OpenMOSS's reference sampler.")
@@ -445,7 +450,7 @@ def build_moss_image_view(root):
                 output = gr.Gallery(label="Generated image", columns=1, interactive=False)
                 output.h3_metadata_root = gr.Column()
                 run, stop, status = _actions("Generate image")
-    return MossImageView(prompt, preset, turbo_variant, model, text_encoder, width, height, seed, steps, cfg,
+    return MossImageView(prompt, preset, turbo_variant, model, text_encoder, vae, width, height, seed, steps, cfg,
                          layout, output, run, stop, status, rewrite_mode, writer, enhance, enhance_status,
                          resolution_small, resolution_large)
 
@@ -882,11 +887,12 @@ def bind_moss_image(view, actions):
         show_progress="minimal", api_name="enhance_moss_image_prompt",
     )
     view.preset.change(moss_image_preset_values, inputs=view.preset,
-                       outputs=[view.turbo_variant, view.steps, view.cfg], **_QUIET)
+                       outputs=[view.turbo_variant, view.steps, view.cfg, view.model, view.vae], **_QUIET)
     view.turbo_variant.input(moss_image_turbo_defaults, inputs=[view.turbo_variant, view.preset],
                              outputs=[view.steps, view.cfg], **_QUIET)
     return _bind_generation(view, "moss_image", actions.generate_moss_image, actions.interrupt, [
-        view.prompt, view.preset, view.turbo_variant, view.model, view.text_encoder, view.width, view.height,
+        view.prompt, view.preset, view.turbo_variant, view.model, view.text_encoder, view.vae, view.width,
+        view.height,
         view.seed, view.steps, view.cfg, view.layout,
     ])
 

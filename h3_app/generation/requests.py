@@ -27,8 +27,9 @@ class MossImageRequest:
     prompt: str
     preset: str = "Fast"
     turbo_variant: str = "Lodestones DMD (8-step)"
-    model_choice: str = "BF16"
+    model_choice: str = "INT8 ConvRot (lower VRAM)"
     text_encoder_choice: str = "INT8 ConvRot (recommended)"
+    vae_choice: str = "Small FLUX.2 VAE (faster decode)"
     width: int = 1024
     height: int = 1024
     seed: int = -1

@@ -1,4 +1,4 @@
-"""MOSS-Image SFT presets, Turbo LoRA selection and native ComfyUI graphs."""
+"""MOSS-Image presets, model/VAE/Turbo LoRA selection and native ComfyUI graphs."""
 
 import tempfile
 import unittest
@@ -14,7 +14,8 @@ from h3_app.generation.requests import MossImageRequest
 from h3_app.workflows.moss_image import build_moss_image_graph, moss_image_model_keys
 from h3_models import (
     LAZY_OPTIONAL_MODEL_KEYS, MODEL_SPECS, MOSS_IMAGE_DMD_8STEP, MOSS_IMAGE_MODEL_KEYS,
-    MOSS_IMAGE_TURBO_MODES, PRELOAD_MODEL_KEYS,
+    MOSS_IMAGE_SFT_BF16, MOSS_IMAGE_SFT_INT8, MOSS_IMAGE_TURBO_MODES, MOSS_IMAGE_VAE_FULL,
+    MOSS_IMAGE_VAE_SMALL, PRELOAD_MODEL_KEYS,
 )
 from h3_ui.optional_engine_views import moss_image_preset_values, moss_image_turbo_defaults
 
@@ -22,8 +23,8 @@ ENCODER = "INT8 ConvRot (recommended)"
 
 
 def graph_for(preset, **changes):
-    turbo, steps, cfg = MOSS_IMAGE_PRESETS[preset]
-    arguments = dict(model_choice="BF16", text_encoder_choice=ENCODER, prompt="a fox",
+    turbo, steps, cfg, model, vae = MOSS_IMAGE_PRESETS[preset]
+    arguments = dict(model_choice=model, text_encoder_choice=ENCODER, vae_choice=vae, prompt="a fox",
                      turbo_variant=turbo, steps=steps, cfg=cfg, seed=7)
     return build_moss_image_graph(**{**arguments, **changes})
 
@@ -35,9 +36,9 @@ def nodes(graph, class_type):
 class MossImagePresetTests(unittest.TestCase):
     def test_presets_match_the_requested_recipes(self):
         self.assertEqual(MOSS_IMAGE_PRESETS, {
-            "Fast": (MOSS_IMAGE_DMD_8STEP, 8, 1.0),
-            "Balanced": ("Off", 25, 3.0),
-            "Quality": ("Off", 50, 3.0),
+            "Fast": (MOSS_IMAGE_DMD_8STEP, 8, 1.0, MOSS_IMAGE_SFT_INT8, MOSS_IMAGE_VAE_SMALL),
+            "Balanced": ("Off", 25, 3.0, MOSS_IMAGE_SFT_BF16, MOSS_IMAGE_VAE_FULL),
+            "Quality": ("Off", 50, 3.0, MOSS_IMAGE_SFT_BF16, MOSS_IMAGE_VAE_FULL),
         })
         self.assertEqual(DEFAULT_MOSS_IMAGE_PRESET, "Fast")
         self.assertEqual(MOSS_IMAGE_TURBO_MODES[MOSS_IMAGE_DMD_8STEP], ("moss_image_dmd_8step_lora", 8))
@@ -71,8 +72,30 @@ class MossImagePresetTests(unittest.TestCase):
         self.assertEqual(nodes(graph, "UNETLoader")[0]["unet_name"], "moss_image_sft_int8_convrot.safetensors")
         clip = nodes(graph, "CLIPLoader")[0]
         self.assertEqual((clip["clip_name"], clip["type"]), ("qwen3.5_9b_w4a8_gptq.safetensors", "moss_image"))
-        self.assertEqual(nodes(graph, "VAELoader")[0]["vae_name"], "flux2-vae_small.safetensors")
+        self.assertEqual(nodes(graph, "VAELoader")[0]["vae_name"], "flux2-vae.safetensors")
         self.assertTrue(nodes(graph, "EmptyFlux2LatentImage"))
+
+    def test_presets_load_their_model_and_vae(self):
+        fast, quality = graph_for("Fast"), graph_for("Quality")
+        self.assertEqual(nodes(fast, "UNETLoader")[0]["unet_name"], "moss_image_sft_int8_convrot.safetensors")
+        self.assertEqual(nodes(fast, "VAELoader")[0]["vae_name"], "flux2-vae_small.safetensors")
+        self.assertEqual(nodes(quality, "UNETLoader")[0]["unet_name"], "moss_image_sft_bf16.safetensors")
+        self.assertEqual(nodes(quality, "VAELoader")[0]["vae_name"], "flux2-vae.safetensors")
+
+    def test_base_checkpoints_are_selectable_without_the_sft_turbo_lora(self):
+        for choice, filename in (("Base BF16", "moss_image_base_bf16.safetensors"),
+                                 ("Base INT8 ConvRot (lower VRAM)", "moss_image_base_int8_convrot.safetensors")):
+            with self.subTest(choice=choice):
+                graph = graph_for("Balanced", model_choice=choice)
+                self.assertEqual(nodes(graph, "UNETLoader")[0]["unet_name"], filename)
+                with self.assertRaisesRegex(ValueError, "SFT"):
+                    graph_for("Fast", model_choice=choice)
+
+    def test_full_vae_is_the_shared_flux3_file(self):
+        self.assertEqual(MODEL_SPECS["flux3_vae"].expected_sha256,
+                         "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3")
+        with self.assertRaisesRegex(ValueError, "VAE"):
+            graph_for("Fast", vae_choice="Imaginary VAE")
 
     def test_turbo_requires_its_step_count_and_cfg_one(self):
         with self.assertRaisesRegex(ValueError, "exactly 8"):
@@ -85,6 +108,8 @@ class MossImagePresetTests(unittest.TestCase):
     def test_model_keys_download_only_the_selection(self):
         self.assertEqual(moss_image_model_keys("BF16", ENCODER, "Off"),
                          ("moss_image_sft_bf16", "moss_image_text_int8", "moss_image_vae"))
+        self.assertEqual(moss_image_model_keys("Base BF16", ENCODER, "Off", MOSS_IMAGE_VAE_FULL),
+                         ("moss_image_base_bf16", "moss_image_text_int8", "flux3_vae"))
         self.assertEqual(moss_image_model_keys("BF16", "BF16", MOSS_IMAGE_DMD_8STEP)[-1], "moss_image_dmd_8step_lora")
         for key in MOSS_IMAGE_MODEL_KEYS:
             self.assertIn(key, MODEL_SPECS)
@@ -113,8 +138,10 @@ class MossImagePresetTests(unittest.TestCase):
 
 class MossImageControlTests(unittest.TestCase):
     def test_preset_sets_turbo_steps_and_cfg(self):
-        self.assertEqual(moss_image_preset_values("Balanced"), ("Off", 25, 3.0))
-        self.assertEqual(moss_image_preset_values("Fast"), (MOSS_IMAGE_DMD_8STEP, 8, 1.0))
+        self.assertEqual(moss_image_preset_values("Balanced"),
+                         ("Off", 25, 3.0, MOSS_IMAGE_SFT_BF16, MOSS_IMAGE_VAE_FULL))
+        self.assertEqual(moss_image_preset_values("Fast"),
+                         (MOSS_IMAGE_DMD_8STEP, 8, 1.0, MOSS_IMAGE_SFT_INT8, MOSS_IMAGE_VAE_SMALL))
 
     def test_turbo_change_fixes_steps_and_off_restores_the_base_preset(self):
         self.assertEqual(moss_image_turbo_defaults(MOSS_IMAGE_DMD_8STEP, "Quality"), (8, 1.0))
@@ -180,12 +207,15 @@ class MossImageRequestTests(unittest.TestCase):
             ({"cfg": 3.0}, "CFG 1"),
             ({"turbo_variant": "Off", "steps": 25, "cfg": 11.0}, "CFG"),
             ({"layout": "not json"}, "JSON"),
+            ({"vae_choice": "Imaginary VAE"}, "VAE"),
+            ({"model_choice": "Base BF16"}, "SFT"),
         ):
             with self.subTest(changes=changes), self.assertRaisesRegex(H3Error, message):
                 validate_request(replace(request, **changes))
 
     def test_generation_downloads_the_selection_and_records_the_preset(self):
-        request = MossImageRequest("a fox", preset="Quality", turbo_variant="Off", steps=50, cfg=3.0, seed=5)
+        request = MossImageRequest("a fox", preset="Quality", turbo_variant="Off", model_choice=MOSS_IMAGE_SFT_BF16,
+                                   vae_choice=MOSS_IMAGE_VAE_FULL, steps=50, cfg=3.0, seed=5)
         models, submitted = Mock(), {}
 
         def submit(graph, _client_id):
@@ -203,7 +233,7 @@ class MossImageRequestTests(unittest.TestCase):
             results = list(generate_optional_engine(request, services, SimpleNamespace()))
         self.assertNotIn("Error:", results[-1].status)
         self.assertIn("MOSS-Image complete", results[-1].status)
-        models.ensure_model_keys.assert_called_once_with(("moss_image_sft_bf16", "moss_image_text_int8", "moss_image_vae"))
+        models.ensure_model_keys.assert_called_once_with(("moss_image_sft_bf16", "moss_image_text_int8", "flux3_vae"))
         settings = snapshot.call_args.args[1]["settings"]
         self.assertEqual((settings["preset"], settings["turbo_variant"], settings["steps"]), ("Quality", "Off", 50))
         self.assertEqual(snapshot.call_args.args[1]["family"], "MOSS-Image")

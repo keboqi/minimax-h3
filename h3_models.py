@@ -134,6 +134,16 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "text_encoders/qwen3.5_9b_flux3_prompt_upsampler_w4a8.safetensors", "FLUX 3 prompt upsampler W4A8",
         expected_sha256="e5d85a7421d197bf5a12474511936ecabce19a833252f16e9310a983194a4458",
     ),
+    "moss_image_base_bf16": ModelSpec(
+        MOSS_IMAGE_REPO, "diffusion_models", "diffusion_models/moss_image_base_bf16.safetensors",
+        "MOSS-Image Base BF16",
+        expected_sha256="cacd158728a1fb9e57c408a922b54752ec71fceb566b3821269927964e62b41f",
+    ),
+    "moss_image_base_int8": ModelSpec(
+        MOSS_IMAGE_REPO, "diffusion_models", "diffusion_models/moss_image_base_int8_convrot.safetensors",
+        "MOSS-Image Base INT8 ConvRot",
+        expected_sha256="f601c1e1161915fb3fea003da0c1782e374dd960fbb3978bc0e4e3fa1f2d8e6f",
+    ),
     "moss_image_sft_bf16": ModelSpec(
         MOSS_IMAGE_REPO, "diffusion_models", "diffusion_models/moss_image_sft_bf16.safetensors",
         "MOSS-Image SFT BF16",
@@ -159,7 +169,8 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "MOSS-Image Qwen3.5 9B W4A8 text encoder",
         expected_sha256="4cc6a1543ad2061806da46f35f90cadb4801dcba246c44782cf42ec0feb6407c",
     ),
-    # Upstream bundles the small FLUX.2 decoder; the full flux3_vae is a different file.
+    # Upstream ships the small FLUX.2 decoder plus the full VAE, which is
+    # byte-identical to flux3_vae and therefore shared with FLUX 3.
     "moss_image_vae": ModelSpec(
         MOSS_IMAGE_REPO, "vae", "vae/flux2-vae_small.safetensors", "MOSS-Image small FLUX.2 VAE",
         expected_sha256="d8d52ba036475f5fb07c8b435e176d3d97ebfa82f0d1a1c317f9cc1e25bd013b",
@@ -905,8 +916,17 @@ FLUX3_MODEL_CHOICES = {"NVFP4 (Blackwell)": "flux3_nvfp4", "BF16": "flux3_bf16",
 FLUX3_UPSAMPLER_CHOICES = {"INT8 ConvRot": "flux3_upsampler", "W4A8 (lower VRAM)": "flux3_upsampler_w4a8"}
 DEFAULT_FLUX3_UPSAMPLER = "INT8 ConvRot"
 FLUX3_MODEL_KEYS = (*FLUX3_MODEL_CHOICES.values(), "flux3_text_encoder", "flux3_vae", *FLUX3_UPSAMPLER_CHOICES.values())
-MOSS_IMAGE_MODEL_CHOICES = {"BF16": "moss_image_sft_bf16", "INT8 ConvRot (lower VRAM)": "moss_image_sft_int8"}
-DEFAULT_MOSS_IMAGE_MODEL = "BF16"
+MOSS_IMAGE_SFT_BF16 = "BF16"
+MOSS_IMAGE_SFT_INT8 = "INT8 ConvRot (lower VRAM)"
+MOSS_IMAGE_MODEL_CHOICES = {
+    MOSS_IMAGE_SFT_BF16: "moss_image_sft_bf16", MOSS_IMAGE_SFT_INT8: "moss_image_sft_int8",
+    "Base BF16": "moss_image_base_bf16", "Base INT8 ConvRot (lower VRAM)": "moss_image_base_int8",
+}
+DEFAULT_MOSS_IMAGE_MODEL = MOSS_IMAGE_SFT_INT8
+MOSS_IMAGE_VAE_FULL = "Full FLUX.2 VAE"
+MOSS_IMAGE_VAE_SMALL = "Small FLUX.2 VAE (faster decode)"
+MOSS_IMAGE_VAE_CHOICES = {MOSS_IMAGE_VAE_FULL: "flux3_vae", MOSS_IMAGE_VAE_SMALL: "moss_image_vae"}
+DEFAULT_MOSS_IMAGE_VAE = MOSS_IMAGE_VAE_SMALL
 MOSS_IMAGE_TEXT_ENCODER_CHOICES = {
     "INT8 ConvRot (recommended)": "moss_image_text_int8",
     "W4A8 (lowest VRAM)": "moss_image_text_w4a8",
@@ -921,7 +941,7 @@ MOSS_IMAGE_TURBO_MODES = {
 MOSS_IMAGE_MODEL_KEYS = (
     *MOSS_IMAGE_MODEL_CHOICES.values(),
     *MOSS_IMAGE_TEXT_ENCODER_CHOICES.values(),
-    "moss_image_vae",
+    *MOSS_IMAGE_VAE_CHOICES.values(),
     *dict.fromkeys(key for key, _steps in MOSS_IMAGE_TURBO_MODES.values()),
 )
 DRAMA3_MODEL_CHOICES = {"FP8 (original weights)": "drama3_fp8", "INT8 ConvRot": "drama3_int8", "W6A8 (lower RAM)": "drama3_w6a8"}

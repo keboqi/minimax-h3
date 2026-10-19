@@ -29,9 +29,11 @@ from h3_models import (
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
     DEFAULT_MOSS_IMAGE_MODEL,
     DEFAULT_MOSS_IMAGE_TEXT_ENCODER,
+    DEFAULT_MOSS_IMAGE_VAE,
     MOSS_IMAGE_MODEL_CHOICES,
     MOSS_IMAGE_TEXT_ENCODER_CHOICES,
     MOSS_IMAGE_TURBO_MODES,
+    MOSS_IMAGE_VAE_CHOICES,
     YUE2_MODEL_CHOICES,
     build_model_config,
     model_file_matches_manifest,
@@ -193,7 +195,7 @@ def model_presets() -> dict[str, tuple[str, ...]]:
     moss = (
         MOSS_IMAGE_MODEL_CHOICES[DEFAULT_MOSS_IMAGE_MODEL],
         MOSS_IMAGE_TEXT_ENCODER_CHOICES[DEFAULT_MOSS_IMAGE_TEXT_ENCODER],
-        "moss_image_vae",
+        MOSS_IMAGE_VAE_CHOICES[DEFAULT_MOSS_IMAGE_VAE],
     )
     return {
         "MiniMax H3 defaults": tuple(dict.fromkeys((
