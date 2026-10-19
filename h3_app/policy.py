@@ -44,7 +44,7 @@ def upscale_target_dimensions(
     except (KeyError, TypeError, ValueError) as exc:
         raise H3Error(f"Unknown upscale resolution preset: {preset}") from exc
     scale = min(max_width / source_width, max_height / source_height)
-    # SeedVR2 and SwiftVR can preserve the fitted source ratio exactly.
+    # SeedVR2 can preserve the fitted source ratio exactly.
     # LTX applies its required latent alignment inside its graph.
     width = max(1, int(round(source_width * scale)))
     height = max(1, int(round(source_height * scale)))

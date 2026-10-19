@@ -71,8 +71,6 @@ from h3_requirements import (
     TENSORRT_PACKAGE,
     TORCHVISION_VERSION,
     WSPROTO_VERSION,
-    SWIFTVR_REF,
-    SWIFTVR_REPO,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
     sync_ltx25_workflows,
@@ -902,20 +900,6 @@ def sync_external_nodes(
     )
 
 
-def sync_swiftvr_runtime(install_dir: Path) -> None:
-    runtime = install_dir / "SwiftVR"
-    sync_git_repo(
-        SWIFTVR_REPO,
-        runtime,
-        ref=SWIFTVR_REF,
-        required_paths=(
-            "setup.py",
-            "swiftvr/__init__.py",
-            "swiftvr/pipeline.py",
-        ),
-    )
-
-
 def install_bundled_nodes(comfy: Path) -> None:
     destination = comfy / "custom_nodes" / "H3Acceleration" / "__init__.py"
     if not BUNDLED_ACCEL_NODE.is_file():
@@ -1148,7 +1132,6 @@ def main() -> None:
     )
     if not args.skip_env:
         uv_pip(HUGGINGFACE_HUB_REQUIREMENT, no_deps=True)
-    sync_swiftvr_runtime(install_dir)
     if not torch_stack_matches():
         install_pinned_torch_stack()
     if not numpy_stack_matches():

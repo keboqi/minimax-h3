@@ -1395,12 +1395,6 @@ def prune_hf_cache(
 
     if repo_ids is None:
         target_repos = {spec.repo_id for spec in MODEL_SPECS.values()}
-        try:
-            from h3_app.swiftvr import SWIFTVR_HF_REPO
-
-            target_repos.add(SWIFTVR_HF_REPO)
-        except ImportError:
-            pass
     else:
         target_repos = set(repo_ids)
 

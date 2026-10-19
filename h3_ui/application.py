@@ -131,7 +131,6 @@ from h3_app.catalog import (
     RESULT_FORMATS,
     SEEDVR2_UPSCALE,
     SLA_PRESET_INPUTS,
-    SWIFTVR_UPSCALE,
     TURBO_SETTINGS,
     UI_DEFAULTS,
     UPSCALE_RESOLUTION_PRESETS,
@@ -171,7 +170,6 @@ from h3_app.execution import ExecutionRunner, PromptId, Submission
 from h3_app import prompt_service
 import h3_app.staging as staging
 from h3_app import media_tools
-import h3_app.swiftvr as swiftvr
 from h3_app import gallery_store
 from h3_app import outputs
 from h3_app.outputs import OutputContext
@@ -271,7 +269,6 @@ def _mediacontroller():
             POSTPROCESS_OPTIONS=POSTPROCESS_OPTIONS,
             Path=Path,
             SEEDVR2_UPSCALE=SEEDVR2_UPSCALE,
-            SWIFTVR_UPSCALE=SWIFTVR_UPSCALE,
             UPSCALE_RESOLUTION_PRESETS=UPSCALE_RESOLUTION_PRESETS,
             VIDEO_EXTENSIONS=VIDEO_EXTENSIONS,
             _runtime_config=_runtime_config,
@@ -290,7 +287,6 @@ def _mediacontroller():
             load_model_config=load_model_config,
             object_info=object_info,
             poll_comfy_progress=poll_comfy_progress,
-            postprocess_swiftvr_video=postprocess_swiftvr_video,
             postprocess_video=postprocess_video,
             prepare_upscale_clip_batch=prepare_upscale_clip_batch,
             probe_video_metadata=probe_video_metadata,
@@ -1772,18 +1768,6 @@ def save_selected_image_frames(
     return (saved, f"Saved {len(saved)} selected frame(s) to `{destination}`.")
 
 
-def postprocess_swiftvr_video(
-    source: Path, *, fps: float, target_width: int, target_height: int
-) -> Path:
-    return swiftvr.postprocess_swiftvr_video(
-        source,
-        fps=fps,
-        target_width=target_width,
-        target_height=target_height,
-        runtime=_runtime_config(),
-    )
-
-
 def postprocess_video(source: Path, option: str) -> Path:
     return media_tools.postprocess_video(source, option, runtime=_runtime_config())
 
@@ -2273,7 +2257,6 @@ def _generation_services() -> generation_services.GenerationServices:
         media=generation_services.MediaServices(
             cleanup_upscale_clip_batch=cleanup_upscale_clip_batch,
             concat_upscaled_clips=concat_upscaled_clips,
-            postprocess_swiftvr_video=postprocess_swiftvr_video,
             postprocess_video=postprocess_video,
             prepare_upscale_clip_batch=prepare_upscale_clip_batch,
             probe_video_metadata=probe_video_metadata,

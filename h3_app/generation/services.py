@@ -205,12 +205,6 @@ class ConcatUpscaledClips(Protocol):
     ) -> Path: ...
 
 
-class PostprocessSwiftvrVideo(Protocol):
-    def __call__(
-        self, source: Path, *, fps: float, target_width: int, target_height: int
-    ) -> Path: ...
-
-
 class PostprocessVideo(Protocol):
     def __call__(self, source: Path, option: str) -> Path: ...
 
@@ -413,7 +407,6 @@ class WorkflowsServices:
 class MediaServices:
     cleanup_upscale_clip_batch: CleanupUpscaleClipBatch
     concat_upscaled_clips: ConcatUpscaledClips
-    postprocess_swiftvr_video: PostprocessSwiftvrVideo
     postprocess_video: PostprocessVideo
     prepare_upscale_clip_batch: PrepareUpscaleClipBatch
     probe_video_metadata: ProbeVideoMetadata

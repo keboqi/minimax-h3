@@ -149,8 +149,6 @@ from h3_requirements import (  # noqa: E402
     TENSORRT_PACKAGE,
     TORCHVISION_VERSION,
     WSPROTO_VERSION,
-    SWIFTVR_REF,
-    SWIFTVR_REPO,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
     probe_comfy_frontend,
@@ -267,10 +265,6 @@ def build(revision: str) -> None:
 
     _clone(COMFY_REPO, Path(COMFY), ref=COMFY_REF)
     _print_git_revision(Path(COMFY))
-
-    swiftvr_dir = Path(ROOT) / "SwiftVR"
-    _clone(SWIFTVR_REPO, swiftvr_dir, ref=SWIFTVR_REF)
-    _print_git_revision(swiftvr_dir)
 
     audio_t8_dir = Path(COMFY) / "custom_nodes" / "minimax-h3-audio-T8"
     drama3_dir = Path(COMFY) / "custom_nodes" / "ComfyUI-Drama3"

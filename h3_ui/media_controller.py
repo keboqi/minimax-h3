@@ -43,7 +43,6 @@ class MediaServices:
     POSTPROCESS_OPTIONS: Any
     Path: Any
     SEEDVR2_UPSCALE: Any
-    SWIFTVR_UPSCALE: Any
     UPSCALE_RESOLUTION_PRESETS: Any
     VIDEO_EXTENSIONS: Any
     _runtime_config: Any
@@ -62,7 +61,6 @@ class MediaServices:
     load_model_config: Any
     object_info: Any
     poll_comfy_progress: Any
-    postprocess_swiftvr_video: Any
     postprocess_video: Any
     prepare_upscale_clip_batch: Any
     probe_video_metadata: Any
@@ -681,26 +679,6 @@ class MediaController:
             yield self.services.gallery_progress_result(
                 f"Preparing `{source.name}` for {option}"
             )
-            if option == self.services.SWIFTVR_UPSCALE:
-                progress(0, desc="Checking SwiftVR runtime and checkpoint")
-                yield self.services.gallery_progress_result(
-                    "Checking SwiftVR runtime and downloading its checkpoint on first use."
-                )
-                metadata = self.services.probe_video_metadata(source)
-                target_width, target_height = self.services.upscale_target_dimensions(
-                    metadata.width, metadata.height, upscale_resolution
-                )
-                result = self.services.postprocess_swiftvr_video(
-                    source,
-                    fps=metadata.fps,
-                    target_width=target_width,
-                    target_height=target_height,
-                )
-                progress(1, desc="Complete")
-                yield self.services.gallery_processed_result(
-                    result, option, self.services.time.monotonic() - started, request
-                )
-                return
             if option not in self.services.COMFY_POSTPROCESS_OPTIONS:
                 result = self.services.postprocess_video(source, option)
                 progress(1, desc="Complete")

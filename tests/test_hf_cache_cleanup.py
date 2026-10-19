@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 import h3_models
 from h3_app import model_service
-from h3_app.swiftvr import ensure_swiftvr_checkpoint
 
 
 class HfCacheCleanupTests(unittest.TestCase):
@@ -246,43 +245,6 @@ class HfCacheCleanupTests(unittest.TestCase):
             self.assertGreater(freed, 0)
             self.assertFalse(target_folder.exists())
             self.assertTrue(other_folder.exists())
-
-    def test_swiftvr_clears_local_cache_only_after_checkpoint_is_complete(self):
-        with TemporaryDirectory() as temp_dir:
-            checkpoint = Path(temp_dir) / "ComfyUI" / "models" / "swiftvr"
-            runtime = SimpleNamespace(comfy_dir=checkpoint.parents[1])
-
-            def incomplete_download(**kwargs):
-                local = Path(kwargs["local_dir"])
-                (local / ".cache" / "huggingface").mkdir(parents=True)
-                (local / "reae.safetensors").write_bytes(b"model")
-
-            with patch("huggingface_hub.snapshot_download", side_effect=incomplete_download):
-                with self.assertRaisesRegex(Exception, "required files"):
-                    ensure_swiftvr_checkpoint(runtime=runtime)
-            self.assertTrue((checkpoint / ".cache").exists())
-
-            def complete_download(**kwargs):
-                local = Path(kwargs["local_dir"])
-                for relative in (
-                    "prompt_embedding.safetensors", "transformer/config.json",
-                    "transformer/diffusion_pytorch_model.safetensors",
-                ):
-                    path = local / relative
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(b"model")
-
-            with patch("huggingface_hub.snapshot_download", side_effect=complete_download):
-                actual, downloaded = ensure_swiftvr_checkpoint(runtime=runtime)
-            self.assertEqual(actual, checkpoint)
-            self.assertTrue(downloaded)
-            self.assertFalse((checkpoint / ".cache").exists())
-
-            (checkpoint / ".cache" / "huggingface").mkdir(parents=True)
-            actual, downloaded = ensure_swiftvr_checkpoint(runtime=runtime)
-            self.assertEqual(actual, checkpoint)
-            self.assertFalse(downloaded)
-            self.assertFalse((checkpoint / ".cache").exists())
 
 
 if __name__ == "__main__":

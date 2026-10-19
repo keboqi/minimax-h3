@@ -14,7 +14,6 @@ from h3_app.catalog import (
     LTX25_UPSCALE_OPTIONS,
     LTX25_TILED_UPSCALE,
     SEEDVR2_UPSCALE,
-    SWIFTVR_UPSCALE,
 )
 from h3_app.media_types import UpscaleClipBatch
 from h3_app.policy import upscale_target_dimensions
@@ -118,20 +117,7 @@ def finish_video(
     clip_batch: UpscaleClipBatch | None = None
     clip_outputs: list[Path] = []
     try:
-        if request.finishing.postprocess == SWIFTVR_UPSCALE:
-            metadata = services.media.probe_video_metadata(source)
-            target_width, target_height = upscale_target_dimensions(
-                metadata.width, metadata.height, request.finishing.upscale_resolution
-            )
-            if request.finishing.upscale_force_offload:
-                services.models.unload_comfy_models()
-            result = services.media.postprocess_swiftvr_video(
-                source,
-                fps=metadata.fps,
-                target_width=target_width,
-                target_height=target_height,
-            )
-        elif request.finishing.postprocess in COMFY_UPSCALE_OPTIONS:
+        if request.finishing.postprocess in COMFY_UPSCALE_OPTIONS:
             if request.finishing.postprocess == SEEDVR2_UPSCALE:
                 model_status = f"SeedVR2 {request.finishing.seedvr2_model}"
                 stage_bucket = "seedvr2_upscale"

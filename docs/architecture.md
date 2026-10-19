@@ -35,7 +35,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/comfy.py, execution.py | HTTP transport and one submission lifecycle, deadline and websocket owner |
 | h3_app/workflows/ | Pure H3, LTX, Qwen, Music, YuE2 and finishing graph builders with staged input identities |
 | h3_app/generation/ | Named requests and typed services; preparation, graph construction, execution and finishing |
-| h3_app/staging.py, media_tools.py, swiftvr.py | Input staging, media inspection, controlled subprocesses and post-processing |
+| h3_app/staging.py, media_tools.py | Input staging, media inspection, controlled subprocesses and post-processing |
 | h3_app/media.py, outputs.py, gallery_store.py | Contained discovery, explicit output context and complete managed gallery inventory |
 | h3_app/provenance.py | Atomic sidecars, copied-media provenance and escaped metadata rendering |
 | h3_app/prompt_service.py | Local, Gemini and Lightning writer adapters with transient credentials |
@@ -66,7 +66,7 @@ ComfyUI's interrupt endpoint remains global. External clients using ComfyUI dire
 
 ExecutionRunner owns submission identity, save-prefix scope, websocket cleanup, progress fallback and final history. Its HTTP calls and websocket receives use the same monotonic deadline; a disconnected socket does not restart the time budget. H3, LTX, Music and gallery jobs all use this lifecycle. The string-compatible prompt handle retains the submission for legacy callers.
 
-FFmpeg subprocesses check cancellation and a deadline, drain bounded diagnostics, terminate and reap on interruption, and remove partial output. Interpolation and concatenation publish their final media name only after success. SwiftVR's intermediate video stays in a processing directory excluded from gallery discovery. Cancellation during optional finishing leaves the completed source available.
+FFmpeg subprocesses check cancellation and a deadline, drain bounded diagnostics, terminate and reap on interruption, and remove partial output. Interpolation and concatenation publish their final media name only after success. Cancellation during optional finishing leaves the completed source available.
 
 Every submission receives a unique save prefix. Fallback output discovery requires that submission token and a contained path; an unowned timestamp-only scan returns no output.
 

@@ -369,10 +369,8 @@ actually run, rather than relying on FFmpeg's codec list.
 
 The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
 Singularity pruned v1.3 INT8 checkpoint plus the Fast NVFP4/AWQ text encoder, default FP32 latent-upscaler checkpoint, shared VAEs, and default 4-step Turbo LoRAs. The Speed, Quality and Original checkpoints plus the selectable PDMD 4-step, DMAD 4-step and LightX2V 8-step Turbo LoRAs download on demand when selected; the Balanced preset's 6-step Larry LoRA is preloaded. SeedVR2 models, the
-LTX-2.5 upscaler and restoration IC-LoRAs, and SwiftVR checkpoints are lazy and download only
-when their post-processing option is first used. The installer pins the official
-SwiftVR inference source; no SWIFTVR_CHECKPOINT_DIR is required unless you want
-to use an existing checkpoint directory. Fast and Singularity select LynnReal Light
+LTX-2.5 upscaler and restoration IC-LoRAs are lazy and download only
+when their post-processing option is first used. Fast and Singularity select LynnReal Light
 INT8 video VAE by default; Balanced and Quality select the official INT8 ConvRot
 video VAE. Both download on first use.
 The separate **LynnReal Light INT8 video VAE** option downloads Kijai's 2.14 GB
@@ -820,11 +818,7 @@ preserves the source and adds a new processed output. Choose a target preset fro
 **1280 × 1280**, **1920 × 1920**, **2560 × 2560**, or **3840 × 3840**; the source
 is fitted inside that square without cropping, so its original aspect ratio is
 preserved. **SeedVR2 2x** uses ComfyUI's native one-step restoration workflow.
-**SwiftVR 2x** runs the official streaming restoration pipeline directly and
-downloads H-oliday/SwiftVR into ComfyUI/models/swiftvr on first use.
-SWIFTVR_CHECKPOINT_DIR can override that location and must point to the
-checkpoint root containing reae.safetensors, prompt_embedding.safetensors,
-and the transformer directory. **LTX-2.5 IC-LoRA 2x** is a generative
+**LTX-2.5 IC-LoRA 2x** is a generative
 alternative that synthesizes fine detail with the transformer selected in the
 **LTX 2.5**
 tab and the official gated pixel spatial upscaler IC-LoRA. Gallery runs accept

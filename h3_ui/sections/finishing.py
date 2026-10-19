@@ -193,7 +193,7 @@ def build_finishing_section(
             value=defaults["postprocess"],
             label="After generation",
             info=(
-                "Optionally run SeedVR2, SwiftVR or LTX-2.5 upscaling immediately after the base H3 "
+                "Optionally run SeedVR2 or LTX-2.5 upscaling immediately after the base H3 "
                 "video finishes. The source video remains in the gallery."
             ),
         )
