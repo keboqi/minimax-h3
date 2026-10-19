@@ -406,6 +406,8 @@ class CastSlotTests(unittest.TestCase):
                          "Speaker voices (optional) · 3 speakers · 2 with a voice")
         self.assertEqual(drama3_voices_title(1, [UPLOAD_VOICE], [True, True]),
                          "Speaker voices (optional) · 1 speaker · 1 with a voice")
+        self.assertEqual(drama3_voices_title(2, [UPLOAD_VOICE], [True], group="Chapter 1"),
+                         "Speaker voices (optional) · Chapter 1 group · 2 speakers · 1 with a voice")
 
     def test_generation_failure_preserves_current_audio_and_transcript(self):
         from h3_ui import application
@@ -657,6 +659,11 @@ class BrowserSlotPresentationTests(unittest.TestCase):
                                  drama3_voices_title(shown, presets, clips))
                 self.assertEqual(run_js(_panel_title_js(_SOUND_KIND), shown, *presets, *clips)["label"],
                                  drama3_sounds_title(shown, presets, clips))
+        for group, size in (("Global", 3), ("Chapter 1", 0), ("Story", None), ("", 5)):
+            with self.subTest(group=group, size=size):
+                self.assertEqual(run_js(_panel_title_js(_VOICE_KIND, True), group, size, 4, *presets, *clips)["label"],
+                                 drama3_voices_title(4, presets, clips, group, size))
+        self.assertIn("Story group (2 saved) · 4 speakers", drama3_voices_title(4, group="Story", group_size=2))
 
     def test_add_and_remove_send_only_changed_slots_and_clear_the_removed_one(self):
         from tests.node_js import run_js

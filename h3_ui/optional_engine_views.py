@@ -81,6 +81,7 @@ class OptionalEngineActions:
     apply_drama3_writer_reply: Callable
     speaker_library_actions: object | None = None
     drama3_speaker_groups: Callable = lambda: ["Global"]
+    drama3_speaker_group_size: Callable | None = None
     create_drama3_speaker_group: Callable | None = None
     match_drama3_speaker: Callable | None = None
     match_drama3_speakers: Callable | None = None

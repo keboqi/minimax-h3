@@ -3286,6 +3286,12 @@ def drama3_speaker_groups():
     return drama3_speakers.list_groups(_runtime_config())
 
 
+def drama3_speaker_group_size(group):
+    """Number of speakers saved in ``group`` itself (Global voices are not counted twice)."""
+    from h3_app import drama3_speakers
+    return len(drama3_speakers.list_speakers(_runtime_config(), group or "Global"))
+
+
 def create_drama3_speaker_group(name):
     from h3_app import drama3_speakers
     try:
@@ -3582,6 +3588,7 @@ def _optional_engine_actions():
         transcribe_drama3_voice=transcribe_drama3_voice,
         drama3_speaker_names=drama3_speaker_names,
         drama3_speaker_groups=drama3_speaker_groups,
+        drama3_speaker_group_size=drama3_speaker_group_size,
         create_drama3_speaker_group=create_drama3_speaker_group,
         match_drama3_speaker=match_drama3_speaker,
         match_drama3_speakers=match_drama3_speakers,

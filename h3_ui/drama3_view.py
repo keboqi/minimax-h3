@@ -6,7 +6,7 @@ import gradio as gr
 from h3_ui.drama3_speaker_library import SpeakerLibraryView, build_speaker_library
 from h3_app.drama3_voice_design import ENGINE_QWEN, VOICE_DESIGN_ENGINES
 from h3_app.generation.optional_engines import DRAMA3_BACKENDS
-from h3_app.prompt_service import DRAMA3_SCRIPT_BASIC, DRAMA3_SCRIPT_MODES, DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES
+from h3_app.prompt_service import DRAMA3_SCRIPT_ADVANCED, DRAMA3_SCRIPT_MODES, DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES
 from h3_app.voice_design import LANGUAGES as VOICE_DESIGN_LANGUAGES
 from h3_models import DEFAULT_DRAMA3_ASR, DEFAULT_DRAMA3_MODEL, DRAMA3_ASR_CHOICES, DRAMA3_MODEL_CHOICES
 from .prompt_writer_controls import RemotePromptWriterControls
@@ -125,7 +125,9 @@ class Drama3View:
     stop_auto: gr.Button | None = None
     auto_status: gr.Markdown | None = None
     auto_sound_slots: gr.Number | None = None
+    auto_save_speakers: gr.Checkbox | None = None
     speaker_group: gr.Dropdown | None = None
+    speaker_group_size: gr.Number | None = None
     new_speaker_group: gr.Textbox | None = None
     create_speaker_group: gr.Button | None = None
     save_all_speakers: gr.Button | None = None
@@ -253,7 +255,7 @@ def _sound_slot(index, names):
     )
 
 
-def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("Global",)):
+def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("Global",), group_size=None):
     root.elem_classes = [*root.elem_classes, "h3-drama3"]
     with root:
         gr.HTML('<div class="h3-drama3-intro"><p class="h3-eyebrow">Drama 3 · expressive speech</p>'
@@ -267,7 +269,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                     placeholder="<|speaker:0|> [with warm excitement] Welcome back!\n<|speaker:1|> [laughs] Took you long enough.")
                 script_mode = gr.Radio(
                     list(DRAMA3_SCRIPT_MODES),
-                    value=DRAMA3_SCRIPT_BASIC,
+                    value=DRAMA3_SCRIPT_ADVANCED,
                     label="Script mode",
                     info="Basic is dialogue with expression cues. Advanced adds sound effects and music on "
                          "SGLang-Omni (Linux); switching back to Basic removes sound tags.",
@@ -294,12 +296,14 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                         apply_reply = gr.Button("Apply pasted reply", size="sm", variant="primary")
                 _heading("02", "Cast", "Optional. Give each speaker a reference clip, generate one from a "
                          "description, or reuse a saved speaker. Speakers without one get an invented voice.")
-                with gr.Accordion(drama3_voices_title(), open=False) as voices_panel:
+                with gr.Accordion(drama3_voices_title(group="Global", group_size=group_size),
+                                  open=False) as voices_panel:
                     with gr.Group(elem_classes=["h3-drama3-toolbar"]):
                         with gr.Row(equal_height=True):
                             speaker_group = gr.Dropdown(list(speaker_groups), value="Global",
                                 label="Speaker preset group",
                                 info="Saves go here. Names match this group first, then Global.")
+                            speaker_group_size = gr.Number(group_size, precision=0, visible=False)
                             new_speaker_group = gr.Textbox(label="New speaker group",
                                                            placeholder="Story or series name",
                                                            info="Reuse one group across chapters.")
@@ -335,7 +339,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                     with gr.Row(elem_classes=["h3-drama3-inline-actions", "h3-drama3-slot-count"]):
                         add_speaker = gr.Button("Add speaker", size="sm")
                         remove_speaker = gr.Button("Remove last speaker", size="sm")
-                with gr.Accordion(drama3_sounds_title(), open=False, visible=False) as sounds_panel:
+                with gr.Accordion(drama3_sounds_title(), open=False) as sounds_panel:
                     with gr.Group(elem_classes=["h3-drama3-toolbar"]):
                         gr.Markdown(
                             "Clips for `<sound name=\"...\">` tags, made with "
@@ -362,7 +366,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                 _heading("03", "Delivery")
                 with gr.Row(equal_height=True):
                     sampling_preset = gr.Radio(
-                        list(DRAMA3_SAMPLING_PRESETS), value="Balance", label="Speech preset", scale=3,
+                        list(DRAMA3_SAMPLING_PRESETS), value="Expressive", label="Speech preset", scale=3,
                         info="Strict keeps delivery controlled; Expressive adds variation.",
                     )
                     seed = gr.Number(value=-1, precision=0, label="Seed (-1 random)", scale=1, min_width=140)
@@ -371,24 +375,24 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                 "allow about 48 GB system RAM for FP8/INT8 or 40 GB for W6A8. "
                                 "[Model and license](https://huggingface.co/fishaudio/drama-3)",
                                 elem_classes=["h3-drama3-note"])
-                    backend = gr.Radio(list(DRAMA3_BACKENDS), value=DRAMA3_BACKENDS[0], label="Backend",
+                    backend = gr.Radio(list(DRAMA3_BACKENDS), value="SGLang-Omni", label="Backend",
                         info="ComfyUI generates the whole text in one take and can invent voices. "
                              "SGLang-Omni (Linux) suits long scripts where every speaker has a voice: lines go "
                              "out in parallel with their speaker's clip, and near-silent takes can be retried. "
                              "Advanced (sound) mode needs SGLang-Omni.")
-                    with gr.Group(visible=False) as served_settings:
+                    with gr.Group() as served_settings:
                         with gr.Row():
                             parallel = gr.Slider(1, 32, value=8, step=1, label="Parallel requests")
                             retries = gr.Slider(0, 4, value=0, step=1, label="Retries per chunk",
                                 info="0 keeps the first take. Retries only near-silent audio.")
                     with gr.Row():
-                        temperature = gr.Slider(0, 2, value=1, step=0.05, label="Temperature")
-                        top_p = gr.Slider(0.05, 1, value=0.9, step=0.05, label="Top-p")
-                    top_k = gr.Slider(0, 4096, value=0, step=1, label="Top-k",
+                        temperature = gr.Slider(0, 2, value=2.0, step=0.05, label="Temperature")
+                        top_p = gr.Slider(0.05, 1, value=1.0, step=0.05, label="Top-p")
+                    top_k = gr.Slider(0, 4096, value=30, step=1, label="Top-k",
                         info="0 keeps all candidates. Small caps can make speech stall at pauses.")
                     max_frames = gr.Slider(1, 8192, value=8192, step=1, label="Maximum audio frames per take",
                         info="21.5 frames per second; 8192 is about 6.3 minutes. Only limits a take that runs on.")
-                    with gr.Group() as comfy_settings:
+                    with gr.Group(visible=False) as comfy_settings:
                         model = gr.Dropdown(list(DRAMA3_MODEL_CHOICES), value=DEFAULT_DRAMA3_MODEL,
                                             label="Drama model",
                                             info="FP8 preserves the original weights. INT8 suits RAM experts; "
@@ -428,6 +432,8 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                     with gr.Row(elem_classes=["h3-generation-buttons"]):
                         auto = gr.Button("Auto: rewrite, voice, sound and speak", size="sm")
                         stop_auto = gr.Button("Interrupt auto", size="sm", interactive=False)
+                    auto_save_speakers = gr.Checkbox(False, label="Save generated speakers to the selected group",
+                        info="After the voices are generated, Auto saves them like Save all speakers.")
                     auto_status = gr.Markdown("Paste any text, pick a script mode, then run Auto.",
                                               elem_classes=["h3-drama3-note"])
                     auto_sound_slots = gr.Number(0, precision=0, visible=False)
@@ -482,7 +488,9 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         stop_auto=stop_auto,
         auto_status=auto_status,
         auto_sound_slots=auto_sound_slots,
+        auto_save_speakers=auto_save_speakers,
         speaker_group=speaker_group,
+        speaker_group_size=speaker_group_size,
         new_speaker_group=new_speaker_group,
         create_speaker_group=create_speaker_group,
         save_all_speakers=save_all_speakers,

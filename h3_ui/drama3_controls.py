@@ -107,12 +107,16 @@ def _slot_title(kind, index, name, preset, has_clip):
     return title
 
 
-def _panel_title(kind, shown, presets, has_clips):
+def _panel_title(kind, shown, presets, has_clips, group=None, group_size=None):
     shown = _clamp_count(shown, kind.total)
     ready = sum(1 for index in range(shown)
                 if (index < len(presets) and presets[index] and presets[index] != kind.upload)
                 or (index < len(has_clips) and has_clips[index]))
-    return f"{kind.panel} \u00b7 {shown} {kind.noun}{'s' if shown != 1 else ''} \u00b7 {ready} with a {kind.asset}"
+    group = str(group or "").strip()
+    grouped = f" \u00b7 {group} group" if group else ""
+    if group and group_size is not None:
+        grouped += f" ({int(group_size)} saved)"
+    return f"{kind.panel}{grouped} \u00b7 {shown} {kind.noun}{'s' if shown != 1 else ''} \u00b7 {ready} with a {kind.asset}"
 
 
 def _count_js(total):
@@ -132,16 +136,20 @@ def _slot_title_js(kind, index):
 }}"""
 
 
-def _panel_title_js(kind):
-    """Browser twin of ``_panel_title``; inputs are the count, each preset, then each has_clip flag."""
-    return f"""(shown, ...values) => {{
+def _panel_title_js(kind, grouped=False):
+    """Browser twin of ``_panel_title``; inputs are the group and its saved count when
+    ``grouped``, the shown count, each preset, then each has_clip flag."""
+    return f"""({'group, size, ' if grouped else ''}shown, ...values) => {{
   const count = {_count_js(kind.total)};
+  const groupName = {'String(group ?? "").trim()' if grouped else '""'};
+  const saved = {'size === null || size === undefined || size === "" ? "" : " (" + Math.trunc(Number(size)) + " saved)"' if grouped else '""'};
   let ready = 0;
   for (let index = 0; index < count; index += 1) {{
     const preset = values[index];
     if ((preset && preset !== {json.dumps(kind.upload)}) || values[{kind.total} + index]) ready += 1;
   }}
-  const label = {json.dumps(f"{kind.panel} · ")} + count + " " + {json.dumps(kind.noun)}
+  const label = {json.dumps(kind.panel)} + (groupName ? " · " + groupName + " group" + saved : "")
+    + " · " + count + " " + {json.dumps(kind.noun)}
     + (count === 1 ? "" : "s") + " \u00b7 " + ready + {json.dumps(f" with a {kind.asset}")};
   return {{__type__: "update", label}};
 }}"""
@@ -179,9 +187,9 @@ def drama3_slot_title(speaker, name="", preset=UPLOAD_VOICE, has_clip=False):
     return _slot_title(_VOICE_KIND, speaker, name, preset, has_clip)
 
 
-def drama3_voices_title(shown=DRAMA3_VISIBLE_SLOTS, presets=(), has_clips=()):
-    """Speaker voices panel title with the shown speaker count and how many have a voice."""
-    return _panel_title(_VOICE_KIND, shown, presets, has_clips)
+def drama3_voices_title(shown=DRAMA3_VISIBLE_SLOTS, presets=(), has_clips=(), group=None, group_size=None):
+    """Speaker voices panel title: preset group and its saved count, shown speakers, and how many have a voice."""
+    return _panel_title(_VOICE_KIND, shown, presets, has_clips, group, group_size)
 
 
 def drama3_sound_slot_title(index, name="", preset=UPLOAD_SOUND, has_clip=False):

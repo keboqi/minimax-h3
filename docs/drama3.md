@@ -4,19 +4,22 @@
 
 1. Enter a draft or a tagged script in **Speech text**. Use `<|speaker:0|>`
    through `<|speaker:15|>` to assign voices and cues such as `[laughs]` for delivery.
-2. Choose **Basic** for dialogue or **Advanced** for sound effects, music and
-   vocal effects. Advanced requires SGLang-Omni on Linux; switching back to Basic
-   strips sound tags.
+2. Choose **Basic** for dialogue or **Advanced** (the default) for sound effects,
+   music and vocal effects. Advanced requires SGLang-Omni on Linux; switching back
+   to Basic strips sound tags.
 3. Use **Auto: rewrite, voice, sound and speak** for the full workflow, or open
    **Rewrite as a Drama 3 script** and review the result before proceeding.
 4. Open **Speaker voices** to choose a saved group, manage presets, upload clips,
-   or generate a cast. In Advanced mode, review **Sound effects and music** too.
-5. Choose a **Speech preset** and seed. **Generate speech** renders the current
+   or generate a cast. The panel title shows the selected group and how many
+   speakers it holds. In Advanced mode, review **Sound effects and music** too.
+5. Choose a **Speech preset** (**Expressive** by default) and seed. **Generate speech** renders the current
    script and references without rewriting them. Listen beside the composer.
 
 **Speech and memory settings** contains backend, model and custom sampling controls.
 Auto respects the skip-existing voice and sound options; clear them when you want
-new clips. Interrupt controls stop their corresponding jobs.
+new clips. Check **Save generated speakers to the selected group** (off by default)
+to have Auto save the cast after the voices are generated, as **Save all speakers**
+does. Interrupt controls stop their corresponding jobs.
 
 ## Script writer and cast
 

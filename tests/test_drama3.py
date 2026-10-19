@@ -587,6 +587,12 @@ class Drama3AutoTests(unittest.TestCase):
         demo.validate_queue_settings()
         self.assertEqual(len(view.voices), 16)
         self.assertEqual(len(view.sounds), 16)
+        # Auto defaults to sound-enhanced, expressive speech and leaves speaker saving opt-in.
+        self.assertEqual(view.script_mode.value, "Advanced (sound enhanced)")
+        self.assertEqual(view.backend.value, "SGLang-Omni")
+        self.assertEqual((view.temperature.value, view.top_p.value, view.top_k.value), (2.0, 1.0, 30))
+        self.assertTrue(view.sounds_panel.visible)
+        self.assertFalse(view.auto_save_speakers.value)
 
     def test_failed_rewrite_stops_auto_with_the_writer_reason(self):
         import gradio as gr

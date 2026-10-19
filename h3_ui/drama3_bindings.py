@@ -66,10 +66,11 @@ def _refresh_choices_on_open(panel, presets, choices, names):
     panel.expand(refresh, outputs=presets, **_QUIET)
 
 
-def _bind_slot_presentation(kind, slots, shown, panel, add, remove, cleared):
+def _bind_slot_presentation(kind, slots, shown, panel, add, remove, cleared, group=None, group_size=None):
     """Slot titles, has_clip flags, the panel title and Add/Remove, all in the browser.
 
-    ``cleared`` pairs a slot's field getter with the values a removed slot is reset to.
+    ``cleared`` pairs a slot's field getter with the values a removed slot is reset to;
+    an optional ``group`` dropdown and its saved count (``group_size``) are named in the panel title.
     """
     for index, slot in enumerate(slots):
         gr.on([slot.save_name.change, slot.preset.change, slot.audio.change], fn=None,
@@ -77,8 +78,11 @@ def _bind_slot_presentation(kind, slots, shown, panel, add, remove, cleared):
               outputs=[slot.group, slot.has_clip], **_QUIET)
     presets = [slot.preset for slot in slots]
     flags = [slot.has_clip for slot in slots]
-    gr.on([shown.change, *[preset.change for preset in presets], *[flag.change for flag in flags]],
-          fn=None, js=_panel_title_js(kind), inputs=[shown, *presets, *flags], outputs=panel, **_QUIET)
+    grouped = [group, group_size] if group is not None and group_size is not None else []
+    gr.on([*[g.change for g in grouped], shown.change, *[preset.change for preset in presets],
+           *[flag.change for flag in flags]],
+          fn=None, js=_panel_title_js(kind, bool(grouped)), inputs=[*grouped, shown, *presets, *flags],
+          outputs=panel, **_QUIET)
     groups = [slot.group for slot in slots]
     add.click(fn=None, js=_slot_count_js(kind.total, 1), inputs=shown,
               outputs=[shown, *groups, add, remove], **_QUIET)
@@ -160,6 +164,23 @@ def _bind_voice_batch(trigger, view, actions):
     )
 
 
+def _save_all_inputs(view):
+    return [view.speaker_group, view.shown_slots,
+            *[c for slot in view.voices for c in
+              (slot.preset, slot.save_name, slot.audio, slot.transcript, slot.description)]]
+
+
+def _bind_group_size(view, actions, events):
+    """Keep the selected group's saved-speaker count current for the Speaker voices title."""
+    if view.speaker_group_size is None or actions.drama3_speaker_group_size is None:
+        return
+    view.speaker_group.change(actions.drama3_speaker_group_size, inputs=view.speaker_group,
+                              outputs=view.speaker_group_size, **_QUIET)
+    for event in events:
+        event.then(actions.drama3_speaker_group_size, inputs=view.speaker_group,
+                   outputs=view.speaker_group_size, **_QUIET)
+
+
 def _bind_voice_slots(view, actions):
     """Returns the events that save or delete speaker presets."""
     presets = [slot.preset for slot in view.voices]
@@ -168,16 +189,14 @@ def _bind_voice_slots(view, actions):
         _VOICE_KIND, view.voices, view.shown_slots, view.voices_panel, view.add_speaker, view.remove_speaker,
         cleared=[(lambda slot: (slot.preset, slot.audio, slot.transcript), (UPLOAD_VOICE, None, "")),
                  (lambda slot: (slot.save_name, slot.description, slot.preview_text), ("", "", ""))],
+        group=view.speaker_group, group_size=view.speaker_group_size,
     )
     _refresh_choices_on_open(view.voices_panel, presets, drama3_voice_choices, actions.drama3_speaker_names)
     if actions.create_drama3_speaker_group is not None:
         view.create_speaker_group.click(actions.create_drama3_speaker_group,
             inputs=view.new_speaker_group, outputs=[view.speaker_group, view.speaker_group_status], **_QUIET)
         store_events.append(view.save_all_speakers.click(actions.save_all_drama3_speakers,
-            inputs=[view.speaker_group, view.shown_slots,
-                    *[c for slot in view.voices for c in
-                      (slot.preset, slot.save_name, slot.audio, slot.transcript, slot.description)]],
-            outputs=[view.speaker_group_status, *presets], **_QUIET))
+            inputs=_save_all_inputs(view), outputs=[view.speaker_group_status, *presets], **_QUIET))
         view.speaker_group.change(actions.match_drama3_speakers,
             inputs=[view.speaker_group, *[c for slot in view.voices
                     for c in (slot.save_name, slot.preset, slot.audio)]], outputs=presets, **_QUIET)
@@ -305,9 +324,6 @@ def bind_drama3(view, actions):
     _bind_script_mode(view, actions)
     script_events = _bind_writer(view, actions)
     store_events = _bind_voice_slots(view, actions)
-    if view.speaker_library is not None and actions.speaker_library_actions is not None:
-        bind_speaker_library(view.speaker_library, view.speaker_group, view.voices,
-                             actions.speaker_library_actions, view.speaker_group_status, store_events)
     if view.sounds:
         _bind_sound_slots(view, actions, script_events)
     generation_inputs = [
@@ -320,7 +336,13 @@ def bind_drama3(view, actions):
     if view.sounds:
         generation_inputs.extend(drama3_sound_inputs(view))
     event = _bind_generation(view, "drama3", actions.generate_drama3, actions.interrupt, generation_inputs)
-    _bind_auto(view, actions, generation_inputs)
+    store_events += _bind_auto(view, actions, generation_inputs)
+    library_events = []
+    if view.speaker_library is not None and actions.speaker_library_actions is not None:
+        library_events = bind_speaker_library(view.speaker_library, view.speaker_group, view.voices,
+                                              actions.speaker_library_actions, view.speaker_group_status,
+                                              store_events) or []
+    _bind_group_size(view, actions, [*store_events, *library_events])
     return event
 
 
@@ -340,14 +362,28 @@ def drama3_auto_sound_slots(script_mode, shown_sound_slots):
             "Auto: voices done. Generating sound effects\u2026")
 
 
+def _bind_auto_save(voiced, view, actions):
+    """When Auto save is checked, save every voiced speaker to the selected group like Save all."""
+    presets = [slot.preset for slot in view.voices]
+
+    def save(enabled, *values):
+        if not enabled:
+            return [gr.skip()] * (1 + len(presets))
+        return actions.save_all_drama3_speakers(*values)
+
+    return voiced.success(save, inputs=[view.auto_save_speakers, *_save_all_inputs(view)],
+                          outputs=[view.speaker_group_status, *presets], **_QUIET)
+
+
 def _bind_auto(view, actions, generation_inputs):
     """Auto: rewrite the script, generate every speaker voice, every sound, then the speech.
 
     Each step reuses its button's callback and job family and starts only after
     the previous step succeeds; Interrupt auto stops the running job and the chain.
+    Returns the events that save speaker presets.
     """
     if view.auto is None:
-        return
+        return []
     # Auto status, Interrupt auto, then the Auto button itself, which reads "running" until the chain ends.
     controls = [view.auto_status, view.stop_auto, view.auto]
     idle = (gr.update(interactive=False), gr.update(value=view.auto.value, interactive=True))
@@ -369,6 +405,11 @@ def _bind_auto(view, actions, generation_inputs):
         steps.append(checked)
     voiced = _bind_voice_batch(checked.success, view, actions)
     steps.append(voiced)
+    store_events = []
+    if view.auto_save_speakers is not None and actions.save_all_drama3_speakers is not None:
+        voiced = _bind_auto_save(voiced, view, actions)
+        steps.append(voiced)
+        store_events.append(voiced)
     if view.sounds and actions.generate_drama3_sounds is not None:
         counted = voiced.success(drama3_auto_sound_slots, inputs=[view.script_mode, view.shown_sound_slots],
                                  outputs=[view.auto_sound_slots, view.auto_status], **_QUIET)
@@ -399,3 +440,4 @@ def _bind_auto(view, actions, generation_inputs):
     # Gradio can cancel queued work only; status and slot updates run immediately.
     stopped.then(fn=None, cancels=[step for step in steps if step.get("queue") is not False],
                  queue=False, api_name=False)
+    return store_events

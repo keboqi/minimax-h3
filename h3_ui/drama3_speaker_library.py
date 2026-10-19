@@ -130,7 +130,10 @@ class SpeakerLibraryActions:
 
 
 def bind_speaker_library(view, group, slots, actions, group_status, store_events=()):
-    """``store_events`` are Drama 3 events that save or delete presets; the library list follows them."""
+    """``store_events`` are Drama 3 events that save or delete presets; the library list follows them.
+
+    Returns the library's own save, copy and delete events.
+    """
     quiet = {"queue": False, "api_name": False, "show_progress": "hidden"}
     presets = [slot.preset for slot in slots]
     for event in store_events:
@@ -149,10 +152,12 @@ def bind_speaker_library(view, group, slots, actions, group_status, store_events
                          outputs=[view.audio, view.name, view.description, view.transcript], **quiet)
     view.delete_group.click(actions.delete_group, inputs=[group, *presets],
                             outputs=[group, view.selected, view.destination, group_status, *presets], **quiet)
+    mutations = []
     for button, operation in ((view.save, "save"), (view.copy, "copy"), (view.delete, "delete")):
         def mutate(group, key, name, description, transcript, destination, *selected, operation=operation):
             return actions.mutate(operation, group, key, name, description, transcript, destination, *selected)
 
-        button.click(mutate, inputs=[group, view.selected, view.name, view.description,
-                                    view.transcript, view.destination, *presets],
-                     outputs=[view.selected, view.status, *presets], **quiet)
+        mutations.append(button.click(mutate, inputs=[group, view.selected, view.name, view.description,
+                                                     view.transcript, view.destination, *presets],
+                                      outputs=[view.selected, view.status, *presets], **quiet))
+    return mutations
