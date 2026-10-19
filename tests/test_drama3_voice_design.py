@@ -388,7 +388,7 @@ class CastSlotTests(unittest.TestCase):
 
     def test_unchecked_skip_regenerates_speakers_that_already_have_a_clip(self):
         from h3_ui import application
-        from h3_ui.optional_engine_views import UPLOAD_VOICE, drama3_voices_title
+        from h3_ui.drama3_controls import UPLOAD_VOICE, drama3_voices_title
         calls = []
 
         def single(description, *args):
@@ -441,7 +441,7 @@ class CastSlotTests(unittest.TestCase):
 
     def test_generate_all_fills_only_shown_upload_slots_with_a_brief_and_no_clip(self):
         from h3_ui import application
-        from h3_ui.optional_engine_views import UPLOAD_VOICE, drama3_slot_title
+        from h3_ui.drama3_controls import UPLOAD_VOICE, drama3_slot_title
         calls = []
 
         def single(description, preview, language, *settings):
@@ -480,7 +480,7 @@ class CastSlotTests(unittest.TestCase):
         from h3_app import drama3_voice_design
         from h3_app.drama3_voice_design import DesignResult
         from h3_app.generation.results import GenerationUpdate
-        from h3_ui.optional_engine_views import UPLOAD_VOICE
+        from h3_ui.drama3_controls import UPLOAD_VOICE
         seen = {}
 
         def batch(briefs, request, *args, **kwargs):
@@ -631,8 +631,9 @@ class BrowserSlotPresentationTests(unittest.TestCase):
 
     def test_slot_titles_and_clip_flags_match_python(self):
         from tests.node_js import run_js
-        from h3_ui.optional_engine_views import (
-            _SOUND_KIND, _VOICE_KIND, _slot_title_js, drama3_slot_title, drama3_sound_slot_title)
+        from h3_ui.drama3_controls import (
+            _SOUND_KIND, _VOICE_KIND, _slot_title_js, drama3_slot_title, drama3_sound_slot_title
+        )
         audio = {"path": "/tmp/voice.wav", "url": "/file=voice.wav"}
         for name, preset, clip in ((None, None, None), (" Mia ", "Upload a clip", audio),
                                    ("Alice", "Alice", None), ("", "Upload a clip", None)):
@@ -645,8 +646,9 @@ class BrowserSlotPresentationTests(unittest.TestCase):
 
     def test_panel_titles_match_python(self):
         from tests.node_js import run_js
-        from h3_ui.optional_engine_views import (
-            UPLOAD_VOICE, _VOICE_KIND, _SOUND_KIND, _panel_title_js, drama3_sounds_title, drama3_voices_title)
+        from h3_ui.drama3_controls import (
+            UPLOAD_VOICE, _VOICE_KIND, _SOUND_KIND, _panel_title_js, drama3_sounds_title, drama3_voices_title
+        )
         presets = ["Saved Alice", UPLOAD_VOICE, UPLOAD_VOICE] + [UPLOAD_VOICE] * 13
         clips = [False, True, False, True] + [False] * 12
         for shown in (1, 3, 4, 16, 0, None):
@@ -658,7 +660,7 @@ class BrowserSlotPresentationTests(unittest.TestCase):
 
     def test_add_and_remove_send_only_changed_slots_and_clear_the_removed_one(self):
         from tests.node_js import run_js
-        from h3_ui.optional_engine_views import _slot_count_js, _slot_visibility
+        from h3_ui.drama3_controls import _slot_count_js, _slot_visibility
         skip = {"__type__": "update"}
         added = run_js(_slot_count_js(16, 1), 4)
         self.assertEqual(added, [{**value} if isinstance(value, dict) else value

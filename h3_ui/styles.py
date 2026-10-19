@@ -429,6 +429,9 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
   .h3-workspace .h3-mode-row { flex-direction: column; }
   .h3-workspace .h3-task-picker { padding: 8px; }
   .h3-workspace .h3-preview-panel { padding: 8px; }
+  .h3-workspace .h3-drama3 .h3-generation-buttons > button {
+    flex: 1 1 100%; min-width: 0; white-space: normal;
+  }
   .h3-workspace .h3-gallery-workspace { flex-direction: column; }
   .h3-workspace .h3-gallery-workspace > .column { width: 100%; min-width: 0 !important; }
   .h3-workspace .h3-setup-metrics { grid-template-columns: 1fr; }

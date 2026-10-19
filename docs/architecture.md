@@ -42,6 +42,9 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/server.py | Configured FastAPI routes and HTTP/WebSocket proxy |
 | h3_ui/application.py | Runtime service wiring and signature-preserving public API adapters |
 | h3_ui/bootstrap.py, contracts.py | UI composition; one catalog and one service record passed to event registration |
+| h3_ui/drama3_view.py, drama3_bindings.py | Speech composer and event pipelines for rewriting, cast, sounds and generation |
+| h3_ui/drama3_controls.py, drama3_speaker_library.py | Slot contracts/browser presentation and saved-speaker library |
+| h3_ui/optional_engine_controls.py | Shared writer, generation and settings helpers for optional engines |
 | h3_ui/*_view.py, *_bindings.py | Feature-owned views and event bindings |
 | h3_ui/sections/, events/ | Existing visible sections and event registration, preserving component order |
 | h3_ui/job_bindings.py, job_admission.py, jobs_view.py | Gradio request injection, acceptance before queueing, shared GPU binding and owner-scoped job presentation |

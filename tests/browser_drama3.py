@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUDGETS = {
     "apply 16-speaker reply": 2,  # the writer, then its sound-slot sync
     "type a speaker name": 0,
+    "match speaker on blur": 1,
     "generate all voices": 2,  # admission, then the queued job
     "remove a speaker": 0,
     "add a speaker": 0,
@@ -106,6 +107,7 @@ def run():
                 name.press("End")
                 measure("type a speaker name", lambda: name.press_sequentially(" the Bold", delay=40))
                 expect(form.locator("button", has_text="Speaker 0 · Character 0 the Bold")).to_have_count(1)
+                measure("match speaker on blur", lambda: name.press("Tab"))
                 measure("generate all voices",
                         lambda: form.get_by_role("button", name="Generate all speaker voices").click())
                 expect(form.get_by_text("Generated 16 of 16 speaker voices.")).to_be_visible()

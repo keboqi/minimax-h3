@@ -76,7 +76,7 @@ class SpeakerLibraryActions:
             raise gr.Error(str(exc)) from exc
 
     def delete_group(self, group, *selected):
-        from h3_ui.optional_engine_views import UPLOAD_VOICE, drama3_voice_choices
+        from h3_ui.drama3_controls import UPLOAD_VOICE, drama3_voice_choices
 
         try:
             removed = speakers.delete_group(group or "Global", self.runtime())
@@ -93,7 +93,7 @@ class SpeakerLibraryActions:
                   for value in selected]]
 
     def mutate(self, operation, group, key, name, description, transcript, destination, *selected):
-        from h3_ui.optional_engine_views import UPLOAD_VOICE, drama3_voice_choices
+        from h3_ui.drama3_controls import UPLOAD_VOICE, drama3_voice_choices
 
         replacement = key
         try:

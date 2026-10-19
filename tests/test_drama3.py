@@ -406,7 +406,7 @@ class Drama3CastSoundTests(unittest.TestCase):
     def test_unnamed_sound_slot_matches_an_unnamed_tag(self):
         from h3_app.drama3_serving.tree import parse_drama3_tree, iter_sound_nodes
         from h3_ui import application
-        from h3_ui.optional_engine_views import UPLOAD_SOUND
+        from h3_ui.drama3_controls import UPLOAD_SOUND
 
         (node,) = iter_sound_nodes(parse_drama3_tree("<sound>Distant church bells</sound>"))
         (sound,) = application._drama3_sounds((UPLOAD_SOUND, None, "", "Distant church bells", 90))
@@ -539,16 +539,31 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
 
 
 class Drama3AutoTests(unittest.TestCase):
+    def test_composer_and_auto_bindings_can_be_mounted(self):
+        import gradio as gr
+        from h3_ui.application import _optional_engine_actions
+        from h3_ui.drama3_view import build_drama3_view
+        from h3_ui.drama3_bindings import bind_drama3
+
+        with gr.Blocks() as demo:
+            view = build_drama3_view(gr.Group())
+            bind_drama3(view, _optional_engine_actions())
+        demo.queue()
+        # In particular, Auto must not register cancellation of unqueued callbacks.
+        demo.validate_queue_settings()
+        self.assertEqual(len(view.voices), 16)
+        self.assertEqual(len(view.sounds), 16)
+
     def test_failed_rewrite_stops_auto_with_the_writer_reason(self):
         import gradio as gr
-        from h3_ui.optional_engine_views import drama3_auto_rewritten
+        from h3_ui.drama3_bindings import drama3_auto_rewritten
 
         with self.assertRaisesRegex(gr.Error, "no key"):
             drama3_auto_rewritten("Prompt enhancement failed: no key")
         self.assertIn("voices", drama3_auto_rewritten("Rewrote the script."))
 
     def test_only_advanced_generates_sounds(self):
-        from h3_ui.optional_engine_views import drama3_auto_sound_slots
+        from h3_ui.drama3_bindings import drama3_auto_sound_slots
 
         self.assertEqual(drama3_auto_sound_slots(prompt_service.DRAMA3_SCRIPT_BASIC, 4)[0], 0)
         self.assertEqual(drama3_auto_sound_slots(prompt_service.DRAMA3_SCRIPT_ADVANCED, 4)[0], 4)

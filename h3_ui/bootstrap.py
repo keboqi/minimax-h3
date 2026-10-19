@@ -20,11 +20,10 @@ from .media_view import build_gallery_view
 from .music_view import build_music_view
 from .qwen_view import build_qwen_image21_view
 from .yue2_view import build_yue2_view
-from .optional_engine_views import (
-    bind_drama3, bind_flux3, build_drama3_view, build_flux3_view,
-    bind_moss_image, build_moss_image_view,
-    settings_components,
-)
+from h3_ui.drama3_bindings import bind_drama3
+from h3_ui.optional_engine_views import bind_flux3, build_flux3_view, bind_moss_image, build_moss_image_view
+from h3_ui.drama3_view import build_drama3_view
+from h3_ui.optional_engine_controls import settings_components
 
 # Ctrl/Cmd+Enter presses the visible engine's generate button. Disabled
 # buttons swallow the shortcut so it never falls through to other handlers.

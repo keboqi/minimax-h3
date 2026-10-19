@@ -173,9 +173,7 @@ class ResolutionPresetTests(unittest.TestCase):
     def test_presets_set_the_size_clear_each_other_and_flux_switches_to_manual_size(self):
         import gradio as gr
         from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
-        from h3_ui.optional_engine_views import (
-            bind_resolution_presets, build_flux3_view, build_moss_image_view,
-        )
+        from h3_ui.optional_engine_views import bind_resolution_presets, build_flux3_view, build_moss_image_view
 
         with gr.Blocks() as demo:
             flux, moss = build_flux3_view(gr.Group()), build_moss_image_view(gr.Group())

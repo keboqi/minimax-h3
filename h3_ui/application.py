@@ -2689,7 +2689,7 @@ def _drama3_voices(slots, saved_presets=None):
     ``saved_presets``, when given, collects each loaded saved speaker by slot.
     """
     from h3_app import drama3_speakers
-    from h3_ui.optional_engine_views import UPLOAD_VOICE
+    from h3_ui.drama3_controls import UPLOAD_VOICE
 
     voices, names = [], []
     for speaker in range(len(slots) // 3):
@@ -2713,7 +2713,7 @@ def _drama3_sounds(slots):
     from h3_app import drama3_sounds
     from h3_app.drama3_serving.tree import _default_sound_name
     from h3_app.stable_audio import MAX_DURATION_SECONDS as MAX_SOUND_SECONDS
-    from h3_ui.optional_engine_views import UPLOAD_SOUND
+    from h3_ui.drama3_controls import UPLOAD_SOUND
 
     sounds = []
     for index in range(len(slots) // 5):
@@ -2740,7 +2740,7 @@ def generate_drama3(*values, progress=gr.Progress(track_tqdm=False)):
     The parameter list is generated from the slot count; see ``_drama3_signature``.
     """
     from h3_app.generation.optional_engines import generate_optional_engine, validate_request
-    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES
+    from h3_ui.drama3_controls import DRAMA3_SLOT_INPUT_NAMES
     from dataclasses import replace
     slot_count = len(DRAMA3_SLOT_INPUT_NAMES)
     text, slots, settings = values[0], values[1:1 + slot_count], list(values[1 + slot_count:])
@@ -2781,7 +2781,7 @@ def generate_drama3(*values, progress=gr.Progress(track_tqdm=False)):
 def _drama3_signature(leading, trailing):
     """Named API parameters around the generated per-slot inputs."""
     import inspect
-    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES
+    from h3_ui.drama3_controls import DRAMA3_SLOT_INPUT_NAMES
 
     positional = inspect.Parameter.POSITIONAL_OR_KEYWORD
     parameters = [inspect.Parameter(name, positional) for name in (*leading, *DRAMA3_SLOT_INPUT_NAMES)]
@@ -2825,7 +2825,7 @@ def _drama3_writer_slots(slots):
     voice context, known slot identities by ID, and the JSON slot context line.
     """
     import json
-    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VOICE_SLOTS, DRAMA3_VISIBLE_SLOTS
+    from h3_ui.drama3_controls import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VOICE_SLOTS, DRAMA3_VISIBLE_SLOTS
     from h3_app.drama3_speakers import normalize_name
 
     count = len(DRAMA3_SLOT_INPUT_NAMES)
@@ -2870,7 +2870,7 @@ def _drama3_writer_mode_and_sounds(slots):
     """Extract optional script_mode and saved sound preset context for writer prompts."""
     import json
     from h3_app import drama3_sounds
-    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES
+    from h3_ui.drama3_controls import DRAMA3_SLOT_INPUT_NAMES
 
     count = len(DRAMA3_SLOT_INPUT_NAMES)
     script_mode = (
@@ -2894,19 +2894,21 @@ def _drama3_writer_mode_and_sounds(slots):
 
 
 def _drama3_writer_group(slots):
-    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES
+    from h3_ui.drama3_controls import DRAMA3_SLOT_INPUT_NAMES
     index = 2 * len(DRAMA3_SLOT_INPUT_NAMES) + 2
     return (slots[index] or "Global") if len(slots) > index else None
 
 
 def _drama3_unchanged_outputs(group=None):
-    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VOICE_SLOTS
+    from h3_ui.drama3_controls import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VOICE_SLOTS
     return [gr.skip()] * (len(DRAMA3_SLOT_INPUT_NAMES) + DRAMA3_VOICE_SLOTS + 3 + (DRAMA3_VOICE_SLOTS if group is not None else 0))
 
 
 def _drama3_apply_cast(script, status, cast, existing, shown, group=None):
     """Script, status, slot metadata and visibility for a validated cast; raises on reassignment."""
-    from h3_ui.optional_engine_views import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VISIBLE_SLOTS, DRAMA3_VOICE_SLOTS, _slot_visibility
+    from h3_ui.drama3_controls import (
+        DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VISIBLE_SLOTS, DRAMA3_VOICE_SLOTS, _slot_visibility
+    )
 
     from h3_app import drama3_speakers
     presets = [gr.skip()] * DRAMA3_VOICE_SLOTS if group is not None else []
@@ -3008,11 +3010,7 @@ def switch_drama3_script_mode(script_mode, text, backend="ComfyUI"):
 def sync_drama3_script_sounds(text, script_mode, shown_sound_slots, *sound_meta_values):
     """Populate sound slot names, descriptions, and durations from <sound> tags in the script."""
     from h3_app.drama3_serving.tree import extract_script_sounds
-    from h3_ui.optional_engine_views import (
-        DRAMA3_SOUND_SLOTS,
-        DRAMA3_VISIBLE_SOUND_SLOTS,
-        _sound_slot_visibility,
-    )
+    from h3_ui.drama3_controls import DRAMA3_SOUND_SLOTS, DRAMA3_VISIBLE_SOUND_SLOTS, _sound_slot_visibility
 
     total_meta = 3 * DRAMA3_SOUND_SLOTS
     updates = [gr.skip()] * total_meta
@@ -3062,11 +3060,8 @@ def sync_drama3_script_sounds(text, script_mode, shown_sound_slots, *sound_meta_
 
 def _publish_drama3_signatures():
     import inspect
-    from h3_ui.optional_engine_views import (
-        DRAMA3_CAST_INPUT_NAMES,
-        DRAMA3_SOUND_SLOT_INPUT_NAMES,
-        DRAMA3_VISIBLE_SLOTS,
-        UPLOAD_SOUND,
+    from h3_ui.drama3_controls import (
+        DRAMA3_CAST_INPUT_NAMES, DRAMA3_SOUND_SLOT_INPUT_NAMES, DRAMA3_VISIBLE_SLOTS, UPLOAD_SOUND
     )
 
     empty = inspect.Parameter.empty
@@ -3177,7 +3172,7 @@ def generate_drama3_voices(*values):
     SGLang-Omni generates up to ``parallel`` voices at once; other routes run in turn.
     """
     from h3_app.drama3_voice_design import ENGINE_DRAMA3
-    from h3_ui.optional_engine_views import DRAMA3_VOICE_SLOTS, UPLOAD_VOICE
+    from h3_ui.drama3_controls import DRAMA3_VOICE_SLOTS, UPLOAD_VOICE
 
     settings = values[:len(DRAMA3_VOICE_DESIGN_SETTINGS)]
     parallel = values[len(settings)]
@@ -3273,7 +3268,7 @@ def _generate_drama3_designs(targets, settings, parallel, updates, frame, failed
 
 def _publish_drama3_voices_signature():
     import inspect
-    from h3_ui.optional_engine_views import DRAMA3_VOICE_SLOTS
+    from h3_ui.drama3_controls import DRAMA3_VOICE_SLOTS
 
     names = [*DRAMA3_VOICE_DESIGN_SETTINGS, "parallel", "shown_slots", "skip_existing",
              *[f"speaker_{speaker}_{field}" for speaker in range(DRAMA3_VOICE_SLOTS)
@@ -3301,7 +3296,7 @@ def create_drama3_speaker_group(name):
 
 def match_drama3_speaker(group, name, preset, audio):
     from h3_app import drama3_speakers
-    from h3_ui.optional_engine_views import UPLOAD_VOICE
+    from h3_ui.drama3_controls import UPLOAD_VOICE
     if audio and (not preset or preset == UPLOAD_VOICE):
         return gr.skip()
     saved = drama3_speakers.match_speaker(name, _runtime_config(), group)
@@ -3314,7 +3309,7 @@ def match_drama3_speakers(group, *slots):
 
 def save_all_drama3_speakers(group, shown, *slots):
     from h3_app import drama3_speakers
-    from h3_ui.optional_engine_views import UPLOAD_VOICE, drama3_voice_choices
+    from h3_ui.drama3_controls import UPLOAD_VOICE, drama3_voice_choices
     group = group or "Global"
     selected, errors, saved_count = {}, [], 0
     for i in range(min(int(shown or 1), len(slots) // 5)):
@@ -3342,7 +3337,7 @@ def drama3_speaker_names():
 
 
 def _drama3_preset_updates(count, selected_slot=None, selected=None):
-    from h3_ui.optional_engine_views import drama3_voice_choices
+    from h3_ui.drama3_controls import drama3_voice_choices
     choices = drama3_voice_choices(drama3_speaker_names())
     return [
         gr.update(choices=choices, value=selected) if slot == selected_slot else gr.update(choices=choices)
@@ -3353,7 +3348,7 @@ def _drama3_preset_updates(count, selected_slot=None, selected=None):
 def select_drama3_speaker(name):
     """Show the upload controls, or a saved speaker's transcript in their place."""
     from h3_app import drama3_speakers
-    from h3_ui.optional_engine_views import UPLOAD_VOICE
+    from h3_ui.drama3_controls import UPLOAD_VOICE
     if not name or name == UPLOAD_VOICE:
         return (gr.update(visible=True), gr.update(value="", interactive=True),
                 gr.update(visible=True), gr.update(visible=False), "", gr.skip(),
@@ -3380,7 +3375,7 @@ def save_drama3_speaker(slot, name, audio, transcript, count, description="", gr
 
 def delete_drama3_speaker(slot, name, count):
     from h3_app import drama3_speakers
-    from h3_ui.optional_engine_views import UPLOAD_VOICE
+    from h3_ui.drama3_controls import UPLOAD_VOICE
     try:
         drama3_speakers.delete_speaker(name, _runtime_config())
     except H3Error as exc:
@@ -3394,7 +3389,7 @@ def drama3_sound_names():
 
 
 def _drama3_sound_preset_updates(count, selected_slot=None, selected=None):
-    from h3_ui.optional_engine_views import drama3_sound_choices
+    from h3_ui.drama3_controls import drama3_sound_choices
     choices = drama3_sound_choices(drama3_sound_names())
     return [
         gr.update(choices=choices, value=selected) if slot == selected_slot else gr.update(choices=choices)
@@ -3405,7 +3400,7 @@ def _drama3_sound_preset_updates(count, selected_slot=None, selected=None):
 def select_drama3_sound(name):
     """Show the sound upload controls, or a saved sound preset's metadata in their place."""
     from h3_app import drama3_sounds
-    from h3_ui.optional_engine_views import UPLOAD_SOUND
+    from h3_ui.drama3_controls import UPLOAD_SOUND
     if not name or name == UPLOAD_SOUND:
         return (
             gr.update(visible=True),
@@ -3453,7 +3448,7 @@ def save_drama3_sound(slot, name, audio, description, duration, count):
 
 def delete_drama3_sound(slot, name, count):
     from h3_app import drama3_sounds
-    from h3_ui.optional_engine_views import UPLOAD_SOUND
+    from h3_ui.drama3_controls import UPLOAD_SOUND
     try:
         drama3_sounds.delete_sound(name, _runtime_config())
     except H3Error as exc:
@@ -3482,7 +3477,7 @@ def generate_drama3_sounds(*values):
     """Batch-generate shown upload sound slots that have a description and no clip yet."""
     from h3_app import stable_audio
     from h3_models import resolve_hf_token
-    from h3_ui.optional_engine_views import DRAMA3_SOUND_SLOTS, UPLOAD_SOUND
+    from h3_ui.drama3_controls import DRAMA3_SOUND_SLOTS, UPLOAD_SOUND
 
     shown = int(values[0] or 0)
     skip_existing = values[1] is not False
@@ -3553,7 +3548,7 @@ def generate_drama3_sounds(*values):
 
 def _publish_drama3_sounds_signature():
     import inspect
-    from h3_ui.optional_engine_views import DRAMA3_SOUND_SLOTS
+    from h3_ui.drama3_controls import DRAMA3_SOUND_SLOTS
 
     names = [
         "shown_sound_slots",

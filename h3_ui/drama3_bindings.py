@@ -1,0 +1,398 @@
+"""Drama 3 writer, cast, sound and generation event wiring."""
+
+import json
+import gradio as gr
+from h3_ui.drama3_speaker_library import bind_speaker_library
+from h3_app.drama3_voice_design import ENGINE_QWEN
+from h3_app.prompt_service import DRAMA3_PROMPT_FAILED, DRAMA3_SCRIPT_ADVANCED, DRAMA3_SCRIPT_BASIC
+from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
+from h3_ui.optional_engine_controls import (
+    _QUIET,
+    _SKIP_JS,
+    _bind_generation,
+    _owned_view_generation,
+    _writer_inputs,
+)
+from h3_ui.drama3_controls import (
+    DRAMA3_SOUND_SLOTS,
+    UPLOAD_SOUND,
+    UPLOAD_VOICE,
+    _SOUND_KIND,
+    _VOICE_KIND,
+    _clamp_count,
+    _panel_title_js,
+    _slot_count_js,
+    _slot_title_js,
+    drama3_sound_choices,
+    drama3_voice_choices,
+)
+
+
+def drama3_voice_inputs(view):
+    return [component for slot in view.voices for component in (slot.preset, slot.audio, slot.transcript)]
+
+
+def drama3_cast_inputs(view):
+    return [component for slot in view.voices
+            for component in (slot.save_name, slot.description, slot.preview_text)]
+
+
+def drama3_sound_inputs(view):
+    return [
+        component
+        for slot in view.sounds
+        for component in (slot.preset, slot.audio, slot.save_name, slot.description, slot.duration)
+    ]
+
+
+def drama3_sound_meta_inputs(view):
+    return [
+        component
+        for slot in view.sounds
+        for component in (slot.save_name, slot.description, slot.duration)
+    ]
+
+
+def _refresh_choices_on_open(panel, presets, choices, names):
+    """Show presets saved from other sessions when the panel opens; saves and deletes refresh in place."""
+    def refresh():
+        current = choices(names())
+        # The page was served with the build-time choices; resend only when the store differs.
+        values = [choice[1] if isinstance(choice, tuple) else choice for choice in current]
+        if values == [choice[1] for choice in presets[0].choices]:
+            return [gr.skip()] * len(presets)
+        return [gr.update(choices=current)] * len(presets)
+
+    panel.expand(refresh, outputs=presets, **_QUIET)
+
+
+def _bind_slot_presentation(kind, slots, shown, panel, add, remove, cleared):
+    """Slot titles, has_clip flags, the panel title and Add/Remove, all in the browser.
+
+    ``cleared`` pairs a slot's field getter with the values a removed slot is reset to.
+    """
+    for index, slot in enumerate(slots):
+        gr.on([slot.save_name.change, slot.preset.change, slot.audio.change], fn=None,
+              js=_slot_title_js(kind, index), inputs=[slot.save_name, slot.preset, slot.audio],
+              outputs=[slot.group, slot.has_clip], **_QUIET)
+    presets = [slot.preset for slot in slots]
+    flags = [slot.has_clip for slot in slots]
+    gr.on([shown.change, *[preset.change for preset in presets], *[flag.change for flag in flags]],
+          fn=None, js=_panel_title_js(kind), inputs=[shown, *presets, *flags], outputs=panel, **_QUIET)
+    groups = [slot.group for slot in slots]
+    add.click(fn=None, js=_slot_count_js(kind.total, 1), inputs=shown,
+              outputs=[shown, *groups, add, remove], **_QUIET)
+    fields = [component for fields_of, _values in cleared for slot in slots for component in fields_of(slot)]
+    remove.click(fn=None, js=_slot_count_js(kind.total, -1, [values for _fields_of, values in cleared]),
+                 inputs=shown, outputs=[shown, *groups, add, remove, *fields], **_QUIET)
+
+
+def _bind_script_mode(view, actions):
+    bind_gpu_action(
+        view.backend.input, actions.switch_drama3_backend,
+        inputs=view.backend, outputs=view.status,
+        show_progress="minimal", api_name=False,
+    )
+    if view.script_mode is None or actions.switch_drama3_script_mode is None:
+        return
+    view.script_mode.change(
+        actions.switch_drama3_script_mode,
+        inputs=[view.script_mode, view.text, view.backend],
+        outputs=[view.text, view.backend, view.sounds_panel, view.status], **_QUIET,
+    )
+    # Advanced needs SGLang-Omni; choosing ComfyUI falls back to Basic, whose
+    # change event hides the sounds panel.
+    view.backend.input(
+        fn=None,
+        js=f"(choice, mode) => choice === 'ComfyUI' && mode === {json.dumps(DRAMA3_SCRIPT_ADVANCED)} "
+           f"? {json.dumps(DRAMA3_SCRIPT_BASIC)} : {_SKIP_JS}",
+        inputs=[view.backend, view.script_mode], outputs=view.script_mode, **_QUIET,
+    )
+
+
+def _writer_slot_inputs(view):
+    mode_inputs = [view.script_mode] if view.script_mode is not None else []
+    return [*drama3_voice_inputs(view), *drama3_cast_inputs(view), view.shown_slots, *mode_inputs,
+            *([view.speaker_group] if view.speaker_group is not None else [])]
+
+
+def _writer_outputs(view):
+    return [view.text, view.enhance_status, *drama3_cast_inputs(view),
+            view.shown_slots, *[slot.group for slot in view.voices],
+            view.add_speaker, view.remove_speaker,
+            *([slot.preset for slot in view.voices] if view.speaker_group is not None else [])]
+
+
+def _bind_writer(view, actions):
+    """Rewrite, copy and paste; returns the events that may change the script."""
+    writer_slots = _writer_slot_inputs(view)
+    writer_outputs = _writer_outputs(view)
+    view.copy_prompt.click(actions.copy_drama3_writer_prompt,
+                           inputs=[view.text, view.speaker_mode, *writer_slots],
+                           outputs=[view.writer_prompt, view.enhance_status], **_QUIET)
+    applied = view.apply_reply.click(
+        actions.apply_drama3_writer_reply,
+        inputs=[view.pasted_reply, view.text, view.speaker_mode, *writer_slots],
+        outputs=writer_outputs, **_QUIET,
+    )
+    enhanced = bind_prompt_action(
+        view.enhance.click, actions.enhance_drama3_text,
+        inputs=[view.text, view.speaker_mode, *_writer_inputs(view.writer), *writer_slots],
+        outputs=writer_outputs, show_progress="minimal", api_name="enhance_drama3_text",
+    )
+    return enhanced, applied
+
+
+def _voice_settings(view):
+    return [view.voice_engine, view.backend, view.seed, view.temperature, view.top_p, view.top_k,
+            view.max_frames, view.experts, view.expert_cache_gb, view.model]
+
+
+def _bind_voice_batch(trigger, view, actions):
+    return bind_gpu_action(
+        trigger, owned_generation(actions.generate_drama3_voices, "drama3_voice"),
+        inputs=[*_voice_settings(view), view.parallel, view.shown_slots, view.skip_existing,
+                *[component for slot in view.voices
+                  for component in (slot.preset, slot.has_clip, slot.description, slot.preview_text, slot.language)]],
+        outputs=[*[component for slot in view.voices for component in (slot.audio, slot.transcript, slot.status)],
+                 view.voice_status],
+        show_progress="minimal", api_name=False,
+    )
+
+
+def _bind_voice_slots(view, actions):
+    presets = [slot.preset for slot in view.voices]
+    _bind_slot_presentation(
+        _VOICE_KIND, view.voices, view.shown_slots, view.voices_panel, view.add_speaker, view.remove_speaker,
+        cleared=[(lambda slot: (slot.preset, slot.audio, slot.transcript), (UPLOAD_VOICE, None, "")),
+                 (lambda slot: (slot.save_name, slot.description, slot.preview_text), ("", "", ""))],
+    )
+    _refresh_choices_on_open(view.voices_panel, presets, drama3_voice_choices, actions.drama3_speaker_names)
+    if actions.create_drama3_speaker_group is not None:
+        view.create_speaker_group.click(actions.create_drama3_speaker_group,
+            inputs=view.new_speaker_group, outputs=[view.speaker_group, view.speaker_group_status], **_QUIET)
+        view.save_all_speakers.click(actions.save_all_drama3_speakers,
+            inputs=[view.speaker_group, view.shown_slots,
+                    *[c for slot in view.voices for c in
+                      (slot.preset, slot.save_name, slot.audio, slot.transcript, slot.description)]],
+            outputs=[view.speaker_group_status, *presets], **_QUIET)
+        view.speaker_group.change(actions.match_drama3_speakers,
+            inputs=[view.speaker_group, *[c for slot in view.voices
+                    for c in (slot.save_name, slot.preset, slot.audio)]], outputs=presets, **_QUIET)
+        for slot in view.voices:
+            slot.save_name.blur(actions.match_drama3_speaker,
+                inputs=[view.speaker_group, slot.save_name, slot.preset, slot.audio],
+                outputs=slot.preset, **_QUIET)
+    voice_settings = _voice_settings(view)
+    generated_all = _bind_voice_batch(view.generate_voices.click, view, actions)
+    stopped_all = view.stop_voices.click(owned_interrupt(actions.interrupt, "drama3_voice"),
+                                         outputs=view.voice_status, queue=False, api_name=False)
+    stopped_all.then(fn=None, cancels=[generated_all], queue=False, api_name=False)
+    view.voice_engine.change(
+        fn=None,
+        js=f"(engine) => Array.from({{length: {len(view.voices)}}}, "
+           f"() => ({{__type__: 'update', visible: engine === {json.dumps(ENGINE_QWEN)}}}))",
+        inputs=view.voice_engine, outputs=[slot.language for slot in view.voices], **_QUIET,
+    )
+    for slot in view.voices:
+        generated = bind_gpu_action(
+            slot.generate.click, owned_generation(actions.generate_drama3_voice, "drama3_voice"),
+            inputs=[slot.description, slot.preview_text, slot.language, *voice_settings],
+            outputs=[slot.audio, slot.transcript, slot.status], show_progress="minimal",
+            api_name="generate_drama3_voice" if slot.speaker == 0 else False,
+        )
+        stopped = slot.stop.click(owned_interrupt(actions.interrupt, "drama3_voice"),
+                                  outputs=slot.status, queue=False, api_name=False)
+        stopped.then(fn=None, cancels=[generated], queue=False, api_name=False)
+        # A new upload needs its own transcript.
+        slot.audio.upload(fn=None, js="() => ({__type__: 'update', value: '', interactive: true})",
+                          outputs=slot.transcript, **_QUIET)
+        bind_gpu_action(
+            slot.transcribe.click, actions.transcribe_drama3_voice, inputs=[slot.audio, view.asr_model],
+            outputs=[slot.transcript, slot.status], show_progress="minimal",
+            api_name="transcribe_drama3_voice" if slot.speaker == 0 else False,
+        )
+        slot.preset.change(
+            actions.select_drama3_speaker, inputs=[slot.preset],
+            outputs=[slot.upload, slot.transcript, slot.save_row, slot.delete, slot.status,
+                     slot.save_name, slot.description, slot.preview_text, slot.audio], **_QUIET,
+        )
+        slot.save.click(
+            lambda name, audio, transcript, description, group, speaker=slot.speaker: actions.save_drama3_speaker(
+                speaker, name, audio, transcript, len(presets), description, group),
+            inputs=[slot.save_name, slot.audio, slot.transcript, slot.description, view.speaker_group],
+            outputs=[slot.status, *presets], queue=False, api_name=False,
+        )
+        slot.delete.click(
+            lambda name, speaker=slot.speaker: actions.delete_drama3_speaker(speaker, name, len(presets)),
+            inputs=[slot.preset], outputs=[slot.status, *presets], queue=False, api_name=False,
+        )
+
+
+def _sync_script_sounds(trigger, view, actions):
+    return trigger(
+        actions.sync_drama3_script_sounds,
+        inputs=[view.text, view.script_mode, view.shown_sound_slots, *drama3_sound_meta_inputs(view)],
+        outputs=[*drama3_sound_meta_inputs(view), view.shown_sound_slots,
+                 *[slot.group for slot in view.sounds], view.add_sound, view.remove_sound],
+        **_QUIET,
+    )
+
+
+def _bind_sound_batch(trigger, view, actions, shown):
+    return bind_gpu_action(
+        trigger, owned_generation(actions.generate_drama3_sounds, "drama3_sound"),
+        inputs=[shown, view.skip_existing_sounds,
+                *[component for slot in view.sounds
+                  for component in (slot.preset, slot.has_clip, slot.save_name, slot.description,
+                                    slot.duration)]],
+        outputs=[*[component for slot in view.sounds for component in (slot.audio, slot.status)],
+                 view.sound_status],
+        show_progress="minimal", api_name=False,
+    )
+
+
+def _bind_sound_slots(view, actions, script_events):
+    presets = [slot.preset for slot in view.sounds]
+    _bind_slot_presentation(
+        _SOUND_KIND, view.sounds, view.shown_sound_slots, view.sounds_panel, view.add_sound, view.remove_sound,
+        cleared=[(lambda slot: (slot.preset, slot.audio, slot.save_name, slot.description, slot.duration),
+                  (UPLOAD_SOUND, None, "", "", 5))],
+    )
+    _refresh_choices_on_open(view.sounds_panel, presets, drama3_sound_choices, actions.drama3_sound_names)
+    if actions.sync_drama3_script_sounds is not None:
+        for event in script_events:
+            _sync_script_sounds(event.then, view, actions)
+    if actions.generate_drama3_sounds is not None:
+        generated_all = _bind_sound_batch(view.generate_sounds.click, view, actions, view.shown_sound_slots)
+        stopped_all = view.stop_sounds.click(owned_interrupt(actions.interrupt, "drama3_sound"),
+                                             outputs=view.sound_status, queue=False, api_name=False)
+        stopped_all.then(fn=None, cancels=[generated_all], queue=False, api_name=False)
+    for slot in view.sounds:
+        if actions.generate_drama3_sound is not None:
+            generated = bind_gpu_action(
+                slot.generate.click, owned_generation(actions.generate_drama3_sound, "drama3_sound"),
+                inputs=[slot.description, slot.duration], outputs=[slot.audio, slot.status],
+                show_progress="minimal", api_name="generate_drama3_sound" if slot.index == 0 else False,
+            )
+            stopped = slot.stop.click(owned_interrupt(actions.interrupt, "drama3_sound"),
+                                      outputs=slot.status, queue=False, api_name=False)
+            stopped.then(fn=None, cancels=[generated], queue=False, api_name=False)
+        if actions.select_drama3_sound is not None:
+            slot.preset.change(
+                actions.select_drama3_sound, inputs=[slot.preset],
+                outputs=[slot.upload, slot.save_row, slot.delete, slot.status, slot.save_name,
+                         slot.description, slot.duration, slot.audio], **_QUIET,
+            )
+        if actions.save_drama3_sound is not None:
+            slot.save.click(
+                lambda name, audio, description, duration, index=slot.index: actions.save_drama3_sound(
+                    index, name, audio, description, duration, len(presets)),
+                inputs=[slot.save_name, slot.audio, slot.description, slot.duration],
+                outputs=[slot.status, *presets], queue=False, api_name=False,
+            )
+        if actions.delete_drama3_sound is not None:
+            slot.delete.click(
+                lambda name, index=slot.index: actions.delete_drama3_sound(index, name, len(presets)),
+                inputs=[slot.preset], outputs=[slot.status, *presets], queue=False, api_name=False,
+            )
+
+
+def bind_drama3(view, actions):
+    _bind_script_mode(view, actions)
+    script_events = _bind_writer(view, actions)
+    _bind_voice_slots(view, actions)
+    if view.speaker_library is not None and actions.speaker_library_actions is not None:
+        bind_speaker_library(view.speaker_library, view.speaker_group, view.voices,
+                             actions.speaker_library_actions, view.speaker_group_status)
+    if view.sounds:
+        _bind_sound_slots(view, actions, script_events)
+    generation_inputs = [
+        view.text, *drama3_voice_inputs(view), view.seed, view.temperature, view.top_p, view.top_k,
+        view.max_frames, view.split_long_text, view.experts, view.expert_cache_gb,
+        view.backend, view.parallel, view.retries, view.model,
+    ]
+    if view.script_mode is not None:
+        generation_inputs.append(view.script_mode)
+    if view.sounds:
+        generation_inputs.extend(drama3_sound_inputs(view))
+    event = _bind_generation(view, "drama3", actions.generate_drama3, actions.interrupt, generation_inputs)
+    _bind_auto(view, actions, generation_inputs)
+    return event
+
+
+def drama3_auto_rewritten(status):
+    """Stop Auto when the rewrite failed, keeping the writer's reason."""
+    status = str(status or "")
+    if status.startswith(DRAMA3_PROMPT_FAILED):
+        raise gr.Error(f"Auto stopped: {status}")
+    return "Auto: script rewritten. Generating speaker voices\u2026"
+
+
+def drama3_auto_sound_slots(script_mode, shown_sound_slots):
+    """Advanced generates the shown sound slots; Basic has no sounds, so none are generated."""
+    if script_mode != DRAMA3_SCRIPT_ADVANCED:
+        return 0, "Auto: voices done. Generating speech\u2026"
+    return (_clamp_count(shown_sound_slots, DRAMA3_SOUND_SLOTS),
+            "Auto: voices done. Generating sound effects\u2026")
+
+
+def _bind_auto(view, actions, generation_inputs):
+    """Auto: rewrite the script, generate every speaker voice, every sound, then the speech.
+
+    Each step reuses its button's callback and job family and starts only after
+    the previous step succeeds; Interrupt auto stops the running job and the chain.
+    """
+    if view.auto is None:
+        return
+    # Auto status, Interrupt auto, then the Auto button itself, which reads "running" until the chain ends.
+    controls = [view.auto_status, view.stop_auto, view.auto]
+    idle = (gr.update(interactive=False), gr.update(value=view.auto.value, interactive=True))
+    started = view.auto.click(
+        lambda: ("Auto: rewriting the script\u2026", gr.update(interactive=True),
+                 gr.update(value="Auto: running\u2026", interactive=False)),
+        outputs=controls, **_QUIET,
+    )
+    rewritten = bind_prompt_action(
+        started.then, actions.enhance_drama3_text,
+        inputs=[view.text, view.speaker_mode, *_writer_inputs(view.writer), *_writer_slot_inputs(view)],
+        outputs=_writer_outputs(view), show_progress="minimal", api_name=False,
+    )
+    checked = rewritten.success(drama3_auto_rewritten, inputs=view.enhance_status, outputs=view.auto_status,
+                                **_QUIET)
+    steps = [rewritten, checked]
+    if view.sounds and actions.sync_drama3_script_sounds is not None:
+        checked = _sync_script_sounds(checked.success, view, actions)
+        steps.append(checked)
+    voiced = _bind_voice_batch(checked.success, view, actions)
+    steps.append(voiced)
+    if view.sounds and actions.generate_drama3_sounds is not None:
+        counted = voiced.success(drama3_auto_sound_slots, inputs=[view.script_mode, view.shown_sound_slots],
+                                 outputs=[view.auto_sound_slots, view.auto_status], **_QUIET)
+        sounded = _bind_sound_batch(counted.success, view, actions, view.auto_sound_slots)
+        ready = sounded.success(lambda: "Auto: generating speech\u2026", outputs=view.auto_status, **_QUIET)
+        steps += [counted, sounded, ready]
+    else:
+        ready = voiced.success(lambda: "Auto: voices done. Generating speech\u2026",
+                               outputs=view.auto_status, **_QUIET)
+        steps.append(ready)
+    spoken = bind_gpu_action(
+        ready.success, _owned_view_generation(actions.generate_drama3, "drama3", generation_inputs),
+        inputs=generation_inputs, outputs=[view.output, view.status], show_progress="minimal",
+        api_name=False,
+    )
+    steps.append(spoken)
+    spoken.success(lambda: ("Auto: done.", *idle), outputs=controls, **_QUIET)
+    for step in steps:
+        step.failure(lambda: ("Auto stopped. See the step's status for the reason.", *idle),
+                     outputs=controls, **_QUIET)
+
+    def stop_auto(request: gr.Request):
+        for family in ("drama3_voice", "drama3_sound", "drama3"):
+            actions.interrupt(request, family=family)
+        return "Auto interrupted.", *idle
+
+    stopped = view.stop_auto.click(stop_auto, outputs=controls, queue=False, api_name=False)
+    # Gradio can cancel queued work only; status and slot updates run immediately.
+    stopped.then(fn=None, cancels=[step for step in steps if step.get("queue") is not False],
+                 queue=False, api_name=False)
