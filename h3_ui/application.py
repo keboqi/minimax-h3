@@ -3517,24 +3517,9 @@ def generate_drama3_sounds(*values):
             (description, duration)
             for _index, _name, description, duration in targets
         ]
-        results = stable_audio.generate_sound_references(
+        results = list(stable_audio.generate_sound_references(
             items, _runtime_config(), free_gpu=free_comfy_vram, hf_token=resolve_hf_token(),
-        )
-        if isinstance(results, dict):
-            for index, _name, _description, _duration in targets:
-                audio = results.get(str(index))
-                if audio:
-                    updates[2 * index:2 * index + 2] = [
-                        str(audio),
-                        "Sound generated with Stable Audio 3 Medium; ready to save.",
-                    ]
-        else:
-            for (index, _name, _description, _duration), audio in zip(targets, results):
-                if audio:
-                    updates[2 * index:2 * index + 2] = [
-                        str(audio),
-                        "Sound generated with Stable Audio 3 Medium; ready to save.",
-                    ]
+        ))
     except JobCancelled:
         raise
     except Exception as exc:
@@ -3543,7 +3528,19 @@ def generate_drama3_sounds(*values):
         yield frame(f"Sound generation failed: {exc}")
         return
 
-    yield frame(f"Generated {len(targets)} of {len(targets)} sound clips.")
+    failed = []
+    for position, (index, _name, _description, _duration) in enumerate(targets):
+        audio = results[position] if position < len(results) else None
+        if audio and Path(str(audio)).is_file():
+            updates[2 * index:2 * index + 2] = [
+                str(audio), "Sound generated with Stable Audio 3 Medium; ready to save."]
+        else:
+            failed.append(index)
+            updates[2 * index + 1] = "Sound generation failed: Stable Audio returned no clip; generate again."
+    summary = f"Generated {len(targets) - len(failed)} of {len(targets)} sound clips."
+    if failed:
+        summary += " Failed: " + ", ".join(f"sound {index}" for index in failed) + "; see each sound's panel."
+    yield frame(summary)
 
 
 def _publish_drama3_sounds_signature():

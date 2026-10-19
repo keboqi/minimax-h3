@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import Any, Callable, Iterator
 import uuid
 
 import numpy as np
+import requests
 
 from h3_app import drama3_sounds, stable_audio
 from h3_app.errors import H3Error
@@ -23,7 +25,7 @@ from h3_app.workflows.drama3 import MAX_FRAMES, SPEAKER_TAG
 
 from . import audio, environment
 from .planner import Chunk, expected_seconds, plan_turns_chunks
-from .server import ServerSettings, ensure_model, persist_caches, shared_server
+from .server import ServerSettings, SpeechRequestError, ensure_model, persist_caches, shared_server
 from .speaker_effects import apply_speaker_effects
 from .tree import (
     ParallelNode,
@@ -43,6 +45,9 @@ FRAMES_PER_SECOND = 21.5
 # SGLang-Omni's Drama 3 request builder rejects max_new_tokens above this (~95 s of speech).
 SERVER_MAX_NEW_TOKENS = 2048
 HEARTBEAT_SECONDS = 5.0
+# Dropped connections and server errors are retried this many times, independent of take checks.
+TRANSPORT_RETRIES = 2
+TRANSPORT_BACKOFF_SECONDS = 2.0
 
 
 @dataclass
@@ -58,6 +63,37 @@ def frame_budget(text: str, limit: int) -> int:
     """Stop a runaway take early: generous for the text, never above the request's cap."""
     seconds = expected_seconds(text) * 2.5 + 5.0
     return int(max(256, min(limit, MAX_FRAMES, SERVER_MAX_NEW_TOKENS, seconds * FRAMES_PER_SECOND)))
+
+
+@contextmanager
+def _request_pool(workers: int, prefix: str):
+    """A request pool whose exit never waits for in-flight requests.
+
+    An interrupt or a failed chunk returns at once instead of after the slowest
+    running request (up to the request timeout); ``stopped`` tells running
+    workers not to send further attempts.
+    """
+    stopped = threading.Event()
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix=prefix)
+    try:
+        yield pool, stopped
+    finally:
+        stopped.set()
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _request_speech(server, payload: dict, stopped: threading.Event) -> bytes:
+    """One speech request, retried after a dropped connection or an HTTP 5xx."""
+    for attempt in range(TRANSPORT_RETRIES + 1):
+        if stopped.is_set():
+            raise H3Error("Drama 3 generation was stopped.")
+        try:
+            return server.speech(payload)
+        except (requests.ConnectionError, SpeechRequestError) as exc:
+            if (isinstance(exc, SpeechRequestError) and exc.status < 500) or attempt == TRANSPORT_RETRIES:
+                raise
+        stopped.wait(TRANSPORT_BACKOFF_SECONDS * (attempt + 1))
+    raise AssertionError("unreachable")
 
 
 def _staged_reference(path: str, media_dir: Path) -> Path:
@@ -120,10 +156,10 @@ def design_voices_served(takes: dict, *, runtime, free_gpu: Callable[[], None], 
     server = shared_server(settings)
     yield from _ready_server(settings, server, label, free_gpu, hf_token)
 
-    def synthesize(text: str, target: Path) -> None:
+    def synthesize(text: str, target: Path, stopped: threading.Event) -> None:
         payload = server.payload(text=text, reference=None, transcript=None,
                                  max_new_tokens=frame_budget(text, max_frames), sampling=sampling)
-        samples, rate = audio.decode_wav(server.speech(payload))
+        samples, rate = audio.decode_wav(_request_speech(server, payload, stopped))
         samples = audio.tidy_take(samples, rate)
         if not samples.size:
             raise H3Error(f"Drama 3 ({label}) returned a silent voice take; generate again.")
@@ -133,8 +169,8 @@ def design_voices_served(takes: dict, *, runtime, free_gpu: Callable[[], None], 
     total, done, started = len(takes), 0, time.monotonic()
     workers = max(1, min(int(parallel), total))
     yield GenerationUpdate(None, f"Generating {total} voice(s) on {label}, {workers} at a time")
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="drama3-voice") as pool:
-        pending = {pool.submit(synthesize, text, target): key for key, (text, target) in takes.items()}
+    with _request_pool(workers, "drama3-voice") as (pool, stopped):
+        pending = {pool.submit(synthesize, text, target, stopped): key for key, (text, target) in takes.items()}
         while pending:
             finished, _ = wait(pending, timeout=HEARTBEAT_SECONDS, return_when=FIRST_COMPLETED)
             job = CURRENT_JOB.get()
@@ -234,6 +270,12 @@ def _resolve_sounds_for_tree(
     yield clip_by_key
 
 
+def _sound_clip(node: SoundNode, sound_clips: dict[str, Path]) -> Path | None:
+    name_key = (node.name or "").strip().casefold()
+    desc_key = (node.description or "").strip().casefold()
+    return sound_clips.get(name_key) or sound_clips.get(desc_key)
+
+
 def _render_ast(
     node: TreeNode,
     node_chunks: dict[int, list[Chunk]],
@@ -258,9 +300,7 @@ def _render_ast(
         return np.zeros(max(0, int(round(node.seconds * rate))), dtype=np.float32)
 
     if isinstance(node, SoundNode):
-        name_key = (node.name or "").strip().casefold()
-        desc_key = (node.description or "").strip().casefold()
-        clip_path = sound_clips.get(name_key) or sound_clips.get(desc_key)
+        clip_path = _sound_clip(node, sound_clips)
         if clip_path is None:
             raise H3Error(f'Missing sound clip for "{node.name or node.description}".')
         samples = audio.load_audio_file(clip_path, rate)
@@ -288,9 +328,7 @@ def _render_ast(
         tracks: list[dict] = []
         for child in node.children:
             if isinstance(child, SoundNode):
-                name_key = (child.name or "").strip().casefold()
-                desc_key = (child.description or "").strip().casefold()
-                clip_path = sound_clips.get(name_key) or sound_clips.get(desc_key)
+                clip_path = _sound_clip(child, sound_clips)
                 if clip_path is None:
                     raise H3Error(f'Missing sound clip for "{child.name or child.description}".')
                 raw_samples = audio.load_audio_file(clip_path, rate)
@@ -354,6 +392,19 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     sound_summary = f" · {len(sound_nodes)} sound cue(s)" if sound_nodes else ""
     yield GenerationUpdate(None, f"Planned {len(chunks)} chunk(s) · {cast}{sound_summary}")
 
+    # Sounds come first: a missing or failed clip stops the job before any speech is spent.
+    sound_clips: dict[str, Path] = {}
+    if sound_nodes:
+        for item in _resolve_sounds_for_tree(sound_nodes, request, runtime, free_gpu, hf_token):
+            if isinstance(item, GenerationUpdate):
+                yield item
+            else:
+                sound_clips = item
+        missing = [node.name or node.description for node in sound_nodes
+                   if _sound_clip(node, sound_clips) is None]
+        if missing:
+            raise H3Error("No clip for sound(s): " + ", ".join(f'"{name}"' for name in dict.fromkeys(missing)) + ".")
+
     label = request.backend
     yield from _ready_server(settings, server, label, free_gpu, hf_token)
     # The server stays loaded after the job; release_all() frees it for other engines.
@@ -365,14 +416,14 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     sampling = {"temperature": float(request.temperature), "top_p": float(request.top_p),
                 "top_k": int(request.top_k)}
 
-    def synthesize(chunk: Chunk) -> Take:
+    def synthesize(chunk: Chunk, stopped: threading.Event) -> Take:
         best = None
         for attempt in range(int(request.retries) + 1):
             clip, transcript = references[chunk.speaker]
             payload = server.payload(text=chunk.text, reference=clip, transcript=transcript,
                                      max_new_tokens=frame_budget(chunk.text, int(request.max_frames)),
                                      sampling=sampling)
-            samples, rate = audio.decode_wav(server.speech(payload))
+            samples, rate = audio.decode_wav(_request_speech(server, payload, stopped))
             if not request.retries:
                 return Take(chunk, samples, rate, attempt + 1, None)
             check = audio.check_take(samples, rate, expected_seconds(chunk.text))
@@ -386,9 +437,9 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     takes: dict[int, Take] = {}
     total = len(chunks)
     workers = max(1, min(int(request.parallel), total))
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="drama3-sglang") as pool:
+    with _request_pool(workers, "drama3-sglang") as (pool, stopped):
         def run_all(batch: list[Chunk], stage: str) -> Iterator[GenerationUpdate]:
-            pending = {pool.submit(synthesize, chunk): chunk for chunk in batch}
+            pending = {pool.submit(synthesize, chunk, stopped): chunk for chunk in batch}
             while pending:
                 done, _ = wait(pending, timeout=HEARTBEAT_SECONDS, return_when=FIRST_COMPLETED)
                 job = CURRENT_JOB.get()
@@ -404,14 +455,6 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                                              f"({time.monotonic() - started:.0f}s)")
 
         yield from run_all(chunks, "Generating speech")
-
-    sound_clips: dict[str, Path] = {}
-    if sound_nodes:
-        for item in _resolve_sounds_for_tree(sound_nodes, request, runtime, free_gpu, hf_token):
-            if isinstance(item, GenerationUpdate):
-                yield item
-            else:
-                sound_clips = item
 
     ordered = [takes[chunk.index] for chunk in chunks]
     rate = ordered[0].rate

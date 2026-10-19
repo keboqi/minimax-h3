@@ -109,7 +109,11 @@ speaker-based chunks on Linux. SGLang uses an isolated environment, stays loaded
 between TTS jobs, and sleeps or stops when another engine needs the GPU. The app defaults
 to 8 parallel chunks and no automatic retries; the server allows 32 concurrent
 requests. Chunk quality checks and advisories are skipped when retries is zero;
-enabling retries also enables those checks. Completed speech is saved as MP3.
+enabling retries also enables those checks. Separately, a dropped connection or
+HTTP 5xx from the server is retried twice per request. Missing `<sound>` clips
+are generated before any speech, so a sound failure stops the job early. A
+failed chunk or **Interrupt** returns at once without waiting for requests still
+running on the server. Completed speech is saved as MP3.
 
 ComfyUI generation keeps joint dialogue and authored pauses. **Balance** uses
 uncapped top-k; **Strict** and **Expressive** use top-k 30. Saved custom sampling

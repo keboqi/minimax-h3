@@ -28,6 +28,14 @@ from . import checkpoint, environment
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
+class SpeechRequestError(H3Error):
+    """A speech request the server answered with an HTTP error."""
+
+    def __init__(self, message: str, status: int):
+        super().__init__(message)
+        self.status = status
+
+
 @dataclass(frozen=True)
 class ServerSettings:
     venv: Path
@@ -408,7 +416,8 @@ class SglangOmniServer:
             response = requests.post(f"{self.base_url}/v1/audio/speech", json=payload,
                                      timeout=self.settings.request_timeout)
             if not response.ok:
-                raise H3Error(f"{self.label} speech request failed (HTTP {response.status_code}): {response.text[:500]}")
+                raise SpeechRequestError(f"{self.label} speech request failed (HTTP {response.status_code}): "
+                                         f"{response.text[:500]}", response.status_code)
             return response.content
         except requests.RequestException:
             # A client timeout does not prove GPU work has stopped remotely.

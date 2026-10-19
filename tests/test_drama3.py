@@ -155,6 +155,21 @@ class SpeakerPresetTests(unittest.TestCase):
         with self.assertRaises(H3Error):
             drama3_speakers.load_speaker("Narrator One", self.runtime)
 
+    def test_a_failed_replace_keeps_the_previous_preset(self):
+        drama3_speakers.save_speaker("Narrator", str(self.clip), "Original.", self.runtime)
+        rename = Path.rename
+
+        def failing_rename(path, target):
+            if path.name.startswith(".saving-"):
+                raise OSError("file in use")
+            return rename(path, target)
+
+        with patch.object(Path, "rename", autospec=True, side_effect=failing_rename), \
+                self.assertRaises(OSError):
+            drama3_speakers.save_speaker("Narrator", str(self.clip), "Replacement.", self.runtime)
+        self.assertEqual(drama3_speakers.load_speaker("Narrator", self.runtime).transcript, "Original.")
+        self.assertEqual(drama3_speakers.speaker_names(self.runtime), ["Narrator"])
+
     def test_presets_stay_outside_served_outputs_by_default(self):
         with patch.dict(os.environ, {"H3_WORKSPACE_DIR": ""}):
             root = drama3_speakers.speakers_root(self.runtime)
@@ -523,6 +538,25 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         self.assertFalse(basic_panel_upd["visible"])
         self.assertEqual(basic_text, application.gr.skip())
         self.assertIn("kept but ignored", basic_status)
+
+    def test_batch_sounds_report_clips_that_were_not_returned(self):
+        from h3_ui import application
+        from h3_ui.drama3_controls import UPLOAD_SOUND
+
+        with tempfile.TemporaryDirectory() as temp:
+            clip = Path(temp) / "rain.wav"
+            clip.write_bytes(b"RIFF....WAVE")
+            slots = [UPLOAD_SOUND, False, "", "", 5] * 16
+            slots[0:5] = [UPLOAD_SOUND, False, "rain", "Steady rain", 4]
+            slots[5:10] = [UPLOAD_SOUND, False, "bell", "Church bell", 3]
+            with patch("h3_app.stable_audio.generate_sound_references", return_value=[clip, None]), \
+                    patch.object(application, "_runtime_config"), patch("h3_models.resolve_hf_token"):
+                frames = list(application.generate_drama3_sounds(2, True, *slots))
+        final = frames[-1]
+        self.assertEqual(final[0], str(clip))
+        self.assertIn("ready to save", final[1])
+        self.assertIn("failed", final[3])
+        self.assertEqual(final[-1], "Generated 1 of 2 sound clips. Failed: sound 1; see each sound's panel.")
 
     def test_job_admission_signatures_match_bound_inputs(self):
         from h3_ui import application

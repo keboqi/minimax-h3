@@ -406,6 +406,61 @@ class GenerateTests(unittest.TestCase):
 
         with self.assertRaisesRegex(H3Error, "boom"):
             self.run_route(self.request("<|speaker:0|> Hello."), speech)
+    def test_a_failed_chunk_returns_without_waiting_for_running_requests(self):
+        import threading
+        import time
+
+        release = threading.Event()
+        self.addCleanup(release.set)
+
+        def speech(payload):
+            if "fail" in payload["input"]:
+                raise H3Error("boom")
+            release.wait(30)  # an in-flight request the job must not wait for
+            return float_wav(tone(1.0))
+
+        started = time.monotonic()
+        with self.assertRaisesRegex(H3Error, "boom"):
+            self.run_route(self.request("<|speaker:0|> Slow line here.\n<|speaker:1|> This will fail."), speech)
+        self.assertLess(time.monotonic() - started, 5)
+
+    def test_dropped_connections_and_server_errors_are_retried(self):
+        import requests
+
+        failures = [requests.ConnectionError("reset"), server.SpeechRequestError("busy", 503)]
+
+        def speech(payload):
+            if failures:
+                raise failures.pop(0)
+            return float_wav(tone(1.0))
+
+        request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),), backend="SGLang-Omni")
+        with patch.object(generate, "TRANSPORT_BACKOFF_SECONDS", 0):
+            fake, updates, _snapshot = self.run_route(request, speech)
+        self.assertEqual(fake.speech.call_count, 3)
+        self.assertIsNotNone(updates[-1].output)
+
+    def test_client_errors_are_not_retried(self):
+        def speech(payload):
+            raise server.SpeechRequestError("bad request", 400)
+
+        request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),), backend="SGLang-Omni")
+        with patch.object(generate, "TRANSPORT_BACKOFF_SECONDS", 0), \
+                self.assertRaisesRegex(H3Error, "bad request"):
+            fake, _updates, _snapshot = self.run_route(request, speech)
+
+    def test_failed_sound_generation_stops_before_any_speech(self):
+        req = self.request('<|speaker:0|> Hello.\n<sound name="rain">Steady rain, 4 seconds</sound>',
+                           script_mode="Advanced (sound enhanced)")
+        fake = MagicMock()
+        with patch("h3_app.stable_audio.generate_sound_references", side_effect=H3Error("no stable audio")), \
+                patch.dict("os.environ", {"H3_DRAMA3_SGLANG_DATA": str(Path(self.temp.name) / "data")}), \
+                patch.object(generate, "shared_server", return_value=fake), \
+                self.assertRaisesRegex(H3Error, "no stable audio"):
+            list(generate.generate_drama3_served(req, runtime=self.runtime, free_gpu=lambda: None))
+        fake.ensure_ready.assert_not_called()
+        fake.speech.assert_not_called()
+
     def test_duration_advisory_keeps_the_first_take_even_when_retries_enabled(self):
         fake, updates, snapshot = self.run_route(
             self.request("<|speaker:0|> One two three four five."),
