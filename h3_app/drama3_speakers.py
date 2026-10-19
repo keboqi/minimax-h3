@@ -208,14 +208,30 @@ def identity(name):
     return "narrator" if name in {"narrator", "narration", "旁白", "story teller", "storyteller"} else name
 
 
+def speaker_matcher(runtime, group="Global"):
+    """A name -> preset lookup over ``group`` then Global, listing each folder once.
+
+    Matching every slot reuses one scan instead of re-reading every preset per slot.
+    """
+    found = {}
+    for scope in dict.fromkeys([group or "Global", "Global"]):
+        for preset in list_speakers(runtime, scope):
+            found.setdefault(identity(preset.name), preset)
+
+    def match(name):
+        if not str(name or "").strip():
+            return None
+        try:
+            return found.get(identity(name))
+        except H3Error:
+            return None
+    return match
+
+
 def match_speaker(name, runtime, group="Global"):
     if not str(name or "").strip():
         return None
-    for scope in dict.fromkeys([group or "Global", "Global"]):
-        for preset in list_speakers(runtime, scope):
-            if identity(preset.name) == identity(name):
-                return preset
-    return None
+    return speaker_matcher(runtime, group)(name)
 
 
 def update_speaker(key, name, transcript, description, runtime):

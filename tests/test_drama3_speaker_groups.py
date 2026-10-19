@@ -42,6 +42,22 @@ class SpeakerGroupTests(unittest.TestCase):
         speakers.delete_speaker(group_voice.key, self.runtime)
         self.assertEqual(speakers.match_speaker("narrator", self.runtime, "Story A"), global_voice)
 
+    def test_matching_every_slot_scans_each_folder_once(self):
+        from h3_ui import application
+
+        self.save("Narrator")
+        alice = self.save("Alice", "Story A")
+        slots = []
+        for name in ["Alice", "Narrator", *[""] * 14]:
+            slots += [name, "Upload a clip", None]
+        with patch.object(application, "_runtime_config", return_value=self.runtime), \
+                patch.object(speakers, "list_speakers", wraps=speakers.list_speakers) as listed:
+            updates = application.match_drama3_speakers("Story A", *slots)
+        self.assertEqual(listed.call_count, 2)  # Story A, then Global
+        self.assertEqual(updates[0]["value"], alice.key)
+        self.assertEqual(updates[1]["value"], "Narrator")
+        self.assertEqual(updates[2], application.gr.skip())
+
     def test_legacy_presets_and_path_like_group_names(self):
         saved = self.save("Alice")
         metadata = saved.audio.parent / "speaker.json"

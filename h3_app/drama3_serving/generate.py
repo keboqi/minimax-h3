@@ -96,10 +96,23 @@ def _request_speech(server, payload: dict, stopped: threading.Event) -> bytes:
     raise AssertionError("unreachable")
 
 
+# (resolved path, size, mtime_ns) -> content digest, so unchanged clips are not re-hashed every job.
+_REFERENCE_DIGESTS: dict[tuple[str, int, int], str] = {}
+
+
+def _reference_digest(source: Path) -> str:
+    stat = source.stat()
+    key = (str(source.resolve()), stat.st_size, stat.st_mtime_ns)
+    digest = _REFERENCE_DIGESTS.get(key)
+    if digest is None:
+        digest = _REFERENCE_DIGESTS[key] = hashlib.sha256(source.read_bytes()).hexdigest()[:24]
+    return digest
+
+
 def _staged_reference(path: str, media_dir: Path) -> Path:
     """Copy a clip under the server's allowed media path, keyed by content."""
     source = Path(path)
-    digest = hashlib.sha256(source.read_bytes()).hexdigest()[:24]
+    digest = _reference_digest(source)
     target = media_dir / "references" / f"{digest}{source.suffix.lower() or '.wav'}"
     if not target.is_file():
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -276,14 +289,23 @@ def _sound_clip(node: SoundNode, sound_clips: dict[str, Path]) -> Path | None:
     return sound_clips.get(name_key) or sound_clips.get(desc_key)
 
 
+def _decoded_sound(clip_path: Path, rate: int, decoded: dict[Path, np.ndarray]) -> np.ndarray:
+    """Decode each clip once per render; a cue repeated in the script reuses its samples."""
+    if clip_path not in decoded:
+        decoded[clip_path] = audio.load_audio_file(clip_path, rate)
+    return decoded[clip_path]
+
+
 def _render_ast(
     node: TreeNode,
     node_chunks: dict[int, list[Chunk]],
     takes: dict[int, Take],
     sound_clips: dict[str, Path],
     rate: int,
+    decoded: dict[Path, np.ndarray] | None = None,
 ) -> np.ndarray:
     """Recursively render a Drama 3 AST node into a 1D float32 audio array at ``rate``."""
+    decoded = {} if decoded is None else decoded
     if isinstance(node, SpeechNode):
         chunks = node_chunks.get(id(node), [])
         rendered_turns: list[tuple[int, np.ndarray]] = []
@@ -303,18 +325,18 @@ def _render_ast(
         clip_path = _sound_clip(node, sound_clips)
         if clip_path is None:
             raise H3Error(f'Missing sound clip for "{node.name or node.description}".')
-        samples = audio.load_audio_file(clip_path, rate)
+        samples = _decoded_sound(clip_path, rate, decoded)
         if node.volume != 1.0:
             samples = (samples * float(node.volume)).astype(np.float32, copy=False)
         return samples
 
     if isinstance(node, SequentialNode):
         if len(node.children) == 1:
-            return _render_ast(node.children[0], node_chunks, takes, sound_clips, rate)
+            return _render_ast(node.children[0], node_chunks, takes, sound_clips, rate, decoded)
         pieces: list[np.ndarray] = []
         prev_was_speech = False
         for child in node.children:
-            seg = _render_ast(child, node_chunks, takes, sound_clips, rate)
+            seg = _render_ast(child, node_chunks, takes, sound_clips, rate, decoded)
             if seg.size == 0:
                 continue
             is_speech = isinstance(child, SpeechNode)
@@ -331,7 +353,7 @@ def _render_ast(
                 clip_path = _sound_clip(child, sound_clips)
                 if clip_path is None:
                     raise H3Error(f'Missing sound clip for "{child.name or child.description}".')
-                raw_samples = audio.load_audio_file(clip_path, rate)
+                raw_samples = _decoded_sound(clip_path, rate, decoded)
                 tracks.append(
                     {
                         "audio": raw_samples,
@@ -341,7 +363,7 @@ def _render_ast(
                     }
                 )
             else:
-                child_audio = _render_ast(child, node_chunks, takes, sound_clips, rate)
+                child_audio = _render_ast(child, node_chunks, takes, sound_clips, rate, decoded)
                 tracks.append(
                     {
                         "audio": child_audio,

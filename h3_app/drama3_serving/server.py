@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Callable
 
 import requests
+from requests.adapters import HTTPAdapter
 
 from h3_requirements import DRAMA3_HF_REPO, DRAMA3_HF_REVISION
 
@@ -174,6 +175,7 @@ class SglangOmniServer:
         self._sleep_disabled = False
         self._active_requests = 0
         self._uncertain_request = False
+        self._session: requests.Session | None = None
 
     @property
     def sleeping(self) -> bool:
@@ -396,6 +398,9 @@ class SglangOmniServer:
             self._checkpoint = None
             self._checkpoint_helper = None
             self._uncertain_request = False
+            if self._session is not None:
+                self._session.close()
+                self._session = None
             if self._log is not None:
                 self._log.close()
                 self._log = None
@@ -407,14 +412,24 @@ class SglangOmniServer:
         except (OSError, AttributeError):
             return "(no log)"
 
+    def http(self) -> requests.Session:
+        """One pooled session, so parallel chunk requests reuse their connections."""
+        with self._lock:
+            if self._session is None:
+                session = requests.Session()
+                size = max(1, int(getattr(self.settings, "max_seqs", 32)))
+                session.mount("http://", HTTPAdapter(pool_connections=1, pool_maxsize=size))
+                self._session = session
+            return self._session
+
     def speech(self, payload: dict) -> bytes:
         with self._lock:
             if self.sleeping:
                 raise H3Error("SGLang is asleep; wake it before generating speech.")
             self._active_requests += 1
         try:
-            response = requests.post(f"{self.base_url}/v1/audio/speech", json=payload,
-                                     timeout=self.settings.request_timeout)
+            response = self.http().post(f"{self.base_url}/v1/audio/speech", json=payload,
+                                        timeout=self.settings.request_timeout)
             if not response.ok:
                 raise SpeechRequestError(f"{self.label} speech request failed (HTTP {response.status_code}): "
                                          f"{response.text[:500]}", response.status_code)

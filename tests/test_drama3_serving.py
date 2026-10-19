@@ -171,6 +171,18 @@ class ServerTests(unittest.TestCase):
     def settings_for(self, **changes):
         return server.ServerSettings(**{**self.settings.__dict__, **changes})
 
+    def test_speech_requests_share_one_pooled_session(self):
+        instance = server.SglangOmniServer(self.settings_for(max_seqs=12))
+        session = instance.http()
+        self.assertIs(instance.http(), session)
+        self.assertEqual(session.get_adapter("http://127.0.0.1:8096").poolmanager.connection_pool_kw["maxsize"], 12)
+        with patch.object(session, "post", return_value=MagicMock(ok=True, content=b"wav")) as post:
+            self.assertEqual(instance.speech({}), b"wav")
+            self.assertEqual(instance.speech({}), b"wav")
+        self.assertEqual(post.call_count, 2)
+        instance.stop()
+        self.assertIsNot(instance.http(), session)  # a stopped server drops its pooled connections
+
     def test_sglang_environment_overrides_and_defaults(self):
         runtime = SimpleNamespace(script_dir=Path("/app"), comfy_dir=Path("/app/ComfyUI"))
         with patch.dict("os.environ", {}, clear=True):
@@ -460,6 +472,33 @@ class GenerateTests(unittest.TestCase):
             list(generate.generate_drama3_served(req, runtime=self.runtime, free_gpu=lambda: None))
         fake.ensure_ready.assert_not_called()
         fake.speech.assert_not_called()
+
+    def test_unchanged_references_are_hashed_once(self):
+        import os
+
+        media = Path(self.temp.name) / "media"
+        clip = Path(self.clips[0])
+        with patch.object(generate.hashlib, "sha256", wraps=generate.hashlib.sha256) as sha:
+            first = generate._staged_reference(str(clip), media)
+            self.assertEqual(generate._staged_reference(str(clip), media), first)
+            self.assertEqual(sha.call_count, 1)
+            clip.write_bytes(audio.encode_wav(tone(2.0), RATE))
+            os.utime(clip, ns=(1, 1))  # a changed clip is hashed again
+            self.assertNotEqual(generate._staged_reference(str(clip), media), first)
+            self.assertEqual(sha.call_count, 2)
+
+    def test_a_repeated_sound_is_decoded_once(self):
+        rain = Path(self.temp.name) / "rain.wav"
+        rain.write_bytes(audio.encode_wav(tone(0.5), RATE))
+        script = ('<sound name="rain">Rain, 1 second</sound>\n<|speaker:0|> Hello.\n'
+                  '<sound name="rain">Rain, 1 second</sound>\n<|speaker:0|> Again.\n'
+                  '<sound name="rain">Rain, 1 second</sound>')
+        req = self.request(script, script_mode="Advanced (sound enhanced)",
+                           sounds=(("rain", str(rain), "Rain, 1 second", 1),))
+        with patch.object(audio, "load_audio_file", wraps=audio.load_audio_file) as load:
+            fake, updates, _snapshot = self.run_route(req, lambda payload: float_wav(tone(0.6)))
+        self.assertEqual(load.call_count, 1)
+        self.assertTrue(Path(updates[-1].output["value"]).is_file())
 
     def test_duration_advisory_keeps_the_first_take_even_when_retries_enabled(self):
         fake, updates, snapshot = self.run_route(

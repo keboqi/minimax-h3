@@ -2913,6 +2913,7 @@ def _drama3_apply_cast(script, status, cast, existing, shown, group=None):
     from h3_app import drama3_speakers
     presets = [gr.skip()] * DRAMA3_VOICE_SLOTS if group is not None else []
     updates = [gr.skip()] * len(DRAMA3_SLOT_INPUT_NAMES)
+    match = drama3_speakers.speaker_matcher(_runtime_config(), group) if group is not None and cast else None
     for entry in cast:
         speaker = entry["speaker_id"]
         previous = existing.get(speaker, {})
@@ -2922,7 +2923,7 @@ def _drama3_apply_cast(script, status, cast, existing, shown, group=None):
         name = previous.get("name") or entry["name"]
         description = previous.get("description") or entry["description"]
         if group is not None and not previous.get("has_reference"):
-            saved = drama3_speakers.match_speaker(name, _runtime_config(), group)
+            saved = match(name)
             if saved:
                 presets[speaker] = gr.update(value=saved.key)
                 name, description = saved.name, saved.description
@@ -3294,17 +3295,19 @@ def create_drama3_speaker_group(name):
         return gr.skip(), str(exc)
 
 
-def match_drama3_speaker(group, name, preset, audio):
+def match_drama3_speaker(group, name, preset, audio, match=None):
     from h3_app import drama3_speakers
     from h3_ui.drama3_controls import UPLOAD_VOICE
     if audio and (not preset or preset == UPLOAD_VOICE):
         return gr.skip()
-    saved = drama3_speakers.match_speaker(name, _runtime_config(), group)
+    saved = (match or drama3_speakers.speaker_matcher(_runtime_config(), group))(name)
     return gr.update(value=saved.key) if saved else gr.skip()
 
 
 def match_drama3_speakers(group, *slots):
-    return [match_drama3_speaker(group, *slots[i:i + 3]) for i in range(0, len(slots), 3)]
+    from h3_app import drama3_speakers
+    match = drama3_speakers.speaker_matcher(_runtime_config(), group)
+    return [match_drama3_speaker(group, *slots[i:i + 3], match=match) for i in range(0, len(slots), 3)]
 
 
 def save_all_drama3_speakers(group, shown, *slots):

@@ -301,12 +301,12 @@ class LifecycleTests(unittest.TestCase):
             with self.assertRaisesRegex(H3Error, 'still generating'):
                 self.server.release()
             return MagicMock(ok=True, content=b'wav')
-        with patch.object(server.requests, 'post', side_effect=speech):
+        with patch.object(self.server.http(), 'post', side_effect=speech):
             self.assertEqual(self.server.speech({}), b'wav')
         self.assertEqual(self.server._active_requests, 0)
 
     def test_timeout_forces_stop_and_asleep_rejects_speech(self):
-        with patch.object(server.requests, 'post', side_effect=requests.Timeout):
+        with patch.object(self.server.http(), 'post', side_effect=requests.Timeout):
             with self.assertRaises(requests.Timeout):
                 self.server.speech({})
         with patch.object(self.server, 'stop') as stop, patch.object(cp, 'CudaCheckpoint') as create:
@@ -314,7 +314,7 @@ class LifecycleTests(unittest.TestCase):
             stop.assert_called_once()
             create.assert_not_called()
         self.server._checkpoint = self.controller
-        with patch.object(server.requests, 'post') as post:
+        with patch.object(self.server.http(), 'post') as post:
             with self.assertRaisesRegex(H3Error, 'asleep'):
                 self.server.speech({})
             post.assert_not_called()
