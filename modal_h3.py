@@ -728,7 +728,8 @@ hf_secret = modal.Secret.from_name(
 
 # The manager has its own small CPU image; it does not build or import ComfyUI.
 manager_image = modal.Image.debian_slim(python_version="3.12").uv_pip_install(
-    f"gradio=={GRADIO_VERSION}", HUGGINGFACE_HUB_REQUIREMENT,
+    # requests: the Drama 3 SGLang-Omni downloader module imports it.
+    f"gradio=={GRADIO_VERSION}", HUGGINGFACE_HUB_REQUIREMENT, "requests>=2.32",
 )
 if IS_LOCAL:
     # Modal imports this deployment module in each image, so the lightweight
@@ -740,6 +741,11 @@ if IS_LOCAL:
         manager_image = manager_image.add_local_file(
             LOCAL / filename, remote_path=(ROOT / filename).as_posix(), copy=False,
         )
+    # Repository snapshots reuse the runtime's own downloaders and layouts.
+    manager_image = manager_image.add_local_dir(
+        LOCAL / "h3_app", remote_path=(ROOT / "h3_app").as_posix(),
+        copy=False, ignore=_BYTECODE_IGNORE,
+    )
 
 
 def layout() -> None:

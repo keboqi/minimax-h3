@@ -6,7 +6,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 import h3_model_manager as manager_module
-from h3_model_manager import ModelManager, model_presets, preset_selection
+from h3_model_manager import (
+    AUDIO_TOOLS_FAMILY, SNAPSHOT_SPECS, ModelManager, SnapshotSpec, catalog_groups, model_presets, preset_selection,
+)
 from h3_models import MODEL_SPECS, model_manifest_key, read_json, write_json_atomic
 
 
@@ -20,7 +22,7 @@ class ModelManagerTests(unittest.TestCase):
     def test_presets_cover_defaults_and_optional_loras(self):
         presets = model_presets()
         for keys in presets.values():
-            self.assertFalse(set(keys) - MODEL_SPECS.keys())
+            self.assertFalse(set(keys) - MODEL_SPECS.keys() - SNAPSHOT_SPECS.keys())
         h3 = presets["MiniMax H3 defaults"]
         self.assertTrue({"singularity_fl2va", "text_encoder", "turbo_lora",
                          "turbo_ref_lora", "video_vae_lynnreal_int8"}.issubset(h3))
@@ -54,7 +56,75 @@ class ModelManagerTests(unittest.TestCase):
         self.assertTrue(self.manager.config.is_file())
         self.volume.reload.assert_called_once()
         self.assertEqual(self.volume.commit.call_count, len(keys) + 2)
-        self.assertEqual(len(rows), len(MODEL_SPECS))
+        self.assertEqual(len(rows), len(MODEL_SPECS) + len(SNAPSHOT_SPECS))
+
+    def test_snapshots_use_runtime_layouts(self):
+        from h3_app import audio_tools_worker
+        from h3_app.drama3_serving.server import ServerSettings
+
+        root = self.manager.root
+        self.assertEqual(self.manager._path("qwen_voice_design"),
+                         audio_tools_worker.voice_design_cache(root))
+        self.assertEqual(self.manager._path("stable_audio3_medium"),
+                         audio_tools_worker.stable_audio_dir(root))
+        runtime = ServerSettings(venv=Path(), data_dir=Path(self.temp.name) / "drama3-serving",
+                                 model_root=root / "drama3_serving")
+        self.assertEqual(self.manager._path("drama3_sglang_checkpoint"), runtime.model_dir)
+        groups = catalog_groups()
+        self.assertIn("drama3_sglang_checkpoint", groups["Drama 3"])
+        self.assertEqual(groups[AUDIO_TOOLS_FAMILY], ("qwen_voice_design", "stable_audio3_medium"))
+        self.assertFalse(SNAPSHOT_SPECS.keys() & MODEL_SPECS.keys())
+
+    def test_snapshot_inventory_reports_runtime_readiness(self):
+        statuses = lambda: {row[0]: row[3] for row in self.manager._inventory()}
+        self.assertEqual({statuses()[key] for key in SNAPSHOT_SPECS}, {"Missing"})
+        stable = self.manager._path("stable_audio3_medium")
+        (stable / "model.safetensors").parent.mkdir(parents=True)
+        (stable / "model.safetensors").write_bytes(b"x")
+        self.assertEqual(statuses()["stable_audio3_medium"], "Unverified / incomplete")
+        drama = self.manager._path("drama3_sglang_checkpoint")
+        drama.mkdir(parents=True)
+        (drama / ".h3-complete").write_text("rev", encoding="utf-8")
+        row = next(row for row in self.manager._inventory() if row[0] == "drama3_sglang_checkpoint")
+        self.assertEqual((row[1], row[2], row[3]), ("drama3_serving", drama.name + "/", "Installed"))
+
+    def test_snapshot_download_calls_runtime_downloaders(self):
+        from h3_app import audio_tools_worker
+        from h3_app.drama3_serving import server
+
+        with patch.object(audio_tools_worker, "download") as audio, \
+                patch.object(server, "ensure_model") as drama, \
+                patch.object(manager_module, "sync_models") as files, \
+                patch.dict("os.environ", {"HF_TOKEN": "token"}):
+            message, _rows = self.manager.download(list(SNAPSHOT_SPECS))
+        self.assertIn("3/3", message)
+        files.assert_not_called()
+        self.assertEqual([call.args for call in audio.call_args_list], [
+            ("voice_design", str(self.manager.root)), ("stable_audio", str(self.manager.root)),
+        ])
+        settings, = drama.call_args.args
+        self.assertEqual(settings.model_root, self.manager.root / "drama3_serving")
+        self.assertEqual(drama.call_args.kwargs["token"], "token")
+        self.assertEqual(self.volume.commit.call_count, len(SNAPSHOT_SPECS) + 2)
+
+    def test_remove_snapshot_deletes_only_its_directory(self):
+        voice = self.manager._path("qwen_voice_design")
+        (voice / "models--Qwen").mkdir(parents=True)
+        (voice / "models--Qwen" / "blob").write_bytes(b"model")
+        stable = self.manager._path("stable_audio3_medium")
+        stable.mkdir(parents=True)
+        self.manager.remove(["qwen_voice_design"], True)
+        self.assertFalse(voice.exists())
+        self.assertTrue(stable.is_dir())
+        self.volume.commit.assert_called_once()
+
+    def test_snapshot_paths_must_stay_below_models(self):
+        escaping = SnapshotSpec(
+            "Drama 3", "repo", "test", lambda root: root, lambda root: False, lambda root: None,
+        )
+        with patch.dict(SNAPSHOT_SPECS, {"qwen_voice_design": escaping}), \
+                self.assertRaises(ValueError):
+            self.manager._path("qwen_voice_design")
 
     def test_remove_only_selected_and_clear_manifest(self):
         selected, retained = "turbo_lora", "text_encoder"

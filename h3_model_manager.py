@@ -4,7 +4,11 @@ No application runtime, ComfyUI, torch, or GPU dependencies are imported here.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+import os
 from pathlib import Path
+import shutil
 from threading import RLock
 from functools import partial
 
@@ -39,6 +43,110 @@ from h3_models import (
 )
 
 
+AUDIO_TOOLS_FAMILY = "Qwen VoiceDesign / Stable Audio"
+
+
+@dataclass(frozen=True)
+class SnapshotSpec:
+    """A whole Hugging Face repository that its runtime downloads on first use."""
+
+    family: str
+    repo_id: str
+    description: str
+    # Each callable takes the models root, so the manager and runtime share one layout.
+    path: Callable[[Path], Path]
+    ready: Callable[[Path], bool]
+    download: Callable[[Path], None]
+
+
+def _audio_tools_path(model: str, root: Path) -> Path:
+    from h3_app import audio_tools_worker
+
+    if model == "voice_design":
+        return audio_tools_worker.voice_design_cache(root)
+    return audio_tools_worker.stable_audio_dir(root)
+
+
+def _audio_tools_ready(model: str, root: Path) -> bool:
+    from h3_app import audio_tools_worker
+
+    return audio_tools_worker.weights_ready(model, root)
+
+
+def _audio_tools_download(model: str, root: Path) -> None:
+    from h3_app import audio_tools_worker
+
+    # Stable Audio is gated; huggingface_hub reads HF_TOKEN from the Modal Secret.
+    audio_tools_worker.download(model, str(root))
+
+
+def _drama3_settings(root: Path):
+    from h3_app.drama3_serving.server import ServerSettings
+
+    # Match the GPU endpoint's H3_DRAMA3_SGLANG_MODELS and H3_DRAMA3_SGLANG_DATA.
+    return ServerSettings(venv=Path(), data_dir=root.parent / "drama3-serving",
+                          model_root=root / "drama3_serving")
+
+
+def _drama3_path(root: Path) -> Path:
+    return _drama3_settings(root).model_dir
+
+
+def _drama3_ready(root: Path) -> bool:
+    return (_drama3_path(root) / ".h3-complete").is_file()
+
+
+def _drama3_download(root: Path) -> None:
+    from h3_app.drama3_serving.server import ensure_model
+
+    ensure_model(_drama3_settings(root), token=os.environ.get("HF_TOKEN"),
+                 log=lambda message: print(f"[modal-model-manager] {message}", flush=True))
+
+
+def _snapshot_specs() -> dict[str, SnapshotSpec]:
+    from h3_requirements import DRAMA3_HF_REPO
+
+    return {
+        "drama3_sglang_checkpoint": SnapshotSpec(
+            "Drama 3", DRAMA3_HF_REPO, "Drama 3 official checkpoint for SGLang-Omni (~44 GB)",
+            _drama3_path, _drama3_ready, _drama3_download,
+        ),
+        "qwen_voice_design": SnapshotSpec(
+            AUDIO_TOOLS_FAMILY, "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign", "Qwen3-TTS VoiceDesign",
+            partial(_audio_tools_path, "voice_design"), partial(_audio_tools_ready, "voice_design"),
+            partial(_audio_tools_download, "voice_design"),
+        ),
+        "stable_audio3_medium": SnapshotSpec(
+            AUDIO_TOOLS_FAMILY, "stabilityai/stable-audio-3-medium", "Stable Audio 3 Medium (gated)",
+            partial(_audio_tools_path, "stable_audio"), partial(_audio_tools_ready, "stable_audio"),
+            partial(_audio_tools_download, "stable_audio"),
+        ),
+    }
+
+
+SNAPSHOT_SPECS = _snapshot_specs()
+
+
+def _directory_size(path: Path) -> int:
+    """Count regular files once; the Hugging Face cache links snapshots to blobs."""
+    total = 0
+    for folder, _dirs, files in os.walk(path):
+        for name in files:
+            file = os.path.join(folder, name)
+            if not os.path.islink(file):
+                total += os.path.getsize(file)
+    return total
+
+
+def _catalog_location(key: str, root: Path = Path("models")) -> tuple[str, str]:
+    """Folder and file (or repository directory) shown for one catalog entry."""
+    if key in MODEL_SPECS:
+        return MODEL_SPECS[key].folder, MODEL_SPECS[key].local_name
+    relative = SNAPSHOT_SPECS[key].path(root).relative_to(root)
+    folder = relative.parent.as_posix()
+    return ("" if folder == "." else folder), relative.name + "/"
+
+
 def catalog_groups() -> dict[str, tuple[str, ...]]:
     """Group every model and its adapters under the family that uses them."""
     prefixes = {
@@ -50,6 +158,7 @@ def catalog_groups() -> dict[str, tuple[str, ...]]:
         "FLUX 3 Image Klein": ("flux3_",),
         "MOSS-Image": ("moss_image_",),
         "Drama 3": ("drama3_",),
+        AUDIO_TOOLS_FAMILY: (),
         "SeedVR2": ("seedvr2_",),
     }
     groups = {family: [] for family in prefixes}
@@ -59,6 +168,8 @@ def catalog_groups() -> dict[str, tuple[str, ...]]:
             "MiniMax H3",
         )
         groups[family].append(key)
+    for key, spec in SNAPSHOT_SPECS.items():
+        groups[spec.family].append(key)
     return {family: tuple(keys) for family, keys in groups.items()}
 
 
@@ -107,6 +218,8 @@ def model_presets() -> dict[str, tuple[str, ...]]:
             *moss, *dict.fromkeys(key for key, _steps in MOSS_IMAGE_TURBO_MODES.values()),
         ),
         "Drama 3 defaults": ("drama3_fp8", "drama3_codec"),
+        "Drama 3 SGLang-Omni checkpoint": ("drama3_sglang_checkpoint",),
+        "Qwen VoiceDesign + Stable Audio": ("qwen_voice_design", "stable_audio3_medium"),
     }
 
 
@@ -127,16 +240,23 @@ class ModelManager:
 
     def _keys(self, keys) -> tuple[str, ...]:
         selected = tuple(dict.fromkeys(keys or []))
-        unknown = set(selected) - MODEL_SPECS.keys()
+        unknown = set(selected) - MODEL_SPECS.keys() - SNAPSHOT_SPECS.keys()
         if unknown:
             raise ValueError("Unknown models: " + ", ".join(sorted(unknown)))
         # Some profiles refer to the same physical checkpoint. Manage it once.
         unique = {}
         for key in selected:
-            unique.setdefault(model_manifest_key(MODEL_SPECS[key]), key)
+            unique.setdefault(model_manifest_key(MODEL_SPECS[key]) if key in MODEL_SPECS else key, key)
         return tuple(unique.values())
 
     def _path(self, key: str) -> Path:
+        if key in SNAPSHOT_SPECS:
+            path = SNAPSHOT_SPECS[key].path(self.root)
+            resolved, root = path.resolve(), self.root.resolve()
+            # A repository directory is removed recursively, so never the root itself.
+            if resolved == root or not resolved.is_relative_to(root):
+                raise ValueError("Model path escapes the models directory")
+            return path
         spec = MODEL_SPECS[key]
         path = self.root / spec.folder / spec.local_name
         if not path.resolve().is_relative_to(self.root.resolve()):
@@ -156,6 +276,16 @@ class ModelManager:
                 key, spec.folder, spec.local_name,
                 "Installed" if ready else "Unverified / incomplete" if exists else "Missing",
                 round(path.stat().st_size / 1024**3, 3) if exists else 0,
+                spec.repo_id,
+            ])
+        for key, spec in SNAPSHOT_SPECS.items():
+            path = self._path(key)
+            exists = path.is_dir()
+            folder, name = _catalog_location(key, self.root)
+            rows.append([
+                key, folder, name,
+                "Installed" if spec.ready(self.root) else "Unverified / incomplete" if exists else "Missing",
+                round(_directory_size(path) / 1024**3, 3) if exists else 0,
                 spec.repo_id,
             ])
         return rows
@@ -181,13 +311,17 @@ class ModelManager:
                 for index, key in enumerate(selected):
                     progress(index / len(selected), desc=f"Checking / downloading {key}")
                     try:
-                        # One worker keeps resource use modest on default CPU/RAM.
-                        # Each file retains the shared resumable/version-aware logic.
-                        sync_models(
-                            root=self.root, manifest_path=self.manifest,
-                            model_keys=(key,), download_workers=1, metadata_workers=1,
-                            log_prefix="[modal-model-manager]",
-                        )
+                        if key in SNAPSHOT_SPECS:
+                            # The runtime's own downloader keeps its layout and completion marker.
+                            SNAPSHOT_SPECS[key].download(self.root)
+                        else:
+                            # One worker keeps resource use modest on default CPU/RAM.
+                            # Each file retains the shared resumable/version-aware logic.
+                            sync_models(
+                                root=self.root, manifest_path=self.manifest,
+                                model_keys=(key,), download_workers=1, metadata_workers=1,
+                                log_prefix="[modal-model-manager]",
+                            )
                     except Exception as exc:
                         failures.append(f"{key}: {exc}")
                     # Completed files survive a later timeout or container stop.
@@ -217,6 +351,11 @@ class ModelManager:
                     manifest["files"] = {}
                 try:
                     for key, path in paths:
+                        if key in SNAPSHOT_SPECS:
+                            # Repository snapshots are tracked by their own markers.
+                            if path.is_dir():
+                                shutil.rmtree(path)
+                            continue
                         path.unlink(missing_ok=True)
                         # Forget a file only after it is really gone.
                         manifest["files"].pop(model_manifest_key(MODEL_SPECS[key]), None)
@@ -232,7 +371,7 @@ def build_ui(manager: ModelManager):
 
     groups = catalog_groups()
     choices = [
-        (f"{family} · {MODEL_SPECS[key].folder} / {MODEL_SPECS[key].local_name} ({key})", key)
+        (f"{family} · {' / '.join(filter(None, _catalog_location(key, manager.root)))} ({key})", key)
         for family, keys in groups.items() for key in keys
     ]
     with gr.Blocks(title="H3 Model Manager") as ui:
