@@ -117,13 +117,25 @@ def run(*, cloudflare=False):
                     page.screenshot(path=str(ARTIFACTS / "progress.png"))
                     # Completion is impossible until the browser has seen step 1.
                     assert any("/gradio_api/queue/data?" in stream for stream in streams), streams
+                    # A proxy dropping both sockets mid-job must not reload the page or stop the job.
+                    page.evaluate("window.h3SamePage = true")
+                    opened = len(streams)
+                    dropped = requests.post(url + "/test/drop", timeout=5).json()["dropped"]
+                    assert dropped, dropped
+                    deadline = time.monotonic() + 15
+                    while len(streams) < opened + dropped and time.monotonic() < deadline:
+                        page.wait_for_timeout(100)
+                    assert len(streams) >= opened + dropped, streams
                     requests.post(url + "/test/continue", timeout=5).raise_for_status()
                     expect(output).to_have_value("Generation complete", timeout=10000)
+                    assert page.evaluate("window.h3SamePage === true"), "the page reloaded after the drop"
+                    assert not page.get_by_text("Connection Lost").count()
+                    page.screenshot(path=str(ARTIFACTS / "resumed.png"))
                     assert not blocked, blocked
                     assert not errors, errors
                     browser.close()
                     route = "a live Cloudflare Quick Tunnel" if cloudflare else "localhost"
-                    print(f"PASS: intermediate generation progress and completion arrived over WebSockets through {route} with HTTP SSE blocked")
+                    print(f"PASS: generation progress resumed over WebSockets through {route} after the sockets dropped mid-job, with HTTP SSE blocked and no page reload")
             except BaseException:
                 print(log_path.read_text(encoding="utf-8", errors="replace"))
                 raise

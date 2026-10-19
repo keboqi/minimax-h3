@@ -3,12 +3,14 @@
 import asyncio
 from threading import Event
 import unittest
+from unittest.mock import patch
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from h3_app import queue_transport
 from h3_app.queue_transport import install_queue_transport
 
 
@@ -85,6 +87,83 @@ class QueueTransportTests(unittest.TestCase):
         with TestClient(self.app) as client:
             with client.websocket_connect("/gradio_api/queue/data?session_hash=fixture", headers=self.headers) as socket:
                 socket.send_json({})
+                socket.receive_json()
+                self.assertEqual(socket.receive_bytes(), b"data: first\n\n")
+            self.assertTrue(cleaned.wait(timeout=2))
+
+    def _endless_stream(self, cleaned):
+        @self.app.get("/gradio_api/queue/data")
+        async def stream():
+            async def chunks():
+                try:
+                    yield b"data: first\n\n"
+                    while True:
+                        await asyncio.sleep(0.01)
+                finally:
+                    cleaned.set()
+
+            return StreamingResponse(chunks(), media_type="text/event-stream")
+
+    def test_dropped_socket_resumes_the_stream_from_the_last_received_byte(self):
+        released = Event()
+
+        @self.app.get("/gradio_api/queue/data")
+        async def stream():
+            async def chunks():
+                yield b"data: one\n\n"
+                while not released.is_set():
+                    await asyncio.sleep(0.01)
+                yield b"data: two\n\n"
+                yield b"data: three\n\n"
+
+            return StreamingResponse(chunks(), media_type="text/event-stream")
+
+        key = "a" * 32
+        url = "/gradio_api/queue/data?session_hash=fixture"
+        with TestClient(self.app) as client:
+            with client.websocket_connect(url, headers=self.headers) as socket:
+                socket.send_json({"stream": key})
+                self.assertEqual(socket.receive_json()["status"], 200)
+                self.assertEqual(socket.receive_bytes(), b"data: one\n\n")
+                # A proxy drop, not the browser closing the stream.
+                socket.close(1006)
+            # Progress produced while no socket is attached waits for the resume.
+            released.set()
+            with client.websocket_connect(url, headers=self.headers) as socket:
+                socket.send_json({"stream": key, "offset": len(b"data: one\n\n")})
+                self.assertEqual(socket.receive_json()["status"], 200)
+                received = b""
+                while (message := socket.receive())["type"] == "websocket.send":
+                    received += message["bytes"]
+                self.assertEqual(message["code"], 1000)
+        self.assertEqual(received, b"data: two\n\ndata: three\n\n")
+
+    def test_resume_without_a_live_stream_is_refused(self):
+        with TestClient(self.app) as client:
+            with client.websocket_connect("/gradio_api/queue/data", headers=self.headers) as socket:
+                socket.send_json({"stream": "b" * 32, "offset": 12})
+                self.assertEqual(socket.receive()["code"], 4404)
+
+    def test_dropped_stream_closes_once_the_resume_window_passes(self):
+        cleaned = Event()
+        self._endless_stream(cleaned)
+        with patch.object(queue_transport, "RESUME_SECONDS", 0.05), TestClient(self.app) as client:
+            with client.websocket_connect("/gradio_api/queue/data", headers=self.headers) as socket:
+                socket.send_json({"stream": "c" * 32})
+                socket.receive_json()
+                self.assertEqual(socket.receive_bytes(), b"data: first\n\n")
+                socket.close(1006)
+            self.assertTrue(cleaned.wait(timeout=2))
+            with client.websocket_connect("/gradio_api/queue/data", headers=self.headers) as socket:
+                socket.send_json({"stream": "c" * 32, "offset": len(b"data: first\n\n")})
+                self.assertEqual(socket.receive()["code"], 4404)
+
+    def test_browser_close_ends_a_resumable_stream_at_once(self):
+        cleaned = Event()
+        self._endless_stream(cleaned)
+        with TestClient(self.app) as client:
+            with client.websocket_connect("/gradio_api/queue/data", headers=self.headers) as socket:
+                socket.send_json({"stream": "d" * 32})
                 socket.receive_json()
                 self.assertEqual(socket.receive_bytes(), b"data: first\n\n")
             self.assertTrue(cleaned.wait(timeout=2))

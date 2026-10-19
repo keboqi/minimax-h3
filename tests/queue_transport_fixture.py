@@ -49,6 +49,17 @@ def continue_generation():
     return {"released": True}
 
 
+@server.post("/test/drop")
+async def drop_sockets():
+    """Close every live queue socket the way a proxy restart would."""
+    from h3_app.queue_transport import _STREAMS
+
+    sockets = [stream.socket for stream in list(_STREAMS.values()) if stream.socket is not None]
+    for socket in sockets:
+        await socket.close(code=4001)
+    return {"dropped": len(sockets)}
+
+
 @server.get("/test/ready")
 def ready():
     return {"ready": True}
