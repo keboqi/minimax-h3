@@ -629,6 +629,35 @@ class UiContractTests(unittest.TestCase):
         for writer in writers:
             self.assertEqual(writer["props"]["value"], "Gemini")
 
+        def hidden_by_ancestor(component_id: int) -> bool:
+            def visit(node, hidden):
+                hidden = hidden or (
+                    self.components.get(node.get("id"), {}).get("props", {}).get("visible")
+                    is False
+                )
+                if node.get("id") == component_id:
+                    return hidden
+                for child in node.get("children", []):
+                    result = visit(child, hidden)
+                    if result is not None:
+                        return result
+                return None
+
+            return bool(visit(self.config["layout"], False))
+
+        # The Lightning fields must start hidden while Gemini is the default writer.
+        for label in ("Temporary Lightning API key", "Temporary Gemini API key"):
+            keys = [
+                c["id"]
+                for c in self.config["components"]
+                if c.get("props", {}).get("label") == label
+            ]
+            self.assertEqual(len(keys), 8, label)
+            for key in keys:
+                self.assertEqual(
+                    hidden_by_ancestor(key), label.startswith("Temporary Lightning"), label
+                )
+
         endpoints = {
             dependency.get("api_name"): dependency
             for dependency in self.config["dependencies"]

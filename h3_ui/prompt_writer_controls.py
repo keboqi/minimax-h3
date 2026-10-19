@@ -30,12 +30,13 @@ def build_lightning_model_dropdown() -> gr.Dropdown:
 def build_remote_prompt_writer_controls(
     prompt_models: Sequence[str], default_prompt_model: str
 ) -> RemotePromptWriterControls:
+    default_backend = "Gemini"
     backend = gr.Radio(
         choices=("Lightning AI", "Gemini"),
-        value="Gemini",
+        value=default_backend,
         label="Prompt writer",
     )
-    with gr.Group(visible=True) as gemini_group:
+    with gr.Group(visible=default_backend == "Gemini") as gemini_group:
         with gr.Row():
             model = gr.Dropdown(
                 choices=list(prompt_models),
@@ -47,7 +48,7 @@ def build_remote_prompt_writer_controls(
                 type="password",
                 placeholder="Uses GEMINI_API_KEY when blank",
             )
-    with gr.Group(visible=True) as lightning_group:
+    with gr.Group(visible=default_backend == "Lightning AI") as lightning_group:
         gr.Markdown(
             "Set `LIGHTNING_API_KEY` on the server or enter a temporary key; "
             "UI keys are not stored."
