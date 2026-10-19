@@ -949,10 +949,12 @@ modal secret create custom-secret HF_TOKEN="$HF_TOKEN"
 modal deploy modal_h3.py
 ```
 
-Deployment exposes two independent URLs: `models` for the CPU model manager
-and `h3` for GPU generation. Open the **models** URL printed by Modal first.
-The manager uses a separate lightweight image with Modal's default CPU and RAM;
-opening it does not start the expensive GPU endpoint or ComfyUI.
+Deployment exposes two independent URLs: `storage` for the CPU-only
+**H3 Storage Console** and `h3` for GPU generation. Open the **storage** URL
+printed by Modal first. The console uses a separate lightweight image with
+Modal's default CPU and RAM; opening it does not start the expensive GPU
+endpoint or ComfyUI. Its **Models** tab prepares checkpoints and LoRAs; its
+**Media library** tab is the main app's library without GPU enhancement.
 
 The GPU endpoint scales to zero by default (`H3_MODAL_MIN_CONTAINERS=0`), with a
 300-second idle scale-down window (`H3_MODAL_SCALEDOWN_WINDOW`). It uses
@@ -967,6 +969,13 @@ Containers tab to confirm snapshot restoration and measure cold-start latency.
 Changes to the shared volume do not invalidate snapshots, so redeploy after
 changing the installed model inventory to capture fresh startup state.
 
+The **Media library** tab browses videos, images and audio from the shared
+volume with the same search, favorites, tags, lineage, settings, A/B
+comparison, import, download, historical scan and safe deletion as the main
+app. Enhancement (SeedVR2, LTX restoration and upscaling) needs the GPU
+endpoint and is not offered there. **Reload shared volume** picks up outputs
+the GPU endpoint saved after the page opened.
+
 Select one or more presets (MiniMax H3, Qwen Image 2.1, LTX 2.5, Music 3, or
 YuE2), click **Select preset models**, and adjust the individual model/LoRA
 selection. **Download / update selected** checks remote versions and downloads
@@ -979,12 +988,14 @@ catalog tabs. Each tab can add its entire family to the batch selection.
 removal requires the confirmation checkbox. Failed downloads are listed for
 retry, and completed files remain saved to the shared volume.
 
-Stop the GPU endpoint before downloading or removing models, then start it
-after the batch finishes. Modal volumes require a reload to see another
+Stop the GPU endpoint before downloading or removing models, or before
+importing, annotating or deleting media, then start it after you finish: both
+services write the same workspace database on the volume. Modal volumes require a reload to see another
 container's commits, and their file locks do not coordinate separate containers.
 GPU startup now loads the catalog without provisioning models or checking remote
 versions. Generation still downloads missing assets on demand. The old
-`provision_models` function is replaced by `manage_models`.
+`manage_models` function (URL label `models`) is now `storage_console`
+(label `storage`).
 
 The deployment attaches the `custom-secret` Modal Secret to both runtime
 services and requires it to contain `HF_TOKEN`. If your existing secret uses a

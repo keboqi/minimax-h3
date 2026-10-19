@@ -1,4 +1,4 @@
-"""CPU-only model management for the shared Modal volume.
+"""H3 Storage Console: CPU-only models and media for the shared Modal volume.
 
 No application runtime, ComfyUI, torch, or GPU dependencies are imported here.
 """
@@ -102,7 +102,7 @@ def _drama3_download(root: Path) -> None:
     from h3_app.drama3_serving.server import ensure_model
 
     ensure_model(_drama3_settings(root), token=os.environ.get("HF_TOKEN"),
-                 log=lambda message: print(f"[modal-model-manager] {message}", flush=True))
+                 log=lambda message: print(f"[storage-console] {message}", flush=True))
 
 
 def _snapshot_specs() -> dict[str, SnapshotSpec]:
@@ -322,7 +322,7 @@ class ModelManager:
                             sync_models(
                                 root=self.root, manifest_path=self.manifest,
                                 model_keys=(key,), download_workers=1, metadata_workers=1,
-                                log_prefix="[modal-model-manager]",
+                                log_prefix="[storage-console]",
                             )
                     except Exception as exc:
                         failures.append(f"{key}: {exc}")
@@ -368,7 +368,50 @@ class ModelManager:
             return f"Removed {len(selected)} selected model files.", self._inventory()
 
 
-def build_ui(manager: ModelManager):
+TITLE = "H3 Storage Console"
+
+
+def build_ui(manager: ModelManager, media=None):
+    """Models, plus the GPU-free Media library when ``media`` is (runtime, store)."""
+    import gradio as gr
+
+    with gr.Blocks(title=TITLE) as ui:
+        gr.Markdown(
+            f"# {TITLE}\n"
+            "Prepare models and manage generated media on the shared Modal volume "
+            "without starting the GPU endpoint. CPU and RAM use Modal defaults.\n\n"
+            "Stop the GPU endpoint before changing models, or before importing, "
+            "annotating or deleting media. Start it again afterwards so it sees the "
+            "latest files."
+        )
+        with gr.Tabs():
+            with gr.Tab("Models"):
+                _build_models(ui, manager)
+            if media is not None:
+                from h3_ui.media_console import build_media_library
+
+                runtime, store = media
+                media_tab = gr.Tab("Media library")
+                build_media_library(
+                    media_tab, runtime, store, reload=partial(reload_volume, manager),
+                )
+    return ui.queue(default_concurrency_limit=1)
+
+
+def reload_volume(manager: ModelManager) -> str:
+    """See the GPU endpoint's newer commits without waiting behind a model batch."""
+    if not manager.lock.acquire(blocking=False):
+        return "A model batch is running. Reload after it finishes."
+    try:
+        manager.volume.reload()
+    except Exception as exc:
+        return f"Reload failed: {exc}. Try again in a moment."
+    finally:
+        manager.lock.release()
+    return "Reloaded. Choose **Refresh library** to show the latest files."
+
+
+def _build_models(ui, manager: ModelManager):
     import gradio as gr
 
     groups = catalog_groups()
@@ -376,71 +419,104 @@ def build_ui(manager: ModelManager):
         (f"{family} · {' / '.join(filter(None, _catalog_location(key, manager.root)))} ({key})", key)
         for family, keys in groups.items() for key in keys
     ]
-    with gr.Blocks(title="H3 Model Manager") as ui:
-        gr.Markdown(
-            "# Model Manager\n"
-            "Prepare models and LoRAs on CPU before opening the generation endpoint. "
-            "Files are saved to the shared Modal volume. CPU and RAM use Modal defaults.\n\n"
-            "Stop the GPU endpoint before changing models. Start it again after the batch "
-            "finishes so it sees the latest files. Gated models require accepting their "
-            "Hugging Face licenses and a valid HF_TOKEN in the Modal Secret."
-        )
-        presets = gr.Dropdown(
-            list(model_presets()), label="Presets", multiselect=True,
-            value=["MiniMax H3 defaults"],
-        )
-        apply = gr.Button("Select preset models")
-        selected = gr.Dropdown(
-            choices, label="Models / LoRAs to manage", multiselect=True,
-            value=preset_selection(["MiniMax H3 defaults"]),
-            elem_id="model-selection",
-        )
-        with gr.Row():
-            download = gr.Button("Download / update selected", variant="primary")
-            refresh = gr.Button("Refresh inventory")
-            select_installed = gr.Button("Select installed files")
-            clear = gr.Button("Clear selection")
-        with gr.Row():
-            confirm = gr.Checkbox(label="Confirm deletion of selected files", value=False)
-            remove = gr.Button("Remove selected", variant="stop")
-        status = gr.Textbox(label="Batch status", interactive=False, lines=5)
-        gr.Markdown("## Model catalog\nBrowse checkpoints, encoders, VAEs, and LoRAs by model family.")
-        inventories = []
-        family_buttons = []
-        with gr.Tabs():
-            for family, keys in groups.items():
-                with gr.Tab(family):
-                    gr.Markdown(f"**{len(keys)} catalog entries**")
-                    family_buttons.append((family, gr.Button(f"Select all {family} models")))
-                    inventories.append(gr.Dataframe(
-                        headers=["Key", "Folder", "File", "Status", "Size (GiB)", "Hugging Face repository"],
-                        datatype=["str", "str", "str", "str", "number", "str"],
-                        interactive=False, label=f"{family} inventory",
-                    ))
+    gr.Markdown(
+        "Prepare models and LoRAs on CPU before opening the generation endpoint. "
+        "Files are saved to the shared Modal volume. Gated models require accepting "
+        "their Hugging Face licenses and a valid HF_TOKEN in the Modal Secret."
+    )
+    presets = gr.Dropdown(
+        list(model_presets()), label="Presets", multiselect=True,
+        value=["MiniMax H3 defaults"],
+    )
+    apply = gr.Button("Select preset models")
+    selected = gr.Dropdown(
+        choices, label="Models / LoRAs to manage", multiselect=True,
+        value=preset_selection(["MiniMax H3 defaults"]),
+        elem_id="model-selection",
+    )
+    with gr.Row():
+        download = gr.Button("Download / update selected", variant="primary")
+        refresh = gr.Button("Refresh inventory")
+        select_installed = gr.Button("Select installed files")
+        clear = gr.Button("Clear selection")
+    with gr.Row():
+        confirm = gr.Checkbox(label="Confirm deletion of selected files", value=False)
+        remove = gr.Button("Remove selected", variant="stop")
+    status = gr.Textbox(label="Batch status", interactive=False, lines=5)
+    gr.Markdown("## Model catalog\nBrowse checkpoints, encoders, VAEs, and LoRAs by model family.")
+    inventories = []
+    family_buttons = []
+    with gr.Tabs():
+        for family, keys in groups.items():
+            with gr.Tab(family):
+                gr.Markdown(f"**{len(keys)} catalog entries**")
+                family_buttons.append((family, gr.Button(f"Select all {family} models")))
+                inventories.append(gr.Dataframe(
+                    headers=["Key", "Folder", "File", "Status", "Size (GiB)", "Hugging Face repository"],
+                    datatype=["str", "str", "str", "str", "number", "str"],
+                    interactive=False, label=f"{family} inventory",
+                ))
 
-        def refresh_catalog():
-            return grouped_inventory(manager.refresh())
+    def refresh_catalog():
+        return grouped_inventory(manager.refresh())
 
-        def download_selected(keys, progress=gr.Progress(track_tqdm=True)):
-            message, rows = manager.download(keys, progress)
-            return message, *grouped_inventory(rows)
+    def download_selected(keys, progress=gr.Progress(track_tqdm=True)):
+        message, rows = manager.download(keys, progress)
+        return message, *grouped_inventory(rows)
 
-        def remove_selected(keys, confirmed):
-            message, rows = manager.remove(keys, confirmed)
-            return message, *grouped_inventory(rows), False
+    def remove_selected(keys, confirmed):
+        message, rows = manager.remove(keys, confirmed)
+        return message, *grouped_inventory(rows), False
 
-        # Every volume operation shares a queue as well as the process lock.
-        operation = dict(concurrency_id="model-volume", concurrency_limit=1)
-        apply.click(preset_selection, presets, selected)
-        clear.click(lambda: [], outputs=selected)
-        for family, button in family_buttons:
-            button.click(partial(select_catalog, family), selected, selected)
-        download.click(download_selected, selected, [status, *inventories], **operation)
-        remove.click(remove_selected, [selected, confirm], [status, *inventories, confirm], **operation)
-        refresh.click(refresh_catalog, outputs=inventories, **operation)
-        select_installed.click(
-            lambda: [row[0] for row in manager.refresh() if row[3] != "Missing"],
-            outputs=selected, **operation,
-        )
-        ui.load(refresh_catalog, outputs=inventories, **operation)
-    return ui.queue(default_concurrency_limit=1)
+    # Every volume operation shares a queue as well as the process lock.
+    operation = dict(concurrency_id="model-volume", concurrency_limit=1)
+    apply.click(preset_selection, presets, selected)
+    clear.click(lambda: [], outputs=selected)
+    for family, button in family_buttons:
+        button.click(partial(select_catalog, family), selected, selected)
+    download.click(download_selected, selected, [status, *inventories], **operation)
+    remove.click(remove_selected, [selected, confirm], [status, *inventories, confirm], **operation)
+    refresh.click(refresh_catalog, outputs=inventories, **operation)
+    select_installed.click(
+        lambda: [row[0] for row in manager.refresh() if row[3] != "Missing"],
+        outputs=selected, **operation,
+    )
+    ui.load(refresh_catalog, outputs=inventories, **operation)
+
+
+def serve(data: Path, volume, *, port: int, script_dir: Path) -> None:
+    """Serve models and media with the main application's file routes, without ComfyUI."""
+    import threading
+
+    import uvicorn
+
+    from h3_app import server as server_routes
+    from h3_app.catalog import (
+        AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, UVICORN_WEBSOCKET_OPTIONS, VIDEO_EXTENSIONS,
+    )
+    from h3_app.workspace_store import WorkspaceStore
+    from h3_ui.media_console import media_runtime
+    from h3_ui.styles import H3_SETUP_CSS
+
+    manager = ModelManager(data, volume)
+    runtime = media_runtime(data, script_dir)
+    for folder in (runtime.input_dir, runtime.output_dir, runtime.outputs_dir):
+        folder.mkdir(parents=True, exist_ok=True)
+    # Same state directory as the GPU endpoint's H3_WORKSPACE_DIR.
+    store = WorkspaceStore(Path(data) / "h3-workspace")
+    ui = build_ui(manager, (runtime, store))
+    app = server_routes.build_server(
+        ui,
+        [str(runtime.output_dir.resolve()), str(runtime.outputs_dir.resolve())],
+        server_routes.ServerConfig(
+            # No ComfyUI runs here; its proxy routes report it as unavailable.
+            runtime.comfy_url, runtime.output_dir, runtime.outputs_dir, {},
+            runtime.workflow_dir, VIDEO_EXTENSIONS, IMAGE_EXTENSIONS,
+            AUDIO_EXTENSIONS, H3_SETUP_CSS, runtime.gallery_thumbnails_dir,
+        ),
+    )
+    server = uvicorn.Server(uvicorn.Config(
+        app, host="0.0.0.0", port=port, log_level="warning",
+        proxy_headers=True, forwarded_allow_ips="*", **UVICORN_WEBSOCKET_OPTIONS,
+    ))
+    threading.Thread(target=server.run, name="storage-console", daemon=True).start()

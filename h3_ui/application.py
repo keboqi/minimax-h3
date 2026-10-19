@@ -2003,17 +2003,9 @@ def refresh_media_page(
 
 
 def _catalog_inventory(mode, limit):
-    from h3_app.media_catalog import get_media_catalog
+    from h3_app.media_catalog import catalog_inventory
 
-    catalog = get_media_catalog()
-    if catalog is None:
-        return None
-    records, total = catalog.store.catalog_page(
-        kind=mode, limit=limit, roots=catalog.roots
-    )
-    return gallery_store.AssetInventory(
-        mode, tuple(Path(row["path"]) for row in records), tuple(records), total
-    )
+    return catalog_inventory(mode, limit)
 
 
 def refresh_media_gallery(mode: str = "Video", limit: int = GALLERY_PAGE_SIZE):

@@ -726,26 +726,36 @@ hf_secret = modal.Secret.from_name(
     required_keys=["HF_TOKEN"],
 )
 
-# The manager has its own small CPU image; it does not build or import ComfyUI.
-manager_image = modal.Image.debian_slim(python_version="3.12").uv_pip_install(
-    # requests: the Drama 3 SGLang-Omni downloader module imports it.
-    f"gradio=={GRADIO_VERSION}", HUGGINGFACE_HUB_REQUIREMENT, "requests>=2.32",
+# The storage console has its own small CPU image; it does not build or import ComfyUI.
+console_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    # ffmpeg/ffprobe: media library posters and video metadata.
+    .apt_install("ffmpeg")
+    .uv_pip_install(
+        # requests: the Drama 3 SGLang-Omni downloader module imports it.
+        # websocket-client, aiohttp: imported by the shared media controller and routes;
+        # wsproto: the Gradio queue's WebSocket transport, as in the main application.
+        f"gradio=={GRADIO_VERSION}", HUGGINGFACE_HUB_REQUIREMENT, "requests>=2.32",
+        "websocket-client>=1.8", "aiohttp>=3.11,<4", f"wsproto=={WSPROTO_VERSION}",
+    )
 )
 if IS_LOCAL:
     # Modal imports this deployment module in each image, so the lightweight
     # build-configuration modules must also be available in the CPU container.
     for filename in (
-        "h3_models.py", "h3_model_manager.py", "h3_sources.py",
+        "h3_models.py", "h3_storage_console.py", "h3_sources.py",
         "h3_requirements.py", "h3_node_patches.py",
     ):
-        manager_image = manager_image.add_local_file(
+        console_image = console_image.add_local_file(
             LOCAL / filename, remote_path=(ROOT / filename).as_posix(), copy=False,
         )
-    # Repository snapshots reuse the runtime's own downloaders and layouts.
-    manager_image = manager_image.add_local_dir(
-        LOCAL / "h3_app", remote_path=(ROOT / "h3_app").as_posix(),
-        copy=False, ignore=_BYTECODE_IGNORE,
-    )
+    # Repository snapshots reuse the runtime's own downloaders and layouts, and
+    # the media library reuses the main application's controller and views.
+    for package in ("h3_app", "h3_ui"):
+        console_image = console_image.add_local_dir(
+            LOCAL / package, remote_path=(ROOT / package).as_posix(),
+            copy=False, ignore=_BYTECODE_IGNORE,
+        )
 
 
 def layout() -> None:
@@ -774,7 +784,7 @@ def layout() -> None:
 
 
 def prepare_runtime_models() -> None:
-    """Use the CPU manager's files; generation downloads missing assets on demand."""
+    """Use the storage console's files; generation downloads missing assets on demand."""
     from h3_models import build_model_config, write_json_atomic
 
     volume.reload()
@@ -874,7 +884,7 @@ def wait_for_comfy_frontend(
 
 
 @app.function(
-    image=manager_image,
+    image=console_image,
     timeout=21600,
     volumes={DATA.as_posix(): volume},
     secrets=[hf_secret],
@@ -883,18 +893,14 @@ def wait_for_comfy_frontend(
 )
 @modal.concurrent(max_inputs=100)
 @modal.web_server(
-    UI_PORT, startup_timeout=120, label="models", requires_proxy_auth=PROXY_AUTH,
+    UI_PORT, startup_timeout=120, label="storage", requires_proxy_auth=PROXY_AUTH,
 )
-def manage_models():
-    from h3_model_manager import ModelManager, build_ui
+def storage_console():
+    from h3_storage_console import serve
 
     os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
     os.environ["HF_HOME"] = "/tmp/hf"
-    ui = build_ui(ModelManager(Path(DATA), volume))
-    ui.launch(
-        server_name="0.0.0.0", server_port=UI_PORT,
-        prevent_thread_lock=True, ssr_mode=False,
-    )
+    serve(Path(DATA), volume, port=UI_PORT, script_dir=Path(ROOT))
 
 
 @app.cls(

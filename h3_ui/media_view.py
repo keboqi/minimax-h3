@@ -63,10 +63,13 @@ def build_gallery_view(
     default_seedvr2: str,
     ltx25_choices: Sequence[str] = (),
     default_ltx25: str | None = None,
+    enhance: bool = True,
 ) -> GalleryView:
+    """Build the Media library; ``enhance=False`` omits GPU post-processing."""
     with root:
         gr.Markdown(
-            "## Media library\nYour outputs, in one place. Find a favorite, review the details, and create an enhanced copy.",
+            "## Media library\nYour outputs, in one place. Find a favorite, review the details"
+            + (", and create an enhanced copy." if enhance else ", and keep the library tidy."),
             elem_classes=["h3-gallery-heading", "h3-view-heading"],
         )
         with gr.Row(equal_height=False, elem_classes=["h3-gallery-toolbar"]):
@@ -173,7 +176,8 @@ def build_gallery_view(
                         deletion_intent = gr.State(None)
             with gr.Column(scale=4, min_width=320, elem_classes=["h3-preview-panel"]):
                 gr.Markdown(
-                    "### Selected media\nPreview and download your original. Enhancements are saved as a new copy.",
+                    "### Selected media\nPreview and download your original."
+                    + (" Enhancements are saved as a new copy." if enhance else ""),
                     elem_classes=["h3-gallery-section-title"],
                 )
                 player = gr.Video(
@@ -202,8 +206,9 @@ def build_gallery_view(
                 with gr.Accordion(
                     "Enhance selected media",
                     open=False,
+                    visible=enhance,
                     elem_classes=["h3-gallery-card", "h3-gallery-enhance"],
-                ) as enhance:
+                ) as enhance_panel:
                     with gr.Row(equal_height=True):
                         postprocess = gr.Dropdown(
                             choices=list(postprocess_options),
@@ -295,7 +300,7 @@ def build_gallery_view(
         image,
         audio,
         download,
-        enhance,
+        enhance_panel,
         postprocess,
         upscale_resolution,
         ai_settings,

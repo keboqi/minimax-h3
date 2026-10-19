@@ -1,12 +1,12 @@
-"""CPU manager behavior without downloading models or allocating a GPU."""
+"""Storage console behavior without downloading models or allocating a GPU."""
 import ast
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-import h3_model_manager as manager_module
-from h3_model_manager import (
+import h3_storage_console as manager_module
+from h3_storage_console import (
     AUDIO_TOOLS_FAMILY, SNAPSHOT_SPECS, ModelManager, SnapshotSpec, catalog_groups, model_presets, preset_selection,
 )
 from h3_models import MODEL_SPECS, model_manifest_key, read_json, write_json_atomic
@@ -196,17 +196,38 @@ class ModelManagerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.manager._path("turbo_lora")
 
+    def test_media_library_omits_gpu_enhancement(self):
+        from h3_app import media_catalog
+        from h3_app.workspace_store import WorkspaceStore
+        from h3_ui.media_console import media_runtime
+
+        previous = media_catalog.get_media_catalog()
+        self.addCleanup(setattr, media_catalog, "_CATALOG", previous)
+        data = Path(self.temp.name)
+        runtime = media_runtime(data, data / "app")
+        self.assertEqual(runtime.output_dir, (data / "output").resolve())
+        self.assertEqual(runtime.outputs_dir, (data / "output").resolve())
+        ui = manager_module.build_ui(self.manager, (runtime, WorkspaceStore(data / "h3-workspace")))
+        blocks = ui.blocks.values()
+        labels = {getattr(block, "label", None) for block in blocks}
+        self.assertTrue({"Media library", "Models"} <= labels)
+        enhance = [block for block in blocks if getattr(block, "label", None) == "Enhance selected media"]
+        self.assertEqual([block.visible for block in enhance], [False])
+        run = next(block for block in blocks if getattr(block, "value", None) == "Enhance selected media"
+                   and type(block).__name__ == "Button")
+        self.assertFalse(any(run._id in [t[0] for t in dep.targets] for dep in ui.fns.values()))
+
     def test_cpu_endpoint_has_default_resources_and_independent_image(self):
         source = Path(__file__).resolve().parents[1] / "modal_h3.py"
         tree = ast.parse(source.read_text(encoding="utf-8"))
         functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
         self.assertNotIn("provision_models", functions)
-        manager = functions["manage_models"]
+        manager = functions["storage_console"]
         decorator = next(d for d in manager.decorator_list
                          if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
                          and d.func.attr == "function")
         arguments = {kw.arg: kw.value for kw in decorator.keywords}
-        self.assertEqual(arguments["image"].id, "manager_image")
+        self.assertEqual(arguments["image"].id, "console_image")
         for resource in ("gpu", "cpu", "memory"):
             self.assertNotIn(resource, arguments)
         self.assertNotIn("sync_models", ast.unparse(functions["prepare_runtime_models"]))

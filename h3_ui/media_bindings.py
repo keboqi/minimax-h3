@@ -29,8 +29,8 @@ def bind_gallery_view(
     refresh: Callable[..., Any],
     select: Callable[..., Any],
     import_video: Callable[..., Any],
-    postprocess: Callable[..., Any],
-    interrupt: Callable[..., Any],
+    postprocess: Callable[..., Any] | None,
+    interrupt: Callable[..., Any] | None,
     delete: Callable[..., Any],
     empty: Callable[..., Any],
     list_paths: Callable[..., Any] | None = None,
@@ -160,7 +160,7 @@ def bind_gallery_view(
                     else "Enhance selected media"
                 )
             ),
-            gr.update(visible=value != "Audio"),
+            gr.update(visible=postprocess is not None and value != "Audio"),
         )
 
     def browse_controls(mode, target):
@@ -305,6 +305,36 @@ def bind_gallery_view(
         show_progress="hidden",
     )
     synchronize(refreshed, refreshed=True)
+    if postprocess is not None:
+        bind_postprocess(
+            view, selected_ltx_model, postprocess, interrupt,
+            mutation_outputs, sync_more, synchronize,
+        )
+    from .media_actions import bind_safe_deletion
+
+    def refresh_after_deletion(mode: str, filter_values, request: gr.Request):
+        values = sync_more(mode, filter_values, request)
+        return (*values[:2], gr.skip(), *values[3:])
+
+    deleted = bind_safe_deletion(
+        view,
+        list_paths=list_paths,
+        delete=delete,
+        empty=empty,
+        mutation_outputs=mutation_outputs,
+        sync_more=refresh_after_deletion,
+        refresh_inputs=[view.mode, filters],
+        refresh_outputs=page_outputs,
+    )
+    synchronize(deleted, refreshed=True)
+
+
+def bind_postprocess(
+    view, selected_ltx_model, postprocess, interrupt,
+    mutation_outputs, sync_more, synchronize,
+):
+    """Bind the GPU enhancement actions; GPU-free deployments omit them."""
+    page_outputs = [view.grid, view.paths, view.status, view.shown, view.show_more]
     post_event = bind_gpu_action(
         view.post_run.click,
         owned_generation(postprocess, "gallery"),
@@ -327,7 +357,7 @@ def bind_gallery_view(
     )
     refreshed = post_event.then(
         sync_more,
-        inputs=[view.mode, filters],
+        inputs=[view.mode, view.filters],
         outputs=page_outputs,
         queue=False,
         concurrency_limit=None,
@@ -341,20 +371,3 @@ def bind_gallery_view(
         queue=False,
     )
     stopped.then(fn=None, cancels=[post_event], queue=False, api_name=False)
-    from .media_actions import bind_safe_deletion
-
-    def refresh_after_deletion(mode: str, filter_values, request: gr.Request):
-        values = sync_more(mode, filter_values, request)
-        return (*values[:2], gr.skip(), *values[3:])
-
-    deleted = bind_safe_deletion(
-        view,
-        list_paths=list_paths,
-        delete=delete,
-        empty=empty,
-        mutation_outputs=mutation_outputs,
-        sync_more=refresh_after_deletion,
-        refresh_inputs=[view.mode, filters],
-        refresh_outputs=page_outputs,
-    )
-    synchronize(deleted, refreshed=True)

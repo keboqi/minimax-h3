@@ -91,6 +91,18 @@ def get_media_catalog():
     return _CATALOG
 
 
+def catalog_inventory(mode, limit):
+    """The first catalog page for a media type, or None before configuration."""
+    if _CATALOG is None:
+        return None
+    records, total = _CATALOG.store.catalog_page(
+        kind=mode, limit=limit, roots=_CATALOG.roots
+    )
+    return gallery_store.AssetInventory(
+        mode, tuple(Path(row["path"]) for row in records), tuple(records), total
+    )
+
+
 def register_created_media(source, metadata):
     if _CATALOG is not None:
         _CATALOG.register(source, metadata)
