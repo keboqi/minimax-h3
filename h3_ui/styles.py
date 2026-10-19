@@ -409,6 +409,50 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
   .h3-workspace .h3-gallery-status { overflow-wrap: anywhere; }
   .h3-workspace .h3-library-button { width: 100% !important; flex-basis: auto !important; }
 }
+/* Drama 3: numbered Script / Cast / Delivery sections, a sticky Speak stage,
+   and visible outlines on the small secondary buttons used throughout. */
+.h3-workspace .h3-drama3 .styler { gap: 8px; background: transparent; }
+.h3-workspace .h3-drama3-intro { padding: 2px 4px 6px; }
+.h3-workspace .h3-drama3-intro h2 { margin: 2px 0 4px; font-size: 22px; letter-spacing: -.03em; }
+.h3-workspace .h3-drama3-intro p:not(.h3-eyebrow) { margin: 0; color: var(--h3-muted); font-size: 13px; }
+.h3-workspace .h3-drama3 .h3-composer .block:has(> .html-container .h3-panel-heading) { margin-top: 10px; }
+.h3-workspace .h3-drama3 .h3-composer .block:has(> .html-container .h3-panel-heading) ~ .block:has(> .html-container .h3-panel-heading) {
+  margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--h3-border); border-radius: 0;
+}
+.h3-workspace .h3-drama3 .h3-panel-heading code { font-size: 11px; padding: 1px 4px; border-radius: 4px; background: var(--h3-muted-surface); }
+.h3-workspace .h3-drama3-script textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 14px; line-height: 1.65; }
+.h3-workspace .h3-drama3 button.secondary { border: 1px solid var(--h3-border); background: var(--h3-surface); }
+.h3-workspace .h3-drama3 button.secondary:not(:disabled):hover { border-color: var(--h3-accent); color: var(--h3-accent); background: var(--h3-muted-surface); }
+.h3-workspace .h3-drama3-inline-actions { flex-wrap: wrap; gap: 8px; align-items: center; }
+.h3-workspace .h3-drama3-inline-actions > :is(button, .row) { flex: 0 1 auto !important; width: auto; min-width: 0 !important; }
+.h3-workspace .h3-drama3-inline-actions > .row { gap: 8px; }
+.h3-workspace .h3-drama3-slot-count { padding-top: 4px; }
+.h3-workspace .h3-drama3-note, .h3-workspace .h3-drama3-note p { color: var(--h3-muted); font-size: 12px; margin: 0; }
+.h3-workspace .h3-drama3-note:empty { display: none; }
+.h3-workspace .h3-drama3-toolbar { padding: 10px; gap: 8px; border: 1px solid var(--h3-border); border-radius: 10px; background: var(--h3-muted-surface); }
+.h3-workspace .h3-drama3-toolbar + .h3-drama3-toolbar { margin-top: 4px; }
+.h3-workspace .h3-drama3-clip { padding: 8px; border: 1px dashed var(--h3-border); border-radius: 10px; background: var(--h3-muted-surface); }
+.h3-workspace .h3-drama3 .gr-accordion.h3-drama3-slot { box-shadow: inset 3px 0 var(--h3-border); border-color: var(--h3-border); }
+.h3-workspace .h3-drama3 .gr-accordion.h3-drama3-slot > button.label-wrap { min-height: 40px; padding-block: 6px; background: var(--h3-surface); box-shadow: inset 3px 0 var(--h3-border); color: var(--h3-text); }
+.h3-workspace .h3-drama3 .gr-accordion.h3-drama3-slot > button.label-wrap.open { box-shadow: inset 3px 0 var(--h3-accent), 0 1px var(--h3-border); }
+.h3-workspace .h3-drama3 .gr-accordion.h3-drama3-slot > button.label-wrap > span:first-child { font-size: 13px; }
+.h3-workspace .h3-drama3-stage { gap: 12px; }
+.h3-workspace .h3-drama3-auto { gap: 8px; padding: 14px; border: 1px dashed var(--h3-disclosure-border); border-radius: 12px; background: var(--h3-disclosure); }
+.h3-workspace .h3-drama3-auto .h3-generation-buttons { flex-wrap: wrap; }
+.h3-workspace .h3-drama3-auto .h3-generation-buttons > button { flex: 1 1 200px; min-height: 40px; white-space: normal; }
+.h3-workspace .h3-drama3-auto-heading strong { color: var(--h3-accent); font-size: 14px; }
+.h3-workspace .h3-drama3-auto-heading p { margin: 2px 0 0; color: var(--h3-muted); font-size: 12px; }
+@media (min-width: 768px) {
+  .h3-workspace .h3-drama3-stage { position: sticky; top: 12px; }
+  /* Clip, unlike hidden, does not create the scroll container that would pin the stage in place. */
+  .gradio-container:has(.h3-drama3-stage), .h3-workspace .h3-drama3, .h3-workspace .h3-drama3 > .styler { overflow: clip !important; }
+}
+@media (max-width: 767px) {
+  .h3-workspace .h3-drama3.h3-engine-view { padding: 6px; }
+  .h3-workspace .h3-drama3 :is(.h3-composer, .h3-preview-panel) { padding: 8px; }
+  .h3-workspace .h3-drama3 .gr-accordion > div[data-testid="accordion-content"] { padding: 8px 6px 8px 9px; }
+  .h3-workspace .h3-drama3 :is(.h3-drama3-toolbar, .h3-drama3-clip) { padding: 6px; }
+}
 .h3-workspace .h3-mobile-nav { display: none; }
 @media (max-width: 767px) {
   .h3-workspace { padding: 12px 6px 24px; }

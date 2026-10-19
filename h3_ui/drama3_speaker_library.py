@@ -26,9 +26,10 @@ class SpeakerLibraryView:
     delete_group: gr.Button
 
 
-def build_speaker_library(groups):
-    open_button = gr.Button("Manage saved speakers", size="sm")
-    with gr.Group(visible=False) as panel:
+def build_speaker_library(groups, open_button=None):
+    """``open_button`` lets the caller place the button that reveals the library."""
+    open_button = open_button or gr.Button("Manage saved speakers", size="sm")
+    with gr.Group(visible=False, elem_classes=["h3-drama3-toolbar"]) as panel:
         gr.Markdown("### Saved speaker library\nBrowse the selected group above. Preview a voice, edit its details, "
                     "or copy it to another group for use in other stories.")
         with gr.Row():
