@@ -2730,6 +2730,7 @@ def _optional_engine_actions():
         delete_drama3_speaker=drama3_handlers.delete_drama3_speaker,
         generate_drama3_voice=drama3_handlers.generate_drama3_voice,
         generate_drama3_voices=drama3_handlers.generate_drama3_voices,
+        generate_drama3_voice_takes=drama3_handlers.generate_drama3_voice_takes,
         copy_drama3_writer_prompt=drama3_handlers.copy_drama3_writer_prompt,
         apply_drama3_writer_reply=drama3_handlers.apply_drama3_writer_reply,
         interrupt=interrupt,

@@ -2,7 +2,7 @@
 
 import json
 import gradio as gr
-from h3_ui.drama3_speaker_library import bind_speaker_library
+from h3_ui.drama3_speaker_library import bind_speaker_library, bind_voice_takes
 from h3_app.drama3_voice_design import ENGINE_QWEN
 from h3_app.prompt_service import DRAMA3_PROMPT_FAILED, DRAMA3_SCRIPT_ADVANCED
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
@@ -360,6 +360,9 @@ def bind_drama3(view, actions):
         library_events = bind_speaker_library(view.speaker_library, view.speaker_group, view.voices,
                                               actions.speaker_library_actions, view.speaker_group_status,
                                               store_events) or []
+        if actions.generate_drama3_voice_takes is not None:
+            bind_voice_takes(view.speaker_library, actions.generate_drama3_voice_takes,
+                             [*_voice_settings(view), view.parallel], actions.interrupt)
     _bind_group_size(view, actions, [*store_events, *library_events])
     return event
 

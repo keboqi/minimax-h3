@@ -160,6 +160,29 @@ class SpeakerGroupTests(unittest.TestCase):
         self.assertEqual(deleted[2]["value"], "Upload a clip")
         self.assertEqual(actions.choices("Story"), [])
 
+    def test_library_toggles_and_keeps_saved_voice_until_a_try_is_chosen(self):
+        from h3_ui.drama3_speaker_library import HIDE_LABEL, KEEP_SAVED, MANAGE_LABEL, SpeakerLibraryActions
+        actions = SpeakerLibraryActions(lambda: self.runtime)
+        alice = self.save("Alice", "Story")
+        opened = actions.toggle(False, "Story")
+        self.assertEqual((opened[0], opened[1]["visible"], opened[2]["value"]), (True, True, HIDE_LABEL))
+        closed = actions.toggle(True, "Story")
+        self.assertEqual((closed[0], closed[1]["visible"], closed[2]["value"]), (False, False, MANAGE_LABEL))
+        take = self.root / "take.wav"
+        take.write_bytes(b"RIFF" + b"y" * 80)
+        brief = {"key": alice.key, "description": "Brighter", "transcript": "New words."}
+        kept = actions.use_take(alice.key, KEEP_SAVED, brief, str(take))
+        self.assertEqual(kept[-1], "Kept the saved voice.")
+        self.assertEqual(speakers.load_speaker(alice.key, self.runtime).audio.read_bytes(), self.clip.read_bytes())
+        stale = actions.use_take(alice.key, "New voice 1", {**brief, "key": "Story/Bob"}, str(take))
+        self.assertIn("another speaker", stale[-1])
+        used = actions.use_take(alice.key, "New voice 1", brief, str(take), None)
+        saved = speakers.load_speaker(alice.key, self.runtime)
+        self.assertEqual(saved.audio.read_bytes(), take.read_bytes())
+        self.assertEqual((saved.description, saved.transcript), ("Brighter", "New words."))
+        self.assertEqual(used[:3], (str(saved.audio), "Brighter", "New words."))
+        self.assertEqual(used[3]["value"], KEEP_SAVED)
+
     def test_library_list_follows_saves_and_keeps_its_selection(self):
         from h3_ui.drama3_speaker_library import SpeakerLibraryActions
         actions = SpeakerLibraryActions(lambda: self.runtime)

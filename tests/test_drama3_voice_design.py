@@ -419,6 +419,28 @@ class CastSlotTests(unittest.TestCase):
         self.assertEqual(drama3_voices_title(2, [UPLOAD_VOICE], [True], group="Chapter 1"),
                          "Speaker voices · Chapter 1 group · 2 speakers · 1 with a voice")
 
+    def test_saved_speaker_tries_keep_the_saved_voice_selected(self):
+        from h3_ui.application import drama3_handlers
+        results = iter([("one.wav", "Hello."), H3Error("broken"), ("three.wav", "Hello.")])
+
+        def design(*args, **kwargs):
+            result = next(results)
+            if isinstance(result, Exception):
+                raise result
+            return result
+        with patch.object(drama3_handlers, "_runtime_config"), \
+                patch.object(voice_design, "generate_reference", side_effect=design):
+            updates = list(drama3_handlers.generate_drama3_voice_takes(
+                "Story/Alice", 3, "Warm", "Hello.", "Qwen3-TTS VoiceDesign"))
+        *clips, choice, brief, status = updates[-1]
+        self.assertEqual([clip["value"] for clip in clips], ["one.wav", None, "three.wav", None])
+        self.assertEqual([clip["visible"] for clip in clips], [True, True, True, False])
+        self.assertEqual(choice["choices"], ["Keep saved voice", "New voice 1", "New voice 3"])
+        self.assertEqual(choice["value"], "Keep saved voice")
+        self.assertEqual(brief, {"key": "Story/Alice", "description": "Warm", "transcript": "Hello."})
+        self.assertIn("Generated 2 of 3", status)
+        self.assertIn("broken", status)
+
     def test_generation_failure_preserves_current_audio_and_transcript(self):
         from h3_ui.application import drama3_handlers
         with patch.object(drama3_handlers, "_runtime_config"), \

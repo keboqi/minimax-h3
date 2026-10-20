@@ -107,7 +107,7 @@ selected group** saves every shown speaker with a clip and exact transcript in o
 action, including copies of selected presets from other groups. Saving the same
 name again replaces that group's preset; other groups are unaffected.
 
-**Manage saved speakers** opens the library inside **Speaker voices**.
+**Manage saved speakers** shows or hides the library inside **Speaker voices**.
 Its list follows the selected group and updates as soon as a speaker is saved
 or deleted from a slot or with **Save all speakers to selected group**, keeping
 the current selection when it still exists. Search the current group's speakers, listen to a saved clip, edit its name,
@@ -117,6 +117,13 @@ deletions also update any currently selected voice slots.
 **Delete group and all its speakers** removes the selected custom group together
 with its saved clips and presets, then switches back to Global. Copies saved in
 other groups are unaffected. Global itself cannot be deleted.
+
+**Try new voices** designs one to four fresh clips for the selected speaker from
+its voice description and exact clip transcript, using the Cast's **Voice
+generator** and the Speak sampling settings. The saved clip is untouched until you
+pick one of the new voices and press **Use selected voice**, which saves it with the
+description and transcript it was made from. Keep the saved voice or generate
+another batch as often as you like; selecting another speaker discards the tries.
 
 VoiceDesign and Stable Audio 3 Medium sound generation require a CUDA GPU. They
 share one separate Python 3.12 environment with `qwen-tts==0.1.1` and its pinned

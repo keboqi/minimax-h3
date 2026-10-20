@@ -741,6 +741,80 @@ def _generate_drama3_designs(targets, settings, parallel, updates, frame, failed
         yield frame(f"Voice generation failed: {exc}")
 
 
+def generate_drama3_voice_takes(key, count, description, transcript, engine="Qwen3-TTS VoiceDesign",
+                                temperature=1.0, top_p=0.9, top_k=0, max_frames=8192, parallel=8):
+    """Design up to four new voices for a saved speaker without replacing its clip.
+
+    Outputs: one clip per try, the voice choice, the brief the tries were made from
+    (saved with the chosen clip) and a status. Every frame resends every clip; see
+    ``generate_drama3_voices`` for why a skip after a clip breaks the next request.
+    """
+    from h3_app import drama3_voice_design
+    from h3_app.voice_design import generate_reference
+    from h3_ui.drama3_speaker_library import KEEP_SAVED, MAX_TAKES, take_label
+
+    count = max(1, min(int(count or 1), MAX_TAKES))
+    clips = [None] * MAX_TAKES
+    errors = []
+
+    def frame(status, brief=gr.skip(), choice=gr.skip()):
+        return (*[gr.update(value=clip, visible=index < count) for index, clip in enumerate(clips)],
+                choice, brief, status)
+
+    if not key:
+        yield frame("Select a saved speaker first.")
+        return
+    if not str(description or "").strip() or not str(transcript or "").strip():
+        yield frame("Add a voice description and an exact clip transcript first.")
+        return
+    brief = {"key": key, "description": str(description).strip(), "transcript": " ".join(str(transcript).split())}
+    yield frame(f"Generating {count} new voice(s)…", brief=None,
+                choice=gr.update(choices=[KEEP_SAVED], value=KEEP_SAVED))
+    try:
+        if engine == drama3_voice_design.ENGINE_DRAMA3:
+            from h3_models import resolve_hf_token
+
+            request = _drama3_design_request(temperature, top_p, top_k, max_frames, parallel)
+            for result in drama3_voice_design.generate_drama3_references(
+                    {index: (brief["description"], brief["transcript"]) for index in range(count)},
+                    request, _runtime_config(), _generation_services(), free_gpu=free_comfy_vram,
+                    hf_token=resolve_hf_token()):
+                if isinstance(result, drama3_voice_design.DesignResult):
+                    if result.audio:
+                        clips[result.key] = result.audio
+                        brief["transcript"] = result.transcript
+                    else:
+                        errors.append(result.error)
+                    yield frame(f"Designed {sum(clip is not None for clip in clips) + len(errors)}/{count} "
+                                "voices on SGLang-Omni.")
+                else:
+                    yield frame(result.status)
+        elif engine == drama3_voice_design.ENGINE_QWEN:
+            for index in range(count):
+                yield frame(f"Generating voice {index + 1}/{count} with Qwen VoiceDesign…")
+                try:
+                    audio, brief["transcript"] = generate_reference(
+                        brief["description"], brief["transcript"], "Auto", _runtime_config(),
+                        free_gpu=free_comfy_vram)
+                    clips[index] = str(audio)
+                except JobCancelled:
+                    raise
+                except Exception as exc:
+                    errors.append(str(exc))
+        else:
+            raise H3Error("Choose Drama 3 or Qwen3-TTS VoiceDesign to generate a voice.")
+    except JobCancelled:
+        raise
+    except Exception as exc:
+        errors.append(str(exc))
+    made = [take_label(index) for index, clip in enumerate(clips) if clip]
+    status = f"Generated {len(made)} of {count} new voices. Listen, then pick one to keep or try again."
+    if errors:
+        status += " Failed: " + "; ".join(dict.fromkeys(errors))
+    yield frame(status, brief=brief if made else None,
+                choice=gr.update(choices=[KEEP_SAVED, *made], value=KEEP_SAVED))
+
+
 def _publish_drama3_voices_signature():
     import inspect
     from h3_ui.drama3_controls import DRAMA3_VOICE_SLOTS
