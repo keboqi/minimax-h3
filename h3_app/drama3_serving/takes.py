@@ -21,7 +21,7 @@ import numpy as np
 
 from . import audio
 
-SCHEMA = 1
+SCHEMA = 2  # 2: takes are keyed by speaker name, not slot number
 # Takes unused for this long are removed after a job.
 KEEP_SECONDS = 30 * 24 * 3600
 
@@ -33,10 +33,10 @@ def takes_root(runtime) -> Path:
     return base.resolve() / "drama3_takes"
 
 
-def take_key(*, speaker: int, text: str, reference: str, transcript: str, sampling: dict,
+def take_key(*, speaker: str, text: str, reference: str, transcript: str, sampling: dict,
              max_new_tokens: int) -> str:
     """``reference`` identifies the voice clip's content (its staged digest)."""
-    identity = {"schema": SCHEMA, "speaker": int(speaker), "text": text, "reference": reference,
+    identity = {"schema": SCHEMA, "speaker": str(speaker), "text": text, "reference": reference,
                 "transcript": transcript, "sampling": {name: sampling[name] for name in sorted(sampling)},
                 "max_new_tokens": int(max_new_tokens)}
     return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:32]

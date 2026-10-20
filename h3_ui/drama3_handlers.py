@@ -219,6 +219,13 @@ def drama3_takes(output):
             gr.update(visible=bool(rows)))
 
 
+def _cast_names(names, slot_names):
+    """Every Cast name by slot: saved speakers' names (``names``) win over typed ones."""
+    cast = {speaker: " ".join(str(name or "").split()) for speaker, name in enumerate(slot_names)}
+    cast.update((speaker, name) for speaker, name in names if name)
+    return sorted((speaker, name) for speaker, name in cast.items() if name)
+
+
 def _drama3_job(values, progress, **options):
     from h3_app.generation.optional_engines import generate_optional_engine, validate_request
     from h3_app.drama3_cast import clean_title
@@ -235,6 +242,8 @@ def _drama3_job(values, progress, **options):
     sound_slots = settings[7:sound_end]
     title = clean_title(settings[sound_end]) if len(settings) > sound_end else ""
     voices, names = _drama3_voices(slots)
+    # Lines start with these names; each line is sent with its named speaker's clip.
+    names = _cast_names(names, settings[sound_end + 1:])
     sounds = _drama3_sounds(sound_slots)
     request = generation_requests.Drama3Request(
         text, voices, temperature, top_p, top_k, max_frames, parallel, retries, tuple(names),
@@ -317,6 +326,11 @@ def _drama3_writer_slots(slots):
     return names, existing, cast_context, shown
 
 
+def _slot_names(existing):
+    """Speaker ID to Cast name, from the writer's slot identities."""
+    return {speaker: entry["name"] for speaker, entry in existing.items() if entry.get("name")}
+
+
 def _drama3_writer_mode_and_sounds(slots):
     """Extract optional script_mode and saved sound preset context for writer prompts."""
     import json
@@ -372,8 +386,11 @@ def _drama3_cast_updates(script, status, cast, existing, shown, group=None):
     )
 
     from h3_app import drama3_speakers
+    from h3_app.workflows.drama3 import tags_to_names
     presets = [gr.skip()] * DRAMA3_VOICE_SLOTS if group is not None else []
     updates = [gr.skip()] * len(DRAMA3_SLOT_INPUT_NAMES)
+    # The names the slots end up with, which the script's lines show.
+    final_names = {speaker: entry.get("name", "") for speaker, entry in existing.items()}
     match = drama3_speakers.speaker_matcher(_runtime_config(), group) if group is not None and cast else None
     for entry in cast:
         speaker = entry["speaker_id"]
@@ -389,6 +406,8 @@ def _drama3_cast_updates(script, status, cast, existing, shown, group=None):
                 presets[speaker] = gr.update(value=saved.key)
                 name, description = saved.name, saved.description
         updates[3 * speaker:3 * speaker + 3] = [name, description, entry["preview_text"]]
+        final_names[speaker] = name
+    script = tags_to_names(script, final_names)
     if not cast:
         return (script, status, *updates, *[gr.skip()] * (len(_slot_visibility(shown))), *presets)
     previous = int(shown or DRAMA3_VISIBLE_SLOTS)
@@ -410,7 +429,7 @@ def enhance_drama3_text(text, speaker_mode, model, temporary_api_key, backend, l
             lightning_api_key=lightning_api_key, lightning_model=lightning_model,
             speaker_mode=speaker_mode, runtime=_runtime_config(), return_cast=True,
             cast_context=cast_context, script_mode=script_mode, sound_context=sound_context,
-            return_title=True,
+            return_title=True, speaker_names=_slot_names(existing),
         )
         if status.startswith("Prompt enhancement failed:"):
             return text, status, *_drama3_unchanged_outputs(group)
@@ -442,6 +461,7 @@ def apply_drama3_writer_reply(reply, text, speaker_mode, *slots):
         script_mode, _sound_context = _drama3_writer_mode_and_sounds(slots)
         script, status, cast, title = prompt_service.apply_drama3_reply(
             reply, text, names, speaker_mode, script_mode=script_mode, return_title=True,
+            speaker_names=_slot_names(existing),
         )
         if status.startswith("Prompt enhancement failed:"):
             return text, status, *_drama3_unchanged_outputs(group)
@@ -519,7 +539,8 @@ def sync_drama3_script_sounds(text, script_mode, shown_sound_slots, *sound_meta_
 def _publish_drama3_signatures():
     import inspect
     from h3_ui.drama3_controls import (
-        DRAMA3_CAST_INPUT_NAMES, DRAMA3_SOUND_SLOT_INPUT_NAMES, DRAMA3_VISIBLE_SLOTS, UPLOAD_SOUND
+        DRAMA3_CAST_INPUT_NAMES, DRAMA3_SOUND_SLOT_INPUT_NAMES, DRAMA3_VISIBLE_SLOTS, DRAMA3_VOICE_SLOTS,
+        UPLOAD_SOUND,
     )
 
     empty = inspect.Parameter.empty
@@ -538,6 +559,8 @@ def _publish_drama3_signatures():
         ("temperature", empty), ("top_p", empty), ("top_k", empty), ("max_frames", empty),
         ("parallel", 8), ("retries", 0), ("script_mode", "Basic"),
         *sound_defaults, ("title", ""),
+        # Cast names, so scripts can name their speakers ("Mia: Hello.") instead of tagging them.
+        *((f"speaker_{speaker}_name", "") for speaker in range(DRAMA3_VOICE_SLOTS)),
     ))
     generate_drama3.__signature__ = inspect.Signature([*generation, progress])
     remix_drama3.__signature__ = inspect.Signature([*generation, progress])

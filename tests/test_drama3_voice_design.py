@@ -30,6 +30,16 @@ def writer_reply(*ids):
 
 
 class CastValidationTests(unittest.TestCase):
+    def test_writer_names_speakers_by_the_speakers_list(self):
+        reply = {"script": "Character 5: Hello there.\n<parallel>\ncharacter 2 : Hi!\n</parallel>",
+                 "speakers": [cast_entry(i, f"Character {i}") for i in (5, 2)]}
+        script, cast = parse_script_cast(json.dumps(reply))
+        self.assertEqual(script, "<|speaker:5|> Hello there.\n<parallel>\n<|speaker:2|> Hi!\n</parallel>")
+        self.assertEqual([entry["speaker_id"] for entry in cast], [2, 5])
+        reply["script"] += "\nNobody: Who?"
+        with self.assertRaisesRegex(H3Error, "start with one speaker's name"):
+            parse_script_cast(json.dumps(reply))
+
     def test_sparse_ids_stay_paired(self):
         script, cast = parse_script_cast(writer_reply(5, 2))
         self.assertTrue(script.startswith("<|speaker:5|>"))
@@ -378,7 +388,8 @@ class CastSlotTests(unittest.TestCase):
         with patch.object(drama3_handlers, "_runtime_config", return_value=runtime):
             result = drama3_handlers.apply_drama3_writer_reply(fenced, "Original", "Auto", *voices, *[""] * 48, 4)
             bad = drama3_handlers.apply_drama3_writer_reply("not json", "Original", "Auto", *voices, *[""] * 48, 4)
-        self.assertEqual(result[0], "<|speaker:5|> Hello there.")
+        # The script comes back naming its speakers, whichever form the writer used.
+        self.assertEqual(result[0], "Character 5: Hello there.")
         self.assertIn("Applied the pasted", result[1])
         self.assertEqual(result[17:20], ("Character 5", cast_entry(5)["description"], cast_entry(5)["preview_text"]))
         self.assertEqual(result[50], 6)
@@ -520,10 +531,10 @@ class Drama3VoiceDesignTests(unittest.TestCase):
     def test_description_cue_follows_the_opening_phrase(self):
         from h3_app.drama3_voice_design import design_script
         self.assertEqual(design_script(" Gravelly  old sailor ", "Well now, the  tide is turning."),
-                         "<|speaker:0|> Well now, [Gravelly old sailor] the tide is turning.")
-        self.assertEqual(design_script("Warm", "Hello world"), "<|speaker:0|> Hello [Warm] world")
+                         "Well now, [Gravelly old sailor] the tide is turning.")
+        self.assertEqual(design_script("Warm", "Hello world"), "Hello [Warm] world")
         self.assertEqual(design_script("Warm", "你好，今天我们一起出发。"),
-                         "<|speaker:0|> 你好， [Warm] 今天我们一起出发。")
+                         "你好， [Warm] 今天我们一起出发。")
         for description, text in (("A [bright] voice", "Hello there."), ("Warm", "Hello [laughs] there."),
                                   ("", "Hello."), ("Warm", "")):
             with self.subTest(description=description, text=text), self.assertRaises(H3Error):
@@ -576,7 +587,7 @@ class Drama3VoiceDesignTests(unittest.TestCase):
                 "Warm", "Hello there.", self.request, self.runtime, self.services, free_gpu=Mock()))
         payload = fake.speech.call_args.args[0]
         self.assertEqual(payload["references"], [])
-        self.assertEqual(payload["input"], "<|speaker:0|> Hello [Warm] there.")
+        self.assertEqual(payload["input"], "Hello [Warm] there.")  # only text, no speaker
         self.assertEqual((payload["temperature"], payload["top_k"]), (0.7, 30))
         path = Path(updates[-1].output)
         self.assertEqual((path.parent.name, updates[-1].status), ("drama3_voices", "Hello there."))

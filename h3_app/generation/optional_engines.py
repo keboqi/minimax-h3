@@ -20,8 +20,10 @@ from h3_app.workflows.moss_image import (
 from h3_app.workflows.moss_image_prompt import is_layout_prompt
 from h3_models import FLUX3_BASE_MODEL_CHOICES
 from h3_app.workflows.drama3 import (
-    MAX_FRAMES, MAX_SPEAKER, build_drama3_asr_graph, text_speakers, validate_drama3_text, drama3_asr_model_keys,
+    MAX_FRAMES, MAX_SPEAKER, build_drama3_asr_graph, request_cast, speaker_label, unknown_speaker_names,
+    validate_drama3_text, drama3_asr_model_keys,
 )
+from h3_app.drama3_serving.tree import script_speakers
 from h3_models import DEFAULT_DRAMA3_ASR
 from .qwen import first_reference_dimensions
 from .requests import Flux3Request, Drama3Request, MossImageRequest
@@ -138,11 +140,18 @@ def validate_request(request):
         _integer(request.parallel, 1, 32, "Parallel requests")
         _integer(request.retries, 0, 4, "Retries per chunk")
         # Each chunk is sent with its speaker's own clip, so every voice must be given.
-        missing = sorted(text_speakers(request.text) - {speaker for speaker, _a, _t in request.voices})
+        names, default_speaker, resolve = request_cast(request)
+        unknown = unknown_speaker_names(request.text, names)
+        if unknown:
+            raise H3Error("No speaker in Cast is named " + ", ".join(f'"{name}"' for name in unknown)
+                          + '. Give a Cast slot that name, or start the line with its slot, such as "Speaker 2:".')
+        voiced = {speaker_label(speaker, names) for speaker, _a, _t in request.voices}
+        spoken = script_speakers(request.text, default_speaker=default_speaker, resolve=resolve)
+        missing = [speaker for speaker in spoken if speaker not in voiced]
         if missing:
             raise H3Error(
                 "Drama 3 sends each speaker's lines with that speaker's reference voice. Add a clip, "
-                "saved speaker or generated voice for " + ", ".join(f"<|speaker:{n}|>" for n in missing) + "."
+                "saved speaker or generated voice for " + ", ".join(missing) + "."
             )
         for name, low, high in (("temperature", 0, 2), ("top_p", 0.05, 1)):
             if not low <= float(getattr(request, name)) <= high:

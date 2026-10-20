@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any, Union
+from typing import Any, Callable, Union
+
+from h3_app.workflows.drama3 import NAME_LINE
 
 from .speaker_effects import extract_speaker_effects, has_speaker_effects, strip_speaker_effects
 
@@ -24,7 +26,7 @@ PAUSE_TAG_RE = re.compile(r"<#\s*(\d+(?:\.\d+)?)\s*#>")
 
 @dataclass(frozen=True)
 class SpeechTurn:
-    speaker: int
+    speaker: str  # the Cast name, or "Speaker N" for an unnamed slot
     text: str
     speaker_effects: tuple[str, ...] = ()
     raw_text: str = ""
@@ -134,8 +136,8 @@ def _normalize_script_tokens(script: str) -> list[str]:
     return tokens
 
 
-def _expand_speaker_line(speaker: int, raw_body: str) -> list[SpeechTurn | PauseNode]:
-    """Expand a single `<|speaker:N|>` line into SpeechTurn and PauseNode items."""
+def _expand_speaker_line(speaker: str, raw_body: str) -> list[SpeechTurn | PauseNode]:
+    """Expand a single speaker line's body into SpeechTurn and PauseNode items."""
     if not PAUSE_TAG_RE.search(raw_body):
         body, effects = extract_speaker_effects(raw_body)
         cleaned = body.strip()
@@ -192,8 +194,16 @@ def _expand_speaker_line(speaker: int, raw_body: str) -> list[SpeechTurn | Pause
     return items
 
 
-def parse_drama3_tree(script: str, *, default_speaker: int = 0) -> SequentialNode:
-    """Parse a Drama 3 script with arbitrary `<parallel>` and `<sequential>` nesting."""
+def parse_drama3_tree(script: str, *, default_speaker: str = "Speaker 0",
+                      resolve: Callable[[str], str | None] | None = None) -> SequentialNode:
+    """Parse a Drama 3 script with arbitrary `<parallel>` and `<sequential>` nesting.
+
+    Speaker lines start with a name ("Mia: Hello.") or, in older scripts, a
+    ``<|speaker:N|>`` tag, which is "Speaker N". ``resolve`` maps a name to its
+    speaker label, or None when the line does not start with a speaker; without
+    it every ``Name:`` prefix is a speaker. Text before the first speaker line
+    belongs to ``default_speaker``.
+    """
     tokens = _normalize_script_tokens(script)
     stack: list[tuple[str, list[Any]]] = [("sequential", [])]
 
@@ -263,12 +273,16 @@ def parse_drama3_tree(script: str, *, default_speaker: int = 0) -> SequentialNod
                 items.append(PauseNode(seconds=min(seconds, 30.0)))
             continue
 
+        raw_body = token
         speaker_match = SPEAKER_LINE_RE.match(token)
-        if speaker_match:
-            active_speaker = int(speaker_match.group(1))
+        named = None if speaker_match else NAME_LINE.match(token)
+        name = f"Speaker {int(speaker_match.group(1))}" if speaker_match else named["name"] if named else None
+        label = (resolve(name) if resolve else " ".join(name.split())) if name else None
+        if label:
+            active_speaker = label
+            raw_body = speaker_match.group(2) if speaker_match else named["body"]
+        elif speaker_match:  # a tag for a slot the caller cannot resolve is still not spoken
             raw_body = speaker_match.group(2)
-        else:
-            raw_body = token
 
         expanded = _expand_speaker_line(active_speaker, raw_body)
         mode, items = stack[-1]
@@ -347,6 +361,13 @@ def iter_speech_nodes(node: TreeNode) -> list[SpeechNode]:
             result.extend(iter_speech_nodes(child))
         return result
     return []
+
+
+def script_speakers(script: str, *, default_speaker: str = "Speaker 0",
+                    resolve: Callable[[str], str | None] | None = None) -> list[str]:
+    """The labels of every speaker with a line in the script, in order of first line."""
+    tree = parse_drama3_tree(script, default_speaker=default_speaker, resolve=resolve)
+    return list(dict.fromkeys(turn.speaker for node in iter_speech_nodes(tree) for turn in node.turns))
 
 
 def extract_script_sounds(script: str) -> list[dict[str, Any]]:

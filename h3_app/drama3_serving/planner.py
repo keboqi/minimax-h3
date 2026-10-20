@@ -27,15 +27,16 @@ CJK_JOIN = re.compile(rf"[。！？；，、：{CJK_CLOSE}]$")
 @dataclass(frozen=True)
 class Chunk:
     index: int
-    speaker: int
-    text: str  # speech and cues for one speaker, without speaker tags
+    speaker: str  # the speaker's label: its Cast name, or "Speaker N"
+    text: str  # speech and cues for one speaker, without the speaker's name
     speaker_effects: tuple[str, ...] = ()
 
 
-def parse_turns(script: str) -> list[tuple[int, str]]:
-    """Ordered (speaker, text) turns; text before the first tag is speaker 0."""
+def parse_turns(script: str) -> list[tuple[str, str]]:
+    """Ordered (speaker, text) turns of a tagged script; text before the first tag is Speaker 0."""
     parts = SPEAKER_TAG.split(str(script or ""))
-    turns = [(0, parts[0])] + [(int(speaker), body) for speaker, body in zip(parts[1::2], parts[2::2])]
+    turns = [("Speaker 0", parts[0])] + [(f"Speaker {int(speaker)}", body)
+                                         for speaker, body in zip(parts[1::2], parts[2::2])]
     return [(speaker, " ".join(body.split())) for speaker, body in turns if body.strip()]
 
 
@@ -77,7 +78,7 @@ def plan_turns_chunks(
     limit: int = CHUNK_BYTES,
 ) -> list[Chunk]:
     """Merge consecutive turns of one speaker with identical speaker_effects, then cut near ``limit``."""
-    merged: list[tuple[int, str, tuple[str, ...]]] = []
+    merged: list[tuple[str, str, tuple[str, ...]]] = []
     for turn in turns:
         text = " ".join((turn.text or "").split())
         if not text:

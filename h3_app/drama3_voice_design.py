@@ -23,7 +23,7 @@ _OPENING = re.compile(r"[,;:.!?，、；：。！？](?=\s*\S)")
 
 
 def design_script(description: str, text: str) -> str:
-    """``<|speaker:0|> Opening phrase, [description] rest of the preview.``"""
+    """``Opening phrase, [description] rest of the preview.`` Drama 3 gets only this text."""
     description, text, _language = validate_inputs(description, text, "Auto")
     description = " ".join(description.split())
     if any(char in description for char in "<>[]|"):
@@ -37,7 +37,7 @@ def design_script(description: str, text: str) -> str:
         # Unspaced scripts (Chinese, Japanese) without punctuation: after the first two characters.
         cut = space if space > 0 else min(2, len(text))
     head, tail = text[:cut].strip(), text[cut:].strip()
-    return f"<|speaker:0|> {head} [{description}] {tail}".rstrip()
+    return f"{head} [{description}] {tail}".rstrip()
 
 
 def _sampling(request) -> dict:

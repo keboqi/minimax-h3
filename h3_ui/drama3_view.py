@@ -207,8 +207,9 @@ def _voice_slot(speaker, names):
                       visible=speaker < DRAMA3_VISIBLE_SLOTS, elem_classes=["h3-drama3-slot"]) as group:
         with gr.Row(equal_height=True):
             preset = gr.Dropdown(drama3_voice_choices(names), value=UPLOAD_VOICE,
-                                 label=f"Speaker {speaker} voice · <|speaker:{speaker}|>")
-            save_name = gr.Textbox(label=f"Speaker {speaker} name", placeholder="Character or role")
+                                 label=f"Speaker {speaker} voice")
+            save_name = gr.Textbox(label=f"Speaker {speaker} name", placeholder="Character or role",
+                                   info=f'Script lines start with this name, or with "Speaker {speaker}:".')
         description = gr.Textbox(label=f"Speaker {speaker} voice description", lines=2,
                                   placeholder="Age range, pitch, timbre, accent, articulation and pace.")
         with gr.Group(elem_classes=["h3-drama3-clip"]) as upload:
@@ -325,12 +326,12 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         with gr.Row(equal_height=False, elem_classes=["h3-generator-shell", "h3-drama3-studio"]):
             with gr.Column(scale=3, min_width=360, elem_classes=["h3-drama3-left"]):
                 with gr.Column(elem_classes=["h3-composer", "h3-drama3-script-panel"]):
-                    _heading("01", "Script", "Tag each line with <code>&lt;|speaker:N|&gt;</code> and add "
-                             "[cues] in brackets, or let the writer do it.")
+                    _heading("01", "Script", "Start each line with a speaker's name from Cast, such as "
+                             "<code>Mia:</code>, and add [cues] in brackets, or let the writer do it.")
                     title = gr.Textbox(label="Title", max_lines=1, placeholder="Chapter or story title",
                                        info="Names the output file. The writer fills it from the script.")
                     text = gr.Textbox(label="Speech text", lines=18, max_lines=60, elem_classes=["h3-drama3-script"],
-                        placeholder="<|speaker:0|> [with warm excitement] Welcome back!\n<|speaker:1|> [laughs] Took you long enough.")
+                        placeholder="Mia: Welcome [with warm excitement] back!\nLeo: Took you long enough. [laughs]")
                     with gr.Column(elem_classes=["h3-drama3-auto"]):
                         with gr.Row(equal_height=True, elem_classes=["h3-drama3-auto-bar"]):
                             gr.HTML('<div class="h3-drama3-auto-heading"><strong>Auto</strong>'
@@ -370,7 +371,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             writer_prompt = gr.Textbox(label="Full writer prompt", lines=8, max_lines=20,
                                                        interactive=False, visible=False, buttons=["copy"])
                             pasted_reply = gr.Textbox(label="Pasted writer reply", lines=6, max_lines=20,
-                                                      placeholder='{"script": "<|speaker:0|> ...", "speakers": [...]}')
+                                                      placeholder='{"script": "Mia: ...", "speakers": [{"speaker_id": 0, "name": "Mia", ...}]}')
                             apply_reply = gr.Button("Apply pasted reply", size="sm", variant="primary")
                 with gr.Column(elem_classes=["h3-composer", "h3-drama3-cast-panel"]):
                     _heading("02", "Cast", "Every speaker needs a voice: upload a reference clip, generate one from a "

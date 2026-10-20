@@ -2,8 +2,13 @@
 
 ## Compose and generate
 
-1. Enter a draft or a tagged script in **Speech text**. Use `<|speaker:0|>`
-   through `<|speaker:15|>` to assign voices and cues such as `[laughs]` for delivery.
+1. Enter a draft or a script in **Speech text**. Start each line with a speaker's
+   name from **Cast**, such as `Mia: Hello.` (a full-width `：` works too), and add cues
+   such as `[laughs]` for delivery. `Speaker 2:` means Cast slot 2 whatever its name.
+   Text before the first named line, or prose that names nobody, is read by the
+   first speaker with a voice. In a script that names its speakers, a line starting
+   with a name not in Cast is an error, so a typo is not read aloud. Older scripts
+   with `<|speaker:N|>` tags still work.
 2. Choose **Basic** for dialogue or **Advanced** (the default) for sound effects,
    music and vocal effects. Basic keeps those tags in the script but ignores them.
 3. Use **Auto: rewrite, voice, sound and speak** for the full workflow, or open
@@ -24,8 +29,10 @@ feature have no line timings and show no subtitles.
 
 ### Takes
 
-Every generated line is saved as a take, keyed by its text, speaker, voice clip
-and transcript, and sampling settings. Repeated identical lines have separate
+Every generated line is saved as a take, keyed by its text, speaker name, voice clip
+and transcript, and sampling settings; renaming a speaker generates its lines again.
+Drama 3 receives only each line's text with its speaker's clip and transcript, never
+a speaker number or name. Repeated identical lines have separate
 takes, distinguished by their occurrence order. **Generate speech** reuses saved takes, so
 after editing a script only changed lines are generated; when nothing changed, the
 mix is rebuilt without starting SGLang-Omni. After a result, **Lines** appears under
@@ -55,8 +62,9 @@ before the script and speaker slots change.
 The script writer returns a Drama 3 script plus an indexed cast. It separates
 narration and dialogue, resolves character aliases, preserves supplied dialogue
 and story order, and fills the corresponding speaker slots with names, voice
-descriptions, and preview speech. Each slot keeps the exact number used in
-`<|speaker:N|>`; existing references and sparse IDs are preserved. Invalid or
+descriptions, and preview speech. The script names its speakers as the cast
+does; each cast entry keeps its slot, and existing references and sparse slots
+are preserved. Invalid or
 inconsistent writer responses leave the current script and slots in place.
 
 In **Speaker voices**, each speaker has a collapsible panel titled with its
@@ -81,7 +89,7 @@ engine:
 - **Drama 3** generates one take with no reference on SGLang-Omni, with the
   sampling settings under **Speech settings**. The description is
   inserted as a delivery cue after the preview's opening phrase, for example
-  `<|speaker:0|> Well now, [gravelly old sailor, slow and amused] the tide is turning.`,
+  `Well now, [gravelly old sailor, slow and amused] the tide is turning.`,
   so it must not contain brackets. The cue is not part of the transcript.
 
 Preview speech is separate from the current clip's transcript: editing a future

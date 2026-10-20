@@ -39,17 +39,19 @@ class PlannerTests(unittest.TestCase):
     def test_turns_merge_consecutive_lines_of_one_speaker(self):
         script = "Intro line.\n<|speaker:1|> Hi there.\n<|speaker:1|> Still me.\n<|speaker:0|> Back to zero."
         self.assertEqual(parse_turns(script),
-                         [(0, "Intro line."), (1, "Hi there."), (1, "Still me."), (0, "Back to zero.")])
+                         [("Speaker 0", "Intro line."), ("Speaker 1", "Hi there."), ("Speaker 1", "Still me."),
+                          ("Speaker 0", "Back to zero.")])
         chunks = plan_chunks(script)
         self.assertEqual([(c.speaker, c.text) for c in chunks],
-                         [(0, "Intro line."), (1, "Hi there. Still me."), (0, "Back to zero.")])
+                         [("Speaker 0", "Intro line."), ("Speaker 1", "Hi there. Still me."),
+                          ("Speaker 0", "Back to zero.")])
         self.assertEqual([c.index for c in chunks], [0, 1, 2])
     def test_long_turns_split_at_sentence_ends_without_breaking_cues(self):
         sentence = "This sentence has [softly, almost to herself. Then louder] a cue with a period inside."
         chunks = plan_chunks("<|speaker:2|> " + " ".join([sentence] * 8), limit=200)
         self.assertGreater(len(chunks), 1)
         for chunk in chunks:
-            self.assertEqual(chunk.speaker, 2)
+            self.assertEqual(chunk.speaker, "Speaker 2")
             self.assertEqual(chunk.text.count("["), chunk.text.count("]"))
             self.assertLessEqual(len(chunk.text.encode()), 200 + len(sentence))
     def test_cjk_turns_split_without_spaces_and_stay_under_the_server_budget(self):
@@ -372,7 +374,8 @@ class GenerateTests(unittest.TestCase):
         return Drama3Request(text, voices=voices, parallel=4, retries=2,
                              voice_names=((0, "Alice"), (1, "")), **overrides)
     def test_each_chunk_uses_its_speakers_voice_and_the_server_stays_loaded(self):
-        script = "<|speaker:0|> Hello there, friend.\n<|speaker:1|> [laughs] Hi Alice.\n<|speaker:0|> Ready to go?"
+        # Lines name their speaker; older tags still mean an unnamed slot ("Speaker 1").
+        script = "Alice: Hello there, friend.\n<|speaker:1|> [laughs] Hi Alice.\nalice: Ready to go?"
         fake, updates, snapshot = self.run_route(self.request(script),
                                                  lambda payload: float_wav(tone(expected_seconds(payload["input"]))))
         payloads = [call.args[0] for call in fake.speech.call_args_list]
@@ -393,7 +396,7 @@ class GenerateTests(unittest.TestCase):
         # A full 32-hex id lets the UI map Gradio's cached copy back to this file.
         self.assertRegex(result.name, r"_[0-9a-f]{32}\.mp3$")
         chunks = snapshot.call_args.args[1]["settings"]["chunks"]
-        self.assertEqual([c["speaker"] for c in chunks], [0, 1, 0])
+        self.assertEqual([c["speaker"] for c in chunks], ["Alice", "Speaker 1", "Alice"])
         self.assertEqual(chunks[0]["name"], "Alice")
 
     def test_title_names_the_output_file(self):
@@ -543,7 +546,7 @@ class GenerateTests(unittest.TestCase):
         self.assertNotIn("Audio advisories", updates[-1].status)
     def test_every_speaker_needs_a_reference_voice(self):
         request = self.request("<|speaker:0|> Hi.\n<|speaker:3|> Who am I?")
-        with self.assertRaisesRegex(H3Error, r"<\|speaker:3\|>"):
+        with self.assertRaisesRegex(H3Error, r"voice for Speaker 3\.$"):
             validate_request(request)
 
     def test_served_generation_renders_nested_sound_tree_pauses_and_speaker_effects(self):

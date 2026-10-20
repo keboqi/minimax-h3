@@ -740,17 +740,17 @@ DRAMA3_SCRIPT_MODES = (DRAMA3_SCRIPT_BASIC, DRAMA3_SCRIPT_ADVANCED)
 
 
 def drama3_voice_context(voices: Iterable[tuple[int, str]]) -> str:
-    """Describe cloned-voice slots by speaker number and saved name only."""
+    """Describe cloned-voice slots by speaker ID and saved name only."""
     lines = [
-        f"- <|speaker:{speaker}|> uses a cloned reference voice"
-        + (f' saved as "{name}"' if name else "")
-        + "; direct its delivery only."
+        f"- speaker_id {speaker}"
+        + (f' ("{name}")' if name else "")
+        + " uses a cloned reference voice; direct its delivery only."
         for speaker, name in voices
     ]
     if not lines:
         return "Voice context: no reference voices; cast every voice with a style prefix."
     return (
-        "Voice context (give these numbers to the matching speakers; any other speaker "
+        "Voice context (give these speaker IDs to the matching characters; any other speaker "
         "gets an invented voice cast with a style prefix):\n" + "\n".join(lines)
     )
 
@@ -763,7 +763,7 @@ def drama3_speaker_plan(mode: str, voices: Iterable[tuple[int, str]]) -> tuple[t
     if mode == DRAMA3_SPEAKER_SINGLE:
         speaker = cloned[0] if cloned else 0
         return (speaker,), (
-            f"Speaker count: exactly ONE speaker. Tag every line <|speaker:{speaker}|>. "
+            f"Speaker count: exactly ONE speaker, speaker_id {speaker}; start every line with its name. "
             "Do not split the text between characters or add a narrator; one voice performs "
             "everything, including any quoted dialogue, changing only its delivery."
         )
@@ -771,10 +771,10 @@ def drama3_speaker_plan(mode: str, voices: Iterable[tuple[int, str]]) -> tuple[t
         if not cloned:
             raise H3Error("Adapt to voices needs at least one reference voice or saved speaker; "
                           "add one or choose Auto or Single.")
-        tags = ", ".join(f"<|speaker:{speaker}|>" for speaker in cloned)
+        ids = ", ".join(str(speaker) for speaker in cloned)
         return tuple(cloned), (
-            f"Speaker count: exactly {len(cloned)} speaker(s), one per reference voice: {tags}. "
-            "Use only these speaker numbers. Distribute the lines among them by role; when the "
+            f"Speaker count: exactly {len(cloned)} speaker(s), one per reference voice: speaker_id {ids}. "
+            "Use only these speaker IDs. Distribute the lines among them by role; when the "
             "text has more characters than voices, give the extra characters' lines to the "
             "closest-fitting voice instead of inventing new speakers."
         )
@@ -825,7 +825,7 @@ def enforce_drama3_speakers(script: str, allowed: tuple[int, ...] | None) -> str
     extra = sorted(text_speakers(script) - set(allowed))
     if extra:
         raise H3Error("The writer used speakers without a reference voice: "
-                      + ", ".join(f"<|speaker:{speaker}|>" for speaker in extra) + ".")
+                      + ", ".join(f"Speaker {speaker}" for speaker in extra) + ".")
     return script
 
 
@@ -902,8 +902,12 @@ def parse_drama3_reply(
     return_sounds: bool = False,
     notes: list[str] | None = None,
     meta: dict | None = None,
+    speaker_names: dict[int, str] | None = None,
 ) -> tuple:
     """Validate a writer reply exactly as the built-in writer does; raises ``H3Error``.
+
+    ``original`` may name its speakers ("Mia: Hello."); ``speaker_names`` maps the
+    Cast's names to speaker IDs for the checks against it.
 
     Risky cue placements are repaired; what was repaired, and source phrases the
     script dropped, are appended to ``notes`` for the status line. The reply's
@@ -911,6 +915,9 @@ def parse_drama3_reply(
     """
     from h3_app.drama3_cast import parse_script_cast_and_sounds, parse_writer_title
     from h3_app.drama3_serving.tree import extract_script_sounds, strip_drama3_sound_tags
+    from h3_app.workflows.drama3 import names_to_tags
+
+    original = names_to_tags(original, speaker_names)
 
     def review(script):
         from h3_app.drama3_lint import coverage_note, lint_drama3_script
@@ -940,6 +947,7 @@ def parse_drama3_reply(
             raise H3Error("The writer's cast does not match the selected speaker mode and reference IDs.")
         return (script, cast, sounds) if return_sounds else (script, cast)
     # Compatibility for callers with older custom, plain-script system prompts.
+    reply = names_to_tags(reply, speaker_names)
     cleaned_reply = strip_drama3_sound_tags(reply) if script_mode == DRAMA3_SCRIPT_BASIC else reply
     script = review(enforce_drama3_speakers(validate_drama3_script(cleaned_reply), allowed))
     sounds = [] if script_mode == DRAMA3_SCRIPT_BASIC else extract_script_sounds(script)
@@ -955,6 +963,7 @@ def apply_drama3_reply(
     script_mode: str = DRAMA3_SCRIPT_BASIC,
     return_sounds: bool = False,
     return_title: bool = False,
+    speaker_names: dict[int, str] | None = None,
 ) -> tuple:
     """Validate a reply pasted from another chat model; the text is kept on failure.
 
@@ -978,6 +987,7 @@ def apply_drama3_reply(
             return_sounds=return_sounds,
             notes=notes,
             meta=meta,
+            speaker_names=speaker_names,
         )
     except H3Error as exc:
         return (original, f"{DRAMA3_PROMPT_FAILED} {exc} Your text was kept.", [], *extra)
@@ -1011,6 +1021,7 @@ def enhance_drama3_text(
     sound_context: str = "",
     return_sounds: bool = False,
     return_title: bool = False,
+    speaker_names: dict[int, str] | None = None,
 ) -> tuple:
     """Rewrite a script and validate its cast as one result before updating the UI.
 
@@ -1064,6 +1075,7 @@ def enhance_drama3_text(
             return_sounds=return_sounds,
             notes=notes,
             meta=meta,
+            speaker_names=speaker_names,
         )
         status = _with_writer_notes(status.replace(" prompt ", " script ", 1), notes)
         if return_sounds:

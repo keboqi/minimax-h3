@@ -16,7 +16,10 @@ from h3_app.drama3_serving.tree import (
 from h3_app.drama3_sounds import normalize_sound_name
 from h3_app.drama3_speakers import normalize_name
 from h3_app.errors import H3Error
-from h3_app.workflows.drama3 import MAX_SPEAKER, SPEAKER_TAG, text_speakers, validate_drama3_text
+from h3_app.workflows.drama3 import MAX_SPEAKER, SPEAKER_TAG, names_to_tags, text_speakers, validate_drama3_text
+
+SPEAKER_LINE_ERROR = ("Each script line must start with one speaker's name from the speakers list, "
+                      'as in "Mia: Hello.", and contain speech.')
 
 
 def _normalize_and_validate_script_lines(raw_script: str) -> str:
@@ -43,26 +46,29 @@ def _normalize_and_validate_script_lines(raw_script: str) -> str:
             continue
         match = SPEAKER_TAG.match(line)
         if not match or SPEAKER_TAG.search(line[match.end() :]):
-            raise H3Error("Each script line must start with exactly one speaker tag and contain speech.")
+            raise H3Error(SPEAKER_LINE_ERROR)
         spoken_body = PAUSE_TAG_RE.sub("", strip_speaker_effects(line[match.end() :])).strip()
         if not spoken_body:
-            raise H3Error("Each script line must start with exactly one speaker tag and contain speech.")
+            raise H3Error(SPEAKER_LINE_ERROR)
         has_speaker_line = True
         lines.append(line)
     if not has_speaker_line:
-        raise H3Error("Each script line must start with exactly one speaker tag and contain speech.")
+        raise H3Error(SPEAKER_LINE_ERROR)
     return "\n".join(lines)
 
 
 def parse_script_cast_and_sounds(response: str) -> tuple[str, list[dict], list[dict]]:
-    """Parse and validate script, cast entries, and sound briefs from writer JSON."""
+    """Parse and validate script, cast entries, and sound briefs from writer JSON.
+
+    The script names its speakers ("Mia: Hello."), as the speakers list does; the
+    returned script uses Drama 3 speaker tags. Tagged lines are accepted too.
+    """
     try:
         data = json.loads(response)
     except (ValueError, TypeError) as exc:
         raise H3Error("The writer must return JSON with script and speakers.") from exc
     if not isinstance(data, dict) or not isinstance(data.get("script"), str):
         raise H3Error("The writer returned no script string.")
-    script = _normalize_and_validate_script_lines(data["script"])
     raw = data.get("speakers")
     if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_SPEAKER + 1:
         raise H3Error("The writer must return 1–16 speakers.")
@@ -88,8 +94,10 @@ def parse_script_cast_and_sounds(response: str) -> tuple[str, list[dict], list[d
             raise H3Error(f"Speaker {speaker}'s preview must contain only spoken words, without controls.")
         ids.add(speaker)
         cast.append({"speaker_id": speaker, **fields})
+    script = _normalize_and_validate_script_lines(
+        names_to_tags(data["script"], {entry["speaker_id"]: entry["name"] for entry in cast}))
     if ids != text_speakers(script):
-        raise H3Error("The cast's speaker IDs do not match the script's speaker tags.")
+        raise H3Error("The speakers list does not match the speakers the script names.")
 
     sounds = extract_script_sounds(script)
     by_name = {item["name"].casefold(): item for item in sounds}

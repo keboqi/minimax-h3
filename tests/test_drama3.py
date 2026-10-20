@@ -65,8 +65,20 @@ class Drama3RequestTests(unittest.TestCase):
                 validate_request(Drama3Request("Hello", voices=((0, "a.wav", "Hello"),), top_k=top_k))
 
     def test_every_speaker_in_the_script_needs_a_voice(self):
-        with self.assertRaisesRegex(H3Error, r"<\|speaker:2\|>"):
+        with self.assertRaisesRegex(H3Error, r"voice for Speaker 2\.$"):
             validate_request(Drama3Request("<|speaker:0|> Hi.\n<|speaker:2|> Yo.", voices=((0, "a.wav", "Hi"),)))
+
+    def test_named_lines_need_a_cast_name_and_a_voice(self):
+        voices = ((0, "a.wav", "Hi"),)
+        cast = ((0, "Mia"), (2, "Leo"))
+        validate_request(Drama3Request("Mia: Hi.\nmia: Again.\nSpeaker 0: Once more.", voices=voices,
+                                       voice_names=cast))
+        with self.assertRaisesRegex(H3Error, r"voice for Leo\.$"):
+            validate_request(Drama3Request("Mia: Hi.\nLeo: Yo.", voices=voices, voice_names=cast))
+        with self.assertRaisesRegex(H3Error, r'named "Bob"'):
+            validate_request(Drama3Request("Mia: Hi.\nBob: Yo.", voices=voices, voice_names=cast))
+        # Prose that names nobody is spoken by the first voice, headings and all.
+        validate_request(Drama3Request("Chapter 1: Rain\nIt rained.", voices=voices, voice_names=cast))
 
 
 class Drama3TranscriptionTests(unittest.TestCase):
@@ -168,9 +180,9 @@ class Drama3WriterTests(unittest.TestCase):
         self.assertIn(LIGHTNING_PROMPT_MODELS[1], status)
         request = client.return_value.chat.completions.create.call_args.kwargs
         self.assertEqual(request["model"], "openai/gpt-6.1-sol")
-        self.assertIn("<|speaker:N|>", request["messages"][0]["content"])
+        self.assertIn("Start every spoken turn line with the speaker's name", request["messages"][0]["content"])
         user = request["messages"][1]["content"][0]["text"]
-        self.assertIn('<|speaker:0|> uses a cloned reference voice saved as "Alice"', user)
+        self.assertIn('- speaker_id 0 ("Alice") uses a cloned reference voice', user)
         self.assertIn("ALICE: Welcome back.", user)
 
     @patch("openai.OpenAI")
@@ -201,7 +213,7 @@ class Drama3WriterTests(unittest.TestCase):
         self.assertIn("exactly ONE speaker", user)
         self.assertEqual(script, "<|speaker:0|> [warm] Hi.\n<|speaker:0|> [laughs] Yo.")
         script, _status, user = self.rewrite(client, "<|speaker:0|> Hi.", "Single", [(2, "Bob")])
-        self.assertIn("<|speaker:2|>", user)
+        self.assertIn("speaker_id 2", user)
         self.assertEqual(script, "<|speaker:2|> Hi.")
 
     @patch("openai.OpenAI")
@@ -214,7 +226,7 @@ class Drama3WriterTests(unittest.TestCase):
         script, status, _user = self.rewrite(
             client, "<|speaker:0|> Hi.\n<|speaker:1|> Yo.", "Adapt to voices", voices)
         self.assertEqual(script, "ALICE: Hi.\nBOB: Yo.")
-        self.assertIn("<|speaker:1|>", status)
+        self.assertIn("without a reference voice: Speaker 1.", status)
 
     @patch("openai.OpenAI")
     def test_adapt_needs_a_voice_and_auto_allows_any_speakers(self, client):
@@ -656,13 +668,14 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         from h3_ui.job_bindings import owned_generation
 
         gen_drama = owned_generation(drama3_handlers.generate_drama3, "drama3")
-        # 1 text + 48 speaker inputs + 6 settings + 1 script_mode + 80 sound slot inputs + 1 title = 137
-        self.assertEqual(len(gen_drama.job_input_names), 137)
+        # 1 text + 48 speaker inputs + 6 settings + 1 script_mode + 80 sound slot inputs + 1 title
+        # + 16 speaker names = 153
+        self.assertEqual(len(gen_drama.job_input_names), 153)
         gen_sounds = owned_generation(drama3_handlers.generate_drama3_sounds, "drama3_sound")
         # 1 shown_sound_slots + 1 skip_existing_sounds + 80 sound slot inputs = 82
         self.assertEqual(len(gen_sounds.job_input_names), 82)
-        self.assertEqual(len(owned_generation(drama3_handlers.remix_drama3, "drama3").job_input_names), 137)
-        self.assertEqual(len(owned_generation(drama3_handlers.regenerate_drama3_line, "drama3").job_input_names), 138)
+        self.assertEqual(len(owned_generation(drama3_handlers.remix_drama3, "drama3").job_input_names), 153)
+        self.assertEqual(len(owned_generation(drama3_handlers.regenerate_drama3_line, "drama3").job_input_names), 154)
         gen_sound = owned_generation(drama3_handlers.generate_drama3_sound, "drama3_sound")
         self.assertEqual(len(gen_sound.job_input_names), 2)
 

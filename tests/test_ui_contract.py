@@ -8,6 +8,7 @@ from copy import deepcopy
 import inspect
 import os
 from pathlib import Path
+import re
 import unittest
 from unittest import mock
 
@@ -707,7 +708,8 @@ class UiContractTests(unittest.TestCase):
         slots = [f"speaker_{n}_{field}" for n in range(16) for field in ("voice", "audio", "transcript")]
         sound_slots = [f"sound_{n}_{field}" for n in range(16) for field in ("preset", "audio", "name", "description", "duration")]
         self.assertEqual(drama, ["text", *slots, "temperature", "top_p", "top_k", "max_frames",
-                                 "parallel", "retries", "script_mode", *sound_slots, "title"])
+                                 "parallel", "retries", "script_mode", *sound_slots, "title",
+                                 *[f"speaker_{n}_name" for n in range(16)]])
         enhance = [row["parameter_name"] for row in api["/enhance_drama3_text"]["parameters"]]
         self.assertEqual(enhance[:7], ["text", "speaker_mode", "model", "temporary_api_key",
                                        "backend", "lightning_api_key", "lightning_model"])
@@ -753,10 +755,10 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual([labels[i] for i in transcribe["inputs"]], ["Speaker 0 reference clip", "Voice transcript model"])
         self.assertEqual(labels[transcribe["outputs"][0]], "Speaker 0 exact transcript")
         voices = [c for c in self.config["components"]
-                  if str(c.get("props", {}).get("label", "")).startswith("Speaker ")
-                  and str(c["props"]["label"]).endswith("|>")]
+                  if c.get("type") == "dropdown"
+                  and re.fullmatch(r"Speaker \d+ voice", str(c.get("props", {}).get("label", "")))]
         self.assertEqual([c["props"]["label"] for c in voices],
-                         [f"Speaker {n} voice · <|speaker:{n}|>" for n in range(16)])
+                         [f"Speaker {n} voice" for n in range(16)])
         for dropdown in voices:
             self.assertEqual(dropdown["props"]["value"], "Upload a clip")
             self.assertEqual(dropdown["props"]["choices"][0][0], "Upload or generate a voice")

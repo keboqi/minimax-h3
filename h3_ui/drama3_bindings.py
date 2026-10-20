@@ -350,6 +350,8 @@ def bind_drama3(view, actions):
         # The title follows the full set of sound slots.
         if view.title is not None:
             generation_inputs.append(view.title)
+            # Then the Cast names, which the script's "Name:" lines refer to.
+            generation_inputs.extend(slot.save_name for slot in view.voices)
     event =_bind_generation(view, "drama3", actions.generate_drama3, actions.interrupt, generation_inputs)
     _bind_takes(view, actions, generation_inputs)
     store_events += _bind_auto(view, actions, generation_inputs)

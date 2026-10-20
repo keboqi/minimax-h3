@@ -22,7 +22,7 @@ from h3_app.errors import H3Error
 from h3_app.generation.results import GenerationUpdate, fresh_audio
 from h3_app.jobs import CURRENT_JOB
 from h3_app.provenance import write_snapshot
-from h3_app.workflows.drama3 import MAX_FRAMES, SPEAKER_TAG
+from h3_app.workflows.drama3 import MAX_FRAMES, SPEAKER_TAG, request_cast, speaker_label
 
 from . import audio, environment, takes as take_store
 from .planner import Chunk, expected_seconds, plan_turns_chunks
@@ -424,7 +424,8 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
         if getattr(request, "script_mode", "Basic") == "Basic"
         else request.text
     )
-    tree = parse_drama3_tree(script_text)
+    names, default_speaker, resolve = request_cast(request)
+    tree = parse_drama3_tree(script_text, default_speaker=default_speaker, resolve=resolve)
     speech_nodes = iter_speech_nodes(tree)
     sound_nodes = iter_sound_nodes(tree)
 
@@ -437,14 +438,12 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
 
     if not chunks:
         raise H3Error("Speech text is required.")
-    names = {speaker: name or f"Speaker {speaker}" for speaker, name in request.voice_names}
-    references = {speaker: (path, transcript) for speaker, path, transcript in request.voices}
+    # Each line goes out with its speaker's clip, found by the speaker's name.
+    references = {speaker_label(speaker, names): (path, transcript) for speaker, path, transcript in request.voices}
     unvoiced = sorted({chunk.speaker for chunk in chunks} - set(references))
     if unvoiced:
-        raise H3Error("Every speaker needs a reference voice; missing "
-                      + ", ".join(f"<|speaker:{n}|>" for n in unvoiced) + ".")
-    cast = ", ".join(f"{names.get(s, f'Speaker {s}')}: {sum(c.speaker == s for c in chunks)}"
-                     for s in sorted({c.speaker for c in chunks}))
+        raise H3Error("Every speaker needs a reference voice; missing " + ", ".join(unvoiced) + ".")
+    cast = ", ".join(f"{s}: {sum(c.speaker == s for c in chunks)}" for s in dict.fromkeys(c.speaker for c in chunks))
     sound_summary = f" · {len(sound_nodes)} sound cue(s)" if sound_nodes else ""
     yield GenerationUpdate(None, f"Planned {len(chunks)} chunk(s) · {cast}{sound_summary}")
 
@@ -462,7 +461,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
             raise H3Error("No clip for sound(s): " + ", ".join(f'"{name}"' for name in dict.fromkeys(missing)) + ".")
 
     label = LABEL
-    # Each request has one voice; the server tags its transcript as speaker 0 itself.
+    # Each request is only the line's text and its speaker's clip with that clip's transcript.
     references = {
         speaker: (_staged_reference(path, settings.media_dir), SPEAKER_TAG.sub("", transcript).strip())
         for speaker, (path, transcript) in references.items()
@@ -568,7 +567,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
             "retries": request.retries, "reference_count": len(request.voices),
             "script_mode": getattr(request, "script_mode", "Basic"),
             "sound_count": len(sound_nodes),
-            "chunks": [{"speaker": t.chunk.speaker, "name": names.get(t.chunk.speaker, ""),
+            "chunks": [{"speaker": t.chunk.speaker, "name": t.chunk.speaker,
                         "text": t.chunk.text, "take": keys[t.chunk.index], "reused": t.attempts == 0,
                         "attempts": t.attempts,
                         "speaker_effects": list(t.chunk.speaker_effects),
@@ -586,7 +585,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     take_store.prune(store)
     progress(1, desc="Complete")
     note = (f"\n{len(failed)} chunk(s) kept their best take after {int(request.retries) + 1} attempt(s) failed a check: "
-            + "; ".join(f"chunk {t.chunk.index + 1} ({names.get(t.chunk.speaker, t.chunk.speaker)}) "
+            + "; ".join(f"chunk {t.chunk.index + 1} ({t.chunk.speaker}) "
                         f"{t.check.reason}" for t in failed)) if failed else ""
     advised = [take for take in ordered if take.check is not None and take.check.warnings]
     if advised:
