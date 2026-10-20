@@ -8,19 +8,24 @@
    music and vocal effects. Basic keeps those tags in the script but ignores them.
 3. Use **Auto: rewrite, voice, sound and speak** for the full workflow, or open
    **Rewrite as a Drama 3 script** and review the result before proceeding.
-4. Open **Speaker voices** to choose a saved group, manage presets, upload clips,
-   or generate a cast. Every speaker in the script needs a voice. The panel title shows the selected group and how many
+4. In the **Cast** column, use **Speaker voices** to choose a saved group, manage presets,
+   upload clips, or generate a cast. Every speaker in the script needs a voice. The panel title shows the selected group and how many
    speakers it holds. In Advanced mode, review **Sound effects and music** too.
-5. Choose a **Speech preset** (**Expressive** by default). **Generate speech** renders the current
-   script and references without rewriting them. Listen beside the composer.
+5. In the **Speak** column, choose a **Speech preset** (**Expressive** by default).
+   **Generate speech** renders the current script and references without rewriting them.
+
+On wide screens Script, Cast and Speak sit side by side; on narrower ones Script and
+Cast stack on the left with Speak beside them. Speak stays in view while you scroll.
+**Auto** sits at the top of the Script column.
 
 ### Takes
 
 Every generated line is saved as a take, keyed by its text, speaker, voice clip
 and transcript, and sampling settings. **Generate speech** reuses saved takes, so
 after editing a script only changed lines are generated; when nothing changed, the
-mix is rebuilt without starting SGLang-Omni. After a result, **Takes** lists each
-line with its length and whether it was reused. Choose a line and click
+mix is rebuilt without starting SGLang-Omni. After a result, **Lines** appears under
+the studio: a table of every line with its length and whether it was reused. Click
+a row (or choose a line) to hear that line's take, before staging and effects. Click
 **Regenerate line** for a new take of just that line, or **Remix** to rebuild the
 mix from saved takes after changing sounds, staging or vocal effects (which are
 applied at mix time). Takes live in the private workspace (`drama3_takes`) and

@@ -131,15 +131,42 @@ def remix_drama3(*values, progress=gr.Progress(track_tqdm=False)):
     yield from _drama3_job(values, progress, remix_only=True)
 
 
-def drama3_takes(output):
-    """Takes table rows and line choices for a generated result, from its settings snapshot."""
+def _take_chunks(output):
+    """The chunks with a saved take, in script order, from a result's settings snapshot."""
     from h3_app.provenance import read_snapshot
 
     if isinstance(output, dict):
         output = output.get("path") or output.get("value")
     snapshot = read_snapshot(_services().resolve_result(output)) if output else None
     chunks = ((snapshot or {}).get("settings") or {}).get("chunks") or []
-    chunks = [chunk for chunk in chunks if chunk.get("take")]
+    return [chunk for chunk in chunks if chunk.get("take")]
+
+
+def drama3_take_selected(output, evt: gr.SelectData):
+    """The take key of the takes-table row the user clicked."""
+    chunks = _take_chunks(output)
+    row = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
+    if not isinstance(row, int) or not 0 <= row < len(chunks):
+        return gr.skip()
+    return chunks[row]["take"]
+
+
+def drama3_take_audio(key):
+    """One line's saved take, before staging and speaker effects, for the line player."""
+    from h3_app.drama3_serving.takes import load_take, takes_root
+
+    key = str(key or "")
+    # Keys are hex digests; anything else must not become a path.
+    loaded = load_take(takes_root(_runtime_config()), key) if key.isalnum() else None
+    if loaded is None:
+        return None
+    samples, rate = loaded
+    return rate, samples
+
+
+def drama3_takes(output):
+    """Takes table rows and line choices for a generated result, from its settings snapshot."""
+    chunks = _take_chunks(output)
     rows, choices = [], []
     for number, chunk in enumerate(chunks, 1):
         speaker = chunk.get("name") or f"Speaker {chunk.get('speaker', 0)}"

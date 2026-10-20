@@ -161,7 +161,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
     defaults = catalog.UI_DEFAULTS
     initial_backend = services.backend_status()
     with (
-        gr.Blocks(title="MiniMax H3 Local") as demo,
+        gr.Blocks(title="MiniMax H3 Local", fill_width=True) as demo,
         gr.Column(elem_classes=["h3-workspace"]),
     ):
         with gr.Row(elem_classes=["h3-workspace-header"]):

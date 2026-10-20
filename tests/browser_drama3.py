@@ -8,6 +8,7 @@ and the titles those browser-side handlers keep up to date.
 """
 
 import json
+import re
 import os
 from pathlib import Path
 import socket
@@ -100,7 +101,7 @@ def run():
                 measure("apply 16-speaker reply",
                         lambda: form.get_by_role("button", name="Apply pasted reply").click())
                 expect(panel).to_contain_text("16 speakers · 0 with a voice")
-                panel.click()
+                expect(panel).to_have_class(re.compile(r"\bopen\b"))  # the Cast column starts open
                 expect(form.locator("button", has_text="Speaker 15 · Character 15")).to_have_count(1)
                 name = form.get_by_label("Speaker 0 name")
                 name.click()

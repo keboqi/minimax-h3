@@ -310,6 +310,35 @@ class Drama3AppInputTests(unittest.TestCase):
         self.assertTrue(actions["visible"])
         self.assertFalse(drama3_handlers.drama3_takes(None)[2]["visible"])
 
+    def test_clicking_a_takes_row_picks_its_line_and_plays_its_take(self):
+        import gradio as gr
+        import numpy as np
+        from h3_ui import application  # noqa: F401 - installs the handlers' services
+        from h3_ui import drama3_handlers
+        from h3_app.drama3_serving import audio, takes
+        from h3_app.provenance import write_snapshot
+
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"H3_WORKSPACE_DIR": temp}):
+            result = Path(temp) / "speech.mp3"
+            result.write_bytes(b"mp3")
+            write_snapshot(result, {"family": "Drama 3", "settings": {"chunks": [
+                {"speaker": 0, "text": "Untaken."},
+                {"speaker": 0, "text": "One.", "take": "a" * 32},
+                {"speaker": 1, "text": "Two.", "take": "b" * 32},
+            ]}})
+            # Rows count only lines with a take, as the table shows them.
+            self.assertEqual(drama3_handlers.drama3_take_selected(str(result), SimpleNamespace(index=[1, 2])),
+                             "b" * 32)
+            self.assertIs(type(drama3_handlers.drama3_take_selected(str(result), SimpleNamespace(index=[5, 0]))),
+                          type(gr.skip()))
+            root = takes.takes_root(None)
+            takes.save_take(root, "b" * 32, audio.encode_wav(np.zeros(2400, dtype=np.float32), 24000))
+            rate, samples = drama3_handlers.drama3_take_audio("b" * 32)
+            self.assertEqual((rate, samples.size), (24000, 2400))
+            self.assertIsNone(drama3_handlers.drama3_take_audio("a" * 32))
+            self.assertIsNone(drama3_handlers.drama3_take_audio("../b"))
+            self.assertIsNone(drama3_handlers.drama3_take_audio(None))
+
     def test_takes_and_settings_are_found_from_gradios_cached_copy(self):
         import shutil
         from h3_ui import application

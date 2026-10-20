@@ -312,6 +312,11 @@ def _bind_takes(view, actions, generation_inputs):
         return
     view.output.change(actions.drama3_takes, inputs=view.output,
                        outputs=[view.takes, view.take_line, view.take_actions], **_QUIET)
+    if view.take_audio is not None and actions.drama3_take_audio is not None:
+        # Clicking a row picks its line; picking a line plays that line's take.
+        view.takes.select(actions.drama3_take_selected, inputs=view.output, outputs=view.take_line, **_QUIET)
+        view.take_line.change(actions.drama3_take_audio, inputs=view.take_line, outputs=view.take_audio,
+                              **_QUIET)
     jobs = [
         bind_gpu_action(
             button.click, _owned_view_generation(callback, "drama3", inputs), inputs=inputs,

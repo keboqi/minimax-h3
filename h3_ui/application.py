@@ -2712,6 +2712,8 @@ def _optional_engine_actions():
         regenerate_drama3_line=drama3_handlers.regenerate_drama3_line,
         remix_drama3=drama3_handlers.remix_drama3,
         drama3_takes=drama3_handlers.drama3_takes,
+        drama3_take_selected=drama3_handlers.drama3_take_selected,
+        drama3_take_audio=drama3_handlers.drama3_take_audio,
         enhance_flux3_prompt=enhance_flux3_prompt,
         enhance_drama3_text=drama3_handlers.enhance_drama3_text,
         transcribe_drama3_voice=drama3_handlers.transcribe_drama3_voice,

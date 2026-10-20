@@ -158,7 +158,7 @@ H3_WORKSPACE_CSS = """
   --link-text-color: var(--h3-accent);
   --radius-lg: 12px;
   --radius-md: 8px;
-  max-width: 1600px;
+  max-width: none;
   margin: 0 auto;
   padding: 12px 24px 28px;
   background: var(--h3-muted-surface);
@@ -177,6 +177,8 @@ H3_WORKSPACE_CSS = """
   --input-placeholder-color: #94a3b8;
 }
 body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f5f3; }
+/* The workspace fills the window; Gradio's own 32px side padding would only add empty margins. */
+.gradio-container:has(.h3-workspace) .main.app { padding: 8px clamp(0px, 1vw, 16px); }
 :is(.dark body, body.dark):has(.h3-workspace), .dark .gradio-container:has(.h3-workspace) { background: #111b18; }
 .h3-workspace .h3-hero { display: flex; align-items: center; gap: 16px; padding: 0; }
 .h3-workspace .h3-brand-mark { display: grid; place-items: center; width: 54px; height: 54px; flex-shrink: 0; border-radius: 16px; background: #087f6c; color: white; font-size: 22px; font-weight: 750; letter-spacing: -.06em; }
@@ -409,8 +411,8 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
   .h3-workspace .h3-gallery-status { overflow-wrap: anywhere; }
   .h3-workspace .h3-library-button { width: 100% !important; flex-basis: auto !important; }
 }
-/* Drama 3: numbered Script / Cast / Delivery sections, a sticky Speak stage,
-   and visible outlines on the small secondary buttons used throughout. */
+/* Drama 3: Script / Cast / Speak columns side by side (wrapping on narrow screens),
+   a sticky Speak stage, a Lines review below, and visible outlines on the small secondary buttons. */
 .h3-workspace .h3-drama3 .styler { gap: 8px; background: transparent; }
 .h3-workspace .h3-drama3-intro { padding: 2px 4px 6px; }
 .h3-workspace .h3-drama3-intro h2 { margin: 2px 0 4px; font-size: 22px; letter-spacing: -.03em; }
@@ -442,10 +444,25 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-workspace .h3-drama3-auto .h3-generation-buttons > button { flex: 1 1 200px; min-height: 40px; white-space: normal; }
 .h3-workspace .h3-drama3-auto-heading strong { color: var(--h3-accent); font-size: 14px; }
 .h3-workspace .h3-drama3-auto-heading p { margin: 2px 0 0; color: var(--h3-muted); font-size: 12px; }
+.h3-workspace .h3-drama3-auto-bar { flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.h3-workspace .h3-drama3-auto-bar > :first-child { flex: 1 1 220px; min-width: 0; }
+.h3-workspace .h3-drama3-auto-bar > .h3-generation-buttons { flex: 2 1 320px; gap: 8px; }
+.h3-workspace .h3-drama3-studio { flex-wrap: wrap; }
+/* Too narrow for three columns: Script over Cast on the left, with Speak beside both. */
+@media (min-width: 768px) and (max-width: 1499px) {
+  .h3-workspace .h3-drama3-studio { display: grid; grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr); align-items: start; }
+  .h3-workspace .h3-drama3-studio > .h3-drama3-script-panel { grid-area: 1 / 1; }
+  .h3-workspace .h3-drama3-studio > .h3-drama3-cast-panel { grid-area: 2 / 1; }
+  .h3-workspace .h3-drama3-studio > .h3-drama3-stage { grid-area: 1 / 2 / 3 / 3; }
+}
+.h3-workspace .h3-drama3-lines { gap: 10px; margin-top: 16px; }
+.h3-workspace .h3-drama3-line-panel { gap: 10px; padding: 12px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
+.h3-workspace .h3-drama3-lines .h3-generation-buttons > button { flex: 1 1 140px; min-height: 40px; }
+/* Clip, unlike hidden, does not create the scroll container that would pin the stage in place.
+   Top level, because Gradio scopes rules inside @media under .gradio-container, which then never match it. */
+.gradio-container:has(.h3-drama3-stage), .h3-workspace .h3-drama3, .h3-workspace .h3-drama3 > .styler { overflow: clip !important; }
 @media (min-width: 768px) {
   .h3-workspace .h3-drama3-stage { position: sticky; top: 12px; }
-  /* Clip, unlike hidden, does not create the scroll container that would pin the stage in place. */
-  .gradio-container:has(.h3-drama3-stage), .h3-workspace .h3-drama3, .h3-workspace .h3-drama3 > .styler { overflow: clip !important; }
 }
 @media (max-width: 767px) {
   .h3-workspace .h3-drama3.h3-engine-view { padding: 6px; }
