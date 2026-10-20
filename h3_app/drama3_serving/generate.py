@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 from pathlib import Path
 import re
@@ -309,7 +309,22 @@ def _placed_sound(node: SoundNode, ctx: "_Render") -> np.ndarray:
     samples = _decoded_sound(clip_path, ctx.rate, ctx.decoded)
     if node.pan is not None or node.distance:
         samples = audio.place_sound(samples, ctx.rate, node.pan, node.distance)
+    if ctx.room and not node.loop:
+        # A one-shot happens in the scene's room, as its voices do; beds are that room already.
+        samples = np.stack([apply_speaker_effects(samples[:, channel], ctx.rate, (ctx.room,))[: len(samples)]
+                            for channel in range(samples.shape[1])], axis=1)
     return samples
+
+
+# Place effects that describe the space a scene happens in, which its sounds share.
+ROOM_EFFECTS = ("reverb_small_room", "reverb_large_hall", "underwater", "dream_sequence")
+
+
+def _scene_room(node: TreeNode, ctx: "_Render") -> str | None:
+    """The one place effect the voices inside ``node`` carry, if they agree on one."""
+    rooms = {effect for speech in iter_speech_nodes(node) for chunk in ctx.node_chunks.get(id(speech), [])
+             for effect in chunk.speaker_effects if effect in ROOM_EFFECTS}
+    return rooms.pop() if len(rooms) == 1 else None
 
 
 # Speakers' takes are brought this close to the cast's typical level, never by more.
@@ -368,6 +383,7 @@ class _Render:
     decoded: dict[Path, np.ndarray]
     gains: dict[str, float]
     positions: dict[str, float]
+    room: str | None = None  # the enclosing scene's place effect, applied to its one-shot sounds
 
 
 def _edge_texts(node: TreeNode, ctx: _Render) -> tuple[str, str, str, str] | None:
@@ -447,6 +463,8 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
         return out, cursor
 
     if isinstance(node, ParallelNode):
+        # A scene block whose voices share one place sets the room for the sounds inside it.
+        ctx = replace(ctx, room=_scene_room(node, ctx) or ctx.room)
         tracks: list[dict] = []
         child_spans: dict[int, tuple[int, int, list[tuple[int, int]]]] = {}
         for child in node.children:

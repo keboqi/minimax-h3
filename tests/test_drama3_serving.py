@@ -923,6 +923,42 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         self.assertEqual(far.shape, noise.shape)
         self.assertEqual(audio.place_sound(tone(1.0), RATE).shape, (RATE, 2))  # mono clips become stereo
 
+    def test_one_shot_sounds_share_their_scenes_room(self):
+        from h3_app.drama3_serving import generate
+        from h3_app.drama3_serving.planner import plan_turns_chunks
+        from h3_app.drama3_serving.tree import iter_sound_nodes, iter_speech_nodes, parse_drama3_tree
+
+        def context(script):
+            tree = parse_drama3_tree(script)
+            node_chunks = {}
+            for speech in iter_speech_nodes(tree):
+                node_chunks[id(speech)] = plan_turns_chunks(speech.turns, start_index=len(node_chunks))
+            temp = tempfile.TemporaryDirectory()
+            self.addCleanup(temp.cleanup)
+            clip = Path(temp.name) / "knock.wav"
+            clip.write_bytes(audio.encode_wav(tone(0.5), RATE))
+            ctx = generate._Render(node_chunks, {}, {"knock": clip}, RATE, {}, {}, {})
+            return tree, ctx
+
+        tree, ctx = context("<parallel>\n<sound name=\"knock\">Knock</sound>\n<sequential>\n"
+                            "<|speaker:0|> The fairy whispered.\n"
+                            "<|speaker:1|> <fairy_tiny><reverb_small_room> Hush.\n"
+                            "<|speaker:2|> <reverb_small_room> Why?\n</sequential>\n</parallel>")
+        self.assertEqual(generate._scene_room(tree, ctx), "reverb_small_room")  # the narrator stays outside
+        (knock,) = iter_sound_nodes(tree)
+        calls = []
+        with patch.object(generate, "apply_speaker_effects",
+                          side_effect=lambda samples, rate, effects: calls.append(effects) or samples):
+            generate._placed_sound(knock, ctx)
+            self.assertEqual(calls, [])  # outside a scene: as recorded
+            generate._placed_sound(knock, generate.replace(ctx, room="reverb_small_room"))
+            self.assertEqual(calls, [("reverb_small_room",)] * 2)  # each channel
+
+        tree, ctx = context("<parallel>\n<sound name=\"knock\">Knock</sound>\n"
+                            "<|speaker:1|> <reverb_small_room> Hush.\n</parallel>\n"
+                            "<parallel>\n<|speaker:2|> <reverb_large_hall> Why?\n</parallel>")
+        self.assertIsNone(generate._scene_room(tree, ctx))  # two places: no single room
+
     def test_speaker_gains_even_out_voice_levels_within_a_cap(self):
         from h3_app.drama3_serving.generate import MAX_SPEAKER_GAIN_DB, Take, speaker_gains
         from h3_app.drama3_serving.planner import Chunk
@@ -944,6 +980,15 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         self.assertGreater(float(np.max(np.abs(np.diff(np.tile(clip, 2))))), 0.4)  # a hard cut jumps
         self.assertLess(float(np.max(np.abs(np.diff(looped)))), 0.01)
         np.testing.assert_allclose(looped[:RATE // 2], clip[:RATE // 2])  # first pass starts untouched
+
+    def test_loops_end_where_the_clip_matches_its_start(self):
+        t = np.arange(int(9.13 * RATE)) / RATE  # repeats every 0.35 s, cut mid-period
+        clip = (np.sin(2 * np.pi * t / 0.7) * np.sin(2 * np.pi * 330 * t)).astype(np.float32)
+        overlap = RATE // 2
+        end = audio.loop_end(clip, overlap, RATE)
+        self.assertGreaterEqual(end, len(clip) - int(audio.LOOP_SEARCH_SECONDS * RATE))
+        np.testing.assert_allclose(clip[end - overlap:end], clip[:overlap], atol=0.02)
+        self.assertEqual(audio.loop_end(clip[:RATE], RATE // 2, RATE), RATE)  # too short to search
 
 
 class TakeReuseTests(unittest.TestCase):

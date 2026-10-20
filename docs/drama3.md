@@ -208,7 +208,11 @@ stereo image (clips generated before this were mono and play in the centre). In
 Advanced mode a sound can be placed with `pan="-0.6"` (-1 left to 1 right), moved
 during the clip with `pan="-0.8,0"`, and set `distance="far"` (muffled, quieter, with
 room reflections) or `distance="near"`; the writer adds these where the story implies
-a position. The finished mix is brought to -16 LUFS with a look-ahead limiter holding
+a position. When a scene's voices share one place effect (`<reverb_small_room>`,
+`<reverb_large_hall>`, `<underwater>` or `<dream_sequence>`), its one-shot effects
+get the same room, so a knock and a voice sound like one space; ambience and music
+loops do not. A loop repeats from the point near its end that best matches its
+start, so its seams are crossfaded where they are least audible. The finished mix is brought to -16 LUFS with a look-ahead limiter holding
 peaks under -1.5 dBFS, linked across both channels. Remix applies all of this to older
 results too.
 

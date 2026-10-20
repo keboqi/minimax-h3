@@ -424,6 +424,29 @@ def place_sound(samples: np.ndarray, rate: int, pan: tuple[float, float] | None 
 
 
 LOOP_CROSSFADE_SECONDS = 0.5
+LOOP_SEARCH_SECONDS = 2.0  # how far before a clip's end a better loop point is looked for
+
+
+def loop_end(clip: np.ndarray, overlap: int, rate: int) -> int:
+    """Where a looped clip should end so its crossfade into its own start is least audible.
+
+    The last ``overlap`` samples before the chosen end are the ones most like the clip's
+    first ``overlap`` samples, searched within ``LOOP_SEARCH_SECONDS`` of the end and
+    without giving up more than a quarter of the clip.
+    """
+    from scipy import signal
+
+    mono = clip.mean(axis=1) if clip.ndim == 2 else clip
+    search = min(int(LOOP_SEARCH_SECONDS * rate), len(mono) // 4)
+    if search <= 0 or len(mono) < 4 * overlap:
+        return len(mono)
+    head = mono[:overlap].astype(np.float64)
+    region = mono[len(mono) - search - overlap:].astype(np.float64)
+    score = signal.correlate(region, head, mode="valid", method="fft")
+    energy = np.cumsum(np.concatenate(([0.0], region ** 2)))
+    windows = energy[overlap:] - energy[:-overlap]
+    score = score / np.sqrt(np.maximum(windows[: len(score)] * float(np.dot(head, head)), 1e-12))
+    return len(mono) - search + int(np.argmax(score))
 
 
 def loop_to_length(samples: np.ndarray, length: int, rate: int,
@@ -439,6 +462,8 @@ def loop_to_length(samples: np.ndarray, length: int, rate: int,
     if len(clip) >= length:
         return clip[:length].copy()
     overlap = min(int(crossfade * rate), len(clip) // 4)
+    if overlap > 0:
+        clip = clip[:loop_end(clip, overlap, rate)]
     if overlap <= 0:
         return np.tile(clip, (-(-length // len(clip)), *([1] * (clip.ndim - 1))))[:length].astype(np.float32)
     ramp = np.linspace(0.0, np.pi / 2, overlap, dtype=np.float32)
