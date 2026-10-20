@@ -386,7 +386,7 @@ def _drama3_cast_updates(script, status, cast, existing, shown, group=None):
     )
 
     from h3_app import drama3_speakers
-    from h3_app.workflows.drama3 import tags_to_names
+    from h3_app.workflows.drama3 import format_script, tags_to_names
     presets = [gr.skip()] * DRAMA3_VOICE_SLOTS if group is not None else []
     updates = [gr.skip()] * len(DRAMA3_SLOT_INPUT_NAMES)
     # The names the slots end up with, which the script's lines show.
@@ -407,7 +407,7 @@ def _drama3_cast_updates(script, status, cast, existing, shown, group=None):
                 name, description = saved.name, saved.description
         updates[3 * speaker:3 * speaker + 3] = [name, description, entry["preview_text"]]
         final_names[speaker] = name
-    script = tags_to_names(script, final_names)
+    script = format_script(tags_to_names(script, final_names))
     if not cast:
         return (script, status, *updates, *[gr.skip()] * (len(_slot_visibility(shown))), *presets)
     previous = int(shown or DRAMA3_VISIBLE_SLOTS)

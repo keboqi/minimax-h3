@@ -22,7 +22,7 @@ from .qwen_view import build_qwen_image21_view
 from .yue2_view import build_yue2_view
 from h3_ui.drama3_bindings import bind_drama3
 from h3_ui.optional_engine_views import bind_flux3, build_flux3_view, bind_moss_image, build_moss_image_view
-from h3_ui.drama3_view import DRAMA3_SUBTITLES_JS, build_drama3_view
+from h3_ui.drama3_view import DRAMA3_SCRIPT_HIGHLIGHT_JS, DRAMA3_SUBTITLES_JS, build_drama3_view
 from h3_ui.optional_engine_controls import settings_components
 
 # Ctrl/Cmd+Enter presses the visible engine's generate button. Disabled
@@ -521,5 +521,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         )
         demo.load(None, js=GENERATE_SHORTCUT_JS, api_name=False)
         demo.load(None, js=DRAMA3_SUBTITLES_JS, api_name=False)
+        demo.load(None, js=DRAMA3_SCRIPT_HIGHLIGHT_JS, api_name=False)
     demo.h3_css = H3_SETUP_CSS + H3_WORKSPACE_CSS
     return demo

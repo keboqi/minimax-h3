@@ -67,6 +67,13 @@ does; each cast entry keeps its slot, and existing references and sparse slots
 are preserved. Invalid or
 inconsistent writer responses leave the current script and slots in place.
 
+The writer's script is formatted for reading: each turn, sound, and
+`<parallel>`/`<sequential>` tag sits on its own line, indented two spaces per
+level of nesting. Indentation and blank lines do not change the performance.
+**Speech text** colors the script in VS Code's Light+ or Dark+ palette: each
+speaker name gets its own color, and [cues], staging tags, sounds, effect tags,
+and `<#seconds#>` pauses each have theirs.
+
 In **Speaker voices**, each speaker has a collapsible panel titled with its
 index, name, and whether a voice is ready (for example `Speaker 2 · Mia · voice
 ready`). Upload and transcribe a reference clip, or edit the voice description

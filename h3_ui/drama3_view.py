@@ -200,6 +200,101 @@ DRAMA3_SUBTITLES_JS = """
 """
 
 
+# The script box stays a plain textarea with transparent text over a <pre> that mirrors it
+# with colored spans, so editing, undo and every binding keep working. Gradio sets the value
+# without an input event when the writer fills it, so the mirror also polls for changes.
+DRAMA3_SCRIPT_HIGHLIGHT_JS = """
+() => {
+  if (window.h3Drama3Highlight) return;
+  window.h3Drama3Highlight = true;
+  const escape = (text) => text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+  const span = (kind, text) => text ? `<span class="h3-hl-${kind}">${escape(text)}</span>` : "";
+  const NAME = /^([ \\t]*)([^\\s:：<>\\[\\]|#][^:：<>\\[\\]|\\n]{0,63}?)([ \\t]*[:：])/;
+  const TOKEN = /(\\[[^\\[\\]\\n]*\\])|(<#\\s*\\d+(?:\\.\\d+)?\\s*#>)|(<\\|[^|>\\n]*\\|>)|(<\\/?)([A-Za-z_][\\w-]*)([^<>\\n]*?)(\\/?>)/g;
+  const ATTR = /([\\w-]+)(\\s*=\\s*)("[^"]*"|'[^']*'|[^\\s>]+)?/g;
+  const nameKind = (name) => {
+    let hash = 0;
+    for (const c of name.trim().toLowerCase()) hash = (hash * 31 + c.codePointAt(0)) >>> 0;
+    return `name${hash % 6}`;
+  };
+  const attrs = (text) => {
+    let out = "", last = 0;
+    for (const m of text.matchAll(ATTR)) {
+      out += escape(text.slice(last, m.index)) + span("attr", m[1]) + escape(m[2]) + span("value", m[3] || "");
+      last = m.index + m[0].length;
+    }
+    return out + escape(text.slice(last));
+  };
+  const highlight = (script) => {
+    let inSound = false;
+    const plain = (text) => inSound ? span("sound", text) : escape(text);
+    return script.split("\\n").map((line) => {
+      let out = "", rest = line;
+      const name = !inSound && NAME.exec(line);
+      if (name) {
+        out = escape(name[1]) + span(nameKind(name[2]), name[2]) + span("punct", name[3]);
+        rest = line.slice(name[0].length);
+      }
+      let last = 0;
+      for (const m of rest.matchAll(TOKEN)) {
+        out += plain(rest.slice(last, m.index));
+        last = m.index + m[0].length;
+        if (m[1]) { out += span("cue", m[1]); continue; }
+        if (m[2]) { out += span("pause", m[2]); continue; }
+        if (m[3]) { out += span("keyword", m[3]); continue; }
+        const tag = m[5].toLowerCase();
+        const kind = tag === "parallel" || tag === "sequential" ? "keyword" : tag === "sound" ? "tag" : "effect";
+        out += span("punct", m[4]) + span(kind, m[5]) + attrs(m[6]) + span("punct", m[7]);
+        if (tag === "sound") inSound = m[4] === "<" && m[7] === ">";
+      }
+      return out + plain(rest.slice(last));
+    }).join("\\n") + "\\n";  // a trailing newline keeps the last empty line's height
+  };
+  const COPIED = ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "tabSize", "paddingTop",
+    "paddingBottom", "paddingLeft", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+    "borderRadius"];
+  const place = (area) => {
+    const pre = area.h3Mirror, style = getComputedStyle(area);
+    for (const key of COPIED) pre.style[key] = style[key];
+    // The textarea's scrollbar narrows its text, so the mirror pads by the same width.
+    const scrollbar = area.offsetWidth - area.clientWidth
+      - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
+    pre.style.paddingRight = `${parseFloat(style.paddingRight) + scrollbar}px`;
+    Object.assign(pre.style, { top: `${area.offsetTop}px`, left: `${area.offsetLeft}px`,
+      width: `${area.offsetWidth}px`, height: `${area.offsetHeight}px` });
+    pre.scrollTop = area.scrollTop;
+    pre.scrollLeft = area.scrollLeft;
+  };
+  const render = (area) => {
+    if (area.h3Rendered !== area.value) {
+      area.h3Rendered = area.value;
+      area.h3Mirror.innerHTML = highlight(area.value);
+    }
+    place(area);
+  };
+  const attach = (area) => {
+    area.parentElement.querySelector(":scope > pre.h3-drama3-highlight")?.remove();
+    const pre = document.createElement("pre");
+    pre.className = "h3-drama3-highlight";
+    pre.setAttribute("aria-hidden", "true");
+    area.before(pre);
+    area.h3Mirror = pre;
+    area.classList.add("h3-drama3-highlighted");
+    area.addEventListener("input", () => render(area));
+    area.addEventListener("scroll", () => place(area));
+    new ResizeObserver(() => place(area)).observe(area);
+  };
+  setInterval(() => {
+    for (const area of document.querySelectorAll(".h3-drama3-script textarea")) {
+      if (!area.offsetParent) continue;
+      if (!area.h3Mirror) attach(area);
+      render(area);
+    }
+  }, 200);
+}
+"""
+
+
 def _heading(step, title, detail=""):
     """Numbered section heading shared with the other generator views."""
     detail = f"<p>{detail}</p>" if detail else ""

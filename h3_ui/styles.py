@@ -423,6 +423,48 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 }
 .h3-workspace .h3-drama3 .h3-panel-heading code { font-size: 11px; padding: 1px 4px; border-radius: 4px; background: var(--h3-muted-surface); }
 .h3-workspace .h3-drama3-script textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 14px; line-height: 1.65; }
+/* Syntax colors after VS Code's Light+ and Dark+ themes; the mirror sits under the textarea. */
+.h3-workspace .h3-drama3-script {
+  --h3-hl-text: #1f2328; --h3-hl-punct: #800000; --h3-hl-cue: #008000; --h3-hl-pause: #098658;
+  --h3-hl-keyword: #af00db; --h3-hl-tag: #800000; --h3-hl-effect: #267f99; --h3-hl-attr: #e50000;
+  --h3-hl-value: #0000ff; --h3-hl-sound: #795e26;
+  --h3-hl-name0: #0451a5; --h3-hl-name1: #a626a4; --h3-hl-name2: #0b7a55;
+  --h3-hl-name3: #c2410c; --h3-hl-name4: #6d28d9; --h3-hl-name5: #b91c1c;
+}
+.dark .h3-workspace .h3-drama3-script {
+  --h3-hl-text: #d4d4d4; --h3-hl-punct: #808080; --h3-hl-cue: #6a9955; --h3-hl-pause: #b5cea8;
+  --h3-hl-keyword: #c586c0; --h3-hl-tag: #569cd6; --h3-hl-effect: #4ec9b0; --h3-hl-attr: #9cdcfe;
+  --h3-hl-value: #ce9178; --h3-hl-sound: #dcdcaa;
+  --h3-hl-name0: #4fc1ff; --h3-hl-name1: #c586c0; --h3-hl-name2: #4ec9b0;
+  --h3-hl-name3: #ce9178; --h3-hl-name4: #dcdcaa; --h3-hl-name5: #f48771;
+}
+.h3-workspace .h3-drama3-script :has(> textarea.h3-drama3-highlighted) { position: relative; }
+.h3-workspace .h3-drama3-script textarea.h3-drama3-highlighted {
+  position: relative; z-index: 1; background: transparent !important; color: transparent;
+  caret-color: var(--h3-hl-text); white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
+}
+.h3-workspace .h3-drama3-script textarea.h3-drama3-highlighted::placeholder { color: var(--input-placeholder-color); }
+.h3-workspace .h3-drama3-script textarea.h3-drama3-highlighted::selection { color: transparent; background: rgba(38, 132, 255, .3); }
+.h3-workspace .h3-drama3-highlight {
+  position: absolute; z-index: 0; margin: 0; box-sizing: border-box; overflow: hidden; pointer-events: none;
+  border-style: solid; border-color: transparent; background: var(--input-background-fill);
+  color: var(--h3-hl-text); white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
+}
+.h3-drama3-highlight .h3-hl-punct { color: var(--h3-hl-punct); }
+.h3-drama3-highlight .h3-hl-cue { color: var(--h3-hl-cue); }
+.h3-drama3-highlight .h3-hl-pause { color: var(--h3-hl-pause); }
+.h3-drama3-highlight .h3-hl-keyword { color: var(--h3-hl-keyword); }
+.h3-drama3-highlight .h3-hl-tag { color: var(--h3-hl-tag); }
+.h3-drama3-highlight .h3-hl-effect { color: var(--h3-hl-effect); }
+.h3-drama3-highlight .h3-hl-attr { color: var(--h3-hl-attr); }
+.h3-drama3-highlight .h3-hl-value { color: var(--h3-hl-value); }
+.h3-drama3-highlight .h3-hl-sound { color: var(--h3-hl-sound); }
+.h3-drama3-highlight .h3-hl-name0 { color: var(--h3-hl-name0); }
+.h3-drama3-highlight .h3-hl-name1 { color: var(--h3-hl-name1); }
+.h3-drama3-highlight .h3-hl-name2 { color: var(--h3-hl-name2); }
+.h3-drama3-highlight .h3-hl-name3 { color: var(--h3-hl-name3); }
+.h3-drama3-highlight .h3-hl-name4 { color: var(--h3-hl-name4); }
+.h3-drama3-highlight .h3-hl-name5 { color: var(--h3-hl-name5); }
 .h3-workspace .h3-drama3 button.secondary { border: 1px solid var(--h3-border); background: var(--h3-surface); }
 .h3-workspace .h3-drama3 button.secondary:not(:disabled):hover { border-color: var(--h3-accent); color: var(--h3-accent); background: var(--h3-muted-surface); }
 .h3-workspace .h3-drama3-inline-actions { flex-wrap: wrap; gap: 8px; align-items: center; }

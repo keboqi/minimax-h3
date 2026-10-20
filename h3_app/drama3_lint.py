@@ -56,9 +56,11 @@ def lint_drama3_script(script: str) -> tuple[str, list[str]]:
     notes = {"unwrapped": 0, "trailing": 0, "long": 0}
     lines = []
     for line in str(script or "").split("\n"):
-        match = SPEAKER_TAG.match(line)
+        body = line.lstrip(" \t")
+        match = SPEAKER_TAG.match(body)
         if match:
-            line = f"{match.group(0)} {_repair_line(line[match.end():].strip(), notes)}"
+            indent = line[:len(line) - len(body)]
+            line = f"{indent}{match.group(0)} {_repair_line(body[match.end():].strip(), notes)}"
         lines.append(line)
     messages = []
     if notes["unwrapped"]:

@@ -125,6 +125,30 @@ def tags_to_names(script, names):
                          str(script or ""))
 
 
+_BLOCK = re.compile(r"(<sound\b[^>]*>.*?</sound\s*>|</?(?:parallel|sequential)\s*>)", re.IGNORECASE | re.DOTALL)
+_OPEN_CONTAINER = re.compile(r"<(?:parallel|sequential)\s*>", re.IGNORECASE)
+_CLOSE_CONTAINER = re.compile(r"</(?:parallel|sequential)\s*>", re.IGNORECASE)
+
+
+def format_script(script, indent="  "):
+    """One turn, sound or staging tag per line, indented by its <parallel>/<sequential> depth.
+
+    The parser already reads sounds and staging tags as their own lines and ignores
+    indentation and blank lines, so the formatted script performs the same.
+    """
+    lines, depth = [], 0
+    for index, piece in enumerate(_BLOCK.split(str(script or "").replace("\r\n", "\n"))):
+        if index % 2:  # a captured sound or staging tag
+            if _CLOSE_CONTAINER.fullmatch(piece):
+                depth = max(depth - 1, 0)
+            lines.append(indent * depth + " ".join(piece.split()))
+            if _OPEN_CONTAINER.fullmatch(piece):
+                depth += 1
+            continue
+        lines.extend(indent * depth + line.strip() for line in piece.split("\n") if line.strip())
+    return "\n".join(lines)
+
+
 def unknown_speaker_names(script, names):
     """Speaker-like ``Name:`` prefixes matching no Cast name, in a script that names its speakers.
 
