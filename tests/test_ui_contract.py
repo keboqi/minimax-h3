@@ -171,7 +171,7 @@ class UiContractTests(unittest.TestCase):
             if (c["type"] == "image" and c["props"].get("interactive") is not False)
             or (c["type"] == "file" and c["props"].get("file_types") == ["image"])
         ]
-        self.assertEqual(len(image_inputs), 22)
+        self.assertEqual(len(image_inputs), 21)
         pickers = [
             c for c in self.config["components"]
             if c["type"] == "gallery" and c["props"].get("label") == "Library images"
@@ -195,7 +195,7 @@ class UiContractTests(unittest.TestCase):
             if c["type"] == "dropdown" and c["props"].get("label") == "Set as"
         )
         choices = [choice[0] for choice in dropdown["props"]["choices"]]
-        self.assertEqual(len(choices), 12)
+        self.assertEqual(len(choices), 11)
         self.assertIn("Fibo 2.0 · Reference images (optional for Dev, up to 4)", choices)
         self.assertIn("FLUX 3 · Reference images (optional, up to 10)", choices)
         self.assertIn("H3 · First frame (auto resolution)", choices)
@@ -614,9 +614,9 @@ class UiContractTests(unittest.TestCase):
     def test_fibo_endpoint_and_default_on_moss_acceleration_are_bound(self):
         fibo = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_fibo2")
         labels = [self.components[i].get("props", {}).get("label") for i in fibo["inputs"]]
-        self.assertEqual(labels, ["Image prompt / edit instruction / VGL JSON", "Fibo model",
-            "Reference images (optional for Dev, up to 4)", "Edit mask (optional; white changes, black preserves)",
-            "Width", "Height", "Seed (-1 random)", "Steps", "CFG"])
+        self.assertEqual(labels, ["Image prompt / edit instruction / VGL JSON", "Fibo model", "Precision",
+            "Reference images (optional for Dev, up to 4)", "Width", "Height", "Auto size edits",
+            "Seed (-1 random)", "Steps", "CFG"])
         moss = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_moss_image")
         accelerate = self.components[moss["inputs"][-1]]
         self.assertEqual(accelerate["props"]["label"], "Accelerate with Spectrum")

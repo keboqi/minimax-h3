@@ -43,12 +43,13 @@ class MossImageRequest:
 class Fibo2Request:
     prompt: str
     model_choice: str = "Dev"
+    precision: str = "BF16"
     reference_images: tuple[str, ...] = ()
-    mask_image: str | None = None
     width: int = 1024
     height: int = 1024
+    auto_size: bool = True
     seed: int = -1
-    steps: int = 50
+    steps: int = 30
     cfg: float = 5.0
 
 

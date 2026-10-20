@@ -74,7 +74,6 @@ from h3_requirements import (
     WSPROTO_VERSION,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
-    fibo2_install_commands,
     sync_ltx25_workflows,
 )
 
@@ -974,10 +973,6 @@ def install_bundled_nodes(comfy: Path) -> None:
         lightvae_source, comfy / "custom_nodes" / "H3LightVAE", dirs_exist_ok=True,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
-    shutil.copytree(
-        SCRIPT_DIR / "custom_nodes" / "H3Fibo2", comfy / "custom_nodes" / "H3Fibo2", dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-    )
     print(f"[h3-setup] synced {destination}")
 
 
@@ -1150,9 +1145,6 @@ def main() -> None:
         install_pinned_numpy_stack()
     ensure_tensorrt()
     install_bundled_nodes(comfy)
-    if not args.skip_env:
-        for command in fibo2_install_commands(comfy / ".fibo2-venv", ensure_uv(), base_python=sys.executable):
-            run(*command)
     sync_model_inventory(install_dir, comfy)
 
 

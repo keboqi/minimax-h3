@@ -354,7 +354,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             *music3_components.reference_images,
             flux3_components.reference_images,
             fibo2_components.reference_images,
-            fibo2_components.mask_image,
         ]
         for component in image_inputs:
             if hasattr(component, "h3_library_picker"):

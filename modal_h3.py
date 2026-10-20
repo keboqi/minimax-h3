@@ -154,7 +154,6 @@ from h3_requirements import (  # noqa: E402
     WSPROTO_VERSION,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
-    fibo2_install_commands,
     probe_comfy_frontend,
     probe_comfy_workflow,
     sync_ltx25_workflows,
@@ -175,9 +174,6 @@ _BUILD_LOCAL_MOUNTS = (
 _RUNTIME_LOCAL_MOUNTS = (
     (LOCAL_UI, UI),
     (LOCAL_ACCEL, ACCEL_DEST),
-    *((LOCAL / "custom_nodes" / "H3Fibo2" / filename,
-       COMFY / "custom_nodes" / "H3Fibo2" / filename)
-      for filename in ("__init__.py", "nodes.py", "worker.py")),
     *((LOCAL / "custom_nodes" / "H3LightVAE" / filename,
        COMFY / "custom_nodes" / "H3LightVAE" / filename)
       for filename in ("__init__.py", "nodes.py", "h3_vae.py", "UPSTREAM.md")),
@@ -464,9 +460,6 @@ def build(revision: str) -> None:
         "--constraint",
         install_constraints,
     )
-
-    for command in fibo2_install_commands(Path(COMFY) / ".fibo2-venv", base_python=sys.executable):
-        _run(*command)
 
     import torch as _torch
     if not str(_torch.__version__).startswith(TORCH_VERSION + "+cu130"):

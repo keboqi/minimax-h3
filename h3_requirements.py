@@ -38,9 +38,10 @@ LTX_HDR_REQUIREMENTS = ("colour-science==0.4.6", "openimageio==3.0.12.0")
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "6063fafbd9c3b85c5ff40aef435ae11b2844e558"
 
-# ComfyUI v0.42.1: Qwen decode optimizations, TextGenerate cleanup and PDD heads. Keep this
-# source paired with Kitchen 0.2.39 and Drama's new/old cache compatibility.
-COMFY_REF = "63be2f9b82ad0dac88a7ceaa28a9cf3154125a18"
+# ComfyUI v0.42.1 plus kijai's native Fibo 2.0 support (Comfy-Org/ComfyUI#17240 head, fetched by
+# SHA from the official repo). Return to an official release once it merges. Keep this source
+# paired with Kitchen 0.2.39 and Drama's new/old cache compatibility.
+COMFY_REF = "e3699a745d513941f17ecbc9a3c58d00fc7768cb"
 # Drama 3 speech runs on SGLang-Omni; this node pack supplies the Qwen3-ASR transcription nodes.
 DRAMA3_REPO = "https://github.com/PedroMarinhoDev/ComfyUI-Drama3.git"
 # CUDA expert kernels/graphs, plus compatibility with Core's new Qwen cache API.
@@ -376,28 +377,6 @@ def audio_tools_install_commands(venv: str | Path, uv: str | list[str] = "uv") -
     ]
 
 
-def fibo2_install_commands(venv: str | Path, uv: str | list[str] = "uv", *, base_python="3.12") -> list[list[str]]:
-    """Shadow Diffusers in an isolated environment; never upgrade ComfyUI's copy."""
-    from h3_sources import FIBO2_DIFFUSERS_REF, FIBO2_DIFFUSERS_REPO
-
-    base = venv if isinstance(venv, PurePath) else Path(venv)
-    windows = isinstance(base, PureWindowsPath)
-    python = str(base / ("Scripts/python.exe" if windows else "bin/python"))
-    uv = [uv] if isinstance(uv, str) else list(uv)
-    return [
-        [*uv, "venv", "--python", str(base_python), "--system-site-packages", "--allow-existing", str(base)],
-        [*uv, "pip", "install", "--python", python,
-         "--extra-index-url", TORCH_INDEX, "--index-strategy", "unsafe-best-match",
-         "--reinstall-package", "diffusers",
-         f"diffusers @ git+{FIBO2_DIFFUSERS_REPO}@{FIBO2_DIFFUSERS_REF}",
-         "transformers>=5.3,<6", "accelerate>=1.12,<2", "Pillow>=10", "sentencepiece",
-         *INSTALL_CONSTRAINTS],
-        [python, "-c", ("from diffusers import BriaFibo2Pipeline; import torch; "
-         "assert hasattr(BriaFibo2Pipeline, '__call__'); "
-         f"assert torch.__version__.startswith('{TORCH_VERSION}+cu130'), torch.__version__")],
-    ]
-
-
 def selftest() -> None:
     import tempfile
     from unittest.mock import patch
@@ -445,7 +424,7 @@ def selftest() -> None:
     assert KORNIA_RS_VERSION == "0.1.14"
     assert LTX_HDR_REQUIREMENTS == ("colour-science==0.4.6", "openimageio==3.0.12.0")
     assert KERNELS_VERSION == "0.16.0"
-    assert COMFY_REF == "63be2f9b82ad0dac88a7ceaa28a9cf3154125a18"
+    assert COMFY_REF == "e3699a745d513941f17ecbc9a3c58d00fc7768cb"
     assert DRAMA3_REF == "67a733a96890637dc27b1914974ad00c569405fb"
     assert COMFY_KITCHEN_VERSION == "0.2.39"
     assert COMFY_FRONTEND_VERSION == "1.55.18"

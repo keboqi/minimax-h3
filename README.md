@@ -44,7 +44,7 @@ backends; GPU inference and deployment are validated separately.
   multi-reference image editing
 - A MOSS-Image tab for OpenMOSS MOSS-Image SFT and Base text-to-image generation with
   Fast (8-step Turbo LoRA), Balanced and Quality presets, plus default-on Spectrum acceleration
-- Fibo 2.0 Dev generation/editing and Edit Turbo, with references and optional masks
+- Fibo 2.0 Dev generation/editing and Edit Turbo, with ordered reference images
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
 - A dedicated MiniMax Music 3 tab for caption-and-lyrics song generation
 - A dedicated YuE2 tab for score-planned or direct lyrics-to-song generation
@@ -525,29 +525,25 @@ Gemini** follows OpenMOSS's
 the selected LLM returns a caption or a pixel Layout draft for the current width and height,
 and the app validates and compiles it with a port of the skill's `compile_prompt.py`.
 
-**Fibo 2.0** offers **Dev** for text-to-image and editing (50 steps, CFG 5 by default),
+**Fibo 2.0** offers **Dev** for text-to-image and editing (30 steps, CFG 5 by default),
 and **Edit Turbo** for editing only (4 steps, CFG 1). Add up to four ordered reference
-images; refer to them as `<image_1>`, `<image_2>`, etc. An optional mask must match the
-single reference's dimensions: white marks the area to change. Masks guide generation
-and do not guarantee identical pixels outside the region. Enter a plain short caption,
-an edit instruction or structured VGL JSON. No prompt-conversion API key is required.
+images; refer to them as `<image_1>`, `<image_2>`, etc. Enter a plain short caption, an
+edit instruction or structured VGL JSON. No prompt-conversion API key is required.
+**Auto size edits** (on by default) uses Fibo's trained ~1 MP size for the first
+reference's aspect ratio; a single reference is center-cropped to the output size.
+The native nodes have no mask input, so masked edits are not offered.
 
-Fibo runs in the existing ComfyUI instance through the bundled `H3Fibo2Generate` node.
-Setup installs a separate `ComfyUI/.fibo2-venv` with the
-[pinned Fibo Diffusers implementation](https://github.com/muhammadali-afridi/diffusers/tree/ab96e2b58c89adb9df418af74d81cc8b1e1be074).
-It leaves ComfyUI's Diffusers installation intact. Each job unloads Comfy models, starts
-a cancellable inference process, and releases its GPU memory on exit. This adds model
-loading overhead on each run. Generation uses BF16 and standard attention; there is no
-Hopper-specific FlashAttention requirement. `H3_FIBO2_PYTHON` can point to an already
-provisioned compatible Python environment.
-
-Accept access conditions for [Dev](https://huggingface.co/briaai/Fibo-2.0-dev) and
-[Edit Turbo](https://huggingface.co/briaai/Fibo-2.0-edit-turbo) in Hugging Face, then set
-`HF_TOKEN` or run `hf auth login` as the server user. The Dev weights are noncommercial.
-Selected weights download on first use into `ComfyUI/models/fibo2/`; no Fibo weights
-are downloaded by setup. Rerun `setup_h3.py` without `--skip-env` and restart ComfyUI;
-Modal users should rebuild/redeploy. The UI shares reference-library selection,
-generation progress, cancellation and output metadata with the other image engines.
+Fibo runs on ComfyUI's native Fibo 2.0 support (`TextEncodeFibo2`, CLIPLoader type
+`fibo2`) with the ungated [Comfy-Org/Fibo-2.0](https://huggingface.co/Comfy-Org/Fibo-2.0)
+repack; no Hugging Face access request or token is needed. **Precision** selects BF16
+(16.5 GB) or INT8 ConvRot (8.4 GB, lower VRAM) diffusion weights. Text-to-image uses the
+INT8 Qwen3-VL 4B encoder and the FLUX.2 VAE, both byte-identical to FLUX 3's and shared
+with it. Edits use the BF16 encoder (8.9 GB), since the INT8 encoder fails on image inputs
+([Comfy-Org/ComfyUI#17231](https://github.com/Comfy-Org/ComfyUI/issues/17231)).
+Selected weights download on first use. The weights are CC BY-NC 4.0 (noncommercial).
+Rerun `setup_h3.py` and restart ComfyUI for the new Core pin; Modal users should redeploy.
+The UI shares reference-library selection, generation progress, cancellation and output
+metadata with the other image engines.
 
 Reference PNGs retain their alpha channels through native RGBA reconstruction
 before Qwen encoding. The scheduler counts the output latent's native 16× grid
@@ -1040,15 +1036,14 @@ hosted prompt enhancer available without entering a key in the UI, also store
 The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
-The deployment pins ComfyUI v0.42.1 at immutable revision
-`63be2f9b82ad0dac88a7ceaa28a9cf3154125a18` with its required frontend
-package 1.55.18, Comfy Kitchen 0.2.39 and upstream aimdo 0.5.6.
-The source also pins workflow templates 0.11.89 and embedded docs 0.5.14.
-Checked on 2026-10-21: v0.42.1 is still the latest stable release. Development
-revision `d52a7a5ef60b36062f7c3c69bd774f4c98b56eb0` is 14 commits ahead, including
-MOSS RoPE/color-depth controls, H3 PDD LoRA fixes and Fibo 2.0 partner API nodes.
-Those Fibo nodes call a paid remote API; they do not load the local Dev/Turbo weights.
-This integration retains the stable Core pin and supplies the local Fibo bridge.
+The deployment pins ComfyUI at immutable revision
+`e3699a745d513941f17ecbc9a3c58d00fc7768cb`, the head of kijai's native Fibo 2.0 pull
+request [Comfy-Org/ComfyUI#17240](https://github.com/Comfy-Org/ComfyUI/pull/17240),
+fetched by SHA from the official repository. It is v0.42.1 plus 12 development commits
+(MOSS RoPE/color-depth controls, H3 PDD LoRA fixes, partner API nodes) and the Fibo
+model, text encoder and node. Its requirements match v0.42.1: frontend package 1.55.18,
+Comfy Kitchen 0.2.39, upstream aimdo 0.5.6, workflow templates 0.11.89 and embedded
+docs 0.5.14. Return to an official release once the pull request merges.
 v0.42 adds native MOSS-Image, Qwen 3.x decode speedups, TextGenerate cleanup,
 baked-in H3 PDD heads and synchronized CUDA-graph teardown.
 v0.40.0 fixed Qwen Image 2.1 caching under low VRAM and updates shared

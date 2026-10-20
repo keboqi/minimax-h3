@@ -43,6 +43,7 @@ QWEN_IMAGE21_VIGGLE_REPO = "Viggle/Qwen-Image-2.1-viggle-turbo"
 MOSS_IMAGE_REPO = "Comfy-Org/MOSS-Image"
 MOSS_IMAGE_DMD_REPO = "lodestones/MOSS-Image-SFT-8-steps-dmd"
 MOSS_IMAGE_4STEP_REPO = "akhaliq/MOSS-Image-SFT-4-steps"
+FIBO2_REPO = "Comfy-Org/Fibo-2.0"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -187,6 +188,32 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         MOSS_IMAGE_4STEP_REPO, "loras", "moss_image_sft_4step_v2.0.safetensors",
         "akhaliq MOSS-Image SFT 4-step DMD LoRA v2.0",
         expected_sha256="154c7f1455c3bf9925945c2f1ea2e4f09d0d0c67256081384a094b2b585f913f",
+    ),
+    # Ungated ComfyUI repack. Its INT8 Qwen3-VL and FLUX.2 VAE are byte-identical to
+    # flux3_text_encoder and flux3_vae, which Fibo shares.
+    "fibo2_dev_bf16": ModelSpec(
+        FIBO2_REPO, "diffusion_models", "diffusion_models/fibo2_dev_bf16.safetensors", "Fibo 2.0 Dev BF16",
+        expected_sha256="2a09866ff073cae9114f5fd93c0f530f84d41f74dc06e3d0c1372587bb3e9984",
+    ),
+    "fibo2_dev_int8": ModelSpec(
+        FIBO2_REPO, "diffusion_models", "diffusion_models/fibo2_dev_int8_convrot.safetensors",
+        "Fibo 2.0 Dev INT8 ConvRot",
+        expected_sha256="063dd397395809fd22234c6bd32932cfcb22619f4d2282bdbf1dc58c406fe325",
+    ),
+    "fibo2_edit_turbo_bf16": ModelSpec(
+        FIBO2_REPO, "diffusion_models", "diffusion_models/fibo2_edit_turbo_bf16.safetensors",
+        "Fibo 2.0 Edit Turbo BF16",
+        expected_sha256="028f6cf13af75840d7cc7346a5784fe55887c6b9299d173c8271161ba5ccf7d0",
+    ),
+    "fibo2_edit_turbo_int8": ModelSpec(
+        FIBO2_REPO, "diffusion_models", "diffusion_models/fibo2_edit_turbo_int8_convrot.safetensors",
+        "Fibo 2.0 Edit Turbo INT8 ConvRot",
+        expected_sha256="1f6fa7c499191f405467123f655f11762661eaa5bd479d1da8f161398ef72c3b",
+    ),
+    "fibo2_text_bf16": ModelSpec(
+        FIBO2_REPO, "text_encoders", "text_encoders/qwen3vl_4b_bf16.safetensors",
+        "Fibo 2.0 Qwen3-VL 4B BF16 text encoder",
+        expected_sha256="36f3ff447ef59201722e8f9ce6020c9819fdcfba6aa2608c4e09b1c0ce114e34",
     ),
     "drama3_asr": ModelSpec(
         "PedroMarinhoDev/Qwen3-ASR-ComfyUI", "asr", "qwen3_asr_1.7b_bf16.safetensors",
@@ -954,12 +981,26 @@ MOSS_IMAGE_MODEL_KEYS = (
     *MOSS_IMAGE_VAE_CHOICES.values(),
     *dict.fromkeys(key for key, _steps in MOSS_IMAGE_TURBO_MODES.values()),
 )
+FIBO2_PRECISION_BF16 = "BF16"
+FIBO2_PRECISION_INT8 = "INT8 ConvRot (lower VRAM)"
+FIBO2_MODEL_CHOICES = {
+    "Dev": {FIBO2_PRECISION_BF16: "fibo2_dev_bf16", FIBO2_PRECISION_INT8: "fibo2_dev_int8"},
+    "Edit Turbo": {FIBO2_PRECISION_BF16: "fibo2_edit_turbo_bf16", FIBO2_PRECISION_INT8: "fibo2_edit_turbo_int8"},
+}
+DEFAULT_FIBO2_PRECISION = FIBO2_PRECISION_BF16
+# The INT8 encoder fails on image inputs (Comfy-Org/ComfyUI#17231), so edits use BF16.
+FIBO2_TEXT_ENCODERS = {"generate": "flux3_text_encoder", "edit": "fibo2_text_bf16"}
+FIBO2_MODEL_KEYS = (
+    *(key for weights in FIBO2_MODEL_CHOICES.values() for key in weights.values()),
+    *FIBO2_TEXT_ENCODERS.values(), "flux3_vae",
+)
 DRAMA3_ASR_CHOICES = {"1.7B (quality)": "drama3_asr", "0.6B (smaller)": "drama3_asr_small"}
 DEFAULT_DRAMA3_ASR = "1.7B (quality)"
 DRAMA3_ASR_MODEL_KEYS = tuple(DRAMA3_ASR_CHOICES.values())
 LAZY_OPTIONAL_MODEL_KEYS = (
     *FLUX3_MODEL_KEYS,
     *MOSS_IMAGE_MODEL_KEYS,
+    *FIBO2_MODEL_KEYS,
     *DRAMA3_ASR_MODEL_KEYS,
     "lightvae_encoder",
     "lightvae_decoder",
@@ -1783,7 +1824,7 @@ def selftest() -> None:
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert set(MODEL_SPECS) == {
-        *FLUX3_MODEL_KEYS, *MOSS_IMAGE_MODEL_KEYS, *DRAMA3_ASR_MODEL_KEYS,
+        *FLUX3_MODEL_KEYS, *MOSS_IMAGE_MODEL_KEYS, *FIBO2_MODEL_KEYS, *DRAMA3_ASR_MODEL_KEYS,
         *(key for pair in QWEN_IMAGE21_PROMPT_ENHANCERS.values() for key in pair),
         "lightvae_encoder", "lightvae_decoder", "lightvae_decoder_int8",
         "veda_t2va",

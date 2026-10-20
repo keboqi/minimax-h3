@@ -85,7 +85,7 @@ def run():
                     page.screenshot(path=str(ARTIFACTS / "fibo2.png"), full_page=True)
                     jobs = requests.get(url + "/test/jobs", timeout=5).json()
                     job = next(job for job in jobs if job["family"] == "fibo2")
-                    assert job["values"][1] == "Edit Turbo" and job["values"][7:9] == [4, 1]
+                    assert job["values"][1] == "Edit Turbo" and job["values"][8:10] == [4, 1]
                     page.get_by_label("Engine", exact=True).click()
                     page.get_by_role("option", name="MOSS-Image", exact=True).click()
                     accelerate = view.get_by_label("Accelerate with Spectrum")

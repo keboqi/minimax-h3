@@ -27,7 +27,10 @@ from h3_models import (
     PRELOAD_MODEL_KEYS,
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
+    DEFAULT_FIBO2_PRECISION,
     DEFAULT_MOSS_IMAGE_MODEL,
+    FIBO2_MODEL_CHOICES,
+    FIBO2_TEXT_ENCODERS,
     DEFAULT_MOSS_IMAGE_TEXT_ENCODER,
     DEFAULT_MOSS_IMAGE_VAE,
     MOSS_IMAGE_MODEL_CHOICES,
@@ -159,6 +162,7 @@ def catalog_groups() -> dict[str, tuple[str, ...]]:
         "YuE2": ("yue2_",),
         "FLUX 3 Image Klein": ("flux3_",),
         "MOSS-Image": ("moss_image_",),
+        "Fibo 2.0": ("fibo2_",),
         "Drama 3": ("drama3_",),
         AUDIO_TOOLS_FAMILY: (),
         "SeedVR2": ("seedvr2_",),
@@ -197,6 +201,7 @@ def model_presets() -> dict[str, tuple[str, ...]]:
         MOSS_IMAGE_TEXT_ENCODER_CHOICES[DEFAULT_MOSS_IMAGE_TEXT_ENCODER],
         MOSS_IMAGE_VAE_CHOICES[DEFAULT_MOSS_IMAGE_VAE],
     )
+    fibo = (FIBO2_MODEL_CHOICES["Dev"][DEFAULT_FIBO2_PRECISION], FIBO2_TEXT_ENCODERS["generate"], "flux3_vae")
     return {
         "MiniMax H3 defaults": tuple(dict.fromkeys((
             *PRELOAD_MODEL_KEYS, "turbo_lora", "video_vae_lynnreal_int8",
@@ -218,6 +223,10 @@ def model_presets() -> dict[str, tuple[str, ...]]:
         "MOSS-Image defaults": moss,
         "MOSS-Image + Turbo LoRAs": (
             *moss, *dict.fromkeys(key for key, _steps in MOSS_IMAGE_TURBO_MODES.values()),
+        ),
+        "Fibo 2.0 defaults": fibo,
+        "Fibo 2.0 + editing": (
+            *fibo, FIBO2_MODEL_CHOICES["Edit Turbo"][DEFAULT_FIBO2_PRECISION], FIBO2_TEXT_ENCODERS["edit"],
         ),
         "Drama 3 SGLang-Omni checkpoint": ("drama3_sglang_checkpoint",),
         "Qwen VoiceDesign + Stable Audio": ("qwen_voice_design", "stable_audio3_medium"),
