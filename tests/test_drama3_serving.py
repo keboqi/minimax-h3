@@ -384,9 +384,21 @@ class GenerateTests(unittest.TestCase):
         result = Path(updates[-1].output["value"])
         self.assertEqual(updates[-1].output["playback_position"], 0)
         self.assertTrue(result.name.startswith("Drama3_sglang_") and result.is_file())
+        # A full 32-hex id lets the UI map Gradio's cached copy back to this file.
+        self.assertRegex(result.name, r"_[0-9a-f]{32}\.mp3$")
         chunks = snapshot.call_args.args[1]["settings"]["chunks"]
         self.assertEqual([c["speaker"] for c in chunks], [0, 1, 0])
         self.assertEqual(chunks[0]["name"], "Alice")
+
+    def test_title_names_the_output_file(self):
+        fake, updates, snapshot = self.run_route(
+            self.request("<|speaker:0|> Hello there.", title="第一卷 青春/少时: Chapter 1"),
+            lambda payload: float_wav(tone(expected_seconds(payload["input"]))))
+        result = Path(updates[-1].output["value"])
+        self.assertRegex(result.name, r"^第一卷_青春_少时_Chapter_1_\d{8}-\d{6}_[0-9a-f]{32}\.mp3$")
+        self.assertEqual(snapshot.call_args.args[1]["settings"]["title"], "第一卷 青春/少时: Chapter 1")
+        self.assertEqual(generate.title_stem(" <>? "), "Drama3_sglang")
+
     def test_sglang_route_sends_references_inline(self):
         def speech(payload):
             if "seed" in payload:

@@ -162,6 +162,26 @@ def _apply_sound_brief(tag: str, briefs: dict[str, dict]) -> str:
     return f"<sound {' '.join(attrs)}>{brief.get('description') or node.description}</sound>"
 
 
+MAX_TITLE_LENGTH = 100
+
+
+def clean_title(value) -> str:
+    """A one-line plain title without control characters or tag syntax; "" when absent."""
+    if not isinstance(value, str):
+        return ""
+    title = " ".join(re.sub(r"[\x00-\x1f<>\[\]{}|]", " ", value).split())
+    return title[:MAX_TITLE_LENGTH].rstrip()
+
+
+def parse_writer_title(response: str) -> str:
+    """The optional writer title; a reply without one (or not JSON) has none."""
+    try:
+        data = json.loads(response)
+    except (ValueError, TypeError):
+        return ""
+    return clean_title(data.get("title")) if isinstance(data, dict) else ""
+
+
 def parse_script_cast(response: str) -> tuple[str, list[dict]]:
     """Require one cast entry per used ID; never silently renumber an authored script."""
     script, cast, _sounds = parse_script_cast_and_sounds(response)

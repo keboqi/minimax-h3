@@ -2696,6 +2696,7 @@ drama3_handlers.install(drama3_handlers.Drama3Services(
     stage_file=lambda *args: stage_file(*args),
     generation_services=lambda: _generation_services(),
     free_gpu=lambda: free_comfy_vram(),
+    resolve_result=lambda path: resolve_result_path(path),
 ))
 
 
@@ -2857,22 +2858,31 @@ def result_settings_for_media(value):
     items = value if isinstance(value, list) else [value]
     for item in items:
         path = media_path(item)
-        if not path:
-            continue
-        if not read_snapshot(path):
-            name = Path(path).name
-            if re.search("[0-9a-f]{32}", name):
-                candidates = [
-                    candidate
-                    for root in (OUTPUT_DIR, OUTPUTS_DIR)
-                    for candidate in root.rglob(name)
-                    if candidate.resolve().is_relative_to(root.resolve())
-                    and read_snapshot(candidate)
-                ]
-                if len(candidates) == 1:
-                    path = candidates[0]
-        paths.append(path)
+        if path:
+            paths.append(resolve_result_path(path))
     return render_snapshot(paths)
+
+
+def resolve_result_path(path):
+    """The managed output behind ``path``, which may be Gradio's cached copy of it.
+
+    Gradio hands listeners a copy in its own cache, without the settings snapshot;
+    a name with a 32-hex id identifies the original under the output folders.
+    """
+    if read_snapshot(path):
+        return path
+    name = Path(path).name
+    if re.search("[0-9a-f]{32}", name):
+        candidates = [
+            candidate
+            for root in (OUTPUT_DIR, OUTPUTS_DIR)
+            for candidate in root.rglob(name)
+            if candidate.resolve().is_relative_to(root.resolve())
+            and read_snapshot(candidate)
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+    return path
 
 
 def resolve_request_settings(values: dict):

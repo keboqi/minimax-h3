@@ -310,6 +310,30 @@ class Drama3AppInputTests(unittest.TestCase):
         self.assertTrue(actions["visible"])
         self.assertFalse(drama3_handlers.drama3_takes(None)[2]["visible"])
 
+    def test_takes_and_settings_are_found_from_gradios_cached_copy(self):
+        import shutil
+        from h3_ui import application
+        from h3_app.provenance import write_snapshot
+
+        with tempfile.TemporaryDirectory() as temp:
+            outputs = Path(temp) / "output"
+            result = outputs / "drama3" / "Drama3_sglang_20261020-030937_0123456789abcdef0123456789abcdef.mp3"
+            result.parent.mkdir(parents=True)
+            result.write_bytes(b"mp3")
+            write_snapshot(result, {"family": "Drama 3", "settings": {"chunks": [
+                {"speaker": 0, "name": "Alice", "text": "Hello.", "take": "k1", "reused": False,
+                 "check": "skipped", "seconds": 1.0}]}})
+            # Gradio passes listeners a copy in its cache, without the snapshot beside it.
+            cached = Path(temp) / "gradio" / "f00d" / result.name
+            cached.parent.mkdir(parents=True)
+            shutil.copyfile(result, cached)
+            with patch.object(application, "OUTPUT_DIR", outputs), \
+                    patch.object(application, "OUTPUTS_DIR", Path(temp) / "outputs"):
+                self.assertEqual(application.resolve_result_path(str(cached)), result)
+                table, _line, _actions = application.drama3_handlers.drama3_takes(str(cached))
+                self.assertIn("Alice", application.result_settings_for_media(str(cached)))
+        self.assertEqual(table["value"][0][1], "Alice")
+
 
 class Drama3VramHandoffTests(unittest.TestCase):
     def run_release(self, allocations, timeout=60):
@@ -564,13 +588,13 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         from h3_ui.job_bindings import owned_generation
 
         gen_drama = owned_generation(drama3_handlers.generate_drama3, "drama3")
-        # 1 text + 48 speaker inputs + 6 settings + 1 script_mode + 80 sound slot inputs = 136
-        self.assertEqual(len(gen_drama.job_input_names), 136)
+        # 1 text + 48 speaker inputs + 6 settings + 1 script_mode + 80 sound slot inputs + 1 title = 137
+        self.assertEqual(len(gen_drama.job_input_names), 137)
         gen_sounds = owned_generation(drama3_handlers.generate_drama3_sounds, "drama3_sound")
         # 1 shown_sound_slots + 1 skip_existing_sounds + 80 sound slot inputs = 82
         self.assertEqual(len(gen_sounds.job_input_names), 82)
-        self.assertEqual(len(owned_generation(drama3_handlers.remix_drama3, "drama3").job_input_names), 136)
-        self.assertEqual(len(owned_generation(drama3_handlers.regenerate_drama3_line, "drama3").job_input_names), 137)
+        self.assertEqual(len(owned_generation(drama3_handlers.remix_drama3, "drama3").job_input_names), 137)
+        self.assertEqual(len(owned_generation(drama3_handlers.regenerate_drama3_line, "drama3").job_input_names), 138)
         gen_sound = owned_generation(drama3_handlers.generate_drama3_sound, "drama3_sound")
         self.assertEqual(len(gen_sound.job_input_names), 2)
 
@@ -596,6 +620,20 @@ class Drama3AutoTests(unittest.TestCase):
         self.assertEqual((view.temperature.value, view.top_p.value, view.top_k.value), (2.0, 1.0, 30))
         self.assertTrue(view.sounds_panel.visible)
         self.assertFalse(view.auto_save_speakers.value)
+        # Auto only disables and re-enables its button; the label never changes, so it cannot stick.
+        import inspect
+
+        label_writers = []
+        for fn in demo.fns.values():
+            outputs = [block._id for block in fn.outputs]
+            if view.auto._id not in outputs or fn.inputs or not callable(fn.fn) or any(
+                    parameter.default is parameter.empty
+                    for parameter in inspect.signature(fn.fn).parameters.values()):
+                continue
+            update = fn.fn()[outputs.index(view.auto._id)]
+            label_writers += ["value" in update]
+        self.assertTrue(label_writers)
+        self.assertFalse(any(label_writers))
 
     def test_failed_rewrite_stops_auto_with_the_writer_reason(self):
         import gradio as gr

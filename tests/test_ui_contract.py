@@ -707,7 +707,7 @@ class UiContractTests(unittest.TestCase):
         slots = [f"speaker_{n}_{field}" for n in range(16) for field in ("voice", "audio", "transcript")]
         sound_slots = [f"sound_{n}_{field}" for n in range(16) for field in ("preset", "audio", "name", "description", "duration")]
         self.assertEqual(drama, ["text", *slots, "temperature", "top_p", "top_k", "max_frames",
-                                 "parallel", "retries", "script_mode", *sound_slots])
+                                 "parallel", "retries", "script_mode", *sound_slots, "title"])
         enhance = [row["parameter_name"] for row in api["/enhance_drama3_text"]["parameters"]]
         self.assertEqual(enhance[:7], ["text", "speaker_mode", "model", "temporary_api_key",
                                        "backend", "lightning_api_key", "lightning_model"])
@@ -735,7 +735,8 @@ class UiContractTests(unittest.TestCase):
         endpoints = {d.get("api_name"): d for d in self.config["dependencies"]}
         top_k = next(self.components[i] for i in endpoints["generate_drama3"]["inputs"]
                      if labels[i] == "Top-k")
-        self.assertEqual((top_k["props"]["minimum"], top_k["props"]["value"]), (0, 0))
+        # Expressive is the default speech preset.
+        self.assertEqual((top_k["props"]["minimum"], top_k["props"]["value"]), (0, 30))
         preset = next(c for c in self.config["components"]
                       if c.get("props", {}).get("label") == "Speech preset")
         apply_preset = next(fn for fn in self.demo.fns.values()
@@ -792,7 +793,8 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(self.components[moss["Turbo LoRA"]]["props"]["value"], "Lodestones DMD (8-step)")
         self.assertIn("Rewrite as", labels("enhance_moss_image_prompt"))
         drama = labels("generate_drama3")
-        self.assertIn("Drama model", drama)
+        self.assertNotIn("Drama model", drama)
+        self.assertNotIn("Backend", drama)
         asr = labels("transcribe_drama3_voice")
         self.assertIn("Voice transcript model", asr)
         from h3_ui.persistence import EXTRA_FIELDS
@@ -800,7 +802,7 @@ class UiContractTests(unittest.TestCase):
         self.assertIn("upsampler", EXTRA_FIELDS["flux3"])
         self.assertIn("turbo_variant", EXTRA_FIELDS["moss_image"])
         self.assertIn("rewrite_mode", EXTRA_FIELDS["moss_image"])
-        self.assertIn("model", EXTRA_FIELDS["drama3"])
+        self.assertNotIn("model", EXTRA_FIELDS["drama3"])
         self.assertIn("asr_model", EXTRA_FIELDS["drama3"])
 
     def test_flux_references_keep_local_edit_upsampling_available(self):

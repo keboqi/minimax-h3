@@ -24,6 +24,8 @@ class Drama3Services:
     stage_file: Callable[..., str]
     generation_services: Callable[[], Any]
     free_gpu: Callable[[], None]
+    # Maps Gradio's cached copy of a result back to the output that has its snapshot.
+    resolve_result: Callable[[Any], Any] = lambda path: path
 
 
 _SERVICES: Drama3Services | None = None
@@ -135,7 +137,8 @@ def drama3_takes(output):
 
     if isinstance(output, dict):
         output = output.get("path") or output.get("value")
-    chunks = ((read_snapshot(output) or {}).get("settings") or {}).get("chunks") or []
+    snapshot = read_snapshot(_services().resolve_result(output)) if output else None
+    chunks = ((snapshot or {}).get("settings") or {}).get("chunks") or []
     chunks = [chunk for chunk in chunks if chunk.get("take")]
     rows, choices = [], []
     for number, chunk in enumerate(chunks, 1):
@@ -154,7 +157,8 @@ def drama3_takes(output):
 
 def _drama3_job(values, progress, **options):
     from h3_app.generation.optional_engines import generate_optional_engine, validate_request
-    from h3_ui.drama3_controls import DRAMA3_SLOT_INPUT_NAMES
+    from h3_app.drama3_cast import clean_title
+    from h3_ui.drama3_controls import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_SOUND_SLOT_INPUT_NAMES
     slot_count = len(DRAMA3_SLOT_INPUT_NAMES)
     text, slots, settings = values[0], values[1:1 + slot_count], list(values[1 + slot_count:])
     defaults = [1.0, 0.9, 0, 8192, 8, 0]
@@ -162,12 +166,15 @@ def _drama3_job(values, progress, **options):
         settings += defaults[len(settings):]
     temperature, top_p, top_k, max_frames, parallel, retries = settings[:6]
     script_mode = settings[6] if len(settings) > 6 and settings[6] else "Basic"
-    sound_slots = settings[7:] if len(settings) > 7 else ()
+    # The sound slots, then the title, which names the output file.
+    sound_end = 7 + len(DRAMA3_SOUND_SLOT_INPUT_NAMES)
+    sound_slots = settings[7:sound_end]
+    title = clean_title(settings[sound_end]) if len(settings) > sound_end else ""
     voices, names = _drama3_voices(slots)
     sounds = _drama3_sounds(sound_slots)
     request = generation_requests.Drama3Request(
         text, voices, temperature, top_p, top_k, max_frames, parallel, retries, tuple(names),
-        script_mode=script_mode, sounds=sounds, **options,
+        script_mode=script_mode, sounds=sounds, title=title, **options,
     )
     validate_request(request)
     # SGLang-Omni reads staged clips by absolute path.
@@ -281,11 +288,21 @@ def _drama3_writer_group(slots):
 
 def _drama3_unchanged_outputs(group=None):
     from h3_ui.drama3_controls import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VOICE_SLOTS
-    return [gr.skip()] * (len(DRAMA3_SLOT_INPUT_NAMES) + DRAMA3_VOICE_SLOTS + 3 + (DRAMA3_VOICE_SLOTS if group is not None else 0))
+    # Slot metadata, visibility, Add/Remove, presets with a group, then the title.
+    return [gr.skip()] * (len(DRAMA3_SLOT_INPUT_NAMES) + DRAMA3_VOICE_SLOTS + 3
+                          + (DRAMA3_VOICE_SLOTS if group is not None else 0) + 1)
 
 
-def _drama3_apply_cast(script, status, cast, existing, shown, group=None):
-    """Script, status, slot metadata and visibility for a validated cast; raises on reassignment."""
+def _drama3_apply_cast(script, status, cast, existing, shown, group=None, title=""):
+    """Script, status, slot metadata, visibility, presets and title for a validated cast.
+
+    Raises on reassignment. A reply without a title keeps the one in the box.
+    """
+    title_update = title if title else gr.skip()
+    return (*_drama3_cast_updates(script, status, cast, existing, shown, group), title_update)
+
+
+def _drama3_cast_updates(script, status, cast, existing, shown, group=None):
     from h3_ui.drama3_controls import (
         DRAMA3_SLOT_INPUT_NAMES, DRAMA3_VISIBLE_SLOTS, DRAMA3_VOICE_SLOTS, _slot_visibility
     )
@@ -324,15 +341,16 @@ def enhance_drama3_text(text, speaker_mode, model, temporary_api_key, backend, l
     try:
         names, existing, cast_context, shown = _drama3_writer_slots(slots)
         script_mode, sound_context = _drama3_writer_mode_and_sounds(slots)
-        script, status, cast = prompt_service.enhance_drama3_text(
+        script, status, cast, title = prompt_service.enhance_drama3_text(
             text, model, temporary_api_key, names, backend=backend,
             lightning_api_key=lightning_api_key, lightning_model=lightning_model,
             speaker_mode=speaker_mode, runtime=_runtime_config(), return_cast=True,
             cast_context=cast_context, script_mode=script_mode, sound_context=sound_context,
+            return_title=True,
         )
         if status.startswith("Prompt enhancement failed:"):
             return text, status, *_drama3_unchanged_outputs(group)
-        return _drama3_apply_cast(script, status, cast, existing, shown, group)
+        return _drama3_apply_cast(script, status, cast, existing, shown, group, title)
     except H3Error as exc:
         return text, f"Prompt enhancement failed: {exc}", *_drama3_unchanged_outputs(group)
 
@@ -358,12 +376,12 @@ def apply_drama3_writer_reply(reply, text, speaker_mode, *slots):
     try:
         names, existing, _cast_context, shown = _drama3_writer_slots(slots)
         script_mode, _sound_context = _drama3_writer_mode_and_sounds(slots)
-        script, status, cast = prompt_service.apply_drama3_reply(
-            reply, text, names, speaker_mode, script_mode=script_mode,
+        script, status, cast, title = prompt_service.apply_drama3_reply(
+            reply, text, names, speaker_mode, script_mode=script_mode, return_title=True,
         )
         if status.startswith("Prompt enhancement failed:"):
             return text, status, *_drama3_unchanged_outputs(group)
-        return _drama3_apply_cast(script, status, cast, existing, shown, group)
+        return _drama3_apply_cast(script, status, cast, existing, shown, group, title)
     except H3Error as exc:
         return text, f"Prompt enhancement failed: {exc}", *_drama3_unchanged_outputs(group)
 
@@ -455,7 +473,7 @@ def _publish_drama3_signatures():
     generation = _drama3_signature(("text",), (
         ("temperature", empty), ("top_p", empty), ("top_k", empty), ("max_frames", empty),
         ("parallel", 8), ("retries", 0), ("script_mode", "Basic"),
-        *sound_defaults,
+        *sound_defaults, ("title", ""),
     ))
     generate_drama3.__signature__ = inspect.Signature([*generation, progress])
     remix_drama3.__signature__ = inspect.Signature([*generation, progress])

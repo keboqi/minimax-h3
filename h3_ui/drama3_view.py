@@ -131,6 +131,7 @@ class Drama3View:
     take_line: gr.Dropdown | None = None
     regenerate_line: gr.Button | None = None
     remix: gr.Button | None = None
+    title: gr.Textbox | None = None
 
 
 def _heading(step, title, detail=""):
@@ -263,6 +264,8 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
             with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
                 _heading("01", "Script", "Tag each line with <code>&lt;|speaker:N|&gt;</code> and add "
                          "[cues] in brackets, or let the writer do it.")
+                title = gr.Textbox(label="Title", max_lines=1, placeholder="Chapter or story title",
+                                   info="Names the output file. The writer fills it from the script.")
                 text = gr.Textbox(label="Speech text", lines=10, max_lines=40, elem_classes=["h3-drama3-script"],
                     placeholder="<|speaker:0|> [with warm excitement] Welcome back!\n<|speaker:1|> [laughs] Took you long enough.")
                 script_mode = gr.Radio(
@@ -478,4 +481,5 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         take_line=take_line,
         regenerate_line=regenerate_line,
         remix=remix,
+        title=title,
     )

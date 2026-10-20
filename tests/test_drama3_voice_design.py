@@ -337,7 +337,7 @@ class CastSlotTests(unittest.TestCase):
 
     def test_writer_populates_the_matching_slot_and_reveals_sparse_ids(self):
         result = self.rewrite(writer_reply(5), name="Character 5", description="Existing description", reference=True)
-        self.assertEqual(len(result), 69)
+        self.assertEqual(len(result), 70)
         self.assertEqual(result[17:20], ("Character 5", "Existing description", cast_entry(5)["preview_text"]))
         self.assertEqual(result[50], 6)
         self.assertTrue(result[56]["visible"])

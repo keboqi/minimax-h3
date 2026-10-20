@@ -58,6 +58,8 @@ class Drama3Request:
     # Saved-take keys to generate again; remix_only rebuilds the mix from saved takes alone.
     regenerate: tuple[str, ...] = ()
     remix_only: bool = False
+    # Names the output file; "" keeps the default name.
+    title: str = ""
 
 
 

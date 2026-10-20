@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
+import re
 import shutil
 import threading
 import time
@@ -379,6 +380,17 @@ def _render_ast(
     return np.zeros(0, dtype=np.float32)
 
 
+def title_stem(title: str, limit: int = 60) -> str:
+    """A file-name stem from a script title, keeping letters of any script; default when empty.
+
+    Gradio keeps letters, digits, ``._-`` and spaces in cached copies, so the stem
+    uses only letters, digits, ``-`` and ``_`` and still matches its original.
+    """
+    stem = re.sub(r"[^\w-]+", "_", str(title or ""), flags=re.UNICODE)
+    stem = re.sub(r"_+", "_", stem).strip("_-")[:limit].rstrip("_-")
+    return stem or "Drama3_sglang"
+
+
 def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf_token=None,
                            progress=lambda *args, **kwargs: None) -> Iterator[GenerationUpdate]:
     """Generate speaker chunks, optionally check/retry them, render sounds/effects, then join/mix.
@@ -516,13 +528,16 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     rate = ordered[0].rate
     joined = _render_ast(tree, node_chunks, takes, sound_clips, rate)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    result = runtime.output_dir / "drama3" / f"Drama3_sglang_{stamp}_{uuid.uuid4().hex[:6]}.mp3"
+    title = str(getattr(request, "title", "") or "").strip()
+    # A full 32-hex id lets the UI find this file (and its settings) from Gradio's cached copy.
+    result = runtime.output_dir / "drama3" / f"{title_stem(title)}_{stamp}_{uuid.uuid4().hex}.mp3"
     result.parent.mkdir(parents=True, exist_ok=True)
     audio.save_mp3(joined, rate, result)
     failed = [take for take in ordered if take.check is not None and not take.check.ok]
     write_snapshot(result, {
         "family": "Drama 3",
         "settings": {
+            "title": title,
             "backend": LABEL, "temperature": request.temperature,
             "top_p": request.top_p, "top_k": request.top_k, "parallel": request.parallel,
             "retries": request.retries, "reference_count": len(request.voices),

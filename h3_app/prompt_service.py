@@ -901,13 +901,15 @@ def parse_drama3_reply(
     script_mode: str = DRAMA3_SCRIPT_BASIC,
     return_sounds: bool = False,
     notes: list[str] | None = None,
+    meta: dict | None = None,
 ) -> tuple:
     """Validate a writer reply exactly as the built-in writer does; raises ``H3Error``.
 
     Risky cue placements are repaired; what was repaired, and source phrases the
-    script dropped, are appended to ``notes`` for the status line.
+    script dropped, are appended to ``notes`` for the status line. The reply's
+    title, if any, goes in ``meta["title"]``.
     """
-    from h3_app.drama3_cast import parse_script_cast_and_sounds
+    from h3_app.drama3_cast import parse_script_cast_and_sounds, parse_writer_title
     from h3_app.drama3_serving.tree import extract_script_sounds, strip_drama3_sound_tags
 
     def review(script):
@@ -923,6 +925,8 @@ def parse_drama3_reply(
 
     if require_cast or reply.lstrip().startswith("{"):
         script, cast, sounds = parse_script_cast_and_sounds(reply)
+        if meta is not None:
+            meta["title"] = parse_writer_title(reply)
         if script_mode == DRAMA3_SCRIPT_BASIC:
             script = strip_drama3_sound_tags(script)
             sounds = []
@@ -950,13 +954,18 @@ def apply_drama3_reply(
     *,
     script_mode: str = DRAMA3_SCRIPT_BASIC,
     return_sounds: bool = False,
+    return_title: bool = False,
 ) -> tuple:
-    """Validate a reply pasted from another chat model; the text is kept on failure."""
+    """Validate a reply pasted from another chat model; the text is kept on failure.
+
+    ``return_title`` appends the reply's title ("" when it has none or failed).
+    """
     original = str(text or "")
-    empty_sounds = ([],) if return_sounds else ()
+    extra = (([],) if return_sounds else ()) + (("",) if return_title else ())
     if not str(reply or "").strip():
-        return (original, f"{DRAMA3_PROMPT_FAILED} paste the writer's JSON reply first.", [], *empty_sounds)
+        return (original, f"{DRAMA3_PROMPT_FAILED} paste the writer's JSON reply first.", [], *extra)
     notes: list[str] = []
+    meta: dict = {}
     try:
         allowed, _context = drama3_writer_context(voices, speaker_mode, script_mode=script_mode)
         parsed = parse_drama3_reply(
@@ -968,15 +977,17 @@ def apply_drama3_reply(
             script_mode=script_mode,
             return_sounds=return_sounds,
             notes=notes,
+            meta=meta,
         )
     except H3Error as exc:
-        return (original, f"{DRAMA3_PROMPT_FAILED} {exc} Your text was kept.", [], *empty_sounds)
+        return (original, f"{DRAMA3_PROMPT_FAILED} {exc} Your text was kept.", [], *extra)
     status = _with_writer_notes("Applied the pasted Drama 3 script.", notes)
+    title = (meta.get("title", ""),) if return_title else ()
     if return_sounds:
         script, cast, sounds = parsed
-        return script, status, cast, sounds
+        return script, status, cast, sounds, *title
     script, cast = parsed
-    return script, status, cast
+    return script, status, cast, *title
 
 
 def _with_writer_notes(status: str, notes: list[str]) -> str:
@@ -999,15 +1010,21 @@ def enhance_drama3_text(
     script_mode: str = DRAMA3_SCRIPT_BASIC,
     sound_context: str = "",
     return_sounds: bool = False,
+    return_title: bool = False,
 ) -> tuple:
-    """Rewrite a script and validate its cast as one result before updating the UI."""
+    """Rewrite a script and validate its cast as one result before updating the UI.
+
+    ``return_title`` appends the writer's title ("" when it gave none or failed).
+    """
     original = str(text or "")
     voices = tuple(voices)
+    meta: dict = {}
 
     def result(script, status, cast=None, sounds=None):
+        title = (meta.get("title", ""),) if return_title else ()
         if return_sounds:
-            return (script, status, cast or [], sounds or [])
-        return (script, status, cast or []) if return_cast else (script, status)
+            return (script, status, cast or [], sounds or [], *title)
+        return (script, status, cast or [], *title) if return_cast else (script, status, *title)
 
     if not original.strip():
         return result(original, f"{DRAMA3_PROMPT_FAILED} write the speech text or a scene brief first.")
@@ -1046,6 +1063,7 @@ def enhance_drama3_text(
             script_mode=script_mode,
             return_sounds=return_sounds,
             notes=notes,
+            meta=meta,
         )
         status = _with_writer_notes(status.replace(" prompt ", " script ", 1), notes)
         if return_sounds:
@@ -1054,6 +1072,7 @@ def enhance_drama3_text(
         script, cast = parsed
         return result(script, status, cast)
     except H3Error as exc:
+        meta.clear()  # a rejected reply's title does not apply
         return result(original, f"{DRAMA3_PROMPT_FAILED} {exc} Your text was kept; retry.")
 
 

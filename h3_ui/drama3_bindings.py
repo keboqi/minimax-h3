@@ -110,7 +110,8 @@ def _writer_outputs(view):
     return [view.text, view.enhance_status, *drama3_cast_inputs(view),
             view.shown_slots, *[slot.group for slot in view.voices],
             view.add_speaker, view.remove_speaker,
-            *([slot.preset for slot in view.voices] if view.speaker_group is not None else [])]
+            *([slot.preset for slot in view.voices] if view.speaker_group is not None else []),
+            view.title]
 
 
 def _bind_writer(view, actions):
@@ -339,7 +340,10 @@ def bind_drama3(view, actions):
         generation_inputs.append(view.script_mode)
     if view.sounds:
         generation_inputs.extend(drama3_sound_inputs(view))
-    event = _bind_generation(view, "drama3", actions.generate_drama3, actions.interrupt, generation_inputs)
+        # The title follows the full set of sound slots.
+        if view.title is not None:
+            generation_inputs.append(view.title)
+    event =_bind_generation(view, "drama3", actions.generate_drama3, actions.interrupt, generation_inputs)
     _bind_takes(view, actions, generation_inputs)
     store_events += _bind_auto(view, actions, generation_inputs)
     library_events = []
@@ -389,12 +393,13 @@ def _bind_auto(view, actions, generation_inputs):
     """
     if view.auto is None:
         return []
-    # Auto status, Interrupt auto, then the Auto button itself, which reads "running" until the chain ends.
+    # Auto status, Interrupt auto, then the Auto button itself, disabled until the chain ends.
+    # Its label never changes: after long jobs over a tunnel the label reset could be
+    # lost while the rest of the idle update applied, leaving a clickable "running" button.
     controls = [view.auto_status, view.stop_auto, view.auto]
-    idle = (gr.update(interactive=False), gr.update(value=view.auto.value, interactive=True))
+    idle = (gr.update(interactive=False), gr.update(interactive=True))
     started = view.auto.click(
-        lambda: ("Auto: rewriting the script\u2026", gr.update(interactive=True),
-                 gr.update(value="Auto: running\u2026", interactive=False)),
+        lambda: ("Auto: rewriting the script\u2026", gr.update(interactive=True), gr.update(interactive=False)),
         outputs=controls, **_QUIET,
     )
     rewritten = bind_prompt_action(
