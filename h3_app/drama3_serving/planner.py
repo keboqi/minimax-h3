@@ -52,6 +52,79 @@ def parse_turns_with_effects(script: str) -> list[SpeechTurn]:
     return turns
 
 
+# Audible events sound once where they stand; every other bracketed cue sets the delivery after it.
+AUDIBLE_EVENTS = frozenset({"laughs", "laughing", "sighs", "gasps", "clears throat", "chuckles", "sniffs",
+                            "scoffs", "groans", "exhales", "inhales", "coughs"})
+_CUE = re.compile(r"\[([^\[\]]*)\]")
+_PHRASE_BREAK = ",，、;；:：—.!?。！？"
+
+
+def delivery_cues(text: str) -> list[str]:
+    """The bracketed delivery cues in ``text``, in order, without audible events such as [laughs]."""
+    return [match.group(0) for match in _CUE.finditer(str(text or ""))
+            if match.group(1).strip().lower() not in AUDIBLE_EVENTS]
+
+
+def _outside_markup(text: str) -> Iterable[tuple[int, str]]:
+    """(index, character) of ``text`` outside [cues] and <tags>."""
+    square = angle = 0
+    for index, ch in enumerate(text):
+        if ch == "[":
+            square += 1
+        elif ch == "]":
+            square = max(0, square - 1)
+        elif ch == "<":
+            angle += 1
+        elif ch == ">":
+            angle = max(0, angle - 1)
+        elif not square and not angle:
+            yield index, ch
+
+
+def _has_words(text: str) -> bool:
+    return any(ch.isalnum() for _index, ch in _outside_markup(text))
+
+
+def opening_cut(text: str) -> int | None:
+    """Where a cue can follow the opening words of ``text`` with spoken words still after it.
+
+    After the first phrase (its comma or sentence end, with any closing quote); a single
+    phrase is cut after its first word, or its first two CJK characters.
+    """
+    seen = 0
+    for index, ch in _outside_markup(text):
+        if ch in _PHRASE_BREAK and seen:
+            end = index + 1
+            while end < len(text) and text[end] in CJK_CLOSE + "\"'":
+                end += 1
+            if _has_words(text[end:]):
+                return end
+        elif ch.isalnum():
+            seen += 1
+    seen = 0
+    for index, ch in _outside_markup(text):
+        if WIDE_CHAR.match(ch):
+            seen += 1
+            if seen == 2 and _has_words(text[index + 1:]):
+                return index + 1
+        elif ch.isspace() and seen and _has_words(text[index:]):
+            return index
+        elif ch.isalnum():
+            seen = max(seen, 1)
+    return None
+
+
+def insert_cue(text: str, cue: str) -> str | None:
+    """``text`` with ``cue`` placed after its opening words, or None when there is no such place."""
+    cut = opening_cut(text)
+    if cut is None:
+        return None
+    left, right = text[:cut].rstrip(), text[cut:].lstrip()
+    # CJK punctuation needs no space before the cue, as in "当星辰排列成十字，[ominous] 诸神".
+    separator = "" if CJK_JOIN.search(left) else " "
+    return f"{left}{separator}{cue} {right}"
+
+
 def _sentences(text: str, limit: int) -> list[str]:
     pieces = []
     for sentence in filter(None, SENTENCE_END.split(text)):
@@ -115,12 +188,18 @@ def plan_turns_chunks(
             merged.append((turn.speaker, text, turn.speaker_effects, [_visible(text)]))
     pieces = []
     for speaker, text, effects, ends in merged:
-        position = 0
+        position, cue = 0, None
         for piece in _pack(_sentences(text, limit), limit):
             size = _visible(piece)
             lines = _cut(piece, [end - position for end in ends[:-1] if position < end < position + size])
-            pieces.append((speaker, piece, effects, lines))
             position += size
+            # Each request starts fresh, so a turn split across requests repeats its last delivery cue.
+            if cue and not delivery_cues(piece) and lines and piece.startswith(lines[0]):
+                carried = insert_cue(lines[0], cue)
+                if carried is not None:
+                    piece, lines = carried + piece[len(lines[0]):], (carried, *lines[1:])
+            cue = (delivery_cues(piece) or [cue])[-1]
+            pieces.append((speaker, piece, effects, lines))
     return [
         Chunk(start_index + offset, speaker, text, effects, lines)
         for offset, (speaker, text, effects, lines) in enumerate(pieces)

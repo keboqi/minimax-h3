@@ -76,6 +76,24 @@ class PlannerTests(unittest.TestCase):
             self.assertLessEqual(len(chunk.text.encode()), CHUNK_BYTES * 2)
             self.assertLessEqual(frame_budget(chunk.text, 8192), 2048)
         self.assertEqual(frame_budget("字" * 2000, 8192), 2048)
+    def test_a_split_turn_carries_its_delivery_cue_into_the_next_request(self):
+        body = " ".join(["The corridor stretched on, [tense, low] cold and narrow. [sighs]"]
+                        + [f"Door number {n} was shut, and no light came from under it." for n in range(12)])
+        chunks = plan_chunks("<|speaker:0|> " + body + "\n<|speaker:0|> Then, [hushed] a sound.")
+        self.assertGreater(len(chunks), 2)
+        self.assertEqual(chunks[0].text.count("[tense, low]"), 1)
+        # A later request starts fresh, so it repeats the turn's last delivery cue (never an audible event).
+        self.assertTrue(chunks[1].text.startswith("Door number "))
+        self.assertIn(", [tense, low] and no light", chunks[1].text)
+        self.assertNotIn("[sighs]", chunks[1].text)
+        self.assertTrue(chunks[1].lines[0].startswith(chunks[1].text.split(" Door")[0]))
+        # A request with its own delivery cue keeps it, and later requests carry that one.
+        self.assertIn("[hushed]", chunks[-1].text)
+        self.assertEqual(chunks[-1].text.count("[tense, low]"), 0)
+        # The lines a request speaks are still cut where the script's lines meet.
+        self.assertEqual(chunks[-1].lines[-1], "Then, [hushed] a sound.")
+        self.assertEqual(plan_chunks("<|speaker:0|> Plain line.")[0].text, "Plain line.")
+
     def test_spoken_text_and_expected_length(self):
         self.assertEqual(spoken_text("<|speaker:0|> I got [laughing] <emphasis>the job</emphasis>."), "I got the job .")
         self.assertAlmostEqual(expected_seconds("one two three four five [sighs]"), 2.5)
@@ -97,6 +115,14 @@ class AudioTests(unittest.TestCase):
         self.assertEqual(audio.check_take(np.zeros(RATE * 10, np.float32), RATE, 4.0).reason, "no speech")
         self.assertIn("too short", audio.check_take(tone(1.0, silent_tail=9.0), RATE, 10.0).reason)
         self.assertIn("runs on", audio.check_take(tone(30.0), RATE, 4.0).reason)
+        # Clear failures: most of a long line skipped, or a take the length cap stopped.
+        skipped = audio.check_take(tone(1.0), RATE, 10.0)
+        self.assertFalse(skipped.ok)
+        self.assertIn("far too short", skipped.reason)
+        self.assertTrue(audio.check_take(tone(0.4), RATE, 2.0).ok)  # short lines are only estimates
+        capped = audio.check_take(tone(12.0), RATE, 4.0, max_seconds=12.0)
+        self.assertFalse(capped.ok)
+        self.assertIn("length cap", capped.reason)
     def test_quiet_short_speech_and_edge_padding_are_not_failures(self):
         quiet = tone(0.12) * 0.001
         padded = np.concatenate([np.zeros(2 * RATE), quiet, np.zeros(3 * RATE)]).astype(np.float32)
@@ -106,7 +132,7 @@ class AudioTests(unittest.TestCase):
         self.assertGreater(len(audio.tidy_take(padded, RATE)), 0)
     def test_duration_and_internal_pause_heuristics_are_advisory(self):
         for samples, expected, warning in (
-            (tone(1.0), 10.0, "too short"),
+            (tone(2.2), 10.0, "too short"),
             (tone(30.0), 4.0, "runs on"),
             (np.concatenate([tone(1.0), np.zeros(5 * RATE), tone(1.0)]), 2.0, "internal pauses"),
         ):
@@ -552,24 +578,42 @@ class GenerateTests(unittest.TestCase):
     def test_duration_advisory_keeps_the_first_take_even_when_retries_enabled(self):
         fake, updates, snapshot = self.run_route(
             self.request("<|speaker:0|> One two three four five."),
-            lambda payload: float_wav(tone(12.0)))
+            lambda payload: float_wav(tone(9.0)))  # long, but under this line's length cap
         self.assertEqual(fake.speech.call_count, 1)
         self.assertIn("Audio advisories (takes kept)", updates[-1].status)
         self.assertTrue(snapshot.call_args.args[1]["settings"]["chunks"][0]["warnings"])
-    def test_default_retries_are_disabled(self):
+    def test_default_retries_still_check_takes_and_retry_clear_failures_once(self):
         request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),))
         self.assertEqual(request.retries, 0)
-        with patch.object(audio, "check_take", side_effect=AssertionError("Zero retries must skip take checks")):
-            fake, updates, snapshot = self.run_route(request, lambda payload: float_wav(tone(1.0)),
-                                                     server_class=server.SglangOmniServer)
+        fake, updates, snapshot = self.run_route(request, lambda payload: float_wav(tone(1.0)),
+                                                 server_class=server.SglangOmniServer)
         self.assertEqual(fake.speech.call_count, 1)
         self.assertEqual(snapshot.call_args.args[1]["settings"]["retries"], 0)
         chunk = snapshot.call_args.args[1]["settings"]["chunks"][0]
-        self.assertEqual(chunk["check"], "skipped")
-        self.assertEqual(chunk["warnings"], [])
+        self.assertEqual(chunk["check"], "ok")
         self.assertAlmostEqual(chunk["seconds"], 1.0)
         self.assertNotIn("failed a check", updates[-1].status)
+
+        # A silent take is a clear failure: generated once more, even with retries off.
+        attempts = []
+
+        def speech(payload):
+            attempts.append(payload)
+            return float_wav(np.zeros(RATE * 2, np.float32) if len(attempts) == 1 else tone(1.0))
+
+        request = Drama3Request("Hello again.", voices=((0, self.clips[0], "Reference 0."),))
+        _fake, updates, snapshot = self.run_route(request, speech, server_class=server.SglangOmniServer)
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(snapshot.call_args.args[1]["settings"]["chunks"][0]["attempts"], 2)
+
+        # Uncertain advisories are recorded but stay out of the status unless retries were asked for.
+        request = Drama3Request("One two three four five.", voices=((0, self.clips[0], "Reference 0."),))
+        fake, updates, snapshot = self.run_route(request, lambda payload: float_wav(tone(9.0)),
+                                                 server_class=server.SglangOmniServer)
+        self.assertEqual(fake.speech.call_count, 1)
+        self.assertTrue(snapshot.call_args.args[1]["settings"]["chunks"][0]["warnings"])
         self.assertNotIn("Audio advisories", updates[-1].status)
+
     def test_every_speaker_needs_a_reference_voice(self):
         request = self.request("<|speaker:0|> Hi.\n<|speaker:3|> Who am I?")
         with self.assertRaisesRegex(H3Error, r"voice for Speaker 3\.$"):
@@ -608,10 +652,11 @@ class GenerateTests(unittest.TestCase):
         mixed = audio.load_audio_file(result_path, RATE)
         self.assertGreater(len(mixed) / RATE, 1.5)
         # Each line's place in the mix, for synced subtitles: in script order, inside the mix,
-        # with the 0.5 s pause between the first two lines and the parallel line after them.
+        # after the rain bed's lead-in, with the 0.5 s pause between the first two lines and the
+        # parallel line after them.
         settings = snapshot.call_args.args[1]["settings"]
         spans = [(chunk["start"], chunk["end"]) for chunk in settings["chunks"]]
-        self.assertAlmostEqual(spans[0][0], 0.0, places=2)
+        self.assertAlmostEqual(spans[0][0], audio.SCENE_LEAD_IN_SECONDS, places=2)  # the bed opens the scene
         self.assertGreaterEqual(spans[1][0] - spans[0][1], 0.5 - 0.01)
         self.assertGreaterEqual(spans[2][0], spans[1][1])
         for start, end in spans:
@@ -737,15 +782,27 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
             processed = speaker_effects.apply_speaker_effects(tone(0.2), RATE, ("radio_broadcast",))
         self.assertAlmostEqual(float(np.max(np.abs(processed))), 0.95, places=3)
 
-    def test_mix_parallel_tracks_loops_bgm_ducks_under_speech_and_trims_sfx(self):
+    def test_bed_leads_in_fades_and_tails_past_the_speech(self):
         speech_track = tone(2.0)
-        bgm_track = tone(0.6)  # shorter than speech, with loop=True loops to speech + 1.0s fade-out
-        mixed = audio.mix_parallel_tracks(
-            [(speech_track, False, False, 1.0), (bgm_track, True, True, 0.2)],
-            RATE,
-        )
-        self.assertEqual(len(mixed), len(speech_track) + RATE)
-        self.assertLessEqual(float(np.max(np.abs(mixed))), 0.901)
+        bgm_track = tone(0.6)  # shorter than speech, with loop=True loops to speech + the tail
+        mix = audio.mix_parallel([(speech_track, False, False, 1.0), (bgm_track, True, True, 0.2)], RATE)
+        lead, tail = int(audio.SCENE_LEAD_IN_SECONDS * RATE), int(audio.LOOP_TAIL_SECONDS * RATE)
+        self.assertEqual(mix.speech_offset, lead)
+        self.assertEqual(mix.advance, lead + len(speech_track))  # the bed's tail overlaps what follows
+        self.assertEqual(len(mix.audio), lead + len(speech_track) + tail)
+        self.assertLess(float(np.max(np.abs(mix.audio[:RATE // 50]))), 0.02)  # the bed fades in
+        self.assertLess(float(np.max(np.abs(mix.audio[-RATE // 50:]))), 0.02)  # and out
+        self.assertGreater(float(np.max(np.abs(mix.audio[lead // 2:lead]))), 0.01)  # the bed alone, rising
+
+    def test_one_shot_sounds_play_out_past_short_speech(self):
+        mix = audio.mix_parallel([{"audio": tone(1.0), "is_sound": False},
+                                  {"audio": tone(5.0), "is_sound": True}], RATE)
+        self.assertEqual(mix.speech_offset, 0)  # no bed, no lead-in
+        self.assertEqual(mix.advance, RATE)
+        self.assertEqual(len(mix.audio), 5 * RATE)  # the effect's tail is not cut
+        sounds_only = audio.mix_parallel([{"audio": tone(2.0), "is_sound": True},
+                                          {"audio": tone(3.0), "is_sound": True}], RATE)
+        self.assertEqual(sounds_only.advance, 3 * RATE)
 
     def test_sound_tracks_duck_while_speech_is_audible(self):
         speech = np.concatenate([np.zeros(RATE, dtype=np.float32), tone(1.0), np.zeros(RATE, dtype=np.float32)])
@@ -759,17 +816,60 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         self.assertGreater(level(2.0, 2.1), level(1.3, 1.9))  # recovering after speech
         self.assertAlmostEqual(level(2.8, 3.0), 1.0, places=1)  # released
 
-        noise = np.random.default_rng(0).uniform(-0.1, 0.1, 3 * RATE).astype(np.float32)
+        noise = np.random.default_rng(0).uniform(-0.1, 0.1, 8 * RATE).astype(np.float32)
 
         def under_speech_ratio(loop):
-            mixed = audio.mix_parallel_tracks(
+            mix = audio.mix_parallel(
                 [{"audio": speech, "is_sound": False}, {"audio": noise, "is_sound": True, "loop": loop}], RATE)
-            bed = mixed[:3 * RATE] - speech
-            quiet = float(np.sqrt(np.mean(bed[:int(0.9 * RATE)] ** 2)))
+            start = mix.speech_offset
+            bed = mix.audio[start:start + 3 * RATE] - speech
+            # Measured after a looped bed's fade-in, before the speech.
+            quiet = float(np.sqrt(np.mean(bed[int(0.4 * RATE):int(0.9 * RATE)] ** 2)))
             return float(np.sqrt(np.mean(bed[int(1.3 * RATE):int(1.9 * RATE)] ** 2))) / quiet
 
         self.assertLess(under_speech_ratio(loop=True), 1 / 3)  # a looped bed ducks
         self.assertAlmostEqual(under_speech_ratio(loop=False), 1.0, delta=0.1)  # a one-shot SFX stays in front
+
+    def test_turn_gaps_follow_the_lines(self):
+        self.assertEqual(audio.turn_gap("Hello.", "Hi.", True), audio.SAME_SPEAKER_GAP)
+        self.assertEqual(audio.turn_gap("I only wanted to tell you that I —", "Stop.", False), audio.CUT_OFF_GAP)
+        self.assertEqual(audio.turn_gap("你走吗？", "走。", False), audio.QUICK_REPLY_GAP)
+        self.assertEqual(audio.turn_gap("Run! [laughs]", "Why?", False), audio.QUICK_REPLY_GAP)
+        self.assertEqual(audio.turn_gap("Where were you?", "I was [sad, soft voice] at the grave.", False),
+                         audio.WEIGHTED_GAP)
+        self.assertEqual(audio.turn_gap("It rained.", "<reverb_small_room> We waited.", False), audio.TURN_GAP)
+        joined = audio.join_takes([("Mia", tone(1.0), "Wait —"), ("Leo", tone(1.0), "No.")], RATE)
+        self.assertAlmostEqual(len(joined) / RATE, 2.0 + audio.CUT_OFF_GAP, places=2)
+
+    def test_master_reaches_the_loudness_target_under_the_peak_ceiling(self):
+        quiet = tone(6.0) * 0.3  # about -25 LUFS
+        mastered = audio.master(quiet, RATE)
+        self.assertAlmostEqual(audio.integrated_loudness(mastered, RATE), audio.TARGET_LUFS, delta=0.5)
+        hot = tone(6.0) * 0.3
+        hot[3 * RATE:3 * RATE + RATE // 10] *= 3.0  # a peak far above the rest
+        mastered = audio.master(hot, RATE)
+        ceiling = 10 ** (audio.PEAK_CEILING_DBFS / 20)
+        self.assertLessEqual(float(np.max(np.abs(mastered))), ceiling + 1e-6)
+        # The limiter only touches the peak: the body keeps its level relative to the target.
+        body = mastered[RATE:2 * RATE]
+        self.assertAlmostEqual(float(np.max(np.abs(body))) / float(np.max(np.abs(hot[RATE:2 * RATE]))),
+                               float(np.max(np.abs(mastered[5 * RATE:]))) / float(np.max(np.abs(hot[5 * RATE:]))),
+                               places=3)
+        self.assertEqual(audio.master(np.zeros(RATE, dtype=np.float32), RATE).size, RATE)
+
+    def test_speaker_gains_even_out_voice_levels_within_a_cap(self):
+        from h3_app.drama3_serving.generate import MAX_SPEAKER_GAIN_DB, Take, speaker_gains
+        from h3_app.drama3_serving.planner import Chunk
+
+        def take(index, speaker, level):
+            return Take(Chunk(index, speaker, "Hi."), tone(1.0) * level, RATE, 1, None)
+
+        gains = speaker_gains({0: take(0, "A", 0.3), 1: take(1, "B", 0.15), 2: take(2, "C", 0.3),
+                               3: take(3, "D", 0.01), 4: take(4, "E", 0.3)})
+        self.assertAlmostEqual(gains["A"], 1.0, places=3)
+        self.assertAlmostEqual(gains["B"], 2.0, delta=0.02)  # 6 dB quieter than the median
+        self.assertAlmostEqual(gains["D"], 10 ** (MAX_SPEAKER_GAIN_DB / 20), places=3)  # capped
+        self.assertEqual(speaker_gains({0: take(0, "A", 0.3)}), {})  # one voice: nothing to balance
 
     def test_loops_crossfade_their_seams(self):
         clip = np.linspace(0.0, 0.5, RATE, dtype=np.float32)  # ends far from where it starts

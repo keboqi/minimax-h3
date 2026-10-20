@@ -47,6 +47,8 @@ FRAMES_PER_SECOND = 21.5
 # SGLang-Omni's Drama 3 request builder rejects max_new_tokens above this (~95 s of speech).
 SERVER_MAX_NEW_TOKENS = 2048
 HEARTBEAT_SECONDS = 5.0
+# A take that clearly failed its check is generated again this many times even with retries off.
+AUTOMATIC_RETRIES = 1
 # Dropped connections and server errors are retried this many times, independent of take checks.
 TRANSPORT_RETRIES = 2
 TRANSPORT_BACKOFF_SECONDS = 2.0
@@ -299,29 +301,68 @@ def _decoded_sound(clip_path: Path, rate: int, decoded: dict[Path, np.ndarray]) 
     return decoded[clip_path]
 
 
-def _render_ast(
-    node: TreeNode,
-    node_chunks: dict[int, list[Chunk]],
-    takes: dict[int, Take],
-    sound_clips: dict[str, Path],
-    rate: int,
-    decoded: dict[Path, np.ndarray] | None = None,
-    spans: dict[int, tuple[int, int, list[tuple[int, int]]]] | None = None,
-) -> np.ndarray:
-    """Recursively render a Drama 3 AST node into a 1D float32 audio array at ``rate``.
+# Speakers' takes are brought this close to the cast's typical level, never by more.
+MAX_SPEAKER_GAIN_DB = 6.0
 
-    ``spans``, when given, receives each chunk's (start, end) samples in the returned audio,
-    keyed by chunk index, with the (start, end) of each of its script lines inside the take.
+
+def speaker_gains(takes: dict[int, Take]) -> dict[str, float]:
+    """A gain per speaker that evens out how loud each voice clip makes its lines.
+
+    Each speaker's voiced level across all their takes is moved toward the median of the
+    speakers, by at most ``MAX_SPEAKER_GAIN_DB``; whispers and shouts within one speaker
+    keep their difference.
     """
-    decoded = {} if decoded is None else decoded
+    energy: dict[str, float] = {}
+    length: dict[str, int] = {}
+    for take in takes.values():
+        level = audio.active_level_db(take.samples, take.rate)
+        if level is not None:
+            speaker = take.chunk.speaker
+            energy[speaker] = energy.get(speaker, 0.0) + 10.0 ** (level / 10.0) * len(take.samples)
+            length[speaker] = length.get(speaker, 0) + len(take.samples)
+    levels = {speaker: 10.0 * np.log10(energy[speaker] / length[speaker]) for speaker in energy}
+    if len(levels) < 2:
+        return {}
+    target = float(np.median(list(levels.values())))
+    return {speaker: float(10.0 ** (np.clip(target - level, -MAX_SPEAKER_GAIN_DB, MAX_SPEAKER_GAIN_DB) / 20.0))
+            for speaker, level in levels.items()}
+
+
+@dataclass
+class _Render:
+    node_chunks: dict[int, list[Chunk]]
+    takes: dict[int, Take]
+    sound_clips: dict[str, Path]
+    rate: int
+    decoded: dict[Path, np.ndarray]
+    gains: dict[str, float]
+
+
+def _edge_texts(node: TreeNode, ctx: _Render) -> tuple[str, str, str, str] | None:
+    """(first speaker, first text, last speaker, last text) of the speech in ``node``."""
+    chunks = [chunk for speech in iter_speech_nodes(node) for chunk in ctx.node_chunks.get(id(speech), [])]
+    if not chunks:
+        return None
+    return chunks[0].speaker, chunks[0].text, chunks[-1].speaker, chunks[-1].text
+
+
+def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarray, int]:
+    """(audio, advance): ``node`` rendered, and where the timeline moves on after it.
+
+    Audio past ``advance`` is a sound's tail, mixed under whatever follows.
+    """
+    rate = ctx.rate
     if isinstance(node, SpeechNode):
-        chunks = node_chunks.get(id(node), [])
-        rendered_turns: list[tuple[int, np.ndarray]] = []
+        chunks = ctx.node_chunks.get(id(node), [])
+        rendered_turns: list[tuple[str, np.ndarray, str]] = []
         line_offsets: list[list[tuple[int, int]]] = []
         for chunk in chunks:
-            take = takes[chunk.index]
+            take = ctx.takes[chunk.index]
             tidied = audio.tidy_take(take.samples, take.rate)
             tidied = audio.resample_audio(tidied, take.rate, rate)
+            gain = ctx.gains.get(chunk.speaker, 1.0)
+            if gain != 1.0:
+                tidied = (tidied * gain).astype(np.float32, copy=False)
             # Lines are found before effects, whose filtering can blur the pauses between them.
             lines = audio.line_bounds(tidied, rate, [max(expected_seconds(line), 0.3)
                                                      for line in chunk.lines or (chunk.text,)])
@@ -330,80 +371,93 @@ def _render_ast(
                 tidied = apply_speaker_effects(tidied, rate, chunk.speaker_effects)
                 if dry and len(tidied) != dry:
                     lines = [(start * len(tidied) // dry, end * len(tidied) // dry) for start, end in lines]
-            rendered_turns.append((chunk.speaker, tidied))
+            rendered_turns.append((chunk.speaker, tidied, chunk.text))
             line_offsets.append(lines)
         offsets: list[tuple[int, int]] = []
         joined = audio.join_takes(rendered_turns, rate, offsets)
         if spans is not None:
             spans.update((chunk.index, (*offset, lines))
                          for chunk, offset, lines in zip(chunks, offsets, line_offsets))
-        return joined
+        return joined, len(joined)
 
     if isinstance(node, PauseNode):
-        return np.zeros(max(0, int(round(node.seconds * rate))), dtype=np.float32)
+        silence = np.zeros(max(0, int(round(node.seconds * rate))), dtype=np.float32)
+        return silence, len(silence)
 
     if isinstance(node, SoundNode):
-        clip_path = _sound_clip(node, sound_clips)
+        clip_path = _sound_clip(node, ctx.sound_clips)
         if clip_path is None:
             raise H3Error(f'Missing sound clip for "{node.name or node.description}".')
-        samples = _decoded_sound(clip_path, rate, decoded)
+        samples = _decoded_sound(clip_path, rate, ctx.decoded)
         if node.volume != 1.0:
             samples = (samples * float(node.volume)).astype(np.float32, copy=False)
-        return samples
+        return samples, len(samples)
 
     if isinstance(node, SequentialNode):
-        if len(node.children) == 1:
-            return _render_ast(node.children[0], node_chunks, takes, sound_clips, rate, decoded, spans)
-        pieces: list[np.ndarray] = []
-        prev_was_speech = False
-        cursor = 0
+        placed: list[tuple[int, np.ndarray]] = []
+        cursor, previous = 0, None  # previous: the last speech before this child, with no pause or sound between
         for child in node.children:
             child_spans: dict[int, tuple[int, int, list[tuple[int, int]]]] = {}
-            seg = _render_ast(child, node_chunks, takes, sound_clips, rate, decoded, child_spans)
+            seg, advance = _render(child, ctx, child_spans)
             if seg.size == 0:
                 continue
-            is_speech = isinstance(child, SpeechNode)
-            if pieces and prev_was_speech and is_speech:
-                pieces.append(np.zeros(int(rate * audio.TURN_GAP), dtype=np.float32))
-                cursor += len(pieces[-1])
-            pieces.append(seg.astype(np.float32, copy=False))
+            edges = None if isinstance(child, PauseNode) or is_sound_only_node(child) else _edge_texts(child, ctx)
+            if edges is not None and previous is not None:
+                cursor += int(rate * audio.turn_gap(previous[1], edges[1], previous[0] == edges[0]))
+            placed.append((cursor, seg))
             if spans is not None:
                 spans.update((index, (start + cursor, end + cursor, lines))
                              for index, (start, end, lines) in child_spans.items())
-            cursor += len(seg)
-            prev_was_speech = is_speech
-        return np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
+            cursor += advance
+            previous = (edges[2], edges[3]) if edges is not None else None
+        length = max([cursor] + [start + len(seg) for start, seg in placed])
+        out = np.zeros(length, dtype=np.float32)
+        for start, seg in placed:
+            out[start:start + len(seg)] += seg
+        return out, cursor
 
     if isinstance(node, ParallelNode):
         tracks: list[dict] = []
+        child_spans: dict[int, tuple[int, int, list[tuple[int, int]]]] = {}
         for child in node.children:
             if isinstance(child, SoundNode):
-                clip_path = _sound_clip(child, sound_clips)
+                clip_path = _sound_clip(child, ctx.sound_clips)
                 if clip_path is None:
                     raise H3Error(f'Missing sound clip for "{child.name or child.description}".')
-                raw_samples = _decoded_sound(clip_path, rate, decoded)
-                tracks.append(
-                    {
-                        "audio": raw_samples,
-                        "loop": child.loop,
-                        "is_sound": True,
-                        "volume": child.volume,
-                    }
-                )
+                tracks.append({"audio": _decoded_sound(clip_path, rate, ctx.decoded), "loop": child.loop,
+                               "is_sound": True, "volume": child.volume})
             else:
-                # Parallel tracks all start together, so child offsets carry over unchanged.
-                child_audio = _render_ast(child, node_chunks, takes, sound_clips, rate, decoded, spans)
-                tracks.append(
-                    {
-                        "audio": child_audio,
-                        "loop": False,
-                        "is_sound": is_sound_only_node(child),
-                        "volume": 1.0,
-                    }
-                )
-        return audio.mix_parallel_tracks(tracks, rate)
+                # Parallel tracks all start together, so child offsets differ only by the speech lead-in.
+                child_audio, advance = _render(child, ctx, child_spans)
+                tracks.append({"audio": child_audio, "advance": advance, "loop": False,
+                               "is_sound": is_sound_only_node(child), "volume": 1.0})
+        mix = audio.mix_parallel(tracks, rate)
+        if spans is not None:
+            spans.update((index, (start + mix.speech_offset, end + mix.speech_offset, lines))
+                         for index, (start, end, lines) in child_spans.items())
+        return mix.audio, mix.advance
 
-    return np.zeros(0, dtype=np.float32)
+    return np.zeros(0, dtype=np.float32), 0
+
+
+def _render_ast(
+    node: TreeNode,
+    node_chunks: dict[int, list[Chunk]],
+    takes: dict[int, Take],
+    sound_clips: dict[str, Path],
+    rate: int,
+    decoded: dict[Path, np.ndarray] | None = None,
+    spans: dict[int, tuple[int, int, list[tuple[int, int]]]] | None = None,
+    gains: dict[str, float] | None = None,
+) -> np.ndarray:
+    """Recursively render a Drama 3 AST node into a 1D float32 audio array at ``rate``.
+
+    ``spans``, when given, receives each chunk's (start, end) samples in the returned audio,
+    keyed by chunk index, with the (start, end) of each of its script lines inside the take.
+    ``gains`` scales each speaker's takes (see ``speaker_gains``).
+    """
+    ctx = _Render(node_chunks, takes, sound_clips, rate, {} if decoded is None else decoded, gains or {})
+    return _render(node, ctx, spans)[0]
 
 
 def title_stem(title: str, limit: int = 60) -> str:
@@ -511,15 +565,14 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
 
     def synthesize(chunk: Chunk, stopped: threading.Event) -> Take:
         best = None
-        for attempt in range(int(request.retries) + 1):
+        for attempt in range(max(int(request.retries), AUTOMATIC_RETRIES) + 1):
             clip, transcript = references[chunk.speaker]
             payload = server.payload(text=chunk.text, reference=clip, transcript=transcript,
                                      max_new_tokens=budget(chunk), sampling=sampling)
             wav = _request_speech(server, payload, stopped)
             samples, rate = audio.decode_wav(wav)
-            if not request.retries:
-                return Take(chunk, samples, rate, attempt + 1, None, wav)
-            check = audio.check_take(samples, rate, expected_seconds(chunk.text))
+            check = audio.check_take(samples, rate, expected_seconds(chunk.text),
+                                     max_seconds=budget(chunk) / FRAMES_PER_SECOND)
             take = Take(chunk, samples, rate, attempt + 1, check, wav)
             if check.ok:
                 return take
@@ -557,7 +610,8 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     ordered = [takes[chunk.index] for chunk in chunks]
     rate = ordered[0].rate
     spans: dict[int, tuple[int, int, list[tuple[int, int]]]] = {}
-    joined = _render_ast(tree, node_chunks, takes, sound_clips, rate, spans=spans)
+    joined = _render_ast(tree, node_chunks, takes, sound_clips, rate, spans=spans, gains=speaker_gains(takes))
+    joined = audio.master(joined, rate)
 
     # Where each take and script line plays in the mix, for synced subtitles;
     # a mix trimmed to fit cuts the last ones short.
@@ -601,10 +655,11 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
         persist_caches()  # kernels JIT-compiled for this job's shapes survive restarts too
     take_store.prune(store)
     progress(1, desc="Complete")
-    note = (f"\n{len(failed)} chunk(s) kept their best take after {int(request.retries) + 1} attempt(s) failed a check: "
-            + "; ".join(f"chunk {t.chunk.index + 1} ({t.chunk.speaker}) "
+    note = (f"\n{len(failed)} chunk(s) kept their best take after every attempt failed a check: "
+            + "; ".join(f"chunk {t.chunk.index + 1} ({t.chunk.speaker}, {t.attempts} attempt(s)) "
                         f"{t.check.reason}" for t in failed)) if failed else ""
-    advised = [take for take in ordered if take.check is not None and take.check.warnings]
+    # Uncertain advisories stay in the result's details unless retries were asked for.
+    advised = [take for take in ordered if request.retries and take.check is not None and take.check.warnings]
     if advised:
         note += "\nAudio advisories (takes kept): " + "; ".join(
             f"chunk {t.chunk.index + 1}: {t.check.reason}" for t in advised)

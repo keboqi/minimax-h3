@@ -70,6 +70,27 @@ does; each cast entry keeps its slot, and existing references and sparse slots
 are preserved. Invalid or
 inconsistent writer responses leave the current script and slots in place.
 
+The writer directs most lines, narration included, with Fish Audio cues and the
+seven scoped tags. It also says whether it preserved supplied text or wrote from a
+brief; a preserved source is always checked line by line, and missing phrases are
+reported in the status. The app then repairs placements Drama 3 performs poorly: a
+cue that opens a line moves after its opening words, ellipses become commas or
+periods, pause and silence cues are removed, and cues beyond one per sentence and
+two per line are dropped. The status reports each repair, lines that repeat the
+previous line's cue, and a script that leaves most lines undirected.
+
+When fewer than 60% of a script's lines (of three or more) carry direction,
+**Rewrite** and **Auto** make one more call to the same chat model, a performance
+director (`prompt_drama3_direction.txt`) that may only insert cues and scoped tags.
+Each of its lines is accepted only when the speaker, vocal effects and every word
+and punctuation mark are unchanged; other lines keep the writer's version, and a
+reply that changes lines, sounds or staging is ignored. Pasted replies from another
+chat model are not sent to the director.
+
+A long turn is sent to Drama 3 in several requests, and each request starts
+afresh, so a request without its own delivery cue repeats the turn's last one
+(never an audible event such as [laughs]) after its opening words.
+
 The writer's script is formatted for reading: each turn, sound, and
 `<parallel>`/`<sequential>` tag sits on its own line, indented two spaces per
 level of nesting. Indentation and blank lines do not change the performance.
@@ -158,13 +179,28 @@ worker and setup logs under `ComfyUI/output/audio_tools`.
 Drama 3 generates parallel, speaker-based chunks on SGLang-Omni. It has no
 per-request seed. SGLang uses an isolated environment, stays loaded
 between TTS jobs, and sleeps or stops when another engine needs the GPU. The app defaults
-to 8 parallel chunks and no automatic retries; the server allows 32 concurrent
-requests. Chunk quality checks and advisories are skipped when retries is zero;
-enabling retries also enables those checks. Separately, a dropped connection or
+to 8 parallel chunks and zero retries; the server allows 32 concurrent
+requests. Every new take is checked, and one that clearly failed (silent, holding a
+fifth or less of a long line, or stopped by its length cap) is generated once more
+even with zero retries; more retries give such takes more attempts. Uncertain
+duration and pause advisories are saved with the result and shown in the status only
+when retries are enabled. Separately, a dropped connection or
 HTTP 5xx from the server is retried twice per request. Missing `<sound>` clips
 are generated before any speech, so a sound failure stops the job early. A
 failed chunk or **Interrupt** returns at once without waiting for requests still
 running on the server. Completed speech is saved as MP3.
+
+The mix follows the script. Gaps between speakers follow the lines: a line cut off
+with a dash is barged in on, a question or exclamation is answered quickly, and a
+line opening slow, sad or hushed gets a longer breath. In Advanced mode, a block with
+an ambience or music loop opens with it alone for 0.8 s; loops fade in, dip under
+speech and fade out over a second under whatever follows, and one-shot effects and
+stingers always play to their end. Each speaker's takes are evened out toward the
+cast's typical level (by at most 6 dB, so whispers and shouts keep their contrast),
+and the finished mix is brought to -19 LUFS (mono; it plays like -16 LUFS stereo)
+with a look-ahead limiter holding peaks under -1.5 dBFS. Speaker vocal effects use
+Spotify's `pedalboard`, which setup installs; without it they fall back to simpler
+SciPy versions. Remix applies all of this to older results too.
 
 Each take is trimmed at its edges and long silences inside it are shortened,
 because the model sometimes generates spurious gaps; use `<#N#>` pause tags for

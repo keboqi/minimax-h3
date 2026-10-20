@@ -186,6 +186,31 @@ class Drama3WriterTests(unittest.TestCase):
         self.assertIn("ALICE: Welcome back.", user)
 
     @patch("openai.OpenAI")
+    def test_an_under_directed_rewrite_gets_a_direction_pass(self, client):
+        import json
+
+        writer = json.dumps({"title": "Night", "source_mode": "preserve", "script": (
+            "narrator: The door creaked open.\nMia: Is someone there?\nnarrator: Nobody answered her."),
+            "speakers": [{"speaker_id": 0, "name": "narrator", "description": "Calm.", "preview_text": "Hello."},
+                         {"speaker_id": 1, "name": "Mia", "description": "Bright.", "preview_text": "Hello."}]})
+        director = ("narrator: The door [hushed] creaked open.\nMia: Is someone [nervous] there?\n"
+                    "narrator: Nobody answered [tense, low] <slow>her</slow>.")
+        client.return_value.chat.completions.create.side_effect = [completion(writer), completion(director)]
+        runtime = SimpleNamespace(prompt_systems={"Drama 3": ROOT / "prompt_drama3.txt",
+                                                  "Drama 3 direction": ROOT / "prompt_drama3_direction.txt"})
+        script, status, cast = prompt_service.enhance_drama3_text(
+            "The door creaked open. “Is someone there?” Nobody answered her.", "unused", "", (),
+            "Lightning AI", "key", runtime=runtime, return_cast=True)
+        self.assertEqual(script, "<|speaker:0|> The door [hushed] creaked open.\n<|speaker:1|> Is someone [nervous] there?\n"
+                                 "<|speaker:0|> Nobody answered [tense, low] <slow>her</slow>.")
+        self.assertIn("A direction pass added cues to 3 line(s), 3 of 3 now directed.", status)
+        self.assertEqual([entry["name"] for entry in cast], ["narrator", "Mia"])
+        calls = client.return_value.chat.completions.create.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertIn("performance director", calls[1].kwargs["messages"][0]["content"])
+        self.assertIn("Mia: Is someone there?", calls[1].kwargs["messages"][1]["content"][0]["text"])
+
+    @patch("openai.OpenAI")
     def test_invalid_scripts_keep_the_original_text(self, client):
         client.return_value.chat.completions.create.return_value = completion(
             "<|speaker:0|> Hi<|audio_separator|><|speaker:1|> Yo"
@@ -209,9 +234,9 @@ class Drama3WriterTests(unittest.TestCase):
     @patch("openai.OpenAI")
     def test_single_mode_instructs_and_folds_onto_one_speaker(self, client):
         script, _status, user = self.rewrite(
-            client, "<|speaker:0|> [warm] Hi.\n<|speaker:1|> [laughs] Yo.", "Single")
+            client, "<|speaker:0|> Hi [warm] there.\n<|speaker:1|> Yo! [laughs]", "Single")
         self.assertIn("exactly ONE speaker", user)
-        self.assertEqual(script, "<|speaker:0|> [warm] Hi.\n<|speaker:0|> [laughs] Yo.")
+        self.assertEqual(script, "<|speaker:0|> Hi [warm] there.\n<|speaker:0|> Yo! [laughs]")
         script, _status, user = self.rewrite(client, "<|speaker:0|> Hi.", "Single", [(2, "Bob")])
         self.assertIn("speaker_id 2", user)
         self.assertEqual(script, "<|speaker:2|> Hi.")
@@ -602,7 +627,7 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         self.assertNotIn("<#1.0#>", basic_script)
         self.assertNotIn("<phone_call>", basic_script)
         self.assertNotIn("<robotic_voice>", basic_script)
-        self.assertIn("<|speaker:0|> [anxious] Hello? Can you hear me?", basic_script)
+        self.assertIn("<|speaker:0|> Hello? [anxious] Can you hear me?", basic_script)  # the opening cue moves in
         self.assertIn("<|speaker:1|> Affirmative.", basic_script)
 
         adv_script, adv_status, _cast = prompt_service.apply_drama3_reply(

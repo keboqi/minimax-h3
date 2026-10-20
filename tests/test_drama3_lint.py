@@ -6,7 +6,14 @@ import json
 import unittest
 
 from h3_app import prompt_service
-from h3_app.drama3_lint import coverage_note, lint_drama3_script, missing_source_phrases
+from h3_app.drama3_lint import (
+    coverage_note,
+    direction_share,
+    lint_drama3_script,
+    merge_direction,
+    missing_source_phrases,
+    under_directed,
+)
 
 
 class LintTests(unittest.TestCase):
@@ -23,7 +30,8 @@ class LintTests(unittest.TestCase):
             "<|speaker:1|> <phone_call> Hello there.",
             "<sound name=\"rain\">Rain</sound>",
         ])
-        self.assertEqual(len(notes), 2)
+        self.assertEqual(len(notes), 3)
+        self.assertIn("only 0 of 3 lines carry delivery direction", notes)
 
     def test_valid_placements_are_kept_and_long_cues_reported(self):
         original = ("<|speaker:0|> I did it! [laughs]\n"
@@ -93,6 +101,155 @@ class PromptExampleTests(unittest.TestCase):
         self.assertTrue(all(sound.duration for sound in sounds))
         self.assertEqual({sound.name for sound in sounds if sound.loop},
                          {"temple_rumble", "tense_strings", "mystery_pad"})
+
+
+class RepairTests(unittest.TestCase):
+    def test_opening_cues_move_after_the_opening_words(self):
+        script, notes = lint_drama3_script(
+            "<|speaker:0|> [softly] The house was quiet, too quiet.\n"
+            "<|speaker:1|> <phone_call> [urgent] Leave now!\n"
+            "<|speaker:2|> [whispering] 不知道你在说什么。\n"
+            "<|speaker:3|> [laughs] Yes.")
+        self.assertEqual(script.split("\n"), [
+            "<|speaker:0|> The house was quiet, [softly] too quiet.",
+            "<|speaker:1|> <phone_call> Leave [urgent] now!",
+            "<|speaker:2|> 不知 [whispering] 道你在说什么。",
+            "<|speaker:3|> Yes.",  # no words left after a one-word line's opening
+        ])
+        self.assertIn("moved 3 line-opening cue(s) after the opening words", notes)
+        self.assertIn("removed 1 line-opening cue(s) with no room after the opening words", notes)
+
+    def test_ellipses_pauses_and_extra_cues_are_removed(self):
+        script, notes = lint_drama3_script(
+            "<|speaker:0|> Well... I [pause] never said that…\n"
+            "<|speaker:1|> 我不知道……你在说什么。Hello…?\n"
+            "<|speaker:0|> She waited [nervous] and waited [tense] and then [scared] she ran. [laughs]")
+        self.assertEqual(script.split("\n"), [
+            "<|speaker:0|> Well, I never said that.",
+            "<|speaker:1|> 我不知道，你在说什么。Hello?",
+            "<|speaker:0|> She waited [nervous] and waited and then she ran. [laughs]",
+        ])
+        self.assertIn("replaced 4 ellipsis(es) with commas or periods", notes)
+        self.assertIn("removed 1 pause or silence cue(s); punctuation paces the line", notes)
+        self.assertIn("removed 2 cue(s) beyond one per sentence and 2 per line", notes)
+
+    def test_direction_share_and_repeated_cues_are_reported(self):
+        flat = "\n".join(f"<|speaker:0|> Line number {n} goes here." for n in range(5))
+        self.assertTrue(under_directed(flat))
+        self.assertEqual(direction_share(flat), (0, 5))
+        self.assertIn("only 0 of 5 lines carry delivery direction", lint_drama3_script(flat)[1])
+        directed = ("<|speaker:0|> One, [sad] two.\n<|speaker:1|> Three, [sad] four.\n"
+                    "<|speaker:0|> Five <emphasis>six</emphasis>.")
+        self.assertFalse(under_directed(directed))
+        self.assertEqual(lint_drama3_script(directed)[1], ["1 line(s) open with the same cue as the line before"])
+        self.assertFalse(under_directed("<|speaker:0|> Hi.\n<|speaker:1|> Yo."))  # too short to judge
+
+
+class DirectionMergeTests(unittest.TestCase):
+    SCRIPT = ("<|speaker:0|> The door creaked open. Nobody was there.\n"
+              "<parallel>\n"
+              '  <sound name="wind" duration="3">Wind gust</sound>\n'
+              "  <|speaker:1|> <phone_call> Hello? Is someone there?\n"
+              "</parallel>\n"
+              "<|speaker:2|> It's just the wind.")
+
+    def test_inserted_direction_is_merged_and_changed_words_are_refused(self):
+        directed = ("<|speaker:0|> The door creaked open. [hushed] Nobody was <slow>there</slow>.\n"
+                    "<parallel>\n"
+                    '<sound name="wind" duration="3">Wind gust</sound>\n'
+                    "<|speaker:1|> <phone_call> Hello? [nervous] Is someone here?\n"  # a word changed
+                    "</parallel>\n"
+                    "<|speaker:2|> It's just [gently teasing] the wind.")
+        merged, taken, refused = merge_direction(self.SCRIPT, directed)
+        self.assertEqual((taken, refused), (2, 1))
+        self.assertEqual(merged.split("\n"), [
+            "<|speaker:0|> The door creaked open. [hushed] Nobody was <slow>there</slow>.",
+            "<parallel>",
+            '  <sound name="wind" duration="3">Wind gust</sound>',
+            "  <|speaker:1|> <phone_call> Hello? Is someone there?",
+            "</parallel>",
+            "<|speaker:2|> It's just [gently teasing] the wind.",
+        ])
+
+    def test_changed_structure_merges_nothing(self):
+        for directed in ("<|speaker:0|> The door creaked open. [hushed] Nobody was there.",  # lines dropped
+                         self.SCRIPT.replace("Wind gust", "Strong wind"),  # a sound changed
+                         self.SCRIPT.replace("<|speaker:2|>", "<|speaker:1|>"),  # a speaker changed
+                         self.SCRIPT.replace("<phone_call> ", "")):  # an effect removed
+            with self.subTest(directed=directed[-40:]):
+                merged, taken, _refused = merge_direction(self.SCRIPT, directed)
+                self.assertEqual(taken, 0)
+                self.assertEqual(merged.split("\n")[3], "  <|speaker:1|> <phone_call> Hello? Is someone there?")
+
+    def test_direction_pass_runs_only_for_under_directed_scripts(self):
+        cast = [{"speaker_id": 0, "name": "narrator", "description": "Calm."},
+                {"speaker_id": 1, "name": "Mia", "description": "Bright."}]
+        flat = ("<|speaker:0|> The door creaked open.\n<|speaker:1|> Hello there?\n"
+                "<|speaker:0|> Nobody answered her.")
+        requests = []
+
+        def ask(request):
+            requests.append(request)
+            return ("narrator: The door [hushed] creaked open.\nMia: Hello [nervous] there?\n"
+                    "narrator: Nobody [tense, low] answered her.", "Enhanced Drama 3 direction prompt.")
+
+        script, note = prompt_service.direct_drama3_script(flat, cast, "Basic", ask)
+        self.assertEqual(script, "<|speaker:0|> The door [hushed] creaked open.\n<|speaker:1|> Hello [nervous] there?\n"
+                                 "<|speaker:0|> Nobody [tense, low] answered her.")
+        self.assertEqual(note, "A direction pass added cues to 3 line(s), 3 of 3 now directed.")
+        self.assertIn("Mia: Hello there?", requests[0])  # the director reads names, not tags
+        self.assertIn("- Mia: Bright.", requests[0])
+        self.assertEqual(prompt_service.direct_drama3_script(script, cast, "Basic", ask), (script, ""))
+        self.assertEqual(len(requests), 1)  # an already directed script needs no second call
+
+        def failing(_request):
+            return "", "Prompt enhancement failed: quota exceeded."
+
+        script, note = prompt_service.direct_drama3_script(flat, cast, "Basic", failing)
+        self.assertEqual(script, flat)
+        self.assertIn("quota exceeded", note)
+
+
+class SourceModeTests(unittest.TestCase):
+    SOURCE = "第一句话说得很长很长。第二句话也说得很长。第三句话同样很长很长。"
+
+    def test_preserve_mode_always_reports_missing_source(self):
+        shortened = "<|speaker:0|> 第一句话说得很长很长。"
+        self.assertIsNone(missing_source_phrases(self.SOURCE, shortened))  # mostly gone: looks like a brief
+        self.assertEqual(len(missing_source_phrases(self.SOURCE, shortened, source_mode="preserve")), 2)
+        self.assertIn("2 source phrase(s)", coverage_note(self.SOURCE, shortened, source_mode="preserve"))
+        self.assertIsNone(missing_source_phrases(self.SOURCE, "<|speaker:0|> 第一句话说得很长很长。第二句话也说得很长。",
+                                                 source_mode="brief"))
+
+    def test_the_writer_reply_carries_its_source_mode(self):
+        reply = json.dumps({
+            "source_mode": "preserve",
+            "script": "narrator: 第一句话说得很长很长。",
+            "speakers": [{"speaker_id": 0, "name": "narrator", "description": "Calm.", "preview_text": "你好。"}],
+        }, ensure_ascii=False)
+        _script, status, _cast = prompt_service.apply_drama3_reply(reply, self.SOURCE, (), "Auto")
+        self.assertIn("2 source phrase(s)", status)
+
+
+class PromptBasicExampleTests(unittest.TestCase):
+    def test_basic_examples_are_clean_directed_and_complete(self):
+        from pathlib import Path
+
+        prompt = (Path(__file__).resolve().parents[1] / "prompt_drama3.txt").read_text(encoding="utf-8")
+        for heading in ("Basic script-field example", "Basic prose example"):
+            with self.subTest(heading=heading):
+                example = prompt.split(heading, 1)[1]
+                source = example.split("User text:\n", 1)[1].split("\nScript:\n", 1)[0]
+                script = example.split("\nScript:\n", 1)[1].split("\n\n", 1)[0].strip()
+                names = {}
+                for line in script.split("\n"):
+                    names.setdefault(line.split(":", 1)[0], len(names))
+                tagged = "\n".join(f"<|speaker:{names[line.split(':', 1)[0]]}|> {line.split(': ', 1)[1]}"
+                                   for line in script.split("\n"))
+                self.assertEqual(lint_drama3_script(tagged), (tagged, []))
+                self.assertEqual(missing_source_phrases(source, tagged, source_mode="preserve"), [])
+                directed, total = direction_share(tagged)
+                self.assertGreaterEqual(directed, total - 1)
 
 
 if __name__ == "__main__":

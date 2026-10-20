@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 import struct
 import tempfile
 import wave
@@ -21,6 +22,9 @@ MAX_INTERNAL_GAP = 1.0  # longer silences inside a take are shortened ...
 KEPT_GAP = 0.5  # ... to this
 TURN_GAP = 0.3  # between speakers
 SAME_SPEAKER_GAP = 0.12  # between chunks of one speaker
+CUT_OFF_GAP = 0.04  # after a line cut off with a dash, the next speaker barges in
+QUICK_REPLY_GAP = 0.22  # an answer to a question or exclamation comes quickly
+WEIGHTED_GAP = 0.6  # before a line that opens slow, sad or hushed
 
 
 def decode_wav(data: bytes) -> tuple[np.ndarray, int]:
@@ -117,8 +121,14 @@ class TakeCheck:
     warnings: tuple[str, ...] = ()  # uncertain heuristics never trigger regeneration
 
 
-def check_take(samples: np.ndarray, rate: int, expected_seconds: float) -> TakeCheck:
-    """Retry near-silent takes; report uncertain duration estimates as advice only."""
+def check_take(samples: np.ndarray, rate: int, expected_seconds: float,
+               max_seconds: float | None = None) -> TakeCheck:
+    """Fail clearly broken takes; report uncertain duration estimates as advice only.
+
+    A take fails when it is silent, holds a fifth or less of the activity a line of at
+    least three seconds needs (the model skipped most of it), or ran until ``max_seconds``,
+    the request's frame budget, stopped it.
+    """
     if rate <= 0 or not np.isfinite(samples).all():
         raise ValueError("TTS audio has an invalid sample rate or non-finite samples.")
     silent = _silent_frames(samples, rate)
@@ -129,6 +139,11 @@ def check_take(samples: np.ndarray, rate: int, expected_seconds: float) -> TakeC
     score = abs(np.log(max(ratio, 1e-3)))
     if voiced < 0.08:
         return TakeCheck(False, "no speech", seconds, voiced, 99.0)
+    if expected_seconds >= 3.0 and voiced < 0.2 * expected_seconds:
+        return TakeCheck(False, f"far too short ({voiced:.1f}s of activity for ~{expected:.1f}s of text)",
+                         seconds, voiced, score + 10.0)
+    if max_seconds and seconds >= 0.97 * max_seconds:
+        return TakeCheck(False, "ran until the length cap stopped it", seconds, voiced, score + 10.0)
     warnings = []
     if voiced < 0.35 * expected - 1.0:
         warnings.append(f"possibly too short ({voiced:.1f}s of activity for ~{expected:.1f}s of text)")
@@ -214,24 +229,70 @@ def line_bounds(samples: np.ndarray, rate: int, weights: list[float]) -> list[tu
     return list(zip(starts, ends))
 
 
-def join_takes(takes: list[tuple[int, np.ndarray]], rate: int,
-               spans: list[tuple[int, int]] | None = None) -> np.ndarray:
-    """Concatenate (speaker, samples) in order with short, consistent gaps.
+_TRAILING_MARKUP = re.compile(r"(?:\s*(?:\[[^\[\]]*\]|<[^<>]*>))+\s*$")
+_LEADING_MARKUP = re.compile(r"^(?:\s*<[^<>]*>)+\s*")
+_CLOSING_QUOTES = "\"'”’」』）)"
+_WEIGHTED_CUE = re.compile(r"\[[^\]]*\b(?:sad|sadly|soft|softly|slow|slowly|quiet|quietly|hush|hushed|hesitant|"
+                           r"hesitantly|gentle|gently|tired|weary|grief|grieving|whisper|whispering|whispers|"
+                           r"reluctant|reluctantly|heavy|somber|sombre|mournful|tearful)\b[^\]]*\]|<(?:slow|soft|whisper)>",
+                           re.IGNORECASE)
 
-    ``spans``, when given, receives each take's (start, end) sample offsets in the result.
+
+def turn_gap(previous_text: str, next_text: str, same_speaker: bool) -> float:
+    """Silence before ``next_text``, shaped by how ``previous_text`` ends and how the next line opens.
+
+    A line cut off with a dash is barged in on, a question or exclamation is answered
+    quickly, and a line opening slow, sad or hushed gets a longer breath before it.
+    """
+    if same_speaker:
+        return SAME_SPEAKER_GAP
+    ending = _TRAILING_MARKUP.sub("", str(previous_text or "")).rstrip().rstrip(_CLOSING_QUOTES).rstrip()
+    if ending.endswith(("—", "–", "-", "~")):
+        return CUT_OFF_GAP
+    opening = _LEADING_MARKUP.sub("", str(next_text or ""))
+    # A cue shapes the words after it, so only the line's first words set its entry.
+    if _WEIGHTED_CUE.search(opening[:80]):
+        return WEIGHTED_GAP
+    if ending.endswith(("?", "!", "？", "！")):
+        return QUICK_REPLY_GAP
+    return TURN_GAP
+
+
+def join_takes(takes: list[tuple], rate: int,
+               spans: list[tuple[int, int]] | None = None) -> np.ndarray:
+    """Concatenate (speaker, samples[, text]) in order with short gaps.
+
+    With texts the gap follows the lines (see ``turn_gap``); without, it is the plain turn
+    or same-speaker gap. ``spans``, when given, receives each take's (start, end) sample
+    offsets in the result.
     """
     pieces, previous, cursor = [], None, 0
-    for speaker, samples in takes:
+    for speaker, samples, *text in takes:
+        text = text[0] if text else None
         if previous is not None:
-            gap = SAME_SPEAKER_GAP if speaker == previous else TURN_GAP
+            previous_speaker, previous_text = previous
+            same = speaker == previous_speaker
+            gap = (turn_gap(previous_text, text, same) if text is not None and previous_text is not None
+                   else SAME_SPEAKER_GAP if same else TURN_GAP)
             pieces.append(np.zeros(int(rate * gap), dtype=np.float32))
             cursor += len(pieces[-1])
         pieces.append(samples.astype(np.float32))
         if spans is not None:
             spans.append((cursor, cursor + len(samples)))
         cursor += len(samples)
-        previous = speaker
+        previous = (speaker, text)
     return np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
+
+
+def active_level_db(samples: np.ndarray, rate: int) -> float | None:
+    """RMS level of a take's voiced frames in dBFS, or None for a silent take."""
+    samples = np.asarray(samples, dtype=np.float32).reshape(-1)
+    silent = _silent_frames(samples, rate)
+    if not silent.size or silent.all():
+        return None
+    size = max(1, int(rate * FRAME_SECONDS))
+    frames = samples[: silent.size * size].reshape(-1, size)[~silent].astype(np.float64)
+    return float(10.0 * np.log10(max(np.mean(frames ** 2), 1e-12)))
 
 
 def resample_audio(samples: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
@@ -316,6 +377,9 @@ def loop_to_length(samples: np.ndarray, length: int, rate: int,
     return out[:length]
 
 
+LOOP_FADE_IN_SECONDS = 1.0  # beds rise instead of starting at full level ...
+LOOP_TAIL_SECONDS = 1.0  # ... and fade out over this after the block's speech, under what follows
+SCENE_LEAD_IN_SECONDS = 0.8  # a block with a bed is heard for this long before its speech
 DUCK_DEPTH_DB = 12.0
 DUCK_ATTACK_SECONDS = 0.05
 DUCK_RELEASE_SECONDS = 0.3
@@ -351,8 +415,32 @@ def speech_duck_gain(speech: np.ndarray, rate: int, *, depth_db: float = DUCK_DE
     return np.interp(np.arange(samples.size), centers, gains).astype(np.float32)
 
 
-def mix_parallel_tracks(tracks: list[dict | tuple], rate: int) -> np.ndarray:
-    """Mix speech and sound tracks: loop, level sounds to speech RMS, duck looped beds under speech, fade, limit."""
+@dataclass(frozen=True)
+class Mix:
+    audio: np.ndarray
+    advance: int  # where the timeline moves on; sound tails beyond it overlap what follows
+    speech_offset: int  # where the block's speech starts in ``audio``
+
+
+def _fade(samples: np.ndarray, fade_in: int, fade_out: int) -> np.ndarray:
+    fade_in, fade_out = min(fade_in, samples.size), min(fade_out, samples.size)
+    if fade_in > 0:
+        samples[:fade_in] *= np.sin(np.linspace(0.0, np.pi / 2, fade_in, dtype=np.float32))
+    if fade_out > 0:
+        samples[-fade_out:] *= np.cos(np.linspace(0.0, np.pi / 2, fade_out, dtype=np.float32))
+    return samples
+
+
+def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
+    """Mix a ``<parallel>`` block's speech and sound tracks.
+
+    Sounds are leveled to the speech. A block with a looped bed opens with the bed alone
+    for ``SCENE_LEAD_IN_SECONDS``; beds fade in, loop to the end of the speech, dip under
+    it, and fade out over ``LOOP_TAIL_SECONDS``. One-shot effects and stingers play out in
+    full. The block advances the timeline at the end of its speech (a block without speech:
+    its longest sound), so bed and effect tails overlap what follows. Levels are not limited
+    here; the finished mix is mastered once.
+    """
     normalized: list[dict] = []
     for item in tracks:
         if isinstance(item, dict):
@@ -366,69 +454,149 @@ def mix_parallel_tracks(tracks: list[dict | tuple], rate: int) -> np.ndarray:
             })
     valid = [t for t in normalized if t.get("audio") is not None and len(t["audio"]) > 0]
     if not valid:
-        return np.zeros(0, dtype=np.float32)
+        return Mix(np.zeros(0, dtype=np.float32), 0, 0)
 
-    speech_lengths = [
-        len(t["audio"])
-        for t in valid
-        if not t.get("is_sound", False)
-    ]
-    max_speech_length = max(speech_lengths) if speech_lengths else 0
+    speech_tracks = [t for t in valid if not t.get("is_sound", False)]
+    sound_tracks = [t for t in valid if t.get("is_sound", False)]
+    has_bed = any(t.get("loop", False) for t in sound_tracks)
+    offset = int(SCENE_LEAD_IN_SECONDS * rate) if speech_tracks and has_bed else 0
+    speech_end = offset + max((int(t.get("advance", len(t["audio"]))) for t in speech_tracks), default=0)
 
-    speech_rms_values = [
-        float(np.sqrt(np.mean(np.asarray(t["audio"], dtype=np.float64) ** 2)))
-        for t in valid
-        if not t.get("is_sound", False) and len(t["audio"]) > 0
-    ]
+    speech_rms_values = [float(np.sqrt(np.mean(np.asarray(t["audio"], dtype=np.float64) ** 2)))
+                         for t in speech_tracks]
     avg_speech_rms = float(np.mean(speech_rms_values)) if speech_rms_values else 0.0
 
-    processed: list[tuple[np.ndarray, bool, bool]] = []
-    for track in valid:
+    sounds: list[tuple[np.ndarray, bool]] = []
+    for track in sound_tracks:
         samples = np.asarray(track["audio"], dtype=np.float32).reshape(-1).copy()
-        is_sound = bool(track.get("is_sound", False))
         loop = bool(track.get("loop", False))
-        volume = float(track.get("volume", 1.0))
+        if loop and speech_tracks:
+            tail = int(LOOP_TAIL_SECONDS * rate)
+            samples = _fade(loop_to_length(samples, speech_end + tail, rate),
+                            int(LOOP_FADE_IN_SECONDS * rate), tail)
+        current_rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+        if avg_speech_rms > 0.0 and current_rms > 1e-7:
+            samples = samples * float(min(avg_speech_rms * 0.7 / current_rms, 2.0))
+        samples = samples * float(track.get("volume", 1.0))
+        sounds.append((samples.astype(np.float32, copy=False), loop))
 
-        if loop and max_speech_length > 0 and samples.size > 0:
-            target_len = max_speech_length + rate
-            samples = loop_to_length(samples, target_len, rate)
-            fade_len = min(rate, samples.size)
-            if fade_len > 0:
-                samples[-fade_len:] *= np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
-
-        if is_sound and samples.size > 0:
-            current_rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
-            if avg_speech_rms > 0.0 and current_rms > 1e-7:
-                target_sound_rms = avg_speech_rms * 0.7
-                scaling_factor = min(target_sound_rms / current_rms, 2.0)
-                samples = samples * float(scaling_factor)
-            if volume != 1.0:
-                samples = samples * volume
-
-        processed.append((samples.astype(np.float32, copy=False), is_sound, is_sound and loop))
-
-    max_len = max(len(arr) for arr, _is_sound, _bed in processed)
-    speech = np.zeros(max_len, dtype=np.float32)
-    for arr, is_sound, _bed in processed:
-        if not is_sound:
-            speech[: len(arr)] += arr
+    length = max([offset + len(t["audio"]) for t in speech_tracks] + [len(arr) for arr, _bed in sounds])
+    speech = np.zeros(length, dtype=np.float32)
+    for track in speech_tracks:
+        arr = np.asarray(track["audio"], dtype=np.float32).reshape(-1)
+        speech[offset:offset + len(arr)] += arr
     # Only looped beds (ambience, music) dip under speech; a one-shot effect or stinger
     # is usually anchored to the sentence that narrates it and must stay in front.
-    duck = speech_duck_gain(speech, rate) if speech_lengths else None
+    duck = speech_duck_gain(speech, rate) if speech_tracks else None
     mixed = speech.copy()
-    for arr, is_sound, bed in processed:
-        if is_sound:
-            mixed[: len(arr)] += arr * duck[: len(arr)] if bed and duck is not None else arr
+    for arr, bed in sounds:
+        mixed[: len(arr)] += arr * duck[: len(arr)] if bed and duck is not None else arr
+    advance = speech_end if speech_tracks else max(len(arr) for arr, _bed in sounds)
+    return Mix(mixed, advance, offset)
 
-    if max_speech_length > 0 and mixed.size > max_speech_length + rate:
-        target_len = max_speech_length + rate
-        mixed = mixed[:target_len].copy()
-        fade_len = min(rate, mixed.size)
-        if fade_len > 0:
-            mixed[-fade_len:] *= np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
 
-    peak = float(np.max(np.abs(mixed))) if mixed.size else 0.0
-    if peak > 1.0:
-        mixed = mixed * (0.9 / peak)
-    return mixed.astype(np.float32, copy=False)
+def mix_parallel_tracks(tracks: list[dict | tuple], rate: int) -> np.ndarray:
+    """The mixed audio of ``mix_parallel``."""
+    return mix_parallel(tracks, rate).audio
 
+
+# Loudness of the finished mix (ITU-R BS.1770). A mono file plays on both speakers,
+# about 3 LU louder than it measures, so -19 LUFS mono matches the usual -16 LUFS stereo.
+TARGET_LUFS = -19.0
+MAX_LOUDNESS_GAIN_DB = 12.0
+PEAK_CEILING_DBFS = -1.5  # sample peaks, leaving room for inter-sample and MP3 overshoot
+LIMITER_BLOCK_SECONDS = 0.0025
+LIMITER_LOOKAHEAD_SECONDS = 0.005
+LIMITER_RELEASE_SECONDS = 0.08
+LEVEL_CHUNK_STEPS = 600  # blocks per piece when metering or limiting a long mix
+
+
+def _k_weighting(rate: int) -> np.ndarray:
+    """BS.1770 K-weighting (high shelf, then high-pass) as second-order sections for ``rate``.
+
+    The analog prototypes behind the standard's 48 kHz coefficients, re-discretized for ``rate``.
+    """
+    k = np.tan(np.pi * 1681.9744509555319 / rate)
+    q = 0.7071752369554193
+    vh = 10.0 ** (3.99984385397 / 20.0)
+    vb = vh ** 0.499666774155
+    norm = 1.0 + k / q + k * k
+    shelf = [(vh + vb * k / q + k * k) / norm, 2.0 * (k * k - vh) / norm, (vh - vb * k / q + k * k) / norm,
+             1.0, 2.0 * (k * k - 1.0) / norm, (1.0 - k / q + k * k) / norm]
+    k = np.tan(np.pi * 38.13547087613982 / rate)
+    q = 0.5003270373253953
+    norm = 1.0 + k / q + k * k
+    highpass = [1.0, -2.0, 1.0, 1.0, 2.0 * (k * k - 1.0) / norm, (1.0 - k / q + k * k) / norm]
+    return np.array([shelf, highpass], dtype=np.float64)
+
+
+def integrated_loudness(samples: np.ndarray, rate: int) -> float | None:
+    """Gated integrated loudness in LUFS, or None when the audio is too short or silent."""
+    from scipy import signal
+
+    samples = np.asarray(samples, dtype=np.float32).reshape(-1)
+    step = int(0.1 * rate)  # 400 ms blocks overlap by 75%: four 100 ms steps each
+    steps = samples.size // step if rate > 0 else 0
+    if steps < 4:
+        return None
+    sos = _k_weighting(rate)
+    state = np.zeros((sos.shape[0], 2))
+    energy = np.empty(steps, dtype=np.float64)
+    # Filtered in pieces so a long chapter never needs a float64 copy of itself.
+    for first in range(0, steps, LEVEL_CHUNK_STEPS):
+        last = min(first + LEVEL_CHUNK_STEPS, steps)
+        weighted, state = signal.sosfilt(sos, samples[first * step:last * step].astype(np.float64), zi=state)
+        energy[first:last] = (weighted.reshape(-1, step) ** 2).sum(axis=1)
+    z = np.convolve(energy, np.ones(4), mode="valid") / (4 * step)
+    z = z[-0.691 + 10.0 * np.log10(np.maximum(z, 1e-20)) > -70.0]  # absolute gate
+    if not z.size:
+        return None
+    relative = -0.691 + 10.0 * np.log10(np.mean(z)) - 10.0
+    z = z[-0.691 + 10.0 * np.log10(z) > relative]
+    return float(-0.691 + 10.0 * np.log10(np.mean(z)))
+
+
+def limit_peaks(samples: np.ndarray, rate: int, ceiling_db: float = PEAK_CEILING_DBFS) -> np.ndarray:
+    """Look-ahead peak limiter: gain falls just before a peak and recovers smoothly after it."""
+    from scipy.ndimage import minimum_filter1d
+
+    samples = np.asarray(samples, dtype=np.float32).reshape(-1)
+    ceiling = float(10.0 ** (ceiling_db / 20.0))
+    if not samples.size or float(np.max(np.abs(samples))) <= ceiling:
+        return samples
+    size = max(1, int(rate * LIMITER_BLOCK_SECONDS))
+    count = -(-samples.size // size)
+    padded = np.zeros(count * size, dtype=np.float32)
+    padded[: samples.size] = np.abs(samples)
+    peaks = padded.reshape(count, size).max(axis=1)
+    needed = np.minimum(1.0, ceiling / np.maximum(peaks, 1e-9))
+    # Each block also covers its neighbours, so gain interpolated between blocks never overshoots.
+    reach = max(1, -(-int(rate * LIMITER_LOOKAHEAD_SECONDS) // size))
+    needed = minimum_filter1d(needed, size=2 * reach + 1, mode="nearest")
+    recover = 1.0 - float(np.exp(-LIMITER_BLOCK_SECONDS / LIMITER_RELEASE_SECONDS))
+    gains = np.empty(count, dtype=np.float64)
+    gain = 1.0
+    for index, target in enumerate(needed):
+        gain = target if target < gain else gain + (target - gain) * recover
+        gains[index] = gain
+    centers = (np.arange(count) + 0.5) * size
+    out = np.empty_like(samples)
+    piece = LEVEL_CHUNK_STEPS * size
+    for start in range(0, samples.size, piece):
+        stop = min(start + piece, samples.size)
+        envelope = np.interp(np.arange(start, stop), centers, gains).astype(np.float32)
+        out[start:stop] = np.clip(samples[start:stop] * envelope, -ceiling, ceiling)
+    return out
+
+
+def master(samples: np.ndarray, rate: int, target_lufs: float = TARGET_LUFS) -> np.ndarray:
+    """Bring the finished mix to ``target_lufs`` and keep its peaks under the ceiling.
+
+    One gain for the whole piece keeps whispers, shouts and scene levels as mixed.
+    """
+    samples = np.asarray(samples, dtype=np.float32).reshape(-1)
+    loudness = integrated_loudness(samples, rate)
+    if loudness is not None:
+        gain_db = min(target_lufs - loudness, MAX_LOUDNESS_GAIN_DB)
+        samples = samples * float(10.0 ** (gain_db / 20.0))
+    return limit_peaks(samples, rate)

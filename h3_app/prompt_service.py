@@ -903,6 +903,7 @@ def parse_drama3_reply(
     notes: list[str] | None = None,
     meta: dict | None = None,
     speaker_names: dict[int, str] | None = None,
+    direct=None,
 ) -> tuple:
     """Validate a writer reply exactly as the built-in writer does; raises ``H3Error``.
 
@@ -911,21 +912,22 @@ def parse_drama3_reply(
 
     Risky cue placements are repaired; what was repaired, and source phrases the
     script dropped, are appended to ``notes`` for the status line. The reply's
-    title, if any, goes in ``meta["title"]``.
+    title, if any, goes in ``meta["title"]``. ``direct(script, cast)``, when given,
+    returns the validated script with more delivery direction and a note, or None.
     """
-    from h3_app.drama3_cast import parse_script_cast_and_sounds, parse_writer_title
+    from h3_app.drama3_cast import parse_script_cast_and_sounds, parse_writer_source_mode, parse_writer_title
     from h3_app.drama3_serving.tree import extract_script_sounds, strip_drama3_sound_tags
     from h3_app.workflows.drama3 import names_to_tags
 
     original = names_to_tags(original, speaker_names)
 
-    def review(script):
+    def review(script, source_mode=""):
         from h3_app.drama3_lint import coverage_note, lint_drama3_script
 
         script, messages = lint_drama3_script(script)
         if notes is not None:
             notes.extend(message[0].upper() + message[1:] + "." for message in messages)
-            coverage = coverage_note(original, script)
+            coverage = coverage_note(original, script, source_mode=source_mode)
             if coverage:
                 notes.append(coverage)
         return script
@@ -937,7 +939,11 @@ def parse_drama3_reply(
         if script_mode == DRAMA3_SCRIPT_BASIC:
             script = strip_drama3_sound_tags(script)
             sounds = []
-        script = review(script)
+        if direct is not None:
+            script, note = direct(script, cast)
+            if note and notes is not None:
+                notes.append(note)
+        script = review(script, parse_writer_source_mode(reply))
         if speaker_mode == DRAMA3_SPEAKER_AUTO:
             from h3_app.workflows.drama3 import SPEAKER_TAG, text_speakers
             existing_ids = {int(value) for value in SPEAKER_TAG.findall(str(original or ""))}
@@ -998,6 +1004,46 @@ def apply_drama3_reply(
         return script, status, cast, sounds, *title
     script, cast = parsed
     return script, status, cast, *title
+
+
+DRAMA3_DIRECTION_PROMPT = "Drama 3 direction"
+
+
+def drama3_direction_request(script: str, cast: Iterable[dict], script_mode: str) -> str:
+    """The director's request: the cast for context and the script to direct."""
+    people = "\n".join(f"- {entry['name']}: {' '.join(str(entry.get('description', '')).split())[:300]}"
+                       for entry in cast)
+    return (f"Script mode: {script_mode}\n"
+            f"Cast (the voices are fixed; direct only how each line is delivered):\n{people}\n\n"
+            f"Script to direct (return every line, in order, changing nothing but inserted cues and tags):\n"
+            f"{script}")
+
+
+def direct_drama3_script(script: str, cast: list[dict], script_mode: str, ask) -> tuple[str, str]:
+    """(script, note): an under-directed tagged script with a director's cues merged in.
+
+    ``ask(request_text)`` returns the director's (reply, status). A script already
+    directed enough, a failed request, or a reply that changes words keeps its lines.
+    """
+    from h3_app.drama3_lint import direction_share, merge_direction, under_directed
+    from h3_app.workflows.drama3 import names_to_tags, tags_to_names
+
+    if not under_directed(script):
+        return script, ""
+    names = {int(entry["speaker_id"]): entry["name"] for entry in cast}
+    try:
+        reply, status = ask(drama3_direction_request(tags_to_names(script, names), cast, script_mode))
+    except H3Error as exc:
+        return script, f"The direction pass failed ({exc}); the writer's cues were kept."
+    if status.startswith(DRAMA3_PROMPT_FAILED):
+        return script, f"The direction pass failed ({status[len(DRAMA3_PROMPT_FAILED):].strip()}); the writer's cues were kept."
+    fenced = re.search(r"```[A-Za-z0-9_-]*\s*(.*?)\s*```", reply, flags=re.S)
+    directed, taken, refused = merge_direction(script, names_to_tags(fenced.group(1) if fenced else reply, names))
+    if not taken:
+        return script, "The direction pass changed the script's words or lines, so the writer's cues were kept."
+    share = direction_share(directed)
+    refusal = f"; {refused} line(s) that changed words were kept as written" if refused else ""
+    return directed, f"A direction pass added cues to {taken} line(s), {share[0]} of {share[1]} now directed{refusal}."
 
 
 def _with_writer_notes(status: str, notes: list[str]) -> str:
@@ -1064,6 +1110,16 @@ def enhance_drama3_text(
     if status.startswith(DRAMA3_PROMPT_FAILED):
         return result(original, status)
     notes: list[str] = []
+    direction_prompt = getattr(runtime, "prompt_systems", {}).get(DRAMA3_DIRECTION_PROMPT)
+
+    def ask_director(request_text: str) -> tuple[str, str]:
+        return _enhance_prompt_from_media(
+            prompt=request_text, model=model, temporary_api_key=temporary_api_key,
+            target="Drama 3 direction", system_path=direction_prompt, backend=backend,
+            lightning_api_key=lightning_api_key, lightning_model=lightning_model,
+            media_values=(), context="", request_text=request_text,
+        )
+
     try:
         parsed = parse_drama3_reply(
             script,
@@ -1076,6 +1132,9 @@ def enhance_drama3_text(
             notes=notes,
             meta=meta,
             speaker_names=speaker_names,
+            # A second writer call that only adds delivery cues to an under-directed script.
+            direct=(lambda script, cast: direct_drama3_script(script, cast, script_mode, ask_director))
+            if direction_prompt is not None and Path(direction_prompt).is_file() else None,
         )
         status = _with_writer_notes(status.replace(" prompt ", " script ", 1), notes)
         if return_sounds:

@@ -190,6 +190,17 @@ def parse_writer_title(response: str) -> str:
     return clean_title(data.get("title")) if isinstance(data, dict) else ""
 
 
+def parse_writer_source_mode(response: str) -> str:
+    """The writer's reading of the source, "preserve" or "brief"; "" when it gave neither."""
+    try:
+        data = json.loads(response)
+    except (ValueError, TypeError):
+        return ""
+    mode = data.get("source_mode") if isinstance(data, dict) else None
+    mode = mode.strip().lower() if isinstance(mode, str) else ""
+    return mode if mode in ("preserve", "brief") else ""
+
+
 def parse_script_cast(response: str) -> tuple[str, list[dict]]:
     """Require one cast entry per used ID; never silently renumber an authored script."""
     script, cast, _sounds = parse_script_cast_and_sounds(response)

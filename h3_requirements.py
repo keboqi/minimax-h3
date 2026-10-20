@@ -57,6 +57,8 @@ DRAMA3_HF_REVISION = "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
 COMFY_KITCHEN_VERSION = "0.2.39"
 COMFY_FRONTEND_VERSION = "1.55.18"
 WSPROTO_VERSION = "1.2.0"
+# Drama 3 speaker vocal effects; without it they fall back to cruder scipy versions.
+PEDALBOARD_VERSION = "0.9.19"
 GRADIO_VERSION = "6.30.0"
 LTX25_WORKFLOW_FILENAMES = (
     "LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
