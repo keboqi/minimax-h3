@@ -306,28 +306,37 @@ def _render_ast(
     sound_clips: dict[str, Path],
     rate: int,
     decoded: dict[Path, np.ndarray] | None = None,
-    spans: dict[int, tuple[int, int]] | None = None,
+    spans: dict[int, tuple[int, int, list[tuple[int, int]]]] | None = None,
 ) -> np.ndarray:
     """Recursively render a Drama 3 AST node into a 1D float32 audio array at ``rate``.
 
     ``spans``, when given, receives each chunk's (start, end) samples in the returned audio,
-    keyed by chunk index.
+    keyed by chunk index, with the (start, end) of each of its script lines inside the take.
     """
     decoded = {} if decoded is None else decoded
     if isinstance(node, SpeechNode):
         chunks = node_chunks.get(id(node), [])
         rendered_turns: list[tuple[int, np.ndarray]] = []
+        line_offsets: list[list[tuple[int, int]]] = []
         for chunk in chunks:
             take = takes[chunk.index]
             tidied = audio.tidy_take(take.samples, take.rate)
             tidied = audio.resample_audio(tidied, take.rate, rate)
+            # Lines are found before effects, whose filtering can blur the pauses between them.
+            lines = audio.line_bounds(tidied, rate, [max(expected_seconds(line), 0.3)
+                                                     for line in chunk.lines or (chunk.text,)])
             if chunk.speaker_effects:
+                dry = len(tidied)
                 tidied = apply_speaker_effects(tidied, rate, chunk.speaker_effects)
+                if dry and len(tidied) != dry:
+                    lines = [(start * len(tidied) // dry, end * len(tidied) // dry) for start, end in lines]
             rendered_turns.append((chunk.speaker, tidied))
+            line_offsets.append(lines)
         offsets: list[tuple[int, int]] = []
         joined = audio.join_takes(rendered_turns, rate, offsets)
         if spans is not None:
-            spans.update((chunk.index, offset) for chunk, offset in zip(chunks, offsets))
+            spans.update((chunk.index, (*offset, lines))
+                         for chunk, offset, lines in zip(chunks, offsets, line_offsets))
         return joined
 
     if isinstance(node, PauseNode):
@@ -349,7 +358,7 @@ def _render_ast(
         prev_was_speech = False
         cursor = 0
         for child in node.children:
-            child_spans: dict[int, tuple[int, int]] = {}
+            child_spans: dict[int, tuple[int, int, list[tuple[int, int]]]] = {}
             seg = _render_ast(child, node_chunks, takes, sound_clips, rate, decoded, child_spans)
             if seg.size == 0:
                 continue
@@ -359,7 +368,8 @@ def _render_ast(
                 cursor += len(pieces[-1])
             pieces.append(seg.astype(np.float32, copy=False))
             if spans is not None:
-                spans.update((index, (start + cursor, end + cursor)) for index, (start, end) in child_spans.items())
+                spans.update((index, (start + cursor, end + cursor, lines))
+                             for index, (start, end, lines) in child_spans.items())
             cursor += len(seg)
             prev_was_speech = is_speech
         return np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
@@ -546,11 +556,16 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
 
     ordered = [takes[chunk.index] for chunk in chunks]
     rate = ordered[0].rate
-    spans: dict[int, tuple[int, int]] = {}
+    spans: dict[int, tuple[int, int, list[tuple[int, int]]]] = {}
     joined = _render_ast(tree, node_chunks, takes, sound_clips, rate, spans=spans)
-    # Where each line plays in the mix, for synced subtitles; a mix trimmed to fit cuts the last ones short.
-    timings = {index: (round(min(start, len(joined)) / rate, 3), round(min(end, len(joined)) / rate, 3))
-               for index, (start, end) in spans.items()}
+
+    # Where each take and script line plays in the mix, for synced subtitles;
+    # a mix trimmed to fit cuts the last ones short.
+    def seconds(sample):
+        return round(min(sample, len(joined)) / rate, 3)
+
+    timings = {index: (seconds(start), seconds(end), [(seconds(start + a), seconds(start + b)) for a, b in lines])
+               for index, (start, end, lines) in spans.items()}
     stamp = time.strftime("%Y%m%d-%H%M%S")
     title = str(getattr(request, "title", "") or "").strip()
     # A full 32-hex id lets the UI find this file (and its settings) from Gradio's cached copy.
@@ -575,7 +590,9 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                                   else "reused" if t.attempts == 0 else "skipped"),
                         "warnings": list(t.check.warnings) if t.check is not None else [],
                         "seconds": round(len(t.samples) / t.rate, 2),
-                        **({"start": timings[t.chunk.index][0], "end": timings[t.chunk.index][1]}
+                        **({"start": timings[t.chunk.index][0], "end": timings[t.chunk.index][1],
+                            "lines": [{"text": text, "start": start, "end": end} for text, (start, end)
+                                      in zip(t.chunk.lines or (t.chunk.text,), timings[t.chunk.index][2])]}
                            if t.chunk.index in timings else {})} for t in ordered],
             "duration": round(len(joined) / rate, 3),
         },

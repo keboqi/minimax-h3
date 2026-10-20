@@ -151,8 +151,25 @@ DRAMA3_SUBTITLES_JS = """
     ...source,
     set(value) { media.add(this); source.set.call(this, value); },
   });
+  // While anything plays, follow it every frame; the interval below covers seeks while paused.
+  let following = false;
+  const follow = () => {
+    if (following || typeof requestAnimationFrame !== "function") return;
+    following = true;
+    const frame = () => {
+      sync();
+      following = [...media].some((element) => !element.paused);
+      if (following) requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  };
   const play = proto.play;
-  proto.play = function (...args) { media.add(this); return play.apply(this, args); };
+  proto.play = function (...args) {
+    media.add(this);
+    const result = play.apply(this, args);
+    follow();
+    return result;
+  };
   const playerFor = (box) => {
     const id = box.dataset.media, duration = Number(box.dataset.duration);
     let found = null;

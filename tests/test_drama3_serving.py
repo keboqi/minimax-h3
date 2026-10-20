@@ -46,6 +46,16 @@ class PlannerTests(unittest.TestCase):
                          [("Speaker 0", "Intro line."), ("Speaker 1", "Hi there. Still me."),
                           ("Speaker 0", "Back to zero.")])
         self.assertEqual([c.index for c in chunks], [0, 1, 2])
+    def test_merged_chunks_remember_their_script_lines(self):
+        script = ("<|speaker:1|> Hi there.\n<|speaker:1|> Still me, and\n<|speaker:1|> still talking.\n"
+                  "<|speaker:0|> 你好。\n<|speaker:0|> 再见。")
+        chunks = plan_chunks(script)
+        self.assertEqual(chunks[0].text, "Hi there. Still me, and still talking.")
+        self.assertEqual(chunks[0].lines, ("Hi there.", "Still me, and", "still talking."))
+        self.assertEqual((chunks[1].text, chunks[1].lines), ("你好。再见。", ("你好。", "再见。")))
+        split = plan_chunks("<|speaker:0|> " + " ".join(f"Sentence number {n} is here." for n in range(30)))
+        self.assertGreater(len(split), 1)
+        self.assertTrue(all(chunk.lines == (chunk.text,) for chunk in split))
     def test_long_turns_split_at_sentence_ends_without_breaking_cues(self):
         sentence = "This sentence has [softly, almost to herself. Then louder] a cue with a period inside."
         chunks = plan_chunks("<|speaker:2|> " + " ".join([sentence] * 8), limit=200)
@@ -117,6 +127,22 @@ class AudioTests(unittest.TestCase):
         joined = audio.join_takes([(0, tone(1.0)), (0, tone(1.0)), (1, tone(1.0))], RATE)
         expected = 3.0 + audio.SAME_SPEAKER_GAP + audio.TURN_GAP
         self.assertAlmostEqual(len(joined) / RATE, expected, places=2)
+    def test_lines_are_cut_at_the_pauses_nearest_their_estimate(self):
+        gap = np.zeros(int(0.3 * RATE), dtype=np.float32)
+        breath = np.zeros(int(0.06 * RATE), dtype=np.float32)
+        # A breath inside the first line must not be taken for the end of a line.
+        take = np.concatenate([tone(1.0), breath, tone(1.0), gap, tone(0.5), gap, tone(2.0)])
+        bounds = audio.line_bounds(take, RATE, [2.0, 0.5, 2.0])
+        first_gap = int(2.06 * RATE)
+        self.assertEqual(len(bounds), 3)
+        self.assertEqual(bounds[0][0], 0)
+        self.assertEqual(bounds[-1][1], len(take))
+        self.assertAlmostEqual(bounds[0][1] / RATE, first_gap / RATE, delta=0.03)
+        self.assertAlmostEqual(bounds[1][0] / RATE, (first_gap + len(gap)) / RATE, delta=0.03)
+        self.assertAlmostEqual(bounds[2][0] / RATE, 3.16, delta=0.03)
+        # Without pauses the estimate alone places the cut.
+        self.assertEqual(audio.line_bounds(tone(3.0), RATE, [1.0, 2.0]), [(0, RATE), (RATE, 3 * RATE)])
+        self.assertEqual(audio.line_bounds(tone(1.0), RATE, [1.0]), [(0, RATE)])
     def test_join_reports_where_each_take_lands(self):
         spans = []
         joined = audio.join_takes([(0, tone(1.0)), (0, tone(0.5)), (1, tone(1.0))], RATE, spans)
@@ -592,6 +618,10 @@ class GenerateTests(unittest.TestCase):
             self.assertLess(start, end)
             self.assertLessEqual(end, settings["duration"])
         self.assertAlmostEqual(settings["duration"], len(mixed) / RATE, delta=0.1)
+        # Each take here is one script line, so its one subtitle line spans the whole take.
+        self.assertEqual([[(line["text"], line["start"], line["end"]) for line in chunk["lines"]]
+                          for chunk in settings["chunks"]],
+                         [[(chunk["text"], chunk["start"], chunk["end"])] for chunk in settings["chunks"]])
 
 
 class TreeAndSpeakerEffectsTests(unittest.TestCase):

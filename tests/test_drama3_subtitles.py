@@ -63,6 +63,30 @@ class SubtitlePlaybackTests(unittest.TestCase):
     def test_gaps_keep_the_latest_started_line_in_time_order(self):
         self.assertEqual(self.playback([[0, 2], [5, 7], [0, 1]], [3, 8]), [[2], [1]])
 
+    def test_playing_follows_every_frame_until_paused(self):
+        frames = run_js("""() => {
+            const queued = [];
+            globalThis.requestAnimationFrame = fn => queued.push(fn);
+            globalThis.setInterval = () => {};
+            globalThis.window = {};
+            class Media { set src(value) {} play() { this.paused = false; } }
+            globalThis.HTMLMediaElement = Media;
+            let syncs = 0;
+            globalThis.document = { querySelectorAll: () => { syncs += 1; return []; }, addEventListener() {} };
+            (""" + subtitle_controller() + """)();
+            const player = new Media();
+            player.play();
+            player.play();  // a second play while following starts no second loop
+            const counts = [];
+            for (let i = 0; i < 3 && queued.length; i++) {
+                if (i === 2) player.paused = true;
+                queued.shift()();
+                counts.push([syncs, queued.length]);
+            }
+            return counts;
+        }""")
+        self.assertEqual(frames, [[1, 1], [2, 1], [3, 0]])
+
     def test_seeking_backwards_recomputes_the_active_lines(self):
         self.assertEqual(self.playback([[1, 2], [4, 5]], [0, 1.5, 4.5, 1.5, 0]),
                          [[], [0], [1], [0], []])

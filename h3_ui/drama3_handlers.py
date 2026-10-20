@@ -161,14 +161,18 @@ def drama3_subtitles(output):
     settings = _result_settings(output)
     lines = []
     for chunk in settings.get("chunks") or []:
-        text = " ".join(_CUE.sub(" ", str(chunk.get("text", ""))).split())
-        if not text or chunk.get("start") is None:
+        if chunk.get("start") is None:
             continue
         speaker = chunk.get("name") or f"Speaker {chunk.get('speaker', 0)}"
-        lines.append(
-            f'<li data-start="{float(chunk["start"]):.3f}" data-end="{float(chunk.get("end", chunk["start"])):.3f}">'
-            f'<span class="h3-subtitle-speaker">{html.escape(str(speaker))}</span>'
-            f'<span class="h3-subtitle-text">{html.escape(text)}</span></li>')
+        # A take can hold several script lines; results from before line timings show it whole.
+        for line in chunk.get("lines") or [chunk]:
+            text = " ".join(_CUE.sub(" ", str(line.get("text", ""))).split())
+            if not text or line.get("start") is None:
+                continue
+            lines.append(
+                f'<li data-start="{float(line["start"]):.3f}" data-end="{float(line.get("end", line["start"])):.3f}">'
+                f'<span class="h3-subtitle-speaker">{html.escape(str(speaker))}</span>'
+                f'<span class="h3-subtitle-text">{html.escape(text)}</span></li>')
     if not lines:
         return gr.update(value="", visible=False)
     # The result's 32-hex id is in every copy's file name, so the browser can find its player.

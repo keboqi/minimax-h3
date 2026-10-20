@@ -30,6 +30,8 @@ class Chunk:
     speaker: str  # the speaker's label: its Cast name, or "Speaker N"
     text: str  # speech and cues for one speaker, without the speaker's name
     speaker_effects: tuple[str, ...] = ()
+    # ``text`` cut where one script line ends and the next begins, for per-line subtitles.
+    lines: tuple[str, ...] = ()
 
 
 def parse_turns(script: str) -> list[tuple[str, str]]:
@@ -71,30 +73,57 @@ def _pack(sentences: list[str], limit: int) -> list[str]:
     return [*chunks, current] if current else chunks
 
 
+def _visible(text: str) -> int:
+    return sum(not ch.isspace() for ch in text)
+
+
+def _cut(text: str, cuts: list[int]) -> tuple[str, ...]:
+    """``text`` cut before each of its non-space characters numbered in ``cuts``."""
+    pieces, last, seen, pending = [], 0, 0, sorted(cuts)
+    for position, ch in enumerate(text):
+        if ch.isspace():
+            continue
+        while pending and pending[0] == seen:
+            pieces.append(text[last:position])
+            last = position
+            pending.pop(0)
+        seen += 1
+    pieces.append(text[last:])
+    return tuple(piece.strip() for piece in pieces if piece.strip())
+
+
 def plan_turns_chunks(
     turns: Iterable[SpeechTurn],
     *,
     start_index: int = 0,
     limit: int = CHUNK_BYTES,
 ) -> list[Chunk]:
-    """Merge consecutive turns of one speaker with identical speaker_effects, then cut near ``limit``."""
-    merged: list[tuple[str, str, tuple[str, ...]]] = []
+    """Merge consecutive turns of one speaker with identical speaker_effects, then cut near ``limit``.
+
+    Splitting and rejoining only ever drops or adds whitespace, so counting non-space
+    characters finds where each merged turn's text lands in the chunks.
+    """
+    merged: list[tuple[str, str, tuple[str, ...], list[int]]] = []
     for turn in turns:
         text = " ".join((turn.text or "").split())
         if not text:
             continue
         if merged and merged[-1][0] == turn.speaker and merged[-1][2] == turn.speaker_effects:
-            merged[-1] = (turn.speaker, f"{merged[-1][1]} {text}", turn.speaker_effects)
+            speaker, joined, effects, ends = merged[-1]
+            merged[-1] = (speaker, f"{joined} {text}", effects, [*ends, ends[-1] + _visible(text)])
         else:
-            merged.append((turn.speaker, text, turn.speaker_effects))
-    pieces = [
-        (speaker, piece, effects)
-        for speaker, text, effects in merged
-        for piece in _pack(_sentences(text, limit), limit)
-    ]
+            merged.append((turn.speaker, text, turn.speaker_effects, [_visible(text)]))
+    pieces = []
+    for speaker, text, effects, ends in merged:
+        position = 0
+        for piece in _pack(_sentences(text, limit), limit):
+            size = _visible(piece)
+            lines = _cut(piece, [end - position for end in ends[:-1] if position < end < position + size])
+            pieces.append((speaker, piece, effects, lines))
+            position += size
     return [
-        Chunk(start_index + offset, speaker, text, effects)
-        for offset, (speaker, text, effects) in enumerate(pieces)
+        Chunk(start_index + offset, speaker, text, effects, lines)
+        for offset, (speaker, text, effects, lines) in enumerate(pieces)
     ]
 
 

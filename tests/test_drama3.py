@@ -363,6 +363,8 @@ class Drama3AppInputTests(unittest.TestCase):
                 {"speaker": 0, "name": "Mia & Co", "text": "[whispers] Hello <there>!", "start": 0.0, "end": 1.25},
                 {"speaker": 2, "text": "<phone_call> Who is it?", "start": 1.55, "end": 3.0},
                 {"speaker": 0, "text": "[laughs]", "start": 3.2, "end": 4.0},
+                {"speaker": 1, "name": "Leo", "text": "One. Two.", "start": 4.3, "end": 6.0, "lines": [
+                    {"text": "One.", "start": 4.3, "end": 5.0}, {"text": "Two.", "start": 5.3, "end": 6.0}]},
             ]}})
             update = drama3_handlers.drama3_subtitles(str(result))
             write_snapshot(result, {"family": "Drama 3", "settings": {"chunks": [{"speaker": 0, "text": "Old."}]}})
@@ -374,7 +376,9 @@ class Drama3AppInputTests(unittest.TestCase):
         self.assertIn("Mia &amp; Co", update["value"])
         self.assertIn('<span class="h3-subtitle-text">Hello !</span>', update["value"])
         self.assertIn("Speaker 2</span><span class=\"h3-subtitle-text\">Who is it?", update["value"])
-        self.assertEqual(update["value"].count("<li"), 2)  # a cue-only line has nothing to show
+        self.assertIn('<li data-start="5.300" data-end="6.000"><span class="h3-subtitle-speaker">Leo</span>'
+                      '<span class="h3-subtitle-text">Two.</span>', update["value"])
+        self.assertEqual(update["value"].count("<li"), 4)  # a cue-only line has nothing to show
         self.assertFalse(old["visible"])  # results from before line timings were recorded
         self.assertFalse(drama3_handlers.drama3_subtitles(None)["visible"])
 

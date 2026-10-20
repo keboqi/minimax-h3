@@ -163,6 +163,57 @@ def tidy_take(samples: np.ndarray, rate: int) -> np.ndarray:
     return np.concatenate(pieces) if pieces else samples[:0]
 
 
+MIN_LINE_PAUSE = 0.12  # a shorter silence inside a take is a breath, not the end of a line
+PAUSE_BONUS = 2.0  # seconds of drift from the estimate a pause one second longer outweighs
+
+
+def line_bounds(samples: np.ndarray, rate: int, weights: list[float]) -> list[tuple[int, int]]:
+    """(start, end) samples of each script line inside one tidied take.
+
+    ``weights`` estimate each line's share of the take. Lines are cut at pauses in the
+    take, picking in order the pauses that are long and close to where the estimate puts
+    each cut; a take with too few pauses is cut by the estimate alone.
+    """
+    length = len(samples)
+    if len(weights) <= 1 or length == 0:
+        return [(0, length)] * len(weights)
+    total = sum(weights) or 1.0
+    expected, running = [], 0.0
+    for weight in weights[:-1]:
+        running += weight
+        expected.append(length * running / total)
+    size = max(1, int(rate * FRAME_SECONDS))
+    silent = _silent_frames(samples, rate)
+    pauses = [(start * size, end * size) for start, end in _runs(silent)
+              if start > 0 and end < len(silent) and (end - start) * FRAME_SECONDS >= MIN_LINE_PAUSE]
+    cuts = len(expected)
+    if len(pauses) < cuts:
+        bounds = [(int(cut), int(cut)) for cut in expected]
+    else:
+        # cost[k][j]: the best cost of cuts 0..k with cut k at pause j, in seconds.
+        def cost(k, j):
+            start, end = pauses[j]
+            return abs((start + end) / 2 - expected[k]) / rate - PAUSE_BONUS * (end - start) / rate
+        best = [[cost(0, j) for j in range(len(pauses))]]
+        back = [[-1] * len(pauses)]
+        for k in range(1, cuts):
+            row, links = [float("inf")] * len(pauses), [-1] * len(pauses)
+            for j in range(k, len(pauses)):
+                previous = min(range(k - 1, j), key=lambda i: best[-1][i])
+                row[j], links[j] = best[-1][previous] + cost(k, j), previous
+            best.append(row)
+            back.append(links)
+        j = min(range(cuts - 1, len(pauses)), key=lambda i: best[-1][i])
+        chosen = []
+        for k in range(cuts - 1, -1, -1):
+            chosen.append(j)
+            j = back[k][j]
+        bounds = [pauses[j] for j in reversed(chosen)]
+    starts = [0, *(end for _start, end in bounds)]
+    ends = [*(start for start, _end in bounds), length]
+    return list(zip(starts, ends))
+
+
 def join_takes(takes: list[tuple[int, np.ndarray]], rate: int,
                spans: list[tuple[int, int]] | None = None) -> np.ndarray:
     """Concatenate (speaker, samples) in order with short, consistent gaps.

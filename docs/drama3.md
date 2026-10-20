@@ -24,8 +24,11 @@ you scroll. **Auto** sits under the speech text.
 
 Under the player, the result's lines scroll as subtitles: the line being spoken is
 highlighted as it plays and follows the player when you seek, and clicking a line
-jumps to it. Bracketed cues and tags are left out. Results made before this
-feature have no line timings and show no subtitles.
+jumps to it. Bracketed cues and tags are left out. Consecutive lines of one speaker
+are spoken as one take, so each line's time inside the take is placed at the pauses
+between them, or estimated from its length when the take has too few pauses. Results
+made before this feature have no line timings and show no subtitles; Remix gives older
+results per-line timings without generating anything.
 
 ### Takes
 
