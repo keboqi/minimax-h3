@@ -196,11 +196,21 @@ line opening slow, sad or hushed gets a longer breath. In Advanced mode, a block
 an ambience or music loop opens with it alone for 0.8 s; loops fade in, dip under
 speech and fade out over a second under whatever follows, and one-shot effects and
 stingers always play to their end. Each speaker's takes are evened out toward the
-cast's typical level (by at most 6 dB, so whispers and shouts keep their contrast),
-and the finished mix is brought to -19 LUFS (mono; it plays like -16 LUFS stereo)
-with a look-ahead limiter holding peaks under -1.5 dBFS. Speaker vocal effects use
-Spotify's `pedalboard`, which setup installs; without it they fall back to simpler
-SciPy versions. Remix applies all of this to older results too.
+cast's typical level (by at most 6 dB, so whispers and shouts keep their contrast).
+Speaker vocal effects use Spotify's `pedalboard`, which setup installs; without it
+they fall back to simpler SciPy versions.
+
+Results are stereo. The narrator stands in the centre; when a script has two or more
+other characters, they stand apart in order of their first line (left 30%, right 30%,
+then nearer the centre and further out), so a conversation is heard across the scene.
+A narrator with a single character stays centred. Sound clips keep Stable Audio's
+stereo image (clips generated before this were mono and play in the centre). In
+Advanced mode a sound can be placed with `pan="-0.6"` (-1 left to 1 right), moved
+during the clip with `pan="-0.8,0"`, and set `distance="far"` (muffled, quieter, with
+room reflections) or `distance="near"`; the writer adds these where the story implies
+a position. The finished mix is brought to -16 LUFS with a look-ahead limiter holding
+peaks under -1.5 dBFS, linked across both channels. Remix applies all of this to older
+results too.
 
 Each take is trimmed at its edges and long silences inside it are shortened,
 because the model sometimes generates spurious gaps; use `<#N#>` pause tags for

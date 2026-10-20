@@ -44,6 +44,8 @@ class SoundNode:
     loop: bool = False
     volume: float = 1.0
     duration: int = 5
+    pan: tuple[float, float] | None = None  # (start, end) position, -1 left to 1 right
+    distance: str = ""  # "near", "far", or "" for as recorded
 
 
 @dataclass(frozen=True)
@@ -110,13 +112,40 @@ def _parse_sound_tag(raw_tag: str) -> SoundNode | None:
     name = " ".join(attrs.get("name", "").split()).strip()
     if not name:
         name = _default_sound_name(body)
+    distance = attrs.get("distance", "").lower()
     return SoundNode(
         description=body,
         name=name,
         loop=loop,
         volume=volume,
         duration=duration,
+        pan=parse_pan(attrs.get("pan", "")),
+        distance=distance if distance in ("near", "far") else "",
     )
+
+
+PAN_RE = re.compile(r"^\s*(-?\d*\.?\d+)\s*(?:(?:,|to|->|→)\s*(-?\d*\.?\d+)\s*)?$", re.IGNORECASE)
+
+
+def parse_pan(value: str) -> tuple[float, float] | None:
+    """``pan="-0.5"`` holds a position; ``pan="-0.8,0.2"`` moves from one to the other."""
+    match = PAN_RE.match(str(value or ""))
+    if match is None:
+        return None
+    start = max(-1.0, min(float(match.group(1)), 1.0))
+    end = max(-1.0, min(float(match.group(2)), 1.0)) if match.group(2) else start
+    return start, end
+
+
+def sound_placement_attrs(node: SoundNode) -> list[str]:
+    """The ``pan`` and ``distance`` attributes that place ``node``, as written in a tag."""
+    attrs = []
+    if node.pan is not None:
+        start, end = node.pan
+        attrs.append(f'pan="{start:g}"' if start == end else f'pan="{start:g},{end:g}"')
+    if node.distance:
+        attrs.append(f'distance="{node.distance}"')
+    return attrs
 
 
 def _default_sound_name(description: str) -> str:

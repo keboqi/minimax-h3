@@ -614,6 +614,21 @@ class GenerateTests(unittest.TestCase):
         self.assertTrue(snapshot.call_args.args[1]["settings"]["chunks"][0]["warnings"])
         self.assertNotIn("Audio advisories", updates[-1].status)
 
+    def test_results_are_stereo_with_characters_on_both_sides(self):
+        _fake, updates, snapshot = self.run_route(
+            self.request("Alice: Hello there, friend.\n<|speaker:1|> Hi Alice, good to see you."),
+            lambda payload: float_wav(tone(1.0)))
+        mixed = audio.load_audio_file(Path(updates[-1].output["value"]), RATE, stereo=True)
+        chunks = snapshot.call_args.args[1]["settings"]["chunks"]
+
+        def level(chunk, channel):
+            start, end = int(chunk["start"] * RATE), int(chunk["end"] * RATE)
+            return float(np.sqrt(np.mean(mixed[start:end, channel] ** 2)))
+
+        self.assertGreater(level(chunks[0], 0), 1.5 * level(chunks[0], 1))  # Alice on the left
+        self.assertGreater(level(chunks[1], 1), 1.5 * level(chunks[1], 0))  # Speaker 1 on the right
+        self.assertAlmostEqual(audio.integrated_loudness(mixed, RATE), audio.TARGET_LUFS, delta=1.0)
+
     def test_every_speaker_needs_a_reference_voice(self):
         request = self.request("<|speaker:0|> Hi.\n<|speaker:3|> Who am I?")
         with self.assertRaisesRegex(H3Error, r"voice for Speaker 3\.$"):
@@ -844,7 +859,12 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
     def test_master_reaches_the_loudness_target_under_the_peak_ceiling(self):
         quiet = tone(6.0) * 0.3  # about -25 LUFS
         mastered = audio.master(quiet, RATE)
-        self.assertAlmostEqual(audio.integrated_loudness(mastered, RATE), audio.TARGET_LUFS, delta=0.5)
+        self.assertAlmostEqual(audio.integrated_loudness(mastered, RATE), audio.TARGET_LUFS_MONO, delta=0.5)
+        # Stereo measures both channels and aims 3 LU higher; a centred voice sounds as loud as mono did.
+        stereo = audio.master(audio.pan_mono(quiet, 0.0), RATE)
+        self.assertEqual(stereo.shape, (len(quiet), 2))
+        self.assertAlmostEqual(audio.integrated_loudness(stereo, RATE), audio.TARGET_LUFS, delta=0.5)
+        np.testing.assert_allclose(stereo[:, 0], mastered, atol=2e-3)  # each speaker plays what mono did
         hot = tone(6.0) * 0.3
         hot[3 * RATE:3 * RATE + RATE // 10] *= 3.0  # a peak far above the rest
         mastered = audio.master(hot, RATE)
@@ -856,6 +876,52 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
                                float(np.max(np.abs(mastered[5 * RATE:]))) / float(np.max(np.abs(hot[5 * RATE:]))),
                                places=3)
         self.assertEqual(audio.master(np.zeros(RATE, dtype=np.float32), RATE).size, RATE)
+
+    def test_voices_pan_with_constant_power(self):
+        voice = tone(1.0)
+        for position in (-1.0, -0.3, 0.0, 0.45, 1.0):
+            with self.subTest(position=position):
+                placed = audio.pan_mono(voice, position)
+                np.testing.assert_allclose(np.sum(placed ** 2, axis=1), voice ** 2, atol=1e-6)
+        left = audio.pan_mono(voice, -0.3)
+        self.assertGreater(float(np.abs(left[:, 0]).max()), float(np.abs(left[:, 1]).max()))
+
+    def test_narrator_is_centred_and_characters_spread(self):
+        from h3_app.drama3_serving.generate import CHARACTER_POSITIONS, speaker_positions
+        from h3_app.drama3_serving.planner import Chunk
+
+        chunks = [Chunk(i, speaker, "Hi.") for i, speaker in enumerate(["Narrator", "Mia", "Leo", "Mia", "Ann"])]
+        self.assertEqual(speaker_positions(chunks), dict(zip(["Mia", "Leo", "Ann"], CHARACTER_POSITIONS)))
+        self.assertEqual(speaker_positions(chunks[:2]), {})  # a narrator and one character stay centred
+
+    def test_sounds_move_and_recede(self):
+        from h3_app.drama3_serving.tree import parse_drama3_tree, iter_sound_nodes, parse_pan
+
+        self.assertEqual(parse_pan("-0.5"), (-0.5, -0.5))
+        self.assertEqual(parse_pan("-0.8, 0.2"), (-0.8, 0.2))
+        self.assertEqual(parse_pan("-2 to 3"), (-1.0, 1.0))
+        self.assertIsNone(parse_pan("left"))
+        (steps,) = iter_sound_nodes(parse_drama3_tree(
+            '<sound name="steps" pan="-1,1" distance="far">Steps</sound>\n<|speaker:0|> Hi.'))
+        self.assertEqual((steps.pan, steps.distance), ((-1.0, 1.0), "far"))
+
+        noise = np.random.default_rng(1).uniform(-0.3, 0.3, (2 * RATE, 2)).astype(np.float32)
+        moving = audio.place_sound(noise, RATE, (-1.0, 1.0))
+        first, last = moving[: RATE // 20], moving[-RATE // 20:]
+        self.assertGreater(np.abs(first[:, 0]).mean(), 5 * np.abs(first[:, 1]).mean())  # starts left
+        self.assertGreater(np.abs(last[:, 1]).mean(), 5 * np.abs(last[:, 0]).mean())  # ends right
+        np.testing.assert_allclose(audio.place_sound(noise, RATE, (0.0, 0.0)), noise, atol=1e-6)
+
+        far = audio.place_sound(noise, RATE, None, "far")
+
+        def highs(samples):
+            spectrum = np.abs(np.fft.rfft(samples[:, 0]))
+            return spectrum[len(spectrum) // 4:].sum() / spectrum.sum()
+
+        self.assertLess(highs(far), highs(noise) / 3)  # distance dulls a sound ...
+        self.assertLess(np.sqrt(np.mean(far ** 2)), np.sqrt(np.mean(noise ** 2)))  # ... and lowers it
+        self.assertEqual(far.shape, noise.shape)
+        self.assertEqual(audio.place_sound(tone(1.0), RATE).shape, (RATE, 2))  # mono clips become stereo
 
     def test_speaker_gains_even_out_voice_levels_within_a_cap(self):
         from h3_app.drama3_serving.generate import MAX_SPEAKER_GAIN_DB, Take, speaker_gains

@@ -12,6 +12,7 @@ from h3_app.drama3_serving.tree import (
     SOUND_BLOCK_RE,
     _parse_sound_tag,
     extract_script_sounds,
+    sound_placement_attrs,
 )
 from h3_app.drama3_sounds import normalize_sound_name
 from h3_app.drama3_speakers import normalize_name
@@ -167,6 +168,7 @@ def _apply_sound_brief(tag: str, briefs: dict[str, dict]) -> str:
     if node.volume != 1.0:
         attrs.append(f'volume="{node.volume:g}"')
     attrs.append(f'duration="{brief.get("duration", node.duration)}"')
+    attrs.extend(sound_placement_attrs(node))
     return f"<sound {' '.join(attrs)}>{brief.get('description') or node.description}</sound>"
 
 

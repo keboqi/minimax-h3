@@ -101,7 +101,7 @@ class StableAudioWorkerTests(unittest.TestCase):
             self.assertEqual(worker.loaded, ["stable_audio"])
             for path, seconds in zip(outputs, (3, 1, 2)):
                 samples, rate = soundfile.read(path)
-                self.assertEqual((rate, samples.shape), (RATE, (seconds * RATE,)))
+                self.assertEqual((rate, samples.shape), (RATE, (seconds * RATE, 2)))  # stereo kept
                 self.assertAlmostEqual(float(np.max(np.abs(samples))), 1.0, places=3)  # normalized after the cut
 
 

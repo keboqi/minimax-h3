@@ -236,10 +236,9 @@ class Worker:
                 if peak > 0:
                     output = output.div(peak).clamp(-1.0, 1.0)
                 audio = output.cpu().numpy()
-                if audio.ndim == 2:
-                    # Channels-first (C, N) -> mono (N,)
-                    audio = np.mean(audio, axis=0)
-                audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+                # Channels-first (C, N) -> (N, C): Drama 3 mixes in stereo, so the model's
+                # stereo image is kept; a mono result stays mono.
+                audio = np.asarray(audio.T if audio.ndim == 2 else audio.reshape(-1), dtype=np.float32)
                 if not audio.size or not np.isfinite(audio).all():
                     raise RuntimeError(f"Stable Audio 3 Medium returned empty or invalid audio for '{prompt}'.")
                 sf.write(item["output"], audio, sample_rate, subtype="PCM_16")

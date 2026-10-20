@@ -561,6 +561,13 @@ class Drama3CastSoundTests(unittest.TestCase):
         self.assertEqual((rain["description"], rain["duration"], rain["loop"]),
                          ("Steady rain on a tin roof", 20, True))
 
+    def test_writer_briefs_keep_a_sounds_placement(self):
+        script, _cast, _sounds = self.parse(
+            [{"name": "steps", "description": "Footsteps approaching", "duration": 4}],
+            script='<sound name="steps" pan="-0.8,0" distance="far">Steps</sound>\n<|speaker:0|> Hello there.')
+        self.assertIn('<sound name="steps" duration="4" pan="-0.8,0" distance="far">Footsteps approaching</sound>',
+                      script)
+
     def test_script_is_unchanged_without_matching_briefs(self):
         script, _cast, _sounds = self.parse([{"name": "other", "description": "Wind"}])
         self.assertIn('<sound loop="true" name="rain">Rain</sound>', script)

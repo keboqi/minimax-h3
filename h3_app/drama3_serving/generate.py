@@ -297,8 +297,19 @@ def _sound_clip(node: SoundNode, sound_clips: dict[str, Path]) -> Path | None:
 def _decoded_sound(clip_path: Path, rate: int, decoded: dict[Path, np.ndarray]) -> np.ndarray:
     """Decode each clip once per render; a cue repeated in the script reuses its samples."""
     if clip_path not in decoded:
-        decoded[clip_path] = audio.load_audio_file(clip_path, rate)
+        decoded[clip_path] = audio.load_audio_file(clip_path, rate, stereo=True)
     return decoded[clip_path]
+
+
+def _placed_sound(node: SoundNode, ctx: "_Render") -> np.ndarray:
+    """A sound cue's stereo clip at its volume, position and distance."""
+    clip_path = _sound_clip(node, ctx.sound_clips)
+    if clip_path is None:
+        raise H3Error(f'Missing sound clip for "{node.name or node.description}".')
+    samples = _decoded_sound(clip_path, ctx.rate, ctx.decoded)
+    if node.pan is not None or node.distance:
+        samples = audio.place_sound(samples, ctx.rate, node.pan, node.distance)
+    return samples
 
 
 # Speakers' takes are brought this close to the cast's typical level, never by more.
@@ -328,6 +339,26 @@ def speaker_gains(takes: dict[int, Take]) -> dict[str, float]:
             for speaker, level in levels.items()}
 
 
+# The narrator stands in the middle; characters take these places in order of first line.
+NARRATOR_NAMES = frozenset({"narrator", "narration", "旁白", "storyteller", "story teller"})
+CHARACTER_POSITIONS = (-0.3, 0.3, -0.15, 0.15, -0.45, 0.45)
+
+
+def speaker_positions(chunks: list[Chunk]) -> dict[str, float]:
+    """Where each speaker stands in the stereo image.
+
+    The narrator is centred and close; with two or more characters they spread gently
+    to both sides, alternating, so a conversation is heard across the scene. A lone
+    voice or a single character stays centred.
+    """
+    characters = [speaker for speaker in dict.fromkeys(chunk.speaker for chunk in chunks)
+                  if " ".join(speaker.split()).casefold() not in NARRATOR_NAMES]
+    if len(characters) < 2:
+        return {}
+    return {speaker: CHARACTER_POSITIONS[index % len(CHARACTER_POSITIONS)]
+            for index, speaker in enumerate(characters)}
+
+
 @dataclass
 class _Render:
     node_chunks: dict[int, list[Chunk]]
@@ -336,6 +367,7 @@ class _Render:
     rate: int
     decoded: dict[Path, np.ndarray]
     gains: dict[str, float]
+    positions: dict[str, float]
 
 
 def _edge_texts(node: TreeNode, ctx: _Render) -> tuple[str, str, str, str] | None:
@@ -354,7 +386,7 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
     rate = ctx.rate
     if isinstance(node, SpeechNode):
         chunks = ctx.node_chunks.get(id(node), [])
-        rendered_turns: list[tuple[str, np.ndarray, str]] = []
+        rendered_turns: list[tuple[str, np.ndarray, str]] = []  # stereo, placed
         line_offsets: list[list[tuple[int, int]]] = []
         for chunk in chunks:
             take = ctx.takes[chunk.index]
@@ -371,7 +403,8 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
                 tidied = apply_speaker_effects(tidied, rate, chunk.speaker_effects)
                 if dry and len(tidied) != dry:
                     lines = [(start * len(tidied) // dry, end * len(tidied) // dry) for start, end in lines]
-            rendered_turns.append((chunk.speaker, tidied, chunk.text))
+            placed = audio.pan_mono(tidied, ctx.positions.get(chunk.speaker, 0.0))
+            rendered_turns.append((chunk.speaker, placed, chunk.text))
             line_offsets.append(lines)
         offsets: list[tuple[int, int]] = []
         joined = audio.join_takes(rendered_turns, rate, offsets)
@@ -381,14 +414,11 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
         return joined, len(joined)
 
     if isinstance(node, PauseNode):
-        silence = np.zeros(max(0, int(round(node.seconds * rate))), dtype=np.float32)
+        silence = np.zeros((max(0, int(round(node.seconds * rate))), 2), dtype=np.float32)
         return silence, len(silence)
 
     if isinstance(node, SoundNode):
-        clip_path = _sound_clip(node, ctx.sound_clips)
-        if clip_path is None:
-            raise H3Error(f'Missing sound clip for "{node.name or node.description}".')
-        samples = _decoded_sound(clip_path, rate, ctx.decoded)
+        samples = _placed_sound(node, ctx)
         if node.volume != 1.0:
             samples = (samples * float(node.volume)).astype(np.float32, copy=False)
         return samples, len(samples)
@@ -411,7 +441,7 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
             cursor += advance
             previous = (edges[2], edges[3]) if edges is not None else None
         length = max([cursor] + [start + len(seg) for start, seg in placed])
-        out = np.zeros(length, dtype=np.float32)
+        out = np.zeros((length, 2), dtype=np.float32)
         for start, seg in placed:
             out[start:start + len(seg)] += seg
         return out, cursor
@@ -421,10 +451,7 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
         child_spans: dict[int, tuple[int, int, list[tuple[int, int]]]] = {}
         for child in node.children:
             if isinstance(child, SoundNode):
-                clip_path = _sound_clip(child, ctx.sound_clips)
-                if clip_path is None:
-                    raise H3Error(f'Missing sound clip for "{child.name or child.description}".')
-                tracks.append({"audio": _decoded_sound(clip_path, rate, ctx.decoded), "loop": child.loop,
+                tracks.append({"audio": _placed_sound(child, ctx), "loop": child.loop,
                                "is_sound": True, "volume": child.volume})
             else:
                 # Parallel tracks all start together, so child offsets differ only by the speech lead-in.
@@ -437,7 +464,7 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
                          for index, (start, end, lines) in child_spans.items())
         return mix.audio, mix.advance
 
-    return np.zeros(0, dtype=np.float32), 0
+    return np.zeros((0, 2), dtype=np.float32), 0
 
 
 def _render_ast(
@@ -449,14 +476,17 @@ def _render_ast(
     decoded: dict[Path, np.ndarray] | None = None,
     spans: dict[int, tuple[int, int, list[tuple[int, int]]]] | None = None,
     gains: dict[str, float] | None = None,
+    positions: dict[str, float] | None = None,
 ) -> np.ndarray:
-    """Recursively render a Drama 3 AST node into a 1D float32 audio array at ``rate``.
+    """Recursively render a Drama 3 AST node into (frames, 2) float32 stereo audio at ``rate``.
 
     ``spans``, when given, receives each chunk's (start, end) samples in the returned audio,
     keyed by chunk index, with the (start, end) of each of its script lines inside the take.
-    ``gains`` scales each speaker's takes (see ``speaker_gains``).
+    ``gains`` scales each speaker's takes (see ``speaker_gains``) and ``positions`` places
+    them left to right (see ``speaker_positions``); unlisted speakers are centred.
     """
-    ctx = _Render(node_chunks, takes, sound_clips, rate, {} if decoded is None else decoded, gains or {})
+    ctx = _Render(node_chunks, takes, sound_clips, rate, {} if decoded is None else decoded, gains or {},
+                  positions or {})
     return _render(node, ctx, spans)[0]
 
 
@@ -610,7 +640,8 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     ordered = [takes[chunk.index] for chunk in chunks]
     rate = ordered[0].rate
     spans: dict[int, tuple[int, int, list[tuple[int, int]]]] = {}
-    joined = _render_ast(tree, node_chunks, takes, sound_clips, rate, spans=spans, gains=speaker_gains(takes))
+    joined = _render_ast(tree, node_chunks, takes, sound_clips, rate, spans=spans, gains=speaker_gains(takes),
+                         positions=speaker_positions(chunks))
     joined = audio.master(joined, rate)
 
     # Where each take and script line plays in the mix, for synced subtitles;

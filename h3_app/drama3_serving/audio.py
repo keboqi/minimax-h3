@@ -27,8 +27,11 @@ QUICK_REPLY_GAP = 0.22  # an answer to a question or exclamation comes quickly
 WEIGHTED_GAP = 0.6  # before a line that opens slow, sad or hushed
 
 
-def decode_wav(data: bytes) -> tuple[np.ndarray, int]:
-    """Mono float32 samples from PCM16/24/32 or float32 WAV, including WAVE_FORMAT_EXTENSIBLE."""
+def decode_wav(data: bytes, *, keep_channels: bool = False) -> tuple[np.ndarray, int]:
+    """Float32 samples from PCM16/24/32 or float32 WAV, including WAVE_FORMAT_EXTENSIBLE.
+
+    Mono unless ``keep_channels``, which returns a multichannel file as (frames, channels).
+    """
     if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
         raise ValueError("SGLang-Omni did not return a WAV file.")
     position, fmt, payload = 12, None, None
@@ -58,15 +61,19 @@ def decode_wav(data: bytes) -> tuple[np.ndarray, int]:
     else:
         raise ValueError(f"Unsupported WAV encoding (format {format_tag}, {bits} bits).")
     if channels > 1:
-        samples = samples[: len(samples) // channels * channels].reshape(-1, channels).mean(axis=1)
+        samples = samples[: len(samples) // channels * channels].reshape(-1, channels)
+        if not keep_channels:
+            samples = samples.mean(axis=1)
     return samples, int(rate)
 
 
 def encode_wav(samples: np.ndarray, rate: int) -> bytes:
+    """16-bit PCM WAV of mono samples, or of (frames, channels) samples."""
+    samples = np.asarray(samples)
     pcm = (np.clip(samples, -1.0, 1.0) * 32767.0).astype("<i2")
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as target:
-        target.setnchannels(1)
+        target.setnchannels(1 if samples.ndim == 1 else samples.shape[1])
         target.setsampwidth(2)
         target.setframerate(rate)
         target.writeframes(pcm.tobytes())
@@ -274,7 +281,7 @@ def join_takes(takes: list[tuple], rate: int,
             same = speaker == previous_speaker
             gap = (turn_gap(previous_text, text, same) if text is not None and previous_text is not None
                    else SAME_SPEAKER_GAP if same else TURN_GAP)
-            pieces.append(np.zeros(int(rate * gap), dtype=np.float32))
+            pieces.append(np.zeros((int(rate * gap), *np.shape(samples)[1:]), dtype=np.float32))
             cursor += len(pieces[-1])
         pieces.append(samples.astype(np.float32))
         if spans is not None:
@@ -296,8 +303,9 @@ def active_level_db(samples: np.ndarray, rate: int) -> float | None:
 
 
 def resample_audio(samples: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
-    """Resample 1D float32 audio from src_rate to dst_rate."""
-    audio = np.asarray(samples, dtype=np.float32).reshape(-1)
+    """Resample mono or (frames, channels) float32 audio from src_rate to dst_rate."""
+    audio = np.asarray(samples, dtype=np.float32)
+    audio = audio if audio.ndim == 2 else audio.reshape(-1)
     if src_rate <= 0 or dst_rate <= 0 or src_rate == dst_rate or audio.size == 0:
         return audio
     import math
@@ -306,18 +314,21 @@ def resample_audio(samples: np.ndarray, src_rate: int, dst_rate: int) -> np.ndar
     divisor = math.gcd(int(src_rate), int(dst_rate))
     up = int(dst_rate) // divisor
     down = int(src_rate) // divisor
-    return signal.resample_poly(audio, up, down).astype(np.float32, copy=False)
+    return signal.resample_poly(audio, up, down, axis=0).astype(np.float32, copy=False)
 
 
-def load_audio_file(path: str | Path, target_rate: int) -> np.ndarray:
-    """Load an audio file (WAV or ffmpeg-decoded format) as mono float32 at target_rate."""
+def load_audio_file(path: str | Path, target_rate: int, *, stereo: bool = False) -> np.ndarray:
+    """Load an audio file (WAV or ffmpeg-decoded format) as float32 at target_rate.
+
+    Mono, or with ``stereo`` (frames, 2), a mono file on both channels.
+    """
     source = Path(path)
     if not source.is_file():
         raise H3Error(f"Sound audio file is missing: {source}")
     raw = source.read_bytes()
     if raw[:4] == b"RIFF" and raw[8:12] == b"WAVE":
-        samples, rate = decode_wav(raw)
-        return resample_audio(samples, rate, target_rate)
+        samples, rate = decode_wav(raw, keep_channels=stereo)
+        return resample_audio(as_stereo(samples) if stereo else samples, rate, target_rate)
     with tempfile.TemporaryDirectory(prefix="drama3-sound-decode-") as directory:
         decoded_wav = Path(directory) / "decoded.wav"
         proc = run_media_process(
@@ -330,7 +341,7 @@ def load_audio_file(path: str | Path, target_rate: int) -> np.ndarray:
                 "-i",
                 str(source),
                 "-ac",
-                "1",
+                "2" if stereo else "1",
                 "-ar",
                 str(int(target_rate)),
                 "-f",
@@ -341,8 +352,75 @@ def load_audio_file(path: str | Path, target_rate: int) -> np.ndarray:
         )
         if proc.returncode != 0 or not decoded_wav.is_file():
             raise H3Error(f"Failed to decode sound clip {source.name}: {proc.stderr.strip()}")
-        samples, rate = decode_wav(decoded_wav.read_bytes())
-        return resample_audio(samples, rate, target_rate)
+        samples, rate = decode_wav(decoded_wav.read_bytes(), keep_channels=stereo)
+        return resample_audio(as_stereo(samples) if stereo else samples, rate, target_rate)
+
+
+def as_stereo(samples: np.ndarray) -> np.ndarray:
+    """(frames, 2) float32: mono on both channels, the first two channels of a wider file."""
+    samples = np.asarray(samples, dtype=np.float32)
+    if samples.ndim == 1:
+        return np.repeat(samples[:, None], 2, axis=1)
+    if samples.shape[1] == 1:
+        return np.repeat(samples, 2, axis=1)
+    return samples[:, :2]
+
+
+def _along(gain: np.ndarray, samples: np.ndarray) -> np.ndarray:
+    """``gain`` per frame, shaped to scale mono or (frames, channels) ``samples``."""
+    return gain if samples.ndim == 1 else gain[:, None]
+
+
+def pan_gains(position) -> tuple:
+    """Constant-power (left, right) gains for ``position`` from -1 (left) to 1 (right)."""
+    angle = (np.clip(position, -1.0, 1.0) + 1.0) * np.pi / 4.0
+    return np.cos(angle), np.sin(angle)
+
+
+def pan_mono(samples: np.ndarray, position: float) -> np.ndarray:
+    """A mono voice placed at ``position``; its loudness is the same anywhere."""
+    samples = np.asarray(samples, dtype=np.float32).reshape(-1)
+    left, right = pan_gains(float(position))
+    return np.stack([samples * left, samples * right], axis=1).astype(np.float32)
+
+
+FAR_LOWPASS_HZ = 2500.0
+FAR_GAIN = 0.4  # about -8 dB
+FAR_REFLECTIONS = ((0.031, 0.35), (0.057, 0.25), (0.089, 0.18), (0.131, 0.12))  # (seconds, gain)
+NEAR_GAIN = 1.25
+
+
+def place_sound(samples: np.ndarray, rate: int, pan: tuple[float, float] | None = None,
+                distance: str = "") -> np.ndarray:
+    """A stereo sound moved to ``pan`` (start, end positions) and ``distance`` ("near" or "far").
+
+    A far sound loses its highs and level and gains a few room reflections; a panned
+    stereo sound narrows toward mono as it moves to the side, so its image follows.
+    """
+    out = as_stereo(samples).copy()
+    if distance == "far" and len(out):
+        from scipy import signal
+
+        sos = signal.butter(2, min(FAR_LOWPASS_HZ / (0.5 * rate), 0.99), btype="lowpass", output="sos")
+        dry = signal.sosfilt(sos, out, axis=0).astype(np.float32)
+        wet = dry.copy()
+        for index, (seconds, gain) in enumerate(FAR_REFLECTIONS):
+            offset = int(seconds * rate)
+            if offset < len(dry):
+                # Alternate sides so the reflections widen the sound instead of doubling it.
+                wet[offset:] += dry[:-offset][:, ::-1 if index % 2 else 1] * gain
+        out = wet * FAR_GAIN
+    elif distance == "near":
+        out = out * NEAR_GAIN
+    if pan is not None and len(out):
+        start, end = (float(np.clip(value, -1.0, 1.0)) for value in pan)
+        positions = np.linspace(start, end, len(out), dtype=np.float32) if start != end else np.full(len(out), start, np.float32)
+        mono = out.mean(axis=1)
+        width = 1.0 - np.abs(positions)  # a sound at the far side is a point source
+        left, right = pan_gains(positions)
+        out = np.stack([out[:, 0] * width + mono * (1 - width) * left * np.sqrt(2),
+                        out[:, 1] * width + mono * (1 - width) * right * np.sqrt(2)], axis=1)
+    return out.astype(np.float32, copy=False)
 
 
 LOOP_CROSSFADE_SECONDS = 0.5
@@ -354,26 +432,27 @@ def loop_to_length(samples: np.ndarray, length: int, rate: int,
 
     Generated clips do not end where they begin, so a plain tile clicks at every repeat.
     """
-    clip = np.asarray(samples, dtype=np.float32).reshape(-1)
-    if clip.size == 0 or length <= 0:
-        return np.zeros(max(0, length), dtype=np.float32)
-    if clip.size >= length:
+    clip = np.asarray(samples, dtype=np.float32)
+    clip = clip if clip.ndim == 2 else clip.reshape(-1)
+    if len(clip) == 0 or length <= 0:
+        return np.zeros((max(0, length), *clip.shape[1:]), dtype=np.float32)
+    if len(clip) >= length:
         return clip[:length].copy()
-    overlap = min(int(crossfade * rate), clip.size // 4)
+    overlap = min(int(crossfade * rate), len(clip) // 4)
     if overlap <= 0:
-        return np.tile(clip, -(-length // clip.size))[:length].astype(np.float32)
+        return np.tile(clip, (-(-length // len(clip)), *([1] * (clip.ndim - 1))))[:length].astype(np.float32)
     ramp = np.linspace(0.0, np.pi / 2, overlap, dtype=np.float32)
-    fade_in, fade_out = np.sin(ramp), np.cos(ramp)
-    step = clip.size - overlap
+    fade_in, fade_out = _along(np.sin(ramp), clip), _along(np.cos(ramp), clip)
+    step = len(clip) - overlap
     repeats = -(-(length - overlap) // step)
-    out = np.zeros(repeats * step + overlap, dtype=np.float32)
+    out = np.zeros((repeats * step + overlap, *clip.shape[1:]), dtype=np.float32)
     for index in range(repeats):
         piece = clip.copy()
         if index:
             piece[:overlap] *= fade_in
         if index < repeats - 1:
             piece[-overlap:] *= fade_out
-        out[index * step:index * step + clip.size] += piece
+        out[index * step:index * step + len(clip)] += piece
     return out[:length]
 
 
@@ -423,11 +502,11 @@ class Mix:
 
 
 def _fade(samples: np.ndarray, fade_in: int, fade_out: int) -> np.ndarray:
-    fade_in, fade_out = min(fade_in, samples.size), min(fade_out, samples.size)
+    fade_in, fade_out = min(fade_in, len(samples)), min(fade_out, len(samples))
     if fade_in > 0:
-        samples[:fade_in] *= np.sin(np.linspace(0.0, np.pi / 2, fade_in, dtype=np.float32))
+        samples[:fade_in] *= _along(np.sin(np.linspace(0.0, np.pi / 2, fade_in, dtype=np.float32)), samples)
     if fade_out > 0:
-        samples[-fade_out:] *= np.cos(np.linspace(0.0, np.pi / 2, fade_out, dtype=np.float32))
+        samples[-fade_out:] *= _along(np.cos(np.linspace(0.0, np.pi / 2, fade_out, dtype=np.float32)), samples)
     return samples
 
 
@@ -455,6 +534,9 @@ def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
     valid = [t for t in normalized if t.get("audio") is not None and len(t["audio"]) > 0]
     if not valid:
         return Mix(np.zeros(0, dtype=np.float32), 0, 0)
+    # Mono tracks join a stereo block on both channels.
+    stereo = any(np.ndim(t["audio"]) == 2 for t in valid)
+    shape = lambda arr: as_stereo(arr) if stereo else np.asarray(arr, dtype=np.float32).reshape(-1)  # noqa: E731
 
     speech_tracks = [t for t in valid if not t.get("is_sound", False)]
     sound_tracks = [t for t in valid if t.get("is_sound", False)]
@@ -468,7 +550,7 @@ def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
 
     sounds: list[tuple[np.ndarray, bool]] = []
     for track in sound_tracks:
-        samples = np.asarray(track["audio"], dtype=np.float32).reshape(-1).copy()
+        samples = shape(track["audio"]).copy()
         loop = bool(track.get("loop", False))
         if loop and speech_tracks:
             tail = int(LOOP_TAIL_SECONDS * rate)
@@ -481,16 +563,16 @@ def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
         sounds.append((samples.astype(np.float32, copy=False), loop))
 
     length = max([offset + len(t["audio"]) for t in speech_tracks] + [len(arr) for arr, _bed in sounds])
-    speech = np.zeros(length, dtype=np.float32)
+    speech = np.zeros((length, 2) if stereo else length, dtype=np.float32)
     for track in speech_tracks:
-        arr = np.asarray(track["audio"], dtype=np.float32).reshape(-1)
+        arr = shape(track["audio"])
         speech[offset:offset + len(arr)] += arr
     # Only looped beds (ambience, music) dip under speech; a one-shot effect or stinger
     # is usually anchored to the sentence that narrates it and must stay in front.
-    duck = speech_duck_gain(speech, rate) if speech_tracks else None
+    duck = speech_duck_gain(speech.mean(axis=1) if stereo else speech, rate) if speech_tracks else None
     mixed = speech.copy()
     for arr, bed in sounds:
-        mixed[: len(arr)] += arr * duck[: len(arr)] if bed and duck is not None else arr
+        mixed[: len(arr)] += arr * _along(duck[: len(arr)], arr) if bed and duck is not None else arr
     advance = speech_end if speech_tracks else max(len(arr) for arr, _bed in sounds)
     return Mix(mixed, advance, offset)
 
@@ -502,7 +584,8 @@ def mix_parallel_tracks(tracks: list[dict | tuple], rate: int) -> np.ndarray:
 
 # Loudness of the finished mix (ITU-R BS.1770). A mono file plays on both speakers,
 # about 3 LU louder than it measures, so -19 LUFS mono matches the usual -16 LUFS stereo.
-TARGET_LUFS = -19.0
+TARGET_LUFS = -16.0
+TARGET_LUFS_MONO = -19.0
 MAX_LOUDNESS_GAIN_DB = 12.0
 PEAK_CEILING_DBFS = -1.5  # sample peaks, leaving room for inter-sample and MP3 overshoot
 LIMITER_BLOCK_SECONDS = 0.0025
@@ -531,22 +614,26 @@ def _k_weighting(rate: int) -> np.ndarray:
 
 
 def integrated_loudness(samples: np.ndarray, rate: int) -> float | None:
-    """Gated integrated loudness in LUFS, or None when the audio is too short or silent."""
+    """Gated integrated loudness in LUFS, or None when the audio is too short or silent.
+
+    Channels of (frames, channels) audio are summed with equal weight, as for stereo.
+    """
     from scipy import signal
 
-    samples = np.asarray(samples, dtype=np.float32).reshape(-1)
+    samples = np.asarray(samples, dtype=np.float32)
+    samples = samples if samples.ndim == 2 else samples.reshape(-1, 1)
     step = int(0.1 * rate)  # 400 ms blocks overlap by 75%: four 100 ms steps each
-    steps = samples.size // step if rate > 0 else 0
+    steps = len(samples) // step if rate > 0 else 0
     if steps < 4:
         return None
     sos = _k_weighting(rate)
-    state = np.zeros((sos.shape[0], 2))
+    state = np.zeros((sos.shape[0], 2, samples.shape[1]))
     energy = np.empty(steps, dtype=np.float64)
     # Filtered in pieces so a long chapter never needs a float64 copy of itself.
     for first in range(0, steps, LEVEL_CHUNK_STEPS):
         last = min(first + LEVEL_CHUNK_STEPS, steps)
-        weighted, state = signal.sosfilt(sos, samples[first * step:last * step].astype(np.float64), zi=state)
-        energy[first:last] = (weighted.reshape(-1, step) ** 2).sum(axis=1)
+        weighted, state = signal.sosfilt(sos, samples[first * step:last * step].astype(np.float64), axis=0, zi=state)
+        energy[first:last] = (weighted.reshape(-1, step, samples.shape[1]) ** 2).sum(axis=(1, 2))
     z = np.convolve(energy, np.ones(4), mode="valid") / (4 * step)
     z = z[-0.691 + 10.0 * np.log10(np.maximum(z, 1e-20)) > -70.0]  # absolute gate
     if not z.size:
@@ -560,14 +647,16 @@ def limit_peaks(samples: np.ndarray, rate: int, ceiling_db: float = PEAK_CEILING
     """Look-ahead peak limiter: gain falls just before a peak and recovers smoothly after it."""
     from scipy.ndimage import minimum_filter1d
 
-    samples = np.asarray(samples, dtype=np.float32).reshape(-1)
+    samples = np.asarray(samples, dtype=np.float32)
+    samples = samples if samples.ndim == 2 else samples.reshape(-1)
     ceiling = float(10.0 ** (ceiling_db / 20.0))
     if not samples.size or float(np.max(np.abs(samples))) <= ceiling:
         return samples
     size = max(1, int(rate * LIMITER_BLOCK_SECONDS))
-    count = -(-samples.size // size)
+    count = -(-len(samples) // size)
     padded = np.zeros(count * size, dtype=np.float32)
-    padded[: samples.size] = np.abs(samples)
+    # Linked channels: one gain for both keeps a voice where it was placed.
+    padded[: len(samples)] = np.abs(samples).max(axis=1) if samples.ndim == 2 else np.abs(samples)
     peaks = padded.reshape(count, size).max(axis=1)
     needed = np.minimum(1.0, ceiling / np.maximum(peaks, 1e-9))
     # Each block also covers its neighbours, so gain interpolated between blocks never overshoots.
@@ -582,19 +671,23 @@ def limit_peaks(samples: np.ndarray, rate: int, ceiling_db: float = PEAK_CEILING
     centers = (np.arange(count) + 0.5) * size
     out = np.empty_like(samples)
     piece = LEVEL_CHUNK_STEPS * size
-    for start in range(0, samples.size, piece):
-        stop = min(start + piece, samples.size)
+    for start in range(0, len(samples), piece):
+        stop = min(start + piece, len(samples))
         envelope = np.interp(np.arange(start, stop), centers, gains).astype(np.float32)
-        out[start:stop] = np.clip(samples[start:stop] * envelope, -ceiling, ceiling)
+        out[start:stop] = np.clip(samples[start:stop] * _along(envelope, samples), -ceiling, ceiling)
     return out
 
 
-def master(samples: np.ndarray, rate: int, target_lufs: float = TARGET_LUFS) -> np.ndarray:
+def master(samples: np.ndarray, rate: int, target_lufs: float | None = None) -> np.ndarray:
     """Bring the finished mix to ``target_lufs`` and keep its peaks under the ceiling.
 
+    The target defaults to ``TARGET_LUFS`` for stereo and ``TARGET_LUFS_MONO`` for mono.
     One gain for the whole piece keeps whispers, shouts and scene levels as mixed.
     """
-    samples = np.asarray(samples, dtype=np.float32).reshape(-1)
+    samples = np.asarray(samples, dtype=np.float32)
+    samples = samples if samples.ndim == 2 else samples.reshape(-1)
+    if target_lufs is None:
+        target_lufs = TARGET_LUFS if samples.ndim == 2 else TARGET_LUFS_MONO
     loudness = integrated_loudness(samples, rate)
     if loudness is not None:
         gain_db = min(target_lufs - loudness, MAX_LOUDNESS_GAIN_DB)

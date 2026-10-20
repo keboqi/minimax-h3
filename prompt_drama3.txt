@@ -79,6 +79,7 @@ Advanced Sound & Vocal Staging (USE ONLY WHEN Script mode is "Advanced (sound en
      * Ambience loop (`<sound loop="true" volume="0.4" duration="25" name="rain">Steady rain and wind on a window</sound>`): volume 0.3–0.5, 20–30 seconds.
      * Music loop (`<sound loop="true" volume="0.2" duration="40" name="tense_cello">Slow minor-key cello drone, no vocals</sound>`): volume 0.15–0.25, 30–47 seconds, matching the emotional arc. A music bed is ALWAYS `loop="true"`: a sound without it plays once and stops, so un-looped music cuts out under the lines that follow.
    - Loops fade in, are heard alone for a moment before their block's first line, repeat until the block's speech ends, dip automatically under speech, and fade out under what follows; one-shot effects and stingers are not dipped and always play to their end. Keep at most two loops active at once (one ambience, one music).
+   - Placement (optional, one-shot effects and stingers): the result is stereo. The narrator stands in the centre and the characters stand apart automatically, so place a sound where the story puts it: `pan="-0.6"` sets it from -1 (left) to 1 (right), `pan="-0.8,0"` moves it during the clip (footsteps approaching from the left, a car passing), `distance="far"` makes it distant (muffled, quieter, with some room), and `distance="near"` close. Leave ambience and music loops unplaced; they surround the scene. Place only sounds whose position the story implies.
    - Pause tags (`<#seconds#>`): e.g. `<#1.5#>` for a 1.5s dramatic beat or Foley gap.
 
 2. Arbitrarily Nested `<parallel>` and `<sequential>` Staging (6 Mixing Paradigms):
@@ -233,7 +234,7 @@ narrator: 信号变得极不稳定。
 narrator: 就在这时，神殿开始剧烈震动。
 </parallel>
 <parallel>
-<sound name="titan_step" duration="4">Single enormous footstep shaking the ground, deep sub-bass boom with stone echo</sound>
+<sound name="titan_step" duration="4" distance="far">Single enormous footstep shaking the ground, deep sub-bass boom with stone echo</sound>
 narrator: 一个庞大的身影缓缓降临。
 </parallel>
 远古巨神: <giant_titan> 千年的沉睡，[slow, thunderous] 结束了。
@@ -256,6 +257,6 @@ narrator: 精灵拉着林夕躲进一间狭小的密室。
 <sound name="reveal_sting" volume="0.4" duration="6">Short rising orchestral swell with shimmering bells, single hit, no vocals</sound>
 narrator: 守卫将一柄闪耀着星光的权杖交给了林夕。
 </parallel>
-Why: the recording and the far-end caller carry device effects and the caller escalates to `<bad_signal>`, while 林夕 holding the phone stays dry; each one-shot shares a block with the sentence that narrates it, and the quake is a sequential chain; the temple scene has one ambience and one music loop under its own timeline; scene changes get pauses; inside the small room every in-world speaker carries `<reverb_small_room>`, chained after the fairy's character effect; only the two-word reactions overlap; the reveal gets a stinger; narration never carries an effect; ellipses became commas.
+Why: the recording and the far-end caller carry device effects and the caller escalates to `<bad_signal>`, while 林夕 holding the phone stays dry; each one-shot shares a block with the sentence that narrates it, and the quake is a sequential chain; the titan's first footstep is far off as it descends; the temple scene has one ambience and one music loop under its own timeline; scene changes get pauses; inside the small room every in-world speaker carries `<reverb_small_room>`, chained after the fairy's character effect; only the two-word reactions overlap; the reveal gets a stinger; narration never carries an effect; ellipses became commas.
 
 Never output <|...|> tokens such as <|speaker:0|> or <|im_start|>, relative notes such as "softer versus previous", duration hints such as [audio tokens: N], or language hints unless the user mixes languages within one line.
