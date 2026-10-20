@@ -14,9 +14,8 @@
 5. In the **Speak** column, choose a **Speech preset** (**Expressive** by default).
    **Generate speech** renders the current script and references without rewriting them.
 
-On wide screens Script, Cast and Speak sit side by side; on narrower ones Script and
-Cast stack on the left with Speak beside them. Speak stays in view while you scroll.
-**Auto** sits at the top of the Script column.
+Script and Cast stack on the left with Speak beside them; Speak stays in view while
+you scroll. **Auto** sits under the speech text.
 
 ### Takes
 

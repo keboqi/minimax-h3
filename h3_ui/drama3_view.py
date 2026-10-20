@@ -261,127 +261,128 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         gr.HTML('<div class="h3-drama3-intro"><p class="h3-eyebrow">Drama 3 · expressive speech</p>'
                 '<h2>Speech studio</h2><p>Write a script, cast the voices, then speak it and review it line '
                 'by line. Or paste any text and let <strong>Auto</strong> do every step.</p></div>')
-        # Script, cast and speech side by side on wide screens; the columns wrap on narrow ones.
+        # Script over Cast on the left, with the Speak stage beside both.
         with gr.Row(equal_height=False, elem_classes=["h3-generator-shell", "h3-drama3-studio"]):
-            with gr.Column(scale=4, min_width=360, elem_classes=["h3-composer", "h3-drama3-script-panel"]):
-                _heading("01", "Script", "Tag each line with <code>&lt;|speaker:N|&gt;</code> and add "
-                         "[cues] in brackets, or let the writer do it.")
-                with gr.Column(elem_classes=["h3-drama3-auto"]):
-                    with gr.Row(equal_height=True, elem_classes=["h3-drama3-auto-bar"]):
-                        gr.HTML('<div class="h3-drama3-auto-heading"><strong>Auto</strong>'
-                                '<p>Rewrites the script, generates every voice (and every sound in Advanced), '
-                                'then speaks it with the Speak settings.</p></div>')
-                        with gr.Row(elem_classes=["h3-generation-buttons"]):
-                            auto = gr.Button("Auto: rewrite, voice, sound and speak", size="sm",
-                                             variant="primary")
-                            stop_auto = gr.Button("Interrupt auto", size="sm", interactive=False)
-                    auto_save_speakers = gr.Checkbox(False, label="Save generated speakers to the selected group",
-                        info="After the voices are generated, Auto saves them like Save all speakers.")
-                    auto_status = gr.Markdown("Paste any text, pick a script mode, then run Auto.",
-                                              elem_classes=["h3-drama3-note"])
-                    auto_sound_slots = gr.Number(0, precision=0, visible=False)
-                title = gr.Textbox(label="Title", max_lines=1, placeholder="Chapter or story title",
-                                   info="Names the output file. The writer fills it from the script.")
-                text = gr.Textbox(label="Speech text", lines=18, max_lines=60, elem_classes=["h3-drama3-script"],
-                    placeholder="<|speaker:0|> [with warm excitement] Welcome back!\n<|speaker:1|> [laughs] Took you long enough.")
-                script_mode = gr.Radio(
-                    list(DRAMA3_SCRIPT_MODES),
-                    value=DRAMA3_SCRIPT_ADVANCED,
-                    label="Script mode",
-                    info="Basic is dialogue with expression cues. Advanced adds sound effects, music and "
-                         "vocal effects; Basic keeps those tags in the script but ignores them.",
-                )
-                with gr.Accordion("Rewrite as a Drama 3 script", open=False):
-                    gr.Markdown("Splits narration from dialogue, adds speaker tags and expression cues, and fills "
-                                "the voice slots in Cast. Advanced mode also stages sound effects, music and vocal "
-                                "effects such as `<phone_call>`.", elem_classes=["h3-drama3-note"])
-                    speaker_mode = gr.Radio(
-                        list(DRAMA3_SPEAKER_MODES), value=DRAMA3_SPEAKER_AUTO, label="Speakers",
-                        info="Auto decides from the text. Adapt to voices uses one speaker per voice in Cast. "
-                             "Single keeps one voice throughout.",
+            with gr.Column(scale=3, min_width=360, elem_classes=["h3-drama3-left"]):
+                with gr.Column(elem_classes=["h3-composer", "h3-drama3-script-panel"]):
+                    _heading("01", "Script", "Tag each line with <code>&lt;|speaker:N|&gt;</code> and add "
+                             "[cues] in brackets, or let the writer do it.")
+                    title = gr.Textbox(label="Title", max_lines=1, placeholder="Chapter or story title",
+                                       info="Names the output file. The writer fills it from the script.")
+                    text = gr.Textbox(label="Speech text", lines=18, max_lines=60, elem_classes=["h3-drama3-script"],
+                        placeholder="<|speaker:0|> [with warm excitement] Welcome back!\n<|speaker:1|> [laughs] Took you long enough.")
+                    with gr.Column(elem_classes=["h3-drama3-auto"]):
+                        with gr.Row(equal_height=True, elem_classes=["h3-drama3-auto-bar"]):
+                            gr.HTML('<div class="h3-drama3-auto-heading"><strong>Auto</strong>'
+                                    '<p>Rewrites the script, generates every voice (and every sound in Advanced), '
+                                    'then speaks it with the Speak settings.</p></div>')
+                            with gr.Row(elem_classes=["h3-generation-buttons"]):
+                                auto = gr.Button("Auto: rewrite, voice, sound and speak", size="sm",
+                                                 variant="primary")
+                                stop_auto = gr.Button("Interrupt auto", size="sm", interactive=False)
+                        auto_save_speakers = gr.Checkbox(False, label="Save generated speakers to the selected group",
+                            info="After the voices are generated, Auto saves them like Save all speakers.")
+                        auto_status = gr.Markdown("Paste any text, pick a script mode, then run Auto.",
+                                                  elem_classes=["h3-drama3-note"])
+                        auto_sound_slots = gr.Number(0, precision=0, visible=False)
+                    script_mode = gr.Radio(
+                        list(DRAMA3_SCRIPT_MODES),
+                        value=DRAMA3_SCRIPT_ADVANCED,
+                        label="Script mode",
+                        info="Basic is dialogue with expression cues. Advanced adds sound effects, music and "
+                             "vocal effects; Basic keeps those tags in the script but ignores them.",
                     )
-                    writer, enhance, enhance_status = _writer("Rewrite script")
-                    with gr.Accordion("Use another chat model", open=False):
-                        gr.Markdown("Copy the full writer prompt into any chat model, then paste its JSON reply. "
-                                    "It is checked like the built-in writer before anything changes.",
-                                    elem_classes=["h3-drama3-note"])
-                        copy_prompt = gr.Button("Show full writer prompt", size="sm")
-                        writer_prompt = gr.Textbox(label="Full writer prompt", lines=8, max_lines=20,
-                                                   interactive=False, visible=False, buttons=["copy"])
-                        pasted_reply = gr.Textbox(label="Pasted writer reply", lines=6, max_lines=20,
-                                                  placeholder='{"script": "<|speaker:0|> ...", "speakers": [...]}')
-                        apply_reply = gr.Button("Apply pasted reply", size="sm", variant="primary")
-            with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer", "h3-drama3-cast-panel"]):
-                _heading("02", "Cast", "Every speaker needs a voice: upload a reference clip, generate one from a "
-                         "description, or reuse a saved speaker.")
-                with gr.Accordion(drama3_voices_title(group="Global", group_size=group_size),
-                                  open=True) as voices_panel:
-                    with gr.Group(elem_classes=["h3-drama3-toolbar"]):
-                        with gr.Row(equal_height=True):
-                            speaker_group = gr.Dropdown(list(speaker_groups), value="Global",
-                                label="Speaker preset group",
-                                info="Saves go here. Names match this group first, then Global.")
-                            speaker_group_size = gr.Number(group_size, precision=0, visible=False)
-                            new_speaker_group = gr.Textbox(label="New speaker group",
-                                                           placeholder="Story or series name",
-                                                           info="Reuse one group across chapters.")
-                        with gr.Row(elem_classes=["h3-drama3-inline-actions"]):
-                            create_speaker_group = gr.Button("Create group", size="sm")
-                            save_all_speakers = gr.Button("Save all speakers to selected group", size="sm")
-                            library_open = gr.Button("Manage saved speakers", size="sm")
-                        speaker_group_status = gr.Markdown(
-                            "Global voices are available in every group.", elem_classes=["h3-drama3-note"])
-                    speaker_library = build_speaker_library(speaker_groups, library_open)
-                    with gr.Group(elem_classes=["h3-drama3-toolbar"]):
-                        voice_engine = gr.Radio(
-                            list(VOICE_DESIGN_ENGINES), value=ENGINE_QWEN, label="Voice generator",
-                            info="[Qwen3-TTS VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign) "
-                                 "designs a voice from its description (downloaded on first use). Drama 3 uses "
-                                 "SGLang-Omni and the sampling settings in Speak.",
+                    with gr.Accordion("Rewrite as a Drama 3 script", open=False):
+                        gr.Markdown("Splits narration from dialogue, adds speaker tags and expression cues, and fills "
+                                    "the voice slots in Cast. Advanced mode also stages sound effects, music and vocal "
+                                    "effects such as `<phone_call>`.", elem_classes=["h3-drama3-note"])
+                        speaker_mode = gr.Radio(
+                            list(DRAMA3_SPEAKER_MODES), value=DRAMA3_SPEAKER_AUTO, label="Speakers",
+                            info="Auto decides from the text. Adapt to voices uses one speaker per voice in Cast. "
+                                 "Single keeps one voice throughout.",
                         )
-                        with gr.Row(equal_height=True):
-                            skip_existing = gr.Checkbox(
-                                True, label="Skip speakers with a voice",
-                                info="Uncheck to regenerate, e.g. after changing the backend.")
-                            asr_model = gr.Dropdown(list(DRAMA3_ASR_CHOICES), value=DEFAULT_DRAMA3_ASR,
-                                                    label="Voice transcript model",
-                                                    info="Used by Auto transcribe; 0.6B uses less memory.")
-                        with gr.Row(elem_classes=["h3-drama3-inline-actions"]):
-                            generate_voices = gr.Button("Generate all speaker voices", size="sm", variant="primary")
-                            stop_voices = gr.Button("Interrupt", size="sm", interactive=False)
-                            generate_voices.h3_stop = stop_voices
-                        voice_status = gr.Markdown("", elem_classes=["h3-drama3-note"])
-                    voices = tuple(_voice_slot(speaker, list(speaker_names))
-                                   for speaker in range(DRAMA3_VOICE_SLOTS))
-                    shown_slots = gr.Number(DRAMA3_VISIBLE_SLOTS, precision=0, visible=False)
-                    with gr.Row(elem_classes=["h3-drama3-inline-actions", "h3-drama3-slot-count"]):
-                        add_speaker = gr.Button("Add speaker", size="sm")
-                        remove_speaker = gr.Button("Remove last speaker", size="sm")
-                with gr.Accordion(drama3_sounds_title(), open=False) as sounds_panel:
-                    with gr.Group(elem_classes=["h3-drama3-toolbar"]):
-                        gr.Markdown(
-                            "Clips for `<sound name=\"...\">` tags, made with "
-                            "[Stable Audio 3 Medium](https://huggingface.co/stabilityai/stable-audio-3-medium). "
-                            "An Advanced rewrite fills these slots; any sound without a clip is generated "
-                            "during speech.",
-                            elem_classes=["h3-drama3-note"],
-                        )
-                        skip_existing_sounds = gr.Checkbox(
-                            True,
-                            label="Skip sounds with a clip",
-                            info="Uncheck to regenerate existing sound clips.",
-                        )
-                        with gr.Row(elem_classes=["h3-drama3-inline-actions"]):
-                            generate_sounds = gr.Button("Generate all sounds", size="sm", variant="primary")
-                            stop_sounds = gr.Button("Interrupt", size="sm", interactive=False)
-                            generate_sounds.h3_stop = stop_sounds
-                        sound_status = gr.Markdown("", elem_classes=["h3-drama3-note"])
-                    sounds = tuple(_sound_slot(i, list(sound_names)) for i in range(DRAMA3_SOUND_SLOTS))
-                    shown_sound_slots = gr.Number(DRAMA3_VISIBLE_SOUND_SLOTS, precision=0, visible=False)
-                    with gr.Row(elem_classes=["h3-drama3-inline-actions", "h3-drama3-slot-count"]):
-                        add_sound = gr.Button("Add sound", size="sm")
-                        remove_sound = gr.Button("Remove last sound", size="sm")
-            with gr.Column(scale=3, min_width=320, elem_classes=["h3-preview-panel", "h3-drama3-stage"]):
+                        writer, enhance, enhance_status = _writer("Rewrite script")
+                        with gr.Accordion("Use another chat model", open=False):
+                            gr.Markdown("Copy the full writer prompt into any chat model, then paste its JSON reply. "
+                                        "It is checked like the built-in writer before anything changes.",
+                                        elem_classes=["h3-drama3-note"])
+                            copy_prompt = gr.Button("Show full writer prompt", size="sm")
+                            writer_prompt = gr.Textbox(label="Full writer prompt", lines=8, max_lines=20,
+                                                       interactive=False, visible=False, buttons=["copy"])
+                            pasted_reply = gr.Textbox(label="Pasted writer reply", lines=6, max_lines=20,
+                                                      placeholder='{"script": "<|speaker:0|> ...", "speakers": [...]}')
+                            apply_reply = gr.Button("Apply pasted reply", size="sm", variant="primary")
+                with gr.Column(elem_classes=["h3-composer", "h3-drama3-cast-panel"]):
+                    _heading("02", "Cast", "Every speaker needs a voice: upload a reference clip, generate one from a "
+                             "description, or reuse a saved speaker.")
+                    with gr.Accordion(drama3_voices_title(group="Global", group_size=group_size),
+                                      open=True) as voices_panel:
+                        with gr.Group(elem_classes=["h3-drama3-toolbar"]):
+                            with gr.Row(equal_height=True):
+                                speaker_group = gr.Dropdown(list(speaker_groups), value="Global",
+                                    label="Speaker preset group",
+                                    info="Saves go here. Names match this group first, then Global.")
+                                speaker_group_size = gr.Number(group_size, precision=0, visible=False)
+                                new_speaker_group = gr.Textbox(label="New speaker group",
+                                                               placeholder="Story or series name",
+                                                               info="Reuse one group across chapters.")
+                            with gr.Row(elem_classes=["h3-drama3-inline-actions"]):
+                                create_speaker_group = gr.Button("Create group", size="sm")
+                                save_all_speakers = gr.Button("Save all speakers to selected group", size="sm")
+                                library_open = gr.Button("Manage saved speakers", size="sm")
+                            speaker_group_status = gr.Markdown(
+                                "Global voices are available in every group.", elem_classes=["h3-drama3-note"])
+                        speaker_library = build_speaker_library(speaker_groups, library_open)
+                        with gr.Group(elem_classes=["h3-drama3-toolbar"]):
+                            voice_engine = gr.Radio(
+                                list(VOICE_DESIGN_ENGINES), value=ENGINE_QWEN, label="Voice generator",
+                                info="[Qwen3-TTS VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign) "
+                                     "designs a voice from its description (downloaded on first use). Drama 3 uses "
+                                     "SGLang-Omni and the sampling settings in Speak.",
+                            )
+                            with gr.Row(equal_height=True):
+                                skip_existing = gr.Checkbox(
+                                    True, label="Skip speakers with a voice",
+                                    info="Uncheck to regenerate, e.g. after changing the backend.")
+                                asr_model = gr.Dropdown(list(DRAMA3_ASR_CHOICES), value=DEFAULT_DRAMA3_ASR,
+                                                        label="Voice transcript model",
+                                                        info="Used by Auto transcribe; 0.6B uses less memory.")
+                            with gr.Row(elem_classes=["h3-drama3-inline-actions"]):
+                                generate_voices = gr.Button("Generate all speaker voices", size="sm", variant="primary")
+                                stop_voices = gr.Button("Interrupt", size="sm", interactive=False)
+                                generate_voices.h3_stop = stop_voices
+                            voice_status = gr.Markdown("", elem_classes=["h3-drama3-note"])
+                        voices = tuple(_voice_slot(speaker, list(speaker_names))
+                                       for speaker in range(DRAMA3_VOICE_SLOTS))
+                        shown_slots = gr.Number(DRAMA3_VISIBLE_SLOTS, precision=0, visible=False)
+                        with gr.Row(elem_classes=["h3-drama3-inline-actions", "h3-drama3-slot-count"]):
+                            add_speaker = gr.Button("Add speaker", size="sm")
+                            remove_speaker = gr.Button("Remove last speaker", size="sm")
+                    with gr.Accordion(drama3_sounds_title(), open=False) as sounds_panel:
+                        with gr.Group(elem_classes=["h3-drama3-toolbar"]):
+                            gr.Markdown(
+                                "Clips for `<sound name=\"...\">` tags, made with "
+                                "[Stable Audio 3 Medium](https://huggingface.co/stabilityai/stable-audio-3-medium). "
+                                "An Advanced rewrite fills these slots; any sound without a clip is generated "
+                                "during speech.",
+                                elem_classes=["h3-drama3-note"],
+                            )
+                            skip_existing_sounds = gr.Checkbox(
+                                True,
+                                label="Skip sounds with a clip",
+                                info="Uncheck to regenerate existing sound clips.",
+                            )
+                            with gr.Row(elem_classes=["h3-drama3-inline-actions"]):
+                                generate_sounds = gr.Button("Generate all sounds", size="sm", variant="primary")
+                                stop_sounds = gr.Button("Interrupt", size="sm", interactive=False)
+                                generate_sounds.h3_stop = stop_sounds
+                            sound_status = gr.Markdown("", elem_classes=["h3-drama3-note"])
+                        sounds = tuple(_sound_slot(i, list(sound_names)) for i in range(DRAMA3_SOUND_SLOTS))
+                        shown_sound_slots = gr.Number(DRAMA3_VISIBLE_SOUND_SLOTS, precision=0, visible=False)
+                        with gr.Row(elem_classes=["h3-drama3-inline-actions", "h3-drama3-slot-count"]):
+                            add_sound = gr.Button("Add sound", size="sm")
+                            remove_sound = gr.Button("Remove last sound", size="sm")
+            with gr.Column(scale=2, min_width=320, elem_classes=["h3-preview-panel", "h3-drama3-stage"]):
                 _heading("03", "Speak", "Unchanged lines reuse their saved takes.")
                 output = gr.Audio(label="Generated speech", type="filepath", interactive=False)
                 output.h3_metadata_root = gr.Column()
