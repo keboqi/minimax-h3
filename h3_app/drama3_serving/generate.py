@@ -435,8 +435,9 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
 
     if isinstance(node, SoundNode):
         samples = _placed_sound(node, ctx)
-        if node.volume != 1.0:
-            samples = (samples * float(node.volume)).astype(np.float32, copy=False)
+        volume = node.volume * audio.distance_gain(node.distance)
+        if volume != 1.0:
+            samples = (samples * float(volume)).astype(np.float32, copy=False)
         return samples, len(samples)
 
     if isinstance(node, SequentialNode):
@@ -469,8 +470,9 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
         child_spans: dict[int, tuple[int, int, list[tuple[int, int]]]] = {}
         for child in node.children:
             if isinstance(child, SoundNode):
-                tracks.append({"audio": _placed_sound(child, ctx), "loop": child.loop,
-                               "is_sound": True, "volume": child.volume})
+                # Volume and distance apply after the mix levels the sound to the speech.
+                tracks.append({"audio": _placed_sound(child, ctx), "loop": child.loop, "is_sound": True,
+                               "volume": child.volume * audio.distance_gain(child.distance)})
             else:
                 # Parallel tracks all start together, so child offsets differ only by the speech lead-in.
                 child_audio, advance = _render(child, ctx, child_spans)

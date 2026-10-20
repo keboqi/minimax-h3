@@ -385,17 +385,23 @@ def pan_mono(samples: np.ndarray, position: float) -> np.ndarray:
 
 
 FAR_LOWPASS_HZ = 2500.0
-FAR_GAIN = 0.4  # about -8 dB
 FAR_REFLECTIONS = ((0.031, 0.35), (0.057, 0.25), (0.089, 0.18), (0.131, 0.12))  # (seconds, gain)
-NEAR_GAIN = 1.25
+# Applied with a sound's volume, after it is leveled to the speech, which would otherwise undo it.
+DISTANCE_GAINS = {"far": 0.4, "near": 1.25}  # about -8 dB and +2 dB
+
+
+def distance_gain(distance: str) -> float:
+    """The level change ``distance`` ("near" or "far") makes, applied with the sound's volume."""
+    return DISTANCE_GAINS.get(distance, 1.0)
 
 
 def place_sound(samples: np.ndarray, rate: int, pan: tuple[float, float] | None = None,
                 distance: str = "") -> np.ndarray:
-    """A stereo sound moved to ``pan`` (start, end positions) and ``distance`` ("near" or "far").
+    """A stereo sound moved to ``pan`` (start, end positions) and given the tone of ``distance``.
 
-    A far sound loses its highs and level and gains a few room reflections; a panned
-    stereo sound narrows toward mono as it moves to the side, so its image follows.
+    A far sound loses its highs and gains a few room reflections; its quieter level is
+    ``distance_gain``, applied with the sound's volume. A panned stereo sound narrows
+    toward mono as it moves to the side, so its image follows.
     """
     out = as_stereo(samples).copy()
     if distance == "far" and len(out):
@@ -409,9 +415,7 @@ def place_sound(samples: np.ndarray, rate: int, pan: tuple[float, float] | None 
             if offset < len(dry):
                 # Alternate sides so the reflections widen the sound instead of doubling it.
                 wet[offset:] += dry[:-offset][:, ::-1 if index % 2 else 1] * gain
-        out = wet * FAR_GAIN
-    elif distance == "near":
-        out = out * NEAR_GAIN
+        out = wet
     if pan is not None and len(out):
         start, end = (float(np.clip(value, -1.0, 1.0)) for value in pan)
         positions = np.linspace(start, end, len(out), dtype=np.float32) if start != end else np.full(len(out), start, np.float32)

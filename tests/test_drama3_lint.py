@@ -171,6 +171,20 @@ class DirectionMergeTests(unittest.TestCase):
             "<|speaker:2|> It's just [gently teasing] the wind.",
         ])
 
+    def test_word_boundaries_count_but_cue_spacing_does_not(self):
+        for original, directed, taken in (
+            ("We are now here.", "We are [sad] nowhere.", 0),  # two words merged into one
+            ("We are nowhere.", "We are now [sad] here.", 0),
+            ("We are now here.", "We are [sad] now <emphasis>here</emphasis>.", 1),
+            ("Hello? Is someone there?", "Hello? [nervous] Is someone there [scared]?", 1),
+            ("我不知道你在说什么。", "我不知 [whispering] 道你在<emphasis>说什么</emphasis>。", 1),
+            ("“你好，”她说。", "“你好，” [warm] 她说。", 1),
+        ):
+            with self.subTest(directed=directed):
+                _merged, merged_lines, _refused = merge_direction(
+                    f"<|speaker:0|> {original}", f"<|speaker:0|> {directed}")
+                self.assertEqual(merged_lines, taken)
+
     def test_changed_structure_merges_nothing(self):
         for directed in ("<|speaker:0|> The door creaked open. [hushed] Nobody was there.",  # lines dropped
                          self.SCRIPT.replace("Wind gust", "Strong wind"),  # a sound changed

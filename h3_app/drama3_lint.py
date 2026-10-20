@@ -196,9 +196,18 @@ def lint_drama3_script(script: str) -> tuple[str, list[str]]:
     return repaired, messages
 
 
+_LOOSE_SPACE_RE = re.compile(r"\s+(?=[,.!?;:，。！？；：、”’」』）)])|(?<=[“‘「『（(])\s+")
+
+
 def _words_only(body: str) -> str:
-    """A speaker line's text without cues, scoped tags or whitespace: what direction may not change."""
-    return "".join(_SCOPED_RE.sub("", CUE_RE.sub("", body)).split())
+    """A speaker line's words and punctuation without cues or scoped tags: what direction may not change.
+
+    Spaces between words count, so "now here" never becomes "nowhere"; a space an inserted
+    cue leaves beside CJK text or before punctuation does not.
+    """
+    text = " ".join(_SCOPED_RE.sub("", CUE_RE.sub(" ", body)).split())
+    text = _LOOSE_SPACE_RE.sub("", text)
+    return re.sub(rf"(?<={WIDE_CHAR.pattern}) | (?={WIDE_CHAR.pattern})", "", text)
 
 
 def merge_direction(script: str, directed: str) -> tuple[str, int, int]:

@@ -918,9 +918,24 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
             spectrum = np.abs(np.fft.rfft(samples[:, 0]))
             return spectrum[len(spectrum) // 4:].sum() / spectrum.sum()
 
-        self.assertLess(highs(far), highs(noise) / 3)  # distance dulls a sound ...
-        self.assertLess(np.sqrt(np.mean(far ** 2)), np.sqrt(np.mean(noise ** 2)))  # ... and lowers it
+        self.assertLess(highs(far), highs(noise) / 3)  # distance dulls a sound
         self.assertEqual(far.shape, noise.shape)
+
+        # ... and its level survives the mix leveling every sound to the speech.
+        speech = tone(2.0)
+
+        def mixed_level(distance, volume):
+            mix = audio.mix_parallel([{"audio": speech, "is_sound": False},
+                                      {"audio": audio.place_sound(noise, RATE, None, distance), "is_sound": True,
+                                       "volume": volume}], RATE).audio
+            return float(np.sqrt(np.mean((mix - audio.as_stereo(speech)) ** 2)))
+
+        for distance in ("near", "far"):
+            with self.subTest(distance=distance):
+                gain = audio.distance_gain(distance)
+                self.assertAlmostEqual(mixed_level(distance, gain) / mixed_level(distance, 1.0), gain, places=3)
+        self.assertLess(mixed_level("far", audio.distance_gain("far")), 0.5 * mixed_level("", 1.0))
+        self.assertGreater(mixed_level("near", audio.distance_gain("near")), mixed_level("", 1.0))
         self.assertEqual(audio.place_sound(tone(1.0), RATE).shape, (RATE, 2))  # mono clips become stereo
 
     def test_one_shot_sounds_share_their_scenes_room(self):
