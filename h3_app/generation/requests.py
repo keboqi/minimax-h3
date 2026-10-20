@@ -36,6 +36,20 @@ class MossImageRequest:
     steps: int = 8
     cfg: float = 1.0
     layout: str = ""
+    accelerate: bool = True
+
+
+@dataclass(frozen=True)
+class Fibo2Request:
+    prompt: str
+    model_choice: str = "Dev"
+    reference_images: tuple[str, ...] = ()
+    mask_image: str | None = None
+    width: int = 1024
+    height: int = 1024
+    seed: int = -1
+    steps: int = 50
+    cfg: float = 5.0
 
 
 @dataclass(frozen=True)

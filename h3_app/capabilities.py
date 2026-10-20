@@ -48,6 +48,8 @@ ENGINES += (
                      "Distilled image generation and editing with up to ten references."),
     EngineCapability("moss_image", "MOSS-Image", ("Image",),
                      "OpenMOSS 5B text-to-image with text rendering, layout boxes and 4- or 8-step Turbo LoRAs."),
+    EngineCapability("fibo2", "Fibo 2.0", ("Image",),
+                     "Dev image generation and editing, with 4-step Edit Turbo, reference images and masks."),
     EngineCapability("drama3", "Drama 3 (experimental)", ("TTS",),
                      "Expressive speech and voice cloning. Built with Fish Audio."),
 )

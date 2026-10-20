@@ -19,6 +19,13 @@ from .flux3_layout import parse_flux3_layout
 # negative pass only (``uncond_skip_layers=[22]``). Shift 5 is the model default.
 MOSS_IMAGE_BASE_CFG = 3.0
 MOSS_IMAGE_UNCOND_SKIP_LAYERS = "22"
+MOSS_SPECTRUM_NODE = "SpectrumMOSSImageAdaptive"
+
+
+def moss_spectrum_enabled(accelerate, turbo_variant, steps):
+    # Upstream's eight warmup and two tail steps leave no forecasting window
+    # for step-distilled LoRAs. Keep their trained schedule intact.
+    return bool(accelerate) and turbo_variant == "Off" and steps > 10
 
 
 def moss_image_model_keys(model_choice, text_encoder_choice, turbo_variant="Off", vae_choice=None):
@@ -54,7 +61,8 @@ def validate_moss_image_sampling(turbo_variant, steps, cfg, width=1024, height=1
 
 def build_moss_image_graph(*, model_choice, text_encoder_choice, prompt, turbo_variant="Off",
                            vae_choice=DEFAULT_MOSS_IMAGE_VAE, width=1024, height=1024, seed=0, steps=50,
-                           cfg=MOSS_IMAGE_BASE_CFG, layout="", output_stamp="0", output_nonce="moss"):
+                           cfg=MOSS_IMAGE_BASE_CFG, layout="", accelerate=True,
+                           output_stamp="0", output_nonce="moss"):
     moss_image_model_keys(model_choice, text_encoder_choice, turbo_variant, vae_choice)
     validate_moss_image_sampling(turbo_variant, steps, cfg, width, height)
     elements = parse_flux3_layout(layout)
@@ -70,6 +78,12 @@ def build_moss_image_graph(*, model_choice, text_encoder_choice, prompt, turbo_v
     if guided:
         model = add("SkipLayerGuidanceDiTSimple", model=model, double_layers="",
                     single_layers=MOSS_IMAGE_UNCOND_SKIP_LAYERS, start_percent=0.0, end_percent=1.0)
+    spectrum = moss_spectrum_enabled(accelerate, turbo_variant, steps)
+    if spectrum:
+        model = add(MOSS_SPECTRUM_NODE, model=model, warmup_steps=8,
+                    detail_guard_steps=8, tail_actual_steps=2, post_guard_horizon_cap=6,
+                    window_size=2.0, flex_window=0.5, cache_device="main_device",
+                    debug=False, error_tolerance=1.0)
     clip = add("CLIPLoader", clip_name=MODEL_SPECS[MOSS_IMAGE_TEXT_ENCODER_CHOICES[text_encoder_choice]].local_name,
                type="moss_image", device="default")
     vae = add("VAELoader", vae_name=MODEL_SPECS[MOSS_IMAGE_VAE_CHOICES[vae_choice]].local_name)
@@ -84,7 +98,7 @@ def build_moss_image_graph(*, model_choice, text_encoder_choice, prompt, turbo_v
     latent = add("EmptyFlux2LatentImage", width=width, height=height, batch_size=1)
     samples = add("KSampler", model=model, positive=positive, negative=negative,
                   latent_image=latent, seed=seed, steps=steps, cfg=cfg,
-                  sampler_name="euler", scheduler="simple", denoise=1.0)
+                  sampler_name="euler", scheduler="sgm_uniform" if spectrum else "simple", denoise=1.0)
     image = add("VAEDecode", samples=samples, vae=vae)
     add("SaveImage", images=image, filename_prefix=f"h3/image_staging/moss_image_{output_stamp}_{output_nonce}")
     return g.nodes

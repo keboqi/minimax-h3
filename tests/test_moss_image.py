@@ -36,6 +36,23 @@ def nodes(graph, class_type):
 
 
 class MossImagePresetTests(unittest.TestCase):
+    def test_spectrum_defaults_on_after_guidance_and_can_be_disabled(self):
+        graph = graph_for("Quality")
+        spectrum, = nodes(graph, "SpectrumMOSSImageAdaptive")
+        self.assertEqual(graph[spectrum["model"][0]]["class_type"], "SkipLayerGuidanceDiTSimple")
+        sampler, = nodes(graph, "KSampler")
+        self.assertEqual(graph[sampler["model"][0]]["class_type"], "SpectrumMOSSImageAdaptive")
+        self.assertEqual(sampler["scheduler"], "sgm_uniform")
+        original = graph_for("Quality", accelerate=False)
+        self.assertFalse(nodes(original, "SpectrumMOSSImageAdaptive"))
+        self.assertEqual(nodes(original, "KSampler")[0]["scheduler"], "simple")
+
+    def test_spectrum_bypasses_step_distilled_and_short_runs(self):
+        for graph in (graph_for("Fast"), graph_for("Quality", steps=10),
+                      graph_for("Fast", turbo_variant=MOSS_IMAGE_4STEP_V2, steps=4)):
+            self.assertFalse(nodes(graph, "SpectrumMOSSImageAdaptive"))
+            self.assertEqual(nodes(graph, "KSampler")[0]["scheduler"], "simple")
+
     def test_presets_match_the_requested_recipes(self):
         self.assertEqual(MOSS_IMAGE_PRESETS, {
             "Fast": (MOSS_IMAGE_DMD_8STEP, 8, 1.0, MOSS_IMAGE_SFT_INT8, MOSS_IMAGE_VAE_SMALL),
@@ -260,6 +277,34 @@ class MossImageRequestTests(unittest.TestCase):
         settings = snapshot.call_args.args[1]["settings"]
         self.assertEqual((settings["preset"], settings["turbo_variant"], settings["steps"]), ("Quality", "Off", 50))
         self.assertEqual(snapshot.call_args.args[1]["family"], "MOSS-Image")
+        self.assertEqual((settings["spectrum_applied"], settings["scheduler"]), (True, "sgm_uniform"))
+        self.assertTrue(nodes(submitted, "SpectrumMOSSImageAdaptive"))
+
+    def test_missing_spectrum_node_falls_back_to_the_original_graph(self):
+        request = MossImageRequest("a fox", preset="Quality", turbo_variant="Off", model_choice=MOSS_IMAGE_SFT_BF16,
+                                   vae_choice=MOSS_IMAGE_VAE_FULL, steps=50, cfg=3.0, seed=5)
+        submitted = {}
+
+        def submit(graph, _client_id):
+            submitted.update(graph)
+            return "job"
+
+        info = {n["class_type"]: {} for n in graph_for("Quality", accelerate=False).values()}
+        info["CLIPLoader"] = {"input": {"required": {"type": [["flux3", "moss_image"]]}}}
+        execution = SimpleNamespace(
+            object_info=lambda: info,
+            submit_prompt=submit, poll_comfy_progress=lambda *args: iter(()), wait_for_history=lambda *args: {})
+        services = SimpleNamespace(models=Mock(), execution=execution, media=SimpleNamespace(
+            resolve_image_outputs=lambda *args: [Path("moss_image_1_a.png")]))
+        with patch("h3_app.generation.optional_engines.write_snapshot") as snapshot:
+            results = list(generate_optional_engine(request, services, SimpleNamespace()))
+        self.assertIn("MOSS-Image complete", results[-1].status)
+        self.assertTrue(any("Spectrum-MOSS is not installed" in update.status for update in results))
+        self.assertFalse(nodes(submitted, "SpectrumMOSSImageAdaptive"))
+        self.assertEqual(nodes(submitted, "KSampler")[0]["scheduler"], "simple")
+        settings = snapshot.call_args.args[1]["settings"]
+        self.assertEqual((settings["accelerate"], settings["spectrum_applied"], settings["scheduler"]),
+                         (True, False, "simple"))
 
 
 CUP_LAYOUT = {

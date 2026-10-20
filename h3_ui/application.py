@@ -2653,12 +2653,30 @@ def generate_flux3(prompt, model_choice, reference_images, width, height, edit_s
 
 
 def generate_moss_image(prompt, preset, turbo_variant, model_choice, text_encoder_choice, vae_choice, width,
-                        height, seed, steps, cfg, layout="", progress=gr.Progress(track_tqdm=False)):
+                        height, seed, steps, cfg, layout="", accelerate=True, progress=gr.Progress(track_tqdm=False)):
     from h3_app.generation.optional_engines import generate_optional_engine
     request = generation_requests.MossImageRequest(
         prompt, preset, turbo_variant, model_choice, text_encoder_choice, vae_choice, width, height, seed, steps,
-        cfg, layout or "",
+        cfg, layout or "", accelerate,
     )
+    yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
+
+
+def generate_fibo2(prompt, model_choice, reference_images, mask_image, width, height, seed, steps, cfg,
+                   progress=gr.Progress(track_tqdm=False)):
+    from dataclasses import replace
+    from h3_app.generation.optional_engines import generate_optional_engine, validate_request
+
+    paths = reference_images or []
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    request = generation_requests.Fibo2Request(
+        prompt, model_choice, tuple(str(path) for path in paths), mask_image, width, height, seed, steps, cfg,
+    )
+    validate_request(request)
+    request = replace(request, reference_images=tuple(
+        stage_file(path, "fibo2_references", reuse=True) for path in request.reference_images
+    ), mask_image=stage_file(mask_image, "fibo2_masks", reuse=True) if mask_image else None)
     yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
 
 
@@ -2707,6 +2725,7 @@ def _optional_engine_actions():
         speaker_library_actions=SpeakerLibraryActions(_runtime_config),
         generate_flux3=generate_flux3,
         generate_moss_image=generate_moss_image,
+        generate_fibo2=generate_fibo2,
         enhance_moss_image_prompt=enhance_moss_image_prompt,
         generate_drama3=drama3_handlers.generate_drama3,
         regenerate_drama3_line=drama3_handlers.regenerate_drama3_line,

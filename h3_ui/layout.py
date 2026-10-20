@@ -35,6 +35,7 @@ class AppViews:
     flux3: gr.Group | None = None
     drama3: gr.Group | None = None
     moss_image: gr.Group | None = None
+    fibo2: gr.Group | None = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,8 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
                     flux3 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("MOSS-Image", id="moss_image"):
                     moss_image = gr.Group(elem_classes=["h3-engine-view"])
+                with gr.Tab("Fibo 2.0", id="fibo2"):
+                    fibo2 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Drama 3 TTS", id="drama3"):
                     drama3 = gr.Group(elem_classes=["h3-engine-view"])
         with gr.Tab("Media", id="media") as gallery_tab:
@@ -141,6 +144,7 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
         flux3,
         drama3,
         moss_image,
+        fibo2,
     )
 
 

@@ -36,6 +36,8 @@ from h3_sources import (
     SPECTRUM_REPO,
     SPECTRUM_QWEN_REF,
     SPECTRUM_QWEN_REPO,
+    SPECTRUM_MOSS_REF,
+    SPECTRUM_MOSS_REPO,
     VIDEO_DEPTH_REF,
     VIDEO_DEPTH_REPO,
 )
@@ -72,6 +74,7 @@ from h3_requirements import (
     WSPROTO_VERSION,
     comfy_frontend_package_is_ready,
     filter_pinned_requirements,
+    fibo2_install_commands,
     sync_ltx25_workflows,
 )
 
@@ -820,6 +823,11 @@ def sync_external_nodes(
     if install_requirements and (spectrum_qwen / "requirements.txt").is_file():
         install_custom_node_requirements(spectrum_qwen / "requirements.txt")
 
+    sync_git_repo(
+        SPECTRUM_MOSS_REPO, comfy / "custom_nodes" / "ComfyUI-Spectrum-MOSS",
+        ref=SPECTRUM_MOSS_REF, required_paths=("__init__.py", "nodes.py"),
+    )
+
     trt_vae = comfy / "custom_nodes" / "ComfyUI-H3VAE_TRT"
     sync_git_repo(
         TRT_VAE_NODE_REPO,
@@ -964,6 +972,10 @@ def install_bundled_nodes(comfy: Path) -> None:
     lightvae_source = SCRIPT_DIR / "custom_nodes" / "H3LightVAE"
     shutil.copytree(
         lightvae_source, comfy / "custom_nodes" / "H3LightVAE", dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    shutil.copytree(
+        SCRIPT_DIR / "custom_nodes" / "H3Fibo2", comfy / "custom_nodes" / "H3Fibo2", dirs_exist_ok=True,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
     print(f"[h3-setup] synced {destination}")
@@ -1138,6 +1150,9 @@ def main() -> None:
         install_pinned_numpy_stack()
     ensure_tensorrt()
     install_bundled_nodes(comfy)
+    if not args.skip_env:
+        for command in fibo2_install_commands(comfy / ".fibo2-venv", ensure_uv(), base_python=sys.executable):
+            run(*command)
     sync_model_inventory(install_dir, comfy)
 
 

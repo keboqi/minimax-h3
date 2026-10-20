@@ -18,7 +18,7 @@ collapsed below. Generate actions sit directly under the result, and
 Ctrl/⌘+Enter generates with the visible engine.
 Mobile section links jump to compose, generate, and preview.
 Create supports H3,
-LTX 2.5, Qwen Image 2.1, MiniMax Music 3 and YuE2. Prompt suggestions require
+LTX 2.5, Qwen Image 2.1, FLUX 3, MOSS-Image, Fibo 2.0, MiniMax Music 3, YuE2 and Drama 3. Prompt suggestions require
 acceptance. Media includes indexed search, shared tags/favorites, lineage,
 image comparison and synchronized video playback.
 
@@ -43,7 +43,8 @@ backends; GPU inference and deployment are validated separately.
 - A dedicated Qwen Image 2.1 tab for native text-to-image generation and
   multi-reference image editing
 - A MOSS-Image tab for OpenMOSS MOSS-Image SFT and Base text-to-image generation with
-  Fast (8-step Turbo LoRA), Balanced and Quality presets
+  Fast (8-step Turbo LoRA), Balanced and Quality presets, plus default-on Spectrum acceleration
+- Fibo 2.0 Dev generation/editing and Edit Turbo, with references and optional masks
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
 - A dedicated MiniMax Music 3 tab for caption-and-lyrics song generation
 - A dedicated YuE2 tab for score-planned or direct lyrics-to-song generation
@@ -506,6 +507,15 @@ VAE. The full VAE is the same file as FLUX 3's and is shared with it.
 at 8 Euler steps and CFG 1; the LoRA requires an SFT model. **Balanced** and **Quality** run
 BF16 SFT with the full VAE and no LoRA for 25 or 50 steps at CFG 3, skipping layer 22 in the empty negative pass as in OpenMOSS's
 reference sampler. Other step-distilled LoRAs can be added to the **Turbo LoRA** list.
+**Accelerate with Spectrum** is on by default. The pinned
+[Spectrum-MOSS](https://github.com/Rkkss/ComfyUI-Spectrum-MOSS/tree/3fde0674b29342565e7f42a0674af48d65aabc4a)
+adaptive node uses the upstream defaults and Euler + `sgm_uniform` for non-distilled runs
+longer than 10 steps. Turn it off to restore the original Euler + `simple` graph.
+Step-distilled Turbo LoRAs, including the default Fast preset, bypass Spectrum and keep
+their original schedule. Until setup has installed the node and ComfyUI has restarted,
+generation reports that and uses the original graph. The output settings record both the
+preference and whether Spectrum was actually applied. Forecasting can affect details; its GPU speed/quality
+has not been benchmarked here.
 **1M** and **2M resolution presets**, OpenMOSS's recommended range, set common aspect
 ratios on the 16-pixel grid. The FLUX 3 tab has matching **1K** and **2K** presets up to its
 4 MP limit, and a FLUX 3 preset overrides edit size matching, as in Qwen Image 2.1.
@@ -514,6 +524,30 @@ Gemini** follows OpenMOSS's
 [prompt-enhancer skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer):
 the selected LLM returns a caption or a pixel Layout draft for the current width and height,
 and the app validates and compiles it with a port of the skill's `compile_prompt.py`.
+
+**Fibo 2.0** offers **Dev** for text-to-image and editing (50 steps, CFG 5 by default),
+and **Edit Turbo** for editing only (4 steps, CFG 1). Add up to four ordered reference
+images; refer to them as `<image_1>`, `<image_2>`, etc. An optional mask must match the
+single reference's dimensions: white marks the area to change. Masks guide generation
+and do not guarantee identical pixels outside the region. Enter a plain short caption,
+an edit instruction or structured VGL JSON. No prompt-conversion API key is required.
+
+Fibo runs in the existing ComfyUI instance through the bundled `H3Fibo2Generate` node.
+Setup installs a separate `ComfyUI/.fibo2-venv` with the
+[pinned Fibo Diffusers implementation](https://github.com/muhammadali-afridi/diffusers/tree/ab96e2b58c89adb9df418af74d81cc8b1e1be074).
+It leaves ComfyUI's Diffusers installation intact. Each job unloads Comfy models, starts
+a cancellable inference process, and releases its GPU memory on exit. This adds model
+loading overhead on each run. Generation uses BF16 and standard attention; there is no
+Hopper-specific FlashAttention requirement. `H3_FIBO2_PYTHON` can point to an already
+provisioned compatible Python environment.
+
+Accept access conditions for [Dev](https://huggingface.co/briaai/Fibo-2.0-dev) and
+[Edit Turbo](https://huggingface.co/briaai/Fibo-2.0-edit-turbo) in Hugging Face, then set
+`HF_TOKEN` or run `hf auth login` as the server user. The Dev weights are noncommercial.
+Selected weights download on first use into `ComfyUI/models/fibo2/`; no Fibo weights
+are downloaded by setup. Rerun `setup_h3.py` without `--skip-env` and restart ComfyUI;
+Modal users should rebuild/redeploy. The UI shares reference-library selection,
+generation progress, cancellation and output metadata with the other image engines.
 
 Reference PNGs retain their alpha channels through native RGBA reconstruction
 before Qwen encoding. The scheduler counts the output latent's native 16× grid
@@ -1008,6 +1042,11 @@ The deployment pins ComfyUI v0.42.1 at immutable revision
 `63be2f9b82ad0dac88a7ceaa28a9cf3154125a18` with its required frontend
 package 1.55.18, Comfy Kitchen 0.2.39 and upstream aimdo 0.5.6.
 The source also pins workflow templates 0.11.89 and embedded docs 0.5.14.
+Checked on 2026-10-21: v0.42.1 is still the latest stable release. Development
+revision `d52a7a5ef60b36062f7c3c69bd774f4c98b56eb0` is 14 commits ahead, including
+MOSS RoPE/color-depth controls, H3 PDD LoRA fixes and Fibo 2.0 partner API nodes.
+Those Fibo nodes call a paid remote API; they do not load the local Dev/Turbo weights.
+This integration retains the stable Core pin and supplies the local Fibo bridge.
 v0.42 adds native MOSS-Image, Qwen 3.x decode speedups, TextGenerate cleanup,
 baked-in H3 PDD heads and synchronized CUDA-graph teardown.
 v0.40.0 fixed Qwen Image 2.1 caching under low VRAM and updates shared

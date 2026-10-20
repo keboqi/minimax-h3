@@ -22,6 +22,7 @@ from .qwen_view import build_qwen_image21_view
 from .yue2_view import build_yue2_view
 from h3_ui.drama3_bindings import bind_drama3
 from h3_ui.optional_engine_views import bind_flux3, build_flux3_view, bind_moss_image, build_moss_image_view
+from h3_ui.fibo2_view import bind_fibo2, build_fibo2_view
 from h3_ui.drama3_view import DRAMA3_SCRIPT_HIGHLIGHT_JS, DRAMA3_SUBTITLES_JS, build_drama3_view
 from h3_ui.optional_engine_controls import settings_components
 from h3_ui import audio_probe_cache
@@ -306,6 +307,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         bind_flux3(flux3_components, engine_actions)
         moss_image_components = build_moss_image_view(app_views.moss_image)
         bind_moss_image(moss_image_components, engine_actions)
+        fibo2_components = build_fibo2_view(app_views.fibo2)
+        bind_fibo2(fibo2_components, engine_actions)
         bind_drama3(drama3_components, engine_actions)
         gallery_components = build_gallery_view(
             gallery_view,
@@ -350,6 +353,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             *vars(qwen_image21_components).values(),
             *music3_components.reference_images,
             flux3_components.reference_images,
+            fibo2_components.reference_images,
+            fibo2_components.mask_image,
         ]
         for component in image_inputs:
             if hasattr(component, "h3_library_picker"):
@@ -370,6 +375,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             ("LTX", vars(ltx25_components).values()),
             ("Qwen", vars(qwen_image21_components).values()),
             ("FLUX 3", vars(flux3_components).values()),
+            ("Fibo 2.0", vars(fibo2_components).values()),
         ):
             for component in inputs:
                 if hasattr(component, "h3_library_picker") and not hasattr(component, "h3_reference_slot"):
@@ -386,6 +392,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             (yue2_view, yue2_components),
             (app_views.flux3, flux3_components),
             (app_views.moss_image, moss_image_components),
+            (app_views.fibo2, fibo2_components),
             (app_views.drama3, drama3_components),
         ):
             with view.output.h3_metadata_root:
@@ -497,6 +504,10 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             **{
                 f"moss_image.{name}": component
                 for name, component in settings_components(moss_image_components).items()
+            },
+            **{
+                f"fibo2.{name}": component
+                for name, component in settings_components(fibo2_components).items()
             },
             **{
                 f"drama3.{name}": component

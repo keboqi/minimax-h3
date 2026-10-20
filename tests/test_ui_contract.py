@@ -171,7 +171,7 @@ class UiContractTests(unittest.TestCase):
             if (c["type"] == "image" and c["props"].get("interactive") is not False)
             or (c["type"] == "file" and c["props"].get("file_types") == ["image"])
         ]
-        self.assertEqual(len(image_inputs), 20)
+        self.assertEqual(len(image_inputs), 22)
         pickers = [
             c for c in self.config["components"]
             if c["type"] == "gallery" and c["props"].get("label") == "Library images"
@@ -195,7 +195,8 @@ class UiContractTests(unittest.TestCase):
             if c["type"] == "dropdown" and c["props"].get("label") == "Set as"
         )
         choices = [choice[0] for choice in dropdown["props"]["choices"]]
-        self.assertEqual(len(choices), 10)
+        self.assertEqual(len(choices), 12)
+        self.assertIn("Fibo 2.0 · Reference images (optional for Dev, up to 4)", choices)
         self.assertIn("FLUX 3 · Reference images (optional, up to 10)", choices)
         self.assertIn("H3 · First frame (auto resolution)", choices)
         self.assertIn("H3 · Reference images", choices)
@@ -590,7 +591,7 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(
             [self.components[n["id"]]["props"]["label"] for n in children],
             ["MiniMax H3", "LTX 2.5", "Qwen Image 2.1", "MiniMax Music 3", "YuE2",
-             "FLUX 3 Image Klein", "MOSS-Image", "Drama 3 TTS"],
+             "FLUX 3 Image Klein", "MOSS-Image", "Fibo 2.0", "Drama 3 TTS"],
         )
 
     def test_non_h3_generated_media_outputs_are_display_only(self) -> None:
@@ -606,9 +607,20 @@ class UiContractTests(unittest.TestCase):
             for component in self.config["components"]
             if component.get("props", {}).get("label") in labels
         ]
-        self.assertEqual(len(outputs), 7)  # Qwen, FLUX 3 and MOSS-Image all show "Generated image"
+        self.assertEqual(len(outputs), 8)  # Includes Qwen, FLUX 3, MOSS-Image and Fibo images.
         for output in outputs:
             self.assertFalse(output["props"]["interactive"], output["props"]["label"])
+
+    def test_fibo_endpoint_and_default_on_moss_acceleration_are_bound(self):
+        fibo = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_fibo2")
+        labels = [self.components[i].get("props", {}).get("label") for i in fibo["inputs"]]
+        self.assertEqual(labels, ["Image prompt / edit instruction / VGL JSON", "Fibo model",
+            "Reference images (optional for Dev, up to 4)", "Edit mask (optional; white changes, black preserves)",
+            "Width", "Height", "Seed (-1 random)", "Steps", "CFG"])
+        moss = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_moss_image")
+        accelerate = self.components[moss["inputs"][-1]]
+        self.assertEqual(accelerate["props"]["label"], "Accelerate with Spectrum")
+        self.assertIs(accelerate["props"]["value"], True)
 
     def test_all_gemini_prompt_writers_default_to_flash_3_8(self) -> None:
         models = [

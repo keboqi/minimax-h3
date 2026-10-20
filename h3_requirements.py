@@ -376,6 +376,28 @@ def audio_tools_install_commands(venv: str | Path, uv: str | list[str] = "uv") -
     ]
 
 
+def fibo2_install_commands(venv: str | Path, uv: str | list[str] = "uv", *, base_python="3.12") -> list[list[str]]:
+    """Shadow Diffusers in an isolated environment; never upgrade ComfyUI's copy."""
+    from h3_sources import FIBO2_DIFFUSERS_REF, FIBO2_DIFFUSERS_REPO
+
+    base = venv if isinstance(venv, PurePath) else Path(venv)
+    windows = isinstance(base, PureWindowsPath)
+    python = str(base / ("Scripts/python.exe" if windows else "bin/python"))
+    uv = [uv] if isinstance(uv, str) else list(uv)
+    return [
+        [*uv, "venv", "--python", str(base_python), "--system-site-packages", "--allow-existing", str(base)],
+        [*uv, "pip", "install", "--python", python,
+         "--extra-index-url", TORCH_INDEX, "--index-strategy", "unsafe-best-match",
+         "--reinstall-package", "diffusers",
+         f"diffusers @ git+{FIBO2_DIFFUSERS_REPO}@{FIBO2_DIFFUSERS_REF}",
+         "transformers>=5.3,<6", "accelerate>=1.12,<2", "Pillow>=10", "sentencepiece",
+         *INSTALL_CONSTRAINTS],
+        [python, "-c", ("from diffusers import BriaFibo2Pipeline; import torch; "
+         "assert hasattr(BriaFibo2Pipeline, '__call__'); "
+         f"assert torch.__version__.startswith('{TORCH_VERSION}+cu130'), torch.__version__")],
+    ]
+
+
 def selftest() -> None:
     import tempfile
     from unittest.mock import patch

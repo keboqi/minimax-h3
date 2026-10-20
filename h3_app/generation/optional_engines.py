@@ -15,8 +15,10 @@ from h3_app.status import StageTimings, progress_status
 from h3_app.workflows.flux3 import build_flux3_graph, flux3_model_keys
 from h3_app.workflows.flux3_layout import parse_flux3_layout
 from h3_app.workflows.moss_image import (
-    build_moss_image_graph, moss_image_model_keys, validate_moss_image_sampling,
+    build_moss_image_graph, moss_image_model_keys, validate_moss_image_sampling, moss_spectrum_enabled,
+    MOSS_SPECTRUM_NODE,
 )
+from h3_app.workflows.fibo2 import build_fibo2_graph, validate_fibo2_inputs
 from h3_app.workflows.moss_image_prompt import is_layout_prompt
 from h3_models import FLUX3_BASE_MODEL_CHOICES
 from h3_app.workflows.drama3 import (
@@ -26,7 +28,7 @@ from h3_app.workflows.drama3 import (
 from h3_app.drama3_serving.tree import script_speakers
 from h3_models import DEFAULT_DRAMA3_ASR
 from .qwen import first_reference_dimensions
-from .requests import Flux3Request, Drama3Request, MossImageRequest
+from .requests import Flux3Request, Drama3Request, MossImageRequest, Fibo2Request
 from .results import GenerationUpdate
 
 
@@ -105,6 +107,17 @@ def validate_request(request):
             raise H3Error("Choose a valid FLUX 3 edit output size.")
         if len(request.reference_images) > 10:
             raise H3Error("FLUX 3 supports at most ten reference images.")
+    elif isinstance(request, Fibo2Request):
+        _integer(request.width, 256, 2048, "Width", 16)
+        _integer(request.height, 256, 2048, "Height", 16)
+        _integer(request.steps, 1, 100, "Steps")
+        if isinstance(request.cfg, bool) or not math.isfinite(float(request.cfg)) or not 1 <= request.cfg <= 20:
+            raise H3Error("Fibo CFG must be between 1 and 20.")
+        try:
+            validate_fibo2_inputs(request.model_choice, request.prompt, request.reference_images,
+                                  request.mask_image, request.steps, request.cfg)
+        except ValueError as exc:
+            raise H3Error(str(exc)) from exc
     elif isinstance(request, MossImageRequest):
         if not request.prompt.strip():
             raise H3Error("Write an image prompt.")
@@ -168,8 +181,9 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
     ``free_gpu`` releases ComfyUI's VRAM before Drama 3 starts or wakes SGLang-Omni.
     """
     moss = isinstance(request, MossImageRequest)
-    image = moss or isinstance(request, Flux3Request)
-    family = MOSS_IMAGE_FAMILY if moss else "FLUX 3 Image Klein" if image else "Drama 3"
+    fibo = isinstance(request, Fibo2Request)
+    image = moss or fibo or isinstance(request, Flux3Request)
+    family = "Fibo 2.0" if fibo else MOSS_IMAGE_FAMILY if moss else "FLUX 3 Image Klein" if image else "Drama 3"
     started = time.monotonic()
     timings = StageTimings(family, started, "Validating request")
     try:
@@ -189,9 +203,19 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
         seed = variant_seed(job.variant if job else 0,
                             lambda: random.randrange(2**63 - 1) if request.seed < 0 else int(request.seed))
         values = {**asdict(request), "seed": seed}
-        if moss:
+        info = services.execution.object_info()
+        if fibo:
+            graph = build_fibo2_graph(**values, output_stamp=str(int(time.time())),
+                                      output_nonce=uuid.uuid4().hex[:8])
+        elif moss:
+            # Installs that predate the Spectrum-MOSS pin keep the original graph.
+            wanted = moss_spectrum_enabled(request.accelerate, request.turbo_variant, request.steps)
+            spectrum = wanted and MOSS_SPECTRUM_NODE in info
+            if wanted and not spectrum:
+                yield GenerationUpdate(None, "Spectrum-MOSS is not installed; using the original sampler. "
+                                             "Rerun setup and restart ComfyUI to enable it.")
             graph = build_moss_image_graph(
-                **{k: v for k, v in values.items() if k != "preset"},
+                **{k: v for k, v in values.items() if k not in {"preset", "accelerate"}}, accelerate=spectrum,
                 output_stamp=str(int(time.time())), output_nonce=uuid.uuid4().hex[:8],
             )
         else:
@@ -204,17 +228,16 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
                     "FLUX 3 Image Klein edit" if request.reference_images else "FLUX 3 Image Klein"
                 ].read_text(encoding="utf-8").strip(),
             )
-        info = services.execution.object_info()
         missing = {node["class_type"] for node in graph.values()} - set(info)
         if missing:
             raise H3Error(f"Update setup and restart ComfyUI (the pinned Core nodes are required). Missing nodes: {', '.join(sorted(missing))}")
         clip_types = info.get("CLIPLoader", {}).get("input", {}).get("required", {}).get("type", [[]])[0]
         clip_type, label = ("moss_image", "MOSS-Image") if moss else ("flux3", "FLUX 3")
-        if clip_type not in clip_types:
+        if not fibo and clip_type not in clip_types:
             raise H3Error(f"This backend lacks the {label} text encoder. Update setup and restart ComfyUI.")
         services.models.unload_prompt_rewriter()
         yield GenerationUpdate(None, f"Preparing {family} models; missing weights download on first use.")
-        keys = (moss_image_model_keys(request.model_choice, request.text_encoder_choice,
+        keys = () if fibo else (moss_image_model_keys(request.model_choice, request.text_encoder_choice,
                                       request.turbo_variant, request.vae_choice)
                 if moss else
                 flux3_model_keys(request.model_choice, request.expand_prompt, request.upsampler_choice))
@@ -234,9 +257,14 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
         history = services.execution.wait_for_history(prompt_id)
         result = services.media.resolve_image_outputs(history, queued_at, 1)[0]
         settings = {key: value for key, value in values.items()
-                    if key not in {"prompt", "text", "voices", "reference_images", "layout"}}
+                    if key not in {"prompt", "text", "voices", "reference_images", "mask_image", "layout"}}
         if moss:
             settings["layout_box_count"] = len(parse_flux3_layout(request.layout))
+            settings["spectrum_applied"] = spectrum
+            settings["scheduler"] = "sgm_uniform" if settings["spectrum_applied"] else "simple"
+        elif fibo:
+            settings["reference_count"] = len(request.reference_images)
+            settings["masked_edit"] = bool(request.mask_image)
         else:
             settings["reference_count"] = len(request.reference_images)
             settings["layout_box_count"] = len(parse_flux3_layout(request.layout))

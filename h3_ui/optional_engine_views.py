@@ -102,6 +102,7 @@ class OptionalEngineActions:
     drama3_subtitles: Callable | None = None
     generate_moss_image: Callable | None = None
     enhance_moss_image_prompt: Callable | None = None
+    generate_fibo2: Callable | None = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +154,7 @@ class MossImageView:
     enhance_status: gr.Textbox
     resolution_small: gr.Dropdown
     resolution_large: gr.Dropdown
+    accelerate: gr.Checkbox
 
 
 def moss_image_preset_values(preset):
@@ -253,6 +255,9 @@ def build_moss_image_view(root):
                 preset = gr.Radio(list(MOSS_IMAGE_PRESETS), value=DEFAULT_MOSS_IMAGE_PRESET, label="MOSS-Image preset",
                     info="Fast uses INT8 SFT, the small VAE and the 8-step DMD Turbo LoRA at CFG 1. "
                          "Balanced and Quality run BF16 SFT with the full VAE for 25 or 50 steps at CFG 3.")
+                accelerate = gr.Checkbox(value=True, label="Accelerate with Spectrum",
+                    info="Adaptive hidden-state prediction. Uses Euler + sgm_uniform; may change fine details. "
+                         "Automatically bypassed for Turbo LoRAs and runs of 10 steps or fewer.")
                 resolution_small, resolution_large = _resolution_presets(
                     MOSS_IMAGE_1M_RESOLUTION_PRESETS, MOSS_IMAGE_2M_RESOLUTION_PRESETS,
                     "1M resolution preset", "2M resolution preset",
@@ -288,7 +293,7 @@ def build_moss_image_view(root):
                 run, stop, status = _actions("Generate image")
     return MossImageView(prompt, preset, turbo_variant, model, text_encoder, vae, width, height, seed, steps, cfg,
                          layout, output, run, stop, status, rewrite_mode, writer, enhance, enhance_status,
-                         resolution_small, resolution_large)
+                         resolution_small, resolution_large, accelerate)
 
 
 def bind_flux3(view, actions):
@@ -325,5 +330,5 @@ def bind_moss_image(view, actions):
     return _bind_generation(view, "moss_image", actions.generate_moss_image, actions.interrupt, [
         view.prompt, view.preset, view.turbo_variant, view.model, view.text_encoder, view.vae, view.width,
         view.height,
-        view.seed, view.steps, view.cfg, view.layout,
+        view.seed, view.steps, view.cfg, view.layout, view.accelerate,
     ])
