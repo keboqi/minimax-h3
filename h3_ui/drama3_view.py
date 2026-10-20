@@ -170,11 +170,16 @@ DRAMA3_SUBTITLES_JS = """
       const player = playerFor(box);
       const time = player ? player.currentTime : -1;
       const lines = [...box.querySelectorAll("li")];
-      // The last line to start stays lit through pauses and sounds until the next one.
-      const active = lines.filter((line) => Number(line.dataset.start) <= time + 0.05).pop() ?? null;
+      // Parallel branches arrive in script order, not playback order.
+      const started = lines.filter((line) => Number(line.dataset.start) <= time + 0.05)
+        .sort((a, b) => Number(a.dataset.start) - Number(b.dataset.start));
+      const playing = started.filter((line) => Number(line.dataset.end) > time);
+      // Highlight overlapping speech together; keep the latest start lit during gaps.
+      const highlighted = playing.length ? playing : started.slice(-1);
+      const active = highlighted.at(-1) ?? null;
       for (const line of lines) {
-        line.classList.toggle("active", line === active);
-        line.classList.toggle("past", time >= 0 && Number(line.dataset.end) <= time && line !== active);
+        line.classList.toggle("active", highlighted.includes(line));
+        line.classList.toggle("past", time >= 0 && Number(line.dataset.end) <= time && !highlighted.includes(line));
       }
       if (active && box.h3Active !== active) {
         const list = box.querySelector("ol");

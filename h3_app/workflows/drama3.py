@@ -61,8 +61,18 @@ def speaker_label(speaker, names):
 def _speaker_lookup(names):
     lookup = {}
     for speaker, name in sorted((names or {}).items()):
-        if str(name or "").strip():
-            lookup.setdefault(_name_key(name), int(speaker))  # the lowest slot wins a duplicate name
+        key = _name_key(name)
+        if not key:
+            continue
+        speaker = int(speaker)
+        if key in lookup:
+            raise H3Error(f'Speaker {lookup[key]} and Speaker {speaker} share the name "{name}". '
+                          "Give each Cast slot a unique name.")
+        generic = _GENERIC_NAME.fullmatch(key)
+        if generic and int(generic[1]) <= MAX_SPEAKER and int(generic[1]) != speaker:
+            raise H3Error(f'The name "{name}" is reserved for Speaker {int(generic[1])}. '
+                          f"Give Speaker {speaker} a different Cast name.")
+        lookup[key] = speaker
     return lookup
 
 
@@ -90,6 +100,7 @@ def request_cast(request):
     Text before any speaker line belongs to the lowest slot with a voice.
     """
     names = {int(speaker): name for speaker, name in getattr(request, "voice_names", ()) or ()}
+    _speaker_lookup(names)  # reject ambiguous labels before building name-keyed references
     voiced = sorted(int(speaker) for speaker, _audio, _transcript in request.voices)
     return names, speaker_label(voiced[0] if voiced else 0, names), lambda name: resolve_speaker(name, names)
 
