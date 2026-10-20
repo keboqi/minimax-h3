@@ -105,9 +105,9 @@ class RefinementLoraTests(unittest.TestCase):
         base = _graph.Graph.out(graph.add('UNETLoader', unet_name='base', weight_dtype='default'))
         self.assertIsNone(add_refinement_model(graph, base, lora_name=None, variant=None, available_nodes=set()))
         self.assertEqual(len(graph.nodes), 1)
-        values = [app.UI_DEFAULTS.get(name) for name in GENERATION_FIELDS[:-1]]
+        values = [app.UI_DEFAULTS.get(name) for name in GENERATION_FIELDS[:GENERATION_FIELDS.index('latent_upscale_refine_lora')]]
         self.assertEqual(GenerationArguments.from_positional(values).values['latent_upscale_refine_lora'], SAME_REFINEMENT_LORA)
-        request_values = {name: app.UI_DEFAULTS.get(name) for name in GENERATION_FIELDS[:-1]}
+        request_values = {name: app.UI_DEFAULTS.get(name) for name in GENERATION_FIELDS[:GENERATION_FIELDS.index('latent_upscale_refine_lora')]}
         self.assertEqual(H3Request.from_values(request_values).finishing.latent_upscale_refine_lora, SAME_REFINEMENT_LORA)
 
     def test_selection_survives_restore_and_is_in_effective_settings(self):

@@ -198,7 +198,7 @@ class EncoderOptionTests(unittest.TestCase):
         args.update(prompt="A quiet lake", width=864, height=480, duration=5,
                     steps=4, seed=seed, encoder_small_input=small_input,
                     reuse_unchanged_inputs=reuse,
-                    models=SimpleNamespace(text_encoder="encoder.safetensors"),
+                    models=SimpleNamespace(text_encoder="encoder.safetensors", video_vae="video_vae.safetensors"),
                     available_nodes=set(), latent_upscale_model_name="upscaler.pth")
         if family == "fl2va":
             args.update(first_image="start.png", last_image=None)

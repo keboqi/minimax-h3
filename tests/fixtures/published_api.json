@@ -92,8 +92,10 @@
         {"parameter_name": "fl2va_audio_2", "parameter_has_default": true, "parameter_default": null, "type": "type_10"},
         {"parameter_name": "fl2va_audio_3", "parameter_has_default": true, "parameter_default": null, "type": "type_10"},
         {"parameter_name": "encoder_small_input", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
-        {"parameter_name": "use_lynnreal_vae", "parameter_has_default": true, "parameter_default": true, "type": "type_6"},
-        {"parameter_name": "latent_upscale_refine_lora", "parameter_has_default": true, "parameter_default": "Same as generation", "type": "type_45"}
+        {"parameter_name": "use_lynnreal_vae", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
+        {"parameter_name": "latent_upscale_refine_lora", "parameter_has_default": true, "parameter_default": "Same as generation", "type": "type_45"},
+        {"parameter_name": "video_encoder", "parameter_has_default": true, "parameter_default": "LightVAE Lite", "type": "type_93"},
+        {"parameter_name": "lightvae_decoder", "parameter_has_default": true, "parameter_default": "lite", "type": "type_94"}
       ],
       "returns": [
         {"type": "type_10", "component": "Video"},
@@ -1493,6 +1495,21 @@
         "Off",
         "INT8 ConvRot",
         "W4A8 (lower VRAM)"
+      ]
+    },
+    "type_93": {
+      "type": "string",
+      "enum": [
+        "Original",
+        "LightVAE Lite"
+      ]
+    },
+    "type_94": {
+      "type": "string",
+      "enum": [
+        "none",
+        "lite",
+        "int8"
       ]
     }
   }

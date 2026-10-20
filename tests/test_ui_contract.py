@@ -334,12 +334,12 @@ class UiContractTests(unittest.TestCase):
             for d in self.config["dependencies"]
             if d.get("api_name") == "generate_video_advanced"
         )
-        self.assertEqual(advanced["inputs"][-6:-3], voice_ids)
+        self.assertEqual(advanced["inputs"][-8:-5], voice_ids)
         self.assertTrue(set(ref_ids) <= set(advanced["inputs"]))
         parameters = self.demo.get_api_info()["named_endpoints"][
             "/generate_video_advanced"
         ]["parameters"]
-        for parameter in parameters[-6:-3]:
+        for parameter in parameters[-8:-5]:
             self.assertTrue(parameter["parameter_has_default"])
             self.assertIsNone(parameter["parameter_default"])
 
@@ -355,10 +355,10 @@ class UiContractTests(unittest.TestCase):
             for d in self.config["dependencies"]
             if d.get("api_name") == "generate_video_advanced"
         )
-        self.assertEqual(advanced["inputs"][-3], toggle["id"])
+        self.assertEqual(advanced["inputs"][-5], toggle["id"])
         parameter = self.demo.get_api_info()["named_endpoints"][
             "/generate_video_advanced"
-        ]["parameters"][-3]
+        ]["parameters"][-5]
         self.assertTrue(parameter["parameter_has_default"])
         self.assertFalse(parameter["parameter_default"])
 
@@ -430,10 +430,10 @@ class UiContractTests(unittest.TestCase):
             for d in self.config["dependencies"]
             if d.get("api_name") == "generate_video_advanced"
         )
-        self.assertEqual(advanced["inputs"][-1], control["id"])
+        self.assertEqual(advanced["inputs"][-3], control["id"])
         parameter = self.demo.get_api_info()["named_endpoints"][
             "/generate_video_advanced"
-        ]["parameters"][-1]
+        ]["parameters"][-3]
         self.assertTrue(parameter["parameter_has_default"])
         self.assertEqual(parameter["parameter_default"], SAME_REFINEMENT_LORA)
 
@@ -590,7 +590,7 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(
             [self.components[n["id"]]["props"]["label"] for n in children],
             ["MiniMax H3", "LTX 2.5", "Qwen Image 2.1", "MiniMax Music 3", "YuE2",
-             "FLUX 3 Image Klein", "Drama 3 TTS"],
+             "FLUX 3 Image Klein", "MOSS-Image", "Drama 3 TTS"],
         )
 
     def test_non_h3_generated_media_outputs_are_display_only(self) -> None:
@@ -606,7 +606,7 @@ class UiContractTests(unittest.TestCase):
             for component in self.config["components"]
             if component.get("props", {}).get("label") in labels
         ]
-        self.assertEqual(len(outputs), 6)  # Qwen and FLUX 3 both show "Generated image"
+        self.assertEqual(len(outputs), 7)  # Qwen, FLUX 3 and MOSS-Image all show "Generated image"
         for output in outputs:
             self.assertFalse(output["props"]["interactive"], output["props"]["label"])
 
@@ -776,8 +776,8 @@ class UiContractTests(unittest.TestCase):
                        if c.get("props", {}).get("label") == "Saved speaker")
         refreshes = [fn for fn in self.demo.fns.values()
                      if getattr(fn.fn, "__name__", "") == "refresh_saved"]
-        # One per slot save and delete, plus Save all speakers to selected group.
-        self.assertEqual(len(refreshes), 2 * 16 + 1)
+        # One per slot save and delete, plus Save all speakers to selected group and Auto's save.
+        self.assertEqual(len(refreshes), 2 * 16 + 2)
         for fn in refreshes:
             self.assertEqual(fn.outputs[0]._id, library["id"])
 
@@ -1188,10 +1188,7 @@ class UiContractTests(unittest.TestCase):
                         self.assertEqual((stored["width"], stored["height"]), (width, height))
 
     def test_resolution_quick_presets_share_single_rows(self) -> None:
-        controls = {
-            component.get("props", {}).get("label"): component
-            for component in self.config["components"]
-        }
+        controls = self.qwen_controls()  # FLUX 3 reuses the preset labels
 
         def assert_same_row(labels):
             ids = {controls[label]["id"] for label in labels}

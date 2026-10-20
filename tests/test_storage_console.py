@@ -201,8 +201,12 @@ class ModelManagerTests(unittest.TestCase):
         from h3_app.workspace_store import WorkspaceStore
         from h3_ui.media_console import media_runtime
 
+        from h3_app.jobs import JOBS
+
         previous = media_catalog.get_media_catalog()
         self.addCleanup(setattr, media_catalog, "_CATALOG", previous)
+        # build_ui configures the shared job registry with this test's temporary store.
+        self.addCleanup(setattr, JOBS, "store", JOBS.store)
         data = Path(self.temp.name)
         runtime = media_runtime(data, data / "app")
         self.assertEqual(runtime.output_dir, (data / "output").resolve())

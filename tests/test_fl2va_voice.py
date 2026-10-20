@@ -26,7 +26,7 @@ class Fl2vaVoiceTests(unittest.TestCase):
             prompt='The woman uses the voice of <Audio 1> and says, "Hello."',
             first_image="start.png", last_image="end.png", width=864, height=480,
             duration=5, steps=4, seed=7,
-            models=SimpleNamespace(text_encoder="encoder.safetensors"),
+            models=SimpleNamespace(text_encoder="encoder.safetensors", video_vae="video_vae.safetensors"),
             available_nodes={T8, "LoadAudio", _catalog.H3_SEMANTIC_BRIDGE_NODE} if available is None else available,
             voice_reference_audios=list(voices),
             latent_upscale_model_name="upscaler.pth" if upscale else None,
@@ -51,7 +51,9 @@ class Fl2vaVoiceTests(unittest.TestCase):
             self.assertFalse(inputs["add_source_as_reference"])
             self.assertNotIn("drive_audio", inputs)
             self.assertNotIn("final_audio", inputs)
-            self.assertEqual(inputs["video_vae"], ["vae", 0])
+            # Keyframes are encoded by the full video VAE, not the stack's decoder.
+            encoder = graph[inputs["video_vae"][0]]
+            self.assertEqual((encoder["class_type"], encoder["inputs"]), ("VAELoader", {"vae_name": "video_vae.safetensors"}))
             self.assertEqual(inputs["audio_vae"], ["audio", 0])
             for field in ("first_frame", "last_frame", "ref_audios.ref_audio_1", "ref_audios.ref_audio_2"):
                 self.assertIn(field, inputs)
