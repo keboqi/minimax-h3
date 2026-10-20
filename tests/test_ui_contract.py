@@ -706,13 +706,8 @@ class UiContractTests(unittest.TestCase):
         drama = [row["parameter_name"] for row in api["/generate_drama3"]["parameters"]]
         slots = [f"speaker_{n}_{field}" for n in range(16) for field in ("voice", "audio", "transcript")]
         sound_slots = [f"sound_{n}_{field}" for n in range(16) for field in ("preset", "audio", "name", "description", "duration")]
-        self.assertEqual(drama, ["text", *slots, "seed", "temperature", "top_p", "top_k",
-                                 "max_frames", "split_long_text", "experts", "expert_cache_gb",
-                                 "backend", "parallel", "retries", "model_choice", "script_mode", *sound_slots])
-        backend = next(c for c in self.config["components"]
-                       if c.get("props", {}).get("label") == "Backend")
-        self.assertEqual(backend["props"]["value"], "ComfyUI")
-        self.assertEqual([choice[1] for choice in backend["props"]["choices"]], ["ComfyUI", "SGLang-Omni"])
+        self.assertEqual(drama, ["text", *slots, "temperature", "top_p", "top_k", "max_frames",
+                                 "parallel", "retries", "script_mode", *sound_slots])
         enhance = [row["parameter_name"] for row in api["/enhance_drama3_text"]["parameters"]]
         self.assertEqual(enhance[:7], ["text", "speaker_mode", "model", "temporary_api_key",
                                        "backend", "lightning_api_key", "lightning_model"])
@@ -722,9 +717,8 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(enhance[7:], [*slots, *metadata, "shown_slots", "script_mode", "speaker_group"])
         voice = api["/generate_drama3_voice"]
         self.assertEqual([row["parameter_name"] for row in voice["parameters"]],
-                         ["description", "preview_text", "language", "engine", "backend", "seed",
-                          "temperature", "top_p", "top_k", "max_frames", "experts", "expert_cache_gb",
-                          "model_choice"])
+                         ["description", "preview_text", "language", "engine",
+                          "temperature", "top_p", "top_k", "max_frames"])
         engine = next(c for c in self.config["components"]
                       if c.get("props", {}).get("label") == "Voice generator")
         self.assertEqual(engine["props"]["value"], "Qwen3-TTS VoiceDesign")
@@ -1574,7 +1568,6 @@ class UiContractTests(unittest.TestCase):
             "generate_qwen_image21",
             "generate_yue2",
             "unload_all_models",
-            "switch_drama3_backend",
         }
         found = set()
         for event in self.demo.fns.values():

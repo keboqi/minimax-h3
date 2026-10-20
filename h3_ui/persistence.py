@@ -31,9 +31,8 @@ EXTRA_FIELDS = {
               "prompt_backend", "prompt_model", "lightning_model", "upsampler", "cfg"),
     "moss_image": ("preset", "turbo_variant", "model", "text_encoder", "vae", "width", "height", "seed", "steps",
                    "cfg", "rewrite_mode", "prompt_backend", "prompt_model", "lightning_model"),
-    "drama3": ("seed", "temperature", "top_p", "top_k", "max_frames", "split_long_text", "experts",
-               "expert_cache_gb", "prompt_backend", "prompt_model", "lightning_model",
-               "speaker_mode", "backend", "parallel", "retries", "model", "asr_model",
+    "drama3": ("temperature", "top_p", "top_k", "max_frames", "prompt_backend", "prompt_model",
+               "lightning_model", "speaker_mode", "parallel", "retries", "asr_model",
                "voice_engine", "skip_existing"),
     "workspace": ("task", "engine"),
     "qwen_image21": (

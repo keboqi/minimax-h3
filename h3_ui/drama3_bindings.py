@@ -4,11 +4,10 @@ import json
 import gradio as gr
 from h3_ui.drama3_speaker_library import bind_speaker_library
 from h3_app.drama3_voice_design import ENGINE_QWEN
-from h3_app.prompt_service import DRAMA3_PROMPT_FAILED, DRAMA3_SCRIPT_ADVANCED, DRAMA3_SCRIPT_BASIC
+from h3_app.prompt_service import DRAMA3_PROMPT_FAILED, DRAMA3_SCRIPT_ADVANCED
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
 from h3_ui.optional_engine_controls import (
     _QUIET,
-    _SKIP_JS,
     _bind_generation,
     _owned_view_generation,
     _writer_inputs,
@@ -92,25 +91,12 @@ def _bind_slot_presentation(kind, slots, shown, panel, add, remove, cleared, gro
 
 
 def _bind_script_mode(view, actions):
-    bind_gpu_action(
-        view.backend.input, actions.switch_drama3_backend,
-        inputs=view.backend, outputs=view.status,
-        show_progress="minimal", api_name=False,
-    )
     if view.script_mode is None or actions.switch_drama3_script_mode is None:
         return
     view.script_mode.change(
         actions.switch_drama3_script_mode,
-        inputs=[view.script_mode, view.text, view.backend],
-        outputs=[view.text, view.backend, view.sounds_panel, view.status], **_QUIET,
-    )
-    # Advanced needs SGLang-Omni; choosing ComfyUI falls back to Basic, whose
-    # change event hides the sounds panel.
-    view.backend.input(
-        fn=None,
-        js=f"(choice, mode) => choice === 'ComfyUI' && mode === {json.dumps(DRAMA3_SCRIPT_ADVANCED)} "
-           f"? {json.dumps(DRAMA3_SCRIPT_BASIC)} : {_SKIP_JS}",
-        inputs=[view.backend, view.script_mode], outputs=view.script_mode, **_QUIET,
+        inputs=[view.script_mode, view.text],
+        outputs=[view.sounds_panel, view.status], **_QUIET,
     )
 
 
@@ -148,8 +134,7 @@ def _bind_writer(view, actions):
 
 
 def _voice_settings(view):
-    return [view.voice_engine, view.backend, view.seed, view.temperature, view.top_p, view.top_k,
-            view.max_frames, view.experts, view.expert_cache_gb, view.model]
+    return [view.voice_engine, view.temperature, view.top_p, view.top_k, view.max_frames]
 
 
 def _bind_voice_batch(trigger, view, actions):
@@ -327,9 +312,8 @@ def bind_drama3(view, actions):
     if view.sounds:
         _bind_sound_slots(view, actions, script_events)
     generation_inputs = [
-        view.text, *drama3_voice_inputs(view), view.seed, view.temperature, view.top_p, view.top_k,
-        view.max_frames, view.split_long_text, view.experts, view.expert_cache_gb,
-        view.backend, view.parallel, view.retries, view.model,
+        view.text, *drama3_voice_inputs(view), view.temperature, view.top_p, view.top_k,
+        view.max_frames, view.parallel, view.retries,
     ]
     if view.script_mode is not None:
         generation_inputs.append(view.script_mode)

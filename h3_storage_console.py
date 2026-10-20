@@ -219,7 +219,6 @@ def model_presets() -> dict[str, tuple[str, ...]]:
         "MOSS-Image + Turbo LoRAs": (
             *moss, *dict.fromkeys(key for key, _steps in MOSS_IMAGE_TURBO_MODES.values()),
         ),
-        "Drama 3 defaults": ("drama3_fp8", "drama3_codec"),
         "Drama 3 SGLang-Omni checkpoint": ("drama3_sglang_checkpoint",),
         "Qwen VoiceDesign + Stable Audio": ("qwen_voice_design", "stable_audio3_medium"),
     }

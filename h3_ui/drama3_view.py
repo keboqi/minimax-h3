@@ -5,10 +5,9 @@ import json
 import gradio as gr
 from h3_ui.drama3_speaker_library import SpeakerLibraryView, build_speaker_library
 from h3_app.drama3_voice_design import ENGINE_QWEN, VOICE_DESIGN_ENGINES
-from h3_app.generation.optional_engines import DRAMA3_BACKENDS
 from h3_app.prompt_service import DRAMA3_SCRIPT_ADVANCED, DRAMA3_SCRIPT_MODES, DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES
 from h3_app.voice_design import LANGUAGES as VOICE_DESIGN_LANGUAGES
-from h3_models import DEFAULT_DRAMA3_ASR, DEFAULT_DRAMA3_MODEL, DRAMA3_ASR_CHOICES, DRAMA3_MODEL_CHOICES
+from h3_models import DEFAULT_DRAMA3_ASR, DRAMA3_ASR_CHOICES
 from .prompt_writer_controls import RemotePromptWriterControls
 from h3_ui.optional_engine_controls import (
     _QUIET,
@@ -85,22 +84,16 @@ class Drama3View:
     add_speaker: gr.Button
     remove_speaker: gr.Button
     voice_status: gr.Markdown
-    seed: gr.Number
     temperature: gr.Slider
     top_p: gr.Slider
     top_k: gr.Slider
     max_frames: gr.Slider
-    split_long_text: gr.Checkbox
-    experts: gr.Dropdown
-    expert_cache_gb: gr.Slider
-    backend: gr.Radio
     parallel: gr.Slider
     retries: gr.Slider
     output: gr.Audio
     run: gr.Button
     stop: gr.Button
     status: gr.Textbox
-    model: gr.Dropdown
     asr_model: gr.Dropdown
     voice_engine: gr.Radio
     generate_voices: gr.Button
@@ -271,8 +264,8 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                     list(DRAMA3_SCRIPT_MODES),
                     value=DRAMA3_SCRIPT_ADVANCED,
                     label="Script mode",
-                    info="Basic is dialogue with expression cues. Advanced adds sound effects and music on "
-                         "SGLang-Omni (Linux); switching back to Basic removes sound tags.",
+                    info="Basic is dialogue with expression cues. Advanced adds sound effects, music and "
+                         "vocal effects; Basic keeps those tags in the script but ignores them.",
                 )
                 with gr.Accordion("Rewrite as a Drama 3 script", open=False):
                     gr.Markdown("Splits narration from dialogue, adds speaker tags and expression cues, and fills "
@@ -294,8 +287,8 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                         pasted_reply = gr.Textbox(label="Pasted writer reply", lines=6, max_lines=20,
                                                   placeholder='{"script": "<|speaker:0|> ...", "speakers": [...]}')
                         apply_reply = gr.Button("Apply pasted reply", size="sm", variant="primary")
-                _heading("02", "Cast", "Optional. Give each speaker a reference clip, generate one from a "
-                         "description, or reuse a saved speaker. Speakers without one get an invented voice.")
+                _heading("02", "Cast", "Every speaker needs a voice: upload a reference clip, generate one from a "
+                         "description, or reuse a saved speaker.")
                 with gr.Accordion(drama3_voices_title(group="Global", group_size=group_size),
                                   open=False) as voices_panel:
                     with gr.Group(elem_classes=["h3-drama3-toolbar"]):
@@ -319,7 +312,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             list(VOICE_DESIGN_ENGINES), value=ENGINE_QWEN, label="Voice generator",
                             info="[Qwen3-TTS VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign) "
                                  "designs a voice from its description (downloaded on first use). Drama 3 uses "
-                                 "the selected backend and the sampling settings below.",
+                                 "SGLang-Omni and the sampling settings below.",
                         )
                         with gr.Row(equal_height=True):
                             skip_existing = gr.Checkbox(
@@ -364,27 +357,19 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                         add_sound = gr.Button("Add sound", size="sm")
                         remove_sound = gr.Button("Remove last sound", size="sm")
                 _heading("03", "Delivery")
-                with gr.Row(equal_height=True):
-                    sampling_preset = gr.Radio(
-                        list(DRAMA3_SAMPLING_PRESETS), value="Expressive", label="Speech preset", scale=3,
-                        info="Strict keeps delivery controlled; Expressive adds variation.",
-                    )
-                    seed = gr.Number(value=-1, precision=0, label="Seed (-1 random)", scale=1, min_width=140)
-                with gr.Accordion("Speech and memory settings", open=False):
-                    gr.Markdown("Models download on first use (~40 GB for FP8/INT8). With experts in RAM, "
-                                "allow about 48 GB system RAM for FP8/INT8 or 40 GB for W6A8. "
+                sampling_preset = gr.Radio(
+                    list(DRAMA3_SAMPLING_PRESETS), value="Expressive", label="Speech preset",
+                    info="Strict keeps delivery controlled; Expressive adds variation.",
+                )
+                with gr.Accordion("Speech settings", open=False):
+                    gr.Markdown("Drama 3 runs on SGLang-Omni (Linux, CUDA). Lines go out in parallel with their "
+                                "speaker's clip. The checkpoint downloads on first use. "
                                 "[Model and license](https://huggingface.co/fishaudio/drama-3)",
                                 elem_classes=["h3-drama3-note"])
-                    backend = gr.Radio(list(DRAMA3_BACKENDS), value="SGLang-Omni", label="Backend",
-                        info="ComfyUI generates the whole text in one take and can invent voices. "
-                             "SGLang-Omni (Linux) suits long scripts where every speaker has a voice: lines go "
-                             "out in parallel with their speaker's clip, and near-silent takes can be retried. "
-                             "Advanced (sound) mode needs SGLang-Omni.")
-                    with gr.Group() as served_settings:
-                        with gr.Row():
-                            parallel = gr.Slider(1, 32, value=8, step=1, label="Parallel requests")
-                            retries = gr.Slider(0, 4, value=0, step=1, label="Retries per chunk",
-                                info="0 keeps the first take. Retries only near-silent audio.")
+                    with gr.Row():
+                        parallel = gr.Slider(1, 32, value=8, step=1, label="Parallel requests")
+                        retries = gr.Slider(0, 4, value=0, step=1, label="Retries per chunk",
+                            info="0 keeps the first take. Retries only near-silent audio.")
                     with gr.Row():
                         temperature = gr.Slider(0, 2, value=2.0, step=0.05, label="Temperature")
                         top_p = gr.Slider(0.05, 1, value=1.0, step=0.05, label="Top-p")
@@ -392,23 +377,6 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                         info="0 keeps all candidates. Small caps can make speech stall at pauses.")
                     max_frames = gr.Slider(1, 8192, value=8192, step=1, label="Maximum audio frames per take",
                         info="21.5 frames per second; 8192 is about 6.3 minutes. Only limits a take that runs on.")
-                    with gr.Group(visible=False) as comfy_settings:
-                        model = gr.Dropdown(list(DRAMA3_MODEL_CHOICES), value=DEFAULT_DRAMA3_MODEL,
-                                            label="Drama model",
-                                            info="FP8 preserves the original weights. INT8 suits RAM experts; "
-                                                 "W6A8 needs about 40 GB RAM including working memory.")
-                        split = gr.Checkbox(value=False, label="Split long text into connected chunks",
-                            info="Off generates the whole text in one take, avoiding silent gaps at chunk joins.")
-                        with gr.Row():
-                            experts = gr.Dropdown(["in RAM", "in VRAM"], value="in VRAM", label="Expert weights",
-                                info="In VRAM needs room for the whole model plus working memory.")
-                            cache = gr.Slider(0, 256, value=0, step=0.5, label="Expert VRAM cache (GB, 0 automatic)")
-                    backend.change(
-                        fn=None,
-                        js="(choice) => [{__type__: 'update', visible: choice !== 'ComfyUI'}, "
-                           "{__type__: 'update', visible: choice === 'ComfyUI'}]",
-                        inputs=backend, outputs=[served_settings, comfy_settings], **_QUIET,
-                    )
                 sampling_controls = [temperature, top_p, top_k]
                 presets_js = json.dumps(DRAMA3_SAMPLING_PRESETS)
                 sampling_preset.input(fn=None, js=f"(name) => ({presets_js})[name]",
@@ -448,22 +416,16 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         add_speaker=add_speaker,
         remove_speaker=remove_speaker,
         voice_status=voice_status,
-        seed=seed,
         temperature=temperature,
         top_p=top_p,
         top_k=top_k,
         max_frames=max_frames,
-        split_long_text=split,
-        experts=experts,
-        expert_cache_gb=cache,
-        backend=backend,
         parallel=parallel,
         retries=retries,
         output=output,
         run=run,
         stop=stop,
         status=status,
-        model=model,
         asr_model=asr_model,
         voice_engine=voice_engine,
         generate_voices=generate_voices,

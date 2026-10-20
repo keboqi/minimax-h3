@@ -41,10 +41,11 @@ H3_AUDIO_T8_REF = "6063fafbd9c3b85c5ff40aef435ae11b2844e558"
 # ComfyUI v0.42.1: Qwen decode optimizations, TextGenerate cleanup and PDD heads. Keep this
 # source paired with Kitchen 0.2.39 and Drama's new/old cache compatibility.
 COMFY_REF = "63be2f9b82ad0dac88a7ceaa28a9cf3154125a18"
+# Drama 3 speech runs on SGLang-Omni; this node pack supplies the Qwen3-ASR transcription nodes.
 DRAMA3_REPO = "https://github.com/PedroMarinhoDev/ComfyUI-Drama3.git"
 # CUDA expert kernels/graphs, plus compatibility with Core's new Qwen cache API.
 DRAMA3_REF = "67a733a96890637dc27b1914974ad00c569405fb"
-# Optional parallel Drama 3 backend, isolated from ComfyUI's Torch stack.
+# Drama 3 backend, isolated from ComfyUI's Torch stack.
 DRAMA3_SGLANG_TORCH_BACKEND = "cu130"
 DRAMA3_SGLANG_PYTHON = "3.12"
 # Parallel Drama 3 backend: SGLang-Omni main. Drama 3

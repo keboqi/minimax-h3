@@ -154,7 +154,7 @@ class EnvironmentTests(unittest.TestCase):
         self.assertNotIn("VIRTUAL_ENV", env)
         self.assertEqual(env["PYTHONNOUSERSITE"], "1")
     def test_prepare_refuses_non_linux(self):
-        with patch.object(environment.os, "name", "nt"), self.assertRaisesRegex(H3Error, "Linux only"):
+        with patch.object(environment.os, "name", "nt"), self.assertRaisesRegex(H3Error, "requires Linux"):
             environment.prepare(Path("venv"))
 
 
@@ -359,9 +359,9 @@ class GenerateTests(unittest.TestCase):
             updates = list(generate.generate_drama3_served(request, runtime=self.runtime, free_gpu=lambda: None))
         return fake, updates, snapshot
 
-    def request(self, text, backend="SGLang-Omni", **overrides):
+    def request(self, text, **overrides):
         voices = tuple((speaker, path, f"<|speaker:{speaker}|> Reference {speaker}.") for speaker, path in self.clips.items())
-        return Drama3Request(text, voices=voices, backend=backend, parallel=4, retries=2,
+        return Drama3Request(text, voices=voices, parallel=4, retries=2,
                              voice_names=((0, "Alice"), (1, "")), **overrides)
     def test_each_chunk_uses_its_speakers_voice_and_the_server_stays_loaded(self):
         script = "<|speaker:0|> Hello there, friend.\n<|speaker:1|> [laughs] Hi Alice.\n<|speaker:0|> Ready to go?"
@@ -392,15 +392,15 @@ class GenerateTests(unittest.TestCase):
             return float_wav(tone(2.0))
 
         fake, updates, snapshot = self.run_route(
-            self.request("<|speaker:1|> Hi there.", backend="SGLang-Omni"),
+            self.request("<|speaker:1|> Hi there."),
             speech, server_class=server.SglangOmniServer)
         payload = fake.speech.call_args.args[0]
         self.assertEqual(payload["references"][0]["text"], "Reference 1.")
         self.assertEqual(payload["temperature"], 1.0)
         self.assertEqual(snapshot.call_args.args[1]["settings"]["backend"], "SGLang-Omni")
-        self.assertIsNone(snapshot.call_args.args[1]["settings"]["seed"])
-        self.assertIsNone(snapshot.call_args.args[1]["settings"]["chunks"][0]["seed"])
-        self.assertIn("seed control unavailable", updates[-1].status)
+        self.assertNotIn("seed", snapshot.call_args.args[1]["settings"])
+        self.assertNotIn("seed", snapshot.call_args.args[1]["settings"]["chunks"][0])
+        self.assertNotIn("seed", updates[-1].status)
     def test_silent_takes_are_retried_without_seed_control(self):
         attempts = []
 
@@ -446,7 +446,7 @@ class GenerateTests(unittest.TestCase):
                 raise failures.pop(0)
             return float_wav(tone(1.0))
 
-        request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),), backend="SGLang-Omni")
+        request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),))
         with patch.object(generate, "TRANSPORT_BACKOFF_SECONDS", 0):
             fake, updates, _snapshot = self.run_route(request, speech)
         self.assertEqual(fake.speech.call_count, 3)
@@ -456,7 +456,7 @@ class GenerateTests(unittest.TestCase):
         def speech(payload):
             raise server.SpeechRequestError("bad request", 400)
 
-        request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),), backend="SGLang-Omni")
+        request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),))
         with patch.object(generate, "TRANSPORT_BACKOFF_SECONDS", 0), \
                 self.assertRaisesRegex(H3Error, "bad request"):
             fake, _updates, _snapshot = self.run_route(request, speech)
@@ -508,7 +508,7 @@ class GenerateTests(unittest.TestCase):
         self.assertIn("Audio advisories (takes kept)", updates[-1].status)
         self.assertTrue(snapshot.call_args.args[1]["settings"]["chunks"][0]["warnings"])
     def test_default_retries_are_disabled(self):
-        request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),), backend="SGLang-Omni")
+        request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),))
         self.assertEqual(request.retries, 0)
         with patch.object(audio, "check_take", side_effect=AssertionError("Zero retries must skip take checks")):
             fake, updates, snapshot = self.run_route(request, lambda payload: float_wav(tone(1.0)),
@@ -522,11 +522,9 @@ class GenerateTests(unittest.TestCase):
         self.assertNotIn("failed a check", updates[-1].status)
         self.assertNotIn("Audio advisories", updates[-1].status)
     def test_every_speaker_needs_a_reference_voice(self):
-        for backend in ("SGLang-Omni",):
-            request = self.request("<|speaker:0|> Hi.\n<|speaker:3|> Who am I?", backend=backend)
-            with self.subTest(backend=backend), self.assertRaisesRegex(H3Error, r"<\|speaker:3\|>"):
-                validate_request(request)
-        validate_request(Drama3Request("<|speaker:0|> Hi.\n<|speaker:3|> Who am I?"))  # ComfyUI invents voices
+        request = self.request("<|speaker:0|> Hi.\n<|speaker:3|> Who am I?")
+        with self.assertRaisesRegex(H3Error, r"<\|speaker:3\|>"):
+            validate_request(request)
 
     def test_served_generation_renders_nested_sound_tree_pauses_and_speaker_effects(self):
         sfx_clip = Path(self.temp.name) / "thunder.wav"

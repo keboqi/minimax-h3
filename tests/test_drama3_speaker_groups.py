@@ -43,20 +43,20 @@ class SpeakerGroupTests(unittest.TestCase):
         self.assertEqual(speakers.match_speaker("narrator", self.runtime, "Story A"), global_voice)
 
     def test_matching_every_slot_scans_each_folder_once(self):
-        from h3_ui import application
+        from h3_ui.application import drama3_handlers
 
         self.save("Narrator")
         alice = self.save("Alice", "Story A")
         slots = []
         for name in ["Alice", "Narrator", *[""] * 14]:
             slots += [name, "Upload a clip", None]
-        with patch.object(application, "_runtime_config", return_value=self.runtime), \
+        with patch.object(drama3_handlers, "_runtime_config", return_value=self.runtime), \
                 patch.object(speakers, "list_speakers", wraps=speakers.list_speakers) as listed:
-            updates = application.match_drama3_speakers("Story A", *slots)
+            updates = drama3_handlers.match_drama3_speakers("Story A", *slots)
         self.assertEqual(listed.call_count, 2)  # Story A, then Global
         self.assertEqual(updates[0]["value"], alice.key)
         self.assertEqual(updates[1]["value"], "Narrator")
-        self.assertEqual(updates[2], application.gr.skip())
+        self.assertEqual(updates[2], drama3_handlers.gr.skip())
 
     def test_legacy_presets_and_path_like_group_names(self):
         saved = self.save("Alice")
@@ -70,36 +70,36 @@ class SpeakerGroupTests(unittest.TestCase):
         self.assertEqual(speakers.load_speaker("Alice", self.runtime).audio, saved.audio)
 
     def test_rewrite_selects_saved_voices_and_keeps_new_cast(self):
-        from h3_ui import application
+        from h3_ui.application import drama3_handlers
         narrator = self.save("Narrator")
         alice = self.save("Alice", "Story")
         entries = [cast_entry(0, "旁白"), cast_entry(2, "ALICE"), cast_entry(5, "Bob")]
         reply = json.dumps({"script": "\n".join(f'<|speaker:{e["speaker_id"]}|> Hello there.' for e in entries),
                             "speakers": entries})
         slots = ["Upload a clip", None, ""] * 16 + [""] * 48 + [4, "Basic", "Story"]
-        with patch.object(application, "_runtime_config", return_value=self.runtime):
-            result = application.apply_drama3_writer_reply(reply, "Original", "Auto", *slots)
+        with patch.object(drama3_handlers, "_runtime_config", return_value=self.runtime):
+            result = drama3_handlers.apply_drama3_writer_reply(reply, "Original", "Auto", *slots)
             self.assertEqual(len(result), 85)
             self.assertEqual(result[-16]["value"], narrator.key)
             self.assertEqual(result[-14]["value"], alice.key)
             self.assertEqual(result[-11], {"__type__": "update"})
             self.assertEqual(result[17], "Bob")
             self.assertEqual(result[50], 6)
-            bad = application.apply_drama3_writer_reply("invalid", "Original", "Auto", *slots)
+            bad = drama3_handlers.apply_drama3_writer_reply("invalid", "Original", "Auto", *slots)
             self.assertEqual(len(bad), len(result))
             self.assertTrue(all(update == {"__type__": "update"} for update in bad[2:]))
-            context = application._drama3_writer_slots(slots)[2]
+            context = drama3_handlers._drama3_writer_slots(slots)[2]
             self.assertIn("Reusable speaker voices", context)
             self.assertIn("Alice", context)
 
     def test_bulk_save_copies_presets_and_reports_invalid_clips(self):
-        from h3_ui import application
+        from h3_ui.application import drama3_handlers
         saved = self.save("Narrator")
         slots = [saved.key, "Narrator", None, "", "",
                  "Upload a clip", "Alice", str(self.clip), "Alice's words.", "Bright voice",
                  "Upload a clip", "Bob", str(self.clip), "", ""]
-        with patch.object(application, "_runtime_config", return_value=self.runtime):
-            result = application.save_all_drama3_speakers("Story", 3, *slots)
+        with patch.object(drama3_handlers, "_runtime_config", return_value=self.runtime):
+            result = drama3_handlers.save_all_drama3_speakers("Story", 3, *slots)
         self.assertIn("Saved 2 speakers", result[0])
         self.assertIn("Speaker 2:", result[0])
         self.assertEqual(speakers.load_speaker(result[1]["value"], self.runtime).group, "Story")
@@ -107,17 +107,17 @@ class SpeakerGroupTests(unittest.TestCase):
         self.assertEqual(speakers.load_speaker(saved.key, self.runtime), saved)
 
     def test_matching_preserves_uploaded_references(self):
-        from h3_ui import application
+        from h3_ui.application import drama3_handlers
         saved = self.save("Alice", "Story")
-        with patch.object(application, "_runtime_config", return_value=self.runtime):
-            self.assertEqual(application.match_drama3_speaker("Story", "alice", "Upload a clip", None)["value"], saved.key)
-            self.assertEqual(application.match_drama3_speaker("Story", "alice", "Upload a clip", str(self.clip)),
+        with patch.object(drama3_handlers, "_runtime_config", return_value=self.runtime):
+            self.assertEqual(drama3_handlers.match_drama3_speaker("Story", "alice", "Upload a clip", None)["value"], saved.key)
+            self.assertEqual(drama3_handlers.match_drama3_speaker("Story", "alice", "Upload a clip", str(self.clip)),
                              {"__type__": "update"})
 
     def test_canonical_narrator_does_not_reassign_an_existing_alias(self):
-        from h3_ui import application
-        with patch.object(application, "_runtime_config", return_value=self.runtime):
-            result = application._drama3_apply_cast(
+        from h3_ui.application import drama3_handlers
+        with patch.object(drama3_handlers, "_runtime_config", return_value=self.runtime):
+            result = drama3_handlers._drama3_apply_cast(
                 "<|speaker:0|> Hello.", "Rewritten", [cast_entry(0, "narrator")],
                 {0: {"name": "旁白", "has_reference": True}}, 4, "Global")
         self.assertEqual(result[2], "旁白")

@@ -188,22 +188,6 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "akhaliq MOSS-Image SFT 4-step DMD LoRA v2.0",
         expected_sha256="154c7f1455c3bf9925945c2f1ea2e4f09d0d0c67256081384a094b2b585f913f",
     ),
-    "drama3_fp8": ModelSpec(
-        "PedroMarinhoDev/Drama-3-ComfyUI", "diffusion_models", "drama3_fp8experts_bf16.safetensors", "Drama 3 FP8 experts / BF16",
-        expected_sha256="5d053a200cf0f77faa13c087c78ef200c3b53f288451a6b9e7a8fa421c03a67b",
-    ),
-    "drama3_codec": ModelSpec(
-        "PedroMarinhoDev/Drama-3-ComfyUI", "vae", "drama3_codec.safetensors", "Drama 3 audio codec",
-        expected_sha256="4fecf102907a48414230da9a74d72d07c3a92368eab53fab655797837bddf5ae",
-    ),
-    "drama3_int8": ModelSpec(
-        "PedroMarinhoDev/Drama-3-ComfyUI", "diffusion_models", "drama3_int8experts_bf16.safetensors", "Drama 3 INT8 experts / BF16",
-        expected_sha256="f407996b17583ba857ace14e0330a13788cf89f4d47cfdcd4766ad5106576899",
-    ),
-    "drama3_w6a8": ModelSpec(
-        "PedroMarinhoDev/Drama-3-ComfyUI", "diffusion_models", "drama3_w6a8experts_bf16.safetensors", "Drama 3 W6A8 experts / BF16",
-        expected_sha256="09d063f2667edae5baab63a8aa583d5445fc6693658b676a490d3cec827fb785",
-    ),
     "drama3_asr": ModelSpec(
         "PedroMarinhoDev/Qwen3-ASR-ComfyUI", "asr", "qwen3_asr_1.7b_bf16.safetensors",
         "Qwen3-ASR 1.7B for Drama 3 voice transcripts",
@@ -961,16 +945,12 @@ MOSS_IMAGE_MODEL_KEYS = (
     *MOSS_IMAGE_VAE_CHOICES.values(),
     *dict.fromkeys(key for key, _steps in MOSS_IMAGE_TURBO_MODES.values()),
 )
-DRAMA3_MODEL_CHOICES = {"FP8 (original weights)": "drama3_fp8", "INT8 ConvRot": "drama3_int8", "W6A8 (lower RAM)": "drama3_w6a8"}
-DEFAULT_DRAMA3_MODEL = "FP8 (original weights)"
 DRAMA3_ASR_CHOICES = {"1.7B (quality)": "drama3_asr", "0.6B (smaller)": "drama3_asr_small"}
 DEFAULT_DRAMA3_ASR = "1.7B (quality)"
-DRAMA3_MODEL_KEYS = (*DRAMA3_MODEL_CHOICES.values(), "drama3_codec")
 DRAMA3_ASR_MODEL_KEYS = tuple(DRAMA3_ASR_CHOICES.values())
 LAZY_OPTIONAL_MODEL_KEYS = (
     *FLUX3_MODEL_KEYS,
     *MOSS_IMAGE_MODEL_KEYS,
-    *DRAMA3_MODEL_KEYS,
     *DRAMA3_ASR_MODEL_KEYS,
     "lightvae_encoder",
     "lightvae_decoder",
@@ -1794,7 +1774,7 @@ def selftest() -> None:
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert set(MODEL_SPECS) == {
-        *FLUX3_MODEL_KEYS, *MOSS_IMAGE_MODEL_KEYS, *DRAMA3_MODEL_KEYS, *DRAMA3_ASR_MODEL_KEYS,
+        *FLUX3_MODEL_KEYS, *MOSS_IMAGE_MODEL_KEYS, *DRAMA3_ASR_MODEL_KEYS,
         *(key for pair in QWEN_IMAGE21_PROMPT_ENHANCERS.values() for key in pair),
         "lightvae_encoder", "lightvae_decoder", "lightvae_decoder_int8",
         "veda_t2va",

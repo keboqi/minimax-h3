@@ -1,4 +1,4 @@
-"""FLUX 3, MOSS-Image and Drama 3 requests over the shared, owned ComfyUI queue."""
+"""FLUX 3 and MOSS-Image over the shared, owned ComfyUI queue; Drama 3 on SGLang-Omni."""
 
 from dataclasses import asdict
 import math
@@ -20,17 +20,15 @@ from h3_app.workflows.moss_image import (
 from h3_app.workflows.moss_image_prompt import is_layout_prompt
 from h3_models import FLUX3_BASE_MODEL_CHOICES
 from h3_app.workflows.drama3 import (
-    MAX_FRAMES, MAX_SPEAKER, build_drama3_asr_graph, build_drama3_graph, text_speakers, validate_drama3_text,
-    drama3_model_keys, drama3_asr_model_keys,
+    MAX_FRAMES, MAX_SPEAKER, build_drama3_asr_graph, text_speakers, validate_drama3_text, drama3_asr_model_keys,
 )
 from h3_models import DEFAULT_DRAMA3_ASR
 from .qwen import first_reference_dimensions
 from .requests import Flux3Request, Drama3Request, MossImageRequest
-from .results import GenerationUpdate, fresh_audio
+from .results import GenerationUpdate
 
 
-DRAMA3_BACKENDS = ("ComfyUI", "SGLang-Omni")
-DRAMA3_SERVED_BACKENDS = DRAMA3_BACKENDS[1:]
+DRAMA3_BACKEND = "SGLang-Omni"
 FLUX3_EDIT_SIZES = (QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX, QWEN_EDIT_SIZE_MANUAL)
 MOSS_IMAGE_FAMILY = "MOSS-Image"
 FLUX3_MAX_PIXELS, FLUX3_MIN_SIDE, FLUX3_MAX_SIDE, FLUX3_GRID = 4_194_304, 256, 4096, 16
@@ -86,7 +84,8 @@ def resolve_flux3_dimensions(request, *, input_dir=None):
 
 
 def validate_request(request):
-    _integer(request.seed, -1, 2**63 - 2, "Seed")
+    if not isinstance(request, Drama3Request):  # SGLang-Omni takes no per-request seed
+        _integer(request.seed, -1, 2**63 - 2, "Seed")
     if isinstance(request, Flux3Request):
         if not request.prompt.strip():
             raise H3Error("Write an image prompt or edit request.")
@@ -123,7 +122,6 @@ def validate_request(request):
         if request.layout.strip() and is_layout_prompt(request.prompt):
             raise H3Error("The prompt is already a MOSS-Image Layout with its own boxes. Clear the layout boxes.")
     elif isinstance(request, Drama3Request):
-        drama3_model_keys(request.model_choice)
         validate_drama3_text(request.text)
         speakers = [speaker for speaker, _audio, _transcript in request.voices]
         if len(set(speakers)) != len(speakers):
@@ -133,32 +131,20 @@ def validate_request(request):
             if not audio or not str(transcript).strip():
                 raise H3Error(f"Speaker {speaker} needs both a reference clip and its exact transcript.")
             validate_drama3_text(transcript, f"Speaker {speaker}'s transcript")
-        if request.experts not in {"in RAM", "in VRAM"}:
-            raise H3Error("Choose experts in RAM or in VRAM.")
-        if request.backend not in DRAMA3_BACKENDS:
-            raise H3Error("Choose the ComfyUI or SGLang-Omni Drama 3 backend.")
-        from h3_app.prompt_service import DRAMA3_SCRIPT_ADVANCED, DRAMA3_SCRIPT_MODES
+        from h3_app.prompt_service import DRAMA3_SCRIPT_MODES
 
         if request.script_mode not in DRAMA3_SCRIPT_MODES:
             raise H3Error("Choose Basic or Advanced (sound enhanced) Drama 3 script mode.")
-        # Basic mode keeps any authored staging tags in the text but ignores them when generating.
-        if request.script_mode == DRAMA3_SCRIPT_ADVANCED and request.backend != "SGLang-Omni":
-            raise H3Error(
-                "Advanced sound-enhanced Drama 3 scripts (with <sound>, <parallel>, <sequential>, "
-                "or speaker vocal effects) are only supported on the SGLang-Omni backend."
-            )
         _integer(request.parallel, 1, 32, "Parallel requests")
         _integer(request.retries, 0, 4, "Retries per chunk")
-        if request.backend in DRAMA3_SERVED_BACKENDS:
-            # Each chunk is sent with its speaker's own clip, so every voice must be given.
-            missing = sorted(text_speakers(request.text) - {speaker for speaker, _a, _t in request.voices})
-            if missing:
-                raise H3Error(
-                    f"The {request.backend} backend sends each speaker's lines with that speaker's reference voice. "
-                    "Add a clip or saved speaker for " + ", ".join(f"<|speaker:{n}|>" for n in missing)
-                    + ", or use the ComfyUI backend to let Drama 3 create voices in one take."
-                )
-        for name, low, high in (("temperature", 0, 2), ("top_p", 0.05, 1), ("expert_cache_gb", 0, 256)):
+        # Each chunk is sent with its speaker's own clip, so every voice must be given.
+        missing = sorted(text_speakers(request.text) - {speaker for speaker, _a, _t in request.voices})
+        if missing:
+            raise H3Error(
+                "Drama 3 sends each speaker's lines with that speaker's reference voice. Add a clip, "
+                "saved speaker or generated voice for " + ", ".join(f"<|speaker:{n}|>" for n in missing) + "."
+            )
+        for name, low, high in (("temperature", 0, 2), ("top_p", 0.05, 1)):
             if not low <= float(getattr(request, name)) <= high:
                 raise H3Error(f"{name} must be between {low} and {high}.")
         _integer(request.top_k, 0, 4096, "Top-k")
@@ -170,7 +156,7 @@ def validate_request(request):
 def generate_optional_engine(request, services, runtime, *, progress=no_progress, free_gpu=None):
     """Validate before downloads, retain retry seeds, and resolve only this job's output.
 
-    ``free_gpu`` releases ComfyUI's VRAM before the optional SGLang-Omni Drama 3 route runs.
+    ``free_gpu`` releases ComfyUI's VRAM before Drama 3 starts or wakes SGLang-Omni.
     """
     moss = isinstance(request, MossImageRequest)
     image = moss or isinstance(request, Flux3Request)
@@ -179,27 +165,27 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
     timings = StageTimings(family, started, "Validating request")
     try:
         validate_request(request)
-        job = CURRENT_JOB.get()
-        seed = variant_seed(job.variant if job else 0,
-                            lambda: random.randrange(2**63 - 1) if request.seed < 0 else int(request.seed))
-        values = {**asdict(request), "seed": seed}
-        if not image and request.backend in DRAMA3_SERVED_BACKENDS:
+        if not image:
             from h3_app.drama3_serving.generate import generate_drama3_served
             from h3_models import resolve_hf_token
 
             services.models.unload_prompt_rewriter()
-            timings.transition(f"{request.backend} Drama 3")
+            timings.transition(f"{DRAMA3_BACKEND} Drama 3")
             yield from generate_drama3_served(
                 request, runtime=runtime, free_gpu=free_gpu or (lambda: None),
                 hf_token=resolve_hf_token(), progress=progress,
             )
             return
+        job = CURRENT_JOB.get()
+        seed = variant_seed(job.variant if job else 0,
+                            lambda: random.randrange(2**63 - 1) if request.seed < 0 else int(request.seed))
+        values = {**asdict(request), "seed": seed}
         if moss:
             graph = build_moss_image_graph(
                 **{k: v for k, v in values.items() if k != "preset"},
                 output_stamp=str(int(time.time())), output_nonce=uuid.uuid4().hex[:8],
             )
-        elif image:
+        else:
             values["width"], values["height"] = resolve_flux3_dimensions(request, input_dir=runtime.input_dir)
             # The shared image resolver only reads the managed staging directory.
             graph = build_flux3_graph(
@@ -209,38 +195,24 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
                     "FLUX 3 Image Klein edit" if request.reference_images else "FLUX 3 Image Klein"
                 ].read_text(encoding="utf-8").strip(),
             )
-        else:
-            from h3_app.drama3_serving.server import release_all
-
-            from h3_app.drama3_serving.tree import strip_drama3_sound_tags
-
-            from h3_app import audio_tools
-
-            release_all()  # the ComfyUI route needs the VRAM a served backend holds
-            audio_tools.stop()
-            values["text"] = validate_drama3_text(strip_drama3_sound_tags(request.text))  # Basic mode
-            graph = build_drama3_graph(**{key: value for key, value in values.items()
-                                          if key not in {"backend", "parallel", "retries", "voice_names", "script_mode", "sounds"}})
         info = services.execution.object_info()
         missing = {node["class_type"] for node in graph.values()} - set(info)
         if missing:
-            raise H3Error(f"Update setup and restart ComfyUI (the pinned Core and Drama 3 nodes are required). Missing nodes: {', '.join(sorted(missing))}")
-        if image:
-            clip_types = info.get("CLIPLoader", {}).get("input", {}).get("required", {}).get("type", [[]])[0]
-            clip_type, label = ("moss_image", "MOSS-Image") if moss else ("flux3", "FLUX 3")
-            if clip_type not in clip_types:
-                raise H3Error(f"This backend lacks the {label} text encoder. Update setup and restart ComfyUI.")
+            raise H3Error(f"Update setup and restart ComfyUI (the pinned Core nodes are required). Missing nodes: {', '.join(sorted(missing))}")
+        clip_types = info.get("CLIPLoader", {}).get("input", {}).get("required", {}).get("type", [[]])[0]
+        clip_type, label = ("moss_image", "MOSS-Image") if moss else ("flux3", "FLUX 3")
+        if clip_type not in clip_types:
+            raise H3Error(f"This backend lacks the {label} text encoder. Update setup and restart ComfyUI.")
         services.models.unload_prompt_rewriter()
         yield GenerationUpdate(None, f"Preparing {family} models; missing weights download on first use.")
         keys = (moss_image_model_keys(request.model_choice, request.text_encoder_choice,
                                       request.turbo_variant, request.vae_choice)
                 if moss else
-                flux3_model_keys(request.model_choice, request.expand_prompt, request.upsampler_choice)
-                if image else drama3_model_keys(request.model_choice))
+                flux3_model_keys(request.model_choice, request.expand_prompt, request.upsampler_choice))
         services.models.ensure_model_keys(keys)
         queued_at = time.time()
         prompt_id = services.execution.submit_prompt(graph, str(uuid.uuid4()))
-        size = f" · {values['width']}×{values['height']}" if image else ""
+        size = f" · {values['width']}×{values['height']}"
         yield GenerationUpdate(None, f"Queued {family} job {prompt_id} · seed {seed}{size}")
         for stage, done, total, step, steps in services.execution.poll_comfy_progress(prompt_id, graph):
             timings.transition(stage)
@@ -251,23 +223,17 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
             yield GenerationUpdate(None, progress_status(stage, started=started,
                 completed_nodes=done, total_nodes=total, step=step, step_total=steps))
         history = services.execution.wait_for_history(prompt_id)
-        result = (services.media.resolve_image_outputs(history, queued_at, 1)[0] if image
-                  else services.media.resolve_audio_output(history, queued_at))
+        result = services.media.resolve_image_outputs(history, queued_at, 1)[0]
         settings = {key: value for key, value in values.items()
                     if key not in {"prompt", "text", "voices", "reference_images", "layout"}}
         if moss:
             settings["layout_box_count"] = len(parse_flux3_layout(request.layout))
-        elif image:
+        else:
             settings["reference_count"] = len(request.reference_images)
             settings["layout_box_count"] = len(parse_flux3_layout(request.layout))
-        else:
-            settings["reference_count"] = len(request.voices)
-            settings["cloned_speakers"] = sorted(speaker for speaker, _a, _t in request.voices)
-            settings["text_speakers"] = sorted(text_speakers(request.text))
         write_snapshot(result, {"job_id": prompt_id, "family": family, "settings": settings})
         progress(1, desc="Complete")
-        yield GenerationUpdate([str(result)] if image else fresh_audio(result),
-                               f"{family} complete · seed {seed}\n\n{timings.summary()}")
+        yield GenerationUpdate([str(result)], f"{family} complete · seed {seed}\n\n{timings.summary()}")
     except Exception as exc:
         record_failure(exc)
         yield GenerationUpdate(None, f"Error: {exc}\n\n{timings.summary()}")
@@ -280,7 +246,7 @@ def transcribe_drama3_audio(audio, services, *, language="auto", model_choice=DE
     graph, preview = build_drama3_asr_graph(audio=audio, language=language, model_choice=model_choice)
     missing = {node["class_type"] for node in graph.values()} - set(services.execution.object_info())
     if missing:
-        raise H3Error("Update setup and restart ComfyUI (pinned Drama 3 nodes with Qwen3-ASR required). "
+        raise H3Error("Update setup and restart ComfyUI (the pinned ComfyUI-Drama3 Qwen3-ASR nodes are required). "
                       f"Missing nodes: {', '.join(sorted(missing))}")
     services.models.ensure_model_keys(drama3_asr_model_keys(model_choice))
     prompt_id = services.execution.submit_prompt(graph, str(uuid.uuid4()))

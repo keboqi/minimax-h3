@@ -2,10 +2,6 @@
 
 import ast
 import json
-import hashlib
-import os
-import tempfile
-import threading
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -13,11 +9,11 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from h3_app.generation.optional_engines import generate_optional_engine, transcribe_drama3_audio
+from h3_app.generation.optional_engines import transcribe_drama3_audio
 from h3_app.generation.optional_engines import validate_request
 from h3_app.generation.qwen import generate_qwen_image21
-from h3_app.generation.requests import Drama3Request, QwenImage21Request, Flux3Request
-from h3_app.workflows.drama3 import build_drama3_graph, build_drama3_asr_graph
+from h3_app.generation.requests import QwenImage21Request, Flux3Request
+from h3_app.workflows.drama3 import build_drama3_asr_graph
 from h3_app.workflows.flux3 import build_flux3_graph, flux3_model_keys
 from h3_app.workflows.flux3_layout import parse_flux3_layout
 from h3_app.workflows.qwen import build_qwen_image21_graph, required_qwen_image21_nodes
@@ -47,25 +43,6 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("flux3_base_int8", flux3_model_keys("Base INT8 ConvRot", False))
         with self.assertRaisesRegex(ValueError, "CFG 1"):
             build_flux3_graph(model_choice="BF16", prompt="a fox", cfg=4)
-
-    def test_drama_downloads_only_the_selected_checkpoint_and_codec(self):
-        for choice, key in (("FP8 (original weights)", "drama3_fp8"), ("INT8 ConvRot", "drama3_int8"),
-                            ("W6A8 (lower RAM)", "drama3_w6a8")):
-            request = Drama3Request("Hello", model_choice=choice)
-            graph = build_drama3_graph(text=request.text, model_choice=choice)
-            models = Mock()
-            execution = SimpleNamespace(object_info=lambda: graph,
-                submit_prompt=Mock(return_value="job"), poll_comfy_progress=lambda *args: iter(()),
-                wait_for_history=lambda *args: {})
-            execution.object_info = lambda: {n["class_type"]: {} for n in graph.values()}
-            services = SimpleNamespace(models=models, execution=execution,
-                                       media=SimpleNamespace(resolve_audio_output=lambda *args: Path("speech.mp3")))
-            with patch("h3_app.drama3_serving.server.release_all"), patch("h3_app.generation.optional_engines.write_snapshot"):
-                results = list(generate_optional_engine(request, services, SimpleNamespace()))
-            self.assertNotIn("Error:", results[-1].status)
-            models.ensure_model_keys.assert_called_once_with((key, "drama3_codec"))
-            loaded = next(n["inputs"]["model_name"] for n in graph.values() if n["class_type"] == "Drama3Loader")
-            self.assertEqual(loaded, MODEL_SPECS[key].local_name)
 
     def test_small_asr_downloads_and_loads_only_the_small_model(self):
         graph, preview = build_drama3_asr_graph(audio="ref.wav", model_choice="0.6B (smaller)")
@@ -190,67 +167,6 @@ class FluxLayoutTests(unittest.TestCase):
         self.assertTrue(prompt.startswith("A street scene "))
         row = json.loads(prompt[len("A street scene "):])[0]
         self.assertEqual(row, {"id": "obj_1", "bbox": [100, 200, 600, 700], "desc": 'red sign "你好"'})
-
-
-class DramaVoiceCacheTests(unittest.TestCase):
-    def test_private_cache_reuses_codes_and_invalidates_every_encoding_input(self):
-        class Tensor(np.ndarray):
-            def detach(self): return self
-            def float(self): return self.astype(np.float32).view(Tensor)
-            def cpu(self): return self
-            def contiguous(self): return self
-            def numpy(self): return np.asarray(self)
-            def numel(self): return self.size
-            def long(self): return self.astype(np.int64).view(Tensor)
-            def to(self, dtype): return self.astype(dtype).view(Tensor)
-
-        def tensor(values, dtype=np.float32):
-            return np.asarray(values, dtype=dtype).view(Tensor)
-
-        class CacheFile:
-            def __init__(self, path, **kwargs):
-                self.data = json.loads(Path(path).read_text())
-            def __enter__(self): return self
-            def __exit__(self, *args): pass
-            def metadata(self): return self.data["metadata"]
-            def get_tensor(self, name): return tensor(self.data["codes"], np.int16)
-
-        def save_file(values, path, metadata):
-            Path(path).write_text(json.dumps({"codes": values["codes"].tolist(), "metadata": metadata}))
-
-        source = ROOT / "custom_nodes/H3Acceleration/__init__.py"
-        node = next(n for n in ast.parse(source.read_text(encoding="utf-8")).body
-                    if isinstance(n, ast.ClassDef) and n.name == "H3Drama3CachedVoice")
-        with tempfile.TemporaryDirectory() as directory:
-            private = Path(directory) / "private"
-            voice = {"transcript": "<|speaker:2|> Hello", "codes": tensor([[1, 2, 3]], np.int64)}
-            native = Mock(return_value=SimpleNamespace(result=(voice,)))
-            namespace = {"os": os, "json": json, "hashlib": hashlib, "threading": threading,
-                         "logging": Mock(), "torch": SimpleNamespace(int16=np.dtype(np.int16)),
-                         "folder_paths": SimpleNamespace(base_path=str(Path(directory) / "ComfyUI"))}
-            exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), "exec"), namespace)
-            modules = {"nodes": SimpleNamespace(NODE_CLASS_MAPPINGS={"Drama3EncodeVoice": SimpleNamespace(execute=native)}),
-                       "safetensors": SimpleNamespace(safe_open=CacheFile),
-                       "safetensors.torch": SimpleNamespace(save_file=save_file)}
-            with patch.dict(os.environ, {"H3_WORKSPACE_DIR": str(private)}), patch.dict("sys.modules", modules):
-                cache = namespace["H3Drama3CachedVoice"]()
-                arguments = dict(codec=object(), audio={"waveform": tensor([[[0.1, 0.2]]]), "sample_rate": 44100},
-                                 transcript=voice["transcript"], codec_revision="codec-v1", encoder_revision="encoder-v1")
-                first = cache.encode(**arguments)[0]
-                hit = cache.encode(**arguments)[0]
-                np.testing.assert_array_equal(first["codes"], hit["codes"])
-                self.assertEqual(native.call_count, 1)
-                original_file = next((private / "drama3_voice_cache").glob("*.safetensors"))
-                for changes in ({"transcript": "different words"}, {"codec_revision": "codec-v2"},
-                                {"encoder_revision": "encoder-v2"},
-                                {"audio": {"waveform": tensor([[[0.3, 0.2]]]), "sample_rate": 44100}},
-                                {"audio": {"waveform": arguments["audio"]["waveform"], "sample_rate": 22050}}):
-                    cache.encode(**{**arguments, **changes})
-                self.assertEqual(native.call_count, 6)
-                original_file.write_bytes(b"broken cache")
-                cache.encode(**arguments)
-                self.assertEqual(native.call_count, 7)
-                self.assertFalse(list(private.rglob("*.tmp")))
 
 
 @unittest.skipUnless((UPSTREAM / "core-textgen.py").is_file(), "audited upstream sources not downloaded")

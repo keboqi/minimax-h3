@@ -96,7 +96,7 @@ def prepare(venv: Path, *, force: bool = False, run=None, log=print) -> Path:
     venv = Path(venv)
     label = "SGLang-Omni"
     if os.name != "posix":
-        raise H3Error(f"The {label} Drama 3 backend runs on Linux only; use the ComfyUI backend here.")
+        raise H3Error(f"Drama 3 runs on {label}, which requires Linux.")
     run = run or (lambda command, **kwargs: subprocess.run(command, check=True, **kwargs))
     with _setup_lock(venv.parent / f".{venv.name}.lock"):
         if not force and is_ready(venv):

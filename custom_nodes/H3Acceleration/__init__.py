@@ -1731,65 +1731,6 @@ def _qwen21_target_tokens(latent_image):
     return height * width
 
 
-class H3Drama3CachedVoice:
-    """Persist codec codes in the same private workspace as saved speakers."""
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {"required": {"codec": ("DRAMA3_CODEC",), "audio": ("AUDIO",),
-            "transcript": ("STRING", {"multiline": True}),
-            "codec_revision": ("STRING",), "encoder_revision": ("STRING",)}}
-
-    RETURN_TYPES = ("DRAMA3_VOICE",)
-    FUNCTION = "encode"
-    CATEGORY = "audio/drama3"
-
-    def encode(self, codec, audio, transcript, codec_revision, encoder_revision):
-        import nodes
-        from safetensors import safe_open
-        from safetensors.torch import save_file
-
-        waveform = audio["waveform"].detach().float().cpu().contiguous()
-        identity = {"schema": 1, "transcript": transcript, "codec": codec_revision,
-                    "encoder": encoder_revision, "rate": audio["sample_rate"], "shape": list(waveform.shape)}
-        digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8"))
-        digest.update(waveform.numpy().tobytes())
-        key = digest.hexdigest()
-        outputs = os.environ.get("GRADIO_OUTPUT_DIR") or os.path.join(os.path.dirname(folder_paths.base_path), "gradio_outputs")
-        workspace = os.environ.get("H3_WORKSPACE_DIR") or os.path.join(outputs, ".h3-workspace")
-        directory = os.path.join(workspace, "drama3_voice_cache")
-        path = os.path.join(directory, key + ".safetensors")
-        try:
-            if os.path.isfile(path):
-                with safe_open(path, framework="pt", device="cpu") as cached:
-                    metadata = cached.metadata() or {}
-                    codes = cached.get_tensor("codes")
-                if (metadata.get("identity") == key and metadata.get("transcript") == transcript
-                        and codes.ndim == 2 and codes.numel() and codes.dtype == torch.int16):
-                    return ({"transcript": transcript, "codes": codes.long()},)
-        except Exception as exc:
-            logging.warning("Drama voice cache unreadable; encoding again: %s", exc)
-
-        # Delegate preprocessing/resampling to the pinned upstream node.
-        voice = nodes.NODE_CLASS_MAPPINGS["Drama3EncodeVoice"].execute(codec, audio, transcript).result[0]
-        temporary = path + f".{os.getpid()}.{threading.get_ident()}.tmp"
-        try:
-            os.makedirs(directory, mode=0o700, exist_ok=True)
-            save_file({"codes": voice["codes"].to(torch.int16).contiguous()}, temporary,
-                      metadata={"identity": key, "transcript": transcript})
-            os.replace(temporary, path)
-        except Exception as exc:
-            logging.warning("Drama voice cache write skipped: %s", exc)
-        finally:
-            try:
-                os.unlink(temporary)
-            except FileNotFoundError:
-                pass
-            except OSError:
-                logging.warning("Could not remove temporary Drama voice cache file")
-        return (voice,)
-
-
 class H3Flux3LayoutElements:
     @classmethod
     def INPUT_TYPES(cls):
@@ -2141,7 +2082,6 @@ NODE_CLASS_MAPPINGS = {
     "H3LTXPadVideoFrames": H3LTXPadVideoFrames,
     "H3Flux3EditPrompt": H3Flux3EditPrompt,
     "H3Flux3LayoutElements": H3Flux3LayoutElements,
-    "H3Drama3CachedVoice": H3Drama3CachedVoice,
     "H3Qwen21PromptEnhance": H3Qwen21PromptEnhance,
     "H3Qwen21Sigmas": H3Qwen21Sigmas,
     "H3LTXHDRConditioning": H3LTXHDRConditioning,
@@ -2166,7 +2106,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "H3LTXPadVideoFrames": "LTX Pad Video Frames",
     "H3Flux3EditPrompt": "FLUX 3 Image Edit Prompt Upsampler",
     "H3Flux3LayoutElements": "FLUX 3 Layout Elements",
-    "H3Drama3CachedVoice": "Drama 3 Cached Reference Voice",
     "H3Qwen21PromptEnhance": "Qwen Image 2.1 Native Prompt Enhancer",
     "H3Qwen21Sigmas": "Qwen Image 2.1 Resolution-Aware Sigmas",
     "H3Qwen21TurboSigmas": "Qwen Image 2.1 Viggle Turbo Sigmas",

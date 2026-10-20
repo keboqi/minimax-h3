@@ -5,17 +5,17 @@
 1. Enter a draft or a tagged script in **Speech text**. Use `<|speaker:0|>`
    through `<|speaker:15|>` to assign voices and cues such as `[laughs]` for delivery.
 2. Choose **Basic** for dialogue or **Advanced** (the default) for sound effects,
-   music and vocal effects. Advanced requires SGLang-Omni on Linux; switching back
-   to Basic strips sound tags.
+   music and vocal effects. Basic keeps those tags in the script but ignores them.
 3. Use **Auto: rewrite, voice, sound and speak** for the full workflow, or open
    **Rewrite as a Drama 3 script** and review the result before proceeding.
 4. Open **Speaker voices** to choose a saved group, manage presets, upload clips,
-   or generate a cast. The panel title shows the selected group and how many
+   or generate a cast. Every speaker in the script needs a voice. The panel title shows the selected group and how many
    speakers it holds. In Advanced mode, review **Sound effects and music** too.
-5. Choose a **Speech preset** (**Expressive** by default) and seed. **Generate speech** renders the current
+5. Choose a **Speech preset** (**Expressive** by default). **Generate speech** renders the current
    script and references without rewriting them. Listen beside the composer.
 
-**Speech and memory settings** contains backend, model and custom sampling controls.
+Drama 3 runs on SGLang-Omni, which requires Linux and a CUDA GPU.
+**Speech settings** contains parallel requests, retries and custom sampling controls.
 Auto respects the skip-existing voice and sound options; clear them when you want
 new clips. Check **Save generated speakers to the selected group** (off by default)
 to have Auto save the cast after the voices are generated, as **Save all speakers**
@@ -47,19 +47,17 @@ have a voice. **Generate all speaker voices** designs every shown speaker in one
 job; it skips saved speakers and speakers without a description and preview
 speech. **Skip speakers with a voice** (on by default) also skips speakers that
 already have a clip; uncheck it to regenerate them, for example after changing
-the backend. With Drama 3 on SGLang-Omni, the
-server is prepared once and up to **Parallel requests** voices generate at the
-same time; a failed voice does not stop the others. ComfyUI and Qwen run the
-voices one after another. **Voice generator** picks the
+the voice generator. With Drama 3, the SGLang-Omni server is prepared once and up
+to **Parallel requests** voices generate at the same time; a failed voice does not
+stop the others. Qwen runs the voices one after another. **Voice generator** picks the
 engine:
 
 - **Qwen3-TTS VoiceDesign** (default) uses
   [Qwen3-TTS-12Hz-1.7B-VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign)
   and also takes a preview language. Browsers that saved the previous default
   (Drama 3) switch to it once; choosing Drama 3 again is remembered.
-- **Drama 3** generates one take with no reference on the Drama 3
-  backend selected under **Speech and memory settings** (ComfyUI or
-  SGLang-Omni), with that tab's model and sampling settings. The description is
+- **Drama 3** generates one take with no reference on SGLang-Omni, with the
+  sampling settings under **Speech settings**. The description is
   inserted as a delivery cue after the preview's opening phrase, for example
   `<|speaker:0|> Well now, [gravelly old sailor, slow and amused] the tide is turning.`,
   so it must not contain brackets. The cue is not part of the transcript.
@@ -104,14 +102,14 @@ token) with its bundled T5Gemma encoder lands in `ComfyUI/models/stable_audio3/m
 (both on Modal's models volume). One worker serves both models with
 `HF_HUB_OFFLINE=1`; each model loads on its first request and stays in VRAM
 beside Drama 3. ComfyUI and SGLang are released only when the GPU lacks room for a
-model's first load. Other engines' jobs, **Unload**, the ComfyUI Drama 3 route, and
-an SGLang start or wake without enough free VRAM stop the worker. A slot's
+model's first load. Other engines' jobs, **Unload**, and an SGLang start or wake
+without enough free VRAM stop the worker. A slot's
 **Interrupt voice generation** button cancels the work and stops the worker. Clips
 are written under `ComfyUI/output/drama3_voices` and `ComfyUI/output/drama3_sounds`;
 worker and setup logs under `ComfyUI/output/audio_tools`.
 
-Drama 3 offers ComfyUI for one-take generation and SGLang-Omni for parallel,
-speaker-based chunks on Linux. SGLang uses an isolated environment, stays loaded
+Drama 3 generates parallel, speaker-based chunks on SGLang-Omni. It has no
+per-request seed. SGLang uses an isolated environment, stays loaded
 between TTS jobs, and sleeps or stops when another engine needs the GPU. The app defaults
 to 8 parallel chunks and no automatic retries; the server allows 32 concurrent
 requests. Chunk quality checks and advisories are skipped when retries is zero;
@@ -121,10 +119,11 @@ are generated before any speech, so a sound failure stops the job early. A
 failed chunk or **Interrupt** returns at once without waiting for requests still
 running on the server. Completed speech is saved as MP3.
 
-ComfyUI generation keeps joint dialogue and authored pauses. **Balance** uses
-uncapped top-k; **Strict** and **Expressive** use top-k 30. Saved custom sampling
-settings remain respected. The SGLang route translates zero to its
-whole-vocabulary sampling value. Dependency revisions live in `h3_sources.py`
+Each take is trimmed at its edges and long silences inside it are shortened,
+because the model sometimes generates spurious gaps; use `<#N#>` pause tags for
+intended pauses. **Balance** uses uncapped top-k; **Strict** and **Expressive**
+use top-k 30. Saved custom sampling settings remain respected. Zero top-k is sent
+as SGLang's whole-vocabulary value. Dependency revisions live in `h3_sources.py`
 and `h3_requirements.py` rather than in this guide.
 
 SGLang configuration uses these environment variables:

@@ -82,11 +82,11 @@ class _SlotKind:
 
 
 _VOICE_KIND = _SlotKind("Speaker", UPLOAD_VOICE, "saved voice", "voice ready",
-                        "Speaker voices (optional)", "speaker", "voice", DRAMA3_VOICE_SLOTS)
+                        "Speaker voices", "speaker", "voice", DRAMA3_VOICE_SLOTS)
 
 
 _SOUND_KIND = _SlotKind("Sound", UPLOAD_SOUND, "saved sound", "clip ready",
-                        "Sound effects and music (SGLang-Omni)", "sound", "clip", DRAMA3_SOUND_SLOTS)
+                        "Sound effects and music", "sound", "clip", DRAMA3_SOUND_SLOTS)
 
 
 def _clamp_count(count, total):

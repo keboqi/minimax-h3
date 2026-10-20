@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -16,13 +15,7 @@ from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.generation.optional_engines import transcribe_drama3_audio, validate_request
 from h3_app.generation.requests import Drama3Request
-from h3_app.workflows.drama3 import (
-    build_drama3_asr_graph,
-    build_drama3_graph,
-    speaker_transcript,
-    text_speakers,
-    validate_drama3_text,
-)
+from h3_app.workflows.drama3 import build_drama3_asr_graph, text_speakers, validate_drama3_text
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -31,21 +24,7 @@ def completion(text):
     return Mock(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
 
 
-class Drama3GraphTests(unittest.TestCase):
-    def test_each_voice_is_encoded_with_its_speaker_tag(self):
-        graph = build_drama3_graph(text="<|speaker:0|> Hi\n<|speaker:2|> Yo",
-                                   voices=((0, "a.wav", "Hello there."), (2, "b.wav", "<|speaker:7|> Hey.")))
-        encoders = [n for n in graph.values() if n["class_type"] == "H3Drama3CachedVoice"]
-        self.assertEqual([n["inputs"]["transcript"] for n in encoders],
-                         ["<|speaker:0|> Hello there.", "<|speaker:2|> Hey."])
-        generate = next(n for n in graph.values() if n["class_type"] == "Drama3Generate")
-        self.assertEqual(sorted(k for k in generate["inputs"] if k.startswith("voices.")),
-                         ["voices.voice0", "voices.voice1"])
-
-    def test_without_voices_the_model_casts_from_the_seed(self):
-        graph = build_drama3_graph(text="Hello")
-        self.assertFalse(any(n["class_type"] == "H3Drama3CachedVoice" for n in graph.values()))
-
+class Drama3RequestTests(unittest.TestCase):
     def test_text_validation_matches_the_node_pack(self):
         self.assertEqual(validate_drama3_text(" <|speaker:15|> [sighs] fine "), "<|speaker:15|> [sighs] fine")
         # Fish Audio documents seven scoped tags; the writer prompt offers all of them and none is rejected.
@@ -63,24 +42,13 @@ class Drama3GraphTests(unittest.TestCase):
     def test_text_speakers_treats_untagged_text_as_speaker_zero(self):
         self.assertEqual(text_speakers("hello"), {0})
         self.assertEqual(text_speakers("<|speaker:1|> a\n<|speaker:3|> b"), {1, 3})
-        self.assertEqual(speaker_transcript(3, "  words "), "<|speaker:3|> words")
 
-    def test_default_is_one_take_with_the_full_frame_cap(self):
+    def test_defaults_use_the_full_frame_cap_and_uncapped_top_k(self):
         request = Drama3Request("Hello")
-        self.assertEqual((request.split_long_text, request.max_frames), (False, 8192))
-        generate = next(n for n in build_drama3_graph(text="Hello").values()
-                        if n["class_type"] == "Drama3Generate")["inputs"]
-        self.assertEqual((generate["split_long_text"], generate["max_frames"]), (False, 8192))
-        self.assertEqual((request.top_k, generate["top_k"]), (0, 0))
-        self.assertEqual(generate["speakers"], "together")
-        graph = build_drama3_graph(text="Hello")
-        decoder = next(n["inputs"] for n in graph.values() if n["class_type"] == "Drama3Decode")
-        self.assertFalse(decoder["shorten_long_pauses"])
-        self.assertEqual(decoder["codes"],
-                         [next(key for key, n in graph.items() if n["class_type"] == "Drama3Generate"), 0])
+        self.assertEqual((request.max_frames, request.top_k, request.parallel, request.retries), (8192, 0, 8, 0))
         for frames in (0, 8193):
             with self.subTest(frames=frames), self.assertRaises(H3Error):
-                validate_request(Drama3Request("Hello", max_frames=frames))
+                validate_request(Drama3Request("Hello", voices=((0, "a.wav", "Hello"),), max_frames=frames))
 
     def test_request_validation_for_voice_slots(self):
         validate_request(Drama3Request("<|speaker:0|> a <|speaker:1|> b",
@@ -89,15 +57,16 @@ class Drama3GraphTests(unittest.TestCase):
             with self.subTest(voices=voices), self.assertRaises(H3Error):
                 validate_request(Drama3Request("hi", voices=voices))
 
-    def test_uncapped_sampling_is_valid_on_both_backends(self):
-        for backend in ("ComfyUI", "SGLang-Omni"):
-            for top_k in (0, 30, 4096):
-                validate_request(Drama3Request("Hello", voices=((0, "a.wav", "Hello"),),
-                                               backend=backend, top_k=top_k))
-            for top_k in (-1, 4097):
-                with self.subTest(backend=backend, top_k=top_k), self.assertRaises(H3Error):
-                    validate_request(Drama3Request("Hello", voices=((0, "a.wav", "Hello"),),
-                                                   backend=backend, top_k=top_k))
+    def test_uncapped_sampling_is_valid(self):
+        for top_k in (0, 30, 4096):
+            validate_request(Drama3Request("Hello", voices=((0, "a.wav", "Hello"),), top_k=top_k))
+        for top_k in (-1, 4097):
+            with self.subTest(top_k=top_k), self.assertRaises(H3Error):
+                validate_request(Drama3Request("Hello", voices=((0, "a.wav", "Hello"),), top_k=top_k))
+
+    def test_every_speaker_in_the_script_needs_a_voice(self):
+        with self.assertRaisesRegex(H3Error, r"<\|speaker:2\|>"):
+            validate_request(Drama3Request("<|speaker:0|> Hi.\n<|speaker:2|> Yo.", voices=((0, "a.wav", "Hi"),)))
 
 
 class Drama3TranscriptionTests(unittest.TestCase):
@@ -266,8 +235,10 @@ class Drama3WriterTests(unittest.TestCase):
 
 
 class Drama3AppInputTests(unittest.TestCase):
-    def run_app(self, backend):
+    def test_slot_values_map_to_speakers_with_absolute_staged_paths(self):
         from h3_ui import application
+
+        drama3_handlers = application.drama3_handlers  # importing the application installs its services
 
         captured = {}
 
@@ -277,18 +248,16 @@ class Drama3AppInputTests(unittest.TestCase):
 
         slots = ["Upload a clip", None, ""] * 16
         slots[3 * 5:3 * 5 + 3] = ["Upload a clip", "/uploads/five.wav", "Line five."]
-        values = ["<|speaker:5|> Hi.", *slots, -1, 1.0, 0.9, 30, 8192, False, "in RAM", 0.0, backend]
-        with patch.object(application, "stage_file", return_value="h3_gradio/drama3_voices/five.wav"),                 patch.object(application, "_runtime_config", return_value=SimpleNamespace(input_dir=Path("/in"))),                 patch.object(application, "_generation_services"),                 patch("h3_app.generation.optional_engines.generate_optional_engine", engine),                 patch("h3_app.generation.optional_engines.validate_request"):
-            list(application.generate_drama3(*values))
-        return captured["request"]
-
-    def test_slot_values_map_to_speakers_and_served_backends_get_absolute_paths(self):
-        for backend in ("SGLang-Omni",):
-            with self.subTest(backend=backend):
-                request = self.run_app(backend)
-                self.assertEqual(request.voices, ((5, str(Path("/in") / "h3_gradio/drama3_voices/five.wav"), "Line five."),))
-                self.assertEqual((request.backend, request.parallel, request.retries), (backend, 8, 0))
-        self.assertEqual(self.run_app("ComfyUI").voices, ((5, "h3_gradio/drama3_voices/five.wav", "Line five."),))
+        values = ["<|speaker:5|> Hi.", *slots, 1.0, 0.9, 30, 8192]
+        with patch.object(drama3_handlers, "stage_file", return_value="h3_gradio/drama3_voices/five.wav"), \
+                patch.object(drama3_handlers, "_runtime_config", return_value=SimpleNamespace(input_dir=Path("/in"))), \
+                patch.object(drama3_handlers, "_generation_services"), \
+                patch("h3_app.generation.optional_engines.generate_optional_engine", engine), \
+                patch("h3_app.generation.optional_engines.validate_request"):
+            list(drama3_handlers.generate_drama3(*values))
+        request = captured["request"]
+        self.assertEqual(request.voices, ((5, str(Path("/in") / "h3_gradio/drama3_voices/five.wav"), "Line five."),))
+        self.assertEqual((request.top_k, request.parallel, request.retries), (30, 8, 0))
 
 
 class Drama3VramHandoffTests(unittest.TestCase):
@@ -315,18 +284,12 @@ class Drama3VramHandoffTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "40.00 GiB still reserved"):
             self.run_release([40 * 2**30] * 3, timeout=3)
 
-    def test_explicit_backend_switch_releases_previous_backend_under_gpu_lease(self):
-        from h3_ui import application
+    def test_handlers_release_comfyui_through_the_application(self):
+        from h3_ui import application, drama3_handlers
 
-        with patch.object(application.JOBS, "maintenance", side_effect=lambda family: nullcontext()) as lease, \
-                patch.object(application, "free_comfy_vram") as free, \
-                patch("h3_app.drama3_serving.server.release_all") as release:
-            self.assertIn("ComfyUI models", application.switch_drama3_backend("SGLang-Omni"))
-            free.assert_called_once()
-            release.assert_not_called()
-            self.assertIn("SGLang GPU memory released", application.switch_drama3_backend("ComfyUI"))
-            release.assert_called_once()
-        self.assertEqual([call.args for call in lease.call_args_list], [("drama3",), ("drama3",)])
+        with patch.object(application, "free_comfy_vram") as free:
+            drama3_handlers.free_comfy_vram()
+        free.assert_called_once_with()
 
 
 class SoundPresetTests(unittest.TestCase):
@@ -420,11 +383,11 @@ class Drama3CastSoundTests(unittest.TestCase):
 
     def test_unnamed_sound_slot_matches_an_unnamed_tag(self):
         from h3_app.drama3_serving.tree import parse_drama3_tree, iter_sound_nodes
-        from h3_ui import application
+        from h3_ui import drama3_handlers
         from h3_ui.drama3_controls import UPLOAD_SOUND
 
         (node,) = iter_sound_nodes(parse_drama3_tree("<sound>Distant church bells</sound>"))
-        (sound,) = application._drama3_sounds((UPLOAD_SOUND, None, "", "Distant church bells", 90))
+        (sound,) = drama3_handlers._drama3_sounds((UPLOAD_SOUND, None, "", "Distant church bells", 90))
         self.assertEqual(sound, (node.name, "", "Distant church bells", 47))
 
 
@@ -432,17 +395,9 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
     def setUp(self):
         self.runtime = SimpleNamespace(prompt_systems={"Drama 3": ROOT / "prompt_drama3.txt"})
 
-    def test_advanced_mode_and_sound_or_effect_tags_require_sglang_omni(self):
+    def test_sound_and_effect_tags_validate_in_both_script_modes(self):
         voices = ((0, "a.wav", "Ref 0."),)
-        # Advanced mode on ComfyUI is rejected
-        with self.assertRaisesRegex(H3Error, "SGLang-Omni"):
-            validate_request(Drama3Request(
-                "<|speaker:0|> Hello.",
-                voices=voices,
-                backend="ComfyUI",
-                script_mode=prompt_service.DRAMA3_SCRIPT_ADVANCED,
-            ))
-        # Basic mode accepts tags left in the text on ComfyUI; generation ignores them
+        # Basic mode accepts tags left in the text; generation ignores them
         for text in (
             '<sound name="rain">Steady rain, 4 seconds</sound>\n<|speaker:0|> Hello.',
             "<parallel>\n<|speaker:0|> Hello.\n</parallel>",
@@ -450,13 +405,11 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
             "<|speaker:0|> <phone_call> Hello.",
         ):
             with self.subTest(text=text):
-                validate_request(Drama3Request(text, voices=voices, backend="ComfyUI"))
-        # All of the above are valid on SGLang-Omni
+                validate_request(Drama3Request(text, voices=voices))
         validate_request(Drama3Request(
             '<parallel>\n<sound loop="true" volume="0.2" name="bgm">Dark synth drone, 15 seconds</sound>\n'
             '<sequential>\n<|speaker:0|> <phone_call> [whispering] Hello? <#1.0#> Are you there?\n</sequential>\n</parallel>',
             voices=voices,
-            backend="SGLang-Omni",
             script_mode=prompt_service.DRAMA3_SCRIPT_ADVANCED,
         ))
 
@@ -503,8 +456,8 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         self.assertIn("<robotic_voice>", adv_script)
         self.assertIn("<#1.0#>", adv_script)
 
-    def test_switch_script_mode_and_sync_script_sounds_in_application(self):
-        from h3_ui import application
+    def test_switch_script_mode_and_sync_script_sounds(self):
+        from h3_ui import drama3_handlers
 
         text = (
             "<parallel>\n"
@@ -515,32 +468,28 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
             "</sequential>\n"
             "</parallel>"
         )
-        # Switching to Advanced switches backend to SGLang-Omni and reveals sounds_panel
-        text_upd, backend_upd, panel_upd, status = application.switch_drama3_script_mode(
-            prompt_service.DRAMA3_SCRIPT_ADVANCED, text, "ComfyUI"
-        )
-        self.assertEqual(backend_upd["value"], "SGLang-Omni")
+        # Switching to Advanced reveals the sounds panel
+        panel_upd, status = drama3_handlers.switch_drama3_script_mode(prompt_service.DRAMA3_SCRIPT_ADVANCED, text)
         self.assertTrue(panel_upd["visible"])
-        self.assertIn("SGLang-Omni", status)
+        self.assertIn("Advanced", status)
 
         # Syncing script sounds populates slot metadata
         meta = ["", "", 5] * 16
-        synced = application.sync_drama3_script_sounds(
+        synced = drama3_handlers.sync_drama3_script_sounds(
             text, prompt_service.DRAMA3_SCRIPT_ADVANCED, 4, *meta
         )
         self.assertEqual(list(synced[0:3]), ["cafe_bgm", "Warm jazz piano, 15 seconds", 15])
         self.assertEqual(list(synced[3:6]), ["door_bell", "Shop doorbell chime, 2 seconds", 2])
 
         # Switching back to Basic keeps the authored tags (they are ignored when generating)
-        basic_text, _backend_upd, basic_panel_upd, basic_status = application.switch_drama3_script_mode(
-            prompt_service.DRAMA3_SCRIPT_BASIC, text, "SGLang-Omni"
+        basic_panel_upd, basic_status = drama3_handlers.switch_drama3_script_mode(
+            prompt_service.DRAMA3_SCRIPT_BASIC, text
         )
         self.assertFalse(basic_panel_upd["visible"])
-        self.assertEqual(basic_text, application.gr.skip())
         self.assertIn("kept but ignored", basic_status)
 
     def test_batch_sounds_report_clips_that_were_not_returned(self):
-        from h3_ui import application
+        from h3_ui import drama3_handlers
         from h3_ui.drama3_controls import UPLOAD_SOUND
 
         with tempfile.TemporaryDirectory() as temp:
@@ -550,8 +499,9 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
             slots[0:5] = [UPLOAD_SOUND, False, "rain", "Steady rain", 4]
             slots[5:10] = [UPLOAD_SOUND, False, "bell", "Church bell", 3]
             with patch("h3_app.stable_audio.generate_sound_references", return_value=[clip, None]), \
-                    patch.object(application, "_runtime_config"), patch("h3_models.resolve_hf_token"):
-                frames = list(application.generate_drama3_sounds(2, True, *slots))
+                    patch.object(drama3_handlers, "_runtime_config"), patch("h3_models.resolve_hf_token"), \
+                    patch.object(drama3_handlers, "free_comfy_vram"):
+                frames = list(drama3_handlers.generate_drama3_sounds(2, True, *slots))
         final = frames[-1]
         self.assertEqual(final[0], str(clip))
         self.assertIn("ready to save", final[1])
@@ -559,16 +509,16 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         self.assertEqual(final[-1], "Generated 1 of 2 sound clips. Failed: sound 1; see each sound's panel.")
 
     def test_job_admission_signatures_match_bound_inputs(self):
-        from h3_ui import application
+        from h3_ui import drama3_handlers
         from h3_ui.job_bindings import owned_generation
 
-        gen_drama = owned_generation(application.generate_drama3, "drama3")
-        # 1 text + 48 speaker inputs + 12 settings + 1 script_mode + 80 sound slot inputs = 142
-        self.assertEqual(len(gen_drama.job_input_names), 142)
-        gen_sounds = owned_generation(application.generate_drama3_sounds, "drama3_sound")
+        gen_drama = owned_generation(drama3_handlers.generate_drama3, "drama3")
+        # 1 text + 48 speaker inputs + 6 settings + 1 script_mode + 80 sound slot inputs = 136
+        self.assertEqual(len(gen_drama.job_input_names), 136)
+        gen_sounds = owned_generation(drama3_handlers.generate_drama3_sounds, "drama3_sound")
         # 1 shown_sound_slots + 1 skip_existing_sounds + 80 sound slot inputs = 82
         self.assertEqual(len(gen_sounds.job_input_names), 82)
-        gen_sound = owned_generation(application.generate_drama3_sound, "drama3_sound")
+        gen_sound = owned_generation(drama3_handlers.generate_drama3_sound, "drama3_sound")
         self.assertEqual(len(gen_sound.job_input_names), 2)
 
 
@@ -589,7 +539,7 @@ class Drama3AutoTests(unittest.TestCase):
         self.assertEqual(len(view.sounds), 16)
         # Auto defaults to sound-enhanced, expressive speech and leaves speaker saving opt-in.
         self.assertEqual(view.script_mode.value, "Advanced (sound enhanced)")
-        self.assertEqual(view.backend.value, "SGLang-Omni")
+        self.assertFalse(hasattr(view, "backend"))
         self.assertEqual((view.temperature.value, view.top_p.value, view.top_k.value), (2.0, 1.0, 30))
         self.assertTrue(view.sounds_panel.visible)
         self.assertFalse(view.auto_save_speakers.value)

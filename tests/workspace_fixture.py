@@ -98,8 +98,8 @@ def fake_drama3_references(briefs, request, *args, **kwargs):
         yield DesignResult(key, fake_voice_clip(), preview)
 
 
-fake_drama3_voice.__signature__ = inspect.signature(app.generate_drama3_voice)
-app.generate_drama3_voice = fake_drama3_voice
+fake_drama3_voice.__signature__ = inspect.signature(app.drama3_handlers.generate_drama3_voice)
+app.drama3_handlers.generate_drama3_voice = fake_drama3_voice
 from h3_app import drama3_voice_design  # noqa: E402
 
 drama3_voice_design.generate_drama3_references = fake_drama3_references

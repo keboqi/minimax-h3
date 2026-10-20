@@ -41,6 +41,7 @@ from .tree import (
     strip_drama3_sound_tags,
 )
 
+LABEL = "SGLang-Omni"
 FRAMES_PER_SECOND = 21.5
 # SGLang-Omni's Drama 3 request builder rejects max_new_tokens above this (~95 s of speech).
 SERVER_MAX_NEW_TOKENS = 2048
@@ -158,7 +159,7 @@ class DesignedVoice:
 
 def design_voices_served(takes: dict, *, runtime, free_gpu: Callable[[], None], hf_token=None,
                          sampling: dict, max_frames: int, parallel: int = 1,
-                         label: str = "SGLang-Omni") -> Iterator[GenerationUpdate | DesignedVoice]:
+                         label: str = LABEL) -> Iterator[GenerationUpdate | DesignedVoice]:
     """Generate ``{key: (text, target)}`` concurrently after one server preparation.
 
     Each take is one unchunked request without references, so a single invented
@@ -407,7 +408,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     references = {speaker: (path, transcript) for speaker, path, transcript in request.voices}
     unvoiced = sorted({chunk.speaker for chunk in chunks} - set(references))
     if unvoiced:
-        raise H3Error(f"Every speaker needs a reference voice on the {request.backend} backend; missing "
+        raise H3Error("Every speaker needs a reference voice; missing "
                       + ", ".join(f"<|speaker:{n}|>" for n in unvoiced) + ".")
     cast = ", ".join(f"{names.get(s, f'Speaker {s}')}: {sum(c.speaker == s for c in chunks)}"
                      for s in sorted({c.speaker for c in chunks}))
@@ -427,7 +428,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
         if missing:
             raise H3Error("No clip for sound(s): " + ", ".join(f'"{name}"' for name in dict.fromkeys(missing)) + ".")
 
-    label = request.backend
+    label = LABEL
     yield from _ready_server(settings, server, label, free_gpu, hf_token)
     # The server stays loaded after the job; release_all() frees it for other engines.
     # Each request has one voice; the server tags its transcript as speaker 0 itself.
@@ -489,13 +490,13 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     write_snapshot(result, {
         "family": "Drama 3",
         "settings": {
-            "backend": request.backend, "seed": None, "temperature": request.temperature,
+            "backend": LABEL, "temperature": request.temperature,
             "top_p": request.top_p, "top_k": request.top_k, "parallel": request.parallel,
             "retries": request.retries, "reference_count": len(request.voices),
             "script_mode": getattr(request, "script_mode", "Basic"),
             "sound_count": len(sound_nodes),
             "chunks": [{"speaker": t.chunk.speaker, "name": names.get(t.chunk.speaker, ""),
-                        "seed": None, "attempts": t.attempts,
+                        "attempts": t.attempts,
                         "speaker_effects": list(t.chunk.speaker_effects),
                         "check": t.check.reason if t.check is not None else "skipped",
                         "warnings": list(t.check.warnings) if t.check is not None else [],
@@ -511,5 +512,5 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     if advised:
         note += "\nAudio advisories (takes kept): " + "; ".join(
             f"chunk {t.chunk.index + 1}: {t.check.reason}" for t in advised)
-    yield GenerationUpdate(fresh_audio(result), f"Drama 3 ({label}) complete · {len(chunks)} chunks · seed control unavailable · "
+    yield GenerationUpdate(fresh_audio(result), f"Drama 3 ({label}) complete · {len(chunks)} chunks · "
                                         f"{len(joined) / rate:.1f}s in {time.monotonic() - started:.0f}s{note}")

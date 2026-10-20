@@ -93,7 +93,7 @@ def run():
                             seen, last = len(posts), time.monotonic()
                     counts[label] = len(posts)
 
-                panel = form.locator("button", has_text="Speaker voices (optional)").first
+                panel = form.locator("button", has_text="Speaker voices").first
                 form.get_by_text("Rewrite as a Drama 3 script", exact=True).click()
                 form.get_by_text("Use another chat model", exact=True).click()
                 form.get_by_label("Pasted writer reply").fill(writer_reply())

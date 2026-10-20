@@ -935,8 +935,8 @@ Features in the Colab notebook:
 
 ## Drama 3 speech studio
 
-Compose dialogue, reuse a saved cast, and generate speech with ComfyUI or
-SGLang-Omni. Auto can rewrite a draft, prepare voices and sounds, and render it.
+Compose dialogue, reuse a saved cast, and generate speech on SGLang-Omni
+(Linux). Auto can rewrite a draft, prepare voices and sounds, and render it.
 See the [Drama 3 guide](docs/drama3.md) for the workflow, speaker library,
 backend configuration and deployment requirements.
 

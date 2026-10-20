@@ -747,7 +747,8 @@ def sync_external_nodes(
     *,
     install_requirements: bool,
 ) -> None:
-    # Drama 3 and base T8 conditioning use only ComfyUI dependencies.
+    # ComfyUI-Drama3 now only provides the Qwen3-ASR transcription nodes; speech runs on
+    # SGLang-Omni. It and base T8 conditioning use only ComfyUI dependencies.
     sync_git_repo(
         DRAMA3_REPO, comfy / "custom_nodes" / "ComfyUI-Drama3",
         ref=DRAMA3_REF, required_paths=(

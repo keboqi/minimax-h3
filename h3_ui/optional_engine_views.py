@@ -66,7 +66,6 @@ def bind_resolution_presets(view, *, extra_outputs=(), extra_values=()):
 class OptionalEngineActions:
     generate_flux3: Callable
     generate_drama3: Callable
-    switch_drama3_backend: Callable
     enhance_flux3_prompt: Callable
     enhance_drama3_text: Callable
     transcribe_drama3_voice: Callable

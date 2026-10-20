@@ -43,20 +43,15 @@ class Drama3Request:
     text: str
     # (speaker number, audio path, exact transcript) per cloned voice.
     voices: tuple[tuple[int, str, str], ...] = ()
-    seed: int = -1
     temperature: float = 1.0
     top_p: float = 0.9
     top_k: int = 0
     max_frames: int = 8192
-    split_long_text: bool = False
-    experts: str = "in VRAM"
-    expert_cache_gb: float = 0.0
-    backend: str = "ComfyUI"  # or "SGLang-Omni": speaker chunks generated in parallel
+    # Speaker chunks generated in parallel on SGLang-Omni.
     parallel: int = 8
     retries: int = 0
     # (speaker number, saved speaker name or "") for status and provenance.
     voice_names: tuple[tuple[int, str], ...] = ()
-    model_choice: str = "FP8 (original weights)"
     script_mode: str = "Basic"
     # (sound name, audio path or "", description, duration_seconds)
     sounds: tuple[tuple[str, str, str, int], ...] = ()
