@@ -13,11 +13,13 @@ from h3_app.generation.optional_engines import generate_optional_engine, validat
 from h3_app.generation.requests import MossImageRequest
 from h3_app.workflows.moss_image import build_moss_image_graph, moss_image_model_keys
 from h3_models import (
-    LAZY_OPTIONAL_MODEL_KEYS, MODEL_SPECS, MOSS_IMAGE_DMD_8STEP, MOSS_IMAGE_MODEL_KEYS,
+    LAZY_OPTIONAL_MODEL_KEYS, MODEL_SPECS, MOSS_IMAGE_4STEP_V2, MOSS_IMAGE_DMD_8STEP, MOSS_IMAGE_MODEL_KEYS,
     MOSS_IMAGE_SFT_BF16, MOSS_IMAGE_SFT_INT8, MOSS_IMAGE_TURBO_MODES, MOSS_IMAGE_VAE_FULL,
     MOSS_IMAGE_VAE_SMALL, PRELOAD_MODEL_KEYS,
 )
-from h3_ui.optional_engine_views import moss_image_preset_values, moss_image_turbo_defaults
+from h3_ui.optional_engine_views import (
+    moss_image_preset_values, moss_image_turbo_defaults, moss_image_turbo_size_steps,
+)
 
 ENCODER = "INT8 ConvRot (recommended)"
 
@@ -41,7 +43,7 @@ class MossImagePresetTests(unittest.TestCase):
             "Quality": ("Off", 50, 3.0, MOSS_IMAGE_SFT_BF16, MOSS_IMAGE_VAE_FULL),
         })
         self.assertEqual(DEFAULT_MOSS_IMAGE_PRESET, "Fast")
-        self.assertEqual(MOSS_IMAGE_TURBO_MODES[MOSS_IMAGE_DMD_8STEP], ("moss_image_dmd_8step_lora", 8))
+        self.assertEqual(MOSS_IMAGE_TURBO_MODES[MOSS_IMAGE_DMD_8STEP], ("moss_image_dmd_8step_lora", ((None, 8),)))
 
     def test_fast_applies_the_dmd_lora_at_full_strength_without_guidance(self):
         graph = graph_for("Fast")
@@ -53,6 +55,20 @@ class MossImagePresetTests(unittest.TestCase):
         self.assertEqual((sampler["steps"], sampler["cfg"], sampler["sampler_name"]), (8, 1.0, "euler"))
         self.assertEqual(graph[sampler["model"][0]]["class_type"], "LoraLoaderModelOnly")
         self.assertEqual(graph[sampler["negative"][0]]["class_type"], "ConditioningZeroOut")
+
+    def test_4step_lora_takes_more_steps_on_larger_canvases(self):
+        self.assertEqual(MODEL_SPECS["moss_image_4step_v2_lora"].local_name, "moss_image_sft_4step_v2.0.safetensors")
+        for (width, height), steps in (((1024, 1024), 4), ((1248, 832), 4), ((1536, 1024), 6),
+                                       ((1440, 1440), 8), ((2048, 2048), 8)):
+            with self.subTest(size=(width, height)):
+                graph = graph_for("Fast", turbo_variant=MOSS_IMAGE_4STEP_V2, steps=steps, width=width, height=height)
+                (lora,) = nodes(graph, "LoraLoaderModelOnly")
+                self.assertEqual((lora["lora_name"], lora["strength_model"]),
+                                 ("moss_image_sft_4step_v2.0.safetensors", 1.0))
+                (sampler,) = nodes(graph, "KSampler")
+                self.assertEqual((sampler["steps"], sampler["cfg"], sampler["scheduler"]), (steps, 1.0, "simple"))
+        with self.assertRaisesRegex(ValueError, "exactly 6 sampling steps at 1536x1024"):
+            graph_for("Fast", turbo_variant=MOSS_IMAGE_4STEP_V2, steps=4, width=1536, height=1024)
 
     def test_base_presets_skip_layer_22_in_the_empty_negative_pass_only(self):
         for preset, steps in (("Balanced", 25), ("Quality", 50)):
@@ -147,6 +163,14 @@ class MossImageControlTests(unittest.TestCase):
         self.assertEqual(moss_image_turbo_defaults(MOSS_IMAGE_DMD_8STEP, "Quality"), (8, 1.0))
         self.assertEqual(moss_image_turbo_defaults("Off", "Quality"), (50, 3.0))
         self.assertEqual(moss_image_turbo_defaults("Off", "Fast"), (25, 3.0))
+        self.assertEqual(moss_image_turbo_defaults(MOSS_IMAGE_4STEP_V2, "Fast", 1024, 1024), (4, 1.0))
+        self.assertEqual(moss_image_turbo_defaults(MOSS_IMAGE_4STEP_V2, "Fast", 2048, 2048), (8, 1.0))
+
+    def test_resizing_keeps_turbo_steps_matched_and_leaves_base_steps_alone(self):
+        self.assertEqual(moss_image_turbo_size_steps(MOSS_IMAGE_4STEP_V2, 4, 1536, 1024), 6)
+        self.assertEqual(moss_image_turbo_size_steps(MOSS_IMAGE_4STEP_V2, 6, 1024, 1024), 4)
+        self.assertEqual(moss_image_turbo_size_steps(MOSS_IMAGE_DMD_8STEP, 8, 2048, 2048), 8)
+        self.assertEqual(moss_image_turbo_size_steps("Off", 37, 2048, 2048), 37)
 
 
 class ResolutionPresetTests(unittest.TestCase):
@@ -207,6 +231,7 @@ class MossImageRequestTests(unittest.TestCase):
             ({"layout": "not json"}, "JSON"),
             ({"vae_choice": "Imaginary VAE"}, "VAE"),
             ({"model_choice": "Base BF16"}, "SFT"),
+            ({"turbo_variant": MOSS_IMAGE_4STEP_V2, "steps": 4, "width": 2048, "height": 2048}, "exactly 8"),
         ):
             with self.subTest(changes=changes), self.assertRaisesRegex(H3Error, message):
                 validate_request(replace(request, **changes))

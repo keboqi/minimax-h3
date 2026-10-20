@@ -6,7 +6,7 @@ import gradio as gr
 from h3_app.catalog import DEFAULT_MOSS_IMAGE_PRESET, MOSS_IMAGE_PRESETS, QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX
 from h3_app.workflows.flux3 import flux3_sampling_defaults
 from h3_app.workflows.moss_image_prompt import MOSS_IMAGE_REWRITE_MODES
-from h3_models import DEFAULT_FLUX3_UPSAMPLER, FLUX3_MODEL_CHOICES, FLUX3_UPSAMPLER_CHOICES, DEFAULT_MOSS_IMAGE_TEXT_ENCODER, MOSS_IMAGE_MODEL_CHOICES, MOSS_IMAGE_TEXT_ENCODER_CHOICES, MOSS_IMAGE_TURBO_MODES, MOSS_IMAGE_VAE_CHOICES
+from h3_models import DEFAULT_FLUX3_UPSAMPLER, FLUX3_MODEL_CHOICES, FLUX3_UPSAMPLER_CHOICES, DEFAULT_MOSS_IMAGE_TEXT_ENCODER, MOSS_IMAGE_MODEL_CHOICES, MOSS_IMAGE_TEXT_ENCODER_CHOICES, MOSS_IMAGE_TURBO_MODES, MOSS_IMAGE_VAE_CHOICES, moss_image_turbo_steps
 from .image_library import build_image_file_input
 from .job_bindings import bind_prompt_action
 from .prompt_writer_controls import RemotePromptWriterControls
@@ -154,12 +154,17 @@ def moss_image_preset_values(preset):
     return MOSS_IMAGE_PRESETS[preset]
 
 
-def moss_image_turbo_defaults(variant, preset=DEFAULT_MOSS_IMAGE_PRESET):
-    """Turbo LoRAs fix their steps at CFG 1; Off restores the selected base preset."""
+def moss_image_turbo_defaults(variant, preset=DEFAULT_MOSS_IMAGE_PRESET, width=1024, height=1024):
+    """Turbo LoRAs fix their steps for the output size at CFG 1; Off restores the selected base preset."""
     if variant in MOSS_IMAGE_TURBO_MODES:
-        return MOSS_IMAGE_TURBO_MODES[variant][1], 1.0
+        return moss_image_turbo_steps(variant, width, height), 1.0
     base = preset if MOSS_IMAGE_PRESETS.get(preset, ("",))[0] == "Off" else "Balanced"
     return MOSS_IMAGE_PRESETS[base][1:3]
+
+
+def moss_image_turbo_size_steps(variant, steps, width, height):
+    """Resizing keeps a Turbo LoRA on the step count it was distilled for at that size."""
+    return moss_image_turbo_steps(variant, width, height) if variant in MOSS_IMAGE_TURBO_MODES else steps
 
 
 def build_flux3_view(root):
@@ -251,7 +256,8 @@ def build_moss_image_view(root):
                     height = gr.Slider(256, 2048, value=1024, step=16, label="Height")
                 with gr.Accordion("Model and sampling", open=False):
                     turbo_variant = gr.Dropdown(["Off", *MOSS_IMAGE_TURBO_MODES], value=turbo, label="Turbo LoRA",
-                        info="A step-distilled LoRA sets its own step count and CFG 1.")
+                        info="A step-distilled LoRA sets its own step count and CFG 1. "
+                             "The 4-step LoRA uses 6 steps up to 1536x1024 and 8 above.")
                     model = gr.Dropdown(list(MOSS_IMAGE_MODEL_CHOICES), value=model_default,
                                         label="Image model",
                                         info="SFT is the tuned release; Base is the pretrained checkpoint. "
@@ -304,8 +310,12 @@ def bind_moss_image(view, actions):
     )
     view.preset.change(moss_image_preset_values, inputs=view.preset,
                        outputs=[view.turbo_variant, view.steps, view.cfg, view.model, view.vae], **_QUIET)
-    view.turbo_variant.input(moss_image_turbo_defaults, inputs=[view.turbo_variant, view.preset],
+    view.turbo_variant.input(moss_image_turbo_defaults,
+                             inputs=[view.turbo_variant, view.preset, view.width, view.height],
                              outputs=[view.steps, view.cfg], **_QUIET)
+    for size in (view.width, view.height):
+        size.change(moss_image_turbo_size_steps, inputs=[view.turbo_variant, view.steps, view.width, view.height],
+                    outputs=view.steps, **_QUIET)
     return _bind_generation(view, "moss_image", actions.generate_moss_image, actions.interrupt, [
         view.prompt, view.preset, view.turbo_variant, view.model, view.text_encoder, view.vae, view.width,
         view.height,

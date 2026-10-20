@@ -42,6 +42,7 @@ QWEN_IMAGE21_LIGHTNING_REPO = "lightx2v/Qwen-Image-2.1-Lightning"
 QWEN_IMAGE21_VIGGLE_REPO = "Viggle/Qwen-Image-2.1-viggle-turbo"
 MOSS_IMAGE_REPO = "Comfy-Org/MOSS-Image"
 MOSS_IMAGE_DMD_REPO = "lodestones/MOSS-Image-SFT-8-steps-dmd"
+MOSS_IMAGE_4STEP_REPO = "akhaliq/MOSS-Image-SFT-4-steps"
 
 HF_METADATA_WORKERS = 2
 HF_DOWNLOAD_WORKERS = 6
@@ -180,6 +181,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "Lodestones MOSS-Image SFT 8-step DMD LoRA",
         local_filename="moss_image_sft_dmd_8step_lora.safetensors",
         expected_sha256="4abb14e39c1a59018907581e609f43616ec6810126144ec2b1d2e6f8969628fe",
+    ),
+    # Frozen v2.0 name: the canonical lora.safetensors is overwritten by later releases.
+    "moss_image_4step_v2_lora": ModelSpec(
+        MOSS_IMAGE_4STEP_REPO, "loras", "moss_image_sft_4step_v2.0.safetensors",
+        "akhaliq MOSS-Image SFT 4-step DMD LoRA v2.0",
+        expected_sha256="154c7f1455c3bf9925945c2f1ea2e4f09d0d0c67256081384a094b2b585f913f",
     ),
     "drama3_fp8": ModelSpec(
         "PedroMarinhoDev/Drama-3-ComfyUI", "diffusion_models", "drama3_fp8experts_bf16.safetensors", "Drama 3 FP8 experts / BF16",
@@ -934,10 +941,20 @@ MOSS_IMAGE_TEXT_ENCODER_CHOICES = {
 }
 DEFAULT_MOSS_IMAGE_TEXT_ENCODER = "INT8 ConvRot (recommended)"
 MOSS_IMAGE_DMD_8STEP = "Lodestones DMD (8-step)"
-# Turbo label -> (LoRA model key, required steps); add new step-distilled LoRAs here.
+MOSS_IMAGE_4STEP_V2 = "akhaliq DMD v2.0 (4-step)"
+# Turbo label -> (LoRA model key, ((max output pixels or None, required steps), ...)).
+# The 4-step anchors cover about 1024x1024; larger canvases need 6 or 8 steps.
 MOSS_IMAGE_TURBO_MODES = {
-    MOSS_IMAGE_DMD_8STEP: ("moss_image_dmd_8step_lora", 8),
+    MOSS_IMAGE_DMD_8STEP: ("moss_image_dmd_8step_lora", ((None, 8),)),
+    MOSS_IMAGE_4STEP_V2: ("moss_image_4step_v2_lora", ((1024 * 1024, 4), (1536 * 1024, 6), (None, 8))),
 }
+
+
+def moss_image_turbo_steps(variant, width, height):
+    """Step count a Turbo LoRA was distilled for at this output size."""
+    for max_pixels, steps in MOSS_IMAGE_TURBO_MODES[variant][1]:
+        if max_pixels is None or int(width) * int(height) <= max_pixels:
+            return steps
 MOSS_IMAGE_MODEL_KEYS = (
     *MOSS_IMAGE_MODEL_CHOICES.values(),
     *MOSS_IMAGE_TEXT_ENCODER_CHOICES.values(),

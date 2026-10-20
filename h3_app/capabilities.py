@@ -47,7 +47,7 @@ ENGINES += (
     EngineCapability("flux3", "FLUX 3 Image Klein", ("Image",),
                      "Distilled image generation and editing with up to ten references."),
     EngineCapability("moss_image", "MOSS-Image", ("Image",),
-                     "OpenMOSS 5B text-to-image with text rendering, layout boxes and an 8-step Turbo LoRA."),
+                     "OpenMOSS 5B text-to-image with text rendering, layout boxes and 4- or 8-step Turbo LoRAs."),
     EngineCapability("drama3", "Drama 3 (experimental)", ("TTS",),
                      "Expressive speech and voice cloning. Built with Fish Audio."),
 )

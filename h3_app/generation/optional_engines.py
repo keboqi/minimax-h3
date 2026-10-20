@@ -115,7 +115,8 @@ def validate_request(request):
         try:
             moss_image_model_keys(request.model_choice, request.text_encoder_choice, request.turbo_variant,
                                   request.vae_choice)
-            validate_moss_image_sampling(request.turbo_variant, request.steps, request.cfg)
+            validate_moss_image_sampling(request.turbo_variant, request.steps, request.cfg,
+                                         request.width, request.height)
             parse_flux3_layout(request.layout)
         except ValueError as exc:
             raise H3Error(str(exc)) from exc

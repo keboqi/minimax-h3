@@ -10,6 +10,7 @@ from h3_models import (
     MOSS_IMAGE_TEXT_ENCODER_CHOICES,
     MOSS_IMAGE_TURBO_MODES,
     MOSS_IMAGE_VAE_CHOICES,
+    moss_image_turbo_steps,
 )
 from .flux3_layout import parse_flux3_layout
 
@@ -39,14 +40,14 @@ def moss_image_model_keys(model_choice, text_encoder_choice, turbo_variant="Off"
     return keys
 
 
-def validate_moss_image_sampling(turbo_variant, steps, cfg):
+def validate_moss_image_sampling(turbo_variant, steps, cfg, width=1024, height=1024):
     if turbo_variant == "Off":
         return
     if turbo_variant not in MOSS_IMAGE_TURBO_MODES:
         raise ValueError(f"Unknown MOSS-Image Turbo LoRA: {turbo_variant}")
-    expected = MOSS_IMAGE_TURBO_MODES[turbo_variant][1]
+    expected = moss_image_turbo_steps(turbo_variant, width, height)
     if int(steps) != expected:
-        raise ValueError(f"{turbo_variant} requires exactly {expected} sampling steps.")
+        raise ValueError(f"{turbo_variant} requires exactly {expected} sampling steps at {width}x{height}.")
     if float(cfg) != 1.0:
         raise ValueError(f"{turbo_variant} requires CFG 1.")
 
@@ -55,7 +56,7 @@ def build_moss_image_graph(*, model_choice, text_encoder_choice, prompt, turbo_v
                            vae_choice=DEFAULT_MOSS_IMAGE_VAE, width=1024, height=1024, seed=0, steps=50,
                            cfg=MOSS_IMAGE_BASE_CFG, layout="", output_stamp="0", output_nonce="moss"):
     moss_image_model_keys(model_choice, text_encoder_choice, turbo_variant, vae_choice)
-    validate_moss_image_sampling(turbo_variant, steps, cfg)
+    validate_moss_image_sampling(turbo_variant, steps, cfg, width, height)
     elements = parse_flux3_layout(layout)
     g = Graph()
     def add(kind, **inputs):
