@@ -111,9 +111,7 @@ def run():
                 measure("match speaker on blur", lambda: name.press("Tab"))
                 measure("generate all voices",
                         lambda: form.get_by_role("button", name="Generate all speaker voices").click())
-                # The default Qwen3-TTS designer makes the voices one at a time, and each
-                # frame repeats every finished clip, so 16 voices take about 25 s here.
-                expect(form.get_by_text("Generated 16 of 16 speaker voices.")).to_be_visible(timeout=60000)
+                expect(form.get_by_text("Generated 16 of 16 speaker voices.")).to_be_visible()
                 expect(panel).to_contain_text("16 speakers · 16 with a voice")
                 expect(form.locator("button", has_text="Speaker 15 · Character 15 · voice ready")).to_have_count(1)
                 measure("remove a speaker", lambda: form.get_by_role("button", name="Remove last speaker").click())

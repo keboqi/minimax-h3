@@ -691,8 +691,8 @@ def generate_drama3_voices(*values):
     else:
         for index, (speaker, description, preview, language) in enumerate(targets, 1):
             progress = f"Generating speaker voices: {index}/{len(targets)} (speaker {speaker})"
-            updates[3 * speaker + 2] = "Waiting for voice generation…"
-            yield frame(progress)
+            # No frame of its own: the voice's first status follows at once and carries
+            # the progress line, and every frame resends each finished clip.
             status = ""
             for audio, transcript, status in generate_drama3_voice(description, preview, language, *settings):
                 if isinstance(audio, str):

@@ -24,6 +24,7 @@ from h3_ui.drama3_bindings import bind_drama3
 from h3_ui.optional_engine_views import bind_flux3, build_flux3_view, bind_moss_image, build_moss_image_view
 from h3_ui.drama3_view import DRAMA3_SCRIPT_HIGHLIGHT_JS, DRAMA3_SUBTITLES_JS, build_drama3_view
 from h3_ui.optional_engine_controls import settings_components
+from h3_ui import audio_probe_cache
 
 # Ctrl/Cmd+Enter presses the visible engine's generate button. Disabled
 # buttons swallow the shortcut so it never falls through to other handlers.
@@ -158,6 +159,7 @@ class BootstrapServices:
 
 
 def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Blocks:
+    audio_probe_cache.install()
     defaults = catalog.UI_DEFAULTS
     initial_backend = services.backend_status()
     with (
