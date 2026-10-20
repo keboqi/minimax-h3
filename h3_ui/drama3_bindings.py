@@ -312,6 +312,8 @@ def _bind_takes(view, actions, generation_inputs):
         return
     view.output.change(actions.drama3_takes, inputs=view.output,
                        outputs=[view.takes, view.take_line, view.take_actions], **_QUIET)
+    if view.subtitles is not None and actions.drama3_subtitles is not None:
+        view.output.change(actions.drama3_subtitles, inputs=view.output, outputs=view.subtitles, **_QUIET)
     if view.take_audio is not None and actions.drama3_take_audio is not None:
         # Clicking a row picks its line; picking a line plays that line's take.
         view.takes.select(actions.drama3_take_selected, inputs=view.output, outputs=view.take_line, **_QUIET)

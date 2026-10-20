@@ -163,14 +163,22 @@ def tidy_take(samples: np.ndarray, rate: int) -> np.ndarray:
     return np.concatenate(pieces) if pieces else samples[:0]
 
 
-def join_takes(takes: list[tuple[int, np.ndarray]], rate: int) -> np.ndarray:
-    """Concatenate (speaker, samples) in order with short, consistent gaps."""
-    pieces, previous = [], None
+def join_takes(takes: list[tuple[int, np.ndarray]], rate: int,
+               spans: list[tuple[int, int]] | None = None) -> np.ndarray:
+    """Concatenate (speaker, samples) in order with short, consistent gaps.
+
+    ``spans``, when given, receives each take's (start, end) sample offsets in the result.
+    """
+    pieces, previous, cursor = [], None, 0
     for speaker, samples in takes:
         if previous is not None:
             gap = SAME_SPEAKER_GAP if speaker == previous else TURN_GAP
             pieces.append(np.zeros(int(rate * gap), dtype=np.float32))
+            cursor += len(pieces[-1])
         pieces.append(samples.astype(np.float32))
+        if spans is not None:
+            spans.append((cursor, cursor + len(samples)))
+        cursor += len(samples)
         previous = speaker
     return np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
 

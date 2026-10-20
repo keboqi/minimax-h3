@@ -98,6 +98,7 @@ class OptionalEngineActions:
     drama3_takes: Callable | None = None
     drama3_take_selected: Callable | None = None
     drama3_take_audio: Callable | None = None
+    drama3_subtitles: Callable | None = None
     generate_moss_image: Callable | None = None
     enhance_moss_image_prompt: Callable | None = None
 

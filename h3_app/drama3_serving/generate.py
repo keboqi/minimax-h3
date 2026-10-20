@@ -306,8 +306,13 @@ def _render_ast(
     sound_clips: dict[str, Path],
     rate: int,
     decoded: dict[Path, np.ndarray] | None = None,
+    spans: dict[int, tuple[int, int]] | None = None,
 ) -> np.ndarray:
-    """Recursively render a Drama 3 AST node into a 1D float32 audio array at ``rate``."""
+    """Recursively render a Drama 3 AST node into a 1D float32 audio array at ``rate``.
+
+    ``spans``, when given, receives each chunk's (start, end) samples in the returned audio,
+    keyed by chunk index.
+    """
     decoded = {} if decoded is None else decoded
     if isinstance(node, SpeechNode):
         chunks = node_chunks.get(id(node), [])
@@ -319,7 +324,11 @@ def _render_ast(
             if chunk.speaker_effects:
                 tidied = apply_speaker_effects(tidied, rate, chunk.speaker_effects)
             rendered_turns.append((chunk.speaker, tidied))
-        return audio.join_takes(rendered_turns, rate)
+        offsets: list[tuple[int, int]] = []
+        joined = audio.join_takes(rendered_turns, rate, offsets)
+        if spans is not None:
+            spans.update((chunk.index, offset) for chunk, offset in zip(chunks, offsets))
+        return joined
 
     if isinstance(node, PauseNode):
         return np.zeros(max(0, int(round(node.seconds * rate))), dtype=np.float32)
@@ -335,17 +344,23 @@ def _render_ast(
 
     if isinstance(node, SequentialNode):
         if len(node.children) == 1:
-            return _render_ast(node.children[0], node_chunks, takes, sound_clips, rate, decoded)
+            return _render_ast(node.children[0], node_chunks, takes, sound_clips, rate, decoded, spans)
         pieces: list[np.ndarray] = []
         prev_was_speech = False
+        cursor = 0
         for child in node.children:
-            seg = _render_ast(child, node_chunks, takes, sound_clips, rate, decoded)
+            child_spans: dict[int, tuple[int, int]] = {}
+            seg = _render_ast(child, node_chunks, takes, sound_clips, rate, decoded, child_spans)
             if seg.size == 0:
                 continue
             is_speech = isinstance(child, SpeechNode)
             if pieces and prev_was_speech and is_speech:
                 pieces.append(np.zeros(int(rate * audio.TURN_GAP), dtype=np.float32))
+                cursor += len(pieces[-1])
             pieces.append(seg.astype(np.float32, copy=False))
+            if spans is not None:
+                spans.update((index, (start + cursor, end + cursor)) for index, (start, end) in child_spans.items())
+            cursor += len(seg)
             prev_was_speech = is_speech
         return np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
 
@@ -366,7 +381,8 @@ def _render_ast(
                     }
                 )
             else:
-                child_audio = _render_ast(child, node_chunks, takes, sound_clips, rate, decoded)
+                # Parallel tracks all start together, so child offsets carry over unchanged.
+                child_audio = _render_ast(child, node_chunks, takes, sound_clips, rate, decoded, spans)
                 tracks.append(
                     {
                         "audio": child_audio,
@@ -531,7 +547,11 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
 
     ordered = [takes[chunk.index] for chunk in chunks]
     rate = ordered[0].rate
-    joined = _render_ast(tree, node_chunks, takes, sound_clips, rate)
+    spans: dict[int, tuple[int, int]] = {}
+    joined = _render_ast(tree, node_chunks, takes, sound_clips, rate, spans=spans)
+    # Where each line plays in the mix, for synced subtitles; a mix trimmed to fit cuts the last ones short.
+    timings = {index: (round(min(start, len(joined)) / rate, 3), round(min(end, len(joined)) / rate, 3))
+               for index, (start, end) in spans.items()}
     stamp = time.strftime("%Y%m%d-%H%M%S")
     title = str(getattr(request, "title", "") or "").strip()
     # A full 32-hex id lets the UI find this file (and its settings) from Gradio's cached copy.
@@ -555,7 +575,10 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                         "check": (t.check.reason if t.check is not None
                                   else "reused" if t.attempts == 0 else "skipped"),
                         "warnings": list(t.check.warnings) if t.check is not None else [],
-                        "seconds": round(len(t.samples) / t.rate, 2)} for t in ordered],
+                        "seconds": round(len(t.samples) / t.rate, 2),
+                        **({"start": timings[t.chunk.index][0], "end": timings[t.chunk.index][1]}
+                           if t.chunk.index in timings else {})} for t in ordered],
+            "duration": round(len(joined) / rate, 3),
         },
     })
     if pending_chunks:

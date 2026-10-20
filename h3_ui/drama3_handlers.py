@@ -7,7 +7,9 @@ each call, so tests can patch the accessors below.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import html
 from pathlib import Path
+import re
 from typing import Any, Callable
 
 import gradio as gr
@@ -131,15 +133,50 @@ def remix_drama3(*values, progress=gr.Progress(track_tqdm=False)):
     yield from _drama3_job(values, progress, remix_only=True)
 
 
-def _take_chunks(output):
-    """The chunks with a saved take, in script order, from a result's settings snapshot."""
+def _result_settings(output):
+    """A result's settings snapshot, or {}; ``output`` may be Gradio's cached copy."""
     from h3_app.provenance import read_snapshot
 
     if isinstance(output, dict):
         output = output.get("path") or output.get("value")
     snapshot = read_snapshot(_services().resolve_result(output)) if output else None
-    chunks = ((snapshot or {}).get("settings") or {}).get("chunks") or []
-    return [chunk for chunk in chunks if chunk.get("take")]
+    return (snapshot or {}).get("settings") or {}
+
+
+def _take_chunks(output):
+    """The chunks with a saved take, in script order, from a result's settings snapshot."""
+    return [chunk for chunk in _result_settings(output).get("chunks") or [] if chunk.get("take")]
+
+
+_CUE = re.compile(r"<\|[^|]*\|>|<[^>]*>|\[[^\]]*\]")
+
+
+def drama3_subtitles(output):
+    """Subtitle lines for a result, timed to the mix; the browser highlights the one playing.
+
+    Results from before line timings were recorded have none, and the panel stays hidden.
+    """
+    if isinstance(output, dict):
+        output = output.get("path") or output.get("value")
+    settings = _result_settings(output)
+    lines = []
+    for chunk in settings.get("chunks") or []:
+        text = " ".join(_CUE.sub(" ", str(chunk.get("text", ""))).split())
+        if not text or chunk.get("start") is None:
+            continue
+        speaker = chunk.get("name") or f"Speaker {chunk.get('speaker', 0)}"
+        lines.append(
+            f'<li data-start="{float(chunk["start"]):.3f}" data-end="{float(chunk.get("end", chunk["start"])):.3f}">'
+            f'<span class="h3-subtitle-speaker">{html.escape(str(speaker))}</span>'
+            f'<span class="h3-subtitle-text">{html.escape(text)}</span></li>')
+    if not lines:
+        return gr.update(value="", visible=False)
+    # The result's 32-hex id is in every copy's file name, so the browser can find its player.
+    media = re.search(r"[0-9a-f]{32}", Path(str(output)).name)
+    return gr.update(visible=True, value=(
+        f'<div class="h3-drama3-subtitles" data-media="{media.group(0) if media else ""}" '
+        f'data-duration="{float(settings.get("duration") or 0):.3f}">'
+        f'<ol>{"".join(lines)}</ol></div>'))
 
 
 def drama3_take_selected(output, evt: gr.SelectData):

@@ -448,6 +448,13 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-workspace .h3-drama3-auto-bar > :first-child { flex: 1 1 220px; min-width: 0; }
 .h3-workspace .h3-drama3-auto-bar > .h3-generation-buttons { flex: 2 1 320px; gap: 8px; }
 .h3-workspace .h3-drama3-left { gap: 16px; }
+.h3-workspace .h3-drama3-subtitles ol { position: relative; max-height: 220px; overflow-y: auto; margin: 0; padding: 6px; list-style: none; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
+.h3-workspace .h3-drama3-subtitles li { display: flex; gap: 10px; margin: 0; padding: 6px 10px; border-radius: 8px; cursor: pointer; color: var(--h3-muted); font-size: 14px; line-height: 1.5; transition: background 160ms ease, color 160ms ease; }
+.h3-workspace .h3-drama3-subtitles li:hover { background: var(--h3-surface); }
+.h3-workspace .h3-drama3-subtitles li.past { opacity: .7; }
+.h3-workspace .h3-drama3-subtitles li.active { color: var(--h3-text); background: var(--h3-surface); box-shadow: inset 3px 0 var(--h3-accent); }
+.h3-workspace .h3-subtitle-speaker { flex: 0 0 auto; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--h3-accent); font-size: 12px; font-weight: 650; padding-top: 2px; }
+.h3-workspace .h3-subtitle-text { min-width: 0; }
 .h3-workspace .h3-drama3-lines { gap: 10px; margin-top: 16px; }
 .h3-workspace .h3-drama3-line-panel { gap: 10px; padding: 12px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
 .h3-workspace .h3-drama3-lines .h3-generation-buttons > button { flex: 1 1 140px; min-height: 40px; }

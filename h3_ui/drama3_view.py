@@ -133,6 +133,66 @@ class Drama3View:
     remix: gr.Button | None = None
     title: gr.Textbox | None = None
     take_audio: gr.Audio | None = None
+    subtitles: gr.HTML | None = None
+
+
+# Gradio's waveform player keeps its <audio> element out of the DOM, so media elements are
+# registered as they get a source; each visible subtitle panel follows the player whose file
+# (or, for a blob source, whose length) matches its result, so playing and seeking both sync.
+# Clicking a line seeks the player to it.
+DRAMA3_SUBTITLES_JS = """
+() => {
+  if (window.h3Drama3Subtitles) return;
+  window.h3Drama3Subtitles = true;
+  const media = new Set();
+  const proto = HTMLMediaElement.prototype;
+  const source = Object.getOwnPropertyDescriptor(proto, "src");
+  Object.defineProperty(proto, "src", {
+    ...source,
+    set(value) { media.add(this); source.set.call(this, value); },
+  });
+  const play = proto.play;
+  proto.play = function (...args) { media.add(this); return play.apply(this, args); };
+  const playerFor = (box) => {
+    const id = box.dataset.media, duration = Number(box.dataset.duration);
+    let found = null;
+    for (const element of media) {
+      const url = element.currentSrc || element.src || "";
+      const matches = (id && url.includes(id))
+        || (url.startsWith("blob:") && duration > 0 && Math.abs(element.duration - duration) < 0.6);
+      if (matches && (!found || (found.paused && !element.paused))) found = element;
+    }
+    return found;
+  };
+  const sync = () => {
+    for (const box of document.querySelectorAll(".h3-drama3-subtitles")) {
+      if (!box.offsetParent) continue;
+      const player = playerFor(box);
+      const time = player ? player.currentTime : -1;
+      const lines = [...box.querySelectorAll("li")];
+      // The last line to start stays lit through pauses and sounds until the next one.
+      const active = lines.filter((line) => Number(line.dataset.start) <= time + 0.05).pop() ?? null;
+      for (const line of lines) {
+        line.classList.toggle("active", line === active);
+        line.classList.toggle("past", time >= 0 && Number(line.dataset.end) <= time && line !== active);
+      }
+      if (active && box.h3Active !== active) {
+        const list = box.querySelector("ol");
+        list.scrollTo({ top: active.offsetTop - (list.clientHeight - active.offsetHeight) / 2, behavior: "smooth" });
+      }
+      box.h3Active = active;
+    }
+  };
+  setInterval(sync, 200);
+  document.addEventListener("click", (event) => {
+    const line = event.target.closest?.(".h3-drama3-subtitles li");
+    const player = line && playerFor(line.closest(".h3-drama3-subtitles"));
+    if (!player) return;
+    player.currentTime = Number(line.dataset.start);
+    sync();
+  });
+}
+"""
 
 
 def _heading(step, title, detail=""):
@@ -385,6 +445,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
             with gr.Column(scale=2, min_width=320, elem_classes=["h3-preview-panel", "h3-drama3-stage"]):
                 _heading("03", "Speak", "Unchanged lines reuse their saved takes.")
                 output = gr.Audio(label="Generated speech", type="filepath", interactive=False)
+                subtitles = gr.HTML("", visible=False, elem_classes=["h3-drama3-subtitle-panel"])
                 output.h3_metadata_root = gr.Column()
                 sampling_preset = gr.Radio(
                     list(DRAMA3_SAMPLING_PRESETS), value="Expressive", label="Speech preset",
@@ -495,4 +556,5 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         remix=remix,
         title=title,
         take_audio=take_audio,
+        subtitles=subtitles,
     )

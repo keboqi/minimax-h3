@@ -17,6 +17,11 @@
 Script and Cast stack on the left with Speak beside them; Speak stays in view while
 you scroll. **Auto** sits under the speech text.
 
+Under the player, the result's lines scroll as subtitles: the line being spoken is
+highlighted as it plays and follows the player when you seek, and clicking a line
+jumps to it. Bracketed cues and tags are left out. Results made before this
+feature have no line timings and show no subtitles.
+
 ### Takes
 
 Every generated line is saved as a take, keyed by its text, speaker, voice clip

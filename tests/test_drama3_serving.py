@@ -115,6 +115,12 @@ class AudioTests(unittest.TestCase):
         joined = audio.join_takes([(0, tone(1.0)), (0, tone(1.0)), (1, tone(1.0))], RATE)
         expected = 3.0 + audio.SAME_SPEAKER_GAP + audio.TURN_GAP
         self.assertAlmostEqual(len(joined) / RATE, expected, places=2)
+    def test_join_reports_where_each_take_lands(self):
+        spans = []
+        joined = audio.join_takes([(0, tone(1.0)), (0, tone(0.5)), (1, tone(1.0))], RATE, spans)
+        same, turn = int(RATE * audio.SAME_SPEAKER_GAP), int(RATE * audio.TURN_GAP)
+        self.assertEqual(spans, [(0, RATE), (RATE + same, RATE + same + RATE // 2),
+                                 (RATE + same + RATE // 2 + turn, len(joined))])
 
 
 class EnvironmentTests(unittest.TestCase):
@@ -572,6 +578,17 @@ class GenerateTests(unittest.TestCase):
         self.assertTrue(result_path.is_file())
         mixed = audio.load_audio_file(result_path, RATE)
         self.assertGreater(len(mixed) / RATE, 1.5)
+        # Each line's place in the mix, for synced subtitles: in script order, inside the mix,
+        # with the 0.5 s pause between the first two lines and the parallel line after them.
+        settings = snapshot.call_args.args[1]["settings"]
+        spans = [(chunk["start"], chunk["end"]) for chunk in settings["chunks"]]
+        self.assertAlmostEqual(spans[0][0], 0.0, places=2)
+        self.assertGreaterEqual(spans[1][0] - spans[0][1], 0.5 - 0.01)
+        self.assertGreaterEqual(spans[2][0], spans[1][1])
+        for start, end in spans:
+            self.assertLess(start, end)
+            self.assertLessEqual(end, settings["duration"])
+        self.assertAlmostEqual(settings["duration"], len(mixed) / RATE, delta=0.1)
 
 
 class TreeAndSpeakerEffectsTests(unittest.TestCase):

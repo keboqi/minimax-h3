@@ -339,6 +339,33 @@ class Drama3AppInputTests(unittest.TestCase):
             self.assertIsNone(drama3_handlers.drama3_take_audio("../b"))
             self.assertIsNone(drama3_handlers.drama3_take_audio(None))
 
+    def test_subtitles_are_timed_lines_without_cues(self):
+        from h3_ui import application  # noqa: F401 - installs the handlers' services
+        from h3_ui import drama3_handlers
+        from h3_app.provenance import write_snapshot
+
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp) / f"Story_20261020-060911_{'f' * 32}.mp3"
+            result.write_bytes(b"mp3")
+            write_snapshot(result, {"family": "Drama 3", "settings": {"duration": 9.5, "chunks": [
+                {"speaker": 0, "name": "Mia & Co", "text": "[whispers] Hello <there>!", "start": 0.0, "end": 1.25},
+                {"speaker": 2, "text": "<phone_call> Who is it?", "start": 1.55, "end": 3.0},
+                {"speaker": 0, "text": "[laughs]", "start": 3.2, "end": 4.0},
+            ]}})
+            update = drama3_handlers.drama3_subtitles(str(result))
+            write_snapshot(result, {"family": "Drama 3", "settings": {"chunks": [{"speaker": 0, "text": "Old."}]}})
+            old = drama3_handlers.drama3_subtitles(str(result))
+        self.assertTrue(update["visible"])
+        self.assertIn(f'data-media="{"f" * 32}"', update["value"])
+        self.assertIn('data-duration="9.500"', update["value"])
+        self.assertIn('<li data-start="0.000" data-end="1.250">', update["value"])
+        self.assertIn("Mia &amp; Co", update["value"])
+        self.assertIn('<span class="h3-subtitle-text">Hello !</span>', update["value"])
+        self.assertIn("Speaker 2</span><span class=\"h3-subtitle-text\">Who is it?", update["value"])
+        self.assertEqual(update["value"].count("<li"), 2)  # a cue-only line has nothing to show
+        self.assertFalse(old["visible"])  # results from before line timings were recorded
+        self.assertFalse(drama3_handlers.drama3_subtitles(None)["visible"])
+
     def test_takes_and_settings_are_found_from_gradios_cached_copy(self):
         import shutil
         from h3_ui import application
