@@ -915,7 +915,12 @@ def parse_drama3_reply(
     title, if any, goes in ``meta["title"]``. ``direct(script, cast)``, when given,
     returns the validated script with more delivery direction and a note, or None.
     """
-    from h3_app.drama3_cast import parse_script_cast_and_sounds, parse_writer_source_mode, parse_writer_title
+    from h3_app.drama3_cast import (
+        parse_script_cast_and_sounds,
+        parse_writer_source_mode,
+        parse_writer_title,
+        voices_without_sex,
+    )
     from h3_app.drama3_serving.tree import extract_script_sounds, strip_drama3_sound_tags
     from h3_app.workflows.drama3 import names_to_tags
 
@@ -944,6 +949,10 @@ def parse_drama3_reply(
             if note and notes is not None:
                 notes.append(note)
         script = review(script, parse_writer_source_mode(reply))
+        unsexed = voices_without_sex(cast)
+        if unsexed and notes is not None:
+            notes.append(f"The voice description for {', '.join(unsexed)} does not say male or female; "
+                         "add it before generating voices, or the voice may come out wrong.")
         if speaker_mode == DRAMA3_SPEAKER_AUTO:
             from h3_app.workflows.drama3 import SPEAKER_TAG, text_speakers
             existing_ids = {int(value) for value in SPEAKER_TAG.findall(str(original or ""))}

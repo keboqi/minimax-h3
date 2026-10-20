@@ -245,6 +245,24 @@ class SourceModeTests(unittest.TestCase):
         self.assertIn("2 source phrase(s)", status)
 
 
+class VoiceSexTests(unittest.TestCase):
+    def test_descriptions_that_never_say_male_or_female_are_reported(self):
+        from h3_app.drama3_cast import voices_without_sex
+
+        cast = [{"name": "胡母", "description": "A weary, hardworking middle-aged mother, warm, rapid-fire."},
+                {"name": "Mia", "description": "A female voice: bright, early twenties."},
+                {"name": "Leo", "description": "Young man, dry humour."},
+                {"name": "旁白", "description": "沉稳的中年男声。"},
+                {"name": "Kid", "description": "A boy's voice, about ten."},
+                {"name": "Spirit", "description": "Human-like, manner calm, mysterious."}]
+        self.assertEqual(voices_without_sex(cast), ["胡母", "Spirit"])
+        reply = json.dumps({"script": "胡母: 杀人犯！", "speakers": [
+            {"speaker_id": 0, "name": "胡母", "description": cast[0]["description"], "preview_text": "你好。"}]},
+            ensure_ascii=False)
+        _script, status, _cast = prompt_service.apply_drama3_reply(reply, "胡母: 杀人犯！", (), "Auto")
+        self.assertIn("The voice description for 胡母 does not say male or female", status)
+
+
 class PromptBasicExampleTests(unittest.TestCase):
     def test_basic_examples_are_clean_directed_and_complete(self):
         from pathlib import Path

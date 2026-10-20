@@ -229,10 +229,21 @@ DRAMA3_SCRIPT_HIGHLIGHT_JS = """
   const NAME = /^([ \\t]*)([^\\s:：<>\\[\\]|#][^:：<>\\[\\]|\\n]{0,63}?)([ \\t]*[:：])/;
   const TOKEN = /(\\[[^\\[\\]\\n]*\\])|(<#\\s*\\d+(?:\\.\\d+)?\\s*#>)|(<\\|[^|>\\n]*\\|>)|(<\\/?)([A-Za-z_][\\w-]*)([^<>\\n]*?)(\\/?>)/g;
   const ATTR = /([\\w-]+)(\\s*=\\s*)("[^"]*"|'[^']*'|[^\\s>]+)?/g;
-  const nameKind = (name) => {
-    let hash = 0;
-    for (const c of name.trim().toLowerCase()) hash = (hash * 31 + c.codePointAt(0)) >>> 0;
-    return `name${hash % 6}`;
+  // The narrator has its own color; characters take the name colors in order of first line,
+  // so no two share one until a ninth character.
+  const NARRATOR = new Set(["narrator", "narration", "旁白", "storyteller", "story teller"]);
+  const NAME_COLORS = 8;
+  const nameKinds = (lines) => {
+    const kinds = new Map();
+    for (const line of lines) {
+      const key = NAME.exec(line)?.[2].trim().toLowerCase();
+      if (key && !kinds.has(key)) {
+        // span() prefixes "h3-hl-": a character's name gets "h3-hl-name h3-hl-nameN".
+        kinds.set(key, NARRATOR.has(key) ? "narrator" : `name h3-hl-name${[...kinds.values()]
+          .filter((kind) => kind !== "narrator").length % NAME_COLORS}`);
+      }
+    }
+    return kinds;
   };
   const attrs = (text) => {
     let out = "", last = 0;
@@ -245,11 +256,13 @@ DRAMA3_SCRIPT_HIGHLIGHT_JS = """
   const highlight = (script) => {
     let inSound = false;
     const plain = (text) => inSound ? span("sound", text) : escape(text);
-    return script.split("\\n").map((line) => {
+    const lines = script.split("\\n");
+    const kinds = nameKinds(lines);
+    return lines.map((line) => {
       let out = "", rest = line;
       const name = !inSound && NAME.exec(line);
       if (name) {
-        out = escape(name[1]) + span(nameKind(name[2]), name[2]) + span("punct", name[3]);
+        out = escape(name[1]) + span(kinds.get(name[2].trim().toLowerCase()), name[2]) + span("punct", name[3]);
         rest = line.slice(name[0].length);
       }
       let last = 0;
@@ -260,7 +273,7 @@ DRAMA3_SCRIPT_HIGHLIGHT_JS = """
         if (m[2]) { out += span("pause", m[2]); continue; }
         if (m[3]) { out += span("keyword", m[3]); continue; }
         const tag = m[5].toLowerCase();
-        const kind = tag === "parallel" || tag === "sequential" ? "keyword" : tag === "sound" ? "tag" : "effect";
+        const kind = tag === "parallel" ? "keyword" : tag === "sequential" ? "sequence" : tag === "sound" ? "tag" : "effect";
         out += span("punct", m[4]) + span(kind, m[5]) + attrs(m[6]) + span("punct", m[7]);
         if (tag === "sound") inSound = m[4] === "<" && m[7] === ">";
       }

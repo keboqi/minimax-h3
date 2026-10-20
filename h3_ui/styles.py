@@ -427,16 +427,17 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-workspace .h3-drama3-script {
   --h3-hl-text: #1f2328; --h3-hl-punct: #800000; --h3-hl-cue: #008000; --h3-hl-pause: #098658;
   --h3-hl-keyword: #af00db; --h3-hl-tag: #800000; --h3-hl-effect: #267f99; --h3-hl-attr: #e50000;
-  --h3-hl-value: #0000ff; --h3-hl-sound: #795e26;
-  --h3-hl-name0: #0451a5; --h3-hl-name1: #a626a4; --h3-hl-name2: #0b7a55;
-  --h3-hl-name3: #c2410c; --h3-hl-name4: #6d28d9; --h3-hl-name5: #b91c1c;
+  --h3-hl-value: #0000ff; --h3-hl-sound: #795e26; --h3-hl-sequence: #b35c00; --h3-hl-narrator: #5b6b80;
+  /* Character names: none is a tag color, and each sits on a faint tint of itself. */
+  --h3-hl-name0: #c92a2a; --h3-hl-name1: #1864ab; --h3-hl-name2: #2b8a3e; --h3-hl-name3: #6741d9;
+  --h3-hl-name4: #d9480f; --h3-hl-name5: #9c36b5; --h3-hl-name6: #c2255c; --h3-hl-name7: #a07800;
 }
 .dark .h3-workspace .h3-drama3-script {
   --h3-hl-text: #d4d4d4; --h3-hl-punct: #808080; --h3-hl-cue: #6a9955; --h3-hl-pause: #b5cea8;
   --h3-hl-keyword: #c586c0; --h3-hl-tag: #569cd6; --h3-hl-effect: #4ec9b0; --h3-hl-attr: #9cdcfe;
-  --h3-hl-value: #ce9178; --h3-hl-sound: #dcdcaa;
-  --h3-hl-name0: #4fc1ff; --h3-hl-name1: #c586c0; --h3-hl-name2: #4ec9b0;
-  --h3-hl-name3: #ce9178; --h3-hl-name4: #dcdcaa; --h3-hl-name5: #f48771;
+  --h3-hl-value: #ce9178; --h3-hl-sound: #dcdcaa; --h3-hl-sequence: #d7ba7d; --h3-hl-narrator: #94a3b8;
+  --h3-hl-name0: #ff8787; --h3-hl-name1: #74c0fc; --h3-hl-name2: #a9e34b; --h3-hl-name3: #b197fc;
+  --h3-hl-name4: #ffa94d; --h3-hl-name5: #da77f2; --h3-hl-name6: #f783ac; --h3-hl-name7: #ffd43b;
 }
 .h3-workspace .h3-drama3-script :has(> textarea.h3-drama3-highlighted) { position: relative; }
 .h3-workspace .h3-drama3-script textarea.h3-drama3-highlighted {
@@ -454,6 +455,13 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-drama3-highlight .h3-hl-cue { color: var(--h3-hl-cue); }
 .h3-drama3-highlight .h3-hl-pause { color: var(--h3-hl-pause); }
 .h3-drama3-highlight .h3-hl-keyword { color: var(--h3-hl-keyword); }
+.h3-drama3-highlight .h3-hl-sequence { color: var(--h3-hl-sequence); }
+.h3-drama3-highlight .h3-hl-narrator { color: var(--h3-hl-narrator); }
+/* A tint and shadow, never padding, so the mirror's text stays under the textarea's. */
+.h3-drama3-highlight .h3-hl-name {
+  border-radius: 3px; background: color-mix(in srgb, currentColor 16%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 16%, transparent);
+}
 .h3-drama3-highlight .h3-hl-tag { color: var(--h3-hl-tag); }
 .h3-drama3-highlight .h3-hl-effect { color: var(--h3-hl-effect); }
 .h3-drama3-highlight .h3-hl-attr { color: var(--h3-hl-attr); }
@@ -465,6 +473,8 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-drama3-highlight .h3-hl-name3 { color: var(--h3-hl-name3); }
 .h3-drama3-highlight .h3-hl-name4 { color: var(--h3-hl-name4); }
 .h3-drama3-highlight .h3-hl-name5 { color: var(--h3-hl-name5); }
+.h3-drama3-highlight .h3-hl-name6 { color: var(--h3-hl-name6); }
+.h3-drama3-highlight .h3-hl-name7 { color: var(--h3-hl-name7); }
 .h3-workspace .h3-drama3 button.secondary { border: 1px solid var(--h3-border); background: var(--h3-surface); }
 .h3-workspace .h3-drama3 button.secondary:not(:disabled):hover { border-color: var(--h3-accent); color: var(--h3-accent); background: var(--h3-muted-surface); }
 .h3-workspace .h3-drama3-inline-actions { flex-wrap: wrap; gap: 8px; align-items: center; }

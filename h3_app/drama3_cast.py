@@ -192,6 +192,18 @@ def parse_writer_title(response: str) -> str:
     return clean_title(data.get("title")) if isinstance(data, dict) else ""
 
 
+_VOICE_SEX_RE = re.compile(r"\b(?:fe)?male\b|\bwom[ae]n\b|\bm[ae]n\b|\bgirl|\bboy|\bfeminine\b|\bmasculine\b"
+                           r"|\bandrogynous\b|\bgender-neutral\b|[男女]", re.IGNORECASE)
+
+
+def voices_without_sex(cast: list[dict]) -> list[str]:
+    """Names of cast entries whose voice description never says male or female.
+
+    Voice design guesses from roles such as "mother" and sometimes guesses wrong.
+    """
+    return [entry["name"] for entry in cast if not _VOICE_SEX_RE.search(str(entry.get("description", "")))]
+
+
 def parse_writer_source_mode(response: str) -> str:
     """The writer's reading of the source, "preserve" or "brief"; "" when it gave neither."""
     try:

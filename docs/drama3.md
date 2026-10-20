@@ -94,9 +94,15 @@ afresh, so a request without its own delivery cue repeats the turn's last one
 The writer's script is formatted for reading: each turn, sound, and
 `<parallel>`/`<sequential>` tag sits on its own line, indented two spaces per
 level of nesting. Indentation and blank lines do not change the performance.
-**Speech text** colors the script in VS Code's Light+ or Dark+ palette: each
-speaker name gets its own color, and [cues], staging tags, sounds, effect tags,
-and `<#seconds#>` pauses each have theirs.
+**Speech text** colors the script in VS Code's Light+ or Dark+ palette. The
+narrator's name has its own slate color; characters take eight further colors in
+order of their first line, each on a faint tint so a name never reads as a tag, and
+none of them is a tag color. [cues], `<parallel>`, `<sequential>`, sounds, effect
+tags, and `<#seconds#>` pauses each have theirs.
+
+The writer starts every voice description by naming the voice's sex ("A female
+voice: ..."), since voice design otherwise guesses from roles such as "mother" and
+sometimes guesses wrong; the status names any description that still does not say.
 
 In **Speaker voices**, each speaker has a collapsible panel titled with its
 index, name, and whether a voice is ready (for example `Speaker 2 · Mia · voice
