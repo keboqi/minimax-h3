@@ -311,16 +311,15 @@ forecast before a completed native refresh, which limits both acceleration and
 trajectory error at four to eight steps. Compare the same prompt and seed with
 Acceleration Off before relying on it for quality-critical output.
 
-Turbo defaults to the LightX2V four-step adapter at strength 1.0 (FL2V v1.2
-768p or the dedicated Ref2V 544p adapter). Larry v4-600 EMA remains available
+Turbo defaults to the LightX2V four-step adapter at strength 1.0 (FL2V v1.3
+768p or the dedicated Ref2V v1.0 768p adapter). Larry v4-600 EMA remains available
 at six steps through its pinned custom node, which uses a quantization-aware
-bypass loader plus the adaptive H3 Turbo sampler. LightX2V also provides a
-mode-specific four-step option (FL2V v1.2 768p or Ref2V v0.1 544p) and
-mode-specific FL2V/Ref2V v1.0 eight-step 768p options, all at strength 1.0.
-The 768p workflows apply LightX2V's official video/audio sigma shifts of
-6/3 and use Euler sampling (four or eight NFE according to the selected LoRA)
-with the simple scheduler by default. The 544p Ref2V adapter uses its official
-12/3 shifts and four Euler NFE. Every base profile applies either Turbo LoRA
+bypass loader plus the adaptive H3 Turbo sampler. LightX2V also provides
+mode-specific FL2V/Ref2V v1.1 eight-step 768p options, all at strength 1.0.
+FL2V workflows apply LightX2V's official video/audio sigma shifts of 6/3; Ref2V
+adapters keep the model's default 12/3, as LightX2V recommends. All use Euler
+sampling (four or eight NFE according to the selected LoRA) with the simple
+scheduler by default. Every base profile applies either Turbo LoRA
 through its sharper runtime path. On Quality ConvRot INT8, fused FC2 kernels
 read weights directly and cannot execute a forward bypass hook, so those FC2
 adapters alone use ComfyUI's transient post-dequantization weight-cast patch;

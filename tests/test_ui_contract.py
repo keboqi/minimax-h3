@@ -1973,7 +1973,7 @@ class UiContractTests(unittest.TestCase):
         self.assertIn("Next run", summary)
         self.assertNotIn("Ready to generate", summary)
         self.assertIn("Acceleration: Off", summary)
-        self.assertIn("LightX2V v1.0 / 8-step 768p", summary)
+        self.assertIn("LightX2V v1.1 / 8-step 768p", summary)
         self.assertIn("Original &lt;unsafe&gt;", summary)
         self.assertNotIn("Original <unsafe>", summary)
         split_summary = gradio_app.compact_settings_summary(

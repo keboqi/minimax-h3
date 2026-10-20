@@ -538,6 +538,40 @@ class WorkflowContractsTests(unittest.TestCase):
                 _catalog.LIGHTX2V_8STEP_TURBO, fake.turbo_8step_lora
             ),
         )
+        # LightX2V's 6/3 shift is for FL2V only; 768p Ref2V keeps 12/3.
+        self.assertNotIn(
+            _catalog.H3_SIGMA_SHIFT_NODE,
+            _h3_workflow.turbo_required_nodes(
+                _catalog.LIGHTX2V_8STEP_TURBO, fake.turbo_8step_ref_lora
+            ),
+        )
+        self.assertIsNone(
+            _policy.turbo_sigma_shifts(
+                _catalog.LIGHTX2V_4STEP_TURBO, fake.turbo_ref_lora
+            )
+        )
+        self.assertEqual(
+            _policy.turbo_sigma_shifts(_catalog.LIGHTX2V_4STEP_TURBO, fake.turbo_lora),
+            (6.0, 3.0),
+        )
+        for legacy, current in _catalog.LEGACY_TURBO_VARIANTS.items():
+            self.assertEqual(_policy.normalize_turbo_variant(legacy), current)
+        from types import SimpleNamespace
+        from h3_ui.persistence import restore_preferences
+
+        choices = list(_catalog.TURBO_SETTINGS)
+        restored, _ = restore_preferences(
+            {"h3.turbo_variant": "LightX2V v1.0 / 8-step 768p"},
+            {"h3.turbo_variant": SimpleNamespace(
+                value=_catalog.DEFAULT_TURBO, choices=choices
+            )},
+        )
+        self.assertEqual(
+            restored["h3.turbo_variant"], _catalog.LIGHTX2V_8STEP_TURBO
+        )
+        self.assertEqual(
+            _policy.turbo_steps_for("LightX2V v1.0 / 8-step 768p"), 8
+        )
         self.assertEqual(
             _policy.turbo_sampler_name(_catalog.LIGHTX2V_4STEP_TURBO, fake.turbo_lora),
             "euler",

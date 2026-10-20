@@ -353,29 +353,38 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     "turbo_lora": ModelSpec(
         TURBO_REPO,
         "loras",
-        "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
-        "LightX2V Turbo 4-step v1.2 · official 768p ComfyUI BF16",
+        "minimax_h3_fl2v_turbo_4step_v1.3_768p_comfyui_bf16.safetensors",
+        "LightX2V Turbo 4-step v1.3 · official 768p ComfyUI BF16",
         expected_sha256=(
-            "c8168ebc17bbacc4296103dda2fec1ba85b24392fa08cf2bfbcef0cff0dc3cc8"
+            "70103fd0d80a947ed4e7fe6f88915863d54ef22c5cab03bd5d2fd649385ffe1e"
         ),
     ),
     "turbo_ref_lora": ModelSpec(
         TURBO_REPO,
         "loras",
-        "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
-        "LightX2V Ref2V Turbo 4-step v0.1 · official ComfyUI BF16",
+        "minimax_h3_ref2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors",
+        "LightX2V Ref2V Turbo 4-step v1.0 · official 768p ComfyUI BF16",
+        expected_sha256=(
+            "b4da466e43588004097dfbcde245ccc439c34a26bc997cb76a0b53a1d549ea0d"
+        ),
     ),
     "turbo_8step_lora": ModelSpec(
         TURBO_REPO,
         "loras",
-        "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
-        "LightX2V Turbo 8-step v1.0 · official 768p ComfyUI BF16",
+        "minimax_h3_fl2v_turbo_8step_v1.1_768p_comfyui_bf16.safetensors",
+        "LightX2V Turbo 8-step v1.1 · official 768p ComfyUI BF16",
+        expected_sha256=(
+            "fb4c00361c94bad47f878d5e096c6cab2f45063b0968bd5756dcb7da6936f53e"
+        ),
     ),
     "turbo_8step_ref_lora": ModelSpec(
         TURBO_REPO,
         "loras",
-        "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
-        "LightX2V Ref2V Turbo 8-step v1.0 · official 768p ComfyUI BF16",
+        "minimax_h3_ref2v_turbo_8step_v1.1_768p_comfyui_bf16.safetensors",
+        "LightX2V Ref2V Turbo 8-step v1.1 · official 768p ComfyUI BF16",
+        expected_sha256=(
+            "e56863a7524e0300729cbb7b64cc8b548d90698c1abbf7d83898b0122fbe1e81"
+        ),
     ),
     "pdmd_4step_lora": ModelSpec(
         "Kijai/MiniMax-H3-experimental", "loras",
@@ -1915,17 +1924,17 @@ def selftest() -> None:
     assert "image_vae_500k" not in PRELOAD_MODEL_KEYS
     assert (
         cfg["turbo_lora"]
-        == "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors"
+        == "minimax_h3_fl2v_turbo_4step_v1.3_768p_comfyui_bf16.safetensors"
     )
     assert cfg["turbo_ref_lora"] == (
-        "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
+        "minimax_h3_ref2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"
     )
     assert (
         cfg["turbo_8step_lora"]
-        == "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
+        == "minimax_h3_fl2v_turbo_8step_v1.1_768p_comfyui_bf16.safetensors"
     )
     assert cfg["turbo_8step_ref_lora"] == (
-        "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
+        "minimax_h3_ref2v_turbo_8step_v1.1_768p_comfyui_bf16.safetensors"
     )
     assert {"turbo_lora", "turbo_ref_lora"}.issubset(PRELOAD_MODEL_KEYS)
     assert "turbo_8step_lora" not in PRELOAD_MODEL_KEYS

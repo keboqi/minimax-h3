@@ -178,6 +178,18 @@ def restore_preferences(saved, components):
     if version < 7 and values.get("drama3.voice_engine") == "Drama 3":
         # v7 made Qwen3-TTS VoiceDesign the default; older saves stored the previous default.
         values = {name: value for name, value in values.items() if name != "drama3.voice_engine"}
+    # Turbo labels name their LoRA versions; carry renamed choices forward.
+    from h3_app.catalog import LEGACY_TURBO_VARIANTS
+
+    values = {
+        name: (
+            LEGACY_TURBO_VARIANTS.get(value, value)
+            if name in ("h3.turbo_variant", "h3.latent_upscale_refine_lora")
+            and isinstance(value, str)
+            else value
+        )
+        for name, value in values.items()
+    }
     restored = {
         name: sanitize(component, values.get(name, component.value))
         for name, component in components.items()

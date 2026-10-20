@@ -2211,11 +2211,11 @@ def backend_status() -> str:
             )
         if models.turbo_lora:
             profile_lines.append(
-                f"**LightX2V Turbo / 4-step** · FL2VA v1.2 `{models.turbo_lora}` · Ref2VA v0.1 544p `{models.turbo_ref_lora}` · strength 1.0"
+                f"**LightX2V Turbo / 4-step 768p** · FL2VA v1.3 `{models.turbo_lora}` · Ref2VA v1.0 `{models.turbo_ref_lora}` · strength 1.0"
             )
         if models.turbo_8step_lora:
             profile_lines.append(
-                f"**LightX2V Turbo v1.0 / 8-step 768p** · FL2VA `{models.turbo_8step_lora}` · Ref2VA `{models.turbo_8step_ref_lora}` · 8-step default · strength 1.0 · FL2VA and Ref2VA"
+                f"**LightX2V Turbo v1.1 / 8-step 768p** · FL2VA `{models.turbo_8step_lora}` · Ref2VA `{models.turbo_8step_ref_lora}` · 8-step default · strength 1.0 · FL2VA and Ref2VA"
             )
         return (
             f"Connected · {gpu}{vram_text} · sparse: {SERVER_ATTENTION_BACKEND} · dense: {SERVER_DENSE_ATTENTION_BACKEND} · memory: {SERVER_MEMORY_PROFILE} · FirstBlockCache: {fbcache_status} · EasyCache: {easycache_status}  \n"

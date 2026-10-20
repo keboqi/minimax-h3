@@ -14,6 +14,7 @@ from h3_app.catalog import (
     DEFAULT_IMAGE_VAE,
     DEFAULT_RESULT_FORMAT,
     DEFAULT_TURBO,
+    LEGACY_TURBO_VARIANTS,
     H3_LATENT_UPSCALE_SPLIT,
     H3_LATENT_UPSCALE_STANDARD,
     IMAGE_VAE_CHOICES,
@@ -52,6 +53,7 @@ def upscale_target_dimensions(
 
 
 def normalize_turbo_variant(value: str) -> str:
+    value = LEGACY_TURBO_VARIANTS.get(value, value)
     return value if value in TURBO_SETTINGS else DEFAULT_TURBO
 
 
@@ -76,9 +78,13 @@ def is_lightx2v_turbo_lora(turbo_variant: str, lora_filename: str | None) -> boo
 
 
 def lightx2v_uses_768p_schedule(turbo_variant: str, lora_filename: str | None) -> bool:
-    """Official 768p FL2VA Turbo checkpoints use video/audio shifts 6/3."""
+    """Official 768p FL2VA Turbo checkpoints use video/audio shifts 6/3.
+
+    Ref2VA checkpoints, 768p included, keep the model's default 12/3.
+    """
+    name = Path(str(lora_filename)).name.lower()
     return is_lightx2v_turbo_lora(turbo_variant, lora_filename) and (
-        "768p" in Path(str(lora_filename)).name.lower()
+        "768p" in name and "fl2v" in name
     )
 
 

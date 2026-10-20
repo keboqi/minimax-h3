@@ -12,8 +12,8 @@ from typing import Any, Mapping
 from .resources import resolve_decoders
 from .decoder_intent import VideoDecoder
 
-LIGHTX2V_4STEP = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
-LIGHTX2V_8STEP = "LightX2V v1.0 / 8-step 768p"
+LIGHTX2V_4STEP = "LightX2V / 4-step 768p (FL2V v1.3 · Ref2V v1.0)"
+LIGHTX2V_8STEP = "LightX2V v1.1 / 8-step 768p"
 LARRY = "Larry v4-600 EMA"
 PDMD_4STEP = "PDMD / 4-step"
 DMAD_4STEP = "DMAD / 4-step"

@@ -134,16 +134,23 @@ SLA_PRESET_INPUTS = {
 }
 
 
-LIGHTX2V_4STEP_TURBO = "LightX2V / 4-step (FL2V 768p · Ref2V 544p)"
+LIGHTX2V_4STEP_TURBO = "LightX2V / 4-step 768p (FL2V v1.3 · Ref2V v1.0)"
 
 
-LIGHTX2V_8STEP_TURBO = "LightX2V v1.0 / 8-step 768p"
+LIGHTX2V_8STEP_TURBO = "LightX2V v1.1 / 8-step 768p"
 
 
 LARRY_TURBO = "Larry v4-600 EMA"
 
 
 DEFAULT_TURBO = LIGHTX2V_4STEP_TURBO
+
+
+# Labels saved by earlier releases, mapped to the variant that replaced them.
+LEGACY_TURBO_VARIANTS = {
+    "LightX2V / 4-step (FL2V 768p · Ref2V 544p)": LIGHTX2V_4STEP_TURBO,
+    "LightX2V v1.0 / 8-step 768p": LIGHTX2V_8STEP_TURBO,
+}
 
 
 RESULT_FORMATS = ("Video", "Image", "Audio")

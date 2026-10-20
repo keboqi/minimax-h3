@@ -18,7 +18,7 @@
         {"parameter_name": "text_encoder", "parameter_has_default": true, "parameter_default": "NVFP4 / AWQ", "type": "type_5"},
         {"parameter_name": "stage_model_offload", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
         {"parameter_name": "generation_mode", "parameter_has_default": true, "parameter_default": "Turbo", "type": "type_7"},
-        {"parameter_name": "turbo_variant", "parameter_has_default": true, "parameter_default": "LightX2V / 4-step (FL2V 768p · Ref2V 544p)", "type": "type_8"},
+        {"parameter_name": "turbo_variant", "parameter_has_default": true, "parameter_default": "LightX2V / 4-step 768p (FL2V v1.3 · Ref2V v1.0)", "type": "type_8"},
         {"parameter_name": "prompt", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "first_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
         {"parameter_name": "last_image", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
@@ -434,8 +434,8 @@
     "type_8": {
       "enum": [
         "Larry v4-600 EMA",
-        "LightX2V / 4-step (FL2V 768p · Ref2V 544p)",
-        "LightX2V v1.0 / 8-step 768p",
+        "LightX2V / 4-step 768p (FL2V v1.3 · Ref2V v1.0)",
+        "LightX2V v1.1 / 8-step 768p",
         "PDMD / 4-step",
         "DMAD / 4-step"
       ],
@@ -840,8 +840,8 @@
       "enum": [
         "Same as generation",
         "Larry v4-600 EMA",
-        "LightX2V / 4-step (FL2V 768p · Ref2V 544p)",
-        "LightX2V v1.0 / 8-step 768p",
+        "LightX2V / 4-step 768p (FL2V v1.3 · Ref2V v1.0)",
+        "LightX2V v1.1 / 8-step 768p",
         "PDMD / 4-step",
         "DMAD / 4-step"
       ]
