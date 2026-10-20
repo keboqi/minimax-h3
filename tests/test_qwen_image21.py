@@ -673,7 +673,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
                                         turbo_variant=QWEN_IMAGE21_LIGHTNING, scheduler="beta")
                     lora_id, lora = self._by_type(graph, "LoraLoaderModelOnly")[0]
                     self.assertEqual(lora["inputs"]["lora_name"], MODEL_SPECS[key].local_name)
-                    self.assertEqual(lora["inputs"]["strength_model"], 1.)
+                    self.assertEqual(lora["inputs"]["strength_model"], .5)
                     sigma_id, sigma = self._by_type(graph, "H3Qwen21LightningSigmas")[0]
                     sampler = self._by_type(graph, "SamplerCustomAdvanced")[0][1]
                     self.assertEqual(sampler["inputs"]["sigmas"], [sigma_id, 0])

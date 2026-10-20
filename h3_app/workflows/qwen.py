@@ -36,6 +36,9 @@ QWEN_IMAGE21_LIGHTNING_6STEP_SIGMAS = (
     1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.55, 0.0,
 )
 QWEN_IMAGE21_LIGHTNING_6STEP_STRENGTH = 0.45
+# Full strength pushes subjects left in generations and edits; 0.50 is the
+# reported fix (https://huggingface.co/lightx2v/Qwen-Image-2.1-Lightning/discussions/7).
+QWEN_IMAGE21_LIGHTNING_STRENGTH = 0.5
 
 
 def qwen_prompt_enhancer_key(choice, *, editing):
@@ -248,7 +251,8 @@ def build_qwen_image21_graph(
             model=sampled_model,
             lora_name=MODEL_SPECS[lora_key].local_name,
             strength_model=(
-                QWEN_IMAGE21_LIGHTNING_6STEP_STRENGTH if lightning_6step else 1.0
+                QWEN_IMAGE21_LIGHTNING_6STEP_STRENGTH if lightning_6step
+                else QWEN_IMAGE21_LIGHTNING_STRENGTH if lightning else 1.0
             ),
         )
         sampled_model = Graph.out(lora_model)
