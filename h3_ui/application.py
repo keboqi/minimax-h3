@@ -2875,15 +2875,17 @@ def resolve_result_path(path):
         return path
     name = Path(path).name
     if re.search("[0-9a-f]{32}", name):
-        candidates = [
-            candidate
+        # Modal exposes the same output directory through both a symlink and
+        # its volume path. Overlapping roots can also find the same file twice.
+        candidates = {
+            candidate.resolve()
             for root in (OUTPUT_DIR, OUTPUTS_DIR)
             for candidate in root.rglob(name)
             if candidate.resolve().is_relative_to(root.resolve())
             and read_snapshot(candidate)
-        ]
+        }
         if len(candidates) == 1:
-            return candidates[0]
+            return next(iter(candidates))
     return path
 
 

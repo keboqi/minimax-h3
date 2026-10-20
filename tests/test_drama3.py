@@ -356,12 +356,24 @@ class Drama3AppInputTests(unittest.TestCase):
             cached = Path(temp) / "gradio" / "f00d" / result.name
             cached.parent.mkdir(parents=True)
             shutil.copyfile(result, cached)
+            for other_root in (Path(temp) / "outputs", outputs, outputs / ".." / "output", Path(temp)):
+                with self.subTest(other_root=other_root), \
+                        patch.object(application, "OUTPUT_DIR", outputs), \
+                        patch.object(application, "OUTPUTS_DIR", other_root):
+                    self.assertEqual(application.resolve_result_path(str(cached)), result)
+                    table, _line, actions = application.drama3_handlers.drama3_takes(str(cached))
+                    self.assertEqual(table["value"][0][1], "Alice")
+                    self.assertTrue(actions["visible"])
+                    self.assertIn("Alice", application.result_settings_for_media(str(cached)))
+
+            # Two distinct outputs with the same name must still be considered ambiguous.
+            other = Path(temp) / "outputs" / result.name
+            other.parent.mkdir()
+            shutil.copyfile(result, other)
+            write_snapshot(other, {"family": "Drama 3", "settings": {}})
             with patch.object(application, "OUTPUT_DIR", outputs), \
-                    patch.object(application, "OUTPUTS_DIR", Path(temp) / "outputs"):
-                self.assertEqual(application.resolve_result_path(str(cached)), result)
-                table, _line, _actions = application.drama3_handlers.drama3_takes(str(cached))
-                self.assertIn("Alice", application.result_settings_for_media(str(cached)))
-        self.assertEqual(table["value"][0][1], "Alice")
+                    patch.object(application, "OUTPUTS_DIR", other.parent):
+                self.assertEqual(application.resolve_result_path(str(cached)), str(cached))
 
 
 class Drama3VramHandoffTests(unittest.TestCase):

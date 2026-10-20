@@ -457,10 +457,15 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     def budget(chunk: Chunk) -> int:
         return frame_budget(chunk.text, int(request.max_frames))
 
-    keys = {chunk.index: take_store.take_key(
-        speaker=chunk.speaker, text=chunk.text, reference=references[chunk.speaker][0].stem,
-        transcript=references[chunk.speaker][1], sampling=sampling, max_new_tokens=budget(chunk))
-        for chunk in chunks}
+    keys: dict[int, str] = {}
+    occurrences: dict[str, int] = {}
+    for chunk in chunks:
+        content_key = take_store.take_key(
+            speaker=chunk.speaker, text=chunk.text, reference=references[chunk.speaker][0].stem,
+            transcript=references[chunk.speaker][1], sampling=sampling, max_new_tokens=budget(chunk))
+        occurrence = occurrences.get(content_key, 0)
+        keys[chunk.index] = take_store.occurrence_key(content_key, occurrence)
+        occurrences[content_key] = occurrence + 1
     forced = set(getattr(request, "regenerate", ()) or ())
     if forced and not forced & set(keys.values()):
         raise H3Error("That line changed since it was generated. Generate speech, then choose the line again.")

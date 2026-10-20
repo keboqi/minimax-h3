@@ -21,7 +21,8 @@ Cast stack on the left with Speak beside them. Speak stays in view while you scr
 ### Takes
 
 Every generated line is saved as a take, keyed by its text, speaker, voice clip
-and transcript, and sampling settings. **Generate speech** reuses saved takes, so
+and transcript, and sampling settings. Repeated identical lines have separate
+takes, distinguished by their occurrence order. **Generate speech** reuses saved takes, so
 after editing a script only changed lines are generated; when nothing changed, the
 mix is rebuilt without starting SGLang-Omni. After a result, **Lines** appears under
 the studio: a table of every line with its length and whether it was reused. Click

@@ -780,6 +780,40 @@ class TakeReuseTests(unittest.TestCase):
         fake.ensure_ready.assert_not_called()
         self.assertTrue(Path(updates[-1].output["value"]).is_file())
 
+    def test_repeated_lines_keep_independent_takes_when_remixed_and_regenerated(self):
+        from dataclasses import replace
+
+        script = "<|speaker:0|> Hello.\n<|speaker:1|> What?\n<|speaker:0|> Hello."
+        request = replace(self.request(script), parallel=1)
+        durations = iter((1.0, 1.5, 2.0))
+        with patch.object(audio, "save_mp3") as save:
+            _fake, _updates, first = self.run_route(request, lambda payload: float_wav(tone(next(durations))))
+            original_mix = save.call_args.args[0].copy()
+            keys = self.keys(first)
+            self.assertEqual(len(set(keys)), 3)
+            fake, _updates, snapshot = self.run_route(replace(request, remix_only=True), self.speech)
+            fake.speech.assert_not_called()
+            fake.ensure_ready.assert_not_called()
+            np.testing.assert_array_equal(save.call_args.args[0], original_mix)
+
+            fake, _updates, snapshot = self.run_route(
+                replace(request, regenerate=(keys[2],)), lambda payload: float_wav(tone(3.0)))
+            self.assertEqual(self.inputs(fake), ["Hello."])
+            self.assertEqual(self.keys(snapshot), keys)
+            chunks = snapshot.call_args.args[1]["settings"]["chunks"]
+            self.assertEqual([chunk["reused"] for chunk in chunks], [True, True, False])
+            self.assertEqual([chunk["seconds"] for chunk in chunks], [1.0, 1.5, 3.0])
+            regenerated_mix = save.call_args.args[0].copy()
+            fake, _updates, _snapshot = self.run_route(replace(request, remix_only=True), self.speech)
+            fake.speech.assert_not_called()
+            np.testing.assert_array_equal(save.call_args.args[0], regenerated_mix)
+
+            # Inserting unrelated dialogue must not invalidate either repeated take.
+            edited = "<|speaker:1|> Listen.\n" + script
+            fake, _updates, snapshot = self.run_route(replace(request, text=edited), self.speech)
+            self.assertEqual(self.inputs(fake), ["Listen."])
+            self.assertEqual(self.keys(snapshot)[1:], keys)
+
     def test_unreadable_takes_are_generated_again(self):
         _fake, _updates, first = self.run_route(self.request(self.SCRIPT), self.speech)
         broken = Path(self.temp.name) / "workspace" / "drama3_takes" / f"{self.keys(first)[0]}.wav"

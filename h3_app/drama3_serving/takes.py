@@ -2,7 +2,8 @@
 
 A take is the server's WAV for one chunk, stored before tidying and speaker
 effects, which are applied at mix time. Its key covers everything the server
-saw for that request; changing any of it makes a new take.
+saw for that request; changing any of it makes a new take. Repeated identical
+chunks have separate saved takes, identified by their occurrence order.
 """
 
 from __future__ import annotations
@@ -39,6 +40,19 @@ def take_key(*, speaker: int, text: str, reference: str, transcript: str, sampli
                 "transcript": transcript, "sampling": {name: sampling[name] for name in sorted(sampling)},
                 "max_new_tokens": int(max_new_tokens)}
     return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:32]
+
+
+def occurrence_key(content_key: str, occurrence: int) -> str:
+    """Identify an occurrence of identical content, counting from zero.
+
+    Keep the first occurrence's existing key so previously saved takes remain
+    reusable. Count per content key, not script position, so unrelated edits do
+    not invalidate later lines.
+    """
+    if occurrence == 0:
+        return content_key
+    identity = f"{content_key}:occurrence:{occurrence}"
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
 
 
 def _path(root: Path, key: str) -> Path:
