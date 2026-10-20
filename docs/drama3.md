@@ -14,6 +14,18 @@
 5. Choose a **Speech preset** (**Expressive** by default). **Generate speech** renders the current
    script and references without rewriting them. Listen beside the composer.
 
+### Takes
+
+Every generated line is saved as a take, keyed by its text, speaker, voice clip
+and transcript, and sampling settings. **Generate speech** reuses saved takes, so
+after editing a script only changed lines are generated; when nothing changed, the
+mix is rebuilt without starting SGLang-Omni. After a result, **Takes** lists each
+line with its length and whether it was reused. Choose a line and click
+**Regenerate line** for a new take of just that line, or **Remix** to rebuild the
+mix from saved takes after changing sounds, staging or vocal effects (which are
+applied at mix time). Takes live in the private workspace (`drama3_takes`) and
+are removed after 30 days unused.
+
 Drama 3 runs on SGLang-Omni, which requires Linux and a CUDA GPU.
 **Speech settings** contains parallel requests, retries and custom sampling controls.
 Auto respects the skip-existing voice and sound options; clear them when you want

@@ -258,6 +258,57 @@ class Drama3AppInputTests(unittest.TestCase):
         request = captured["request"]
         self.assertEqual(request.voices, ((5, str(Path("/in") / "h3_gradio/drama3_voices/five.wav"), "Line five."),))
         self.assertEqual((request.top_k, request.parallel, request.retries), (30, 8, 0))
+        self.assertEqual((request.regenerate, request.remix_only), ((), False))
+
+    def captured_request(self, handler, *leading):
+        from h3_ui import application
+
+        drama3_handlers = application.drama3_handlers
+        captured = {}
+
+        def engine(request, *args, **kwargs):
+            captured["request"] = request
+            yield None
+
+        slots = ["Upload a clip", None, ""] * 16
+        values = ["Hi.", *slots, 1.0, 0.9, 30, 8192]
+        with patch.object(drama3_handlers, "_runtime_config", return_value=SimpleNamespace(input_dir=Path("/in"))), \
+                patch.object(drama3_handlers, "_generation_services"), \
+                patch("h3_app.generation.optional_engines.generate_optional_engine", engine), \
+                patch("h3_app.generation.optional_engines.validate_request"):
+            list(getattr(drama3_handlers, handler)(*leading, *values))
+        return captured["request"]
+
+    def test_regenerate_and_remix_reuse_the_generation_inputs(self):
+        import gradio as gr
+
+        self.assertEqual(self.captured_request("regenerate_drama3_line", "abc").regenerate, ("abc",))
+        remix = self.captured_request("remix_drama3")
+        self.assertEqual((remix.text, remix.regenerate, remix.remix_only), ("Hi.", (), True))
+        with self.assertRaisesRegex(gr.Error, "Choose a line"):
+            self.captured_request("regenerate_drama3_line", None)
+
+    def test_takes_table_comes_from_the_result_snapshot(self):
+        from h3_ui import drama3_handlers
+        from h3_app.provenance import write_snapshot
+
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp) / "speech.mp3"
+            result.write_bytes(b"mp3")
+            write_snapshot(result, {"family": "Drama 3", "settings": {"chunks": [
+                {"speaker": 0, "name": "Alice", "text": "Hello  there.", "take": "k1", "reused": True,
+                 "check": "reused", "seconds": 1.2},
+                {"speaker": 3, "name": "", "text": "x" * 60, "take": "k2", "reused": False,
+                 "check": "skipped", "seconds": 4.0},
+            ]}})
+            table, line, actions = drama3_handlers.drama3_takes(str(result))
+        self.assertEqual(table["value"], [[1, "Alice", "Hello there.", 1.2, "reused"],
+                                          [2, "Speaker 3", "x" * 60, 4.0, "new"]])
+        self.assertEqual(line["choices"][0], ("1 · Alice · Hello there.", "k1"))
+        self.assertTrue(line["choices"][1][0].endswith("…"))
+        self.assertEqual(line["value"], "k1")
+        self.assertTrue(actions["visible"])
+        self.assertFalse(drama3_handlers.drama3_takes(None)[2]["visible"])
 
 
 class Drama3VramHandoffTests(unittest.TestCase):
@@ -518,6 +569,8 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         gen_sounds = owned_generation(drama3_handlers.generate_drama3_sounds, "drama3_sound")
         # 1 shown_sound_slots + 1 skip_existing_sounds + 80 sound slot inputs = 82
         self.assertEqual(len(gen_sounds.job_input_names), 82)
+        self.assertEqual(len(owned_generation(drama3_handlers.remix_drama3, "drama3").job_input_names), 136)
+        self.assertEqual(len(owned_generation(drama3_handlers.regenerate_drama3_line, "drama3").job_input_names), 137)
         gen_sound = owned_generation(drama3_handlers.generate_drama3_sound, "drama3_sound")
         self.assertEqual(len(gen_sound.job_input_names), 2)
 

@@ -112,7 +112,47 @@ def generate_drama3(*values, progress=gr.Progress(track_tqdm=False)):
     """Inputs: text, then (voice, audio, transcript) per speaker slot, then settings and sound slots.
 
     The parameter list is generated from the slot count; see ``_drama3_signature``.
+    Lines with a saved take for the same text, voice and sampling are reused.
     """
+    yield from _drama3_job(values, progress)
+
+
+def regenerate_drama3_line(line, *values, progress=gr.Progress(track_tqdm=False)):
+    """Generate one line's take again (``line`` is its take key from the takes table), then remix."""
+    if not line:
+        raise gr.Error("Choose a line from the takes table first.")
+    yield from _drama3_job(values, progress, regenerate=(str(line),))
+
+
+def remix_drama3(*values, progress=gr.Progress(track_tqdm=False)):
+    """Rebuild the mix from saved takes, with the current sounds and effects; nothing is generated."""
+    yield from _drama3_job(values, progress, remix_only=True)
+
+
+def drama3_takes(output):
+    """Takes table rows and line choices for a generated result, from its settings snapshot."""
+    from h3_app.provenance import read_snapshot
+
+    if isinstance(output, dict):
+        output = output.get("path") or output.get("value")
+    chunks = ((read_snapshot(output) or {}).get("settings") or {}).get("chunks") or []
+    chunks = [chunk for chunk in chunks if chunk.get("take")]
+    rows, choices = [], []
+    for number, chunk in enumerate(chunks, 1):
+        speaker = chunk.get("name") or f"Speaker {chunk.get('speaker', 0)}"
+        text = " ".join(str(chunk.get("text", "")).split())
+        take = "reused" if chunk.get("reused") else chunk.get("check") or ""
+        if take == "skipped":
+            take = "new"
+        rows.append([number, speaker, text, chunk.get("seconds", ""), take])
+        short = text if len(text) <= 48 else text[:47] + "…"
+        choices.append((f"{number} · {speaker} · {short}", chunk["take"]))
+    return (gr.update(value=rows, visible=bool(rows)),
+            gr.update(choices=choices, value=choices[0][1] if choices else None, visible=bool(rows)),
+            gr.update(visible=bool(rows)))
+
+
+def _drama3_job(values, progress, **options):
     from h3_app.generation.optional_engines import generate_optional_engine, validate_request
     from h3_ui.drama3_controls import DRAMA3_SLOT_INPUT_NAMES
     slot_count = len(DRAMA3_SLOT_INPUT_NAMES)
@@ -127,7 +167,7 @@ def generate_drama3(*values, progress=gr.Progress(track_tqdm=False)):
     sounds = _drama3_sounds(sound_slots)
     request = generation_requests.Drama3Request(
         text, voices, temperature, top_p, top_k, max_frames, parallel, retries, tuple(names),
-        script_mode=script_mode, sounds=sounds,
+        script_mode=script_mode, sounds=sounds, **options,
     )
     validate_request(request)
     # SGLang-Omni reads staged clips by absolute path.
@@ -411,14 +451,16 @@ def _publish_drama3_signatures():
             sound_defaults.append((name, 5))
         else:
             sound_defaults.append((name, ""))
-    generate_drama3.__signature__ = inspect.Signature([
-        *_drama3_signature(("text",), (
-            ("temperature", empty), ("top_p", empty), ("top_k", empty), ("max_frames", empty),
-            ("parallel", 8), ("retries", 0), ("script_mode", "Basic"),
-            *sound_defaults,
-        )),
-        inspect.Parameter("progress", inspect.Parameter.KEYWORD_ONLY, default=gr.Progress(track_tqdm=False)),
-    ])
+    progress = inspect.Parameter("progress", inspect.Parameter.KEYWORD_ONLY, default=gr.Progress(track_tqdm=False))
+    generation = _drama3_signature(("text",), (
+        ("temperature", empty), ("top_p", empty), ("top_k", empty), ("max_frames", empty),
+        ("parallel", 8), ("retries", 0), ("script_mode", "Basic"),
+        *sound_defaults,
+    ))
+    generate_drama3.__signature__ = inspect.Signature([*generation, progress])
+    remix_drama3.__signature__ = inspect.Signature([*generation, progress])
+    regenerate_drama3_line.__signature__ = inspect.Signature([
+        inspect.Parameter("line", inspect.Parameter.POSITIONAL_OR_KEYWORD), *generation, progress])
     enhance_drama3_text.__signature__ = inspect.Signature([*_drama3_signature(
         ("text", "speaker_mode", "model", "temporary_api_key", "backend", "lightning_api_key",
          "lightning_model"), ()),

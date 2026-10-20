@@ -341,7 +341,8 @@ class GenerateTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
-        self.runtime = SimpleNamespace(script_dir=root, comfy_dir=root / "ComfyUI", output_dir=root / "output")
+        self.runtime = SimpleNamespace(script_dir=root, comfy_dir=root / "ComfyUI", output_dir=root / "output",
+                                       outputs_dir=root / "outputs")
         self.clips = {}
         for speaker in (0, 1):
             clip = root / f"voice{speaker}.wav"
@@ -352,7 +353,8 @@ class GenerateTests(unittest.TestCase):
         fake = MagicMock()
         fake.speech.side_effect = speech
         fake.payload.side_effect = server_class(None).payload
-        with patch.dict("os.environ", {"H3_DRAMA3_SGLANG_DATA": str(Path(self.temp.name) / "data")}), \
+        with patch.dict("os.environ", {"H3_DRAMA3_SGLANG_DATA": str(Path(self.temp.name) / "data"),
+                                       "H3_WORKSPACE_DIR": str(Path(self.temp.name) / "workspace")}), \
                 patch.object(generate, "shared_server", return_value=fake), \
                 patch.object(generate.environment, "prepare"), patch.object(generate, "ensure_model"), \
                 patch.object(generate, "write_snapshot") as snapshot:
@@ -714,6 +716,82 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         self.assertGreater(float(np.max(np.abs(np.diff(np.tile(clip, 2))))), 0.4)  # a hard cut jumps
         self.assertLess(float(np.max(np.abs(np.diff(looped)))), 0.01)
         np.testing.assert_allclose(looped[:RATE // 2], clip[:RATE // 2])  # first pass starts untouched
+
+
+class TakeReuseTests(unittest.TestCase):
+    setUp = GenerateTests.setUp
+    run_route = GenerateTests.run_route
+    request = GenerateTests.request
+    SCRIPT = "<|speaker:0|> Hello there, friend.\n<|speaker:1|> [laughs] Hi Alice.\n<|speaker:0|> Ready to go?"
+
+    @staticmethod
+    def speech(payload):
+        return float_wav(tone(expected_seconds(payload["input"])))
+
+    def inputs(self, fake):
+        return sorted(call.args[0]["input"] for call in fake.speech.call_args_list)
+
+    def keys(self, snapshot):
+        return [chunk["take"] for chunk in snapshot.call_args.args[1]["settings"]["chunks"]]
+
+    def test_editing_one_line_only_generates_that_line(self):
+        _fake, _updates, first = self.run_route(self.request(self.SCRIPT), self.speech)
+        edited = self.SCRIPT.replace("Ready to go?", "Shall we go?")
+        fake, updates, snapshot = self.run_route(self.request(edited), self.speech)
+        self.assertEqual(self.inputs(fake), ["Shall we go?"])
+        chunks = snapshot.call_args.args[1]["settings"]["chunks"]
+        self.assertEqual([c["reused"] for c in chunks], [True, True, False])
+        self.assertEqual(self.keys(snapshot)[:2], self.keys(first)[:2])
+        self.assertIn("(2 reused)", updates[-1].status)
+
+    def test_unchanged_script_needs_no_server(self):
+        self.run_route(self.request(self.SCRIPT), self.speech)
+        fake, _updates, _snapshot = self.run_route(self.request(self.SCRIPT), self.speech)
+        fake.speech.assert_not_called()
+        fake.ensure_ready.assert_not_called()
+
+    def test_regenerating_a_line_sends_exactly_one_request(self):
+        _fake, _updates, first = self.run_route(self.request(self.SCRIPT), self.speech)
+        line = self.keys(first)[1]
+        fake, _updates, snapshot = self.run_route(self.request(self.SCRIPT, regenerate=(line,)), self.speech)
+        self.assertEqual(self.inputs(fake), ["[laughs] Hi Alice."])
+        self.assertEqual(self.keys(snapshot), self.keys(first))
+        with self.assertRaisesRegex(H3Error, "changed since"):
+            self.run_route(self.request(self.SCRIPT, regenerate=("0" * 32,)), self.speech)
+
+    def test_remix_uses_saved_takes_only(self):
+        with self.assertRaisesRegex(H3Error, "3 line"):
+            self.run_route(self.request(self.SCRIPT, remix_only=True), self.speech)
+        self.run_route(self.request(self.SCRIPT), self.speech)
+        fake, updates, _snapshot = self.run_route(self.request(self.SCRIPT, remix_only=True), self.speech)
+        fake.speech.assert_not_called()
+        fake.ensure_ready.assert_not_called()
+        self.assertTrue(Path(updates[-1].output["value"]).is_file())
+
+    def test_unreadable_takes_are_generated_again(self):
+        _fake, _updates, first = self.run_route(self.request(self.SCRIPT), self.speech)
+        broken = Path(self.temp.name) / "workspace" / "drama3_takes" / f"{self.keys(first)[0]}.wav"
+        broken.write_bytes(b"not a wav")
+        fake, _updates, _snapshot = self.run_route(self.request(self.SCRIPT), self.speech)
+        self.assertEqual(self.inputs(fake), ["Hello there, friend."])
+        self.assertEqual(audio.decode_wav(broken.read_bytes())[1], RATE)
+
+    def test_take_identity_and_pruning(self):
+        from h3_app.drama3_serving import takes
+
+        base = dict(speaker=0, text="Hi.", reference="abc", transcript="Ref.",
+                    sampling={"temperature": 1.0, "top_p": 0.9, "top_k": 30}, max_new_tokens=256)
+        key = takes.take_key(**base)
+        for change in ({"speaker": 1}, {"text": "Hi!"}, {"reference": "abd"}, {"transcript": "Ref"},
+                       {"sampling": {**base["sampling"], "top_k": 0}}, {"max_new_tokens": 300}):
+            with self.subTest(change=change):
+                self.assertNotEqual(takes.take_key(**{**base, **change}), key)
+        root = Path(self.temp.name) / "takes"
+        takes.save_take(root, key, audio.encode_wav(tone(0.5), RATE))
+        takes.prune(root)
+        self.assertIsNotNone(takes.load_take(root, key))
+        takes.prune(root, now=10**12)
+        self.assertIsNone(takes.load_take(root, key))
 
 
 if __name__ == "__main__":

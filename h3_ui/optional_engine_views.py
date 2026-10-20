@@ -93,6 +93,9 @@ class OptionalEngineActions:
     generate_drama3_sounds: Callable | None = None
     sync_drama3_script_sounds: Callable | None = None
     switch_drama3_script_mode: Callable | None = None
+    regenerate_drama3_line: Callable | None = None
+    remix_drama3: Callable | None = None
+    drama3_takes: Callable | None = None
     generate_moss_image: Callable | None = None
     enhance_moss_image_prompt: Callable | None = None
 

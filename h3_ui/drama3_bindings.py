@@ -305,6 +305,26 @@ def _bind_sound_slots(view, actions, script_events):
             )
 
 
+def _bind_takes(view, actions, generation_inputs):
+    """Show the result's takes, and regenerate one line or remix from saved takes."""
+    if view.takes is None or actions.drama3_takes is None:
+        return
+    view.output.change(actions.drama3_takes, inputs=view.output,
+                       outputs=[view.takes, view.take_line, view.take_actions], **_QUIET)
+    jobs = [
+        bind_gpu_action(
+            button.click, _owned_view_generation(callback, "drama3", inputs), inputs=inputs,
+            outputs=[view.output, view.status], api_name=api_name, show_progress="minimal",
+        )
+        for button, callback, inputs, api_name in (
+            (view.regenerate_line, actions.regenerate_drama3_line, [view.take_line, *generation_inputs],
+             "regenerate_drama3_line"),
+            (view.remix, actions.remix_drama3, generation_inputs, "remix_drama3"),
+        )
+    ]
+    view.stop.click(fn=None, cancels=jobs, queue=False, api_name=False)
+
+
 def bind_drama3(view, actions):
     _bind_script_mode(view, actions)
     script_events = _bind_writer(view, actions)
@@ -320,6 +340,7 @@ def bind_drama3(view, actions):
     if view.sounds:
         generation_inputs.extend(drama3_sound_inputs(view))
     event = _bind_generation(view, "drama3", actions.generate_drama3, actions.interrupt, generation_inputs)
+    _bind_takes(view, actions, generation_inputs)
     store_events += _bind_auto(view, actions, generation_inputs)
     library_events = []
     if view.speaker_library is not None and actions.speaker_library_actions is not None:

@@ -55,6 +55,9 @@ class Drama3Request:
     script_mode: str = "Basic"
     # (sound name, audio path or "", description, duration_seconds)
     sounds: tuple[tuple[str, str, str, int], ...] = ()
+    # Saved-take keys to generate again; remix_only rebuilds the mix from saved takes alone.
+    regenerate: tuple[str, ...] = ()
+    remix_only: bool = False
 
 
 

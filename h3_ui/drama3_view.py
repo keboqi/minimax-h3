@@ -126,6 +126,11 @@ class Drama3View:
     save_all_speakers: gr.Button | None = None
     speaker_group_status: gr.Markdown | None = None
     speaker_library: SpeakerLibraryView | None = None
+    takes: gr.Dataframe | None = None
+    take_actions: gr.Row | None = None
+    take_line: gr.Dropdown | None = None
+    regenerate_line: gr.Button | None = None
+    remix: gr.Button | None = None
 
 
 def _heading(step, title, detail=""):
@@ -393,6 +398,16 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                 output.h3_metadata_root = gr.Column()
                 with gr.Column(elem_classes=["h3-action-dock"]):
                     run, stop, status = _actions("Generate speech")
+                takes = gr.Dataframe(headers=["#", "Speaker", "Line", "Seconds", "Take"], label="Takes",
+                                     interactive=False, wrap=True, visible=False)
+                with gr.Row(equal_height=True, visible=False) as take_actions:
+                    take_line = gr.Dropdown([], label="Line", scale=3, min_width=200,
+                        info="Generate speech reuses unchanged lines. Regenerate one line, or remix "
+                             "after changing sounds or effects.")
+                    with gr.Column(scale=1, min_width=140):
+                        regenerate_line = gr.Button("Regenerate line", size="sm")
+                        remix = gr.Button("Remix", size="sm")
+                regenerate_line.h3_stop = remix.h3_stop = stop
                 with gr.Column(elem_classes=["h3-drama3-auto"]):
                     gr.HTML('<div class="h3-drama3-auto-heading"><strong>Auto</strong>'
                             '<p>Rewrites the script, generates every voice (and every sound in Advanced), '
@@ -458,4 +473,9 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         save_all_speakers=save_all_speakers,
         speaker_group_status=speaker_group_status,
         speaker_library=speaker_library,
+        takes=takes,
+        take_actions=take_actions,
+        take_line=take_line,
+        regenerate_line=regenerate_line,
+        remix=remix,
     )

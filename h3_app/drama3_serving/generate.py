@@ -23,7 +23,7 @@ from h3_app.jobs import CURRENT_JOB
 from h3_app.provenance import write_snapshot
 from h3_app.workflows.drama3 import MAX_FRAMES, SPEAKER_TAG
 
-from . import audio, environment
+from . import audio, environment, takes as take_store
 from .planner import Chunk, expected_seconds, plan_turns_chunks
 from .server import ServerSettings, SpeechRequestError, ensure_model, persist_caches, shared_server
 from .speaker_effects import apply_speaker_effects
@@ -56,8 +56,9 @@ class Take:
     chunk: Chunk
     samples: np.ndarray
     rate: int
-    attempts: int
+    attempts: int  # 0 for a saved take
     check: audio.TakeCheck | None
+    wav: bytes = b""  # the server's response, saved for reuse
 
 
 def frame_budget(text: str, limit: int) -> int:
@@ -380,7 +381,11 @@ def _render_ast(
 
 def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf_token=None,
                            progress=lambda *args, **kwargs: None) -> Iterator[GenerationUpdate]:
-    """Generate speaker chunks, optionally check/retry them, render sounds/effects, then join/mix."""
+    """Generate speaker chunks, optionally check/retry them, render sounds/effects, then join/mix.
+
+    Saved takes are reused unless their key is in ``request.regenerate``; with
+    ``request.remix_only`` nothing is generated and every take must be saved.
+    """
     settings = ServerSettings.from_environment(runtime)
     server = shared_server(settings)
     started = time.monotonic()
@@ -429,8 +434,6 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
             raise H3Error("No clip for sound(s): " + ", ".join(f'"{name}"' for name in dict.fromkeys(missing)) + ".")
 
     label = LABEL
-    yield from _ready_server(settings, server, label, free_gpu, hf_token)
-    # The server stays loaded after the job; release_all() frees it for other engines.
     # Each request has one voice; the server tags its transcript as speaker 0 itself.
     references = {
         speaker: (_staged_reference(path, settings.media_dir), SPEAKER_TAG.sub("", transcript).strip())
@@ -439,30 +442,57 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     sampling = {"temperature": float(request.temperature), "top_p": float(request.top_p),
                 "top_k": int(request.top_k)}
 
+    def budget(chunk: Chunk) -> int:
+        return frame_budget(chunk.text, int(request.max_frames))
+
+    keys = {chunk.index: take_store.take_key(
+        speaker=chunk.speaker, text=chunk.text, reference=references[chunk.speaker][0].stem,
+        transcript=references[chunk.speaker][1], sampling=sampling, max_new_tokens=budget(chunk))
+        for chunk in chunks}
+    forced = set(getattr(request, "regenerate", ()) or ())
+    if forced and not forced & set(keys.values()):
+        raise H3Error("That line changed since it was generated. Generate speech, then choose the line again.")
+    store = take_store.takes_root(runtime)
+    takes: dict[int, Take] = {}
+    for chunk in chunks:
+        if keys[chunk.index] in forced:
+            continue
+        saved = take_store.load_take(store, keys[chunk.index])
+        if saved is not None:
+            takes[chunk.index] = Take(chunk, *saved, attempts=0, check=None)
+    reused = len(takes)
+    pending_chunks = [chunk for chunk in chunks if chunk.index not in takes]
+    if getattr(request, "remix_only", False) and pending_chunks:
+        raise H3Error(f"{len(pending_chunks)} line(s) have no saved take; generate speech first.")
+    if reused:
+        yield GenerationUpdate(None, f"Reusing {reused} saved take(s); generating {len(pending_chunks)}.")
+
     def synthesize(chunk: Chunk, stopped: threading.Event) -> Take:
         best = None
         for attempt in range(int(request.retries) + 1):
             clip, transcript = references[chunk.speaker]
             payload = server.payload(text=chunk.text, reference=clip, transcript=transcript,
-                                     max_new_tokens=frame_budget(chunk.text, int(request.max_frames)),
-                                     sampling=sampling)
-            samples, rate = audio.decode_wav(_request_speech(server, payload, stopped))
+                                     max_new_tokens=budget(chunk), sampling=sampling)
+            wav = _request_speech(server, payload, stopped)
+            samples, rate = audio.decode_wav(wav)
             if not request.retries:
-                return Take(chunk, samples, rate, attempt + 1, None)
+                return Take(chunk, samples, rate, attempt + 1, None, wav)
             check = audio.check_take(samples, rate, expected_seconds(chunk.text))
-            take = Take(chunk, samples, rate, attempt + 1, check)
+            take = Take(chunk, samples, rate, attempt + 1, check, wav)
             if check.ok:
                 return take
             if best is None or check.score < best.check.score:
                 best = take
         return best
 
-    takes: dict[int, Take] = {}
-    total = len(chunks)
-    workers = max(1, min(int(request.parallel), total))
-    with _request_pool(workers, "drama3-sglang") as (pool, stopped):
-        def run_all(batch: list[Chunk], stage: str) -> Iterator[GenerationUpdate]:
-            pending = {pool.submit(synthesize, chunk, stopped): chunk for chunk in batch}
+    if pending_chunks:
+        yield from _ready_server(settings, server, label, free_gpu, hf_token)
+        # The server stays loaded after the job; release_all() frees it for other engines.
+        total = len(pending_chunks)
+        done_count = 0
+        workers = max(1, min(int(request.parallel), total))
+        with _request_pool(workers, "drama3-sglang") as (pool, stopped):
+            pending = {pool.submit(synthesize, chunk, stopped): chunk for chunk in pending_chunks}
             while pending:
                 done, _ = wait(pending, timeout=HEARTBEAT_SECONDS, return_when=FIRST_COMPLETED)
                 job = CURRENT_JOB.get()
@@ -472,12 +502,15 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                     job.check()
                 for future in done:
                     chunk = pending.pop(future)
-                    takes[chunk.index] = future.result()
-                progress((len(takes), total), desc=stage)
-                yield GenerationUpdate(None, f"{stage}: {len(takes)}/{total} chunks "
+                    take = takes[chunk.index] = future.result()
+                    done_count += 1
+                    try:
+                        take_store.save_take(store, keys[chunk.index], take.wav)
+                    except OSError as exc:  # a full disk must not fail the job
+                        yield GenerationUpdate(None, f"Could not save take {chunk.index + 1}: {exc}")
+                progress((done_count, total), desc="Generating speech")
+                yield GenerationUpdate(None, f"Generating speech: {done_count}/{total} chunks "
                                              f"({time.monotonic() - started:.0f}s)")
-
-        yield from run_all(chunks, "Generating speech")
 
     ordered = [takes[chunk.index] for chunk in chunks]
     rate = ordered[0].rate
@@ -496,14 +529,18 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
             "script_mode": getattr(request, "script_mode", "Basic"),
             "sound_count": len(sound_nodes),
             "chunks": [{"speaker": t.chunk.speaker, "name": names.get(t.chunk.speaker, ""),
+                        "text": t.chunk.text, "take": keys[t.chunk.index], "reused": t.attempts == 0,
                         "attempts": t.attempts,
                         "speaker_effects": list(t.chunk.speaker_effects),
-                        "check": t.check.reason if t.check is not None else "skipped",
+                        "check": (t.check.reason if t.check is not None
+                                  else "reused" if t.attempts == 0 else "skipped"),
                         "warnings": list(t.check.warnings) if t.check is not None else [],
                         "seconds": round(len(t.samples) / t.rate, 2)} for t in ordered],
         },
     })
-    persist_caches()  # kernels JIT-compiled for this job's shapes survive restarts too
+    if pending_chunks:
+        persist_caches()  # kernels JIT-compiled for this job's shapes survive restarts too
+    take_store.prune(store)
     progress(1, desc="Complete")
     note = (f"\n{len(failed)} chunk(s) kept their best take after {int(request.retries) + 1} attempt(s) failed a check: "
             + "; ".join(f"chunk {t.chunk.index + 1} ({names.get(t.chunk.speaker, t.chunk.speaker)}) "
@@ -512,5 +549,6 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     if advised:
         note += "\nAudio advisories (takes kept): " + "; ".join(
             f"chunk {t.chunk.index + 1}: {t.check.reason}" for t in advised)
-    yield GenerationUpdate(fresh_audio(result), f"Drama 3 ({label}) complete · {len(chunks)} chunks · "
+    reuse_note = f" ({reused} reused)" if reused else ""
+    yield GenerationUpdate(fresh_audio(result), f"Drama 3 ({label}) complete · {len(chunks)} chunks{reuse_note} · "
                                         f"{len(joined) / rate:.1f}s in {time.monotonic() - started:.0f}s{note}")
