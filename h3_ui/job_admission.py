@@ -90,6 +90,18 @@ def execute_accepted(job_id: str, request: gr.Request):
 GENERATING_LABEL = "Generating\u2026"
 
 
+def family_busy(owner, family):
+    """Whether this process still runs or queues a job of the family.
+
+    Jobs restored from an earlier process await reconciliation and never stream
+    here, so counting them would leave Generate reading Generating… forever.
+    """
+    return any(
+        job.family == family and job.finished_at is None and not job.recovered
+        for job in JOBS.list_owned(owner)
+    )
+
+
 def busy_label(component):
     """A Generate button's original label, so it can read Generating… while its job runs."""
     label = getattr(component, "value", None) if isinstance(component, gr.Button) else None
@@ -290,10 +302,7 @@ def bind_accepted_action(
 
         def stop_availability(request: gr.Request):
             # Queued jobs of the same family keep Interrupt and Generating… until the last one ends.
-            running = any(
-                job.family == callback.job_family and job.finished_at is None
-                for job in JOBS.list_owned(require_owner(request))
-            )
+            running = family_busy(require_owner(request), callback.job_family)
             updates = []
             if stop_control is not None:
                 updates.append(gr.update(interactive=running))
