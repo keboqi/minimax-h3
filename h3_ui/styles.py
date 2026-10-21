@@ -1,4 +1,4 @@
-"""Design tokens and responsive styles for the MiniMax H3 Gradio UI."""
+"""Design tokens and responsive styles for the Prism Studio Gradio UI."""
 
 H3_SETUP_CSS = """
 .h3-settings-summary {
@@ -410,6 +410,39 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
   .h3-workspace :is(.h3-gallery-toolbar, .h3-gallery-filters) > * { width: 100%; min-width: 0 !important; }
   .h3-workspace .h3-gallery-status { overflow-wrap: anywhere; }
   .h3-workspace .h3-library-button { width: 100% !important; flex-basis: auto !important; }
+}
+/* Song: a guided draft beside the player and generation controls. */
+.h3-workspace .h3-song .styler { gap: 12px; background: transparent; }
+.h3-workspace .h3-song.h3-engine-view { border: 0; box-shadow: none; padding: 8px; }
+.h3-workspace .h3-song-intro { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 8px 22px; border-bottom: 1px solid var(--h3-border); margin-bottom: 10px; }
+.h3-workspace .h3-song-intro h2 { margin: 5px 0 8px; font-size: clamp(24px, 2.4vw, 34px); letter-spacing: -.045em; font-weight: 650; }
+.h3-workspace .h3-song-intro p:not(.h3-eyebrow) { margin: 0; color: var(--h3-muted); font-size: 14px; }
+.h3-workspace .h3-song-badge { border: 1px solid var(--h3-border); border-radius: 999px; padding: 9px 14px; font-size: 10px; letter-spacing: .14em; color: var(--h3-accent); white-space: nowrap; }
+.h3-workspace .h3-song-write-action { align-items: center; gap: 12px; padding-top: 4px; }
+.h3-workspace .h3-song-write-action > button { flex: 0 1 220px !important; border-radius: 10px; min-height: 44px; }
+.h3-workspace .h3-song-write-action > .block { flex: 1 1 180px !important; }
+.h3-workspace .h3-song-write-action p { color: var(--h3-muted); font-size: 12px; margin: 0; }
+.h3-workspace .h3-song-writer-status textarea { font-size: 12px; color: var(--h3-muted); }
+.h3-workspace .h3-song-draft-heading { border-top: 1px solid var(--h3-border); padding-top: 18px; margin-top: 8px; }
+.h3-workspace .h3-song-lyrics textarea { font-size: 15px; line-height: 1.7; }
+.h3-workspace .h3-song-editor-tabs { min-width: 0; }
+.h3-workspace .h3-song-duration-presets { gap: 6px; }
+.h3-workspace .h3-song-duration-presets > button { flex: 1 1 50px !important; min-width: 0 !important; border-radius: 8px; }
+.h3-workspace .h3-song .h3-composer .block:has(> .html-container .h3-panel-heading) { margin-top: 8px; }
+.h3-workspace .h3-song button.secondary { border: 1px solid var(--h3-border); }
+.h3-workspace .h3-song-stage { gap: 12px; border-top: 3px solid var(--h3-accent); }
+.h3-workspace .h3-song-stage .h3-action-dock { border: 0; padding: 10px 0 0; background: transparent; }
+.h3-workspace .h3-song-stage .h3-generation-buttons > button { border-radius: 10px; }
+.h3-workspace .h3-song,.h3-workspace .h3-song > .styler { overflow: clip !important; }
+@media (min-width: 768px) {
+  .h3-workspace .h3-song-stage { position: sticky; top: 12px; }
+}
+@media (max-width: 767px) {
+  .h3-workspace .h3-song .h3-generation-buttons { flex-wrap: wrap; }
+  .h3-workspace .h3-song .h3-generation-buttons > button { flex: 1 1 100%; min-width: 0; white-space: normal; }
+  .h3-workspace .h3-song-badge { display: none; }
+  .h3-workspace .h3-song-intro { padding: 8px 0 16px; }
+  .h3-workspace .h3-song-write-action > button { flex: 1 1 100% !important; }
 }
 /* Drama 3: Script over Cast on the left beside a sticky Speak stage,
    a Lines review below, and visible outlines on the small secondary buttons. */

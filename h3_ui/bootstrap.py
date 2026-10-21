@@ -164,14 +164,14 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
     defaults = catalog.UI_DEFAULTS
     initial_backend = services.backend_status()
     with (
-        gr.Blocks(title="MiniMax H3 Local", fill_width=True) as demo,
+        gr.Blocks(title="Prism Studio", fill_width=True) as demo,
         gr.Column(elem_classes=["h3-workspace"]),
     ):
         with gr.Row(elem_classes=["h3-workspace-header"]):
             gr.HTML(
-                '<header class="h3-hero"><span class="h3-brand-mark" aria-hidden="true">H3</span>'
-                '<div><p class="h3-eyebrow">Creative workspace</p>'
-                '<h1>MiniMax H3 Local</h1></div></header>',
+                '<header class="h3-hero"><span class="h3-brand-mark" aria-hidden="true">PS</span>'
+                '<div><p class="h3-eyebrow">Video · Image · Music · Audio</p>'
+                '<h1>Prism Studio</h1></div></header>',
                 scale=3,
             )
             summary_root = gr.Column(scale=2, elem_classes=["h3-header-status"])

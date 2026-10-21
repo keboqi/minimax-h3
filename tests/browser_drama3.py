@@ -80,7 +80,7 @@ def run():
                 expect.set_options(timeout=20000)
                 page.goto(url, wait_until="domcontentloaded")
                 page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for(timeout=60000)
-                page.locator(".h3-task-picker").get_by_label("TTS", exact=True).check()
+                page.locator(".h3-task-picker").get_by_label("Soundstage", exact=True).check()
                 form = page.locator('#h3-engine-tabs > [role="tabpanel"]:visible')
                 counts = {}
 
@@ -103,6 +103,8 @@ def run():
                 expect(panel).to_contain_text("16 speakers · 0 with a voice")
                 expect(panel).to_have_class(re.compile(r"\bopen\b"))  # the Cast column starts open
                 expect(form.locator("button", has_text="Speaker 15 · Character 15")).to_have_count(1)
+                # Voice slots start collapsed.
+                form.locator("button", has_text="Speaker 0 · Character 0").click()
                 name = form.get_by_label("Speaker 0 name")
                 name.click()
                 name.press("End")

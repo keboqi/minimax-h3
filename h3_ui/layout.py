@@ -75,8 +75,11 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
     with tabs:
         with gr.Tab("Create", id="create"):
             with gr.Row(elem_classes=["h3-task-picker"]):
+                # Keep persisted task values stable while updating the visible names.
                 task = gr.Radio(
-                    TASKS, value="Video", label="Task", scale=2, interactive=False
+                    [({"TTS": "Soundstage", "Audio / Music": "Song"}.get(task, task), task)
+                     for task in TASKS],
+                    value="Video", label="Task", scale=2, interactive=False
                 )
                 engine = gr.Dropdown(
                     [(e.label, e.id) for e in engines_for_task("Video")],
@@ -113,7 +116,7 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
                     moss_image = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Fibo 2.0", id="fibo2"):
                     fibo2 = gr.Group(elem_classes=["h3-engine-view"])
-                with gr.Tab("Drama 3 TTS", id="drama3"):
+                with gr.Tab("Soundstage", id="drama3"):
                     drama3 = gr.Group(elem_classes=["h3-engine-view"])
         with gr.Tab("Media", id="media") as gallery_tab:
             gallery = gr.Column(elem_classes=["h3-gallery-shell"])

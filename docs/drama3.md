@@ -1,4 +1,9 @@
-# Drama 3 speech studio
+# Soundstage
+
+Soundstage is Prism Studio's audio production workspace: write and direct
+scripts, cast voices, stage sound effects and music, review individual takes,
+and remix the result. Speech generation is powered by Fish Audio Drama 3.
+Open **Create → Soundstage** to begin.
 
 ## Compose and generate
 

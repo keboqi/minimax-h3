@@ -1,1 +1,1 @@
-"""Presentation helpers for the MiniMax H3 Gradio application."""
+"""Presentation helpers for the Prism Studio Gradio application."""

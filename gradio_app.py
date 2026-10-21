@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the MiniMax H3 workspace."""
+"""Launch Prism Studio."""
 from h3_ui.application import main
 
 if __name__ == "__main__":

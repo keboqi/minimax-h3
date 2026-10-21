@@ -333,7 +333,7 @@ def _heading(step, title, detail=""):
 
 
 def _voice_slot(speaker, names):
-    with gr.Accordion(drama3_slot_title(speaker), open=speaker == 0,
+    with gr.Accordion(drama3_slot_title(speaker), open=False,
                       visible=speaker < DRAMA3_VISIBLE_SLOTS, elem_classes=["h3-drama3-slot"]) as group:
         with gr.Row(equal_height=True):
             preset = gr.Dropdown(drama3_voice_choices(names), value=UPLOAD_VOICE,
@@ -449,9 +449,10 @@ def _sound_slot(index, names):
 def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("Global",), group_size=None):
     root.elem_classes = [*root.elem_classes, "h3-drama3"]
     with root:
-        gr.HTML('<div class="h3-drama3-intro"><p class="h3-eyebrow">Drama 3 · expressive speech</p>'
-                '<h2>Speech studio</h2><p>Write a script, cast the voices, then speak it and review it line '
-                'by line. Or paste any text and let <strong>Auto</strong> do every step.</p></div>')
+        gr.HTML('<div class="h3-drama3-intro"><p class="h3-eyebrow">Audio production · powered by Drama 3</p>'
+                '<h2>Soundstage</h2><p>Write and direct a script, cast the voices, add sound effects and music, '
+                'then review takes and remix the production. Or paste any text and let '
+                '<strong>Auto</strong> do every step.</p></div>')
         # Script over Cast on the left, with the Speak stage beside both.
         with gr.Row(equal_height=False, elem_classes=["h3-generator-shell", "h3-drama3-studio"]):
             with gr.Column(scale=3, min_width=360, elem_classes=["h3-drama3-left"]):

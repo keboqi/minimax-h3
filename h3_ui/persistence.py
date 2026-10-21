@@ -10,7 +10,7 @@ from .settings_controller import SETTING_NAMES
 # Keep the transport key/secret so existing encrypted v3 values remain readable.
 _STORAGE_KEY = "minimax-h3:settings:v3"
 _BROWSER_STATE_SECRET = "minimax-h3-ui-settings-v3"
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 # Runs only in the browser: drop every saved H3 preference, then reload so the
 # page restores from the app defaults in a brand-new session.
 RESET_BROWSER_SETTINGS_JS = """
@@ -180,6 +180,11 @@ def restore_preferences(saved, components):
     if version < 7 and values.get("drama3.voice_engine") == "Drama 3":
         # v7 made Qwen3-TTS VoiceDesign the default; older saves stored the previous default.
         values = {name: value for name, value in values.items() if name != "drama3.voice_engine"}
+    if version < 8 and values.get("workspace.engine") == "h3" and values.get("workspace.task") in (
+        "Image", "Audio / Music"
+    ):
+        # v8 made Qwen Image 2.1 and Music 3 the defaults; task switches staged the previous H3 default.
+        values = {name: value for name, value in values.items() if name != "workspace.engine"}
     # Turbo labels name their LoRA versions; carry renamed choices forward.
     from h3_app.catalog import LEGACY_TURBO_VARIANTS
 

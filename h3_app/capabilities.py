@@ -50,13 +50,18 @@ ENGINES += (
                      "OpenMOSS 5B text-to-image with text rendering, layout boxes and 4- or 8-step Turbo LoRAs."),
     EngineCapability("fibo2", "Fibo 2.0", ("Image",),
                      "Dev image generation and editing, with 4-step Edit Turbo and ordered reference images."),
-    EngineCapability("drama3", "Drama 3 (experimental)", ("TTS",),
-                     "Expressive speech and voice cloning. Built with Fish Audio."),
+    EngineCapability("drama3", "Soundstage (Drama 3)", ("TTS",),
+                     "Audio production with scripts, cast voices, sound effects, music, takes and mixing. "
+                     "Speech powered by Fish Audio Drama 3."),
 )
 TASKS = ("Video", "Image", "Audio / Music", "TTS")
+# Navigation and preference restoration use the first engine as the default.
+DEFAULT_ENGINES = {"Image": "qwen", "Audio / Music": "music"}
 
 
 def engines_for_task(task: str) -> tuple[EngineCapability, ...]:
     if task not in TASKS:
         raise ValueError("Unsupported creative task.")
-    return tuple(engine for engine in ENGINES if task in engine.tasks)
+    engines = tuple(engine for engine in ENGINES if task in engine.tasks)
+    default_engine = DEFAULT_ENGINES.get(task)
+    return tuple(sorted(engines, key=lambda engine: engine.id != default_engine))

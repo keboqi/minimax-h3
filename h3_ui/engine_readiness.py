@@ -29,12 +29,14 @@ def bind_engine_readiness(view, family):
     else:
         inputs = [view.caption if family == "music" else view.style, view.lyrics]
 
+        prompt = (
+            "Describe your song or add lyrics to start."
+            if family == "music"
+            else "Write a style or lyrics to start."
+        )
+
         def missing(description, lyrics):
-            return (
-                ""
-                if description.strip() or lyrics.strip()
-                else "Write a style or lyrics to start."
-            )
+            return "" if description.strip() or lyrics.strip() else prompt
 
     def readiness(*values):
         message = missing(*values)

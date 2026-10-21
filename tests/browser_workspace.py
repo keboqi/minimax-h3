@@ -408,12 +408,13 @@ def run():
                         "Generate with Qwen Image 2.1",
                     ),
                     (
-                        "Audio / Music",
+                        "Song",
                         "MiniMax Music 3",
-                        "Music caption",
+                        # The info text joins this field's accessible name.
+                        re.compile(r"^Song idea / music description"),
                         "Generate with Music 3",
                     ),
-                    ("Audio / Music", "YuE2", "Style prompt", "Generate with YuE2"),
+                    ("Song", "YuE2", "Style prompt", "Generate with YuE2"),
                 ):
                     phase[0] = f"engine switch: {label}"
                     page.get_by_role("tab", name="Create", exact=True).click()

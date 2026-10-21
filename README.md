@@ -1,9 +1,13 @@
-# MiniMax H3 launcher
+# Prism Studio
 
-A standalone Gradio interface and deployment toolkit for MiniMax H3 video
-generation on NVIDIA Blackwell GPUs. It provisions ComfyUI, the required H3
-models, SLA, Veda, Sol-Attn, Comfy Kitchen attention, SageAttention 2, Spectrum, and a
-bundled FirstBlockCache node.
+A creative workspace for video, images, music, and audio production, with a
+standalone Gradio interface and deployment toolkit for NVIDIA Blackwell GPUs.
+Prism Studio brings multiple generation engines together with shared media,
+projects, and jobs. It provisions ComfyUI, the required models, and acceleration
+tools for local and Modal deployments.
+
+Formerly the MiniMax H3 launcher. Existing launch commands, configuration keys,
+storage paths, and APIs remain compatible.
 
 ## Creative workspace
 
@@ -18,9 +22,21 @@ collapsed below. Generate actions sit directly under the result, and
 Ctrl/⌘+Enter generates with the visible engine.
 Mobile section links jump to compose, generate, and preview.
 Create supports H3,
-LTX 2.5, Qwen Image 2.1, FLUX 3, MOSS-Image, Fibo 2.0, MiniMax Music 3, YuE2 and Drama 3. Prompt suggestions require
+LTX 2.5, Qwen Image 2.1, FLUX 3, MOSS-Image, Fibo 2.0, MiniMax Music 3, YuE2 and
+[Soundstage](docs/drama3.md), the audio production workspace powered by Drama 3. Prompt suggestions require
 acceptance. Media includes indexed search, shared tags/favorites, lineage,
 image comparison and synchronized video playback.
+**Image** defaults to **Qwen Image 2.1**, and **Song** defaults to **MiniMax Music 3**.
+Both tasks remember explicit engine choices.
+
+For Song with MiniMax Music 3, start with a plain-language idea or a starter example.
+**Write / improve song** proposes a music description and original lyrics when
+the lyrics field is blank; existing lyrics are preserved. Review and accept the
+suggestion, then generate from the current draft in **The track** panel. Suggestions
+appear only when ready, with Undo available after acceptance. **Lyrics** and
+**Writing tools** have separate tabs; the latter contains writer settings and
+visual inspiration. Quick duration buttons set a 30-second, 1-, 2-, or 3-minute
+limit, and advanced generation controls stay collapsed.
 
 Jobs capture requests before the GPU queue, retain seeds for failed-variant
 retries, and support separate H3 finishing retries. SQLite stores technical job
@@ -48,6 +64,8 @@ backends; GPU inference and deployment are validated separately.
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
 - A dedicated MiniMax Music 3 tab for caption-and-lyrics song generation
 - A dedicated YuE2 tab for score-planned or direct lyrics-to-song generation
+- Soundstage for script writing and direction, voice casting, sound effects,
+  music, reusable takes, and mixing
 - All ten official LTX-2.5 ComfyUI workflows for two-stage generation,
   audio-to-video, text-to-audio, video editing, reference sheets, motion tracks,
   in/outpainting, and pose/depth/canny control

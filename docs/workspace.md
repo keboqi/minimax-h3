@@ -1,4 +1,4 @@
-# Workspace operating guide
+# Prism Studio operating guide
 
 ## Running and storage
 
