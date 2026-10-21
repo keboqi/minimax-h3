@@ -31,7 +31,7 @@ EXTRA_FIELDS = {
               "prompt_backend", "prompt_model", "lightning_model", "upsampler", "cfg"),
     "moss_image": ("preset", "turbo_variant", "model", "text_encoder", "vae", "width", "height", "seed", "steps",
                    "cfg", "rewrite_mode", "prompt_backend", "prompt_model", "lightning_model", "accelerate"),
-    "fibo2": ("model", "precision", "width", "height", "auto_size", "seed", "steps", "cfg"),
+    "fibo2": ("model", "precision", "width", "height", "edit_size", "seed", "steps", "cfg"),
     "drama3": ("temperature", "top_p", "top_k", "max_frames", "prompt_backend", "prompt_model",
                "lightning_model", "speaker_mode", "parallel", "retries", "asr_model",
                "voice_engine", "skip_existing"),

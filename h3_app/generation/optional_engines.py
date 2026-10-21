@@ -18,7 +18,10 @@ from h3_app.workflows.moss_image import (
     build_moss_image_graph, moss_image_model_keys, validate_moss_image_sampling, moss_spectrum_enabled,
     MOSS_SPECTRUM_NODE,
 )
-from h3_app.workflows.fibo2 import build_fibo2_graph, fibo2_model_keys, validate_fibo2_inputs
+from h3_app.workflows.fibo2 import (
+    FIBO2_EDIT_SIZE_MAX, FIBO2_EDIT_SIZE_TRAINED, FIBO2_EDIT_SIZES, FIBO2_MAX_PIXELS,
+    build_fibo2_graph, fibo2_model_keys, validate_fibo2_inputs,
+)
 from h3_app.workflows.moss_image_prompt import is_layout_prompt
 from h3_models import FLUX3_BASE_MODEL_CHOICES, MODEL_SPECS
 from h3_app.workflows.drama3 import (
@@ -47,17 +50,18 @@ def _integer(value, low, high, name, multiple=1):
     return value
 
 
-def flux3_edit_dimensions(source_width, source_height, *, maximize=False):
-    """Fit the first reference's aspect ratio on FLUX's 16-pixel grid.
+def aspect_edit_dimensions(source_width, source_height, *, maximize, max_pixels, min_side, max_side, grid,
+                           label):
+    """Fit the first reference's aspect ratio on a model's grid.
 
-    Match keeps the native area (downscaled to the 4 MP cap); Max scales toward 4 MP.
+    Match keeps the native area (downscaled to the cap); Max scales toward the cap.
     """
     source_width, source_height = int(source_width), int(source_height)
     if source_width <= 0 or source_height <= 0:
         raise H3Error("The first reference image has invalid dimensions.")
-    lo, hi, grid = FLUX3_MIN_SIDE, FLUX3_MAX_SIDE, FLUX3_GRID
+    lo, hi = min_side, max_side
     source_area = source_width * source_height
-    target_area = FLUX3_MAX_PIXELS if maximize else min(source_area, FLUX3_MAX_PIXELS)
+    target_area = max_pixels if maximize else min(source_area, max_pixels)
     scale = min(math.sqrt(target_area / source_area), hi / source_width, hi / source_height)
     target_area = max(lo * lo, min(hi, max(lo, source_width * scale)) * min(hi, max(lo, source_height * scale)))
     source_ratio = source_width / source_height
@@ -66,10 +70,10 @@ def flux3_edit_dimensions(source_width, source_height, *, maximize=False):
         (width, height)
         for width in range(lo, hi + 1, grid)
         for height in range(lo, hi + 1, grid)
-        if target_area * 0.85 <= width * height <= min(target_area, FLUX3_MAX_PIXELS)
+        if target_area * 0.85 <= width * height <= min(target_area, max_pixels)
     ]
     if not candidates:
-        raise H3Error("The first reference image's aspect ratio is outside FLUX 3's supported canvas.")
+        raise H3Error(f"The first reference image's aspect ratio is outside {label}'s supported canvas.")
     def drift(size):
         return abs(math.log((size[0] / size[1]) / source_ratio))
     # Up to 1% ratio drift is invisible; prefer the larger canvas within it (1920×1088, not 1792×1008).
@@ -77,6 +81,23 @@ def flux3_edit_dimensions(source_width, source_height, *, maximize=False):
     if close:
         return max(close, key=lambda size: (size[0] * size[1], -drift(size)))
     return min(candidates, key=lambda size: (drift(size), -(size[0] * size[1])))
+
+
+def flux3_edit_dimensions(source_width, source_height, *, maximize=False):
+    return aspect_edit_dimensions(source_width, source_height, maximize=maximize, max_pixels=FLUX3_MAX_PIXELS,
+                                  min_side=FLUX3_MIN_SIDE, max_side=FLUX3_MAX_SIDE, grid=FLUX3_GRID, label="FLUX 3")
+
+
+def resolve_fibo2_dimensions(request, *, input_dir=None):
+    """Edits default to the node's trained size (0 × 0); Match and Max keep the first image's aspect."""
+    if not request.reference_images or request.edit_size == QWEN_EDIT_SIZE_MANUAL:
+        return int(request.width), int(request.height)
+    if request.edit_size == FIBO2_EDIT_SIZE_TRAINED:
+        return 0, 0
+    size = first_reference_dimensions(request.reference_images[0], input_dir)
+    return aspect_edit_dimensions(*size, maximize=request.edit_size == FIBO2_EDIT_SIZE_MAX,
+                                  max_pixels=FIBO2_MAX_PIXELS, min_side=256, max_side=2048, grid=16,
+                                  label="Fibo 2.0")
 
 
 def resolve_flux3_dimensions(request, *, input_dir=None):
@@ -113,6 +134,8 @@ def validate_request(request):
         _integer(request.steps, 1, 100, "Steps")
         if isinstance(request.cfg, bool) or not math.isfinite(float(request.cfg)) or not 1 <= request.cfg <= 20:
             raise H3Error("Fibo CFG must be between 1 and 20.")
+        if request.edit_size not in FIBO2_EDIT_SIZES:
+            raise H3Error("Choose a valid Fibo 2.0 edit output size.")
         try:
             validate_fibo2_inputs(request.model_choice, request.prompt, request.reference_images,
                                   request.steps, request.cfg, request.precision)
@@ -205,8 +228,9 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
         values = {**asdict(request), "seed": seed}
         info = services.execution.object_info()
         if fibo:
-            graph = build_fibo2_graph(**values, output_stamp=str(int(time.time())),
-                                      output_nonce=uuid.uuid4().hex[:8])
+            values["width"], values["height"] = resolve_fibo2_dimensions(request, input_dir=runtime.input_dir)
+            graph = build_fibo2_graph(**{k: v for k, v in values.items() if k != "edit_size"},
+                                      output_stamp=str(int(time.time())), output_nonce=uuid.uuid4().hex[:8])
         elif moss:
             # Installs that predate the Spectrum-MOSS pin keep the original graph.
             wanted = moss_spectrum_enabled(request.accelerate, request.turbo_variant, request.steps)
@@ -247,8 +271,8 @@ def generate_optional_engine(request, services, runtime, *, progress=no_progress
         services.models.ensure_model_keys(keys)
         queued_at = time.time()
         prompt_id = services.execution.submit_prompt(graph, str(uuid.uuid4()))
-        auto_size = fibo and request.auto_size and bool(request.reference_images)
-        size = " · auto size" if auto_size else f" · {values['width']}×{values['height']}"
+        trained = fibo and values["width"] == 0
+        size = " · trained size" if trained else f" · {values['width']}×{values['height']}"
         yield GenerationUpdate(None, f"Queued {family} job {prompt_id} · seed {seed}{size}")
         for stage, done, total, step, steps in services.execution.poll_comfy_progress(prompt_id, graph):
             timings.transition(stage)

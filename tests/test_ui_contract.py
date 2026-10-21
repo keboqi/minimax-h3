@@ -615,7 +615,7 @@ class UiContractTests(unittest.TestCase):
         fibo = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_fibo2")
         labels = [self.components[i].get("props", {}).get("label") for i in fibo["inputs"]]
         self.assertEqual(labels, ["Image prompt / edit instruction / VGL JSON", "Fibo model", "Precision",
-            "Reference images (optional for Dev, up to 4)", "Width", "Height", "Auto size edits",
+            "Reference images (optional for Dev, up to 4)", "Width", "Height", "Edit output size",
             "Seed (-1 random)", "Steps", "CFG"])
         moss = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_moss_image")
         accelerate = self.components[moss["inputs"][-1]]

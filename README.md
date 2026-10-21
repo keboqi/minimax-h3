@@ -529,8 +529,13 @@ and the app validates and compiles it with a port of the skill's `compile_prompt
 and **Edit Turbo** for editing only (4 steps, CFG 1). Add up to four ordered reference
 images; refer to them as `<image_1>`, `<image_2>`, etc. Enter a plain short caption, an
 edit instruction or structured VGL JSON. No prompt-conversion API key is required.
-**Auto size edits** (on by default) uses Fibo's trained ~1 MP size for the first
-reference's aspect ratio; a single reference is center-cropped to the output size.
+Bria trained Fibo 2.0 at about 1 MP. The **1M** presets are its trained sizes for each
+aspect ratio (1024×1024, 1424×800 and so on); the **2M** presets, up to 1456×1456 or
+1920×1088, run above the trained size and their quality is unverified. **Edit output size**
+keeps the first reference's aspect ratio at the trained ~1 MP size (default), at its own
+size capped at 2 MP, or scaled up to 2 MP (**Max resolution**), or uses the width and
+height. A preset overrides it, as in FLUX 3. A single reference is center-cropped to the
+output size.
 The native nodes have no mask input, so masked edits are not offered.
 
 Fibo runs on ComfyUI's native Fibo 2.0 support (`TextEncodeFibo2`, CLIPLoader type

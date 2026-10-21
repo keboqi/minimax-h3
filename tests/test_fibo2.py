@@ -6,13 +6,23 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH
 from h3_app.errors import H3Error
 from h3_app.generation.optional_engines import (
     generate_optional_engine,
+    resolve_fibo2_dimensions,
     validate_request,
 )
 from h3_app.generation.requests import Fibo2Request
-from h3_app.workflows.fibo2 import build_fibo2_graph, fibo2_model_keys
+from h3_app.workflows.fibo2 import (
+    FIBO2_1M_RESOLUTION_PRESETS,
+    FIBO2_2M_RESOLUTION_PRESETS,
+    FIBO2_EDIT_SIZE_MAX,
+    FIBO2_EDIT_SIZE_TRAINED,
+    FIBO2_MAX_PIXELS,
+    build_fibo2_graph,
+    fibo2_model_keys,
+)
 from h3_models import FIBO2_MODEL_KEYS, FIBO2_PRECISION_INT8, LAZY_OPTIONAL_MODEL_KEYS, MODEL_SPECS
 
 
@@ -67,10 +77,10 @@ class FiboGraphTests(unittest.TestCase):
         self.assertEqual([sampler[name][1] for name in ("positive", "negative", "latent_image")], [0, 1, 2])
         self.assertEqual(inputs(graph, "SaveImage")[0]["filename_prefix"], "h3/image_staging/fibo2_123_abcd")
 
-    def test_edits_wire_ordered_references_bf16_encoder_and_auto_size(self):
+    def test_edits_wire_ordered_references_and_the_bf16_encoder(self):
         graph = build_fibo2_graph(prompt="put <image_2> on <image_1>", model_choice="Edit Turbo",
                                   precision=FIBO2_PRECISION_INT8, reference_images=("a.png", "b.png"),
-                                  width=1536, height=1024, steps=4, cfg=1)
+                                  width=0, height=0, steps=4, cfg=1)
         encode, = inputs(graph, "TextEncodeFibo2")
         self.assertEqual([source(graph, encode[f"images.image_{i}"])["inputs"]["image"] for i in (1, 2)],
                          ["a.png", "b.png"])
@@ -78,10 +88,39 @@ class FiboGraphTests(unittest.TestCase):
         self.assertEqual((encode["width"], encode["height"]), (0, 0))
         self.assertEqual(inputs(graph, "CLIPLoader")[0]["clip_name"], "qwen3vl_4b_bf16.safetensors")
         self.assertEqual(inputs(graph, "UNETLoader")[0]["unet_name"], "fibo2_edit_turbo_int8_convrot.safetensors")
-        fixed = build_fibo2_graph(prompt="edit", reference_images=("a.png",), width=1536, height=1024,
-                                  auto_size=False)
-        self.assertEqual((inputs(fixed, "TextEncodeFibo2")[0]["width"], inputs(fixed, "TextEncodeFibo2")[0]["height"]),
-                         (1536, 1024))
+
+
+class FiboSizeTests(unittest.TestCase):
+    def resolve(self, edit_size, source=(1920, 1080), refs=("a.png",), width=1248, height=832):
+        request = Fibo2Request("edit", reference_images=refs, width=width, height=height, edit_size=edit_size)
+        with patch("h3_app.generation.optional_engines.first_reference_dimensions", return_value=source):
+            return resolve_fibo2_dimensions(request)
+
+    def test_edit_sizes_keep_the_first_reference_aspect_ratio(self):
+        self.assertEqual(self.resolve(FIBO2_EDIT_SIZE_TRAINED), (0, 0))  # the node's trained ~1 MP size
+        self.assertEqual(self.resolve(QWEN_EDIT_SIZE_MATCH), (1920, 1072))  # own area, under the 2 MP cap
+        self.assertEqual(self.resolve(QWEN_EDIT_SIZE_MATCH, source=(4000, 3000)), (1680, 1248))
+        self.assertEqual(self.resolve(QWEN_EDIT_SIZE_MATCH, source=(640, 480)), (640, 480))
+        self.assertEqual(self.resolve(FIBO2_EDIT_SIZE_MAX, source=(640, 480)), (1680, 1248))
+        self.assertEqual(self.resolve(FIBO2_EDIT_SIZE_MAX, source=(1024, 1024)), (1456, 1456))
+        self.assertEqual(self.resolve(QWEN_EDIT_SIZE_MANUAL), (1248, 832))
+        self.assertEqual(self.resolve(FIBO2_EDIT_SIZE_MAX, refs=()), (1248, 832))  # generation uses width/height
+        for size in (self.resolve(FIBO2_EDIT_SIZE_MAX, source=source) for source in ((3000, 1000), (1000, 3000))):
+            self.assertLessEqual(size[0] * size[1], FIBO2_MAX_PIXELS)
+            self.assertLessEqual(max(size), 2048)
+        with self.assertRaisesRegex(H3Error, "edit output size"):
+            validate_request(Fibo2Request("edit", edit_size="Huge"))
+
+    def test_resolution_presets_are_trained_1m_and_2m_sizes_on_the_grid(self):
+        from h3_ui.qwen_bindings import qwen_resolution_preset_values
+        self.assertIn("1M · 16:9 · 1424×800", FIBO2_1M_RESOLUTION_PRESETS)
+        for presets, low, high in ((FIBO2_1M_RESOLUTION_PRESETS, 0.9, 1.15), (FIBO2_2M_RESOLUTION_PRESETS, 1.9, 2.2)):
+            for name in presets:
+                width, height = qwen_resolution_preset_values(name)
+                self.assertEqual((width % 16, height % 16), (0, 0), name)
+                self.assertTrue(low <= width * height / 1024**2 <= high, name)
+                self.assertLessEqual(width * height, FIBO2_MAX_PIXELS, name)
+                validate_request(Fibo2Request("a fox", width=width, height=height))
 
     def test_model_keys_are_ungated_and_registered(self):
         self.assertEqual(fibo2_model_keys("Dev", "BF16", False), ("fibo2_dev_bf16", "flux3_text_encoder", "flux3_vae"))
@@ -109,9 +148,10 @@ class FiboQueueTests(unittest.TestCase):
         info["CLIPLoader"] = {"input": {"required": {"type": [["flux3", "fibo2"]]}}}
         services = self.services(info)
         with patch("h3_app.generation.optional_engines.write_snapshot") as snapshot:
-            updates = list(generate_optional_engine(request, services, SimpleNamespace()))
+            updates = list(generate_optional_engine(request, services, SimpleNamespace(input_dir=None)))
         self.assertIn("Fibo 2.0 complete", updates[-1].status)
-        self.assertTrue(any("auto size" in update.status for update in updates))
+        self.assertTrue(any("trained size" in update.status for update in updates))
+        self.assertEqual(inputs(services.execution.submit_prompt.call_args.args[0], "TextEncodeFibo2")[0]["width"], 0)
         services.models.ensure_model_keys.assert_called_once_with(
             ("fibo2_edit_turbo_bf16", "fibo2_text_bf16", "flux3_vae"))
         settings = snapshot.call_args.args[1]["settings"]
@@ -122,11 +162,11 @@ class FiboQueueTests(unittest.TestCase):
         request = Fibo2Request("a fox")
         info = {name: {} for name in ("UNETLoader", "VAELoader", "KSampler", "VAEDecode", "SaveImage")}
         services = self.services(info)
-        updates = list(generate_optional_engine(request, services, SimpleNamespace()))
+        updates = list(generate_optional_engine(request, services, SimpleNamespace(input_dir=None)))
         self.assertIn("TextEncodeFibo2", updates[-1].status)
         info["TextEncodeFibo2"] = {}
         info["CLIPLoader"] = {"input": {"required": {"type": [["flux3"]]}}}
-        updates = list(generate_optional_engine(request, services, SimpleNamespace()))
+        updates = list(generate_optional_engine(request, services, SimpleNamespace(input_dir=None)))
         self.assertIn("Fibo 2.0 text encoder", updates[-1].status)
         services.execution.submit_prompt.assert_not_called()
         services.models.ensure_model_keys.assert_not_called()
@@ -154,7 +194,7 @@ class FiboIntegrationTests(unittest.TestCase):
         from h3_ui.persistence import PERSISTED_NAMES
         self.assertIn("fibo2", {engine.id for engine in engines_for_task("Image")})
         self.assertNotIn("fibo2", {engine.id for engine in engines_for_task("Video")})
-        for name in ("model", "precision", "auto_size"):
+        for name in ("model", "precision", "edit_size"):
             self.assertIn(f"fibo2.{name}", PERSISTED_NAMES)
         self.assertIn("moss_image.accelerate", PERSISTED_NAMES)
         steps, cfg = fibo2_sampling_defaults("Edit Turbo")

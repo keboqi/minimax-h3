@@ -2,11 +2,26 @@
 
 import json
 
+from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH
 from h3_app.graph import Graph
 from h3_models import FIBO2_MODEL_CHOICES, FIBO2_TEXT_ENCODERS, MODEL_SPECS
 
 FIBO2_MODELS = tuple(FIBO2_MODEL_CHOICES)
 FIBO2_MAX_REFERENCES = 4
+# Bria trained at ~1 MP; Max and the 2M presets stop at MOSS's 2M ceiling (1456 × 1456).
+FIBO2_MAX_PIXELS = 1456 * 1456
+FIBO2_EDIT_SIZE_TRAINED = "Trained size (~1 MP, recommended)"
+FIBO2_EDIT_SIZE_MAX = "Max resolution (up to 2 MP)"
+FIBO2_EDIT_SIZES = (FIBO2_EDIT_SIZE_TRAINED, QWEN_EDIT_SIZE_MATCH, FIBO2_EDIT_SIZE_MAX, QWEN_EDIT_SIZE_MANUAL)
+# Bria's trained sizes for each aspect ratio, as ComfyUI's TextEncodeFibo2 computes them.
+FIBO2_1M_RESOLUTION_PRESETS = (
+    "1M · 1:1 · 1024×1024", "1M · 4:3 · 1152×864", "1M · 3:2 · 1248×832", "1M · 16:9 · 1424×800",
+    "1M · 3:4 · 864×1152", "1M · 2:3 · 832×1248", "1M · 9:16 · 800×1424",
+)
+FIBO2_2M_RESOLUTION_PRESETS = (
+    "2M · 1:1 · 1456×1456", "2M · 4:3 · 1664×1248", "2M · 3:2 · 1776×1184", "2M · 16:9 · 1920×1088",
+    "2M · 3:4 · 1248×1664", "2M · 2:3 · 1184×1776", "2M · 9:16 · 1088×1920",
+)
 
 
 def validate_fibo2_inputs(model_choice, prompt, reference_images=(), steps=30, cfg=5.0, precision=None):
@@ -38,7 +53,7 @@ def fibo2_model_keys(model_choice, precision, editing):
 
 
 def build_fibo2_graph(*, prompt, model_choice="Dev", precision="BF16", reference_images=(),
-                      width=1024, height=1024, auto_size=True, seed=0, steps=30, cfg=5.0,
+                      width=1024, height=1024, seed=0, steps=30, cfg=5.0,
                       output_stamp="0", output_nonce="fibo"):
     validate_fibo2_inputs(model_choice, prompt, reference_images, steps, cfg, precision)
     unet, text_encoder, vae_key = fibo2_model_keys(model_choice, precision, bool(reference_images))
@@ -53,9 +68,8 @@ def build_fibo2_graph(*, prompt, model_choice="Dev", precision="BF16", reference
     images = {f"images.image_{index}": add("LoadImage", image=path)
               for index, path in enumerate(reference_images, 1)}
     # 0 x 0 lets the node pick Bria's trained ~1 MP size for the first reference's aspect ratio.
-    auto = auto_size and bool(reference_images)
     encoded = g.add("TextEncodeFibo2", clip=clip, prompt=prompt, negative_prompt="", vae=vae, **images,
-                    width=0 if auto else width, height=0 if auto else height, batch_size=1)
+                    width=width, height=height, batch_size=1)
     samples = add("KSampler", model=model, positive=Graph.out(encoded, 0), negative=Graph.out(encoded, 1),
                   latent_image=Graph.out(encoded, 2), seed=seed, steps=steps, cfg=cfg,
                   sampler_name="euler", scheduler="simple", denoise=1.0)

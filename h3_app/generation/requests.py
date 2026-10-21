@@ -47,7 +47,7 @@ class Fibo2Request:
     reference_images: tuple[str, ...] = ()
     width: int = 1024
     height: int = 1024
-    auto_size: bool = True
+    edit_size: str = "Trained size (~1 MP, recommended)"
     seed: int = -1
     steps: int = 30
     cfg: float = 5.0

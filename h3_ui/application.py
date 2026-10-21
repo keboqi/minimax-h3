@@ -2664,7 +2664,7 @@ def generate_moss_image(prompt, preset, turbo_variant, model_choice, text_encode
     yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
 
 
-def generate_fibo2(prompt, model_choice, precision, reference_images, width, height, auto_size, seed, steps, cfg,
+def generate_fibo2(prompt, model_choice, precision, reference_images, width, height, edit_size, seed, steps, cfg,
                    progress=gr.Progress(track_tqdm=False)):
     from dataclasses import replace
     from h3_app.generation.optional_engines import generate_optional_engine, validate_request
@@ -2673,7 +2673,7 @@ def generate_fibo2(prompt, model_choice, precision, reference_images, width, hei
     if isinstance(paths, (str, Path)):
         paths = [paths]
     request = generation_requests.Fibo2Request(
-        prompt, model_choice, precision, tuple(str(path) for path in paths), width, height, auto_size,
+        prompt, model_choice, precision, tuple(str(path) for path in paths), width, height, edit_size,
         seed, steps, cfg,
     )
     validate_request(request)

@@ -4,11 +4,19 @@ from dataclasses import dataclass
 
 import gradio as gr
 
-from h3_app.workflows.fibo2 import FIBO2_MODELS
+from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
+from h3_app.workflows.fibo2 import (
+    FIBO2_1M_RESOLUTION_PRESETS,
+    FIBO2_2M_RESOLUTION_PRESETS,
+    FIBO2_EDIT_SIZE_TRAINED,
+    FIBO2_EDIT_SIZES,
+    FIBO2_MODELS,
+)
 from h3_models import DEFAULT_FIBO2_PRECISION, FIBO2_MODEL_CHOICES
 
 from .image_library import build_image_file_input
 from .optional_engine_controls import _QUIET, _actions, _bind_generation
+from .optional_engine_views import _resolution_presets, bind_resolution_presets
 
 
 @dataclass(frozen=True)
@@ -19,7 +27,7 @@ class Fibo2View:
     reference_images: gr.File
     width: gr.Slider
     height: gr.Slider
-    auto_size: gr.Checkbox
+    edit_size: gr.Radio
     seed: gr.Number
     steps: gr.Slider
     cfg: gr.Slider
@@ -27,6 +35,8 @@ class Fibo2View:
     run: gr.Button
     stop: gr.Button
     status: gr.Textbox
+    resolution_small: gr.Dropdown
+    resolution_large: gr.Dropdown
 
 
 def fibo2_sampling_defaults(model):
@@ -51,12 +61,22 @@ def build_fibo2_view(root):
                          "Refer to images in order as <image_1>, <image_2>, etc.")
                 refs = build_image_file_input(label="Reference images (optional for Dev, up to 4)",
                                                file_count="multiple", file_types=["image"], type="filepath")
-                auto_size = gr.Checkbox(value=True, label="Auto size edits",
-                    info="With references, use Fibo's trained ~1 MP size for the first image's aspect ratio. "
-                         "A single reference is center-cropped to the output size.")
+                resolution_small, resolution_large = _resolution_presets(
+                    FIBO2_1M_RESOLUTION_PRESETS, FIBO2_2M_RESOLUTION_PRESETS,
+                    "1M resolution preset", "2M resolution preset",
+                    "Bria's trained ~1 MP sizes, recommended.",
+                    "About two megapixels, above the trained size; quality may vary. "
+                    "Edits use these instead of the edit output size.")
                 with gr.Row():
                     width = gr.Slider(256, 2048, value=1024, step=16, label="Width")
                     height = gr.Slider(256, 2048, value=1024, step=16, label="Height")
+                edit_size = gr.Radio(list(FIBO2_EDIT_SIZES), value=FIBO2_EDIT_SIZE_TRAINED,
+                    label="Edit output size", visible=False,
+                    info="Keep the first reference's aspect ratio at Bria's trained ~1 MP size, at its own size "
+                         "(capped at 2 MP), or scaled up to 2 MP; or use the width and height above. "
+                         "A single reference is center-cropped to the output size. Applies only to edits.")
+                refs.change(lambda paths: gr.update(visible=bool(paths)), inputs=refs, outputs=edit_size,
+                            queue=False, api_name=False)
                 with gr.Accordion("Sampling", open=False):
                     steps = gr.Slider(1, 100, value=30, step=1, label="Steps")
                     cfg = gr.Slider(1, 20, value=5, step=0.1, label="CFG")
@@ -65,13 +85,15 @@ def build_fibo2_view(root):
                 output = gr.Gallery(label="Generated image", columns=1, interactive=False)
                 output.h3_metadata_root = gr.Column()
                 run, stop, status = _actions("Generate / edit image")
-    return Fibo2View(prompt, model, precision, refs, width, height, auto_size, seed, steps, cfg,
-                     output, run, stop, status)
+    return Fibo2View(prompt, model, precision, refs, width, height, edit_size, seed, steps, cfg,
+                     output, run, stop, status, resolution_small, resolution_large)
 
 
 def bind_fibo2(view, actions):
+    # As in FLUX 3, a chosen preset takes priority over the edit output size.
+    bind_resolution_presets(view, extra_outputs=(view.edit_size,), extra_values=(QWEN_EDIT_SIZE_MANUAL,))
     view.model.change(fibo2_sampling_defaults, inputs=view.model, outputs=[view.steps, view.cfg], **_QUIET)
     return _bind_generation(view, "fibo2", actions.generate_fibo2, actions.interrupt, [
         view.prompt, view.model, view.precision, view.reference_images, view.width, view.height,
-        view.auto_size, view.seed, view.steps, view.cfg,
+        view.edit_size, view.seed, view.steps, view.cfg,
     ])
