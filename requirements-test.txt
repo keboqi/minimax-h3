@@ -5,3 +5,4 @@ requests
 websocket-client
 openai==3.16.2
 playwright==1.62.0
+websockets

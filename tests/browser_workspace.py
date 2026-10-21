@@ -12,6 +12,7 @@ import time
 import requests
 from PIL import Image
 from playwright.sync_api import sync_playwright, expect
+from tests.browser_navigation import choose_engine
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -80,16 +81,12 @@ def run():
                 time_to_ready = time.perf_counter() - loaded_at
                 # Task-filtered engine restoration includes choices unavailable
                 # in the default Video task. Passwords and prompts stay blank.
-                page.locator(".h3-task-picker").get_by_label(
-                    "Image", exact=True
-                ).check()
-                page.get_by_label("Engine", exact=True).click()
-                page.get_by_role("option", name="Qwen Image 2.1", exact=True).click()
+                choose_engine(page, "Image", "Qwen Image 2.1")
                 qwen = page.locator('#h3-engine-tabs > [role="tabpanel"]:visible')
                 qwen.get_by_label("Seed (-1 random)", exact=True).fill("123")
                 qwen.get_by_label("Seed (-1 random)", exact=True).press("Tab")
                 qwen.get_by_text("Prompt writer / enhancer", exact=True).click()
-                qwen.get_by_label("Temporary Lightning API key", exact=True).fill(
+                qwen.get_by_label("Temporary Gemini API key", exact=True).fill(
                     "fixture-secret"
                 )
                 page.wait_for_timeout(600)
@@ -100,7 +97,7 @@ def run():
                 )
                 qwen.get_by_text("Prompt writer / enhancer", exact=True).click()
                 expect(
-                    qwen.get_by_label("Temporary Lightning API key", exact=True)
+                    qwen.get_by_label("Temporary Gemini API key", exact=True)
                 ).to_have_value("")
                 page.locator(".h3-task-picker").get_by_label(
                     "Video", exact=True
@@ -114,11 +111,7 @@ def run():
                 replacement = ARTIFACTS / "replacement-fixture.png"
                 Image.new("RGB", (768, 1152), "navy").save(first)
                 Image.new("RGB", (640, 960), "teal").save(replacement)
-                page.locator(".h3-task-picker").get_by_label(
-                    "Image", exact=True
-                ).check()
-                page.get_by_label("Engine", exact=True).click()
-                page.get_by_role("option", name="MiniMax H3", exact=True).click()
+                choose_engine(page, "Image", "MiniMax H3")
                 h3.get_by_label("First / last frame", exact=True).check()
                 page.locator('#first-frame-image input[type="file"]').set_input_files(
                     str(first)
@@ -411,23 +404,19 @@ def run():
                         "Song",
                         "MiniMax Music 3",
                         # The info text joins this field's accessible name.
-                        re.compile(r"^Song idea / music description"),
+                        re.compile(r"Song idea / music description"),
                         "Generate with Music 3",
                     ),
-                    ("Song", "YuE2", re.compile(r"^Style prompt"), "Generate with YuE2"),
+                    ("Song", "YuE2", re.compile(r"Style prompt"), "Generate with YuE2"),
                 ):
                     phase[0] = f"engine switch: {label}"
                     page.get_by_role("tab", name="Create", exact=True).click()
-                    page.locator(".h3-task-picker").get_by_label(
-                        task, exact=True
-                    ).check()
-                    page.get_by_label("Engine", exact=True).click()
-                    page.get_by_role("option", name=label, exact=True).click()
+                    choose_engine(page, task, label)
                     form = page.locator('#h3-engine-tabs > [role="tabpanel"]:visible')
                     form.get_by_label(field, exact=True).fill("Fixture request")
                     if label == "YuE2":
                         # YuE2 needs lyrics too before Generate enables.
-                        form.get_by_label(re.compile(r"^Lyrics and song structure")).fill("[verse]\nFixture")
+                        form.get_by_label(re.compile(r"Lyrics and song structure")).fill("[verse]\nFixture")
                     form.get_by_role("button", name=action, exact=True).click()
                     expect(
                         form.get_by_label("Generation progress", exact=True)
@@ -621,11 +610,7 @@ def run():
                 page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for(
                     state="attached"
                 )
-                page.locator(".h3-task-picker").get_by_label(
-                    "Video", exact=True
-                ).check()
-                page.get_by_label("Engine", exact=True).click()
-                page.get_by_role("option", name="MiniMax H3", exact=True).click()
+                choose_engine(page, "Video", "MiniMax H3")
                 expect(page.locator("#h3-composer")).to_be_visible()
                 for width in (390, 1440):
                     page.set_viewport_size({"width": width, "height": 1000})

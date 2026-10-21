@@ -13,6 +13,7 @@ import tempfile
 import time
 import requests
 from playwright.sync_api import sync_playwright, expect
+from tests.browser_navigation import choose_engine
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -213,11 +214,7 @@ def run():
                 second.close()
                 # Audio retains the native-refinement preference for the next video.
                 # Song defaults to Music 3, so pick H3 to keep its settings card in view.
-                page.locator(".h3-task-picker").get_by_label(
-                    "Song", exact=True
-                ).check()
-                page.get_by_label("Engine", exact=True).click()
-                page.get_by_role("option", name="MiniMax H3", exact=True).click()
+                choose_engine(page, "Song", "MiniMax H3")
                 expect(card).to_contain_text("Audio · 5 seconds")
                 expect(card).not_to_contain_text("H3 output")
                 page.locator(".h3-task-picker").get_by_label(

@@ -11,6 +11,7 @@ import time
 import requests
 from PIL import Image
 from playwright.sync_api import expect, sync_playwright
+from tests.browser_navigation import choose_engine
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,9 +68,7 @@ def run():
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     page.goto(url, wait_until="domcontentloaded")
                     page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for(state="attached")
-                    page.locator(".h3-task-picker").get_by_label("Image", exact=True).check()
-                    page.get_by_label("Engine", exact=True).click()
-                    page.get_by_role("option", name="Fibo 2.0", exact=True).click()
+                    choose_engine(page, "Image", "Fibo 2.0")
                     view = page.locator('#h3-engine-tabs > [role="tabpanel"]:visible')
                     view.get_by_label("Fibo model", exact=True).click()
                     page.get_by_role("option", name="Edit Turbo", exact=True).click()

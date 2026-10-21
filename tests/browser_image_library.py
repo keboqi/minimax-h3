@@ -11,6 +11,7 @@ import time
 
 from PIL import Image
 from playwright.sync_api import expect, sync_playwright
+from tests.browser_navigation import choose_engine
 import requests
 
 
@@ -132,9 +133,7 @@ uvicorn.run(server, host='127.0.0.1', port={port}, log_level='warning')
                     expect(picture.locator(".thumbnail-item")).to_have_count(1)
                     picture.locator(".thumbnail-item").click()
                     expect(picture.locator("img").first).to_be_visible()
-                    page.locator(".h3-task-picker").get_by_label("Image", exact=True).check()
-                    page.get_by_label("Engine", exact=True).click()
-                    page.get_by_role("option", name="Qwen Image 2.1", exact=True).click()
+                    choose_engine(page, "Image", "Qwen Image 2.1")
                     page.get_by_text("Reference images and editing", exact=True).click()
                     inputs = page.locator(".h3-image-library-input").filter(
                         has=page.get_by_text("Input / reference images", exact=True)
@@ -173,9 +172,7 @@ uvicorn.run(server, host='127.0.0.1', port={port}, log_level='warning')
                     expect(media.get_by_text("Added image to Qwen · Input / reference images. Open Create to use it.", exact=True)).to_be_visible()
                     page.get_by_role("tab", name="Create", exact=True).click()
                     expect(inputs.get_by_role("row")).to_have_count(3)
-                    page.locator(".h3-task-picker").get_by_label("Video", exact=True).check()
-                    page.get_by_label("Engine", exact=True).click()
-                    page.get_by_role("option", name="MiniMax H3", exact=True).click()
+                    choose_engine(page, "Video", "MiniMax H3")
                     page.get_by_label("First / last frame", exact=True).check()
                     expect(page.locator(".h3-setup-card")).to_contain_text("640×960", timeout=15000)
                     page.get_by_label("Reference media", exact=True).check()

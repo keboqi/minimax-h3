@@ -275,7 +275,8 @@
         {"parameter_name": "output_resolution_2k", "parameter_has_default": false, "parameter_default": null, "type": "type_78"},
         {"parameter_name": "batch_count", "parameter_has_default": true, "parameter_default": 1, "type": "type_2"},
         {"parameter_name": "batch_edit_inputs", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
-        {"parameter_name": "prompt_enhancer", "parameter_has_default": true, "parameter_default": "Off", "type": "type_92"}
+        {"parameter_name": "prompt_enhancer", "parameter_has_default": true, "parameter_default": "Off", "type": "type_92"},
+        {"parameter_name": "lightning_strength", "parameter_has_default": true, "parameter_default": 0.5, "type": "type_95"}
       ],
       "returns": [
         {"type": "type_46", "component": "Gallery"},
@@ -1511,6 +1512,10 @@
         "lite",
         "int8"
       ]
+    },
+    "type_95": {
+      "type": "number",
+      "description": "numeric value between 0.05 and 1.5"
     }
   }
 }
