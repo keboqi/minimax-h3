@@ -10,6 +10,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import gradio as gr
+
 from h3_app import audio_tools, drama3_speakers, prompt_service, voice_design
 from h3_app.config import RuntimeConfig
 from h3_app.drama3_cast import parse_script_cast
@@ -369,16 +371,14 @@ class CastSlotTests(unittest.TestCase):
         metadata[6:9] = ["Mia", "Bright young voice", ""]
         runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompt_drama3.txt")})
         with patch.object(drama3_handlers, "_runtime_config", return_value=runtime):
-            prompt, status = drama3_handlers.copy_drama3_writer_prompt("MIA: Hello there.", "Auto",
-                                                                   *voices, *metadata, 4)
-            _skip, failed = drama3_handlers.copy_drama3_writer_prompt("  ", "Auto", *voices, *metadata, 4)
-        text = prompt["value"]
+            text = drama3_handlers.copy_drama3_writer_prompt("MIA: Hello there.", "Auto",
+                                                             *voices, *metadata, 4)
+            with self.assertRaises(gr.Error) as failed:
+                drama3_handlers.copy_drama3_writer_prompt("  ", "Auto", *voices, *metadata, 4)
         self.assertTrue(text.startswith(Path("prompt_drama3.txt").read_text(encoding="utf-8").strip()[:80]))
         self.assertIn('"speaker_id": 2, "name": "Mia"', text)
         self.assertTrue(text.rstrip().endswith("User text:\nMIA: Hello there."))
-        self.assertTrue(prompt["visible"])
-        self.assertIn("paste", status)
-        self.assertIn("speech text", failed)
+        self.assertIn("speech text", str(failed.exception))
 
     def test_pasted_reply_fills_slots_like_the_built_in_writer(self):
         from h3_ui.application import drama3_handlers

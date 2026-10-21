@@ -100,6 +100,27 @@ def _bind_script_mode(view, actions):
     )
 
 
+_COPY_PROMPT_JS = """async (prompt) => {
+  if (!prompt) return;
+  try {
+    await navigator.clipboard.writeText(prompt);
+  } catch (_error) {
+    const area = document.createElement('textarea');
+    area.value = prompt;
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+  }
+  const button = document.getElementById('h3-drama3-copy-prompt');
+  if (button) {
+    const label = 'Copy full writer prompt';
+    button.textContent = 'Copied';
+    setTimeout(() => { button.textContent = label; }, 1500);
+  }
+}"""
+
+
 def _writer_slot_inputs(view):
     mode_inputs = [view.script_mode] if view.script_mode is not None else []
     return [*drama3_voice_inputs(view), *drama3_cast_inputs(view), view.shown_slots, *mode_inputs,
@@ -118,9 +139,11 @@ def _bind_writer(view, actions):
     """Rewrite, copy and paste; returns the events that may change the script."""
     writer_slots = _writer_slot_inputs(view)
     writer_outputs = _writer_outputs(view)
+    # Copying never touches the rewrite's outputs, so a running rewrite keeps going.
     view.copy_prompt.click(actions.copy_drama3_writer_prompt,
                            inputs=[view.text, view.speaker_mode, *writer_slots],
-                           outputs=[view.writer_prompt, view.enhance_status], **_QUIET)
+                           outputs=view.writer_prompt, **_QUIET,
+                           ).success(fn=None, js=_COPY_PROMPT_JS, inputs=view.writer_prompt, api_name=False)
     applied = view.apply_reply.click(
         actions.apply_drama3_writer_reply,
         inputs=[view.pasted_reply, view.text, view.speaker_mode, *writer_slots],

@@ -443,18 +443,19 @@ def enhance_drama3_text(text, speaker_mode, model, temporary_api_key, backend, l
 
 
 def copy_drama3_writer_prompt(text, speaker_mode, *slots):
-    """The full writer prompt (system prompt, slot context and speech text) for an external chat model."""
+    """The full writer prompt (system prompt, slot context and speech text) for an external chat model.
+
+    It only fills the browser's clipboard, so a running rewrite and its status are left alone.
+    """
     try:
         names, _existing, cast_context, _shown = _drama3_writer_slots(slots)
         script_mode, sound_context = _drama3_writer_mode_and_sounds(slots)
-        prompt = prompt_service.drama3_full_prompt(
+        return prompt_service.drama3_full_prompt(
             text, names, speaker_mode, runtime=_runtime_config(),
             cast_context=cast_context, script_mode=script_mode, sound_context=sound_context,
         )
     except H3Error as exc:
-        return gr.skip(), f"Could not build the writer prompt: {exc}"
-    return (gr.update(value=prompt, visible=True),
-            "Copy the full prompt into any chat model, then paste its JSON reply below and apply it.")
+        raise gr.Error(f"Could not build the writer prompt: {exc}") from exc
 
 
 def apply_drama3_writer_reply(reply, text, speaker_mode, *slots):

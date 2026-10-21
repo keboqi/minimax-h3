@@ -56,8 +56,8 @@ does. Interrupt controls stop their corresponding jobs.
 ## Script writer and cast
 
 To use a chat model outside the app, open **Use another chat model** under
-**Rewrite as a Drama 3 script**, click **Show full writer prompt**, and copy it.
-It contains the system prompt, the current speaker slots, and the speech text.
+**Rewrite as a Drama 3 script** and click **Copy full writer prompt**; a running
+rewrite keeps going. The prompt contains the system prompt, the current speaker slots, and the speech text.
 Paste the model's JSON reply (code fences and surrounding chat text are fine)
 and click **Apply pasted reply**; it is validated like the built-in writer
 before the script and speaker slots change.

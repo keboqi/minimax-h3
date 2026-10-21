@@ -101,7 +101,7 @@ class Drama3View:
     skip_existing: gr.Checkbox
     voices_panel: gr.Accordion
     copy_prompt: gr.Button
-    writer_prompt: gr.Textbox
+    writer_prompt: gr.State
     pasted_reply: gr.Textbox
     apply_reply: gr.Button
     script_mode: gr.Radio | None = None
@@ -497,9 +497,9 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             gr.Markdown("Copy the full writer prompt into any chat model, then paste its JSON reply. "
                                         "It is checked like the built-in writer before anything changes.",
                                         elem_classes=["h3-drama3-note"])
-                            copy_prompt = gr.Button("Show full writer prompt", size="sm")
-                            writer_prompt = gr.Textbox(label="Full writer prompt", lines=8, max_lines=20,
-                                                       interactive=False, visible=False, buttons=["copy"])
+                            copy_prompt = gr.Button("Copy full writer prompt", size="sm",
+                                                    elem_id="h3-drama3-copy-prompt")
+                            writer_prompt = gr.State("")
                             pasted_reply = gr.Textbox(label="Pasted writer reply", lines=6, max_lines=20,
                                                       placeholder='{"script": "Mia: ...", "speakers": [{"speaker_id": 0, "name": "Mia", ...}]}')
                             apply_reply = gr.Button("Apply pasted reply", size="sm", variant="primary")
