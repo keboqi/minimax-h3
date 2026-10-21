@@ -1043,14 +1043,14 @@ hosted prompt enhancer available without entering a key in the UI, also store
 The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
-The deployment pins ComfyUI at immutable revision
-`e3699a745d513941f17ecbc9a3c58d00fc7768cb`, the head of kijai's native Fibo 2.0 pull
-request [Comfy-Org/ComfyUI#17240](https://github.com/Comfy-Org/ComfyUI/pull/17240),
-fetched by SHA from the official repository. It is v0.42.1 plus 12 development commits
-(MOSS RoPE/color-depth controls, H3 PDD LoRA fixes, partner API nodes) and the Fibo
-model, text encoder and node. Its requirements match v0.42.1: frontend package 1.55.18,
-Comfy Kitchen 0.2.39, upstream aimdo 0.5.6, workflow templates 0.11.89 and embedded
-docs 0.5.14. Return to an official release once the pull request merges.
+The deployment pins ComfyUI at immutable official-master revision
+`7a28332047b6af638dc6c7f72ef3481a718769fd`, which includes kijai's merged native Fibo 2.0
+support ([Comfy-Org/ComfyUI#17240](https://github.com/Comfy-Org/ComfyUI/pull/17240)).
+It is v0.42.1 plus development commits: MOSS RoPE/color-depth controls, H3 PDD LoRA fixes,
+the Fibo model, text encoder and node, a top-p nucleus fix for native text generation, a
+Pad Image node and an opt-in agent host (off unless `--enable-agent`). Its requirements:
+frontend package 1.57.1, Comfy Kitchen 0.2.39, upstream aimdo 0.5.6, workflow templates
+0.11.93 and embedded docs 0.5.14. Return to an official release once one includes Fibo 2.0.
 v0.42 adds native MOSS-Image, Qwen 3.x decode speedups, TextGenerate cleanup,
 baked-in H3 PDD heads and synchronized CUDA-graph teardown.
 v0.40.0 fixed Qwen Image 2.1 caching under low VRAM and updates shared

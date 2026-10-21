@@ -467,6 +467,7 @@ class SglangOmniServer:
         sampling = dict(sampling)
         # The Drama 3 request builder requires a positive top_k. SGLang uses
         # 1 << 30 (TOP_K_ALL) to represent the whole vocabulary internally.
+        # It uncaps only the main token; codebook heads stay capped at 30.
         if sampling.get("top_k") == 0:
             sampling["top_k"] = 1 << 30
         # No reference lets Drama 3 invent the voice from the text's cues (voice design).

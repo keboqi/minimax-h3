@@ -38,10 +38,10 @@ LTX_HDR_REQUIREMENTS = ("colour-science==0.4.6", "openimageio==3.0.12.0")
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "6063fafbd9c3b85c5ff40aef435ae11b2844e558"
 
-# ComfyUI v0.42.1 plus kijai's native Fibo 2.0 support (Comfy-Org/ComfyUI#17240 head, fetched by
-# SHA from the official repo). Return to an official release once it merges. Keep this source
-# paired with Kitchen 0.2.39 and Drama's new/old cache compatibility.
-COMFY_REF = "e3699a745d513941f17ecbc9a3c58d00fc7768cb"
+# ComfyUI master after native Fibo 2.0 merged (Comfy-Org/ComfyUI#17240), with the top-p
+# nucleus fix and frontend 1.57.1. Return to an official release once one includes Fibo 2.0.
+# Keep this source paired with Kitchen 0.2.39 and Drama's new/old cache compatibility.
+COMFY_REF = "7a28332047b6af638dc6c7f72ef3481a718769fd"
 # Drama 3 speech runs on SGLang-Omni; this node pack supplies the Qwen3-ASR transcription nodes.
 DRAMA3_REPO = "https://github.com/PedroMarinhoDev/ComfyUI-Drama3.git"
 # CUDA expert kernels/graphs, plus compatibility with Core's new Qwen cache API.
@@ -52,11 +52,11 @@ DRAMA3_SGLANG_PYTHON = "3.12"
 # Parallel Drama 3 backend: SGLang-Omni main. Drama 3
 # (FishOmniModel) landed after v0.1.8 (#2763, 2026-10-13); pin a main commit.
 DRAMA3_SGLANG_OMNI_REPO = "https://github.com/sgl-project/sglang-omni.git"
-DRAMA3_SGLANG_OMNI_REF = "caae7eb18d8c8d22643d4cf8e377226a3b1259e9"
+DRAMA3_SGLANG_OMNI_REF = "f31cf9e9af749040ffa6dbdf064882c443a2fd37"
 DRAMA3_HF_REPO = "fishaudio/drama-3"
 DRAMA3_HF_REVISION = "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
 COMFY_KITCHEN_VERSION = "0.2.39"
-COMFY_FRONTEND_VERSION = "1.55.18"
+COMFY_FRONTEND_VERSION = "1.57.1"
 WSPROTO_VERSION = "1.2.0"
 # Drama 3 speaker vocal effects; without it they fall back to cruder scipy versions.
 PEDALBOARD_VERSION = "0.9.19"
@@ -424,10 +424,10 @@ def selftest() -> None:
     assert KORNIA_RS_VERSION == "0.1.14"
     assert LTX_HDR_REQUIREMENTS == ("colour-science==0.4.6", "openimageio==3.0.12.0")
     assert KERNELS_VERSION == "0.16.0"
-    assert COMFY_REF == "e3699a745d513941f17ecbc9a3c58d00fc7768cb"
+    assert COMFY_REF == "7a28332047b6af638dc6c7f72ef3481a718769fd"
     assert DRAMA3_REF == "67a733a96890637dc27b1914974ad00c569405fb"
     assert COMFY_KITCHEN_VERSION == "0.2.39"
-    assert COMFY_FRONTEND_VERSION == "1.55.18"
+    assert COMFY_FRONTEND_VERSION == "1.57.1"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 12
     with tempfile.TemporaryDirectory() as temp:

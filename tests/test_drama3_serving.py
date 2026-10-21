@@ -195,7 +195,7 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(commands[2][commands[2].index("--overrides") + 1], "/opt/h3/drama3-sglang-venv/h3-overrides.txt")
         self.assertIn("--prerelease=allow", commands[2])
         self.assertIn("--torch-backend=cu130", commands[2])
-        self.assertTrue(commands[2][-1].startswith("sglang-omni[fishaudio] @ git+https://github.com/sgl-project/sglang-omni.git@caae7eb"))
+        self.assertTrue(commands[2][-1].startswith("sglang-omni[fishaudio] @ git+https://github.com/sgl-project/sglang-omni.git@f31cf9e"))
         self.assertEqual(environment.default_venv(Path("/app")), Path("/app/h3/drama3-sglang-venv"))
     def test_readiness_requires_the_current_fingerprint(self):
         with tempfile.TemporaryDirectory() as root:
