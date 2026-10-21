@@ -600,6 +600,10 @@ def enhance_yue2_prompt(
         candidate_lyrics = marker_match.group(2).strip()
         if candidate_lyrics.upper() != "N/A":
             generated_lyrics = candidate_lyrics
+        elif not generated_lyrics:
+            # YuE2 needs section tags even for an instrumental; older/custom
+            # writer prompts still answer N/A.
+            generated_lyrics = "[Intro]\n\n[Instrumental]\n\n[Instrumental]\n\n[Outro]"
     return generated, generated_lyrics, status
 
 

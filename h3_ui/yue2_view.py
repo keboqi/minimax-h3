@@ -10,6 +10,7 @@ import gradio as gr
 
 from .prompt_review import build_prompt_review
 from .prompt_writer_controls import build_remote_prompt_writer_controls
+from .song_controls import duration_presets, panel_heading, song_intro
 
 
 @dataclass(frozen=True)
@@ -55,57 +56,104 @@ def build_yue2_view(
     model_choices: Sequence[str],
     defaults: Mapping[str, Any],
 ) -> YuE2View:
+    root.elem_classes = [*root.elem_classes, "h3-song"]
     with root:
-        gr.Markdown(
-            "## YuE2\nGenerate full songs from a style prompt and sectioned lyrics on the shared ComfyUI backend. Full and Melody modes plan a score first; Direct skips planning. The INT8 checkpoint downloads on first use. Model license: CC-BY-NC-4.0. [Model details](https://huggingface.co/Comfy-Org/YuE2)"
+        song_intro(
+            "YuE2 · score-planned songs",
+            "Plan the melody, then sing it.",
+            "Sketch an idea and YuE2 writes a score before it sings, for songs up to 15 minutes. "
+            'Model license: CC-BY-NC-4.0 · <a href="https://huggingface.co/Comfy-Org/YuE2" '
+            'target="_blank" rel="noopener">model details</a>',
+            "SCORE STUDIO",
         )
         with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
             with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
-                gr.Markdown("### Compose")
+                panel_heading("01", "The idea", "Describe the genre, voice, instruments, and mood.")
                 style = gr.Textbox(
                     label="Style prompt",
-                    lines=6,
-                    placeholder="Indie pop, warm female vocal, clean guitar, restrained drums...",
+                    lines=3,
+                    placeholder=(
+                        "Indie pop with a warm female vocal, clean guitar, restrained drums, "
+                        "and a hopeful, building chorus."
+                    ),
+                    info="Start with an idea, or paste a finished style prompt to generate directly.",
                 )
-                lyrics = gr.Textbox(
-                    label="Lyrics and song structure",
-                    lines=8,
-                    placeholder="[verse]\nLyrics here...\n\n[chorus]\n...",
+                with gr.Accordion("Try a starter idea", open=False):
+                    gr.Examples(
+                        examples=[
+                            ["Anthemic indie rock about a night drive, with a raspy male vocal, "
+                             "driving drums, wide guitars, and a big final chorus."],
+                            ["A soulful R&B slow jam about a late-night phone call, with a smooth "
+                             "female vocal, Rhodes piano, and a deep, warm bass."],
+                            ["A bright Mandopop song about the first day of summer, with an airy "
+                             "female vocal, acoustic guitar, and handclaps."],
+                        ],
+                        inputs=style, label="Choose an idea, then make it your own",
+                        cache_examples=False,
+                    )
+                with gr.Row(elem_classes=["h3-song-write-action"]):
+                    enhance = gr.Button("Write / improve song", variant="primary")
+                    gr.Markdown("Draft a style and lyrics from your idea. **Review before applying.**")
+                enhance_status = gr.Textbox(
+                    label="Prompt writer status", lines=1, interactive=False, show_label=False,
+                    placeholder="Ready to help write your song.", elem_classes=["h3-song-writer-status"],
                 )
-                with gr.Accordion("Score override (optional)", open=False):
-                    abc = gr.Textbox(
-                        label="ABC score override (optional)",
-                        lines=7,
-                        placeholder="Leave blank to let YuE2 create the score.",
-                    )
-                with gr.Accordion("Prompt writer / enhancer", open=False):
-                    gr.Markdown(
-                        "Create or enhance the style prompt and sectioned lyrics for YuE2."
-                    )
-                    writer = build_remote_prompt_writer_controls(
-                        prompt_models, default_prompt_model
-                    )
-                    prompt_model = writer.model
-                    api_key = writer.gemini_api_key
-                    prompt_backend = writer.backend
-                    lightning_api_key = writer.lightning_api_key
-                    lightning_model = writer.lightning_model
-                    enhance = gr.Button("Generate / enhance YuE2 prompt")
-                    enhance.h3_review = build_prompt_review()
-                    enhance_status = gr.Textbox(
-                        label="Prompt writer status", lines=2, interactive=False
-                    )
-                action_root = gr.Column(elem_classes=["h3-action-dock"])
-                settings_root = gr.Column(elem_classes=["h3-essentials"])
-            with gr.Column(scale=2, min_width=320, elem_classes=["h3-preview-panel"]):
-                gr.Markdown("### Results")
+                enhance.h3_review = build_prompt_review(preview_label="Suggested song draft", compact=True)
+                panel_heading("02", "The draft", "YuE2 sings these lyrics. The writer keeps words you have already added.",
+                              classes="h3-song-draft-heading")
+                with gr.Tabs(elem_classes=["h3-song-editor-tabs"]):
+                    with gr.Tab("Lyrics"):
+                        lyrics = gr.Textbox(
+                            label="Lyrics and song structure", lines=9,
+                            placeholder="Leave blank to write from your idea, or paste your lyrics here.",
+                            info="YuE2 needs lyrics or section tags. For an instrumental, use only "
+                                 "[Instrumental] sections.",
+                            elem_classes=["h3-song-lyrics"],
+                        )
+                    with gr.Tab("Score"):
+                        gr.Markdown(
+                            "Full and Melody plan an ABC score before singing; Direct skips planning. "
+                            "Paste a score to reuse a melody you liked."
+                        )
+                        abc = gr.Textbox(
+                            label="ABC score override (optional)",
+                            lines=7,
+                            placeholder="Leave blank to let YuE2 create the score.",
+                            info="Ignored by Direct generation.",
+                        )
+                    with gr.Tab("Writing tools"):
+                        gr.Markdown("Choose a writing service and supply its API key if one isn't configured.")
+                        writer = build_remote_prompt_writer_controls(prompt_models, default_prompt_model)
+                prompt_model = writer.model
+                api_key = writer.gemini_api_key
+                prompt_backend = writer.backend
+                lightning_api_key = writer.lightning_api_key
+                lightning_model = writer.lightning_model
+            with gr.Column(scale=2, min_width=320, elem_classes=["h3-preview-panel", "h3-song-stage"]):
+                panel_heading("03", "The track", "Turn your current draft into music.")
                 output = gr.Audio(
                     label="Generated song", type="filepath", interactive=False
                 )
                 output.h3_metadata_root = gr.Column()
-                with action_root:
+                # A Dropdown keeps the published /generate_yue2 schema unchanged.
+                mode = gr.Dropdown(
+                    choices=[
+                        ("Full score", "full"),
+                        ("Melody", "melody"),
+                        ("Direct", "off"),
+                    ],
+                    value=defaults["mode"],
+                    label="Score mode",
+                    info="Full plans melody and accompaniment; Melody plans the vocal line; Direct is fastest.",
+                )
+                duration = gr.Slider(
+                    1, 900, value=defaults["duration"], step=1, label="Maximum seconds",
+                    info="A length limit, not an exact duration. The song may finish sooner.",
+                )
+                duration_presets(duration, ((60, "1 min"), (120, "2 min"), (180, "3 min"), (300, "5 min")))
+                with gr.Column(elem_classes=["h3-action-dock"]):
                     readiness = gr.HTML(
-                        '<p class="h3-readiness" role="alert">Write a prompt to start.</p>'
+                        '<p class="h3-readiness" role="alert">Describe your song and add lyrics to start.</p>'
                     )
                     with gr.Row(elem_classes=["h3-generation-buttons"]):
                         run = gr.Button(
@@ -120,42 +168,24 @@ def build_yue2_view(
                     status = gr.Textbox(
                         label="Generation progress", lines=2, interactive=False
                     )
-                with settings_root:
-                    with gr.Accordion("Model (advanced)", open=False):
-                        model = gr.Dropdown(
-                            choices=list(model_choices),
-                            value=defaults["model"],
-                            label="Checkpoint",
-                            info="INT8 ConvRot uses less VRAM; downloaded on first use.",
-                        )
-                    mode = gr.Dropdown(
-                        choices=[
-                            ("Full score", "full"),
-                            ("Melody only", "melody"),
-                            ("Direct generation", "off"),
-                        ],
-                        value=defaults["mode"],
-                        label="Score mode",
+                with gr.Accordion("Generation settings (advanced)", open=False):
+                    model = gr.Dropdown(
+                        choices=list(model_choices),
+                        value=defaults["model"],
+                        label="Checkpoint",
+                        info="INT8 ConvRot uses less VRAM; downloads on first use.",
                     )
-                    with gr.Row():
-                        duration = gr.Slider(
-                            1,
-                            900,
-                            value=defaults["duration"],
-                            step=1,
-                            label="Maximum seconds",
-                        )
-                        seed = gr.Number(
-                            value=defaults["seed"],
-                            precision=0,
-                            label="Seed (-1 random)",
-                        )
+                    seed = gr.Number(
+                        value=defaults["seed"],
+                        precision=0,
+                        label="Seed (-1 random)",
+                    )
                     tiled = gr.Checkbox(
                         value=defaults["tiled_decode"],
                         label="Tiled audio decode",
                         info="Recommended for long songs to reduce peak VRAM.",
                     )
-                    with gr.Accordion("Advanced sampling", open=False):
+                    with gr.Accordion("Sampling", open=False):
                         with gr.Row():
                             steps = gr.Slider(
                                 1,

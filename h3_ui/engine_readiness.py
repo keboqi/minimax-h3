@@ -26,17 +26,24 @@ def bind_engine_readiness(view, family):
                 return "Add an image to edit."
             return ""
 
+    elif family == "music":
+        inputs = [view.caption, view.lyrics]
+
+        def missing(caption, lyrics):
+            return "" if caption.strip() or lyrics.strip() else "Describe your song or add lyrics to start."
+
     else:
-        inputs = [view.caption if family == "music" else view.style, view.lyrics]
+        inputs = [view.style, view.lyrics]
 
-        prompt = (
-            "Describe your song or add lyrics to start."
-            if family == "music"
-            else "Write a style or lyrics to start."
-        )
-
-        def missing(description, lyrics):
-            return "" if description.strip() or lyrics.strip() else prompt
+        # YuE2 rejects a request without both, so Generate waits for both.
+        def missing(style, lyrics):
+            if not style.strip() and not lyrics.strip():
+                return "Describe your song and add lyrics to start."
+            if not lyrics.strip():
+                return "Add lyrics or section tags, or use Write / improve song to draft them."
+            if not style.strip():
+                return "Add a style prompt, or use Write / improve song to suggest one."
+            return ""
 
     def readiness(*values):
         message = missing(*values)

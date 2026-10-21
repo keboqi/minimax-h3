@@ -11,6 +11,7 @@ from .image_library import build_image_input
 
 from .prompt_review import build_prompt_review
 from .prompt_writer_controls import build_remote_prompt_writer_controls
+from .song_controls import duration_presets, panel_heading, song_intro
 
 
 @dataclass(frozen=True)
@@ -49,13 +50,11 @@ def build_music_view(
 ) -> MusicView:
     root.elem_classes = [*root.elem_classes, "h3-song"]
     with root:
-        gr.HTML('<div class="h3-song-intro"><div><p class="h3-eyebrow">MiniMax Music 3</p>'
-                '<h2>Your next song starts here.</h2><p>An idea, a few lyrics, a feeling. Make it yours.</p>'
-                '</div><span class="h3-song-badge">SONG STUDIO</span></div>')
+        song_intro("MiniMax Music 3", "Your next song starts here.",
+                   "An idea, a few lyrics, a feeling. Make it yours.", "SONG STUDIO")
         with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
             with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
-                gr.HTML('<div class="h3-panel-heading"><span class="h3-step" aria-hidden="true">01</span>'
-                        '<div><h3>The idea</h3><p>Describe the sound, story, and language you have in mind.</p></div></div>')
+                panel_heading("01", "The idea", "Describe the sound, story, and language you have in mind.")
                 caption = gr.Textbox(
                     label="Song idea / music description",
                     lines=3,
@@ -86,8 +85,8 @@ def build_music_view(
                     placeholder="Ready to help write your song.", elem_classes=["h3-song-writer-status"],
                 )
                 enhance.h3_review = build_prompt_review(preview_label="Suggested song draft", compact=True)
-                gr.HTML('<div class="h3-panel-heading h3-song-draft-heading"><span class="h3-step" aria-hidden="true">02</span>'
-                        '<div><h3>The draft</h3><p>Edit your lyrics here. The writer keeps words you have already added.</p></div></div>')
+                panel_heading("02", "The draft", "Edit your lyrics here. The writer keeps words you have already added.",
+                              classes="h3-song-draft-heading")
                 with gr.Tabs(elem_classes=["h3-song-editor-tabs"]):
                     with gr.Tab("Lyrics"):
                         lyrics = gr.Textbox(
@@ -114,8 +113,7 @@ def build_music_view(
                 lightning_api_key = writer.lightning_api_key
                 lightning_model = writer.lightning_model
             with gr.Column(scale=2, min_width=320, elem_classes=["h3-preview-panel", "h3-song-stage"]):
-                gr.HTML('<div class="h3-panel-heading"><span class="h3-step" aria-hidden="true">03</span>'
-                        '<div><h3>The track</h3><p>Turn your current draft into music.</p></div></div>')
+                panel_heading("03", "The track", "Turn your current draft into music.")
                 output = gr.Audio(
                     label="Generated song", type="filepath", interactive=False
                 )
@@ -124,11 +122,7 @@ def build_music_view(
                     1, 300, value=defaults["duration"], step=1, label="Maximum seconds",
                     info="A length limit, not an exact duration. The song may finish sooner.",
                 )
-                with gr.Row(elem_classes=["h3-song-duration-presets"]):
-                    for seconds, label in ((30, "30 sec"), (60, "1 min"), (120, "2 min"), (180, "3 min")):
-                        gr.Button(label, size="sm", min_width=50).click(
-                            None, outputs=duration, js=f"() => {seconds}", queue=False, api_name=False,
-                        )
+                duration_presets(duration, ((30, "30 sec"), (60, "1 min"), (120, "2 min"), (180, "3 min")))
                 with gr.Column(elem_classes=["h3-action-dock"]):
                     readiness = gr.HTML(
                         '<p class="h3-readiness" role="alert">Describe your song or add lyrics to start.</p>'

@@ -414,7 +414,7 @@ def run():
                         re.compile(r"^Song idea / music description"),
                         "Generate with Music 3",
                     ),
-                    ("Song", "YuE2", "Style prompt", "Generate with YuE2"),
+                    ("Song", "YuE2", re.compile(r"^Style prompt"), "Generate with YuE2"),
                 ):
                     phase[0] = f"engine switch: {label}"
                     page.get_by_role("tab", name="Create", exact=True).click()
@@ -425,6 +425,9 @@ def run():
                     page.get_by_role("option", name=label, exact=True).click()
                     form = page.locator('#h3-engine-tabs > [role="tabpanel"]:visible')
                     form.get_by_label(field, exact=True).fill("Fixture request")
+                    if label == "YuE2":
+                        # YuE2 needs lyrics too before Generate enables.
+                        form.get_by_label(re.compile(r"^Lyrics and song structure")).fill("[verse]\nFixture")
                     form.get_by_role("button", name=action, exact=True).click()
                     expect(
                         form.get_by_label("Generation progress", exact=True)

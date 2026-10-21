@@ -89,6 +89,15 @@ class RemotePromptLightningTests(unittest.TestCase):
         )
         self.assertEqual((style, lyrics), ("Warm acoustic folk", "[Chorus] Keep singing"))
         self.assertIn("YuE2", status)
+        client.return_value.chat.completions.create.return_value = self.completion(
+            "STYLE: Lo-fi instrumental\nLYRICS: N/A"
+        )
+        style, lyrics, _status = prompt_service.enhance_yue2_prompt(
+            "lo-fi, no vocals", "unused", "", "", "full", 90,
+            "Lightning AI", "temporary-key", runtime=self.runtime,
+        )
+        self.assertEqual(style, "Lo-fi instrumental")
+        self.assertIn("[Instrumental]", lyrics)
 
     def test_missing_key_preserves_original_text(self) -> None:
         with patch.dict(prompt_service.os.environ, {"LIGHTNING_API_KEY": ""}):

@@ -38,6 +38,13 @@ appear only when ready, with Undo available after acceptance. **Lyrics** and
 visual inspiration. Quick duration buttons set a 30-second, 1-, 2-, or 3-minute
 limit, and advanced generation controls stay collapsed.
 
+Song with YuE2 follows the same idea, draft, and track flow. Its draft has
+**Lyrics**, **Score** (an optional ABC override), and **Writing tools** tabs, and
+**The track** panel holds the score mode and 1-, 2-, 3-, or 5-minute duration
+presets. YuE2 needs both a style prompt and lyrics, so Generate waits for both;
+the writer drafts lyrics when they are blank and answers an instrumental request
+with [Instrumental] section tags.
+
 Jobs capture requests before the GPU queue, retain seeds for failed-variant
 retries, and support separate H3 finishing retries. SQLite stores technical job
 history across restarts. A signed browser cookie and recovery key preserve
@@ -637,8 +644,8 @@ The **YuE2** tab uses ComfyUI's native YuE2 nodes (ComfyUI v0.36.0 or newer).
 Its INT8 ConvRot checkpoint (about 4 GB) is selected by default; the BF16
 checkpoint is an optional alternative. The selected checkpoint downloads on
 first use into ComfyUI/models/checkpoints/. Use **Full score** to plan melody
-and chords, **Melody only** for a melody plan, or **Direct generation** to skip
-the score planner. Lyrics should use section tags such as [verse] and [chorus].
+and chords, **Melody** for a melody plan, or **Direct** to skip the score
+planner. Lyrics should use section tags such as [verse] and [chorus].
 Tiled audio decode is enabled by default for long songs. YuE2 weights from
 [Comfy-Org/YuE2](https://huggingface.co/Comfy-Org/YuE2) are licensed
 CC-BY-NC-4.0. Generation is exposed as /generate_yue2; style, lyrics, and an
