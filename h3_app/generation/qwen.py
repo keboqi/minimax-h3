@@ -316,6 +316,7 @@ def generate_qwen_image21(
                 output_nonce=uuid.uuid4().hex[:8],
                 turbo_variant=request.turbo_variant,
                 prompt_enhancer=request.prompt_enhancer,
+                lightning_strength=request.lightning_strength,
             )
             client_id = str(uuid.uuid4())
             prompt_id = services.execution.submit_prompt(graph, client_id)

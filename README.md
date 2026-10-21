@@ -571,7 +571,9 @@ as an on-demand download, reusing the selected base model, encoder, and VAE.
 It uses the native LoRA loader at strength 0.50, four Euler steps, CFG 1, and
 accelerator Off for generation and editing. Full strength shifts subjects to the
 left; 0.50 is the
-[reported fix](https://huggingface.co/lightx2v/Qwen-Image-2.1-Lightning/discussions/7). Its raw sigma nodes
+[reported fix](https://huggingface.co/lightx2v/Qwen-Image-2.1-Lightning/discussions/7),
+though a slight shift can remain. **Lightning LoRA strength** (0.05–1.5) appears under
+**Model and encoding** for both Lightning modes, including the 6-step community mode. Its raw sigma nodes
 `[1, 0.75, 0.5, 0.25]` receive the author's resolution-dependent exponential
 shift (256/8192 tokens, 0.5/0.9 shifts), followed by zero, with no terminal
 stretch. This schedule overrides the scheduler control. Edit KV caching is

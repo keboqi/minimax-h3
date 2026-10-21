@@ -181,7 +181,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
 
     def _build(self, references=(), match_input_size=True, *, steps=25, turbo_variant="Off",
                scheduler="simple", cfg=1.0, sampler_name="euler", accelerator="Off",
-               width=1024, height=768, model_choice="INT8 ConvRot (lower VRAM)"):
+               width=1024, height=768, model_choice="INT8 ConvRot (lower VRAM)", **extra):
         return build_qwen_image21_graph(
             model_choice=model_choice,
             text_encoder_choice="INT8 ConvRot (recommended)",
@@ -204,6 +204,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             output_stamp="1234",
             output_nonce="abcd",
             turbo_variant=turbo_variant,
+            **extra,
         )
 
     @staticmethod
@@ -700,6 +701,14 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         from h3_app.model_service import qwen_image21_model_keys
 
         key = "qwen_image21_lightning_lora"
+        for variant, steps in ((QWEN_IMAGE21_LIGHTNING, 4), (QWEN_IMAGE21_LIGHTNING_6STEP, 6)):
+            with self.subTest(variant=variant):
+                graph = self._build(steps=steps, turbo_variant=variant, lightning_strength=0.35)
+                self.assertEqual(self._by_type(graph, "LoraLoaderModelOnly")[0][1]["inputs"]["strength_model"], .35)
+                with self.assertRaisesRegex(ValueError, "Lightning LoRA strength"):
+                    self._build(steps=steps, turbo_variant=variant, lightning_strength=0)
+        official = self._build(steps=8, turbo_variant=QWEN_IMAGE21_OFFICIAL_TURBO, lightning_strength=0.35)
+        self.assertEqual(self._by_type(official, "LoraLoaderModelOnly")[0][1]["inputs"]["strength_model"], 1.)
         self.assertEqual(qwen_turbo_defaults(QWEN_IMAGE21_LIGHTNING_6STEP), (6, 1., "euler", "Off"))
         self.assertEqual(qwen_image21_model_keys("BF16", "BF16", QWEN_IMAGE21_LIGHTNING_6STEP),
                          (*qwen_image21_model_keys("BF16", "BF16"), key))
@@ -709,7 +718,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
                                     turbo_variant=QWEN_IMAGE21_LIGHTNING_6STEP)
                 lora_id, lora = self._by_type(graph, "LoraLoaderModelOnly")[0]
                 self.assertEqual(lora["inputs"]["lora_name"], MODEL_SPECS[key].local_name)
-                self.assertEqual(lora["inputs"]["strength_model"], .45)
+                self.assertEqual(lora["inputs"]["strength_model"], .5)
                 sigma_id, sigma = self._by_type(graph, "ManualSigmas")[0]
                 self.assertEqual([float(value) for value in sigma["inputs"]["sigmas"].split(",")],
                                  [1., .978453, .95418, .926626, .89508, .55, 0.])

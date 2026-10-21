@@ -283,6 +283,7 @@ class QwenImage21Request:
     turbo_variant: str = "Off"
     max_resolution: bool = False
     prompt_enhancer: str = "Off"
+    lightning_strength: float = 0.5
 
 
 @dataclass(frozen=True)

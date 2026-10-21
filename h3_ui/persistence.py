@@ -56,6 +56,7 @@ EXTRA_FIELDS = {
         "attention_backend",
         "accelerator",
         "turbo_variant",
+        "lightning_strength",
         "preset",
         "prompt_model",
         "prompt_backend",

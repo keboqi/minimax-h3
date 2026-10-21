@@ -11,7 +11,7 @@ from h3_models import QWEN_IMAGE21_TURBO_MODES
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation
 
 
-from .qwen_view import QwenImage21View
+from .qwen_view import QWEN_IMAGE21_LIGHTNING_MODES, QwenImage21View
 
 
 def qwen_resolution_preset_values(name: str) -> tuple[int, int]:
@@ -76,6 +76,14 @@ def bind_qwen_image21_view(
         qwen_turbo_defaults,
         inputs=[view.turbo_variant, view.preset],
         outputs=[view.steps, view.cfg, view.sampler, view.accelerator],
+        queue=False,
+        show_progress="hidden",
+        api_name=False,
+    )
+    view.turbo_variant.change(
+        lambda variant: gr.update(visible=variant in QWEN_IMAGE21_LIGHTNING_MODES),
+        inputs=view.turbo_variant,
+        outputs=view.lightning_strength,
         queue=False,
         show_progress="hidden",
         api_name=False,
@@ -161,6 +169,7 @@ def bind_qwen_image21_view(
             view.batch_count,
             view.batch_edit_inputs,
             view.prompt_enhancer,
+            view.lightning_strength,
         ],
         outputs=[view.output, view.status],
         show_progress="minimal",

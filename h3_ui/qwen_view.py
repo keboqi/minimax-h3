@@ -6,7 +6,14 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 import gradio as gr
-from h3_models import QWEN_IMAGE21_TURBO_MODES, QWEN_IMAGE21_PROMPT_ENHANCERS
+from h3_models import (
+    QWEN_IMAGE21_LIGHTNING,
+    QWEN_IMAGE21_LIGHTNING_6STEP,
+    QWEN_IMAGE21_PROMPT_ENHANCERS,
+    QWEN_IMAGE21_TURBO_MODES,
+)
+
+QWEN_IMAGE21_LIGHTNING_MODES = (QWEN_IMAGE21_LIGHTNING, QWEN_IMAGE21_LIGHTNING_6STEP)
 
 from h3_app.catalog import (
     QWEN_EDIT_SIZE_MATCH,
@@ -81,6 +88,7 @@ class QwenImage21View:
     turbo_variant: gr.Dropdown
     preset: gr.Radio
     prompt_enhancer: gr.Dropdown
+    lightning_strength: gr.Slider
 
     @property
     def output_resolution(self) -> gr.Dropdown:
@@ -225,6 +233,15 @@ def build_qwen_image21_view(
                                 "7 turbo steps + 2 base steps for finer detail. "
                                 "Use Euler, CFG 1, and accelerator Off. "
                                 "Research and evaluation use only."
+                            ),
+                        )
+                        lightning_strength = gr.Slider(
+                            0.05, 1.5, value=0.5, step=0.05,
+                            label="Lightning LoRA strength",
+                            visible=defaults["turbo_variant"] in QWEN_IMAGE21_LIGHTNING_MODES,
+                            info=(
+                                "Applies to both Lightning modes. Full strength shifts subjects "
+                                "to the left; 0.50 reduces it."
                             ),
                         )
                         text_encoder = gr.Dropdown(
@@ -416,4 +433,5 @@ def build_qwen_image21_view(
         turbo_variant,
         preset,
         prompt_enhancer,
+        lightning_strength,
     )

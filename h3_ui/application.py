@@ -2583,6 +2583,7 @@ def generate_qwen_image21(
     batch_count: int = 1,
     batch_edit_inputs: bool = False,
     prompt_enhancer: str = "Off",
+    lightning_strength: float = 0.5,
     *,
     output_resolution: str | None = None,
     progress=gr.Progress(track_tqdm=False),
@@ -2627,6 +2628,7 @@ def generate_qwen_image21(
         turbo_variant=turbo_variant,
         max_resolution=bool(max_resolution),
         prompt_enhancer=prompt_enhancer,
+        lightning_strength=float(lightning_strength),
     )
     yield from qwen_generation.generate_qwen_image21(
         request, _generation_services(), _runtime_config(), progress=progress
