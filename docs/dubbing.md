@@ -60,9 +60,19 @@ soundtrack plays under every line anyway.
   best clip (the longest one between 3 and 15 seconds), which is steadier.
   Lines shorter than 2 seconds always use their speaker's clip.
 - **Speech preset**: Strict, Balance (default) or Expressive Drama 3 sampling.
-- **Maximum speed-up**: a take longer than its slot (until the next line starts)
-  is sped up, pitch preserved, by at most this factor. Takes that still overrun
-  are listed under **Check** in the status.
+- **Timing**:
+  - *Match the original timing* (default) stretches every take with FFmpeg's
+    `atempo`, pitch preserved, so it starts and ends exactly where the original
+    line does, as index-tts-vllm's FFmpeg duration control does. Lines sped up
+    more than 1.6x or slowed below 0.75x are listed under **Check**; a shorter or
+    longer translation sounds more natural there.
+  - *Natural pace* keeps each take's own pace. A take longer than its slot (until
+    the next line starts) is sped up by at most **Maximum speed-up**. Takes that
+    still overrun are listed under **Check**: they overlap the next line, and a
+    last line runs past the end of the source rather than being cut. The audio
+    gets longer; a re-encoded video (burned subtitles) holds its last frame.
+- Translated subtitles stay on screen while a line is still being spoken, up to
+  the next line.
 - **Dub volume** and **Background volume** set the mix.
 - **Keep the original audio as a second track** and **Burn translated subtitles
   into the video** shape the video. Burning re-encodes it with x264; selectable

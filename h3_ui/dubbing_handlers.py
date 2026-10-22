@@ -109,12 +109,13 @@ def save_lines(session_id, rows):
 
 
 def _analysis_values(result: pipeline.Analysis):
-    return result.session.id, segment_tools.to_rows(result.session.segments), result.message
+    # The table's status still describes the previous session (or none): reset it.
+    return result.session.id, segment_tools.to_rows(result.session.segments), result.message, ""
 
 
 def analyze_source(source, library, separate, separator_model, transcription, source_language, target_language,
                    translate, translator, aligner, merge_gap, gemini_model, api_key, notes):
-    """Outputs: session id, line rows, status."""
+    """Outputs: session id, line rows, status, table status."""
     chosen = source or library
     try:
         if not chosen:
@@ -127,9 +128,9 @@ def analyze_source(source, library, separate, separator_model, transcription, so
             if isinstance(update, pipeline.Analysis):
                 yield _analysis_values(update)
             else:
-                yield gr.skip(), gr.skip(), update
+                yield gr.skip(), gr.skip(), update, gr.skip()
     except Exception as exc:
-        yield gr.skip(), gr.skip(), _failed(exc)
+        yield gr.skip(), gr.skip(), _failed(exc), gr.skip()
 
 
 def translate_lines(session_id, line_numbers, target_language, translator, gemini_model, api_key, notes):
@@ -149,23 +150,25 @@ def translate_lines(session_id, line_numbers, target_language, translator, gemin
         yield gr.skip(), _failed(exc)
 
 
-def _dub_request(session_id, voice_mode, preset, max_speed, parallel, speech_volume=100, background_volume=100,
-                 keep_original=True, burn_subtitles=False, regenerate=""):
+def _dub_request(session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume=100,
+                 background_volume=100, keep_original=True, burn_subtitles=False, regenerate=""):
     session = sessions.load(_runtime(), session_id)
     fresh = tuple(segment_tools.parse_line_numbers(regenerate, len(session.segments)))
-    return pipeline.DubRequest(session_id, voice_mode, preset, int(parallel), float(max_speed),
-                               float(speech_volume), float(background_volume), bool(keep_original),
-                               bool(burn_subtitles), fresh)
+    return pipeline.DubRequest(
+        session_id, voice_mode=voice_mode, preset=preset, timing=timing, parallel=int(parallel),
+        max_speed=float(max_speed), speech_volume=float(speech_volume),
+        background_volume=float(background_volume), keep_original_track=bool(keep_original),
+        burn_subtitles=bool(burn_subtitles), regenerate=fresh)
 
 
-def preview_line(session_id, line_numbers, voice_mode, preset, max_speed, parallel):
+def preview_line(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel):
     """Outputs: preview audio, status. Previews the first listed line."""
     try:
         session = sessions.load(_runtime(), session_id)
         indices = segment_tools.parse_line_numbers(line_numbers, len(session.segments))
         if not indices:
             raise H3Error("Enter the number of the line to preview.")
-        request = _dub_request(session_id, voice_mode, preset, max_speed, parallel)
+        request = _dub_request(session_id, voice_mode, preset, timing, max_speed, parallel)
         for update in _gpu(lambda **kw: pipeline.preview_line(request, indices[0], **kw)):
             if isinstance(update, pipeline.LinePreview):
                 yield (update.rate, update.samples), update.message
@@ -175,11 +178,11 @@ def preview_line(session_id, line_numbers, voice_mode, preset, max_speed, parall
         yield gr.skip(), _failed(exc)
 
 
-def generate_dub(session_id, voice_mode, preset, max_speed, parallel, speech_volume, background_volume,
+def generate_dub(session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume, background_volume,
                  keep_original, burn_subtitles, regenerate):
     """Outputs: video, audio, subtitle files, status."""
     try:
-        request = _dub_request(session_id, voice_mode, preset, max_speed, parallel, speech_volume,
+        request = _dub_request(session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume,
                                background_volume, keep_original, burn_subtitles, regenerate)
         for update in _gpu(lambda **kw: pipeline.dub(request, **kw)):
             if isinstance(update, pipeline.Dub):

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import gradio as gr
 
 from . import dubbing_handlers as handlers
-from .dubbing_view import DubbingView, gemini_visibility, local_visibility
+from .dubbing_view import DubbingView, gemini_visibility, local_visibility, speed_visibility
 from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES
 
 from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
@@ -28,6 +28,7 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions=hand
     for control in (view.pipeline, view.translator):
         control.change(gemini_visibility, inputs=[view.pipeline, view.translator], outputs=view.gemini, **_QUIET)
     view.pipeline.change(local_visibility, inputs=view.pipeline, outputs=view.local, **_QUIET)
+    view.timing.change(speed_visibility, inputs=view.timing, outputs=view.max_speed, **_QUIET)
     # Edits are saved to the session as they happen; GPU steps read the saved lines.
     view.lines.input(actions.save_lines, inputs=[view.session, view.lines],
                      outputs=[view.lines, view.table_status], **_QUIET)
@@ -37,7 +38,7 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions=hand
         inputs=[view.source, view.library, view.separate, view.separator_model, view.pipeline,
                 view.source_language, view.target_language, view.translate, view.translator, view.aligner,
                 view.merge_gap, view.gemini_model, view.api_key, view.notes],
-        outputs=[view.session, view.lines, view.analyze_status], show_progress="minimal",
+        outputs=[view.session, view.lines, view.analyze_status, view.table_status], show_progress="minimal",
         api_name="dub_analyze_source",
     )
     translated = bind_gpu_action(
@@ -48,12 +49,14 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions=hand
     )
     previewed = bind_gpu_action(
         view.preview.click, owned_generation(actions.preview_line, FAMILY_LINES),
-        inputs=[view.session, view.line_numbers, view.voice_mode, view.preset, view.max_speed, view.parallel],
+        inputs=[view.session, view.line_numbers, view.voice_mode, view.preset, view.timing, view.max_speed,
+                view.parallel],
         outputs=[view.preview_audio, view.table_status], show_progress="minimal", api_name=False,
     )
     dubbed = bind_gpu_action(
         view.run.click, owned_generation(actions.generate_dub, FAMILY_DUB),
-        inputs=[view.session, view.voice_mode, view.preset, view.max_speed, view.parallel, view.speech_volume,
+        inputs=[view.session, view.voice_mode, view.preset, view.timing, view.max_speed, view.parallel,
+                view.speech_volume,
                 view.background_volume, view.keep_original, view.burn_subtitles, view.regenerate],
         outputs=[view.video, view.audio, view.files, view.status], show_progress="minimal",
         api_name="dub_generate",

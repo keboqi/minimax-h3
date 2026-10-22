@@ -194,6 +194,27 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(pipeline.speaker_reference(lines, "b"), 4)
         self.assertIsNone(pipeline.speaker_reference(lines, "c"))
 
+    def test_subtitles_stay_up_while_a_line_is_spoken_but_not_over_the_next(self):
+        lines = segments.normalize([{"start": 0, "end": 1, "source": "a", "translation": "A"},
+                                    {"start": 3, "end": 4, "source": "b", "translation": "B"}])
+        shown = pipeline.subtitle_lines(lines, {0: 5.0, 1: 6.5})
+        self.assertEqual([s["end"] for s in shown], [2.95, 6.5])
+        self.assertEqual([s["end"] for s in pipeline.subtitle_lines(lines, {})], [1.0, 4.0])
+
+    def test_atempo_chain_keeps_each_stage_in_range(self):
+        self.assertEqual(pipeline.atempo_chain(3.0), "atempo=2.000000,atempo=1.500000")
+        self.assertEqual(pipeline.atempo_chain(0.3), "atempo=0.500000,atempo=0.600000")
+        self.assertEqual(pipeline.atempo_chain(1.25), "atempo=1.250000")
+
+    def test_match_reports_large_tempo_changes(self):
+        take = np.zeros(4 * 24000, dtype=np.float32)
+        with patch.object(pipeline, "_stretch", side_effect=lambda s, r, t: s[: int(len(s) / t)]):
+            _timed, tempo, note = pipeline.match(take, 24000, 2.0)
+            self.assertEqual(tempo, 2.0)
+            self.assertIn("shorter translation", note)
+            self.assertIn("longer translation", pipeline.match(take, 24000, 8.0)[2])
+            self.assertEqual(pipeline.match(take, 24000, 3.5)[2], "")
+
     def test_filter_paths_escape_drive_colons(self):
         self.assertEqual(pipeline._filter_path(Path("C:/a b/it's.srt"))[:12], "'C\\:/a b/it\\")
 
@@ -382,8 +403,8 @@ class HandlerTests(Workspace):
                                                     "Auto-detect", "English", True, pipeline.TRANSLATOR_HYMT,
                                                     True, 0.35, "gemini-3.8-flash", "", ""))
         self.assertIn("Upload a video or audio file", updates[-1][2])
-        updates = list(self.handlers.generate_dub("", pipeline.VOICE_LINE, "Balance", 1.35, 8, 100, 100,
-                                                  True, False, ""))
+        updates = list(self.handlers.generate_dub("", pipeline.VOICE_LINE, "Balance", pipeline.TIMING_MATCH, 1.35,
+                                                  8, 100, 100, True, False, ""))
         self.assertIn("Analyze a source first", updates[-1][3])
 
     def test_cookie_handlers(self):
@@ -420,7 +441,7 @@ class ReviewFixTests(Workspace):
         ])
         line = pipeline._Line(0, session.segments[0], session.path("vocals"), "a",
                               take=np.zeros(pipeline.RATE // 2, dtype=np.float32))
-        track, _notes = pipeline._speech_track(session, [line], pipeline.DubRequest(session.id), 3.0)
+        track, _notes, _ends = pipeline._speech_track(session, [line], pipeline.DubRequest(session.id), 3.0)
         self.assertAlmostEqual(float(track[int(2.0 * pipeline.RATE)]), 0.5, places=3)
         self.assertEqual(float(track[int(0.25 * pipeline.RATE)]), 0.0)
 
@@ -591,7 +612,8 @@ class DubRenderTests(Workspace):
         self.assertEqual(self.streams(result.video), ["video", "audio", "audio", "subtitle", "subtitle"])
         self.assertTrue(result.audio.is_file())
         self.assertEqual([p.name.rsplit(".", 2)[-2] for p in result.subtitles], ["french", "original"])
-        self.assertIn("1 sped up to fit", result.message)
+        self.assertIn("matched to the original timing (1 sped up, 1 slowed down)", result.message)
+        self.assertAlmostEqual(self.duration(result.audio), 4.0, delta=0.1)
         # The first line's clip is long enough to be its own reference; the short one uses its speaker's best.
         references = sorted(p.name for p in (session.root / "references").iterdir())
         self.assertEqual(len(references), 1)
@@ -606,6 +628,55 @@ class DubRenderTests(Workspace):
                                                            burn_subtitles=True),
                                        runtime=self.runtime, free_gpu=lambda: None))[-1]
         self.assertEqual(self.streams(result.video), ["video", "audio", "subtitle", "subtitle"])
+
+    def long_last_line(self, planned, request, session, **_kwargs):
+        # Line 2 starts at 2.8 s in a 4 s source: 2.5 s at 1.35x still ends near 4.65 s.
+        for line in planned:
+            seconds = 1.0 if line.index == 0 else 2.5
+            line.take = (0.2 * np.sin(np.arange(int(seconds * pipeline.RATE)) / 20)).astype(np.float32)
+        yield "voiced"
+
+    def duration(self, path, stream=None):
+        command = ["ffprobe", "-v", "error", "-of", "csv=p=0"]
+        command += ["-select_streams", stream, "-show_entries", "stream=duration"] if stream else             ["-show_entries", "format=duration"]
+        return float(subprocess.run([*command, str(path)], check=True, capture_output=True,
+                                    text=True).stdout.split()[0])
+
+    def test_matched_timing_keeps_a_long_last_line_inside_the_source(self):
+        session = self.analyze(self.make_video(), separate=True)
+        with patch.object(pipeline, "_synthesize", side_effect=self.long_last_line):
+            result = list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime,
+                                       free_gpu=lambda: None))[-1]
+        self.assertAlmostEqual(self.duration(result.audio), 4.0, delta=0.1)
+        self.assertNotIn("past the end", result.message)
+
+    def test_a_natural_pace_last_line_longer_than_the_source_is_not_cut(self):
+        session = self.analyze(self.make_video(), separate=True)
+        with patch.object(pipeline, "_synthesize", side_effect=self.long_last_line):
+            result = list(pipeline.dub(pipeline.DubRequest(session.id, timing=pipeline.TIMING_NATURAL),
+                                       runtime=self.runtime, free_gpu=lambda: None))[-1]
+        self.assertGreater(self.duration(result.audio), 4.55)
+        self.assertGreater(self.duration(result.video, "a:0"), 4.55)
+        self.assertIn("past the end of the source", result.message)
+        last_cue = result.subtitles[0].read_text(encoding="utf-8").strip().splitlines()[-2]
+        self.assertGreater(segments.parse_time(last_cue.split("-->")[1]), 4.55)
+
+    def test_burned_video_holds_its_last_frame_under_a_long_last_line(self):
+        session = self.analyze(self.make_video(), separate=False)
+        with patch.object(pipeline, "_synthesize", side_effect=self.long_last_line):
+            result = list(pipeline.dub(pipeline.DubRequest(session.id, burn_subtitles=True,
+                                                           timing=pipeline.TIMING_NATURAL),
+                                       runtime=self.runtime, free_gpu=lambda: None))[-1]
+        self.assertGreater(self.duration(result.video, "v:0"), 4.55)
+
+    def test_match_stretches_a_take_to_exactly_its_line(self):
+        tone = (0.2 * np.sin(np.arange(2 * pipeline.RATE) / 20)).astype(np.float32)
+        for target in (0.6, 1.0, 3.5):  # beyond 2x faster, faster, and slower
+            timed, tempo, _note = pipeline.match(tone, pipeline.RATE, target)
+            self.assertEqual(len(timed), int(round(target * pipeline.RATE)))
+            self.assertAlmostEqual(tempo, 2.0 / target)
+            # Stretched, not padded or cut: the tone runs to within a few ms of the end.
+            self.assertGreater(float(np.abs(timed[-int(0.05 * pipeline.RATE):]).max()), 0.05)
 
     def test_read_slice_reads_part_of_a_wav(self):
         target = self.root / "tone.wav"

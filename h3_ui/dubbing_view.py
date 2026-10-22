@@ -9,7 +9,8 @@ import gradio as gr
 
 from h3_app.dubbing.pipeline import (
     PIPELINE_GEMINI, PIPELINE_LOCAL, PIPELINES, SEPARATOR_MODELS, SOURCE_LANGUAGES, TARGET_LANGUAGES,
-    TRANSLATOR_GEMINI, TRANSLATOR_HYMT, TRANSLATORS, VOICE_LINE, VOICE_MODES, VOICE_PRESETS,
+    TIMING_MATCH, TIMING_NATURAL, TIMINGS, TRANSLATOR_GEMINI, TRANSLATOR_HYMT, TRANSLATORS, VOICE_LINE,
+    VOICE_MODES, VOICE_PRESETS,
 )
 from h3_app.dubbing.segments import TABLE_HEADERS, TABLE_TYPES
 
@@ -46,6 +47,7 @@ class DubbingView:
     preview_audio: gr.Audio
     voice_mode: gr.Radio
     preset: gr.Dropdown
+    timing: gr.Radio
     max_speed: gr.Slider
     parallel: gr.Slider
     speech_volume: gr.Slider
@@ -133,15 +135,20 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
             preview = gr.Button("Preview line", scale=1)
             stop_preview = gr.Button("Interrupt", scale=0, min_width=110, interactive=False)
         preview_audio = gr.Audio(label="Line preview (fitted to its timing)", type="numpy", interactive=False)
-        _step(4, "Dub", "Voices are cloned from the original audio with Drama 3. Lines too long for their slot "
-                        "are sped up, up to the limit below.")
+        _step(4, "Dub", "Voices are cloned from the original audio with Drama 3, and each take is fitted to "
+                        "its line's timing.")
         with gr.Row():
             voice_mode = gr.Radio(list(VOICE_MODES), value=VOICE_LINE, label="Voice",
                                   info="Each line keeps its own delivery; one voice per speaker is steadier. "
                                        "Lines shorter than 2 s always use their speaker's voice.")
             preset = gr.Dropdown(list(VOICE_PRESETS), value="Balance", label="Speech preset")
         with gr.Row():
-            max_speed = gr.Slider(1.0, 2.0, value=1.35, step=0.05, label="Maximum speed-up")
+            timing = gr.Radio(list(TIMINGS), value=TIMING_MATCH, label="Timing",
+                              info="Match stretches every take with FFmpeg to start and end exactly where the "
+                                   "original line does. Natural keeps each take's pace and only speeds up long ones, "
+                                   "using the pause before the next line.")
+            max_speed = gr.Slider(1.0, 2.0, value=1.35, step=0.05, label="Maximum speed-up", visible=False,
+                                  info="Natural pace only. Takes still too long overlap the next line.")
             parallel = gr.Slider(1, 32, value=8, step=1, label="Parallel requests")
         with gr.Row():
             speech_volume = gr.Slider(0, 200, value=100, step=5, label="Dub volume (%)")
@@ -168,7 +175,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
         session, source, library, refresh_library, separate, separator_model, pipeline, source_language,
         target_language, translate, translator, gemini, gemini_model, api_key, local, aligner, merge_gap, notes,
         analyze, stop_analyze, analyze_status, lines, table_status, line_numbers, retranslate, preview,
-        stop_preview, preview_audio, voice_mode, preset, max_speed, parallel, speech_volume, background_volume,
+        stop_preview, preview_audio, voice_mode, preset, timing, max_speed, parallel, speech_volume, background_volume,
         keep_original, burn_subtitles, regenerate, run, stop, status, video, audio, files,
     )
 
@@ -180,3 +187,7 @@ def gemini_visibility(pipeline: str, translator: str):
 
 def local_visibility(pipeline: str):
     return gr.update(visible=pipeline == PIPELINE_LOCAL)
+
+
+def speed_visibility(timing: str):
+    return gr.update(visible=timing == TIMING_NATURAL)

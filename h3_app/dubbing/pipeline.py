@@ -50,6 +50,13 @@ TARGET_LANGUAGES = ("English", "Chinese", "Japanese", "Korean", "Spanish", "Fren
 VOICE_LINE = "Each line's own voice"
 VOICE_SPEAKER = "One voice per speaker"
 VOICE_MODES = (VOICE_LINE, VOICE_SPEAKER)
+# Match stretches every take to its line's original length with ffmpeg, as index-tts-vllm's
+# duration control does; Natural only speeds up long takes, by at most the chosen limit.
+TIMING_MATCH = "Match the original timing"
+TIMING_NATURAL = "Natural pace"
+TIMINGS = (TIMING_MATCH, TIMING_NATURAL)
+# Matched takes changed more than this are reported: their translation is much longer or shorter.
+TEMPO_WARNING = (0.75, 1.6)
 # Drama 3 sampling (temperature, top_p, top_k); Soundstage offers the same three.
 VOICE_PRESETS = {"Strict": (0.7, 0.7, 30), "Balance": (1.0, 0.9, 0), "Expressive": (2.0, 1.0, 30)}
 # A line's own clip shorter than this is a weak reference; its speaker's best clip is used instead.
@@ -88,6 +95,7 @@ class DubRequest:
     session_id: str
     voice_mode: str = VOICE_LINE
     preset: str = "Balance"
+    timing: str = TIMING_MATCH
     parallel: int = 8
     max_speed: float = 1.35
     speech_volume: float = 100.0
@@ -388,15 +396,47 @@ def slot_end(lines: list[dict], index: int, duration: float) -> float:
     return max(segment["end"], limit)
 
 
-def _stretch(samples: np.ndarray, rate: int, factor: float) -> np.ndarray:
-    """Speed speech up by ``factor`` (pitch kept) with ffmpeg's atempo."""
+def atempo_chain(tempo: float) -> str:
+    """An atempo filter for any tempo: each stage stays within 0.5–2x, as in index-tts-vllm."""
+    tempo = max(0.01, float(tempo))
+    factors = []
+    while tempo > 2.0:
+        factors.append(2.0)
+        tempo /= 2.0
+    while tempo < 0.5:
+        factors.append(0.5)
+        tempo /= 0.5
+    factors.append(tempo)
+    return ",".join(f"atempo={factor:.6f}" for factor in factors)
+
+
+def _stretch(samples: np.ndarray, rate: int, tempo: float) -> np.ndarray:
+    """Play speech ``tempo`` times faster (below 1: slower), pitch kept, with ffmpeg's atempo."""
     from h3_app.drama3_serving.audio import decode_wav
 
     with tempfile.TemporaryDirectory(prefix="dub-stretch-") as directory:
         source = _write_wav(samples, rate, Path(directory) / "take.wav")
-        target = _ffmpeg(["-i", str(source), "-af", f"atempo={factor:.4f}", "-ar", str(rate), "-ac", "1"],
-                         Path(directory) / "fast.wav", timeout=300, action="Fitting a line to its timing")
+        target = _ffmpeg(["-i", str(source), "-af", atempo_chain(tempo), "-ar", str(rate), "-ac", "1"],
+                         Path(directory) / "timed.wav", timeout=300, action="Fitting a line to its timing")
         return decode_wav(target.read_bytes())[0]
+
+
+def match(samples: np.ndarray, rate: int, target: float) -> tuple[np.ndarray, float, str]:
+    """Stretch a take to exactly ``target`` seconds, then pad or trim the last samples."""
+    seconds = len(samples) / rate
+    if target <= 0 or not len(samples):
+        return samples, 1.0, ""
+    tempo = seconds / target
+    timed = _stretch(samples, rate, tempo) if abs(seconds - target) > 0.03 else samples
+    size = int(round(target * rate))
+    timed = timed[:size] if len(timed) >= size else np.concatenate(
+        [timed, np.zeros(size - len(timed), dtype=np.float32)])
+    note = ""
+    if tempo > TEMPO_WARNING[1]:
+        note = f"sped up {tempo:.2f}x to match; a shorter translation would sound more natural"
+    elif tempo < TEMPO_WARNING[0]:
+        note = f"slowed to {tempo:.2f}x to match; a longer translation would sound more natural"
+    return timed, tempo, note
 
 
 def fit(samples: np.ndarray, rate: int, available: float, max_speed: float) -> tuple[np.ndarray, float, str]:
@@ -409,6 +449,17 @@ def fit(samples: np.ndarray, rate: int, available: float, max_speed: float) -> t
     over = len(fitted) / rate - available
     note = f"{over:.1f}s longer than its slot" if over > 0.05 else ""
     return fitted, factor, note
+
+
+def timed_take(take: np.ndarray, lines: list[dict], index: int, duration: float,
+               request: DubRequest) -> tuple[np.ndarray, float, str, float]:
+    """The take as it will play: (samples, tempo, note, seconds it was fitted to)."""
+    segment = lines[index]
+    if request.timing == TIMING_NATURAL:
+        available = slot_end(lines, index, duration) - segment["start"]
+        return (*fit(take, RATE, available, request.max_speed), available)
+    available = segment["end"] - segment["start"]
+    return (*match(take, RATE, available), available)
 
 
 def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Session, *, runtime, free_gpu,
@@ -505,34 +556,43 @@ def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token
         raise H3Error(f"Line {index + 1} has no translation to speak.")
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
     line = planned[0]
-    available = slot_end(lines, index, session.data.get("duration", 0.0)) - line.segment["start"]
-    fitted, speed, note = fit(line.take, RATE, available, request.max_speed)
+    fitted, speed, note, available = timed_take(line.take, lines, index, session.data.get("duration", 0.0),
+                                                request)
     details = [f"Line {index + 1}: {len(fitted) / RATE:.1f}s for a {available:.1f}s slot"]
-    if speed > 1.01:
-        details.append(f"sped up {speed:.2f}x")
+    if not note and abs(speed - 1.0) > 0.01:
+        details.append(f"{'sped up' if speed > 1 else 'slowed to'} {speed:.2f}x")
     details += [part for part in (note, line.note) if part]
     yield LinePreview(RATE, fitted, " · ".join(details) + ".")
 
 
 def _speech_track(session: sessions.Session, planned: list[_Line], request: DubRequest,
-                  duration: float) -> tuple[np.ndarray, list[str]]:
+                  duration: float) -> tuple[np.ndarray, list[str], dict[int, float]]:
+    """The dubbed speech on the source's timeline, the check notes, and where each voiced line ends.
+
+    A last line still too long after the speed-up runs past the end of the source
+    instead of being cut off; the timeline grows to hold it.
+    """
     lines = session.segments
-    track = np.zeros(int(round(duration * RATE)) + RATE, dtype=np.float32)
     notes = []
-    voiced = set()
+    placed = []
     for line in planned:
         if line.take is None or not len(line.take):
             notes.append(f"line {line.index + 1}: no audio, original kept")
             continue
-        voiced.add(line.index)
-        available = slot_end(lines, line.index, duration) - line.segment["start"]
-        fitted, speed, note = fit(line.take, RATE, available, request.max_speed)
+        fitted, speed, note, _available = timed_take(line.take, lines, line.index, duration, request)
         line.speed = speed
         if note or line.note:
             notes.append(f"line {line.index + 1}: " + "; ".join(part for part in (note, line.note) if part))
-        start = int(round(line.segment["start"] * RATE))
-        end = min(len(track), start + len(fitted))
-        track[start:end] += fitted[: end - start]
+        placed.append((line.index, int(round(line.segment["start"] * RATE)), fitted))
+    source_length = int(round(duration * RATE))
+    track = np.zeros(max([source_length] + [start + len(fitted) for _, start, fitted in placed]), dtype=np.float32)
+    spoken_ends = {}
+    for index, start, fitted in placed:
+        track[start:start + len(fitted)] += fitted
+        spoken_ends[index] = (start + len(fitted)) / RATE
+    if len(track) > source_length + RATE // 20:
+        notes.append(f"the dub runs {(len(track) - source_length) / RATE:.1f}s past the end of the source")
+    voiced = set(spoken_ends)
     if session.path("vocals") is not None:
         # Every line not voiced here (unticked, untranslated or failed) keeps its original voice.
         for index, segment in enumerate(lines):
@@ -541,7 +601,22 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
                 original = read_slice(session.path("vocals"), segment["start"], segment["end"])
                 end = min(len(track), start + len(original))
                 track[start:end] += original[: end - start]
-    return track[: int(round(duration * RATE))], notes
+    return track, notes, spoken_ends
+
+
+def subtitle_lines(lines: list[dict], spoken_ends: dict[int, float]) -> list[dict]:
+    """Translated subtitles that stay up while a dubbed line is still being spoken.
+
+    A line may extend to its spoken end but never past the next line's start, except the last.
+    """
+    shown = []
+    for index, line in enumerate(lines):
+        end = max(line["end"], spoken_ends.get(index, line["end"]))
+        later = [s["start"] for s in lines[index + 1:] if s["start"] > line["start"]]
+        if later:
+            end = min(end, max(line["end"], min(later) - LINE_GAP))
+        shown.append({**line, "end": round(end, 3)})
+    return shown
 
 
 def _filter_path(path: Path) -> str:
@@ -574,7 +649,8 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
 
     yield "Placing lines on the timeline"
-    track, notes = _speech_track(session, planned, request, duration)
+    track, notes, spoken_ends = _speech_track(session, planned, request, duration)
+    overrun = max(0.0, len(track) / RATE - duration)
     speech = _write_wav(track, RATE, session.root / "speech.wav")
     del track
     separated = session.path("backing") is not None
@@ -584,13 +660,13 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     if separated:
         graph = (f"[1:a]volume={speech_gain:.3f},aformat=channel_layouts=stereo[sp];"
                  f"[0:a]volume={background_gain:.3f}[bg];"
-                 "[bg][sp]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.97[out]")
+                 "[bg][sp]amix=inputs=2:normalize=0:duration=longest,alimiter=limit=0.97[out]")
     else:
         # The background still holds the original voices: duck it under the dub.
         graph = (f"[1:a]volume={speech_gain:.3f},aformat=channel_layouts=stereo,asplit=2[sp][key];"
                  f"[0:a]volume={background_gain:.3f}[bg];"
                  "[bg][key]sidechaincompress=threshold=0.02:ratio=12:attack=20:release=400[ducked];"
-                 "[ducked][sp]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.97[out]")
+                 "[ducked][sp]amix=inputs=2:normalize=0:duration=longest,alimiter=limit=0.97[out]")
     yield "Mixing the dub over the background"
     mix = _ffmpeg(["-i", str(background), "-i", str(speech), "-filter_complex", graph, "-map", "[out]",
                    "-ar", str(RATE), "-c:a", "pcm_s16le"], session.root / "mix.wav", action="Mixing the dub")
@@ -601,7 +677,8 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     stem = _output_stem(session, language)
     subtitles = []
     for field_name, suffix in (("translation", language or "dub"), ("source", "original")):
-        text = segment_tools.to_srt(lines, field_name)
+        shown = subtitle_lines(lines, spoken_ends) if field_name == "translation" else lines
+        text = segment_tools.to_srt(shown, field_name)
         if text.strip():
             path = output_dir / f"{stem}.{re.sub(r'[^A-Za-z0-9]+', '', suffix).lower() or 'dub'}.srt"
             path.write_text(text, encoding="utf-8")
@@ -612,7 +689,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
         "source": session.data.get("name"), "target_language": language,
         "source_language": session.data.get("source_language", ""), "pipeline": session.data.get("pipeline"),
         "separated": separated, "voice_mode": request.voice_mode, "preset": request.preset,
-        "max_speed": request.max_speed, "speech_volume": request.speech_volume,
+        "timing": request.timing, "max_speed": request.max_speed, "speech_volume": request.speech_volume,
         "background_volume": request.background_volume, "lines": len(lines), "dubbed_lines": len(planned),
         "sped_up_lines": sum(line.speed > 1.01 for line in planned), "session": session.id,
     }
@@ -638,9 +715,16 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
             metadata += [f"-metadata:s:s:{number}",
                          f"language={_language_code(session.data.get('source_language', '') if original else language)}",
                          f"-metadata:s:s:{number}", f"title={'Original' if original else language or 'Translated'}"]
-        video_codec = ["-c:v", "copy"]
+        # A dub longer than the source keeps going over the last frame: re-encoding holds it
+        # (tpad); a copied stream simply ends, and players show its last frame.
+        filters = []
         if request.burn_subtitles and subtitles:
-            video_codec = ["-vf", f"subtitles={_filter_path(subtitles[0])}", "-c:v", "libx264", "-crf", "18",
+            filters.append(f"subtitles={_filter_path(subtitles[0])}")
+        if filters and overrun > 0.05:
+            filters.append(f"tpad=stop_mode=clone:stop_duration={overrun:.3f}")
+        video_codec = ["-c:v", "copy"]
+        if filters:
+            video_codec = ["-vf", ",".join(filters), "-c:v", "libx264", "-crf", "18",
                            "-preset", "veryfast", "-pix_fmt", "yuv420p"]
         video_out = _ffmpeg([*inputs, *maps, *video_codec, "-c:a", "aac", "-b:a", "192k", "-c:s", "mov_text",
                              *metadata, "-movflags", "+faststart"], output_dir / f"{stem}.mp4",
@@ -652,9 +736,12 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     # Only this field is the dub's: lines edited while it ran stay as saved.
     sessions.modify(session, lambda latest: latest.data.update(last_output=str(video_out or audio_out)))
     sped = sum(line.speed > 1.01 for line in planned)
+    slowed = sum(line.speed < 0.99 for line in planned)
     message = f"Dubbed {len(planned)} line(s) into {language or 'the target language'}"
-    if sped:
-        message += f"; {sped} sped up to fit"
+    if request.timing == TIMING_NATURAL:
+        message += f"; {sped} sped up to fit" if sped else ""
+    elif sped or slowed:
+        message += f"; matched to the original timing ({sped} sped up, {slowed} slowed down)"
     if notes:
         message += ".\n\nCheck: " + "; ".join(notes[:12]) + ("; …" if len(notes) > 12 else "")
     yield Dub(session, audio_out, video_out, subtitles, message + ("" if notes else "."))
