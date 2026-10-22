@@ -1,6 +1,6 @@
 # Reorganization plan
 
-Status: in progress. Phases 0–4 are done. Combines two code reviews.
+Status: in progress. Phases 0–5 are done. Combines two code reviews.
 One review covered feature ownership and the workspace, the other the cost of
 adding a feature. Remove this file when the plan is finished.
 
@@ -136,6 +136,15 @@ their values.
 - Done when `application.py` is under ~800 lines and no controller refers
   back into it.
 
+Outcome: the wrapper loop, the Media video-only adapters and the
+gallery_store / media_catalog / provenance cycle are gone (provenance now
+notifies `SNAPSHOT_LISTENERS`, which the media catalog joins). Tests import
+from owning modules, so no `compat.py` was needed. `application.py` is 1,234
+lines, not ~800: what remains is the ComfyUI transport, staging and graph
+wrappers that tests patch as the effect seam, the full `generate`, backend
+status and `build_ui`/`main`. Moving those means giving tests a fake runtime
+instead of `patch.object(app, …)`, listed under Later.
+
 ## Phase 6: Workspace experience (separate UI track, after phase 2)
 
 - Make Projects a top-level tab between Create and Media. It shows the
@@ -148,6 +157,9 @@ their values.
 
 ## Later
 
+- Move the ComfyUI transport, staging and graph wrappers out of
+  `application.py` behind one runtime-effects object that tests replace,
+  instead of patching module functions.
 - One project model. Song takes (browser session), Dub sessions (private
   `session.json` folders), Drama 3 takes and saved requests (SQLite) persist
   differently. Making them editable multi-step projects needs its own

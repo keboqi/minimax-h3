@@ -5,6 +5,7 @@ import time
 
 from .catalog import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from . import gallery_store
+from .provenance import SNAPSHOT_LISTENERS
 
 MEDIA_EXTENSIONS = {
     "Image": IMAGE_EXTENSIONS,
@@ -106,3 +107,6 @@ def catalog_inventory(mode, limit):
 def register_created_media(source, metadata):
     if _CATALOG is not None:
         _CATALOG.register(source, metadata)
+
+
+SNAPSHOT_LISTENERS.append(register_created_media)

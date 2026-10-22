@@ -79,54 +79,21 @@ class GalleryRestorationTests(unittest.TestCase):
             [item["visible"] for item in updates[3:6]], [False, True, False]
         )
 
-    def test_video_gallery_dispatch_reserves_image_and_audio_preview_slots(self):
-        legacy_update = (
-            "grid",
-            "paths",
-            "status",
-            "video",
-            "download",
-            "selected",
-            False,
-            "complete",
-        )
-        with patch.object(app.MEDIA, "postprocess_selected_gallery_video",
-            return_value=iter([legacy_update]),
+    def test_processed_video_fills_the_media_result_slots(self):
+        with (
+            patch.object(app.MEDIA, "refresh_media_gallery", return_value=([], [], "1 video")),
+            patch.object(app.MEDIA, "absolute_gallery_media_download_url", return_value="/video"),
+            patch.object(app.MEDIA, "gallery_resolution_text", return_value="1920×1080"),
         ):
-            updates = list(
-                app.MEDIA.postprocess_selected_gallery_media(
-                    "Video",
-                    "source.mp4",
-                    "method",
-                    1,
-                    "seedvr",
-                    "ltx",
-                    "prompt",
-                    False,
-                    False,
-                    5.0,
-                    "1920 × 1920",
-                    request=Mock(),
-                    progress=Mock(),
-                )
+            updates = app.MEDIA.gallery_media_processed_result(
+                "Video", Path("video.mp4"), "Upscale", 1.0, Mock()
             )
+        self.assertEqual(len(updates), 10)
         self.assertEqual(
-            updates,
-            [
-                (
-                    "grid",
-                    "paths",
-                    "status",
-                    "video",
-                    None,
-                    None,
-                    "download",
-                    "selected",
-                    False,
-                    "complete",
-                )
-            ],
+            [item["visible"] for item in updates[3:6]], [True, False, False]
         )
+        self.assertEqual(updates[3]["value"], "video.mp4")
+        self.assertIn("Download processed video", updates[6])
 
     def test_gallery_image_upscale_reuses_seedvr2_still_workflow(self):
         source = Path("source.png")
@@ -341,7 +308,7 @@ class GalleryRestorationTests(unittest.TestCase):
                         "concat_upscaled_clips": result,
                         "cleanup_upscale_clip_batch": None,
                         "unload_comfy_models": None,
-                        "gallery_processed_result": "complete",
+                        "gallery_media_processed_result": "complete",
                         "postprocess_video": None,
                         "upscale_target_dimensions": None,
                     }
@@ -355,8 +322,8 @@ class GalleryRestorationTests(unittest.TestCase):
                         )
                     )
                     updates = list(
-                        app.MEDIA.postprocess_selected_gallery_video(
-                            str(source),
+                        app.MEDIA.postprocess_selected_gallery_media(
+                            "Video", str(source),
                             option,
                             42,
                             "unused",

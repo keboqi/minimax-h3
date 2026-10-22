@@ -38,7 +38,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/generation/ | Named requests and typed services; preparation, graph construction, execution and finishing. One module per engine; image_jobs.py is the shared ComfyUI job for FLUX 3, MOSS-Image and Fibo 2.0 |
 | h3_app/staging.py, media_tools.py | Input staging, media inspection, controlled subprocesses and post-processing |
 | h3_app/media.py, outputs.py, gallery_store.py | Contained discovery, explicit output context and complete managed gallery inventory |
-| h3_app/provenance.py | Atomic sidecars, copied-media provenance and escaped metadata rendering |
+| h3_app/provenance.py | Atomic sidecars, copied-media provenance and escaped metadata rendering. Listeners in `SNAPSHOT_LISTENERS` hear of each new sidecar; the media catalog registers there, so provenance imports neither the catalog nor the gallery |
 | h3_app/prompt_writers/ | One prompt writer module per engine (h3, ltx, qwen, flux3, moss_image, song, drama3) over `common.py`'s uploaded-media handling and Gemini/Lightning request |
 | h3_app/llm/ | Gemini and Lightning clients: transient keys, temporary Gemini file uploads, generation |
 | h3_app/workers/ | Isolated uv environments, setup steps with cancellation, and resident JSON-line worker processes |

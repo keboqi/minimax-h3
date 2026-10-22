@@ -8,9 +8,14 @@ import uuid
 from contextvars import ContextVar
 from html import escape
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
+
+from .jobs import CURRENT_JOB, check_cancelled
 
 RUN_CONTEXT: ContextVar[dict] = ContextVar("h3_run_context", default={})
+# Called with (media path, snapshot) after each snapshot is written; the media
+# catalog registers here so provenance does not depend on it.
+SNAPSHOT_LISTENERS: list[Callable[[Path | str, dict], None]] = []
 
 
 def snapshot_path(path: str | Path) -> Path:
@@ -19,8 +24,6 @@ def snapshot_path(path: str | Path) -> Path:
 
 
 def write_snapshot(path: str | Path, settings: Mapping[str, Any]) -> None:
-    from .jobs import CURRENT_JOB
-
     destination = snapshot_path(path)
     temporary = destination.with_name(destination.name + f".{uuid.uuid4().hex}.tmp")
     payload = {"schema_version": 1, "output": Path(path).name, **settings}
@@ -41,8 +44,8 @@ def write_snapshot(path: str | Path, settings: Mapping[str, Any]) -> None:
             json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
         )
         os.replace(temporary, destination)
-        from .media_catalog import register_created_media
-        register_created_media(path, payload)
+        for listener in SNAPSHOT_LISTENERS:
+            listener(path, payload)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -125,8 +128,6 @@ def copy_snapshot(source: Path, destination: Path) -> None:
 def copy_media(source: Path, destination: Path) -> None:
     """Publish a complete managed copy and preserve its execution settings."""
     import shutil
-
-    from .jobs import check_cancelled
 
     temporary = destination.with_name(destination.name + f".{uuid.uuid4().hex}.partial")
     try:

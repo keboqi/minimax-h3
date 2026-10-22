@@ -101,12 +101,12 @@ class GalleryHdrTests(unittest.TestCase):
                     "prepare_upscale_clip_batch": batch, "submit_prompt": "job", "poll_comfy_progress": [],
                     "wait_for_history": {}, "resolve_output": result, "concat_upscaled_clips": result,
                     "cleanup_upscale_clip_batch": None, "unload_comfy_models": None,
-                    "gallery_processed_result": "complete", "upscale_target_dimensions": None,
+                    "gallery_media_processed_result": "complete", "upscale_target_dimensions": None,
                 }
                 mocks = {name: stack.enter_context(patch.object(owner(app, name), name, return_value=value)) for name, value in values.items()}
                 build = stack.enter_context(patch.object(app, "build_upscale_graph", wraps=app.build_upscale_graph))
-                updates = list(app.MEDIA.postprocess_selected_gallery_video(
-                    "source.mp4", LTX25_SDR_TO_HDR, 42, "unused", "BF16", "ignored",
+                updates = list(app.MEDIA.postprocess_selected_gallery_media(
+                    "Video", "source.mp4", LTX25_SDR_TO_HDR, 42, "unused", "BF16", "ignored",
                     False, split, 5.0, "unused", request=Mock(), progress=Mock(),
                 ))
                 self.assertEqual(updates[-1], "complete", updates)

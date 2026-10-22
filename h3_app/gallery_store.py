@@ -18,6 +18,7 @@ from h3_app.catalog import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.processes import run_media_process
+from h3_app.provenance import read_snapshot
 
 _GALLERY_RESOLUTION_CACHE = {}
 _GALLERY_RESOLUTION_CACHE_LOCK = Lock()
@@ -536,8 +537,6 @@ def generated_image_family(image: str | Path, *, runtime: RuntimeConfig) -> str:
         if "/input_upscale/" in f"/{lowered}/":
             # CQ and SeedVR2 share this directory. Prefer provenance so older
             # CQ outputs also receive their actual processing family.
-            from h3_app.provenance import read_snapshot
-
             snapshot = read_snapshot(resolved) or {}
             if (
                 snapshot.get("family") == "CQ image enhancement"

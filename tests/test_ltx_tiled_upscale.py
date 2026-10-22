@@ -92,14 +92,14 @@ class TiledUpscaleTests(unittest.TestCase):
                         "wait_for_history": {}, "resolve_output": result,
                         "concat_upscaled_clips": result,
                         "cleanup_upscale_clip_batch": None,
-                        "gallery_processed_result": "complete",
+                        "gallery_media_processed_result": "complete",
                     }
                     mocks = {name: stack.enter_context(patch.object(owner(app, name), name, return_value=value))
                              for name, value in values.items()}
                     build = stack.enter_context(patch.object(app, "build_upscale_graph", wraps=app.build_upscale_graph))
                     if entry == "media":
-                        updates = list(app.MEDIA.postprocess_selected_gallery_video(
-                            str(source), LTX25_TILED_UPSCALE, 42, "unused",
+                        updates = list(app.MEDIA.postprocess_selected_gallery_media(
+                            "Video", str(source), LTX25_TILED_UPSCALE, 42, "unused",
                             DEFAULT_LTX25_MODEL, "Subtle natural texture", False,
                             split, 5.0, "3840 × 3840", request=Mock(), progress=Mock(),
                         ))

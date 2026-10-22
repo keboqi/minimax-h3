@@ -44,12 +44,8 @@ from h3_app.gallery_store import AssetInventory, AssetPage
 from .media_previews import preview_results
 from .presentation import error_markdown
 
-GalleryMutationResult = tuple[
-    list[tuple[str, str]], list[str], str, Any, Any, str | None, bool
-]
-GalleryPostprocessResult = tuple[
-    list[tuple[str, str]], list[str], str, Any, Any, str | None, bool, str
-]
+# How deletion messages name one item and a count of items of each type.
+MEDIA_NOUNS = {"Video": ("a video", "video"), "Image": ("an image", "image"), "Audio": ("an audio clip", "audio clip")}
 GalleryMediaMutationResult = tuple[
     list[tuple[str, str]], list[str], str, Any, Any, Any, Any, str | None, bool
 ]
@@ -294,30 +290,6 @@ class MediaController:
             selectable_paths.append(str(video))
         return AssetPage.from_scan(
             items, selectable_paths, len(videos), limit, "videos", failed
-        )
-
-    def refresh_gallery(self, limit: int = 48):
-        """Compatibility adapter for existing gallery callers."""
-        return self.refresh_media_page("Video", limit).as_ui_values()
-
-    def select_gallery_video(
-        self, paths: list[str], request: gr.Request, evt: gr.SelectData
-    ) -> tuple[str | None, str, str | None]:
-        index = evt.index
-        if isinstance(index, (tuple, list)):
-            index = index[0]
-        try:
-            video = paths[int(index)]
-        except (IndexError, TypeError, ValueError):
-            return (None, "", None)
-        download_url = self.absolute_video_download_url(video, request)
-        resolution = self.gallery_resolution_text(
-            self.managed_video_path(video)
-        )
-        return (
-            video,
-            f"**Resolution:** {resolution} · [Download video]({download_url})",
-            video,
         )
 
     def list_media_paths(self, mode):
@@ -570,53 +542,7 @@ class MediaController:
             f"Completed {option} in {elapsed:.1f}s",
         )
 
-    def gallery_mutation_result(
-        self, message: str, *, selected_video: str | None = None, clear_selection: bool
-    ) -> GalleryMutationResult:
-        items, paths, detail = self.refresh_gallery()
-        player = None if clear_selection else gr.skip()
-        download = "" if clear_selection else gr.skip()
-        selected = None if clear_selection else selected_video
-        return (
-            items,
-            paths,
-            f"{message} · {detail}",
-            player,
-            download,
-            selected,
-            False,
-        )
-
-    def gallery_progress_result(self, message: str) -> GalleryPostprocessResult:
-        return (
-            gr.skip(),
-            gr.skip(),
-            message,
-            gr.skip(),
-            gr.skip(),
-            gr.skip(),
-            gr.skip(),
-            message,
-        )
-
-    def gallery_processed_result(
-        self, result: Path, option: str, elapsed: float, request: gr.Request
-    ) -> GalleryPostprocessResult:
-        items, paths, detail = self.refresh_gallery()
-        download_url = self.absolute_video_download_url(result, request)
-        resolution = self.gallery_resolution_text(result)
-        return (
-            items,
-            paths,
-            f"Completed {option} in {elapsed:.1f}s · {detail}",
-            str(result),
-            f"**Resolution:** {resolution} · [Download processed video]({download_url})",
-            str(result),
-            False,
-            f"Completed {option} in {elapsed:.1f}s",
-        )
-
-    def postprocess_selected_gallery_video(
+    def _postprocess_selected_video(
         self,
         selected_video: str | None,
         option: str,
@@ -648,14 +574,14 @@ class MediaController:
                 else int(seed)
             )
             progress(0, desc=f"Preparing {option}")
-            yield self.gallery_progress_result(
+            yield self.gallery_media_progress_result(
                 f"Preparing `{source.name}` for {option}"
             )
             if option not in COMFY_POSTPROCESS_OPTIONS:
                 result = self.services.postprocess_video(source, option)
                 progress(1, desc="Complete")
-                yield self.gallery_processed_result(
-                    result, option, time.monotonic() - started, request
+                yield self.gallery_media_processed_result(
+                    "Video", result, option, time.monotonic() - started, request
                 )
                 return
             models = self.services.load_model_config()
@@ -668,7 +594,7 @@ class MediaController:
                 )
             if option == SEEDVR2_UPSCALE:
                 model_status = f"SeedVR2 {seedvr2_model}"
-                yield self.gallery_progress_result(
+                yield self.gallery_media_progress_result(
                     f"Checking {model_status} models"
                 )
                 downloaded = self.services.ensure_seedvr2_upscale_models(
@@ -677,7 +603,7 @@ class MediaController:
                 stage_bucket = "seedvr2_upscale"
             else:
                 model_status = f"{option} with {ltx25_model}"
-                yield self.gallery_progress_result(
+                yield self.gallery_media_progress_result(
                     f"Checking {model_status} models"
                 )
                 downloaded = self.services.ensure_ltx25_upscale_models(
@@ -689,7 +615,7 @@ class MediaController:
                     else "ltx25_upscale"
                 )
             if downloaded:
-                yield self.gallery_progress_result(
+                yield self.gallery_media_progress_result(
                     f"{option} models downloaded"
                 )
             metadata = self.services.probe_video_metadata(source)
@@ -712,11 +638,11 @@ class MediaController:
             )
             clip_count = len(clip_batch.sources)
             if use_split:
-                yield self.gallery_progress_result(
+                yield self.gallery_media_progress_result(
                     f"Split `{source.name}` into {clip_count} LTX-safe clips (target {float(split_seconds):g}s each)"
                 )
             if force_offload:
-                yield self.gallery_progress_result(
+                yield self.gallery_media_progress_result(
                     f"Unloading resident models before {option}"
                 )
                 self.services.unload_comfy_models()
@@ -757,7 +683,7 @@ class MediaController:
                     queued_at = time.time()
                     prompt_id = self.services.submit_prompt(graph, client_id)
                     clip_label = f"Clip {clip_index + 1}/{clip_count}"
-                    yield self.gallery_progress_result(
+                    yield self.gallery_media_progress_result(
                         progress_status(
                             f"{option} queued",
                             started=started,
@@ -796,7 +722,7 @@ class MediaController:
                                 ),
                                 desc=f"{clip_label}: {stage}",
                             )
-                        yield self.gallery_progress_result(
+                        yield self.gallery_media_progress_result(
                             progress_status(
                                 f"{clip_label}: {stage}",
                                 started=started,
@@ -815,7 +741,7 @@ class MediaController:
                             self.services.wait_for_history(prompt_id), queued_at
                         )
                     )
-                yield self.gallery_progress_result(
+                yield self.gallery_media_progress_result(
                     f"Concatenating {clip_count} processed clips and restoring source audio"
                 )
                 result = self.services.concat_upscaled_clips(
@@ -826,13 +752,13 @@ class MediaController:
                     frame_count=metadata.frame_count,
                 )
                 progress(1, desc="Complete")
-                yield self.gallery_processed_result(
-                    result, option, time.monotonic() - started, request
+                yield self.gallery_media_processed_result(
+                    "Video", result, option, time.monotonic() - started, request
                 )
                 return
             queued_at = time.time()
             prompt_id = self.services.submit_prompt(graph, client_id)
-            yield self.gallery_progress_result(
+            yield self.gallery_media_progress_result(
                 progress_status(
                     f"{option} queued",
                     started=started,
@@ -851,7 +777,7 @@ class MediaController:
                     progress((step, step_total), desc=stage)
                 elif total_nodes:
                     progress((completed_nodes, total_nodes), desc=stage)
-                yield self.gallery_progress_result(
+                yield self.gallery_media_progress_result(
                     progress_status(
                         stage,
                         started=started,
@@ -867,12 +793,12 @@ class MediaController:
                 self.services.wait_for_history(prompt_id), queued_at
             )
             progress(1, desc="Complete")
-            yield self.gallery_processed_result(
-                result, option, time.monotonic() - started, request
+            yield self.gallery_media_processed_result(
+                "Video", result, option, time.monotonic() - started, request
             )
         except Exception as exc:
             record_failure(exc)
-            yield self.gallery_progress_result(
+            yield self.gallery_media_progress_result(
                 error_markdown("Post-processing failed", exc)
             )
         finally:
@@ -1079,7 +1005,7 @@ class MediaController:
                 progress,
             )
             return
-        for update in self.postprocess_selected_gallery_video(
+        yield from self._postprocess_selected_video(
             selected_media,
             option,
             seed,
@@ -1092,8 +1018,7 @@ class MediaController:
             upscale_resolution,
             request,
             progress,
-        ):
-            yield (*update[:4], None, None, *update[4:])
+        )
 
     def _delete_generated_media(self, selected_media, mode):
         """Delete only managed outputs and retire their catalog entries immediately."""
@@ -1119,36 +1044,10 @@ class MediaController:
         placeholder.unlink(missing_ok=True)
         return media.name
 
-    def delete_selected_gallery_video(
-        self, selected_video: str | None, confirmed: bool
-    ) -> GalleryMutationResult:
-        if not confirmed:
-            return self.gallery_mutation_result(
-                "Confirm permanent deletion first.",
-                selected_video=selected_video,
-                clear_selection=False,
-            )
-        if not selected_video:
-            return self.gallery_mutation_result(
-                "Select a video to delete.", clear_selection=True
-            )
-        try:
-            name = self._delete_generated_media(selected_video, "Video")
-            return self.gallery_mutation_result(
-                f"Deleted `{name}`.", clear_selection=True
-            )
-        except (H3Error, OSError) as exc:
-            return self.gallery_mutation_result(
-                f"Delete failed: {exc}", clear_selection=True
-            )
-
     def delete_selected_gallery_media(
         self, mode: str, selected_media: str | None, confirmed: bool
     ) -> GalleryMediaMutationResult:
         media_mode = self.gallery_media_mode(mode)
-        if media_mode == "Video":
-            result = self.delete_selected_gallery_video(selected_media, confirmed)
-            return (*result[:4], None, None, *result[4:])
         if not confirmed:
             return self.gallery_media_mutation_result(
                 media_mode,
@@ -1158,7 +1057,7 @@ class MediaController:
             )
         if not selected_media:
             return self.gallery_media_mutation_result(
-                media_mode, "Select an item to delete.", clear_selection=True,
+                media_mode, f"Select {MEDIA_NOUNS[media_mode][0]} to delete.", clear_selection=True,
             )
         try:
             name = self._delete_generated_media(selected_media, media_mode)
@@ -1169,37 +1068,10 @@ class MediaController:
             media_mode, message, clear_selection=True,
         )
 
-    def empty_generated_gallery(
-        self, selected_video: str | None, confirmed: bool
-    ) -> GalleryMutationResult:
-        if not confirmed:
-            return self.gallery_mutation_result(
-                "Confirm permanent deletion first.",
-                selected_video=selected_video,
-                clear_selection=False,
-            )
-        deleted = 0
-        failed = 0
-        for candidate in self.gallery_video_paths(limit=None):
-            try:
-                self._delete_generated_media(candidate, "Video")
-                deleted += 1
-            except (H3Error, OSError):
-                failed += 1
-        result = f"Deleted {deleted} generated video{('s' if deleted != 1 else '')}."
-        if failed:
-            result += (
-                f" {failed} file{('s' if failed != 1 else '')} could not be deleted."
-            )
-        return self.gallery_mutation_result(result, clear_selection=True)
-
     def empty_generated_media_gallery(
         self, mode: str, selected_media: str | None, confirmed: bool
     ) -> GalleryMediaMutationResult:
         media_mode = self.gallery_media_mode(mode)
-        if media_mode == "Video":
-            result = self.empty_generated_gallery(selected_media, confirmed)
-            return (*result[:4], None, None, *result[4:])
         if not confirmed:
             return self.gallery_media_mutation_result(
                 media_mode,
@@ -1214,9 +1086,10 @@ class MediaController:
                 deleted += 1
             except (H3Error, OSError):
                 failed += 1
-        message = f"Deleted {deleted} generated {media_mode.lower()} item(s)."
+        noun = MEDIA_NOUNS[media_mode][1]
+        message = f"Deleted {deleted} generated {noun}{'s' if deleted != 1 else ''}."
         if failed:
-            message += f" {failed} item(s) could not be deleted."
+            message += f" {failed} file{'s' if failed != 1 else ''} could not be deleted."
         return self.gallery_media_mutation_result(
             media_mode, message, clear_selection=True,
         )

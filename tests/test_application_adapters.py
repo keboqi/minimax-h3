@@ -582,7 +582,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
                 )
                 h3_video.unlink()
                 ltx25_video.unlink()
-                gallery_items, gallery_paths, gallery_detail = app.MEDIA.refresh_gallery()
+                gallery_items, gallery_paths, gallery_detail = app.MEDIA.refresh_media_gallery("Video")
 
                 class FakeGalleryRequest:
                     class request:
@@ -591,19 +591,20 @@ class ApplicationAdaptersTests(unittest.TestCase):
                 class FakeSelectEvent:
                     index = 0
 
-                gallery_play_url, gallery_download_link, selected_video = (
-                    app.MEDIA.select_gallery_video(
+                gallery_player, _image, _audio, gallery_download_link, selected_video = (
+                    app.MEDIA.select_gallery_media(
+                        "Video",
                         gallery_paths,
                         FakeGalleryRequest(),  # type: ignore[arg-type]
                         FakeSelectEvent(),  # type: ignore[arg-type]
                     )
                 )
-                unconfirmed_delete = app.MEDIA.delete_selected_gallery_video(
-                    selected_video, False
+                unconfirmed_delete = app.MEDIA.delete_selected_gallery_media(
+                    "Video", selected_video, False
                 )
                 fallback_exists_after_unconfirmed = fallback_video.exists()
-                confirmed_delete = app.MEDIA.delete_selected_gallery_video(
-                    selected_video, True
+                confirmed_delete = app.MEDIA.delete_selected_gallery_media(
+                    "Video", selected_video, True
                 )
                 fallback_exists_after_delete = fallback_video.exists()
 
@@ -611,11 +612,11 @@ class ApplicationAdaptersTests(unittest.TestCase):
                 empty_video_2 = gradio_test_output / "empty-2.mp4"
                 empty_video_1.write_bytes(b"test")
                 empty_video_2.write_bytes(b"test")
-                unconfirmed_empty = app.MEDIA.empty_generated_gallery(None, False)
+                unconfirmed_empty = app.MEDIA.empty_generated_media_gallery("Video", None, False)
                 empty_exists_after_unconfirmed = (
                     empty_video_1.exists() and empty_video_2.exists()
                 )
-                confirmed_empty = app.MEDIA.empty_generated_gallery(None, True)
+                confirmed_empty = app.MEDIA.empty_generated_media_gallery("Video", None, True)
                 empty_exists_after_delete = (
                     empty_video_1.exists() or empty_video_2.exists()
                 )
@@ -638,14 +639,14 @@ class ApplicationAdaptersTests(unittest.TestCase):
             self.assertIn("fallback.mp4", gallery_items[0][1])
             self.assertNotIn("864×480", gallery_items[0][1])
             self.assertEqual(gallery_paths, [str(fallback_video)])
-            self.assertEqual(gallery_play_url, str(fallback_video))
+            self.assertTrue(gallery_player["visible"])
+            self.assertTrue(gallery_player["value"].endswith("/downloads/comfy/fallback.mp4"))
             self.assertEqual(selected_video, str(fallback_video))
             self.assertTrue(
                 gallery_download_link.endswith(
                     "/downloads/comfy/fallback.mp4?download=1)"
                 )
             )
-            self.assertIn("**Resolution:** 864×480", gallery_download_link)
             self.assertIn("Showing 1 of 1 generated videos", gallery_detail)
             self.assertIn("1 thumbnail", gallery_detail)
             self.assertIs(fallback_exists_after_unconfirmed, True)

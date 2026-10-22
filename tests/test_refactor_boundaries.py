@@ -299,7 +299,7 @@ class MediaPublicationTests(unittest.TestCase):
                 ),
                 patch.object(app, "_runtime_config", return_value=config),
             ):
-                items, paths, _detail = app.MEDIA.refresh_gallery()
+                items, paths, _detail = app.MEDIA.refresh_media_gallery("Video")
             self.assertEqual(paths, [str(source)])
             self.assertNotEqual(items[0][0], str(source))
             self.assertEqual(Path(items[0][0]).suffix, ".png")
@@ -325,7 +325,7 @@ class MediaPublicationTests(unittest.TestCase):
                 patch.object(app.MEDIA, "gallery_resolution_text") as video_resolution,
                 patch.object(app, "_runtime_config", return_value=config),
             ):
-                items, paths, status = app.MEDIA.refresh_gallery()
+                items, paths, status = app.MEDIA.refresh_media_gallery("Video")
                 self.assertEqual((len(items), len(paths)), (48, 48))
                 self.assertIn("48 of 120", status)
                 self.assertEqual(poster.call_count, 48)
@@ -369,7 +369,7 @@ class MediaPublicationTests(unittest.TestCase):
                     patch.object(app.MEDIA, "gallery_video_paths", return_value=videos),
                     patch.object(app.MEDIA, "gallery_thumbnail", side_effect=poster),
                 ):
-                    items, paths, _ = app.MEDIA.refresh_gallery()
+                    items, paths, _ = app.MEDIA.refresh_media_gallery("Video")
                 self.assertEqual(paths, [str(video) for video in videos])
                 self.assertEqual(
                     [item[0] for item in items],

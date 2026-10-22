@@ -106,7 +106,6 @@ class MediaPerformanceTests(TestCase):
         controller.managed_video_path = Mock(return_value=source)
         controller.absolute_video_url = Mock(return_value=url)
         controller.absolute_video_download_url = Mock(return_value=url + "?download=1")
-        controller.select_gallery_video = Mock(side_effect=AssertionError("metadata probe"))
         updates = controller.select_gallery_media("Video", [str(source)], Mock(), SimpleNamespace(index=0))
         self.assertEqual(updates[-1], str(source))
         with patch.object(processing_utils, "hash_file", side_effect=AssertionError("whole-file hash")), patch.object(processing_utils, "video_is_playable", side_effect=AssertionError("codec probe")):
