@@ -5,8 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-import gradio as gr
-
 from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation
 from .song_controls import bind_song_check, bind_write_and_generate
 from .song_takes import bind_take_history
@@ -53,22 +51,12 @@ def bind_yue2_view(
     bind_take_history(
         view.takes, run=view.run, output=view.output, seed=view.seed, take_facts=take_facts,
         score=view.abc, mode=view.mode,
+        last_score=view.last_score, reuse_last_score=view.reuse_score,
         drafts={
             "style": view.style, "lyrics": view.lyrics, "abc": view.abc, "mode": view.mode,
             "duration": view.duration, "vocals": view.vocals, "language": view.language,
             "use": view.use,
         },
-    )
-
-    def reuse(score, mode):
-        if not str(score or "").strip():
-            return gr.skip(), gr.skip()
-        # A supplied score needs a planning mode; keep the user's choice otherwise.
-        return score, ("full" if mode == "off" else gr.skip())
-
-    view.reuse_score.click(
-        reuse, inputs=[view.last_score, view.mode], outputs=[view.abc, view.mode],
-        queue=False, api_name=False,
     )
     return bind_gpu_action(
         view.run.click,

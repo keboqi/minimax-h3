@@ -139,11 +139,15 @@ def generate_music3(
             services.execution.wait_for_history(prompt_id), queued_at
         )
         snapshot_values.update(seed=actual_seed)
+        seconds = probe_audio_seconds(result)
         write_snapshot(
             result,
-            {"job_id": prompt_id, "family": "Music 3", "settings": snapshot_values},
+            {
+                "job_id": prompt_id, "family": "Music 3", "settings": snapshot_values,
+                "audio_seconds": seconds,
+            },
         )
-        note = take_note(probe_audio_seconds(result), float(request.max_duration))
+        note = take_note(seconds, float(request.max_duration))
         finished_at = time.monotonic()
         elapsed = finished_at - started
         timing_summary = timings.summary(now=finished_at)

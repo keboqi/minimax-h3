@@ -133,9 +133,14 @@ def bind_write_and_generate(
         if message.startswith("Prompt enhancement failed"):
             raise gr.Error(message)
         originals = tuple(values[i] for i in draft_indices)
+        suggestions = tuple(result[:-1])
+        if suggestions == originals:
+            # Nothing to undo; keep any earlier Undo as it was.
+            return (*suggestions, message + " The writer kept your draft as it is.",
+                    gr.skip(), None, gr.skip(), gr.update(visible=False))
         return (
-            *result[:-1],
-            message + " Applied without review; starting a take.",
+            *suggestions,
+            message + " Applied without review.",
             originals,
             None,
             gr.update(visible=True),
@@ -151,13 +156,18 @@ def bind_write_and_generate(
         **PROMPT_QUEUE,
     ).success(
         None,
+        inputs=status,
+        outputs=status,
         api_name=False,
         queue=False,
-        # Readiness re-enables Generate once the new draft lands; wait briefly for it.
+        # Readiness re-enables Generate once the new draft lands; wait briefly for
+        # it, and say so when it stays disabled (a take is still running).
         js=(
-            "async () => { for (let i = 0; i < 50; i++) { "
+            "async (status) => { for (let i = 0; i < 50; i++) { "
             f"const b = document.getElementById({generate_id!r}); "
-            "if (b && !b.disabled) { b.click(); return; } "
-            "await new Promise((r) => setTimeout(r, 100)); } }"
+            "if (b && !b.disabled) { b.click(); return status + ' Starting a take.'; } "
+            "await new Promise((r) => setTimeout(r, 100)); } "
+            "return status + ' No take started: Generate is not available yet. "
+            "Press Generate when the current take finishes.'; }"
         ),
     )

@@ -180,6 +180,12 @@ _RAP_FORMS = (
         ("Outro", 4, 0, "beat rides out or cuts clean"),
     ),
 )
+# Longer limits grow the largest rap form verse by verse, each followed by the hook.
+_RAP_MORE = (
+    ("Verse", 16, 16, "a new flow or a guest-style switch; new angle on the story"),
+    ("Verse", 16, 16, "closing verse: bring the story home"),
+)
+_RAP_HOOK = ("Chorus", 8, 4, "hook again")
 
 
 @dataclass(frozen=True)
@@ -295,7 +301,7 @@ def plan_song(
         if sum(bars for _, bars, _, _ in form) <= budget:
             sections = list(form)
     if use != HOOK:
-        sections = _extend(sections, budget, instrumental)
+        sections = _extend(sections, budget, instrumental, largest=forms[-1])
     elif sum(bars for _, bars, _, _ in sections) > budget:
         # A slow jingle: a one-bar pickup and button, and a shorter hook,
         # rather than overrun the limit.
@@ -322,7 +328,7 @@ def plan_song(
     )
 
 
-def _extend(sections, budget, instrumental):
+def _extend(sections, budget, instrumental, *, largest):
     def total():
         return sum(bars for _, bars, _, _ in sections)
 
@@ -334,15 +340,23 @@ def _extend(sections, budget, instrumental):
             role = "development: vary the theme" if variation % 2 else "theme returns, fuller"
             sections.insert(len(sections) - 1, ("Instrumental", bars, 0, role))
         return sections
-    if len(sections) < len(_RADIO):
+    # Only the family's largest form grows; a smaller one still had room to spare.
+    if len(sections) < len(largest):
         return sections
-    if total() + _SOLO[1] <= budget:
-        sections.insert(len(sections) - 2, _SOLO)
-    if total() + _LAST_CHORUS[1] <= budget:
-        sections.insert(len(sections) - 1, _LAST_CHORUS)
-    if total() + sum(bars for _, bars, _, _ in _THIRD_VERSE) <= budget:
-        bridge = next(i for i, section in enumerate(sections) if section[0] == "Bridge")
-        sections[bridge:bridge] = _THIRD_VERSE
+    if largest is _RAP_FORMS[-1]:
+        # Rap grows by another verse and hook rather than a solo or bridge.
+        for verse in _RAP_MORE:
+            if total() + verse[1] + _RAP_HOOK[1] > budget:
+                break
+            sections[-1:-1] = (verse, _RAP_HOOK)
+    else:
+        if total() + _SOLO[1] <= budget:
+            sections.insert(len(sections) - 2, _SOLO)
+        if total() + _LAST_CHORUS[1] <= budget:
+            sections.insert(len(sections) - 1, _LAST_CHORUS)
+        if total() + sum(bars for _, bars, _, _ in _THIRD_VERSE) <= budget:
+            bridge = next(i for i, section in enumerate(sections) if section[0] == "Bridge")
+            sections[bridge:bridge] = _THIRD_VERSE
     tag, bars, lines, _role = sections[-1]
     extra = min(12, (budget - total()) // 4 * 4)
     if extra > 0:

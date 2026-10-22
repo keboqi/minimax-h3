@@ -67,6 +67,20 @@ class SongPlanTests(unittest.TestCase):
             sum(s.bars for s in fast.sections), sum(s.bars for s in song_brief.plan_song(150).sections)
         )
 
+    def test_long_rap_grows_by_verse_and_hook(self) -> None:
+        for seconds in (300, 360):
+            with self.subTest(seconds=seconds):
+                plan = song_brief.plan_song(seconds, idea="hip hop")
+                self.assertLessEqual(plan.seconds, seconds)
+                self.assertGreater(plan.seconds, seconds * 0.85)
+                self.assertNotIn("Bridge", [s.tag for s in plan.sections])
+        # Growth stops at five verses; very long limits keep a shorter song.
+        longest = song_brief.plan_song(480, idea="hip hop")
+        self.assertLessEqual(longest.seconds, 480)
+        longest = [s.tag for s in longest.sections]
+        self.assertEqual(longest.count("Verse"), 5)
+        self.assertEqual(longest[-2:], ["Chorus", "Outro"])
+
     def test_conventions_follow_the_genre(self) -> None:
         rap = song_brief.plan_song(120, idea="a hip-hop track about my hometown")
         self.assertEqual(rap.genre.name, "rap")
@@ -254,6 +268,28 @@ class SongWriterTests(unittest.TestCase):
         self.assertIn("could not be split", status)
 
     @patch("openai.OpenAI")
+    def test_markdown_labels_and_a_preamble_still_split(self, client: Mock) -> None:
+        self.reply(client, "Here is your draft.\n\n**STYLE**: indie pop, warm vocal\n\n**LYRICS:**\n[Verse]\nNew")
+        style, lyrics, status = self.yue2("indie", "")
+        self.assertEqual((style, lyrics), ("indie pop, warm vocal", "[Verse]\nNew"))
+        self.assertNotIn("failed", status)
+        self.reply(client, "## Caption: Dream pop\n## Lyrics: N/A")
+        caption, _, status = self.music3("dreamy", SONG)
+        self.assertEqual(caption, "Dream pop")
+        self.assertNotIn("failed", status)
+
+    @patch("openai.OpenAI")
+    def test_instrumental_tags_give_way_once_a_voice_is_chosen(self, client: Mock) -> None:
+        tags = "[Intro]\n\n[Instrumental]\n\n[Outro]"
+        self.reply(client, "STYLE: indie pop\nLYRICS:\n[Verse]\nFresh words")
+        _, lyrics, _ = self.yue2("indie", tags, vocals="Female lead")
+        self.assertEqual(lyrics, "[Verse]\nFresh words")
+        self.assertIn("Existing lyrics:\n(none)", self.request_text(client))
+        # Still instrumental: the tag-only structure is kept.
+        _, lyrics, _ = self.yue2("indie", tags, vocals="Instrumental")
+        self.assertEqual(lyrics, tags)
+
+    @patch("openai.OpenAI")
     def test_yue2_keeps_lyrics_and_turns_style_into_tags(self, client: Mock) -> None:
         self.reply(client, "STYLE:\nindie pop,\nwarm female vocal.\nclean guitar\nLYRICS:\n[Verse]\nRewritten")
         style, lyrics, _ = self.yue2("indie", SONG)
@@ -336,8 +372,12 @@ class YuE2ScoreTests(unittest.TestCase):
             self.assertIn("score saved", updates[-1].status)
             self.assertIn("reached the 1:00 limit", updates[-1].status)
             self.assertEqual(read_score(result), "X:1\nK:G\nGABc|")
-            self.assertEqual(app.score_for_media(str(result)), "X:1\nK:G\nGABc|")
-            self.assertEqual(app.score_for_media(None), "")
+            facts = app.take_facts(str(result))
+            self.assertEqual(
+                (facts["score"], facts["seconds"], facts["score_mode"]),
+                ("X:1\nK:G\nGABc|", 59.5, app.YUE2_DEFAULTS["mode"]),
+            )
+            self.assertEqual(app.take_facts(None), {})
 
     def test_score_sidecar_follows_the_song_name(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -359,7 +399,7 @@ class SongTakeHistoryTests(unittest.TestCase):
     def handler(demo, name):
         return next(f.fn for f in demo.fns.values() if f.fn and f.fn.__name__ == name)
 
-    def build(self, facts):
+    def build(self, facts, *, latest=False):
         import gradio as gr
 
         from h3_ui.song_takes import bind_take_history, build_take_history
@@ -369,11 +409,26 @@ class SongTakeHistoryTests(unittest.TestCase):
             mode = gr.Dropdown(["full", "melody", "off"], value="off")
             seed, run, output = gr.Number(), gr.Button(), gr.Audio(type="filepath")
             takes = build_take_history(with_score=True)
+            extra = {"last_score": gr.Textbox(), "reuse_last_score": gr.Button()} if latest else {}
             bind_take_history(
                 takes, run=run, output=output, seed=seed, take_facts=facts,
                 score=abc, mode=mode, drafts={"style": style, "lyrics": lyrics, "abc": abc},
+                **extra,
             )
         return demo
+
+    def test_reused_scores_keep_their_composition_mode(self) -> None:
+        import gradio as gr
+
+        facts = {"m.mp3": {"seed": 3, "seconds": 60, "score": "X:1\nK:D", "score_mode": "melody"}}
+        demo = self.build(lambda path: facts[path], latest=True)
+        result = self.handler(demo, "add")("m.mp3", [], {})
+        history, last_score = result[0], result[-1]
+        self.assertEqual(last_score, "X:1\nK:D")
+        self.assertEqual(self.handler(demo, "add")("m.mp3", history, {}), (gr.skip(),) * 8)
+        self.assertEqual(self.handler(demo, "take_score")(history, "0", "full"), ("X:1\nK:D", "melody"))
+        self.assertEqual(self.handler(demo, "latest_score")(history, "off"), ("X:1\nK:D", "melody"))
+        self.assertEqual(self.handler(demo, "latest_score")([], "off"), (gr.skip(), gr.skip()))
 
     def test_takes_record_drafts_compare_and_reuse(self) -> None:
         facts = {"a.mp3": {"seed": 1, "seconds": 61, "score": "X:1"},
@@ -412,7 +467,8 @@ class SongTakeHistoryTests(unittest.TestCase):
         from h3_ui.song_controls import bind_write_and_generate
 
         replies = iter([("New caption", "New lyrics", "Done."),
-                        ("idea", "", "Prompt enhancement failed: no key")])
+                        ("idea", "", "Prompt enhancement failed: no key"),
+                        ("idea", "old words", "Done.")])
         with gr.Blocks() as demo:
             caption, notes, lyrics, status = gr.Textbox(), gr.Textbox(), gr.Textbox(), gr.Textbox()
             button = gr.Button()
@@ -429,5 +485,10 @@ class SongTakeHistoryTests(unittest.TestCase):
         self.assertIsNone(result[4])
         with self.assertRaises(gr.Error):
             write("idea", "", "")
+        # An unchanged draft offers no Undo and does not claim it was rewritten.
+        unchanged = write("idea", "", "old words")
+        self.assertIn("kept your draft", unchanged[2])
+        self.assertEqual((unchanged[3], unchanged[5]), (gr.skip(), gr.skip()))
         scripts = [d.get("js") or "" for d in demo.get_config_file()["dependencies"]]
-        self.assertTrue(any("getElementById('h3-test-generate')" in js for js in scripts))
+        starter = next(js for js in scripts if "getElementById('h3-test-generate')" in js)
+        self.assertIn("No take started", starter)

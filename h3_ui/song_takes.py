@@ -72,8 +72,12 @@ def bind_take_history(
     take_facts: Callable[[Any], Mapping[str, Any]],
     score: gr.Textbox | None = None,
     mode: gr.Dropdown | None = None,
+    last_score: gr.Textbox | None = None,
+    reuse_last_score: gr.Button | None = None,
 ) -> None:
+    """Record each take; with ``last_score`` also show the latest take's score."""
     names, components = list(drafts), list(drafts.values())
+    score_outputs = [last_score] if last_score is not None else []
 
     # The draft is captured when Generate is pressed, so edits made while the
     # take renders do not get attributed to it.
@@ -85,7 +89,7 @@ def bind_take_history(
     def add(value, history, pending):
         path = value.get("path") if isinstance(value, dict) else value
         if not path or any(take["path"] == str(path) for take in history):
-            return (gr.skip(),) * 7
+            return (gr.skip(),) * (7 + len(score_outputs))
         facts = dict(take_facts(path) or {})
         number = (history[-1]["number"] + 1) if history else 1
         take = {"number": number, "path": str(path), "draft": dict(pending or {}), **facts}
@@ -99,12 +103,13 @@ def bind_take_history(
             None if b is None else history[b]["path"],
             _describe(history, a, b),
             gr.update(open=True, label=f"Your takes · {len(history)} · compare and reuse"),
+            *((take.get("score") or "",) if score_outputs else ()),
         )
 
     output.change(
         add, inputs=[output, takes.history, takes.pending],
         outputs=[takes.history, takes.take_a, takes.take_b, takes.audio_a, takes.audio_b,
-                 takes.details, takes.panel],
+                 takes.details, takes.panel, *score_outputs],
         queue=False, api_name=False, show_progress="hidden",
     )
 
@@ -141,20 +146,39 @@ def bind_take_history(
     takes.use_seed.click(
         take_seed, inputs=[takes.history, takes.take_a], outputs=seed, queue=False, api_name=False,
     )
-    if takes.reuse_score is not None and score is not None and mode is not None:
+    if score is None or mode is None:
+        return
 
-        def take_score(history, a, current_mode):
-            index = _index(history, a)
-            value = history[index].get("score") if index is not None else ""
-            if not value:
-                return gr.skip(), gr.skip()
-            # A supplied score needs a planning mode; keep the user's choice otherwise.
-            return value, ("full" if current_mode == "off" else gr.skip())
+    def take_score(history, a, current_mode):
+        index = _index(history, a)
+        return _score_and_mode(history[index] if index is not None else None, current_mode)
 
+    def latest_score(history, current_mode):
+        return _score_and_mode(history[-1] if history else None, current_mode)
+
+    if takes.reuse_score is not None:
         takes.reuse_score.click(
             take_score, inputs=[takes.history, takes.take_a, mode], outputs=[score, mode],
             queue=False, api_name=False,
         )
+    if reuse_last_score is not None:
+        reuse_last_score.click(
+            latest_score, inputs=[takes.history, mode], outputs=[score, mode],
+            queue=False, api_name=False,
+        )
+
+
+def _score_and_mode(take, current_mode):
+    """A take's score and the composition mode to sing it in."""
+    value = (take or {}).get("score") or ""
+    if not value:
+        return gr.skip(), gr.skip()
+    # Sing a score in the mode it was planned in: a melody-only score is not a
+    # full arrangement. Without that record, a score still needs a planning mode.
+    planned = take.get("score_mode")
+    if planned in {"full", "melody"}:
+        return value, planned
+    return value, ("full" if current_mode == "off" else gr.skip())
 
 
 def _index(history, value) -> int | None:

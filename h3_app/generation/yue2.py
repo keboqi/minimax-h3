@@ -177,9 +177,13 @@ def generate_yue2(
         history = services.execution.wait_for_history(prompt_id)
         result = services.media.resolve_audio_output(history, queued_at)
         snapshot_values.update(seed=actual_seed)
+        seconds = probe_audio_seconds(result)
         write_snapshot(
             result,
-            {"job_id": prompt_id, "family": "YuE2", "settings": snapshot_values},
+            {
+                "job_id": prompt_id, "family": "YuE2", "settings": snapshot_values,
+                "audio_seconds": seconds,
+            },
         )
         # Keep the score this take sang from, planned or supplied, for reuse.
         score = (
@@ -189,7 +193,7 @@ def generate_yue2(
         )
         if score:
             write_score(result, score)
-        note = take_note(probe_audio_seconds(result), float(request.max_duration))
+        note = take_note(seconds, float(request.max_duration))
         finished_at = time.monotonic()
         elapsed = finished_at - started
         timing_summary = timings.summary(now=finished_at)
