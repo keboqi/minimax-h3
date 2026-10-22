@@ -419,7 +419,8 @@
         "Speed",
         "Quality",
         "Original",
-        "Singularity"
+        "Singularity",
+        "Singularity V2"
       ],
       "title": "Radio",
       "type": "string"

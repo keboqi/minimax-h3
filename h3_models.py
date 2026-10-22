@@ -25,6 +25,8 @@ from typing import Any, Iterable
 MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
 ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 SINGULARITY_MODEL_REPO = "WarmBloodAban/Minimax-h3_Singularity"
+# Community prune of WarmBloodAban's V2 INT8 in ComfyUI's pruned H3 layout.
+SINGULARITY_V2_MODEL_REPO = "Abiray/Minimax-h3-Singularity-V2-Pruned"
 TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 SINGLE_FRAME_VAE_REPO = "iamkaikai/MiniMax-H3-Single-Frame-VAE-500K"
@@ -305,6 +307,20 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "diffusion_models",
         "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
         "Singularity · pruned v1.3 INT8",
+    ),
+    "singularity_v2_fl2va": ModelSpec(
+        SINGULARITY_V2_MODEL_REPO,
+        "diffusion_models",
+        "Minimax-h3_Singularity_ref2va_v2_Pruned_int8.safetensors",
+        "Singularity V2 · pruned INT8 (Abiray)",
+        expected_sha256="bc7c5efb713a8a5042d2bc177bda343af7f4e6340edb23d3fb2644b336147a50",
+    ),
+    "singularity_v2_ref2va": ModelSpec(
+        SINGULARITY_V2_MODEL_REPO,
+        "diffusion_models",
+        "Minimax-h3_Singularity_ref2va_v2_Pruned_int8.safetensors",
+        "Singularity V2 · pruned INT8 (Abiray)",
+        expected_sha256="bc7c5efb713a8a5042d2bc177bda343af7f4e6340edb23d3fb2644b336147a50",
     ),
     "text_encoder": ModelSpec(
         TEXT_ENCODER_REPO,
@@ -792,12 +808,14 @@ PROFILE_MODEL_KEYS = {
     "quality": ("quality_fl2va", "quality_ref2va"),
     "original": ("original_fl2va", "original_ref2va"),
     "singularity": ("singularity_fl2va", "singularity_ref2va"),
+    "singularity_v2": ("singularity_v2_fl2va", "singularity_v2_ref2va"),
 }
 PROFILE_LABELS = {
     "speed": "Speed",
     "quality": "Quality",
     "original": "Original",
     "singularity": "Singularity",
+    "singularity_v2": "Singularity V2",
 }
 PRELOAD_PROFILES = ("singularity",)
 PRELOAD_PROFILE_MODEL_KEYS = ("singularity_fl2va",)
@@ -1838,6 +1856,8 @@ def selftest() -> None:
         "original_ref2va",
         "singularity_fl2va",
         "singularity_ref2va",
+        "singularity_v2_fl2va",
+        "singularity_v2_ref2va",
         "text_encoder",
         "text_encoder_int8",
         "text_encoder_bf16",
@@ -1928,6 +1948,11 @@ def selftest() -> None:
         == MODEL_SPECS["singularity_ref2va"].local_name
     )
     assert "speed_ref2va" not in PRELOAD_MODEL_KEYS
+    assert set(PRELOAD_MODEL_KEYS).isdisjoint(PROFILE_MODEL_KEYS["singularity_v2"])
+    assert (
+        MODEL_SPECS["singularity_v2_fl2va"].local_name
+        == MODEL_SPECS["singularity_v2_ref2va"].local_name
+    )
     assert set(SEEDVR2_UPSCALE_MODEL_KEYS).isdisjoint(PRELOAD_MODEL_KEYS)
     assert "h3_latent_upscaler_3d_fp32" in PRELOAD_MODEL_KEYS
     assert "h3_latent_upscaler_3d_bf16" not in PRELOAD_MODEL_KEYS
@@ -2058,6 +2083,7 @@ def selftest() -> None:
         "quality",
         "original",
         "singularity",
+        "singularity_v2",
     ]
     assert cfg["turbo_supported_modes"] == ["fl2va", "ref2va"]
     print("h3_models selftest OK")
