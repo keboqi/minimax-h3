@@ -402,10 +402,11 @@ class SongStepTests(unittest.TestCase):
     def test_steps_stay_mounted_and_buttons_open_the_right_step(self) -> None:
         import gradio as gr
 
-        from h3_ui.song_controls import DRAFT, LISTEN, song_steps
+        from h3_ui.song_controls import DRAFT, LISTEN
+        from h3_ui.step_cards import step_strip
 
         with gr.Blocks() as demo:
-            steps = song_steps("h3-test-steps")
+            steps = step_strip("h3-test-steps")
             with steps.tabs:
                 for index, label in enumerate(("Idea", "Lyrics", "Generate", "Listen & refine")):
                     with steps.step(index, label):

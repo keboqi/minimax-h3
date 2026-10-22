@@ -141,7 +141,7 @@ class _Line:
 # ---------------------------------------------------------------------------
 
 
-def _blocking(label: str, work: Callable[[Callable[[str], None]], Any]) -> Iterator[str]:
+def blocking(label: str, work: Callable[[Callable[[str], None]], Any]) -> Iterator[str]:
     """Drama 3's heartbeat runner as status strings; returns ``work(report)``'s result."""
     from h3_app.drama3.serving.speech import run_blocking
 
@@ -226,7 +226,7 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
     session.save()
 
     if request.separate:
-        reply = yield from _blocking(
+        reply = yield from blocking(
             "Separating vocals from the background",
             lambda report: tools.run("separate", {"input": str(audio), "output_dir": str(session.root / "stems"),
                                                   "model": request.separator_model},
@@ -242,7 +242,7 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
     if request.pipeline == PIPELINE_GEMINI:
         upload = _ffmpeg(["-i", str(speech), "-ac", "1", "-c:a", "libmp3lame", "-b:a", "96k"],
                          session.root / "speech.mp3", action="Preparing audio for Gemini")
-        found, speakers, _raw = yield from _blocking(
+        found, speakers, _raw = yield from blocking(
             f"Transcribing{' and translating' if request.translate else ''} with {request.gemini_model}",
             lambda _report: gemini.transcribe(upload, model=request.gemini_model, api_key=request.api_key,
                                               target_language=target_language, translate=request.translate,
@@ -257,7 +257,7 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
                 yield from _translate(session, missing, request, runtime=runtime, free_gpu=free_gpu,
                                       hf_token=hf_token)
     else:
-        reply = yield from _blocking(
+        reply = yield from blocking(
             "Finding speech and transcribing with Qwen3-ASR",
             lambda report: tools.run("transcribe", {"audio": str(speech), "language": _language(
                 request.source_language) or None, "aligner": bool(request.aligner),
@@ -289,13 +289,13 @@ def _translate(session: sessions.Session, indices: list[int], request, *, runtim
         translated = []
         for first in range(0, len(texts), GEMINI_TRANSLATE_BATCH):
             batch = texts[first:first + GEMINI_TRANSLATE_BATCH]
-            translated += yield from _blocking(
+            translated += yield from blocking(
                 f"Translating lines {first + 1}-{first + len(batch)} of {len(texts)} with Gemini",
                 lambda _report, batch=batch: gemini.translate(
                     batch, model=request.gemini_model, api_key=request.api_key, target_language=target,
                     source_language=session.data.get("source_language", ""), notes=request.notes))
     else:
-        reply = yield from _blocking(
+        reply = yield from blocking(
             f"Translating {len(texts)} line(s) into {target} with Hy-MT",
             lambda report: tools.run("translate", {"texts": texts, "target_language": target,
                                                    "notes": request.notes},

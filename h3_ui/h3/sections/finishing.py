@@ -9,7 +9,7 @@ import gradio as gr
 from h3_app.catalog import REFINEMENT_LORA_CHOICES
 
 if TYPE_CHECKING:
-    from ..h3_view import H3ViewServices
+    from ..services import H3ViewServices
 
 
 @dataclass(frozen=True)

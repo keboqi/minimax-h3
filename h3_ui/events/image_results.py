@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from ..contracts import AppComponents
 
 if TYPE_CHECKING:
-    from ..bootstrap import BootstrapServices
+    from ..contracts import BootstrapServices
 
 
 def bind_image_results(components: AppComponents, services: BootstrapServices) -> None:

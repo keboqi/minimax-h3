@@ -11,9 +11,10 @@ import gradio as gr
 from ...prompt_review import build_prompt_review
 from ...prompt_writer_controls import build_remote_prompt_writer_controls
 from ...song_controls import (
-    DRAFT, IDEA, LISTEN, TAKE, card_heading, change_request, duration_presets, lyrics_policy,
-    render_recap, song_check_panel, song_choices, song_intro, song_steps,
+    DRAFT, IDEA, LISTEN, TAKE, change_request, duration_presets, lyrics_policy, render_recap, song_check_panel,
+    song_choices,
 )
+from ...step_cards import card_heading, intro, step_strip
 from ...song_takes import SongTakes, build_take_history
 
 
@@ -73,7 +74,7 @@ def build_yue2_view(
 ) -> YuE2View:
     root.elem_classes = [*root.elem_classes, "h3-song"]
     with root:
-        song_intro(
+        intro(
             "YuE2 · score-planned songs",
             "Plan the melody, then sing it.",
             "Sketch an idea and YuE2 writes a score before it sings, for songs up to 15 minutes. "
@@ -81,7 +82,7 @@ def build_yue2_view(
             'target="_blank" rel="noopener">model details</a>',
             "SCORE STUDIO",
         )
-        steps = song_steps("h3-yue2-steps")
+        steps = step_strip("h3-yue2-steps")
         with steps.tabs:
             with steps.step(IDEA, "Idea"):
                 with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):

@@ -329,14 +329,13 @@ class SessionTests(Workspace):
 class HandlerTests(Workspace):
     def setUp(self):
         super().setUp()
-        from h3_ui import dubbing_handlers
+        from h3_ui.dubbing import handlers as module
+        from h3_ui.dubbing.handlers import DubbingHandlers, DubbingServices
 
-        self.handlers = dubbing_handlers
-        previous = dubbing_handlers._SERVICES
-        dubbing_handlers.install(dubbing_handlers.DubbingServices(
+        self.module = module
+        self.handlers = DubbingHandlers(DubbingServices(
             runtime_config=lambda: self.runtime, free_gpu=lambda: None,
             list_media=lambda mode: [self.root / f"{mode}.file"]))
-        self.addCleanup(dubbing_handlers.install, previous)
 
     def test_library_choices_and_table_saves(self):
         update = self.handlers.library_choices()
@@ -350,7 +349,7 @@ class HandlerTests(Workspace):
                          [2, "00:02.000", "00:03.000", "speaker1", "Yo", "", True]])
         self.assertEqual(status, "**1 of 2 line(s) ready** to dub into the target language · 1 speaker(s) · "
                                  "1 untranslated")
-        self.assertEqual(rows, self.handlers.gr.skip())  # nothing moved: the table is left as typed
+        self.assertEqual(rows, self.module.gr.skip())  # nothing moved: the table is left as typed
 
     def test_a_library_pick_survives_a_refresh_while_still_listed(self):
         listed = str(self.root / "Video.file")
@@ -364,7 +363,7 @@ class HandlerTests(Workspace):
         typed = [[1, "00:00.000", "00:01.000", "speaker1", "Hi", "Hola", True],
                  [None, "00:04.000", "", "", "", "", True]]
         rows, status = self.handlers.save_lines(created.id, typed)
-        self.assertEqual(rows, self.handlers.gr.skip())  # redrawing would wipe the row being typed
+        self.assertEqual(rows, self.module.gr.skip())  # redrawing would wipe the row being typed
         self.assertIn("1 unfinished row(s) not saved yet", status)
         # Once complete it is saved, numbered and sorted into place.
         typed[1] = [None, "00:00.500", "00:00.900", "speaker2", "Oh", "Ah", True]
@@ -395,7 +394,7 @@ class HandlerTests(Workspace):
             return SimpleNamespace(row_value=row, index=index)
 
         self.assertEqual(self.handlers.select_line(event([3.0, "00:01.000"], [2, 4])), "3")
-        self.assertEqual(self.handlers.select_line(event([None, ""], [5, 1])), self.handlers.gr.skip())
+        self.assertEqual(self.handlers.select_line(event([None, ""], [5, 1])), self.module.gr.skip())
         self.assertEqual(self.handlers.select_line(SimpleNamespace(index=[1, 0])), "2")
 
     def test_saving_redraws_the_table_when_numbering_changes(self):
@@ -421,7 +420,7 @@ class HandlerTests(Workspace):
             raise H3Error("Download interrupted.")
 
         request = SimpleNamespace(session_hash="tab-1")
-        with patch.object(self.handlers.video_download, "download_video", side_effect=fake):
+        with patch.object(self.module.video_download, "download_video", side_effect=fake):
             updates = []
             worker = threading.Thread(target=lambda: updates.extend(
                 self.handlers.download_video("https://x.com/v", "720p", request)))
@@ -434,7 +433,7 @@ class HandlerTests(Workspace):
             worker.join(10)
         self.assertEqual(seen, [True])
         self.assertIn("Download interrupted", updates[-1][0])
-        self.assertEqual(self.handlers._DOWNLOAD_STOPS, {})
+        self.assertEqual(self.module._DOWNLOAD_STOPS, {})
 
     def test_download_handler_streams_progress_then_the_path(self):
         target = self.root / "clip.mp4"
@@ -444,7 +443,7 @@ class HandlerTests(Workspace):
             self.assertFalse(stopped())
             return target
 
-        with patch.object(self.handlers.video_download, "download_video", side_effect=fake):
+        with patch.object(self.module.video_download, "download_video", side_effect=fake):
             updates = list(self.handlers.download_video("https://x.com/v", "720p"))
         self.assertEqual(updates[-1], ("Downloaded **clip.mp4** to Media.", str(target)))
         self.assertTrue(all(path == "" for _status, path in updates[:-1]))

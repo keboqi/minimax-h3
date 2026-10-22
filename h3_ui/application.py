@@ -5,7 +5,7 @@ from h3_app.public_url import launch_cloudflare, public_url_settings, stop_cloud
 
 from .prompt_controller import PromptController, PromptServices
 from .model_controller import ModelController, ModelServices
-from . import dubbing_handlers
+from .dubbing.handlers import LIBRARY_LIMIT as DUBBING_LIBRARY_LIMIT, DubbingHandlers, DubbingServices
 from .drama3.handlers import Drama3Handlers, Drama3Services
 from .media_controller import (
     MediaController,
@@ -2129,11 +2129,12 @@ drama3_handlers = Drama3Handlers(Drama3Services(
 
 def _dubbing_media(mode):
     """Newest managed media of one kind for Dub & Translate's source picker."""
-    inventory = _catalog_inventory(mode, dubbing_handlers.LIBRARY_LIMIT)
+    inventory = _catalog_inventory(mode, DUBBING_LIBRARY_LIMIT)
     return list(inventory.paths) if inventory is not None else list_media_paths(mode)
 
 
-dubbing_handlers.install(dubbing_handlers.DubbingServices(
+dubbing_handlers = DubbingHandlers(DubbingServices(
+    # Late-bound so the application's runtime hooks stay patchable.
     runtime_config=lambda: _runtime_config(),
     free_gpu=lambda: free_comfy_vram(),
     list_media=lambda mode: _dubbing_media(mode),
@@ -2577,7 +2578,8 @@ def refresh_backend_views() -> tuple[str, str]:
 
 def build_ui() -> gr.Blocks:
     """Compose the workspace using explicit catalogs and callbacks."""
-    from .bootstrap import BootstrapCatalog, BootstrapServices, build_ui as compose_ui
+    from .bootstrap import build_ui as compose_ui
+    from .contracts import BootstrapCatalog, BootstrapServices
     from h3_app.jobs import JOBS
     from h3_app.workspace_store import default_store
 
@@ -2669,6 +2671,7 @@ def build_ui() -> gr.Blocks:
             generate_for_ui=generate_for_ui,
             generate_with_ui_defaults=generate_with_ui_defaults,
             drama3_actions=_drama3_actions(),
+            dubbing_actions=dubbing_handlers,
             engine_deps=_engine_deps(),
             generation_readiness_state=generation_readiness_state,
             image_vae_frame_updates=image_vae_frame_updates,

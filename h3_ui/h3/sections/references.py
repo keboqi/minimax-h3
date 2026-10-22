@@ -4,13 +4,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 import gradio as gr
-from ..image_library import build_image_input
+from ...image_library import build_image_input
 from h3_app.reference_bindings import ReferenceMap, KINDS
 from h3_app.reference_metadata import describe_reference
 from html import escape
 
 if TYPE_CHECKING:
-    from ..h3_view import H3ViewServices
+    from ..services import H3ViewServices
 
 
 @dataclass(frozen=True)

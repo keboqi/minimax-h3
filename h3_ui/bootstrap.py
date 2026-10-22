@@ -1,12 +1,11 @@
 """Composition root with explicit catalogs and callbacks; no generation policy."""
 
-from dataclasses import dataclass
 from contextlib import nullcontext
-from typing import Any, Callable
 import gradio as gr
 from .app_bindings import bind_app
-from .contracts import AppComponents
-from .h3_view import build_h3_view, H3ViewServices
+from .contracts import AppComponents, BootstrapCatalog, BootstrapServices
+from .h3.services import H3ViewServices
+from .h3.view import build_h3_view
 from .layout import create_app_views, bind_workspace_navigation
 from .persistence import (
     RESET_BROWSER_SETTINGS_JS,
@@ -17,7 +16,7 @@ from .styles import H3_SETUP_CSS, H3_WORKSPACE_CSS
 from .api_view import build_api_view
 from .media_view import build_gallery_view
 from h3_ui.drama3.bindings import bind_drama3
-from h3_ui.engines import FEATURES, EngineDeps
+from h3_ui.engines import FEATURES
 from h3_ui.engines.controls import settings_components
 from h3_ui.drama3.view import DRAMA3_SCRIPT_HIGHLIGHT_JS, DRAMA3_SUBTITLES_JS, build_drama3_view
 from h3_ui import audio_probe_cache
@@ -38,109 +37,6 @@ GENERATE_SHORTCUT_JS = """
   });
 }
 """
-
-
-@dataclass(frozen=True)
-class BootstrapCatalog:
-    AUTO_RESOLUTION_MEGAPIXEL_PRESETS: Any
-    AUTO_SOL_TOKEN_THRESHOLD: Any
-    COMFY_DIR: Any
-    DEFAULT_AUTO_RESOLUTION_MEGAPIXELS: Any
-    DEFAULT_GEMINI_PROMPT_MODEL: Any
-    DEFAULT_INPUT_IMAGE_FRAME_PRESET: Any
-    DEFAULT_LOCAL_PROMPT_BASE_MODEL: Any
-    DEFAULT_LTX25_MODEL: Any
-    DEFAULT_PROMPT_WRITER_BACKEND: Any
-    DEFAULT_UPSCALE_RESOLUTION: Any
-    DEFAULT_VIDEO_BATCH_COUNT: Any
-    DRAFT_RESOLUTIONS: Any
-    FAST_RESOLUTIONS: Any
-    GEMINI_PROMPT_MODELS: Any
-    GENERATION_POSTPROCESS_OPTIONS: Any
-    H3_LATENT_UPSCALER_MODEL_CHOICES: Any
-    H3_LATENT_UPSCALE_METHODS: Any
-    H3_LATENT_UPSCALE_SPLIT: Any
-    H3_TEXT_ENCODER_CHOICES: Any
-    IMAGE_VAE_CHOICES: Any
-    INPUT_IMAGE_FRAME_PRESETS: Any
-    INPUT_IMAGE_UPSCALE_SLOTS: Any
-    LARGE_RESOLUTIONS: Any
-    LIGHTNING_PROMPT_MODEL: Any
-    LOCAL_PROMPT_BASE_MODELS: Any
-    LTX25_DEFAULTS: Any
-    LTX25_MODEL_CHOICES: Any
-    LTX25_WORKFLOWS: Any
-    MAX_IMAGE_FRAMES: Any
-    MAX_VIDEO_BATCH_COUNT: Any
-    MIN_IMAGE_FRAMES: Any
-    MIN_VIDEO_BATCH_COUNT: Any
-    MODEL_PROFILE_CHOICES: Any
-    MUSIC3_DEFAULTS: Any
-    MUSIC3_MODEL_CHOICES: Any
-    POSTPROCESS_OPTIONS: Any
-    PROMPT_WRITER_BACKENDS: Any
-    QWEN_IMAGE21_DEFAULTS: Any
-    QWEN_IMAGE21_MODEL_CHOICES: Any
-    QWEN_IMAGE21_TEXT_ENCODER_CHOICES: Any
-    RESULT_FORMATS: Any
-    SEEDVR2_MODEL_CHOICES: Any
-    SERVER_ATTENTION_BACKEND: Any
-    SERVER_DENSE_ATTENTION_BACKEND: Any
-    SLA_PRESET_INPUTS: Any
-    TURBO_SETTINGS: Any
-    UI_DEFAULTS: Any
-    UPSCALE_RESOLUTION_PRESETS: Any
-    YUE2_DEFAULTS: Any
-    YUE2_MODEL_CHOICES: Any
-
-
-@dataclass(frozen=True)
-class BootstrapServices:
-    api_get: Callable
-    api_guide: Callable
-    api_post: Callable
-    auto_resolution_from_start_frame: Callable
-    backend_status: Callable
-    compact_backend_status: Callable
-    compact_settings_summary: Callable
-    compile_trt_video_vae: Callable
-    delete_selected_gallery_media: Callable
-    describe_settings: Callable
-    empty_generated_media_gallery: Callable
-    enhance_h3_prompt: Callable
-    fbcache_preset_defaults: Callable
-    generate_for_ui: Callable
-    generate_with_ui_defaults: Callable
-    drama3_actions: Any
-    engine_deps: EngineDeps
-    generation_readiness_state: Callable
-    gallery_media_download_path: Callable
-    image_vae_frame_updates: Callable
-    import_gallery_media: Callable
-    input_image_frame_preset_updates: Callable
-    interrupt: Callable
-    latent_upscale_layout_updates: Callable
-    latent_upscale_method_layout_update: Callable
-    list_media_paths: Callable
-    mode_help: Callable
-    postprocess_selected_gallery_media: Callable
-    prompt_writer_backend_visibility: Callable
-    reference_prompt_help: Callable
-    refresh_backend_views: Callable
-    refresh_media_page: Callable
-    render_snapshot: Callable
-    resolution_choice_updates: Callable
-    resolution_control_updates: Callable
-    resolution_info_preview: Callable
-    resolution_summary: Callable
-    resolve_request_settings: Callable
-    result_format_layout_updates: Callable
-    result_settings_for_media: Callable
-    save_selected_image_frames: Callable
-    select_all_image_frames: Callable
-    select_gallery_media: Callable
-    unload_all_models: Callable
-    upscale_selected_input_images: Callable
 
 
 def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Blocks:
@@ -265,8 +161,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             downloads=True,
         )
         if app_views.dubbing is not None:
-            from .dubbing_bindings import bind_dubbing
-            from .dubbing_view import build_dubbing_view
+            from .dubbing.bindings import bind_dubbing
+            from .dubbing.view import build_dubbing_view
 
             dubbing_components = build_dubbing_view(
                 app_views.dubbing,
@@ -274,7 +170,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 default_gemini_model=catalog.DEFAULT_GEMINI_PROMPT_MODEL,
             )
             bind_dubbing(dubbing_components, task=app_views.task, create_tab=app_views.create_tab,
-                         interrupt=services.interrupt)
+                         interrupt=services.interrupt, actions=services.dubbing_actions)
         with gallery_components.inspector:
             gallery_settings_used = gr.HTML("Select an output to inspect its settings.")
         from .library_tools import build_library_tools

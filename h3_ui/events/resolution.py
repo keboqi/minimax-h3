@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from ..contracts import AppComponents
 
 if TYPE_CHECKING:
-    from ..bootstrap import BootstrapServices
+    from ..contracts import BootstrapServices
 from ..settings_controller import SettingsController
 
 

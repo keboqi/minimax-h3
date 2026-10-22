@@ -34,6 +34,7 @@ def bind_gallery_view(
     delete: Callable[..., Any],
     empty: Callable[..., Any],
     list_paths: Callable[..., Any] | None = None,
+    download_actions: Any = None,
 ) -> None:
     page_size = 48
 
@@ -305,8 +306,8 @@ def bind_gallery_view(
         show_progress="hidden",
     )
     synchronize(refreshed, refreshed=True)
-    if view.downloads is not None:
-        from .dubbing_bindings import bind_media_downloads
+    if view.downloads is not None and download_actions is not None:
+        from .dubbing.bindings import bind_media_downloads
 
         def show_download(event):
             # A finished download is a video: switch to Video and show it at the top of the page.
@@ -320,7 +321,7 @@ def bind_gallery_view(
                 queue=False, concurrency_limit=None, show_progress="hidden",
             ), refreshed=True)
 
-        bind_media_downloads(view.downloads, on_downloaded=show_download)
+        bind_media_downloads(view.downloads, on_downloaded=show_download, actions=download_actions)
     if postprocess is not None:
         bind_postprocess(
             view, selected_ltx_model, postprocess, interrupt,

@@ -72,7 +72,7 @@ TreeNode = Union[
 ]
 
 
-def _parse_sound_tag(raw_tag: str) -> SoundNode | None:
+def parse_sound_tag(raw_tag: str) -> SoundNode | None:
     match = SOUND_PARSE_RE.match(raw_tag.strip())
     if not match:
         return None
@@ -111,7 +111,7 @@ def _parse_sound_tag(raw_tag: str) -> SoundNode | None:
 
     name = " ".join(attrs.get("name", "").split()).strip()
     if not name:
-        name = _default_sound_name(body)
+        name = default_sound_name(body)
     distance = attrs.get("distance", "").lower()
     return SoundNode(
         description=body,
@@ -148,7 +148,7 @@ def sound_placement_attrs(node: SoundNode) -> list[str]:
     return attrs
 
 
-def _default_sound_name(description: str) -> str:
+def default_sound_name(description: str) -> str:
     words = re.findall(r"[A-Za-z0-9]+", description.lower())[:4]
     return " ".join(words) if words else "sound effect"
 
@@ -286,7 +286,7 @@ def parse_drama3_tree(script: str, *, default_speaker: str = "Speaker 0",
                     parent_items.append(SequentialNode(children=tuple(items)))
             continue
 
-        sound_node = _parse_sound_tag(token)
+        sound_node = parse_sound_tag(token)
         if sound_node is not None:
             mode, items = stack[-1]
             flush_turns(mode, items, pending_stack[-1])
@@ -417,7 +417,7 @@ def extract_script_sounds(script: str) -> list[dict[str, Any]]:
                 existing["description"] = sound.description
             continue
         item = {
-            "name": sound.name or _default_sound_name(sound.description),
+            "name": sound.name or default_sound_name(sound.description),
             "description": sound.description,
             "loop": sound.loop,
             "volume": sound.volume,

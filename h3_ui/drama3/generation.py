@@ -47,7 +47,7 @@ class GenerationHandlers:
     def _drama3_sounds(self, slots):
         """Resolve (preset, audio, save_name, description, duration) sound slot 5-tuples."""
         from h3_app.drama3 import sounds as drama3_sounds
-        from h3_app.drama3.serving.tree import _default_sound_name
+        from h3_app.drama3.serving.tree import default_sound_name
         from h3_app.stable_audio import MAX_DURATION_SECONDS as MAX_SOUND_SECONDS
         from h3_ui.drama3.controls import UPLOAD_SOUND
 
@@ -60,7 +60,7 @@ class GenerationHandlers:
             elif audio or str(save_name or "").strip() or str(description or "").strip():
                 desc = str(description or "").strip()
                 # An unnamed slot takes the name an unnamed <sound> tag with this description gets.
-                name = str(save_name or "").strip() or (_default_sound_name(desc) if desc else f"sound_{index}")
+                name = str(save_name or "").strip() or (default_sound_name(desc) if desc else f"sound_{index}")
                 desc = desc or name
                 try:
                     dur = max(1, min(MAX_SOUND_SECONDS, int(round(float(duration or 5)))))

@@ -10,7 +10,7 @@ from h3_app.drama3.serving.tree import (
     CONTAINER_TAG_RE,
     PAUSE_TAG_RE,
     SOUND_BLOCK_RE,
-    _parse_sound_tag,
+    parse_sound_tag,
     extract_script_sounds,
     sound_placement_attrs,
 )
@@ -41,7 +41,7 @@ def _normalize_and_validate_script_lines(raw_script: str) -> str:
             lines.append(line)
             continue
         if line.lower().startswith("<sound") and line.lower().endswith("</sound>"):
-            if _parse_sound_tag(line) is None:
+            if parse_sound_tag(line) is None:
                 raise H3Error("Each <sound> tag must include a non-empty sound description.")
             lines.append(line)
             continue
@@ -158,7 +158,7 @@ def _clamped_number(value, default, low, high, *, integer=False):
 
 
 def _apply_sound_brief(tag: str, briefs: dict[str, dict]) -> str:
-    node = _parse_sound_tag(tag)
+    node = parse_sound_tag(tag)
     brief = briefs.get(node.name.casefold()) if node is not None else None
     if not brief:
         return tag

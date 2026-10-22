@@ -19,7 +19,7 @@ from h3_app.dubbing.pipeline import (
 )
 from h3_app.dubbing.segments import TABLE_HEADERS, TABLE_TYPES
 
-from .song_controls import SongSteps, card_heading, song_intro, song_steps
+from ..step_cards import StepStrip, card_heading, intro, step_strip
 
 SOURCE, LINES, DUB = range(3)
 STEPS_ID = "h3-dub-steps"
@@ -27,7 +27,7 @@ STEPS_ID = "h3-dub-steps"
 
 @dataclass(frozen=True)
 class DubbingView:
-    steps: SongSteps
+    steps: StepStrip
     session: gr.Textbox
     source: gr.File
     library: gr.Dropdown
@@ -79,7 +79,7 @@ class DubbingView:
     files: gr.File
 
 
-def opened_session_js(steps: SongSteps) -> str:
+def opened_session_js(steps: StepStrip) -> str:
     """Browser code that opens Review lines when a different session arrives.
 
     Analysis reports errors and interruptions as status lines, so its event always
@@ -97,11 +97,11 @@ def opened_session_js(steps: SongSteps) -> str:
 def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default_gemini_model: str) -> DubbingView:
     root.elem_classes = [*root.elem_classes, "h3-song", "h3-dub"]
     with root:
-        song_intro("Dub & Translate", "Hear it in another language.",
+        intro("Dub & Translate", "Hear it in another language.",
                    "Bring a video or recording, check every translated line, then dub it in each speaker's "
                    "own voice.", "DUB STUDIO")
         session = gr.Textbox(visible=False)
-        steps = song_steps(STEPS_ID)
+        steps = step_strip(STEPS_ID)
         with steps.tabs:
             with steps.step(SOURCE, "Source"):
                 with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):

@@ -100,7 +100,7 @@ def drama3_script_mode_instruction(script_mode: str) -> str:
 
 def enforce_drama3_speakers(script: str, allowed: tuple[int, ...] | None) -> str:
     """Fold a single-speaker script onto its tag; reject other speakers otherwise."""
-    from h3_app.drama3.serving.tree import CONTAINER_TAG_RE, PAUSE_TAG_RE, _parse_sound_tag
+    from h3_app.drama3.serving.tree import CONTAINER_TAG_RE, PAUSE_TAG_RE, parse_sound_tag
     from h3_app.workflows.drama3 import SPEAKER_TAG, text_speakers
 
     if allowed is None:
@@ -115,7 +115,7 @@ def enforce_drama3_speakers(script: str, allowed: tuple[int, ...] | None) -> str
             if (
                 CONTAINER_TAG_RE.fullmatch(stripped)
                 or PAUSE_TAG_RE.fullmatch(stripped)
-                or (stripped.lower().startswith("<sound") and _parse_sound_tag(stripped) is not None)
+                or (stripped.lower().startswith("<sound") and parse_sound_tag(stripped) is not None)
             ):
                 rebuilt.append(stripped)
                 continue

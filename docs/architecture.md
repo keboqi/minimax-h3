@@ -43,19 +43,20 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/llm/ | Gemini and Lightning clients: transient keys, temporary Gemini file uploads, generation |
 | h3_app/workers/ | Isolated uv environments, setup steps with cancellation, and resident JSON-line worker processes |
 | prompts/ | Writer system prompts for each engine, read through h3_app/config.py |
-| h3_app/song_brief.py, h3_ui/song_controls.py, song_takes.py | Song planning and checks, guided step cards and the session take history for Music 3 and YuE2 |
+| h3_app/song_brief.py, h3_ui/song_controls.py, song_takes.py | Song planning and checks, Song-specific controls and the session take history for Music 3 and YuE2 |
+| h3_ui/step_cards.py | The guided step strip, intro and card headings shared by Song and Dub & Translate |
 | h3_app/drama3/ | Soundstage cast, script lint, speaker and sound libraries, voice design, and Drama 3 on SGLang-Omni in serving/ (environment, planner, takes, mixing, checkpointed sleep). serving/speech.py is the line-speaking interface other features use |
 | h3_app/audio_tools.py, audio_tools_worker.py, voice_design.py, stable_audio.py | The isolated resident worker for Qwen VoiceDesign and Stable Audio, and its clients |
 | h3_app/server.py | Configured FastAPI routes and HTTP/WebSocket proxy |
 | h3_ui/application.py | Runtime service wiring and signature-preserving public API adapters |
-| h3_ui/bootstrap.py, contracts.py | UI composition; one catalog and one service record passed to event registration |
+| h3_ui/bootstrap.py, contracts.py | UI composition; contracts.py holds the catalog and service records passed to event registration |
 | h3_ui/drama3/ | Soundstage view, bindings, slot controls and saved-speaker library. handlers.py builds `Drama3Handlers` from explicit `Drama3Services`; its generation, writer, voices, speakers and sounds methods live in one module each |
 | h3_app/dubbing/ | Dub & Translate sessions, line helpers, Gemini transcription, the isolated tools worker (separation, OmniVAD + Qwen3-ASR, Hy-MT) and the Drama 3 dub/mix pipeline |
 | h3_app/video_download.py | yt-dlp downloads into Media and the private per-site cookie store |
-| h3_ui/dubbing_view.py, dubbing_bindings.py, dubbing_handlers.py | Dub & Translate tab and Media's Download from a URL panel |
+| h3_ui/dubbing/ | Dub & Translate tab and Media's Download from a URL panel; handlers.py builds `DubbingHandlers` from explicit `DubbingServices` |
 | h3_ui/engines/ | Create engines that own their view, bindings and handlers (FLUX 3, MOSS-Image, Fibo 2.0). Each registers an `EngineFeature` in `FEATURES` and receives `EngineDeps` explicitly; controls.py holds the shared Generate/Interrupt/progress, prompt-writer, resolution-preset and saved-settings helpers |
-| h3_ui/*_view.py, *_bindings.py | Feature-owned views and event bindings |
-| h3_ui/sections/, events/ | Existing visible sections and event registration, preserving component order |
+| h3_ui/h3/ | The H3 composer: view.py, services.py and sections/, one dataclass per visible section |
+| h3_ui/events/ | H3 and workspace-wide event registration (generation, prompt, resolution, input upscale, gallery, system, layout) |
 | h3_ui/job_bindings.py, job_admission.py, jobs_view.py | Gradio request injection, acceptance before queueing, shared GPU binding and owner-scoped job presentation |
 | h3_app/reference_bindings.py, h3_ui/prompt_preview.py, prompt_review.py | Stable reference translation and guarded accept/keep/undo prompt previews |
 | h3_ui/media_actions.py | Selection- and file-specific deletion confirmation |
@@ -126,13 +127,15 @@ A real supported GPU and provisioned ComfyUI installation are still needed for i
 An H3 setting that reaches the graph is one `H3GraphOptions` field in
 `h3_app/workflows/h3.py` and one line in `construct_graph.graph_options`; both
 builders accept it by name and `tests/test_h3_graph_options.py` checks the
-wiring. Its control is one field in its `h3_ui/sections/` dataclass; `H3View`
+wiring. Its control is one field in its `h3_ui/h3/sections/` dataclass; `H3View`
 collects section fields by name.
 
 A new Create engine is one module in `h3_ui/engines/` plus its entry in
 `FEATURES`, its `h3_app/capabilities.py` navigation entry, its layout tab and
 its saved-settings allowlist; `tests/test_engine_features.py` checks they agree.
-Its handlers take `EngineDeps` rather than module-level state.
+Its handlers take `EngineDeps` rather than module-level state. Features import
+each other's public names only; `tests/test_import_boundaries.py` rejects a
+private name taken from another feature.
 
 Keep one response per user action. A settings edit that changes dimensions
 or another policy input uses `SettingsController.bind_refresh` instead of a

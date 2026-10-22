@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from ..contracts import AppComponents
 
 if TYPE_CHECKING:
-    from ..bootstrap import BootstrapServices
+    from ..contracts import BootstrapServices
 from ..job_bindings import bind_prompt_action
 from ..prompt_preview import bind_prompt_preview
 import gradio as gr

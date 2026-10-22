@@ -7,7 +7,7 @@ import gradio as gr
 from h3_ui.prompt_writer_controls import build_lightning_model_dropdown
 
 if TYPE_CHECKING:
-    from ..h3_view import H3ViewServices
+    from ..services import H3ViewServices
 
 
 @dataclass(frozen=True)

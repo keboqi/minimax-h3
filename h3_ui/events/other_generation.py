@@ -10,7 +10,7 @@ from ..api_bindings import bind_api_view
 from ..contracts import AppComponents
 
 if TYPE_CHECKING:
-    from ..bootstrap import BootstrapServices
+    from ..contracts import BootstrapServices
 
 
 def bind_other_generation(components: AppComponents, services: BootstrapServices) -> gr.events.Dependency:

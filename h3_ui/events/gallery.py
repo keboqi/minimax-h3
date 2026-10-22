@@ -10,7 +10,7 @@ from ..contracts import AppComponents
 from ..media_bindings import bind_gallery_view
 
 if TYPE_CHECKING:
-    from ..bootstrap import BootstrapServices
+    from ..contracts import BootstrapServices
 
 
 def bind_gallery(components: AppComponents, services: BootstrapServices) -> None:
@@ -29,4 +29,5 @@ def bind_gallery(components: AppComponents, services: BootstrapServices) -> None
         delete=services.delete_selected_gallery_media,
         empty=services.empty_generated_media_gallery,
         list_paths=services.list_media_paths,
+        download_actions=services.dubbing_actions,
     )

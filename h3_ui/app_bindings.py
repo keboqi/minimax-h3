@@ -18,7 +18,7 @@ from .job_bindings import owned_interrupt
 from .settings_controller import SettingsController, SettingsServices
 
 if TYPE_CHECKING:
-    from .bootstrap import BootstrapServices
+    from .contracts import BootstrapServices
 
 
 def bind_app(

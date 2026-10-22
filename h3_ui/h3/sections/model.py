@@ -8,7 +8,7 @@ import gradio as gr
 from h3_app.decoder_intent import VideoDecoder
 
 if TYPE_CHECKING:
-    from ..h3_view import H3ViewServices
+    from ..services import H3ViewServices
 
 
 @dataclass(frozen=True)

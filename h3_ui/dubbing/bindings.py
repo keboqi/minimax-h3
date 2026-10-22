@@ -6,16 +6,15 @@ from types import SimpleNamespace
 
 import gradio as gr
 
-from . import dubbing_handlers as handlers
-from .dubbing_view import DubbingView, gemini_visibility, local_visibility, opened_session_js, speed_visibility
+from .view import DubbingView, gemini_visibility, local_visibility, opened_session_js, speed_visibility
 from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES
 
-from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
+from ..job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 
 _QUIET = {"queue": False, "api_name": False, "show_progress": "hidden"}
 
 
-def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions=handlers) -> None:
+def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> None:
     """``task`` is Create's task picker; Dub & Translate is its "Dub" task."""
     view.refresh_library.click(actions.library_choices, inputs=view.library, outputs=view.library, **_QUIET)
 
@@ -92,7 +91,7 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions=hand
         stopped.then(fn=None, cancels=events, queue=False, api_name=False)
 
 
-def bind_media_downloads(controls: SimpleNamespace, *, on_downloaded, actions=handlers) -> None:
+def bind_media_downloads(controls: SimpleNamespace, *, on_downloaded, actions) -> None:
     """Download from a URL and manage saved cookies inside the Media library.
 
     ``on_downloaded(event)`` chains the library refresh after a finished download.
