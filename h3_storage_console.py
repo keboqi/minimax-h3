@@ -86,7 +86,7 @@ def _audio_tools_download(model: str, root: Path) -> None:
 
 
 def _drama3_settings(root: Path):
-    from h3_app.drama3_serving.server import ServerSettings
+    from h3_app.drama3.serving.server import ServerSettings
 
     # Match the GPU endpoint's H3_DRAMA3_SGLANG_MODELS and H3_DRAMA3_SGLANG_DATA.
     return ServerSettings(venv=Path(), data_dir=root.parent / "drama3-serving",
@@ -102,7 +102,7 @@ def _drama3_ready(root: Path) -> bool:
 
 
 def _drama3_download(root: Path) -> None:
-    from h3_app.drama3_serving.server import ensure_model
+    from h3_app.drama3.serving.server import ensure_model
 
     ensure_model(_drama3_settings(root), token=os.environ.get("HF_TOKEN"),
                  log=lambda message: print(f"[storage-console] {message}", flush=True))

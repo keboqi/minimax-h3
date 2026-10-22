@@ -2,8 +2,8 @@
 
 import unittest
 
-from h3_app.drama3_lint import lint_drama3_script
-from h3_app.drama3_serving.tree import parse_drama3_tree
+from h3_app.drama3.lint import lint_drama3_script
+from h3_app.drama3.serving.tree import parse_drama3_tree
 from h3_app.workflows.drama3 import format_script
 
 SCRIPT = (

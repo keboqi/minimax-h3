@@ -30,7 +30,7 @@ def validate_drama3_text(text, location="Speech text"):
 
 def text_speakers(text):
     """Speaker numbers the text uses; untagged text is speaker 0."""
-    from h3_app.drama3_serving.tree import strip_drama3_sound_tags
+    from h3_app.drama3.serving.tree import strip_drama3_sound_tags
 
     raw = str(text or "")
     speakers = {int(digits) for digits in SPEAKER_TAG.findall(raw)}

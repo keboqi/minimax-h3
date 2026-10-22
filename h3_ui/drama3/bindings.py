@@ -5,18 +5,18 @@ import json
 from typing import Callable
 
 import gradio as gr
-from h3_ui.drama3_speaker_library import bind_speaker_library, bind_voice_takes
-from h3_app.drama3_voice_design import ENGINE_QWEN
+from h3_ui.drama3.speaker_library import bind_speaker_library, bind_voice_takes
+from h3_app.drama3.voice_design import ENGINE_QWEN
 from h3_app.prompt_writers.drama3 import DRAMA3_PROMPT_FAILED, DRAMA3_SCRIPT_ADVANCED
 from h3_app.jobs import JobCancelled
-from .job_bindings import GPU_QUEUE, bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
+from ..job_bindings import GPU_QUEUE, bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
 from h3_ui.engines.controls import (
     QUIET,
     bind_generation,
     owned_view_generation,
     writer_inputs,
 )
-from h3_ui.drama3_controls import (
+from h3_ui.drama3.controls import (
     DRAMA3_SOUND_SLOTS,
     UPLOAD_SOUND,
     UPLOAD_VOICE,

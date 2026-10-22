@@ -44,14 +44,12 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/workers/ | Isolated uv environments, setup steps with cancellation, and resident JSON-line worker processes |
 | prompts/ | Writer system prompts for each engine, read through h3_app/config.py |
 | h3_app/song_brief.py, h3_ui/song_controls.py, song_takes.py | Song planning and checks, guided step cards and the session take history for Music 3 and YuE2 |
-| h3_app/drama3_*.py, drama3_serving/ | Soundstage cast, script lint, speaker and sound libraries, voice design, and Drama 3 on SGLang-Omni (environment, planner, takes, mixing, checkpointed sleep). drama3_serving/speech.py is the line-speaking interface other features use |
+| h3_app/drama3/ | Soundstage cast, script lint, speaker and sound libraries, voice design, and Drama 3 on SGLang-Omni in serving/ (environment, planner, takes, mixing, checkpointed sleep). serving/speech.py is the line-speaking interface other features use |
 | h3_app/audio_tools.py, audio_tools_worker.py, voice_design.py, stable_audio.py | The isolated resident worker for Qwen VoiceDesign and Stable Audio, and its clients |
 | h3_app/server.py | Configured FastAPI routes and HTTP/WebSocket proxy |
 | h3_ui/application.py | Runtime service wiring and signature-preserving public API adapters |
 | h3_ui/bootstrap.py, contracts.py | UI composition; one catalog and one service record passed to event registration |
-| h3_ui/drama3_view.py, drama3_bindings.py | Speech composer and event pipelines for rewriting, cast, sounds and generation |
-| h3_ui/drama3_handlers.py | Drama 3 event handlers; the application installs their runtime services |
-| h3_ui/drama3_controls.py, drama3_speaker_library.py | Slot contracts/browser presentation and saved-speaker library |
+| h3_ui/drama3/ | Soundstage view, bindings, slot controls and saved-speaker library. handlers.py builds `Drama3Handlers` from explicit `Drama3Services`; its generation, writer, voices, speakers and sounds methods live in one module each |
 | h3_app/dubbing/ | Dub & Translate sessions, line helpers, Gemini transcription, the isolated tools worker (separation, OmniVAD + Qwen3-ASR, Hy-MT) and the Drama 3 dub/mix pipeline |
 | h3_app/video_download.py | yt-dlp downloads into Media and the private per-site cookie store |
 | h3_ui/dubbing_view.py, dubbing_bindings.py, dubbing_handlers.py | Dub & Translate tab and Media's Download from a URL panel |

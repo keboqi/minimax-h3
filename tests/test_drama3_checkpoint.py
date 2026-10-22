@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-from h3_app.drama3_serving import checkpoint as cp, server
+from h3_app.drama3.serving import checkpoint as cp, server
 from h3_app.errors import H3Error
 
 

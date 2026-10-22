@@ -584,11 +584,11 @@ class WorkerRoomTests(unittest.TestCase):
 
     def memory(self, *free):
         values = iter(free)
-        return patch("h3_app.drama3_serving.server.gpu_memory", side_effect=lambda: (next(values), 12288.0, ""))
+        return patch("h3_app.drama3.serving.server.gpu_memory", side_effect=lambda: (next(values), 12288.0, ""))
 
     def test_idle_tools_models_unload_before_other_engines(self):
         worker, free_gpu = self.Worker({"asr+aligner"}), unittest.mock.Mock()
-        with self.memory(3000, 9000), patch("h3_app.drama3_serving.server.release_all") as release:
+        with self.memory(3000, 9000), patch("h3_app.drama3.serving.server.release_all") as release:
             tools._make_room("translate", worker, free_gpu)
         self.assertEqual(worker.requests, [{"op": "unload", "model": "asr+aligner"}])
         free_gpu.assert_not_called()
@@ -596,7 +596,7 @@ class WorkerRoomTests(unittest.TestCase):
 
     def test_other_engines_go_only_when_still_short(self):
         worker, free_gpu = self.Worker(set()), unittest.mock.Mock()
-        with self.memory(3000, 3000, 3000), patch("h3_app.drama3_serving.server.release_all") as release,                 patch.object(tools.audio_tools, "stop") as stop_voice_design:
+        with self.memory(3000, 3000, 3000), patch("h3_app.drama3.serving.server.release_all") as release,                 patch.object(tools.audio_tools, "stop") as stop_voice_design:
             tools._make_room("transcribe", worker, free_gpu)
         free_gpu.assert_called_once()
         stop_voice_design.assert_called_once()
@@ -604,12 +604,12 @@ class WorkerRoomTests(unittest.TestCase):
 
     def test_a_loaded_model_needs_no_room(self):
         worker = self.Worker({"translator"})
-        with patch("h3_app.drama3_serving.server.gpu_memory") as memory:
+        with patch("h3_app.drama3.serving.server.gpu_memory") as memory:
             tools._make_room("translate", worker, lambda: None)
         memory.assert_not_called()
 
     def test_dubbing_steps_share_the_gpu_with_the_worker_and_drama3(self):
-        from h3_app.drama3_serving import server
+        from h3_app.drama3.serving import server
 
         with patch.object(tools, "stop") as stop, patch.object(server, "release_all") as release:
             for family in tools.FAMILIES:

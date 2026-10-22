@@ -9,7 +9,7 @@ from tests.node_js import run_js
 
 def subtitle_controller():
     # Read the browser code without importing Gradio or starting the application.
-    source = Path(__file__).resolve().parents[1] / "h3_ui" / "drama3_view.py"
+    source = Path(__file__).resolve().parents[1] / "h3_ui" / "drama3" / "view.py"
     for node in ast.parse(source.read_text(encoding="utf-8")).body:
         if isinstance(node, ast.Assign) and any(
             isinstance(target, ast.Name) and target.id == "DRAMA3_SUBTITLES_JS" for target in node.targets

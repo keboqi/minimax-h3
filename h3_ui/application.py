@@ -5,7 +5,8 @@ from h3_app.public_url import launch_cloudflare, public_url_settings, stop_cloud
 
 from .prompt_controller import PromptController, PromptServices
 from .model_controller import ModelController, ModelServices
-from . import drama3_handlers, dubbing_handlers
+from . import dubbing_handlers
+from .drama3.handlers import Drama3Handlers, Drama3Services
 from .media_controller import (
     MediaController,
     MediaServices,
@@ -2116,7 +2117,7 @@ def generate(
     )
 
 
-drama3_handlers.install(drama3_handlers.Drama3Services(
+drama3_handlers = Drama3Handlers(Drama3Services(
     # Late-bound so the application's runtime hooks stay patchable.
     runtime_config=lambda: _runtime_config(),
     stage_file=lambda *args: stage_file(*args),
@@ -2154,8 +2155,8 @@ def _engine_deps():
 
 
 def _drama3_actions():
-    from h3_ui.drama3_speaker_library import SpeakerLibraryActions
-    from h3_ui.drama3_bindings import Drama3Actions
+    from h3_ui.drama3.speaker_library import SpeakerLibraryActions
+    from h3_ui.drama3.bindings import Drama3Actions
     return Drama3Actions(
         speaker_library_actions=SpeakerLibraryActions(_runtime_config),
         generate_drama3=drama3_handlers.generate_drama3,

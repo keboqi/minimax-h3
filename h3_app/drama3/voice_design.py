@@ -50,7 +50,7 @@ def generate_drama3_reference(description, text, request, runtime, services, *, 
     ``request`` is the tab's ``Drama3Request`` (sampling and frame cap); its text and
     voices are ignored. Raises ``H3Error`` on failure.
     """
-    from h3_app.drama3_serving.generate import design_voice_served
+    from h3_app.drama3.serving.generate import design_voice_served
 
     script = design_script(description, text)
     transcript = " ".join(str(text).split())
@@ -74,7 +74,7 @@ def generate_drama3_references(briefs, request, runtime, services, *, free_gpu, 
 
     SGLang-Omni sends the takes concurrently, up to ``request.parallel``. Failures stay per voice.
     """
-    from h3_app.drama3_serving.generate import DesignedVoice, design_voices_served
+    from h3_app.drama3.serving.generate import DesignedVoice, design_voices_served
 
     scripts = {}
     for key, (description, text) in briefs.items():

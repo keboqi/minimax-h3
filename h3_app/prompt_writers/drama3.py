@@ -100,7 +100,7 @@ def drama3_script_mode_instruction(script_mode: str) -> str:
 
 def enforce_drama3_speakers(script: str, allowed: tuple[int, ...] | None) -> str:
     """Fold a single-speaker script onto its tag; reject other speakers otherwise."""
-    from h3_app.drama3_serving.tree import CONTAINER_TAG_RE, PAUSE_TAG_RE, _parse_sound_tag
+    from h3_app.drama3.serving.tree import CONTAINER_TAG_RE, PAUSE_TAG_RE, _parse_sound_tag
     from h3_app.workflows.drama3 import SPEAKER_TAG, text_speakers
 
     if allowed is None:
@@ -216,19 +216,19 @@ def parse_drama3_reply(
     title, if any, goes in ``meta["title"]``. ``direct(script, cast)``, when given,
     returns the validated script with more delivery direction and a note, or None.
     """
-    from h3_app.drama3_cast import (
+    from h3_app.drama3.cast import (
         parse_script_cast_and_sounds,
         parse_writer_source_mode,
         parse_writer_title,
         voices_without_sex,
     )
-    from h3_app.drama3_serving.tree import extract_script_sounds, strip_drama3_sound_tags
+    from h3_app.drama3.serving.tree import extract_script_sounds, strip_drama3_sound_tags
     from h3_app.workflows.drama3 import names_to_tags
 
     original = names_to_tags(original, speaker_names)
 
     def review(script, source_mode=""):
-        from h3_app.drama3_lint import coverage_note, lint_drama3_script
+        from h3_app.drama3.lint import coverage_note, lint_drama3_script
 
         script, messages = lint_drama3_script(script)
         if notes is not None:
@@ -335,7 +335,7 @@ def direct_drama3_script(script: str, cast: list[dict], script_mode: str, ask) -
     ``ask(request_text)`` returns the director's (reply, status). A script already
     directed enough, a failed request, or a reply that changes words keeps its lines.
     """
-    from h3_app.drama3_lint import direction_share, merge_direction, under_directed
+    from h3_app.drama3.lint import direction_share, merge_direction, under_directed
     from h3_app.workflows.drama3 import names_to_tags, tags_to_names
 
     if not under_directed(script):

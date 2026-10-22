@@ -6,7 +6,7 @@ import json
 import unittest
 
 from h3_app.prompt_writers import drama3 as drama3_writer
-from h3_app.drama3_lint import (
+from h3_app.drama3.lint import (
     coverage_note,
     direction_share,
     lint_drama3_script,
@@ -87,7 +87,7 @@ class PromptExampleTests(unittest.TestCase):
     def test_advanced_example_is_a_clean_parseable_script(self):
         from pathlib import Path
 
-        from h3_app.drama3_serving.tree import iter_sound_nodes, iter_speech_nodes, parse_drama3_tree
+        from h3_app.drama3.serving.tree import iter_sound_nodes, iter_speech_nodes, parse_drama3_tree
 
         prompt = (Path(__file__).resolve().parents[1] / "prompts" / "prompt_drama3.txt").read_text(encoding="utf-8")
         example = prompt.split("Advanced script-field example", 1)[1]
@@ -247,7 +247,7 @@ class SourceModeTests(unittest.TestCase):
 
 class VoiceSexTests(unittest.TestCase):
     def test_descriptions_that_never_say_male_or_female_are_reported(self):
-        from h3_app.drama3_cast import voices_without_sex
+        from h3_app.drama3.cast import voices_without_sex
 
         cast = [{"name": "胡母", "description": "A weary, hardworking middle-aged mother, warm, rapid-fire."},
                 {"name": "Mia", "description": "A female voice: bright, early twenties."},

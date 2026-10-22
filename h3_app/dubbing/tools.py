@@ -70,7 +70,7 @@ def _make_room(op: str, worker, free_gpu) -> None:
 
     Nothing is freed when the op's model is already loaded or the GPU has room.
     """
-    from h3_app.drama3_serving.server import gpu_memory, release_all
+    from h3_app.drama3.serving.server import gpu_memory, release_all
 
     needed, prefix = LOAD_HEADROOM_MIB.get(op, 0), OP_MODELS.get(op, "")
     if not needed or any(name.startswith(prefix) for name in worker.loaded):
@@ -95,7 +95,7 @@ def _make_room(op: str, worker, free_gpu) -> None:
 def run(op: str, payload: dict, runtime, *, free_gpu, hf_token: str | None = None,
         report=lambda _message: None) -> dict:
     """Send one request to the resident worker, preparing the environment and GPU room first."""
-    from h3_app.drama3_serving.server import persist_caches
+    from h3_app.drama3.serving.server import persist_caches
     from h3_app.jobs import JOBS
 
     JOBS.add_gpu_claim_hook(release_for_job)

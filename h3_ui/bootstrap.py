@@ -16,10 +16,10 @@ from .persistence import (
 from .styles import H3_SETUP_CSS, H3_WORKSPACE_CSS
 from .api_view import build_api_view
 from .media_view import build_gallery_view
-from h3_ui.drama3_bindings import bind_drama3
+from h3_ui.drama3.bindings import bind_drama3
 from h3_ui.engines import FEATURES, EngineDeps
 from h3_ui.engines.controls import settings_components
-from h3_ui.drama3_view import DRAMA3_SCRIPT_HIGHLIGHT_JS, DRAMA3_SUBTITLES_JS, build_drama3_view
+from h3_ui.drama3.view import DRAMA3_SCRIPT_HIGHLIGHT_JS, DRAMA3_SUBTITLES_JS, build_drama3_view
 from h3_ui import audio_probe_cache
 
 # Ctrl/Cmd+Enter presses the visible engine's generate button. Disabled

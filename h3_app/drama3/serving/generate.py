@@ -18,7 +18,8 @@ import uuid
 import numpy as np
 import requests
 
-from h3_app import drama3_sounds, stable_audio
+from h3_app import stable_audio
+from h3_app.drama3 import sounds as drama3_sounds
 from h3_app.errors import H3Error
 from h3_app.generation.results import GenerationUpdate, fresh_audio
 from h3_app.jobs import CURRENT_JOB

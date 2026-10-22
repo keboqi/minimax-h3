@@ -1,5 +1,6 @@
 """Scoped voice reuse and the writer/bulk-save integration."""
 
+import gradio as gr
 import json
 import os
 from pathlib import Path
@@ -8,7 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from h3_app import drama3_speakers as speakers
+from h3_app.drama3 import speakers
 from h3_app.errors import H3Error
 from tests.test_drama3_voice_design import cast_entry
 
@@ -56,7 +57,7 @@ class SpeakerGroupTests(unittest.TestCase):
         self.assertEqual(listed.call_count, 2)  # Story A, then Global
         self.assertEqual(updates[0]["value"], alice.key)
         self.assertEqual(updates[1]["value"], "Narrator")
-        self.assertEqual(updates[2], drama3_handlers.gr.skip())
+        self.assertEqual(updates[2], gr.skip())
 
     def test_legacy_presets_and_path_like_group_names(self):
         saved = self.save("Alice")
@@ -145,7 +146,7 @@ class SpeakerGroupTests(unittest.TestCase):
         self.assertEqual(speakers.load_speaker(other.key, self.runtime), other)
 
     def test_library_updates_selected_slots_after_rename_and_delete(self):
-        from h3_ui.drama3_speaker_library import SpeakerLibraryActions
+        from h3_ui.drama3.speaker_library import SpeakerLibraryActions
         actions = SpeakerLibraryActions(lambda: self.runtime)
         original = self.save("Alice", "Story")
         preview = actions.select(original.key)
@@ -161,7 +162,7 @@ class SpeakerGroupTests(unittest.TestCase):
         self.assertEqual(actions.choices("Story"), [])
 
     def test_library_toggles_and_keeps_saved_voice_until_a_try_is_chosen(self):
-        from h3_ui.drama3_speaker_library import HIDE_LABEL, KEEP_SAVED, MANAGE_LABEL, SpeakerLibraryActions
+        from h3_ui.drama3.speaker_library import HIDE_LABEL, KEEP_SAVED, MANAGE_LABEL, SpeakerLibraryActions
         actions = SpeakerLibraryActions(lambda: self.runtime)
         alice = self.save("Alice", "Story")
         opened = actions.toggle(False, "Story")
@@ -184,7 +185,7 @@ class SpeakerGroupTests(unittest.TestCase):
         self.assertEqual(used[3]["value"], KEEP_SAVED)
 
     def test_library_list_follows_saves_and_keeps_its_selection(self):
-        from h3_ui.drama3_speaker_library import SpeakerLibraryActions
+        from h3_ui.drama3.speaker_library import SpeakerLibraryActions
         actions = SpeakerLibraryActions(lambda: self.runtime)
         alice = self.save("Alice", "Story")
         listed, groups = actions.refresh_saved("Story", alice.key)
@@ -198,7 +199,7 @@ class SpeakerGroupTests(unittest.TestCase):
         self.assertIsNone(actions.refresh_saved("Story", alice.key)[0]["value"])
 
     def test_group_deletion_removes_owned_voices_and_resets_selections(self):
-        from h3_ui.drama3_speaker_library import SpeakerLibraryActions
+        from h3_ui.drama3.speaker_library import SpeakerLibraryActions
         actions = SpeakerLibraryActions(lambda: self.runtime)
         narrator = self.save("narrator")
         alice = self.save("Alice", "Story")

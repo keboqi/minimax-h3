@@ -11,7 +11,7 @@ from h3_app.workflows.drama3 import (
     MAX_FRAMES, MAX_SPEAKER, build_drama3_asr_graph, drama3_asr_model_keys, request_cast, speaker_label,
     unknown_speaker_names, validate_drama3_text,
 )
-from h3_app.drama3_serving.tree import script_speakers
+from h3_app.drama3.serving.tree import script_speakers
 from h3_models import DEFAULT_DRAMA3_ASR
 
 from .checks import whole_number
@@ -63,7 +63,7 @@ def generate_drama3(request, services, runtime, *, progress=no_progress, free_gp
     timings = StageTimings("Drama 3", time.monotonic(), "Validating request")
     try:
         validate_drama3(request)
-        from h3_app.drama3_serving.generate import generate_drama3_served
+        from h3_app.drama3.serving.generate import generate_drama3_served
         from h3_models import resolve_hf_token
 
         services.models.unload_prompt_rewriter()

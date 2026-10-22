@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import re
 
-from h3_app.drama3_serving.planner import WIDE_CHAR, insert_cue
-from h3_app.drama3_serving.speaker_effects import SPEAKER_EFFECTS
+from h3_app.drama3.serving.planner import WIDE_CHAR, insert_cue
+from h3_app.drama3.serving.speaker_effects import SPEAKER_EFFECTS
 from h3_app.workflows.drama3 import SPEAKER_TAG
 
 SCOPED_TAGS = ("whisper", "soft", "emphasis", "stress", "forceful", "fast", "slow")

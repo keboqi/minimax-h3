@@ -60,7 +60,7 @@ class ModelManagerTests(unittest.TestCase):
 
     def test_snapshots_use_runtime_layouts(self):
         from h3_app import audio_tools_worker
-        from h3_app.drama3_serving.server import ServerSettings
+        from h3_app.drama3.serving.server import ServerSettings
 
         root = self.manager.root
         self.assertEqual(self.manager._path("qwen_voice_design"),
@@ -90,7 +90,7 @@ class ModelManagerTests(unittest.TestCase):
 
     def test_snapshot_download_calls_runtime_downloaders(self):
         from h3_app import audio_tools_worker
-        from h3_app.drama3_serving import server
+        from h3_app.drama3.serving import server
 
         with patch.object(audio_tools_worker, "download") as audio, \
                 patch.object(server, "ensure_model") as drama, \

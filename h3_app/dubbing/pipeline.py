@@ -143,7 +143,7 @@ class _Line:
 
 def _blocking(label: str, work: Callable[[Callable[[str], None]], Any]) -> Iterator[str]:
     """Drama 3's heartbeat runner as status strings; returns ``work(report)``'s result."""
-    from h3_app.drama3_serving.speech import run_blocking
+    from h3_app.drama3.serving.speech import run_blocking
 
     updates = run_blocking(label, work)
     while True:
@@ -184,13 +184,13 @@ def read_slice(path: Path, start: float, end: float) -> np.ndarray:
 
 
 def _resample(samples: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
-    from h3_app.drama3_serving.audio import resample_audio
+    from h3_app.drama3.serving.audio import resample_audio
 
     return resample_audio(samples, source_rate, target_rate)
 
 
 def _write_wav(samples: np.ndarray, rate: int, target: Path) -> Path:
-    from h3_app.drama3_serving.audio import encode_wav
+    from h3_app.drama3.serving.audio import encode_wav
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(encode_wav(samples, rate))
@@ -416,7 +416,7 @@ def atempo_chain(tempo: float) -> str:
 
 def _stretch(samples: np.ndarray, rate: int, tempo: float) -> np.ndarray:
     """Play speech ``tempo`` times faster (below 1: slower), pitch kept, with ffmpeg's atempo."""
-    from h3_app.drama3_serving.audio import decode_wav
+    from h3_app.drama3.serving.audio import decode_wav
 
     with tempfile.TemporaryDirectory(prefix="dub-stretch-") as directory:
         source = _write_wav(samples, rate, Path(directory) / "take.wav")
@@ -469,8 +469,8 @@ def timed_take(take: np.ndarray, lines: list[dict], index: int, duration: float,
 def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Session, *, runtime, free_gpu,
                 hf_token=None) -> Iterator[str]:
     """Fill each line's ``take`` (mono at RATE), reusing saved takes unless regeneration was asked."""
-    from h3_app.drama3_serving import audio, takes as take_store
-    from h3_app.drama3_serving.speech import LineSpeaker, persist_caches
+    from h3_app.drama3.serving import audio, takes as take_store
+    from h3_app.drama3.serving.speech import LineSpeaker, persist_caches
 
     temperature, top_p, top_k = VOICE_PRESETS.get(request.preset, VOICE_PRESETS["Balance"])
     sampling = {"temperature": temperature, "top_p": top_p, "top_k": top_k}

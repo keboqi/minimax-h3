@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import gradio as gr
 
-from h3_app import drama3_speakers as speakers
+from h3_app.drama3 import speakers
 from h3_app.errors import H3Error
 
 
@@ -155,7 +155,7 @@ class SpeakerLibraryActions:
                 gr.update(value=KEEP_SAVED), f'"{saved.name}" now uses {choice.lower()}.')
 
     def delete_group(self, group, *selected):
-        from h3_ui.drama3_controls import UPLOAD_VOICE, drama3_voice_choices
+        from h3_ui.drama3.controls import UPLOAD_VOICE, drama3_voice_choices
 
         try:
             removed = speakers.delete_group(group or "Global", self.runtime())
@@ -172,7 +172,7 @@ class SpeakerLibraryActions:
                   for value in selected]]
 
     def mutate(self, operation, group, key, name, description, transcript, destination, *selected):
-        from h3_ui.drama3_controls import UPLOAD_VOICE, drama3_voice_choices
+        from h3_ui.drama3.controls import UPLOAD_VOICE, drama3_voice_choices
 
         replacement = key
         try:
@@ -240,7 +240,7 @@ def bind_speaker_library(view, group, slots, actions, group_status, store_events
 
 def bind_voice_takes(view, generate, settings, interrupt):
     """Generate tries for the selected speaker with the Cast's voice generator and sampling."""
-    from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
+    from ..job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 
     generated = bind_gpu_action(
         view.try_takes.click, owned_generation(generate, "drama3_voice"),

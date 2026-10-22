@@ -94,7 +94,7 @@ def fake_drama3_voice(description, preview_text, *args):
 
 
 def fake_drama3_references(briefs, request, *args, **kwargs):
-    from h3_app.drama3_voice_design import DesignResult
+    from h3_app.drama3.voice_design import DesignResult
     from h3_app.generation.results import GenerationUpdate
 
     yield GenerationUpdate(None, f"Fixture batch of {len(briefs)}, {request.parallel} at a time")
@@ -105,7 +105,7 @@ def fake_drama3_references(briefs, request, *args, **kwargs):
 
 fake_drama3_voice.__signature__ = inspect.signature(app.drama3_handlers.generate_drama3_voice)
 app.drama3_handlers.generate_drama3_voice = fake_drama3_voice
-from h3_app import drama3_voice_design  # noqa: E402
+from h3_app.drama3 import voice_design as drama3_voice_design  # noqa: E402
 
 drama3_voice_design.generate_drama3_references = fake_drama3_references
 

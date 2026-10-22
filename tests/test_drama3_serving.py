@@ -11,9 +11,9 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from h3_app.drama3_serving import audio, environment, generate, server
-from h3_app.drama3_serving.generate import frame_budget
-from h3_app.drama3_serving.planner import CHUNK_BYTES, expected_seconds, parse_turns, plan_chunks, spoken_text
+from h3_app.drama3.serving import audio, environment, generate, server
+from h3_app.drama3.serving.generate import frame_budget
+from h3_app.drama3.serving.planner import CHUNK_BYTES, expected_seconds, parse_turns, plan_chunks, spoken_text
 from h3_app.errors import H3Error
 from h3_app.workers import env as worker_env
 from h3_app.generation.drama3 import validate_drama3 as validate_request
@@ -687,8 +687,8 @@ class GenerateTests(unittest.TestCase):
 
 class TreeAndSpeakerEffectsTests(unittest.TestCase):
     def test_nested_parallel_sequential_tree_and_pause_splitting(self):
-        from h3_app.drama3_serving.planner import plan_turns_chunks
-        from h3_app.drama3_serving.tree import (
+        from h3_app.drama3.serving.planner import plan_turns_chunks
+        from h3_app.drama3.serving.tree import (
             ParallelNode,
             PauseNode,
             SequentialNode,
@@ -749,7 +749,7 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         self.assertEqual([s["duration"] for s in sounds], [15, 2])
 
     def test_all_twenty_speaker_effects_transform_audio_cleanly(self):
-        from h3_app.drama3_serving.speaker_effects import (
+        from h3_app.drama3.serving.speaker_effects import (
             SPEAKER_EFFECTS,
             apply_speaker_effects,
             extract_speaker_effects,
@@ -769,7 +769,7 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
                 self.assertGreater(float(np.max(np.abs(processed))), 0.01)
 
     def test_fallback_pitch_shift_keeps_length_and_shifts_cleanly_to_the_end(self):
-        from h3_app.drama3_serving.speaker_effects import _pitch_shift_preserve_len
+        from h3_app.drama3.serving.speaker_effects import _pitch_shift_preserve_len
 
         def spectrum(samples):
             magnitude = np.abs(np.fft.rfft(samples * np.hanning(samples.size))) ** 2
@@ -792,7 +792,7 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
                     self.assertGreater(near / power.sum(), 0.9)
 
     def test_pedalboard_output_is_peak_limited(self):
-        from h3_app.drama3_serving import speaker_effects
+        from h3_app.drama3.serving import speaker_effects
 
         with patch.object(speaker_effects, "_try_apply_pedalboard", lambda samples, rate, effects: samples * 6):
             processed = speaker_effects.apply_speaker_effects(tone(0.2), RATE, ("radio_broadcast",))
@@ -888,15 +888,15 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         self.assertGreater(float(np.abs(left[:, 0]).max()), float(np.abs(left[:, 1]).max()))
 
     def test_narrator_is_centred_and_characters_spread(self):
-        from h3_app.drama3_serving.generate import CHARACTER_POSITIONS, speaker_positions
-        from h3_app.drama3_serving.planner import Chunk
+        from h3_app.drama3.serving.generate import CHARACTER_POSITIONS, speaker_positions
+        from h3_app.drama3.serving.planner import Chunk
 
         chunks = [Chunk(i, speaker, "Hi.") for i, speaker in enumerate(["Narrator", "Mia", "Leo", "Mia", "Ann"])]
         self.assertEqual(speaker_positions(chunks), dict(zip(["Mia", "Leo", "Ann"], CHARACTER_POSITIONS)))
         self.assertEqual(speaker_positions(chunks[:2]), {})  # a narrator and one character stay centred
 
     def test_sounds_move_and_recede(self):
-        from h3_app.drama3_serving.tree import parse_drama3_tree, iter_sound_nodes, parse_pan
+        from h3_app.drama3.serving.tree import parse_drama3_tree, iter_sound_nodes, parse_pan
 
         self.assertEqual(parse_pan("-0.5"), (-0.5, -0.5))
         self.assertEqual(parse_pan("-0.8, 0.2"), (-0.8, 0.2))
@@ -940,9 +940,9 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         self.assertEqual(audio.place_sound(tone(1.0), RATE).shape, (RATE, 2))  # mono clips become stereo
 
     def test_one_shot_sounds_share_their_scenes_room(self):
-        from h3_app.drama3_serving import generate
-        from h3_app.drama3_serving.planner import plan_turns_chunks
-        from h3_app.drama3_serving.tree import iter_sound_nodes, iter_speech_nodes, parse_drama3_tree
+        from h3_app.drama3.serving import generate
+        from h3_app.drama3.serving.planner import plan_turns_chunks
+        from h3_app.drama3.serving.tree import iter_sound_nodes, iter_speech_nodes, parse_drama3_tree
 
         def context(script):
             tree = parse_drama3_tree(script)
@@ -976,8 +976,8 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         self.assertIsNone(generate._scene_room(tree, ctx))  # two places: no single room
 
     def test_speaker_gains_even_out_voice_levels_within_a_cap(self):
-        from h3_app.drama3_serving.generate import MAX_SPEAKER_GAIN_DB, Take, speaker_gains
-        from h3_app.drama3_serving.planner import Chunk
+        from h3_app.drama3.serving.generate import MAX_SPEAKER_GAIN_DB, Take, speaker_gains
+        from h3_app.drama3.serving.planner import Chunk
 
         def take(index, speaker, level):
             return Take(Chunk(index, speaker, "Hi."), tone(1.0) * level, RATE, 1, None)
@@ -1009,7 +1009,7 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
 
 class LineSpeakerTests(unittest.TestCase):
     def speaker(self, speech):
-        from h3_app.drama3_serving.speech import LineSpeaker
+        from h3_app.drama3.serving.speech import LineSpeaker
 
         fake = MagicMock()
         fake.speech.side_effect = speech
@@ -1127,7 +1127,7 @@ class TakeReuseTests(unittest.TestCase):
         self.assertEqual(audio.decode_wav(broken.read_bytes())[1], RATE)
 
     def test_take_identity_and_pruning(self):
-        from h3_app.drama3_serving import takes
+        from h3_app.drama3.serving import takes
 
         base = dict(speaker=0, text="Hi.", reference="abc", transcript="Ref.",
                     sampling={"temperature": 1.0, "top_p": 0.9, "top_k": 30}, max_new_tokens=256)

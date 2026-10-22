@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from h3_app import drama3_speakers
+from h3_app.drama3 import speakers as drama3_speakers
 from h3_app.prompt_writers import drama3 as drama3_writer
 from h3_app.catalog import LIGHTNING_PROMPT_MODELS
 from h3_app.config import RuntimeConfig
@@ -327,7 +327,7 @@ class Drama3AppInputTests(unittest.TestCase):
             self.captured_request("regenerate_drama3_line", None)
 
     def test_takes_table_comes_from_the_result_snapshot(self):
-        from h3_ui import drama3_handlers
+        from h3_ui.application import drama3_handlers
         from h3_app.provenance import write_snapshot
 
         with tempfile.TemporaryDirectory() as temp:
@@ -352,8 +352,8 @@ class Drama3AppInputTests(unittest.TestCase):
         import gradio as gr
         import numpy as np
         from h3_ui import application  # noqa: F401 - installs the handlers' services
-        from h3_ui import drama3_handlers
-        from h3_app.drama3_serving import audio, takes
+        from h3_ui.application import drama3_handlers
+        from h3_app.drama3.serving import audio, takes
         from h3_app.provenance import write_snapshot
 
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"H3_WORKSPACE_DIR": temp}):
@@ -379,7 +379,7 @@ class Drama3AppInputTests(unittest.TestCase):
 
     def test_subtitles_are_timed_lines_without_cues(self):
         from h3_ui import application  # noqa: F401 - installs the handlers' services
-        from h3_ui import drama3_handlers
+        from h3_ui.application import drama3_handlers
         from h3_app.provenance import write_snapshot
 
         with tempfile.TemporaryDirectory() as temp:
@@ -470,7 +470,9 @@ class Drama3VramHandoffTests(unittest.TestCase):
             self.run_release([40 * 2**30] * 3, timeout=3)
 
     def test_handlers_release_comfyui_through_the_application(self):
-        from h3_ui import application, drama3_handlers
+        from h3_ui import application
+
+        drama3_handlers = application.drama3_handlers
 
         with patch.object(application, "free_comfy_vram") as free:
             drama3_handlers.free_comfy_vram()
@@ -479,7 +481,7 @@ class Drama3VramHandoffTests(unittest.TestCase):
 
 class SoundPresetTests(unittest.TestCase):
     def setUp(self):
-        from h3_app import drama3_sounds
+        from h3_app.drama3 import sounds as drama3_sounds
 
         self.drama3_sounds = drama3_sounds
         self.temp = tempfile.TemporaryDirectory()
@@ -531,7 +533,7 @@ class SoundPresetTests(unittest.TestCase):
 class Drama3CastSoundTests(unittest.TestCase):
     def parse(self, sounds, script='<sound loop="true" name="rain">Rain</sound>\n<|speaker:0|> Hello there.'):
         import json
-        from h3_app.drama3_cast import parse_script_cast_and_sounds
+        from h3_app.drama3.cast import parse_script_cast_and_sounds
 
         return parse_script_cast_and_sounds(json.dumps({
             "script": script,
@@ -552,7 +554,7 @@ class Drama3CastSoundTests(unittest.TestCase):
         self.assertEqual((by_name["music"]["duration"], by_name["music"]["volume"]), (47, 2.0))
 
     def test_writer_briefs_are_written_into_the_script_tags(self):
-        from h3_app.drama3_serving.tree import extract_script_sounds
+        from h3_app.drama3.serving.tree import extract_script_sounds
 
         script, _cast, _sounds = self.parse([
             {"name": "rain", "description": "Steady rain on a <tin> roof", "duration": 20},
@@ -574,9 +576,9 @@ class Drama3CastSoundTests(unittest.TestCase):
         self.assertIn('<sound loop="true" name="rain">Rain</sound>', script)
 
     def test_unnamed_sound_slot_matches_an_unnamed_tag(self):
-        from h3_app.drama3_serving.tree import parse_drama3_tree, iter_sound_nodes
-        from h3_ui import drama3_handlers
-        from h3_ui.drama3_controls import UPLOAD_SOUND
+        from h3_app.drama3.serving.tree import parse_drama3_tree, iter_sound_nodes
+        from h3_ui.application import drama3_handlers
+        from h3_ui.drama3.controls import UPLOAD_SOUND
 
         (node,) = iter_sound_nodes(parse_drama3_tree("<sound>Distant church bells</sound>"))
         (sound,) = drama3_handlers._drama3_sounds((UPLOAD_SOUND, None, "", "Distant church bells", 90))
@@ -649,7 +651,7 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         self.assertIn("<#1.0#>", adv_script)
 
     def test_switch_script_mode_and_sync_script_sounds(self):
-        from h3_ui import drama3_handlers
+        from h3_ui.application import drama3_handlers
 
         text = (
             "<parallel>\n"
@@ -681,8 +683,8 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         self.assertIn("kept but ignored", basic_status)
 
     def test_batch_sounds_report_clips_that_were_not_returned(self):
-        from h3_ui import drama3_handlers
-        from h3_ui.drama3_controls import UPLOAD_SOUND
+        from h3_ui.application import drama3_handlers
+        from h3_ui.drama3.controls import UPLOAD_SOUND
 
         with tempfile.TemporaryDirectory() as temp:
             clip = Path(temp) / "rain.wav"
@@ -701,7 +703,7 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         self.assertEqual(final[-1], "Generated 1 of 2 sound clips. Failed: sound 1; see each sound's panel.")
 
     def test_job_admission_signatures_match_bound_inputs(self):
-        from h3_ui import drama3_handlers
+        from h3_ui.application import drama3_handlers
         from h3_ui.job_bindings import owned_generation
 
         gen_drama = owned_generation(drama3_handlers.generate_drama3, "drama3")
@@ -721,8 +723,8 @@ class Drama3AutoTests(unittest.TestCase):
     def test_composer_and_auto_bindings_can_be_mounted(self):
         import gradio as gr
         from h3_ui.application import _drama3_actions
-        from h3_ui.drama3_view import build_drama3_view
-        from h3_ui.drama3_bindings import bind_drama3
+        from h3_ui.drama3.view import build_drama3_view
+        from h3_ui.drama3.bindings import bind_drama3
 
         with gr.Blocks() as demo:
             view = build_drama3_view(gr.Group())
@@ -755,7 +757,7 @@ class Drama3AutoTests(unittest.TestCase):
 
     def test_failed_rewrite_stops_auto_with_the_writer_reason(self):
         import gradio as gr
-        from h3_ui.drama3_bindings import drama3_auto_rewritten
+        from h3_ui.drama3.bindings import drama3_auto_rewritten
 
         with self.assertRaisesRegex(gr.Error, "no key"):
             drama3_auto_rewritten("Prompt enhancement failed: no key")
@@ -764,8 +766,8 @@ class Drama3AutoTests(unittest.TestCase):
     def test_preload_runs_on_the_gpu_queue_beside_the_rewrite(self):
         import gradio as gr
         from h3_ui.application import _drama3_actions
-        from h3_ui.drama3_view import build_drama3_view
-        from h3_ui.drama3_bindings import bind_drama3
+        from h3_ui.drama3.view import build_drama3_view
+        from h3_ui.drama3.bindings import bind_drama3
 
         with gr.Blocks() as demo:
             view = build_drama3_view(gr.Group())
@@ -778,11 +780,11 @@ class Drama3AutoTests(unittest.TestCase):
 
     def test_preload_loads_the_voice_engine_then_sounds_then_sglang_and_survives_failures(self):
         from h3_app import audio_tools
-        from h3_app.drama3_serving import generate
-        from h3_app.drama3_voice_design import ENGINE_DRAMA3, ENGINE_QWEN
+        from h3_app.drama3.serving import generate
+        from h3_app.drama3.voice_design import ENGINE_DRAMA3, ENGINE_QWEN
         from h3_app.generation.results import GenerationUpdate
         from h3_app.jobs import JobCancelled
-        from h3_ui import drama3_handlers
+        from h3_ui.application import drama3_handlers
 
         order = []
 
@@ -819,7 +821,7 @@ class Drama3AutoTests(unittest.TestCase):
             list(drama3_handlers.preload_drama3_models(ENGINE_QWEN))
 
     def test_only_advanced_generates_sounds(self):
-        from h3_ui.drama3_bindings import drama3_auto_sound_slots
+        from h3_ui.drama3.bindings import drama3_auto_sound_slots
 
         self.assertEqual(drama3_auto_sound_slots(drama3_writer.DRAMA3_SCRIPT_BASIC, 4)[0], 0)
         self.assertEqual(drama3_auto_sound_slots(drama3_writer.DRAMA3_SCRIPT_ADVANCED, 4)[0], 4)

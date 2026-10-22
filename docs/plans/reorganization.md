@@ -1,6 +1,6 @@
 # Reorganization plan
 
-Status: in progress. Phases 0–3, 4a and 4b are done. Combines two code reviews.
+Status: in progress. Phases 0–3 and 4a–4c are done. Combines two code reviews.
 One review covered feature ownership and the workspace, the other the cost of
 adding a feature. Remove this file when the plan is finished.
 

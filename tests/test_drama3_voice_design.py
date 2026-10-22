@@ -12,10 +12,11 @@ from unittest.mock import Mock, patch
 
 import gradio as gr
 
-from h3_app import audio_tools, drama3_speakers, voice_design
+from h3_app import audio_tools, voice_design
+from h3_app.drama3 import speakers as drama3_speakers
 from h3_app.prompt_writers import common as writers_common, drama3 as drama3_writer
 from h3_app.config import RuntimeConfig
-from h3_app.drama3_cast import parse_script_cast
+from h3_app.drama3.cast import parse_script_cast
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
 from h3_app.workers import env as worker_env
@@ -128,7 +129,7 @@ class VoiceDesignTests(unittest.TestCase):
             Path(payload["output"]).write_bytes(b"RIFF" + b"x" * 80)
             return {"ok": True}
         with patch.object(audio_tools, "run", side_effect=run), \
-                patch("h3_app.drama3_serving.server.release_all") as release:
+                patch("h3_app.drama3.serving.server.release_all") as release:
             audio, transcript = voice_design.generate_reference(
                 "Warm narrator", "你好，今天我们一起出发。", "Chinese", self.runtime, free_gpu=Mock())
         release.assert_not_called()
@@ -247,13 +248,13 @@ class ResidentAudioToolsTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         for name in ("persist_caches", "release_all"):
-            patcher = patch(f"h3_app.drama3_serving.server.{name}")
+            patcher = patch(f"h3_app.drama3.serving.server.{name}")
             setattr(self, name, patcher.start())
             self.addCleanup(patcher.stop)
 
     def gpu(self, *free_mib):
         values = iter(free_mib)
-        return patch("h3_app.drama3_serving.server.gpu_memory",
+        return patch("h3_app.drama3.serving.server.gpu_memory",
                      side_effect=lambda: (next(values), 98304.0, ""))
 
     def test_one_worker_serves_both_models_without_freeing_a_roomy_gpu(self):
@@ -419,7 +420,7 @@ class CastSlotTests(unittest.TestCase):
 
     def test_unchecked_skip_regenerates_speakers_that_already_have_a_clip(self):
         from h3_ui.application import drama3_handlers
-        from h3_ui.drama3_controls import UPLOAD_VOICE, drama3_voices_title
+        from h3_ui.drama3.controls import UPLOAD_VOICE, drama3_voices_title
         calls = []
 
         def single(description, *args):
@@ -471,7 +472,7 @@ class CastSlotTests(unittest.TestCase):
 
     def test_drama3_generator_uses_the_tab_sampling(self):
         from h3_ui.application import drama3_handlers
-        from h3_app import drama3_voice_design
+        from h3_app.drama3 import voice_design as drama3_voice_design
         from h3_app.generation.results import GenerationUpdate
         seen = {}
 
@@ -494,7 +495,7 @@ class CastSlotTests(unittest.TestCase):
 
     def test_generate_all_fills_only_shown_upload_slots_with_a_brief_and_no_clip(self):
         from h3_ui.application import drama3_handlers
-        from h3_ui.drama3_controls import UPLOAD_VOICE, drama3_slot_title
+        from h3_ui.drama3.controls import UPLOAD_VOICE, drama3_slot_title
         calls = []
 
         def single(description, preview, language, *settings):
@@ -529,10 +530,10 @@ class CastSlotTests(unittest.TestCase):
 
     def test_generate_all_with_drama3_sends_every_brief_in_one_batch_with_the_parallel_setting(self):
         from h3_ui.application import drama3_handlers
-        from h3_app import drama3_voice_design
-        from h3_app.drama3_voice_design import DesignResult
+        from h3_app.drama3 import voice_design as drama3_voice_design
+        from h3_app.drama3.voice_design import DesignResult
         from h3_app.generation.results import GenerationUpdate
-        from h3_ui.drama3_controls import UPLOAD_VOICE
+        from h3_ui.drama3.controls import UPLOAD_VOICE
         seen = {}
 
         def batch(briefs, request, *args, **kwargs):
@@ -571,7 +572,7 @@ class Drama3VoiceDesignTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_description_cue_follows_the_opening_phrase(self):
-        from h3_app.drama3_voice_design import design_script
+        from h3_app.drama3.voice_design import design_script
         self.assertEqual(design_script(" Gravelly  old sailor ", "Well now, the  tide is turning."),
                          "Well now, [Gravelly old sailor] the tide is turning.")
         self.assertEqual(design_script("Warm", "Hello world"), "Hello [Warm] world")
@@ -586,8 +587,8 @@ class Drama3VoiceDesignTests(unittest.TestCase):
         import threading
         import numpy as np
         from dataclasses import replace
-        from h3_app import drama3_voice_design
-        from h3_app.drama3_serving import audio, generate, server as served
+        from h3_app.drama3 import voice_design as drama3_voice_design
+        from h3_app.drama3.serving import audio, generate, server as served
         clip = audio.encode_wav(np.full(24000, 0.2, dtype=np.float32), 24000)
         barrier = threading.Barrier(2, timeout=5)  # both requests must be in flight at once
 
@@ -616,8 +617,8 @@ class Drama3VoiceDesignTests(unittest.TestCase):
 
     def test_sglang_sends_no_reference_and_writes_the_clip(self):
         import numpy as np
-        from h3_app import drama3_voice_design
-        from h3_app.drama3_serving import audio, generate, server as served
+        from h3_app.drama3 import voice_design as drama3_voice_design
+        from h3_app.drama3.serving import audio, generate, server as served
         clip = audio.encode_wav(np.full(24000, 0.2, dtype=np.float32), 24000)
         fake = Mock()
         fake.payload.side_effect = lambda **kwargs: served.SglangOmniServer.payload(None, **kwargs)
@@ -647,7 +648,7 @@ class BrowserSlotPresentationTests(unittest.TestCase):
 
     def test_slot_titles_and_clip_flags_match_python(self):
         from tests.node_js import run_js
-        from h3_ui.drama3_controls import (
+        from h3_ui.drama3.controls import (
             _SOUND_KIND, _VOICE_KIND, _slot_title_js, drama3_slot_title, drama3_sound_slot_title
         )
         audio = {"path": "/tmp/voice.wav", "url": "/file=voice.wav"}
@@ -662,7 +663,7 @@ class BrowserSlotPresentationTests(unittest.TestCase):
 
     def test_panel_titles_match_python(self):
         from tests.node_js import run_js
-        from h3_ui.drama3_controls import (
+        from h3_ui.drama3.controls import (
             UPLOAD_VOICE, _VOICE_KIND, _SOUND_KIND, _panel_title_js, drama3_sounds_title, drama3_voices_title
         )
         presets = ["Saved Alice", UPLOAD_VOICE, UPLOAD_VOICE] + [UPLOAD_VOICE] * 13
@@ -681,7 +682,7 @@ class BrowserSlotPresentationTests(unittest.TestCase):
 
     def test_add_and_remove_send_only_changed_slots_and_clear_the_removed_one(self):
         from tests.node_js import run_js
-        from h3_ui.drama3_controls import _slot_count_js, _slot_visibility
+        from h3_ui.drama3.controls import _slot_count_js, _slot_visibility
         skip = {"__type__": "update"}
         added = run_js(_slot_count_js(16, 1), 4)
         self.assertEqual(added, [{**value} if isinstance(value, dict) else value

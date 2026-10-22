@@ -57,7 +57,7 @@ def ensure_weights(model: str, runtime, python: Path, log: Path, *, hf_token: st
         env[key] = "0"
     worker_env.run_process([str(python), str(WORKER), "download", model, str(models)], log,
                            timeout=runtime.generation_timeout, env=env, label=f"{LABEL} download")
-    from h3_app.drama3_serving.server import persist_caches
+    from h3_app.drama3.serving.server import persist_caches
 
     persist_caches()  # Commit the downloaded weights when running on Modal's volume.
 
@@ -96,7 +96,7 @@ def _make_room(model: str, free_gpu, *, evict: bool = True) -> bool:
 
     Without ``evict``, SGLang-Omni stays loaded and False reports that the GPU still lacks room.
     """
-    from h3_app.drama3_serving.server import gpu_memory, release_all
+    from h3_app.drama3.serving.server import gpu_memory, release_all
 
     needed = LOAD_HEADROOM_MIB[model]
     memory = gpu_memory()
@@ -137,7 +137,7 @@ def _worker_for(model: str, runtime, *, free_gpu, hf_token: str | None, evict: b
 def run(model: str, payload: dict, runtime, *, free_gpu, hf_token: str | None = None) -> dict:
     """Send one request to the resident worker, starting it and fetching weights as needed."""
     from h3_app.jobs import JOBS
-    from h3_app.drama3_serving.server import persist_caches
+    from h3_app.drama3.serving.server import persist_caches
 
     JOBS.add_gpu_claim_hook(release_for_job)
     with _SLOT.lock:

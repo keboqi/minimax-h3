@@ -8,7 +8,7 @@ import modal
 
 app = modal.App("h3-cuda-sleep-probe")
 image = (modal.Image.debian_slim(python_version="3.12").pip_install("requests")
-         .add_local_file(str(Path(__file__).resolve().parents[1] / "h3_app/drama3_serving/checkpoint.py"),
+         .add_local_file(str(Path(__file__).resolve().parents[1] / "h3_app/drama3/serving/checkpoint.py"),
                          "/root/h3_checkpoint.py"))
 
 

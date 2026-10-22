@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import re
 
-from h3_app.drama3_serving.speaker_effects import strip_speaker_effects
-from h3_app.drama3_serving.tree import (
+from h3_app.drama3.serving.speaker_effects import strip_speaker_effects
+from h3_app.drama3.serving.tree import (
     CONTAINER_TAG_RE,
     PAUSE_TAG_RE,
     SOUND_BLOCK_RE,
@@ -14,8 +14,8 @@ from h3_app.drama3_serving.tree import (
     extract_script_sounds,
     sound_placement_attrs,
 )
-from h3_app.drama3_sounds import normalize_sound_name
-from h3_app.drama3_speakers import normalize_name
+from h3_app.drama3.sounds import normalize_sound_name
+from h3_app.drama3.speakers import normalize_name
 from h3_app.errors import H3Error
 from h3_app.workflows.drama3 import MAX_SPEAKER, SPEAKER_TAG, names_to_tags, text_speakers, validate_drama3_text
 
