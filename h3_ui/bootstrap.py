@@ -320,7 +320,18 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             default_seedvr2=defaults["seedvr2_model"],
             ltx25_choices=tuple(catalog.LTX25_MODEL_CHOICES),
             default_ltx25=catalog.DEFAULT_LTX25_MODEL,
+            downloads=True,
         )
+        if app_views.dubbing is not None:
+            from .dubbing_bindings import bind_dubbing
+            from .dubbing_view import build_dubbing_view
+
+            dubbing_components = build_dubbing_view(
+                app_views.dubbing,
+                gemini_models=catalog.GEMINI_PROMPT_MODELS,
+                default_gemini_model=catalog.DEFAULT_GEMINI_PROMPT_MODEL,
+            )
+            bind_dubbing(dubbing_components, tab=app_views.dubbing_tab, interrupt=services.interrupt)
         from .engine_readiness import bind_engine_readiness
 
         for view, family in (

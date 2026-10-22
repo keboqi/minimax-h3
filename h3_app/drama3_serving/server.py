@@ -505,11 +505,12 @@ def shared_server(settings: ServerSettings) -> SglangOmniServer:
 def release_for_job(family: str) -> None:
     """Other engines reclaim the GPU; ComfyUI TTS releases the server itself.
 
-    Voice and sound design, and Auto's preload, share the GPU with a loaded server.
+    Voice and sound design, Auto's preload and Dub & Translate share the GPU with a
+    loaded server; dubbing's transcription tools release it only when VRAM is short.
     """
     if family == "unload":
         stop_all()
-    elif family not in {"drama3", "drama3_voice", "drama3_sound", "drama3_preload"}:
+    elif family not in {"drama3", "drama3_voice", "drama3_sound", "drama3_preload", "dubbing"}:
         release_all()
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Sequence
 import gradio as gr
 
@@ -51,6 +52,50 @@ class GalleryView:
     inspector: Any = None
     filters: Any = None
     scan_history: Any = None
+    downloads: Any = None
+
+
+def build_download_controls() -> SimpleNamespace:
+    """Download a video from a page URL with yt-dlp, plus saved cookies for sign-in sites."""
+    from h3_app.video_download import DEFAULT_QUALITY, QUALITIES
+
+    with gr.Accordion("Download from a URL", open=False, elem_classes=["h3-gallery-card"]):
+        gr.Markdown("Paste a video page link (YouTube, Bilibili, X and most video sites). The video joins the "
+                    "library, ready for **Dub & Translate**.")
+        with gr.Row(equal_height=True):
+            url = gr.Textbox(label="Video URL", placeholder="https://…", scale=4)
+            quality = gr.Dropdown(list(QUALITIES), value=DEFAULT_QUALITY, label="Quality", scale=1, min_width=140)
+        with gr.Row():
+            download = gr.Button("Download video", variant="primary", scale=2)
+            info = gr.Button("Check link", scale=1)
+            stop = gr.Button("Interrupt", scale=1)
+        status = gr.Markdown()
+        path = gr.Textbox(visible=False)
+        with gr.Accordion("Cookies for sign-in downloads", open=False) as cookies:
+            gr.Markdown("Age-restricted, members-only or sign-in videos need your browser's cookies for that "
+                        "site. They are stored privately on this server and used only for that site's links.")
+            sites = gr.Markdown()
+            with gr.Tab("From cURL"):
+                curl = gr.Textbox(label="Copy as cURL", lines=3, placeholder="curl 'https://www.youtube.com/…' -H 'cookie: …'",
+                                  info="Signed in, open DevTools → Network, right-click a request on the site → "
+                                       "Copy → Copy as cURL (bash).")
+                with gr.Row(equal_height=True):
+                    curl_domain = gr.Textbox(label="Site", placeholder="Detected from the command", scale=3)
+                    import_curl = gr.Button("Save cookies", scale=1)
+            with gr.Tab("From cookies.txt"):
+                cookie_file = gr.File(label="Netscape cookies.txt", file_types=[".txt"], type="filepath", height=90)
+                with gr.Row(equal_height=True):
+                    file_domain = gr.Textbox(label="Site", placeholder="youtube.com", scale=3)
+                    import_file = gr.Button("Save cookies", scale=1)
+            with gr.Row(equal_height=True):
+                saved_site = gr.Dropdown([], label="Saved site", scale=3)
+                delete = gr.Button("Delete cookies", variant="stop", scale=1)
+            cookie_status = gr.Markdown()
+    return SimpleNamespace(url=url, quality=quality, download=download, info=info, stop=stop, status=status,
+                           path=path, cookies=cookies, sites=sites, curl=curl, curl_domain=curl_domain,
+                           import_curl=import_curl, cookie_file=cookie_file, file_domain=file_domain,
+                           import_file=import_file, saved_site=saved_site, delete=delete,
+                           cookie_status=cookie_status)
 
 
 def build_gallery_view(
@@ -64,8 +109,12 @@ def build_gallery_view(
     ltx25_choices: Sequence[str] = (),
     default_ltx25: str | None = None,
     enhance: bool = True,
+    downloads: bool = False,
 ) -> GalleryView:
-    """Build the Media library; ``enhance=False`` omits GPU post-processing."""
+    """Build the Media library; ``enhance=False`` omits GPU post-processing.
+
+    ``downloads`` adds Download from a URL (yt-dlp) with its saved cookies.
+    """
     with root:
         gr.Markdown(
             "## Media library\nYour outputs, in one place. Find a favorite, review the details"
@@ -130,6 +179,7 @@ def build_gallery_view(
                 show_more = gr.Button(
                     "Show more", interactive=False, variant="secondary"
                 )
+                download_controls = build_download_controls() if downloads else None
                 with gr.Accordion(
                     "Import local media", open=False, elem_classes=["h3-gallery-card"]
                 ):
@@ -325,4 +375,5 @@ def build_gallery_view(
         inspector,
         filters,
         scan_history,
+        download_controls,
     )

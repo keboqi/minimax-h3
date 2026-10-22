@@ -25,7 +25,9 @@ Create supports H3,
 LTX 2.5, Qwen Image 2.1, FLUX 3, MOSS-Image, Fibo 2.0, MiniMax Music 3, YuE2 and
 [Soundstage](docs/drama3.md), the audio production workspace powered by Drama 3. Prompt suggestions require
 acceptance. Media includes indexed search, shared tags/favorites, lineage,
-image comparison and synchronized video playback.
+image comparison, synchronized video playback, and downloads from video URLs.
+[Dub & Translate](docs/dubbing.md) transcribes, translates and re-voices a video
+with each speaker's cloned voice, with every line editable before dubbing.
 **Image** defaults to **Qwen Image 2.1**, and **Song** defaults to **MiniMax Music 3**.
 Both tasks remember explicit engine choices.
 
@@ -116,6 +118,10 @@ backends; GPU inference and deployment are validated separately.
 - A dedicated YuE2 tab for score-planned or direct lyrics-to-song generation
 - Soundstage for script writing and direction, voice casting, sound effects,
   music, reusable takes, and mixing
+- Dub & Translate: local (OmniVAD + Qwen3-ASR + ForcedAligner + Hy-MT) or Gemini
+  transcription and translation, vocal separation, a line editor, and Drama 3
+  voice-cloned dubbing muxed back into the video with subtitle tracks
+- Media downloads from video URLs with yt-dlp, including saved per-site cookies
 - All ten official LTX-2.5 ComfyUI workflows for two-stage generation,
   audio-to-video, text-to-audio, video editing, reference sheets, motion tracks,
   in/outpainting, and pose/depth/canny control

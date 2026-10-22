@@ -1,0 +1,114 @@
+"""Dub & Translate sessions: a private folder per source with its stems, references and lines.
+
+``session.json`` holds the source facts and the edited segments; audio work files
+sit beside it. Sessions live in the private workspace, which is never served.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import threading
+import time
+import uuid
+
+from h3_app.errors import H3Error
+from h3_app.video_download import workspace_dir
+
+from . import segments as segment_tools
+
+MANIFEST = "session.json"
+_LOCK = threading.RLock()
+
+
+def sessions_dir(runtime) -> Path:
+    return workspace_dir(runtime) / "dubbing"
+
+
+@dataclass
+class Session:
+    root: Path
+    data: dict
+
+    @property
+    def id(self) -> str:
+        return self.data["id"]
+
+    @property
+    def segments(self) -> list[dict]:
+        return self.data.get("segments") or []
+
+    @segments.setter
+    def segments(self, value) -> None:
+        self.data["segments"] = segment_tools.normalize(value)
+
+    def path(self, key: str) -> Path | None:
+        """A work file named in the manifest (``audio``, ``vocals``, ``backing``, ``video``)."""
+        name = self.data.get("files", {}).get(key)
+        return self.root / name if name else None
+
+    def set_file(self, key: str, path: Path | None) -> None:
+        files = self.data.setdefault("files", {})
+        if path is None:
+            files.pop(key, None)
+        else:
+            files[key] = Path(path).relative_to(self.root).as_posix()
+
+    @property
+    def speech_audio(self) -> Path:
+        """Separated vocals when available, otherwise the full soundtrack."""
+        return self.path("vocals") or self.path("audio")
+
+    def save(self) -> None:
+        with _LOCK:
+            self.data["updated"] = time.time()
+            target = self.root / MANIFEST
+            temporary = target.with_name(f"{MANIFEST}.{uuid.uuid4().hex}.tmp")
+            try:
+                temporary.write_text(json.dumps(self.data, indent=2, ensure_ascii=False), encoding="utf-8")
+                os.replace(temporary, target)
+            finally:
+                temporary.unlink(missing_ok=True)
+
+
+def create(runtime, source: str | Path, *, video: bool) -> Session:
+    """Copy the source in, so the session outlives the upload that started it."""
+    source = Path(source)
+    if not source.is_file():
+        raise H3Error("Choose a video or audio file first.")
+    session_id = uuid.uuid4().hex
+    root = sessions_dir(runtime) / session_id
+    root.mkdir(parents=True)
+    copied = root / f"source{source.suffix.lower()}"
+    shutil.copy2(source, copied)
+    session = Session(root, {
+        "id": session_id, "created": time.time(), "name": source.stem,
+        "video": bool(video), "files": {"source": copied.name}, "segments": [], "speakers": {},
+    })
+    session.save()
+    return session
+
+
+def load(runtime, session_id: str) -> Session:
+    session_id = str(session_id or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{32}", session_id):
+        raise H3Error("Analyze a source first.")
+    root = sessions_dir(runtime) / session_id
+    try:
+        data = json.loads((root / MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise H3Error("This dubbing session is no longer available; analyze the source again.") from exc
+    return Session(root, data)
+
+
+def update_segments(runtime, session_id: str, segments: list[dict]) -> Session:
+    """Replace the lines under the manifest lock (editor saves race with running jobs)."""
+    with _LOCK:
+        session = load(runtime, session_id)
+        session.segments = segments
+        session.save()
+        return session

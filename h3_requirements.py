@@ -32,6 +32,9 @@ KORNIA_RS_VERSION = "0.1.14"
 # New LTX HDR nodes require these packages. Later releases require NumPy 2,
 # so keep their versions compatible with the pinned NumPy 1.26/CUDA stack.
 LTX_HDR_REQUIREMENTS = ("colour-science==0.4.6", "openimageio==3.0.12.0")
+# Media's Download from a URL. Sites change often, so yt-dlp keeps only a floor;
+# Deno (from PyPI) runs yt-dlp's YouTube challenge solver without a system runtime.
+VIDEO_DOWNLOAD_REQUIREMENTS = ("yt-dlp[default]>=2026.8.19", "deno>=2.5")
 # Keep the ComfyUI source and its pinned comfy-kitchen dependency in lockstep.
 # ComfyUI v0.40.0 fixes Qwen Image low-VRAM caching and adds direct single-latent
 # H3 decoder metadata. Keep frontend and Kitchen aligned with its requirements.
@@ -374,6 +377,55 @@ def audio_tools_install_commands(venv: str | Path, uv: str | list[str] = "uv") -
         [*uv, "pip", "install", "--python", python, "--no-deps",
          f"git+{STABLE_AUDIO_TOOLS_REPO}@{STABLE_AUDIO_TOOLS_REF}", flash_attn_wheel(windows)],
         [python, "-c", AUDIO_TOOLS_SMOKE],
+    ]
+
+
+DUB_TOOLS_READY_MARKER = "h3-dub-tools-ready.txt"
+DUB_TOOLS_PYTHON = "3.12"
+# Dub & Translate's audio-separator, OmniVAD, Qwen3-ASR + ForcedAligner and Hy-MT share
+# one interpreter. qwen-asr pins Transformers 4.57.6 (and audio-separator needs NumPy 2),
+# so neither fits ComfyUI's environment or the VoiceDesign/Stable Audio one.
+DUB_TOOLS_REQUIREMENTS = (
+    "qwen-asr==0.0.6",
+    "omnivad==0.2.13",
+    "audio-separator==0.47.1",
+    "onnxruntime>=1.17",
+    f"torch=={TORCH_VERSION}",
+    f"torchaudio=={TORCHAUDIO_VERSION}",
+    "huggingface-hub>=0.34,<1",
+    "hf-xet>=1.1",
+    "librosa>=0.10",
+    "soundfile",
+)
+DUB_TOOLS_SMOKE = (
+    "import torch, soundfile, librosa, hf_xet; "
+    "from qwen_asr import Qwen3ASRModel; "
+    "from omnivad import OmniVAD; "
+    "from audio_separator.separator import Separator; "
+    "from transformers import AutoModelForCausalLM; "
+    "assert torch.version.cuda, 'Dubbing tools installed CPU-only Torch'; "
+    "assert callable(Qwen3ASRModel.transcribe)"
+)
+
+
+def dub_tools_fingerprint() -> str:
+    """Match first-use installs and the prebuilt Modal dubbing tools environment."""
+    import hashlib
+
+    pins = "|".join((DUB_TOOLS_PYTHON, *DUB_TOOLS_REQUIREMENTS, TORCH_INDEX, DUB_TOOLS_SMOKE))
+    return hashlib.sha256(pins.encode("utf-8")).hexdigest()
+
+
+def dub_tools_install_commands(venv: str | Path, uv: str | list[str] = "uv") -> list[list[str]]:
+    """Install the dubbing tools with CUDA Torch from the shared index."""
+    base = venv if isinstance(venv, PurePath) else Path(venv)
+    python = str(base / ("Scripts/python.exe" if isinstance(base, PureWindowsPath) else "bin/python"))
+    uv = [uv] if isinstance(uv, str) else list(uv)
+    return [
+        [*uv, "venv", "--python", DUB_TOOLS_PYTHON, "--seed", str(base)],
+        [*uv, "pip", "install", "--python", python, "--extra-index-url", TORCH_INDEX,
+         "--index-strategy", "unsafe-best-match", *DUB_TOOLS_REQUIREMENTS],
+        [python, "-c", DUB_TOOLS_SMOKE],
     ]
 
 

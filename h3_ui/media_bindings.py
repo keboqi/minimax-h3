@@ -305,6 +305,22 @@ def bind_gallery_view(
         show_progress="hidden",
     )
     synchronize(refreshed, refreshed=True)
+    if view.downloads is not None:
+        from .dubbing_bindings import bind_media_downloads
+
+        def show_download(event):
+            # A finished download is a video: switch to Video and show it at the top of the page.
+            switched = event.success(
+                lambda path: gr.update(value="Video") if path else gr.skip(),
+                inputs=view.downloads.path, outputs=view.mode,
+                queue=False, show_progress="hidden", api_name=False,
+            )
+            synchronize(switched.then(
+                sync_more, inputs=[view.mode, filters], outputs=page_outputs,
+                queue=False, concurrency_limit=None, show_progress="hidden",
+            ), refreshed=True)
+
+        bind_media_downloads(view.downloads, on_downloaded=show_download)
     if postprocess is not None:
         bind_postprocess(
             view, selected_ltx_model, postprocess, interrupt,

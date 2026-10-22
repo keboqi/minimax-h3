@@ -66,6 +66,7 @@ DATA = PurePosixPath("/data")
 DRAMA3_SGLANG_VENV = ROOT / "drama3-sglang-venv"
 DRAMA3_SGLANG_DATA = DATA / "drama3-serving"
 AUDIO_TOOLS_VENV = ROOT / "audio-tools-venv"
+DUB_TOOLS_VENV = ROOT / "dub-tools-venv"
 MODELS = DATA / "models"
 INPUT = DATA / "input"
 OUTPUT = DATA / "output"
@@ -130,6 +131,10 @@ from h3_requirements import (  # noqa: E402
     AUDIO_TOOLS_READY_MARKER,
     audio_tools_fingerprint,
     audio_tools_install_commands,
+    DUB_TOOLS_READY_MARKER,
+    dub_tools_fingerprint,
+    dub_tools_install_commands,
+    VIDEO_DOWNLOAD_REQUIREMENTS,
     H3_AUDIO_T8_REPO,
     H3_AUDIO_T8_REF,
     DRAMA3_REPO,
@@ -453,6 +458,7 @@ def build(revision: str) -> None:
         f"wsproto=={WSPROTO_VERSION}",
         f"pedalboard=={PEDALBOARD_VERSION}",
         "Pillow>=10",
+        *VIDEO_DOWNLOAD_REQUIREMENTS,
         f"numpy=={NUMPY_VERSION}",
         f"scipy=={SCIPY_VERSION}",
         TENSORRT_PACKAGE,
@@ -689,6 +695,14 @@ image = image.run_commands(
     f"{(AUDIO_TOOLS_VENV / AUDIO_TOOLS_READY_MARKER).as_posix()}",
 )
 
+# Dub & Translate's audio-separator, OmniVAD, Qwen3-ASR and Hy-MT: qwen-asr's own
+# Transformers pin keeps them in a third interpreter. Weights download on first use.
+image = image.run_commands(
+    *(shlex.join(command) for command in dub_tools_install_commands(DUB_TOOLS_VENV)),
+    f"echo {dub_tools_fingerprint()} > "
+    f"{(DUB_TOOLS_VENV / DUB_TOOLS_READY_MARKER).as_posix()}",
+)
+
 if IS_LOCAL:
     for local_path, remote_path in _BUILD_LOCAL_MOUNTS:
         image = image.add_local_file(
@@ -816,6 +830,7 @@ def service_env() -> dict[str, str]:
             "H3_DRAMA3_SGLANG_VENV": DRAMA3_SGLANG_VENV.as_posix(),
             "H3_DRAMA3_SGLANG_DATA": DRAMA3_SGLANG_DATA.as_posix(),
             "H3_AUDIO_TOOLS_VENV": AUDIO_TOOLS_VENV.as_posix(),
+            "H3_DUB_TOOLS_VENV": DUB_TOOLS_VENV.as_posix(),
             "H3_DRAMA3_SGLANG_MODELS": (MODELS / "drama3_serving").as_posix(),
             # The Drama 3 server commits its kernel caches to this volume.
             "H3_MODAL_COMMIT_VOLUME": VOL,

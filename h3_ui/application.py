@@ -5,7 +5,7 @@ from h3_app.public_url import launch_cloudflare, public_url_settings, stop_cloud
 
 from .prompt_controller import PromptController, PromptServices
 from .model_controller import ModelController, ModelServices
-from . import drama3_handlers
+from . import drama3_handlers, dubbing_handlers
 from .media_controller import (
     MediaController,
     MediaServices,
@@ -2741,6 +2741,19 @@ drama3_handlers.install(drama3_handlers.Drama3Services(
     generation_services=lambda: _generation_services(),
     free_gpu=lambda: free_comfy_vram(),
     resolve_result=lambda path: resolve_result_path(path),
+))
+
+
+def _dubbing_media(mode):
+    """Newest managed media of one kind for Dub & Translate's source picker."""
+    inventory = _catalog_inventory(mode, dubbing_handlers.LIBRARY_LIMIT)
+    return list(inventory.paths) if inventory is not None else list_media_paths(mode)
+
+
+dubbing_handlers.install(dubbing_handlers.DubbingServices(
+    runtime_config=lambda: _runtime_config(),
+    free_gpu=lambda: free_comfy_vram(),
+    list_media=lambda mode: _dubbing_media(mode),
 ))
 
 

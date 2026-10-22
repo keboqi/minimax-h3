@@ -36,6 +36,8 @@ class AppViews:
     drama3: gr.Group | None = None
     moss_image: gr.Group | None = None
     fibo2: gr.Group | None = None
+    dubbing: gr.Column | None = None
+    dubbing_tab: gr.Tab | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,8 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
                     fibo2 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Soundstage", id="drama3"):
                     drama3 = gr.Group(elem_classes=["h3-engine-view"])
+        with gr.Tab("Dub & Translate", id="dub") as dubbing_tab:
+            dubbing = gr.Column(elem_classes=["h3-dub-shell"])
         with gr.Tab("Media", id="media") as gallery_tab:
             gallery = gr.Column(elem_classes=["h3-gallery-shell"])
         with gr.Tab("Jobs", id="jobs"):
@@ -148,6 +152,8 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
         drama3,
         moss_image,
         fibo2,
+        dubbing,
+        dubbing_tab,
     )
 
 

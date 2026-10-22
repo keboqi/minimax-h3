@@ -45,6 +45,9 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_ui/drama3_view.py, drama3_bindings.py | Speech composer and event pipelines for rewriting, cast, sounds and generation |
 | h3_ui/drama3_handlers.py | Drama 3 event handlers; the application installs their runtime services |
 | h3_ui/drama3_controls.py, drama3_speaker_library.py | Slot contracts/browser presentation and saved-speaker library |
+| h3_app/dubbing/ | Dub & Translate sessions, line helpers, Gemini transcription, the isolated tools worker (separation, OmniVAD + Qwen3-ASR, Hy-MT) and the Drama 3 dub/mix pipeline |
+| h3_app/video_download.py | yt-dlp downloads into Media and the private per-site cookie store |
+| h3_ui/dubbing_view.py, dubbing_bindings.py, dubbing_handlers.py | Dub & Translate tab and Media's Download from a URL panel |
 | h3_ui/optional_engine_controls.py | Shared writer, generation and settings helpers for optional engines |
 | h3_ui/*_view.py, *_bindings.py | Feature-owned views and event bindings |
 | h3_ui/sections/, events/ | Existing visible sections and event registration, preserving component order |

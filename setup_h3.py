@@ -58,6 +58,7 @@ from h3_requirements import (
     COMFY_REF,
     GRADIO_VERSION,
     PEDALBOARD_VERSION,
+    VIDEO_DOWNLOAD_REQUIREMENTS,
     HUGGINGFACE_HUB_REQUIREMENT,
     INSTALL_CONSTRAINTS,
     KERNELS_VERSION,
@@ -679,6 +680,7 @@ def install_environment(comfy: Path) -> None:
             f"wsproto=={WSPROTO_VERSION}",
             f"pedalboard=={PEDALBOARD_VERSION}",
             "Pillow>=10",
+            *VIDEO_DOWNLOAD_REQUIREMENTS,
             "--constraint",
             str(app_constraint_path),
         )
