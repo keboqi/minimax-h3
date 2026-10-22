@@ -125,6 +125,12 @@ A real supported GPU and provisioned ComfyUI installation are still needed for i
 
 ## Keeping the structure small
 
+An H3 setting that reaches the graph is one `H3GraphOptions` field in
+`h3_app/workflows/h3.py` and one line in `construct_graph.graph_options`; both
+builders accept it by name and `tests/test_h3_graph_options.py` checks the
+wiring. Its control is one field in its `h3_ui/sections/` dataclass; `H3View`
+collects section fields by name.
+
 A new Create engine is one module in `h3_ui/engines/` plus its entry in
 `FEATURES`, its `h3_app/capabilities.py` navigation entry, its layout tab and
 its saved-settings allowlist; `tests/test_engine_features.py` checks they agree.

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import MISSING, dataclass, fields
 import hashlib
+import inspect
 import json
-from typing import Any
+from typing import Any, Callable
 
 from h3_app.catalog import (
     AUTO_SOL_TOKEN_THRESHOLD,
@@ -930,177 +932,328 @@ def finish_sampling(
     )
 
 
+@dataclass(frozen=True)
+class H3GraphOptions:
+    """Everything an H3 graph needs besides its prompt, conditioning media and output naming.
+
+    A new H3 setting becomes one field here; both builders accept it by name.
+    """
+
+    width: int
+    height: int
+    duration: float
+    steps: int
+    seed: int
+    scheduler: str
+    turbo_lora_name: str | None
+    turbo_variant: str
+    turbo_strength: float
+    use_sol: bool
+    sol_tau: float
+    sol_thresh_type: str
+    sol_exact_mode: str
+    sol_dense_steps: int
+    sol_step_off: float
+    sol_sink_tokens: int
+    cache_mode: str
+    fbcache_preset: str
+    fbcache_threshold: float
+    fbcache_start: float
+    fbcache_end: float
+    fbcache_max_hits: int
+    fbcache_temporal_guard: bool
+    easycache_threshold: float
+    easycache_start: float
+    easycache_end: float
+    easycache_verbose: bool
+    model_name: str
+    models: ModelConfig
+    available_nodes: set[str]
+    video_encoder: str = "Original"
+    lightvae_decoder: str = "none"
+    use_lynnreal_vae: bool = False
+    use_int8_vae: bool = False
+    use_trt_vae: bool = False
+    use_sage: bool = False
+    use_sla: bool = False
+    use_veda: bool = False
+    sla_preset: str = DEFAULT_SLA_PRESET
+    latent_upscale_model_name: str | None = None
+    latent_upscale_precision: str = "bf16"
+    latent_upscale_refine_steps: int = 2
+    refinement_lora_name: str | None = None
+    refinement_variant: str | None = None
+    latent_split_config: H3SplitUpscaleConfig | None = None
+    result_format: str = DEFAULT_RESULT_FORMAT
+    image_frames: int = DEFAULT_IMAGE_FRAMES
+    image_vae: str = DEFAULT_IMAGE_VAE
+    text_encoder_name: str | None = None
+    encoder_small_input: bool = False
+    reuse_unchanged_inputs: bool = True
+    stage_model_offload: bool = False
+    smart_stage_offload: bool = False
+    # FL2VA only: Ref2VA never applies the bridge.
+    semantic_bridge: bool = False
+    semantic_bridge_alpha: float = 0.10
+
+
+FL2VA_ONLY_OPTIONS = frozenset({"semantic_bridge", "semantic_bridge_alpha"})
+
+
+def _options_signature(mode_parameters, *, exclude=frozenset()):
+    """A builder's full keyword signature: its own media parameters, every option, output naming."""
+    keyword = inspect.Parameter.KEYWORD_ONLY
+    options = [
+        inspect.Parameter(
+            option.name, keyword, annotation=option.type,
+            default=inspect.Parameter.empty if option.default is MISSING else option.default,
+        )
+        for option in fields(H3GraphOptions)
+        if option.name not in exclude
+    ]
+    naming = [inspect.Parameter("output_stamp", keyword, default="0", annotation=str),
+              inspect.Parameter("output_nonce", keyword, default="", annotation=str)]
+    return inspect.Signature([*mode_parameters, *options, *naming], return_annotation=dict[str, Any])
+
+
+def _add_options_model_stack(graph: Graph, options: H3GraphOptions, veda_key: str):
+    o = options
+    return add_model_stack(
+        graph,
+        o.model_name,
+        o.models,
+        turbo_lora_name=o.turbo_lora_name,
+        turbo_variant=o.turbo_variant,
+        turbo_strength=o.turbo_strength,
+        use_sol=o.use_sol,
+        sol_tau=o.sol_tau,
+        sol_thresh_type=o.sol_thresh_type,
+        sol_exact_mode=o.sol_exact_mode,
+        sol_dense_steps=o.sol_dense_steps,
+        sol_step_off=o.sol_step_off,
+        sol_sink_tokens=o.sol_sink_tokens,
+        cache_mode=o.cache_mode,
+        fbcache_preset=o.fbcache_preset,
+        fbcache_threshold=o.fbcache_threshold,
+        fbcache_start=o.fbcache_start,
+        fbcache_end=o.fbcache_end,
+        fbcache_max_hits=o.fbcache_max_hits,
+        fbcache_temporal_guard=o.fbcache_temporal_guard,
+        easycache_threshold=o.easycache_threshold,
+        easycache_start=o.easycache_start,
+        easycache_end=o.easycache_end,
+        easycache_verbose=o.easycache_verbose,
+        available_nodes=o.available_nodes,
+        text_encoder_name=o.text_encoder_name,
+        use_lynnreal_vae=o.use_lynnreal_vae,
+        lightvae_decoder=o.lightvae_decoder,
+        use_int8_vae=o.use_int8_vae,
+        use_trt_vae=o.use_trt_vae,
+        use_sage=o.use_sage,
+        use_sla=o.use_sla,
+        use_veda=o.use_veda,
+        sampling_steps=o.steps,
+        veda_predictor=MODEL_SPECS[veda_key].local_name,
+        sla_preset=o.sla_preset,
+    )
+
+
+def _build_h3_graph(
+    task: str,
+    prompt: str,
+    options: H3GraphOptions,
+    *,
+    veda_key: str,
+    has_visual_conditioning: bool,
+    add_conditioning: Callable[[Graph, dict[str, Any], Any], tuple[str, list[tuple[str, str]]]],
+    encoder_settings: dict[str, Any],
+    semantic_bridge: bool,
+    output_stamp: str,
+    output_nonce: str,
+) -> dict[str, Any]:
+    """The graph both H3 tasks share around their conditioning node.
+
+    ``add_conditioning(graph, inputs, audio_vae_ref)`` adds the task's media loaders,
+    completes the node ``inputs`` in place, and returns the conditioning node type and
+    the media identities for the conditioning cache key.
+    """
+    o = options
+    graph = Graph()
+    model_ref, clip_ref, video_vae_ref, audio_vae_ref = _add_options_model_stack(graph, o, veda_key)
+    conditioning_vae_ref = h3_conditioning_video_vae(
+        graph,
+        o.models,
+        video_vae_ref,
+        use_trt_vae=o.use_trt_vae,
+        video_encoder=o.video_encoder,
+        available_nodes=o.available_nodes,
+        has_visual_conditioning=has_visual_conditioning,
+    )
+    result_format = normalize_result_format(o.result_format)
+    normalized_image_vae = normalize_image_vae(o.image_vae)
+    single_frame_images = (
+        result_format == "Image" and normalized_image_vae == SINGLE_FRAME_IMAGE_VAE
+    )
+    image_vae_ref = None
+    if single_frame_images:
+        if not o.models.image_vae_500k:
+            raise H3Error("The 500K single-frame image VAE is not configured.")
+        image_loader = graph.add(
+            H3_SINGLE_FRAME_VAE_LOADER_NODE,
+            base_vae_name=o.models.video_vae,
+            decoder_name=o.models.image_vae_500k,
+        )
+        image_vae_ref = Graph.out(image_loader)
+
+    target_width = snap32(o.width)
+    target_height = snap32(o.height)
+    source_width, source_height = target_width, target_height
+    if o.latent_upscale_model_name is not None:
+        source_width, source_height, target_width, target_height = (
+            h3_latent_upscale_dimensions(target_width, target_height)
+        )
+
+    inputs: dict[str, Any] = {
+        "vae": conditioning_vae_ref,
+        "prompt": prompt,
+        "length": (
+            selected_image_sampling_length(o.image_frames, normalized_image_vae)
+            if result_format == "Image"
+            else frame_length(o.duration)
+        ),
+    }
+    conditioning_node, conditioning_media = add_conditioning(graph, inputs, audio_vae_ref)
+
+    # Tie the native H3 node's upstream CLIP identity to the actual
+    # conditioning inputs. This forces changed prompts/media to execute while
+    # unchanged conditioning can still reuse the encoded result.
+    conditioning_cache_key = h3_conditioning_cache_key(
+        task,
+        prompt,
+        o.text_encoder_name or o.models.text_encoder,
+        conditioning_media,
+        encoder_settings=encoder_settings,
+    )
+    cache_node = graph.add(
+        H3_CONDITIONING_CACHE_NODE,
+        clip=clip_ref,
+        cache_key=conditioning_cache_key,
+        encoder_small_input=o.encoder_small_input,
+        reuse_conditioning=o.reuse_unchanged_inputs,
+    )
+    inputs["clip"] = Graph.out(cache_node)
+
+    target_h3 = graph.add(
+        conditioning_node,
+        **inputs,
+        width=target_width,
+        height=target_height,
+    )
+    initial_h3 = target_h3
+    if o.latent_upscale_model_name is not None:
+        initial_h3 = graph.add(
+            conditioning_node,
+            **inputs,
+            width=source_width,
+            height=source_height,
+        )
+    target_conditioning = Graph.out(target_h3, 0)
+    initial_conditioning = Graph.out(initial_h3, 0)
+    if semantic_bridge and o.semantic_bridge and o.semantic_bridge_alpha != 0:
+        if H3_SEMANTIC_BRIDGE_NODE not in o.available_nodes:
+            raise H3Error(
+                "Missing H3SemanticBridge node. Update provisioning and restart ComfyUI."
+            )
+
+        def bridge(conditioning):
+            return Graph.out(
+                graph.add(
+                    H3_SEMANTIC_BRIDGE_NODE,
+                    conditioning=conditioning,
+                    alpha=o.semantic_bridge_alpha,
+                )
+            )
+
+        target_conditioning = bridge(target_conditioning)
+        initial_conditioning = (
+            target_conditioning
+            if initial_h3 == target_h3
+            else bridge(initial_conditioning)
+        )
+    finish_sampling(
+        graph,
+        model_ref=model_ref,
+        conditioning_ref=target_conditioning,
+        latent_ref=Graph.out(target_h3, 1),
+        video_vae_ref=video_vae_ref,
+        audio_vae_ref=audio_vae_ref,
+        seed=o.seed,
+        steps=o.steps,
+        scheduler=o.scheduler,
+        turbo_variant=o.turbo_variant if o.turbo_lora_name else None,
+        sampler_name=turbo_sampler_name(o.turbo_variant, o.turbo_lora_name),
+        filename_prefix=(
+            f"h3/image_staging/{task}_{output_stamp}_{output_nonce}"
+            if result_format == "Image"
+            else f"audio/h3_{task}_{output_stamp}"
+            if result_format == "Audio"
+            else f"h3/{task}_{output_stamp}"
+        ),
+        result_format=o.result_format,
+        image_frames=o.image_frames,
+        image_vae_ref=image_vae_ref,
+        single_frame_images=single_frame_images,
+        initial_conditioning_ref=initial_conditioning,
+        initial_latent_ref=Graph.out(initial_h3, 1),
+        latent_upscale_model_name=o.latent_upscale_model_name,
+        latent_upscale_precision=o.latent_upscale_precision,
+        latent_upscale_refine_steps=o.latent_upscale_refine_steps,
+        refinement_lora_name=o.refinement_lora_name,
+        refinement_variant=o.refinement_variant,
+        veda_dense_tail=o.use_veda and resolve_sla_preset(o.sla_preset)[0] == "Quality",
+        refinement_model_ref=(
+            add_refinement_model(
+                graph, model_ref, lora_name=o.refinement_lora_name,
+                variant=o.refinement_variant, available_nodes=o.available_nodes,
+            ) if o.latent_upscale_model_name is not None else None
+        ),
+        latent_split_config=o.latent_split_config,
+        stage_model_offload=o.stage_model_offload,
+        smart_stage_offload=o.smart_stage_offload,
+        conditioning_cache_key=conditioning_cache_key,
+    )
+    return graph.nodes
+
+
 def build_fl2va_graph(
     *,
     prompt: str,
     first_image: str | None,
     last_image: str | None,
-    width: int,
-    height: int,
-    duration: float,
-    steps: int,
-    seed: int,
-    scheduler: str,
-    turbo_lora_name: str | None,
-    turbo_variant: str,
-    turbo_strength: float,
-    use_sol: bool,
-    sol_tau: float,
-    sol_thresh_type: str,
-    sol_exact_mode: str,
-    sol_dense_steps: int,
-    sol_step_off: float,
-    sol_sink_tokens: int,
-    cache_mode: str,
-    fbcache_preset: str,
-    fbcache_threshold: float,
-    fbcache_start: float,
-    fbcache_end: float,
-    fbcache_max_hits: int,
-    fbcache_temporal_guard: bool,
-    easycache_threshold: float,
-    easycache_start: float,
-    easycache_end: float,
-    easycache_verbose: bool,
-    model_name: str,
-    models: ModelConfig,
-    available_nodes: set[str],
-    video_encoder: str = "Original",
-    lightvae_decoder: str = "none",
-    use_lynnreal_vae: bool = False,
-    use_int8_vae: bool = False,
-    use_trt_vae: bool = False,
-    use_sage: bool = False,
-    use_sla: bool = False,
-    use_veda: bool = False,
-    sla_preset: str = DEFAULT_SLA_PRESET,
-    latent_upscale_model_name: str | None = None,
-    latent_upscale_precision: str = "bf16",
-    latent_upscale_refine_steps: int = 2,
-    refinement_lora_name: str | None = None,
-    refinement_variant: str | None = None,
-    latent_split_config: H3SplitUpscaleConfig | None = None,
-    result_format: str = DEFAULT_RESULT_FORMAT,
-    image_frames: int = DEFAULT_IMAGE_FRAMES,
-    image_vae: str = DEFAULT_IMAGE_VAE,
-    text_encoder_name: str | None = None,
-    encoder_small_input: bool = False,
-    reuse_unchanged_inputs: bool = True,
-    stage_model_offload: bool = False,
-    smart_stage_offload: bool = False,
-    semantic_bridge: bool = False,
-    semantic_bridge_alpha: float = 0.10,
     voice_reference_audios: list[str] | None = None,
     output_stamp: str = "0",
     output_nonce: str = "",
+    **settings: Any,
 ) -> dict[str, Any]:
-    graph = Graph()
-    model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
-        graph,
-        model_name,
-        models,
-        turbo_lora_name=turbo_lora_name,
-        turbo_variant=turbo_variant,
-        turbo_strength=turbo_strength,
-        use_sol=use_sol,
-        sol_tau=sol_tau,
-        sol_thresh_type=sol_thresh_type,
-        sol_exact_mode=sol_exact_mode,
-        sol_dense_steps=sol_dense_steps,
-        sol_step_off=sol_step_off,
-        sol_sink_tokens=sol_sink_tokens,
-        cache_mode=cache_mode,
-        fbcache_preset=fbcache_preset,
-        fbcache_threshold=fbcache_threshold,
-        fbcache_start=fbcache_start,
-        fbcache_end=fbcache_end,
-        fbcache_max_hits=fbcache_max_hits,
-        fbcache_temporal_guard=fbcache_temporal_guard,
-        easycache_threshold=easycache_threshold,
-        easycache_start=easycache_start,
-        easycache_end=easycache_end,
-        easycache_verbose=easycache_verbose,
-        available_nodes=available_nodes,
-        text_encoder_name=text_encoder_name,
-        use_lynnreal_vae=use_lynnreal_vae,
-        lightvae_decoder=lightvae_decoder,
-        use_int8_vae=use_int8_vae,
-        use_trt_vae=use_trt_vae,
-        use_sage=use_sage,
-        use_sla=use_sla,
-        use_veda=use_veda,
-        sampling_steps=steps,
-        veda_predictor=MODEL_SPECS["veda_t2va"].local_name,
-        sla_preset=sla_preset,
-    )
-    conditioning_vae_ref = h3_conditioning_video_vae(
-        graph,
-        models,
-        video_vae_ref,
-        use_trt_vae=use_trt_vae,
-        video_encoder=video_encoder,
-        available_nodes=available_nodes,
-        has_visual_conditioning=bool(first_image or last_image),
-    )
-    normalized_image_vae = normalize_image_vae(image_vae)
-    single_frame_images = (
-        normalize_result_format(result_format) == "Image"
-        and normalized_image_vae == SINGLE_FRAME_IMAGE_VAE
-    )
-    image_vae_ref = None
-    if single_frame_images:
-        if not models.image_vae_500k:
-            raise H3Error("The 500K single-frame image VAE is not configured.")
-        image_loader = graph.add(
-            H3_SINGLE_FRAME_VAE_LOADER_NODE,
-            base_vae_name=models.video_vae,
-            decoder_name=models.image_vae_500k,
-        )
-        image_vae_ref = Graph.out(image_loader)
+    """Text, first/last-frame and FL2VA voice-reference generation. ``settings`` are :class:`H3GraphOptions`."""
+    options = H3GraphOptions(**settings)
 
-    target_width = snap32(width)
-    target_height = snap32(height)
-    source_width, source_height = target_width, target_height
-    if latent_upscale_model_name is not None:
-        source_width, source_height, target_width, target_height = (
-            h3_latent_upscale_dimensions(target_width, target_height)
-        )
-
-    conditioning_media: list[tuple[str, str]] = []
-    inputs: dict[str, Any] = {
-        "vae": conditioning_vae_ref,
-        "prompt": prompt,
-        "length": (
-            selected_image_sampling_length(image_frames, normalized_image_vae)
-            if normalize_result_format(result_format) == "Image"
-            else frame_length(duration)
-        ),
-    }
-    if first_image:
-        staged = first_image
-        conditioning_media.append(("first_image", staged))
-        loaded = graph.add(
-            "LoadImage",
-            image=staged,
-        )
-        inputs["first_frame"] = Graph.out(loaded)
-    if last_image:
-        staged = last_image
-        conditioning_media.append(("last_image", staged))
-        loaded = graph.add(
-            "LoadImage",
-            image=staged,
-        )
-        inputs["last_frame"] = Graph.out(loaded)
-
-    conditioning_node = "MiniMaxH3ImageToVideo"
-    if voice_reference_audios:
+    def add_conditioning(graph, inputs, audio_vae_ref):
+        conditioning_media: list[tuple[str, str]] = []
+        if first_image:
+            conditioning_media.append(("first_image", first_image))
+            inputs["first_frame"] = Graph.out(graph.add("LoadImage", image=first_image))
+        if last_image:
+            conditioning_media.append(("last_image", last_image))
+            inputs["last_frame"] = Graph.out(graph.add("LoadImage", image=last_image))
+        if not voice_reference_audios:
+            return "MiniMaxH3ImageToVideo", conditioning_media
         if not (first_image or last_image):
             raise H3Error("FL2VA voice references require a first or last frame.")
         if len(voice_reference_audios) > MAX_REFERENCE_AUDIOS:
             raise H3Error("FL2VA supports up to three voice references.")
         conditioning_node = "MiniMaxH3AudioConditioningT8"
-        missing = {conditioning_node, "LoadAudio"} - available_nodes
+        missing = {conditioning_node, "LoadAudio"} - options.available_nodes
         if missing:
             raise H3Error(
                 "Missing FL2VA voice-reference nodes: "
@@ -1120,111 +1273,32 @@ def build_fl2va_graph(
             reference_video_policy="official_2_to_15s",
         )
         for index, path in enumerate(voice_reference_audios, 1):
-            staged = path
-            conditioning_media.append((f"fl2va_audio_{index}", staged))
-            loaded = graph.add("LoadAudio", audio=staged)
-            inputs[f"ref_audios.ref_audio_{index}"] = Graph.out(loaded)
+            conditioning_media.append((f"fl2va_audio_{index}", path))
+            inputs[f"ref_audios.ref_audio_{index}"] = Graph.out(graph.add("LoadAudio", audio=path))
+        return conditioning_node, conditioning_media
 
-    # Tie the native H3 node's upstream CLIP identity to the actual
-    # conditioning inputs. This forces changed prompts/media to execute while
-    # unchanged conditioning can still reuse the encoded result.
-    conditioning_cache_key = h3_conditioning_cache_key(
-        "fl2va",
-        prompt,
-        text_encoder_name or models.text_encoder,
-        conditioning_media,
-        encoder_settings={"encoder_small_input": encoder_small_input, **({"video_encoder": video_encoder} if video_encoder != "Original" else {})},
+    return _build_h3_graph(
+        "fl2va", prompt, options,
+        veda_key="veda_t2va",
+        has_visual_conditioning=bool(first_image or last_image),
+        add_conditioning=add_conditioning,
+        encoder_settings={
+            "encoder_small_input": options.encoder_small_input,
+            **({"video_encoder": options.video_encoder} if options.video_encoder != "Original" else {}),
+        },
+        semantic_bridge=True,
+        output_stamp=output_stamp,
+        output_nonce=output_nonce,
     )
-    cache_node = graph.add(
-        H3_CONDITIONING_CACHE_NODE,
-        clip=clip_ref,
-        cache_key=conditioning_cache_key,
-        encoder_small_input=encoder_small_input,
-        reuse_conditioning=reuse_unchanged_inputs,
-    )
-    clip_ref = Graph.out(cache_node)
-    inputs["clip"] = clip_ref
 
-    target_h3 = graph.add(
-        conditioning_node,
-        **inputs,
-        width=target_width,
-        height=target_height,
-    )
-    initial_h3 = target_h3
-    if latent_upscale_model_name is not None:
-        initial_h3 = graph.add(
-            conditioning_node,
-            **inputs,
-            width=source_width,
-            height=source_height,
-        )
-    target_conditioning = Graph.out(target_h3, 0)
-    initial_conditioning = Graph.out(initial_h3, 0)
-    if semantic_bridge and semantic_bridge_alpha != 0:
-        if H3_SEMANTIC_BRIDGE_NODE not in available_nodes:
-            raise H3Error(
-                "Missing H3SemanticBridge node. Update provisioning and restart ComfyUI."
-            )
 
-        def bridge(conditioning):
-            return Graph.out(
-                graph.add(
-                    H3_SEMANTIC_BRIDGE_NODE,
-                    conditioning=conditioning,
-                    alpha=semantic_bridge_alpha,
-                )
-            )
-
-        target_conditioning = bridge(target_conditioning)
-        initial_conditioning = (
-            target_conditioning
-            if initial_h3 == target_h3
-            else bridge(initial_conditioning)
-        )
-    finish_sampling(
-        graph,
-        model_ref=model_ref,
-        conditioning_ref=target_conditioning,
-        latent_ref=Graph.out(target_h3, 1),
-        video_vae_ref=video_vae_ref,
-        audio_vae_ref=audio_vae_ref,
-        seed=seed,
-        steps=steps,
-        scheduler=scheduler,
-        turbo_variant=turbo_variant if turbo_lora_name else None,
-        sampler_name=turbo_sampler_name(turbo_variant, turbo_lora_name),
-        filename_prefix=(
-            f"h3/image_staging/fl2va_{output_stamp}_{output_nonce}"
-            if normalize_result_format(result_format) == "Image"
-            else f"audio/h3_fl2va_{output_stamp}"
-            if normalize_result_format(result_format) == "Audio"
-            else f"h3/fl2va_{output_stamp}"
-        ),
-        result_format=result_format,
-        image_frames=image_frames,
-        image_vae_ref=image_vae_ref,
-        single_frame_images=single_frame_images,
-        initial_conditioning_ref=initial_conditioning,
-        initial_latent_ref=Graph.out(initial_h3, 1),
-        latent_upscale_model_name=latent_upscale_model_name,
-        latent_upscale_precision=latent_upscale_precision,
-        latent_upscale_refine_steps=latent_upscale_refine_steps,
-        refinement_lora_name=refinement_lora_name,
-        refinement_variant=refinement_variant,
-        veda_dense_tail=use_veda and resolve_sla_preset(sla_preset)[0] == "Quality",
-        refinement_model_ref=(
-            add_refinement_model(
-                graph, model_ref, lora_name=refinement_lora_name,
-                variant=refinement_variant, available_nodes=available_nodes,
-            ) if latent_upscale_model_name is not None else None
-        ),
-        latent_split_config=latent_split_config,
-        stage_model_offload=stage_model_offload,
-        smart_stage_offload=smart_stage_offload,
-        conditioning_cache_key=conditioning_cache_key,
-    )
-    return graph.nodes
+build_fl2va_graph.__signature__ = _options_signature([
+    inspect.Parameter("prompt", inspect.Parameter.KEYWORD_ONLY, annotation=str),
+    inspect.Parameter("first_image", inspect.Parameter.KEYWORD_ONLY, annotation=str | None),
+    inspect.Parameter("last_image", inspect.Parameter.KEYWORD_ONLY, annotation=str | None),
+    inspect.Parameter("voice_reference_audios", inspect.Parameter.KEYWORD_ONLY, default=None,
+                      annotation=list[str] | None),
+])
 
 
 def build_ref2va_graph(
@@ -1233,252 +1307,57 @@ def build_ref2va_graph(
     reference_images: list[str],
     reference_videos: list[str],
     reference_audios: list[str],
-    width: int,
-    height: int,
-    duration: float,
-    steps: int,
-    seed: int,
-    scheduler: str,
     ref_image_size: str,
-    turbo_lora_name: str | None,
-    turbo_variant: str,
-    turbo_strength: float,
-    use_sol: bool,
-    sol_tau: float,
-    sol_thresh_type: str,
-    sol_exact_mode: str,
-    sol_dense_steps: int,
-    sol_step_off: float,
-    sol_sink_tokens: int,
-    cache_mode: str,
-    fbcache_preset: str,
-    fbcache_threshold: float,
-    fbcache_start: float,
-    fbcache_end: float,
-    fbcache_max_hits: int,
-    fbcache_temporal_guard: bool,
-    easycache_threshold: float,
-    easycache_start: float,
-    easycache_end: float,
-    easycache_verbose: bool,
-    model_name: str,
-    models: ModelConfig,
-    available_nodes: set[str],
-    video_encoder: str = "Original",
-    lightvae_decoder: str = "none",
-    use_lynnreal_vae: bool = False,
-    use_int8_vae: bool = False,
-    use_trt_vae: bool = False,
-    use_sage: bool = False,
-    use_sla: bool = False,
-    use_veda: bool = False,
-    sla_preset: str = DEFAULT_SLA_PRESET,
-    latent_upscale_model_name: str | None = None,
-    latent_upscale_precision: str = "bf16",
-    latent_upscale_refine_steps: int = 2,
-    refinement_lora_name: str | None = None,
-    refinement_variant: str | None = None,
-    latent_split_config: H3SplitUpscaleConfig | None = None,
-    result_format: str = DEFAULT_RESULT_FORMAT,
-    image_frames: int = DEFAULT_IMAGE_FRAMES,
-    image_vae: str = DEFAULT_IMAGE_VAE,
-    text_encoder_name: str | None = None,
-    encoder_small_input: bool = False,
-    smart_stage_offload: bool = False,
-    reuse_unchanged_inputs: bool = True,
-    stage_model_offload: bool = False,
     output_stamp: str = "0",
     output_nonce: str = "",
+    **settings: Any,
 ) -> dict[str, Any]:
-    graph = Graph()
-    model_ref, clip_ref, video_vae_ref, audio_vae_ref = add_model_stack(
-        graph,
-        model_name,
-        models,
-        turbo_lora_name=turbo_lora_name,
-        turbo_variant=turbo_variant,
-        turbo_strength=turbo_strength,
-        use_sol=use_sol,
-        sol_tau=sol_tau,
-        sol_thresh_type=sol_thresh_type,
-        sol_exact_mode=sol_exact_mode,
-        sol_dense_steps=sol_dense_steps,
-        sol_step_off=sol_step_off,
-        sol_sink_tokens=sol_sink_tokens,
-        cache_mode=cache_mode,
-        fbcache_preset=fbcache_preset,
-        fbcache_threshold=fbcache_threshold,
-        fbcache_start=fbcache_start,
-        fbcache_end=fbcache_end,
-        fbcache_max_hits=fbcache_max_hits,
-        fbcache_temporal_guard=fbcache_temporal_guard,
-        easycache_threshold=easycache_threshold,
-        easycache_start=easycache_start,
-        easycache_end=easycache_end,
-        easycache_verbose=easycache_verbose,
-        available_nodes=available_nodes,
-        text_encoder_name=text_encoder_name,
-        use_lynnreal_vae=use_lynnreal_vae,
-        lightvae_decoder=lightvae_decoder,
-        use_int8_vae=use_int8_vae,
-        use_trt_vae=use_trt_vae,
-        use_sage=use_sage,
-        use_sla=use_sla,
-        use_veda=use_veda,
-        sampling_steps=steps,
-        veda_predictor=MODEL_SPECS["veda_r2va"].local_name,
-        sla_preset=sla_preset,
-    )
-    conditioning_vae_ref = h3_conditioning_video_vae(
-        graph,
-        models,
-        video_vae_ref,
-        use_trt_vae=use_trt_vae,
-        video_encoder=video_encoder,
-        available_nodes=available_nodes,
+    """Reference-media generation. ``settings`` are :class:`H3GraphOptions` except the FL2VA-only ones."""
+    unexpected = FL2VA_ONLY_OPTIONS & set(settings)
+    if unexpected:
+        raise TypeError(f"build_ref2va_graph() got unexpected keyword arguments: {', '.join(sorted(unexpected))}")
+    options = H3GraphOptions(**settings)
+
+    def add_conditioning(graph, inputs, audio_vae_ref):
+        inputs.update(audio_vae=audio_vae_ref, ref_image_size=ref_image_size)
+        conditioning_media: list[tuple[str, str]] = []
+        for index, path in enumerate(reference_images[:MAX_REFERENCE_IMAGES]):
+            conditioning_media.append((f"reference_image_{index}", path))
+            inputs[f"ref_images.ref_image_{index}"] = Graph.out(graph.add("LoadImage", image=path))
+        for index, path in enumerate(reference_videos[:MAX_REFERENCE_VIDEOS]):
+            conditioning_media.append((f"reference_video_{index}", path))
+            loaded = graph.add("LoadVideo", file=path)
+            components = graph.add("GetVideoComponents", video=Graph.out(loaded))
+            inputs[f"ref_videos.ref_video_{index}"] = Graph.out(components, 0)
+            inputs[f"ref_video_audios.ref_video_audio_{index}"] = Graph.out(components, 1)
+        for index, path in enumerate(reference_audios[:MAX_REFERENCE_AUDIOS]):
+            conditioning_media.append((f"reference_audio_{index}", path))
+            inputs[f"ref_audios.ref_audio_{index}"] = Graph.out(graph.add("LoadAudio", audio=path))
+        return "MiniMaxH3ReferenceToVideo", conditioning_media
+
+    return _build_h3_graph(
+        "ref2va", prompt, options,
+        veda_key="veda_r2va",
         has_visual_conditioning=bool(reference_images or reference_videos),
-    )
-    normalized_image_vae = normalize_image_vae(image_vae)
-    single_frame_images = (
-        normalize_result_format(result_format) == "Image"
-        and normalized_image_vae == SINGLE_FRAME_IMAGE_VAE
-    )
-    image_vae_ref = None
-    if single_frame_images:
-        if not models.image_vae_500k:
-            raise H3Error("The 500K single-frame image VAE is not configured.")
-        image_loader = graph.add(
-            H3_SINGLE_FRAME_VAE_LOADER_NODE,
-            base_vae_name=models.video_vae,
-            decoder_name=models.image_vae_500k,
-        )
-        image_vae_ref = Graph.out(image_loader)
-
-    target_width = snap32(width)
-    target_height = snap32(height)
-    source_width, source_height = target_width, target_height
-    if latent_upscale_model_name is not None:
-        source_width, source_height, target_width, target_height = (
-            h3_latent_upscale_dimensions(target_width, target_height)
-        )
-
-    conditioning_media: list[tuple[str, str]] = []
-    inputs: dict[str, Any] = {
-        "vae": conditioning_vae_ref,
-        "audio_vae": audio_vae_ref,
-        "prompt": prompt,
-        "length": (
-            selected_image_sampling_length(image_frames, normalized_image_vae)
-            if normalize_result_format(result_format) == "Image"
-            else frame_length(duration)
-        ),
-        "ref_image_size": ref_image_size,
-    }
-
-    for index, path in enumerate(reference_images[:MAX_REFERENCE_IMAGES]):
-        staged = path
-        conditioning_media.append((f"reference_image_{index}", staged))
-        loaded = graph.add(
-            "LoadImage",
-            image=staged,
-        )
-        inputs[f"ref_images.ref_image_{index}"] = Graph.out(loaded)
-
-    for index, path in enumerate(reference_videos[:MAX_REFERENCE_VIDEOS]):
-        staged = path
-        conditioning_media.append((f"reference_video_{index}", staged))
-        loaded = graph.add("LoadVideo", file=staged)
-        components = graph.add("GetVideoComponents", video=Graph.out(loaded))
-        inputs[f"ref_videos.ref_video_{index}"] = Graph.out(components, 0)
-        inputs[f"ref_video_audios.ref_video_audio_{index}"] = Graph.out(components, 1)
-
-    for index, path in enumerate(reference_audios[:MAX_REFERENCE_AUDIOS]):
-        staged = path
-        conditioning_media.append((f"reference_audio_{index}", staged))
-        loaded = graph.add(
-            "LoadAudio",
-            audio=staged,
-        )
-        inputs[f"ref_audios.ref_audio_{index}"] = Graph.out(loaded)
-
-    conditioning_cache_key = h3_conditioning_cache_key(
-        "ref2va",
-        prompt,
-        text_encoder_name or models.text_encoder,
-        conditioning_media,
+        add_conditioning=add_conditioning,
         encoder_settings={
-            **({"video_encoder": video_encoder} if video_encoder != "Original" else {}),
+            **({"video_encoder": options.video_encoder} if options.video_encoder != "Original" else {}),
             "ref_image_size": ref_image_size,
-            "encoder_small_input": encoder_small_input,
+            "encoder_small_input": options.encoder_small_input,
         },
+        semantic_bridge=False,
+        output_stamp=output_stamp,
+        output_nonce=output_nonce,
     )
-    cache_node = graph.add(
-        H3_CONDITIONING_CACHE_NODE,
-        clip=clip_ref,
-        cache_key=conditioning_cache_key,
-        encoder_small_input=encoder_small_input,
-        reuse_conditioning=reuse_unchanged_inputs,
-    )
-    clip_ref = Graph.out(cache_node)
-    inputs["clip"] = clip_ref
 
-    target_h3 = graph.add(
-        "MiniMaxH3ReferenceToVideo",
-        **inputs,
-        width=target_width,
-        height=target_height,
-    )
-    initial_h3 = target_h3
-    if latent_upscale_model_name is not None:
-        initial_h3 = graph.add(
-            "MiniMaxH3ReferenceToVideo",
-            **inputs,
-            width=source_width,
-            height=source_height,
-        )
-    finish_sampling(
-        graph,
-        model_ref=model_ref,
-        conditioning_ref=Graph.out(target_h3, 0),
-        latent_ref=Graph.out(target_h3, 1),
-        video_vae_ref=video_vae_ref,
-        audio_vae_ref=audio_vae_ref,
-        seed=seed,
-        steps=steps,
-        scheduler=scheduler,
-        turbo_variant=turbo_variant if turbo_lora_name else None,
-        sampler_name=turbo_sampler_name(turbo_variant, turbo_lora_name),
-        filename_prefix=(
-            f"h3/image_staging/ref2va_{output_stamp}_{output_nonce}"
-            if normalize_result_format(result_format) == "Image"
-            else f"audio/h3_ref2va_{output_stamp}"
-            if normalize_result_format(result_format) == "Audio"
-            else f"h3/ref2va_{output_stamp}"
-        ),
-        result_format=result_format,
-        image_frames=image_frames,
-        image_vae_ref=image_vae_ref,
-        single_frame_images=single_frame_images,
-        initial_conditioning_ref=Graph.out(initial_h3, 0),
-        initial_latent_ref=Graph.out(initial_h3, 1),
-        latent_upscale_model_name=latent_upscale_model_name,
-        latent_upscale_precision=latent_upscale_precision,
-        latent_upscale_refine_steps=latent_upscale_refine_steps,
-        refinement_lora_name=refinement_lora_name,
-        refinement_variant=refinement_variant,
-        veda_dense_tail=use_veda and resolve_sla_preset(sla_preset)[0] == "Quality",
-        refinement_model_ref=(
-            add_refinement_model(
-                graph, model_ref, lora_name=refinement_lora_name,
-                variant=refinement_variant, available_nodes=available_nodes,
-            ) if latent_upscale_model_name is not None else None
-        ),
-        latent_split_config=latent_split_config,
-        stage_model_offload=stage_model_offload,
-        smart_stage_offload=smart_stage_offload,
-        conditioning_cache_key=conditioning_cache_key,
-    )
-    return graph.nodes
+
+build_ref2va_graph.__signature__ = _options_signature([
+    inspect.Parameter("prompt", inspect.Parameter.KEYWORD_ONLY, annotation=str),
+    inspect.Parameter("reference_images", inspect.Parameter.KEYWORD_ONLY, annotation=list[str]),
+    inspect.Parameter("reference_videos", inspect.Parameter.KEYWORD_ONLY, annotation=list[str]),
+    inspect.Parameter("reference_audios", inspect.Parameter.KEYWORD_ONLY, annotation=list[str]),
+    inspect.Parameter("ref_image_size", inspect.Parameter.KEYWORD_ONLY, annotation=str),
+], exclude=FL2VA_ONLY_OPTIONS)
 
 
 def required_nodes_for(

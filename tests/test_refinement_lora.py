@@ -1,4 +1,5 @@
 """Independent refinement adapters, sampler routing, and lazy provisioning."""
+from h3_app.policy import H3SplitUpscaleConfig
 import h3_app.catalog as _catalog
 import h3_app.graph as _graph
 import h3_app.workflows.h3 as _h3_workflow
@@ -64,7 +65,7 @@ class RefinementLoraTests(unittest.TestCase):
                             refinement_lora_name='refinement.safetensors', refinement_variant=variant,
                             available_nodes=(_h3_workflow.turbo_required_nodes(LIGHTX2V_8STEP_TURBO, models.turbo_8step_lora)
                                              | _h3_workflow.turbo_required_nodes(variant) | {_catalog.SLA_ATTENTION_NODE}),
-                            latent_split_config=(app.H3SplitUpscaleConfig(512, 512, .25, .5, 73, 22, .75, 'off')
+                            latent_split_config=(H3SplitUpscaleConfig(512, 512, .25, .5, 73, 22, .75, 'off')
                                                  if split else None),
                         )
                         if build is app.build_fl2va_graph:

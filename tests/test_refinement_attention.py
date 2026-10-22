@@ -1,4 +1,5 @@
 """Stage-specific SLA graph composition and pinned runtime scheduling."""
+from h3_app.policy import H3SplitUpscaleConfig
 import h3_app.catalog as _catalog
 import h3_app.graph as _graph
 import h3_app.workflows.h3 as _h3_workflow
@@ -45,7 +46,7 @@ class RefinementAttentionTests(unittest.TestCase):
     def test_sampler_and_split_refinement_use_branched_model(self):
         for upscale, split in ((False, False), (True, False), (True, True)):
             graph, model, _ = self.stack()
-            config = app.H3SplitUpscaleConfig(512, 512, .25, .5, 73, 22, .75, 'off') if split else None
+            config = H3SplitUpscaleConfig(512, 512, .25, .5, 73, 22, .75, 'off') if split else None
             _h3_workflow.finish_sampling(graph, model_ref=model, conditioning_ref=['target', 0], latent_ref=['latent', 0], video_vae_ref=['vae', 0], audio_vae_ref=['audio', 0], seed=7, steps=8, scheduler='simple', turbo_variant=None, filename_prefix='test', initial_conditioning_ref=['initial', 0], initial_latent_ref=['initial_latent', 0], latent_upscale_model_name='upscaler.pth' if upscale else None, latent_split_config=config)
             guiders = [n['inputs'] for n in graph.nodes.values() if n['class_type'] == 'BasicGuider']
             target = next(g for g in guiders if g['conditioning'] == ['target', 0])

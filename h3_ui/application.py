@@ -24,6 +24,7 @@ import re
 import signal
 import tempfile
 import threading
+import inspect
 import time
 import uuid
 from contextlib import nullcontext
@@ -95,7 +96,6 @@ from h3_app.catalog import (
     DEFAULT_INPUT_IMAGE_FRAME_PRESET,
     DEFAULT_PROMPT_WRITER_BACKEND,
     DEFAULT_RESULT_FORMAT,
-    DEFAULT_SLA_PRESET,
     DEFAULT_UPSCALE_RESOLUTION,
     DEFAULT_VIDEO_BATCH_COUNT,
     DRAFT_RESOLUTIONS,
@@ -140,7 +140,6 @@ from h3_app.catalog import (
     VIDEO_EXTENSIONS,
 )
 from h3_app.policy import (
-    H3SplitUpscaleConfig,
     auto_resolution_pixel_cap,
     estimate_packed_tokens,
     normalize_image_vae,
@@ -1066,284 +1065,55 @@ def stage_file(
     )
 
 
-def build_fl2va_graph(
-    *,
-    prompt: str,
-    first_image: str | None,
-    last_image: str | None,
-    width: int,
-    height: int,
-    duration: float,
-    steps: int,
-    seed: int,
-    scheduler: str,
-    turbo_lora_name: str | None,
-    turbo_variant: str,
-    turbo_strength: float,
-    use_sol: bool,
-    sol_tau: float,
-    sol_thresh_type: str,
-    sol_exact_mode: str,
-    sol_dense_steps: int,
-    sol_step_off: float,
-    sol_sink_tokens: int,
-    cache_mode: str,
-    fbcache_preset: str,
-    fbcache_threshold: float,
-    fbcache_start: float,
-    fbcache_end: float,
-    fbcache_max_hits: int,
-    fbcache_temporal_guard: bool,
-    easycache_threshold: float,
-    easycache_start: float,
-    easycache_end: float,
-    easycache_verbose: bool,
-    model_name: str,
-    models: ModelConfig,
-    available_nodes: set[str],
-    video_encoder: str = "Original",
-    lightvae_decoder: str = "none",
-    use_lynnreal_vae: bool = False,
-    use_int8_vae: bool = False,
-    use_trt_vae: bool = False,
-    use_sage: bool = False,
-    use_sla: bool = False,
-    use_veda: bool = False,
-    sla_preset: str = DEFAULT_SLA_PRESET,
-    latent_upscale_model_name: str | None = None,
-    latent_upscale_precision: str = "bf16",
-    latent_upscale_refine_steps: int = 2,
-    refinement_lora_name: str | None = None,
-    refinement_variant: str | None = None,
-    latent_split_config: H3SplitUpscaleConfig | None = None,
-    result_format: str = DEFAULT_RESULT_FORMAT,
-    image_frames: int = DEFAULT_IMAGE_FRAMES,
-    image_vae: str = DEFAULT_IMAGE_VAE,
-    text_encoder_name: str | None = None,
-    encoder_small_input: bool = False,
-    reuse_unchanged_inputs: bool = True,
-    stage_model_offload: bool = False,
-    smart_stage_offload: bool = False,
-    semantic_bridge: bool = False,
-    semantic_bridge_alpha: float = 0.1,
-    voice_reference_audios: list[str] | None = None,
-) -> dict[str, Any]:
-    first_image = (
-        stage_file(first_image, "keyframes", reuse=reuse_unchanged_inputs)
-        if first_image
-        else None
-    )
-    last_image = (
-        stage_file(last_image, "keyframes", reuse=reuse_unchanged_inputs)
-        if last_image
-        else None
-    )
-    voice_reference_audios = [
-        stage_file(path, "fl2va_voice_audios", reuse=reuse_unchanged_inputs)
-        for path in voice_reference_audios or []
-    ]
+def _submission_signature(builder):
+    """``builder``'s signature without the output naming each submission supplies."""
+    signature = inspect.signature(builder)
+    return signature.replace(parameters=[
+        parameter for parameter in signature.parameters.values()
+        if parameter.name not in {"output_stamp", "output_nonce"}
+    ])
+
+
+def _output_naming() -> dict[str, str]:
+    return {"output_stamp": str(int(time.time())), "output_nonce": uuid.uuid4().hex[:8]}
+
+
+def build_fl2va_graph(*, first_image, last_image, voice_reference_audios=None,
+                      reuse_unchanged_inputs: bool = True, **settings) -> dict[str, Any]:
+    """Stage the frames and voice samples, then build with a fresh output name."""
+    def staged(path, category):
+        return stage_file(path, category, reuse=reuse_unchanged_inputs) if path else None
+
     return h3_workflow.build_fl2va_graph(
-        prompt=prompt,
-        first_image=first_image,
-        last_image=last_image,
-        width=width,
-        height=height,
-        duration=duration,
-        steps=steps,
-        seed=seed,
-        scheduler=scheduler,
-        turbo_lora_name=turbo_lora_name,
-        turbo_variant=turbo_variant,
-        turbo_strength=turbo_strength,
-        use_sol=use_sol,
-        sol_tau=sol_tau,
-        sol_thresh_type=sol_thresh_type,
-        sol_exact_mode=sol_exact_mode,
-        sol_dense_steps=sol_dense_steps,
-        sol_step_off=sol_step_off,
-        sol_sink_tokens=sol_sink_tokens,
-        cache_mode=cache_mode,
-        fbcache_preset=fbcache_preset,
-        fbcache_threshold=fbcache_threshold,
-        fbcache_start=fbcache_start,
-        fbcache_end=fbcache_end,
-        fbcache_max_hits=fbcache_max_hits,
-        fbcache_temporal_guard=fbcache_temporal_guard,
-        easycache_threshold=easycache_threshold,
-        easycache_start=easycache_start,
-        easycache_end=easycache_end,
-        easycache_verbose=easycache_verbose,
-        model_name=model_name,
-        models=models,
-        available_nodes=available_nodes,
-        use_int8_vae=use_int8_vae,
-        use_lynnreal_vae=use_lynnreal_vae,
-        video_encoder=video_encoder,
-        lightvae_decoder=lightvae_decoder,
-        use_trt_vae=use_trt_vae,
-        use_sage=use_sage,
-        use_sla=use_sla,
-        use_veda=use_veda,
-        sla_preset=sla_preset,
-        latent_upscale_model_name=latent_upscale_model_name,
-        latent_upscale_precision=latent_upscale_precision,
-        latent_upscale_refine_steps=latent_upscale_refine_steps,
-        refinement_lora_name=refinement_lora_name,
-        refinement_variant=refinement_variant,
-        latent_split_config=latent_split_config,
-        result_format=result_format,
-        image_frames=image_frames,
-        image_vae=image_vae,
-        text_encoder_name=text_encoder_name,
-        encoder_small_input=encoder_small_input,
+        first_image=staged(first_image, "keyframes"),
+        last_image=staged(last_image, "keyframes"),
+        voice_reference_audios=[staged(path, "fl2va_voice_audios") for path in voice_reference_audios or []],
         reuse_unchanged_inputs=reuse_unchanged_inputs,
-        stage_model_offload=stage_model_offload,
-        smart_stage_offload=smart_stage_offload,
-        semantic_bridge=semantic_bridge,
-        semantic_bridge_alpha=semantic_bridge_alpha,
-        voice_reference_audios=voice_reference_audios,
-        output_stamp=str(int(time.time())),
-        output_nonce=uuid.uuid4().hex[:8],
+        **settings,
+        **_output_naming(),
     )
 
 
-def build_ref2va_graph(
-    *,
-    prompt: str,
-    reference_images: list[str],
-    reference_videos: list[str],
-    reference_audios: list[str],
-    width: int,
-    height: int,
-    duration: float,
-    steps: int,
-    seed: int,
-    scheduler: str,
-    ref_image_size: str,
-    turbo_lora_name: str | None,
-    turbo_variant: str,
-    turbo_strength: float,
-    use_sol: bool,
-    sol_tau: float,
-    sol_thresh_type: str,
-    sol_exact_mode: str,
-    sol_dense_steps: int,
-    sol_step_off: float,
-    sol_sink_tokens: int,
-    cache_mode: str,
-    fbcache_preset: str,
-    fbcache_threshold: float,
-    fbcache_start: float,
-    fbcache_end: float,
-    fbcache_max_hits: int,
-    fbcache_temporal_guard: bool,
-    easycache_threshold: float,
-    easycache_start: float,
-    easycache_end: float,
-    easycache_verbose: bool,
-    model_name: str,
-    models: ModelConfig,
-    available_nodes: set[str],
-    video_encoder: str = "Original",
-    lightvae_decoder: str = "none",
-    use_lynnreal_vae: bool = False,
-    use_int8_vae: bool = False,
-    use_trt_vae: bool = False,
-    use_sage: bool = False,
-    use_sla: bool = False,
-    use_veda: bool = False,
-    sla_preset: str = DEFAULT_SLA_PRESET,
-    latent_upscale_model_name: str | None = None,
-    latent_upscale_precision: str = "bf16",
-    latent_upscale_refine_steps: int = 2,
-    refinement_lora_name: str | None = None,
-    refinement_variant: str | None = None,
-    latent_split_config: H3SplitUpscaleConfig | None = None,
-    result_format: str = DEFAULT_RESULT_FORMAT,
-    image_frames: int = DEFAULT_IMAGE_FRAMES,
-    image_vae: str = DEFAULT_IMAGE_VAE,
-    text_encoder_name: str | None = None,
-    encoder_small_input: bool = False,
-    smart_stage_offload: bool = False,
-    reuse_unchanged_inputs: bool = True,
-    stage_model_offload: bool = False,
-) -> dict[str, Any]:
-    reference_images = [
-        stage_file(path, "reference_images", reuse=reuse_unchanged_inputs)
-        for path in reference_images
-    ]
-    reference_videos = [
-        stage_file(
-            path, "reference_videos", transcode_video=True, reuse=reuse_unchanged_inputs
-        )
-        for path in reference_videos
-    ]
-    reference_audios = [
-        stage_file(path, "reference_audios", reuse=reuse_unchanged_inputs)
-        for path in reference_audios
-    ]
+build_fl2va_graph.__signature__ = _submission_signature(h3_workflow.build_fl2va_graph)
+
+
+def build_ref2va_graph(*, reference_images, reference_videos, reference_audios,
+                       reuse_unchanged_inputs: bool = True, **settings) -> dict[str, Any]:
+    """Stage the reference media, then build with a fresh output name."""
     return h3_workflow.build_ref2va_graph(
-        prompt=prompt,
-        reference_images=reference_images,
-        reference_videos=reference_videos,
-        reference_audios=reference_audios,
-        width=width,
-        height=height,
-        duration=duration,
-        steps=steps,
-        seed=seed,
-        scheduler=scheduler,
-        ref_image_size=ref_image_size,
-        turbo_lora_name=turbo_lora_name,
-        turbo_variant=turbo_variant,
-        turbo_strength=turbo_strength,
-        use_sol=use_sol,
-        sol_tau=sol_tau,
-        sol_thresh_type=sol_thresh_type,
-        sol_exact_mode=sol_exact_mode,
-        sol_dense_steps=sol_dense_steps,
-        sol_step_off=sol_step_off,
-        sol_sink_tokens=sol_sink_tokens,
-        cache_mode=cache_mode,
-        fbcache_preset=fbcache_preset,
-        fbcache_threshold=fbcache_threshold,
-        fbcache_start=fbcache_start,
-        fbcache_end=fbcache_end,
-        fbcache_max_hits=fbcache_max_hits,
-        fbcache_temporal_guard=fbcache_temporal_guard,
-        easycache_threshold=easycache_threshold,
-        easycache_start=easycache_start,
-        easycache_end=easycache_end,
-        easycache_verbose=easycache_verbose,
-        model_name=model_name,
-        models=models,
-        available_nodes=available_nodes,
-        use_int8_vae=use_int8_vae,
-        use_lynnreal_vae=use_lynnreal_vae,
-        video_encoder=video_encoder,
-        lightvae_decoder=lightvae_decoder,
-        use_trt_vae=use_trt_vae,
-        use_sage=use_sage,
-        use_sla=use_sla,
-        use_veda=use_veda,
-        sla_preset=sla_preset,
-        latent_upscale_model_name=latent_upscale_model_name,
-        latent_upscale_precision=latent_upscale_precision,
-        latent_upscale_refine_steps=latent_upscale_refine_steps,
-        refinement_lora_name=refinement_lora_name,
-        refinement_variant=refinement_variant,
-        latent_split_config=latent_split_config,
-        result_format=result_format,
-        image_frames=image_frames,
-        image_vae=image_vae,
-        text_encoder_name=text_encoder_name,
-        encoder_small_input=encoder_small_input,
-        smart_stage_offload=smart_stage_offload,
+        reference_images=[stage_file(path, "reference_images", reuse=reuse_unchanged_inputs)
+                          for path in reference_images],
+        reference_videos=[stage_file(path, "reference_videos", transcode_video=True,
+                                     reuse=reuse_unchanged_inputs) for path in reference_videos],
+        reference_audios=[stage_file(path, "reference_audios", reuse=reuse_unchanged_inputs)
+                          for path in reference_audios],
         reuse_unchanged_inputs=reuse_unchanged_inputs,
-        stage_model_offload=stage_model_offload,
-        output_stamp=str(int(time.time())),
-        output_nonce=uuid.uuid4().hex[:8],
+        **settings,
+        **_output_naming(),
     )
+
+
+build_ref2va_graph.__signature__ = _submission_signature(h3_workflow.build_ref2va_graph)
 
 
 def build_ltx25_graph(
