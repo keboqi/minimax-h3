@@ -53,8 +53,11 @@ ENGINES += (
     EngineCapability("drama3", "Soundstage (Drama 3)", ("TTS",),
                      "Audio production with scripts, cast voices, sound effects, music, takes and mixing. "
                      "Speech powered by Fish Audio Drama 3."),
+    EngineCapability("dub", "Dub & Translate", ("Dub",),
+                     "Translate a video's speech and dub it with each speaker's cloned voice: transcribe, "
+                     "review every line, then dub with Drama 3."),
 )
-TASKS = ("Video", "Image", "Audio / Music", "TTS")
+TASKS = ("Video", "Image", "Audio / Music", "TTS", "Dub")
 # Navigation and preference restoration use the first engine as the default.
 DEFAULT_ENGINES = {"Image": "qwen", "Audio / Music": "music"}
 

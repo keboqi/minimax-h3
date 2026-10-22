@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import gradio as gr
+
 from . import dubbing_handlers as handlers
 from .dubbing_view import DubbingView, gemini_visibility, local_visibility
 from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES
@@ -13,9 +15,16 @@ from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 _QUIET = {"queue": False, "api_name": False, "show_progress": "hidden"}
 
 
-def bind_dubbing(view: DubbingView, *, tab, interrupt, actions=handlers) -> None:
-    for trigger in (tab.select, view.refresh_library.click):
-        trigger(actions.library_choices, outputs=view.library, **_QUIET)
+def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions=handlers) -> None:
+    """``task`` is Create's task picker; Dub & Translate is its "Dub" task."""
+    view.refresh_library.click(actions.library_choices, outputs=view.library, **_QUIET)
+
+    def refresh_for_dub(selected):
+        # Engine tabs are switched by the task picker, so their own select event never fires.
+        return actions.library_choices() if selected == "Dub" else gr.skip()
+
+    for trigger in (task.input, create_tab.select):
+        trigger(refresh_for_dub, inputs=task, outputs=view.library, **_QUIET)
     for control in (view.pipeline, view.translator):
         control.change(gemini_visibility, inputs=[view.pipeline, view.translator], outputs=view.gemini, **_QUIET)
     view.pipeline.change(local_visibility, inputs=view.pipeline, outputs=view.local, **_QUIET)

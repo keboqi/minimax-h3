@@ -331,7 +331,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 gemini_models=catalog.GEMINI_PROMPT_MODELS,
                 default_gemini_model=catalog.DEFAULT_GEMINI_PROMPT_MODEL,
             )
-            bind_dubbing(dubbing_components, tab=app_views.dubbing_tab, interrupt=services.interrupt)
+            bind_dubbing(dubbing_components, task=app_views.task, create_tab=app_views.create_tab,
+                         interrupt=services.interrupt)
         from .engine_readiness import bind_engine_readiness
 
         for view, family in (

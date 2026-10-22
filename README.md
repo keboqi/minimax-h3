@@ -22,12 +22,12 @@ collapsed below. Generate actions sit directly under the result, and
 Ctrl/⌘+Enter generates with the visible engine.
 Mobile section links jump to compose, generate, and preview.
 Create supports H3,
-LTX 2.5, Qwen Image 2.1, FLUX 3, MOSS-Image, Fibo 2.0, MiniMax Music 3, YuE2 and
-[Soundstage](docs/drama3.md), the audio production workspace powered by Drama 3. Prompt suggestions require
+LTX 2.5, Qwen Image 2.1, FLUX 3, MOSS-Image, Fibo 2.0, MiniMax Music 3, YuE2,
+[Soundstage](docs/drama3.md), the audio production workspace powered by Drama 3, and
+[Dub & Translate](docs/dubbing.md), which transcribes, translates and re-voices a video
+with each speaker's cloned voice, with every line editable before dubbing. Prompt suggestions require
 acceptance. Media includes indexed search, shared tags/favorites, lineage,
 image comparison, synchronized video playback, and downloads from video URLs.
-[Dub & Translate](docs/dubbing.md) transcribes, translates and re-voices a video
-with each speaker's cloned voice, with every line editable before dubbing.
 **Image** defaults to **Qwen Image 2.1**, and **Song** defaults to **MiniMax Music 3**.
 Both tasks remember explicit engine choices.
 

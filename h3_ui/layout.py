@@ -37,7 +37,7 @@ class AppViews:
     moss_image: gr.Group | None = None
     fibo2: gr.Group | None = None
     dubbing: gr.Column | None = None
-    dubbing_tab: gr.Tab | None = None
+    create_tab: gr.Tab | None = None
 
 
 @dataclass(frozen=True)
@@ -60,7 +60,9 @@ FORMAT_LAYOUT_OUTPUTS = (
     ("audio_output", 9),
     ("resolution_info", 14),
 )
-FORMAT_FOR_TASK = {"Video": "Video", "Image": "Image", "Audio / Music": "Audio", "TTS": "Audio"}
+# Dub & Translate has no H3 output; its task keeps the H3 settings on Video.
+FORMAT_FOR_TASK = {"Video": "Video", "Image": "Image", "Audio / Music": "Audio", "TTS": "Audio", "Dub": "Video"}
+TASK_LABELS = {"TTS": "Soundstage", "Audio / Music": "Song", "Dub": "Dub & Translate"}
 
 
 def create_app_views(*, summary_root=None) -> AppViews:
@@ -75,12 +77,11 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
         )
     tabs = gr.Tabs(elem_id="h3-main-tabs", selected="create", overflow_behavior="wrap")
     with tabs:
-        with gr.Tab("Create", id="create"):
+        with gr.Tab("Create", id="create") as create_tab:
             with gr.Row(elem_classes=["h3-task-picker"]):
                 # Keep persisted task values stable while updating the visible names.
                 task = gr.Radio(
-                    [({"TTS": "Soundstage", "Audio / Music": "Song"}.get(task, task), task)
-                     for task in TASKS],
+                    [(TASK_LABELS.get(task, task), task) for task in TASKS],
                     value="Video", label="Task", scale=2, interactive=False
                 )
                 engine = gr.Dropdown(
@@ -120,8 +121,8 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
                     fibo2 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Soundstage", id="drama3"):
                     drama3 = gr.Group(elem_classes=["h3-engine-view"])
-        with gr.Tab("Dub & Translate", id="dub") as dubbing_tab:
-            dubbing = gr.Column(elem_classes=["h3-dub-shell"])
+                with gr.Tab("Dub & Translate", id="dub"):
+                    dubbing = gr.Column(elem_classes=["h3-engine-view", "h3-dub-shell"])
         with gr.Tab("Media", id="media") as gallery_tab:
             gallery = gr.Column(elem_classes=["h3-gallery-shell"])
         with gr.Tab("Jobs", id="jobs"):
@@ -153,7 +154,7 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
         moss_image,
         fibo2,
         dubbing,
-        dubbing_tab,
+        create_tab,
     )
 
 

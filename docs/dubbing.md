@@ -1,8 +1,8 @@
 # Dub & Translate
 
 **Dub & Translate** translates the speech in a video or recording and dubs it
-with each speaker's own cloned voice. Open the **Dub & Translate** tab. It works
-in four steps.
+with each speaker's own cloned voice. Open **Create** and choose the **Dub & Translate** task, after
+Soundstage. It works in four steps.
 
 ## 1 · Source
 
