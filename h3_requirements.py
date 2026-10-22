@@ -389,6 +389,8 @@ DUB_TOOLS_REQUIREMENTS = (
     "qwen-asr==0.0.6",
     "omnivad==0.2.13",
     "audio-separator==0.47.1",
+    # audio-separator imports audioread but no longer gets it: librosa 0.11 made it optional.
+    "audioread==3.1.0",
     "onnxruntime>=1.17",
     f"torch=={TORCH_VERSION}",
     f"torchaudio=={TORCHAUDIO_VERSION}",
@@ -402,6 +404,7 @@ DUB_TOOLS_SMOKE = (
     "from qwen_asr import Qwen3ASRModel; "
     "from omnivad import OmniVAD; "
     "from audio_separator.separator import Separator; "
+    "from audio_separator.separator.architectures import mdx_separator, mdxc_separator; "
     "from transformers import AutoModelForCausalLM; "
     "assert torch.version.cuda, 'Dubbing tools installed CPU-only Torch'; "
     "assert callable(Qwen3ASRModel.transcribe)"
