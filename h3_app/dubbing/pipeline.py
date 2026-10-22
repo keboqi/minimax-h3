@@ -12,10 +12,10 @@ Each step is a generator of status strings that ends with one result object.
 from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, wait
-import contextvars
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import shutil
 import tempfile
 import threading
 import time
@@ -137,29 +137,16 @@ class _Line:
 
 
 def _blocking(label: str, work: Callable[[Callable[[str], None]], Any]) -> Iterator[str]:
-    """Run ``work(report)`` on a thread under this job's context, yielding its latest progress.
+    """Drama 3's heartbeat runner as status strings; returns ``work(report)``'s result."""
+    from h3_app.drama3_serving.generate import _with_heartbeat
 
-    The generator's return value is ``work``'s result (use ``result = yield from ...``).
-    """
-    context = contextvars.copy_context()
-    result, error, latest = [], [], [label]
-
-    def run():
+    updates = _with_heartbeat(label, work)
+    while True:
         try:
-            result.append(context.run(work, lambda message: latest.__setitem__(0, message)))
-        except BaseException as exc:  # surfaced on the generator's thread
-            error.append(exc)
-
-    thread = threading.Thread(target=run, daemon=True)
-    started = time.monotonic()
-    thread.start()
-    while thread.is_alive():
-        thread.join(HEARTBEAT_SECONDS)
-        if thread.is_alive():
-            yield f"{latest[0]} ({time.monotonic() - started:.0f}s)"
-    if error:
-        raise error[0]
-    return result[0]
+            update = next(updates)
+        except StopIteration as done:
+            return done.value
+        yield update.status
 
 
 def _ffmpeg(arguments: list[str], target: Path, *, timeout: float = 3600, action: str) -> Path:
@@ -242,6 +229,7 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
         for key in ("vocals", "backing"):
             session.set_file(key, _to_pcm(Path(reply[key]), session.root / f"{key}.wav",
                                           action=f"Saving the {key} stem"))
+        shutil.rmtree(session.root / "stems", ignore_errors=True)  # converted copies replace the raw stems
         session.data["separator_model"] = request.separator_model
         session.save()
 
@@ -308,10 +296,20 @@ def _translate(session: sessions.Session, indices: list[int], request, *, runtim
                                                    "notes": request.notes},
                                      runtime, free_gpu=free_gpu, hf_token=hf_token, report=report))
         translated = reply["texts"]
-    for index, text in zip(indices, translated):
-        lines[index]["translation"] = text
-    session.segments = lines
-    session.save()
+    # The editor may have saved lines meanwhile: apply each translation to the line that still
+    # has the same start and original text, on top of the latest saved lines.
+    results = {(lines[i]["start"], lines[i]["source"]): text for i, text in zip(indices, translated)}
+
+    def apply(latest: sessions.Session) -> None:
+        updated = latest.segments
+        for line in updated:
+            text = results.get((line["start"], line["source"]))
+            if text is not None:
+                line["translation"] = text
+        latest.segments = updated
+        latest.data["target_language"] = target
+
+    sessions.modify(session, apply)
 
 
 def retranslate(session_id: str, indices: list[int] | None, request, *, runtime, free_gpu,
@@ -336,8 +334,9 @@ def retranslate(session_id: str, indices: list[int] | None, request, *, runtime,
 # ---------------------------------------------------------------------------
 
 
-def _reference_clip(session: sessions.Session, segment: dict, name: str) -> Path:
-    target = session.root / "references" / f"{name}.wav"
+def _reference_clip(session: sessions.Session, segment: dict) -> Path:
+    """The line's original audio, named by its times so an edited start or end cuts a new clip."""
+    target = session.root / "references" / f"clip_{segment['start']:.3f}_{segment['end']:.3f}.wav"
     if not target.is_file():
         start = max(0.0, segment["start"] - REFERENCE_PAD)
         _write_wav(read_slice(session.speech_audio, start, segment["end"] + REFERENCE_PAD), RATE, target)
@@ -367,8 +366,7 @@ def _plan(session: sessions.Session, indices: list[int], voice_mode: str) -> lis
             continue
         own_length = segment["end"] - segment["start"]
         if voice_mode == VOICE_LINE and segment["source"] and own_length >= MIN_REFERENCE_SECONDS:
-            reference = (_reference_clip(session, segment, f"line_{index:05d}_{segment['start']:.3f}"),
-                         segment["source"])
+            reference = (_reference_clip(session, segment), segment["source"])
         else:
             speaker = segment["speaker"]
             if speaker not in speaker_refs:
@@ -376,9 +374,7 @@ def _plan(session: sessions.Session, indices: list[int], voice_mode: str) -> lis
                 if best is None:
                     best = max(range(len(lines)), key=lambda i: lines[i]["end"] - lines[i]["start"]
                                if lines[i]["source"] else -1)
-                speaker_refs[speaker] = (
-                    _reference_clip(session, lines[best], f"line_{best:05d}_{lines[best]['start']:.3f}"),
-                    lines[best]["source"])
+                speaker_refs[speaker] = (_reference_clip(session, lines[best]), lines[best]["source"])
             reference = speaker_refs[speaker]
         planned.append(_Line(index, segment, *reference))
     return planned
@@ -523,10 +519,12 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
     lines = session.segments
     track = np.zeros(int(round(duration * RATE)) + RATE, dtype=np.float32)
     notes = []
+    voiced = set()
     for line in planned:
         if line.take is None or not len(line.take):
-            notes.append(f"line {line.index + 1}: no audio")
+            notes.append(f"line {line.index + 1}: no audio, original kept")
             continue
+        voiced.add(line.index)
         available = slot_end(lines, line.index, duration) - line.segment["start"]
         fitted, speed, note = fit(line.take, RATE, available, request.max_speed)
         line.speed = speed
@@ -536,9 +534,9 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
         end = min(len(track), start + len(fitted))
         track[start:end] += fitted[: end - start]
     if session.path("vocals") is not None:
-        # Lines left undubbed keep their original voice.
-        for segment in lines:
-            if not segment.get("dub", True):
+        # Every line not voiced here (unticked, untranslated or failed) keeps its original voice.
+        for index, segment in enumerate(lines):
+            if index not in voiced:
                 start = int(round(segment["start"] * RATE))
                 original = read_slice(session.path("vocals"), segment["start"], segment["end"])
                 end = min(len(track), start + len(original))
@@ -649,8 +647,10 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
                             timeout=runtime.generation_timeout, action="Writing the dubbed video")
         write_snapshot(video_out, {"family": "Dub & Translate", "settings": {
             **settings, "original_track": request.keep_original_track, "burned_subtitles": request.burn_subtitles}})
-    session.data["last_output"] = str(video_out or audio_out)
-    session.save()
+    for work_file in (speech, mix):
+        work_file.unlink(missing_ok=True)
+    # Only this field is the dub's: lines edited while it ran stay as saved.
+    sessions.modify(session, lambda latest: latest.data.update(last_output=str(video_out or audio_out)))
     sped = sum(line.speed > 1.01 for line in planned)
     message = f"Dubbed {len(planned)} line(s) into {language or 'the target language'}"
     if sped:

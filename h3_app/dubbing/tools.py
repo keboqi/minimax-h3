@@ -8,12 +8,8 @@ and the Drama 3 speech step of a dub, stop it so its VRAM returns at once.
 from __future__ import annotations
 
 import atexit
-import itertools
-import json
 import os
 from pathlib import Path
-import queue
-import subprocess
 import threading
 import time
 
@@ -21,7 +17,6 @@ from h3_app import audio_tools
 from h3_app.dubbing import tools_worker as layout
 from h3_app.drama3_serving.environment import _setup_lock, uv_command
 from h3_app.errors import H3Error
-from h3_app.jobs import check_cancelled
 from h3_requirements import (
     DUB_TOOLS_READY_MARKER as READY_MARKER,
     dub_tools_fingerprint as fingerprint,
@@ -29,15 +24,15 @@ from h3_requirements import (
 )
 
 LABEL = "Dub & Translate tools"
-FAMILY = "dubbing"
+# Job families of Dub & Translate's steps; separate families let each Interrupt stop only its step.
+FAMILY_ANALYZE, FAMILY_LINES, FAMILY_DUB = "dubbing_analyze", "dubbing_lines", "dubbing"
+FAMILIES = frozenset({FAMILY_ANALYZE, FAMILY_LINES, FAMILY_DUB})
 WORKER = Path(__file__).with_name("tools_worker.py")
 # Free VRAM (MiB) wanted before a request's models load: weights plus working room.
-LOAD_HEADROOM_MIB = {"separate": 4 * 1024, "transcribe": 7 * 1024, "translate": 6 * 1024, "unload": 0}
+LOAD_HEADROOM_MIB = {"separate": 4 * 1024, "transcribe": 7 * 1024, "translate": 6 * 1024}
+# The worker's loaded-model names start with these, per request.
+OP_MODELS = {"separate": "separator:", "transcribe": "asr", "translate": "translator"}
 _SETUP_LOCK = threading.Lock()
-
-
-class RequestFailed(H3Error):
-    """The worker reported a failed request and is still healthy."""
 
 
 def log_dir(runtime) -> Path:
@@ -70,70 +65,7 @@ def prepare(runtime, log: Path) -> Path:
     return python
 
 
-class ResidentWorker:
-    def __init__(self, python: Path, models: Path, log: Path, *, hf_token: str | None = None):
-        self.python, self.log_path = python, log
-        self.loaded: set[str] = set()
-        self._ids = itertools.count(1)
-        self._replies: queue.Queue = queue.Queue()
-        self._log = log.open("ab")
-        env = audio_tools.worker_env()
-        env.update(HF_HOME=str(layout.models_root(models) / "hf"), HF_XET_HIGH_PERFORMANCE="1")
-        if hf_token:
-            env["HF_TOKEN"] = hf_token
-        self.process = subprocess.Popen([str(python), str(WORKER), "serve", str(models)], env=env,
-                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._log,
-                                        **audio_tools._popen_flags())
-        threading.Thread(target=self._read, name="dub-tools-replies", daemon=True).start()
-
-    def _read(self) -> None:
-        for line in self.process.stdout:
-            try:
-                self._replies.put(json.loads(line))
-            except ValueError:
-                continue
-        self._replies.put(None)
-
-    def running(self) -> bool:
-        return self.process.poll() is None
-
-    def request(self, payload: dict, timeout: float) -> dict:
-        request_id = next(self._ids)
-        try:
-            self.process.stdin.write((json.dumps({**payload, "id": request_id}) + "\n").encode("utf-8"))
-            self.process.stdin.flush()
-        except OSError as exc:
-            raise H3Error(f"{LABEL} worker is not accepting requests. See {self.log_path}.") from exc
-        deadline = time.monotonic() + timeout
-        while True:
-            check_cancelled()
-            if time.monotonic() >= deadline:
-                raise H3Error(f"{LABEL} timed out. See {self.log_path}.")
-            try:
-                reply = self._replies.get(timeout=0.25)
-            except queue.Empty:
-                continue
-            if reply is None:
-                self.process.wait()
-                raise H3Error(f"{LABEL} worker exited (code {self.process.returncode}). See {self.log_path}.")
-            if reply.get("id") != request_id:
-                continue
-            self.loaded = set(reply.get("loaded") or ())
-            if not reply.get("ok"):
-                raise RequestFailed(f"{LABEL} failed: {reply.get('error')}. See {self.log_path}.")
-            return reply
-
-    def stop(self) -> None:
-        try:
-            if self.process.stdin:
-                self.process.stdin.close()
-        except OSError:
-            pass
-        audio_tools._reap(self.process)
-        self._log.close()
-
-
-_WORKER: ResidentWorker | None = None
+_WORKER: audio_tools.ResidentWorker | None = None
 _WORKER_LOCK = threading.RLock()
 
 
@@ -149,26 +81,38 @@ def stop() -> bool:
 
 
 def release_for_job(family: str) -> None:
-    """Every other engine reclaims the GPU; dubbing jobs keep the worker resident."""
-    if family != FAMILY:
+    """Every other engine reclaims the GPU; Dub & Translate's own steps keep the worker resident."""
+    if family not in FAMILIES:
         stop()
 
 
 atexit.register(stop)
 
 
-def _make_room(op: str, free_gpu) -> None:
-    """Free ComfyUI, the VoiceDesign worker and then a loaded Drama 3 server, only as needed."""
+def _make_room(op: str, worker, free_gpu) -> None:
+    """Room for ``op``'s models: the worker's idle models go first, then ComfyUI, VoiceDesign and Drama 3.
+
+    Nothing is freed when the op's model is already loaded or the GPU has room.
+    """
     from h3_app.drama3_serving.server import gpu_memory, release_all
 
-    needed = LOAD_HEADROOM_MIB.get(op, 0)
-    memory = gpu_memory()
-    if not needed or memory is None or memory[0] >= needed:
+    needed, prefix = LOAD_HEADROOM_MIB.get(op, 0), OP_MODELS.get(op, "")
+    if not needed or any(name.startswith(prefix) for name in worker.loaded):
+        return
+
+    def short() -> bool:
+        memory = gpu_memory()
+        return memory is not None and memory[0] < needed
+
+    if not short():
+        return
+    for name in sorted(worker.loaded):
+        worker.request({"op": "unload", "model": name}, 300)
+    if not short():
         return
     free_gpu()
     audio_tools.stop()
-    memory = gpu_memory()
-    if memory is not None and memory[0] < needed:
+    if short():
         release_all()
 
 
@@ -185,13 +129,17 @@ def run(op: str, payload: dict, runtime, *, free_gpu, hf_token: str | None = Non
         if _WORKER is None or not _WORKER.running():
             report(f"Preparing the {LABEL} environment (first use installs it)")
             python = prepare(runtime, logs / f"setup_{time.strftime('%Y%m%d-%H%M%S')}.log")
-            _WORKER = ResidentWorker(python, models_dir(runtime),
-                                     logs / f"worker_{time.strftime('%Y%m%d-%H%M%S')}.log", hf_token=hf_token)
-        _make_room(op, free_gpu)
+            models = models_dir(runtime)
+            env = {"HF_HOME": str(layout.models_root(models) / "hf"), "HF_XET_HIGH_PERFORMANCE": "1",
+                   **({"HF_TOKEN": hf_token} if hf_token else {})}
+            _WORKER = audio_tools.ResidentWorker(
+                python, models, logs / f"worker_{time.strftime('%Y%m%d-%H%M%S')}.log",
+                script=WORKER, env=env, label=LABEL)
         worker = _WORKER
         try:
+            _make_room(op, worker, free_gpu)
             reply = worker.request({"op": op, **payload}, runtime.generation_timeout)
-        except RequestFailed:
+        except audio_tools.RequestFailed:
             raise
         except BaseException:
             # Cancellation, timeouts and crashes leave GPU state unknown: reap the process.

@@ -22,6 +22,8 @@ audible.
   finds speech, and pauses shorter than **Join pauses shorter than** become one
   span. Qwen3-ASR 1.7B transcribes each span. Qwen3-ForcedAligner 0.6B times
   every word, so long speech is cut into subtitle-sized lines at sentence ends.
+  Without word timing (aligner off, or a language it does not support), long
+  spans are split at sentence ends and timed by their share of the text.
   Hy-MT2 1.8B then translates the lines. Local transcription does not separate
   speakers: every line is `speaker1`, and each line is voiced from its own audio.
 - **Gemini (cloud)** uploads the vocals (or the soundtrack) once. Gemini
@@ -39,9 +41,12 @@ The first local run installs the isolated tools environment (see
 ## 3 · Review lines
 
 Every line has Start, End, Speaker, Original, Translation and **Dub**. Edits
-save to the session as you type. Untick **Dub** to keep a line's original voice;
-this needs separation, because without stems the original soundtrack plays
-under every line anyway.
+save to the session as you type; when an edit changes the order (a new Start
+time) or removes a row, the table is renumbered to match. Edits made while a
+job runs are kept: jobs write only their own results. Untick **Dub** to keep a
+line's original voice. With separation, every line that is not voiced (unticked,
+untranslated or failed) keeps its original voice; without stems the original
+soundtrack plays under every line anyway.
 
 - **Translate again** retranslates the listed lines (for example `3, 5-7`).
   With the box empty, it fills only lines that have no translation.
@@ -99,9 +104,13 @@ choice.
   `ComfyUI/output/dub_tools`.
 - The tools worker stays loaded between steps of a dubbing session. Any other
   GPU job stops it, and the dub's speech step stops it before Drama 3 starts.
-  When VRAM is short, loading the tools frees ComfyUI, the VoiceDesign worker
-  and then a loaded Drama 3 server, in that order.
+  When VRAM is short, loading a tool first unloads the worker's other models,
+  then frees ComfyUI, the VoiceDesign worker and a loaded Drama 3 server.
+- Analyze, line actions (Translate again, Preview line) and Generate dub are
+  separate job families: each **Interrupt** stops only its own step. A
+  download's Interrupt stops yt-dlp at its next progress update.
 - Speech uses Drama 3 on SGLang-Omni, so dubbing requires Linux, like Soundstage.
   Transcription, translation and downloads have no such limit.
-- Sessions (source copy, stems, references, lines) live in
-  `.h3-workspace/dubbing/<session>`.
+- Sessions (source copy, soundtrack and stems, references, lines) live in
+  `.h3-workspace/dubbing/<session>`. Sessions untouched for 14 days are removed
+  when a new one starts.

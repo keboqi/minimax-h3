@@ -14,6 +14,7 @@ import re
 import shutil
 import threading
 import time
+from typing import Callable
 import uuid
 
 from h3_app.errors import H3Error
@@ -22,6 +23,8 @@ from h3_app.video_download import workspace_dir
 from . import segments as segment_tools
 
 MANIFEST = "session.json"
+# Sessions untouched for this long are removed when another one starts.
+KEEP_SECONDS = 14 * 24 * 3600
 _LOCK = threading.RLock()
 
 
@@ -75,11 +78,29 @@ class Session:
                 temporary.unlink(missing_ok=True)
 
 
+def prune(runtime, *, now: float | None = None) -> None:
+    """Remove sessions untouched for ``KEEP_SECONDS``: each holds a source copy and full-length WAVs."""
+    root = sessions_dir(runtime)
+    if not root.is_dir():
+        return
+    cutoff = (time.time() if now is None else now) - KEEP_SECONDS
+    for folder in root.iterdir():
+        manifest = folder / MANIFEST
+        try:
+            stale = folder.is_dir() and (manifest.stat().st_mtime if manifest.is_file()
+                                         else folder.stat().st_mtime) < cutoff
+        except OSError:
+            continue
+        if stale:
+            shutil.rmtree(folder, ignore_errors=True)
+
+
 def create(runtime, source: str | Path, *, video: bool) -> Session:
     """Copy the source in, so the session outlives the upload that started it."""
     source = Path(source)
     if not source.is_file():
         raise H3Error("Choose a video or audio file first.")
+    prune(runtime)
     session_id = uuid.uuid4().hex
     root = sessions_dir(runtime) / session_id
     root.mkdir(parents=True)
@@ -103,6 +124,20 @@ def load(runtime, session_id: str) -> Session:
     except (OSError, ValueError) as exc:
         raise H3Error("This dubbing session is no longer available; analyze the source again.") from exc
     return Session(root, data)
+
+
+def modify(session: Session, change: Callable[[Session], None]) -> Session:
+    """Apply ``change`` to the latest saved manifest under the lock.
+
+    Jobs run for minutes while the editor keeps saving lines; a job writes only
+    what it owns, onto whatever was saved last, so those edits survive.
+    """
+    with _LOCK:
+        latest = Session(session.root, json.loads((session.root / MANIFEST).read_text(encoding="utf-8")))
+        change(latest)
+        latest.save()
+        session.data = latest.data
+        return latest
 
 
 def update_segments(runtime, session_id: str, segments: list[dict]) -> Session:

@@ -510,7 +510,8 @@ def release_for_job(family: str) -> None:
     """
     if family == "unload":
         stop_all()
-    elif family not in {"drama3", "drama3_voice", "drama3_sound", "drama3_preload", "dubbing"}:
+    elif family not in {"drama3", "drama3_voice", "drama3_sound", "drama3_preload",
+                        "dubbing_analyze", "dubbing_lines", "dubbing"}:
         release_all()
 
 

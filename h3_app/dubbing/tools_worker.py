@@ -101,8 +101,25 @@ def lines_from_alignment(items, offset: float, end_limit: float, fallback: str) 
             words, start, end = [], None, None
     if words and start is not None:
         lines.append({"start": round(start, 3), "end": round(end, 3), "text": join_words(words)})
-    if not lines and fallback.strip():
-        lines.append({"start": round(offset, 3), "end": round(end_limit, 3), "text": fallback.strip()})
+    return lines or proportional_lines(offset, end_limit, fallback)
+
+
+def proportional_lines(start: float, end: float, text: str) -> list[dict]:
+    """Subtitle-sized lines for a span without word timing, timed by their share of the text."""
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?;。！？；…])\s*", text or "")
+                 if part.strip()]
+    groups: list[str] = []
+    for sentence in sentences:
+        if groups and len(groups[-1]) + len(sentence) < MAX_LINE_CHARS:
+            groups[-1] = join_words([groups[-1], sentence])
+        else:
+            groups.append(sentence)
+    total = sum(len(group) for group in groups) or 1
+    lines, cursor = [], start
+    for group in groups:
+        stop = min(end, cursor + (end - start) * len(group) / total)
+        lines.append({"start": round(cursor, 3), "end": round(stop, 3), "text": group})
+        cursor = stop
     return lines
 
 
@@ -251,7 +268,9 @@ class Worker:
             except Exception:
                 if not aligner:
                     raise
+                # Usually a language the aligner does not support: later batches skip it too.
                 traceback.print_exc()
+                aligner = False
                 results = asr.transcribe(audio=clips, language=language, return_time_stamps=False)
             for (start, end), result in zip(batch, results):
                 text = str(getattr(result, "text", "") or "").strip()
@@ -261,8 +280,7 @@ class Worker:
                     languages.append(str(result.language).split(",")[0])
                 stamps = getattr(result, "time_stamps", None)
                 items = list(getattr(stamps, "items", None) or stamps or [])
-                segments += lines_from_alignment(items, start, end, text) if items else [
-                    {"start": round(start, 3), "end": round(end, 3), "text": text}]
+                segments += lines_from_alignment(items, start, end, text)
             print(f"Transcribed {min(first + ASR_BATCH, len(spans))}/{len(spans)} speech spans", file=sys.stderr)
         detected = max(set(languages), key=languages.count) if languages else ""
         return {"segments": segments, "language": detected, "spans": len(spans)}

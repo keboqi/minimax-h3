@@ -136,19 +136,28 @@ def ensure_weights(model: str, runtime, python: Path, log: Path, *, hf_token: st
 
 
 class ResidentWorker:
-    def __init__(self, python: Path, models: Path, log: Path):
-        self.python, self.models, self.log_path = python, models, log
+    """A ``<script> serve <models>`` process answering one JSON request per line.
+
+    Defaults to the offline VoiceDesign/Stable Audio worker; Dub & Translate passes its
+    own script, environment variables and label.
+    """
+
+    def __init__(self, python: Path, models: Path, log: Path, *, script: Path | None = None,
+                 env: dict[str, str] | None = None, label: str = LABEL):
+        self.python, self.models, self.log_path, self.label = python, models, log, label
+        script = script or WORKER
         self.loaded: set[str] = set()
         self._ids = itertools.count(1)
         self._replies: queue.Queue = queue.Queue()
         self._log = log.open("ab")
-        env = worker_env()
-        env.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1",
-                   HF_HUB_CACHE=str(layout.voice_design_cache(models)))
-        self.process = subprocess.Popen([str(python), str(WORKER), "serve", str(models)], env=env,
+        process_env = worker_env()
+        process_env.update(env if env is not None else {
+            "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1",
+            "HF_HUB_CACHE": str(layout.voice_design_cache(models))})
+        self.process = subprocess.Popen([str(python), str(script), "serve", str(models)], env=process_env,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._log,
                                         **_popen_flags())
-        threading.Thread(target=self._read, name="audio-tools-replies", daemon=True).start()
+        threading.Thread(target=self._read, name=f"{Path(script).stem}-replies", daemon=True).start()
 
     def _read(self) -> None:
         for line in self.process.stdout:
@@ -167,24 +176,24 @@ class ResidentWorker:
             self.process.stdin.write((json.dumps({**payload, "id": request_id}) + "\n").encode("utf-8"))
             self.process.stdin.flush()
         except OSError as exc:
-            raise H3Error(f"{LABEL} worker is not accepting requests. See {self.log_path}.") from exc
+            raise H3Error(f"{self.label} worker is not accepting requests. See {self.log_path}.") from exc
         deadline = time.monotonic() + timeout
         while True:
             check_cancelled()
             if time.monotonic() >= deadline:
-                raise H3Error(f"{LABEL} timed out. See {self.log_path}.")
+                raise H3Error(f"{self.label} timed out. See {self.log_path}.")
             try:
                 reply = self._replies.get(timeout=0.25)
             except queue.Empty:
                 continue
             if reply is None:
                 self.process.wait()
-                raise H3Error(f"{LABEL} worker exited (code {self.process.returncode}). See {self.log_path}.")
+                raise H3Error(f"{self.label} worker exited (code {self.process.returncode}). See {self.log_path}.")
             if reply.get("id") != request_id:
                 continue
             self.loaded = set(reply.get("loaded") or ())
             if not reply.get("ok"):
-                raise RequestFailed(f"{LABEL} failed: {reply.get('error')}. See {self.log_path}.")
+                raise RequestFailed(f"{self.label} failed: {reply.get('error')}. See {self.log_path}.")
             return reply
 
     def stop(self) -> None:

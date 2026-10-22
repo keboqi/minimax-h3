@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
+import contextvars
 from dataclasses import dataclass, replace
 import hashlib
 from pathlib import Path
@@ -126,12 +127,17 @@ def _staged_reference(path: str, media_dir: Path) -> Path:
 
 
 def _with_heartbeat(label: str, work: Callable[[Callable[[str], None]], object]) -> Iterator[GenerationUpdate]:
-    """Run blocking setup in a thread, reporting its latest progress message."""
+    """Run blocking work in a thread, reporting its latest progress message.
+
+    The thread runs in this job's context, so the work's cancellation checks see an
+    Interrupt. The generator returns the work's result (``result = yield from ...``).
+    """
+    context = contextvars.copy_context()
     result, error, latest = [], [], [label]
 
     def run():
         try:
-            result.append(work(lambda message: latest.__setitem__(0, message)))
+            result.append(context.run(work, lambda message: latest.__setitem__(0, message)))
         except BaseException as exc:  # surfaced on the generator's thread
             error.append(exc)
 
@@ -144,6 +150,7 @@ def _with_heartbeat(label: str, work: Callable[[Callable[[str], None]], object])
             yield GenerationUpdate(None, f"{latest[0]} ({time.monotonic() - started:.0f}s)")
     if error:
         raise error[0]
+    return result[0]
 
 
 def _ready_server(settings, server, label, free_gpu, hf_token, *, evict=True) -> Iterator[GenerationUpdate]:

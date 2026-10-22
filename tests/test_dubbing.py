@@ -7,9 +7,12 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import threading
+import time
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
+import unittest.mock
 from unittest.mock import patch
 import wave
 
@@ -299,13 +302,53 @@ class HandlerTests(Workspace):
     def test_library_choices_and_table_saves(self):
         update = self.handlers.library_choices()
         self.assertEqual([label for label, _path in update["choices"]], ["Video · Video.file", "Audio · Audio.file"])
-        self.assertIn("Analyze a source first", self.handlers.save_lines("", []))
+        self.assertIn("Analyze a source first", self.handlers.save_lines("", [])[1])
         source = self.root / "a.wav"
         source.write_bytes(b"x")
         created = sessions.create(self.runtime, source, video=False)
-        status = self.handlers.save_lines(created.id, [[1, "00:00.000", "00:01.000", "speaker1", "Hi", "Hola", True],
-                                                       [2, "00:02.000", "00:03.000", "speaker1", "Yo", "", True]])
+        rows, status = self.handlers.save_lines(
+            created.id, [[1, "00:00.000", "00:01.000", "speaker1", "Hi", "Hola", True],
+                         [2, "00:02.000", "00:03.000", "speaker1", "Yo", "", True]])
         self.assertEqual(status, "Saved 2 line(s); 1 ready to dub.")
+        self.assertEqual(rows, self.handlers.gr.skip())  # nothing moved: the table is left as typed
+
+    def test_saving_redraws_the_table_when_numbering_changes(self):
+        source = self.root / "a.wav"
+        source.write_bytes(b"x")
+        created = sessions.create(self.runtime, source, video=False)
+        # Line 2 now starts first, and an empty row was added.
+        rows, _status = self.handlers.save_lines(
+            created.id, [[1, "00:05.000", "00:06.000", "speaker1", "Late", "Tard", True],
+                         [2, "00:01.000", "00:02.000", "speaker1", "Early", "Tôt", True],
+                         [None, "", "", "", "", "", True]])
+        self.assertEqual([(row[0], row[4]) for row in rows], [(1, "Early"), (2, "Late")])
+        self.assertEqual([s["source"] for s in sessions.load(self.runtime, created.id).segments], ["Early", "Late"])
+
+    def test_interrupt_signals_this_sessions_download(self):
+        started, release = threading.Event(), threading.Event()
+        seen = []
+
+        def fake(url, quality, runtime, *, report, stopped):
+            started.set()
+            release.wait(5)
+            seen.append(stopped())
+            raise H3Error("Download interrupted.")
+
+        request = SimpleNamespace(session_hash="tab-1")
+        with patch.object(self.handlers.video_download, "download_video", side_effect=fake):
+            updates = []
+            worker = threading.Thread(target=lambda: updates.extend(
+                self.handlers.download_video("https://x.com/v", "720p", request)))
+            worker.start()
+            self.assertTrue(started.wait(5))
+            self.assertEqual(self.handlers.stop_downloads(SimpleNamespace(session_hash="other")),
+                             "No download is running.")
+            self.assertIn("Interrupting", self.handlers.stop_downloads(request))
+            release.set()
+            worker.join(10)
+        self.assertEqual(seen, [True])
+        self.assertIn("Download interrupted", updates[-1][0])
+        self.assertEqual(self.handlers._DOWNLOAD_STOPS, {})
 
     def test_download_handler_streams_progress_then_the_path(self):
         target = self.root / "clip.mp4"
@@ -336,6 +379,140 @@ class HandlerTests(Workspace):
         self.assertIn("**bilibili.com** (1)", sites)
         self.assertIn("Deleted", self.handlers.delete_cookies("bilibili.com")[0])
 
+
+
+def _tone_wav(path: Path, seconds: float, level: float = 0.5) -> Path:
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(2)
+        out.setsampwidth(2)
+        out.setframerate(pipeline.RATE)
+        out.writeframes(np.full((int(seconds * pipeline.RATE), 2), int(level * 32768), dtype="<i2").tobytes())
+    return path
+
+
+class ReviewFixTests(Workspace):
+    def session_with_vocals(self, lines):
+        source = _tone_wav(self.root / "a.wav", 3.0)
+        session = sessions.create(self.runtime, source, video=False)
+        session.set_file("vocals", _tone_wav(session.root / "vocals.wav", 3.0))
+        session.segments = lines
+        session.save()
+        return session
+
+    def test_untranslated_lines_keep_their_original_voice(self):
+        session = self.session_with_vocals([
+            {"start": 0.0, "end": 1.0, "source": "a", "translation": "A"},
+            {"start": 1.5, "end": 2.5, "source": "b", "translation": ""},
+        ])
+        line = pipeline._Line(0, session.segments[0], session.path("vocals"), "a",
+                              take=np.zeros(pipeline.RATE // 2, dtype=np.float32))
+        track, _notes = pipeline._speech_track(session, [line], pipeline.DubRequest(session.id), 3.0)
+        self.assertAlmostEqual(float(track[int(2.0 * pipeline.RATE)]), 0.5, places=3)
+        self.assertEqual(float(track[int(0.25 * pipeline.RATE)]), 0.0)
+
+    def test_translations_land_on_the_latest_saved_lines(self):
+        session = self.session_with_vocals([
+            {"start": 0.0, "end": 1.0, "source": "one"},
+            {"start": 1.5, "end": 2.5, "source": "two"},
+        ])
+
+        def translate(op, payload, runtime, **_kwargs):
+            # The editor saves while Hy-MT works: a new first line and a hand translation for "two".
+            sessions.update_segments(self.runtime, session.id, [
+                {"start": 0.0, "end": 0.4, "source": "zero", "translation": "zéro"},
+                {"start": 0.5, "end": 1.0, "source": "one"},
+                {"start": 1.5, "end": 2.5, "source": "two", "translation": "deux (edited)"}])
+            return {"texts": [f"{text}-fr" for text in payload["texts"]]}
+
+        stale = sessions.load(self.runtime, session.id)
+        stale.segments = [{"start": 0.5, "end": 1.0, "source": "one"}, {"start": 1.5, "end": 2.5, "source": "two"}]
+        with patch.object(pipeline.tools, "run", side_effect=translate):
+            list(pipeline._translate(stale, [0], pipeline.AnalyzeRequest("", target_language="French"),
+                                     runtime=self.runtime, free_gpu=lambda: None))
+        saved = sessions.load(self.runtime, session.id)
+        self.assertEqual([(s["source"], s["translation"]) for s in saved.segments],
+                         [("zero", "zéro"), ("one", "one-fr"), ("two", "deux (edited)")])
+        self.assertEqual(saved.data["target_language"], "French")
+
+    def test_job_bookkeeping_keeps_lines_edited_meanwhile(self):
+        session = self.session_with_vocals([{"start": 0.0, "end": 1.0, "source": "old"}])
+        sessions.update_segments(self.runtime, session.id, [{"start": 0.0, "end": 1.0, "source": "new"}])
+        sessions.modify(session, lambda latest: latest.data.update(last_output="dub.mp4"))
+        saved = sessions.load(self.runtime, session.id)
+        self.assertEqual((saved.segments[0]["source"], saved.data["last_output"]), ("new", "dub.mp4"))
+        self.assertEqual(session.segments[0]["source"], "new")
+
+    def test_reference_clips_follow_edited_times(self):
+        session = self.session_with_vocals([])
+        short = pipeline._reference_clip(session, {"start": 0.5, "end": 1.0})
+        longer = pipeline._reference_clip(session, {"start": 0.5, "end": 2.0})
+        self.assertNotEqual(short, longer)
+        with wave.open(str(short)) as a, wave.open(str(longer)) as b:
+            self.assertGreater(b.getnframes(), a.getnframes())
+
+    def test_old_sessions_are_pruned_when_a_new_one_starts(self):
+        old = self.session_with_vocals([])
+        stale = time.time() - sessions.KEEP_SECONDS - 60
+        os.utime(old.root / sessions.MANIFEST, (stale, stale))
+        fresh = self.session_with_vocals([])
+        self.assertFalse(old.root.exists())
+        self.assertTrue(fresh.root.exists())
+
+
+class WorkerRoomTests(unittest.TestCase):
+    class Worker:
+        def __init__(self, loaded):
+            self.loaded, self.requests = set(loaded), []
+
+        def request(self, payload, timeout):
+            self.requests.append(payload)
+            self.loaded.discard(payload.get("model"))
+            return {"ok": True}
+
+    def memory(self, *free):
+        values = iter(free)
+        return patch("h3_app.drama3_serving.server.gpu_memory", side_effect=lambda: (next(values), 12288.0, ""))
+
+    def test_idle_tools_models_unload_before_other_engines(self):
+        worker, free_gpu = self.Worker({"asr+aligner"}), unittest.mock.Mock()
+        with self.memory(3000, 9000), patch("h3_app.drama3_serving.server.release_all") as release:
+            tools._make_room("translate", worker, free_gpu)
+        self.assertEqual(worker.requests, [{"op": "unload", "model": "asr+aligner"}])
+        free_gpu.assert_not_called()
+        release.assert_not_called()
+
+    def test_other_engines_go_only_when_still_short(self):
+        worker, free_gpu = self.Worker(set()), unittest.mock.Mock()
+        with self.memory(3000, 3000, 3000), patch("h3_app.drama3_serving.server.release_all") as release,                 patch.object(tools.audio_tools, "stop") as stop_voice_design:
+            tools._make_room("transcribe", worker, free_gpu)
+        free_gpu.assert_called_once()
+        stop_voice_design.assert_called_once()
+        release.assert_called_once()
+
+    def test_a_loaded_model_needs_no_room(self):
+        worker = self.Worker({"translator"})
+        with patch("h3_app.drama3_serving.server.gpu_memory") as memory:
+            tools._make_room("translate", worker, lambda: None)
+        memory.assert_not_called()
+
+    def test_dubbing_steps_share_the_gpu_with_the_worker_and_drama3(self):
+        from h3_app.drama3_serving import server
+
+        with patch.object(tools, "stop") as stop, patch.object(server, "release_all") as release:
+            for family in tools.FAMILIES:
+                tools.release_for_job(family)
+                server.release_for_job(family)
+        stop.assert_not_called()
+        release.assert_not_called()
+
+    def test_spans_without_word_timing_split_at_sentences(self):
+        text = "Short one. Another short. " + "A very long sentence " * 6 + "ends here."
+        lines = tools_worker.proportional_lines(10.0, 20.0, text)
+        self.assertEqual(lines[0]["text"], "Short one. Another short.")
+        self.assertEqual((lines[0]["start"], lines[-1]["end"]), (10.0, 20.0))
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(tools_worker.lines_from_alignment([], 0.0, 4.0, "One. Two."),
+                         [{"start": 0.0, "end": 4.0, "text": "One. Two."}])
 
 def _run(command):
     subprocess.run(command, check=True, capture_output=True)

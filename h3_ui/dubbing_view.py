@@ -163,7 +163,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                 files = gr.File(label="Subtitles", file_count="multiple", interactive=False)
     run.h3_stop = stop
     analyze.h3_stop = stop_analyze
-    preview.h3_stop = stop_preview
+    preview.h3_stop = retranslate.h3_stop = stop_preview
     return DubbingView(
         session, source, library, refresh_library, separate, separator_model, pipeline, source_language,
         target_language, translate, translator, gemini, gemini_model, api_key, local, aligner, merge_gap, notes,

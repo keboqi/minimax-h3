@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import threading
 from typing import Any, Callable
 
 import gradio as gr
@@ -82,16 +83,29 @@ def library_choices():
 
 
 def save_lines(session_id, rows):
-    """Save the editor's rows as the session's lines (runs on every edit)."""
+    """Save the editor's rows as the session's lines (runs on every edit).
+
+    Outputs: line rows, status. Saving sorts lines by time and drops empty ones; when
+    that changes the table's order or numbering, the table is redrawn so the line
+    numbers used by Preview, Translate again and Fresh takes match what is saved.
+    """
     if not str(session_id or "").strip():
-        return "Analyze a source first; edits apply to an analyzed session."
+        return gr.skip(), "Analyze a source first; edits apply to an analyzed session."
+    rows = rows.values.tolist() if hasattr(rows, "columns") else list(rows or [])
     try:
         session = sessions.update_segments(_runtime(), session_id, segment_tools.from_rows(rows))
     except (H3Error, ValueError) as exc:
-        return f"**Not saved:** {exc}"
+        return gr.skip(), f"**Not saved:** {exc}"
     lines = session.segments
+    saved = segment_tools.to_rows(lines)
+
+    def layout(table):
+        return [(row[0] if row else None, segment_tools.parse_time(row[1]) if len(row) > 1 else None)
+                for row in table]
+
     ready = sum(bool(s["translation"]) and s.get("dub", True) for s in lines)
-    return f"Saved {len(lines)} line(s); {ready} ready to dub."
+    return (saved if layout(rows) != layout(saved) else gr.skip()), \
+        f"Saved {len(lines)} line(s); {ready} ready to dub."
 
 
 def _analysis_values(result: pipeline.Analysis):
@@ -234,17 +248,35 @@ def video_info(url):
         return f"**Error:** {exc}"
 
 
-def download_video(url, quality):
+# Running downloads' stop flags by browser session, so Interrupt reaches the yt-dlp thread.
+_DOWNLOAD_STOPS: dict[str, set[threading.Event]] = {}
+_DOWNLOAD_LOCK = threading.Lock()
+
+
+def _session_key(request) -> str:
+    return str(getattr(request, "session_hash", None) or "")
+
+
+def stop_downloads(request: gr.Request = None) -> str:
+    """Interrupt this browser session's downloads at their next progress update."""
+    with _DOWNLOAD_LOCK:
+        running = list(_DOWNLOAD_STOPS.get(_session_key(request), ()))
+    for stop in running:
+        stop.set()
+    return "Interrupting the download…" if running else "No download is running."
+
+
+def download_video(url, quality, request: gr.Request = None):
     """Outputs: status, downloaded path (empty until the file is published).
 
-    Downloads hold no GPU, so they run outside the job queue; closing this
-    generator (Interrupt) stops yt-dlp at its next progress update.
+    Downloads hold no GPU, so they run outside the job queue; ``stop_downloads``
+    stops yt-dlp at its next progress update and the staged file is discarded.
     """
-    import threading
-
     from h3_app.dubbing.pipeline import _blocking
 
-    stop = threading.Event()
+    key, stop = _session_key(request), threading.Event()
+    with _DOWNLOAD_LOCK:
+        _DOWNLOAD_STOPS.setdefault(key, set()).add(stop)
     try:
         work = _blocking("Starting the download", lambda report: video_download.download_video(
             url, quality, _runtime(), report=report, stopped=stop.is_set))
@@ -259,3 +291,8 @@ def download_video(url, quality):
         yield f"**Error:** {exc}", ""
     finally:
         stop.set()
+        with _DOWNLOAD_LOCK:
+            flags = _DOWNLOAD_STOPS.get(key, set())
+            flags.discard(stop)
+            if not flags:
+                _DOWNLOAD_STOPS.pop(key, None)
