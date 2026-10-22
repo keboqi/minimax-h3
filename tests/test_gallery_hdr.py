@@ -1,5 +1,6 @@
 """HDR gallery routing, color graph, conditioning and lazy resource selection."""
 
+from tests.app_targets import owner
 import ast
 from contextlib import ExitStack
 from pathlib import Path
@@ -102,9 +103,9 @@ class GalleryHdrTests(unittest.TestCase):
                     "cleanup_upscale_clip_batch": None, "unload_comfy_models": None,
                     "gallery_processed_result": "complete", "upscale_target_dimensions": None,
                 }
-                mocks = {name: stack.enter_context(patch.object(app, name, return_value=value)) for name, value in values.items()}
+                mocks = {name: stack.enter_context(patch.object(owner(app, name), name, return_value=value)) for name, value in values.items()}
                 build = stack.enter_context(patch.object(app, "build_upscale_graph", wraps=app.build_upscale_graph))
-                updates = list(app.postprocess_selected_gallery_video(
+                updates = list(app.MEDIA.postprocess_selected_gallery_video(
                     "source.mp4", LTX25_SDR_TO_HDR, 42, "unused", "BF16", "ignored",
                     False, split, 5.0, "unused", request=Mock(), progress=Mock(),
                 ))

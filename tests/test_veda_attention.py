@@ -142,17 +142,17 @@ class VedaAttentionTests(unittest.TestCase):
                   patch.object(model_service, 'sync_models') as sync,
                   patch.object(model_service, 'resolve_hf_token', return_value=None),
                   patch.object(model_service, 'model_file_is_ready', return_value=True)):
-                app.ensure_h3_veda_predictor(mode)
+                app.MODELS.ensure_h3_veda_predictor(mode)
                 self.assertEqual(sync.call_args.kwargs['model_keys'], (key,))
             with (patch.object(model_service, 'stale_model_keys', return_value=[]),
                   patch.object(model_service, 'sync_models') as sync,
                   patch.object(model_service, 'model_file_is_ready', return_value=True)):
-                app.ensure_h3_veda_predictor(mode)
+                app.MODELS.ensure_h3_veda_predictor(mode)
                 sync.assert_not_called()
         with (patch.object(model_service, 'stale_model_keys', return_value=[]),
               patch.object(model_service, 'model_file_is_ready', return_value=False)):
             with self.assertRaisesRegex(H3Error, 'valid model file'):
-                app.ensure_h3_veda_predictor('Text to video')
+                app.MODELS.ensure_h3_veda_predictor('Text to video')
 
     def test_preparation_downloads_only_for_veda_and_passes_selection_to_graph(self):
         for attention in ('SLA', 'Veda'):

@@ -51,20 +51,16 @@ class MediaPerformanceTests(TestCase):
             thumbnail = gallery_store.gallery_image_thumbnail_path(source, runtime=runtime)
             thumbnail.parent.mkdir()
             thumbnail.touch()
-            services = SimpleNamespace(
-                gallery_media_mode=lambda mode: mode, gallery_store=gallery_store,
-                _runtime_config=lambda: runtime,
-                managed_gallery_image_path=Mock(return_value=source),
-                gallery_image_resolution_text=Mock(side_effect=AssertionError("original image read")),
-                absolute_gallery_media_download_url=Mock(return_value="https://example.com/downloads/gradio/large.png?download=1"),
-                gallery_preview_updates=lambda mode, **values: tuple(gr.update(value=values.get(kind), visible=mode == kind.title()) for kind in ("video", "image", "audio")),
-            )
+            controller = MediaController(SimpleNamespace(_runtime_config=lambda: runtime))
+            controller.managed_gallery_image_path = Mock(return_value=source)
+            controller.gallery_image_resolution_text = Mock(side_effect=AssertionError("original image read"))
+            controller.absolute_gallery_media_download_url = Mock(return_value="https://example.com/downloads/gradio/large.png?download=1")
             request = SimpleNamespace(request=SimpleNamespace(base_url="https://example.com/"))
-            updates = MediaController(services).select_gallery_media("Image", [str(source)], request, SimpleNamespace(index=0))
+            updates = controller.select_gallery_media("Image", [str(source)], request, SimpleNamespace(index=0))
             self.assertEqual(updates[1]["value"], f"https://example.com/downloads/gradio/large.png?v={file_stat.st_mtime_ns}-{file_stat.st_size}")
             self.assertEqual(updates[-1], str(source))
             self.assertIn("/downloads/gradio/large.png?download=1", updates[3])
-            services.managed_gallery_image_path.assert_called_once_with(str(source), require_file=False)
+            controller.managed_gallery_image_path.assert_called_once_with(str(source), require_file=False)
     def test_image_dimensions_honor_orientation_without_loading_pixels(self):
         from PIL import Image
         with TemporaryDirectory() as directory:
@@ -106,15 +102,11 @@ class MediaPerformanceTests(TestCase):
     def test_video_selection_does_not_probe_hash_copy_or_transcode_original(self):
         source = Path("original.mp4")
         url = "https://example.com/downloads/comfy/original.mp4"
-        services = SimpleNamespace(
-            gallery_media_mode=lambda mode: mode,
-            managed_video_path=Mock(return_value=source),
-            absolute_video_url=Mock(return_value=url),
-            absolute_video_download_url=Mock(return_value=url + "?download=1"),
-            gallery_preview_updates=lambda mode, **values: tuple(gr.update(value=values.get(kind), visible=mode == kind.title()) for kind in ("video", "image", "audio")),
-            select_gallery_video=Mock(side_effect=AssertionError("metadata probe")),
-        )
-        controller = MediaController(services)
+        controller = MediaController(SimpleNamespace())
+        controller.managed_video_path = Mock(return_value=source)
+        controller.absolute_video_url = Mock(return_value=url)
+        controller.absolute_video_download_url = Mock(return_value=url + "?download=1")
+        controller.select_gallery_video = Mock(side_effect=AssertionError("metadata probe"))
         updates = controller.select_gallery_media("Video", [str(source)], Mock(), SimpleNamespace(index=0))
         self.assertEqual(updates[-1], str(source))
         with patch.object(processing_utils, "hash_file", side_effect=AssertionError("whole-file hash")), patch.object(processing_utils, "video_is_playable", side_effect=AssertionError("codec probe")):

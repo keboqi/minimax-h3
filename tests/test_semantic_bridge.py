@@ -121,7 +121,7 @@ class SemanticBridgeTests(unittest.TestCase):
             patch.object(app.model_service, "sync_models") as sync,
             patch.object(app.model_service, "model_file_is_ready", return_value=True),
         ):
-            app.ensure_h3_semantic_bridge()
+            app.MODELS.ensure_h3_semantic_bridge()
             sync.assert_not_called()
         with (
             patch.object(app.model_service, "stale_model_keys", return_value=["semantic_bridge_v1"]),
@@ -129,7 +129,7 @@ class SemanticBridgeTests(unittest.TestCase):
             patch.object(app.model_service, "model_file_is_ready", return_value=True),
             patch.object(app.model_service, "resolve_hf_token", return_value=None),
         ):
-            app.ensure_h3_semantic_bridge()
+            app.MODELS.ensure_h3_semantic_bridge()
             self.assertEqual(
                 sync.call_args.kwargs["model_keys"], ("semantic_bridge_v1",)
             )

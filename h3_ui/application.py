@@ -7,14 +7,7 @@ from .prompt_controller import PromptController, PromptServices
 from .model_controller import ModelController, ModelServices
 from .dubbing.handlers import LIBRARY_LIMIT as DUBBING_LIBRARY_LIMIT, DubbingHandlers, DubbingServices
 from .drama3.handlers import Drama3Handlers, Drama3Services
-from .media_controller import (
-    MediaController,
-    MediaServices,
-    GalleryMutationResult,
-    GalleryPostprocessResult,
-    GalleryMediaMutationResult,
-    GalleryMediaPostprocessResult,
-)
+from .media_controller import MediaController, MediaServices
 
 import argparse
 import html
@@ -45,15 +38,11 @@ from h3_models import (
     H3_LATENT_UPSCALER_MODEL_CHOICES,
     H3_TEXT_ENCODER_CHOICES,
     LTX25_MODEL_CHOICES,
-    MODEL_SPECS,
     MUSIC3_MODEL_CHOICES,
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
     YUE2_MODEL_CHOICES,
     SEEDVR2_MODEL_CHOICES,
-    resolve_hf_token,
-    stale_model_keys,
-    sync_models,
 )
 from h3_prompt_rewriter import (
     BASE_MODEL_CHOICES as LOCAL_PROMPT_BASE_MODELS,
@@ -71,13 +60,7 @@ from h3_app.contracts import GenerationArguments
 from h3_app import server as server_routes
 from h3_app.comfy import ComfyClient
 from h3_app.jobs import gpu_maintenance, JOBS, CURRENT_JOB
-from h3_app.provenance import (
-    RUN_CONTEXT,
-    write_snapshot,
-    read_snapshot,
-    render_snapshot,
-    snapshot_path,
-)
+from h3_app.provenance import RUN_CONTEXT, write_snapshot, read_snapshot, render_snapshot
 from h3_ui.settings_presentation import render_settings
 from h3_app.errors import H3Error
 from h3_app.catalog import (
@@ -85,9 +68,6 @@ from h3_app.catalog import (
     AUDIO_EXTENSIONS,
     AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
     AUTO_SOL_TOKEN_THRESHOLD,
-    COMFY_POSTPROCESS_OPTIONS,
-    LTX25_POSTPROCESS_MODELS,
-    LTX25_SAME_RESOLUTION_OPTIONS,
     DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
     DEFAULT_GEMINI_PROMPT_MODEL,
     DEFAULT_IMAGE_FRAMES,
@@ -111,7 +91,6 @@ from h3_app.catalog import (
     LARGE_RESOLUTIONS,
     LIGHTNING_PROMPT_MODEL,
     LTX25_DEFAULTS,
-    LTX25_UPSCALE,
     LTX25_WORKFLOWS,
     MAX_IMAGE_FRAMES,
     MAX_REFERENCE_AUDIOS,
@@ -127,7 +106,6 @@ from h3_app.catalog import (
     POSTPROCESS_OPTIONS,
     PROMPT_WRITER_BACKENDS,
     RESULT_FORMATS,
-    SEEDVR2_UPSCALE,
     SLA_PRESET_INPUTS,
     TURBO_SETTINGS,
     UI_DEFAULTS,
@@ -150,15 +128,7 @@ from h3_app.policy import (
     upscale_target_dimensions,
     validate_resolution,
 )
-from h3_app.model_types import (
-    ModelConfig,
-    ModelProfile,
-    h3_text_encoder_settings,
-    ltx25_official_inventory_keys,
-    ltx25_workflow_entry,
-    ltx25_workflow_model_keys,
-    model_file_is_ready,
-)
+from h3_app.model_types import ModelConfig, h3_text_encoder_settings, model_file_is_ready
 from h3_app import model_service
 import h3_app.workflows.ltx as ltx_workflow
 import h3_app.workflows.h3 as h3_workflow
@@ -167,13 +137,11 @@ from h3_app.execution import ExecutionRunner, PromptId, Submission
 from h3_app.prompt_writers import h3 as h3_writer
 import h3_app.staging as staging
 from h3_app import media_tools
-from h3_app import gallery_store
 from h3_app import outputs
 from h3_app.outputs import OutputContext
 from h3_app.config import RuntimeConfig
 from h3_app.provenance import copy_media
 from dataclasses import replace
-from h3_app.status import progress_status
 from h3_app.media_types import UpscaleClipBatch, VideoMetadata
 from h3_app.generation import (
     requests as generation_requests,
@@ -216,118 +184,42 @@ def _promptcontroller():
     )
 
 
-def _modelcontroller():
-    return ModelController(
-        ModelServices(
-            COMFY_DIR=COMFY_DIR,
-            H3Error=H3Error,
-            MODELS_CONFIG=MODELS_CONFIG,
-            MODEL_SPECS=MODEL_SPECS,
-            _runtime_config=_runtime_config,
-            ltx25_official_inventory_keys=ltx25_official_inventory_keys,
-            ltx25_workflow_entry=ltx25_workflow_entry,
-            ltx25_workflow_model_keys=ltx25_workflow_model_keys,
-            model_file_is_ready=model_file_is_ready,
-            model_service=model_service,
-            resolve_hf_token=resolve_hf_token,
-            stale_model_keys=stale_model_keys,
-            sync_models=sync_models,
-            unload_comfy_models=unload_comfy_models,
-            load_model_config=load_model_config,
-            render_ltx25_official_model_inventory=render_ltx25_official_model_inventory,
-            _prepare_ltx25_model_set=_prepare_ltx25_model_set,
-            ensure_trt_video_vae_engine=ensure_trt_video_vae_engine,
-        )
-    )
+# One controller of each kind. Their records hold late-bound effects, so patching
+# this module's ComfyUI, graph and file functions reaches them.
+MODELS = ModelController(ModelServices(
+    _runtime_config=lambda: _runtime_config(),
+    unload_comfy_models=lambda: unload_comfy_models(),
+))
 
 
-def _mediacontroller():
-    return MediaController(
-        MediaServices(
-            AUDIO_EXTENSIONS=AUDIO_EXTENSIONS,
-            COMFY_POSTPROCESS_OPTIONS=COMFY_POSTPROCESS_OPTIONS,
-            GALLERY_THUMBNAILS_DIR=GALLERY_THUMBNAILS_DIR,
-            H3Error=H3Error,
-            IMAGE_EXTENSIONS=IMAGE_EXTENSIONS,
-            LTX25_POSTPROCESS_MODELS=LTX25_POSTPROCESS_MODELS,
-            LTX25_SAME_RESOLUTION_OPTIONS=LTX25_SAME_RESOLUTION_OPTIONS,
-            OUTPUTS_DIR=OUTPUTS_DIR,
-            POSTPROCESS_OPTIONS=POSTPROCESS_OPTIONS,
-            Path=Path,
-            SEEDVR2_UPSCALE=SEEDVR2_UPSCALE,
-            UPSCALE_RESOLUTION_PRESETS=UPSCALE_RESOLUTION_PRESETS,
-            VIDEO_EXTENSIONS=VIDEO_EXTENSIONS,
-            _runtime_config=_runtime_config,
-            build_seedvr2_image_upscale_graph=build_seedvr2_image_upscale_graph,
-            build_cq_image_enhance_graph=build_cq_image_enhance_graph,
-            build_upscale_graph=build_upscale_graph,
-            cleanup_upscale_clip_batch=cleanup_upscale_clip_batch,
-            concat_upscaled_clips=concat_upscaled_clips,
-            copy_media=copy_media,
-            ensure_ltx25_upscale_models=ensure_ltx25_upscale_models,
-            ensure_seedvr2_upscale_models=ensure_seedvr2_upscale_models,
-            ensure_cq_image_enhance_models=ensure_cq_image_enhance_models,
-            gallery_store=gallery_store,
-            gr=gr,
-            input_image_upscale_dimensions=input_image_upscale_dimensions,
-            load_model_config=load_model_config,
-            object_info=object_info,
-            poll_comfy_progress=poll_comfy_progress,
-            postprocess_video=postprocess_video,
-            prepare_upscale_clip_batch=prepare_upscale_clip_batch,
-            probe_video_metadata=probe_video_metadata,
-            progress_status=progress_status,
-            random=random,
-            required_seedvr2_image_upscale_nodes=required_seedvr2_image_upscale_nodes,
-            required_cq_image_enhance_nodes=required_cq_image_enhance_nodes,
-            required_upscale_nodes=required_upscale_nodes,
-            resolve_output=resolve_output,
-            resolve_seedvr2_input_upscale_outputs=resolve_seedvr2_input_upscale_outputs,
-            snapshot_path=snapshot_path,
-            stage_file=stage_file,
-            stream_comfy_progress=stream_comfy_progress,
-            submit_prompt=submit_prompt,
-            time=time,
-            unload_comfy_models=unload_comfy_models,
-            upscale_target_dimensions=upscale_target_dimensions,
-            uuid=uuid,
-            wait_for_history=wait_for_history,
-            write_snapshot=write_snapshot,
-            gallery_audio_paths=gallery_audio_paths,
-            empty_generated_gallery=empty_generated_gallery,
-            gallery_processed_result=gallery_processed_result,
-            generated_video_family=generated_video_family,
-            refresh_gallery=refresh_gallery,
-            gallery_media_processed_result=gallery_media_processed_result,
-            gallery_video_paths=gallery_video_paths,
-            absolute_gallery_media_download_url=absolute_gallery_media_download_url,
-            managed_gallery_audio_path=managed_gallery_audio_path,
-            managed_video_path=managed_video_path,
-            gallery_image_paths=gallery_image_paths,
-            postprocess_selected_gallery_image=postprocess_selected_gallery_image,
-            managed_gallery_image_path=managed_gallery_image_path,
-            gallery_media_download_path=gallery_media_download_path,
-            refresh_gallery_page=refresh_gallery_page,
-            gallery_mutation_result=gallery_mutation_result,
-            gallery_thumbnail=gallery_thumbnail,
-            refresh_media_gallery=refresh_media_gallery,
-            gallery_progress_result=gallery_progress_result,
-            delete_selected_gallery_video=delete_selected_gallery_video,
-            gallery_preview_updates=gallery_preview_updates,
-            absolute_video_download_url=absolute_video_download_url,
-            gallery_media_progress_result=gallery_media_progress_result,
-            gallery_thumbnail_path=gallery_thumbnail_path,
-            forget_gallery_metadata=forget_gallery_metadata,
-            gallery_media_mode=gallery_media_mode,
-            video_download_path=video_download_path,
-            postprocess_selected_gallery_video=postprocess_selected_gallery_video,
-            gallery_image_resolution_text=gallery_image_resolution_text,
-            gallery_media_mutation_result=gallery_media_mutation_result,
-            absolute_video_url=absolute_video_url,
-            gallery_resolution_text=gallery_resolution_text,
-            refresh_media_page=refresh_media_page,
-        )
-    )
+MEDIA = MediaController(MediaServices(
+    _runtime_config=lambda: _runtime_config(),
+    catalog_inventory=lambda mode, limit: _catalog_inventory(mode, limit),
+    load_model_config=lambda: MODELS.load_model_config(),
+    ensure_ltx25_upscale_models=lambda *args, **kwargs: MODELS.ensure_ltx25_upscale_models(*args, **kwargs),
+    ensure_seedvr2_upscale_models=lambda *args, **kwargs: MODELS.ensure_seedvr2_upscale_models(*args, **kwargs),
+    ensure_cq_image_enhance_models=lambda: MODELS.ensure_cq_image_enhance_models(),
+    build_seedvr2_image_upscale_graph=lambda *args, **kwargs: build_seedvr2_image_upscale_graph(*args, **kwargs),
+    build_cq_image_enhance_graph=lambda *args, **kwargs: build_cq_image_enhance_graph(*args, **kwargs),
+    build_upscale_graph=lambda *args, **kwargs: build_upscale_graph(*args, **kwargs),
+    object_info=lambda: object_info(),
+    submit_prompt=lambda *args, **kwargs: submit_prompt(*args, **kwargs),
+    poll_comfy_progress=lambda *args, **kwargs: poll_comfy_progress(*args, **kwargs),
+    stream_comfy_progress=lambda *args, **kwargs: stream_comfy_progress(*args, **kwargs),
+    wait_for_history=lambda *args, **kwargs: wait_for_history(*args, **kwargs),
+    resolve_output=lambda *args, **kwargs: resolve_output(*args, **kwargs),
+    resolve_seedvr2_input_upscale_outputs=lambda *args, **kwargs: resolve_seedvr2_input_upscale_outputs(*args, **kwargs),
+    unload_comfy_models=lambda: unload_comfy_models(),
+    stage_file=lambda *args, **kwargs: stage_file(*args, **kwargs),
+    input_image_upscale_dimensions=lambda *args, **kwargs: input_image_upscale_dimensions(*args, **kwargs),
+    upscale_target_dimensions=lambda *args, **kwargs: upscale_target_dimensions(*args, **kwargs),
+    postprocess_video=lambda *args, **kwargs: postprocess_video(*args, **kwargs),
+    probe_video_metadata=lambda *args, **kwargs: probe_video_metadata(*args, **kwargs),
+    prepare_upscale_clip_batch=lambda *args, **kwargs: prepare_upscale_clip_batch(*args, **kwargs),
+    concat_upscaled_clips=lambda *args, **kwargs: concat_upscaled_clips(*args, **kwargs),
+    cleanup_upscale_clip_batch=lambda *args, **kwargs: cleanup_upscale_clip_batch(*args, **kwargs),
+    write_snapshot=lambda *args, **kwargs: write_snapshot(*args, **kwargs),
+))
 
 
 def _runtime_config() -> RuntimeConfig:
@@ -460,146 +352,8 @@ def prompt_writer_backend_visibility(backend: str) -> tuple[Any, Any, Any]:
     return _promptcontroller().prompt_writer_backend_visibility(backend)
 
 
-def load_model_config() -> ModelConfig:
-    return _modelcontroller().load_model_config()
-
-
-def trt_vae_decoder_paths(models: ModelConfig) -> tuple[Path, Path, Path]:
-    return _modelcontroller().trt_vae_decoder_paths(models)
-
-
-def ensure_h3_text_encoder(models: ModelConfig, model_choice: str) -> tuple[str, bool]:
-    return _modelcontroller().ensure_h3_text_encoder(models, model_choice)
-
-
-def ensure_h3_veda_predictor(mode: str) -> None:
-    return _modelcontroller().ensure_h3_veda_predictor(mode)
-
-
-def ensure_h3_semantic_bridge() -> None:
-    return _modelcontroller().ensure_h3_semantic_bridge()
-
-
-def ensure_h3_latent_upscaler_model(model_choice: str) -> bool:
-    return _modelcontroller().ensure_h3_latent_upscaler_model(model_choice)
-
-
-def ensure_profile_model(profile_key: str, profile: ModelProfile, mode: str) -> bool:
-    return _modelcontroller().ensure_profile_model(profile_key, profile, mode)
-
-
-def ensure_turbo_lora(models: ModelConfig, turbo_variant: str, mode: str) -> bool:
-    return _modelcontroller().ensure_turbo_lora(models, turbo_variant, mode)
-
-
-def ensure_base_video_vae(models: ModelConfig) -> bool:
-    return _modelcontroller().ensure_base_video_vae(models)
-
-
-def ensure_audio_vae(models: ModelConfig) -> bool:
-    return _modelcontroller().ensure_audio_vae(models)
-
-
 def ensure_lightvae(video_encoder: str, decoder: str) -> bool:
     return model_service.ensure_lightvae(video_encoder, decoder, runtime=_runtime_config())
-
-
-def ensure_int8_video_vae(models: ModelConfig, *, lynnreal: bool = False) -> bool:
-    return _modelcontroller().ensure_int8_video_vae(models, lynnreal=lynnreal)
-
-
-def ensure_trt_video_vae_engine(
-    models: ModelConfig, *, force: bool = False, progress=gr.Progress(track_tqdm=False)
-) -> bool:
-    return _modelcontroller().ensure_trt_video_vae_engine(
-        models, force=force, progress=progress
-    )
-
-
-def compile_trt_video_vae(progress=gr.Progress(track_tqdm=False)) -> str:
-    return _modelcontroller().compile_trt_video_vae(progress)
-
-
-def ensure_single_frame_image_vae(models: ModelConfig) -> bool:
-    return _modelcontroller().ensure_single_frame_image_vae(models)
-
-
-def missing_ltx25_model_names(model_choice: str = DEFAULT_LTX25_MODEL) -> list[str]:
-    return _modelcontroller().missing_ltx25_model_names(model_choice)
-
-
-def ensure_ltx25_models(model_choice: str = DEFAULT_LTX25_MODEL) -> bool:
-    return _modelcontroller().ensure_ltx25_models(model_choice)
-
-
-def ensure_ltx25_ingredients_model() -> bool:
-    return _modelcontroller().ensure_ltx25_ingredients_model()
-
-
-def render_ltx25_official_model_inventory() -> str:
-    return _modelcontroller().render_ltx25_official_model_inventory()
-
-
-def render_ltx25_workflow_details(workflow_label: str) -> str:
-    return _modelcontroller().render_ltx25_workflow_details(workflow_label)
-
-
-def _prepare_ltx25_model_set(required_keys: Iterable[str], label: str):
-    return _modelcontroller()._prepare_ltx25_model_set(required_keys, label)
-
-
-def prepare_ltx25_official_workflow(workflow_label: str):
-    return _modelcontroller().prepare_ltx25_official_workflow(workflow_label)
-
-
-def prepare_all_ltx25_official_models():
-    return _modelcontroller().prepare_all_ltx25_official_models()
-
-
-def ensure_seedvr2_upscale_models(models: ModelConfig, model_choice: str) -> bool:
-    return _modelcontroller().ensure_seedvr2_upscale_models(models, model_choice)
-
-
-def ensure_cq_image_enhance_models() -> bool:
-    return _modelcontroller().ensure_cq_image_enhance_models()
-
-
-def ensure_ltx25_upscale_models(
-    model_choice: str = DEFAULT_LTX25_MODEL, *, option: str = LTX25_UPSCALE
-) -> bool:
-    return _modelcontroller().ensure_ltx25_upscale_models(model_choice, option=option)
-
-
-def missing_music3_model_names(model_choice: str) -> list[str]:
-    return _modelcontroller().missing_music3_model_names(model_choice)
-
-
-def ensure_music3_models(model_choice: str) -> bool:
-    return _modelcontroller().ensure_music3_models(model_choice)
-
-
-def missing_qwen_image21_model_names(
-    model_choice: str, text_encoder_choice: str, turbo_variant: str = "Off"
-) -> list[str]:
-    return _modelcontroller().missing_qwen_image21_model_names(
-        model_choice, text_encoder_choice, turbo_variant
-    )
-
-
-def ensure_qwen_image21_models(
-    model_choice: str, text_encoder_choice: str, turbo_variant: str = "Off"
-) -> bool:
-    return _modelcontroller().ensure_qwen_image21_models(
-        model_choice, text_encoder_choice, turbo_variant
-    )
-
-
-def missing_yue2_model_names(model_choice: str) -> list[str]:
-    return _modelcontroller().missing_yue2_model_names(model_choice)
-
-
-def ensure_yue2_models(model_choice: str) -> bool:
-    return _modelcontroller().ensure_yue2_models(model_choice)
 
 
 def api_get(path: str, **kwargs: Any) -> requests.Response:
@@ -1311,8 +1065,8 @@ def upscale_selected_input_images(
                     "SeedVR2 input upscaling requires current ComfyUI nodes: "
                     + ", ".join(sorted(missing))
                 )
-            models = load_model_config()
-            ensure_seedvr2_upscale_models(models, model_choice)
+            models = MODELS.load_model_config()
+            MODELS.ensure_seedvr2_upscale_models(models, model_choice)
             if force_offload:
                 progress(0, desc="Unloading resident models")
                 unload_comfy_models()
@@ -1512,301 +1266,13 @@ def unload_all_models() -> tuple[str, str]:
         return (f"ComfyUI VRAM release failed: {exc}.{local_note}", backend_status())
 
 
-def video_download_path(video: str | Path) -> str:
-    return _mediacontroller().video_download_path(video)
-
-
-def managed_video_path(video: str | Path, *, require_file: bool = True) -> Path:
-    return _mediacontroller().managed_video_path(video, require_file=require_file)
-
-
-def absolute_video_url(
-    video: str | Path, request: gr.Request, *, download: bool = False
-) -> str:
-    return _mediacontroller().absolute_video_url(video, request, download=download)
-
-
-def absolute_video_download_url(video: str | Path, request: gr.Request) -> str:
-    return _mediacontroller().absolute_video_download_url(video, request)
-
-
-def gallery_video_paths(*, limit: int | None = GALLERY_LIMIT) -> list[Path]:
-    return _mediacontroller().gallery_video_paths(limit=limit)
-
-
-def gallery_thumbnail(video: Path) -> Path | None:
-    return _mediacontroller().gallery_thumbnail(video)
-
-
-def gallery_thumbnail_path(video: str | Path) -> Path:
-    return _mediacontroller().gallery_thumbnail_path(video)
-
-
-def gallery_resolution_text(video: Path) -> str:
-    return _mediacontroller().gallery_resolution_text(video)
-
-
-def generated_video_family(video: str | Path) -> str:
-    return _mediacontroller().generated_video_family(video)
-
-
-def forget_gallery_metadata(video: str | Path | None = None) -> None:
-    return _mediacontroller().forget_gallery_metadata(video)
-
-
-def managed_gallery_image_path(image: str | Path, *, require_file: bool = True) -> Path:
-    return _mediacontroller().managed_gallery_image_path(
-        image, require_file=require_file
-    )
-
-
-def gallery_image_paths(*, limit: int | None = GALLERY_LIMIT) -> list[Path]:
-    return _mediacontroller().gallery_image_paths(limit=limit)
-
-
-def gallery_image_resolution_text(image: Path) -> str:
-    return _mediacontroller().gallery_image_resolution_text(image)
-
-
-def managed_gallery_audio_path(audio: str | Path, *, require_file: bool = True) -> Path:
-    return _mediacontroller().managed_gallery_audio_path(
-        audio, require_file=require_file
-    )
-
-
-def gallery_audio_paths(*, limit: int | None = GALLERY_LIMIT) -> list[Path]:
-    return _mediacontroller().gallery_audio_paths(limit=limit)
-
-
-def gallery_media_mode(mode: str) -> str:
-    return _mediacontroller().gallery_media_mode(mode)
-
-
-def gallery_media_download_path(media: str | Path, mode: str) -> str:
-    return _mediacontroller().gallery_media_download_path(media, mode)
-
-
-def absolute_gallery_media_download_url(
-    media: str | Path, mode: str, request: gr.Request
-) -> str:
-    return _mediacontroller().absolute_gallery_media_download_url(media, mode, request)
-
-
-def import_gallery_media(mode: str, uploaded_media: str | None):
-    return _mediacontroller().import_gallery_media(mode, uploaded_media)
-
-
 GALLERY_PAGE_SIZE = 48
-
-
-def refresh_gallery_page(limit: int = GALLERY_PAGE_SIZE) -> gallery_store.AssetPage:
-    inventory = _catalog_inventory("Video", limit)
-    if inventory is not None:
-        return _mediacontroller().refresh_media_page("Video", limit, paths=inventory)
-    return _mediacontroller().refresh_gallery_page(limit)
-
-
-def refresh_gallery(limit: int = GALLERY_PAGE_SIZE):
-    return _mediacontroller().refresh_gallery(limit)
-
-
-def select_gallery_video(
-    paths: list[str], request: gr.Request, evt: gr.SelectData
-) -> tuple[str | None, str, str | None]:
-    return _mediacontroller().select_gallery_video(paths, request, evt)
-
-
-def list_media_paths(mode):
-    return _mediacontroller().list_media_paths(mode)
-
-
-def refresh_media_page(
-    mode: str = "Video",
-    limit: int = GALLERY_PAGE_SIZE,
-    *,
-    paths=None,
-) -> gallery_store.AssetPage:
-    if paths is None:
-        paths = _catalog_inventory(mode, limit)
-    return _mediacontroller().refresh_media_page(mode, limit, paths=paths)
 
 
 def _catalog_inventory(mode, limit):
     from h3_app.media_catalog import catalog_inventory
 
     return catalog_inventory(mode, limit)
-
-
-def refresh_media_gallery(mode: str = "Video", limit: int = GALLERY_PAGE_SIZE):
-    return _mediacontroller().refresh_media_gallery(mode, limit)
-
-
-def gallery_preview_updates(
-    mode: str,
-    *,
-    video: str | None = None,
-    image: str | None = None,
-    audio: str | None = None,
-) -> tuple[Any, Any, Any]:
-    return _mediacontroller().gallery_preview_updates(
-        mode, video=video, image=image, audio=audio
-    )
-
-
-def select_gallery_media(
-    mode: str, paths: list[str], request: gr.Request, evt: gr.SelectData
-) -> tuple[Any, Any, Any, str, str | None]:
-    return _mediacontroller().select_gallery_media(mode, paths, request, evt)
-
-
-def gallery_media_mutation_result(
-    mode: str, message: str, *, selected_media: str | None = None, clear_selection: bool
-) -> GalleryMediaMutationResult:
-    return _mediacontroller().gallery_media_mutation_result(
-        mode, message, selected_media=selected_media, clear_selection=clear_selection
-    )
-
-
-def gallery_media_progress_result(message: str) -> GalleryMediaPostprocessResult:
-    return _mediacontroller().gallery_media_progress_result(message)
-
-
-def gallery_media_processed_result(
-    mode: str, result: Path, option: str, elapsed: float, request: gr.Request
-) -> GalleryMediaPostprocessResult:
-    return _mediacontroller().gallery_media_processed_result(
-        mode, result, option, elapsed, request
-    )
-
-
-def gallery_mutation_result(
-    message: str, *, selected_video: str | None = None, clear_selection: bool
-) -> GalleryMutationResult:
-    return _mediacontroller().gallery_mutation_result(
-        message, selected_video=selected_video, clear_selection=clear_selection
-    )
-
-
-def gallery_progress_result(message: str) -> GalleryPostprocessResult:
-    return _mediacontroller().gallery_progress_result(message)
-
-
-def gallery_processed_result(
-    result: Path, option: str, elapsed: float, request: gr.Request
-) -> GalleryPostprocessResult:
-    return _mediacontroller().gallery_processed_result(result, option, elapsed, request)
-
-
-def postprocess_selected_gallery_video(
-    selected_video: str | None,
-    option: str,
-    seed: int,
-    seedvr2_model: str,
-    ltx25_model: str,
-    ltx25_prompt: str,
-    force_offload: bool,
-    split_upscale: bool,
-    split_seconds: float,
-    upscale_resolution: str,
-    request: gr.Request,
-    progress=gr.Progress(track_tqdm=False),
-):
-    return _mediacontroller().postprocess_selected_gallery_video(
-        selected_video,
-        option,
-        seed,
-        seedvr2_model,
-        ltx25_model,
-        ltx25_prompt,
-        force_offload,
-        split_upscale,
-        split_seconds,
-        upscale_resolution,
-        request,
-        progress,
-    )
-
-
-def postprocess_selected_gallery_image(
-    selected_image: str | None,
-    option: str,
-    seed: int,
-    seedvr2_model: str,
-    force_offload: bool,
-    upscale_resolution: str,
-    request: gr.Request,
-    progress=gr.Progress(track_tqdm=False),
-):
-    return _mediacontroller().postprocess_selected_gallery_image(
-        selected_image,
-        option,
-        seed,
-        seedvr2_model,
-        force_offload,
-        upscale_resolution,
-        request,
-        progress,
-    )
-
-
-def postprocess_selected_gallery_media(
-    mode: str,
-    selected_media: str | None,
-    option: str,
-    seed: int,
-    seedvr2_model: str,
-    ltx25_model: str,
-    ltx25_prompt: str,
-    force_offload: bool,
-    split_upscale: bool,
-    split_seconds: float,
-    upscale_resolution: str,
-    request: gr.Request,
-    progress=gr.Progress(track_tqdm=False),
-):
-    return _mediacontroller().postprocess_selected_gallery_media(
-        mode,
-        selected_media,
-        option,
-        seed,
-        seedvr2_model,
-        ltx25_model,
-        ltx25_prompt,
-        force_offload,
-        split_upscale,
-        split_seconds,
-        upscale_resolution,
-        request,
-        progress,
-    )
-
-
-def delete_selected_gallery_video(
-    selected_video: str | None, confirmed: bool
-) -> GalleryMutationResult:
-    return _mediacontroller().delete_selected_gallery_video(selected_video, confirmed)
-
-
-def delete_selected_gallery_media(
-    mode: str, selected_media: str | None, confirmed: bool
-) -> GalleryMediaMutationResult:
-    return _mediacontroller().delete_selected_gallery_media(
-        mode, selected_media, confirmed
-    )
-
-
-def empty_generated_gallery(
-    selected_video: str | None, confirmed: bool
-) -> GalleryMutationResult:
-    return _mediacontroller().empty_generated_gallery(selected_video, confirmed)
-
-
-def empty_generated_media_gallery(
-    mode: str, selected_media: str | None, confirmed: bool
-) -> GalleryMediaMutationResult:
-    return _mediacontroller().empty_generated_media_gallery(
-        mode, selected_media, confirmed
-    )
 
 
 def backend_status() -> str:
@@ -1826,7 +1292,7 @@ def backend_status() -> str:
             vram_text = f" · {vram_total / 2**30:.1f} GiB VRAM"
         else:
             vram_text = ""
-        models = load_model_config()
+        models = MODELS.load_model_config()
         easycache_status = "available" if "EasyCache" in live_nodes else "unavailable"
         fbcache_status = (
             "available" if "H3FirstBlockCache" in live_nodes else "unavailable"
@@ -1886,32 +1352,32 @@ def _generation_services() -> generation_services.GenerationServices:
             resolve_output=resolve_output,
         ),
         models=generation_services.ModelsServices(
-            ensure_audio_vae=ensure_audio_vae,
-            ensure_base_video_vae=ensure_base_video_vae,
-            ensure_h3_latent_upscaler_model=ensure_h3_latent_upscaler_model,
-            ensure_h3_semantic_bridge=ensure_h3_semantic_bridge,
-            ensure_h3_veda_predictor=ensure_h3_veda_predictor,
-            ensure_h3_text_encoder=ensure_h3_text_encoder,
-            ensure_int8_video_vae=ensure_int8_video_vae,
+            ensure_audio_vae=MODELS.ensure_audio_vae,
+            ensure_base_video_vae=MODELS.ensure_base_video_vae,
+            ensure_h3_latent_upscaler_model=MODELS.ensure_h3_latent_upscaler_model,
+            ensure_h3_semantic_bridge=MODELS.ensure_h3_semantic_bridge,
+            ensure_h3_veda_predictor=MODELS.ensure_h3_veda_predictor,
+            ensure_h3_text_encoder=MODELS.ensure_h3_text_encoder,
+            ensure_int8_video_vae=MODELS.ensure_int8_video_vae,
             ensure_lightvae=ensure_lightvae,
-            ensure_ltx25_models=ensure_ltx25_models,
-            ensure_ltx25_ingredients_model=ensure_ltx25_ingredients_model,
-            ensure_ltx25_upscale_models=ensure_ltx25_upscale_models,
-            ensure_music3_models=ensure_music3_models,
-            ensure_qwen_image21_models=ensure_qwen_image21_models,
-            ensure_yue2_models=ensure_yue2_models,
-            ensure_model_keys=lambda keys: _modelcontroller().ensure_model_keys(keys),
-            ensure_profile_model=ensure_profile_model,
-            ensure_seedvr2_upscale_models=ensure_seedvr2_upscale_models,
-            ensure_single_frame_image_vae=ensure_single_frame_image_vae,
-            ensure_trt_video_vae_engine=ensure_trt_video_vae_engine,
-            ensure_turbo_lora=ensure_turbo_lora,
-            load_model_config=load_model_config,
-            missing_ltx25_model_names=missing_ltx25_model_names,
-            missing_music3_model_names=missing_music3_model_names,
-            missing_qwen_image21_model_names=missing_qwen_image21_model_names,
-            missing_yue2_model_names=missing_yue2_model_names,
-            trt_vae_decoder_paths=trt_vae_decoder_paths,
+            ensure_ltx25_models=MODELS.ensure_ltx25_models,
+            ensure_ltx25_ingredients_model=MODELS.ensure_ltx25_ingredients_model,
+            ensure_ltx25_upscale_models=MODELS.ensure_ltx25_upscale_models,
+            ensure_music3_models=MODELS.ensure_music3_models,
+            ensure_qwen_image21_models=MODELS.ensure_qwen_image21_models,
+            ensure_yue2_models=MODELS.ensure_yue2_models,
+            ensure_model_keys=lambda keys: MODELS.ensure_model_keys(keys),
+            ensure_profile_model=MODELS.ensure_profile_model,
+            ensure_seedvr2_upscale_models=MODELS.ensure_seedvr2_upscale_models,
+            ensure_single_frame_image_vae=MODELS.ensure_single_frame_image_vae,
+            ensure_trt_video_vae_engine=MODELS.ensure_trt_video_vae_engine,
+            ensure_turbo_lora=MODELS.ensure_turbo_lora,
+            load_model_config=MODELS.load_model_config,
+            missing_ltx25_model_names=MODELS.missing_ltx25_model_names,
+            missing_music3_model_names=MODELS.missing_music3_model_names,
+            missing_qwen_image21_model_names=MODELS.missing_qwen_image21_model_names,
+            missing_yue2_model_names=MODELS.missing_yue2_model_names,
+            trt_vae_decoder_paths=MODELS.trt_vae_decoder_paths,
             unload_comfy_models=unload_comfy_models,
             h3_text_encoder_settings=h3_text_encoder_settings,
             model_file_is_ready=model_file_is_ready,
@@ -2130,7 +1596,7 @@ drama3_handlers = Drama3Handlers(Drama3Services(
 def _dubbing_media(mode):
     """Newest managed media of one kind for Dub & Translate's source picker."""
     inventory = _catalog_inventory(mode, DUBBING_LIBRARY_LIMIT)
-    return list(inventory.paths) if inventory is not None else list_media_paths(mode)
+    return list(inventory.paths) if inventory is not None else MEDIA.list_media_paths(mode)
 
 
 dubbing_handlers = DubbingHandlers(DubbingServices(
@@ -2150,7 +1616,7 @@ def _engine_deps():
         generation_services=lambda: _generation_services(),
         stage_file=lambda *args, **kwargs: stage_file(*args, **kwargs),
         interrupt=interrupt,
-        models=lambda: _modelcontroller(),
+        models=lambda: MODELS,
         resolve_result=lambda path: resolve_result_path(path),
     )
 
@@ -2429,7 +1895,7 @@ def generate_with_ui_defaults(
     )
     for video, status in updates:
         download_url = (
-            absolute_video_download_url(video, request) if video is not None else None
+            MEDIA.absolute_video_download_url(video, request) if video is not None else None
         )
         yield (download_url, status)
 
@@ -2662,10 +2128,10 @@ def build_ui() -> gr.Blocks:
             backend_status=backend_status,
             compact_backend_status=compact_backend_status,
             compact_settings_summary=compact_settings_summary,
-            compile_trt_video_vae=compile_trt_video_vae,
-            delete_selected_gallery_media=delete_selected_gallery_media,
+            compile_trt_video_vae=MODELS.compile_trt_video_vae,
+            delete_selected_gallery_media=MEDIA.delete_selected_gallery_media,
             describe_settings=describe_settings,
-            empty_generated_media_gallery=empty_generated_media_gallery,
+            empty_generated_media_gallery=MEDIA.empty_generated_media_gallery,
             enhance_h3_prompt=enhance_h3_prompt,
             fbcache_preset_defaults=fbcache_preset_defaults,
             generate_for_ui=generate_for_ui,
@@ -2675,19 +2141,19 @@ def build_ui() -> gr.Blocks:
             engine_deps=_engine_deps(),
             generation_readiness_state=generation_readiness_state,
             image_vae_frame_updates=image_vae_frame_updates,
-            import_gallery_media=import_gallery_media,
+            import_gallery_media=MEDIA.import_gallery_media,
             input_image_frame_preset_updates=input_image_frame_preset_updates,
             interrupt=interrupt,
             latent_upscale_layout_updates=latent_upscale_layout_updates,
             latent_upscale_method_layout_update=latent_upscale_method_layout_update,
-            list_media_paths=list_media_paths,
-            gallery_media_download_path=gallery_media_download_path,
+            list_media_paths=MEDIA.list_media_paths,
+            gallery_media_download_path=MEDIA.gallery_media_download_path,
             mode_help=mode_help,
-            postprocess_selected_gallery_media=postprocess_selected_gallery_media,
+            postprocess_selected_gallery_media=MEDIA.postprocess_selected_gallery_media,
             prompt_writer_backend_visibility=prompt_writer_backend_visibility,
             reference_prompt_help=reference_prompt_help,
             refresh_backend_views=refresh_backend_views,
-            refresh_media_page=refresh_media_page,
+            refresh_media_page=MEDIA.refresh_media_page,
             render_snapshot=render_snapshot,
             resolution_choice_updates=resolution_choice_updates,
             resolution_control_updates=resolution_control_updates,
@@ -2698,7 +2164,7 @@ def build_ui() -> gr.Blocks:
             result_settings_for_media=result_settings_for_media,
             save_selected_image_frames=save_selected_image_frames,
             select_all_image_frames=select_all_image_frames,
-            select_gallery_media=select_gallery_media,
+            select_gallery_media=MEDIA.select_gallery_media,
             unload_all_models=unload_all_models,
             upscale_selected_input_images=upscale_selected_input_images,
         ),

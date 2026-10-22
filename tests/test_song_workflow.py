@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from tests.app_targets import owner
 import inspect
 import tempfile
 import unittest
@@ -347,9 +348,9 @@ class YuE2ScoreTests(unittest.TestCase):
                 return {"outputs": {node: {"text": ["X:1\nK:G\nGABc|"]}}}
 
             for name in ("unload_prompt_rewriter", "ensure_yue2_models"):
-                stack.enter_context(patch.object(app, name))
+                stack.enter_context(patch.object(owner(app, name), name))
             for name in ("missing_yue2_model_names", "poll_comfy_progress"):
-                stack.enter_context(patch.object(app, name, return_value=[]))
+                stack.enter_context(patch.object(owner(app, name), name, return_value=[]))
             stack.enter_context(patch.object(
                 app, "object_info",
                 return_value={k: {} for k in required_yue2_nodes(tiled_decode=True, generate_abc=True)},

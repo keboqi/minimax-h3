@@ -53,12 +53,12 @@ class MediaDeletionTests(TestCase):
         for mode in ("Video", "Image", "Audio"):
             with self.subTest(mode=mode):
                 source, preview = self.create_media(mode)
-                result = app.delete_selected_gallery_media(mode, str(source), False)
+                result = app.MEDIA.delete_selected_gallery_media(mode, str(source), False)
                 self.assertIn("Confirm permanent deletion", result[2])
                 self.assertTrue(source.exists())
                 self.assertTrue(preview.exists())
                 self.assertTrue(snapshot_path(source).exists())
-                result = app.delete_selected_gallery_media(mode, str(source), True)
+                result = app.MEDIA.delete_selected_gallery_media(mode, str(source), True)
                 self.assertIn(f"Deleted `{source.name}`", result[2])
                 self.assertFalse(source.exists())
                 self.assertFalse(preview.exists())
@@ -74,9 +74,9 @@ class MediaDeletionTests(TestCase):
                 source, preview = self.create_media(mode)
                 other_mode = "Image" if mode != "Image" else "Audio"
                 retained, retained_preview = self.create_media(other_mode, "retained")
-                app.empty_generated_media_gallery(mode, str(source), False)
+                app.MEDIA.empty_generated_media_gallery(mode, str(source), False)
                 self.assertTrue(source.exists())
-                result = app.empty_generated_media_gallery(mode, str(source), True)
+                result = app.MEDIA.empty_generated_media_gallery(mode, str(source), True)
                 self.assertIn("Deleted 1 generated", result[2])
                 self.assertFalse(source.exists())
                 self.assertFalse(preview.exists())
@@ -84,7 +84,7 @@ class MediaDeletionTests(TestCase):
                 self.assertTrue(retained.exists())
                 self.assertTrue(retained_preview.exists())
                 self.assertEqual(self.index.inventory(mode).total, 0)
-                app.delete_selected_gallery_media(other_mode, str(retained), True)
+                app.MEDIA.delete_selected_gallery_media(other_mode, str(retained), True)
 
     def test_cleanup_failure_still_retires_deleted_original(self):
         source, _ = self.create_media("Image")
@@ -96,7 +96,7 @@ class MediaDeletionTests(TestCase):
             return original_unlink(path, *args, **kwargs)
 
         with patch.object(Path, "unlink", unlink):
-            result = app.delete_selected_gallery_media("Image", str(source), True)
+            result = app.MEDIA.delete_selected_gallery_media("Image", str(source), True)
         self.assertIn("Delete failed: sidecar is locked", result[2])
         self.assertFalse(source.exists())
         self.assertEqual(self.index.inventory("Image").total, 0)
@@ -104,7 +104,7 @@ class MediaDeletionTests(TestCase):
     def test_unmanaged_paths_are_rejected(self):
         outside = self.root / "outside.png"
         Image.new("RGB", (32, 24)).save(outside)
-        result = app.delete_selected_gallery_media("Image", str(outside), True)
+        result = app.MEDIA.delete_selected_gallery_media("Image", str(outside), True)
         self.assertIn("Delete failed", result[2])
         self.assertTrue(outside.exists())
 

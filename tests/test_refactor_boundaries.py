@@ -1,5 +1,8 @@
 """Integration regressions for extracted configuration, media, and generation."""
 
+import h3_app.gallery_store
+import h3_app.model_types
+from tests.app_targets import owner
 import h3_app.catalog as _catalog
 import h3_app.workflows.ltx as _ltx_workflow
 import h3_app.workflows.music as _music_workflow
@@ -270,10 +273,10 @@ class MediaPublicationTests(unittest.TestCase):
             self.assertEqual(thumbnail.stat().st_mtime_ns, cached_mtime)
 
             with (
-                patch.object(app, "gallery_image_paths", return_value=[source]),
+                patch.object(app.MEDIA, "gallery_image_paths", return_value=[source]),
                 patch.object(app, "_runtime_config", return_value=config),
             ):
-                items, paths, _detail = app.refresh_media_gallery("Image")
+                items, paths, _detail = app.MEDIA.refresh_media_gallery("Image")
             self.assertEqual(items[0][0], str(thumbnail))
             self.assertEqual(paths, [str(source)])
 
@@ -290,14 +293,13 @@ class MediaPublicationTests(unittest.TestCase):
             source.parent.mkdir(parents=True)
             source.write_bytes(b"fixture")
             with (
-                patch.object(app, "gallery_video_paths", return_value=[source]),
-                patch.object(app, "gallery_thumbnail", return_value=None),
-                patch.object(
-                    app, "gallery_resolution_text", return_value="unavailable"
+                patch.object(app.MEDIA, "gallery_video_paths", return_value=[source]),
+                patch.object(app.MEDIA, "gallery_thumbnail", return_value=None),
+                patch.object(app.MEDIA, "gallery_resolution_text", return_value="unavailable"
                 ),
                 patch.object(app, "_runtime_config", return_value=config),
             ):
-                items, paths, _detail = app.refresh_gallery()
+                items, paths, _detail = app.MEDIA.refresh_gallery()
             self.assertEqual(paths, [str(source)])
             self.assertNotEqual(items[0][0], str(source))
             self.assertEqual(Path(items[0][0]).suffix, ".png")
@@ -317,30 +319,29 @@ class MediaPublicationTests(unittest.TestCase):
                 source.write_bytes(b"fixture")
 
             with (
-                patch.object(app, "gallery_video_paths", return_value=videos),
-                patch.object(
-                    app, "gallery_thumbnail", return_value=root / "poster.jpg"
+                patch.object(app.MEDIA, "gallery_video_paths", return_value=videos),
+                patch.object(app.MEDIA, "gallery_thumbnail", return_value=root / "poster.jpg"
                 ) as poster,
-                patch.object(app, "gallery_resolution_text") as video_resolution,
+                patch.object(app.MEDIA, "gallery_resolution_text") as video_resolution,
                 patch.object(app, "_runtime_config", return_value=config),
             ):
-                items, paths, status = app.refresh_gallery()
+                items, paths, status = app.MEDIA.refresh_gallery()
                 self.assertEqual((len(items), len(paths)), (48, 48))
                 self.assertIn("48 of 120", status)
                 self.assertEqual(poster.call_count, 48)
                 video_resolution.assert_not_called()
 
             with (
-                patch.object(app, "gallery_image_paths", return_value=images),
+                patch.object(app.MEDIA, "gallery_image_paths", return_value=images),
                 patch.object(
-                    app.gallery_store,
+                    h3_app.gallery_store,
                     "gallery_image_thumbnail",
                     return_value=root / "poster.jpg",
                 ) as poster,
-                patch.object(app, "gallery_image_resolution_text") as image_resolution,
+                patch.object(app.MEDIA, "gallery_image_resolution_text") as image_resolution,
                 patch.object(app, "_runtime_config", return_value=config),
             ):
-                items, paths, status = app.refresh_media_gallery("Image", 96)
+                items, paths, status = app.MEDIA.refresh_media_gallery("Image", 96)
                 self.assertEqual((len(items), len(paths)), (96, 96))
                 self.assertIn("96 of 120", status)
                 self.assertEqual(poster.call_count, 96)
@@ -365,10 +366,10 @@ class MediaPublicationTests(unittest.TestCase):
                     return video.with_suffix(".jpg")
 
                 with (
-                    patch.object(app, "gallery_video_paths", return_value=videos),
-                    patch.object(app, "gallery_thumbnail", side_effect=poster),
+                    patch.object(app.MEDIA, "gallery_video_paths", return_value=videos),
+                    patch.object(app.MEDIA, "gallery_thumbnail", side_effect=poster),
                 ):
-                    items, paths, _ = app.refresh_gallery()
+                    items, paths, _ = app.MEDIA.refresh_gallery()
                 self.assertEqual(paths, [str(video) for video in videos])
                 self.assertEqual(
                     [item[0] for item in items],
@@ -385,24 +386,23 @@ class MediaPublicationTests(unittest.TestCase):
             image = root / "image.png"
             image.write_bytes(b"fixture")
             with (
-                patch.object(
-                    app, "gallery_image_paths", side_effect=AssertionError("rescan")
+                patch.object(app.MEDIA, "gallery_image_paths", side_effect=AssertionError("rescan")
                 ),
                 patch.object(
-                    app.gallery_store,
+                    h3_app.gallery_store,
                     "gallery_image_thumbnail",
                     return_value=root / "poster.jpg",
                 ),
             ):
-                page = app.refresh_media_page(
+                page = app.MEDIA.refresh_media_page(
                     "Image", paths=AssetInventory("Image", (image,))
                 )
                 self.assertEqual(page.paths, (str(image),))
-            with patch.object(app, "gallery_image_paths", return_value=[]):
-                page = app.refresh_media_page("Image", paths={root / "outside.png"})
+            with patch.object(app.MEDIA, "gallery_image_paths", return_value=[]):
+                page = app.MEDIA.refresh_media_page("Image", paths={root / "outside.png"})
                 self.assertEqual(page.paths, ())
             with self.assertRaises(ValueError):
-                app.refresh_media_page("Video", paths=AssetInventory("Image", (image,)))
+                app.MEDIA.refresh_media_page("Video", paths=AssetInventory("Image", (image,)))
 
     def test_processed_and_copied_media_retain_provenance(self):
         with TemporaryDirectory() as directory:
@@ -497,7 +497,7 @@ class GenerationIntegrationTests(unittest.TestCase):
             source.write_bytes(b"complete")
             models = app.ModelConfig(
                 {
-                    "speed": app.ModelProfile(
+                    "speed": h3_app.model_types.ModelProfile(
                         "Speed", "fl2va.safetensors", "ref2va.safetensors"
                     )
                 },
@@ -533,7 +533,7 @@ class GenerationIntegrationTests(unittest.TestCase):
                         unload_prompt_rewriter=None,
                     )
                     for name, value in returns.items():
-                        stack.enter_context(patch.object(app, name, return_value=value))
+                        stack.enter_context(patch.object(owner(app, name), name, return_value=value))
                     stack.enter_context(
                         patch(
                             "h3_app.generation.preparation.required_nodes_for",
@@ -592,13 +592,13 @@ class GenerationIntegrationTests(unittest.TestCase):
                 "ensure_ltx25_models",
                 "ensure_music3_models",
             ):
-                stack.enter_context(patch.object(app, name))
+                stack.enter_context(patch.object(owner(app, name), name))
             for name in (
                 "missing_ltx25_model_names",
                 "missing_music3_model_names",
                 "poll_comfy_progress",
             ):
-                stack.enter_context(patch.object(app, name, return_value=[]))
+                stack.enter_context(patch.object(owner(app, name), name, return_value=[]))
             stack.enter_context(
                 patch.object(
                     app,
@@ -616,7 +616,7 @@ class GenerationIntegrationTests(unittest.TestCase):
             )
             stack.enter_context(patch.object(app, "wait_for_history", return_value={}))
             for name in ("resolve_output", "resolve_audio_output"):
-                stack.enter_context(patch.object(app, name, return_value=result))
+                stack.enter_context(patch.object(owner(app, name), name, return_value=result))
             from h3_ui.engines.ltx import LtxHandlers
             from h3_ui.engines.music import MusicHandlers
 

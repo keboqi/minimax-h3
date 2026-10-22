@@ -1,5 +1,6 @@
 """Tiled LTX routing and frame/audio preservation without GPU inference."""
 
+from tests.app_targets import owner
 import ast
 from contextlib import ExitStack
 from pathlib import Path
@@ -93,11 +94,11 @@ class TiledUpscaleTests(unittest.TestCase):
                         "cleanup_upscale_clip_batch": None,
                         "gallery_processed_result": "complete",
                     }
-                    mocks = {name: stack.enter_context(patch.object(app, name, return_value=value))
+                    mocks = {name: stack.enter_context(patch.object(owner(app, name), name, return_value=value))
                              for name, value in values.items()}
                     build = stack.enter_context(patch.object(app, "build_upscale_graph", wraps=app.build_upscale_graph))
                     if entry == "media":
-                        updates = list(app.postprocess_selected_gallery_video(
+                        updates = list(app.MEDIA.postprocess_selected_gallery_video(
                             str(source), LTX25_TILED_UPSCALE, 42, "unused",
                             DEFAULT_LTX25_MODEL, "Subtle natural texture", False,
                             split, 5.0, "3840 × 3840", request=Mock(), progress=Mock(),

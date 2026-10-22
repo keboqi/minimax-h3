@@ -1,5 +1,6 @@
 """Behavioral regressions for resource selection, maintenance, and execution."""
 
+import h3_app.model_types
 import inspect
 import json
 import subprocess
@@ -33,7 +34,7 @@ class DecoderTests(unittest.TestCase):
         from h3_ui import application as app
 
         models = app.ModelConfig(
-            {"speed": app.ModelProfile("Speed", "fl", "ref")},
+            {"speed": h3_app.model_types.ModelProfile("Speed", "fl", "ref")},
             "speed", "text", "video", "audio", image_vae_500k="image",
         )
         cases = [
@@ -171,12 +172,10 @@ class DecoderTests(unittest.TestCase):
             )
             with (
                 patch.object(app, "unload_prompt_rewriter"),
-                patch.object(
-                    app,
-                    "load_model_config",
+                patch.object(app.MODELS, "load_model_config",
                     return_value=app.ModelConfig(
                         {
-                            "speed": app.ModelProfile(
+                            "speed": h3_app.model_types.ModelProfile(
                                 "Speed", "fl.safetensors", "ref.safetensors"
                             )
                         },
@@ -193,23 +192,16 @@ class DecoderTests(unittest.TestCase):
                     return_value=("text_encoder", "encoder", False),
                 ),
                 patch.object(app, "model_file_is_ready", return_value=True),
-                patch.object(
-                    app, "ensure_h3_text_encoder", return_value=("encoder", False)
+                patch.object(app.MODELS, "ensure_h3_text_encoder", return_value=("encoder", False)
                 ),
-                patch.object(app, "ensure_single_frame_image_vae"),
-                patch.object(
-                    app,
-                    "ensure_trt_video_vae_engine",
+                patch.object(app.MODELS, "ensure_single_frame_image_vae"),
+                patch.object(app.MODELS, "ensure_trt_video_vae_engine",
                     side_effect=AssertionError("unused TRT"),
                 ) as trt,
-                patch.object(
-                    app,
-                    "ensure_int8_video_vae",
+                patch.object(app.MODELS, "ensure_int8_video_vae",
                     side_effect=AssertionError("unused INT8"),
                 ) as int8,
-                patch.object(
-                    app,
-                    "ensure_profile_model",
+                patch.object(app.MODELS, "ensure_profile_model",
                     side_effect=H3Error("Reached model preparation"),
                 ),
             ):

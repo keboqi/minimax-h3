@@ -269,14 +269,10 @@ class UiContractTests(unittest.TestCase):
             with (
                 mock.patch.object(JOBS, "store", store),
                 mock.patch.object(gradio_app, "_runtime_config", return_value=config),
-                mock.patch.object(
-                    gradio_app,
-                    "gallery_image_paths",
+                mock.patch.object(gradio_app.MEDIA, "gallery_image_paths",
                     side_effect=AssertionError("rescan"),
                 ),
-                mock.patch.object(
-                    gradio_app,
-                    "gallery_video_paths",
+                mock.patch.object(gradio_app.MEDIA, "gallery_video_paths",
                     side_effect=AssertionError("rescan"),
                 ),
             ):
@@ -474,7 +470,7 @@ class UiContractTests(unittest.TestCase):
             if option != _catalog.LTX25_CQ_ENHANCER:
                 self.assertIn("Preserves source resolution", updates[2]["info"])
         self.assertEqual(
-            [u["visible"] for u in callback(gradio_app.LTX25_UPSCALE)],
+            [u["visible"] for u in callback(_catalog.LTX25_UPSCALE)],
             [True, False, True, True, True, True, True],
         )
         self.assertIn(_catalog.LTX25_TILED_UPSCALE, choices)
@@ -491,7 +487,7 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(len(split_controls), 2)
         self.assertTrue(all(c["props"]["value"] is False for c in split_controls))
         self.assertEqual(
-            [u["visible"] for u in callback(gradio_app.SEEDVR2_UPSCALE)],
+            [u["visible"] for u in callback(_catalog.SEEDVR2_UPSCALE)],
             [True, True, False, False, False, True, False],
         )
         self.assertNotIn(_catalog.LTX25_CQ_IMAGE_ENHANCER, choices)
@@ -536,7 +532,7 @@ class UiContractTests(unittest.TestCase):
         self.assertFalse(updates[2]["visible"])
         self.assertTrue(updates[5]["visible"])
         self.assertEqual(updates[7]["choices"], [
-            gradio_app.SEEDVR2_UPSCALE, _catalog.LTX25_CQ_IMAGE_ENHANCER,
+            _catalog.SEEDVR2_UPSCALE, _catalog.LTX25_CQ_IMAGE_ENHANCER,
         ])
         self.assertTrue(updates[9]["visible"])
 
@@ -1468,7 +1464,7 @@ class UiContractTests(unittest.TestCase):
             ) as build,
         ):
             self.assertTrue(
-                gradio_app.ensure_trt_video_vae_engine(models, progress=progress)
+                gradio_app.MODELS.ensure_trt_video_vae_engine(models, progress=progress)
             )
         provision.assert_has_calls(
             [
@@ -1482,7 +1478,7 @@ class UiContractTests(unittest.TestCase):
             models,
             progress,
             runtime=gradio_app._runtime_config(),
-            release_backend=gradio_app.unload_comfy_models,
+            release_backend=gradio_app.MODELS.services.unload_comfy_models,
         )
 
         with (
@@ -1497,10 +1493,10 @@ class UiContractTests(unittest.TestCase):
             ) as build,
         ):
             self.assertFalse(
-                gradio_app.ensure_trt_video_vae_engine(models, progress=progress)
+                gradio_app.MODELS.ensure_trt_video_vae_engine(models, progress=progress)
             )
             self.assertTrue(
-                gradio_app.ensure_trt_video_vae_engine(
+                gradio_app.MODELS.ensure_trt_video_vae_engine(
                     models, force=True, progress=progress
                 )
             )
@@ -1519,16 +1515,15 @@ class UiContractTests(unittest.TestCase):
             models,
             progress,
             runtime=gradio_app._runtime_config(),
-            release_backend=gradio_app.unload_comfy_models,
+            release_backend=gradio_app.MODELS.services.unload_comfy_models,
         )
 
         with (
-            mock.patch.object(gradio_app, "load_model_config", return_value=models),
-            mock.patch.object(
-                gradio_app, "ensure_trt_video_vae_engine", return_value=True
+            mock.patch.object(gradio_app.MODELS, "load_model_config", return_value=models),
+            mock.patch.object(gradio_app.MODELS, "ensure_trt_video_vae_engine", return_value=True
             ) as ensure_engine,
         ):
-            status = gradio_app.compile_trt_video_vae(progress=progress)
+            status = gradio_app.MODELS.compile_trt_video_vae(progress=progress)
             self.assertIn("compiled and ready to use", status)
             ensure_engine.assert_called_once_with(models, force=True, progress=progress)
 
@@ -1780,7 +1775,7 @@ class UiContractTests(unittest.TestCase):
             inventory.assert_called_once_with("Image", "old", False, limit=48)
             self.assertEqual([update["visible"] for update in switched[:3]], [False, True, False])
             self.assertEqual(switched[7]["choices"], [
-                gradio_app.SEEDVR2_UPSCALE, _catalog.LTX25_CQ_IMAGE_ENHANCER,
+                _catalog.SEEDVR2_UPSCALE, _catalog.LTX25_CQ_IMAGE_ENHANCER,
             ])
             inventory.reset_mock()
             filtered = event.fn(

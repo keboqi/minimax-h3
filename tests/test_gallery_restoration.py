@@ -1,5 +1,7 @@
 """Gallery restoration routing, adapter downloads, and Comfy graph contracts."""
 
+import h3_app.catalog
+from tests.app_targets import owner
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,25 +38,22 @@ class GalleryRestorationTests(unittest.TestCase):
             ("Audio", [False, False, True]),
         ):
             with self.subTest(mode=mode):
-                updates = app.gallery_preview_updates(
+                updates = app.MEDIA.gallery_preview_updates(
                     mode, video="video.mp4", image="image.png", audio="audio.mp3"
                 )
                 self.assertEqual([item["visible"] for item in updates], expected)
 
     def test_select_gallery_image_hides_video_preview(self):
         with (
-            patch.object(
-                app, "managed_gallery_image_path", return_value=Path("image.png")
+            patch.object(app.MEDIA, "managed_gallery_image_path", return_value=Path("image.png")
             ),
-            patch.object(
-                app, "gallery_image_resolution_text", return_value="1024×1024"
+            patch.object(app.MEDIA, "gallery_image_resolution_text", return_value="1024×1024"
             ),
-            patch.object(
-                app, "absolute_gallery_media_download_url", return_value="/image"
+            patch.object(app.MEDIA, "absolute_gallery_media_download_url", return_value="/image"
             ),
             patch.object(Path, "stat", return_value=SimpleNamespace(st_mtime_ns=1, st_size=2)),
         ):
-            updates = app.select_gallery_media(
+            updates = app.MEDIA.select_gallery_media(
                 "Image", ["image.png"], SimpleNamespace(request=SimpleNamespace(base_url="https://example.com/")), SimpleNamespace(index=0)
             )
         self.assertEqual(
@@ -66,17 +65,14 @@ class GalleryRestorationTests(unittest.TestCase):
 
     def test_processed_image_hides_video_preview(self):
         with (
-            patch.object(
-                app, "refresh_media_gallery", return_value=([], [], "1 image")
+            patch.object(app.MEDIA, "refresh_media_gallery", return_value=([], [], "1 image")
             ),
-            patch.object(
-                app, "absolute_gallery_media_download_url", return_value="/image"
+            patch.object(app.MEDIA, "absolute_gallery_media_download_url", return_value="/image"
             ),
-            patch.object(
-                app, "gallery_image_resolution_text", return_value="1024×1024"
+            patch.object(app.MEDIA, "gallery_image_resolution_text", return_value="1024×1024"
             ),
         ):
-            updates = app.gallery_media_processed_result(
+            updates = app.MEDIA.gallery_media_processed_result(
                 "Image", Path("image.png"), "Upscale", 1.0, Mock()
             )
         self.assertEqual(
@@ -94,13 +90,11 @@ class GalleryRestorationTests(unittest.TestCase):
             False,
             "complete",
         )
-        with patch.object(
-            app,
-            "postprocess_selected_gallery_video",
+        with patch.object(app.MEDIA, "postprocess_selected_gallery_video",
             return_value=iter([legacy_update]),
         ):
             updates = list(
-                app.postprocess_selected_gallery_media(
+                app.MEDIA.postprocess_selected_gallery_media(
                     "Video",
                     "source.mp4",
                     "method",
@@ -154,7 +148,7 @@ class GalleryRestorationTests(unittest.TestCase):
                 "gallery_media_processed_result": "complete",
             }
             mocks = {
-                name: stack.enter_context(patch.object(app, name, return_value=value))
+                name: stack.enter_context(patch.object(owner(app, name), name, return_value=value))
                 for name, value in returns.items()
             }
             build = stack.enter_context(
@@ -166,9 +160,9 @@ class GalleryRestorationTests(unittest.TestCase):
                 )
             )
             updates = list(
-                app.postprocess_selected_gallery_image(
+                app.MEDIA.postprocess_selected_gallery_image(
                     str(source),
-                    app.SEEDVR2_UPSCALE,
+                    h3_app.catalog.SEEDVR2_UPSCALE,
                     42,
                     app.DEFAULT_SEEDVR2_MODEL,
                     True,
@@ -353,7 +347,7 @@ class GalleryRestorationTests(unittest.TestCase):
                     }
                     for name, value in returns.items():
                         mocks[name] = stack.enter_context(
-                            patch.object(app, name, return_value=value)
+                            patch.object(owner(app, name), name, return_value=value)
                         )
                     build = stack.enter_context(
                         patch.object(
@@ -361,7 +355,7 @@ class GalleryRestorationTests(unittest.TestCase):
                         )
                     )
                     updates = list(
-                        app.postprocess_selected_gallery_video(
+                        app.MEDIA.postprocess_selected_gallery_video(
                             str(source),
                             option,
                             42,

@@ -1,5 +1,7 @@
 """Focused CPU contracts retained from the former launcher self-test."""
 
+import h3_app.gallery_store
+import h3_app.model_types
 import inspect as _inspect
 import json as _json
 import unittest
@@ -163,7 +165,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
             "h3_app.model_service.stale_model_keys", return_value=[]
         ) as stale_turbo_models:
             self.assertIs(
-                app.ensure_turbo_lora(
+                app.MODELS.ensure_turbo_lora(
                     fake, _catalog.LIGHTX2V_8STEP_TURBO, "Reference media"
                 ),
                 False,
@@ -295,9 +297,9 @@ class ApplicationAdaptersTests(unittest.TestCase):
         )
         for label in app.LTX25_WORKFLOWS:
             self.assertLessEqual(
-                set(app.ltx25_workflow_model_keys(label)), set(app.MODEL_SPECS)
+                set(h3_app.model_types.ltx25_workflow_model_keys(label)), set(_models.MODEL_SPECS)
             )
-            self.assertIn("/ltx25-workflows/", app.render_ltx25_workflow_details(label))
+            self.assertIn("/ltx25-workflows/", app.MODELS.render_ltx25_workflow_details(label))
         audio_label = next(
             label
             for label, entry in app.LTX25_WORKFLOWS.items()
@@ -305,7 +307,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
         )
         self.assertFalse(
             {"ltx25_video_vae", "ltx25_video_vae_full"}
-            & set(app.ltx25_workflow_model_keys(audio_label))
+            & set(h3_app.model_types.ltx25_workflow_model_keys(audio_label))
         )
         video_label = next(
             label
@@ -314,20 +316,20 @@ class ApplicationAdaptersTests(unittest.TestCase):
         )
         self.assertLessEqual(
             {"ltx25_video_vae", "ltx25_video_vae_full"},
-            set(app.ltx25_workflow_model_keys(video_label)),
+            set(h3_app.model_types.ltx25_workflow_model_keys(video_label)),
         )
-        inventory = app.render_ltx25_official_model_inventory()
+        inventory = app.MODELS.render_ltx25_official_model_inventory()
         self.assertTrue(
             all(
                 (
-                    app.MODEL_SPECS[key].repo_id in inventory
+                    _models.MODEL_SPECS[key].repo_id in inventory
                     for key in _models.LTX25_ICLORA_MODEL_KEYS
                 )
             )
         )
         self.assertLessEqual(
             set(_models.LTX25_ICLORA_MODEL_KEYS),
-            set(app.ltx25_official_inventory_keys()),
+            set(h3_app.model_types.ltx25_official_inventory_keys()),
         )
 
     def test_input_image_upscale_dimensions(self):
@@ -496,8 +498,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
         self.assertEqual(unload_status, "refreshed backend")
         captured_api_call: dict[str, app.Any] = {}
         original_generate = vars(app)["generate"]
-        original_download_url = vars(app)["absolute_video_download_url"]
-
+        
         def fake_generate(*args: app.Any, **kwargs: app.Any):
             captured_api_call["args"] = args
             captured_api_call["kwargs"] = kwargs
@@ -507,7 +508,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
             return f"https://example.test/downloads/{video}"
 
         vars(app)["generate"] = fake_generate
-        vars(app)["absolute_video_download_url"] = fake_download_url
+        app.MEDIA.absolute_video_download_url = fake_download_url
         try:
             self.assertEqual(
                 list(app.generate_with_ui_defaults("API prompt", object())),
@@ -515,7 +516,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
             )
         finally:
             vars(app)["generate"] = original_generate
-            vars(app)["absolute_video_download_url"] = original_download_url
+            del app.MEDIA.absolute_video_download_url
         self.assertEqual(captured_api_call["args"], ())
         api_kwargs = captured_api_call["kwargs"]
         self.assertEqual(api_kwargs["prompt"], "API prompt")
@@ -534,7 +535,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
             all((api_kwargs[f"ref_audio_{index}"] is None for index in range(1, 4)))
         )
         self.assertEqual(
-            app.video_download_path(app.OUTPUT_DIR / "h3" / "result video.mp4"),
+            app.MEDIA.video_download_path(app.OUTPUT_DIR / "h3" / "result video.mp4"),
             "/downloads/comfy/h3/result%20video.mp4",
         )
 
@@ -542,8 +543,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
         original_output_dir = vars(app)["OUTPUT_DIR"]
         original_outputs_dir = vars(app)["OUTPUTS_DIR"]
         original_thumbnails_dir = vars(app)["GALLERY_THUMBNAILS_DIR"]
-        original_gallery_thumbnail = vars(app)["gallery_thumbnail"]
-        original_gallery_video_resolution = vars(app.gallery_store)[
+        original_gallery_video_resolution = vars(h3_app.gallery_store)[
             "gallery_video_resolution"
         ]
         with app.tempfile.TemporaryDirectory() as gallery_temp:
@@ -557,8 +557,8 @@ class ApplicationAdaptersTests(unittest.TestCase):
             vars(app)["OUTPUT_DIR"] = comfy_test_output
             vars(app)["OUTPUTS_DIR"] = gradio_test_output
             vars(app)["GALLERY_THUMBNAILS_DIR"] = gradio_test_output / ".thumbs"
-            vars(app)["gallery_thumbnail"] = lambda _video: None
-            vars(app.gallery_store)["gallery_video_resolution"] = (
+            app.MEDIA.gallery_thumbnail = lambda _video: None
+            vars(h3_app.gallery_store)["gallery_video_resolution"] = (
                 lambda _video, **_kwargs: (864, 480)
             )
             try:
@@ -568,18 +568,18 @@ class ApplicationAdaptersTests(unittest.TestCase):
                 ltx25_video.parent.mkdir()
                 h3_video.write_bytes(b"h3")
                 ltx25_video.write_bytes(b"ltx25")
-                self.assertEqual(len(app.gallery_video_paths(limit=1)), 1)
-                self.assertEqual(len(app.gallery_video_paths(limit=None)), 3)
+                self.assertEqual(len(app.MEDIA.gallery_video_paths(limit=1)), 1)
+                self.assertEqual(len(app.MEDIA.gallery_video_paths(limit=None)), 3)
                 discovered_families = {
-                    app.generated_video_family(video)
-                    for video in app.gallery_video_paths()
+                    app.MEDIA.generated_video_family(video)
+                    for video in app.MEDIA.gallery_video_paths()
                 }
                 self.assertLessEqual(
                     {"MiniMax H3", "LTX-2.5", "Post-processed"}, discovered_families
                 )
                 h3_video.unlink()
                 ltx25_video.unlink()
-                gallery_items, gallery_paths, gallery_detail = app.refresh_gallery()
+                gallery_items, gallery_paths, gallery_detail = app.MEDIA.refresh_gallery()
 
                 class FakeGalleryRequest:
                     class request:
@@ -589,17 +589,17 @@ class ApplicationAdaptersTests(unittest.TestCase):
                     index = 0
 
                 gallery_play_url, gallery_download_link, selected_video = (
-                    app.select_gallery_video(
+                    app.MEDIA.select_gallery_video(
                         gallery_paths,
                         FakeGalleryRequest(),  # type: ignore[arg-type]
                         FakeSelectEvent(),  # type: ignore[arg-type]
                     )
                 )
-                unconfirmed_delete = app.delete_selected_gallery_video(
+                unconfirmed_delete = app.MEDIA.delete_selected_gallery_video(
                     selected_video, False
                 )
                 fallback_exists_after_unconfirmed = fallback_video.exists()
-                confirmed_delete = app.delete_selected_gallery_video(
+                confirmed_delete = app.MEDIA.delete_selected_gallery_video(
                     selected_video, True
                 )
                 fallback_exists_after_delete = fallback_video.exists()
@@ -608,16 +608,16 @@ class ApplicationAdaptersTests(unittest.TestCase):
                 empty_video_2 = gradio_test_output / "empty-2.mp4"
                 empty_video_1.write_bytes(b"test")
                 empty_video_2.write_bytes(b"test")
-                unconfirmed_empty = app.empty_generated_gallery(None, False)
+                unconfirmed_empty = app.MEDIA.empty_generated_gallery(None, False)
                 empty_exists_after_unconfirmed = (
                     empty_video_1.exists() and empty_video_2.exists()
                 )
-                confirmed_empty = app.empty_generated_gallery(None, True)
+                confirmed_empty = app.MEDIA.empty_generated_gallery(None, True)
                 empty_exists_after_delete = (
                     empty_video_1.exists() or empty_video_2.exists()
                 )
                 try:
-                    app.managed_video_path(
+                    app.MEDIA.managed_video_path(
                         gallery_root / "outside.mp4", require_file=False
                     )
                     raise AssertionError("Unmanaged gallery path was accepted")
@@ -627,8 +627,8 @@ class ApplicationAdaptersTests(unittest.TestCase):
                 vars(app)["OUTPUT_DIR"] = original_output_dir
                 vars(app)["OUTPUTS_DIR"] = original_outputs_dir
                 vars(app)["GALLERY_THUMBNAILS_DIR"] = original_thumbnails_dir
-                vars(app)["gallery_thumbnail"] = original_gallery_thumbnail
-                vars(app.gallery_store)["gallery_video_resolution"] = (
+                del app.MEDIA.gallery_thumbnail
+                vars(h3_app.gallery_store)["gallery_video_resolution"] = (
                     original_gallery_video_resolution
                 )
             self.assertEqual(len(gallery_items), 1)
@@ -750,7 +750,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
         self.assertEqual(
             _status.node_stage(_catalog.H3_NVENC_SAVE_NODE), "Saving H.264 video"
         )
-        rendered_progress = app.progress_status(
+        rendered_progress = _status.progress_status(
             "Generating video and audio",
             started=app.time.monotonic(),
             completed_nodes=7,
@@ -761,7 +761,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
         )
         self.assertIn("Sampler step 2/4 (50%)", rendered_progress)
         self.assertIn("Workflow nodes 7/12", rendered_progress)
-        expanded_progress = app.progress_status(
+        expanded_progress = _status.progress_status(
             "Generating video and audio",
             started=app.time.monotonic(),
             step=3,

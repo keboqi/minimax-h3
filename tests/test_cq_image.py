@@ -1,5 +1,6 @@
 """CQ image recipe, lazy provisioning, and gallery execution contracts."""
 
+from tests.app_targets import owner
 from contextlib import ExitStack
 from h3_app.catalog import LTX25_CQ_IMAGE_ENHANCER
 from pathlib import Path
@@ -85,9 +86,9 @@ class CqImageTests(unittest.TestCase):
                     "write_snapshot": None, "unload_comfy_models": None,
                     "gallery_media_processed_result": "complete",
                 }
-                mocks = {name: stack.enter_context(patch.object(app, name, return_value=value)) for name, value in returns.items()}
+                mocks = {name: stack.enter_context(patch.object(owner(app, name), name, return_value=value)) for name, value in returns.items()}
                 build = stack.enter_context(patch.object(app, "build_cq_image_enhance_graph", wraps=build_cq_image_enhance_graph))
-                updates = list(app.postprocess_selected_gallery_media(
+                updates = list(app.MEDIA.postprocess_selected_gallery_media(
                     "Image", "source.png", LTX25_CQ_IMAGE_ENHANCER,
                     42, app.DEFAULT_SEEDVR2_MODEL, app.DEFAULT_LTX25_MODEL,
                     "ignored", True, True, 5.0, "1920 × 1920",
@@ -111,13 +112,13 @@ class CqImageTests(unittest.TestCase):
 
     def test_missing_nodes_prevent_download_and_submission(self):
         with (
-            patch.object(app, "managed_gallery_image_path", return_value=Path("source.png")),
+            patch.object(app.MEDIA, "managed_gallery_image_path", return_value=Path("source.png")),
             patch.object(app, "input_image_upscale_dimensions", return_value=(1024, 768, 1920, 1440, 1.875)),
             patch.object(app, "object_info", return_value={}),
-            patch.object(app, "ensure_cq_image_enhance_models") as provision,
+            patch.object(app.MODELS, "ensure_cq_image_enhance_models") as provision,
             patch.object(app, "submit_prompt") as submit,
         ):
-            updates = list(app.postprocess_selected_gallery_image(
+            updates = list(app.MEDIA.postprocess_selected_gallery_image(
                 "source.png", LTX25_CQ_IMAGE_ENHANCER, 42,
                 app.DEFAULT_SEEDVR2_MODEL, False, "1920 × 1920",
                 request=Mock(), progress=Mock(),

@@ -24,6 +24,7 @@ def run():
         code = f"""
 import sys,runpy
 from h3_ui import application as app
+import h3_app.gallery_store
 from gradio import processing_utils
 from PIL import Image
 original_new = Image.new
@@ -37,8 +38,8 @@ def forbid_thumbnail_hash(path, *args, **kwargs):
     if '.gallery_thumbnails' in str(path):
         raise AssertionError('Thumbnail must be served directly')
     return original_hash(path, *args, **kwargs)
-app.gallery_image_paths = app.gallery_video_paths = app.gallery_audio_paths = forbid_scan
-app.gallery_store.gallery_image_paths = app.gallery_store.gallery_video_paths = app.gallery_store.gallery_audio_paths = forbid_scan
+app.MEDIA.gallery_image_paths = app.MEDIA.gallery_video_paths = app.MEDIA.gallery_audio_paths = forbid_scan
+h3_app.gallery_store.gallery_image_paths = h3_app.gallery_store.gallery_video_paths = h3_app.gallery_store.gallery_audio_paths = forbid_scan
 processing_utils.hash_file = forbid_thumbnail_hash
 sys.argv=['fixture','{port}']
 runpy.run_module('tests.workspace_fixture',run_name='__main__')
