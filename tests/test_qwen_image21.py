@@ -1180,7 +1180,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
 
     def test_prompt_writer_uses_natural_single_image_reference(self):
         runtime = SimpleNamespace(
-            prompt_systems={"Qwen Image 2.1": Path("prompt_qwen_image21.txt")}
+            prompt_systems={"Qwen Image 2.1": Path("prompts/prompt_qwen_image21.txt")}
         )
         with patch.object(
             prompt_service,
@@ -1207,7 +1207,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
 
     def test_prompt_writer_tags_every_multi_image_input(self):
         runtime = SimpleNamespace(
-            prompt_systems={"Qwen Image 2.1": Path("prompt_qwen_image21.txt")}
+            prompt_systems={"Qwen Image 2.1": Path("prompts/prompt_qwen_image21.txt")}
         )
         with patch.object(
             prompt_service,
@@ -1232,7 +1232,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         self.assertIn("Use the numbered image tags verbatim", arguments["context"])
 
     def test_prompt_rules_include_official_transparency_wrapper(self):
-        rules = (Path(__file__).resolve().parents[1] / "prompt_qwen_image21.txt").read_text(
+        rules = (Path(__file__).resolve().parents[1] / "prompts" / "prompt_qwen_image21.txt").read_text(
             encoding="utf-8"
         )
         self.assertIn("do not use an <image1> tag", rules)

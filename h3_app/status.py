@@ -1,4 +1,4 @@
-"""Extracted h3 app/status boundary."""
+"""Human-readable progress and stage timings for ComfyUI executions."""
 
 from __future__ import annotations
 

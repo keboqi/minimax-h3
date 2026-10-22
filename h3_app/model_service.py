@@ -1,4 +1,4 @@
-"""Extracted model service boundary."""
+"""On-demand model downloads and the TensorRT VAE engine lifecycle."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Extracted gallery store boundary."""
+"""Managed Media library paths, inventory, thumbnails and resolution text."""
 
 from __future__ import annotations
 

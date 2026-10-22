@@ -33,12 +33,17 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/workspace_store.py, workspace_admin.py | SQLite ownership, technical history, explicit projects, asset annotations, backup/restore |
 | h3_ui/prompt_controller.py, model_controller.py, media_controller.py | Feature behavior through explicit service dependencies |
 | h3_app/comfy.py, execution.py | HTTP transport and one submission lifecycle, deadline and websocket owner |
-| h3_app/workflows/ | Pure H3, LTX, Qwen, Music, YuE2 and finishing graph builders with staged input identities |
-| h3_app/generation/ | Named requests and typed services; preparation, graph construction, execution and finishing |
+| h3_app/capabilities.py | Create tasks, engines and their navigation labels |
+| h3_app/workflows/ | Pure H3, LTX, Qwen, Music, YuE2, FLUX 3, MOSS-Image, Fibo 2.0, Drama 3 and finishing graph builders with staged input identities |
+| h3_app/generation/ | Named requests and typed services; preparation, graph construction, execution and finishing. optional_engines.py runs FLUX 3, MOSS-Image, Fibo 2.0 and Drama 3 |
 | h3_app/staging.py, media_tools.py | Input staging, media inspection, controlled subprocesses and post-processing |
 | h3_app/media.py, outputs.py, gallery_store.py | Contained discovery, explicit output context and complete managed gallery inventory |
 | h3_app/provenance.py | Atomic sidecars, copied-media provenance and escaped metadata rendering |
 | h3_app/prompt_service.py | Local, Gemini and Lightning writer adapters with transient credentials |
+| prompts/ | Writer system prompts for each engine, read through h3_app/config.py |
+| h3_app/song_brief.py, h3_ui/song_controls.py, song_takes.py | Song planning and checks, guided step cards and the session take history for Music 3 and YuE2 |
+| h3_app/drama3_*.py, drama3_serving/ | Soundstage cast, script lint, speaker and sound libraries, voice design, and Drama 3 on SGLang-Omni (environment, planner, takes, mixing, checkpointed sleep) |
+| h3_app/audio_tools.py, audio_tools_worker.py, voice_design.py, stable_audio.py | The isolated resident worker for Qwen VoiceDesign and Stable Audio, and its clients |
 | h3_app/server.py | Configured FastAPI routes and HTTP/WebSocket proxy |
 | h3_ui/application.py | Runtime service wiring and signature-preserving public API adapters |
 | h3_ui/bootstrap.py, contracts.py | UI composition; one catalog and one service record passed to event registration |
@@ -48,7 +53,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/dubbing/ | Dub & Translate sessions, line helpers, Gemini transcription, the isolated tools worker (separation, OmniVAD + Qwen3-ASR, Hy-MT) and the Drama 3 dub/mix pipeline |
 | h3_app/video_download.py | yt-dlp downloads into Media and the private per-site cookie store |
 | h3_ui/dubbing_view.py, dubbing_bindings.py, dubbing_handlers.py | Dub & Translate tab and Media's Download from a URL panel |
-| h3_ui/optional_engine_controls.py | Shared writer, generation and settings helpers for optional engines |
+| h3_ui/optional_engine_views.py, fibo2_view.py, optional_engine_controls.py | FLUX 3, MOSS-Image and Fibo 2.0 views, and their shared writer, generation and settings helpers |
 | h3_ui/*_view.py, *_bindings.py | Feature-owned views and event bindings |
 | h3_ui/sections/, events/ | Existing visible sections and event registration, preserving component order |
 | h3_ui/job_bindings.py, job_admission.py, jobs_view.py | Gradio request injection, acceptance before queueing, shared GPU binding and owner-scoped job presentation |

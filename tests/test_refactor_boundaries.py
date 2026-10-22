@@ -83,18 +83,15 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn("(LOCAL_SHARED_SOURCES, SHARED_SOURCES)", modal)
         self.assertIn('LOCAL / "h3_app"', modal)
         self.assertIn("LOCAL_UI_PACKAGE,", modal)
-        for prompt_name in (
-            "prompt.txt",
-            "prompt_ltx25.txt",
-            "prompt_music3.txt",
-            "prompt_qwen_image21.txt",
-            "prompt_yue2.txt",
-            "prompt_flux3_t2i.txt",
-            "prompt_flux3_i2i.txt",
-            "prompt_drama3.txt",
-            "prompt_moss_image.txt",
-        ):
-            self.assertIn(f'LOCAL / "{prompt_name}"', modal)
+        self.assertIn('LOCAL_PROMPTS = LOCAL / "prompts"', modal)
+        self.assertIn("for name in PROMPT_FILES", modal)
+        listed = next(
+            ast.literal_eval(node.value)
+            for node in ast.parse(modal).body
+            if isinstance(node, ast.Assign)
+            and any(getattr(target, "id", None) == "PROMPT_FILES" for target in node.targets)
+        )
+        self.assertEqual(sorted(listed), sorted(path.name for path in (root / "prompts").glob("*.txt")))
 
     def test_launchers_keep_cuda_allocator_and_compiler_enabled(self):
         root = Path(__file__).resolve().parents[1]

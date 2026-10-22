@@ -19,7 +19,7 @@ class SpeakerGroupTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.runtime = SimpleNamespace(outputs_dir=self.root,
-                                       prompt_systems={"Drama 3": Path("prompt_drama3.txt")})
+                                       prompt_systems={"Drama 3": Path("prompts/prompt_drama3.txt")})
         self.env = patch.dict(os.environ, {"H3_WORKSPACE_DIR": str(self.root)})
         self.env.start()
         self.addCleanup(self.env.stop)

@@ -1,4 +1,4 @@
-"""Extracted upscale boundary."""
+"""SeedVR2, CQ image, LTX upscale and HDR finishing graph builders."""
 
 from __future__ import annotations
 

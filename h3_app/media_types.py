@@ -1,4 +1,4 @@
-"""Extracted media types boundary."""
+"""Plain records for probed video metadata and upscale clip batches."""
 
 from __future__ import annotations
 

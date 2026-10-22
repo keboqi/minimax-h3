@@ -1,4 +1,4 @@
-"""Extracted ltx boundary."""
+"""LTX 2.5 graph builder and its required nodes."""
 
 from __future__ import annotations
 

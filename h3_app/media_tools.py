@@ -1,4 +1,4 @@
-"""Extracted media tools boundary."""
+"""FFmpeg post-processing, media probing and clip batches for split upscaling."""
 
 from __future__ import annotations
 

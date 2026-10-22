@@ -15,7 +15,6 @@ from h3_app.errors import H3Error
 
 MODEL_ID = audio_tools.layout.STABLE_AUDIO_ID
 DEFAULT_DURATION_SECONDS = 5
-DEFAULT_LOOP_DURATION_SECONDS = 10
 MAX_DURATION_SECONDS = audio_tools.layout.MAX_SOUND_SECONDS
 
 

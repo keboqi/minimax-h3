@@ -1,4 +1,4 @@
-"""Extracted music boundary."""
+"""MiniMax Music 3 graph builder and its required nodes."""
 
 from __future__ import annotations
 

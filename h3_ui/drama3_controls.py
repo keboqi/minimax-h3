@@ -45,13 +45,6 @@ DRAMA3_SOUND_SLOT_INPUT_NAMES = tuple(
 )
 
 
-DRAMA3_SOUND_META_INPUT_NAMES = tuple(
-    f"sound_{index}_{field}"
-    for index in range(DRAMA3_SOUND_SLOTS)
-    for field in ("name", "description", "duration")
-)
-
-
 DRAMA3_SAMPLING_PRESETS = {
     "Strict": (0.7, 0.7, 30),
     "Balance": (1.0, 0.9, 0),

@@ -15,7 +15,7 @@ from .flux3_layout import parse_flux3_layout
 # ComfyUI reuse the cached expansion instead of reloading the 9B upsampler.
 UPSAMPLER_SEED = 0
 # BFL's official text-to-image upsampler instructions, shared with the remote writers.
-UPSAMPLER_SYSTEM_PATH = Path(__file__).resolve().parents[2] / "prompt_flux3_t2i.txt"
+UPSAMPLER_SYSTEM_PATH = Path(__file__).resolve().parents[2] / "prompts" / "prompt_flux3_t2i.txt"
 UPSAMPLER_EDIT_SYSTEM_PATH = UPSAMPLER_SYSTEM_PATH.with_name("prompt_flux3_i2i.txt")
 UPSAMPLER_MAX_LENGTH = 3584
 # BFL reference 62e90b9278: alpha 6.93 -> 16, for distilled and base.

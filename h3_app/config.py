@@ -56,21 +56,21 @@ class RuntimeConfig:
 
     @property
     def prompt_system_path(self):
-        return self.script_dir / "prompt.txt"
+        return self.script_dir / "prompts" / "prompt.txt"
 
     @property
     def prompt_systems(self):
         return {
             "MiniMax H3": self.prompt_system_path,
-            "MiniMax Music 3": self.script_dir / "prompt_music3.txt",
-            "LTX-2.5": self.script_dir / "prompt_ltx25.txt",
-            "Qwen Image 2.1": self.script_dir / "prompt_qwen_image21.txt",
-            "YuE2": self.script_dir / "prompt_yue2.txt",
-            "FLUX 3 Image Klein": self.script_dir / "prompt_flux3_t2i.txt",
-            "FLUX 3 Image Klein edit": self.script_dir / "prompt_flux3_i2i.txt",
-            "MOSS-Image": self.script_dir / "prompt_moss_image.txt",
-            "Drama 3": self.script_dir / "prompt_drama3.txt",
-            "Drama 3 direction": self.script_dir / "prompt_drama3_direction.txt",
+            "MiniMax Music 3": self.script_dir / "prompts" / "prompt_music3.txt",
+            "LTX-2.5": self.script_dir / "prompts" / "prompt_ltx25.txt",
+            "Qwen Image 2.1": self.script_dir / "prompts" / "prompt_qwen_image21.txt",
+            "YuE2": self.script_dir / "prompts" / "prompt_yue2.txt",
+            "FLUX 3 Image Klein": self.script_dir / "prompts" / "prompt_flux3_t2i.txt",
+            "FLUX 3 Image Klein edit": self.script_dir / "prompts" / "prompt_flux3_i2i.txt",
+            "MOSS-Image": self.script_dir / "prompts" / "prompt_moss_image.txt",
+            "Drama 3": self.script_dir / "prompts" / "prompt_drama3.txt",
+            "Drama 3 direction": self.script_dir / "prompts" / "prompt_drama3_direction.txt",
         }
 
     @classmethod

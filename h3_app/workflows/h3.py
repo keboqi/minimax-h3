@@ -1,4 +1,4 @@
-"""Extracted h3 boundary."""
+"""MiniMax H3 FL2VA and Ref2VA graph builders and their required nodes."""
 
 from __future__ import annotations
 

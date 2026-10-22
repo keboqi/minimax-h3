@@ -1,4 +1,4 @@
-"""Extracted errors boundary."""
+"""The user-facing application error."""
 
 from __future__ import annotations
 

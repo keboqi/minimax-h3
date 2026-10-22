@@ -1,4 +1,4 @@
-"""Extracted model types boundary."""
+"""Model configuration records and per-engine model key and filename lookups."""
 
 from __future__ import annotations
 

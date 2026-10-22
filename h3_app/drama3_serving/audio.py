@@ -606,11 +606,6 @@ def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
     return Mix(mixed, advance, offset)
 
 
-def mix_parallel_tracks(tracks: list[dict | tuple], rate: int) -> np.ndarray:
-    """The mixed audio of ``mix_parallel``."""
-    return mix_parallel(tracks, rate).audio
-
-
 # Loudness of the finished mix (ITU-R BS.1770). A mono file plays on both speakers,
 # about 3 LU louder than it measures, so -19 LUFS mono matches the usual -16 LUFS stereo.
 TARGET_LUFS = -16.0

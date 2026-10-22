@@ -40,7 +40,7 @@ class Flux3OfficialUpdateTests(unittest.TestCase):
             image = writer["inputs"][f"image{i}"]
             self.assertEqual(image, refs[f"images.image{i}"])
             self.assertEqual(graph[image[0]]["inputs"]["image"], path)
-        self.assertEqual(writer["inputs"]["system_prompt"], (ROOT / "prompt_flux3_i2i.txt").read_text(encoding="utf-8").strip())
+        self.assertEqual(writer["inputs"]["system_prompt"], (ROOT / "prompts" / "prompt_flux3_i2i.txt").read_text(encoding="utf-8").strip())
         encoded = next(n["inputs"] for n in graph.values() if n["class_type"] == "CLIPTextEncode")
         self.assertEqual(encoded["text"], [writer_id, 0])
 
@@ -207,8 +207,8 @@ class Flux3EditSizeTests(unittest.TestCase):
 class Flux3WriterTests(unittest.TestCase):
     def setUp(self):
         self.runtime = SimpleNamespace(prompt_systems={
-            "FLUX 3 Image Klein": ROOT / "prompt_flux3_t2i.txt",
-            "FLUX 3 Image Klein edit": ROOT / "prompt_flux3_i2i.txt",
+            "FLUX 3 Image Klein": ROOT / "prompts" / "prompt_flux3_t2i.txt",
+            "FLUX 3 Image Klein edit": ROOT / "prompts" / "prompt_flux3_i2i.txt",
         })
 
     @staticmethod

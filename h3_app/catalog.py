@@ -1,4 +1,4 @@
-"""Extracted catalog boundary."""
+"""Static choices, limits and defaults shared by settings, workflows and the UI."""
 
 from __future__ import annotations
 

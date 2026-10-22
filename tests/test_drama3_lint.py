@@ -89,7 +89,7 @@ class PromptExampleTests(unittest.TestCase):
 
         from h3_app.drama3_serving.tree import iter_sound_nodes, iter_speech_nodes, parse_drama3_tree
 
-        prompt = (Path(__file__).resolve().parents[1] / "prompt_drama3.txt").read_text(encoding="utf-8")
+        prompt = (Path(__file__).resolve().parents[1] / "prompts" / "prompt_drama3.txt").read_text(encoding="utf-8")
         example = prompt.split("Advanced script-field example", 1)[1]
         script = example.split("Script:\n", 1)[1].split("\nWhy:", 1)[0].strip()
         self.assertEqual(lint_drama3_script(script), (script, []))
@@ -267,7 +267,7 @@ class PromptBasicExampleTests(unittest.TestCase):
     def test_basic_examples_are_clean_directed_and_complete(self):
         from pathlib import Path
 
-        prompt = (Path(__file__).resolve().parents[1] / "prompt_drama3.txt").read_text(encoding="utf-8")
+        prompt = (Path(__file__).resolve().parents[1] / "prompts" / "prompt_drama3.txt").read_text(encoding="utf-8")
         for heading in ("Basic script-field example", "Basic prose example"):
             with self.subTest(heading=heading):
                 example = prompt.split(heading, 1)[1]

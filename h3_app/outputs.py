@@ -1,4 +1,4 @@
-"""Extracted outputs boundary."""
+"""Locate a submission's saved outputs in ComfyUI history."""
 
 from __future__ import annotations
 

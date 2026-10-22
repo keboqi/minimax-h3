@@ -66,7 +66,7 @@ class CastValidationTests(unittest.TestCase):
 
     @patch("h3_app.prompt_service._enhance_prompt_from_media")
     def test_structured_writer_is_atomic_and_preserves_mode_and_existing_ids(self, enhance):
-        runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompt_drama3.txt")})
+        runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompts/prompt_drama3.txt")})
         def rewrite(reply, text="Original", **kwargs):
             enhance.return_value = reply, "Enhanced prompt with writer"
             return prompt_service.enhance_drama3_text(text, "model", "", runtime=runtime,
@@ -359,7 +359,7 @@ class CastSlotTests(unittest.TestCase):
             voices[15:18] = ["Upload a clip", "uploaded.wav", "The exact uploaded words."]
         metadata = [""] * 48
         metadata[15:18] = [name, description, "Old preview"]
-        runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompt_drama3.txt")})
+        runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompts/prompt_drama3.txt")})
         with patch.object(drama3_handlers, "_runtime_config", return_value=runtime), \
                 patch.object(prompt_service, "_enhance_prompt_from_media", return_value=(response, "Enhanced prompt")):
             return drama3_handlers.enhance_drama3_text("Original", "Auto", "model", "", "Lightning AI", "key", "llm",
@@ -387,13 +387,13 @@ class CastSlotTests(unittest.TestCase):
         voices = ["Upload a clip", None, ""] * 16
         metadata = [""] * 48
         metadata[6:9] = ["Mia", "Bright young voice", ""]
-        runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompt_drama3.txt")})
+        runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompts/prompt_drama3.txt")})
         with patch.object(drama3_handlers, "_runtime_config", return_value=runtime):
             text = drama3_handlers.copy_drama3_writer_prompt("MIA: Hello there.", "Auto",
                                                              *voices, *metadata, 4)
             with self.assertRaises(gr.Error) as failed:
                 drama3_handlers.copy_drama3_writer_prompt("  ", "Auto", *voices, *metadata, 4)
-        self.assertTrue(text.startswith(Path("prompt_drama3.txt").read_text(encoding="utf-8").strip()[:80]))
+        self.assertTrue(text.startswith(Path("prompts/prompt_drama3.txt").read_text(encoding="utf-8").strip()[:80]))
         self.assertIn('"speaker_id": 2, "name": "Mia"', text)
         self.assertTrue(text.rstrip().endswith("User text:\nMIA: Hello there."))
         self.assertIn("speech text", str(failed.exception))
@@ -401,7 +401,7 @@ class CastSlotTests(unittest.TestCase):
     def test_pasted_reply_fills_slots_like_the_built_in_writer(self):
         from h3_ui.application import drama3_handlers
         voices = ["Upload a clip", None, ""] * 16
-        runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompt_drama3.txt")})
+        runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompts/prompt_drama3.txt")})
         fenced = "Here is the result:\n```json\n" + writer_reply(5) + "\n```"
         with patch.object(drama3_handlers, "_runtime_config", return_value=runtime):
             result = drama3_handlers.apply_drama3_writer_reply(fenced, "Original", "Auto", *voices, *[""] * 48, 4)

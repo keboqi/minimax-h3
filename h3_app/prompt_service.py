@@ -1,4 +1,4 @@
-"""Extracted prompt service boundary."""
+"""Prompt writers for every engine over local, Gemini and Lightning backends."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Extracted policy boundary."""
+"""Pure sampling, Turbo, upscale and attention rules derived from settings."""
 
 from __future__ import annotations
 

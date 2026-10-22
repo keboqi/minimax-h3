@@ -28,7 +28,7 @@ class Drama3RequestTests(unittest.TestCase):
     def test_text_validation_matches_the_node_pack(self):
         self.assertEqual(validate_drama3_text(" <|speaker:15|> [sighs] fine "), "<|speaker:15|> [sighs] fine")
         # Fish Audio documents seven scoped tags; the writer prompt offers all of them and none is rejected.
-        prompt = (ROOT / "prompt_drama3.txt").read_text(encoding="utf-8")
+        prompt = (ROOT / "prompts" / "prompt_drama3.txt").read_text(encoding="utf-8")
         for tag in ("whisper", "emphasis", "soft", "fast", "slow", "stress", "forceful"):
             with self.subTest(tag=tag):
                 line = f"<|speaker:0|> Well, <{tag}>this matters</{tag}>."
@@ -165,7 +165,7 @@ class SpeakerPresetTests(unittest.TestCase):
 
 class Drama3WriterTests(unittest.TestCase):
     def setUp(self):
-        self.runtime = SimpleNamespace(prompt_systems={"Drama 3": ROOT / "prompt_drama3.txt"})
+        self.runtime = SimpleNamespace(prompt_systems={"Drama 3": ROOT / "prompts" / "prompt_drama3.txt"})
 
     @patch("openai.OpenAI")
     def test_rewrite_sends_voice_context_and_selected_lightning_model(self, client):
@@ -196,8 +196,8 @@ class Drama3WriterTests(unittest.TestCase):
         director = ("narrator: The door [hushed] creaked open.\nMia: Is someone [nervous] there?\n"
                     "narrator: Nobody answered [tense, low] <slow>her</slow>.")
         client.return_value.chat.completions.create.side_effect = [completion(writer), completion(director)]
-        runtime = SimpleNamespace(prompt_systems={"Drama 3": ROOT / "prompt_drama3.txt",
-                                                  "Drama 3 direction": ROOT / "prompt_drama3_direction.txt"})
+        runtime = SimpleNamespace(prompt_systems={"Drama 3": ROOT / "prompts" / "prompt_drama3.txt",
+                                                  "Drama 3 direction": ROOT / "prompts" / "prompt_drama3_direction.txt"})
         script, status, cast = prompt_service.enhance_drama3_text(
             "The door creaked open. “Is someone there?” Nobody answered her.", "unused", "", (),
             "Lightning AI", "key", runtime=runtime, return_cast=True)
@@ -584,7 +584,7 @@ class Drama3CastSoundTests(unittest.TestCase):
 
 class Drama3SoundAndEffectValidationTests(unittest.TestCase):
     def setUp(self):
-        self.runtime = SimpleNamespace(prompt_systems={"Drama 3": ROOT / "prompt_drama3.txt"})
+        self.runtime = SimpleNamespace(prompt_systems={"Drama 3": ROOT / "prompts" / "prompt_drama3.txt"})
 
     def test_sound_and_effect_tags_validate_in_both_script_modes(self):
         voices = ((0, "a.wav", "Ref 0."),)

@@ -28,16 +28,19 @@ SHARED_SOURCES = ROOT / "h3_sources.py"
 NODE_PATCHES = ROOT / "h3_node_patches.py"
 ATTENTION_HELPER = ROOT / "h3_attention.py"
 PROMPT_REWRITER = ROOT / "h3_prompt_rewriter.py"
-PROMPT_ENHANCER = ROOT / "prompt.txt"
-PROMPT_MUSIC3 = ROOT / "prompt_music3.txt"
-PROMPT_LTX25 = ROOT / "prompt_ltx25.txt"
-PROMPT_QWEN_IMAGE21 = ROOT / "prompt_qwen_image21.txt"
-PROMPT_YUE2 = ROOT / "prompt_yue2.txt"
-PROMPT_FLUX3_T2I = ROOT / "prompt_flux3_t2i.txt"
-PROMPT_FLUX3_I2I = ROOT / "prompt_flux3_i2i.txt"
-PROMPT_DRAMA3 = ROOT / "prompt_drama3.txt"
-PROMPT_DRAMA3_DIRECTION = ROOT / "prompt_drama3_direction.txt"
-PROMPT_MOSS_IMAGE = ROOT / "prompt_moss_image.txt"
+PROMPTS = ROOT / "prompts"
+PROMPT_FILES = (
+    "prompt.txt",
+    "prompt_music3.txt",
+    "prompt_ltx25.txt",
+    "prompt_qwen_image21.txt",
+    "prompt_yue2.txt",
+    "prompt_flux3_t2i.txt",
+    "prompt_flux3_i2i.txt",
+    "prompt_drama3.txt",
+    "prompt_drama3_direction.txt",
+    "prompt_moss_image.txt",
+)
 ACCEL_DEST = COMFY / "custom_nodes" / "H3Acceleration" / "__init__.py"
 
 LOCAL_UI = LOCAL / "gradio_app.py"
@@ -49,16 +52,7 @@ LOCAL_SHARED_SOURCES = LOCAL / "h3_sources.py"
 LOCAL_NODE_PATCHES = LOCAL / "h3_node_patches.py"
 LOCAL_ATTENTION_HELPER = LOCAL / "h3_attention.py"
 LOCAL_PROMPT_REWRITER = LOCAL / "h3_prompt_rewriter.py"
-LOCAL_PROMPT_ENHANCER = LOCAL / "prompt.txt"
-LOCAL_PROMPT_MUSIC3 = LOCAL / "prompt_music3.txt"
-LOCAL_PROMPT_LTX25 = LOCAL / "prompt_ltx25.txt"
-LOCAL_PROMPT_QWEN_IMAGE21 = LOCAL / "prompt_qwen_image21.txt"
-LOCAL_PROMPT_YUE2 = LOCAL / "prompt_yue2.txt"
-LOCAL_PROMPT_FLUX3_T2I = LOCAL / "prompt_flux3_t2i.txt"
-LOCAL_PROMPT_FLUX3_I2I = LOCAL / "prompt_flux3_i2i.txt"
-LOCAL_PROMPT_DRAMA3 = LOCAL / "prompt_drama3.txt"
-LOCAL_PROMPT_DRAMA3_DIRECTION = LOCAL / "prompt_drama3_direction.txt"
-LOCAL_PROMPT_MOSS_IMAGE = LOCAL / "prompt_moss_image.txt"
+LOCAL_PROMPTS = LOCAL / "prompts"
 
 DATA = PurePosixPath("/data")
 # Optional Drama 3 backend: an isolated SGLang-Omni environment in the image, with
@@ -185,16 +179,7 @@ _RUNTIME_LOCAL_MOUNTS = (
     (LOCAL_SHARED_MODELS, SHARED_MODELS),
     (LOCAL_ATTENTION_HELPER, ATTENTION_HELPER),
     (LOCAL_PROMPT_REWRITER, PROMPT_REWRITER),
-    (LOCAL_PROMPT_ENHANCER, PROMPT_ENHANCER),
-    (LOCAL_PROMPT_MUSIC3, PROMPT_MUSIC3),
-    (LOCAL_PROMPT_LTX25, PROMPT_LTX25),
-    (LOCAL_PROMPT_QWEN_IMAGE21, PROMPT_QWEN_IMAGE21),
-    (LOCAL_PROMPT_YUE2, PROMPT_YUE2),
-    (LOCAL_PROMPT_FLUX3_T2I, PROMPT_FLUX3_T2I),
-    (LOCAL_PROMPT_FLUX3_I2I, PROMPT_FLUX3_I2I),
-    (LOCAL_PROMPT_DRAMA3, PROMPT_DRAMA3),
-    (LOCAL_PROMPT_DRAMA3_DIRECTION, PROMPT_DRAMA3_DIRECTION),
-    (LOCAL_PROMPT_MOSS_IMAGE, PROMPT_MOSS_IMAGE),
+    *((LOCAL_PROMPTS / name, PROMPTS / name) for name in PROMPT_FILES),
 )
 _BUILD_LOCAL_FILES = tuple(local for local, _ in _BUILD_LOCAL_MOUNTS)
 _RUNTIME_LOCAL_FILES = tuple(local for local, _ in _RUNTIME_LOCAL_MOUNTS)

@@ -360,7 +360,7 @@ class MossImagePromptCompilerTests(unittest.TestCase):
         import json
         from h3_app import prompt_service
 
-        runtime = SimpleNamespace(prompt_systems={"MOSS-Image": Path(__file__).parents[1] / "prompt_moss_image.txt"})
+        runtime = SimpleNamespace(prompt_systems={"MOSS-Image": Path(__file__).parents[1] / "prompts" / "prompt_moss_image.txt"})
         reply = (json.dumps(CUP_LAYOUT, ensure_ascii=False), "Enhanced MOSS-Image prompt with m using 0 image(s).")
         with patch.object(prompt_service, "_enhance_prompt_from_media", return_value=reply) as writer:
             prompt, status = prompt_service.enhance_moss_image_prompt(

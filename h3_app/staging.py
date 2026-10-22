@@ -1,4 +1,4 @@
-"""Extracted staging boundary."""
+"""Copy inputs into ComfyUI's input folder; reused inputs get content-hash names."""
 
 from __future__ import annotations
 
