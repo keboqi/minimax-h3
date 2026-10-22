@@ -411,24 +411,44 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
   .h3-workspace .h3-gallery-status { overflow-wrap: anywhere; }
   .h3-workspace .h3-library-button { width: 100% !important; flex-basis: auto !important; }
 }
-/* Song: a guided draft beside the player and generation controls. */
+/* Song: four steps (Idea, Lyrics, Generate, Listen & refine); each pairs a working
+   card with an action card that holds the step's next move. */
 .h3-workspace .h3-song .styler { gap: 12px; background: transparent; }
 .h3-workspace .h3-song.h3-engine-view { border: 0; box-shadow: none; padding: 8px; }
 .h3-workspace .h3-song-intro { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 8px 22px; border-bottom: 1px solid var(--h3-border); margin-bottom: 10px; }
 .h3-workspace .h3-song-intro h2 { margin: 5px 0 8px; font-size: clamp(24px, 2.4vw, 34px); letter-spacing: -.045em; font-weight: 650; }
 .h3-workspace .h3-song-intro p:not(.h3-eyebrow) { margin: 0; color: var(--h3-muted); font-size: 14px; }
 .h3-workspace .h3-song-badge { border: 1px solid var(--h3-border); border-radius: 999px; padding: 9px 14px; font-size: 10px; letter-spacing: .14em; color: var(--h3-accent); white-space: nowrap; }
-.h3-workspace .h3-song-write-action { align-items: center; gap: 12px; padding-top: 4px; }
-.h3-workspace .h3-song-write-action > button { flex: 0 1 220px !important; border-radius: 10px; min-height: 44px; }
-.h3-workspace .h3-song-write-action > .block { flex: 1 1 180px !important; }
-.h3-workspace .h3-song-write-action p { color: var(--h3-muted); font-size: 12px; margin: 0; }
-.h3-workspace .h3-song-writer-status textarea { font-size: 12px; color: var(--h3-muted); }
-.h3-workspace .h3-song-draft-heading { border-top: 1px solid var(--h3-border); padding-top: 18px; margin-top: 8px; }
+.h3-workspace .h3-song-steps { counter-reset: h3-song-step; border: 0; background: transparent; padding: 0; }
+.h3-workspace .h3-song-steps > .tab-wrapper { border: 0; margin-bottom: 14px; padding: 0; }
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; border: 0; padding: 0; }
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button { counter-increment: h3-song-step; display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 54px; margin: 0; padding: 8px 14px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-surface); color: var(--h3-muted); font-size: 14px; font-weight: 600; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: border-color .15s, background .15s, color .15s; }
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button::before { content: counter(h3-song-step); display: grid; place-items: center; flex: none; width: 28px; height: 28px; border: 1px solid var(--h3-border); border-radius: 999px; background: var(--h3-muted-surface); color: var(--h3-accent); font-size: 12px; font-weight: 700; }
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button::after { display: none; }
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button:hover { color: var(--h3-text); border-color: var(--h3-disclosure-border); }
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button[aria-selected="true"] { color: var(--h3-text); border-color: var(--h3-accent); background: color-mix(in srgb, var(--h3-accent) 7%, var(--h3-surface)); box-shadow: inset 0 -3px var(--h3-accent); }
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button[aria-selected="true"]::before { border-color: var(--h3-accent); background: var(--h3-accent); color: var(--h3-surface); }
+/* Steps before the open one read as visited. */
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button:has(~ button[aria-selected="true"])::before { content: "✓"; background: color-mix(in srgb, var(--h3-accent) 14%, var(--h3-surface)); border-color: color-mix(in srgb, var(--h3-accent) 40%, var(--h3-border)); }
+.h3-workspace .h3-song-steps > [role="tabpanel"] { border: 0; padding: 0; background: transparent; }
+.h3-workspace .h3-song-card-heading h3 { margin: 0; font-size: 18px; letter-spacing: -.025em; }
+.h3-workspace .h3-song-card-heading p { margin: 4px 0 0; font-size: 13px; color: var(--h3-muted); }
+.h3-workspace .h3-song-stage button.h3-song-nav, .h3-workspace .h3-song-stage .h3-primary-action { min-height: 44px; border-radius: 10px; }
+.h3-workspace .h3-song-stage button.h3-song-skip { border-color: transparent; background: transparent; color: var(--h3-accent); }
+.h3-workspace .h3-song-stage button.h3-song-skip:hover { background: var(--h3-muted-surface); }
+.h3-workspace .h3-song-step-nav { gap: 8px; margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--h3-border); }
+.h3-workspace .h3-song-step-nav > button { flex: 1 1 0 !important; min-width: 0 !important; }
+.h3-workspace .h3-song-hint p { margin: 0; font-size: 12px; color: var(--h3-muted); }
+.h3-workspace .h3-song-writer-status textarea { font-size: 13px; color: var(--h3-muted); }
+.h3-workspace .h3-song-recap dl { display: grid; gap: 8px; margin: 0 0 12px; }
+.h3-workspace .h3-song-recap dl > div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; padding: 10px 12px; border: 1px solid var(--h3-border); border-radius: 10px; }
+.h3-workspace .h3-song-recap dt { padding-top: 2px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--h3-muted); }
+.h3-workspace .h3-song-recap dd { margin: 0; font-size: 14px; color: var(--h3-text); overflow-wrap: anywhere; }
+.h3-workspace .h3-song-recap em { color: var(--h3-muted); }
 .h3-workspace .h3-song-lyrics textarea { font-size: 15px; line-height: 1.7; }
 .h3-workspace .h3-song-editor-tabs { min-width: 0; }
 .h3-workspace .h3-song-duration-presets { gap: 6px; }
 .h3-workspace .h3-song-duration-presets > button { flex: 1 1 50px !important; min-width: 0 !important; border-radius: 8px; }
-.h3-workspace .h3-song .h3-composer .block:has(> .html-container .h3-panel-heading) { margin-top: 8px; }
 .h3-workspace .h3-song button.secondary { border: 1px solid var(--h3-border); }
 .h3-workspace .h3-song-stage { gap: 12px; border-top: 3px solid var(--h3-accent); }
 .h3-workspace .h3-song-stage .h3-action-dock { border: 0; padding: 10px 0 0; background: transparent; }
@@ -437,7 +457,7 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-workspace .h3-song-choices { gap: 8px; flex-wrap: wrap; }
 .h3-workspace .h3-song-choices > .block { flex: 1 1 150px !important; }
 .h3-workspace .h3-song-quick-fixes { flex-wrap: wrap; gap: 6px; margin-top: -4px; }
-.h3-workspace .h3-song-takes-help p, .h3-workspace .h3-song-take-details { margin: 0; font-size: 13px; color: var(--h3-muted); }
+.h3-workspace .h3-song-take-details { margin: 0; font-size: 13px; color: var(--h3-muted); }
 .h3-workspace .h3-song-take-details strong { color: var(--h3-text); }
 .h3-workspace .h3-song-take-actions { flex-wrap: wrap; gap: 6px; }
 .h3-workspace .h3-song-take-actions > button { flex: 1 1 140px !important; border-radius: 8px; }
@@ -466,7 +486,8 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
   .h3-workspace .h3-song .h3-generation-buttons > button { flex: 1 1 100%; min-width: 0; white-space: normal; }
   .h3-workspace .h3-song-badge { display: none; }
   .h3-workspace .h3-song-intro { padding: 8px 0 16px; }
-  .h3-workspace .h3-song-write-action > button { flex: 1 1 100% !important; }
+  .h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] { gap: 4px; }
+  .h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button { flex-direction: column; justify-content: center; gap: 4px; min-height: 64px; padding: 6px 2px; font-size: 11px; line-height: 1.2; text-align: center; white-space: normal; }
 }
 /* Drama 3: Script over Cast on the left beside a sticky Speak stage,
    a Lines review below, and visible outlines on the small secondary buttons. */

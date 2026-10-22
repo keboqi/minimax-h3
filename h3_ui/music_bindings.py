@@ -47,7 +47,7 @@ def bind_music_view(
         drafts=[view.caption, view.lyrics], status=view.enhance_status,
         review=view.enhance.h3_review, generate_id=view.run.elem_id,
     )
-    bind_song_check(view, "MiniMax Music 3", view.caption)
+    bind_song_check(view, "MiniMax Music 3", view.caption, "Sound")
     bind_take_history(
         view.takes, run=view.run, output=view.output, seed=view.seed, take_facts=take_facts,
         drafts={

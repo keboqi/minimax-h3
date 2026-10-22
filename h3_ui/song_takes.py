@@ -27,7 +27,7 @@ _FIELD_NAMES = {
 class SongTakes:
     history: gr.State
     pending: gr.State
-    panel: gr.Accordion
+    summary: gr.HTML
     take_a: gr.Dropdown
     take_b: gr.Dropdown
     audio_a: gr.Audio
@@ -40,25 +40,20 @@ class SongTakes:
 
 def build_take_history(*, with_score: bool) -> SongTakes:
     history, pending = gr.State([]), gr.State(None)
-    with gr.Accordion("Your takes · compare and reuse", open=False, elem_classes=["h3-song-takes"]) as panel:
-        gr.Markdown(
-            "Every take from this session, with the draft that made it. Play A and B back to back "
-            "and keep the one you like.",
-            elem_classes=["h3-song-takes-help"],
-        )
-        with gr.Row(equal_height=False):
-            with gr.Column(min_width=200):
-                take_a = gr.Dropdown([], label="Take A", interactive=True)
-                audio_a = gr.Audio(label="Take A", type="filepath", interactive=False, show_label=False)
-            with gr.Column(min_width=200):
-                take_b = gr.Dropdown([], label="Take B", interactive=True)
-                audio_b = gr.Audio(label="Take B", type="filepath", interactive=False, show_label=False)
-        details = gr.HTML(_describe([], None, None))
-        with gr.Row(elem_classes=["h3-song-take-actions"]):
-            reuse_draft = gr.Button("Back to take A's draft", size="sm")
-            use_seed = gr.Button("Use take A's seed", size="sm")
-            reuse_score = gr.Button("Reuse take A's score", size="sm") if with_score else None
-    return SongTakes(history, pending, panel, take_a, take_b, audio_a, audio_b, details,
+    summary = gr.HTML(_summary(0), elem_classes=["h3-song-takes"])
+    with gr.Row(equal_height=False):
+        with gr.Column(min_width=200):
+            take_a = gr.Dropdown([], label="Take A", interactive=True)
+            audio_a = gr.Audio(label="Take A", type="filepath", interactive=False, show_label=False)
+        with gr.Column(min_width=200):
+            take_b = gr.Dropdown([], label="Take B", interactive=True)
+            audio_b = gr.Audio(label="Take B", type="filepath", interactive=False, show_label=False)
+    details = gr.HTML(_describe([], None, None))
+    with gr.Row(elem_classes=["h3-song-take-actions"]):
+        reuse_draft = gr.Button("Back to take A's draft", size="sm")
+        use_seed = gr.Button("Use take A's seed", size="sm")
+        reuse_score = gr.Button("Reuse take A's score", size="sm") if with_score else None
+    return SongTakes(history, pending, summary, take_a, take_b, audio_a, audio_b, details,
                      reuse_draft, use_seed, reuse_score)
 
 
@@ -102,14 +97,14 @@ def bind_take_history(
             history[a]["path"],
             None if b is None else history[b]["path"],
             _describe(history, a, b),
-            gr.update(open=True, label=f"Your takes · {len(history)} · compare and reuse"),
+            _summary(len(history)),
             *((take.get("score") or "",) if score_outputs else ()),
         )
 
     output.change(
         add, inputs=[output, takes.history, takes.pending],
         outputs=[takes.history, takes.take_a, takes.take_b, takes.audio_a, takes.audio_b,
-                 takes.details, takes.panel, *score_outputs],
+                 takes.details, takes.summary, *score_outputs],
         queue=False, api_name=False, show_progress="hidden",
     )
 
@@ -179,6 +174,15 @@ def _score_and_mode(take, current_mode):
     if planned in {"full", "melody"}:
         return value, planned
     return value, ("full" if current_mode == "off" else gr.skip())
+
+
+def _summary(count: int) -> str:
+    detail = (
+        f"{count} take{'s' if count != 1 else ''} this session. Play A and B back to back and keep "
+        "the one you like; every take is also in Media."
+        if count else "Every take from this session lands here with the draft that made it."
+    )
+    return f'<div class="h3-song-card-heading"><h3>Your takes</h3><p>{escape(detail)}</p></div>'
 
 
 def _index(history, value) -> int | None:

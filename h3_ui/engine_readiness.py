@@ -34,8 +34,8 @@ def bind_engine_readiness(view, family):
             if caption.strip():
                 return ""
             if lyrics.strip():
-                return "Add a music description, or use Write / improve song to draft one from your lyrics."
-            return "Describe your song or add lyrics to start."
+                return "Add a music description on the Idea step, or press Write the song to draft one from your lyrics."
+            return "Describe your song on the Idea step, or add lyrics, to start."
 
     else:
         inputs = [view.style, view.lyrics]
@@ -43,11 +43,11 @@ def bind_engine_readiness(view, family):
         # YuE2 rejects a request without both, so Generate waits for both.
         def missing(style, lyrics):
             if not style.strip() and not lyrics.strip():
-                return "Describe your song and add lyrics to start."
+                return "Describe your song on the Idea step and add lyrics to start."
             if not lyrics.strip():
-                return "Add lyrics or section tags, or use Write / improve song to draft them."
+                return "Add lyrics or section tags on the Lyrics step, or press Write the song to draft them."
             if not style.strip():
-                return "Add a style prompt, or use Write / improve song to suggest one."
+                return "Add a style on the Idea step, or press Write the song to suggest one."
             return ""
 
     def readiness(*values):

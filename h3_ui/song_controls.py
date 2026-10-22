@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from html import escape
 
 import gradio as gr
 
 from h3_app import song_brief
+
+# The four steps every Song view walks through, in order.
+IDEA, DRAFT, TAKE, LISTEN = range(4)
 
 
 def song_intro(eyebrow: str, title: str, detail: str, badge: str) -> gr.HTML:
@@ -17,12 +21,57 @@ def song_intro(eyebrow: str, title: str, detail: str, badge: str) -> gr.HTML:
     )
 
 
-def panel_heading(step: str, title: str, detail: str, *, classes: str = "") -> gr.HTML:
-    names = " ".join(("h3-panel-heading", classes)).strip()
+def card_heading(title: str, detail: str = "") -> gr.HTML:
     return gr.HTML(
-        f'<div class="{names}"><span class="h3-step" aria-hidden="true">'
-        f"{escape(step)}</span><div><h3>{escape(title)}</h3><p>{escape(detail)}</p></div></div>"
+        f'<div class="h3-song-card-heading"><h3>{escape(title)}</h3>'
+        + (f"<p>{escape(detail)}</p>" if detail else "")
+        + "</div>"
     )
+
+
+@dataclass(frozen=True)
+class SongSteps:
+    """Idea → Lyrics → Generate → Listen & refine, shown as one step strip.
+
+    Every step stays mounted (``render_children``) so a button on one step can
+    press Write or Generate on another, and take audio loads before it is shown.
+    Moving between steps happens in the browser; no request is sent.
+    """
+
+    tabs: gr.Tabs
+
+    def step(self, index: int, label: str) -> gr.Tab:
+        return gr.Tab(label, id=index, render_children=True, elem_classes=["h3-song-step"])
+
+    def go(self, index: int, then: str = "") -> str:
+        """Browser code that opens step ``index``, then runs ``then``."""
+        return (
+            "() => { "
+            f"const root = document.getElementById({self.tabs.elem_id!r}); "
+            "const tab = root && root.querySelectorAll(':scope > .tab-wrapper [role=\"tab\"]')"
+            f"[{int(index)}]; "
+            "if (tab) { tab.click(); if (root.getBoundingClientRect().top < 0) "
+            "root.scrollIntoView({ block: 'start', behavior: 'smooth' }); } "
+            f"{then}}}"
+        )
+
+    def follow(self, trigger: gr.Button, index: int) -> None:
+        """Open step ``index`` whenever ``trigger`` is pressed."""
+        trigger.click(None, js=self.go(index), queue=False, api_name=False)
+
+    def button(self, label: str, index: int, *, variant: str = "secondary",
+               press: str = "", classes: tuple[str, ...] = ()) -> gr.Button:
+        """A button that opens step ``index`` and, with ``press``, clicks that element."""
+        then = f"document.getElementById({press!r})?.click(); " if press else ""
+        button = gr.Button(label, variant=variant, elem_classes=["h3-song-nav", *classes])
+        button.click(None, js=self.go(index, then), queue=False, api_name=False)
+        return button
+
+
+def song_steps(elem_id: str) -> SongSteps:
+    # Wrap keeps all four steps in the strip; CSS lays them out as a stepper.
+    return SongSteps(gr.Tabs(selected=IDEA, elem_id=elem_id, elem_classes=["h3-song-steps"],
+                             overflow_behavior="wrap"))
 
 
 def duration_presets(slider: gr.Slider, presets) -> None:
@@ -61,9 +110,10 @@ QUICK_FIXES = (
 
 def change_request() -> gr.Textbox:
     notes = gr.Textbox(
-        "", label="What should change? (optional)", lines=1, max_lines=3,
+        "", label="What should change? (optional)", lines=2, max_lines=4,
         placeholder="Say what you hear, for example: the chorus feels flat, too busy, too slow",
-        info="Used when you press Write again on an existing draft. Only what you mention changes.",
+        info="Revise the draft sends this to the writer, and so does any later Write until you "
+             "clear it. Only what you mention changes.",
     )
     with gr.Row(elem_classes=["h3-song-quick-fixes"]):
         for label in QUICK_FIXES:
@@ -91,19 +141,55 @@ def song_check_panel(engine: str, max_seconds: float) -> gr.HTML:
     )
 
 
-def bind_song_check(view, engine: str, description: gr.Textbox) -> None:
-    """Re-check the draft in the browser session on every edit; no GPU, no network."""
-    inputs = [description, view.lyrics, view.duration, view.vocals, view.use]
+def render_recap(*, engine: str, sound_label: str, description: str, lyrics: str,
+                 max_seconds: float, vocals: str = song_brief.AUTO,
+                 language: str = song_brief.AUTO, use: str = song_brief.AUTO) -> str:
+    """What the next take will use: the sound, the voice, and the song check."""
+    sound = " ".join(description.split())
+    if len(sound) > 220:
+        sound = sound[:219] + "…"
+    if vocals == song_brief.INSTRUMENTAL:
+        voice = "Instrumental"
+    else:
+        voice = " · ".join((
+            "Voice chosen from your idea" if vocals == song_brief.AUTO else vocals,
+            "language from your idea" if language in (song_brief.AUTO, "", None) else str(language),
+        ))
+    if use not in (song_brief.AUTO, "", None):
+        voice += f" · {use}"
+    rows = (
+        (sound_label, escape(sound) if sound else
+         '<em>Not described yet. Add it on the Idea step, or press Write the song.</em>'),
+        ("Voice", escape(voice)),
+    )
+    check = song_brief.render_check(
+        engine=engine, description=description, lyrics=lyrics,
+        max_seconds=max_seconds, vocals=vocals, use=use,
+    )
+    return (
+        '<div class="h3-song-recap"><dl>'
+        + "".join(f"<div><dt>{escape(name)}</dt><dd>{value}</dd></div>" for name, value in rows)
+        + f"</dl>{check}</div>"
+    )
 
-    def check(text, lyrics, duration, vocals, use):
-        return song_brief.render_check(
+
+def bind_song_check(view, engine: str, description: gr.Textbox, sound_label: str) -> None:
+    """Re-check the draft in the browser session on every edit; no GPU, no network."""
+    inputs = [description, view.lyrics, view.duration, view.vocals, view.use, view.language]
+
+    def check(text, lyrics, duration, vocals, use, language):
+        values = dict(
             engine=engine, description=text or "", lyrics=lyrics or "",
             max_seconds=float(duration or 1), vocals=vocals, use=use,
+        )
+        return (
+            song_brief.render_check(**values),
+            render_recap(sound_label=sound_label, language=language, **values),
         )
 
     gr.on(
         triggers=[component.change for component in inputs],
-        fn=check, inputs=inputs, outputs=view.song_check,
+        fn=check, inputs=inputs, outputs=[view.song_check, view.recap],
         queue=False, api_name=False, show_progress="hidden",
     )
 

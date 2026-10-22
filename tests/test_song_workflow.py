@@ -392,6 +392,45 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class SongStepTests(unittest.TestCase):
+    """The four-step Song layout: every step mounted, browser-side navigation."""
+
+    def test_steps_stay_mounted_and_buttons_open_the_right_step(self) -> None:
+        import gradio as gr
+
+        from h3_ui.song_controls import DRAFT, LISTEN, song_steps
+
+        with gr.Blocks() as demo:
+            steps = song_steps("h3-test-steps")
+            with steps.tabs:
+                for index, label in enumerate(("Idea", "Lyrics", "Generate", "Listen & refine")):
+                    with steps.step(index, label):
+                        gr.Textbox()
+            with steps.tabs:
+                with steps.step(LISTEN + 1, "Spare"):
+                    steps.button("Revise", DRAFT, press="h3-test-write")
+        config = demo.get_config_file()
+        tabs = [c["props"] for c in config["components"] if c["type"] == "tabitem"]
+        self.assertTrue(all(props["render_children"] for props in tabs))
+        script = next(d["js"] for d in config["dependencies"] if d.get("js"))
+        self.assertIn("getElementById('h3-test-steps')", script)
+        self.assertIn(f"[{DRAFT}]", script)
+        self.assertIn("getElementById('h3-test-write')?.click()", script)
+
+    def test_recap_escapes_the_idea_and_names_the_voice(self) -> None:
+        from h3_ui.song_controls import render_recap
+
+        html = render_recap(engine="YuE2", sound_label="Style", description="<b>synth</b> pop",
+                            lyrics=SONG, max_seconds=120, vocals="Duet", language="English")
+        self.assertIn("&lt;b&gt;synth&lt;/b&gt; pop", html)
+        self.assertIn("Duet · English", html)
+        self.assertIn("h3-song-timeline", html)
+        empty = render_recap(engine="MiniMax Music 3", sound_label="Sound", description="",
+                             lyrics="", max_seconds=60, vocals=song_brief.INSTRUMENTAL)
+        self.assertIn("Not described yet", empty)
+        self.assertIn("Instrumental", empty)
+
+
 class SongTakeHistoryTests(unittest.TestCase):
     """The take and one-click handlers, exercised through a minimal Blocks."""
 
@@ -436,7 +475,7 @@ class SongTakeHistoryTests(unittest.TestCase):
         demo = self.build(lambda path: facts[path])
         add = self.handler(demo, "add")
         history, *_rest = add("a.mp3", [], {"style": "pop", "lyrics": "[Verse]\nOne", "abc": ""})
-        history, take_a, take_b, audio_a, audio_b, details, panel = add(
+        history, take_a, take_b, audio_a, audio_b, details, summary = add(
             "b.mp3", history, {"style": "pop", "lyrics": "[Verse]\nTwo", "abc": ""},
         )
         self.assertEqual([take["number"] for take in history], [1, 2])
@@ -444,7 +483,7 @@ class SongTakeHistoryTests(unittest.TestCase):
         self.assertEqual((audio_a, audio_b), ("b.mp3", "a.mp3"))
         self.assertIn("lyrics, seed changed", details)
         self.assertEqual(take_a["choices"][0], ("Take 2 · 0:59 · seed 2", "1"))
-        self.assertTrue(panel["open"])
+        self.assertIn("2 takes this session", summary)
         # The same file does not become a second take.
         import gradio as gr
 
