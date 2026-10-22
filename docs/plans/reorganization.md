@@ -1,6 +1,6 @@
 # Reorganization plan
 
-Status: in progress. Phases 0–5 are done. Combines two code reviews.
+Status: phases 0–6 are done; Later lists what remains. Combines two code reviews.
 One review covered feature ownership and the workspace, the other the cost of
 adding a feature. Remove this file when the plan is finished.
 
@@ -154,6 +154,14 @@ instead of `patch.object(app, …)`, listed under Later.
   and wording. Song and Dub keep their guided steps; Video and Image keep the
   compact composer.
 - Run focused browser checks for navigation and narrow viewports.
+
+Outcome: Projects sits between Create and Media; Jobs keeps **Save as
+project** beside the selected job, and a project run reports in Projects.
+LTX, Qwen, Music 3 and YuE2 build their Generate/Interrupt/progress row with
+`generation_actions`, as FLUX 3, MOSS-Image, Fibo 2.0 and Soundstage do, and
+every stop button reads **Interrupt**. H3's composer keeps its own row (it
+adds **Refresh status** and the shortcut hint), and Dub keeps its guided
+steps with Markdown status.
 
 ## Later
 

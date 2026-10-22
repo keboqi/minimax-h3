@@ -354,14 +354,16 @@ def run():
                 other.close()
                 # Explicit project saving retains content, while recovery keys
                 # reconnect a new browser owner without sharing other owners.
-                page.get_by_text("Saved projects", exact=True).click()
+                page.get_by_text("Save as project", exact=True).click()
                 page.get_by_label("Project name", exact=True).fill("Browser project")
                 page.get_by_role(
                     "button", name="Save prompt, settings & sources", exact=True
                 ).click()
+                page.get_by_role("tab", name="Projects", exact=True).click()
                 expect(page.get_by_label("Saved project", exact=True)).to_have_value(
                     "Browser project"
                 )
+                page.get_by_role("tab", name="Jobs", exact=True).click()
                 page.get_by_text("Browser ownership and recovery", exact=True).click()
                 page.get_by_role(
                     "button", name="Show my recovery key", exact=True
@@ -380,7 +382,7 @@ def run():
                 expect(recovered_page.locator(".h3-job-table")).to_contain_text(
                     failed["id"][:8]
                 )
-                recovered_page.get_by_text("Saved projects", exact=True).click()
+                recovered_page.get_by_role("tab", name="Projects", exact=True).click()
                 recovered_page.get_by_role(
                     "button", name="Refresh projects", exact=True
                 ).click()
@@ -590,17 +592,12 @@ def run():
                     "Shared timeline: 1.00 seconds"
                 )
                 page.screenshot(path=str(ARTIFACTS / "media.png"), full_page=True)
-                for tab_name in ("Media", "Jobs"):
+                shells = {"Projects": ".h3-projects-shell", "Media": ".h3-gallery-shell", "Jobs": ".h3-jobs-shell"}
+                for tab_name, shell in shells.items():
                     page.get_by_role("tab", name=tab_name, exact=True).click()
                     for width in (390, 1440):
                         page.set_viewport_size({"width": width, "height": 1000})
-                        expect(
-                            page.locator(
-                                ".h3-gallery-shell"
-                                if tab_name == "Media"
-                                else ".h3-jobs-shell"
-                            ).first
-                        ).to_be_visible()
+                        expect(page.locator(shell).first).to_be_visible()
                         page.screenshot(
                             path=str(ARTIFACTS / f"{tab_name.lower()}-{width}.png"),
                             full_page=True,
@@ -623,7 +620,7 @@ def run():
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= innerWidth + 2"
                     )
-                for tab_name in ("Media", "Jobs"):
+                for tab_name in ("Projects", "Media", "Jobs"):
                     page.get_by_role("tab", name=tab_name, exact=True).click()
                     for width in (390, 1440):
                         page.set_viewport_size({"width": width, "height": 1000})

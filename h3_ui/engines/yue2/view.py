@@ -8,6 +8,7 @@ from typing import Any, Mapping, Sequence
 import gradio as gr
 
 
+from ..controls import generation_actions
 from ...prompt_review import build_prompt_review
 from ...prompt_writer_controls import build_remote_prompt_writer_controls
 from ...song_controls import (
@@ -309,19 +310,8 @@ def build_yue2_view(
                             readiness = gr.HTML(
                                 '<p class="h3-readiness" role="alert">Describe your song on the Idea step and add lyrics to start.</p>'
                             )
-                            with gr.Row(elem_classes=["h3-generation-buttons"]):
-                                run = gr.Button(
-                                    "Generate with YuE2",
-                                    variant="primary",
-                                    interactive=False,
-                                    elem_classes=["h3-primary-action"],
-                                    elem_id="h3-yue2-generate",
-                                )
-                                stop = gr.Button("Interrupt", interactive=False)
-                                run.h3_stop = stop
-                                run.h3_readiness = readiness
-                            status = gr.Textbox(
-                                label="Generation progress", lines=2, interactive=False
+                            run, stop, status = generation_actions(
+                                "Generate with YuE2", readiness=readiness, elem_id="h3-yue2-generate"
                             )
                         output = gr.Audio(
                             label="Generated song", type="filepath", interactive=False

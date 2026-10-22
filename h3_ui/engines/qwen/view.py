@@ -22,6 +22,7 @@ from h3_app.catalog import (
     QWEN_IMAGE21_DYNAMIC_SCHEDULER,
 )
 
+from ..controls import generation_actions
 from ...prompt_review import build_prompt_review
 from ...image_library import build_image_file_input
 from ...prompt_writer_controls import build_remote_prompt_writer_controls
@@ -195,18 +196,8 @@ def build_qwen_image21_view(
                     readiness = gr.HTML(
                         '<p class="h3-readiness" role="alert">Write a prompt to start.</p>'
                     )
-                    with gr.Row(elem_classes=["h3-generation-buttons"]):
-                        run = gr.Button(
-                            "Generate with Qwen Image 2.1",
-                            variant="primary",
-                            interactive=False,
-                            elem_classes=["h3-primary-action"],
-                        )
-                        stop = gr.Button("Interrupt", interactive=False)
-                        run.h3_stop = stop
-                        run.h3_readiness = readiness
-                    status = gr.Textbox(
-                        label="Generation progress", lines=2, interactive=False
+                    run, stop, status = generation_actions(
+                        "Generate with Qwen Image 2.1", readiness=readiness
                     )
                 with settings_root:
                     preset = gr.Radio(

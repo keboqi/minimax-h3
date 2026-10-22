@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import time
 import uuid
+from contextlib import nullcontext
 
 import gradio as gr
 
@@ -98,7 +99,8 @@ def table(jobs, selected=None):
     )
 
 
-def build_jobs_view(root, *, get, post, summary):
+def build_jobs_view(root, *, get, post, summary, projects_root=None):
+    """Jobs in ``root``; saved projects in ``projects_root``, or an accordion in Jobs without one."""
     with root:
         with gr.Row(equal_height=False, elem_classes=["h3-view-heading"]):
             gr.Markdown(
@@ -153,6 +155,15 @@ def build_jobs_view(root, *, get, post, summary):
                         [], label="Retained H3 source variant", value=None
                     )
                     finishing = gr.Button("Retry finishing only", interactive=False)
+                with gr.Accordion(
+                    "Save as project", open=False, elem_classes=["h3-gallery-card"]
+                ):
+                    gr.Markdown(
+                        "**Saving retains the selected job's prompt and source files on this server.** "
+                        "Saved projects appear in **Projects**."
+                    )
+                    project_name = gr.Textbox(label="Project name", max_lines=1)
+                    save_project = gr.Button("Save prompt, settings & sources")
                 status = gr.Markdown(elem_classes=["h3-job-action-status"])
         ticket = gr.Textbox(visible=False)
         timer = gr.Timer(2)
@@ -175,21 +186,36 @@ def build_jobs_view(root, *, get, post, summary):
                 label="Restore browser recovery key", type="password"
             )
             recover_owner = gr.Button("Restore owner and reload")
-        with gr.Accordion("Saved projects", open=False):
+
+    with projects_root if projects_root is not None else root:
+        with (
+            nullcontext() if projects_root is not None
+            else gr.Accordion("Saved projects", open=False)
+        ):
+            if projects_root is not None:
+                with gr.Row(equal_height=False, elem_classes=["h3-view-heading"]):
+                    gr.Markdown(
+                        "## Projects\nRequests you saved from **Jobs**, with their prompt, settings and "
+                        "source files. Run one again or remove it.",
+                        scale=4,
+                    )
+                    refresh_projects = gr.Button("Refresh projects", scale=0, min_width=180)
             gr.Markdown(
-                "**Saving retains the selected job's prompt and source files on this server.** "
                 "Projects belong to this browser owner. Provider keys are never saved."
             )
-            project_name = gr.Textbox(label="Project name", max_lines=1)
-            save_project = gr.Button("Save prompt, settings & sources")
             project = gr.Dropdown([], label="Saved project", value=None)
             saved_prompt = gr.Textbox(
                 label="Saved prompt / caption / lyrics", interactive=False, lines=5
             )
             saved_settings = gr.JSON(label="Saved request settings")
             with gr.Row():
-                refresh_projects = gr.Button("Refresh projects")
+                if projects_root is None:
+                    refresh_projects = gr.Button("Refresh projects")
                 run_project = gr.Button("Run saved request", variant="primary")
+            project_files = gr.File(
+                label="Project outputs", file_count="multiple", interactive=False, visible=False
+            )
+            project_status = gr.Markdown(elem_classes=["h3-job-action-status"])
             confirm_project_delete = gr.Checkbox(
                 label="Delete the selected project and its retained inputs"
             )
@@ -398,7 +424,7 @@ def build_jobs_view(root, *, get, post, summary):
     delete_project.click(
         remove_project,
         inputs=[project, confirm_project_delete],
-        outputs=[project, confirm_project_delete, status],
+        outputs=[project, confirm_project_delete, project_status],
         queue=False,
         api_name=False,
     )
@@ -553,29 +579,29 @@ def build_jobs_view(root, *, get, post, summary):
             f"Job `{job.id[:8]}` · {job.state}. " + (job.error or ""),
         )
 
-    for accepted in (
-        retry.click(
+    for accepted, outputs in (
+        (retry.click(
             accept_retry,
             inputs=[selected, variants],
             outputs=ticket,
             queue=False,
             api_name=False,
-        ),
-        finishing.click(
+        ), [files, status]),
+        (finishing.click(
             accept_finishing,
             inputs=[selected, finishing_variant],
             outputs=ticket,
             queue=False,
             api_name=False,
-        ),
-        run_project.click(
+        ), [files, status]),
+        (run_project.click(
             accept_project, inputs=project, outputs=ticket, queue=False, api_name=False
-        ),
+        ), [project_files, project_status]),
     ):
         dispatched = accepted.success(
             execute_retry,
             inputs=ticket,
-            outputs=[files, status],
+            outputs=outputs,
             api_name=False,
             trigger_mode="multiple",
             **GPU_QUEUE,

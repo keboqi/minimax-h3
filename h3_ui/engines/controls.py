@@ -16,12 +16,18 @@ QUIET = {"queue": False, "show_progress": "hidden", "api_name": False}
 SKIP_JS = '{"__type__": "update"}'
 
 
-def generation_actions(label):
-    """The primary action, its Interrupt and the progress box, in the shared placement."""
+def generation_actions(label, *, readiness=None, elem_id=None):
+    """The primary action, its Interrupt and the progress box, in the shared placement.
+
+    With ``readiness``, the action starts disabled until that check passes.
+    """
     with gr.Row(elem_classes=["h3-generation-buttons"]):
-        run = gr.Button(label, variant="primary", elem_classes=["h3-primary-action"])
+        run = gr.Button(label, variant="primary", interactive=readiness is None,
+                        elem_classes=["h3-primary-action"], elem_id=elem_id)
         stop = gr.Button("Interrupt", interactive=False)
         run.h3_stop = stop
+        if readiness is not None:
+            run.h3_readiness = readiness
     status = gr.Textbox(label="Generation progress", lines=3, interactive=False)
     return run, stop, status
 

@@ -7,6 +7,7 @@ from typing import Any, Mapping, Sequence
 
 import gradio as gr
 
+from ..controls import generation_actions
 from ...prompt_review import build_prompt_review
 from ...image_library import build_image_input, build_image_file_input
 from ...prompt_writer_controls import build_remote_prompt_writer_controls
@@ -183,18 +184,8 @@ def build_ltx_view(
                     readiness = gr.HTML(
                         '<p class="h3-readiness" role="alert">Write a prompt to start.</p>'
                     )
-                    with gr.Row(elem_classes=["h3-generation-buttons"]):
-                        run = gr.Button(
-                            "Generate with LTX-2.5",
-                            variant="primary",
-                            interactive=False,
-                            elem_classes=["h3-primary-action"],
-                        )
-                        stop = gr.Button("Interrupt", interactive=False)
-                        run.h3_stop = stop
-                        run.h3_readiness = readiness
-                    status = gr.Textbox(
-                        label="Generation progress", lines=2, interactive=False
+                    run, stop, status = generation_actions(
+                        "Generate with LTX-2.5", readiness=readiness
                     )
                 with settings_root:
                     gr.Markdown("### Generation settings")

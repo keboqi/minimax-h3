@@ -57,7 +57,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_ui/engines/ | Create engines that own their view, bindings and handlers (FLUX 3, MOSS-Image, Fibo 2.0). Each registers an `EngineFeature` in `FEATURES` and receives `EngineDeps` explicitly; controls.py holds the shared Generate/Interrupt/progress, prompt-writer, resolution-preset and saved-settings helpers |
 | h3_ui/h3/ | The H3 composer: view.py, services.py and sections/ (one dataclass per visible section); layout.py computes resolution, result-format and frame control updates; handlers.py holds `H3Handlers` (batched generation, the default-settings API, settings summaries and result lookup) |
 | h3_ui/events/ | H3 and workspace-wide event registration (generation, prompt, resolution, input upscale, gallery, system, layout) |
-| h3_ui/job_bindings.py, job_admission.py, jobs_view.py | Gradio request injection, acceptance before queueing, shared GPU binding and owner-scoped job presentation |
+| h3_ui/job_bindings.py, job_admission.py, jobs_view.py | Gradio request injection, acceptance before queueing, shared GPU binding, owner-scoped job presentation, and the Projects tab of saved requests |
 | h3_app/reference_bindings.py, h3_ui/prompt_preview.py, prompt_review.py | Stable reference translation and guarded accept/keep/undo prompt previews |
 | h3_ui/media_actions.py | Selection- and file-specific deletion confirmation |
 | h3_ui/settings_controller.py, settings_presentation.py | Serialized settings actions and resolved-plan rendering |

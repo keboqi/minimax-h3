@@ -350,7 +350,7 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-workspace .h3-job-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .h3-workspace .h3-job-table :is(th, td) { text-align: left; padding: 10px; border-bottom: 1px solid var(--h3-border); }
 .h3-workspace .h3-view-heading { align-items: center; margin-bottom: 8px; }
-.h3-workspace :is(.h3-gallery-shell, .h3-jobs-shell) { background: transparent; border: 0; padding: 0; gap: 16px; }
+.h3-workspace :is(.h3-gallery-shell, .h3-jobs-shell, .h3-projects-shell) { background: transparent; border: 0; padding: 0; gap: 16px; }
 .h3-workspace .h3-view-heading h2 { font-size: 24px; letter-spacing: -.025em; margin: 0 0 6px; }
 .h3-workspace .h3-view-heading p { color: var(--h3-muted); margin: 0; max-width: 760px; }
 .h3-workspace .h3-gallery-toolbar { align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }

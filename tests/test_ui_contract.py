@@ -578,7 +578,7 @@ class UiContractTests(unittest.TestCase):
         tab_nodes = layout["children"]
         self.assertEqual(
             [self.components[node["id"]]["props"]["label"] for node in tab_nodes],
-            ["Create", "Media", "Jobs", "System", "API & workflows"],
+            ["Create", "Projects", "Media", "Jobs", "System", "API & workflows"],
         )
         engine_tabs = next(
             c

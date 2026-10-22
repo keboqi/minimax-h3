@@ -29,7 +29,7 @@ through a validated engine value, including engines outside the initial task.
 
 | Area | Behavior |
 |---|---|
-| Shell | Create, Media, Jobs, System and API/workflows; task-filtered choices and remembered engines |
+| Shell | Create, Projects, Media, Jobs, System and API/workflows; task-filtered choices and remembered engines |
 | H3 | Compact composer/results; collapsed Output & recipe and tabbed Advanced settings; mobile Compose/Preview links |
 | Engines | H3, LTX, Qwen, Music and YuE2 share the shell, ownership, GPU queue and guarded prompt review |
 | References | Stable slots/tags, shared sparse-to-dense translation, repair after replacement/removal |
@@ -37,7 +37,7 @@ through a validated engine value, including engines outside the initial task.
 | Jobs | Immutable UI acceptance, owner-scoped idempotency, pinned sources, bounded admission, stage/seed ledger, inspect/cancel/download |
 | Retry | Failed subsets reuse recorded seeds/configuration; unknown submission outcomes block replay; H3 finishing retries use completed raw sources |
 | Recovery | Signed browser ownership and recovery keys; technical records survive restart; reconnect observes exact backend history/queue and collects existing outputs without automatic replay |
-| Projects | Explicit save of private prompts/settings and source copies; inspect, run a saved request, delete retained content; saved finishing state supports restart recovery |
+| Projects | Save a job's private prompt/settings and source copies from **Save as project** in Jobs; the **Projects** tab inspects, runs and deletes saved requests; saved finishing state supports restart recovery |
 | Media | Typed pagination, search by filename/tags/technical settings, tags/favorites, stable IDs and lineage; bounded index batches; safe scoped deletion |
 | Comparison | Image reveal slider; two videos on elapsed time at native frame rates; shorter-duration timeline, drift correction, buffering pause, mute/A/B audio |
 | Canvas | Existing input-derived default; optional H3 conditioned Image fit/pad or fill/crop, effective dimensions and preview; transforms derived copies |

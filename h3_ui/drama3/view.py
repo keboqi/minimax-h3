@@ -351,7 +351,7 @@ def _voice_slot(speaker, names):
                     language = gr.Dropdown(list(VOICE_DESIGN_LANGUAGES), value="Auto", label="Preview language")
                     with gr.Row(elem_classes=["h3-drama3-inline-actions"]):
                         generate = gr.Button("Generate voice", size="sm", variant="primary")
-                        stop = gr.Button("Interrupt voice generation", size="sm", interactive=False)
+                        stop = gr.Button("Interrupt", size="sm", interactive=False)
                         generate.h3_stop = stop
                 with gr.Column(min_width=220):
                     audio = gr.Audio(label=f"Speaker {speaker} reference clip", type="filepath")
@@ -420,7 +420,7 @@ def _sound_slot(index, names):
             audio = gr.Audio(label=f"Sound {index} clip", type="filepath")
             with gr.Row(elem_classes=["h3-drama3-inline-actions"]):
                 generate = gr.Button("Generate sound", size="sm", variant="primary")
-                stop = gr.Button("Interrupt sound generation", size="sm", interactive=False)
+                stop = gr.Button("Interrupt", size="sm", interactive=False)
                 generate.h3_stop = stop
         with gr.Row(elem_classes=["h3-drama3-inline-actions"]):
             with gr.Row() as save_row:
@@ -472,7 +472,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             with gr.Row(elem_classes=["h3-generation-buttons"]):
                                 auto = gr.Button("Auto: rewrite, voice, sound and speak", size="sm",
                                                  variant="primary")
-                                stop_auto = gr.Button("Interrupt auto", size="sm", interactive=False)
+                                stop_auto = gr.Button("Interrupt", size="sm", interactive=False)
                         auto_save_speakers = gr.Checkbox(False, label="Save generated speakers to the selected group",
                             info="After the voices are generated, Auto saves them like Save all speakers.")
                         auto_status = gr.Markdown("Paste any text, pick a script mode, then run Auto.",

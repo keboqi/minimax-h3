@@ -23,7 +23,8 @@ or **Add to compare B**. The slots show thumbnails and keep their picks while
 you filter the library. Choose two different images or two different videos;
 adding another type starts a new pair. **Clear A** and **Clear B** remove picks.
 In **Jobs**, click a history row (or focus it and press Enter/Space) to inspect
-that request and its available actions.
+that request and its available actions. **Save as project** keeps its prompt,
+settings and sources; saved requests open in **Projects**.
 Image mode offers the one-step **SeedVR2 2x** workflow and
 **LTX-2.5 CQ Image Enhancer**, using the same target-resolution presets.
 CQ resizes the selected still to fit the target, then generatively restores

@@ -38,6 +38,7 @@ class AppViews:
     fibo2: gr.Group | None = None
     dubbing: gr.Column | None = None
     create_tab: gr.Tab | None = None
+    projects: gr.Column | None = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,8 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
                     drama3 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Dub & Translate", id="dub"):
                     dubbing = gr.Column(elem_classes=["h3-engine-view", "h3-dub-shell"])
+        with gr.Tab("Projects", id="projects"):
+            projects = gr.Column(elem_classes=["h3-projects-shell"])
         with gr.Tab("Media", id="media") as gallery_tab:
             gallery = gr.Column(elem_classes=["h3-gallery-shell"])
         with gr.Tab("Jobs", id="jobs"):
@@ -155,6 +158,7 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
         fibo2,
         dubbing,
         create_tab,
+        projects,
     )
 
 
