@@ -7,11 +7,8 @@ Modal bakes its uv environment into the image; Linux installs prepare it on firs
 from __future__ import annotations
 
 import argparse
-import contextlib
 import os
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 from h3_requirements import (
@@ -21,9 +18,9 @@ from h3_requirements import (
 )
 
 from h3_app.errors import H3Error
+from h3_app.workers.env import SCRUBBED_ENV, compiler_env, setup_lock, uv_command
 
-# Inherited interpreter settings would leak ComfyUI's packages into the venv.
-SCRUBBED_ENV = ("PYTHONPATH", "PYTHONHOME", "PIP_CONSTRAINT", "UV_CONSTRAINT", "VIRTUAL_ENV")
+__all__ = ["compiler_env", "install_env", "is_ready", "prepare", "uv_command"]
 
 
 def fingerprint() -> str:
@@ -51,16 +48,6 @@ def is_ready(venv: Path) -> bool:
         return False
 
 
-def uv_command() -> list[str] | None:
-    """The uv executable, or uv run as a module of this interpreter (Colab, setup_h3.py)."""
-    found = shutil.which("uv")
-    if found:
-        return [found]
-    import importlib.util
-
-    return [sys.executable, "-m", "uv"] if importlib.util.find_spec("uv") else None
-
-
 def install_commands(venv: Path, uv: str | list[str] = "uv") -> list[list[str]]:
     """The install steps, shared with the Modal image build."""
     return drama3_sglang_install_commands(venv, uv)
@@ -77,29 +64,6 @@ def install_env(venv: Path) -> dict[str, str]:
     return env
 
 
-def compiler_env(env=None) -> dict[str, str]:
-    """``CC``/``CXX`` for uv installs that compile C extensions (cdifflib, diffq).
-
-    Standalone Python builds name clang as their C compiler; fall back to gcc when
-    clang is absent and no compiler was chosen.
-    """
-    env = os.environ if env is None else env
-    if "CC" not in env and not shutil.which("clang") and shutil.which("gcc"):
-        return {"CC": "gcc", "CXX": "g++"}
-    return {}
-
-
-@contextlib.contextmanager
-def _setup_lock(path: Path):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a") as stream:
-        if os.name == "posix":
-            import fcntl
-
-            fcntl.flock(stream, fcntl.LOCK_EX)
-        yield
-
-
 def prepare(venv: Path, *, force: bool = False, run=None, log=print) -> Path:
     """Create or reuse an environment; publish readiness only after the smoke test."""
     venv = Path(venv)
@@ -107,7 +71,7 @@ def prepare(venv: Path, *, force: bool = False, run=None, log=print) -> Path:
     if os.name != "posix":
         raise H3Error(f"Drama 3 runs on {label}, which requires Linux.")
     run = run or (lambda command, **kwargs: subprocess.run(command, check=True, **kwargs))
-    with _setup_lock(venv.parent / f".{venv.name}.lock"):
+    with setup_lock(venv.parent / f".{venv.name}.lock"):
         if not force and is_ready(venv):
             return python_path(venv)
         uv = uv_command()

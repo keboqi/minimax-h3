@@ -1,6 +1,6 @@
 # Reorganization plan
 
-Status: proposed 2026-10-22; phase 0 in progress. Combines two code reviews.
+Status: in progress. Phases 0 and 1 are done. Combines two code reviews.
 One review covered feature ownership and the workspace, the other the cost of
 adding a feature. Remove this file when the plan is finished.
 

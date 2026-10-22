@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import base64
 import math
-import mimetypes
-import os
 import re
-import time
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -16,16 +12,14 @@ import requests
 from h3_app.catalog import (
     DEFAULT_IMAGE_FRAMES,
     DEFAULT_RESULT_FORMAT,
-    GEMINI_API_ROOT,
     GEMINI_PROMPT_MODELS,
     DEFAULT_LIGHTNING_PROMPT_MODEL,
-    LIGHTNING_API_ROOT,
-    LIGHTNING_PROMPT_MODELS,
     MAX_REFERENCE_AUDIOS,
 )
 from h3_app import song_brief
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
+from h3_app.llm import gemini, lightning, strip_code_fence
 from h3_app.policy import (
     active_fl2va_voice_references,
     normalize_result_format,
@@ -34,33 +28,6 @@ from h3_app.policy import (
 from h3_prompt_rewriter import resolution_for_size as local_prompt_resolution
 from h3_prompt_rewriter import rewrite_prompt as rewrite_local_h3_prompt
 from h3_prompt_rewriter import task_for_inputs as local_prompt_task
-
-
-def _gemini_api_key(temporary_key: str | None) -> str:
-    key = str(temporary_key or "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
-    if not key:
-        raise H3Error(
-            "Set GEMINI_API_KEY in the server environment or enter a temporary "
-            "Gemini API key in Prompt enhancer."
-        )
-    return key
-
-
-def _lightning_api_key(temporary_key: str | None) -> str:
-    key = str(temporary_key or "").strip() or os.getenv("LIGHTNING_API_KEY", "").strip()
-    if not key:
-        raise H3Error(
-            "Set LIGHTNING_API_KEY in the server environment or enter a temporary "
-            "Lightning API key in Prompt enhancer."
-        )
-    return key
-
-
-def _lightning_model(model: str | None) -> str:
-    selected = str(model or "").strip() or DEFAULT_LIGHTNING_PROMPT_MODEL
-    if selected not in LIGHTNING_PROMPT_MODELS:
-        raise H3Error(f"Unsupported Lightning AI prompt model: {selected}")
-    return selected
 
 
 def _uploaded_media_path(value: Any) -> Path | None:
@@ -81,103 +48,6 @@ def _uploaded_media_path(value: Any) -> Path | None:
     if candidate is None or not candidate.is_file():
         raise H3Error(f"Prompt-enhancer media file does not exist: {candidate}")
     return candidate
-
-
-def _gemini_mime_type(path: Path) -> str:
-    mime_type = mimetypes.guess_type(path.name)[0]
-    if mime_type:
-        return mime_type
-    suffix_defaults = {
-        ".mp3": "audio/mpeg",
-        ".wav": "audio/wav",
-        ".m4a": "audio/mp4",
-        ".mp4": "video/mp4",
-        ".mov": "video/quicktime",
-        ".webm": "video/webm",
-    }
-    return suffix_defaults.get(path.suffix.lower(), "application/octet-stream")
-
-
-def _gemini_error(response: requests.Response, action: str) -> H3Error:
-    try:
-        payload = response.json()
-        detail = payload.get("error", {}).get("message") or response.text
-    except (ValueError, AttributeError):
-        detail = response.text
-    detail = re.sub(r"\s+", " ", str(detail)).strip()[:800]
-    return H3Error(f"Gemini {action} failed (HTTP {response.status_code}): {detail}")
-
-
-def _upload_gemini_file(
-    session: requests.Session,
-    path: Path,
-    api_key: str,
-) -> dict[str, Any]:
-    mime_type = _gemini_mime_type(path)
-    size = path.stat().st_size
-    headers = {
-        "x-goog-api-key": api_key,
-        "X-Goog-Upload-Protocol": "resumable",
-        "X-Goog-Upload-Command": "start",
-        "X-Goog-Upload-Header-Content-Length": str(size),
-        "X-Goog-Upload-Header-Content-Type": mime_type,
-        "Content-Type": "application/json",
-    }
-    started = session.post(
-        f"{GEMINI_API_ROOT}/upload/v1beta/files",
-        headers=headers,
-        json={"file": {"displayName": path.name[:512]}},
-        timeout=60,
-    )
-    if not started.ok:
-        raise _gemini_error(started, f"upload initialization for {path.name}")
-    upload_url = started.headers.get("x-goog-upload-url")
-    if not upload_url:
-        raise H3Error(f"Gemini did not return an upload URL for {path.name}.")
-    with path.open("rb") as source:
-        uploaded = session.post(
-            upload_url,
-            headers={
-                "Content-Length": str(size),
-                "X-Goog-Upload-Offset": "0",
-                "X-Goog-Upload-Command": "upload, finalize",
-                "Content-Type": mime_type,
-            },
-            data=source,
-            timeout=600,
-        )
-    if not uploaded.ok:
-        raise _gemini_error(uploaded, f"upload for {path.name}")
-    file_info = uploaded.json().get("file", {})
-    if not file_info.get("name") or not file_info.get("uri"):
-        raise H3Error(f"Gemini returned incomplete file metadata for {path.name}.")
-    return file_info
-
-
-def _wait_for_gemini_file(
-    session: requests.Session,
-    file_info: dict[str, Any],
-    api_key: str,
-) -> dict[str, Any]:
-    name = str(file_info["name"])
-    deadline = time.monotonic() + 600
-    while str(file_info.get("state", "ACTIVE")).upper() == "PROCESSING":
-        if time.monotonic() >= deadline:
-            raise H3Error(f"Gemini timed out while processing {name}.")
-        time.sleep(2)
-        response = session.get(
-            f"{GEMINI_API_ROOT}/v1beta/{name}",
-            headers={"x-goog-api-key": api_key},
-            timeout=60,
-        )
-        if not response.ok:
-            raise _gemini_error(response, f"file status check for {name}")
-        file_info = response.json()
-    state = str(file_info.get("state", "ACTIVE")).upper()
-    if state == "FAILED":
-        detail = file_info.get("error", {}).get("message", "unknown processing error")
-        raise H3Error(f"Gemini could not process {name}: {detail}")
-    return file_info
 
 
 def _active_prompt_media(
@@ -218,6 +88,25 @@ def _active_prompt_media(
     return media
 
 
+def _read_system_prompt(system_path: Path, target: str) -> str:
+    if not system_path.is_file():
+        raise H3Error(f"Missing {target} system prompt: {system_path}")
+    system_prompt = system_path.read_text(encoding="utf-8").strip()
+    if not system_prompt:
+        raise H3Error(f"{target} system prompt is empty.")
+    return system_prompt
+
+
+def _media_paths(media_values: Iterable[tuple[str, Any]]) -> list[tuple[str, Path]]:
+    media: list[tuple[str, Path]] = []
+    for label, value in media_values:
+        if value is not None:
+            path = _uploaded_media_path(value)
+            if path is not None:
+                media.append((label, path))
+    return media
+
+
 def _enhance_prompt_from_media(
     *,
     prompt: str,
@@ -254,18 +143,9 @@ def _enhance_prompt_from_media(
     try:
         if model not in GEMINI_PROMPT_MODELS:
             raise H3Error(f"Unsupported Gemini prompt model: {model}")
-        key = _gemini_api_key(temporary_api_key)
-        if not system_path.is_file():
-            raise H3Error(f"Missing {target} system prompt: {system_path}")
-        system_prompt = system_path.read_text(encoding="utf-8").strip()
-        if not system_prompt:
-            raise H3Error(f"{target} system prompt is empty.")
-        media: list[tuple[str, Path]] = []
-        for label, value in media_values:
-            if value is not None:
-                path = _uploaded_media_path(value)
-                if path is not None:
-                    media.append((label, path))
+        key = gemini.api_key(temporary_api_key)
+        system_prompt = _read_system_prompt(system_path, target)
+        media = _media_paths(media_values)
         rough_prompt = str(prompt or "").strip()
         if not rough_prompt and not media:
             raise H3Error("Enter a prompt or upload an image before enhancing.")
@@ -278,74 +158,25 @@ def _enhance_prompt_from_media(
                 )
             }
         ]
-        uploaded_names: list[str] = []
-        with requests.Session() as session:
-            try:
-                for label, path in media:
-                    parts.append({"text": f"The next uploaded image is {label}."})
-                    file_info = _upload_gemini_file(session, path, key)
-                    uploaded_names.append(str(file_info["name"]))
-                    file_info = _wait_for_gemini_file(session, file_info, key)
-                    parts.append(
-                        {
-                            "fileData": {
-                                "mimeType": file_info.get("mimeType")
-                                or _gemini_mime_type(path),
-                                "fileUri": file_info["uri"],
-                            }
-                        }
-                    )
-                response = session.post(
-                    f"{GEMINI_API_ROOT}/v1beta/models/{model}:generateContent",
-                    headers={"x-goog-api-key": key, "Content-Type": "application/json"},
-                    json={
-                        "systemInstruction": {"parts": [{"text": system_prompt}]},
-                        "contents": [{"role": "user", "parts": parts}],
-                        "generationConfig": {
-                            "temperature": float(temperature),
-                            "maxOutputTokens": 16384,
-                        },
-                    },
-                    timeout=600,
-                )
-                if not response.ok:
-                    raise _gemini_error(response, "prompt generation")
-                payload = response.json()
-                candidates = payload.get("candidates") or []
-                text_parts = (
-                    candidates[0].get("content", {}).get("parts", [])
-                    if candidates
-                    else []
-                )
-                enhanced = "".join(
-                    str(part.get("text", "")) for part in text_parts
-                ).strip()
-                if enhanced.startswith("```") and enhanced.endswith("```"):
-                    enhanced = re.sub(r"^```[^\n]*\n?", "", enhanced)
-                    enhanced = re.sub(r"\n?```$", "", enhanced).strip()
-                if not enhanced:
-                    reason = (
-                        candidates[0].get("finishReason")
-                        if candidates
-                        else payload.get("promptFeedback", {}).get(
-                            "blockReason", "no candidate"
-                        )
-                    )
-                    raise H3Error(f"Gemini returned no enhanced prompt ({reason}).")
-                return (
-                    enhanced,
-                    f"Enhanced {target} prompt with {model} using {len(media)} image(s).",
-                )
-            finally:
-                for name in uploaded_names:
-                    try:
-                        session.delete(
-                            f"{GEMINI_API_ROOT}/v1beta/{name}",
-                            headers={"x-goog-api-key": key},
-                            timeout=30,
-                        )
-                    except requests.RequestException:
-                        pass
+        with gemini.Session(key) as session:
+            for label, path in media:
+                parts.append({"text": f"The next uploaded image is {label}."})
+                parts.append(session.file_part(path))
+            payload = session.generate(
+                model,
+                parts,
+                system_prompt=system_prompt,
+                generation_config={"temperature": float(temperature), "maxOutputTokens": 16384},
+            )
+        enhanced = strip_code_fence(gemini.reply_text(payload))
+        if not enhanced:
+            raise H3Error(
+                f"Gemini returned no enhanced prompt ({gemini.empty_reply_reason(payload)})."
+            )
+        return (
+            enhanced,
+            f"Enhanced {target} prompt with {model} using {len(media)} image(s).",
+        )
     except (H3Error, requests.RequestException, OSError, ValueError) as exc:
         return str(prompt or ""), f"Prompt enhancement failed: {exc}"
 
@@ -362,24 +193,13 @@ def _enhance_prompt_from_media_lightning(
     context: str,
 ) -> tuple[str, str]:
     """Use the H3 Lightning endpoint with a target-specific prompt and images."""
-    from openai import OpenAI, OpenAIError
-
     try:
-        model = _lightning_model(model)
-        key = _lightning_api_key(temporary_api_key)
-        if not system_path.is_file():
-            raise H3Error(f"Missing {target} system prompt: {system_path}")
-        system_prompt = system_path.read_text(encoding="utf-8").strip()
-        if not system_prompt:
-            raise H3Error(f"{target} system prompt is empty.")
-        media: list[tuple[str, Path]] = []
-        for label, value in media_values:
-            if value is not None:
-                path = _uploaded_media_path(value)
-                if path is not None:
-                    if not _gemini_mime_type(path).startswith("image/"):
-                        raise H3Error("Lightning AI prompt enhancement supports images only.")
-                    media.append((label, path))
+        model = lightning.model(model)
+        key = lightning.api_key(temporary_api_key)
+        system_prompt = _read_system_prompt(system_path, target)
+        media = _media_paths(media_values)
+        if not all(lightning.is_image(path) for _label, path in media):
+            raise H3Error("Lightning AI prompt enhancement supports images only.")
         rough_prompt = str(prompt or "").strip()
         if not rough_prompt and not media:
             raise H3Error("Enter a prompt or upload an image before enhancing.")
@@ -393,30 +213,11 @@ def _enhance_prompt_from_media_lightning(
             ),
         }]
         for label, path in media:
-            mime_type = _gemini_mime_type(path)
-            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
             content.extend((
                 {"type": "text", "text": f"The next uploaded image is {label}."},
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mime_type};base64,{encoded}",
-                        "detail": "high",
-                    },
-                },
+                lightning.image_part(path),
             ))
-        client = OpenAI(base_url=LIGHTNING_API_ROOT, api_key=key, timeout=600.0)
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": content},
-            ],
-        )
-        enhanced = str(completion.choices[0].message.content or "").strip()
-        if enhanced.startswith("```") and enhanced.endswith("```"):
-            enhanced = re.sub(r"^```[^\n]*\n?", "", enhanced)
-            enhanced = re.sub(r"\n?```$", "", enhanced).strip()
+        enhanced = strip_code_fence(lightning.complete(key, model, system_prompt, content))
         if not enhanced:
             raise H3Error("Lightning AI returned no enhanced prompt.")
         return (
@@ -424,7 +225,7 @@ def _enhance_prompt_from_media_lightning(
             f"Enhanced {target} prompt with {model} "
             f"using {len(media)} image(s).",
         )
-    except (H3Error, OpenAIError, OSError, ValueError, IndexError) as exc:
+    except (H3Error, OSError, ValueError) as exc:
         return str(prompt or ""), f"Prompt enhancement failed: {exc}"
 
 
@@ -1283,7 +1084,7 @@ def _enhance_h3_prompt_with_gemini(
     try:
         if model not in GEMINI_PROMPT_MODELS:
             raise H3Error(f"Unsupported Gemini prompt model: {model}")
-        key = _gemini_api_key(temporary_api_key)
+        key = gemini.api_key(temporary_api_key)
         if not runtime.prompt_system_path.is_file():
             raise H3Error(
                 f"Missing prompt enhancer system prompt: {runtime.prompt_system_path}"
@@ -1332,77 +1133,25 @@ def _enhance_h3_prompt_with_gemini(
                 )
             }
         ]
-        uploaded_names: list[str] = []
-        with requests.Session() as session:
-            try:
-                for label, path in media:
-                    parts.append({"text": f"The next uploaded file is {label}."})
-                    file_info = _upload_gemini_file(session, path, key)
-                    uploaded_names.append(str(file_info["name"]))
-                    file_info = _wait_for_gemini_file(session, file_info, key)
-                    parts.append(
-                        {
-                            "fileData": {
-                                "mimeType": file_info.get("mimeType")
-                                or _gemini_mime_type(path),
-                                "fileUri": file_info["uri"],
-                            }
-                        }
-                    )
-                response = session.post(
-                    f"{GEMINI_API_ROOT}/v1beta/models/{model}:generateContent",
-                    headers={
-                        "x-goog-api-key": key,
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "systemInstruction": {"parts": [{"text": system_prompt}]},
-                        "contents": [{"role": "user", "parts": parts}],
-                        "generationConfig": {
-                            "temperature": 0.6,
-                            "maxOutputTokens": 16384,
-                        },
-                    },
-                    timeout=600,
-                )
-                if not response.ok:
-                    raise _gemini_error(response, "prompt generation")
-                payload = response.json()
-                candidates = payload.get("candidates") or []
-                text_parts = (
-                    candidates[0].get("content", {}).get("parts", [])
-                    if candidates
-                    else []
-                )
-                enhanced = "".join(
-                    str(part.get("text", "")) for part in text_parts
-                ).strip()
-                if enhanced.startswith("```") and enhanced.endswith("```"):
-                    enhanced = re.sub(r"^```[^\n]*\n?", "", enhanced)
-                    enhanced = re.sub(r"\n?```$", "", enhanced).strip()
-                if not enhanced:
-                    reason = (
-                        candidates[0].get("finishReason")
-                        if candidates
-                        else payload.get("promptFeedback", {}).get(
-                            "blockReason", "no candidate"
-                        )
-                    )
-                    raise H3Error(f"Gemini returned no enhanced prompt ({reason}).")
-                return (
-                    enhanced,
-                    f"Enhanced with {model} using {len(media)} media file(s).",
-                )
-            finally:
-                for name in uploaded_names:
-                    try:
-                        session.delete(
-                            f"{GEMINI_API_ROOT}/v1beta/{name}",
-                            headers={"x-goog-api-key": key},
-                            timeout=30,
-                        )
-                    except requests.RequestException:
-                        pass
+        with gemini.Session(key) as session:
+            for label, path in media:
+                parts.append({"text": f"The next uploaded file is {label}."})
+                parts.append(session.file_part(path))
+            payload = session.generate(
+                model,
+                parts,
+                system_prompt=system_prompt,
+                generation_config={"temperature": 0.6, "maxOutputTokens": 16384},
+            )
+        enhanced = strip_code_fence(gemini.reply_text(payload))
+        if not enhanced:
+            raise H3Error(
+                f"Gemini returned no enhanced prompt ({gemini.empty_reply_reason(payload)})."
+            )
+        return (
+            enhanced,
+            f"Enhanced with {model} using {len(media)} media file(s).",
+        )
     except (H3Error, requests.RequestException, OSError, ValueError) as exc:
         return str(prompt or ""), f"Prompt enhancement failed: {exc}"
 
@@ -1438,11 +1187,9 @@ def _enhance_h3_prompt_with_lightning(
     runtime: RuntimeConfig,
 ) -> tuple[str, str]:
     """Generate or enhance an H3 prompt through Lightning's OpenAI API."""
-    from openai import OpenAI, OpenAIError
-
     try:
-        lightning_model = _lightning_model(lightning_model)
-        key = _lightning_api_key(temporary_api_key)
+        lightning_model = lightning.model(lightning_model)
+        key = lightning.api_key(temporary_api_key)
         if not runtime.prompt_system_path.is_file():
             raise H3Error(
                 f"Missing prompt enhancer system prompt: {runtime.prompt_system_path}"
@@ -1472,11 +1219,7 @@ def _enhance_h3_prompt_with_lightning(
         if not rough_prompt and not media:
             raise H3Error("Enter a prompt or upload an image before enhancing.")
 
-        unsupported = [
-            label
-            for label, path in media
-            if not _gemini_mime_type(path).startswith("image/")
-        ]
+        unsupported = [label for label, path in media if not lightning.is_image(path)]
         if unsupported:
             raise H3Error(
                 "Lightning AI prompt enhancement supports text and images; use "
@@ -1506,44 +1249,22 @@ def _enhance_h3_prompt_with_lightning(
             }
         ]
         for label, path in media:
-            mime_type = _gemini_mime_type(path)
-            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
             content.extend(
                 (
                     {"type": "text", "text": f"The next image is {label}."},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime_type};base64,{encoded}",
-                            "detail": "high",
-                        },
-                    },
+                    lightning.image_part(path),
                 )
             )
-
-        client = OpenAI(
-            base_url=LIGHTNING_API_ROOT,
-            api_key=key,
-            timeout=600.0,
+        enhanced = strip_code_fence(
+            lightning.complete(key, lightning_model, system_prompt, content)
         )
-        completion = client.chat.completions.create(
-            model=lightning_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": content},
-            ],
-        )
-        enhanced = str(completion.choices[0].message.content or "").strip()
-        if enhanced.startswith("```") and enhanced.endswith("```"):
-            enhanced = re.sub(r"^```[^\n]*\n?", "", enhanced)
-            enhanced = re.sub(r"\n?```$", "", enhanced).strip()
         if not enhanced:
             raise H3Error("Lightning AI returned no enhanced prompt.")
         return (
             enhanced,
             f"Enhanced with {lightning_model} using {len(media)} image(s).",
         )
-    except (H3Error, OpenAIError, OSError, ValueError, IndexError) as exc:
+    except (H3Error, OSError, ValueError) as exc:
         return str(prompt or ""), f"Lightning AI prompt enhancement failed: {exc}"
 
 

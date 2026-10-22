@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -100,7 +101,7 @@ class RemotePromptLightningTests(unittest.TestCase):
         self.assertIn("[Instrumental]", lyrics)
 
     def test_missing_key_preserves_original_text(self) -> None:
-        with patch.dict(prompt_service.os.environ, {"LIGHTNING_API_KEY": ""}):
+        with patch.dict(os.environ, {"LIGHTNING_API_KEY": ""}):
             style, lyrics, status = prompt_service.enhance_yue2_prompt(
                 "Original style", "unused", "", "Original lyrics", "full", 90,
                 "Lightning AI", "", runtime=self.runtime,

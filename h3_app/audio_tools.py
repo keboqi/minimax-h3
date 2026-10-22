@@ -8,20 +8,13 @@ engines' GPU jobs, Unload, and a Drama 3 start that lacks room stop the worker.
 
 from __future__ import annotations
 
-import atexit
-import itertools
-import json
 import os
 from pathlib import Path
-import queue
-import subprocess
-import threading
 import time
 
 from h3_app import audio_tools_worker as layout
-from h3_app.drama3_serving.environment import _setup_lock, uv_command
-from h3_app.errors import H3Error
-from h3_app.jobs import check_cancelled
+from h3_app.workers import env as worker_env
+from h3_app.workers.resident import RequestFailed, ResidentWorker as _ResidentWorker, WorkerSlot
 from h3_requirements import (
     AUDIO_TOOLS_READY_MARKER as READY_MARKER,
     audio_tools_fingerprint as fingerprint,
@@ -34,61 +27,7 @@ COEXISTING_FAMILIES = {"drama3", "drama3_voice", "drama3_sound", "drama3_preload
 # Free VRAM (MiB) wanted before a model's first load: weights plus generation headroom.
 LOAD_HEADROOM_MIB = {"voice_design": 6 * 1024, "stable_audio": 8 * 1024}
 WORKER = Path(__file__).with_name("audio_tools_worker.py")
-_SETUP_LOCK = threading.Lock()
-
-
-class RequestFailed(H3Error):
-    """The worker reported a failed request and is still healthy."""
-
-
-def python_path(venv: Path) -> Path:
-    return venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-
-
-def worker_env() -> dict[str, str]:
-    env = {key: value for key, value in os.environ.items()
-           if key not in {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "PIP_CONSTRAINT", "UV_CONSTRAINT"}}
-    env.update(PYTHONNOUSERSITE="1", PYTHONUNBUFFERED="1", HF_HUB_DISABLE_SYMLINKS_WARNING="1")
-    return env
-
-
-def _popen_flags() -> dict:
-    return {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
-
-
-def _reap(process: subprocess.Popen) -> None:
-    if process.poll() is None:
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-
-
-def run_process(command: list[str], log: Path, *, timeout: float, env: dict[str, str] | None = None,
-                label: str = LABEL) -> None:
-    """Drain output to disk; cancellation/timeout always reaps the process.
-
-    ``env`` adds variables (such as a Hugging Face token) on top of :func:`worker_env`;
-    ``label`` names the step in failure messages.
-    """
-    check_cancelled()
-    with log.open("ab") as stream:
-        process = subprocess.Popen(command, env={**worker_env(), **(env or {})}, stdin=subprocess.DEVNULL,
-                                   stdout=stream, stderr=subprocess.STDOUT, **_popen_flags())
-        deadline = time.monotonic() + timeout
-        try:
-            while process.poll() is None:
-                check_cancelled()
-                if time.monotonic() >= deadline:
-                    raise H3Error(f"{label} timed out. See {log}.")
-                time.sleep(0.25)
-            check_cancelled()
-            if process.returncode:
-                raise H3Error(f"{label} failed (exit {process.returncode}). See {log}.")
-        finally:
-            _reap(process)
+__all__ = ["RequestFailed", "ResidentWorker", "loaded_models", "preload", "release_for_job", "run", "stop"]
 
 
 def log_dir(runtime) -> Path:
@@ -103,21 +42,9 @@ def models_dir(runtime) -> Path:
 
 def prepare(runtime, log: Path) -> Path:
     venv = Path(os.getenv("H3_AUDIO_TOOLS_VENV") or runtime.script_dir / "h3" / "audio-tools-venv")
-    with _SETUP_LOCK, _setup_lock(venv.parent / f".{venv.name}.lock"):
-        marker = venv / READY_MARKER
-        if python_path(venv).is_file() and marker.is_file() and marker.read_text().strip() == fingerprint():
-            return python_path(venv)
-        uv = uv_command()
-        if not uv:
-            raise H3Error("Install uv (`pip install uv`) to prepare the isolated VoiceDesign/Stable Audio runtime.")
-        marker.unlink(missing_ok=True)
-        commands = install_commands(venv, uv)
-        if python_path(venv).is_file():
-            commands = commands[1:]
-        for command in commands:
-            run_process(command, log, timeout=1800, label=f"{LABEL} setup")
-        marker.write_text(fingerprint(), encoding="utf-8")
-    return python_path(venv)
+    return worker_env.prepare_venv(
+        venv, log, name="VoiceDesign/Stable Audio", label=LABEL, fingerprint=fingerprint(),
+        ready_marker=READY_MARKER, install_commands=install_commands, timeout=1800)
 
 
 def ensure_weights(model: str, runtime, python: Path, log: Path, *, hf_token: str | None = None) -> None:
@@ -128,111 +55,40 @@ def ensure_weights(model: str, runtime, python: Path, log: Path, *, hf_token: st
     env = {"HF_XET_HIGH_PERFORMANCE": "1", **({"HF_TOKEN": hf_token} if hf_token else {})}
     for key in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"):
         env[key] = "0"
-    run_process([str(python), str(WORKER), "download", model, str(models)], log,
-                timeout=runtime.generation_timeout, env=env, label=f"{LABEL} download")
+    worker_env.run_process([str(python), str(WORKER), "download", model, str(models)], log,
+                           timeout=runtime.generation_timeout, env=env, label=f"{LABEL} download")
     from h3_app.drama3_serving.server import persist_caches
 
     persist_caches()  # Commit the downloaded weights when running on Modal's volume.
 
 
-class ResidentWorker:
-    """A ``<script> serve <models>`` process answering one JSON request per line.
+class ResidentWorker(_ResidentWorker):
+    """The offline VoiceDesign/Stable Audio worker."""
 
-    Defaults to the offline VoiceDesign/Stable Audio worker; Dub & Translate passes its
-    own script, environment variables and label.
-    """
-
-    def __init__(self, python: Path, models: Path, log: Path, *, script: Path | None = None,
-                 env: dict[str, str] | None = None, label: str = LABEL):
-        self.python, self.models, self.log_path, self.label = python, models, log, label
-        script = script or WORKER
-        self.loaded: set[str] = set()
-        self._ids = itertools.count(1)
-        self._replies: queue.Queue = queue.Queue()
-        self._log = log.open("ab")
-        process_env = worker_env()
-        process_env.update(env if env is not None else {
+    def __init__(self, python: Path, models: Path, log: Path):
+        super().__init__(python, WORKER, models, log, label=LABEL, env={
             "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1",
             "HF_HUB_CACHE": str(layout.voice_design_cache(models))})
-        self.process = subprocess.Popen([str(python), str(script), "serve", str(models)], env=process_env,
-                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self._log,
-                                        **_popen_flags())
-        threading.Thread(target=self._read, name=f"{Path(script).stem}-replies", daemon=True).start()
-
-    def _read(self) -> None:
-        for line in self.process.stdout:
-            try:
-                self._replies.put(json.loads(line))
-            except ValueError:
-                continue
-        self._replies.put(None)
-
-    def running(self) -> bool:
-        return self.process.poll() is None
-
-    def request(self, payload: dict, timeout: float) -> dict:
-        request_id = next(self._ids)
-        try:
-            self.process.stdin.write((json.dumps({**payload, "id": request_id}) + "\n").encode("utf-8"))
-            self.process.stdin.flush()
-        except OSError as exc:
-            raise H3Error(f"{self.label} worker is not accepting requests. See {self.log_path}.") from exc
-        deadline = time.monotonic() + timeout
-        while True:
-            check_cancelled()
-            if time.monotonic() >= deadline:
-                raise H3Error(f"{self.label} timed out. See {self.log_path}.")
-            try:
-                reply = self._replies.get(timeout=0.25)
-            except queue.Empty:
-                continue
-            if reply is None:
-                self.process.wait()
-                raise H3Error(f"{self.label} worker exited (code {self.process.returncode}). See {self.log_path}.")
-            if reply.get("id") != request_id:
-                continue
-            self.loaded = set(reply.get("loaded") or ())
-            if not reply.get("ok"):
-                raise RequestFailed(f"{self.label} failed: {reply.get('error')}. See {self.log_path}.")
-            return reply
-
-    def stop(self) -> None:
-        try:
-            if self.process.stdin:
-                self.process.stdin.close()
-        except OSError:
-            pass
-        _reap(self.process)
-        self._log.close()
 
 
-_WORKER: ResidentWorker | None = None
-_WORKER_LOCK = threading.RLock()
+_SLOT = WorkerSlot()
 
 
 def stop() -> bool:
     """Exit the resident worker; process exit returns all of its VRAM. True if one was running."""
-    global _WORKER
-    with _WORKER_LOCK:
-        worker, _WORKER = _WORKER, None
-    if worker is None:
-        return False
-    worker.stop()
-    return True
+    return _SLOT.stop()
 
 
 def loaded_models() -> set[str]:
-    with _WORKER_LOCK:
-        return set(_WORKER.loaded) if _WORKER is not None and _WORKER.running() else set()
+    with _SLOT.lock:
+        worker = _SLOT.running()
+        return set(worker.loaded) if worker is not None else set()
 
 
 def release_for_job(family: str) -> None:
     """Other engines reclaim the GPU; Drama 3 jobs keep the worker resident."""
     if family not in COEXISTING_FAMILIES:
         stop()
-
-
-atexit.register(stop)
 
 
 def _make_room(model: str, free_gpu, *, evict: bool = True) -> bool:
@@ -256,40 +112,26 @@ def _make_room(model: str, free_gpu, *, evict: bool = True) -> bool:
 
 
 def _worker_for(model: str, runtime, *, free_gpu, hf_token: str | None, evict: bool = True):
-    """The running worker with ``model``'s weights on disk and room to load it; hold ``_WORKER_LOCK``.
+    """The running worker with ``model``'s weights on disk and room to load it; hold ``_SLOT.lock``.
 
     None when ``evict`` is off and the GPU has no room without sleeping SGLang-Omni.
     """
-    global _WORKER
     logs = log_dir(runtime)
-    if _WORKER is None or not _WORKER.running():
+    worker = _SLOT.running()
+    if worker is None:
         setup_log = logs / f"setup_{time.strftime('%Y%m%d-%H%M%S')}.log"
         python = prepare(runtime, setup_log)
         ensure_weights(model, runtime, python, setup_log, hf_token=hf_token)
-        if _WORKER is not None:
-            _WORKER.stop()
-            _WORKER = None
+        _SLOT.stop()
         if not _make_room(model, free_gpu, evict=evict):
             return None
-        _WORKER = ResidentWorker(python, models_dir(runtime),
-                                 logs / f"worker_{time.strftime('%Y%m%d-%H%M%S')}.log")
-    elif model not in _WORKER.loaded:
-        ensure_weights(model, runtime, _WORKER.python, _WORKER.log_path, hf_token=hf_token)
+        _SLOT.worker = ResidentWorker(python, models_dir(runtime),
+                                      logs / f"worker_{time.strftime('%Y%m%d-%H%M%S')}.log")
+    elif model not in worker.loaded:
+        ensure_weights(model, runtime, worker.python, worker.log_path, hf_token=hf_token)
         if not _make_room(model, free_gpu, evict=evict):
             return None
-    return _WORKER
-
-
-def _request(worker: ResidentWorker, payload: dict, timeout: float) -> dict:
-    try:
-        return worker.request(payload, timeout=timeout)
-    except RequestFailed:
-        raise
-    except BaseException:
-        # Cancellation, timeouts and crashes leave GPU state unknown: reap the process.
-        if _WORKER is worker:
-            stop()
-        raise
+    return _SLOT.worker
 
 
 def run(model: str, payload: dict, runtime, *, free_gpu, hf_token: str | None = None) -> dict:
@@ -298,9 +140,9 @@ def run(model: str, payload: dict, runtime, *, free_gpu, hf_token: str | None = 
     from h3_app.drama3_serving.server import persist_caches
 
     JOBS.add_gpu_claim_hook(release_for_job)
-    with _WORKER_LOCK:
+    with _SLOT.lock:
         worker = _worker_for(model, runtime, free_gpu=free_gpu, hf_token=hf_token)
-        reply = _request(worker, {"op": model, **payload}, runtime.generation_timeout)
+        reply = _SLOT.request(worker, {"op": model, **payload}, runtime.generation_timeout)
     persist_caches()  # Commit the clip when running on Modal's volume.
     return reply
 
@@ -314,11 +156,11 @@ def preload(model: str, runtime, *, free_gpu, hf_token: str | None = None) -> bo
     from h3_app.jobs import JOBS
 
     JOBS.add_gpu_claim_hook(release_for_job)
-    with _WORKER_LOCK:
+    with _SLOT.lock:
         if model in loaded_models():
             return True
         worker = _worker_for(model, runtime, free_gpu=free_gpu, hf_token=hf_token, evict=False)
         if worker is None:
             return False
-        _request(worker, {"op": "load", "model": model}, runtime.generation_timeout)
+        _SLOT.request(worker, {"op": "load", "model": model}, runtime.generation_timeout)
     return True

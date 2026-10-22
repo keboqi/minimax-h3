@@ -102,6 +102,34 @@ def _request_speech(server, payload: dict, stopped: threading.Event) -> bytes:
     raise AssertionError("unreachable")
 
 
+@dataclass(frozen=True)
+class Attempt:
+    wav: bytes
+    samples: np.ndarray
+    rate: int
+    check: audio.TakeCheck
+    number: int  # 1-based attempt that produced this take
+
+
+def best_take(server, *, text: str, reference: Path | None, transcript: str | None, max_new_tokens: int,
+              sampling: dict, attempts: int, stopped: threading.Event) -> Attempt:
+    """Generate up to ``attempts`` takes of one line; the first that passes its check, else the best."""
+    best = None
+    for number in range(1, attempts + 1):
+        payload = server.payload(text=text, reference=reference, transcript=transcript,
+                                 max_new_tokens=max_new_tokens, sampling=sampling)
+        wav = _request_speech(server, payload, stopped)
+        samples, rate = audio.decode_wav(wav)
+        check = audio.check_take(samples, rate, expected_seconds(text),
+                                 max_seconds=max_new_tokens / FRAMES_PER_SECOND)
+        attempt = Attempt(wav, samples, rate, check, number)
+        if check.ok:
+            return attempt
+        if best is None or check.score < best.check.score:
+            best = attempt
+    return best
+
+
 # (resolved path, size, mtime_ns) -> content digest, so unchanged clips are not re-hashed every job.
 _REFERENCE_DIGESTS: dict[tuple[str, int, int], str] = {}
 
@@ -631,21 +659,11 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
         yield GenerationUpdate(None, f"Reusing {reused} saved take(s); generating {len(pending_chunks)}.")
 
     def synthesize(chunk: Chunk, stopped: threading.Event) -> Take:
-        best = None
-        for attempt in range(max(int(request.retries), AUTOMATIC_RETRIES) + 1):
-            clip, transcript = references[chunk.speaker]
-            payload = server.payload(text=chunk.text, reference=clip, transcript=transcript,
-                                     max_new_tokens=budget(chunk), sampling=sampling)
-            wav = _request_speech(server, payload, stopped)
-            samples, rate = audio.decode_wav(wav)
-            check = audio.check_take(samples, rate, expected_seconds(chunk.text),
-                                     max_seconds=budget(chunk) / FRAMES_PER_SECOND)
-            take = Take(chunk, samples, rate, attempt + 1, check, wav)
-            if check.ok:
-                return take
-            if best is None or check.score < best.check.score:
-                best = take
-        return best
+        clip, transcript = references[chunk.speaker]
+        attempt = best_take(server, text=chunk.text, reference=clip, transcript=transcript,
+                            max_new_tokens=budget(chunk), sampling=sampling,
+                            attempts=max(int(request.retries), AUTOMATIC_RETRIES) + 1, stopped=stopped)
+        return Take(chunk, attempt.samples, attempt.rate, attempt.number, attempt.check, attempt.wav)
 
     if pending_chunks:
         yield from _ready_server(settings, server, label, free_gpu, hf_token)

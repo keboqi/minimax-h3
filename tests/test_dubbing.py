@@ -142,9 +142,13 @@ class WorkerHelperTests(unittest.TestCase):
         self.assertEqual(second, {"id": 2, "loaded": [], "ok": True, "texts": ["x"]})
 
     def test_first_use_install_compiles_with_gcc_when_clang_is_missing(self):
-        from h3_app.drama3_serving import environment
+        from h3_app.workers import env as worker_env
 
-        with TemporaryDirectory() as root,                 patch.dict(os.environ, {"H3_DUB_TOOLS_VENV": str(Path(root) / "venv")}),                 patch.object(environment.shutil, "which", side_effect=lambda name: None if name == "clang" else name),                 patch.object(tools, "uv_command", return_value=["uv"]),                 patch.object(tools.audio_tools, "run_process",
+        with TemporaryDirectory() as root, \
+                patch.dict(os.environ, {"H3_DUB_TOOLS_VENV": str(Path(root) / "venv")}), \
+                patch.object(worker_env.shutil, "which", side_effect=lambda name: None if name == "clang" else name), \
+                patch.object(worker_env, "uv_command", return_value=["uv"]), \
+                patch.object(worker_env, "run_process",
                              side_effect=lambda *a, **k: (Path(root) / "venv").mkdir(exist_ok=True)) as run:
             os.environ.pop("CC", None)
             tools.prepare(runtime_for(Path(root)), Path(root) / "setup.log")

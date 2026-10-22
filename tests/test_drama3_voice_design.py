@@ -17,6 +17,7 @@ from h3_app.config import RuntimeConfig
 from h3_app.drama3_cast import parse_script_cast
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled
+from h3_app.workers import env as worker_env
 from h3_requirements import FLASH_ATTN_WHEELS, audio_tools_install_commands
 
 
@@ -176,28 +177,28 @@ class VoiceDesignTests(unittest.TestCase):
     def test_cancelled_setup_step_is_terminated_and_reaped(self):
         process = Mock()
         process.poll.return_value = None
-        with patch.object(audio_tools.subprocess, "Popen", return_value=process), \
-                patch.object(audio_tools, "check_cancelled", side_effect=[None, JobCancelled("cancelled")]):
+        with patch.object(worker_env.subprocess, "Popen", return_value=process), \
+                patch.object(worker_env, "check_cancelled", side_effect=[None, JobCancelled("cancelled")]):
             with self.assertRaises(JobCancelled):
-                audio_tools.run_process(["python"], self.root / "worker.log", timeout=10)
+                worker_env.run_process(["python"], self.root / "worker.log", timeout=10, label="Setup")
         process.terminate.assert_called_once()
         process.wait.assert_called_once()
 
     def test_environment_is_ready_only_after_successful_smoke_test(self):
         venv = self.root / "venv"
-        interpreter = audio_tools.python_path(venv)
+        interpreter = worker_env.python_path(venv)
         interpreter.parent.mkdir(parents=True)
         interpreter.touch()
         log = self.root / "install.log"
         with patch.dict(os.environ, {"H3_AUDIO_TOOLS_VENV": str(venv)}), \
-                patch.object(audio_tools, "uv_command", return_value=["uv"]), \
-                patch.object(audio_tools, "run_process", side_effect=H3Error("install failed")):
+                patch.object(worker_env, "uv_command", return_value=["uv"]), \
+                patch.object(worker_env, "run_process", side_effect=H3Error("install failed")):
             with self.assertRaises(H3Error):
                 audio_tools.prepare(self.runtime, log)
         self.assertFalse((venv / audio_tools.READY_MARKER).exists())
         with patch.dict(os.environ, {"H3_AUDIO_TOOLS_VENV": str(venv)}), \
-                patch.object(audio_tools, "uv_command", return_value=["uv"]), \
-                patch.object(audio_tools, "run_process") as run:
+                patch.object(worker_env, "uv_command", return_value=["uv"]), \
+                patch.object(worker_env, "run_process") as run:
             self.assertEqual(audio_tools.prepare(self.runtime, log), interpreter)
             self.assertEqual(run.call_count, 3)
             audio_tools.prepare(self.runtime, log)

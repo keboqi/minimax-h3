@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable
+from typing import Any, Callable, Iterable, Mapping
 
 from h3_app.catalog import (
     LARRY_TURBO,
@@ -300,6 +300,69 @@ def trt_vae_engine_is_current(models: ModelConfig, *, runtime: RuntimeConfig) ->
     return is_trt_engine_loadable(engine_path, runtime=runtime)
 
 
+def _models_root(runtime: RuntimeConfig) -> Path:
+    return runtime.comfy_dir / "models"
+
+
+def _manifest_path(runtime: RuntimeConfig) -> Path:
+    return runtime.models_config.parent / "h3_model_manifest.json"
+
+
+def spec_files(keys: Iterable[str]) -> dict[str, str]:
+    """Each key's file name from the model inventory."""
+    return {key: MODEL_SPECS[key].local_name for key in keys}
+
+
+def missing_models(keys: Iterable[str], *, runtime: RuntimeConfig) -> list[str]:
+    """The keys among ``keys`` whose files are absent or stale."""
+    return stale_model_keys(
+        root=_models_root(runtime), manifest_path=_manifest_path(runtime), model_keys=tuple(keys),
+    )
+
+
+def missing_model_names(keys: Iterable[str], *, runtime: RuntimeConfig) -> list[str]:
+    return [MODEL_SPECS[key].local_name for key in missing_models(keys, runtime=runtime)]
+
+
+def _verify_files(files: Mapping[str, str], failure: str, *, runtime: RuntimeConfig) -> None:
+    for key, filename in files.items():
+        if not model_file_is_ready(_models_root(runtime) / MODEL_SPECS[key].folder / filename):
+            raise H3Error(failure.format(name=filename))
+
+
+def ensure_models(
+    keys: Iterable[str],
+    *,
+    runtime: RuntimeConfig,
+    log_prefix: str = "[engine-on-demand]",
+    download_workers: int = 1,
+    only_stale: bool = False,
+    files: Mapping[str, str] | None = None,
+    verify_always: bool = False,
+    failure: str = "On-demand download did not produce {name}.",
+) -> bool:
+    """Download ``keys`` through the shared manifest when any is stale; True when a download ran.
+
+    ``only_stale`` fetches just the stale keys. ``files`` maps keys to the file
+    names to check afterwards (``failure`` names the missing one); with
+    ``verify_always`` they are checked even when nothing was downloaded.
+    """
+    keys = tuple(keys)
+    stale = missing_models(keys, runtime=runtime)
+    if stale:
+        sync_models(
+            root=_models_root(runtime),
+            manifest_path=_manifest_path(runtime),
+            token=resolve_hf_token(),
+            log_prefix=log_prefix,
+            model_keys=tuple(stale) if only_stale else keys,
+            download_workers=download_workers,
+        )
+    if files and (stale or verify_always):
+        _verify_files(files, failure, runtime=runtime)
+    return bool(stale)
+
+
 def ensure_h3_text_encoder(
     models: ModelConfig, model_choice: str, *, runtime: RuntimeConfig
 ) -> tuple[str, bool]:
@@ -307,74 +370,32 @@ def ensure_h3_text_encoder(
     model_key, filename, requires_offload = h3_text_encoder_settings(
         models, model_choice
     )
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=(model_key,),
-    ):
-        sync_models(
-            root=runtime.comfy_dir / "models",
-            manifest_path=manifest_path,
-            token=resolve_hf_token(),
-            log_prefix="[h3-text-encoder-on-demand]",
-            model_keys=(model_key,),
-            download_workers=1,
-        )
-    destination = (
-        runtime.comfy_dir / "models" / MODEL_SPECS[model_key].folder / filename
+    ensure_models(
+        (model_key,), runtime=runtime, log_prefix="[h3-text-encoder-on-demand]",
+        files={model_key: filename}, verify_always=True,
+        failure="On-demand H3 text encoder download did not produce {name}.",
     )
-    if not model_file_is_ready(destination):
-        raise H3Error(f"On-demand H3 text encoder download did not produce {filename}.")
     return filename, requires_offload
 
 
 def ensure_h3_veda_predictor(mode: str, *, runtime: RuntimeConfig) -> None:
     """Download only the predictor for the selected H3 task, on first use."""
     key = "veda_r2va" if mode == "Reference media" else "veda_t2va"
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=(key,),
-    ):
-        sync_models(
-            root=runtime.comfy_dir / "models",
-            manifest_path=manifest_path,
-            token=resolve_hf_token(),
-            model_keys=(key,),
-            download_workers=1,
-            log_prefix="[h3-veda-on-demand]",
-        )
-    spec = MODEL_SPECS[key]
-    if not model_file_is_ready(runtime.comfy_dir / "models" / spec.folder / spec.local_name):
-        raise H3Error("Veda predictor download did not produce a valid model file.")
+    ensure_models(
+        (key,), runtime=runtime, log_prefix="[h3-veda-on-demand]",
+        files=spec_files((key,)), verify_always=True,
+        failure="Veda predictor download did not produce a valid model file.",
+    )
 
 
 def ensure_h3_semantic_bridge(*, runtime: RuntimeConfig) -> None:
     """Fetch only the optional v1 adapter; never preload it with the base models."""
     key = "semantic_bridge_v1"
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=(key,),
-    ):
-        sync_models(
-            root=runtime.comfy_dir / "models",
-            manifest_path=manifest_path,
-            token=resolve_hf_token(),
-            model_keys=(key,),
-            download_workers=1,
-            log_prefix="[h3-semantic-bridge-on-demand]",
-        )
-    spec = MODEL_SPECS[key]
-    if not model_file_is_ready(
-        runtime.comfy_dir / "models" / spec.folder / spec.local_name
-    ):
-        raise H3Error(
-            "Semantic Bridge adapter download did not produce a valid model file."
-        )
+    ensure_models(
+        (key,), runtime=runtime, log_prefix="[h3-semantic-bridge-on-demand]",
+        files=spec_files((key,)), verify_always=True,
+        failure="Semantic Bridge adapter download did not produce a valid model file.",
+    )
 
 
 def ensure_h3_latent_upscaler_model(
@@ -382,29 +403,11 @@ def ensure_h3_latent_upscaler_model(
 ) -> bool:
     """Download the selected native H3 latent upscaler on first use."""
     model_key, filename, _precision = h3_latent_upscaler_settings(model_choice)
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if not stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=(model_key,),
-    ):
-        return False
-    sync_models(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        token=resolve_hf_token(),
-        log_prefix="[h3-latent-upscaler-on-demand]",
-        model_keys=(model_key,),
-        download_workers=1,
+    return ensure_models(
+        (model_key,), runtime=runtime, log_prefix="[h3-latent-upscaler-on-demand]",
+        files={model_key: filename},
+        failure="On-demand H3 latent upscaler download did not produce {name}.",
     )
-    destination = (
-        runtime.comfy_dir / "models" / MODEL_SPECS[model_key].folder / filename
-    )
-    if not model_file_is_ready(destination):
-        raise H3Error(
-            f"On-demand H3 latent upscaler download did not produce {filename}."
-        )
-    return True
 
 
 def ensure_profile_model(
@@ -414,27 +417,11 @@ def ensure_profile_model(
     reference = str(mode).strip().lower() == "reference media"
     filename = profile.ref2va if reference else profile.fl2va
     model_key = PROFILE_MODEL_KEYS[profile_key][1 if reference else 0]
-    destination = (
-        runtime.comfy_dir / "models" / MODEL_SPECS[model_key].folder / filename
+    return ensure_models(
+        (model_key,), runtime=runtime, log_prefix="[h3-on-demand]",
+        files={model_key: filename},
+        failure="On-demand model download did not produce {name}.",
     )
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if not stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=(model_key,),
-    ):
-        return False
-    sync_models(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        token=resolve_hf_token(),
-        log_prefix="[h3-on-demand]",
-        model_keys=(model_key,),
-        download_workers=1,
-    )
-    if not model_file_is_ready(destination):
-        raise H3Error(f"On-demand model download did not produce {filename}.")
-    return True
 
 
 def ensure_turbo_lora(
@@ -462,27 +449,11 @@ def ensure_turbo_lora(
         return False
     if not filename:
         raise H3Error(f"{variant} Turbo LoRA is not configured.")
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if not stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=(model_key,),
-    ):
-        return False
-    sync_models(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        token=resolve_hf_token(),
-        log_prefix="[h3-turbo-on-demand]",
-        model_keys=(model_key,),
-        download_workers=1,
+    return ensure_models(
+        (model_key,), runtime=runtime, log_prefix="[h3-turbo-on-demand]",
+        files={model_key: filename},
+        failure="On-demand Turbo LoRA download did not produce {name}.",
     )
-    destination = (
-        runtime.comfy_dir / "models" / MODEL_SPECS[model_key].folder / filename
-    )
-    if not model_file_is_ready(destination):
-        raise H3Error(f"On-demand Turbo LoRA download did not produce {filename}.")
-    return True
 
 
 def ensure_lightvae(video_encoder: str, decoder: str, *, runtime: RuntimeConfig) -> bool:
@@ -496,22 +467,10 @@ def ensure_lightvae(video_encoder: str, decoder: str, *, runtime: RuntimeConfig)
     keys = selected.optional_model_keys
     if not keys:
         return False
-    manifest = runtime.models_config.parent / "h3_model_manifest.json"
-    stale = stale_model_keys(
-        root=runtime.comfy_dir / "models", manifest_path=manifest, model_keys=keys,
+    return ensure_models(
+        keys, runtime=runtime, log_prefix="[h3-lightvae-on-demand]", only_stale=True,
+        files=spec_files(keys), failure="LightVAE download did not produce {name}.",
     )
-    if not stale:
-        return False
-    sync_models(
-        root=runtime.comfy_dir / "models", manifest_path=manifest,
-        token=resolve_hf_token(), log_prefix="[h3-lightvae-on-demand]",
-        model_keys=tuple(stale), download_workers=1,
-    )
-    for key in keys:
-        spec = MODEL_SPECS[key]
-        if not model_file_is_ready(runtime.comfy_dir / "models" / spec.folder / spec.local_name):
-            raise H3Error(f"LightVAE download did not produce {spec.local_name}.")
-    return True
 
 
 def ensure_int8_video_vae(
@@ -525,86 +484,34 @@ def ensure_int8_video_vae(
             "The model configuration predates INT8 video VAE support. "
             "Re-run setup_h3.py before enabling it."
         )
-    destination = (
-        runtime.comfy_dir / "models" / MODEL_SPECS[model_key].folder / filename
+    return ensure_models(
+        (model_key,), runtime=runtime, log_prefix="[h3-int8-vae-on-demand]",
+        files={model_key: filename},
+        failure="On-demand INT8 VAE download did not produce {name}.",
     )
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if not stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=(model_key,),
-    ):
-        return False
 
-    sync_models(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        token=resolve_hf_token(),
-        log_prefix="[h3-int8-vae-on-demand]",
-        model_keys=(model_key,),
-        download_workers=1,
+
+def _ensure_shared_vae(models: ModelConfig, key: str, what: str, log_prefix: str, *,
+                       runtime: RuntimeConfig) -> bool:
+    filename = getattr(models, key)
+    if model_file_is_ready(_models_root(runtime) / MODEL_SPECS[key].folder / filename):
+        return False
+    return ensure_models(
+        (key,), runtime=runtime, log_prefix=log_prefix, files={key: filename},
+        failure=f"On-demand {what} download did not produce {{name}}.",
     )
-    if not model_file_is_ready(destination):
-        raise H3Error(f"On-demand INT8 VAE download did not produce {filename}.")
-    return True
 
 
 def ensure_base_video_vae(models: ModelConfig, *, runtime: RuntimeConfig) -> bool:
     """Download the base video VAE on first use."""
-    filename = models.video_vae
-    destination = (
-        runtime.comfy_dir / "models" / MODEL_SPECS["video_vae"].folder / filename
-    )
-    if model_file_is_ready(destination):
-        return False
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if not stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=("video_vae",),
-    ):
-        return False
-
-    sync_models(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        token=resolve_hf_token(),
-        log_prefix="[h3-video-vae-on-demand]",
-        model_keys=("video_vae",),
-        download_workers=1,
-    )
-    if not model_file_is_ready(destination):
-        raise H3Error(f"On-demand video VAE download did not produce {filename}.")
-    return True
+    return _ensure_shared_vae(models, "video_vae", "video VAE", "[h3-video-vae-on-demand]",
+                              runtime=runtime)
 
 
 def ensure_audio_vae(models: ModelConfig, *, runtime: RuntimeConfig) -> bool:
     """Download the audio VAE on first use."""
-    filename = models.audio_vae
-    destination = (
-        runtime.comfy_dir / "models" / MODEL_SPECS["audio_vae"].folder / filename
-    )
-    if model_file_is_ready(destination):
-        return False
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if not stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=("audio_vae",),
-    ):
-        return False
-
-    sync_models(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        token=resolve_hf_token(),
-        log_prefix="[h3-audio-vae-on-demand]",
-        model_keys=("audio_vae",),
-        download_workers=1,
-    )
-    if not model_file_is_ready(destination):
-        raise H3Error(f"On-demand audio VAE download did not produce {filename}.")
-    return True
+    return _ensure_shared_vae(models, "audio_vae", "audio VAE", "[h3-audio-vae-on-demand]",
+                              runtime=runtime)
 
 
 def ensure_trt_video_vae(
@@ -612,20 +519,7 @@ def ensure_trt_video_vae(
 ) -> bool:
     """Provision the decoder ONNX source and require its local TensorRT engine."""
     trt_vae_decoder_paths(models, runtime=runtime)
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=TRT_VAE_RUNTIME_MODEL_KEYS,
-    ):
-        sync_models(
-            root=runtime.comfy_dir / "models",
-            manifest_path=manifest_path,
-            token=resolve_hf_token(),
-            log_prefix="[h3-trt-vae-on-demand]",
-            model_keys=TRT_VAE_RUNTIME_MODEL_KEYS,
-            download_workers=1,
-        )
+    ensure_models(TRT_VAE_RUNTIME_MODEL_KEYS, runtime=runtime, log_prefix="[h3-trt-vae-on-demand]")
 
     if require_engine and not trt_vae_engine_is_current(models, runtime=runtime):
         _, engine_path, _ = trt_vae_decoder_paths(models, runtime=runtime)
@@ -742,40 +636,17 @@ def ensure_single_frame_image_vae(
             "Re-run setup_h3.py before selecting it."
         )
     model_key = "image_vae_500k"
-    destination = (
-        runtime.comfy_dir / "models" / MODEL_SPECS[model_key].folder / filename
+    return ensure_models(
+        (model_key,), runtime=runtime, log_prefix="[h3-image-vae-on-demand]",
+        files={model_key: filename},
+        failure="On-demand single-frame image VAE download did not produce {name}.",
     )
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if not stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=(model_key,),
-    ):
-        return False
-    sync_models(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        token=resolve_hf_token(),
-        log_prefix="[h3-image-vae-on-demand]",
-        model_keys=(model_key,),
-        download_workers=1,
-    )
-    if not model_file_is_ready(destination):
-        raise H3Error(
-            f"On-demand single-frame image VAE download did not produce {filename}."
-        )
-    return True
 
 
 def missing_ltx25_model_names(
     model_choice: str = DEFAULT_LTX25_MODEL, *, runtime: RuntimeConfig
 ) -> list[str]:
-    stale = stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=runtime.models_config.parent / "h3_model_manifest.json",
-        model_keys=ltx25_model_keys(model_choice).values(),
-    )
-    return [MODEL_SPECS[key].local_name for key in stale]
+    return missing_model_names(ltx25_model_keys(model_choice).values(), runtime=runtime)
 
 
 def ensure_ltx25_models(
@@ -795,8 +666,8 @@ def ensure_ltx25_models(
         )
     try:
         sync_models(
-            root=runtime.comfy_dir / "models",
-            manifest_path=runtime.models_config.parent / "h3_model_manifest.json",
+            root=_models_root(runtime),
+            manifest_path=_manifest_path(runtime),
             token=token,
             log_prefix="[ltx25-on-demand]",
             model_keys=required_keys,
@@ -816,14 +687,8 @@ def ensure_ltx25_models(
             "otherwise check the cache, disk space, and network before retrying. "
             f"Details: {exc}"
         ) from exc
-    for key in required_keys:
-        spec = MODEL_SPECS[key]
-        if not model_file_is_ready(
-            runtime.comfy_dir / "models" / spec.folder / spec.local_name
-        ):
-            raise H3Error(
-                f"On-demand LTX-2.5 download did not produce {spec.local_name}."
-            )
+    _verify_files(spec_files(required_keys),
+                  "On-demand LTX-2.5 download did not produce {name}.", runtime=runtime)
     return True
 
 
@@ -831,55 +696,23 @@ def ensure_seedvr2_upscale_models(
     models: ModelConfig, model_choice: str, *, runtime: RuntimeConfig
 ) -> bool:
     configured = seedvr2_upscale_model_names(models, model_choice)
-    selected_key = SEEDVR2_MODEL_CHOICES[str(model_choice)]
-    assets = (
-        (selected_key, configured["seedvr2_dit"]),
-        ("seedvr2_vae", configured["seedvr2_vae"]),
+    files = {
+        SEEDVR2_MODEL_CHOICES[str(model_choice)]: configured["seedvr2_dit"],
+        "seedvr2_vae": configured["seedvr2_vae"],
+    }
+    return ensure_models(
+        files, runtime=runtime, log_prefix="[seedvr2-on-demand]", download_workers=len(files),
+        files=files, failure="On-demand SeedVR2 download did not produce {name}.",
     )
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    missing_files = stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=(key for key, _filename in assets),
-    )
-    if not missing_files:
-        return False
-
-    sync_models(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        token=resolve_hf_token(),
-        log_prefix="[seedvr2-on-demand]",
-        model_keys=tuple(key for key, _filename in assets),
-        download_workers=len(assets),
-    )
-    for key, filename in assets:
-        spec = MODEL_SPECS[key]
-        if not model_file_is_ready(
-            runtime.comfy_dir / "models" / spec.folder / filename
-        ):
-            raise H3Error(f"On-demand SeedVR2 download did not produce {filename}.")
-    return True
 
 
 def ensure_cq_image_enhance_models(*, runtime: RuntimeConfig) -> bool:
     """Download only the assets used by the official CQ image recipe."""
-    root = runtime.comfy_dir / "models"
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if not stale_model_keys(
-        root=root, manifest_path=manifest_path, model_keys=CQ_IMAGE_MODEL_KEYS,
-    ):
-        return False
-    sync_models(
-        root=root, manifest_path=manifest_path, token=resolve_hf_token(),
-        log_prefix="[cq-image-on-demand]", model_keys=CQ_IMAGE_MODEL_KEYS,
-        download_workers=2,
+    return ensure_models(
+        CQ_IMAGE_MODEL_KEYS, runtime=runtime, log_prefix="[cq-image-on-demand]",
+        download_workers=2, files=spec_files(CQ_IMAGE_MODEL_KEYS),
+        failure="On-demand CQ image download did not produce {name}.",
     )
-    for key in CQ_IMAGE_MODEL_KEYS:
-        spec = MODEL_SPECS[key]
-        if not model_file_is_ready(root / spec.folder / spec.local_name):
-            raise H3Error(f"On-demand CQ image download did not produce {spec.local_name}.")
-    return True
 
 
 def ensure_ltx25_upscale_models(
@@ -900,20 +733,12 @@ def ensure_ltx25_upscale_models(
             "ltx25_sdr_to_hdr",
             "ltx25_sdr_to_hdr_conditioning",
         )
-        manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-        stale = stale_model_keys(
-            root=runtime.comfy_dir / "models", manifest_path=manifest_path,
-            model_keys=keys,
-        )
-        if not stale:
-            return False
         try:
-            sync_models(
-                root=runtime.comfy_dir / "models", manifest_path=manifest_path,
-                token=resolve_hf_token(), log_prefix="[ltx25-hdr-on-demand]",
-                model_keys=keys, download_workers=2,
+            return ensure_models(
+                keys, runtime=runtime, log_prefix="[ltx25-hdr-on-demand]", download_workers=2,
+                files=spec_files(keys), failure="On-demand HDR download did not produce {name}.",
             )
-        except JobCancelled:
+        except (JobCancelled, H3Error):
             raise
         except Exception as exc:
             raise H3Error(
@@ -922,94 +747,35 @@ def ensure_ltx25_upscale_models(
                 "on Hugging Face, then authenticate with hf auth login or HF_TOKEN. "
                 f"Details: {exc}"
             ) from exc
-        for key in keys:
-            spec = MODEL_SPECS[key]
-            if not model_file_is_ready(runtime.comfy_dir / "models" / spec.folder / spec.local_name):
-                raise H3Error(f"On-demand HDR download did not produce {spec.local_name}.")
-        return True
     upscaler_key = LTX25_POSTPROCESS_MODELS[option]
     base_downloaded = ensure_ltx25_models(model_choice, runtime=runtime)
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if not stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=(upscaler_key,),
-    ):
-        return base_downloaded
-
-    sync_models(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        token=resolve_hf_token(),
-        log_prefix="[ltx25-postprocess-on-demand]",
-        model_keys=(upscaler_key,),
-        download_workers=1,
-    )
-    spec = MODEL_SPECS[upscaler_key]
-    if not model_file_is_ready(
-        runtime.comfy_dir / "models" / spec.folder / spec.local_name
-    ):
-        raise H3Error(
-            f"On-demand LTX-2.5 post-processing download did not produce {spec.local_name}."
-        )
-    return True
+    return ensure_models(
+        (upscaler_key,), runtime=runtime, log_prefix="[ltx25-postprocess-on-demand]",
+        files=spec_files((upscaler_key,)),
+        failure="On-demand LTX-2.5 post-processing download did not produce {name}.",
+    ) or base_downloaded
 
 
 def ensure_ltx25_ingredients_model(*, runtime: RuntimeConfig) -> bool:
     """Install the Ingredients adapter after the selected base model is ready."""
     key = "ltx25_iclora_ingredients"
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    if not stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=(key,),
-    ):
-        return False
-    sync_models(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        token=resolve_hf_token(),
-        log_prefix="[ltx25-ingredients-on-demand]",
-        model_keys=(key,),
-        download_workers=1,
+    return ensure_models(
+        (key,), runtime=runtime, log_prefix="[ltx25-ingredients-on-demand]",
+        files=spec_files((key,)), failure="Ingredients download did not produce {name}.",
     )
-    spec = MODEL_SPECS[key]
-    if not model_file_is_ready(runtime.comfy_dir / "models" / spec.folder / spec.local_name):
-        raise H3Error(f"Ingredients download did not produce {spec.local_name}.")
-    return True
 
 
 def missing_music3_model_names(
     model_choice: str, *, runtime: RuntimeConfig
 ) -> list[str]:
-    missing = stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=runtime.models_config.parent / "h3_model_manifest.json",
-        model_keys=music3_model_keys(model_choice),
-    )
-    return [MODEL_SPECS[key].local_name for key in missing]
+    return missing_model_names(music3_model_keys(model_choice), runtime=runtime)
 
 
 def ensure_music3_models(model_choice: str, *, runtime: RuntimeConfig) -> bool:
     """Lazily install the selected Music 3 DiT and its shared model files."""
     keys = music3_model_keys(model_choice)
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    missing = stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=keys,
-    )
-    if not missing:
-        return False
-    sync_models(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        token=resolve_hf_token(),
-        log_prefix="[music3-on-demand]",
-        model_keys=keys,
-        download_workers=len(keys),
-    )
-    return True
+    return ensure_models(keys, runtime=runtime, log_prefix="[music3-on-demand]",
+                         download_workers=len(keys))
 
 
 def qwen_image21_model_keys(
@@ -1035,12 +801,9 @@ def missing_qwen_image21_model_names(
     *,
     runtime: RuntimeConfig,
 ) -> list[str]:
-    missing = stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=runtime.models_config.parent / "h3_model_manifest.json",
-        model_keys=qwen_image21_model_keys(model_choice, text_encoder_choice, turbo_variant),
+    return missing_model_names(
+        qwen_image21_model_keys(model_choice, text_encoder_choice, turbo_variant), runtime=runtime
     )
-    return [MODEL_SPECS[key].local_name for key in missing]
 
 
 def ensure_qwen_image21_models(
@@ -1052,62 +815,19 @@ def ensure_qwen_image21_models(
 ) -> bool:
     """Lazily install the selected Qwen Image 2.1 DiT, encoder, and VAE."""
     keys = qwen_image21_model_keys(model_choice, text_encoder_choice, turbo_variant)
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    missing = stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=keys,
-    )
-    if not missing:
-        return False
-    sync_models(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        token=resolve_hf_token(),
-        log_prefix="[qwen-image21-on-demand]",
-        model_keys=keys,
-        download_workers=len(keys),
-    )
-    return True
+    return ensure_models(keys, runtime=runtime, log_prefix="[qwen-image21-on-demand]",
+                         download_workers=len(keys))
 
 
 def ensure_model_keys(keys: tuple[str, ...], *, runtime: RuntimeConfig) -> bool:
     """Provision selected optional engine assets using the shared manifest lock."""
-    manifest = runtime.models_config.parent / "h3_model_manifest.json"
-    root = runtime.comfy_dir / "models"
-    if not stale_model_keys(root=root, manifest_path=manifest, model_keys=keys):
-        return False
-    sync_models(root=root, manifest_path=manifest, model_keys=keys,
-                token=resolve_hf_token(), log_prefix="[engine-on-demand]", download_workers=1)
-    return True
+    return ensure_models(keys, runtime=runtime)
 
 
 def missing_yue2_model_names(model_choice: str, *, runtime: RuntimeConfig) -> list[str]:
-    missing = stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=runtime.models_config.parent / "h3_model_manifest.json",
-        model_keys=yue2_model_keys(model_choice),
-    )
-    return [MODEL_SPECS[key].local_name for key in missing]
+    return missing_model_names(yue2_model_keys(model_choice), runtime=runtime)
 
 
 def ensure_yue2_models(model_choice: str, *, runtime: RuntimeConfig) -> bool:
     """Lazily install the selected YuE2 checkpoint from the official Comfy-Org repo."""
-    keys = yue2_model_keys(model_choice)
-    manifest_path = runtime.models_config.parent / "h3_model_manifest.json"
-    missing = stale_model_keys(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        model_keys=keys,
-    )
-    if not missing:
-        return False
-    sync_models(
-        root=runtime.comfy_dir / "models",
-        manifest_path=manifest_path,
-        token=resolve_hf_token(),
-        log_prefix="[yue2-on-demand]",
-        model_keys=keys,
-        download_workers=1,
-    )
-    return True
+    return ensure_models(yue2_model_keys(model_choice), runtime=runtime, log_prefix="[yue2-on-demand]")

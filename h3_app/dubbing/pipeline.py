@@ -11,13 +11,12 @@ Each step is a generator of status strings that ends with one result object.
 
 from __future__ import annotations
 
-from concurrent.futures import FIRST_COMPLETED, wait
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 import re
 import shutil
 import tempfile
-import threading
 import time
 from typing import Any, Callable, Iterator
 import uuid
@@ -27,14 +26,12 @@ import numpy as np
 
 from h3_app.catalog import VIDEO_EXTENSIONS
 from h3_app.errors import H3Error
-from h3_app.jobs import CURRENT_JOB
 from h3_app.media_tools import probe_audio_seconds, run_media_process
 from h3_app.provenance import write_snapshot
 
 from . import gemini, segments as segment_tools, session as sessions, tools
 
 RATE = 44100
-HEARTBEAT_SECONDS = 4.0
 PIPELINE_LOCAL = "Local: Qwen3-ASR + aligner + Hy-MT"
 PIPELINE_GEMINI = "Gemini (cloud)"
 PIPELINES = (PIPELINE_LOCAL, PIPELINE_GEMINI)
@@ -146,9 +143,9 @@ class _Line:
 
 def _blocking(label: str, work: Callable[[Callable[[str], None]], Any]) -> Iterator[str]:
     """Drama 3's heartbeat runner as status strings; returns ``work(report)``'s result."""
-    from h3_app.drama3_serving.generate import _with_heartbeat
+    from h3_app.drama3_serving.speech import run_blocking
 
-    updates = _with_heartbeat(label, work)
+    updates = run_blocking(label, work)
     while True:
         try:
             update = next(updates)
@@ -473,28 +470,20 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
                 hf_token=None) -> Iterator[str]:
     """Fill each line's ``take`` (mono at RATE), reusing saved takes unless regeneration was asked."""
     from h3_app.drama3_serving import audio, takes as take_store
-    from h3_app.drama3_serving.generate import (
-        AUTOMATIC_RETRIES, FRAMES_PER_SECOND, _ready_server, _request_pool, _request_speech, _staged_reference,
-        frame_budget,
-    )
-    from h3_app.drama3_serving.planner import expected_seconds
-    from h3_app.drama3_serving.server import ServerSettings, persist_caches, shared_server
-    from h3_app.workflows.drama3 import MAX_FRAMES
+    from h3_app.drama3_serving.speech import LineSpeaker, persist_caches
 
     temperature, top_p, top_k = VOICE_PRESETS.get(request.preset, VOICE_PRESETS["Balance"])
     sampling = {"temperature": temperature, "top_p": top_p, "top_k": top_k}
-    settings = ServerSettings.from_environment(runtime)
-    server = shared_server(settings)
+    speaker = LineSpeaker(runtime)
     store = take_store.takes_root(runtime)
     forced = set(request.regenerate)
     occurrences: dict[str, int] = {}
     staged: dict[Path, Path] = {}
     for line in planned:
-        staged.setdefault(line.reference, _staged_reference(str(line.reference), settings.media_dir))
+        staged.setdefault(line.reference, speaker.reference(line.reference))
         content = take_store.take_key(speaker=f"dub:{line.segment['speaker']}", text=line.segment["translation"],
                                       reference=staged[line.reference].stem, transcript=line.transcript,
-                                      sampling=sampling, max_new_tokens=frame_budget(line.segment["translation"],
-                                                                                     MAX_FRAMES))
+                                      sampling=sampling, max_new_tokens=speaker.budget(line.segment["translation"]))
         occurrence = occurrences.get(content, 0)
         occurrences[content] = occurrence + 1
         line.key = take_store.occurrence_key(content, occurrence)
@@ -508,43 +497,20 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
         return
     yield f"Reusing {reused} saved take(s); generating {len(pending)}" if reused else f"Generating {len(pending)} line(s)"
     tools.stop()  # Drama 3 needs the VRAM the transcription models hold.
-    for update in _ready_server(settings, server, "SGLang-Omni", free_gpu, hf_token):
+    for update in speaker.ready(free_gpu, hf_token):
         yield update.status
 
-    def synthesize(line: _Line, stopped: threading.Event) -> tuple[bytes, np.ndarray, int, str]:
-        text = line.segment["translation"]
-        budget = frame_budget(text, MAX_FRAMES)
-        best = None
-        for _attempt in range(AUTOMATIC_RETRIES + 1):
-            payload = server.payload(text=text, reference=staged[line.reference], transcript=line.transcript,
-                                     max_new_tokens=budget, sampling=sampling)
-            wav = _request_speech(server, payload, stopped)
-            samples, rate = audio.decode_wav(wav)
-            check = audio.check_take(samples, rate, expected_seconds(text), max_seconds=budget / FRAMES_PER_SECOND)
-            if check.ok:
-                return wav, samples, rate, ""
-            if best is None or check.score < best[3]:
-                best = (wav, samples, rate, check.score, check.reason)
-        return best[0], best[1], best[2], best[4]
-
     started, done = time.monotonic(), 0
-    workers = max(1, min(int(request.parallel), len(pending)))
-    with _request_pool(workers, "dub-sglang") as (pool, stopped):
-        futures = {pool.submit(synthesize, line, stopped): line for line in pending}
-        while futures:
-            finished, _ = wait(futures, timeout=HEARTBEAT_SECONDS, return_when=FIRST_COMPLETED)
-            job = CURRENT_JOB.get()
-            if job is not None and job.cancelled.is_set():
-                for future in futures:
-                    future.cancel()
-                job.check()
-            for future in finished:
-                line = futures.pop(future)
-                wav, samples, rate, problem = future.result()
-                line.take = _resample(audio.tidy_take(samples, rate), rate, RATE)
-                line.note = f"kept its best take ({problem})" if problem else ""
+    lines = [(line, line.segment["translation"], staged[line.reference], line.transcript) for line in pending]
+    with closing(speaker.speak(lines, sampling=sampling, parallel=request.parallel,
+                               thread_prefix="dub-sglang")) as batches:
+        for batch in batches:
+            for spoken in batch:
+                line = spoken.key
+                line.take = _resample(audio.tidy_take(spoken.samples, spoken.rate), spoken.rate, RATE)
+                line.note = f"kept its best take ({spoken.problem})" if spoken.problem else ""
                 try:
-                    take_store.save_take(store, line.key, wav)
+                    take_store.save_take(store, line.key, spoken.wav)
                 except OSError as exc:  # a full disk must not fail the dub
                     line.note = f"take not saved: {exc}"
                 done += 1

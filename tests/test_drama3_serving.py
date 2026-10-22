@@ -15,6 +15,7 @@ from h3_app.drama3_serving import audio, environment, generate, server
 from h3_app.drama3_serving.generate import frame_budget
 from h3_app.drama3_serving.planner import CHUNK_BYTES, expected_seconds, parse_turns, plan_chunks, spoken_text
 from h3_app.errors import H3Error
+from h3_app.workers import env as worker_env
 from h3_app.generation.optional_engines import validate_request
 from h3_app.generation.requests import Drama3Request
 from h3_requirements import drama3_sglang_install_commands
@@ -179,14 +180,14 @@ class AudioTests(unittest.TestCase):
 
 class EnvironmentTests(unittest.TestCase):
     def test_uv_runs_as_a_module_when_no_executable_is_on_path(self):
-        with patch.object(environment.shutil, "which", return_value=None), \
+        with patch.object(worker_env.shutil, "which", return_value=None), \
                 patch("importlib.util.find_spec", return_value=object()):
             uv = environment.uv_command()
         self.assertEqual(uv[1:], ["-m", "uv"])
         commands = drama3_sglang_install_commands(PurePosixPath("/v"), uv)
         self.assertEqual(commands[0][:4], [uv[0], "-m", "uv", "venv"])
         self.assertEqual(commands[2][:4], [uv[0], "-m", "uv", "pip"])
-        with patch.object(environment.shutil, "which", return_value=None), \
+        with patch.object(worker_env.shutil, "which", return_value=None), \
                 patch("importlib.util.find_spec", return_value=None):
             self.assertIsNone(environment.uv_command())
     def test_sglang_install_pins_the_release_with_fishaudio_extras(self):
@@ -1004,6 +1005,33 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         self.assertGreaterEqual(end, len(clip) - int(audio.LOOP_SEARCH_SECONDS * RATE))
         np.testing.assert_allclose(clip[end - overlap:end], clip[:overlap], atol=0.02)
         self.assertEqual(audio.loop_end(clip[:RATE], RATE // 2, RATE), RATE)  # too short to search
+
+
+class LineSpeakerTests(unittest.TestCase):
+    def speaker(self, speech):
+        from h3_app.drama3_serving.speech import LineSpeaker
+
+        fake = MagicMock()
+        fake.speech.side_effect = speech
+        fake.payload.side_effect = server.SglangOmniServer(None).payload
+        speaker = LineSpeaker.__new__(LineSpeaker)
+        speaker.server = fake
+        return speaker, fake
+
+    def test_lines_return_their_take_or_the_best_failed_attempt(self):
+        good = "Hello there, friend."
+
+        def speech(payload):
+            return float_wav(tone(expected_seconds(payload["input"]) if payload["input"] == good else 0.0))
+
+        speaker, fake = self.speaker(speech)
+        lines = [("a", good, None, None), ("b", "Nobody answers this line.", None, None)]
+        spoken = {line.key: line for batch in speaker.speak(lines, sampling={"temperature": 1.0}, parallel=2)
+                  for line in batch}
+        self.assertEqual(spoken["a"].problem, "")
+        self.assertEqual(spoken["b"].problem, "no speech")
+        # The failed line is tried once more; the good one only once.
+        self.assertEqual(fake.speech.call_count, 2 + generate.AUTOMATIC_RETRIES)
 
 
 class TakeReuseTests(unittest.TestCase):

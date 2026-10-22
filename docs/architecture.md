@@ -27,7 +27,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_sources.py | Repository, revision and wheel pins shared by local and Modal setup |
 | h3_app/settings.py, resources.py | Requested/effective settings, presets and output-specific decoder dependencies |
 | h3_app/contracts.py | Stable positional API ordering |
-| h3_app/model_types.py, model_service.py | Model selection, lazy provisioning and TensorRT engine lifecycle |
+| h3_app/model_types.py, model_service.py | Model selection, lazy provisioning through `ensure_models`, and TensorRT engine lifecycle |
 | h3_models.py | Model inventory and manifest transactions locked across threads and processes |
 | h3_app/jobs.py | Bounded admission, immutable requests, input leases, durable technical ledgers, exact retries, browser ownership, cancellation and the application GPU lease |
 | h3_app/workspace_store.py, workspace_admin.py | SQLite ownership, technical history, explicit projects, asset annotations, backup/restore |
@@ -39,10 +39,12 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/staging.py, media_tools.py | Input staging, media inspection, controlled subprocesses and post-processing |
 | h3_app/media.py, outputs.py, gallery_store.py | Contained discovery, explicit output context and complete managed gallery inventory |
 | h3_app/provenance.py | Atomic sidecars, copied-media provenance and escaped metadata rendering |
-| h3_app/prompt_service.py | Local, Gemini and Lightning writer adapters with transient credentials |
+| h3_app/prompt_service.py | Every engine's prompt writer over the local, Gemini and Lightning backends |
+| h3_app/llm/ | Gemini and Lightning clients: transient keys, temporary Gemini file uploads, generation |
+| h3_app/workers/ | Isolated uv environments, setup steps with cancellation, and resident JSON-line worker processes |
 | prompts/ | Writer system prompts for each engine, read through h3_app/config.py |
 | h3_app/song_brief.py, h3_ui/song_controls.py, song_takes.py | Song planning and checks, guided step cards and the session take history for Music 3 and YuE2 |
-| h3_app/drama3_*.py, drama3_serving/ | Soundstage cast, script lint, speaker and sound libraries, voice design, and Drama 3 on SGLang-Omni (environment, planner, takes, mixing, checkpointed sleep) |
+| h3_app/drama3_*.py, drama3_serving/ | Soundstage cast, script lint, speaker and sound libraries, voice design, and Drama 3 on SGLang-Omni (environment, planner, takes, mixing, checkpointed sleep). drama3_serving/speech.py is the line-speaking interface other features use |
 | h3_app/audio_tools.py, audio_tools_worker.py, voice_design.py, stable_audio.py | The isolated resident worker for Qwen VoiceDesign and Stable Audio, and its clients |
 | h3_app/server.py | Configured FastAPI routes and HTTP/WebSocket proxy |
 | h3_ui/application.py | Runtime service wiring and signature-preserving public API adapters |
