@@ -1,5 +1,6 @@
 """Fibo request, native ComfyUI graph, queue and UI contracts without model downloads."""
 
+import json
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -20,6 +21,7 @@ from h3_app.workflows.fibo2 import (
     FIBO2_EDIT_SIZE_MAX,
     FIBO2_EDIT_SIZE_TRAINED,
     FIBO2_MAX_PIXELS,
+    FIBO2_NEGATIVE_T2I,
     build_fibo2_graph,
     fibo2_model_keys,
 )
@@ -62,7 +64,8 @@ class FiboGraphTests(unittest.TestCase):
                                   output_stamp="123", output_nonce="abcd")
         self.assertNotIn("H3Fibo2Generate", {node["class_type"] for node in graph.values()})
         encode, = inputs(graph, "TextEncodeFibo2")
-        self.assertEqual((encode["width"], encode["height"], encode["negative_prompt"]), (1536, 1024, ""))
+        self.assertEqual((encode["width"], encode["height"]), (1536, 1024))
+        self.assertEqual(encode["negative_prompt"], FIBO2_NEGATIVE_T2I)
         self.assertFalse([key for key in encode if key.startswith("images.")])
         clip, = inputs(graph, "CLIPLoader")
         self.assertEqual((clip["type"], clip["clip_name"]),
@@ -88,6 +91,16 @@ class FiboGraphTests(unittest.TestCase):
         self.assertEqual((encode["width"], encode["height"]), (0, 0))
         self.assertEqual(inputs(graph, "CLIPLoader")[0]["clip_name"], "qwen3vl_4b_bf16.safetensors")
         self.assertEqual(inputs(graph, "UNETLoader")[0]["unet_name"], "fibo2_edit_turbo_int8_convrot.safetensors")
+
+    def test_text_to_image_uses_bria_t2i_negative_and_edits_keep_the_null_caption(self):
+        negative = json.loads(FIBO2_NEGATIVE_T2I)
+        self.assertEqual(negative["objects"][0]["description"], "the main subject")
+        self.assertIn("motion blur", negative["aesthetics"]["artifacts"])
+        dev_edit = build_fibo2_graph(prompt="make it night", reference_images=("a.png",), width=0, height=0)
+        turbo_edit = build_fibo2_graph(prompt="make it night", model_choice="Edit Turbo",
+                                       reference_images=("a.png",), width=0, height=0, steps=4, cfg=1)
+        for graph in (dev_edit, turbo_edit):
+            self.assertEqual(inputs(graph, "TextEncodeFibo2")[0]["negative_prompt"], "")
 
 
 class FiboSizeTests(unittest.TestCase):

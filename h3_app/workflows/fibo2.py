@@ -22,6 +22,21 @@ FIBO2_2M_RESOLUTION_PRESETS = (
     "2M · 1:1 · 1456×1456", "2M · 4:3 · 1664×1248", "2M · 3:2 · 1776×1184", "2M · 16:9 · 1920×1088",
     "2M · 3:4 · 1248×1664", "2M · 2:3 · 1184×1776", "2M · 9:16 · 1088×1920",
 )
+# Bria's text-to-image negative caption, which improves fine detail and image quality.
+# Edits keep TextEncodeFibo2's empty default: the null caption Fibo 2.0 was trained with.
+FIBO2_NEGATIVE_T2I = (
+    '{"short_description":"","objects":[{"description":"the main subject",'
+    '"texture":"smooth, featureless, plastic-like, airbrushed, no fine surface detail",'
+    '"appearance_details":"soft blurred edges, simplified shapes, no fine detail",'
+    '"skin_tone_and_texture":"waxy airbrushed skin, poreless, plastic smooth"}],'
+    '"background_setting":"a plain seamless studio backdrop, perfectly smooth gradient, '
+    'blurred and featureless, no visible texture","lighting":{},"aesthetics":{"artifacts":'
+    '["oversaturated colours","neon colour cast","overexposed highlights","lens flare",'
+    '"slight blur","motion blur","haze"]},"photographic_characteristics":'
+    '{"depth_of_field":"shallow, heavy bokeh obscuring most of the frame",'
+    '"focus":"soft, slightly out of focus, lacking fine texture"},'
+    '"style_medium":"","context":"","artistic_style":""}'
+)
 
 
 def validate_fibo2_inputs(model_choice, prompt, reference_images=(), steps=30, cfg=5.0, precision=None):
@@ -68,7 +83,8 @@ def build_fibo2_graph(*, prompt, model_choice="Dev", precision="BF16", reference
     images = {f"images.image_{index}": add("LoadImage", image=path)
               for index, path in enumerate(reference_images, 1)}
     # 0 x 0 lets the node pick Bria's trained ~1 MP size for the first reference's aspect ratio.
-    encoded = g.add("TextEncodeFibo2", clip=clip, prompt=prompt, negative_prompt="", vae=vae, **images,
+    negative = "" if reference_images else FIBO2_NEGATIVE_T2I
+    encoded = g.add("TextEncodeFibo2", clip=clip, prompt=prompt, negative_prompt=negative, vae=vae, **images,
                     width=width, height=height, batch_size=1)
     samples = add("KSampler", model=model, positive=Graph.out(encoded, 0), negative=Graph.out(encoded, 1),
                   latent_image=Graph.out(encoded, 2), seed=seed, steps=steps, cfg=cfg,
