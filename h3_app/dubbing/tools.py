@@ -15,7 +15,7 @@ import time
 
 from h3_app import audio_tools
 from h3_app.dubbing import tools_worker as layout
-from h3_app.drama3_serving.environment import _setup_lock, uv_command
+from h3_app.drama3_serving.environment import _setup_lock, compiler_env, uv_command
 from h3_app.errors import H3Error
 from h3_requirements import (
     DUB_TOOLS_READY_MARKER as READY_MARKER,
@@ -60,7 +60,8 @@ def prepare(runtime, log: Path) -> Path:
         if python.is_file():
             commands = commands[1:]
         for command in commands:
-            audio_tools.run_process(command, log, timeout=2400, label=f"{LABEL} setup")
+            # audio-separator's diffq ships only as source and compiles a C extension.
+            audio_tools.run_process(command, log, timeout=2400, env=compiler_env(), label=f"{LABEL} setup")
         marker.write_text(fingerprint(), encoding="utf-8")
     return python
 

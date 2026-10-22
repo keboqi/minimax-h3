@@ -697,8 +697,9 @@ image = image.run_commands(
 
 # Dub & Translate's audio-separator, OmniVAD, Qwen3-ASR and Hy-MT: qwen-asr's own
 # Transformers pin keeps them in a third interpreter. Weights download on first use.
+# audio-separator's diffq compiles from source; build it with gcc, as for SGLang-Omni.
 image = image.run_commands(
-    *(shlex.join(command) for command in dub_tools_install_commands(DUB_TOOLS_VENV)),
+    *(f"CC=gcc CXX=g++ {shlex.join(command)}" for command in dub_tools_install_commands(DUB_TOOLS_VENV)),
     f"echo {dub_tools_fingerprint()} > "
     f"{(DUB_TOOLS_VENV / DUB_TOOLS_READY_MARKER).as_posix()}",
 )

@@ -73,11 +73,20 @@ def install_env(venv: Path) -> dict[str, str]:
         PYTHONUNBUFFERED="1",
         PATH=str(Path(venv) / "bin") + os.pathsep + os.environ.get("PATH", ""),
     )
-    # Standalone Python builds name clang as their C compiler; fall back to gcc
-    # for dependencies that compile extensions (cdifflib) when clang is absent.
-    if "CC" not in env and not shutil.which("clang") and shutil.which("gcc"):
-        env.update(CC="gcc", CXX="g++")
+    env.update(compiler_env(env))
     return env
+
+
+def compiler_env(env=None) -> dict[str, str]:
+    """``CC``/``CXX`` for uv installs that compile C extensions (cdifflib, diffq).
+
+    Standalone Python builds name clang as their C compiler; fall back to gcc when
+    clang is absent and no compiler was chosen.
+    """
+    env = os.environ if env is None else env
+    if "CC" not in env and not shutil.which("clang") and shutil.which("gcc"):
+        return {"CC": "gcc", "CXX": "g++"}
+    return {}
 
 
 @contextlib.contextmanager

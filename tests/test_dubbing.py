@@ -141,6 +141,20 @@ class WorkerHelperTests(unittest.TestCase):
         self.assertIn("Unknown dubbing tools request", first["error"])
         self.assertEqual(second, {"id": 2, "loaded": [], "ok": True, "texts": ["x"]})
 
+    def test_first_use_install_compiles_with_gcc_when_clang_is_missing(self):
+        from h3_app.drama3_serving import environment
+
+        with TemporaryDirectory() as root,                 patch.dict(os.environ, {"H3_DUB_TOOLS_VENV": str(Path(root) / "venv")}),                 patch.object(environment.shutil, "which", side_effect=lambda name: None if name == "clang" else name),                 patch.object(tools, "uv_command", return_value=["uv"]),                 patch.object(tools.audio_tools, "run_process",
+                             side_effect=lambda *a, **k: (Path(root) / "venv").mkdir(exist_ok=True)) as run:
+            os.environ.pop("CC", None)
+            tools.prepare(runtime_for(Path(root)), Path(root) / "setup.log")
+        self.assertEqual(run.call_count, 3)
+        self.assertTrue(all(call.kwargs["env"] == {"CC": "gcc", "CXX": "g++"} for call in run.call_args_list))
+
+    def test_modal_builds_the_dub_tools_with_gcc(self):
+        source = (Path(__file__).resolve().parents[1] / "modal_h3.py").read_text(encoding="utf-8")
+        self.assertIn('f"CC=gcc CXX=g++ {shlex.join(command)}" for command in dub_tools_install_commands', source)
+
     def test_other_jobs_stop_the_worker(self):
         with patch.object(tools, "stop") as stop:
             tools.release_for_job("dubbing")
