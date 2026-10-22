@@ -1,7 +1,8 @@
 """Standalone entry point: run only with the isolated audio tools interpreter.
 
 ``serve`` keeps Qwen VoiceDesign and Stable Audio 3 Medium resident: each model
-loads on its first request and stays in VRAM until the parent stops the process.
+loads on its first request (or a ``load`` request) and stays in VRAM until the
+parent stops the process.
 Requests arrive one JSON line at a time on stdin; replies go to the original
 stdout, and everything the libraries print goes to stderr (the log). Serving runs
 with HF_HUB_OFFLINE=1; ``download`` fetches missing weights once beforehand.
@@ -140,6 +141,10 @@ class Worker:
             return self.design_voice(request)
         if op == "stable_audio":
             return self.generate_sounds(request)
+        if op == "load":
+            # Preload ahead of the first request; the reply's ``loaded`` confirms it.
+            {"voice_design": self.load_voice_design, "stable_audio": self.load_stable_audio}[request["model"]]()
+            return {}
         if op == "ping":
             return {}
         raise ValueError(f"Unknown audio tools request: {op!r}")

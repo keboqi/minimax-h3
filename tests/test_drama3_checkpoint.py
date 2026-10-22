@@ -263,6 +263,17 @@ class LifecycleTests(unittest.TestCase):
         self.controller.wake.assert_not_called()
         self.assertTrue(self.server.sleeping)
 
+    def test_preload_never_stops_the_audio_tools_worker_to_make_room(self):
+        self.server.process = None
+        with patch.object(server, 'gpu_memory', return_value=(1024, 100000, 'audio tools')), \
+                patch.object(server, 'reclaim_audio_tools', return_value=None) as reclaim:
+            with self.assertRaisesRegex(H3Error, 'needs about'):
+                self.server.ensure_ready(lambda: None, evict=False)
+            reclaim.assert_not_called()
+            with self.assertRaisesRegex(H3Error, 'needs about'):
+                self.server.ensure_ready(lambda: None)
+            reclaim.assert_called_once()
+
     def test_sleep_failure_stops_instead_of_reusing_partial_checkpoint(self):
         self.controller.sleep.side_effect = RuntimeError('unsupported allocation')
         with patch.object(cp, 'CudaCheckpoint', return_value=self.controller), \

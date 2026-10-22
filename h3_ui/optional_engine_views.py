@@ -100,6 +100,7 @@ class OptionalEngineActions:
     drama3_take_selected: Callable | None = None
     drama3_take_audio: Callable | None = None
     drama3_subtitles: Callable | None = None
+    preload_drama3_models: Callable | None = None
     generate_moss_image: Callable | None = None
     enhance_moss_image_prompt: Callable | None = None
     generate_fibo2: Callable | None = None

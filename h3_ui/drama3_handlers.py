@@ -133,6 +133,61 @@ def remix_drama3(*values, progress=gr.Progress(track_tqdm=False)):
     yield from _drama3_job(values, progress, remix_only=True)
 
 
+def preload_drama3_models(voice_engine, script_mode="Basic"):
+    """Load what Auto needs while the writer works: the voice design engine, Stable Audio, then SGLang-Omni.
+
+    Stable Audio loads only for Advanced scripts. Loaded models are kept and never
+    unloaded to make room; a model that fails or does not fit is left to the step
+    that needs it, which loads it as usual. Yields the preload status.
+    """
+    from h3_app import audio_tools
+    from h3_app.drama3_serving.generate import preload_served
+    from h3_app.drama3_voice_design import ENGINE_QWEN
+    from h3_models import resolve_hf_token
+
+    runtime, hf_token = _runtime_config(), resolve_hf_token()
+
+    def audio_tool(model):
+        if not audio_tools.preload(model, runtime, free_gpu=free_comfy_vram, hf_token=hf_token):
+            raise H3Error("no free GPU memory beside the loaded models")
+        yield from ()
+
+    def sglang():
+        for update in preload_served(runtime=runtime, free_gpu=free_comfy_vram, hf_token=hf_token):
+            yield update.status
+
+    qwen = voice_engine == ENGINE_QWEN
+    # Drama 3 voice design runs on SGLang-Omni, so the server comes first then.
+    steps = [("Qwen VoiceDesign", lambda: audio_tool("voice_design")) if qwen else ("SGLang-Omni", sglang)]
+    if script_mode == prompt_service.DRAMA3_SCRIPT_ADVANCED:
+        steps.append(("Stable Audio 3 Medium", lambda: audio_tool("stable_audio")))
+    if qwen:
+        steps.append(("SGLang-Omni", sglang))
+    ready, skipped = [], []
+
+    def status(current=""):
+        parts = [f"Preloading {current}" if current else "Preload finished."]
+        if ready:
+            parts.append("Ready: " + ", ".join(ready) + ".")
+        if skipped:
+            parts.append("Not preloaded, its step loads it: " + "; ".join(skipped) + ".")
+        return " ".join(parts)
+
+    for name, load in steps:
+        yield status(f"{name}…")
+        try:
+            for message in load():
+                yield status(f"{name}: {message}")
+        except JobCancelled:
+            raise
+        except Exception as exc:
+            reason = (str(exc).strip().splitlines() or [type(exc).__name__])[0]
+            skipped.append(f"{name} ({reason})")
+            continue
+        ready.append(name)
+    yield status()
+
+
 def _result_settings(output):
     """A result's settings snapshot, or {}; ``output`` may be Gradio's cached copy."""
     from h3_app.provenance import read_snapshot

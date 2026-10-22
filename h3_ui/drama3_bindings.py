@@ -5,7 +5,8 @@ import gradio as gr
 from h3_ui.drama3_speaker_library import bind_speaker_library, bind_voice_takes
 from h3_app.drama3_voice_design import ENGINE_QWEN
 from h3_app.prompt_service import DRAMA3_PROMPT_FAILED, DRAMA3_SCRIPT_ADVANCED
-from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
+from h3_app.jobs import JobCancelled
+from .job_bindings import GPU_QUEUE, bind_gpu_action, bind_prompt_action, owned_generation, owned_interrupt
 from h3_ui.optional_engine_controls import (
     _QUIET,
     _bind_generation,
@@ -419,11 +420,35 @@ def _bind_auto_save(voiced, view, actions):
                           outputs=[view.speaker_group_status, *presets], **_QUIET)
 
 
+def _bind_preload(started, view, actions):
+    """While the writer works, load Auto's models on the GPU queue, ahead of the voice step.
+
+    A failed preload never stops Auto: the step that needs the model loads it as usual.
+    """
+    if view.auto_preload_status is None or actions.preload_drama3_models is None:
+        return None
+    sounds = bool(view.sounds) and view.script_mode is not None and actions.generate_drama3_sounds is not None
+    inputs = [view.voice_engine, *([view.script_mode] if sounds else [])]
+    run = owned_generation(actions.preload_drama3_models, "drama3_preload",
+                           ("voice_engine", "script_mode")[:len(inputs)])
+
+    def preload(*args):
+        try:
+            yield from run(*args)
+        except JobCancelled:
+            return
+
+    preload.__signature__, preload.__annotations__ = run.__signature__, run.__annotations__
+    return started.then(preload, inputs=inputs, outputs=view.auto_preload_status, show_progress="hidden",
+                        api_name=False, **GPU_QUEUE)
+
+
 def _bind_auto(view, actions, generation_inputs):
     """Auto: rewrite the script, generate every speaker voice, every sound, then the speech.
 
     Each step reuses its button's callback and job family and starts only after
-    the previous step succeeds; Interrupt auto stops the running job and the chain.
+    the previous step succeeds; the models they need preload during the rewrite.
+    Interrupt auto stops the running job and the chain.
     Returns the events that save speaker presets.
     """
     if view.auto is None:
@@ -437,6 +462,7 @@ def _bind_auto(view, actions, generation_inputs):
         lambda: ("Auto: rewriting the script\u2026", gr.update(interactive=True), gr.update(interactive=False)),
         outputs=controls, **_QUIET,
     )
+    preloaded = _bind_preload(started, view, actions)
     rewritten = bind_prompt_action(
         started.then, actions.enhance_drama3_text,
         inputs=[view.text, view.speaker_mode, *_writer_inputs(view.writer), *_writer_slot_inputs(view)],
@@ -477,12 +503,13 @@ def _bind_auto(view, actions, generation_inputs):
                      outputs=controls, **_QUIET)
 
     def stop_auto(request: gr.Request):
-        for family in ("drama3_voice", "drama3_sound", "drama3"):
+        for family in ("drama3_preload", "drama3_voice", "drama3_sound", "drama3"):
             actions.interrupt(request, family=family)
         return "Auto interrupted.", *idle
 
     stopped = view.stop_auto.click(stop_auto, outputs=controls, queue=False, api_name=False)
     # Gradio can cancel queued work only; status and slot updates run immediately.
-    stopped.then(fn=None, cancels=[step for step in steps if step.get("queue") is not False],
+    queued = [step for step in steps if step.get("queue") is not False]
+    stopped.then(fn=None, cancels=queued + ([preloaded] if preloaded is not None else []),
                  queue=False, api_name=False)
     return store_events

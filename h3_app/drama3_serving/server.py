@@ -215,14 +215,17 @@ class SglangOmniServer:
         if to_file and self._log is not None:
             self._log.write((text + "\n").encode("utf-8", errors="replace"))
 
-    def check_free_vram(self, progress: Callable[[str], None]) -> None:
-        """Fail fast, naming the holders, when the GPU lacks room for the configured share."""
+    def check_free_vram(self, progress: Callable[[str], None], *, evict: bool = True) -> None:
+        """Fail fast, naming the holders, when the GPU lacks room for the configured share.
+
+        ``evict`` first stops the VoiceDesign/Stable Audio worker to make room.
+        """
         memory = gpu_memory()
         if memory is None:
             return
         free, total, holders = memory
         needed = (self.settings.engine_memory + self.settings.codec_memory) * total
-        if free < needed:
+        if free < needed and evict:
             memory = reclaim_audio_tools() or memory
             free, total, holders = memory
         message = f"GPU memory before {self.label}: {free / 1024:.1f} of {total / 1024:.1f} GiB free"
@@ -292,15 +295,20 @@ class SglangOmniServer:
         raise H3Error(f"{self.label} did not become ready in {self.settings.start_timeout:.0f}s. "
                       f"Last log lines:\n{self.log_tail()}")
 
-    def ensure_ready(self, free_gpu: Callable[[], None], progress: Callable[[str], None] = lambda _m: None) -> None:
-        """Free ComfyUI's VRAM, then restore, reuse, or start the server."""
+    def ensure_ready(self, free_gpu: Callable[[], None], progress: Callable[[str], None] = lambda _m: None,
+                     *, evict: bool = True) -> None:
+        """Free ComfyUI's VRAM, then restore, reuse, or start the server.
+
+        Without ``evict`` the VoiceDesign/Stable Audio worker stays loaded; a GPU
+        without room for the server then raises instead.
+        """
         with self._lock:
             free_gpu()
             if self.sleeping and self.running():
                 # Leave it asleep on insufficient VRAM so the user can unload
                 # other models and retry without losing the checkpoint.
                 memory = gpu_memory()
-                if memory is not None and memory[0] * 2**20 < self._checkpoint.required_vram:
+                if memory is not None and memory[0] * 2**20 < self._checkpoint.required_vram and evict:
                     memory = reclaim_audio_tools() or memory
                 if memory is not None and memory[0] * 2**20 < self._checkpoint.required_vram:
                     raise H3Error("Not enough free GPU memory to wake SGLang; unload other models and retry.")
@@ -322,7 +330,7 @@ class SglangOmniServer:
             # Also clean up surviving workers when the parent has exited.
             if self.process is not None:
                 self.stop()
-            self.check_free_vram(progress)
+            self.check_free_vram(progress, evict=evict)
             try:
                 self._launch(progress)
             except (H3Error, OSError):
@@ -331,7 +339,7 @@ class SglangOmniServer:
                     raise
                 self._sleep_disabled = True
                 self.log_line("Checkpoint-enabled launch failed; retrying ordinary startup once")
-                self.check_free_vram(progress)
+                self.check_free_vram(progress, evict=evict)
                 self._launch(progress)
 
     def _launch(self, progress: Callable[[str], None]) -> None:
@@ -497,11 +505,11 @@ def shared_server(settings: ServerSettings) -> SglangOmniServer:
 def release_for_job(family: str) -> None:
     """Other engines reclaim the GPU; ComfyUI TTS releases the server itself.
 
-    Voice and sound design share the GPU with a loaded server.
+    Voice and sound design, and Auto's preload, share the GPU with a loaded server.
     """
     if family == "unload":
         stop_all()
-    elif family not in {"drama3", "drama3_voice", "drama3_sound"}:
+    elif family not in {"drama3", "drama3_voice", "drama3_sound", "drama3_preload"}:
         release_all()
 
 

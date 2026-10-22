@@ -2787,6 +2787,7 @@ def _optional_engine_actions():
         delete_drama3_sound=drama3_handlers.delete_drama3_sound,
         generate_drama3_sound=drama3_handlers.generate_drama3_sound,
         generate_drama3_sounds=drama3_handlers.generate_drama3_sounds,
+        preload_drama3_models=drama3_handlers.preload_drama3_models,
     )
 
 

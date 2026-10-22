@@ -146,13 +146,23 @@ def _with_heartbeat(label: str, work: Callable[[Callable[[str], None]], object])
         raise error[0]
 
 
-def _ready_server(settings, server, label, free_gpu, hf_token) -> Iterator[GenerationUpdate]:
+def _ready_server(settings, server, label, free_gpu, hf_token, *, evict=True) -> Iterator[GenerationUpdate]:
     yield from _with_heartbeat(f"Preparing the {label} environment",
                                lambda _progress: environment.prepare(settings.venv))
     yield from _with_heartbeat("Downloading the Drama 3 checkpoint",
                                lambda _progress: ensure_model(settings, token=hf_token))
     yield from _with_heartbeat(f"Freeing ComfyUI VRAM and starting {label}",
-                               lambda report: server.ensure_ready(free_gpu, report))
+                               lambda report: server.ensure_ready(free_gpu, report, evict=evict))
+
+
+def preload_served(*, runtime, free_gpu: Callable[[], None], hf_token=None,
+                   label: str = LABEL) -> Iterator[GenerationUpdate]:
+    """Prepare, download and start (or wake) the server before its first request.
+
+    The VoiceDesign/Stable Audio worker stays loaded; without room beside it this raises.
+    """
+    settings = ServerSettings.from_environment(runtime)
+    yield from _ready_server(settings, shared_server(settings), label, free_gpu, hf_token, evict=False)
 
 
 @dataclass(frozen=True)

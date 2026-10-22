@@ -137,6 +137,16 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(sound.write.call_args_list[0].args[2], 24000)
         self.assertEqual(worker.loaded, ["voice_design"])
 
+    def test_load_request_preloads_the_named_model_without_generating(self):
+        worker = worker_module.Worker(self.root)
+        with patch.object(worker, "load_stable_audio") as load_sound, \
+                patch.object(worker, "load_voice_design") as load_voice:
+            self.assertEqual(worker.handle({"op": "load", "model": "stable_audio"}), {})
+            load_sound.assert_called_once_with()
+            load_voice.assert_not_called()
+        with self.assertRaises(KeyError):
+            worker.handle({"op": "load", "model": "drama3"})
+
     def test_broken_flash_attention_falls_back_to_sdpa(self):
         worker = worker_module.Worker(self.root)
         with patch.dict(sys.modules, {"flash_attn": None}), patch("builtins.print"):

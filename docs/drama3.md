@@ -58,6 +58,13 @@ new clips. Check **Save generated speakers to the selected group** (off by defau
 to have Auto save the cast after the voices are generated, as **Save all speakers**
 does. Interrupt controls stop their corresponding jobs.
 
+While the writer rewrites the script, Auto loads the models it will need on the
+GPU, in order: the voice design engine (Qwen VoiceDesign, or SGLang-Omni for
+Drama 3 voice design), Stable Audio 3 Medium in Advanced mode, then SGLang-Omni.
+Models that are already loaded are kept. The preload never unloads one model to
+make room for another; a model that does not fit or fails to load is left to the
+step that needs it, and the line under the Auto status says which.
+
 ## Script writer and cast
 
 To use a chat model outside the app, open **Use another chat model** under

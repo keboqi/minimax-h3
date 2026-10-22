@@ -223,7 +223,7 @@ class FakeResident:
         self.requests.append(payload)
         if self.error:
             raise self.error
-        self.loaded.add(payload["op"])
+        self.loaded.add(payload["model"] if payload["op"] == "load" else payload["op"])
         return {"ok": True, "loaded": sorted(self.loaded)}
 
     def stop(self):
@@ -280,11 +280,29 @@ class ResidentAudioToolsTests(unittest.TestCase):
         free_gpu.assert_called_once()
         self.release_all.assert_called_once()
 
+    def test_preload_loads_once_and_never_sleeps_sglang_for_room(self):
+        free_gpu = Mock()
+        with self.gpu(40000, 1000, 1000):
+            self.assertTrue(audio_tools.preload("voice_design", self.runtime, free_gpu=free_gpu))
+            self.assertTrue(audio_tools.preload("voice_design", self.runtime, free_gpu=free_gpu))
+            # A full GPU frees ComfyUI, then leaves the model to its first request.
+            self.assertFalse(audio_tools.preload("stable_audio", self.runtime, free_gpu=free_gpu))
+        worker = FakeResident.instances[0]
+        self.assertEqual(worker.requests, [{"op": "load", "model": "voice_design"}])
+        free_gpu.assert_called_once()
+        self.release_all.assert_not_called()
+        self.assertEqual(audio_tools.loaded_models(), {"voice_design"})
+        audio_tools.stop()
+        with self.gpu(1000, 1000):
+            self.assertFalse(audio_tools.preload("voice_design", self.runtime, free_gpu=Mock()))
+        # No worker starts when even the first model does not fit.
+        self.assertEqual(len(FakeResident.instances), 1)
+
     def test_other_engines_and_unload_stop_the_worker_but_drama3_jobs_keep_it(self):
         with self.gpu(40000):
             audio_tools.run("voice_design", {}, self.runtime, free_gpu=Mock())
         worker = FakeResident.instances[0]
-        for family in ("drama3", "drama3_voice", "drama3_sound"):
+        for family in ("drama3", "drama3_voice", "drama3_sound", "drama3_preload"):
             audio_tools.release_for_job(family)
             self.assertFalse(worker.stopped)
         audio_tools.release_for_job("h3")

@@ -117,6 +117,7 @@ class Drama3View:
     auto: gr.Button | None = None
     stop_auto: gr.Button | None = None
     auto_status: gr.Markdown | None = None
+    auto_preload_status: gr.Markdown | None = None
     auto_sound_slots: gr.Number | None = None
     auto_save_speakers: gr.Checkbox | None = None
     speaker_group: gr.Dropdown | None = None
@@ -476,6 +477,8 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             info="After the voices are generated, Auto saves them like Save all speakers.")
                         auto_status = gr.Markdown("Paste any text, pick a script mode, then run Auto.",
                                                   elem_classes=["h3-drama3-note"])
+                        # Models Auto loads on the GPU while the writer rewrites the script.
+                        auto_preload_status = gr.Markdown("", elem_classes=["h3-drama3-note"])
                         auto_sound_slots = gr.Number(0, precision=0, visible=False)
                     script_mode = gr.Radio(
                         list(DRAMA3_SCRIPT_MODES),
@@ -672,6 +675,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         auto=auto,
         stop_auto=stop_auto,
         auto_status=auto_status,
+        auto_preload_status=auto_preload_status,
         auto_sound_slots=auto_sound_slots,
         auto_save_speakers=auto_save_speakers,
         speaker_group=speaker_group,

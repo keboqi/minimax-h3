@@ -760,6 +760,63 @@ class Drama3AutoTests(unittest.TestCase):
             drama3_auto_rewritten("Prompt enhancement failed: no key")
         self.assertIn("voices", drama3_auto_rewritten("Rewrote the script."))
 
+    def test_preload_runs_on_the_gpu_queue_beside_the_rewrite(self):
+        import gradio as gr
+        from h3_ui.application import _optional_engine_actions
+        from h3_ui.drama3_view import build_drama3_view
+        from h3_ui.drama3_bindings import bind_drama3
+
+        with gr.Blocks() as demo:
+            view = build_drama3_view(gr.Group())
+            bind_drama3(view, _optional_engine_actions())
+        preloads = [fn for fn in demo.fns.values()
+                    if [block._id for block in fn.outputs] == [view.auto_preload_status._id]]
+        self.assertEqual(len(preloads), 1)
+        self.assertEqual(preloads[0].concurrency_id, "h3-gpu")
+        self.assertEqual([block._id for block in preloads[0].inputs], [view.voice_engine._id, view.script_mode._id])
+
+    def test_preload_loads_the_voice_engine_then_sounds_then_sglang_and_survives_failures(self):
+        from h3_app import audio_tools
+        from h3_app.drama3_serving import generate
+        from h3_app.drama3_voice_design import ENGINE_DRAMA3, ENGINE_QWEN
+        from h3_app.generation.results import GenerationUpdate
+        from h3_app.jobs import JobCancelled
+        from h3_ui import drama3_handlers
+
+        order = []
+
+        def preload(model, *_args, **_kwargs):
+            order.append(model)
+            return model != "stable_audio"
+
+        def served(**_kwargs):
+            order.append("sglang")
+            yield GenerationUpdate(None, "Starting SGLang-Omni (3s)")
+            raise H3Error("SGLang-Omni needs about 50 GiB\nlast log lines")
+
+        def run(engine, mode):
+            order.clear()
+            with patch.object(audio_tools, "preload", side_effect=preload), \
+                    patch.object(generate, "preload_served", side_effect=served), \
+                    patch.object(drama3_handlers, "_runtime_config"), patch("h3_models.resolve_hf_token"):
+                return list(drama3_handlers.preload_drama3_models(engine, mode))
+
+        frames = run(ENGINE_QWEN, prompt_service.DRAMA3_SCRIPT_ADVANCED)
+        self.assertEqual(order, ["voice_design", "stable_audio", "sglang"])
+        self.assertTrue(any("Preloading SGLang-Omni: Starting SGLang-Omni (3s)" in frame for frame in frames))
+        self.assertEqual(frames[-1], "Preload finished. Ready: Qwen VoiceDesign. Not preloaded, its step loads it: "
+                                     "Stable Audio 3 Medium (no free GPU memory beside the loaded models); "
+                                     "SGLang-Omni (SGLang-Omni needs about 50 GiB).")
+        # Drama 3 designs voices on SGLang-Omni, so it loads first; Basic has no sounds.
+        run(ENGINE_DRAMA3, prompt_service.DRAMA3_SCRIPT_ADVANCED)
+        self.assertEqual(order, ["sglang", "stable_audio"])
+        run(ENGINE_QWEN, prompt_service.DRAMA3_SCRIPT_BASIC)
+        self.assertEqual(order, ["voice_design", "sglang"])
+        with patch.object(audio_tools, "preload", side_effect=JobCancelled("cancelled")), \
+                patch.object(drama3_handlers, "_runtime_config"), patch("h3_models.resolve_hf_token"), \
+                self.assertRaises(JobCancelled):
+            list(drama3_handlers.preload_drama3_models(ENGINE_QWEN))
+
     def test_only_advanced_generates_sounds(self):
         from h3_ui.drama3_bindings import drama3_auto_sound_slots
 
