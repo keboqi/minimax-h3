@@ -47,6 +47,31 @@ def write_snapshot(path: str | Path, settings: Mapping[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def score_path(path: str | Path) -> Path:
+    """YuE2's planned ABC score, kept beside the audio it produced."""
+    path = Path(path)
+    return path.with_name(path.name + ".score.abc")
+
+
+def write_score(path: str | Path, score: str) -> None:
+    destination = score_path(path)
+    temporary = destination.with_name(destination.name + f".{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(score, encoding="utf-8")
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def read_score(path: str | Path | None) -> str:
+    if not path:
+        return ""
+    try:
+        return score_path(path).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return ""
+
+
 def read_snapshot(path: str | Path | None) -> dict | None:
     if not path:
         return None

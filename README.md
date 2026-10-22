@@ -30,20 +30,51 @@ image comparison and synchronized video playback.
 Both tasks remember explicit engine choices.
 
 For Song with MiniMax Music 3, start with a plain-language idea or a starter example.
-**Write / improve song** proposes a music description and original lyrics when
-the lyrics field is blank; existing lyrics are preserved. Review and accept the
-suggestion, then generate from the current draft in **The track** panel. Suggestions
-appear only when ready, with Undo available after acceptance. **Lyrics** and
-**Writing tools** have separate tabs; the latter contains writer settings and
-visual inspiration. Quick duration buttons set a 30-second, 1-, 2-, or 3-minute
-limit, and advanced generation controls stay collapsed.
+Three optional choices replace music jargon: **Who sings** (Auto, female, male,
+duet, group, or Instrumental), **Lyric language**, and **Made for** (full song,
+short hook or jingle, or background music). **Write / improve song** then makes
+the producer's decisions: it sizes a song form to the length limit (a hook for
+30 seconds, verse and chorus for a minute, a bridge and final chorus for three
+minutes), passes a lyric-line budget per section, and writes a caption with
+tempo, energy map, section-by-section arrangement, and ending, plus singable
+original lyrics. Conventions follow the genre named in the idea: rap gets a
+hook-first form with dense one-bar verse lines, dance gets builds and drops,
+ballads and folk grow through restraint, and ambient cues evolve around a motif.
+Existing lyrics are kept exactly unless **Polish my lyrics** is selected.
+**What should change?** takes a listener's words, or one-click quick fixes such
+as *Stronger chorus* or *The voice gets lost*, and the writer translates them
+into the smallest musical change while keeping everything else.
+Review and accept the suggestion, then generate from the current draft in
+**The track** panel. Suggestions appear only when ready, with Undo available
+after acceptance. **Write & generate** is the one-click alternative: it applies
+the writer's draft without the review step (Undo still restores the previous
+draft) and starts a take through the normal Generate button and queue; a writer
+failure stops before any GPU job. **Your takes** under the track lists every
+take from the browser session with its length and seed. Pick any two as A and
+B to play them back to back; the panel names what changed between their drafts
+(description, lyrics, length, voice, seed, and so on). **Back to take A's
+draft** restores the draft that produced a take, and **Use take A's seed** keeps
+its seed for the next take. Takes are kept for the session only; every file
+also stays in **Media**. A live **song check** under the draft shows the section
+timeline and estimated length, and flags drafts that would be cut off, missing
+tags or a chorus, overlong lines, and lyrics in an instrumental. After each
+take, the status reports its length and warns when it ran to the limit (likely
+cut off) or ended far earlier than planned. Generate needs a
+music description; with lyrics alone, Write drafts one. Quick duration buttons
+set a 30-second, 1-, 2-, or 3-minute limit, and advanced generation controls stay
+collapsed.
 
-Song with YuE2 follows the same idea, draft, and track flow. Its draft has
-**Lyrics**, **Score** (an optional ABC override), and **Writing tools** tabs, and
-**The track** panel holds the score mode and 1-, 2-, 3-, or 5-minute duration
-presets. YuE2 needs both a style prompt and lyrics, so Generate waits for both;
-the writer drafts lyrics when they are blank and answers an instrumental request
-with [Instrumental] section tags.
+Song with YuE2 follows the same idea, draft, and track flow and choices. Its
+writer turns the idea into a short comma-separated style tag line, which YuE2
+reads best, and the draft has **Lyrics**, **Score**, and **Writing tools** tabs.
+After a take that planned or used a score, the **Score** tab shows it; **Reuse
+this score for the next take** keeps the melody while the style or sound
+changes; **Reuse take A's score** in **Your takes** does the same for any
+earlier take. Scores are saved beside the song as `<song>.score.abc` and deleted with
+it. **The track** panel holds the composition mode (plan melody + chords, plan
+melody only, or no score) and 1-, 2-, 3-, or 5-minute duration presets. YuE2
+needs both a style and lyrics, so Generate waits for both; an instrumental gets
+section tags that follow the planned form.
 
 Jobs capture requests before the GPU queue, retain seeds for failed-variant
 retries, and support separate H3 finishing retries. SQLite stores technical job

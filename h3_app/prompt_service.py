@@ -23,6 +23,7 @@ from h3_app.catalog import (
     LIGHTNING_PROMPT_MODELS,
     MAX_REFERENCE_AUDIOS,
 )
+from h3_app import song_brief
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.policy import (
@@ -427,6 +428,27 @@ def _enhance_prompt_from_media_lightning(
         return str(prompt or ""), f"Prompt enhancement failed: {exc}"
 
 
+def _song_reply(text: str, first: str) -> tuple[str, str] | None:
+    """Split a writer reply into its two marked blocks; None if they are absent."""
+    text = re.sub(r"(?m)^\s*```[a-zA-Z]*\s*$", "", str(text or ""))
+    match = re.search(rf"(?is)^\s*\**{first}:\**\s*(.*?)\s*\**LYRICS:\**\s*(.*)\s*$", text)
+    return (match.group(1).strip(), match.group(2).strip()) if match else None
+
+
+def _song_lyrics(
+    original: str, candidate: str | None, *, policy: str
+) -> str:
+    """Code-enforced lyric lock: the writer never silently replaces user lyrics."""
+    candidate = "" if candidate is None or candidate.strip().upper() == "N/A" else candidate.strip()
+    if original and (policy != song_brief.POLISH_LYRICS or not candidate):
+        return original
+    return candidate
+
+
+def _has_sung_words(lyrics: str) -> bool:
+    return any(section.lines for section in song_brief.parse_lyrics(lyrics))
+
+
 def enhance_music3_prompt(
     prompt: str,
     model: str,
@@ -438,11 +460,27 @@ def enhance_music3_prompt(
     backend: str = "Gemini",
     lightning_api_key: str = "",
     lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    duration: float = 120,
+    vocals: str = song_brief.AUTO,
+    language: str = song_brief.AUTO,
+    use: str = song_brief.AUTO,
+    lyrics_policy: str = song_brief.KEEP_LYRICS,
+    notes: str = "",
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str, str]:
-    caption, status = _enhance_prompt_from_media(
-        prompt=prompt,
+    original_caption = str(prompt or "").strip()
+    original_lyrics = str(lyrics or "").strip()
+    request_text = original_caption
+    if not request_text and original_lyrics:
+        request_text = "Create a fitting music description for these lyrics."
+    brief = song_brief.build_brief(
+        engine="MiniMax Music 3", max_seconds=duration, vocals=vocals,
+        language=language, use=use, lyrics_policy=lyrics_policy, notes=notes,
+        idea=original_caption, lyrics=original_lyrics,
+    )
+    generated, status = _enhance_prompt_from_media(
+        prompt=request_text,
         model=model,
         temporary_api_key=temporary_api_key,
         target="MiniMax Music 3",
@@ -455,19 +493,30 @@ def enhance_music3_prompt(
             ("Music reference image 2", ref_image_2),
             ("Music reference image 3", ref_image_3),
         ),
-        context=f"Existing lyrics (preserve them unless formatting only):\n{lyrics or '(none)'}",
+        context=f"{brief}\nExisting lyrics:\n{original_lyrics or '(none)'}",
     )
-    # Music 3's writer returns both fields using explicit markers. Keep a
-    # graceful fallback for older/custom prompt responses that return caption
-    # text only.
-    generated_lyrics = str(lyrics or "").strip()
-    marker_match = re.search(r"(?is)^\s*CAPTION:\s*(.*?)\s*LYRICS:\s*(.*)\s*$", caption)
-    if marker_match:
-        caption = marker_match.group(1).strip()
-        candidate_lyrics = marker_match.group(2).strip()
-        if not generated_lyrics and candidate_lyrics.upper() != "N/A":
-            generated_lyrics = candidate_lyrics
-    return caption, generated_lyrics, status
+    if status.startswith("Prompt enhancement failed:"):
+        return original_caption, original_lyrics, status
+    reply = _song_reply(generated, "CAPTION")
+    if reply is None:
+        if re.search(r"(?i)\bLYRICS:", generated):
+            return (
+                original_caption, original_lyrics,
+                "Prompt enhancement failed: the writer reply could not be split "
+                "into caption and lyrics. Try again.",
+            )
+        # Older or custom writer prompts may return a caption only.
+        reply = (str(generated).strip(), None)
+    caption, candidate = reply
+    if not caption:
+        return original_caption, original_lyrics, (
+            "Prompt enhancement failed: the writer returned an empty music description."
+        )
+    new_lyrics = _song_lyrics(original_lyrics, candidate, policy=lyrics_policy)
+    if song_brief.wants_instrumental(vocals, use, original_caption) and not original_lyrics:
+        # Music 3 sings any words it is given; an instrumental gets none.
+        new_lyrics = ""
+    return caption, new_lyrics, status
 
 
 def enhance_ltx25_prompt(
@@ -566,6 +615,11 @@ def enhance_yue2_prompt(
     backend: str = "Gemini",
     lightning_api_key: str = "",
     lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    vocals: str = song_brief.AUTO,
+    language: str = song_brief.AUTO,
+    use: str = song_brief.AUTO,
+    lyrics_policy: str = song_brief.KEEP_LYRICS,
+    notes: str = "",
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str, str]:
@@ -574,6 +628,11 @@ def enhance_yue2_prompt(
     request_text = original_style
     if not request_text and original_lyrics:
         request_text = "Create a fitting production style for these lyrics."
+    brief = song_brief.build_brief(
+        engine="YuE2", max_seconds=duration, vocals=vocals, language=language,
+        use=use, lyrics_policy=lyrics_policy, notes=notes, idea=original_style,
+        lyrics=original_lyrics, mode=mode,
+    )
     generated, status = _enhance_prompt_from_media(
         prompt=request_text,
         model=model,
@@ -584,27 +643,36 @@ def enhance_yue2_prompt(
         lightning_api_key=lightning_api_key,
         lightning_model=lightning_model,
         media_values=(),
-        context=(
-            f"Score mode: {mode}\nMaximum duration: {float(duration):.0f} seconds\n"
-            f"Existing lyrics (preserve them unless formatting only):\n{lyrics or '(none)'}"
-        ),
+        context=f"{brief}\nExisting lyrics:\n{original_lyrics or '(none)'}",
     )
     if status.startswith("Prompt enhancement failed:"):
-        generated = original_style
-    generated_lyrics = original_lyrics
-    marker_match = re.search(
-        r"(?is)^\s*STYLE:\s*(.*?)\s*LYRICS:\s*(.*)\s*$", generated
+        return original_style, original_lyrics, status
+    reply = _song_reply(generated, "STYLE")
+    if reply is None:
+        return original_style, original_lyrics, (
+            "Prompt enhancement failed: the writer reply could not be split "
+            "into style and lyrics. Try again."
+        )
+    # YuE2 reads the style as tags: one comma-separated line.
+    new_style = ", ".join(
+        part.strip(" .")
+        for part in re.split(r"[\n,]+", reply[0])
+        if part.strip(" .")
     )
-    if marker_match:
-        generated = marker_match.group(1).strip()
-        candidate_lyrics = marker_match.group(2).strip()
-        if candidate_lyrics.upper() != "N/A":
-            generated_lyrics = candidate_lyrics
-        elif not generated_lyrics:
-            # YuE2 needs section tags even for an instrumental; older/custom
-            # writer prompts still answer N/A.
-            generated_lyrics = "[Intro]\n\n[Instrumental]\n\n[Instrumental]\n\n[Outro]"
-    return generated, generated_lyrics, status
+    if not new_style:
+        return original_style, original_lyrics, (
+            "Prompt enhancement failed: the writer returned an empty style."
+        )
+    new_lyrics = _song_lyrics(original_lyrics, reply[1], policy=lyrics_policy)
+    instrumental = song_brief.wants_instrumental(vocals, use, original_style)
+    if not new_lyrics or (instrumental and not original_lyrics and _has_sung_words(new_lyrics)):
+        # YuE2 needs section tags even for an instrumental; follow the planned form.
+        plan = song_brief.plan_song(
+            duration, vocals=song_brief.INSTRUMENTAL, use=use,
+            bpm=song_brief.detect_bpm(new_style),
+        )
+        new_lyrics = song_brief.instrumental_tags(plan)
+    return new_style, new_lyrics, status
 
 
 COMMON_CANVAS_RATIOS = ((1, 1), (5, 4), (4, 3), (3, 2), (16, 9), (2, 1), (21, 9))

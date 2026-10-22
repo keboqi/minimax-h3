@@ -434,6 +434,30 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-workspace .h3-song-stage .h3-action-dock { border: 0; padding: 10px 0 0; background: transparent; }
 .h3-workspace .h3-song-stage .h3-generation-buttons > button { border-radius: 10px; }
 .h3-workspace .h3-song,.h3-workspace .h3-song > .styler { overflow: clip !important; }
+.h3-workspace .h3-song-choices { gap: 8px; flex-wrap: wrap; }
+.h3-workspace .h3-song-choices > .block { flex: 1 1 150px !important; }
+.h3-workspace .h3-song-quick-fixes { flex-wrap: wrap; gap: 6px; margin-top: -4px; }
+.h3-workspace .h3-song-takes-help p, .h3-workspace .h3-song-take-details { margin: 0; font-size: 13px; color: var(--h3-muted); }
+.h3-workspace .h3-song-take-details strong { color: var(--h3-text); }
+.h3-workspace .h3-song-take-actions { flex-wrap: wrap; gap: 6px; }
+.h3-workspace .h3-song-take-actions > button { flex: 1 1 140px !important; border-radius: 8px; }
+.h3-workspace .h3-song-quick-fixes > button { flex: 0 1 auto !important; border-radius: 999px; padding: 4px 12px; font-size: 12px; }
+.h3-workspace .h3-song-check { border: 1px solid var(--h3-border); border-radius: 10px; padding: 10px 12px; background: var(--h3-muted-surface); }
+.h3-workspace .h3-song-check-caption { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--h3-text); }
+.h3-workspace .h3-song-check-caption span { font-weight: 400; color: var(--h3-muted); }
+.h3-workspace .h3-song-timeline { display: flex; gap: 2px; min-height: 26px; border-radius: 6px; overflow: hidden; }
+.h3-workspace .h3-song-chip { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 5px 4px; font-size: 11px; line-height: 16px; text-align: center; color: var(--h3-text); background: color-mix(in srgb, var(--h3-accent) 18%, var(--h3-surface)); }
+.h3-workspace .h3-song-chip-edge { background: color-mix(in srgb, var(--h3-accent) 8%, var(--h3-surface)); }
+.h3-workspace .h3-song-chip-lift { background: color-mix(in srgb, var(--h3-accent) 32%, var(--h3-surface)); }
+.h3-workspace .h3-song-chip-hook { background: color-mix(in srgb, var(--h3-accent) 55%, var(--h3-surface)); font-weight: 600; }
+.h3-workspace .h3-song-chip-contrast { background: color-mix(in srgb, var(--h3-accent) 26%, var(--h3-muted-surface)); font-style: italic; }
+.h3-workspace .h3-song-chip-inst { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--h3-accent) 14%, var(--h3-surface)) 0 6px, var(--h3-surface) 6px 10px); }
+.h3-workspace .h3-song-chip-spare { background: transparent; border: 1px dashed var(--h3-border); }
+.h3-workspace .h3-song-check ul { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--h3-text); }
+.h3-workspace .h3-song-check li { margin: 3px 0; }
+.h3-workspace .h3-song-check li.h3-song-check-warn::marker { content: "! "; color: #b4541a; font-weight: 700; }
+.h3-workspace .h3-song-check li.h3-song-check-tip::marker { content: "› "; color: var(--h3-accent); }
+.h3-workspace .h3-song-check li.h3-song-check-ok::marker { content: "✓ "; color: var(--h3-accent); }
 @media (min-width: 768px) {
   .h3-workspace .h3-song-stage { position: sticky; top: 12px; }
 }

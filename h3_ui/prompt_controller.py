@@ -44,6 +44,12 @@ class PromptController:
         backend: str = "Gemini",
         lightning_api_key: str = "",
         lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+        duration: float = 120,
+        vocals: str = "Auto",
+        language: str = "Auto",
+        use: str = "Auto",
+        lyrics_policy: str = "Keep my lyrics",
+        notes: str = "",
     ) -> tuple[str, str, str]:
         return self.services.prompt_service.enhance_music3_prompt(
             prompt,
@@ -56,6 +62,12 @@ class PromptController:
             backend=backend,
             lightning_api_key=lightning_api_key,
             lightning_model=lightning_model,
+            duration=duration,
+            vocals=vocals,
+            language=language,
+            use=use,
+            lyrics_policy=lyrics_policy,
+            notes=notes,
             runtime=self.services._runtime_config(),
         )
 
@@ -164,6 +176,11 @@ class PromptController:
         backend: str = "Gemini",
         lightning_api_key: str = "",
         lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+        vocals: str = "Auto",
+        language: str = "Auto",
+        use: str = "Auto",
+        lyrics_policy: str = "Keep my lyrics",
+        notes: str = "",
     ) -> tuple[str, str, str]:
         return self.services.prompt_service.enhance_yue2_prompt(
             style,
@@ -175,6 +192,11 @@ class PromptController:
             backend=backend,
             lightning_api_key=lightning_api_key,
             lightning_model=lightning_model,
+            vocals=vocals,
+            language=language,
+            use=use,
+            lyrics_policy=lyrics_policy,
+            notes=notes,
             runtime=self.services._runtime_config(),
         )
 

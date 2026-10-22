@@ -20,7 +20,7 @@ def required_yue2_nodes(*, tiled_decode: bool, generate_abc: bool) -> set[str]:
         "SaveAudioMP3",
     }
     if generate_abc:
-        nodes.add("YuE2GenerateABC")
+        nodes.update({"YuE2GenerateABC", "PreviewAny"})
     return nodes
 
 
@@ -118,4 +118,17 @@ def build_yue2_graph(
     graph.add(
         "SaveAudioMP3", audio=Graph.out(audio), filename_prefix="audio/yue2", quality="V0"
     )
+    if generate_abc:
+        # PreviewAny returns the planned score in the job history so it can be reused.
+        graph.add("PreviewAny", source=Graph.out(abc_node))
     return graph.nodes
+
+
+def planned_score(graph: dict[str, Any], history: dict[str, Any]) -> str:
+    """The ABC score a YuE2 graph planned, read from its PreviewAny history output."""
+    outputs = history.get("outputs", {})
+    for node_id, node in graph.items():
+        if node.get("class_type") == "PreviewAny":
+            texts = outputs.get(node_id, {}).get("text") or []
+            return "\n".join(str(text) for text in texts).strip()
+    return ""

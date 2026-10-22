@@ -675,22 +675,26 @@ class UiContractTests(unittest.TestCase):
             dependency.get("api_name"): dependency
             for dependency in self.config["dependencies"]
         }
-        for endpoint in (
-            "enhance_ltx25_prompt",
-            "enhance_music3_prompt",
-            "enhance_yue2_prompt",
+        song_brief = ["Who sings", "Lyric language", "Made for",
+                      "Your lyrics when you press Write", "What should change? (optional)"]
+        for endpoint, appended in (
+            ("enhance_ltx25_prompt", []),
+            ("enhance_music3_prompt", ["Maximum seconds", *song_brief]),
+            ("enhance_yue2_prompt", song_brief),
         ):
             inputs = endpoints[endpoint]["inputs"]
+            end = len(inputs) - len(appended)
             self.assertEqual(
-                [self.components[id]["props"]["label"] for id in inputs[-3:]],
-                ["Prompt writer", "Temporary Lightning API key", "Lightning model"],
+                [self.components[id]["props"]["label"] for id in inputs[end - 3:]],
+                ["Prompt writer", "Temporary Lightning API key", "Lightning model", *appended],
             )
             parameters = self.demo.get_api_info()["named_endpoints"][f"/{endpoint}"][
                 "parameters"
             ]
-            self.assertEqual(parameters[-3]["parameter_default"], "Gemini")
-            # Appended with a default so existing API clients keep working.
-            self.assertEqual(parameters[-1]["parameter_default"], "openai/gpt-5.6-luna")
+            self.assertEqual(parameters[end - 3]["parameter_default"], "Gemini")
+            # Appended with defaults so existing API clients keep working.
+            self.assertEqual(parameters[end - 1]["parameter_default"], "openai/gpt-5.6-luna")
+            self.assertTrue(all(row["parameter_has_default"] for row in parameters[end:]))
 
         qwen_endpoint = "enhance_qwen_image21_prompt"
         qwen_inputs = endpoints[qwen_endpoint]["inputs"]

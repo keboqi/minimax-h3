@@ -12,10 +12,12 @@ from typing import Iterator
 
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
+from h3_app.media_tools import probe_audio_seconds
 from h3_app.progress import ProgressCallback, no_progress
-from h3_app.provenance import write_snapshot
+from h3_app.song_brief import take_note
+from h3_app.provenance import write_score, write_snapshot
 from h3_app.status import StageTimings, progress_status
-from h3_app.workflows.yue2 import build_yue2_graph, required_yue2_nodes
+from h3_app.workflows.yue2 import build_yue2_graph, planned_score, required_yue2_nodes
 
 from .requests import YuE2Request
 from .results import GenerationUpdate
@@ -172,14 +174,22 @@ def generate_yue2(
                 ),
             )
         timings.transition("Locating generated output")
-        result = services.media.resolve_audio_output(
-            services.execution.wait_for_history(prompt_id), queued_at
-        )
+        history = services.execution.wait_for_history(prompt_id)
+        result = services.media.resolve_audio_output(history, queued_at)
         snapshot_values.update(seed=actual_seed)
         write_snapshot(
             result,
             {"job_id": prompt_id, "family": "YuE2", "settings": snapshot_values},
         )
+        # Keep the score this take sang from, planned or supplied, for reuse.
+        score = (
+            planned_score(graph, history)
+            if generate_abc
+            else ("" if request.mode == "off" else str(request.abc or "").strip())
+        )
+        if score:
+            write_score(result, score)
+        note = take_note(probe_audio_seconds(result), float(request.max_duration))
         finished_at = time.monotonic()
         elapsed = finished_at - started
         timing_summary = timings.summary(now=finished_at)
@@ -187,7 +197,10 @@ def generate_yue2(
         yield GenerationUpdate(
             str(result),
             f"YuE2 completed in {elapsed:.1f}s · output {result.name} · "
-            f"seed {actual_seed}\n\n{timing_summary}",
+            f"seed {actual_seed}"
+            + (" · score saved in the Score tab" if score else "")
+            + (f"\n{note}" if note else "")
+            + f"\n\n{timing_summary}",
         )
     except Exception as exc:
         record_failure(exc)

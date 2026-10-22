@@ -10,7 +10,11 @@ import gradio as gr
 
 from .prompt_review import build_prompt_review
 from .prompt_writer_controls import build_remote_prompt_writer_controls
-from .song_controls import duration_presets, panel_heading, song_intro
+from .song_controls import (
+    change_request, duration_presets, lyrics_policy, panel_heading, song_check_panel,
+    song_choices, song_intro,
+)
+from .song_takes import SongTakes, build_take_history
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,16 @@ class YuE2View:
     abc_repetition_penalty: gr.Slider
     abc_penalty_window: gr.Slider
     tiled: gr.Checkbox
+    vocals: gr.Dropdown
+    language: gr.Dropdown
+    use: gr.Dropdown
+    lyrics_policy: gr.Radio
+    notes: gr.Textbox
+    song_check: gr.HTML
+    last_score: gr.Textbox
+    reuse_score: gr.Button
+    write_generate: gr.Button
+    takes: SongTakes
 
 
 def build_yue2_view(
@@ -68,9 +82,9 @@ def build_yue2_view(
         )
         with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
             with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
-                panel_heading("01", "The idea", "Describe the genre, voice, instruments, and mood.")
+                panel_heading("01", "The idea", "Describe the feeling, story, or genre in your own words.")
                 style = gr.Textbox(
-                    label="Style prompt",
+                    label="Song idea / style tags",
                     lines=3,
                     placeholder=(
                         "Indie pop with a warm female vocal, clean guitar, restrained drums, "
@@ -91,39 +105,51 @@ def build_yue2_view(
                         inputs=style, label="Choose an idea, then make it your own",
                         cache_examples=False,
                     )
+                vocals, language, use = song_choices()
+                notes = change_request()
                 with gr.Row(elem_classes=["h3-song-write-action"]):
                     enhance = gr.Button("Write / improve song", variant="primary")
-                    gr.Markdown("Draft a style and lyrics from your idea. **Review before applying.**")
+                    write_generate = gr.Button("Write & generate", variant="secondary")
+                    gr.Markdown("**Write / improve** drafts for you to review first. **Write & generate** "
+                                "applies the draft and starts a take; Undo still works.")
                 enhance_status = gr.Textbox(
                     label="Prompt writer status", lines=1, interactive=False, show_label=False,
                     placeholder="Ready to help write your song.", elem_classes=["h3-song-writer-status"],
                 )
                 enhance.h3_review = build_prompt_review(preview_label="Suggested song draft", compact=True)
-                panel_heading("02", "The draft", "YuE2 sings these lyrics. The writer keeps words you have already added.",
+                panel_heading("02", "The draft", "YuE2 sings these lyrics. Write keeps your words unless you choose Polish.",
                               classes="h3-song-draft-heading")
                 with gr.Tabs(elem_classes=["h3-song-editor-tabs"]):
                     with gr.Tab("Lyrics"):
                         lyrics = gr.Textbox(
                             label="Lyrics and song structure", lines=9,
                             placeholder="Leave blank to write from your idea, or paste your lyrics here.",
-                            info="YuE2 needs lyrics or section tags. For an instrumental, use only "
-                                 "[Instrumental] sections.",
+                            info="YuE2 needs lyrics or section tags. For an instrumental, choose "
+                                 "Who sings → Instrumental and Write fills in the sections.",
                             elem_classes=["h3-song-lyrics"],
                         )
+                        policy = lyrics_policy()
                     with gr.Tab("Score"):
                         gr.Markdown(
-                            "Full and Melody plan an ABC score before singing; Direct skips planning. "
-                            "Paste a score to reuse a melody you liked."
+                            "YuE2 writes a score (melody and chords) before it sings. Liked a melody? "
+                            "Reuse its score and change the style or sound around it. The score guides "
+                            "the melody; the voice and performance still vary from take to take."
                         )
+                        last_score = gr.Textbox(
+                            label="Score from the latest take", lines=5, interactive=False,
+                            placeholder="Appears after a take that planned its own score.",
+                        )
+                        reuse_score = gr.Button("Reuse this score for the next take", size="sm")
                         abc = gr.Textbox(
-                            label="ABC score override (optional)",
+                            label="Score to use (optional)",
                             lines=7,
-                            placeholder="Leave blank to let YuE2 create the score.",
-                            info="Ignored by Direct generation.",
+                            placeholder="Leave blank to let YuE2 compose a new score.",
+                            info="Ignored by No score (fastest).",
                         )
                     with gr.Tab("Writing tools"):
                         gr.Markdown("Choose a writing service and supply its API key if one isn't configured.")
                         writer = build_remote_prompt_writer_controls(prompt_models, default_prompt_model)
+                song_check = song_check_panel("YuE2", defaults["duration"])
                 prompt_model = writer.model
                 api_key = writer.gemini_api_key
                 prompt_backend = writer.backend
@@ -138,13 +164,13 @@ def build_yue2_view(
                 # A Dropdown keeps the published /generate_yue2 schema unchanged.
                 mode = gr.Dropdown(
                     choices=[
-                        ("Full score", "full"),
-                        ("Melody", "melody"),
-                        ("Direct", "off"),
+                        ("Plan melody + chords (best)", "full"),
+                        ("Plan melody only", "melody"),
+                        ("No score (fastest)", "off"),
                     ],
                     value=defaults["mode"],
-                    label="Score mode",
-                    info="Full plans melody and accompaniment; Melody plans the vocal line; Direct is fastest.",
+                    label="Composition",
+                    info="Planning a score first gives a stronger melody and clearer song form.",
                 )
                 duration = gr.Slider(
                     1, 900, value=defaults["duration"], step=1, label="Maximum seconds",
@@ -161,6 +187,7 @@ def build_yue2_view(
                             variant="primary",
                             interactive=False,
                             elem_classes=["h3-primary-action"],
+                            elem_id="h3-yue2-generate",
                         )
                         stop = gr.Button("Interrupt", interactive=False)
                         run.h3_stop = stop
@@ -168,6 +195,7 @@ def build_yue2_view(
                     status = gr.Textbox(
                         label="Generation progress", lines=2, interactive=False
                     )
+                takes = build_take_history(with_score=True)
                 with gr.Accordion("Generation settings (advanced)", open=False):
                     model = gr.Dropdown(
                         choices=list(model_choices),
@@ -306,4 +334,14 @@ def build_yue2_view(
         abc_repetition_penalty,
         abc_penalty_window,
         tiled,
+        vocals,
+        language,
+        use,
+        policy,
+        notes,
+        song_check,
+        last_score,
+        reuse_score,
+        write_generate,
+        takes,
     )

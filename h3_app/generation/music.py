@@ -12,7 +12,9 @@ from typing import Iterator
 
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
+from h3_app.media_tools import probe_audio_seconds
 from h3_app.progress import ProgressCallback, no_progress
+from h3_app.song_brief import take_note
 from h3_app.provenance import write_snapshot
 from h3_app.status import StageTimings, progress_status
 from h3_app.workflows.music import build_music3_graph, required_music3_nodes
@@ -141,6 +143,7 @@ def generate_music3(
             result,
             {"job_id": prompt_id, "family": "Music 3", "settings": snapshot_values},
         )
+        note = take_note(probe_audio_seconds(result), float(request.max_duration))
         finished_at = time.monotonic()
         elapsed = finished_at - started
         timing_summary = timings.summary(now=finished_at)
@@ -148,7 +151,7 @@ def generate_music3(
         yield GenerationUpdate(
             str(result),
             f"Music 3 completed in {elapsed:.1f}s · output {result.name} · "
-            f"seed {actual_seed}\n\n{timing_summary}",
+            f"seed {actual_seed}" + (f"\n{note}" if note else "") + f"\n\n{timing_summary}",
         )
     except Exception as exc:
         record_failure(exc)

@@ -73,6 +73,7 @@ from h3_app.jobs import gpu_maintenance, JOBS, CURRENT_JOB
 from h3_app.provenance import (
     RUN_CONTEXT,
     write_snapshot,
+    read_score,
     read_snapshot,
     render_snapshot,
     snapshot_path,
@@ -400,6 +401,12 @@ def enhance_music3_prompt(
     backend: str = "Gemini",
     lightning_api_key: str = "",
     lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    duration: float = 120,
+    vocals: str = "Auto",
+    language: str = "Auto",
+    use: str = "Auto",
+    lyrics_policy: str = "Keep my lyrics",
+    notes: str = "",
 ) -> tuple[str, str, str]:
     return _promptcontroller().enhance_music3_prompt(
         prompt,
@@ -412,6 +419,12 @@ def enhance_music3_prompt(
         backend,
         lightning_api_key,
         lightning_model,
+        duration,
+        vocals,
+        language,
+        use,
+        lyrics_policy,
+        notes,
     )
 
 
@@ -489,6 +502,11 @@ def enhance_yue2_prompt(
     backend: str = "Gemini",
     lightning_api_key: str = "",
     lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    vocals: str = "Auto",
+    language: str = "Auto",
+    use: str = "Auto",
+    lyrics_policy: str = "Keep my lyrics",
+    notes: str = "",
 ) -> tuple[str, str, str]:
     return _promptcontroller().enhance_yue2_prompt(
         style,
@@ -500,6 +518,11 @@ def enhance_yue2_prompt(
         backend,
         lightning_api_key,
         lightning_model,
+        vocals,
+        language,
+        use,
+        lyrics_policy,
+        notes,
     )
 
 
@@ -2889,6 +2912,30 @@ def result_settings_for_media(value):
     return render_snapshot(paths)
 
 
+def score_for_media(value):
+    """The YuE2 score saved beside a generated song, or an empty string."""
+    if isinstance(value, dict):
+        value = value.get("path") or value.get("name")
+    if not isinstance(value, (str, Path)) or not value:
+        return ""
+    return read_score(resolve_result_path(value))
+
+
+def take_facts(value):
+    """Seed, length and score of a generated song, for the Song take history."""
+    if isinstance(value, dict):
+        value = value.get("path") or value.get("name")
+    if not isinstance(value, (str, Path)) or not value:
+        return {}
+    managed = resolve_result_path(value)
+    settings = (read_snapshot(managed) or {}).get("settings") or {}
+    return {
+        "seed": settings.get("seed"),
+        "seconds": media_tools.probe_audio_seconds(Path(managed)),
+        "score": read_score(managed),
+    }
+
+
 def resolve_result_path(path):
     """The managed output behind ``path``, which may be Gradio's cached copy of it.
 
@@ -3325,6 +3372,8 @@ def build_ui() -> gr.Blocks:
             resolve_request_settings=resolve_request_settings,
             result_format_layout_updates=result_format_layout_updates,
             result_settings_for_media=result_settings_for_media,
+            score_for_media=score_for_media,
+            take_facts=take_facts,
             save_selected_image_frames=save_selected_image_frames,
             select_all_image_frames=select_all_image_frames,
             select_gallery_media=select_gallery_media,

@@ -26,6 +26,7 @@ def bind_other_generation(components: AppComponents, services: BootstrapServices
         components.music3_components,
         enhance_prompt=services.enhance_music3_prompt,
         generate=services.generate_music3,
+        take_facts=services.take_facts,
     )
     api_event = bind_api_view(
         components.api_components, generate=services.generate_with_ui_defaults
@@ -34,6 +35,7 @@ def bind_other_generation(components: AppComponents, services: BootstrapServices
         components.yue2_components,
         enhance_prompt=services.enhance_yue2_prompt,
         generate=services.generate_yue2,
+        take_facts=services.take_facts,
     )
     qwen_event = bind_qwen_image21_view(
         components.qwen_image21_components,

@@ -9,6 +9,7 @@ import websocket
 from h3_app.media_types import UpscaleClipBatch
 from h3_app.catalog import LTX25_CQ_IMAGE_ENHANCER
 from h3_app.jobs import record_failure
+from h3_app.provenance import score_path
 from dataclasses import dataclass
 
 
@@ -1142,6 +1143,7 @@ class MediaController:
         # Even if sidecar cleanup fails, browsing must stop offering this file.
         self.services.forget_gallery_metadata(media)
         self.services.snapshot_path(media).unlink(missing_ok=True)
+        score_path(media).unlink(missing_ok=True)
         thumbnail.unlink(missing_ok=True)
         placeholder.unlink(missing_ok=True)
         return media.name

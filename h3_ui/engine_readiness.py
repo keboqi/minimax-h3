@@ -29,8 +29,13 @@ def bind_engine_readiness(view, family):
     elif family == "music":
         inputs = [view.caption, view.lyrics]
 
+        # Music 3 rejects a request without a caption; lyrics alone need a description first.
         def missing(caption, lyrics):
-            return "" if caption.strip() or lyrics.strip() else "Describe your song or add lyrics to start."
+            if caption.strip():
+                return ""
+            if lyrics.strip():
+                return "Add a music description, or use Write / improve song to draft one from your lyrics."
+            return "Describe your song or add lyrics to start."
 
     else:
         inputs = [view.style, view.lyrics]

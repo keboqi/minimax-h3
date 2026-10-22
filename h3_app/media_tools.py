@@ -76,6 +76,17 @@ def postprocess_video(source: Path, option: str, *, runtime: RuntimeConfig) -> P
         pending.unlink(missing_ok=True)
 
 
+def probe_audio_seconds(source: Path) -> float | None:
+    """Playback length of a generated audio file, or None when it cannot be read."""
+    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(source)]
+    try:
+        proc = run_media_process(cmd, capture_output=True, text=True, timeout=30)
+        seconds = float(json.loads(proc.stdout)["format"]["duration"])
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return None
+    return seconds if proc.returncode == 0 and seconds > 0 else None
+
+
 def probe_video_metadata(source: Path) -> VideoMetadata:
     """Return dimensions and frame rate needed by AI upscale workflows."""
     cmd = [

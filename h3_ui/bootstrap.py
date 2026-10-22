@@ -152,6 +152,8 @@ class BootstrapServices:
     resolve_request_settings: Callable
     result_format_layout_updates: Callable
     result_settings_for_media: Callable
+    score_for_media: Callable
+    take_facts: Callable
     save_selected_image_frames: Callable
     select_all_image_frames: Callable
     select_gallery_media: Callable
@@ -406,6 +408,14 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 api_name=False,
                 show_progress="hidden",
             )
+        yue2_components.output.change(
+            services.score_for_media,
+            inputs=yue2_components.output,
+            outputs=yue2_components.last_score,
+            queue=False,
+            api_name=False,
+            show_progress="hidden",
+        )
         api_components = build_api_view(api_view, services.api_guide())
         app_components = dict(h3_components.values)
         app_components.update(
