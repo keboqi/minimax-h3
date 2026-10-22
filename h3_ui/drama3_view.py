@@ -9,10 +9,10 @@ from h3_app.prompt_service import DRAMA3_SCRIPT_ADVANCED, DRAMA3_SCRIPT_MODES, D
 from h3_app.voice_design import LANGUAGES as VOICE_DESIGN_LANGUAGES
 from h3_models import DEFAULT_DRAMA3_ASR, DRAMA3_ASR_CHOICES
 from .prompt_writer_controls import RemotePromptWriterControls
-from h3_ui.optional_engine_controls import (
-    _QUIET,
-    _actions,
-    _writer,
+from h3_ui.engines.controls import (
+    QUIET,
+    generation_actions,
+    prompt_writer,
 )
 from h3_ui.drama3_controls import (
     DRAMA3_SAMPLING_PRESETS,
@@ -496,7 +496,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             info="Auto decides from the text. Adapt to voices uses one speaker per voice in Cast. "
                                  "Single keeps one voice throughout.",
                         )
-                        writer, enhance, enhance_status = _writer("Rewrite script")
+                        writer, enhance, enhance_status = prompt_writer("Rewrite script")
                         with gr.Accordion("Use another chat model", open=False):
                             gr.Markdown("Copy the full writer prompt into any chat model, then paste its JSON reply. "
                                         "It is checked like the built-in writer before anything changes.",
@@ -605,15 +605,15 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                 sampling_controls = [temperature, top_p, top_k]
                 presets_js = json.dumps(DRAMA3_SAMPLING_PRESETS)
                 sampling_preset.input(fn=None, js=f"(name) => ({presets_js})[name]",
-                                      inputs=sampling_preset, outputs=sampling_controls, **_QUIET)
+                                      inputs=sampling_preset, outputs=sampling_controls, **QUIET)
                 gr.on(
                     [control.change for control in sampling_controls], fn=None,
                     js=f"""(...values) => Object.entries({presets_js}).find(
                         ([, preset]) => preset.every((value, index) => value === values[index]))?.[0] ?? null""",
-                    inputs=sampling_controls, outputs=sampling_preset, **_QUIET,
+                    inputs=sampling_controls, outputs=sampling_preset, **QUIET,
                 )
                 with gr.Column(elem_classes=["h3-action-dock"]):
-                    run, stop, status = _actions("Generate speech")
+                    run, stop, status = generation_actions("Generate speech")
         # Line review under the studio, like a story's chunk table: pick a line, hear it, redo it.
         with gr.Column(visible=False, elem_classes=["h3-composer", "h3-drama3-lines"]) as take_actions:
             _heading("04", "Lines", "Click a line to hear its take. Regenerate a line you don't like, or remix "

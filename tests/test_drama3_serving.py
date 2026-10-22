@@ -16,7 +16,7 @@ from h3_app.drama3_serving.generate import frame_budget
 from h3_app.drama3_serving.planner import CHUNK_BYTES, expected_seconds, parse_turns, plan_chunks, spoken_text
 from h3_app.errors import H3Error
 from h3_app.workers import env as worker_env
-from h3_app.generation.optional_engines import validate_request
+from h3_app.generation.drama3 import validate_drama3 as validate_request
 from h3_app.generation.requests import Drama3Request
 from h3_requirements import drama3_sglang_install_commands
 

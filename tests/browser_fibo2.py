@@ -19,14 +19,15 @@ ARTIFACTS = ROOT / ".cache/fibo2-browser"
 SERVER = '''
 import inspect, runpy
 import gradio as gr
-from h3_ui import application as app
+from h3_ui.engines.fibo2 import Fibo2Handlers
+from h3_ui.engines.moss_image import MossImageHandlers
 def fake(original):
     def generate(*args, **kwargs):
         yield gr.skip(), "Image integration fixture complete"
     generate.__signature__ = inspect.signature(original)
     return generate
-app.generate_fibo2 = fake(app.generate_fibo2)
-app.generate_moss_image = fake(app.generate_moss_image)
+Fibo2Handlers.generate_fibo2 = fake(Fibo2Handlers.generate_fibo2)
+MossImageHandlers.generate_moss_image = fake(MossImageHandlers.generate_moss_image)
 runpy.run_module("tests.workspace_fixture", run_name="__main__")
 '''
 

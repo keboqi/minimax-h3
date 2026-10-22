@@ -286,7 +286,7 @@ def _cast_names(names, slot_names):
 
 
 def _drama3_job(values, progress, **options):
-    from h3_app.generation.optional_engines import generate_optional_engine, validate_request
+    from h3_app.generation.drama3 import generate_drama3 as run_drama3, validate_drama3
     from h3_app.drama3_cast import clean_title
     from h3_ui.drama3_controls import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_SOUND_SLOT_INPUT_NAMES
     slot_count = len(DRAMA3_SLOT_INPUT_NAMES)
@@ -308,7 +308,7 @@ def _drama3_job(values, progress, **options):
         text, voices, temperature, top_p, top_k, max_frames, parallel, retries, tuple(names),
         script_mode=script_mode, sounds=sounds, title=title, **options,
     )
-    validate_request(request)
+    validate_drama3(request)
     # SGLang-Omni reads staged clips by absolute path.
     input_dir = _runtime_config().input_dir
     request = replace(request, voices=tuple(
@@ -321,8 +321,8 @@ def _drama3_job(values, progress, **options):
              description, duration)
             for name, audio, description, duration in request.sounds
         ))
-    yield from generate_optional_engine(request, _generation_services(), _runtime_config(),
-                                        progress=progress, free_gpu=free_comfy_vram)
+    yield from run_drama3(request, _generation_services(), _runtime_config(),
+                          progress=progress, free_gpu=free_comfy_vram)
 
 
 def _drama3_signature(leading, trailing):
@@ -642,7 +642,7 @@ _publish_drama3_signatures()
 
 def transcribe_drama3_voice(audio, model_choice="1.7B (quality)"):
     """Fill a voice slot's transcript with Qwen3-ASR running in ComfyUI."""
-    from h3_app.generation.optional_engines import transcribe_drama3_audio
+    from h3_app.generation.drama3 import transcribe_drama3_audio
     if not audio:
         return gr.skip(), "Upload a reference clip first."
     try:

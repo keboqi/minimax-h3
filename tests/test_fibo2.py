@@ -9,10 +9,10 @@ from unittest.mock import Mock, patch
 
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH
 from h3_app.errors import H3Error
-from h3_app.generation.optional_engines import (
-    generate_optional_engine,
+from h3_app.generation.fibo2 import (
+    generate_fibo2 as generate_optional_engine,
     resolve_fibo2_dimensions,
-    validate_request,
+    validate_fibo2 as validate_request,
 )
 from h3_app.generation.requests import Fibo2Request
 from h3_app.workflows.fibo2 import (
@@ -106,7 +106,7 @@ class FiboGraphTests(unittest.TestCase):
 class FiboSizeTests(unittest.TestCase):
     def resolve(self, edit_size, source=(1920, 1080), refs=("a.png",), width=1248, height=832):
         request = Fibo2Request("edit", reference_images=refs, width=width, height=height, edit_size=edit_size)
-        with patch("h3_app.generation.optional_engines.first_reference_dimensions", return_value=source):
+        with patch("h3_app.generation.fibo2.first_reference_dimensions", return_value=source):
             return resolve_fibo2_dimensions(request)
 
     def test_edit_sizes_keep_the_first_reference_aspect_ratio(self):
@@ -160,7 +160,7 @@ class FiboQueueTests(unittest.TestCase):
                                       "KSampler", "VAEDecode", "SaveImage")}
         info["CLIPLoader"] = {"input": {"required": {"type": [["flux3", "fibo2"]]}}}
         services = self.services(info)
-        with patch("h3_app.generation.optional_engines.write_snapshot") as snapshot:
+        with patch("h3_app.generation.image_jobs.write_snapshot") as snapshot:
             updates = list(generate_optional_engine(request, services, SimpleNamespace(input_dir=None)))
         self.assertIn("Fibo 2.0 complete", updates[-1].status)
         self.assertTrue(any("trained size" in update.status for update in updates))
@@ -203,7 +203,7 @@ class FiboIntegrationTests(unittest.TestCase):
 
     def test_navigation_and_persistence_include_fibo_and_spectrum(self):
         from h3_app.capabilities import engines_for_task
-        from h3_ui.fibo2_view import fibo2_sampling_defaults
+        from h3_ui.engines.fibo2 import fibo2_sampling_defaults
         from h3_ui.persistence import PERSISTED_NAMES
         self.assertIn("fibo2", {engine.id for engine in engines_for_task("Image")})
         self.assertNotIn("fibo2", {engine.id for engine in engines_for_task("Video")})

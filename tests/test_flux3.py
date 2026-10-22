@@ -12,10 +12,10 @@ from PIL import Image
 
 from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX
 from h3_app.errors import H3Error
-from h3_app.generation.optional_engines import (
+from h3_app.generation.flux3 import (
     flux3_edit_dimensions,
     resolve_flux3_dimensions,
-    validate_request,
+    validate_flux3 as validate_request,
 )
 from h3_app.generation.requests import Flux3Request
 from h3_app import prompt_service
@@ -254,13 +254,15 @@ class Flux3WriterTests(unittest.TestCase):
                          ["The next uploaded image is the first image.", "The next uploaded image is the second image."])
 
     def test_successful_rewrite_turns_local_expansion_off(self):
-        from h3_ui import application
-        with patch.object(application.prompt_service, "enhance_flux3_prompt",
+        from unittest.mock import Mock
+        from h3_ui.engines.flux3 import Flux3Handlers
+        handlers = Flux3Handlers(Mock())
+        with patch.object(prompt_service, "enhance_flux3_prompt",
                           return_value=("Full caption", "Enhanced FLUX 3 Image Klein prompt with x")):
-            self.assertEqual(application.enhance_flux3_prompt("fox", [], 1024, 1024, "m", "")[2], False)
-        with patch.object(application.prompt_service, "enhance_flux3_prompt",
+            self.assertEqual(handlers.enhance_flux3_prompt("fox", [], 1024, 1024, "m", "")[2], False)
+        with patch.object(prompt_service, "enhance_flux3_prompt",
                           return_value=("fox", "Prompt enhancement failed: no key")):
-            self.assertNotEqual(application.enhance_flux3_prompt("fox", [], 1024, 1024, "m", "")[2], False)
+            self.assertNotEqual(handlers.enhance_flux3_prompt("fox", [], 1024, 1024, "m", "")[2], False)
 
 
 if __name__ == "__main__":

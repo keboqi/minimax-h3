@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 import json
 import gradio as gr
-from h3_ui.optional_engine_controls import _SKIP_JS
+from h3_ui.engines.controls import SKIP_JS
 
 
 DRAMA3_VOICE_SLOTS = 16
@@ -156,7 +156,7 @@ def _slot_count_js(total, step, cleared=()):
     so a hidden slot never sends anything.
     """
     return f"""(shown) => {{
-  const skip = {_SKIP_JS};
+  const skip = {SKIP_JS};
   const before = {_count_js(total)};
   const count = Math.max(1, Math.min({total}, before + ({step})));
   const outputs = [count];

@@ -2658,82 +2658,6 @@ def generate_qwen_image21(
     )
 
 
-def generate_flux3(prompt, model_choice, reference_images, width, height, edit_size, seed, steps,
-                   expand_prompt, upsampler_choice="INT8 ConvRot", cfg=None, layout="",
-                   progress=gr.Progress(track_tqdm=False)):
-    from h3_app.generation.optional_engines import generate_optional_engine, validate_request
-    from dataclasses import replace
-    paths = reference_images or []
-    if isinstance(paths, (str, Path)):
-        paths = [paths]
-    request = generation_requests.Flux3Request(
-        prompt, model_choice, tuple(str(path) for path in paths), width, height, edit_size, seed, steps,
-        expand_prompt, upsampler_choice, cfg, layout,
-    )
-    validate_request(request)
-    request = replace(request, reference_images=tuple(
-        stage_file(path, "flux3_references", reuse=True) for path in request.reference_images
-    ))
-    yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
-
-
-def generate_moss_image(prompt, preset, turbo_variant, model_choice, text_encoder_choice, vae_choice, width,
-                        height, seed, steps, cfg, layout="", accelerate=True, progress=gr.Progress(track_tqdm=False)):
-    from h3_app.generation.optional_engines import generate_optional_engine
-    request = generation_requests.MossImageRequest(
-        prompt, preset, turbo_variant, model_choice, text_encoder_choice, vae_choice, width, height, seed, steps,
-        cfg, layout or "", accelerate,
-    )
-    yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
-
-
-def generate_fibo2(prompt, model_choice, precision, reference_images, width, height, edit_size, seed, steps, cfg,
-                   progress=gr.Progress(track_tqdm=False)):
-    from dataclasses import replace
-    from h3_app.generation.optional_engines import generate_optional_engine, validate_request
-
-    paths = reference_images or []
-    if isinstance(paths, (str, Path)):
-        paths = [paths]
-    request = generation_requests.Fibo2Request(
-        prompt, model_choice, precision, tuple(str(path) for path in paths), width, height, edit_size,
-        seed, steps, cfg,
-    )
-    validate_request(request)
-    request = replace(request, reference_images=tuple(
-        stage_file(path, "fibo2_references", reuse=True) for path in request.reference_images
-    ))
-    yield from generate_optional_engine(request, _generation_services(), _runtime_config(), progress=progress)
-
-
-def enhance_flux3_prompt(prompt, reference_images, width, height, model, temporary_api_key,
-                         backend="Gemini", lightning_api_key="",
-                         lightning_model=DEFAULT_LIGHTNING_PROMPT_MODEL):
-    """Rewrite with the official upsampler prompt; turn local expansion off on success."""
-    enhanced, status = prompt_service.enhance_flux3_prompt(
-        prompt, model, temporary_api_key, reference_images, width, height,
-        backend=backend, lightning_api_key=lightning_api_key,
-        lightning_model=lightning_model, runtime=_runtime_config(),
-    )
-    failed = status.startswith("Prompt enhancement failed:")
-    return enhanced, status, gr.skip() if failed else False
-
-
-def enhance_moss_image_prompt(prompt, width, height, rewrite_mode, model, temporary_api_key,
-                              backend="Gemini", lightning_api_key="",
-                              lightning_model=DEFAULT_LIGHTNING_PROMPT_MODEL):
-    """Rewrite with OpenMOSS's prompt-enhancer recipe; a Layout clears the manual boxes."""
-    from h3_app.workflows.moss_image_prompt import is_layout_prompt
-
-    enhanced, status = prompt_service.enhance_moss_image_prompt(
-        prompt, model, temporary_api_key, width, height, rewrite_mode,
-        backend=backend, lightning_api_key=lightning_api_key,
-        lightning_model=lightning_model, runtime=_runtime_config(),
-    )
-    failed = status.startswith("Prompt enhancement failed:")
-    return enhanced, status, "" if not failed and is_layout_prompt(enhanced) else gr.skip()
-
-
 drama3_handlers.install(drama3_handlers.Drama3Services(
     # Late-bound so the application's runtime hooks stay patchable.
     runtime_config=lambda: _runtime_config(),
@@ -2757,15 +2681,23 @@ dubbing_handlers.install(dubbing_handlers.DubbingServices(
 ))
 
 
-def _optional_engine_actions():
+def _engine_deps():
+    from h3_ui.engines import EngineDeps
+
+    # Late-bound so the application's runtime hooks stay patchable.
+    return EngineDeps(
+        runtime_config=lambda: _runtime_config(),
+        generation_services=lambda: _generation_services(),
+        stage_file=lambda *args, **kwargs: stage_file(*args, **kwargs),
+        interrupt=interrupt,
+    )
+
+
+def _drama3_actions():
     from h3_ui.drama3_speaker_library import SpeakerLibraryActions
-    from h3_ui.optional_engine_views import OptionalEngineActions
-    return OptionalEngineActions(
+    from h3_ui.drama3_bindings import Drama3Actions
+    return Drama3Actions(
         speaker_library_actions=SpeakerLibraryActions(_runtime_config),
-        generate_flux3=generate_flux3,
-        generate_moss_image=generate_moss_image,
-        generate_fibo2=generate_fibo2,
-        enhance_moss_image_prompt=enhance_moss_image_prompt,
         generate_drama3=drama3_handlers.generate_drama3,
         regenerate_drama3_line=drama3_handlers.regenerate_drama3_line,
         remix_drama3=drama3_handlers.remix_drama3,
@@ -2773,7 +2705,6 @@ def _optional_engine_actions():
         drama3_take_selected=drama3_handlers.drama3_take_selected,
         drama3_take_audio=drama3_handlers.drama3_take_audio,
         drama3_subtitles=drama3_handlers.drama3_subtitles,
-        enhance_flux3_prompt=enhance_flux3_prompt,
         enhance_drama3_text=drama3_handlers.enhance_drama3_text,
         transcribe_drama3_voice=drama3_handlers.transcribe_drama3_voice,
         drama3_speaker_names=drama3_handlers.drama3_speaker_names,
@@ -3355,7 +3286,8 @@ def build_ui() -> gr.Blocks:
             generate_qwen_image21=generate_qwen_image21,
             generate_with_ui_defaults=generate_with_ui_defaults,
             generate_yue2=generate_yue2,
-            optional_engine_actions=_optional_engine_actions(),
+            drama3_actions=_drama3_actions(),
+            engine_deps=_engine_deps(),
             generation_readiness_state=generation_readiness_state,
             image_vae_frame_updates=image_vae_frame_updates,
             import_gallery_media=import_gallery_media,

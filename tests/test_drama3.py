@@ -13,7 +13,7 @@ from h3_app import drama3_speakers, prompt_service
 from h3_app.catalog import LIGHTNING_PROMPT_MODELS
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
-from h3_app.generation.optional_engines import transcribe_drama3_audio, validate_request
+from h3_app.generation.drama3 import transcribe_drama3_audio, validate_drama3 as validate_request
 from h3_app.generation.requests import Drama3Request
 from h3_app.workflows.drama3 import build_drama3_asr_graph, text_speakers, validate_drama3_text
 
@@ -289,8 +289,8 @@ class Drama3AppInputTests(unittest.TestCase):
         with patch.object(drama3_handlers, "stage_file", return_value="h3_gradio/drama3_voices/five.wav"), \
                 patch.object(drama3_handlers, "_runtime_config", return_value=SimpleNamespace(input_dir=Path("/in"))), \
                 patch.object(drama3_handlers, "_generation_services"), \
-                patch("h3_app.generation.optional_engines.generate_optional_engine", engine), \
-                patch("h3_app.generation.optional_engines.validate_request"):
+                patch("h3_app.generation.drama3.generate_drama3", engine), \
+                patch("h3_app.generation.drama3.validate_drama3"):
             list(drama3_handlers.generate_drama3(*values))
         request = captured["request"]
         self.assertEqual(request.voices, ((5, str(Path("/in") / "h3_gradio/drama3_voices/five.wav"), "Line five."),))
@@ -311,8 +311,8 @@ class Drama3AppInputTests(unittest.TestCase):
         values = ["Hi.", *slots, 1.0, 0.9, 30, 8192]
         with patch.object(drama3_handlers, "_runtime_config", return_value=SimpleNamespace(input_dir=Path("/in"))), \
                 patch.object(drama3_handlers, "_generation_services"), \
-                patch("h3_app.generation.optional_engines.generate_optional_engine", engine), \
-                patch("h3_app.generation.optional_engines.validate_request"):
+                patch("h3_app.generation.drama3.generate_drama3", engine), \
+                patch("h3_app.generation.drama3.validate_drama3"):
             list(getattr(drama3_handlers, handler)(*leading, *values))
         return captured["request"]
 
@@ -719,13 +719,13 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
 class Drama3AutoTests(unittest.TestCase):
     def test_composer_and_auto_bindings_can_be_mounted(self):
         import gradio as gr
-        from h3_ui.application import _optional_engine_actions
+        from h3_ui.application import _drama3_actions
         from h3_ui.drama3_view import build_drama3_view
         from h3_ui.drama3_bindings import bind_drama3
 
         with gr.Blocks() as demo:
             view = build_drama3_view(gr.Group())
-            bind_drama3(view, _optional_engine_actions())
+            bind_drama3(view, _drama3_actions())
         demo.queue()
         # In particular, Auto must not register cancellation of unqueued callbacks.
         demo.validate_queue_settings()
@@ -762,13 +762,13 @@ class Drama3AutoTests(unittest.TestCase):
 
     def test_preload_runs_on_the_gpu_queue_beside_the_rewrite(self):
         import gradio as gr
-        from h3_ui.application import _optional_engine_actions
+        from h3_ui.application import _drama3_actions
         from h3_ui.drama3_view import build_drama3_view
         from h3_ui.drama3_bindings import bind_drama3
 
         with gr.Blocks() as demo:
             view = build_drama3_view(gr.Group())
-            bind_drama3(view, _optional_engine_actions())
+            bind_drama3(view, _drama3_actions())
         preloads = [fn for fn in demo.fns.values()
                     if [block._id for block in fn.outputs] == [view.auto_preload_status._id]]
         self.assertEqual(len(preloads), 1)

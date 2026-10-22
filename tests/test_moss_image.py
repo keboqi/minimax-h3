@@ -9,7 +9,8 @@ from unittest.mock import Mock, patch
 
 from h3_app.catalog import DEFAULT_MOSS_IMAGE_PRESET, MOSS_IMAGE_PRESETS
 from h3_app.errors import H3Error
-from h3_app.generation.optional_engines import generate_optional_engine, validate_request
+from h3_app.generation.flux3 import validate_flux3
+from h3_app.generation.moss_image import generate_moss_image as generate_optional_engine, validate_moss_image
 from h3_app.generation.requests import MossImageRequest
 from h3_app.workflows.moss_image import build_moss_image_graph, moss_image_model_keys
 from h3_models import (
@@ -17,11 +18,15 @@ from h3_models import (
     MOSS_IMAGE_SFT_BF16, MOSS_IMAGE_SFT_INT8, MOSS_IMAGE_TURBO_MODES, MOSS_IMAGE_VAE_FULL,
     MOSS_IMAGE_VAE_SMALL, PRELOAD_MODEL_KEYS,
 )
-from h3_ui.optional_engine_views import (
+from h3_ui.engines.moss_image import (
     moss_image_preset_values, moss_image_turbo_defaults, moss_image_turbo_size_steps,
 )
 
 ENCODER = "INT8 ConvRot (recommended)"
+
+
+def validate_request(request):
+    (validate_moss_image if isinstance(request, MossImageRequest) else validate_flux3)(request)
 
 
 def graph_for(preset, **changes):
@@ -193,14 +198,14 @@ class MossImageControlTests(unittest.TestCase):
 class ResolutionPresetTests(unittest.TestCase):
     def test_every_preset_is_a_valid_request_size_for_its_engine(self):
         from h3_app.generation.requests import Flux3Request
-        from h3_ui import optional_engine_views as views
+        from h3_ui.engines import flux3, moss_image
         from h3_ui.qwen_bindings import qwen_resolution_preset_values
 
         for presets, request, megapixels in (
-            (views.FLUX3_1K_RESOLUTION_PRESETS, Flux3Request("a fox"), 1),
-            (views.FLUX3_2K_RESOLUTION_PRESETS, Flux3Request("a fox"), 4),
-            (views.MOSS_IMAGE_1M_RESOLUTION_PRESETS, MossImageRequest("a fox"), 1),
-            (views.MOSS_IMAGE_2M_RESOLUTION_PRESETS, MossImageRequest("a fox"), 2),
+            (flux3.FLUX3_1K_RESOLUTION_PRESETS, Flux3Request("a fox"), 1),
+            (flux3.FLUX3_2K_RESOLUTION_PRESETS, Flux3Request("a fox"), 4),
+            (moss_image.MOSS_IMAGE_1M_RESOLUTION_PRESETS, MossImageRequest("a fox"), 1),
+            (moss_image.MOSS_IMAGE_2M_RESOLUTION_PRESETS, MossImageRequest("a fox"), 2),
         ):
             for name in presets:
                 with self.subTest(preset=name):
@@ -214,7 +219,9 @@ class ResolutionPresetTests(unittest.TestCase):
     def test_presets_set_the_size_clear_each_other_and_flux_switches_to_manual_size(self):
         import gradio as gr
         from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
-        from h3_ui.optional_engine_views import bind_resolution_presets, build_flux3_view, build_moss_image_view
+        from h3_ui.engines.controls import bind_resolution_presets
+        from h3_ui.engines.flux3 import build_flux3_view
+        from h3_ui.engines.moss_image import build_moss_image_view
 
         with gr.Blocks() as demo:
             flux, moss = build_flux3_view(gr.Group()), build_moss_image_view(gr.Group())
@@ -269,7 +276,7 @@ class MossImageRequestTests(unittest.TestCase):
             submit_prompt=submit, poll_comfy_progress=lambda *args: iter(()), wait_for_history=lambda *args: {})
         services = SimpleNamespace(models=models, execution=execution, media=SimpleNamespace(
             resolve_image_outputs=lambda *args: [Path("moss_image_1_a.png")]))
-        with patch("h3_app.generation.optional_engines.write_snapshot") as snapshot:
+        with patch("h3_app.generation.image_jobs.write_snapshot") as snapshot:
             results = list(generate_optional_engine(request, services, SimpleNamespace()))
         self.assertNotIn("Error:", results[-1].status)
         self.assertIn("MOSS-Image complete", results[-1].status)
@@ -296,7 +303,7 @@ class MossImageRequestTests(unittest.TestCase):
             submit_prompt=submit, poll_comfy_progress=lambda *args: iter(()), wait_for_history=lambda *args: {})
         services = SimpleNamespace(models=Mock(), execution=execution, media=SimpleNamespace(
             resolve_image_outputs=lambda *args: [Path("moss_image_1_a.png")]))
-        with patch("h3_app.generation.optional_engines.write_snapshot") as snapshot:
+        with patch("h3_app.generation.image_jobs.write_snapshot") as snapshot:
             results = list(generate_optional_engine(request, services, SimpleNamespace()))
         self.assertIn("MOSS-Image complete", results[-1].status)
         self.assertTrue(any("Spectrum-MOSS is not installed" in update.status for update in results))

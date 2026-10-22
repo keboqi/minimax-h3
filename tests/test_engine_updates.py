@@ -9,8 +9,8 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from h3_app.generation.optional_engines import transcribe_drama3_audio
-from h3_app.generation.optional_engines import validate_request
+from h3_app.generation.drama3 import transcribe_drama3_audio
+from h3_app.generation.flux3 import validate_flux3 as validate_request
 from h3_app.generation.qwen import generate_qwen_image21
 from h3_app.generation.requests import QwenImage21Request, Flux3Request
 from h3_app.workflows.drama3 import build_drama3_asr_graph

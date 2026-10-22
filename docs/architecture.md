@@ -35,7 +35,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/comfy.py, execution.py | HTTP transport and one submission lifecycle, deadline and websocket owner |
 | h3_app/capabilities.py | Create tasks, engines and their navigation labels |
 | h3_app/workflows/ | Pure H3, LTX, Qwen, Music, YuE2, FLUX 3, MOSS-Image, Fibo 2.0, Drama 3 and finishing graph builders with staged input identities |
-| h3_app/generation/ | Named requests and typed services; preparation, graph construction, execution and finishing. optional_engines.py runs FLUX 3, MOSS-Image, Fibo 2.0 and Drama 3 |
+| h3_app/generation/ | Named requests and typed services; preparation, graph construction, execution and finishing. One module per engine; image_jobs.py is the shared ComfyUI job for FLUX 3, MOSS-Image and Fibo 2.0 |
 | h3_app/staging.py, media_tools.py | Input staging, media inspection, controlled subprocesses and post-processing |
 | h3_app/media.py, outputs.py, gallery_store.py | Contained discovery, explicit output context and complete managed gallery inventory |
 | h3_app/provenance.py | Atomic sidecars, copied-media provenance and escaped metadata rendering |
@@ -55,7 +55,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/dubbing/ | Dub & Translate sessions, line helpers, Gemini transcription, the isolated tools worker (separation, OmniVAD + Qwen3-ASR, Hy-MT) and the Drama 3 dub/mix pipeline |
 | h3_app/video_download.py | yt-dlp downloads into Media and the private per-site cookie store |
 | h3_ui/dubbing_view.py, dubbing_bindings.py, dubbing_handlers.py | Dub & Translate tab and Media's Download from a URL panel |
-| h3_ui/optional_engine_views.py, fibo2_view.py, optional_engine_controls.py | FLUX 3, MOSS-Image and Fibo 2.0 views, and their shared writer, generation and settings helpers |
+| h3_ui/engines/ | Create engines that own their view, bindings and handlers (FLUX 3, MOSS-Image, Fibo 2.0). Each registers an `EngineFeature` in `FEATURES` and receives `EngineDeps` explicitly; controls.py holds the shared Generate/Interrupt/progress, prompt-writer, resolution-preset and saved-settings helpers |
 | h3_ui/*_view.py, *_bindings.py | Feature-owned views and event bindings |
 | h3_ui/sections/, events/ | Existing visible sections and event registration, preserving component order |
 | h3_ui/job_bindings.py, job_admission.py, jobs_view.py | Gradio request injection, acceptance before queueing, shared GPU binding and owner-scoped job presentation |
@@ -124,6 +124,11 @@ Browser checks cover preset application, overrides/reset, mode memory, reload, s
 A real supported GPU and provisioned ComfyUI installation are still needed for inference smoke tests and performance/quality comparisons.
 
 ## Keeping the structure small
+
+A new Create engine is one module in `h3_ui/engines/` plus its entry in
+`FEATURES`, its `h3_app/capabilities.py` navigation entry, its layout tab and
+its saved-settings allowlist; `tests/test_engine_features.py` checks they agree.
+Its handlers take `EngineDeps` rather than module-level state.
 
 Keep one response per user action. A settings edit that changes dimensions
 or another policy input uses `SettingsController.bind_refresh` instead of a
