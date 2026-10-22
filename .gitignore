@@ -3,7 +3,7 @@ __pycache__/
 *.partial
 
 # Local runtime, downloaded models, caches, and generated media
-h3/
+/h3/
 ComfyUI/
 gradio_outputs/
 .cache/

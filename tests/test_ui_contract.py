@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import h3_app.prompt_writers.h3
+import h3_ui.h3.layout
 import httpx as _httpx
 import h3_app.model_service as _model_service
 import h3_app.catalog as _catalog
@@ -1137,13 +1139,13 @@ class UiContractTests(unittest.TestCase):
 
     def test_resolution_presets_apply_latent_alignment_atomically(self) -> None:
         self.assertEqual(
-            gradio_app.resolution_choice_updates(
+            h3_ui.h3.layout.resolution_choice_updates(
                 "16:9 · 1920×1088", "fast", True, "Video"
             )[:2],
             (1920, 1088),
         )
         self.assertEqual(
-            gradio_app.resolution_choice_updates(
+            h3_ui.h3.layout.resolution_choice_updates(
                 "16:9 · 1920×1088", "fast", False, "Video"
             )[:2],
             (1920, 1088),
@@ -1336,7 +1338,7 @@ class UiContractTests(unittest.TestCase):
         im.save(temp_img)
 
         # 1. auto_resolution_from_start_frame calculates 768x1152
-        w, h, info = gradio_app.auto_resolution_from_start_frame(
+        w, h, info = h3_ui.h3.layout.auto_resolution_from_start_frame(
             temp_img, 1408, 768, "Video", False, "1 MP"
         )
         self.assertEqual((w, h), (768, 1152))
@@ -1429,10 +1431,10 @@ class UiContractTests(unittest.TestCase):
         im_large = Image.new("RGB", (3000, 2000), color=(0, 255, 0))
         im_large.save(large_img)
 
-        w_1mp, h_1mp, _ = gradio_app.auto_resolution_from_start_frame(
+        w_1mp, h_1mp, _ = h3_ui.h3.layout.auto_resolution_from_start_frame(
             large_img, 1408, 768, "Video", False, "1 MP"
         )
-        w_2mp, h_2mp, _ = gradio_app.auto_resolution_from_start_frame(
+        w_2mp, h_2mp, _ = h3_ui.h3.layout.auto_resolution_from_start_frame(
             large_img, w_1mp, h_1mp, "Video", False, "2 MP"
         )
         self.assertLess(w_1mp * h_1mp, 1_000_000)
@@ -1609,7 +1611,7 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(found, expected)
 
     def test_only_local_h3_writer_uses_the_gpu_lease(self):
-        signature = inspect.signature(gradio_app.enhance_h3_prompt)
+        signature = inspect.signature(gradio_app.PROMPTS.enhance_h3_prompt)
         arguments = [
             None if parameter.default is inspect.Parameter.empty else parameter.default
             for parameter in signature.parameters.values()
@@ -1617,7 +1619,7 @@ class UiContractTests(unittest.TestCase):
         with (
             mock.patch.object(gradio_app.JOBS, "maintenance") as maintenance,
             mock.patch.object(
-                gradio_app.h3_writer,
+                h3_app.prompt_writers.h3,
                 "enhance_h3_prompt",
                 return_value=("rewritten", "ok"),
             ),
@@ -1628,12 +1630,12 @@ class UiContractTests(unittest.TestCase):
             for backend in ("Lightning AI", "Gemini"):
                 arguments[1] = backend
                 self.assertEqual(
-                    gradio_app.enhance_h3_prompt(*arguments), ("rewritten", "ok")
+                    gradio_app.PROMPTS.enhance_h3_prompt(*arguments), ("rewritten", "ok")
                 )
             maintenance.assert_not_called()
             arguments[1] = "Local MiniMax-H3 8B"
             self.assertEqual(
-                gradio_app.enhance_h3_prompt(*arguments), ("rewritten", "ok")
+                gradio_app.PROMPTS.enhance_h3_prompt(*arguments), ("rewritten", "ok")
             )
             maintenance.assert_called_once_with("prompt-enhance")
 
@@ -1894,7 +1896,7 @@ class UiContractTests(unittest.TestCase):
         self.assertNotIn("prompt</script>", ready.html)
 
     def test_layout_callbacks_preserve_inactive_control_preferences(self) -> None:
-        frames = gradio_app.image_vae_frame_updates(_catalog.SINGLE_FRAME_IMAGE_VAE)
+        frames = h3_ui.h3.layout.image_vae_frame_updates(_catalog.SINGLE_FRAME_IMAGE_VAE)
         self.assertFalse(frames["interactive"])
         self.assertNotIn("value", frames)
 
@@ -1930,12 +1932,12 @@ class UiContractTests(unittest.TestCase):
             choices,
         )
         self.assertFalse(
-            gradio_app.latent_upscale_method_layout_update(
+            h3_ui.h3.layout.latent_upscale_method_layout_update(
                 gradio_app.H3_LATENT_UPSCALE_STANDARD
             )["visible"]
         )
         self.assertTrue(
-            gradio_app.latent_upscale_method_layout_update(
+            h3_ui.h3.layout.latent_upscale_method_layout_update(
                 gradio_app.H3_LATENT_UPSCALE_SPLIT
             )["visible"]
         )
@@ -1950,7 +1952,7 @@ class UiContractTests(unittest.TestCase):
         )
 
     def test_settings_summary_is_compact_disclosure_with_escaped_values(self) -> None:
-        summary = gradio_app.compact_settings_summary(
+        summary = gradio_app.H3.compact_settings_summary(
             "Text to video",
             "Original <unsafe>",
             "BF16",
@@ -1988,7 +1990,7 @@ class UiContractTests(unittest.TestCase):
         self.assertIn("LightX2V v1.1 / 8-step 768p", summary)
         self.assertIn("Original &lt;unsafe&gt;", summary)
         self.assertNotIn("Original <unsafe>", summary)
-        split_summary = gradio_app.compact_settings_summary(
+        split_summary = gradio_app.H3.compact_settings_summary(
             "Text to video",
             "Original",
             "BF16",

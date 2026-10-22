@@ -36,7 +36,7 @@ def fake_generation(batch_count, *args):
 
 
 app.backend_status = lambda: "Connected browser test fixture"
-app.generate_for_ui = fake_generation
+app.H3.generate_for_ui = fake_generation
 
 
 def fake_engine(original, family):
@@ -136,7 +136,7 @@ for name, rate, duration, color in (
         timeout=15,
         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
     )
-app.enhance_h3_prompt = lambda *args: (
+app.PROMPTS.enhance_h3_prompt = lambda *args: (
     args[0] + " Enhanced fixture.",
     "Enhancement finished.",
 )

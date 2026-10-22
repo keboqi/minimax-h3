@@ -1,8 +1,14 @@
-"""Prompt controller with explicit runtime dependencies."""
+"""The H3 prompt writer: enhance a prompt with the chosen backend, and show that backend's controls."""
 
 from __future__ import annotations
 
-from typing import Any
+from contextlib import nullcontext
+from typing import Any, Callable
+
+import gradio as gr
+
+from h3_app.jobs import JOBS
+from h3_app.prompt_writers import h3 as h3_writer
 from h3_app.catalog import (
     DEFAULT_LIGHTNING_PROMPT_MODEL,
     DEFAULT_IMAGE_FRAMES,
@@ -13,11 +19,9 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class PromptServices:
-    JOBS: Any
-    _runtime_config: Any
-    gr: Any
-    nullcontext: Any
-    h3_writer: Any
+    """The runtime prompt writers read their keys, models and workers from."""
+
+    _runtime_config: Callable[[], Any]
 
 
 class PromptController:
@@ -66,12 +70,12 @@ class PromptController:
         lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     ) -> tuple[str, str]:
         lease = (
-            self.services.JOBS.maintenance("prompt-enhance")
+            JOBS.maintenance("prompt-enhance")
             if backend == "Local MiniMax-H3 8B"
-            else self.services.nullcontext()
+            else nullcontext()
         )
         with lease:
-            return self.services.h3_writer.enhance_h3_prompt(
+            return h3_writer.enhance_h3_prompt(
                 prompt,
                 backend,
                 local_base_model,
@@ -117,7 +121,7 @@ class PromptController:
         """Show only controls belonging to the selected prompt-writer backend."""
         local_selected = backend == "Local MiniMax-H3 8B"
         return (
-            self.services.gr.update(visible=local_selected),
-            self.services.gr.update(visible=backend == "Gemini"),
-            self.services.gr.update(visible=backend == "Lightning AI"),
+            gr.update(visible=local_selected),
+            gr.update(visible=backend == "Gemini"),
+            gr.update(visible=backend == "Lightning AI"),
         )

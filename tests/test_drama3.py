@@ -429,11 +429,11 @@ class Drama3AppInputTests(unittest.TestCase):
                 with self.subTest(other_root=other_root), \
                         patch.object(application, "OUTPUT_DIR", outputs), \
                         patch.object(application, "OUTPUTS_DIR", other_root):
-                    self.assertEqual(application.resolve_result_path(str(cached)), result)
+                    self.assertEqual(application.H3.resolve_result_path(str(cached)), result)
                     table, _line, actions = application.drama3_handlers.drama3_takes(str(cached))
                     self.assertEqual(table["value"][0][1], "Alice")
                     self.assertTrue(actions["visible"])
-                    self.assertIn("Alice", application.result_settings_for_media(str(cached)))
+                    self.assertIn("Alice", application.H3.result_settings_for_media(str(cached)))
 
             # Two distinct outputs with the same name must still be considered ambiguous.
             other = Path(temp) / "outputs" / result.name
@@ -442,7 +442,7 @@ class Drama3AppInputTests(unittest.TestCase):
             write_snapshot(other, {"family": "Drama 3", "settings": {}})
             with patch.object(application, "OUTPUT_DIR", outputs), \
                     patch.object(application, "OUTPUTS_DIR", other.parent):
-                self.assertEqual(application.resolve_result_path(str(cached)), str(cached))
+                self.assertEqual(application.H3.resolve_result_path(str(cached)), str(cached))
 
 
 class Drama3VramHandoffTests(unittest.TestCase):

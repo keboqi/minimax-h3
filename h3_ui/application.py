@@ -9,19 +9,30 @@ from .dubbing.handlers import LIBRARY_LIMIT as DUBBING_LIBRARY_LIMIT, DubbingHan
 from .drama3.handlers import Drama3Handlers, Drama3Services
 from .media_controller import MediaController, MediaServices
 
+from .h3.layout import (
+    resolution_control_updates,
+    resolution_info_preview,
+    auto_resolution_from_start_frame,
+    resolution_choice_updates,
+    result_format_layout_updates,
+    image_vae_frame_updates,
+    latent_upscale_layout_updates,
+    latent_upscale_method_layout_update,
+    fbcache_preset_defaults,
+    input_image_frame_preset_updates,
+    select_all_image_frames,
+)
+from .h3.handlers import H3Handlers, H3Services, api_guide, mode_help, reference_prompt_help
+from h3_app.policy import input_image_upscale_dimensions
 import argparse
-import html
 import math
 import os
-import random
-import re
 import signal
 import tempfile
 import threading
 import inspect
 import time
 import uuid
-from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import quote, urlsplit, urlunsplit
@@ -52,19 +63,14 @@ from h3_prompt_rewriter import (
 from h3_ui.presentation import (
     backend_status_html,
     generation_readiness as generation_readiness_state,
-    result_format_presentation,
 )
 from h3_ui.styles import H3_SETUP_CSS
-from h3_app.settings import GenerationRequest, ResolutionContext, resolve_settings
-from h3_app.contracts import GenerationArguments
 from h3_app import server as server_routes
 from h3_app.comfy import ComfyClient
 from h3_app.jobs import gpu_maintenance, JOBS, CURRENT_JOB
-from h3_app.provenance import RUN_CONTEXT, write_snapshot, read_snapshot, render_snapshot
-from h3_ui.settings_presentation import render_settings
+from h3_app.provenance import RUN_CONTEXT, write_snapshot, render_snapshot
 from h3_app.errors import H3Error
 from h3_app.catalog import (
-    DEFAULT_LIGHTNING_PROMPT_MODEL,
     AUDIO_EXTENSIONS,
     AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
     AUTO_SOL_TOKEN_THRESHOLD,
@@ -93,9 +99,6 @@ from h3_app.catalog import (
     LTX25_DEFAULTS,
     LTX25_WORKFLOWS,
     MAX_IMAGE_FRAMES,
-    MAX_REFERENCE_AUDIOS,
-    MAX_REFERENCE_IMAGES,
-    MAX_REFERENCE_VIDEOS,
     MAX_VIDEO_BATCH_COUNT,
     MIN_IMAGE_FRAMES,
     MIN_VIDEO_BATCH_COUNT,
@@ -113,34 +116,18 @@ from h3_app.catalog import (
     UVICORN_WEBSOCKET_OPTIONS,
     VIDEO_EXTENSIONS,
 )
-from h3_app.policy import (
-    auto_resolution_pixel_cap,
-    estimate_packed_tokens,
-    normalize_image_vae,
-    normalize_paths,
-    normalize_result_format,
-    resolution_choice_values,
-    resolution_for_aspect_ratio,
-    resolution_summary,
-    resolve_h3_latent_upscale_method,
-    snap64,
-    snap_to_grid,
-    upscale_target_dimensions,
-    validate_resolution,
-)
+from h3_app.policy import estimate_packed_tokens, resolution_summary, upscale_target_dimensions
 from h3_app.model_types import ModelConfig, h3_text_encoder_settings, model_file_is_ready
 from h3_app import model_service
 import h3_app.workflows.ltx as ltx_workflow
 import h3_app.workflows.h3 as h3_workflow
 import h3_app.workflows.upscale as upscale_workflow
 from h3_app.execution import ExecutionRunner, PromptId, Submission
-from h3_app.prompt_writers import h3 as h3_writer
 import h3_app.staging as staging
 from h3_app import media_tools
 from h3_app import outputs
 from h3_app.outputs import OutputContext
 from h3_app.config import RuntimeConfig
-from h3_app.provenance import copy_media
 from dataclasses import replace
 from h3_app.media_types import UpscaleClipBatch, VideoMetadata
 from h3_app.generation import (
@@ -170,18 +157,6 @@ GALLERY_THUMBNAILS_DIR = RUNTIME.gallery_thumbnails_dir
 GALLERY_LIMIT = RUNTIME.gallery_limit
 GALLERY_METADATA_CACHE_LIMIT = RUNTIME.gallery_metadata_cache_limit
 HTTP = requests.Session()
-
-
-def _promptcontroller():
-    return PromptController(
-        PromptServices(
-            JOBS=JOBS,
-            _runtime_config=_runtime_config,
-            gr=gr,
-            nullcontext=nullcontext,
-            h3_writer=h3_writer,
-        )
-    )
 
 
 # One controller of each kind. Their records hold late-bound effects, so patching
@@ -220,6 +195,17 @@ MEDIA = MediaController(MediaServices(
     cleanup_upscale_clip_batch=lambda *args, **kwargs: cleanup_upscale_clip_batch(*args, **kwargs),
     write_snapshot=lambda *args, **kwargs: write_snapshot(*args, **kwargs),
 ))
+
+
+H3 = H3Handlers(H3Services(
+    # Late-bound so tests that replace this module's generator reach the callbacks.
+    runtime_config=lambda: _runtime_config(),
+    generate=lambda *args, **kwargs: generate(*args, **kwargs),
+    download_url=lambda video, request: MEDIA.absolute_video_download_url(video, request),
+))
+
+
+PROMPTS = PromptController(PromptServices(_runtime_config=lambda: _runtime_config()))
 
 
 def _runtime_config() -> RuntimeConfig:
@@ -266,92 +252,6 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
     )
 
 
-def enhance_h3_prompt(
-    prompt: str,
-    backend: str,
-    local_base_model: str,
-    local_max_new_tokens: int,
-    local_temperature: float,
-    local_top_p: float,
-    local_greedy: bool,
-    local_seed: int,
-    gemini_model: str,
-    gemini_api_key: str,
-    lightning_api_key: str,
-    mode: str,
-    first_image: Any,
-    last_image: Any,
-    ref_image_1: Any,
-    ref_image_2: Any,
-    ref_image_3: Any,
-    ref_image_4: Any,
-    ref_image_5: Any,
-    ref_image_6: Any,
-    ref_image_7: Any,
-    ref_image_8: Any,
-    ref_image_9: Any,
-    ref_video_1: Any,
-    ref_video_2: Any,
-    ref_video_3: Any,
-    ref_audio_1: Any,
-    ref_audio_2: Any,
-    ref_audio_3: Any,
-    duration: float,
-    width: int,
-    height: int,
-    result_format: str = DEFAULT_RESULT_FORMAT,
-    image_frames: int = DEFAULT_IMAGE_FRAMES,
-    fl2va_audio_1: Any = None,
-    fl2va_audio_2: Any = None,
-    fl2va_audio_3: Any = None,
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
-) -> tuple[str, str]:
-    return _promptcontroller().enhance_h3_prompt(
-        prompt,
-        backend,
-        local_base_model,
-        local_max_new_tokens,
-        local_temperature,
-        local_top_p,
-        local_greedy,
-        local_seed,
-        gemini_model,
-        gemini_api_key,
-        lightning_api_key,
-        mode,
-        first_image,
-        last_image,
-        ref_image_1,
-        ref_image_2,
-        ref_image_3,
-        ref_image_4,
-        ref_image_5,
-        ref_image_6,
-        ref_image_7,
-        ref_image_8,
-        ref_image_9,
-        ref_video_1,
-        ref_video_2,
-        ref_video_3,
-        ref_audio_1,
-        ref_audio_2,
-        ref_audio_3,
-        duration,
-        width,
-        height,
-        result_format,
-        image_frames,
-        fl2va_audio_1,
-        fl2va_audio_2,
-        fl2va_audio_3,
-        lightning_model,
-    )
-
-
-def prompt_writer_backend_visibility(backend: str) -> tuple[Any, Any, Any]:
-    return _promptcontroller().prompt_writer_backend_visibility(backend)
-
-
 def ensure_lightvae(video_encoder: str, decoder: str) -> bool:
     return model_service.ensure_lightvae(video_encoder, decoder, runtime=_runtime_config())
 
@@ -366,134 +266,6 @@ def api_post(path: str, **kwargs: Any) -> requests.Response:
 
 def object_info() -> dict[str, Any]:
     return api_get("/object_info").json()
-
-
-def resolution_control_updates(
-    width: int | float | None,
-    height: int | float | None,
-    latent_upscale: bool,
-    result_format: str,
-) -> tuple[int | float, int | float, str]:
-    if normalize_result_format(result_format) == "Audio":
-        return (
-            width if width is not None else 32,
-            height if height is not None else 32,
-            "**Audio result** · resolution controls are ignored; H3 samples at 32×32.",
-        )
-    alignment = 64 if latent_upscale else 32
-    try:
-        resolved_width = snap_to_grid(width, alignment) if width is not None else 864
-        resolved_height = snap_to_grid(height, alignment) if height is not None else 480
-    except Exception:
-        resolved_width, resolved_height = (864, 480)
-    prefix = "**Latent upscale 64-pixel alignment** · " if latent_upscale else ""
-    return (
-        resolved_width,
-        resolved_height,
-        prefix + resolution_summary(resolved_width, resolved_height),
-    )
-
-
-def resolution_info_preview(
-    width: int | float | None,
-    height: int | float | None,
-    latent_upscale: bool,
-    result_format: str,
-) -> str:
-    """Return only the resolution info text without snapping the input values.
-
-    Called on ``.input()`` so the user sees live feedback while typing, without
-    the width/height fields being overwritten mid-keystroke.  The actual snap
-    happens on ``.blur()`` or ``.submit()`` via ``resolution_control_updates``.
-    """
-    if normalize_result_format(result_format) == "Audio":
-        return (
-            "**Audio result** · resolution controls are ignored; H3 samples at 32×32."
-        )
-    if width is None or height is None:
-        return ""
-    try:
-        alignment = 64 if latent_upscale else 32
-        resolved_width = snap_to_grid(width, alignment)
-        resolved_height = snap_to_grid(height, alignment)
-    except Exception as exc:
-        return f"⚠️ {exc}"
-    prefix = "**Latent upscale 64-pixel alignment** · " if latent_upscale else ""
-    return prefix + resolution_summary(resolved_width, resolved_height)
-
-
-def auto_resolution_from_start_frame(
-    first_image: Any,
-    current_width: int | float | None,
-    current_height: int | float | None,
-    result_format: str = DEFAULT_RESULT_FORMAT,
-    latent_upscale: bool = False,
-    auto_megapixels: str = DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
-) -> tuple[int | float, int | float, str]:
-    """Apply the automatic ratio resolution after Gradio stages the image."""
-    fallback_width = current_width or UI_DEFAULTS["width"]
-    fallback_height = current_height or UI_DEFAULTS["height"]
-    normalized_result = normalize_result_format(result_format)
-    if normalized_result == "Audio":
-        return (
-            fallback_width,
-            fallback_height,
-            "**Audio result** · resolution controls are ignored; H3 samples at 32×32.",
-        )
-    paths = normalize_paths(first_image)
-    if not paths:
-        return (
-            fallback_width,
-            fallback_height,
-            resolution_summary(fallback_width, fallback_height),
-        )
-    try:
-        from PIL import Image
-
-        with Image.open(paths[0]) as image:
-            width, height = resolution_for_aspect_ratio(
-                *image.size,
-                preserve_native=normalized_result == "Image",
-                alignment=64 if latent_upscale else 32,
-                pixel_cap=auto_resolution_pixel_cap(auto_megapixels),
-            )
-    except Exception as exc:
-        return (
-            fallback_width,
-            fallback_height,
-            f"⚠️ Unable to read start frame dimensions: {exc}",
-        )
-    return (width, height, resolution_summary(width, height))
-
-
-def resolution_choice_updates(
-    name: str, tier: str, latent_upscale: bool, result_format: str
-) -> tuple[int | float, int | float, str]:
-    """Resolve and align a preset before updating its controls.
-
-    Keeping preset lookup and alignment in one callback prevents the UI from
-    briefly writing the raw preset dimensions before latent upscale snaps them
-    to its required 64-pixel grid.
-    """
-    width, height, _summary = resolution_choice_values(name, tier)
-    return resolution_control_updates(width, height, latent_upscale, result_format)
-
-
-def start_frame_generation_resolution(
-    first_image: Any, *, alignment: int
-) -> tuple[int, int] | None:
-    paths = normalize_paths(first_image)
-    if not paths:
-        return None
-    try:
-        from PIL import Image
-
-        with Image.open(paths[0]) as image:
-            return resolution_for_aspect_ratio(
-                *image.size, preserve_native=True, alignment=alignment
-            )
-    except Exception as exc:
-        raise H3Error(f"Unable to read start frame dimensions: {exc}") from exc
 
 
 def resolve_sol_policy(
@@ -538,126 +310,6 @@ def resolve_sol_policy(
         tokens,
         f"Auto: {tokens:,} target tokens {('≥' if enabled else '<')} {AUTO_SOL_TOKEN_THRESHOLD:,}",
     )
-
-
-def result_format_layout_updates(
-    result_format: str,
-    current_width: int | float,
-    current_height: int | float,
-    first_image: Any,
-    latent_upscale: bool,
-):
-    presentation = result_format_presentation(normalize_result_format(result_format))
-    result_format = presentation.format
-    is_image = presentation.is_image
-    is_audio = presentation.is_audio
-    display_width, display_height = (current_width, current_height)
-    if not is_audio:
-        alignment = 64 if latent_upscale else 32
-        if first_image:
-            try:
-                display_width, display_height, _ = auto_resolution_from_start_frame(
-                    first_image,
-                    current_width,
-                    current_height,
-                    result_format,
-                    latent_upscale,
-                )
-            except Exception:
-                display_width = snap_to_grid(current_width, alignment)
-                display_height = snap_to_grid(current_height, alignment)
-        else:
-            display_width = snap_to_grid(current_width, alignment)
-            display_height = snap_to_grid(current_height, alignment)
-    return (
-        gr.update(visible=not is_image),
-        gr.update(visible=is_image),
-        gr.update(visible=is_image),
-        gr.update(visible=presentation.is_video),
-        gr.update(visible=False),
-        gr.update(visible=False),
-        gr.update(visible=False),
-        gr.update(visible=True) if presentation.is_video else gr.update(visible=False),
-        gr.update(visible=is_image),
-        gr.update(visible=is_audio),
-        (
-            gr.update(interactive=True)
-            if presentation.is_video
-            else gr.update(interactive=False)
-        ),
-        gr.update(interactive=False) if is_audio else gr.update(interactive=True),
-        gr.update(value=display_width, interactive=not is_audio),
-        gr.update(value=display_height, interactive=not is_audio),
-        (
-            "**Audio result** · resolution controls are ignored; H3 samples at 32×32."
-            if is_audio
-            else resolution_summary(display_width, display_height)
-        ),
-        gr.update(value=presentation.action_label),
-    )
-
-
-def image_vae_frame_updates(image_vae: Any):
-    single = normalize_image_vae(image_vae) != DEFAULT_IMAGE_VAE
-    return gr.update(
-        interactive=not single,
-        info=(
-            "Effective output: one frame with the 500K decoder."
-            if single
-            else "Choose 1–20 decoded frames."
-        ),
-    )
-
-
-def latent_upscale_layout_updates(
-    enabled: bool, width: int | float, height: int | float, result_format: str
-):
-    if normalize_result_format(result_format) == "Audio":
-        return (
-            gr.update(visible=False),
-            width,
-            height,
-            "**Audio result** · resolution controls are ignored; H3 samples at 32×32.",
-        )
-    if enabled:
-        resolved_width, resolved_height = (snap64(width), snap64(height))
-        note = "**Latent upscale 64-pixel alignment** · "
-    else:
-        resolved_width, resolved_height = validate_resolution(width, height)
-        note = ""
-    return (
-        gr.update(visible=bool(enabled)),
-        resolved_width,
-        resolved_height,
-        note + resolution_summary(resolved_width, resolved_height),
-    )
-
-
-def latent_upscale_method_layout_update(method: str):
-    return gr.update(
-        visible=resolve_h3_latent_upscale_method(method) == H3_LATENT_UPSCALE_SPLIT
-    )
-
-
-def fbcache_preset_defaults(name: str):
-    key = str(name).strip().lower()
-    if key == "safe":
-        values = (0.08, 0.1, 0.95, 2)
-        interactive = False
-    elif key == "aggressive":
-        values = (0.12, 0.1, 0.95, 2)
-        interactive = False
-    elif key == "custom":
-        return (
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-        )
-    else:
-        values = (0.1, 0.1, 0.95, 2)
-        interactive = False
-    return tuple((gr.update(value=value, interactive=interactive) for value in values))
 
 
 def stage_file(
@@ -930,241 +582,6 @@ def resolve_seedvr2_input_upscale_outputs(
     )
 
 
-def input_image_frame_preset_updates(
-    preset: str, current_width: int | float, current_height: int | float
-) -> tuple[Any, Any]:
-    dimensions = INPUT_IMAGE_FRAME_PRESETS.get(str(preset))
-    if dimensions is None:
-        return (gr.update(value=current_width), gr.update(value=current_height))
-    return dimensions
-
-
-def input_image_upscale_dimensions(
-    image_path: str, frame_width: int | float, frame_height: int | float
-) -> tuple[int, int, int, int, float]:
-    """Fit an image upward into a bounding frame without ever downscaling it."""
-    try:
-        target_width = int(round(float(frame_width)))
-        target_height = int(round(float(frame_height)))
-    except (TypeError, ValueError) as exc:
-        raise H3Error("Input upscale frame width and height must be numbers.") from exc
-    if target_width < 1 or target_height < 1:
-        raise H3Error("Input upscale frame width and height must be positive.")
-    try:
-        from PIL import Image, ImageOps
-
-        with Image.open(image_path) as image:
-            source_width, source_height = ImageOps.exif_transpose(image).size
-    except Exception as exc:
-        raise H3Error(f"Could not read input image dimensions: {exc}") from exc
-    if source_width < 1 or source_height < 1:
-        raise H3Error("Input image has invalid dimensions.")
-    scale_by = min(target_width / source_width, target_height / source_height)
-    if scale_by <= 1.0:
-        return (source_width, source_height, source_width, source_height, 1.0)
-    destination_width = min(target_width, round(source_width * scale_by))
-    destination_height = min(target_height, round(source_height * scale_by))
-    return (
-        source_width,
-        source_height,
-        destination_width,
-        destination_height,
-        scale_by,
-    )
-
-
-def upscale_selected_input_images(
-    selected_slots: Iterable[str],
-    model_choice: str,
-    seed: int,
-    force_offload: bool,
-    frame_width: int,
-    frame_height: int,
-    first_image: Any,
-    last_image: Any,
-    ref_image_1: Any,
-    ref_image_2: Any,
-    ref_image_3: Any,
-    ref_image_4: Any,
-    ref_image_5: Any,
-    ref_image_6: Any,
-    ref_image_7: Any,
-    ref_image_8: Any,
-    ref_image_9: Any,
-    progress=gr.Progress(track_tqdm=False),
-):
-    """Upscale selected H3 stills to fit a frame and replace their UI values."""
-    slot_labels = list(INPUT_IMAGE_UPSCALE_SLOTS)
-    slot_keys = [
-        "first",
-        "last",
-        *(f"picture_{index}" for index in range(1, MAX_REFERENCE_IMAGES + 1)),
-    ]
-    image_values = (
-        first_image,
-        last_image,
-        ref_image_1,
-        ref_image_2,
-        ref_image_3,
-        ref_image_4,
-        ref_image_5,
-        ref_image_6,
-        ref_image_7,
-        ref_image_8,
-        ref_image_9,
-    )
-    selected = list(dict.fromkeys((str(value) for value in selected_slots or [])))
-    if not selected:
-        raise gr.Error("Select at least one start, end, or reference image to upscale.")
-    unknown = sorted(set(selected) - set(slot_labels))
-    if unknown:
-        raise gr.Error("Unknown input image selection: " + ", ".join(unknown))
-    values_by_label = dict(zip(slot_labels, image_values))
-    keys_by_label = dict(zip(slot_labels, slot_keys))
-    staged: list[tuple[str, str, float]] = []
-    unchanged_results: dict[str, Path] = {}
-    dimension_notes: list[str] = []
-    for label in selected:
-        paths = normalize_paths(values_by_label[label])
-        if not paths:
-            raise gr.Error(f"Upload {label} before selecting it for upscaling.")
-        source_path = Path(paths[0]).resolve()
-        try:
-            source_width, source_height, dest_width, dest_height, scale_by = (
-                input_image_upscale_dimensions(
-                    str(source_path), frame_width, frame_height
-                )
-            )
-        except Exception as exc:
-            raise gr.Error(f"Could not prepare {label}: {exc}") from exc
-        slot_key = keys_by_label[label]
-        if scale_by > 1.0:
-            staged.append(
-                (
-                    slot_key,
-                    stage_file(str(source_path), "input_image_upscale", reuse=True),
-                    scale_by,
-                )
-            )
-            dimension_notes.append(
-                f"{label}: {source_width}×{source_height} → {dest_width}×{dest_height}"
-            )
-        else:
-            unchanged_results[slot_key] = source_path
-            dimension_notes.append(f"{label}: {source_width}×{source_height} unchanged")
-    actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
-    generated_keys = {slot_key for slot_key, _path, _scale in staged}
-    results = dict(unchanged_results)
-    try:
-        if staged:
-            progress(0, desc="Checking SeedVR2 input upscaler")
-            available = set(object_info())
-            missing = required_seedvr2_image_upscale_nodes() - available
-            if missing:
-                raise H3Error(
-                    "SeedVR2 input upscaling requires current ComfyUI nodes: "
-                    + ", ".join(sorted(missing))
-                )
-            models = MODELS.load_model_config()
-            MODELS.ensure_seedvr2_upscale_models(models, model_choice)
-            if force_offload:
-                progress(0, desc="Unloading resident models")
-                unload_comfy_models()
-            output_token = uuid.uuid4().hex
-            graph = build_seedvr2_image_upscale_graph(
-                source_images=staged,
-                seed=actual_seed,
-                models=models,
-                model_choice=model_choice,
-                output_token=output_token,
-            )
-            client_id = str(uuid.uuid4())
-            queued_at = time.time()
-            prompt_id = submit_prompt(graph, client_id)
-            for stage, completed, total, step, step_total in poll_comfy_progress(
-                prompt_id, graph
-            ):
-                if step is not None and step_total:
-                    progress((step, step_total), desc=f"Upscaling inputs: {stage}")
-                elif total:
-                    progress((completed, total), desc=f"Upscaling inputs: {stage}")
-            history = wait_for_history(prompt_id)
-            results.update(
-                resolve_seedvr2_input_upscale_outputs(
-                    history, queued_at, output_token, generated_keys
-                )
-            )
-    except gr.Error:
-        raise
-    except Exception as exc:
-        raise gr.Error(f"Input image upscaling failed: {exc}") from exc
-    component_updates: list[Any] = []
-    downloads: list[str] = []
-    for slot_key in slot_keys:
-        if slot_key in generated_keys:
-            path = str(results[slot_key])
-            component_updates.append(gr.update(value=path))
-        else:
-            component_updates.append(gr.update())
-        if slot_key in results:
-            downloads.append(str(results[slot_key]))
-    progress(1, desc="Input images ready")
-    summary = (
-        f"Fit selected images into a {int(frame_width)}×{int(frame_height)} frame: {len(staged)} upscaled with SeedVR2 {model_choice}, {len(unchanged_results)} already large enough. Aspect ratios were preserved and no image was downscaled.\n\n"
-        + "  \n".join(dimension_notes)
-    )
-    return (*component_updates, downloads, summary)
-
-
-def image_frame_labels(frame_paths: Iterable[Any]) -> list[str]:
-    return [f"Frame {index + 1}" for index, _ in enumerate(frame_paths)]
-
-
-def select_all_image_frames(frame_paths: Iterable[Any]) -> list[str]:
-    return image_frame_labels(frame_paths)
-
-
-def save_selected_image_frames(
-    frame_paths: Iterable[Any], selected_labels: Iterable[str]
-) -> tuple[list[str], str]:
-    paths = [Path(path).resolve() for path in normalize_paths(frame_paths)]
-    labels = list(selected_labels or [])
-    if not paths:
-        raise gr.Error("Generate image frames before saving a selection.")
-    if not labels:
-        raise gr.Error("Select at least one image frame to save.")
-    selected_indices: list[int] = []
-    for label in labels:
-        match = re.fullmatch("Frame\\s+(\\d+)", str(label).strip())
-        if not match:
-            raise gr.Error(f"Invalid frame selection: {label}")
-        index = int(match.group(1)) - 1
-        if index < 0 or index >= len(paths):
-            raise gr.Error(f"Frame selection is out of range: {label}")
-        if index not in selected_indices:
-            selected_indices.append(index)
-    staging_root = (OUTPUT_DIR / "h3" / "image_staging").resolve()
-    for index in selected_indices:
-        source = paths[index]
-        if not source.is_relative_to(staging_root) or not source.is_file():
-            raise gr.Error(
-                "A selected frame is outside the H3 image staging directory."
-            )
-    destination = (
-        OUTPUT_DIR
-        / "h3"
-        / "images"
-        / f"selection_{int(time.time())}_{uuid.uuid4().hex[:8]}"
-    )
-    destination.mkdir(parents=True, exist_ok=False)
-    saved: list[str] = []
-    for index in selected_indices:
-        target = destination / f"frame_{index + 1:03d}.png"
-        copy_media(paths[index], target)
-        saved.append(str(target))
-    return (saved, f"Saved {len(saved)} selected frame(s) to `{destination}`.")
-
-
 def postprocess_video(source: Path, option: str) -> Path:
     return media_tools.postprocess_video(source, option, runtime=_runtime_config())
 
@@ -1391,7 +808,7 @@ def _generation_services() -> generation_services.GenerationServices:
             wait_for_history=wait_for_history,
         ),
         policy=generation_services.PolicyServices(
-            resolve_request_settings=resolve_request_settings,
+            resolve_request_settings=H3.resolve_request_settings,
             resolve_sol_policy=resolve_sol_policy,
         ),
     )
@@ -1485,95 +902,9 @@ def generate(
     lightvae_decoder: str = "none",
     progress=gr.Progress(track_tqdm=False),
 ):
-    request = generation_requests.H3Request.from_values(
-        {
-            "mode": mode,
-            "model_profile": model_profile,
-            "text_encoder": text_encoder,
-            "encoder_small_input": encoder_small_input,
-            "stage_model_offload": stage_model_offload,
-            "generation_mode": generation_mode,
-            "turbo_variant": turbo_variant,
-            "prompt": prompt,
-            "first_image": first_image,
-            "last_image": last_image,
-            "ref_image_1": ref_image_1,
-            "ref_image_2": ref_image_2,
-            "ref_image_3": ref_image_3,
-            "ref_image_4": ref_image_4,
-            "ref_image_5": ref_image_5,
-            "ref_image_6": ref_image_6,
-            "ref_image_7": ref_image_7,
-            "ref_image_8": ref_image_8,
-            "ref_image_9": ref_image_9,
-            "ref_video_1": ref_video_1,
-            "ref_video_2": ref_video_2,
-            "ref_video_3": ref_video_3,
-            "ref_audio_1": ref_audio_1,
-            "ref_audio_2": ref_audio_2,
-            "ref_audio_3": ref_audio_3,
-            "duration": duration,
-            "width": width,
-            "height": height,
-            "steps": steps,
-            "scheduler": scheduler,
-            "seed": seed,
-            "attention_mode": attention_mode,
-            "sla_preset": sla_preset,
-            "sol_tau": sol_tau,
-            "sol_thresh_type": sol_thresh_type,
-            "sol_exact_mode": sol_exact_mode,
-            "sol_dense_steps": sol_dense_steps,
-            "sol_step_off": sol_step_off,
-            "sol_sink_tokens": sol_sink_tokens,
-            "cache_mode": cache_mode,
-            "fbcache_preset": fbcache_preset,
-            "fbcache_threshold": fbcache_threshold,
-            "fbcache_start": fbcache_start,
-            "fbcache_end": fbcache_end,
-            "fbcache_max_hits": fbcache_max_hits,
-            "fbcache_temporal_guard": fbcache_temporal_guard,
-            "easycache_threshold": easycache_threshold,
-            "easycache_start": easycache_start,
-            "easycache_end": easycache_end,
-            "easycache_verbose": easycache_verbose,
-            "ref_image_size": ref_image_size,
-            "postprocess": postprocess,
-            "reuse_unchanged_inputs": reuse_unchanged_inputs,
-            "latent_upscale": latent_upscale,
-            "latent_upscaler_model": latent_upscaler_model,
-            "latent_upscale_refine_steps": latent_upscale_refine_steps,
-            "latent_upscale_refine_lora": latent_upscale_refine_lora,
-            "latent_upscale_method": latent_upscale_method,
-            "latent_split_tile_width": latent_split_tile_width,
-            "latent_split_tile_height": latent_split_tile_height,
-            "latent_split_overlap_ratio": latent_split_overlap_ratio,
-            "latent_split_fade_ratio": latent_split_fade_ratio,
-            "latent_split_chunk_frames": latent_split_chunk_frames,
-            "latent_split_temporal_overlap_frames": latent_split_temporal_overlap_frames,
-            "latent_split_seam_denoise": latent_split_seam_denoise,
-            "latent_split_seam_polish": latent_split_seam_polish,
-            "upscale_force_offload": upscale_force_offload,
-            "upscale_split_enabled": upscale_split_enabled,
-            "upscale_split_seconds": upscale_split_seconds,
-            "upscale_resolution": upscale_resolution,
-            "seedvr2_model": seedvr2_model,
-            "ltx25_model": ltx25_model,
-            "use_int8_vae": use_int8_vae,
-            "use_lynnreal_vae": use_lynnreal_vae,
-            "video_encoder": video_encoder,
-            "lightvae_decoder": lightvae_decoder,
-            "use_trt_vae": use_trt_vae,
-            "image_vae": image_vae,
-            "result_format": result_format,
-            "image_frames": image_frames,
-            "semantic_bridge": semantic_bridge,
-            "semantic_bridge_alpha": semantic_bridge_alpha,
-            "fl2va_audio_1": fl2va_audio_1,
-            "fl2va_audio_2": fl2va_audio_2,
-            "fl2va_audio_3": fl2va_audio_3,
-        }
-    )
+    values = dict(locals())
+    del values["progress"]
+    request = generation_requests.H3Request.from_values(values)
     yield from h3_generation.generate(
         request,
         _generation_services(),
@@ -1589,7 +920,7 @@ drama3_handlers = Drama3Handlers(Drama3Services(
     stage_file=lambda *args: stage_file(*args),
     generation_services=lambda: _generation_services(),
     free_gpu=lambda: free_comfy_vram(),
-    resolve_result=lambda path: resolve_result_path(path),
+    resolve_result=lambda path: H3.resolve_result_path(path),
 ))
 
 
@@ -1617,49 +948,15 @@ def _engine_deps():
         stage_file=lambda *args, **kwargs: stage_file(*args, **kwargs),
         interrupt=interrupt,
         models=lambda: MODELS,
-        resolve_result=lambda path: resolve_result_path(path),
+        resolve_result=lambda path: H3.resolve_result_path(path),
     )
 
 
 def _drama3_actions():
     from h3_ui.drama3.speaker_library import SpeakerLibraryActions
     from h3_ui.drama3.bindings import Drama3Actions
-    return Drama3Actions(
-        speaker_library_actions=SpeakerLibraryActions(_runtime_config),
-        generate_drama3=drama3_handlers.generate_drama3,
-        regenerate_drama3_line=drama3_handlers.regenerate_drama3_line,
-        remix_drama3=drama3_handlers.remix_drama3,
-        drama3_takes=drama3_handlers.drama3_takes,
-        drama3_take_selected=drama3_handlers.drama3_take_selected,
-        drama3_take_audio=drama3_handlers.drama3_take_audio,
-        drama3_subtitles=drama3_handlers.drama3_subtitles,
-        enhance_drama3_text=drama3_handlers.enhance_drama3_text,
-        transcribe_drama3_voice=drama3_handlers.transcribe_drama3_voice,
-        drama3_speaker_names=drama3_handlers.drama3_speaker_names,
-        drama3_speaker_groups=drama3_handlers.drama3_speaker_groups,
-        drama3_speaker_group_size=drama3_handlers.drama3_speaker_group_size,
-        create_drama3_speaker_group=drama3_handlers.create_drama3_speaker_group,
-        match_drama3_speaker=drama3_handlers.match_drama3_speaker,
-        match_drama3_speakers=drama3_handlers.match_drama3_speakers,
-        save_all_drama3_speakers=drama3_handlers.save_all_drama3_speakers,
-        select_drama3_speaker=drama3_handlers.select_drama3_speaker,
-        save_drama3_speaker=drama3_handlers.save_drama3_speaker,
-        delete_drama3_speaker=drama3_handlers.delete_drama3_speaker,
-        generate_drama3_voice=drama3_handlers.generate_drama3_voice,
-        generate_drama3_voices=drama3_handlers.generate_drama3_voices,
-        generate_drama3_voice_takes=drama3_handlers.generate_drama3_voice_takes,
-        copy_drama3_writer_prompt=drama3_handlers.copy_drama3_writer_prompt,
-        apply_drama3_writer_reply=drama3_handlers.apply_drama3_writer_reply,
-        interrupt=interrupt,
-        switch_drama3_script_mode=drama3_handlers.switch_drama3_script_mode,
-        sync_drama3_script_sounds=drama3_handlers.sync_drama3_script_sounds,
-        drama3_sound_names=drama3_handlers.drama3_sound_names,
-        select_drama3_sound=drama3_handlers.select_drama3_sound,
-        save_drama3_sound=drama3_handlers.save_drama3_sound,
-        delete_drama3_sound=drama3_handlers.delete_drama3_sound,
-        generate_drama3_sound=drama3_handlers.generate_drama3_sound,
-        generate_drama3_sounds=drama3_handlers.generate_drama3_sounds,
-        preload_drama3_models=drama3_handlers.preload_drama3_models,
+    return Drama3Actions.of(
+        drama3_handlers, interrupt=interrupt, speaker_library_actions=SpeakerLibraryActions(_runtime_config),
     )
 
 
@@ -1670,364 +967,6 @@ def interrupt(request: gr.Request, family: str = "h3") -> str:
         return JOBS.cancel(require_owner(request), family, api_get, api_post)
     except Exception as exc:
         return f"Interrupt failed: {exc}"
-
-
-def compact_settings_summary(
-    mode: str,
-    model_profile: str,
-    text_encoder: str,
-    stage_model_offload: bool,
-    reuse_unchanged_inputs: bool,
-    use_int8_vae: bool,
-    generation_mode: str,
-    turbo_variant: str,
-    duration: float,
-    width: int,
-    height: int,
-    steps: int,
-    scheduler: str,
-    attention_mode: str,
-    sla_preset: str,
-    cache_mode: str,
-    latent_upscale: bool,
-    latent_upscaler_model: str,
-    latent_upscale_refine_steps: int,
-    postprocess: str,
-    seedvr2_model: str,
-    ltx25_model: str,
-    force_offload: bool,
-    split_upscale: bool,
-    split_seconds: float,
-    result_format: str = DEFAULT_RESULT_FORMAT,
-    image_frames: int = DEFAULT_IMAGE_FRAMES,
-    image_vae: str = DEFAULT_IMAGE_VAE,
-    latent_upscale_method: str = H3_LATENT_UPSCALE_STANDARD,
-    latent_split_tile_width: int = 512,
-    latent_split_tile_height: int = 512,
-    latent_split_overlap_ratio: float = 0.25,
-    latent_split_fade_ratio: float = 0.5,
-    latent_split_chunk_frames: int = 73,
-    latent_split_temporal_overlap_frames: int = 22,
-    latent_split_seam_denoise: float = 0.75,
-    latent_split_seam_polish: str = "off",
-    use_trt_vae: bool = False,
-    use_lynnreal_vae: bool = False,
-    video_encoder: str = "Original",
-    lightvae_decoder: str = "none",
-) -> str:
-    return describe_settings(locals())
-
-
-def result_settings_for_media(value):
-    def media_path(item):
-        if isinstance(item, dict):
-            return media_path(item.get("path") or item.get("name") or item.get("image"))
-        if isinstance(item, (tuple, list)):
-            return media_path(item[0]) if item else None
-        return item if isinstance(item, (str, Path)) else None
-
-    paths = []
-    items = value if isinstance(value, list) else [value]
-    for item in items:
-        path = media_path(item)
-        if path:
-            paths.append(resolve_result_path(path))
-    return render_snapshot(paths)
-
-
-def resolve_result_path(path):
-    """The managed output behind ``path``, which may be Gradio's cached copy of it.
-
-    Gradio hands listeners a copy in its own cache, without the settings snapshot;
-    a name with a 32-hex id identifies the original under the output folders.
-    """
-    if read_snapshot(path):
-        return path
-    name = Path(path).name
-    if re.search("[0-9a-f]{32}", name):
-        # Modal exposes the same output directory through both a symlink and
-        # its volume path. Overlapping roots can also find the same file twice.
-        candidates = {
-            candidate.resolve()
-            for root in (OUTPUT_DIR, OUTPUTS_DIR)
-            for candidate in root.rglob(name)
-            if candidate.resolve().is_relative_to(root.resolve())
-            and read_snapshot(candidate)
-        }
-        if len(candidates) == 1:
-            return next(iter(candidates))
-    return path
-
-
-def resolve_request_settings(values: dict):
-    request = GenerationRequest.from_values(values)
-    dimensions = None
-    first = values.get("first_image", values.get("first"))
-    if (
-        request.output.result_format == "Image"
-        and request.mode == "First / last frame"
-        and first
-    ):
-        dimensions = start_frame_generation_resolution(
-            first, alignment=64 if request.finishing.latent_upscale else 32
-        )
-    return resolve_settings(
-        request, ResolutionContext(dimensions, SERVER_MEMORY_PROFILE)
-    )
-
-
-def describe_settings(values: dict) -> str:
-    try:
-        return render_settings(resolve_request_settings(values), values)
-    except (ValueError, TypeError, H3Error) as exc:
-        return (
-            '<div role="alert">Check generation settings: '
-            + html.escape(str(exc))
-            + "</div>"
-        )
-
-
-def reference_prompt_help() -> str:
-    return f"Use `<Picture 1>` through `<Picture {MAX_REFERENCE_IMAGES}>`, `<Video 1>` through `<Video {MAX_REFERENCE_VIDEOS}>`, and `<Audio 1>` through `<Audio {MAX_REFERENCE_AUDIOS}>` in the prompt."
-
-
-def mode_help(mode: str) -> str:
-    if mode == "Reference media":
-        return (
-            "Reference tags are ordered as images, then videos, then standalone audio. "
-            + reference_prompt_help()
-        )
-    if mode == "First / last frame":
-        return "Upload a first frame, a last frame, or both. This uses the FL2VA model."
-    return "Prompt-only generation using FL2VA with native stereo audio."
-
-
-def generate_with_ui_defaults(
-    prompt: str, request: gr.Request, progress=gr.Progress(track_tqdm=False)
-):
-    """Generate with UI defaults and return a reusable public download URL."""
-    defaults = UI_DEFAULTS
-    updates = generate(
-        mode=defaults["mode"],
-        model_profile=defaults["model_profile"],
-        text_encoder=defaults["text_encoder"],
-        encoder_small_input=defaults["encoder_small_input"],
-        stage_model_offload=defaults["stage_model_offload"],
-        use_int8_vae=defaults["use_int8_vae"],
-        use_lynnreal_vae=defaults["use_lynnreal_vae"],
-        video_encoder=defaults["video_encoder"],
-        lightvae_decoder=defaults["lightvae_decoder"],
-        use_trt_vae=defaults["use_trt_vae"],
-        image_vae=defaults["image_vae"],
-        result_format=defaults["result_format"],
-        image_frames=defaults["image_frames"],
-        generation_mode=defaults["generation_mode"],
-        turbo_variant=defaults["turbo_variant"],
-        prompt=prompt,
-        first_image=None,
-        last_image=None,
-        ref_image_1=None,
-        ref_image_2=None,
-        ref_image_3=None,
-        ref_image_4=None,
-        ref_image_5=None,
-        ref_image_6=None,
-        ref_image_7=None,
-        ref_image_8=None,
-        ref_image_9=None,
-        ref_video_1=None,
-        ref_video_2=None,
-        ref_video_3=None,
-        ref_audio_1=None,
-        ref_audio_2=None,
-        ref_audio_3=None,
-        duration=defaults["duration"],
-        width=defaults["width"],
-        height=defaults["height"],
-        steps=defaults["steps"],
-        scheduler=defaults["scheduler"],
-        seed=defaults["seed"],
-        attention_mode=defaults["attention_mode"],
-        sol_tau=defaults["sol_tau"],
-        sla_preset=defaults["sla_preset"],
-        sol_thresh_type=defaults["sol_thresh_type"],
-        sol_exact_mode=defaults["sol_exact_mode"],
-        sol_dense_steps=defaults["sol_dense_steps"],
-        sol_step_off=0.0,
-        sol_sink_tokens=0,
-        cache_mode=defaults["cache_mode"],
-        fbcache_preset=defaults["fbcache_preset"],
-        fbcache_threshold=defaults["fbcache_threshold"],
-        fbcache_start=defaults["fbcache_start"],
-        fbcache_end=defaults["fbcache_end"],
-        fbcache_max_hits=defaults["fbcache_max_hits"],
-        fbcache_temporal_guard=defaults["fbcache_temporal_guard"],
-        easycache_threshold=defaults["easycache_threshold"],
-        easycache_start=defaults["easycache_start"],
-        easycache_end=defaults["easycache_end"],
-        easycache_verbose=defaults["easycache_verbose"],
-        ref_image_size=defaults["ref_image_size"],
-        postprocess=defaults["postprocess"],
-        semantic_bridge=defaults["semantic_bridge"],
-        semantic_bridge_alpha=defaults["semantic_bridge_alpha"],
-        reuse_unchanged_inputs=defaults["reuse_unchanged_inputs"],
-        latent_upscale=defaults["latent_upscale"],
-        latent_upscaler_model=defaults["latent_upscaler_model"],
-        latent_upscale_refine_steps=defaults["latent_upscale_refine_steps"],
-        latent_upscale_refine_lora=defaults["latent_upscale_refine_lora"],
-        latent_upscale_method=defaults["latent_upscale_method"],
-        latent_split_tile_width=defaults["latent_split_tile_width"],
-        latent_split_tile_height=defaults["latent_split_tile_height"],
-        latent_split_overlap_ratio=defaults["latent_split_overlap_ratio"],
-        latent_split_fade_ratio=defaults["latent_split_fade_ratio"],
-        latent_split_chunk_frames=defaults["latent_split_chunk_frames"],
-        latent_split_temporal_overlap_frames=defaults[
-            "latent_split_temporal_overlap_frames"
-        ],
-        latent_split_seam_denoise=defaults["latent_split_seam_denoise"],
-        latent_split_seam_polish=defaults["latent_split_seam_polish"],
-        seedvr2_model=defaults["seedvr2_model"],
-        ltx25_model=DEFAULT_LTX25_MODEL,
-        upscale_force_offload=defaults["upscale_force_offload"],
-        upscale_split_enabled=defaults["upscale_split_enabled"],
-        upscale_split_seconds=defaults["upscale_split_seconds"],
-        progress=progress,
-    )
-    for video, status in updates:
-        download_url = (
-            MEDIA.absolute_video_download_url(video, request) if video is not None else None
-        )
-        yield (download_url, status)
-
-
-def video_batch_seeds(seed: int, batch_count: int) -> list[int]:
-    """Resolve distinct seeds while preserving the single-run random-seed behavior."""
-    count = int(batch_count)
-    if not MIN_VIDEO_BATCH_COUNT <= count <= MAX_VIDEO_BATCH_COUNT:
-        raise H3Error(
-            f"Video batch count must be between {MIN_VIDEO_BATCH_COUNT} and {MAX_VIDEO_BATCH_COUNT}."
-        )
-    base_seed = int(seed)
-    if count == 1:
-        return [base_seed]
-    return random.sample(range(0, 2**63 - 1), count)
-
-
-def generate_for_ui(batch_count: int, *args: Any):
-    """Adapt shared generation to UI outputs, including 1-4 video variants."""
-    arguments = GenerationArguments.from_positional(args)
-    result_format = normalize_result_format(arguments.values["result_format"])
-    count = int(batch_count) if result_format == "Video" else 1
-    job = CURRENT_JOB.get()
-    seeds = (
-        list(job.replay_seeds)
-        if job is not None and job.replay_seeds
-        else (
-            video_batch_seeds(int(arguments.values["seed"]), count)
-            if result_format == "Video"
-            else [int(arguments.values["seed"])]
-        )
-    )
-    indices = list(range(count))
-    if job is not None:
-        if job.replay_seeds:
-            seeds = list(job.replay_seeds)
-            indices = list(job.replay_indices)
-            count = len(seeds)
-        else:
-            seeds = [
-                random.randrange(0, 2**63 - 1) if seed < 0 else seed for seed in seeds
-            ]
-            job.variant_seeds.update(enumerate(seeds))
-    first_update = True
-    for batch_index, batch_seed in enumerate(seeds):
-        if job is not None:
-            job.variant = indices[batch_index]
-            job.check()
-        batch_arguments = arguments.with_seed(batch_seed)
-        prefix = f"Video {batch_index + 1}/{count} · " if count > 1 else ""
-        for result, status in generate(**batch_arguments.values):
-            status = prefix + status
-            video_updates = [gr.update() for _ in range(MAX_VIDEO_BATCH_COUNT)]
-            if first_update:
-                first_update = False
-                video_updates = [
-                    gr.update(
-                        value=None, visible=result_format == "Video" and index < count
-                    )
-                    for index in range(MAX_VIDEO_BATCH_COUNT)
-                ]
-                yield (
-                    *video_updates,
-                    gr.update(visible=result_format == "Image"),
-                    gr.update(value=[]),
-                    gr.update(choices=[], value=[]),
-                    [],
-                    gr.update(value=None),
-                    gr.update(value=None, visible=result_format == "Audio"),
-                    gr.update(value=""),
-                    status,
-                )
-                if result is None:
-                    continue
-            if result is None:
-                yield (
-                    *video_updates,
-                    gr.update(),
-                    gr.update(),
-                    gr.update(),
-                    gr.update(),
-                    gr.update(),
-                    gr.update(),
-                    gr.update(),
-                    status,
-                )
-                continue
-            if result_format == "Image":
-                paths = normalize_paths(result)
-                labels = image_frame_labels(paths)
-                gallery = [(path, label) for path, label in zip(paths, labels)]
-                yield (
-                    *video_updates,
-                    gr.update(visible=True),
-                    gr.update(value=gallery),
-                    gr.update(choices=labels, value=[]),
-                    paths,
-                    gr.update(value=None),
-                    gr.update(),
-                    gr.update(),
-                    status,
-                )
-            elif result_format == "Audio":
-                yield (
-                    *video_updates,
-                    gr.update(),
-                    gr.update(),
-                    gr.update(),
-                    gr.update(),
-                    gr.update(),
-                    gr.update(value=result, visible=True),
-                    gr.update(),
-                    status,
-                )
-            else:
-                video_updates[batch_index] = gr.update(value=result, visible=True)
-                yield (
-                    *video_updates,
-                    gr.update(),
-                    gr.update(),
-                    gr.update(),
-                    gr.update(),
-                    gr.update(),
-                    gr.update(),
-                    gr.update(),
-                    status,
-                )
-
-
-def api_guide() -> str:
-    defaults = UI_DEFAULTS
-    return f"""## Generate through the API\n\nThe `/generate_video` endpoint accepts a prompt and preserves the existing **Video** defaults from the **MiniMax H3** tab, including default-on reuse of unchanged prompt/media conditioning:\n\n`{defaults["mode"]}` · `{defaults["model_profile"]}` · `{defaults["generation_mode"]} / {defaults["turbo_variant"]}` · `{defaults["duration"]}s` · `{defaults["width"]}×{defaults["height"]}` · `{defaults["steps"]} steps` · `{defaults["scheduler"]}` scheduler · random seed\n\nInstall the client and submit a job:\n\n```bash\npip install gradio_client\n```\n\n```python\nfrom gradio_client import Client\n\nclient = Client("http://127.0.0.1:7860")\ndownload_url, status = client.predict(\n    "A cinematic tracking shot through a rain-soaked neon city",\n    api_name="/generate_video",\n)\nprint(download_url)\nprint(status)\n```\n\n`download_url` is an HTTP URL served by this app, so it can be opened in a browser or downloaded with `curl -L -O` while the app is running.\n\nFor every control exposed by the MiniMax H3 tab, including **Image** and **Audio** result formats, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. Image selections can be persisted through `/save_h3_image_frames`. API requests share the same single-job queue as the UI.\n"""
 
 
 def compact_backend_status(detail: str) -> str:
@@ -2127,15 +1066,15 @@ def build_ui() -> gr.Blocks:
             auto_resolution_from_start_frame=auto_resolution_from_start_frame,
             backend_status=backend_status,
             compact_backend_status=compact_backend_status,
-            compact_settings_summary=compact_settings_summary,
+            compact_settings_summary=H3.compact_settings_summary,
             compile_trt_video_vae=MODELS.compile_trt_video_vae,
             delete_selected_gallery_media=MEDIA.delete_selected_gallery_media,
-            describe_settings=describe_settings,
+            describe_settings=H3.describe_settings,
             empty_generated_media_gallery=MEDIA.empty_generated_media_gallery,
-            enhance_h3_prompt=enhance_h3_prompt,
+            enhance_h3_prompt=PROMPTS.enhance_h3_prompt,
             fbcache_preset_defaults=fbcache_preset_defaults,
-            generate_for_ui=generate_for_ui,
-            generate_with_ui_defaults=generate_with_ui_defaults,
+            generate_for_ui=H3.generate_for_ui,
+            generate_with_ui_defaults=H3.generate_with_ui_defaults,
             drama3_actions=_drama3_actions(),
             dubbing_actions=dubbing_handlers,
             engine_deps=_engine_deps(),
@@ -2150,7 +1089,7 @@ def build_ui() -> gr.Blocks:
             gallery_media_download_path=MEDIA.gallery_media_download_path,
             mode_help=mode_help,
             postprocess_selected_gallery_media=MEDIA.postprocess_selected_gallery_media,
-            prompt_writer_backend_visibility=prompt_writer_backend_visibility,
+            prompt_writer_backend_visibility=PROMPTS.prompt_writer_backend_visibility,
             reference_prompt_help=reference_prompt_help,
             refresh_backend_views=refresh_backend_views,
             refresh_media_page=MEDIA.refresh_media_page,
@@ -2159,14 +1098,14 @@ def build_ui() -> gr.Blocks:
             resolution_control_updates=resolution_control_updates,
             resolution_info_preview=resolution_info_preview,
             resolution_summary=resolution_summary,
-            resolve_request_settings=resolve_request_settings,
+            resolve_request_settings=H3.resolve_request_settings,
             result_format_layout_updates=result_format_layout_updates,
-            result_settings_for_media=result_settings_for_media,
-            save_selected_image_frames=save_selected_image_frames,
+            result_settings_for_media=H3.result_settings_for_media,
+            save_selected_image_frames=MEDIA.save_selected_image_frames,
             select_all_image_frames=select_all_image_frames,
             select_gallery_media=MEDIA.select_gallery_media,
             unload_all_models=unload_all_models,
-            upscale_selected_input_images=upscale_selected_input_images,
+            upscale_selected_input_images=MEDIA.upscale_selected_input_images,
         ),
     )
 

@@ -8,6 +8,10 @@ import time
 from typing import Any, Callable
 import uuid
 
+import re
+from h3_app.policy import normalize_paths
+from typing import Iterable
+from h3_app.catalog import INPUT_IMAGE_UPSCALE_SLOTS, MAX_REFERENCE_IMAGES
 import gradio as gr
 import websocket
 from h3_app import gallery_store
@@ -1216,3 +1220,187 @@ class MediaController:
         return self.gallery_media_mutation_result(
             media_mode, message, clear_selection=True,
         )
+
+    def upscale_selected_input_images(
+        self,
+        selected_slots: Iterable[str],
+        model_choice: str,
+        seed: int,
+        force_offload: bool,
+        frame_width: int,
+        frame_height: int,
+        first_image: Any,
+        last_image: Any,
+        ref_image_1: Any,
+        ref_image_2: Any,
+        ref_image_3: Any,
+        ref_image_4: Any,
+        ref_image_5: Any,
+        ref_image_6: Any,
+        ref_image_7: Any,
+        ref_image_8: Any,
+        ref_image_9: Any,
+        progress=gr.Progress(track_tqdm=False),
+    ):
+        """Upscale selected H3 stills to fit a frame and replace their UI values."""
+        slot_labels = list(INPUT_IMAGE_UPSCALE_SLOTS)
+        slot_keys = [
+            "first",
+            "last",
+            *(f"picture_{index}" for index in range(1, MAX_REFERENCE_IMAGES + 1)),
+        ]
+        image_values = (
+            first_image,
+            last_image,
+            ref_image_1,
+            ref_image_2,
+            ref_image_3,
+            ref_image_4,
+            ref_image_5,
+            ref_image_6,
+            ref_image_7,
+            ref_image_8,
+            ref_image_9,
+        )
+        selected = list(dict.fromkeys((str(value) for value in selected_slots or [])))
+        if not selected:
+            raise gr.Error("Select at least one start, end, or reference image to upscale.")
+        unknown = sorted(set(selected) - set(slot_labels))
+        if unknown:
+            raise gr.Error("Unknown input image selection: " + ", ".join(unknown))
+        values_by_label = dict(zip(slot_labels, image_values))
+        keys_by_label = dict(zip(slot_labels, slot_keys))
+        staged: list[tuple[str, str, float]] = []
+        unchanged_results: dict[str, Path] = {}
+        dimension_notes: list[str] = []
+        for label in selected:
+            paths = normalize_paths(values_by_label[label])
+            if not paths:
+                raise gr.Error(f"Upload {label} before selecting it for upscaling.")
+            source_path = Path(paths[0]).resolve()
+            try:
+                source_width, source_height, dest_width, dest_height, scale_by = (
+                    self.services.input_image_upscale_dimensions(
+                        str(source_path), frame_width, frame_height
+                    )
+                )
+            except Exception as exc:
+                raise gr.Error(f"Could not prepare {label}: {exc}") from exc
+            slot_key = keys_by_label[label]
+            if scale_by > 1.0:
+                staged.append(
+                    (
+                        slot_key,
+                        self.services.stage_file(str(source_path), "input_image_upscale", reuse=True),
+                        scale_by,
+                    )
+                )
+                dimension_notes.append(
+                    f"{label}: {source_width}×{source_height} → {dest_width}×{dest_height}"
+                )
+            else:
+                unchanged_results[slot_key] = source_path
+                dimension_notes.append(f"{label}: {source_width}×{source_height} unchanged")
+        actual_seed = random.randrange(0, 2**63 - 1) if int(seed) < 0 else int(seed)
+        generated_keys = {slot_key for slot_key, _path, _scale in staged}
+        results = dict(unchanged_results)
+        try:
+            if staged:
+                progress(0, desc="Checking SeedVR2 input upscaler")
+                available = set(self.services.object_info())
+                missing = required_seedvr2_image_upscale_nodes() - available
+                if missing:
+                    raise H3Error(
+                        "SeedVR2 input upscaling requires current ComfyUI nodes: "
+                        + ", ".join(sorted(missing))
+                    )
+                models = self.services.load_model_config()
+                self.services.ensure_seedvr2_upscale_models(models, model_choice)
+                if force_offload:
+                    progress(0, desc="Unloading resident models")
+                    self.services.unload_comfy_models()
+                output_token = uuid.uuid4().hex
+                graph = self.services.build_seedvr2_image_upscale_graph(
+                    source_images=staged,
+                    seed=actual_seed,
+                    models=models,
+                    model_choice=model_choice,
+                    output_token=output_token,
+                )
+                client_id = str(uuid.uuid4())
+                queued_at = time.time()
+                prompt_id = self.services.submit_prompt(graph, client_id)
+                for stage, completed, total, step, step_total in self.services.poll_comfy_progress(
+                    prompt_id, graph
+                ):
+                    if step is not None and step_total:
+                        progress((step, step_total), desc=f"Upscaling inputs: {stage}")
+                    elif total:
+                        progress((completed, total), desc=f"Upscaling inputs: {stage}")
+                history = self.services.wait_for_history(prompt_id)
+                results.update(
+                    self.services.resolve_seedvr2_input_upscale_outputs(
+                        history, queued_at, output_token, generated_keys
+                    )
+                )
+        except gr.Error:
+            raise
+        except Exception as exc:
+            raise gr.Error(f"Input image upscaling failed: {exc}") from exc
+        component_updates: list[Any] = []
+        downloads: list[str] = []
+        for slot_key in slot_keys:
+            if slot_key in generated_keys:
+                path = str(results[slot_key])
+                component_updates.append(gr.update(value=path))
+            else:
+                component_updates.append(gr.update())
+            if slot_key in results:
+                downloads.append(str(results[slot_key]))
+        progress(1, desc="Input images ready")
+        summary = (
+            f"Fit selected images into a {int(frame_width)}×{int(frame_height)} frame: {len(staged)} upscaled with SeedVR2 {model_choice}, {len(unchanged_results)} already large enough. Aspect ratios were preserved and no image was downscaled.\n\n"
+            + "  \n".join(dimension_notes)
+        )
+        return (*component_updates, downloads, summary)
+
+    def save_selected_image_frames(
+        self,
+        frame_paths: Iterable[Any], selected_labels: Iterable[str]
+    ) -> tuple[list[str], str]:
+        paths = [Path(path).resolve() for path in normalize_paths(frame_paths)]
+        labels = list(selected_labels or [])
+        if not paths:
+            raise gr.Error("Generate image frames before saving a selection.")
+        if not labels:
+            raise gr.Error("Select at least one image frame to save.")
+        selected_indices: list[int] = []
+        for label in labels:
+            match = re.fullmatch("Frame\\s+(\\d+)", str(label).strip())
+            if not match:
+                raise gr.Error(f"Invalid frame selection: {label}")
+            index = int(match.group(1)) - 1
+            if index < 0 or index >= len(paths):
+                raise gr.Error(f"Frame selection is out of range: {label}")
+            if index not in selected_indices:
+                selected_indices.append(index)
+        staging_root = (self.services._runtime_config().output_dir / "h3" / "image_staging").resolve()
+        for index in selected_indices:
+            source = paths[index]
+            if not source.is_relative_to(staging_root) or not source.is_file():
+                raise gr.Error(
+                    "A selected frame is outside the H3 image staging directory."
+                )
+        destination = (
+            self.services._runtime_config().output_dir
+            / "h3"
+            / "images"
+            / f"selection_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        )
+        destination.mkdir(parents=True, exist_ok=False)
+        saved: list[str] = []
+        for index in selected_indices:
+            target = destination / f"frame_{index + 1:03d}.png"
+            copy_media(paths[index], target)
+            saved.append(str(target))
+        return (saved, f"Saved {len(saved)} selected frame(s) to `{destination}`.")

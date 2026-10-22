@@ -31,7 +31,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_models.py | Model inventory and manifest transactions locked across threads and processes |
 | h3_app/jobs.py | Bounded admission, immutable requests, input leases, durable technical ledgers, exact retries, browser ownership, cancellation and the application GPU lease |
 | h3_app/workspace_store.py, workspace_admin.py | SQLite ownership, technical history, explicit projects, asset annotations, backup/restore |
-| h3_ui/prompt_controller.py, model_controller.py, media_controller.py | Feature behavior through explicit service dependencies |
+| h3_ui/prompt_controller.py, model_controller.py, media_controller.py | The H3 prompt writer, model downloads, and the Media library with its finishing jobs and H3 input-image tools. Their service records hold only the runtime and late-bound ComfyUI, graph and file effects; `application.py` builds one of each (`PROMPTS`, `MODELS`, `MEDIA`) |
 | h3_app/comfy.py, execution.py | HTTP transport and one submission lifecycle, deadline and websocket owner |
 | h3_app/capabilities.py | Create tasks, engines and their navigation labels |
 | h3_app/workflows/ | Pure H3, LTX, Qwen, Music, YuE2, FLUX 3, MOSS-Image, Fibo 2.0, Drama 3 and finishing graph builders with staged input identities |
@@ -48,14 +48,14 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/drama3/ | Soundstage cast, script lint, speaker and sound libraries, voice design, and Drama 3 on SGLang-Omni in serving/ (environment, planner, takes, mixing, checkpointed sleep). serving/speech.py is the line-speaking interface other features use |
 | h3_app/audio_tools.py, audio_tools_worker.py, voice_design.py, stable_audio.py | The isolated resident worker for Qwen VoiceDesign and Stable Audio, and its clients |
 | h3_app/server.py | Configured FastAPI routes and HTTP/WebSocket proxy |
-| h3_ui/application.py | Runtime service wiring and signature-preserving public API adapters |
+| h3_ui/application.py | Startup and runtime configuration, the ComfyUI and file effects controllers and engines receive, the full H3 `generate`, and the controller and handler singletons. Controllers never import it; tests patch its effects and find a name's owner with `tests/app_targets.py` |
 | h3_ui/bootstrap.py, contracts.py | UI composition; contracts.py holds the catalog and service records passed to event registration |
 | h3_ui/drama3/ | Soundstage view, bindings, slot controls and saved-speaker library. handlers.py builds `Drama3Handlers` from explicit `Drama3Services`; its generation, writer, voices, speakers and sounds methods live in one module each |
 | h3_app/dubbing/ | Dub & Translate sessions, line helpers, Gemini transcription, the isolated tools worker (separation, OmniVAD + Qwen3-ASR, Hy-MT) and the Drama 3 dub/mix pipeline |
 | h3_app/video_download.py | yt-dlp downloads into Media and the private per-site cookie store |
 | h3_ui/dubbing/ | Dub & Translate tab and Media's Download from a URL panel; handlers.py builds `DubbingHandlers` from explicit `DubbingServices` |
 | h3_ui/engines/ | Create engines that own their view, bindings and handlers (FLUX 3, MOSS-Image, Fibo 2.0). Each registers an `EngineFeature` in `FEATURES` and receives `EngineDeps` explicitly; controls.py holds the shared Generate/Interrupt/progress, prompt-writer, resolution-preset and saved-settings helpers |
-| h3_ui/h3/ | The H3 composer: view.py, services.py and sections/, one dataclass per visible section |
+| h3_ui/h3/ | The H3 composer: view.py, services.py and sections/ (one dataclass per visible section); layout.py computes resolution, result-format and frame control updates; handlers.py holds `H3Handlers` (batched generation, the default-settings API, settings summaries and result lookup) |
 | h3_ui/events/ | H3 and workspace-wide event registration (generation, prompt, resolution, input upscale, gallery, system, layout) |
 | h3_ui/job_bindings.py, job_admission.py, jobs_view.py | Gradio request injection, acceptance before queueing, shared GPU binding and owner-scoped job presentation |
 | h3_app/reference_bindings.py, h3_ui/prompt_preview.py, prompt_review.py | Stable reference translation and guarded accept/keep/undo prompt previews |

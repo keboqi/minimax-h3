@@ -524,3 +524,37 @@ def active_fl2va_voice_references(mode: str, *slots: Any) -> list[str]:
 def ltx25_frame_length(duration: float, fps: float) -> int:
     """LTX-2.5 requires a frame count of 8n+1."""
     return 1 + max(1, int(float(duration) * float(fps)) // 8) * 8
+
+
+def input_image_upscale_dimensions(
+    image_path: str, frame_width: int | float, frame_height: int | float
+) -> tuple[int, int, int, int, float]:
+    """Fit an image upward into a bounding frame without ever downscaling it."""
+    try:
+        target_width = int(round(float(frame_width)))
+        target_height = int(round(float(frame_height)))
+    except (TypeError, ValueError) as exc:
+        raise H3Error("Input upscale frame width and height must be numbers.") from exc
+    if target_width < 1 or target_height < 1:
+        raise H3Error("Input upscale frame width and height must be positive.")
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(image_path) as image:
+            source_width, source_height = ImageOps.exif_transpose(image).size
+    except Exception as exc:
+        raise H3Error(f"Could not read input image dimensions: {exc}") from exc
+    if source_width < 1 or source_height < 1:
+        raise H3Error("Input image has invalid dimensions.")
+    scale_by = min(target_width / source_width, target_height / source_height)
+    if scale_by <= 1.0:
+        return (source_width, source_height, source_width, source_height, 1.0)
+    destination_width = min(target_width, round(source_width * scale_by))
+    destination_height = min(target_height, round(source_height * scale_by))
+    return (
+        source_width,
+        source_height,
+        destination_width,
+        destination_height,
+        scale_by,
+    )

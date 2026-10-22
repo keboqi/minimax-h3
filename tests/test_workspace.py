@@ -1,5 +1,6 @@
 """Correctness gates for workspace requests and session-owned execution."""
 
+import h3_ui.h3.handlers
 from concurrent.futures import ThreadPoolExecutor
 import json
 from h3_ui import application as app
@@ -156,7 +157,7 @@ class JobRegistryTests(unittest.TestCase):
         values[GENERATION_FIELDS.index("seed")] = -1
         values[GENERATION_FIELDS.index("prompt")] = "Original prompt"
         source = self.registry.accept(
-            "owner", "h3", [3, *values], callback=app.generate_for_ui
+            "owner", "h3", [3, *values], callback=app.H3.generate_for_ui
         )
         captured = []
 
@@ -168,24 +169,24 @@ class JobRegistryTests(unittest.TestCase):
             yield None, "mock completed"
 
         with patch.object(app, "generate", generate), patch.object(
-            app.random, "sample", return_value=[101, 202, 303]
+            h3_ui.h3.handlers.random, "sample", return_value=[101, 202, 303]
         ):
             token = CURRENT_JOB.set(source)
             try:
                 with self.registry.run("owner", "h3", accepted=source):
-                    list(app.generate_for_ui(*source.values()))
+                    list(app.H3.generate_for_ui(*source.values()))
             finally:
                 CURRENT_JOB.reset(token)
         retry = self.registry.retry("owner", source.id)
         with patch.object(app, "generate", generate), patch.object(
-            app.random,
+            h3_ui.h3.handlers.random,
             "sample",
             side_effect=AssertionError("Random seeds were recomputed"),
         ):
             token = CURRENT_JOB.set(retry)
             try:
                 with self.registry.run("owner", "h3", accepted=retry):
-                    list(app.generate_for_ui(*retry.values()))
+                    list(app.H3.generate_for_ui(*retry.values()))
             finally:
                 CURRENT_JOB.reset(token)
         self.assertEqual(

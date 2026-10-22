@@ -181,7 +181,7 @@ class VedaAttentionTests(unittest.TestCase):
                 available = AVAILABLE_NODES | {catalog.VEDA_ATTENTION_NODE}
                 services = SimpleNamespace(
                     models=models, execution=SimpleNamespace(object_info=lambda: dict.fromkeys(available, {})),
-                    policy=SimpleNamespace(resolve_request_settings=app.resolve_request_settings,
+                    policy=SimpleNamespace(resolve_request_settings=app.H3.resolve_request_settings,
                                            resolve_sol_policy=app.resolve_sol_policy),
                     workflows=SimpleNamespace(build_fl2va_graph=Mock(return_value={}),
                                               build_ref2va_graph=Mock(return_value={})),

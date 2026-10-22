@@ -1,6 +1,6 @@
 """Drama 3 writer, cast, sound and generation event wiring."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 import json
 from typing import Callable
 
@@ -70,6 +70,16 @@ class Drama3Actions:
     drama3_take_audio: Callable | None = None
     drama3_subtitles: Callable | None = None
     preload_drama3_models: Callable | None = None
+
+    @classmethod
+    def of(cls, handlers, *, interrupt: Callable, speaker_library_actions: object | None = None):
+        """Every action ``handlers`` defines under its field name."""
+        names = {field.name for field in fields(cls)} - {"interrupt", "speaker_library_actions"}
+        return cls(
+            interrupt=interrupt,
+            speaker_library_actions=speaker_library_actions,
+            **{name: getattr(handlers, name) for name in names if hasattr(handlers, name)},
+        )
 
 
 def drama3_voice_inputs(view):

@@ -1,5 +1,8 @@
 """Focused CPU contracts retained from the former launcher self-test."""
 
+import h3_app.policy
+import h3_ui.h3.handlers
+import h3_ui.h3.layout
 import h3_app.gallery_store
 import h3_app.model_types
 import inspect as _inspect
@@ -203,7 +206,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
                     {"outputs": {"save": {"images": image_refs}}}, app.time.time(), 3
                 )
                 self.assertEqual(resolved_frames, staged_paths)
-                saved_frames, _ = app.save_selected_image_frames(
+                saved_frames, _ = app.MEDIA.save_selected_image_frames(
                     resolved_frames, ["Frame 1", "Frame 3"]
                 )
                 self.assertEqual(
@@ -229,13 +232,13 @@ class ApplicationAdaptersTests(unittest.TestCase):
             image_args[_contracts.GENERATION_FIELDS.index("result_format")] = "Image"
             image_args[_contracts.GENERATION_FIELDS.index("image_frames")] = 2
             image_args[_contracts.GENERATION_FIELDS.index("seed")] = -1
-            ui_updates = list(app.generate_for_ui(1, *image_args))
+            ui_updates = list(app.H3.generate_for_ui(1, *image_args))
         finally:
             vars(app)["generate"] = original_ui_generate
         self.assertEqual(len(ui_updates), 2)
         self.assertTrue(all((len(update) == 12 for update in ui_updates)))
         self.assertEqual(ui_updates[-1][7], ["frame-a.png", "frame-b.png"])
-        self.assertEqual(app.video_batch_seeds(7, 1), [7])
+        self.assertEqual(h3_ui.h3.handlers.video_batch_seeds(7, 1), [7])
         captured_batch_args: list[tuple[app.Any, ...]] = []
         original_generate_signature = _inspect.signature(original_ui_generate)
 
@@ -255,15 +258,15 @@ class ApplicationAdaptersTests(unittest.TestCase):
         batch_args[reuse_index] = False
         batch_args[-2] = "Video"
         batch_args[-1] = 5
-        original_random_sample = app.random.sample
-        app.random.sample = lambda _population, count: list(range(101, 101 + count))
+        original_random_sample = h3_ui.h3.handlers.random.sample
+        h3_ui.h3.handlers.random.sample = lambda _population, count: list(range(101, 101 + count))
         vars(app)["generate"] = fake_batch_generate
         try:
-            self.assertEqual(app.video_batch_seeds(7, 4), [101, 102, 103, 104])
-            batch_updates = list(app.generate_for_ui(3, *batch_args))
+            self.assertEqual(h3_ui.h3.handlers.video_batch_seeds(7, 4), [101, 102, 103, 104])
+            batch_updates = list(app.H3.generate_for_ui(3, *batch_args))
         finally:
             vars(app)["generate"] = original_ui_generate
-            app.random.sample = original_random_sample
+            h3_ui.h3.handlers.random.sample = original_random_sample
         self.assertEqual(
             [args[seed_index] for args in captured_batch_args], [101, 102, 103]
         )
@@ -339,7 +342,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
         )
         self.assertEqual(app.INPUT_IMAGE_FRAME_PRESETS["1920 × 1920"], (1920, 1920))
         self.assertEqual(
-            app.input_image_frame_preset_updates("3840 × 3840", 1920, 1920),
+            h3_ui.h3.layout.input_image_frame_preset_updates("3840 × 3840", 1920, 1920),
             (3840, 3840),
         )
         from PIL import Image
@@ -511,7 +514,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
         app.MEDIA.absolute_video_download_url = fake_download_url
         try:
             self.assertEqual(
-                list(app.generate_with_ui_defaults("API prompt", object())),
+                list(app.H3.generate_with_ui_defaults("API prompt", object())),
                 [("https://example.test/downloads/video.mp4", "complete")],
             )
         finally:
@@ -693,49 +696,49 @@ class ApplicationAdaptersTests(unittest.TestCase):
         )
         self.assertIs(turbo_sol_enabled, True)
         self.assertTrue(turbo_sol_reason.startswith("Auto Turbo:"))
-        self.assertEqual(app.validate_resolution(865, 481), (864, 480))
-        self.assertEqual(app.validate_resolution(2048, 2048), (2048, 2048))
+        self.assertEqual(h3_app.policy.validate_resolution(865, 481), (864, 480))
+        self.assertEqual(h3_app.policy.validate_resolution(2048, 2048), (2048, 2048))
 
     def test_resolution_controls(self):
-        auto_landscape = app.resolution_for_aspect_ratio(4096, 2304)
-        auto_portrait = app.resolution_for_aspect_ratio(2304, 4096)
-        self.assertEqual(app.resolution_for_aspect_ratio(1024, 1024), (992, 992))
+        auto_landscape = h3_app.policy.resolution_for_aspect_ratio(4096, 2304)
+        auto_portrait = h3_app.policy.resolution_for_aspect_ratio(2304, 4096)
+        self.assertEqual(h3_app.policy.resolution_for_aspect_ratio(1024, 1024), (992, 992))
         self.assertTrue(auto_landscape[0] % 32 == 0 and auto_landscape[1] % 32 == 0)
         self.assertTrue(auto_portrait[0] % 32 == 0 and auto_portrait[1] % 32 == 0)
         self.assertLess(auto_landscape[0] * auto_landscape[1], 4000000)
         self.assertLess(auto_portrait[0] * auto_portrait[1], 4000000)
         self.assertLess(abs(auto_landscape[0] / auto_landscape[1] - 16 / 9), 0.1)
         self.assertLess(abs(auto_portrait[0] / auto_portrait[1] - 9 / 16), 0.1)
-        one_mp_landscape = app.resolution_for_aspect_ratio(
-            4096, 2304, pixel_cap=app.auto_resolution_pixel_cap("1 MP")
+        one_mp_landscape = h3_app.policy.resolution_for_aspect_ratio(
+            4096, 2304, pixel_cap=h3_app.policy.auto_resolution_pixel_cap("1 MP")
         )
-        two_mp_landscape = app.resolution_for_aspect_ratio(
-            4096, 2304, pixel_cap=app.auto_resolution_pixel_cap("2 MP")
+        two_mp_landscape = h3_app.policy.resolution_for_aspect_ratio(
+            4096, 2304, pixel_cap=h3_app.policy.auto_resolution_pixel_cap("2 MP")
         )
         self.assertLess(one_mp_landscape[0] * one_mp_landscape[1], 1000000)
         self.assertLess(two_mp_landscape[0] * two_mp_landscape[1], 2000000)
-        self.assertEqual(app.auto_resolution_pixel_cap("4 MP"), 4000000 - 1)
-        self.assertEqual(app.auto_resolution_pixel_cap("8 MP"), 8000000 - 1)
+        self.assertEqual(h3_app.policy.auto_resolution_pixel_cap("4 MP"), 4000000 - 1)
+        self.assertEqual(h3_app.policy.auto_resolution_pixel_cap("8 MP"), 8000000 - 1)
         self.assertEqual(app.UI_DEFAULTS["model_profile"], "Singularity")
         self.assertEqual(app.UI_DEFAULTS["text_encoder"], "NVFP4 / AWQ")
         self.assertIs(app.UI_DEFAULTS["stage_model_offload"], False)
         self.assertEqual(
-            app.resolution_for_aspect_ratio(4096, 2304, preserve_native=True),
+            h3_app.policy.resolution_for_aspect_ratio(4096, 2304, preserve_native=True),
             (4096, 2304),
         )
         self.assertEqual(
-            app.resolution_for_aspect_ratio(
+            h3_app.policy.resolution_for_aspect_ratio(
                 4010, 2250, preserve_native=True, alignment=64
             ),
             (4032, 2240),
         )
         self.assertEqual(
-            app.resolution_control_updates(865, 481, True, "Video")[0:2], (896, 512)
+            h3_ui.h3.layout.resolution_control_updates(865, 481, True, "Video")[0:2], (896, 512)
         )
         self.assertIn(
-            "32×32", app.resolution_control_updates(1344, 768, False, "Audio")[2]
+            "32×32", h3_ui.h3.layout.resolution_control_updates(1344, 768, False, "Audio")[2]
         )
-        unchanged = app.auto_resolution_from_start_frame(None, 640, 480)
+        unchanged = h3_ui.h3.layout.auto_resolution_from_start_frame(None, 640, 480)
         self.assertEqual(unchanged[:2], (640, 480))
         self.assertEqual(_policy.frame_length(5), 124)
         self.assertEqual(_policy.frame_length(15), 362)
