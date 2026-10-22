@@ -49,10 +49,10 @@ DRAMA3_REF = "67a733a96890637dc27b1914974ad00c569405fb"
 # Drama 3 backend, isolated from ComfyUI's Torch stack.
 DRAMA3_SGLANG_TORCH_BACKEND = "cu130"
 DRAMA3_SGLANG_PYTHON = "3.12"
-# Parallel Drama 3 backend: SGLang-Omni main. Drama 3
-# (FishOmniModel) landed after v0.1.8 (#2763, 2026-10-13); pin a main commit.
+# Parallel Drama 3 backend: SGLang-Omni v0.1.9, the first release that includes
+# Drama 3 (FishOmniModel, #2763) and its sampling fixes (#2810, #2890, #2844).
 DRAMA3_SGLANG_OMNI_REPO = "https://github.com/sgl-project/sglang-omni.git"
-DRAMA3_SGLANG_OMNI_REF = "f31cf9e9af749040ffa6dbdf064882c443a2fd37"
+DRAMA3_SGLANG_OMNI_REF = "8200f49934d66de591c035cab1c626c0600905fa"  # v0.1.9
 DRAMA3_HF_REPO = "fishaudio/drama-3"
 DRAMA3_HF_REVISION = "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
 COMFY_KITCHEN_VERSION = "0.2.39"
