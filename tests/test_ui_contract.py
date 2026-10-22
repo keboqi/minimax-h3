@@ -628,7 +628,8 @@ class UiContractTests(unittest.TestCase):
             for component in self.config["components"]
             if component.get("props", {}).get("label") == "Gemini model"
         ]
-        self.assertEqual(len(models), 8)  # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, MOSS-Image, Drama 3
+        # H3, LTX, Qwen, Music 3, YuE2, FLUX 3, MOSS-Image, Drama 3, Dub & Translate
+        self.assertEqual(len(models), 9)
         for model in models:
             self.assertEqual(model["props"]["value"], "gemini-3.8-flash")
 

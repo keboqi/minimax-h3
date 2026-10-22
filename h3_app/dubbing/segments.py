@@ -186,21 +186,28 @@ def _truthy(value) -> bool:
     return bool(value)
 
 
-def from_rows(rows: Any) -> list[dict]:
-    """Segments from the editor's rows (lists, or a pandas DataFrame), keeping the user's edits."""
+def row_segment(row) -> dict | None:
+    """One editor row as a segment; None while it lacks a readable start, end or any text."""
+    start, end = parse_time(_cell(row, 1)), parse_time(_cell(row, 2))
+    source, translation = str(_cell(row, 4)).strip(), str(_cell(row, 5)).strip()
+    if start is None or end is None or not (source or translation):
+        return None
+    return {"start": start, "end": end, "speaker": _cell(row, 3) or DEFAULT_SPEAKER,
+            "source": source, "translation": translation, "dub": _truthy(_cell(row, 6, True))}
+
+
+def table_rows(rows: Any) -> list:
+    """The editor's rows as lists, from lists, a pandas DataFrame or Gradio's ``{"data": ...}``."""
     if hasattr(rows, "values") and hasattr(rows, "columns"):
         rows = rows.values.tolist()
     if isinstance(rows, dict):
         rows = rows.get("data") or []
-    segments = []
-    for row in rows or []:
-        start, end = parse_time(_cell(row, 1)), parse_time(_cell(row, 2))
-        source, translation = str(_cell(row, 4)).strip(), str(_cell(row, 5)).strip()
-        if start is None or end is None or not (source or translation):
-            continue
-        segments.append({"start": start, "end": end, "speaker": _cell(row, 3) or DEFAULT_SPEAKER,
-                         "source": source, "translation": translation, "dub": _truthy(_cell(row, 6, True))})
-    return normalize(segments)
+    return list(rows or [])
+
+
+def from_rows(rows: Any) -> list[dict]:
+    """Segments from the editor's rows (lists, or a pandas DataFrame), keeping the user's edits."""
+    return normalize(segment for segment in map(row_segment, table_rows(rows)) if segment is not None)
 
 
 def parse_line_numbers(text: str, count: int) -> list[int]:

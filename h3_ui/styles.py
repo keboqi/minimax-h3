@@ -489,6 +489,18 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
   .h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] { gap: 4px; }
   .h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button { flex-direction: column; justify-content: center; gap: 4px; min-height: 64px; padding: 6px 2px; font-size: 11px; line-height: 1.2; text-align: center; white-space: normal; }
 }
+/* Dub & Translate: Song's stepper with three steps (Source, Review lines, Dub). */
+.h3-workspace .h3-dub .h3-song-steps > .tab-wrapper > [role="tablist"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.h3-workspace .h3-dub-summary p { margin: 0; padding: 10px 12px; border: 1px solid var(--h3-border); border-radius: 10px; background: var(--h3-muted-surface); font-size: 13px; color: var(--h3-muted); }
+.h3-workspace .h3-dub-summary strong { color: var(--h3-text); }
+.h3-workspace .h3-dub-status p { margin: 0; font-size: 13px; color: var(--h3-muted); overflow-wrap: anywhere; }
+.h3-workspace .h3-dub-status p:empty { display: none; }
+.h3-workspace .h3-dub-lines { border-radius: 12px; }
+.h3-workspace .h3-dub-lines tbody td:first-child { color: var(--h3-muted); font-variant-numeric: tabular-nums; }
+.h3-workspace .h3-dub-lines tbody td:is(:nth-child(2), :nth-child(3)) { font-variant-numeric: tabular-nums; }
+.h3-workspace .h3-dub-line-actions { flex-wrap: wrap; gap: 6px; }
+.h3-workspace .h3-dub-line-actions > button { flex: 1 1 120px !important; min-width: 0 !important; border-radius: 8px; }
+.h3-workspace .h3-dub-library > button { align-self: flex-end; min-height: 40px; }
 /* Drama 3: Script over Cast on the left beside a sticky Speak stage,
    a Lines review below, and visible outlines on the small secondary buttons. */
 .h3-workspace .h3-drama3 .styler { gap: 8px; background: transparent; }

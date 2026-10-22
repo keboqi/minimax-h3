@@ -95,6 +95,21 @@ def prune(runtime, *, now: float | None = None) -> None:
             shutil.rmtree(folder, ignore_errors=True)
 
 
+def recent(runtime, limit: int = 30) -> list[dict]:
+    """Manifests of analyzed sessions (those with lines), most recently changed first."""
+    root = sessions_dir(runtime)
+    found = []
+    for manifest in root.glob(f"*/{MANIFEST}") if root.is_dir() else ():
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("segments") and data.get("id") == manifest.parent.name:
+            found.append(data)
+    found.sort(key=lambda data: data.get("updated") or 0, reverse=True)
+    return found[:limit]
+
+
 def create(runtime, source: str | Path, *, video: bool) -> Session:
     """Copy the source in, so the session outlives the upload that started it."""
     source = Path(source)

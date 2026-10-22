@@ -253,8 +253,8 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
                                               custom_prompt=""))
         session.segments, session.data["speakers"] = found, speakers
         session.save()
-        if request.translate and request.translator == TRANSLATOR_HYMT:
-            # Gemini already translated; Hy-MT only fills lines it left empty.
+        if request.translate:
+            # Gemini already translated; the translator only fills lines it left empty.
             missing = [i for i, s in enumerate(session.segments) if s["source"] and not s["translation"]]
             if missing:
                 yield from _translate(session, missing, request, runtime=runtime, free_gpu=free_gpu,
@@ -322,16 +322,23 @@ def _translate(session: sessions.Session, indices: list[int], request, *, runtim
 
 def retranslate(session_id: str, indices: list[int] | None, request, *, runtime, free_gpu,
                 hf_token=None) -> Iterator[str | Analysis]:
-    """Translate the chosen lines again; without a choice, only lines that have no translation."""
+    """Translate the chosen lines again; without a choice, only lines that have no translation.
+
+    A new target language makes every saved translation stale, so then every line is translated.
+    """
     session = sessions.load(runtime, session_id)
+    previous = session.data.get("target_language") or ""
     if request.target_language:
         session.data["target_language"] = request.target_language
+    changed = bool(request.target_language) and request.target_language != previous
     lines = session.segments
     if indices is None:
-        indices = [i for i, s in enumerate(lines) if s["source"] and not s["translation"]]
+        indices = [i for i, s in enumerate(lines) if s["source"] and (changed or not s["translation"])]
     indices = [i for i in indices if lines[i]["source"]]
     if not indices:
-        yield Analysis(session, "Every line already has a translation. Enter line numbers to translate again.")
+        target = session.data.get("target_language") or "the target language"
+        yield Analysis(session, f"Every line already has a translation into {target}. "
+                                "Select lines to translate them again.")
         return
     yield from _translate(session, indices, request, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
     yield Analysis(session, f"Translated {len(indices)} line(s) into {session.data['target_language']}.")

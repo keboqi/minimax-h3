@@ -1,4 +1,9 @@
-"""Dub & Translate: source, transcription, line review and dubbing in four steps."""
+"""Dub & Translate as three steps: Source, Review lines and Dub.
+
+The steps share Song's stepper: each pairs a working card with an action card
+that holds the step's next move. A finished analysis, or a reopened session,
+opens Review lines.
+"""
 
 from __future__ import annotations
 
@@ -14,13 +19,21 @@ from h3_app.dubbing.pipeline import (
 )
 from h3_app.dubbing.segments import TABLE_HEADERS, TABLE_TYPES
 
+from .song_controls import SongSteps, card_heading, song_intro, song_steps
+
+SOURCE, LINES, DUB = range(3)
+STEPS_ID = "h3-dub-steps"
+
 
 @dataclass(frozen=True)
 class DubbingView:
+    steps: SongSteps
     session: gr.Textbox
     source: gr.File
     library: gr.Dropdown
     refresh_library: gr.Button
+    sessions: gr.Dropdown
+    reopen: gr.Accordion
     separate: gr.Checkbox
     separator_model: gr.Dropdown
     pipeline: gr.Radio
@@ -38,15 +51,17 @@ class DubbingView:
     analyze: gr.Button
     stop_analyze: gr.Button
     analyze_status: gr.Markdown
+    summary: gr.Markdown
     lines: gr.Dataframe
-    table_status: gr.Markdown
     line_numbers: gr.Textbox
     retranslate: gr.Button
     preview: gr.Button
+    new_take: gr.Button
     stop_preview: gr.Button
+    line_status: gr.Markdown
     preview_audio: gr.Audio
     voice_mode: gr.Radio
-    preset: gr.Dropdown
+    preset: gr.Radio
     timing: gr.Radio
     max_speed: gr.Slider
     parallel: gr.Slider
@@ -55,6 +70,7 @@ class DubbingView:
     keep_original: gr.Checkbox
     burn_subtitles: gr.Checkbox
     regenerate: gr.Textbox
+    dub_summary: gr.Markdown
     run: gr.Button
     stop: gr.Button
     status: gr.Markdown
@@ -63,120 +79,174 @@ class DubbingView:
     files: gr.File
 
 
-def _step(number: int, title: str, text: str) -> None:
-    gr.Markdown(f"### {number} · {title}\n{text}", elem_classes=["h3-dub-step"])
+def opened_session_js(steps: SongSteps) -> str:
+    """Browser code that opens Review lines when a different session arrives.
+
+    Analysis reports errors and interruptions as status lines, so its event always
+    ends cleanly; only a new session id means there are new lines to review.
+    """
+    return (
+        "(id) => { "
+        f"const root = document.getElementById({steps.tabs.elem_id!r}); "
+        "if (!id || !root || root.dataset.session === id) return; "
+        "root.dataset.session = id; "
+        f"({steps.go(LINES)})(); }}"
+    )
 
 
 def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default_gemini_model: str) -> DubbingView:
+    root.elem_classes = [*root.elem_classes, "h3-song", "h3-dub"]
     with root:
-        gr.Markdown(
-            "## Dub & Translate\nTranslate the speech in a video or recording and dub it with each speaker's "
-            "own cloned voice. Analyze the source, review and edit every line, then dub. Unchanged lines "
-            "reuse their saved takes, so you can fix a few lines and dub again quickly.",
-            elem_classes=["h3-view-heading"],
-        )
+        song_intro("Dub & Translate", "Hear it in another language.",
+                   "Bring a video or recording, check every translated line, then dub it in each speaker's "
+                   "own voice.", "DUB STUDIO")
         session = gr.Textbox(visible=False)
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=1, min_width=320):
-                _step(1, "Source", "Upload a video or audio file, or pick one from Media "
-                                   "(downloads from **Media → Download from a URL** appear there).")
-                source = gr.File(label="Video or audio", file_count="single", file_types=["video", "audio"],
-                                 type="filepath", height=110)
-                with gr.Row(equal_height=True):
-                    library = gr.Dropdown([], value=None, label="Or pick from Media", scale=4,
-                                          info="Used when nothing is uploaded above.")
-                    refresh_library = gr.Button("Refresh", size="sm", scale=0, min_width=90)
-                with gr.Row(equal_height=True):
-                    separate = gr.Checkbox(True, label="Separate vocals from the background",
-                                           info="Keeps the music and effects under the dub and gives clean "
-                                                "voice references. Off: the original is ducked under the dub.")
-                    separator_model = gr.Dropdown(list(SEPARATOR_MODELS), value="Balanced (BS-Roformer)",
-                                                  label="Separation model")
-            with gr.Column(scale=1, min_width=320):
-                _step(2, "Transcribe and translate", "Local runs OmniVAD, Qwen3-ASR with ForcedAligner timing "
-                                                     "and Hy-MT on this server; Gemini also labels speakers.")
-                pipeline = gr.Radio(list(PIPELINES), value=PIPELINE_LOCAL, label="Transcription")
-                with gr.Row():
-                    source_language = gr.Dropdown(list(SOURCE_LANGUAGES), value="Auto-detect",
-                                                  label="Spoken language")
-                    target_language = gr.Dropdown(list(TARGET_LANGUAGES), value="English", label="Dub into",
-                                                  allow_custom_value=True)
-                with gr.Row(equal_height=True):
-                    translate = gr.Checkbox(True, label="Translate while transcribing",
-                                            info="Off: lines keep only the original text; translate later.")
-                    translator = gr.Dropdown(list(TRANSLATORS), value=TRANSLATOR_HYMT, label="Translator")
-                with gr.Group(visible=False) as gemini:
-                    with gr.Row():
-                        gemini_model = gr.Dropdown(list(gemini_models), value=default_gemini_model,
-                                                   label="Gemini transcription model")
-                        api_key = gr.Textbox(label="Gemini API key for this session", type="password",
-                                             placeholder="Uses GEMINI_API_KEY when empty")
-                with gr.Accordion("Local transcription options", open=False) as local:
-                    aligner = gr.Checkbox(True, label="Word timing with Qwen3-ForcedAligner",
-                                          info="Splits long speech into subtitle-sized lines at sentence ends.")
-                    merge_gap = gr.Slider(0.0, 1.5, value=0.35, step=0.05, label="Join pauses shorter than (s)",
-                                          info="Speech separated by a shorter pause is transcribed together.")
-                notes = gr.Textbox(label="Translation notes", lines=2,
-                                   placeholder="Names, terms or tone to keep, e.g. 'Keep the name Mei; casual tone.'")
-                with gr.Row():
-                    analyze = gr.Button("Analyze source", variant="primary", scale=3)
-                    stop_analyze = gr.Button("Interrupt", scale=1, interactive=False)
-                analyze_status = gr.Markdown()
-        _step(3, "Review lines", "Edit times, speakers, the original text or the translation; changes save as "
-                                 "you type. Untick **Dub** to keep a line's original voice.")
-        lines = gr.Dataframe(headers=list(TABLE_HEADERS), datatype=list(TABLE_TYPES), value=[], type="array",
-                             interactive=True, wrap=True, max_height=560, label="Lines",
-                             column_widths=["5%", "9%", "9%", "9%", "30%", "32%", "6%"])
-        table_status = gr.Markdown()
-        with gr.Row(equal_height=True):
-            line_numbers = gr.Textbox(label="Line numbers", placeholder="e.g. 3, 5-7", scale=2,
-                                      info="For Translate again and Preview. Empty translates only untranslated lines.")
-            retranslate = gr.Button("Translate again", scale=1)
-            preview = gr.Button("Preview line", scale=1)
-            stop_preview = gr.Button("Interrupt", scale=0, min_width=110, interactive=False)
-        preview_audio = gr.Audio(label="Line preview (fitted to its timing)", type="numpy", interactive=False)
-        _step(4, "Dub", "Voices are cloned from the original audio with Drama 3, and each take is fitted to "
-                        "its line's timing.")
-        with gr.Row():
-            voice_mode = gr.Radio(list(VOICE_MODES), value=VOICE_LINE, label="Voice",
-                                  info="Each line keeps its own delivery; one voice per speaker is steadier. "
-                                       "Lines shorter than 2 s always use their speaker's voice.")
-            preset = gr.Dropdown(list(VOICE_PRESETS), value="Balance", label="Speech preset")
-        with gr.Row():
-            timing = gr.Radio(list(TIMINGS), value=TIMING_MATCH, label="Timing",
-                              info="Match stretches every take with FFmpeg to start and end exactly where the "
-                                   "original line does. Natural keeps each take's pace and only speeds up long ones, "
-                                   "using the pause before the next line.")
-            max_speed = gr.Slider(1.0, 2.0, value=1.35, step=0.05, label="Maximum speed-up", visible=False,
-                                  info="Natural pace only. Takes still too long overlap the next line.")
-            parallel = gr.Slider(1, 32, value=8, step=1, label="Parallel requests")
-        with gr.Row():
-            speech_volume = gr.Slider(0, 200, value=100, step=5, label="Dub volume (%)")
-            background_volume = gr.Slider(0, 200, value=100, step=5, label="Background volume (%)")
-        with gr.Row():
-            keep_original = gr.Checkbox(True, label="Keep the original audio as a second track")
-            burn_subtitles = gr.Checkbox(False, label="Burn translated subtitles into the video",
-                                         info="Re-encodes the video. Selectable subtitle tracks are always added.")
-        regenerate = gr.Textbox(label="Fresh takes for lines", placeholder="e.g. 4, 9-10",
-                                info="These lines get new takes even when unchanged.")
-        with gr.Row():
-            run = gr.Button("Generate dub", variant="primary", scale=3, elem_classes=["h3-primary-action"])
-            stop = gr.Button("Interrupt", scale=1, interactive=False)
-        status = gr.Markdown()
-        with gr.Row(equal_height=False):
-            video = gr.Video(label="Dubbed video", interactive=False)
-            with gr.Column():
-                audio = gr.Audio(label="Dubbed audio", type="filepath", interactive=False)
-                files = gr.File(label="Subtitles", file_count="multiple", interactive=False)
+        steps = song_steps(STEPS_ID)
+        with steps.tabs:
+            with steps.step(SOURCE, "Source"):
+                with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
+                    with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
+                        card_heading("What should be dubbed?",
+                                     "Upload a video or recording, or pick one from Media. Downloads from "
+                                     "Media → Download from a URL appear there.")
+                        source = gr.File(label="Video or audio", file_count="single", file_types=["video", "audio"],
+                                         type="filepath", height=120)
+                        with gr.Row(equal_height=True, elem_classes=["h3-dub-library"]):
+                            library = gr.Dropdown([], value=None, label="Or pick from Media", scale=4)
+                            refresh_library = gr.Button("Refresh", size="sm", scale=0, min_width=90)
+                        with gr.Row():
+                            source_language = gr.Dropdown(list(SOURCE_LANGUAGES), value="Auto-detect",
+                                                          label="Spoken language")
+                            target_language = gr.Dropdown(list(TARGET_LANGUAGES), value="English",
+                                                          label="Dub into", allow_custom_value=True)
+                        notes = gr.Textbox(label="Translation notes", lines=2,
+                                           placeholder="Names, terms or tone to keep, e.g. 'Keep the name Mei; "
+                                                       "casual tone.'")
+                        separate = gr.Checkbox(True, label="Separate vocals from the background",
+                                               info="Keeps music and effects under the dub and gives clean voice "
+                                                    "references. Off: the original is ducked under the dub.")
+                        separator_model = gr.Dropdown(list(SEPARATOR_MODELS), value="Balanced (BS-Roformer)",
+                                                      label="Separation model")
+                        with gr.Accordion("Continue an earlier session", open=False) as reopen:
+                            gr.Markdown("Analyzed sessions are kept for 14 days. Pick one to review and dub "
+                                        "its lines again.", elem_classes=["h3-song-hint"])
+                            sessions = gr.Dropdown([], value=None, label="Earlier sessions", show_label=False)
+                    with gr.Column(scale=2, min_width=280, elem_classes=["h3-preview-panel", "h3-song-stage"]):
+                        card_heading("Find and translate the lines",
+                                     "Finds who speaks when, transcribes every line and translates it. "
+                                     "You review each line next.")
+                        pipeline = gr.Radio(list(PIPELINES), value=PIPELINE_LOCAL, label="Transcription",
+                                            info="Local runs on this server. Gemini also tells speakers apart.")
+                        with gr.Group(visible=False) as gemini:
+                            gemini_model = gr.Dropdown(list(gemini_models), value=default_gemini_model,
+                                                       label="Gemini model")
+                            api_key = gr.Textbox(label="Gemini API key for this session", type="password",
+                                                 placeholder="Uses GEMINI_API_KEY when empty")
+                        with gr.Row(equal_height=True):
+                            translate = gr.Checkbox(True, label="Translate now",
+                                                    info="Off: transcribe only; translate on the next step.")
+                            translator = gr.Dropdown(list(TRANSLATORS), value=TRANSLATOR_HYMT, label="Translator")
+                        with gr.Accordion("Local transcription options", open=False) as local:
+                            aligner = gr.Checkbox(True, label="Word timing with Qwen3-ForcedAligner",
+                                                  info="Splits long speech into subtitle-sized lines at "
+                                                       "sentence ends.")
+                            merge_gap = gr.Slider(0.0, 1.5, value=0.35, step=0.05,
+                                                  label="Join pauses shorter than (s)",
+                                                  info="Speech separated by a shorter pause is transcribed "
+                                                       "together.")
+                        with gr.Column(elem_classes=["h3-action-dock"]):
+                            with gr.Row(elem_classes=["h3-generation-buttons"]):
+                                analyze = gr.Button("Analyze source", variant="primary", scale=3,
+                                                    elem_classes=["h3-primary-action"])
+                                stop_analyze = gr.Button("Interrupt", scale=1, interactive=False)
+                            analyze_status = gr.Markdown(elem_classes=["h3-dub-status"])
+                        with gr.Row(elem_classes=["h3-song-step-nav"]):
+                            steps.button("Review lines →", LINES)
+            with steps.step(LINES, "Review lines"):
+                card_heading("Check every line",
+                             "Click a line to pick it for the actions below. Edit times, speakers, the original "
+                             "or the translation; changes save as you type. Untick Dub to keep a line's "
+                             "original voice.")
+                summary = gr.Markdown("Analyze a source to see its lines here.", elem_classes=["h3-dub-summary"])
+                lines = gr.Dataframe(headers=list(TABLE_HEADERS), datatype=list(TABLE_TYPES), value=[], type="array",
+                                     interactive=True, wrap=True, max_height=560, label="Lines", show_label=False,
+                                     static_columns=[0], column_widths=["5%", "9%", "9%", "9%", "30%", "32%", "6%"],
+                                     elem_classes=["h3-dub-lines"])
+                with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
+                    with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
+                        card_heading("Work on lines",
+                                     "Preview hears a line fitted to its timing; New take records it again, and "
+                                     "the dub keeps the newest take.")
+                        line_numbers = gr.Textbox(label="Lines", placeholder="Click a line, or type 3, 5-7",
+                                                  info="Translate again with no lines picked fills the "
+                                                       "untranslated ones, or every line after you change "
+                                                       "Dub into.")
+                        with gr.Row(elem_classes=["h3-dub-line-actions"]):
+                            preview = gr.Button("Preview", variant="primary")
+                            new_take = gr.Button("New take")
+                            retranslate = gr.Button("Translate again")
+                            stop_preview = gr.Button("Interrupt", interactive=False)
+                        line_status = gr.Markdown(elem_classes=["h3-dub-status"])
+                    with gr.Column(scale=2, min_width=280, elem_classes=["h3-preview-panel", "h3-song-stage"]):
+                        card_heading("Line preview", "The picked line as it will play in the dub.")
+                        preview_audio = gr.Audio(label="Line preview", show_label=False, type="numpy",
+                                                 interactive=False)
+                        with gr.Row(elem_classes=["h3-song-step-nav"]):
+                            steps.button("← Source", SOURCE)
+                            steps.button("Next: dub →", DUB, variant="primary")
+            with steps.step(DUB, "Dub"):
+                with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
+                    with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
+                        card_heading("Voices and timing", "Voices are cloned from the original audio with "
+                                                          "Drama 3, and each take is fitted to its line.")
+                        voice_mode = gr.Radio(list(VOICE_MODES), value=VOICE_LINE, label="Voice",
+                                              info="Each line keeps its own delivery; one voice per speaker is "
+                                                   "steadier. Lines under 2 s always use their speaker's voice.")
+                        preset = gr.Radio(list(VOICE_PRESETS), value="Balance", label="Delivery")
+                        timing = gr.Radio(list(TIMINGS), value=TIMING_MATCH, label="Timing",
+                                          info="Match starts and ends every take exactly where the original line "
+                                               "does. Natural keeps each take's pace and only speeds up long ones.")
+                        max_speed = gr.Slider(1.0, 2.0, value=1.35, step=0.05, label="Maximum speed-up",
+                                              visible=False,
+                                              info="Takes still too long overlap the next line.")
+                        card_heading("Mix and output")
+                        with gr.Row():
+                            speech_volume = gr.Slider(0, 200, value=100, step=5, label="Dub volume (%)")
+                            background_volume = gr.Slider(0, 200, value=100, step=5, label="Background volume (%)")
+                        keep_original = gr.Checkbox(True, label="Keep the original audio as a second track")
+                        burn_subtitles = gr.Checkbox(False, label="Burn translated subtitles into the video",
+                                                     info="Re-encodes the video. Selectable subtitle tracks are "
+                                                          "always added.")
+                        with gr.Accordion("Advanced", open=False):
+                            regenerate = gr.Textbox(label="Fresh takes for lines", placeholder="e.g. 4, 9-10",
+                                                    info="These lines get new takes even when unchanged.")
+                            parallel = gr.Slider(1, 32, value=8, step=1, label="Parallel requests")
+                    with gr.Column(scale=2, min_width=280, elem_classes=["h3-preview-panel", "h3-song-stage"]):
+                        card_heading("Dub it", "Unchanged lines reuse their saved takes, so dubbing again after "
+                                               "a few fixes is quick.")
+                        dub_summary = gr.Markdown("Analyze a source first.", elem_classes=["h3-dub-summary"])
+                        with gr.Column(elem_classes=["h3-action-dock"]):
+                            with gr.Row(elem_classes=["h3-generation-buttons"]):
+                                run = gr.Button("Generate dub", variant="primary", scale=3,
+                                                elem_classes=["h3-primary-action"])
+                                stop = gr.Button("Interrupt", scale=1, interactive=False)
+                            status = gr.Markdown(elem_classes=["h3-dub-status"])
+                        video = gr.Video(label="Dubbed video", interactive=False)
+                        audio = gr.Audio(label="Dubbed audio", type="filepath", interactive=False)
+                        files = gr.File(label="Subtitles", file_count="multiple", interactive=False, height=96)
+                        with gr.Row(elem_classes=["h3-song-step-nav"]):
+                            steps.button("← Fix lines", LINES)
+                        gr.Markdown("Every dub is also saved to **Media**.", elem_classes=["h3-song-hint"])
     run.h3_stop = stop
     analyze.h3_stop = stop_analyze
-    preview.h3_stop = retranslate.h3_stop = stop_preview
+    preview.h3_stop = new_take.h3_stop = retranslate.h3_stop = stop_preview
     return DubbingView(
-        session, source, library, refresh_library, separate, separator_model, pipeline, source_language,
-        target_language, translate, translator, gemini, gemini_model, api_key, local, aligner, merge_gap, notes,
-        analyze, stop_analyze, analyze_status, lines, table_status, line_numbers, retranslate, preview,
-        stop_preview, preview_audio, voice_mode, preset, timing, max_speed, parallel, speech_volume, background_volume,
-        keep_original, burn_subtitles, regenerate, run, stop, status, video, audio, files,
+        steps, session, source, library, refresh_library, sessions, reopen, separate, separator_model, pipeline,
+        source_language, target_language, translate, translator, gemini, gemini_model, api_key, local, aligner,
+        merge_gap, notes, analyze, stop_analyze, analyze_status, summary, lines, line_numbers, retranslate, preview,
+        new_take, stop_preview, line_status, preview_audio, voice_mode, preset, timing, max_speed, parallel,
+        speech_volume, background_volume, keep_original, burn_subtitles, regenerate, dub_summary, run, stop, status,
+        video, audio, files,
     )
 
 

@@ -2,12 +2,18 @@
 
 **Dub & Translate** translates the speech in a video or recording and dubs it
 with each speaker's own cloned voice. Open **Create** and choose the **Dub & Translate** task, after
-Soundstage. It works in four steps.
+Soundstage. It works in three steps, shown as a step strip: **Source**, **Review
+lines** and **Dub**. A finished analysis opens Review lines.
 
 ## 1 · Source
 
-Upload a video or audio file, or pick one from **Or pick from Media**. To use an
-online video, first download it in **Media → Download from a URL** (see below).
+Upload a video or audio file, or pick one from **Or pick from Media**; choosing
+one clears the other. To use an online video, first download it in **Media →
+Download from a URL** (see below). Choose the **Spoken language**, the language
+to **Dub into**, and any **Translation notes**.
+
+**Continue an earlier session** reopens an analyzed session, with its edited
+lines and dub language, for example after reloading the page.
 
 **Separate vocals from the background** (on by default) splits the soundtrack
 with audio-separator. The music and effects then stay under the dub, and voice
@@ -16,7 +22,7 @@ default) and Quality (Mel-Band-Roformer). With separation off, the original
 soundtrack is ducked under the dub, so the original voices remain faintly
 audible.
 
-## 2 · Transcribe and translate
+The action card on the right, **Find and translate the lines**, chooses how:
 
 - **Local: Qwen3-ASR + aligner + Hy-MT** runs entirely on this server. OmniVAD
   finds speech, and pauses shorter than **Join pauses shorter than** become one
@@ -30,36 +36,42 @@ audible.
   returns timed lines with speaker labels and their translations. The key comes
   from `GEMINI_API_KEY`, or from **Gemini API key for this session**.
 
-**Translator** chooses who translates lines later, in **Translate again**.
-**Translation notes** pass names, terms and tone to the translator. Turn off
-**Translate while transcribing** to transcribe only.
+**Translator** chooses who translates lines Gemini left empty, and lines later
+in **Translate again**. **Translation notes** pass names, terms and tone to the
+translator. Turn off **Translate now** to transcribe only.
 
 The first local run installs the isolated tools environment (see
 [Runtime](#runtime)) and downloads the models into
 `ComfyUI/models/dubbing`.
 
-## 3 · Review lines
+## 2 · Review lines
 
-Every line has Start, End, Speaker, Original, Translation and **Dub**. Edits
-save to the session as you type; when an edit changes the order (a new Start
-time) or removes a row, the table is renumbered to match. Edits made while a
-job runs are kept: jobs write only their own results. Untick **Dub** to keep a
+Every line has Start, End, Speaker, Original, Translation and **Dub**. The
+summary above the table counts the lines ready to dub, the speakers and the
+lines still untranslated. Edits save to the session as you type; when an edit
+changes the order (a new Start time) or removes a row, the table is renumbered
+to match. A new row is saved once it has a start, an end and text. Edits made
+while a job runs are kept: jobs write only their own results. Untick **Dub** to keep a
 line's original voice. With separation, every line that is not voiced (unticked,
 untranslated or failed) keeps its original voice; without stems the original
 soundtrack plays under every line anyway.
 
-- **Translate again** retranslates the listed lines (for example `3, 5-7`).
-  With the box empty, it fills only lines that have no translation.
-- **Preview line** voices the first listed line, fits it to its timing and plays
-  it.
+Click a line to pick it for the line actions, or type lines such as `3, 5-7`:
 
-## 4 · Dub
+- **Preview** voices the first picked line, fits it to its timing and plays it.
+  It reuses the line's saved take.
+- **New take** records the line again; the dub then uses the new take.
+- **Translate again** retranslates the picked lines. With none picked, it fills
+  lines that have no translation, or translates every line when **Dub into**
+  has changed since the last translation.
+
+## 3 · Dub
 
 - **Voice**: *Each line's own voice* clones every line from its original audio,
   which keeps each line's delivery. *One voice per speaker* uses each speaker's
   best clip (the longest one between 3 and 15 seconds), which is steadier.
   Lines shorter than 2 seconds always use their speaker's clip.
-- **Speech preset**: Strict, Balance (default) or Expressive Drama 3 sampling.
+- **Delivery**: Strict, Balance (default) or Expressive Drama 3 sampling.
 - **Timing**:
   - *Match the original timing* (default) stretches every take with FFmpeg's
     `atempo`, pitch preserved, so it starts and ends exactly where the original
@@ -77,8 +89,9 @@ soundtrack plays under every line anyway.
 - **Keep the original audio as a second track** and **Burn translated subtitles
   into the video** shape the video. Burning re-encodes it with x264; selectable
   translated and original subtitle tracks are always added.
-- **Fresh takes for lines** generates new takes for those lines even when they
-  are unchanged.
+- **Advanced → Fresh takes for lines** generates new takes for those lines even
+  when they are unchanged. **Parallel requests** sets how many lines Drama 3
+  voices at once.
 
 Every take is saved by its text, voice clip and preset. Dubbing again after a
 few edits voices only the changed lines. Results go to Media
@@ -116,7 +129,7 @@ choice.
   GPU job stops it, and the dub's speech step stops it before Drama 3 starts.
   When VRAM is short, loading a tool first unloads the worker's other models,
   then frees ComfyUI, the VoiceDesign worker and a loaded Drama 3 server.
-- Analyze, line actions (Translate again, Preview line) and Generate dub are
+- Analyze, line actions (Preview, New take, Translate again) and Generate dub are
   separate job families: each **Interrupt** stops only its own step. A
   download's Interrupt stops yt-dlp at its next progress update.
 - Speech uses Drama 3 on SGLang-Omni, so dubbing requires Linux, like Soundstage.

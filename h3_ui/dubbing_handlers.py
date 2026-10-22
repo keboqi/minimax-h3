@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import threading
+import time
 from typing import Any, Callable
 
 import gradio as gr
@@ -70,8 +71,8 @@ def _failed(exc: BaseException) -> str:
 # ---------------------------------------------------------------------------
 
 
-def library_choices():
-    """Media videos and audio, newest first, as (label, path) choices."""
+def library_choices(current=None):
+    """Media videos and audio, newest first, as (label, path) choices; a still-listed pick stays chosen."""
     choices = []
     for mode in ("Video", "Audio"):
         try:
@@ -79,43 +80,110 @@ def library_choices():
         except Exception:
             paths = []
         choices += [(f"{mode} · {Path(path).name}", str(path)) for path in paths[:LIBRARY_LIMIT]]
+    return gr.update(choices=choices, value=current if current in {path for _label, path in choices} else None)
+
+
+def session_choices():
+    """Analyzed sessions to reopen, most recent first."""
+    choices = []
+    for data in sessions.recent(_runtime()):
+        lines = data.get("segments") or []
+        when = time.strftime("%b %d, %H:%M", time.localtime(data.get("updated") or data.get("created") or 0))
+        target = data.get("target_language") or "untranslated"
+        choices.append((f"{data.get('name') or 'Untitled'} · {len(lines)} line(s) · {target} · {when}", data["id"]))
     return gr.update(choices=choices, value=None)
+
+
+def summary(session: sessions.Session) -> str:
+    """One line on what the next dub will voice."""
+    lines = session.segments
+    if not lines:
+        return "No lines yet."
+    ready = sum(bool(s["translation"]) and s.get("dub", True) for s in lines)
+    untranslated = sum(not s["translation"] for s in lines)
+    kept = sum(bool(s["translation"]) and not s.get("dub", True) for s in lines)
+    speakers = len({s["speaker"] for s in lines})
+    target = session.data.get("target_language") or "the target language"
+    parts = [f"**{ready} of {len(lines)} line(s) ready** to dub into {target}", f"{speakers} speaker(s)"]
+    if untranslated:
+        parts.append(f"{untranslated} untranslated")
+    if kept:
+        parts.append(f"{kept} keep the original voice")
+    return " · ".join(parts)
 
 
 def save_lines(session_id, rows):
     """Save the editor's rows as the session's lines (runs on every edit).
 
-    Outputs: line rows, status. Saving sorts lines by time and drops empty ones; when
-    that changes the table's order or numbering, the table is redrawn so the line
-    numbers used by Preview, Translate again and Fresh takes match what is saved.
+    Outputs: line rows, summary. Saving sorts lines by time and drops empty ones; when
+    that changes the order or numbering of the finished rows, the table is redrawn so
+    the line numbers used by the line actions match what is saved. A row still being
+    filled in (no times or text yet) stays in the editor until it is complete.
     """
     if not str(session_id or "").strip():
         return gr.skip(), "Analyze a source first; edits apply to an analyzed session."
-    rows = rows.values.tolist() if hasattr(rows, "columns") else list(rows or [])
+    rows = segment_tools.table_rows(rows)
     try:
         session = sessions.update_segments(_runtime(), session_id, segment_tools.from_rows(rows))
     except (H3Error, ValueError) as exc:
         return gr.skip(), f"**Not saved:** {exc}"
-    lines = session.segments
-    saved = segment_tools.to_rows(lines)
+    saved = segment_tools.to_rows(session.segments)
+    finished = [row for row in rows if segment_tools.row_segment(row) is not None]
 
     def layout(table):
         return [(row[0] if row else None, segment_tools.parse_time(row[1]) if len(row) > 1 else None)
                 for row in table]
 
-    ready = sum(bool(s["translation"]) and s.get("dub", True) for s in lines)
-    return (saved if layout(rows) != layout(saved) else gr.skip()), \
-        f"Saved {len(lines)} line(s); {ready} ready to dub."
+    redraw = layout(finished) != layout(saved)
+    unfinished = 0 if redraw else len(rows) - len(finished)
+    note = (f" · {unfinished} unfinished row(s) not saved yet: each needs a start, an end and text"
+            if unfinished else "")
+    return (saved if redraw else gr.skip()), summary(session) + note
+
+
+def open_session(session_id):
+    """Outputs: session id, line rows, status, summary, target language."""
+    if not session_id:
+        return gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
+    try:
+        session = sessions.load(_runtime(), session_id)
+    except H3Error as exc:
+        return gr.skip(), gr.skip(), f"**Error:** {exc}", gr.skip(), gr.skip()
+    return (session.id, segment_tools.to_rows(session.segments),
+            f"Opened **{session.data.get('name') or 'the session'}** with {len(session.segments)} line(s).",
+            summary(session), session.data.get("target_language") or gr.skip())
+
+
+def clear_results():
+    """A new session makes the previous one's line picks, preview and dub stale.
+
+    Outputs: line numbers, line status, preview, fresh takes, video, audio, subtitles, dub status.
+    """
+    return "", "", None, "", gr.update(value=None, visible=True), None, None, ""
+
+
+def select_line(event: gr.SelectData):
+    """Clicking a row picks its line for the line actions; an unsaved row has no number yet."""
+    row = getattr(event, "row_value", None)
+    if row is not None:
+        number = row[0] if row else None
+    else:
+        index = event.index[0] if isinstance(event.index, (list, tuple)) else event.index
+        number = None if index is None else int(index) + 1
+    try:
+        return str(int(number))
+    except (TypeError, ValueError):
+        return gr.skip()
 
 
 def _analysis_values(result: pipeline.Analysis):
-    # The table's status still describes the previous session (or none): reset it.
-    return result.session.id, segment_tools.to_rows(result.session.segments), result.message, ""
+    return (result.session.id, segment_tools.to_rows(result.session.segments), result.message,
+            summary(result.session))
 
 
 def analyze_source(source, library, separate, separator_model, transcription, source_language, target_language,
                    translate, translator, aligner, merge_gap, gemini_model, api_key, notes):
-    """Outputs: session id, line rows, status, table status."""
+    """Outputs: session id, line rows, status, summary."""
     chosen = source or library
     try:
         if not chosen:
@@ -134,7 +202,7 @@ def analyze_source(source, library, separate, separator_model, transcription, so
 
 
 def translate_lines(session_id, line_numbers, target_language, translator, gemini_model, api_key, notes):
-    """Outputs: line rows, status."""
+    """Outputs: line rows, line status, summary."""
     try:
         session = sessions.load(_runtime(), session_id)
         indices = segment_tools.parse_line_numbers(line_numbers, len(session.segments)) or None
@@ -143,11 +211,11 @@ def translate_lines(session_id, line_numbers, target_language, translator, gemin
                                           api_key=str(api_key or ""), notes=str(notes or ""))
         for update in _gpu(lambda **kw: pipeline.retranslate(session_id, indices, request, **kw)):
             if isinstance(update, pipeline.Analysis):
-                yield segment_tools.to_rows(update.session.segments), update.message
+                yield segment_tools.to_rows(update.session.segments), update.message, summary(update.session)
             else:
-                yield gr.skip(), update
+                yield gr.skip(), update, gr.skip()
     except Exception as exc:
-        yield gr.skip(), _failed(exc)
+        yield gr.skip(), _failed(exc), gr.skip()
 
 
 def _dub_request(session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume=100,
@@ -161,14 +229,14 @@ def _dub_request(session_id, voice_mode, preset, timing, max_speed, parallel, sp
         burn_subtitles=bool(burn_subtitles), regenerate=fresh)
 
 
-def preview_line(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel):
-    """Outputs: preview audio, status. Previews the first listed line."""
+def _preview(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, *, fresh: bool):
     try:
         session = sessions.load(_runtime(), session_id)
         indices = segment_tools.parse_line_numbers(line_numbers, len(session.segments))
         if not indices:
-            raise H3Error("Enter the number of the line to preview.")
-        request = _dub_request(session_id, voice_mode, preset, timing, max_speed, parallel)
+            raise H3Error("Click a line in the table, or enter its number, to preview it.")
+        request = _dub_request(session_id, voice_mode, preset, timing, max_speed, parallel,
+                               regenerate=str(indices[0] + 1) if fresh else "")
         for update in _gpu(lambda **kw: pipeline.preview_line(request, indices[0], **kw)):
             if isinstance(update, pipeline.LinePreview):
                 yield (update.rate, update.samples), update.message
@@ -176,6 +244,16 @@ def preview_line(session_id, line_numbers, voice_mode, preset, timing, max_speed
                 yield gr.skip(), update
     except Exception as exc:
         yield gr.skip(), _failed(exc)
+
+
+def preview_line(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel):
+    """Outputs: preview audio, line status. Voices the first listed line, reusing its saved take."""
+    yield from _preview(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, fresh=False)
+
+
+def preview_new_take(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel):
+    """Outputs: preview audio, line status. A new take of the first listed line, which the dub then uses."""
+    yield from _preview(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, fresh=True)
 
 
 def generate_dub(session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume, background_volume,

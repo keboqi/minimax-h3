@@ -344,8 +344,55 @@ class HandlerTests(Workspace):
         rows, status = self.handlers.save_lines(
             created.id, [[1, "00:00.000", "00:01.000", "speaker1", "Hi", "Hola", True],
                          [2, "00:02.000", "00:03.000", "speaker1", "Yo", "", True]])
-        self.assertEqual(status, "Saved 2 line(s); 1 ready to dub.")
+        self.assertEqual(status, "**1 of 2 line(s) ready** to dub into the target language · 1 speaker(s) · "
+                                 "1 untranslated")
         self.assertEqual(rows, self.handlers.gr.skip())  # nothing moved: the table is left as typed
+
+    def test_a_library_pick_survives_a_refresh_while_still_listed(self):
+        listed = str(self.root / "Video.file")
+        self.assertEqual(self.handlers.library_choices(listed)["value"], listed)
+        self.assertIsNone(self.handlers.library_choices(str(self.root / "gone.mp4"))["value"])
+
+    def test_an_unfinished_new_row_stays_in_the_editor(self):
+        source = self.root / "a.wav"
+        source.write_bytes(b"x")
+        created = sessions.create(self.runtime, source, video=False)
+        typed = [[1, "00:00.000", "00:01.000", "speaker1", "Hi", "Hola", True],
+                 [None, "00:04.000", "", "", "", "", True]]
+        rows, status = self.handlers.save_lines(created.id, typed)
+        self.assertEqual(rows, self.handlers.gr.skip())  # redrawing would wipe the row being typed
+        self.assertIn("1 unfinished row(s) not saved yet", status)
+        # Once complete it is saved, numbered and sorted into place.
+        typed[1] = [None, "00:00.500", "00:00.900", "speaker2", "Oh", "Ah", True]
+        rows, status = self.handlers.save_lines(created.id, typed)
+        self.assertEqual([(row[0], row[4]) for row in rows], [(1, "Hi"), (2, "Oh")])
+        self.assertNotIn("unfinished", status)
+
+    def test_reopening_a_session_restores_its_lines_and_language(self):
+        source = self.root / "talk.wav"
+        source.write_bytes(b"x")
+        empty = sessions.create(self.runtime, source, video=False)
+        created = sessions.create(self.runtime, source, video=False)
+        created.segments = [{"start": 0, "end": 1, "source": "Hi", "translation": "Salut"}]
+        created.data["target_language"] = "French"
+        created.save()
+        choices = self.handlers.session_choices()["choices"]
+        self.assertEqual([value for _label, value in choices], [created.id])  # unanalyzed sessions are hidden
+        self.assertTrue(choices[0][0].startswith("talk · 1 line(s) · French · "))
+        session_id, rows, status, summary, target = self.handlers.open_session(created.id)
+        self.assertEqual((session_id, rows[0][4], target), (created.id, "Hi", "French"))
+        self.assertIn("Opened **talk**", status)
+        self.assertIn("1 of 1 line(s) ready", summary)
+        self.assertIn("Error", self.handlers.open_session("f" * 32)[2])
+        self.assertNotEqual(empty.id, created.id)
+
+    def test_clicking_a_row_picks_its_line_number(self):
+        def event(row, index):
+            return SimpleNamespace(row_value=row, index=index)
+
+        self.assertEqual(self.handlers.select_line(event([3.0, "00:01.000"], [2, 4])), "3")
+        self.assertEqual(self.handlers.select_line(event([None, ""], [5, 1])), self.handlers.gr.skip())
+        self.assertEqual(self.handlers.select_line(SimpleNamespace(index=[1, 0])), "2")
 
     def test_saving_redraws_the_table_when_numbering_changes(self):
         source = self.root / "a.wav"
@@ -468,6 +515,33 @@ class ReviewFixTests(Workspace):
         self.assertEqual([(s["source"], s["translation"]) for s in saved.segments],
                          [("zero", "zéro"), ("one", "one-fr"), ("two", "deux (edited)")])
         self.assertEqual(saved.data["target_language"], "French")
+
+    def test_translating_into_a_new_language_replaces_every_translation(self):
+        session = self.session_with_vocals([
+            {"start": 0.0, "end": 1.0, "source": "one", "translation": "un"},
+            {"start": 1.5, "end": 2.5, "source": "two", "translation": ""},
+        ])
+        session.data["target_language"] = "French"
+        session.save()
+
+        def translate(op, payload, runtime, **_kwargs):
+            return {"texts": [f"{text}-{payload['target_language']}" for text in payload["texts"]]}
+
+        def run(target):
+            request = pipeline.AnalyzeRequest("", target_language=target)
+            with patch.object(pipeline.tools, "run", side_effect=translate) as tools_run:
+                updates = list(pipeline.retranslate(session.id, None, request, runtime=self.runtime,
+                                                    free_gpu=lambda: None))
+            return tools_run.call_count, updates[-1].message
+
+        # Same language: only the untranslated line.
+        self.assertEqual(run("French"), (1, "Translated 1 line(s) into French."))
+        self.assertEqual(run("French")[0], 0)
+        # A new language: every line, and the session now dubs into it.
+        self.assertEqual(run("German"), (1, "Translated 2 line(s) into German."))
+        saved = sessions.load(self.runtime, session.id)
+        self.assertEqual([s["translation"] for s in saved.segments], ["one-German", "two-German"])
+        self.assertEqual(saved.data["target_language"], "German")
 
     def test_job_bookkeeping_keeps_lines_edited_meanwhile(self):
         session = self.session_with_vocals([{"start": 0.0, "end": 1.0, "source": "old"}])
