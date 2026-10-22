@@ -5,7 +5,7 @@ import json
 import gradio as gr
 from h3_ui.drama3_speaker_library import SpeakerLibraryView, build_speaker_library
 from h3_app.drama3_voice_design import ENGINE_QWEN, VOICE_DESIGN_ENGINES
-from h3_app.prompt_service import DRAMA3_SCRIPT_ADVANCED, DRAMA3_SCRIPT_MODES, DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES
+from h3_app.prompt_writers.drama3 import DRAMA3_SCRIPT_ADVANCED, DRAMA3_SCRIPT_MODES, DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES
 from h3_app.voice_design import LANGUAGES as VOICE_DESIGN_LANGUAGES
 from h3_models import DEFAULT_DRAMA3_ASR, DRAMA3_ASR_CHOICES
 from .prompt_writer_controls import RemotePromptWriterControls

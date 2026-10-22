@@ -365,12 +365,12 @@ class MossImagePromptCompilerTests(unittest.TestCase):
 
     def test_rewrite_sends_canvas_and_deliverable_then_compiles_the_draft(self):
         import json
-        from h3_app import prompt_service
+        from h3_app.prompt_writers import common as writers_common, moss_image as moss_image_writer
 
         runtime = SimpleNamespace(prompt_systems={"MOSS-Image": Path(__file__).parents[1] / "prompts" / "prompt_moss_image.txt"})
         reply = (json.dumps(CUP_LAYOUT, ensure_ascii=False), "Enhanced MOSS-Image prompt with m using 0 image(s).")
-        with patch.object(prompt_service, "_enhance_prompt_from_media", return_value=reply) as writer:
-            prompt, status = prompt_service.enhance_moss_image_prompt(
+        with patch.object(writers_common, "write_prompt", return_value=reply) as writer:
+            prompt, status = moss_image_writer.enhance_moss_image_prompt(
                 "a cup poster", "m", "", 1536, 1024, "Layout", runtime=runtime)
         request = writer.call_args.kwargs["request_text"]
         self.assertIn("TARGET CANVAS: 1536x1024", request)
@@ -378,8 +378,8 @@ class MossImagePromptCompilerTests(unittest.TestCase):
         self.assertEqual(writer.call_args.kwargs["system_path"].name, "prompt_moss_image.txt")
         self.assertEqual(json.loads(prompt)["items"][0]["bbox"], [-288, -592, 352, 32])
         self.assertEqual(status, "Enhanced MOSS-Image prompt with m as a Layout for 1536x1024.")
-        with patch.object(prompt_service, "_enhance_prompt_from_media", return_value=("not json", "Enhanced x")):
-            prompt, status = prompt_service.enhance_moss_image_prompt("a cup", "m", "", 1024, 1024, runtime=runtime)
+        with patch.object(writers_common, "write_prompt", return_value=("not json", "Enhanced x")):
+            prompt, status = moss_image_writer.enhance_moss_image_prompt("a cup", "m", "", 1024, 1024, runtime=runtime)
         self.assertEqual(prompt, "a cup")
         self.assertTrue(status.startswith("Prompt enhancement failed:"))
 

@@ -31,7 +31,7 @@ def validate_drama3(request):
         if not audio or not str(transcript).strip():
             raise H3Error(f"Speaker {speaker} needs both a reference clip and its exact transcript.")
         validate_drama3_text(transcript, f"Speaker {speaker}'s transcript")
-    from h3_app.prompt_service import DRAMA3_SCRIPT_MODES
+    from h3_app.prompt_writers.drama3 import DRAMA3_SCRIPT_MODES
 
     if request.script_mode not in DRAMA3_SCRIPT_MODES:
         raise H3Error("Choose Basic or Advanced (sound enhanced) Drama 3 script mode.")

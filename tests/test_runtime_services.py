@@ -381,7 +381,7 @@ class ExecutionTests(unittest.TestCase):
             [
                 sys.executable,
                 "-c",
-                "import sys;import h3_app.model_service,h3_app.workflows.h3,h3_app.workflows.ltx,h3_app.workflows.music,h3_app.generation.h3,h3_app.generation.ltx,h3_app.generation.music,h3_app.media_tools,h3_app.prompt_service;assert 'gradio' not in sys.modules",
+                "import sys;import h3_app.model_service,h3_app.workflows.h3,h3_app.workflows.ltx,h3_app.workflows.music,h3_app.generation.h3,h3_app.generation.ltx,h3_app.generation.music,h3_app.media_tools,h3_app.prompt_writers.h3;assert 'gradio' not in sys.modules",
             ],
             capture_output=True,
             text=True,

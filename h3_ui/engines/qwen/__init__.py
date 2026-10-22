@@ -5,7 +5,7 @@ from typing import Any
 
 import gradio as gr
 
-from h3_app import prompt_service
+from h3_app.prompt_writers import qwen as qwen_writer
 from h3_app.catalog import (
     DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_LIGHTNING_PROMPT_MODEL, GEMINI_PROMPT_MODELS, QWEN_EDIT_SIZE_MANUAL,
     QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX, QWEN_IMAGE21_DEFAULTS,
@@ -138,7 +138,7 @@ class QwenHandlers:
                     if max_resolution
                     else (source_width, source_height)
                 )
-        return prompt_service.enhance_qwen_image21_prompt(
+        return qwen_writer.enhance_qwen_image21_prompt(
             prompt, model, temporary_api_key, mode, reference_images, width, height,
             backend=backend, lightning_api_key=lightning_api_key, lightning_model=lightning_model,
             runtime=self.deps.runtime_config(),

@@ -2,7 +2,7 @@
 
 import gradio as gr
 
-from h3_app import prompt_service
+from h3_app.prompt_writers import ltx as ltx_writer
 from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_LIGHTNING_PROMPT_MODEL, GEMINI_PROMPT_MODELS
 from h3_app.catalog import LTX25_DEFAULTS, LTX25_WORKFLOWS
 from h3_app.generation import ltx as ltx_generation
@@ -72,7 +72,7 @@ class LtxHandlers:
         lightning_api_key: str = "",
         lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
     ) -> tuple[str, str]:
-        return prompt_service.enhance_ltx25_prompt(
+        return ltx_writer.enhance_ltx25_prompt(
             prompt, model, temporary_api_key, mode, start_image, middle_image, end_image, duration, width,
             height, backend=backend, lightning_api_key=lightning_api_key, lightning_model=lightning_model,
             runtime=self.deps.runtime_config(),

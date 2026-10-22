@@ -4,7 +4,7 @@ from typing import Any
 
 import gradio as gr
 
-from h3_app import prompt_service
+from h3_app.prompt_writers import song as song_writer
 from h3_app.catalog import (
     DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_LIGHTNING_PROMPT_MODEL, GEMINI_PROMPT_MODELS, MUSIC3_DEFAULTS,
 )
@@ -67,7 +67,7 @@ class MusicHandlers:
         lyrics_policy: str = "Keep my lyrics",
         notes: str = "",
     ) -> tuple[str, str, str]:
-        return prompt_service.enhance_music3_prompt(
+        return song_writer.enhance_music3_prompt(
             prompt, model, temporary_api_key, lyrics, ref_image_1, ref_image_2, ref_image_3,
             backend=backend, lightning_api_key=lightning_api_key, lightning_model=lightning_model,
             duration=duration, vocals=vocals, language=language, use=use, lyrics_policy=lyrics_policy,

@@ -17,7 +17,7 @@ class PromptServices:
     _runtime_config: Any
     gr: Any
     nullcontext: Any
-    prompt_service: Any
+    h3_writer: Any
 
 
 class PromptController:
@@ -71,7 +71,7 @@ class PromptController:
             else self.services.nullcontext()
         )
         with lease:
-            return self.services.prompt_service.enhance_h3_prompt(
+            return self.services.h3_writer.enhance_h3_prompt(
                 prompt,
                 backend,
                 local_base_model,

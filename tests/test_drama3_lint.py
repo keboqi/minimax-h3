@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from h3_app import prompt_service
+from h3_app.prompt_writers import drama3 as drama3_writer
 from h3_app.drama3_lint import (
     coverage_note,
     direction_share,
@@ -75,7 +75,7 @@ class CoverageTests(unittest.TestCase):
                 {"speaker_id": 1, "name": "Teacher", "description": "Stern.", "preview_text": "Hello there."},
             ],
         })
-        script, status, _cast = prompt_service.apply_drama3_reply(
+        script, status, _cast = drama3_writer.apply_drama3_reply(
             reply, "班主任站在门口，冲她招招手：“你出来一下！”教室里顿时鸦雀无声。", (), "Auto")
         self.assertEqual(script.split("\n")[1], "<|speaker:1|> 你出来一下！")
         self.assertIn("Writer check:", status)
@@ -207,19 +207,19 @@ class DirectionMergeTests(unittest.TestCase):
             return ("narrator: The door [hushed] creaked open.\nMia: Hello [nervous] there?\n"
                     "narrator: Nobody [tense, low] answered her.", "Enhanced Drama 3 direction prompt.")
 
-        script, note = prompt_service.direct_drama3_script(flat, cast, "Basic", ask)
+        script, note = drama3_writer.direct_drama3_script(flat, cast, "Basic", ask)
         self.assertEqual(script, "<|speaker:0|> The door [hushed] creaked open.\n<|speaker:1|> Hello [nervous] there?\n"
                                  "<|speaker:0|> Nobody [tense, low] answered her.")
         self.assertEqual(note, "A direction pass added cues to 3 line(s), 3 of 3 now directed.")
         self.assertIn("Mia: Hello there?", requests[0])  # the director reads names, not tags
         self.assertIn("- Mia: Bright.", requests[0])
-        self.assertEqual(prompt_service.direct_drama3_script(script, cast, "Basic", ask), (script, ""))
+        self.assertEqual(drama3_writer.direct_drama3_script(script, cast, "Basic", ask), (script, ""))
         self.assertEqual(len(requests), 1)  # an already directed script needs no second call
 
         def failing(_request):
             return "", "Prompt enhancement failed: quota exceeded."
 
-        script, note = prompt_service.direct_drama3_script(flat, cast, "Basic", failing)
+        script, note = drama3_writer.direct_drama3_script(flat, cast, "Basic", failing)
         self.assertEqual(script, flat)
         self.assertIn("quota exceeded", note)
 
@@ -241,7 +241,7 @@ class SourceModeTests(unittest.TestCase):
             "script": "narrator: 第一句话说得很长很长。",
             "speakers": [{"speaker_id": 0, "name": "narrator", "description": "Calm.", "preview_text": "你好。"}],
         }, ensure_ascii=False)
-        _script, status, _cast = prompt_service.apply_drama3_reply(reply, self.SOURCE, (), "Auto")
+        _script, status, _cast = drama3_writer.apply_drama3_reply(reply, self.SOURCE, (), "Auto")
         self.assertIn("2 source phrase(s)", status)
 
 
@@ -259,7 +259,7 @@ class VoiceSexTests(unittest.TestCase):
         reply = json.dumps({"script": "胡母: 杀人犯！", "speakers": [
             {"speaker_id": 0, "name": "胡母", "description": cast[0]["description"], "preview_text": "你好。"}]},
             ensure_ascii=False)
-        _script, status, _cast = prompt_service.apply_drama3_reply(reply, "胡母: 杀人犯！", (), "Auto")
+        _script, status, _cast = drama3_writer.apply_drama3_reply(reply, "胡母: 杀人犯！", (), "Auto")
         self.assertIn("The voice description for 胡母 does not say male or female", status)
 
 

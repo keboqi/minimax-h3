@@ -8,7 +8,7 @@ import unittest.mock
 import h3_app.catalog as _catalog
 import h3_app.contracts as _contracts
 import h3_app.policy as _policy
-import h3_app.prompt_service as _prompt_service
+from h3_app.prompt_writers import common as writers_common, h3 as h3_writer
 import h3_app.status as _status
 import h3_app.workflows.h3 as _h3_workflow
 import h3_models as _models
@@ -40,7 +40,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
             ]
             openai_client.return_value.chat.completions.create.return_value = completion
             rewritten, lightning_status = (
-                _prompt_service._enhance_h3_prompt_with_lightning(
+                h3_writer._enhance_h3_prompt_with_lightning(
                     prompt="A moonlit tracking shot",
                     temporary_api_key="",
                     mode="Text to video",
@@ -91,18 +91,18 @@ class ApplicationAdaptersTests(unittest.TestCase):
             video_path = enhancer_root / "reference.mp4"
             for path in (first_path, last_path, video_path):
                 path.write_bytes(b"test")
-            last_only = _prompt_service._active_prompt_media(
+            last_only = writers_common.active_prompt_media(
                 "First / last frame", None, str(last_path), (), (), ()
             )
             self.assertEqual(last_only, [("<Picture 1> (last frame)", last_path)])
-            both_frames = _prompt_service._active_prompt_media(
+            both_frames = writers_common.active_prompt_media(
                 "First / last frame", str(first_path), str(last_path), (), (), ()
             )
             self.assertEqual(
                 [label for label, _ in both_frames],
                 ["<Picture 1> (first frame)", "<Picture 2> (last frame)"],
             )
-            references = _prompt_service._active_prompt_media(
+            references = writers_common.active_prompt_media(
                 "Reference media",
                 None,
                 None,

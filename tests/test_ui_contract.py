@@ -1622,7 +1622,7 @@ class UiContractTests(unittest.TestCase):
         with (
             mock.patch.object(gradio_app.JOBS, "maintenance") as maintenance,
             mock.patch.object(
-                gradio_app.prompt_service,
+                gradio_app.h3_writer,
                 "enhance_h3_prompt",
                 return_value=("rewritten", "ok"),
             ),

@@ -1,5 +1,5 @@
 """Voice conditioning, input isolation, and backwards-compatible API routing."""
-import h3_app.prompt_service as _prompt_service
+from h3_app.prompt_writers import h3 as h3_writer
 import h3_app.catalog as _catalog
 import h3_app.policy as _policy
 import inspect
@@ -135,7 +135,7 @@ class Fl2vaVoiceTests(unittest.TestCase):
             with self.subTest(backend=backend):
                 args = self.enhancer_args(backend)
                 enhanced = args["prompt"] + " The camera moves closer."
-                with patch.object(app.prompt_service, target, return_value=(enhanced, "Enhanced")) as writer:
+                with patch.object(app.h3_writer, target, return_value=(enhanced, "Enhanced")) as writer:
                     result = app.enhance_h3_prompt(**args)
                 self.assertEqual(result, (enhanced, "Enhanced"))
                 writer_prompt = writer.call_args.kwargs.get("prompt", writer.call_args.args[0] if writer.call_args.args else None)
@@ -148,28 +148,28 @@ class Fl2vaVoiceTests(unittest.TestCase):
         for enhanced in ("The woman says hello.", "A man uses <Audio 2>.", "Voice <Audio 1> plus <Audio 0>."):
             with self.subTest(enhanced=enhanced):
                 args = self.enhancer_args()
-                with patch.object(app.prompt_service, "_enhance_h3_prompt_with_gemini", return_value=(enhanced, "Enhanced")):
+                with patch.object(app.h3_writer, "_enhance_h3_prompt_with_gemini", return_value=(enhanced, "Enhanced")):
                     prompt, status = app.enhance_h3_prompt(**args)
                 self.assertEqual(prompt, args["prompt"])
                 self.assertIn("changed the FL2VA audio labels", status)
 
     def test_provider_failure_never_returns_internal_voice_instructions(self):
         args = self.enhancer_args()
-        with patch.object(app.prompt_service, "_enhance_h3_prompt_with_gemini", side_effect=lambda prompt, *a, **kw: (prompt, "Prompt enhancement failed: offline")):
+        with patch.object(app.h3_writer, "_enhance_h3_prompt_with_gemini", side_effect=lambda prompt, *a, **kw: (prompt, "Prompt enhancement failed: offline")):
             prompt, status = app.enhance_h3_prompt(**args)
         self.assertEqual(prompt, args["prompt"])
         self.assertIn("offline", status)
 
     def test_voice_context_supports_drafts_and_ignores_hidden_slots(self):
-        context, allowed, required = _prompt_service.fl2va_prompt_voice_context("Voice <Audio 2>", "First / last frame")
+        context, allowed, required = h3_writer.fl2va_prompt_voice_context("Voice <Audio 2>", "First / last frame")
         self.assertIn("<Audio 2>", context)
         self.assertEqual(allowed, {"2"})
         self.assertEqual(required, {"2"})
         for mode in ("Text to video", "Reference media"):
-            self.assertEqual(_prompt_service.fl2va_prompt_voice_context("Voice <Audio 1>", mode, "hidden.wav"), ("", set(), set()))
+            self.assertEqual(h3_writer.fl2va_prompt_voice_context("Voice <Audio 1>", mode, "hidden.wav"), ("", set(), set()))
         with self.assertRaises(app.H3Error):
-            _prompt_service.fl2va_prompt_voice_context("Voice <Audio 2>", "First / last frame", "only-one.wav")
-        context, allowed, required = _prompt_service.fl2va_prompt_voice_context("Two speakers.", "First / last frame", "one.wav", "two.wav")
+            h3_writer.fl2va_prompt_voice_context("Voice <Audio 2>", "First / last frame", "only-one.wav")
+        context, allowed, required = h3_writer.fl2va_prompt_voice_context("Two speakers.", "First / last frame", "one.wav", "two.wav")
         self.assertEqual(allowed, {"1", "2"})
         self.assertEqual(required, set())
 

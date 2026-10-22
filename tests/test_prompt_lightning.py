@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from h3_app import prompt_service
+from h3_app.prompt_writers import ltx as ltx_writer, qwen as qwen_writer, song as song_writer
 from h3_app.catalog import LIGHTNING_API_ROOT, LIGHTNING_PROMPT_MODEL
 
 
@@ -36,7 +36,7 @@ class RemotePromptLightningTests(unittest.TestCase):
         client.return_value.chat.completions.create.return_value = self.completion(
             "Rewritten edit instruction"
         )
-        result, status = prompt_service.enhance_qwen_image21_prompt(
+        result, status = qwen_writer.enhance_qwen_image21_prompt(
             "change the sky", "unused Gemini model", "", "Image edit",
             [str(self.image)], 1024, 1024, "Lightning AI", "temporary-key",
             runtime=self.runtime,
@@ -59,7 +59,7 @@ class RemotePromptLightningTests(unittest.TestCase):
         client.return_value.chat.completions.create.return_value = self.completion(
             "A detailed camera move"
         )
-        result, status = prompt_service.enhance_ltx25_prompt(
+        result, status = ltx_writer.enhance_ltx25_prompt(
             "street scene", "unused", "", "Image to video", str(self.image),
             None, None, 5.0, 768, 512, "Lightning AI", "temporary-key",
             runtime=self.runtime,
@@ -75,7 +75,7 @@ class RemotePromptLightningTests(unittest.TestCase):
         client.return_value.chat.completions.create.return_value = self.completion(
             "CAPTION: Dream pop with layered vocals\nLYRICS: [Verse] New words"
         )
-        caption, lyrics, status = prompt_service.enhance_music3_prompt(
+        caption, lyrics, status = song_writer.enhance_music3_prompt(
             "dream pop", "unused", "", "", str(self.image), None, None,
             "Lightning AI", "temporary-key", runtime=self.runtime,
         )
@@ -84,7 +84,7 @@ class RemotePromptLightningTests(unittest.TestCase):
         client.return_value.chat.completions.create.return_value = self.completion(
             "STYLE: Warm acoustic folk\nLYRICS: [Chorus] Keep singing"
         )
-        style, lyrics, status = prompt_service.enhance_yue2_prompt(
+        style, lyrics, status = song_writer.enhance_yue2_prompt(
             "folk", "unused", "", "", "full", 90,
             "Lightning AI", "temporary-key", runtime=self.runtime,
         )
@@ -93,7 +93,7 @@ class RemotePromptLightningTests(unittest.TestCase):
         client.return_value.chat.completions.create.return_value = self.completion(
             "STYLE: Lo-fi instrumental\nLYRICS: N/A"
         )
-        style, lyrics, _status = prompt_service.enhance_yue2_prompt(
+        style, lyrics, _status = song_writer.enhance_yue2_prompt(
             "lo-fi, no vocals", "unused", "", "", "full", 90,
             "Lightning AI", "temporary-key", runtime=self.runtime,
         )
@@ -102,7 +102,7 @@ class RemotePromptLightningTests(unittest.TestCase):
 
     def test_missing_key_preserves_original_text(self) -> None:
         with patch.dict(os.environ, {"LIGHTNING_API_KEY": ""}):
-            style, lyrics, status = prompt_service.enhance_yue2_prompt(
+            style, lyrics, status = song_writer.enhance_yue2_prompt(
                 "Original style", "unused", "", "Original lyrics", "full", 90,
                 "Lightning AI", "", runtime=self.runtime,
             )

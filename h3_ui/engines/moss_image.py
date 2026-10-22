@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import gradio as gr
 
-from h3_app import prompt_service
+from h3_app.prompt_writers import moss_image as moss_image_writer
 from h3_app.catalog import DEFAULT_LIGHTNING_PROMPT_MODEL, DEFAULT_MOSS_IMAGE_PRESET, MOSS_IMAGE_PRESETS
 from h3_app.generation.moss_image import generate_moss_image
 from h3_app.generation.requests import MossImageRequest
@@ -97,7 +97,7 @@ class MossImageHandlers:
                                   backend="Gemini", lightning_api_key="",
                                   lightning_model=DEFAULT_LIGHTNING_PROMPT_MODEL):
         """Rewrite with OpenMOSS's prompt-enhancer recipe; a Layout clears the manual boxes."""
-        enhanced, status = prompt_service.enhance_moss_image_prompt(
+        enhanced, status = moss_image_writer.enhance_moss_image_prompt(
             prompt, model, temporary_api_key, width, height, rewrite_mode,
             backend=backend, lightning_api_key=lightning_api_key,
             lightning_model=lightning_model, runtime=self.deps.runtime_config(),

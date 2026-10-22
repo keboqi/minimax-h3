@@ -9,7 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from h3_app import drama3_speakers, prompt_service
+from h3_app import drama3_speakers
+from h3_app.prompt_writers import drama3 as drama3_writer
 from h3_app.catalog import LIGHTNING_PROMPT_MODELS
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
@@ -172,7 +173,7 @@ class Drama3WriterTests(unittest.TestCase):
         client.return_value.chat.completions.create.return_value = completion(
             "<|speaker:0|> [warm] Welcome back.\n<|speaker:1|> [laughs] Finally!"
         )
-        script, status = prompt_service.enhance_drama3_text(
+        script, status = drama3_writer.enhance_drama3_text(
             "ALICE: Welcome back.\nBOB: Finally!", "unused", "", [(0, "Alice")],
             "Lightning AI", "key", LIGHTNING_PROMPT_MODELS[1], runtime=self.runtime,
         )
@@ -198,7 +199,7 @@ class Drama3WriterTests(unittest.TestCase):
         client.return_value.chat.completions.create.side_effect = [completion(writer), completion(director)]
         runtime = SimpleNamespace(prompt_systems={"Drama 3": ROOT / "prompts" / "prompt_drama3.txt",
                                                   "Drama 3 direction": ROOT / "prompts" / "prompt_drama3_direction.txt"})
-        script, status, cast = prompt_service.enhance_drama3_text(
+        script, status, cast = drama3_writer.enhance_drama3_text(
             "The door creaked open. “Is someone there?” Nobody answered her.", "unused", "", (),
             "Lightning AI", "key", runtime=runtime, return_cast=True)
         self.assertEqual(script, "<|speaker:0|> The door [hushed] creaked open.\n<|speaker:1|> Is someone [nervous] there?\n"
@@ -215,7 +216,7 @@ class Drama3WriterTests(unittest.TestCase):
         client.return_value.chat.completions.create.return_value = completion(
             "<|speaker:0|> Hi<|audio_separator|><|speaker:1|> Yo"
         )
-        script, status = prompt_service.enhance_drama3_text(
+        script, status = drama3_writer.enhance_drama3_text(
             "hi", "unused", "", (), "Lightning AI", "key", runtime=self.runtime,
         )
         self.assertEqual(script, "hi")
@@ -223,7 +224,7 @@ class Drama3WriterTests(unittest.TestCase):
 
     def rewrite(self, client, reply, mode, voices=()):
         client.return_value.chat.completions.create.return_value = completion(reply)
-        result = prompt_service.enhance_drama3_text(
+        result = drama3_writer.enhance_drama3_text(
             "ALICE: Hi.\nBOB: Yo.", "unused", "", voices, "Lightning AI", "key",
             speaker_mode=mode, runtime=self.runtime,
         )
@@ -264,7 +265,7 @@ class Drama3WriterTests(unittest.TestCase):
         self.assertEqual(script, "<|speaker:0|> Hi.\n<|speaker:5|> Yo.")
 
     def test_unknown_lightning_model_is_rejected(self):
-        script, status = prompt_service.enhance_drama3_text(
+        script, status = drama3_writer.enhance_drama3_text(
             "hi", "unused", "", (), "Lightning AI", "key", "openai/unknown", runtime=self.runtime,
         )
         self.assertEqual(script, "hi")
@@ -601,7 +602,7 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
             '<parallel>\n<sound loop="true" volume="0.2" name="bgm">Dark synth drone, 15 seconds</sound>\n'
             '<sequential>\n<|speaker:0|> <phone_call> [whispering] Hello? <#1.0#> Are you there?\n</sequential>\n</parallel>',
             voices=voices,
-            script_mode=prompt_service.DRAMA3_SCRIPT_ADVANCED,
+            script_mode=drama3_writer.DRAMA3_SCRIPT_ADVANCED,
         ))
 
     def test_basic_mode_strips_sound_and_speaker_effect_tags_while_advanced_keeps_them(self):
@@ -624,8 +625,8 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
             ],
             "script": raw_script,
         })
-        basic_script, basic_status, _cast = prompt_service.apply_drama3_reply(
-            reply, "Alice calls Unit 7.", (), "Auto", script_mode=prompt_service.DRAMA3_SCRIPT_BASIC,
+        basic_script, basic_status, _cast = drama3_writer.apply_drama3_reply(
+            reply, "Alice calls Unit 7.", (), "Auto", script_mode=drama3_writer.DRAMA3_SCRIPT_BASIC,
         )
         self.assertFalse(basic_status.startswith("Prompt enhancement failed:"), basic_status)
         self.assertNotIn("<parallel>", basic_script)
@@ -637,8 +638,8 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
         self.assertIn("<|speaker:0|> Hello? [anxious] Can you hear me?", basic_script)  # the opening cue moves in
         self.assertIn("<|speaker:1|> Affirmative.", basic_script)
 
-        adv_script, adv_status, _cast = prompt_service.apply_drama3_reply(
-            reply, "Alice calls Unit 7.", (), "Auto", script_mode=prompt_service.DRAMA3_SCRIPT_ADVANCED,
+        adv_script, adv_status, _cast = drama3_writer.apply_drama3_reply(
+            reply, "Alice calls Unit 7.", (), "Auto", script_mode=drama3_writer.DRAMA3_SCRIPT_ADVANCED,
         )
         self.assertFalse(adv_status.startswith("Prompt enhancement failed:"), adv_status)
         self.assertIn("<parallel>", adv_script)
@@ -660,21 +661,21 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
             "</parallel>"
         )
         # Switching to Advanced reveals the sounds panel
-        panel_upd, status = drama3_handlers.switch_drama3_script_mode(prompt_service.DRAMA3_SCRIPT_ADVANCED, text)
+        panel_upd, status = drama3_handlers.switch_drama3_script_mode(drama3_writer.DRAMA3_SCRIPT_ADVANCED, text)
         self.assertTrue(panel_upd["visible"])
         self.assertIn("Advanced", status)
 
         # Syncing script sounds populates slot metadata
         meta = ["", "", 5] * 16
         synced = drama3_handlers.sync_drama3_script_sounds(
-            text, prompt_service.DRAMA3_SCRIPT_ADVANCED, 4, *meta
+            text, drama3_writer.DRAMA3_SCRIPT_ADVANCED, 4, *meta
         )
         self.assertEqual(list(synced[0:3]), ["cafe_bgm", "Warm jazz piano, 15 seconds", 15])
         self.assertEqual(list(synced[3:6]), ["door_bell", "Shop doorbell chime, 2 seconds", 2])
 
         # Switching back to Basic keeps the authored tags (they are ignored when generating)
         basic_panel_upd, basic_status = drama3_handlers.switch_drama3_script_mode(
-            prompt_service.DRAMA3_SCRIPT_BASIC, text
+            drama3_writer.DRAMA3_SCRIPT_BASIC, text
         )
         self.assertFalse(basic_panel_upd["visible"])
         self.assertIn("kept but ignored", basic_status)
@@ -801,16 +802,16 @@ class Drama3AutoTests(unittest.TestCase):
                     patch.object(drama3_handlers, "_runtime_config"), patch("h3_models.resolve_hf_token"):
                 return list(drama3_handlers.preload_drama3_models(engine, mode))
 
-        frames = run(ENGINE_QWEN, prompt_service.DRAMA3_SCRIPT_ADVANCED)
+        frames = run(ENGINE_QWEN, drama3_writer.DRAMA3_SCRIPT_ADVANCED)
         self.assertEqual(order, ["voice_design", "stable_audio", "sglang"])
         self.assertTrue(any("Preloading SGLang-Omni: Starting SGLang-Omni (3s)" in frame for frame in frames))
         self.assertEqual(frames[-1], "Preload finished. Ready: Qwen VoiceDesign. Not preloaded, its step loads it: "
                                      "Stable Audio 3 Medium (no free GPU memory beside the loaded models); "
                                      "SGLang-Omni (SGLang-Omni needs about 50 GiB).")
         # Drama 3 designs voices on SGLang-Omni, so it loads first; Basic has no sounds.
-        run(ENGINE_DRAMA3, prompt_service.DRAMA3_SCRIPT_ADVANCED)
+        run(ENGINE_DRAMA3, drama3_writer.DRAMA3_SCRIPT_ADVANCED)
         self.assertEqual(order, ["sglang", "stable_audio"])
-        run(ENGINE_QWEN, prompt_service.DRAMA3_SCRIPT_BASIC)
+        run(ENGINE_QWEN, drama3_writer.DRAMA3_SCRIPT_BASIC)
         self.assertEqual(order, ["voice_design", "sglang"])
         with patch.object(audio_tools, "preload", side_effect=JobCancelled("cancelled")), \
                 patch.object(drama3_handlers, "_runtime_config"), patch("h3_models.resolve_hf_token"), \
@@ -820,8 +821,8 @@ class Drama3AutoTests(unittest.TestCase):
     def test_only_advanced_generates_sounds(self):
         from h3_ui.drama3_bindings import drama3_auto_sound_slots
 
-        self.assertEqual(drama3_auto_sound_slots(prompt_service.DRAMA3_SCRIPT_BASIC, 4)[0], 0)
-        self.assertEqual(drama3_auto_sound_slots(prompt_service.DRAMA3_SCRIPT_ADVANCED, 4)[0], 4)
+        self.assertEqual(drama3_auto_sound_slots(drama3_writer.DRAMA3_SCRIPT_BASIC, 4)[0], 0)
+        self.assertEqual(drama3_auto_sound_slots(drama3_writer.DRAMA3_SCRIPT_ADVANCED, 4)[0], 4)
 
 
 if __name__ == "__main__":

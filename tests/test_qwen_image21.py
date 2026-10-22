@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 from PIL import Image
 
-from h3_app import prompt_service
+from h3_app.prompt_writers import common as writers_common, qwen as qwen_writer
 from h3_app.errors import H3Error
 from h3_app.generation.qwen import (
     generate_qwen_image21,
@@ -41,14 +41,15 @@ def qwen_ui():
     """The Qwen engine's handlers, with dependencies read from the returned namespace."""
     from types import SimpleNamespace
 
-    from h3_app import catalog, prompt_service
+    from h3_app import catalog
+    from h3_app.prompt_writers import qwen as qwen_writer
     from h3_app.generation import qwen as qwen_generation
     from h3_ui.engines import qwen as qwen_engine
     from h3_ui.engines.feature import EngineDeps
 
     ui = SimpleNamespace(
         _runtime_config=lambda: object(), _generation_services=lambda: object(),
-        prompt_service=prompt_service, qwen_generation=qwen_generation,
+        qwen_writer=qwen_writer, qwen_generation=qwen_generation,
         qwen_edit_size_flags=qwen_engine.qwen_edit_size_flags,
         QWEN_EDIT_SIZE_MATCH=catalog.QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX=catalog.QWEN_EDIT_SIZE_MAX,
         QWEN_EDIT_SIZE_MANUAL=catalog.QWEN_EDIT_SIZE_MANUAL,
@@ -345,7 +346,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             with (
                 patch.object(ui_app, "_runtime_config", return_value=object()),
                 patch.object(
-                    ui_app.prompt_service,
+                    ui_app.qwen_writer,
                     "enhance_qwen_image21_prompt",
                     return_value=("enhanced", "ok"),
                 ) as enhance,
@@ -414,7 +415,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             with (
                 patch.object(ui_app, "_runtime_config", return_value=object()),
                 patch.object(
-                    ui_app.prompt_service,
+                    ui_app.qwen_writer,
                     "enhance_qwen_image21_prompt",
                     return_value=("enhanced", "ok"),
                 ) as enhance,
@@ -1209,11 +1210,11 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             prompt_systems={"Qwen Image 2.1": Path("prompts/prompt_qwen_image21.txt")}
         )
         with patch.object(
-            prompt_service,
-            "_enhance_prompt_from_media",
+            writers_common,
+            "write_prompt",
             return_value=("enhanced", "ok"),
         ) as enhance:
-            result = prompt_service.enhance_qwen_image21_prompt(
+            result = qwen_writer.enhance_qwen_image21_prompt(
                 "change the sky",
                 "gemini",
                 "",
@@ -1236,11 +1237,11 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             prompt_systems={"Qwen Image 2.1": Path("prompts/prompt_qwen_image21.txt")}
         )
         with patch.object(
-            prompt_service,
-            "_enhance_prompt_from_media",
+            writers_common,
+            "write_prompt",
             return_value=("enhanced", "ok"),
         ) as enhance:
-            prompt_service.enhance_qwen_image21_prompt(
+            qwen_writer.enhance_qwen_image21_prompt(
                 "put the shirt on the person",
                 "gemini",
                 "",

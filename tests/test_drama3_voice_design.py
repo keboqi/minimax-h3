@@ -12,7 +12,8 @@ from unittest.mock import Mock, patch
 
 import gradio as gr
 
-from h3_app import audio_tools, drama3_speakers, prompt_service, voice_design
+from h3_app import audio_tools, drama3_speakers, voice_design
+from h3_app.prompt_writers import common as writers_common, drama3 as drama3_writer
 from h3_app.config import RuntimeConfig
 from h3_app.drama3_cast import parse_script_cast
 from h3_app.errors import H3Error
@@ -65,12 +66,12 @@ class CastValidationTests(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(H3Error):
                 parse_script_cast(json.dumps({**valid, **mutation}))
 
-    @patch("h3_app.prompt_service._enhance_prompt_from_media")
+    @patch("h3_app.prompt_writers.common.write_prompt")
     def test_structured_writer_is_atomic_and_preserves_mode_and_existing_ids(self, enhance):
         runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompts/prompt_drama3.txt")})
         def rewrite(reply, text="Original", **kwargs):
             enhance.return_value = reply, "Enhanced prompt with writer"
-            return prompt_service.enhance_drama3_text(text, "model", "", runtime=runtime,
+            return drama3_writer.enhance_drama3_text(text, "model", "", runtime=runtime,
                                                      return_cast=True, **kwargs)
         script, status, cast = rewrite(writer_reply(5))
         self.assertEqual(cast[0]["speaker_id"], 5)
@@ -160,7 +161,7 @@ class VoiceDesignTests(unittest.TestCase):
         response = json.dumps({"script": "<|speaker:5|> Hello there.", "speakers": [cast_entry(5, "Narrator")]})
         with patch.dict(os.environ, {"H3_WORKSPACE_DIR": str(self.root / "workspace")}), \
                 patch.object(drama3_handlers, "_runtime_config", return_value=self.runtime), \
-                patch.object(prompt_service, "_enhance_prompt_from_media", return_value=(response, "Enhanced prompt")) as writer:
+                patch.object(writers_common, "write_prompt", return_value=(response, "Enhanced prompt")) as writer:
             saved = drama3_speakers.save_speaker("Narrator", clip, "Uploaded words.", self.runtime, "A measured baritone.")
             selection = drama3_handlers.select_drama3_speaker(saved.name)
             self.assertEqual(selection[1]["value"], "Uploaded words.")
@@ -362,7 +363,7 @@ class CastSlotTests(unittest.TestCase):
         metadata[15:18] = [name, description, "Old preview"]
         runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompts/prompt_drama3.txt")})
         with patch.object(drama3_handlers, "_runtime_config", return_value=runtime), \
-                patch.object(prompt_service, "_enhance_prompt_from_media", return_value=(response, "Enhanced prompt")):
+                patch.object(writers_common, "write_prompt", return_value=(response, "Enhanced prompt")):
             return drama3_handlers.enhance_drama3_text("Original", "Auto", "model", "", "Lightning AI", "key", "llm",
                                                   *voices, *metadata, 4)
 

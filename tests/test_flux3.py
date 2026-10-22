@@ -18,7 +18,7 @@ from h3_app.generation.flux3 import (
     validate_flux3 as validate_request,
 )
 from h3_app.generation.requests import Flux3Request
-from h3_app import prompt_service
+from h3_app.prompt_writers import flux3 as flux3_writer
 from h3_app.workflows.flux3 import UPSAMPLER_MAX_LENGTH, build_flux3_graph, upsampler_system
 from h3_models import (
     FLUX3_MODEL_CHOICES, MODEL_SPECS, MIN_VALID_MODEL_BYTES,
@@ -225,7 +225,7 @@ class Flux3WriterTests(unittest.TestCase):
     @patch("openai.OpenAI")
     def test_text_to_image_rewrite_sends_the_target_canvas(self, client):
         client.return_value.chat.completions.create.return_value = self.completion("Full-color outdoor photograph, ...")
-        caption, status = prompt_service.enhance_flux3_prompt(
+        caption, status = flux3_writer.enhance_flux3_prompt(
             "a fox in snow", "unused", "", [], 1920, 1072, "Lightning AI", "key",
             "openai/gpt-6.1-sol", runtime=self.runtime,
         )
@@ -243,7 +243,7 @@ class Flux3WriterTests(unittest.TestCase):
             for name in ("a.png", "b.png"):
                 Image.new("RGB", (8, 8)).save(Path(root) / name)
                 images.append(str(Path(root) / name))
-            prompt_service.enhance_flux3_prompt(
+            flux3_writer.enhance_flux3_prompt(
                 "make it dusk", "unused", "", images, 1024, 1024, "Lightning AI", "key", runtime=self.runtime,
             )
         request = client.return_value.chat.completions.create.call_args.kwargs
@@ -257,10 +257,10 @@ class Flux3WriterTests(unittest.TestCase):
         from unittest.mock import Mock
         from h3_ui.engines.flux3 import Flux3Handlers
         handlers = Flux3Handlers(Mock())
-        with patch.object(prompt_service, "enhance_flux3_prompt",
+        with patch.object(flux3_writer, "enhance_flux3_prompt",
                           return_value=("Full caption", "Enhanced FLUX 3 Image Klein prompt with x")):
             self.assertEqual(handlers.enhance_flux3_prompt("fox", [], 1024, 1024, "m", "")[2], False)
-        with patch.object(prompt_service, "enhance_flux3_prompt",
+        with patch.object(flux3_writer, "enhance_flux3_prompt",
                           return_value=("fox", "Prompt enhancement failed: no key")):
             self.assertNotEqual(handlers.enhance_flux3_prompt("fox", [], 1024, 1024, "m", "")[2], False)
 

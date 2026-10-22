@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 import gradio as gr
 
-from h3_app import prompt_service
+from h3_app.prompt_writers import drama3 as drama3_writer
 from h3_app.errors import H3Error
 from h3_app.generation import requests as generation_requests
 from h3_app.jobs import JobCancelled
@@ -159,7 +159,7 @@ def preload_drama3_models(voice_engine, script_mode="Basic"):
     qwen = voice_engine == ENGINE_QWEN
     # Drama 3 voice design runs on SGLang-Omni, so the server comes first then.
     steps = [("Qwen VoiceDesign", lambda: audio_tool("voice_design")) if qwen else ("SGLang-Omni", sglang)]
-    if script_mode == prompt_service.DRAMA3_SCRIPT_ADVANCED:
+    if script_mode == drama3_writer.DRAMA3_SCRIPT_ADVANCED:
         steps.append(("Stable Audio 3 Medium", lambda: audio_tool("stable_audio")))
     if qwen:
         steps.append(("SGLang-Omni", sglang))
@@ -400,10 +400,10 @@ def _drama3_writer_mode_and_sounds(slots):
     script_mode = (
         slots[count * 2 + 1]
         if len(slots) > count * 2 + 1 and slots[count * 2 + 1]
-        else prompt_service.DRAMA3_SCRIPT_BASIC
+        else drama3_writer.DRAMA3_SCRIPT_BASIC
     )
     sound_context = ""
-    if script_mode == prompt_service.DRAMA3_SCRIPT_ADVANCED:
+    if script_mode == drama3_writer.DRAMA3_SCRIPT_ADVANCED:
         saved = drama3_sounds.list_sounds(_runtime_config())
         if saved:
             items = [
@@ -483,7 +483,7 @@ def enhance_drama3_text(text, speaker_mode, model, temporary_api_key, backend, l
     try:
         names, existing, cast_context, shown = _drama3_writer_slots(slots)
         script_mode, sound_context = _drama3_writer_mode_and_sounds(slots)
-        script, status, cast, title = prompt_service.enhance_drama3_text(
+        script, status, cast, title = drama3_writer.enhance_drama3_text(
             text, model, temporary_api_key, names, backend=backend,
             lightning_api_key=lightning_api_key, lightning_model=lightning_model,
             speaker_mode=speaker_mode, runtime=_runtime_config(), return_cast=True,
@@ -505,7 +505,7 @@ def copy_drama3_writer_prompt(text, speaker_mode, *slots):
     try:
         names, _existing, cast_context, _shown = _drama3_writer_slots(slots)
         script_mode, sound_context = _drama3_writer_mode_and_sounds(slots)
-        return prompt_service.drama3_full_prompt(
+        return drama3_writer.drama3_full_prompt(
             text, names, speaker_mode, runtime=_runtime_config(),
             cast_context=cast_context, script_mode=script_mode, sound_context=sound_context,
         )
@@ -519,7 +519,7 @@ def apply_drama3_writer_reply(reply, text, speaker_mode, *slots):
     try:
         names, existing, _cast_context, shown = _drama3_writer_slots(slots)
         script_mode, _sound_context = _drama3_writer_mode_and_sounds(slots)
-        script, status, cast, title = prompt_service.apply_drama3_reply(
+        script, status, cast, title = drama3_writer.apply_drama3_reply(
             reply, text, names, speaker_mode, script_mode=script_mode, return_title=True,
             speaker_names=_slot_names(existing),
         )
@@ -534,7 +534,7 @@ def switch_drama3_script_mode(script_mode, text):
     """Show the sounds panel for Advanced; Basic keeps but ignores the script's sound tags."""
     from h3_app.drama3_serving.tree import has_drama3_sound_features
 
-    if script_mode == prompt_service.DRAMA3_SCRIPT_ADVANCED:
+    if script_mode == drama3_writer.DRAMA3_SCRIPT_ADVANCED:
         return (gr.update(visible=True),
                 "Advanced sound-enhanced mode enabled (sounds use Stable Audio 3 Medium).")
     # The script is left as authored, so switching back to Advanced restores its staging.
@@ -554,7 +554,7 @@ def sync_drama3_script_sounds(text, script_mode, shown_sound_slots, *sound_meta_
     updates = [gr.skip()] * total_meta
     shown = int(shown_sound_slots or DRAMA3_VISIBLE_SOUND_SLOTS)
     unchanged = (*updates, *_sound_slot_visibility(shown, shown))
-    if script_mode != prompt_service.DRAMA3_SCRIPT_ADVANCED:
+    if script_mode != drama3_writer.DRAMA3_SCRIPT_ADVANCED:
         return unchanged
     extracted = extract_script_sounds(str(text or ""))
     if not extracted:

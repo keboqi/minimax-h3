@@ -11,7 +11,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import h3_models as _models
-from h3_app import prompt_service, song_brief
+from h3_app import song_brief
+from h3_app.prompt_writers import song as song_writer
 from h3_app.provenance import read_score, score_path, write_snapshot
 from h3_app.workflows.yue2 import build_yue2_graph, planned_score, required_yue2_nodes
 from h3_ui import application as app
@@ -216,7 +217,7 @@ class SongWriterTests(unittest.TestCase):
         return content[0]["text"] if isinstance(content, list) else content
 
     def music3(self, caption, lyrics, **values):
-        return prompt_service.enhance_music3_prompt(
+        return song_writer.enhance_music3_prompt(
             caption, "unused", "", lyrics, None, None, None, "Lightning AI", "key",
             runtime=self.runtime, **values,
         )
@@ -224,7 +225,7 @@ class SongWriterTests(unittest.TestCase):
     def yue2(self, style, lyrics, **values):
         values.setdefault("duration", 120)
         duration = values.pop("duration")
-        return prompt_service.enhance_yue2_prompt(
+        return song_writer.enhance_yue2_prompt(
             style, "unused", "", lyrics, "full", duration, "Lightning AI", "key",
             runtime=self.runtime, **values,
         )

@@ -163,7 +163,7 @@ import h3_app.workflows.ltx as ltx_workflow
 import h3_app.workflows.h3 as h3_workflow
 import h3_app.workflows.upscale as upscale_workflow
 from h3_app.execution import ExecutionRunner, PromptId, Submission
-from h3_app import prompt_service
+from h3_app.prompt_writers import h3 as h3_writer
 import h3_app.staging as staging
 from h3_app import media_tools
 from h3_app import gallery_store
@@ -210,7 +210,7 @@ def _promptcontroller():
             _runtime_config=_runtime_config,
             gr=gr,
             nullcontext=nullcontext,
-            prompt_service=prompt_service,
+            h3_writer=h3_writer,
         )
     )
 

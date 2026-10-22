@@ -5,7 +5,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from h3_app import prompt_service
+from h3_app.prompt_writers import flux3 as flux3_writer
 from h3_app.catalog import (
     DEFAULT_LIGHTNING_PROMPT_MODEL, QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX,
 )
@@ -86,7 +86,7 @@ class Flux3Handlers:
                              backend="Gemini", lightning_api_key="",
                              lightning_model=DEFAULT_LIGHTNING_PROMPT_MODEL):
         """Rewrite with the official upsampler prompt; turn local expansion off on success."""
-        enhanced, status = prompt_service.enhance_flux3_prompt(
+        enhanced, status = flux3_writer.enhance_flux3_prompt(
             prompt, model, temporary_api_key, reference_images, width, height,
             backend=backend, lightning_api_key=lightning_api_key,
             lightning_model=lightning_model, runtime=self.deps.runtime_config(),
