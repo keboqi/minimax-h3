@@ -172,5 +172,5 @@ def bind_flux3(view, deps: EngineDeps) -> Flux3Handlers:
     return handlers
 
 
-FEATURE = EngineFeature("flux3", build_flux3_view, bind_flux3, library_label="FLUX 3",
+FEATURE = EngineFeature("flux3", lambda root, deps: build_flux3_view(root), bind_flux3, library_label="FLUX 3",
                         library_inputs=lambda view: (view.reference_images,))

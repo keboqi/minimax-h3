@@ -8,19 +8,7 @@ from .h3_view import H3View
 
 @dataclass(frozen=True)
 class AppComponents(H3View):
-    ltx25_components: Any
-    qwen_image21_components: Any
-    music3_components: Any
-    yue2_components: Any
     api_components: Any
-    ltx25_stop: gr.components.Component
-    ltx25_status: gr.components.Component
-    qwen_image21_stop: gr.components.Component
-    qwen_image21_status: gr.components.Component
-    music3_stop: gr.components.Component
-    music3_status: gr.components.Component
-    yue2_stop: gr.components.Component
-    yue2_status: gr.components.Component
     api_stop: gr.components.Component
     api_status: gr.components.Component
     system_summary: gr.components.Component

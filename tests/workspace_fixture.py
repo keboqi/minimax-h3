@@ -60,13 +60,18 @@ def fake_engine(original, family):
     return run
 
 
-for callback, family in (
-    ("generate_ltx25", "ltx"),
-    ("generate_music3", "music"),
-    ("generate_qwen_image21", "qwen_image21"),
-    ("generate_yue2", "yue2"),
+from h3_ui.engines.ltx import LtxHandlers
+from h3_ui.engines.music import MusicHandlers
+from h3_ui.engines.qwen import QwenHandlers
+from h3_ui.engines.yue2 import YuE2Handlers
+
+for handlers, callback, family in (
+    (LtxHandlers, "generate_ltx25", "ltx"),
+    (MusicHandlers, "generate_music3", "music"),
+    (QwenHandlers, "generate_qwen_image21", "qwen_image21"),
+    (YuE2Handlers, "generate_yue2", "yue2"),
 ):
-    setattr(app, callback, fake_engine(getattr(app, callback), family))
+    setattr(handlers, callback, fake_engine(getattr(handlers, callback), family))
 
 def fake_voice_clip():
     """A tone clip in the real output location."""

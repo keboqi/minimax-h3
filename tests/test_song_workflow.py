@@ -358,9 +358,12 @@ class YuE2ScoreTests(unittest.TestCase):
             stack.enter_context(patch.object(app, "wait_for_history", side_effect=history))
             stack.enter_context(patch.object(app, "resolve_audio_output", return_value=result))
             stack.enter_context(patch("h3_app.generation.yue2.probe_audio_seconds", return_value=59.5))
+            from h3_ui.engines.yue2 import YuE2Handlers
+
+            yue2 = YuE2Handlers(app._engine_deps())
             values = {
                 key: app.YUE2_DEFAULTS.get(key)
-                for key in inspect.signature(app.generate_yue2).parameters
+                for key in inspect.signature(yue2.generate_yue2).parameters
                 if key != "progress"
             }
             values.update(
@@ -368,16 +371,16 @@ class YuE2ScoreTests(unittest.TestCase):
                 max_duration=60, seed=7, tiled_decode=True,
                 progress=lambda *args, **kwargs: None,
             )
-            updates = list(app.generate_yue2(**values))
+            updates = list(yue2.generate_yue2(**values))
             self.assertIn("score saved", updates[-1].status)
             self.assertIn("reached the 1:00 limit", updates[-1].status)
             self.assertEqual(read_score(result), "X:1\nK:G\nGABc|")
-            facts = app.take_facts(str(result))
+            facts = yue2.take_facts(str(result))
             self.assertEqual(
                 (facts["score"], facts["seconds"], facts["score_mode"]),
                 ("X:1\nK:G\nGABc|", 59.5, app.YUE2_DEFAULTS["mode"]),
             )
-            self.assertEqual(app.take_facts(None), {})
+            self.assertEqual(yue2.take_facts(None), {})
 
     def test_score_sidecar_follows_the_song_name(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -8,18 +8,11 @@ from typing import Any
 import gradio as gr
 from h3_app.catalog import QWEN_IMAGE21_PRESETS
 from h3_models import QWEN_IMAGE21_TURBO_MODES
-from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation
+from ...job_bindings import bind_gpu_action, bind_prompt_action, owned_generation
 
 
-from .qwen_view import QWEN_IMAGE21_LIGHTNING_MODES, QwenImage21View
-
-
-def qwen_resolution_preset_values(name: str) -> tuple[int, int]:
-    """Extract the aligned width and height from a Qwen native-size preset."""
-
-    dimensions = str(name).rsplit("·", 1)[-1].strip()
-    width, height = dimensions.split("×", 1)
-    return int(width), int(height)
+from ..controls import resolution_preset_values
+from .view import QWEN_IMAGE21_LIGHTNING_MODES, QwenImage21View
 
 
 def qwen_preset_values(preset: str):
@@ -90,7 +83,7 @@ def bind_qwen_image21_view(
     )
     view.output_resolution_1k.input(
         lambda name: (
-            (*qwen_resolution_preset_values(name), None)
+            (*resolution_preset_values(name), None)
             if name
             else (gr.update(), gr.update(), gr.update())
         ),
@@ -102,7 +95,7 @@ def bind_qwen_image21_view(
     )
     view.output_resolution_2k.input(
         lambda name: (
-            (*qwen_resolution_preset_values(name), None)
+            (*resolution_preset_values(name), None)
             if name
             else (gr.update(), gr.update(), gr.update())
         ),

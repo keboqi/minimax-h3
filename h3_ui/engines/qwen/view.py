@@ -22,9 +22,9 @@ from h3_app.catalog import (
     QWEN_IMAGE21_DYNAMIC_SCHEDULER,
 )
 
-from .prompt_review import build_prompt_review
-from .image_library import build_image_file_input
-from .prompt_writer_controls import build_remote_prompt_writer_controls
+from ...prompt_review import build_prompt_review
+from ...image_library import build_image_file_input
+from ...prompt_writer_controls import build_remote_prompt_writer_controls
 
 
 QWEN_1K_RESOLUTION_PRESETS: tuple[str, ...] = (

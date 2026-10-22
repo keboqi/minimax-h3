@@ -127,5 +127,5 @@ def bind_fibo2(view, deps: EngineDeps) -> Fibo2Handlers:
     return handlers
 
 
-FEATURE = EngineFeature("fibo2", build_fibo2_view, bind_fibo2, library_label="Fibo 2.0",
+FEATURE = EngineFeature("fibo2", lambda root, deps: build_fibo2_view(root), bind_fibo2, library_label="Fibo 2.0",
                         library_inputs=lambda view: (view.reference_images,))

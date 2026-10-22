@@ -64,7 +64,6 @@ from h3_ui.presentation import (
     generation_readiness as generation_readiness_state,
     result_format_presentation,
 )
-from h3_ui.qwen_bindings import qwen_resolution_preset_values
 from h3_ui.styles import H3_SETUP_CSS
 from h3_app.settings import GenerationRequest, ResolutionContext, resolve_settings
 from h3_app.contracts import GenerationArguments
@@ -74,7 +73,6 @@ from h3_app.jobs import gpu_maintenance, JOBS, CURRENT_JOB
 from h3_app.provenance import (
     RUN_CONTEXT,
     write_snapshot,
-    read_score,
     read_snapshot,
     render_snapshot,
     snapshot_path,
@@ -124,9 +122,6 @@ from h3_app.catalog import (
     MODEL_PROFILE_CHOICES,
     MUSIC3_DEFAULTS,
     QWEN_IMAGE21_DEFAULTS,
-    QWEN_EDIT_SIZE_MATCH,
-    QWEN_EDIT_SIZE_MAX,
-    QWEN_EDIT_SIZE_MANUAL,
     YUE2_DEFAULTS,
     POSTPROCESS_OPTIONS,
     PROMPT_WRITER_BACKENDS,
@@ -185,10 +180,6 @@ from h3_app.generation import (
 )
 from h3_app.generation import (
     h3 as h3_generation,
-    ltx as ltx_generation,
-    music as music_generation,
-    qwen as qwen_generation,
-    yue2 as yue2_generation,
 )
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
@@ -215,18 +206,11 @@ HTTP = requests.Session()
 def _promptcontroller():
     return PromptController(
         PromptServices(
-            H3Error=H3Error,
             JOBS=JOBS,
-            Path=Path,
-            QWEN_EDIT_SIZE_MANUAL=QWEN_EDIT_SIZE_MANUAL,
-            QWEN_EDIT_SIZE_MATCH=QWEN_EDIT_SIZE_MATCH,
-            QWEN_EDIT_SIZE_MAX=QWEN_EDIT_SIZE_MAX,
             _runtime_config=_runtime_config,
             gr=gr,
             nullcontext=nullcontext,
             prompt_service=prompt_service,
-            qwen_generation=qwen_generation,
-            qwen_edit_size_flags=qwen_edit_size_flags,
         )
     )
 
@@ -386,142 +370,6 @@ def build_server(demo: gr.Blocks, allowed_paths: list[str]) -> FastAPI:
             css,
             GALLERY_THUMBNAILS_DIR,
         ),
-    )
-
-
-def enhance_music3_prompt(
-    prompt: str,
-    model: str,
-    temporary_api_key: str,
-    lyrics: str,
-    ref_image_1: Any,
-    ref_image_2: Any,
-    ref_image_3: Any,
-    backend: str = "Gemini",
-    lightning_api_key: str = "",
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
-    duration: float = 120,
-    vocals: str = "Auto",
-    language: str = "Auto",
-    use: str = "Auto",
-    lyrics_policy: str = "Keep my lyrics",
-    notes: str = "",
-) -> tuple[str, str, str]:
-    return _promptcontroller().enhance_music3_prompt(
-        prompt,
-        model,
-        temporary_api_key,
-        lyrics,
-        ref_image_1,
-        ref_image_2,
-        ref_image_3,
-        backend,
-        lightning_api_key,
-        lightning_model,
-        duration,
-        vocals,
-        language,
-        use,
-        lyrics_policy,
-        notes,
-    )
-
-
-def enhance_ltx25_prompt(
-    prompt: str,
-    model: str,
-    temporary_api_key: str,
-    mode: str,
-    start_image: Any,
-    middle_image: Any,
-    end_image: Any,
-    duration: float,
-    width: int,
-    height: int,
-    backend: str = "Gemini",
-    lightning_api_key: str = "",
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
-) -> tuple[str, str]:
-    return _promptcontroller().enhance_ltx25_prompt(
-        prompt,
-        model,
-        temporary_api_key,
-        mode,
-        start_image,
-        middle_image,
-        end_image,
-        duration,
-        width,
-        height,
-        backend,
-        lightning_api_key,
-        lightning_model,
-    )
-
-
-def qwen_edit_size_flags(edit_size: str) -> tuple[bool, bool]:
-    return _promptcontroller().qwen_edit_size_flags(edit_size)
-
-
-def enhance_qwen_image21_prompt(
-    prompt: str,
-    model: str,
-    temporary_api_key: str,
-    mode: str,
-    reference_images: Any,
-    width: int,
-    height: int,
-    backend: str = "Gemini",
-    lightning_api_key: str = "",
-    edit_size: str = QWEN_EDIT_SIZE_MATCH,
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
-) -> tuple[str, str]:
-    return _promptcontroller().enhance_qwen_image21_prompt(
-        prompt,
-        model,
-        temporary_api_key,
-        mode,
-        reference_images,
-        width,
-        height,
-        backend,
-        lightning_api_key,
-        edit_size,
-        lightning_model,
-    )
-
-
-def enhance_yue2_prompt(
-    style: str,
-    model: str,
-    temporary_api_key: str,
-    lyrics: str,
-    mode: str,
-    duration: float,
-    backend: str = "Gemini",
-    lightning_api_key: str = "",
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
-    vocals: str = "Auto",
-    language: str = "Auto",
-    use: str = "Auto",
-    lyrics_policy: str = "Keep my lyrics",
-    notes: str = "",
-) -> tuple[str, str, str]:
-    return _promptcontroller().enhance_yue2_prompt(
-        style,
-        model,
-        temporary_api_key,
-        lyrics,
-        mode,
-        duration,
-        backend,
-        lightning_api_key,
-        lightning_model,
-        vocals,
-        language,
-        use,
-        lyrics_policy,
-        notes,
     )
 
 
@@ -2268,166 +2116,6 @@ def generate(
     )
 
 
-def generate_ltx25(
-    mode: str,
-    model_choice: str,
-    prompt: str,
-    negative_prompt: str,
-    first_image: str | None,
-    duration: float,
-    fps: float,
-    width: int,
-    height: int,
-    seed: int,
-    cfg: float,
-    sampler_name: str,
-    image_strength: float,
-    middle_image: str | None = None,
-    middle_time: float = LTX25_DEFAULTS["middle_time"],
-    middle_strength: float = LTX25_DEFAULTS["middle_strength"],
-    end_image: str | None = None,
-    end_strength: float = LTX25_DEFAULTS["end_strength"],
-    reference_images: list[str] | None = None,
-    progress=gr.Progress(track_tqdm=False),
-):
-    request = generation_requests.LtxRequest(
-        **{
-            "mode": mode,
-            "model_choice": model_choice,
-            "prompt": prompt,
-            "negative_prompt": negative_prompt,
-            "first_image": first_image,
-            "duration": duration,
-            "fps": fps,
-            "width": width,
-            "height": height,
-            "seed": seed,
-            "cfg": cfg,
-            "sampler_name": sampler_name,
-            "image_strength": image_strength,
-            "middle_image": middle_image,
-            "middle_time": middle_time,
-            "middle_strength": middle_strength,
-            "end_image": end_image,
-            "end_strength": end_strength,
-            "reference_images": tuple(reference_images or ()),
-        }
-    )
-    yield from ltx_generation.generate_ltx25(
-        request, _generation_services(), _runtime_config(), progress=progress
-    )
-
-
-def generate_music3(
-    model_choice: str,
-    caption: str,
-    lyrics: str,
-    max_duration: float,
-    seed: int,
-    steps: int,
-    cfg: float,
-    ar_cfg: float,
-    top_k: int,
-    tiled_decode: bool,
-    progress=gr.Progress(track_tqdm=False),
-):
-    request = generation_requests.MusicRequest(
-        **{
-            "model_choice": model_choice,
-            "caption": caption,
-            "lyrics": lyrics,
-            "max_duration": max_duration,
-            "seed": seed,
-            "steps": steps,
-            "cfg": cfg,
-            "ar_cfg": ar_cfg,
-            "top_k": top_k,
-            "tiled_decode": tiled_decode,
-        }
-    )
-    yield from music_generation.generate_music3(
-        request, _generation_services(), _runtime_config(), progress=progress
-    )
-
-
-def generate_qwen_image21(
-    mode: str,
-    model_choice: str,
-    text_encoder_choice: str,
-    prompt: str,
-    negative_prompt: str,
-    reference_images: Any,
-    width: int,
-    height: int,
-    reference_resolution: int,
-    edit_size: str,
-    seed: int,
-    steps: int,
-    cfg: float,
-    sampler_name: str,
-    scheduler: str,
-    cache_device: str,
-    cache_dtype: str,
-    attention_backend: str = "pytorch attention",
-    accelerator: str = "Off",
-    turbo_variant: str = "Off",
-    output_resolution_1k: str | None = None,
-    output_resolution_2k: str | None = None,
-    batch_count: int = 1,
-    batch_edit_inputs: bool = False,
-    prompt_enhancer: str = "Off",
-    lightning_strength: float = 0.5,
-    *,
-    output_resolution: str | None = None,
-    progress=gr.Progress(track_tqdm=False),
-):
-    selected_preset = output_resolution_2k or output_resolution_1k or output_resolution
-    match_input_size, max_resolution = qwen_edit_size_flags(edit_size)
-    if selected_preset:
-        width, height = qwen_resolution_preset_values(selected_preset)
-        match_input_size = False
-        max_resolution = False
-    uploaded = reference_images or []
-    if isinstance(uploaded, (str, Path)):
-        uploaded = [uploaded]
-    staged = tuple(
-        (
-            stage_file(str(path), "qwen_image21_references", reuse=True)
-            for path in uploaded
-        )
-    )
-    request = generation_requests.QwenImage21Request(
-        mode=mode,
-        model_choice=model_choice,
-        text_encoder_choice=text_encoder_choice,
-        prompt=prompt,
-        negative_prompt=negative_prompt,
-        reference_images=staged,
-        width=width,
-        height=height,
-        reference_resolution=reference_resolution,
-        match_input_size=match_input_size,
-        seed=seed,
-        batch_count=batch_count,
-        batch_edit_inputs=bool(batch_edit_inputs),
-        steps=steps,
-        cfg=cfg,
-        sampler_name=sampler_name,
-        scheduler=scheduler,
-        cache_device=cache_device,
-        cache_dtype=cache_dtype,
-        attention_backend=attention_backend,
-        accelerator=accelerator,
-        turbo_variant=turbo_variant,
-        max_resolution=bool(max_resolution),
-        prompt_enhancer=prompt_enhancer,
-        lightning_strength=float(lightning_strength),
-    )
-    yield from qwen_generation.generate_qwen_image21(
-        request, _generation_services(), _runtime_config(), progress=progress
-    )
-
-
 drama3_handlers.install(drama3_handlers.Drama3Services(
     # Late-bound so the application's runtime hooks stay patchable.
     runtime_config=lambda: _runtime_config(),
@@ -2460,6 +2148,8 @@ def _engine_deps():
         generation_services=lambda: _generation_services(),
         stage_file=lambda *args, **kwargs: stage_file(*args, **kwargs),
         interrupt=interrupt,
+        models=lambda: _modelcontroller(),
+        resolve_result=lambda path: resolve_result_path(path),
     )
 
 
@@ -2502,56 +2192,6 @@ def _drama3_actions():
         generate_drama3_sound=drama3_handlers.generate_drama3_sound,
         generate_drama3_sounds=drama3_handlers.generate_drama3_sounds,
         preload_drama3_models=drama3_handlers.preload_drama3_models,
-    )
-
-
-def generate_yue2(
-    model_choice: str,
-    style: str,
-    lyrics: str,
-    abc: str,
-    mode: str,
-    max_duration: float,
-    seed: int,
-    steps: int,
-    cfg: float,
-    temperature: float,
-    top_p: float,
-    top_k: int,
-    repetition_penalty: float,
-    max_abc_tokens: int,
-    abc_temperature: float,
-    abc_top_p: float,
-    abc_top_k: int,
-    abc_repetition_penalty: float,
-    abc_penalty_window: int,
-    tiled_decode: bool,
-    progress=gr.Progress(track_tqdm=False),
-):
-    request = generation_requests.YuE2Request(
-        model_choice=model_choice,
-        style=style,
-        lyrics=lyrics,
-        abc=abc,
-        mode=mode,
-        max_duration=max_duration,
-        seed=seed,
-        steps=steps,
-        cfg=cfg,
-        temperature=temperature,
-        top_p=top_p,
-        top_k=top_k,
-        repetition_penalty=repetition_penalty,
-        max_abc_tokens=max_abc_tokens,
-        abc_temperature=abc_temperature,
-        abc_top_p=abc_top_p,
-        abc_top_k=abc_top_k,
-        abc_repetition_penalty=abc_repetition_penalty,
-        abc_penalty_window=abc_penalty_window,
-        tiled_decode=tiled_decode,
-    )
-    yield from yue2_generation.generate_yue2(
-        request, _generation_services(), _runtime_config(), progress=progress
     )
 
 
@@ -2625,27 +2265,6 @@ def result_settings_for_media(value):
         if path:
             paths.append(resolve_result_path(path))
     return render_snapshot(paths)
-
-
-def take_facts(value):
-    """Seed, length and score of a generated song, for the Song take history.
-
-    Generation records the length in the snapshot, so this only reads sidecars.
-    """
-    if isinstance(value, dict):
-        value = value.get("path") or value.get("name")
-    if not isinstance(value, (str, Path)) or not value:
-        return {}
-    managed = resolve_result_path(value)
-    snapshot = read_snapshot(managed) or {}
-    settings = snapshot.get("settings") or {}
-    return {
-        "seed": settings.get("seed"),
-        "seconds": snapshot.get("audio_seconds"),
-        "score": read_score(managed),
-        # The composition mode the score was planned or supplied in.
-        "score_mode": settings.get("mode"),
-    }
 
 
 def resolve_result_path(path):
@@ -3045,17 +2664,9 @@ def build_ui() -> gr.Blocks:
             describe_settings=describe_settings,
             empty_generated_media_gallery=empty_generated_media_gallery,
             enhance_h3_prompt=enhance_h3_prompt,
-            enhance_ltx25_prompt=enhance_ltx25_prompt,
-            enhance_music3_prompt=enhance_music3_prompt,
-            enhance_qwen_image21_prompt=enhance_qwen_image21_prompt,
-            enhance_yue2_prompt=enhance_yue2_prompt,
             fbcache_preset_defaults=fbcache_preset_defaults,
             generate_for_ui=generate_for_ui,
-            generate_ltx25=generate_ltx25,
-            generate_music3=generate_music3,
-            generate_qwen_image21=generate_qwen_image21,
             generate_with_ui_defaults=generate_with_ui_defaults,
-            generate_yue2=generate_yue2,
             drama3_actions=_drama3_actions(),
             engine_deps=_engine_deps(),
             generation_readiness_state=generation_readiness_state,
@@ -3069,14 +2680,10 @@ def build_ui() -> gr.Blocks:
             gallery_media_download_path=gallery_media_download_path,
             mode_help=mode_help,
             postprocess_selected_gallery_media=postprocess_selected_gallery_media,
-            prepare_all_ltx25_official_models=prepare_all_ltx25_official_models,
-            prepare_ltx25_official_workflow=prepare_ltx25_official_workflow,
             prompt_writer_backend_visibility=prompt_writer_backend_visibility,
             reference_prompt_help=reference_prompt_help,
             refresh_backend_views=refresh_backend_views,
             refresh_media_page=refresh_media_page,
-            render_ltx25_official_model_inventory=render_ltx25_official_model_inventory,
-            render_ltx25_workflow_details=render_ltx25_workflow_details,
             render_snapshot=render_snapshot,
             resolution_choice_updates=resolution_choice_updates,
             resolution_control_updates=resolution_control_updates,
@@ -3085,7 +2692,6 @@ def build_ui() -> gr.Blocks:
             resolve_request_settings=resolve_request_settings,
             result_format_layout_updates=result_format_layout_updates,
             result_settings_for_media=result_settings_for_media,
-            take_facts=take_facts,
             save_selected_image_frames=save_selected_image_frames,
             select_all_image_frames=select_all_image_frames,
             select_gallery_media=select_gallery_media,

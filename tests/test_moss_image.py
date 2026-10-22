@@ -199,7 +199,7 @@ class ResolutionPresetTests(unittest.TestCase):
     def test_every_preset_is_a_valid_request_size_for_its_engine(self):
         from h3_app.generation.requests import Flux3Request
         from h3_ui.engines import flux3, moss_image
-        from h3_ui.qwen_bindings import qwen_resolution_preset_values
+        from h3_ui.engines.controls import resolution_preset_values as qwen_resolution_preset_values
 
         for presets, request, megapixels in (
             (flux3.FLUX3_1K_RESOLUTION_PRESETS, Flux3Request("a fox"), 1),

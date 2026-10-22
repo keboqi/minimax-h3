@@ -125,7 +125,7 @@ class FiboSizeTests(unittest.TestCase):
             validate_request(Fibo2Request("edit", edit_size="Huge"))
 
     def test_resolution_presets_are_trained_1m_and_2m_sizes_on_the_grid(self):
-        from h3_ui.qwen_bindings import qwen_resolution_preset_values
+        from h3_ui.engines.controls import resolution_preset_values as qwen_resolution_preset_values
         self.assertIn("1M · 16:9 · 1424×800", FIBO2_1M_RESOLUTION_PRESETS)
         for presets, low, high in ((FIBO2_1M_RESOLUTION_PRESETS, 0.9, 1.15), (FIBO2_2M_RESOLUTION_PRESETS, 1.9, 2.2)):
             for name in presets:

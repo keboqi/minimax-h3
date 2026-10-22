@@ -6,10 +6,10 @@ from collections.abc import Callable
 from typing import Any
 
 import gradio as gr
-from .job_bindings import bind_gpu_action, bind_prompt_action, owned_generation
+from ...job_bindings import bind_gpu_action, bind_prompt_action, owned_generation
 
 
-from .ltx_view import LtxView
+from .view import LtxView
 
 
 def bind_ltx_view(

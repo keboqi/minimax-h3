@@ -33,7 +33,33 @@ from h3_models import (
     QWEN_IMAGE21_OFFICIAL_TURBO,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
 )
-from h3_ui.qwen_bindings import qwen_preset_values, qwen_resolution_preset_values, qwen_turbo_defaults
+from h3_ui.engines.controls import resolution_preset_values as qwen_resolution_preset_values
+from h3_ui.engines.qwen.bindings import qwen_preset_values, qwen_turbo_defaults
+
+
+def qwen_ui():
+    """The Qwen engine's handlers, with dependencies read from the returned namespace."""
+    from types import SimpleNamespace
+
+    from h3_app import catalog, prompt_service
+    from h3_app.generation import qwen as qwen_generation
+    from h3_ui.engines import qwen as qwen_engine
+    from h3_ui.engines.feature import EngineDeps
+
+    ui = SimpleNamespace(
+        _runtime_config=lambda: object(), _generation_services=lambda: object(),
+        prompt_service=prompt_service, qwen_generation=qwen_generation,
+        qwen_edit_size_flags=qwen_engine.qwen_edit_size_flags,
+        QWEN_EDIT_SIZE_MATCH=catalog.QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX=catalog.QWEN_EDIT_SIZE_MAX,
+        QWEN_EDIT_SIZE_MANUAL=catalog.QWEN_EDIT_SIZE_MANUAL,
+    )
+    handlers = qwen_engine.QwenHandlers(EngineDeps(
+        runtime_config=lambda: ui._runtime_config(), generation_services=lambda: ui._generation_services(),
+        stage_file=lambda path, *args, **kwargs: path, interrupt=lambda *args: None,
+    ))
+    ui.generate_qwen_image21 = handlers.generate_qwen_image21
+    ui.enhance_qwen_image21_prompt = handlers.enhance_qwen_image21_prompt
+    return ui
 
 
 class QwenImage21WorkflowTests(unittest.TestCase):
@@ -311,7 +337,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             self.assertLessEqual(width * height, 4_000_000)
 
     def test_prompt_writer_receives_max_edit_dimensions(self):
-        from h3_ui import application as ui_app
+        ui_app = qwen_ui()
 
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "target.png"
@@ -332,7 +358,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             self.assertEqual(enhance.call_args.args[5:7], (2560, 1440))
 
     def test_edit_size_radio_maps_to_exclusive_backend_flags(self):
-        from h3_ui import application as ui_app
+        ui_app = qwen_ui()
 
         self.assertEqual(
             ui_app.qwen_edit_size_flags(ui_app.QWEN_EDIT_SIZE_MATCH),
@@ -350,7 +376,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
             ui_app.qwen_edit_size_flags("Invalid")
 
     def test_generation_receives_radio_edit_size_flags(self):
-        from h3_ui import application as ui_app
+        ui_app = qwen_ui()
 
         for edit_size, expected in (
             (ui_app.QWEN_EDIT_SIZE_MATCH, (True, False)),
@@ -380,7 +406,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
                 )
 
     def test_prompt_writer_matches_first_edit_image_dimensions(self):
-        from h3_ui import application as ui_app
+        ui_app = qwen_ui()
 
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "target.png"
@@ -463,7 +489,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         self.assertEqual(QWEN_IMAGE21_DEFAULTS["sampler"], "euler")
 
     def test_native_resolution_presets(self):
-        from h3_ui.qwen_view import QWEN_1K_RESOLUTION_PRESETS, QWEN_2K_RESOLUTION_PRESETS
+        from h3_ui.engines.qwen.view import QWEN_1K_RESOLUTION_PRESETS, QWEN_2K_RESOLUTION_PRESETS
 
         self.assertEqual(len(QWEN_1K_RESOLUTION_PRESETS), 7)
         self.assertEqual(len(QWEN_2K_RESOLUTION_PRESETS), 7)
@@ -492,7 +518,7 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         )
 
     def test_generate_qwen_image21_accepts_1k_and_2k_presets(self):
-        from h3_ui import application as ui_app
+        ui_app = qwen_ui()
 
         with (
             patch.object(ui_app, "_generation_services", return_value=object()),

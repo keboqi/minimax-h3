@@ -617,8 +617,11 @@ class GenerationIntegrationTests(unittest.TestCase):
             stack.enter_context(patch.object(app, "wait_for_history", return_value={}))
             for name in ("resolve_output", "resolve_audio_output"):
                 stack.enter_context(patch.object(app, name, return_value=result))
+            from h3_ui.engines.ltx import LtxHandlers
+            from h3_ui.engines.music import MusicHandlers
+
             ltx = list(
-                app.generate_ltx25(
+                LtxHandlers(app._engine_deps()).generate_ltx25(
                     "Text to video",
                     app.DEFAULT_LTX25_MODEL,
                     "Private prompt",
@@ -641,7 +644,8 @@ class GenerationIntegrationTests(unittest.TestCase):
             args = dict(app.MUSIC3_DEFAULTS)
             required = {
                 key: args.get(key)
-                for key in inspect.signature(app.generate_music3).parameters
+                for key in inspect.signature(MusicHandlers.generate_music3).parameters
+                if key != "self"
                 if key != "progress"
             }
             required.update(
@@ -652,7 +656,7 @@ class GenerationIntegrationTests(unittest.TestCase):
                 seed=123,
                 progress=lambda *args, **kwargs: None,
             )
-            music = list(app.generate_music3(**required))
+            music = list(MusicHandlers(app._engine_deps()).generate_music3(**required))
             self.assertIn("completed", music[-1].status)
             self.assertNotIn("Private", json.dumps(read_snapshot(result)))
 

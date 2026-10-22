@@ -192,4 +192,4 @@ def bind_moss_image(view, deps: EngineDeps) -> MossImageHandlers:
     return handlers
 
 
-FEATURE = EngineFeature("moss_image", build_moss_image_view, bind_moss_image)
+FEATURE = EngineFeature("moss_image", lambda root, deps: build_moss_image_view(root), bind_moss_image)

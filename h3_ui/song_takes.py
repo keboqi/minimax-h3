@@ -232,3 +232,29 @@ def _describe(history, a, b) -> str:
             + (escape(", ".join(changed)) + " changed." if changed else "same draft, same seed.")
         )
     return '<p class="h3-song-take-details">' + "<br>".join(lines) + "</p>"
+
+
+def take_facts(value, resolve_result: Callable[[Any], Any] = lambda path: path) -> dict[str, Any]:
+    """Seed, length and score of a generated song, for the take history.
+
+    Generation records the length in the snapshot, so this only reads sidecars.
+    ``resolve_result`` finds the managed output behind Gradio's cached copy.
+    """
+    from pathlib import Path
+
+    from h3_app.provenance import read_score, read_snapshot
+
+    if isinstance(value, dict):
+        value = value.get("path") or value.get("name")
+    if not isinstance(value, (str, Path)) or not value:
+        return {}
+    managed = resolve_result(value)
+    snapshot = read_snapshot(managed) or {}
+    settings = snapshot.get("settings") or {}
+    return {
+        "seed": settings.get("seed"),
+        "seconds": snapshot.get("audio_seconds"),
+        "score": read_score(managed),
+        # The composition mode the score was planned or supplied in.
+        "score_mode": settings.get("mode"),
+    }

@@ -7,14 +7,14 @@ from typing import Any, Mapping, Sequence
 
 import gradio as gr
 
-from .image_library import build_image_input
-from .prompt_review import build_prompt_review
-from .prompt_writer_controls import build_remote_prompt_writer_controls
-from .song_controls import (
+from ...image_library import build_image_input
+from ...prompt_review import build_prompt_review
+from ...prompt_writer_controls import build_remote_prompt_writer_controls
+from ...song_controls import (
     DRAFT, IDEA, LISTEN, TAKE, card_heading, change_request, duration_presets, lyrics_policy,
     render_recap, song_check_panel, song_choices, song_intro, song_steps,
 )
-from .song_takes import SongTakes, build_take_history
+from ...song_takes import SongTakes, build_take_history
 
 
 @dataclass(frozen=True)

@@ -7,9 +7,9 @@ from typing import Any, Mapping, Sequence
 
 import gradio as gr
 
-from .prompt_review import build_prompt_review
-from .image_library import build_image_input, build_image_file_input
-from .prompt_writer_controls import build_remote_prompt_writer_controls
+from ...prompt_review import build_prompt_review
+from ...image_library import build_image_input, build_image_file_input
+from ...prompt_writer_controls import build_remote_prompt_writer_controls
 
 
 @dataclass(frozen=True)

@@ -77,14 +77,19 @@ def resolution_presets(small, large, small_label, large_label, small_info, large
     return first, second
 
 
+def resolution_preset_values(name: str) -> tuple[int, int]:
+    """The aligned width and height at the end of a native-size preset such as "1K · 1:1 · 1024×1024"."""
+    dimensions = str(name).rsplit("·", 1)[-1].strip()
+    width, height = dimensions.split("×", 1)
+    return int(width), int(height)
+
+
 def bind_resolution_presets(view, *, extra_outputs=(), extra_values=()):
     """Mirror Qwen: a preset sets the size and clears the other; a manual size clears both."""
-    from ..qwen_bindings import qwen_resolution_preset_values
-
     pairs = ((view.resolution_small, view.resolution_large), (view.resolution_large, view.resolution_small))
     for chosen, other in pairs:
         chosen.input(
-            lambda name: ((*qwen_resolution_preset_values(name), None, *extra_values) if name
+            lambda name: ((*resolution_preset_values(name), None, *extra_values) if name
                           else tuple(gr.update() for _ in range(3 + len(extra_outputs)))),
             inputs=chosen, outputs=[view.width, view.height, other, *extra_outputs], **QUIET,
         )

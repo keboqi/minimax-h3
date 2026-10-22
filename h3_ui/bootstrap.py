@@ -13,17 +13,13 @@ from .persistence import (
     bind_browser_settings,
     create_browser_state,
 )
-from .ltx_view import build_ltx_view
 from .styles import H3_SETUP_CSS, H3_WORKSPACE_CSS
 from .api_view import build_api_view
 from .media_view import build_gallery_view
-from .music_view import build_music_view
-from .qwen_view import build_qwen_image21_view
-from .yue2_view import build_yue2_view
 from h3_ui.drama3_bindings import bind_drama3
 from h3_ui.engines import FEATURES, EngineDeps
-from h3_ui.drama3_view import DRAMA3_SCRIPT_HIGHLIGHT_JS, DRAMA3_SUBTITLES_JS, build_drama3_view
 from h3_ui.engines.controls import settings_components
+from h3_ui.drama3_view import DRAMA3_SCRIPT_HIGHLIGHT_JS, DRAMA3_SUBTITLES_JS, build_drama3_view
 from h3_ui import audio_probe_cache
 
 # Ctrl/Cmd+Enter presses the visible engine's generate button. Disabled
@@ -112,17 +108,9 @@ class BootstrapServices:
     describe_settings: Callable
     empty_generated_media_gallery: Callable
     enhance_h3_prompt: Callable
-    enhance_ltx25_prompt: Callable
-    enhance_music3_prompt: Callable
-    enhance_qwen_image21_prompt: Callable
-    enhance_yue2_prompt: Callable
     fbcache_preset_defaults: Callable
     generate_for_ui: Callable
-    generate_ltx25: Callable
-    generate_music3: Callable
-    generate_qwen_image21: Callable
     generate_with_ui_defaults: Callable
-    generate_yue2: Callable
     drama3_actions: Any
     engine_deps: EngineDeps
     generation_readiness_state: Callable
@@ -136,14 +124,10 @@ class BootstrapServices:
     list_media_paths: Callable
     mode_help: Callable
     postprocess_selected_gallery_media: Callable
-    prepare_all_ltx25_official_models: Callable
-    prepare_ltx25_official_workflow: Callable
     prompt_writer_backend_visibility: Callable
     reference_prompt_help: Callable
     refresh_backend_views: Callable
     refresh_media_page: Callable
-    render_ltx25_official_model_inventory: Callable
-    render_ltx25_workflow_details: Callable
     render_snapshot: Callable
     resolution_choice_updates: Callable
     resolution_control_updates: Callable
@@ -152,7 +136,6 @@ class BootstrapServices:
     resolve_request_settings: Callable
     result_format_layout_updates: Callable
     result_settings_for_media: Callable
-    take_facts: Callable
     save_selected_image_frames: Callable
     select_all_image_frames: Callable
     select_gallery_media: Callable
@@ -204,10 +187,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 ).click(None, js=RESET_BROWSER_SETTINGS_JS, api_name=False)
         app_views = app_views or create_app_views()
         generation_view = app_views.generation
-        qwen_image21_view = app_views.qwen_image21
-        ltx25_view = app_views.ltx25
-        music3_view = app_views.music3
-        yue2_view = app_views.yue2
         gallery_view = app_views.gallery
         api_view = app_views.api
         gallery_tab = app_views.gallery_tab
@@ -261,44 +240,10 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             ),
             advanced_root=app_views.generation_settings,
         )
-        ltx25_components = build_ltx_view(
-            ltx25_view,
-            model_choices=catalog.LTX25_MODEL_CHOICES,
-            defaults=catalog.LTX25_DEFAULTS,
-            prompt_models=catalog.GEMINI_PROMPT_MODELS,
-            default_prompt_model=catalog.DEFAULT_GEMINI_PROMPT_MODEL,
-            workflows=tuple(catalog.LTX25_WORKFLOWS),
-            initial_workflow_details=services.render_ltx25_workflow_details(
-                next(iter(catalog.LTX25_WORKFLOWS))
-            ),
-            model_inventory_text=services.render_ltx25_official_model_inventory(),
-        )
-        music3_components = build_music_view(
-            music3_view,
-            prompt_models=catalog.GEMINI_PROMPT_MODELS,
-            default_prompt_model=catalog.DEFAULT_GEMINI_PROMPT_MODEL,
-            model_choices=catalog.MUSIC3_MODEL_CHOICES,
-            defaults=catalog.MUSIC3_DEFAULTS,
-        )
-        qwen_image21_components = build_qwen_image21_view(
-            qwen_image21_view,
-            model_choices=catalog.QWEN_IMAGE21_MODEL_CHOICES,
-            text_encoder_choices=catalog.QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
-            prompt_models=catalog.GEMINI_PROMPT_MODELS,
-            default_prompt_model=catalog.DEFAULT_GEMINI_PROMPT_MODEL,
-            defaults=catalog.QWEN_IMAGE21_DEFAULTS,
-        )
-        yue2_components = build_yue2_view(
-            yue2_view,
-            prompt_models=catalog.GEMINI_PROMPT_MODELS,
-            default_prompt_model=catalog.DEFAULT_GEMINI_PROMPT_MODEL,
-            model_choices=catalog.YUE2_MODEL_CHOICES,
-            defaults=catalog.YUE2_DEFAULTS,
-        )
         engine_actions = services.drama3_actions
         engine_views = {}
         for feature in FEATURES:
-            engine_views[feature.id] = feature.build(getattr(app_views, feature.id))
+            engine_views[feature.id] = feature.build(getattr(app_views, feature.key), services.engine_deps)
             feature.bind(engine_views[feature.id], services.engine_deps)
         drama3_components = build_drama3_view(
             app_views.drama3,
@@ -330,15 +275,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             )
             bind_dubbing(dubbing_components, task=app_views.task, create_tab=app_views.create_tab,
                          interrupt=services.interrupt)
-        from .engine_readiness import bind_engine_readiness
-
-        for view, family in (
-            (ltx25_components, "ltx"),
-            (qwen_image21_components, "qwen"),
-            (music3_components, "music"),
-            (yue2_components, "yue2"),
-        ):
-            bind_engine_readiness(view, family)
         with gallery_components.inspector:
             gallery_settings_used = gr.HTML("Select an output to inspect its settings.")
         from .library_tools import build_library_tools
@@ -359,9 +295,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
 
         image_inputs = [
             *h3_components.values.values(),
-            *vars(ltx25_components).values(),
-            *vars(qwen_image21_components).values(),
-            *music3_components.reference_images,
             *(component for feature in FEATURES for component in feature.library_inputs(engine_views[feature.id])),
         ]
         for component in image_inputs:
@@ -378,29 +311,16 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 if hasattr(component, "h3_reference_slot")
             ),
         }
-        for family, inputs in (
-            ("H3", h3_components.values.values()),
-            ("LTX", vars(ltx25_components).values()),
-            ("Qwen", vars(qwen_image21_components).values()),
-            *((feature.library_label, feature.library_inputs(engine_views[feature.id]))
-              for feature in FEATURES if feature.library_label),
-        ):
-            for component in inputs:
-                if hasattr(component, "h3_library_picker") and not hasattr(component, "h3_reference_slot"):
-                    destinations[f"{family} · {component.label}"] = component
-        destinations["Music · Reference images"] = music3_components.reference_images
+        for component in h3_components.values.values():
+            if hasattr(component, "h3_library_picker") and not hasattr(component, "h3_reference_slot"):
+                destinations[f"H3 · {component.label}"] = component
+        for feature in FEATURES:
+            destinations.update(feature.destinations_of(engine_views[feature.id]))
         build_media_image_destinations(
             gallery_components, destinations,
             validate_path=services.gallery_media_download_path,
         )
-        for root, view in (
-            (ltx25_view, ltx25_components),
-            (music3_view, music3_components),
-            (qwen_image21_view, qwen_image21_components),
-            (yue2_view, yue2_components),
-            *((getattr(app_views, feature.id), engine_views[feature.id]) for feature in FEATURES),
-            (app_views.drama3, drama3_components),
-        ):
+        for view in (*engine_views.values(), drama3_components):
             with view.output.h3_metadata_root:
                 metadata_view = gr.HTML(
                     "Settings used will appear with the generated result."
@@ -423,19 +343,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 "gallery_components": gallery_components,
                 "gallery_tab": gallery_tab,
                 "health": health,
-                "ltx25_components": ltx25_components,
-                "ltx25_status": ltx25_components.status,
-                "ltx25_stop": ltx25_components.stop,
                 "memory_status": memory_status,
-                "music3_components": music3_components,
-                "music3_status": music3_components.status,
-                "music3_stop": music3_components.stop,
-                "qwen_image21_components": qwen_image21_components,
-                "qwen_image21_status": qwen_image21_components.status,
-                "qwen_image21_stop": qwen_image21_components.stop,
-                "yue2_components": yue2_components,
-                "yue2_status": yue2_components.status,
-                "yue2_stop": yue2_components.stop,
                 "system_summary": system_summary,
                 "unload_models": unload_models,
             }
@@ -488,25 +396,9 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 for name, component in h3_components.values.items()
             },
             **{
-                f"ltx25.{name}": component
-                for name, component in vars(ltx25_components).items()
-            },
-            **{
-                f"music3.{name}": component
-                for name, component in vars(music3_components).items()
-            },
-            **{
-                f"qwen_image21.{name}": component
-                for name, component in vars(qwen_image21_components).items()
-            },
-            **{
-                f"yue2.{name}": component
-                for name, component in vars(yue2_components).items()
-            },
-            **{
-                f"{feature.id}.{name}": component
+                f"{feature.key}.{name}": component
                 for feature in FEATURES
-                for name, component in settings_components(engine_views[feature.id]).items()
+                for name, component in feature.settings_of(engine_views[feature.id]).items()
             },
             **{
                 f"drama3.{name}": component
