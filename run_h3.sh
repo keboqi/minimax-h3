@@ -89,14 +89,18 @@ report_sglang_sleep() {
     log "SGLang sleep: unavailable (nvidia-smi not found); Drama 3 SGLang will stop/restart"
     return
   fi
-  local version
+  local version transport="CUDA IPC"
   while read -r version; do
-    if (( ${version%%.*} < 610 )); then
-      log "SGLang sleep: unavailable (NVIDIA driver $version; 610+ needed for CUDA IPC checkpointing); Drama 3 SGLang will stop/restart"
+    if (( ${version%%.*} < 580 )); then
+      log "SGLang sleep: unavailable (NVIDIA driver $version; 580+ needed for CUDA checkpointing); Drama 3 SGLang will stop/restart"
       return
     fi
+    # 580-609 cannot checkpoint CUDA IPC, so Omni's stages use host SHM instead.
+    if (( ${version%%.*} < 610 )); then
+      transport="host SHM"
+    fi
   done <<< "$versions"
-  log "SGLang sleep: available (NVIDIA driver ${versions//$'\n'/, })"
+  log "SGLang sleep: available (NVIDIA driver ${versions//$'\n'/, }; Omni stages use $transport)"
 }
 
 environment_is_current() {

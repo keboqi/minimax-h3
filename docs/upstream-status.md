@@ -47,6 +47,11 @@ page when an item is resolved or a new audit finds one.
 
 - The Drama 3 SGLang venv now includes `torch_memory_saver==0.0.10`. How it
   interacts with the sleep/checkpoint path has not been tested on a GPU.
+- Drama 3 sleep on drivers 580-609 (Colab) depends on Omni's host-SHM stage
+  transport and on checkpointing without `--launch-job`; neither has run on a
+  GPU yet. `tests/colab_drama3_sleep.py` is the check. SGLang-Omni has no
+  transport setting, so H3 overrides its CUDA platform; drop that if upstream
+  adds one.
 - No Linux/Python 3.12 dependency lock exists. Git sources are pinned by SHA,
   but most packages use ranges. Record a working resolution once a GPU
   environment is validated.

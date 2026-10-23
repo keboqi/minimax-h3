@@ -83,7 +83,9 @@ for line in sys.stdin:
         p.stdin.write(line); p.stdin.flush()
     print(json.dumps([json.loads(p.stdout.readline()) for p in children]), flush=True)
 '''
-    helper = cp.prepare_helper(Path("/tmp/h3-sleep-probe"))
+    helper, ipc = cp.prepare_helper(Path("/tmp/h3-sleep-probe"))
+    if not ipc:
+        return {"error": "This probe checkpoints CUDA IPC buffers, which needs driver 610+"}
     baseline = cp.device_memory()[0]
     process = subprocess.Popen([str(helper), "--launch-job", sys.executable, "-u", "-c", root],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,

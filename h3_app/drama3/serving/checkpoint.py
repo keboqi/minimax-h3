@@ -1,7 +1,8 @@
 """Linux CUDA sleep/wake for the whole managed Omni process group.
 
 Uses NVIDIA's driver checkpoint support, not SIGSTOP (which retains VRAM).
-Driver 610 is required because Omni uses CUDA IPC between its three stages.
+Omni's three stages exchange tensors over CUDA IPC, which only driver 610+
+checkpoints. On 580-609 (Colab) the server routes them through host SHM instead.
 No CRIU or process-image persistence is involved: CPU processes remain alive.
 """
 
@@ -23,6 +24,8 @@ HELPER_SHA256 = "707fa7f54136824d6c1d6dd724b9b1717610f831033c00d06da474de363a06d
 HELPER_URL = (f"https://raw.githubusercontent.com/NVIDIA/cuda-checkpoint/{NVIDIA_REF}"
               "/bin/x86_64_Linux/cuda-checkpoint")
 GIB = 2**30
+IPC_DRIVER = 610  # first driver that checkpoints cuIpcGetMemHandle IPC
+MIN_DRIVER = 580  # Colab's driver; the oldest one this sleep targets
 
 
 def run(command: list[str], timeout: float = 30) -> str:
@@ -34,14 +37,19 @@ def run(command: list[str], timeout: float = 30) -> str:
     return result.stdout.strip()
 
 
-def prepare_helper(cache: Path) -> Path:
-    """Fetch a checksum-pinned helper only on a compatible Linux GPU host."""
+def prepare_helper(cache: Path) -> tuple[Path, bool]:
+    """Fetch a checksum-pinned helper only on a compatible Linux GPU host.
+
+    Also returns whether the driver checkpoints CUDA IPC (610+).
+    """
     if platform.system() != "Linux" or platform.machine() not in {"x86_64", "AMD64"}:
         raise RuntimeError("CUDA sleep requires Linux x86_64")
     versions = run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"])
-    if not versions or any(int(v.split(".")[0]) < 610 for v in versions.splitlines()):
+    majors = [int(v.split(".")[0]) for v in versions.splitlines()]
+    if not majors or min(majors) < MIN_DRIVER:
         found = ", ".join(versions.splitlines()) or "unknown"
-        raise RuntimeError(f"CUDA sleep requires NVIDIA driver 610+ for Omni's CUDA IPC (found {found})")
+        raise RuntimeError(f"CUDA sleep requires NVIDIA driver {MIN_DRIVER}+ (found {found})")
+    ipc = min(majors) >= IPC_DRIVER
     target = cache / "cuda-checkpoint" / NVIDIA_REF / "cuda-checkpoint"
     if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != HELPER_SHA256:
         response = requests.get(HELPER_URL, timeout=30)
@@ -55,9 +63,9 @@ def prepare_helper(cache: Path) -> Path:
         temporary.replace(target)
     target.chmod(0o700)
     help_text = run([str(target), "--help"])
-    if "--launch-job" not in help_text or "--action" not in help_text:
+    if "--action" not in help_text or (ipc and "--launch-job" not in help_text):
         raise RuntimeError("NVIDIA driver does not expose checkpoint job support")
-    return target
+    return target, ipc
 
 
 @dataclass(frozen=True)

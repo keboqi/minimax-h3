@@ -190,9 +190,9 @@ class HostTests(unittest.TestCase):
     def test_old_driver_does_not_download_helper(self):
         with patch.object(cp.platform, 'system', return_value='Linux'), \
                 patch.object(cp.platform, 'machine', return_value='x86_64'), \
-                patch.object(cp, 'run', return_value='580.100'), \
+                patch.object(cp, 'run', return_value='610.10\n575.64'), \
                 patch.object(cp.requests, 'get') as get:
-            with self.assertRaisesRegex(RuntimeError, '610'):
+            with self.assertRaisesRegex(RuntimeError, '580'):
                 cp.prepare_helper(Path('/unused'))
             get.assert_not_called()
 
@@ -217,8 +217,28 @@ class HostTests(unittest.TestCase):
                 patch.object(cp, 'run', side_effect=['610.10', '--launch-job --action'] * 2), \
                 patch.object(cp.requests, 'get', return_value=MagicMock(content=data)) as get:
             first = cp.prepare_helper(Path(temp))
+            self.assertTrue(first[1])
             self.assertEqual(cp.prepare_helper(Path(temp)), first)
             get.assert_called_once_with(cp.HELPER_URL, timeout=30)
+
+    def test_driver_without_ipc_checkpointing_needs_no_job_support(self):
+        import hashlib
+
+        data = b'test executable'
+        for versions, help_text, ipc in (('580.82.07', '--action', False),
+                                         ('610.10\n609.1', '--action', False),
+                                         ('610.10', '--action', None)):
+            with self.subTest(versions=versions), tempfile.TemporaryDirectory() as temp, \
+                    patch.object(cp.platform, 'system', return_value='Linux'), \
+                    patch.object(cp.platform, 'machine', return_value='x86_64'), \
+                    patch.object(cp, 'HELPER_SHA256', hashlib.sha256(data).hexdigest()), \
+                    patch.object(cp, 'run', side_effect=[versions, help_text]), \
+                    patch.object(cp.requests, 'get', return_value=MagicMock(content=data)):
+                if ipc is None:  # 610+ is launched in a job, so the helper must offer one
+                    with self.assertRaisesRegex(RuntimeError, 'job support'):
+                        cp.prepare_helper(Path(temp))
+                else:
+                    self.assertEqual(cp.prepare_helper(Path(temp))[1], ipc)
 
 
 class LifecycleTests(unittest.TestCase):
@@ -336,26 +356,32 @@ class LifecycleTests(unittest.TestCase):
             stop.assert_called_once()
             release.assert_not_called()
 
-    def test_start_wraps_omni_in_fresh_checkpoint_job_and_off_avoids_helper(self):
+    def test_start_uses_checkpoint_job_or_shm_platform_and_off_avoids_helper(self):
         from dataclasses import replace
 
-        for mode in ('auto', 'off'):
+        for mode, ipc in (('auto', True), ('auto', False), ('off', None)):
             self.server.settings = replace(self.server.settings, sleep_mode=mode)
-            with self.subTest(mode=mode), \
-                    patch.object(cp, 'prepare_helper', return_value=Path('/helper')) as prepare, \
+            with self.subTest(mode=mode, ipc=ipc), \
+                    patch.object(cp, 'prepare_helper', return_value=(Path('/helper'), ipc)) as prepare, \
                     patch.object(cp, 'device_memory', return_value=(cp.GIB, 100 * cp.GIB)), \
                     patch.object(server.subprocess, 'Popen') as popen, \
                     patch.object(server.atexit, 'register'):
                 self.server._start()
                 self.server._log.close()
                 self.server._log = None
-                command = popen.call_args.args[0]
-                if mode == 'auto':
+                command, env = popen.call_args.args[0], popen.call_args.kwargs['env']
+                if ipc:
                     self.assertEqual(command[:2], [str(Path('/helper')), '--launch-job'])
-                    prepare.assert_called_once()
                 else:
                     self.assertEqual(command, self.server.command())
-                    prepare.assert_not_called()
+                if ipc is False:  # an older driver: stages exchange tensors through host SHM
+                    self.assertEqual(env['SGLANG_OMNI_PLATFORM_SPEC'], server.SHM_PLATFORM_SPEC)
+                    self.assertEqual(env['PYTHONPATH'], str(server.SHM_PLATFORM_DIR))
+                    self.assertTrue((server.SHM_PLATFORM_DIR / 'h3_omni_shm.py').is_file())
+                else:
+                    self.assertNotIn('SGLANG_OMNI_PLATFORM_SPEC', env)
+                self.assertEqual(prepare.call_count, 0 if mode == 'off' else 1)
+                self.assertEqual(self.server._checkpoint_helper, None if mode == 'off' else Path('/helper'))
                 self.assertTrue(popen.call_args.kwargs['start_new_session'])
 
     def test_wrapped_start_failure_retries_once_without_checkpoint(self):
@@ -404,6 +430,31 @@ class LifecycleTests(unittest.TestCase):
             with self.assertRaisesRegex(H3Error, 'handoff was refused'):
                 self.server.stop()
         self.assertIsNotNone(self.server.process)  # retain handle for retry
+
+
+class ShmPlatformTests(unittest.TestCase):
+    def test_spec_resolves_to_a_cuda_platform_that_keeps_stage_traffic_off_cuda_ipc(self):
+        """Stand-ins for the Omni venv's modules; the real ones exist only there."""
+        import enum
+        import pkgutil
+        import sys
+        import types
+
+        transport = enum.Enum('TransportKind', 'CUDA_IPC SHM')
+        cuda = type('CUDAOmniPlatform', (), {'get_intra_node_transport': lambda self: transport.CUDA_IPC})
+        modules = {'sglang_omni': types.ModuleType('sglang_omni'),
+                   'sglang_omni.comm': types.ModuleType('sglang_omni.comm'),
+                   'sglang_omni.comm.data_ref': types.SimpleNamespace(TransportKind=transport),
+                   'sglang_omni.platforms': types.ModuleType('sglang_omni.platforms'),
+                   'sglang_omni.platforms.cuda': types.SimpleNamespace(CUDAOmniPlatform=cuda)}
+        with patch.dict(sys.modules, modules), patch.object(sys, 'path', [str(server.SHM_PLATFORM_DIR), *sys.path]):
+            sys.modules.pop('h3_omni_shm', None)
+            try:
+                platform = pkgutil.resolve_name(server.SHM_PLATFORM_SPEC)
+                self.assertTrue(issubclass(platform, cuda))
+                self.assertIs(platform().get_intra_node_transport(), transport.SHM)
+            finally:
+                sys.modules.pop('h3_omni_shm', None)
 
 
 if __name__ == '__main__':

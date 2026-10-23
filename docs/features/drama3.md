@@ -269,13 +269,18 @@ them. On Modal's RTX PRO 6000 this freed 73 GiB in 8.5s and woke in 5.8s,
 versus a 156s cold start. Sleeping state does not survive app/container exit,
 and **Unload all models** discards it.
 
-Sleep requires **Linux x86_64 and NVIDIA driver 610+** (for Omni's cross-process
-CUDA IPC). The driver belongs to the host, so where it is older (as on Colab
-at the time of writing) the app logs the detected version and uses
-stop/restart. `run_h3.sh` (also used by Colab) prints an `SGLang sleep:` line
-at startup saying which mode applies. The app downloads a SHA-256-verified, commit-pinned NVIDIA
+Sleep requires **Linux x86_64 and NVIDIA driver 580+**. Omni's stages normally
+exchange tensors over cross-process CUDA IPC, which only driver 610+ can
+checkpoint. On 580-609 (Colab's driver at the time of writing) the app launches
+Omni with an H3 platform (`h3_app/drama3/serving/omni_platform/`, loaded through
+Omni's `SGLANG_OMNI_PLATFORM_SPEC`) that routes those tensors through host shared
+memory instead, so no IPC is left to checkpoint. The driver belongs to the host;
+on older drivers the app logs the detected version and uses stop/restart.
+`run_h3.sh` (also used by Colab) prints an `SGLang sleep:` line at startup saying
+which mode and stage transport apply. The app downloads a SHA-256-verified, commit-pinned NVIDIA
 [`cuda-checkpoint`](https://github.com/NVIDIA/cuda-checkpoint/tree/00d5cce84c628088d6caa203fc4af40c1538b6f7)
-helper into the persistent cache and launches Omni in a fresh checkpoint job.
+helper into the persistent cache; on 610+ it launches Omni in a fresh checkpoint
+job, as NVIDIA's IPC support requires.
 Workers are found through GPU device handles in their `/proc` process group,
 since Modal's gVisor attributes all GPU usage to PID 1 in NVML. Before sleeping
 the app requires free host/container RAM (cgroup limits included) of the
@@ -289,6 +294,11 @@ headroom is retried on the next launch; a failed driver transition disables
 sleep for the rest of the app session. Set `H3_DRAMA3_SGLANG_SLEEP=off` to opt
 out. `modal run tests/modal_drama3_checkpoint.py` is a manual model-free probe
 that checks three sleep/wake cycles with CUDA graph replay and IPC buffers on a
-temporary Modal GPU. In the server log, `asleep after` / `awake after` confirm
-a sleep/wake cycle; `Sleep unavailable` means an ordinary restart.
+temporary Modal GPU. On Colab, stop the app and run
+`python3 -m tests.colab_drama3_sleep` from the workspace: it runs the real
+server through three sleep/wake cycles with speech after each, checks that every
+GPU worker uses the SHM platform on 580-609, and with `--compare-ipc` also times
+the same speech over stock CUDA IPC. In the server log, `asleep after` /
+`awake after` confirm a sleep/wake cycle; `Sleep unavailable` means an ordinary
+restart.
 
