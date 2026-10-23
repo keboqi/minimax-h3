@@ -101,7 +101,7 @@ class Drama3View:
     skip_existing: gr.Checkbox
     voices_panel: gr.Accordion
     copy_prompt: gr.Button
-    writer_prompt: gr.State
+    writer_prompt: gr.Textbox
     pasted_reply: gr.Textbox
     apply_reply: gr.Button
     script_mode: gr.Radio | None = None
@@ -503,7 +503,8 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                         elem_classes=["h3-drama3-note"])
                             copy_prompt = gr.Button("Copy full writer prompt", size="sm",
                                                     elem_id="h3-drama3-copy-prompt")
-                            writer_prompt = gr.State("")
+                            # A hidden Textbox, not gr.State: State values stay on the server, so the copy JS got None.
+                            writer_prompt = gr.Textbox(visible="hidden", container=False, show_label=False)
                             pasted_reply = gr.Textbox(label="Pasted writer reply", lines=6, max_lines=20,
                                                       placeholder='{"script": "Mia: ...", "speakers": [{"speaker_id": 0, "name": "Mia", ...}]}')
                             apply_reply = gr.Button("Apply pasted reply", size="sm", variant="primary")
