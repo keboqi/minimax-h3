@@ -11,8 +11,13 @@ Each step is a generator of status strings that ends with one result object.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+import contextvars
 from dataclasses import dataclass
+import hashlib
+import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -62,6 +67,13 @@ REFERENCE_RANGE = (3.0, 15.0)
 REFERENCE_PAD = 0.08
 LINE_GAP = 0.05
 GEMINI_TRANSLATE_BATCH = 60
+# Each fitted take is one ffmpeg run; these many run at once while the dub is laid out.
+TIMING_WORKERS = max(1, min(8, os.cpu_count() or 4))
+# Hy-MT sees this many earlier lines of the dialogue as background for each line.
+CONTEXT_LINES = 2
+# A speaker's voice setting: empty clones it from the source, otherwise a saved Drama 3 speaker's key.
+ORIGINAL_VOICE = ""
+SPEAKER_VOLUME = (0.0, 200.0)
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +97,8 @@ class AnalyzeRequest:
     api_key: str = ""
     ignore_non_speech: bool = True
     notes: str = ""
+    # Take the stems and transcript from an earlier analysis of the same file when its settings match.
+    reuse: bool = True
 
 
 @dataclass(frozen=True)
@@ -224,22 +238,36 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
     session.set_file("audio", audio)
     session.data["duration"] = round(probe_audio_seconds(audio) or 0.0, 3)
     session.save()
+    earlier = sessions.same_source(session) if request.reuse else []
+    reused = []
 
     if request.separate:
-        reply = yield from blocking(
-            "Separating vocals from the background",
-            lambda report: tools.run("separate", {"input": str(audio), "output_dir": str(session.root / "stems"),
-                                                  "model": request.separator_model},
-                                     runtime, free_gpu=free_gpu, hf_token=hf_token, report=report))
-        for key in ("vocals", "backing"):
-            session.set_file(key, _to_pcm(Path(reply[key]), session.root / f"{key}.wav",
-                                          action=f"Saving the {key} stem"))
-        shutil.rmtree(session.root / "stems", ignore_errors=True)  # converted copies replace the raw stems
+        donor = _earlier_stems(earlier, request.separator_model)
+        if donor is not None:
+            yield "Reusing the separated vocals from an earlier analysis of this file"
+            for key in ("vocals", "backing"):
+                session.set_file(key, _link_or_copy(donor.path(key), session.root / f"{key}.wav"))
+            reused.append("separated vocals")
+        else:
+            reply = yield from blocking(
+                "Separating vocals from the background",
+                lambda report: tools.run("separate", {"input": str(audio), "output_dir": str(session.root / "stems"),
+                                                      "model": request.separator_model},
+                                         runtime, free_gpu=free_gpu, hf_token=hf_token, report=report))
+            for key in ("vocals", "backing"):
+                session.set_file(key, _to_pcm(Path(reply[key]), session.root / f"{key}.wav",
+                                              action=f"Saving the {key} stem"))
+            shutil.rmtree(session.root / "stems", ignore_errors=True)  # converted copies replace the raw stems
         session.data["separator_model"] = request.separator_model
         session.save()
 
+    key = _transcript_key(request)
+    transcript = _earlier_transcript(earlier, key)
     speech = session.speech_audio
-    if request.pipeline == PIPELINE_GEMINI:
+    if transcript is not None:
+        yield "Reusing the transcript from an earlier analysis of this file"
+        reused.append("transcript")
+    elif request.pipeline == PIPELINE_GEMINI:
         upload = _ffmpeg(["-i", str(speech), "-ac", "1", "-c:a", "libmp3lame", "-b:a", "96k"],
                          session.root / "speech.mp3", action="Preparing audio for Gemini")
         found, speakers, _raw = yield from blocking(
@@ -248,14 +276,7 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
                                               target_language=target_language, translate=request.translate,
                                               ignore_non_speech=request.ignore_non_speech,
                                               custom_prompt=""))
-        session.segments, session.data["speakers"] = found, speakers
-        session.save()
-        if request.translate:
-            # Gemini already translated; the translator only fills lines it left empty.
-            missing = [i for i, s in enumerate(session.segments) if s["source"] and not s["translation"]]
-            if missing:
-                yield from _translate(session, missing, request, runtime=runtime, free_gpu=free_gpu,
-                                      hf_token=hf_token)
+        transcript = {"segments": found, "speakers": speakers}
     else:
         reply = yield from blocking(
             "Finding speech and transcribing with Qwen3-ASR",
@@ -265,19 +286,73 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
                 report=report))
         if not reply.get("segments"):
             raise H3Error("No speech was found in this source.")
-        session.segments = [{"start": s["start"], "end": s["end"], "source": s["text"]} for s in reply["segments"]]
-        if reply.get("language") and not session.data.get("source_language"):
-            session.data["source_language"] = reply["language"]
-        session.data["speakers"] = {segment_tools.DEFAULT_SPEAKER: "Single voice (local transcription)"}
-        session.save()
-        if request.translate:
-            yield from _translate(session, list(range(len(session.segments))), request, runtime=runtime,
-                                  free_gpu=free_gpu, hf_token=hf_token)
+        transcript = {
+            "segments": segment_tools.normalize({"start": s["start"], "end": s["end"], "source": s["text"]}
+                                                for s in reply["segments"]),
+            "speakers": {segment_tools.DEFAULT_SPEAKER: "Single voice (local transcription)"},
+            "language": reply.get("language") or "",
+        }
+    # Kept as transcribed, before edits and later translations, for the next analysis of this file.
+    session.data["transcript"] = {**transcript, "key": key}
+    session.segments, session.data["speakers"] = transcript["segments"], dict(transcript["speakers"])
+    if transcript.get("language") and not session.data.get("source_language"):
+        session.data["source_language"] = transcript["language"]
+    session.save()
+    if request.translate:
+        # Gemini may already have translated; the translator fills every line still without one.
+        missing = [i for i, s in enumerate(session.segments) if s["source"] and not s["translation"]]
+        if missing:
+            yield from _translate(session, missing, request, runtime=runtime, free_gpu=free_gpu,
+                                  hf_token=hf_token)
     count = len(session.segments)
     speakers = len({s["speaker"] for s in session.segments})
     translated = sum(bool(s["translation"]) for s in session.segments)
-    yield Analysis(session, f"Found {count} line(s) from {speakers} speaker(s); {translated} translated into "
-                            f"{target_language or 'nothing yet'}. Review the lines, then dub.")
+    message = (f"Found {count} line(s) from {speakers} speaker(s); {translated} translated into "
+               f"{target_language or 'nothing yet'}. Review the lines, then dub.")
+    if reused:
+        message += (f" Reused the {' and '.join(reused)} from an earlier analysis of this file; untick "
+                    "Reuse earlier results to redo them.")
+    yield Analysis(session, message + length_advice(session.segments))
+
+
+def _transcript_key(request: AnalyzeRequest) -> str:
+    """The settings a transcript depends on, beyond the source file itself."""
+    settings: dict[str, Any] = {"pipeline": request.pipeline,
+                                "separator": request.separator_model if request.separate else ""}
+    if request.pipeline == PIPELINE_GEMINI:
+        settings.update(model=request.gemini_model, ignore_non_speech=bool(request.ignore_non_speech),
+                        target=str(request.target_language or "").strip() if request.translate else "")
+    else:
+        settings.update(language=_language(request.source_language), aligner=bool(request.aligner),
+                        merge_gap=round(float(request.merge_gap), 3))
+    return json.dumps(settings, sort_keys=True)
+
+
+def _earlier_stems(earlier: list[sessions.Session], model: str) -> sessions.Session | None:
+    """The latest earlier session whose stems came from ``model`` and are still on disk."""
+    for candidate in earlier:
+        paths = [candidate.path(key) for key in ("vocals", "backing")]
+        if candidate.data.get("separator_model") == model and all(path and path.is_file() for path in paths):
+            return candidate
+    return None
+
+
+def _earlier_transcript(earlier: list[sessions.Session], key: str) -> dict | None:
+    for candidate in earlier:
+        transcript = candidate.data.get("transcript")
+        if isinstance(transcript, dict) and transcript.get("key") == key and transcript.get("segments"):
+            return transcript
+    return None
+
+
+def _link_or_copy(source: Path, target: Path) -> Path:
+    """Share a finished stem with a hard link (stems are never rewritten), else copy it."""
+    target.unlink(missing_ok=True)
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+    return target
 
 
 def _translate(session: sessions.Session, indices: list[int], request, *, runtime, free_gpu,
@@ -286,18 +361,24 @@ def _translate(session: sessions.Session, indices: list[int], request, *, runtim
     texts = [lines[i]["source"] for i in indices]
     target = session.data.get("target_language") or request.target_language
     if request.translator == TRANSLATOR_GEMINI:
+        # Each line's time on screen, so Gemini can word its translation to fit it.
+        seconds = [lines[i]["end"] - lines[i]["start"] for i in indices]
         translated = []
         for first in range(0, len(texts), GEMINI_TRANSLATE_BATCH):
             batch = texts[first:first + GEMINI_TRANSLATE_BATCH]
             translated += yield from blocking(
                 f"Translating lines {first + 1}-{first + len(batch)} of {len(texts)} with Gemini",
-                lambda _report, batch=batch: gemini.translate(
+                lambda _report, batch=batch, first=first: gemini.translate(
                     batch, model=request.gemini_model, api_key=request.api_key, target_language=target,
-                    source_language=session.data.get("source_language", ""), notes=request.notes))
+                    source_language=session.data.get("source_language", ""), notes=request.notes,
+                    seconds=seconds[first:first + len(batch)]))
     else:
+        # Hy-MT translates one line at a time; the lines before it give it the conversation so far.
+        contexts = ["\n".join(s["source"] for s in lines[max(0, i - CONTEXT_LINES):i] if s["source"])
+                    for i in indices]
         reply = yield from blocking(
             f"Translating {len(texts)} line(s) into {target} with Hy-MT",
-            lambda report: tools.run("translate", {"texts": texts, "target_language": target,
+            lambda report: tools.run("translate", {"texts": texts, "contexts": contexts, "target_language": target,
                                                    "notes": request.notes},
                                      runtime, free_gpu=free_gpu, hf_token=hf_token, report=report))
         translated = reply["texts"]
@@ -338,7 +419,30 @@ def retranslate(session_id: str, indices: list[int] | None, request, *, runtime,
                                 "Select lines to translate them again.")
         return
     yield from _translate(session, indices, request, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
-    yield Analysis(session, f"Translated {len(indices)} line(s) into {session.data['target_language']}.")
+    yield Analysis(session, f"Translated {len(indices)} line(s) into {session.data['target_language']}."
+                            + length_advice(session.segments))
+
+
+def long_lines(lines: list[dict]) -> list[int]:
+    """Lines to dub whose translation would need more than ``TEMPO_WARNING``'s speed-up to fit the line.
+
+    Uses Drama 3's estimate of spoken length, so it can be checked before anything is voiced.
+    """
+    from h3_app.drama3.serving.planner import expected_seconds
+
+    return [index for index, line in enumerate(lines)
+            if line["translation"] and line.get("dub", True)
+            and expected_seconds(line["translation"]) > (line["end"] - line["start"]) * TEMPO_WARNING[1]]
+
+
+def length_advice(lines: list[dict]) -> str:
+    """A sentence naming the translations that look too long to say in time; empty when none do."""
+    found = long_lines(lines)
+    if not found:
+        return ""
+    numbers = ", ".join(str(index + 1) for index in found[:20]) + (", …" if len(found) > 20 else "")
+    return (f" {len(found)} translation(s) look too long to say in their line's time: {numbers}. Shorten them, "
+            "or translate them again with Gemini, which is told how long each line lasts.")
 
 
 # ---------------------------------------------------------------------------
@@ -368,16 +472,83 @@ def speaker_reference(lines: list[dict], speaker: str) -> int | None:
                                          abs(item[1]["end"] - item[1]["start"] - high)))[0]
 
 
-def _plan(session: sessions.Session, indices: list[int], voice_mode: str) -> list[_Line]:
+def speaker_settings_available(session: sessions.Session) -> bool:
+    """Per-speaker settings need real speakers, and only Gemini's transcription tells them apart."""
+    return session.data.get("pipeline") == PIPELINE_GEMINI
+
+
+def _speaker_volume(value: Any) -> float:
+    try:
+        volume = float(value)
+    except (TypeError, ValueError):
+        return 100.0
+    return min(SPEAKER_VOLUME[1], max(SPEAKER_VOLUME[0], volume)) if volume == volume else 100.0
+
+
+def speaker_settings(session: sessions.Session) -> dict[str, dict]:
+    """``{speaker: {"voice": key or ORIGINAL_VOICE, "volume": percent}}``; empty unless from Gemini."""
+    stored = session.data.get("speaker_settings")
+    if not speaker_settings_available(session) or not isinstance(stored, dict):
+        return {}
+    return {str(speaker): {"voice": str(entry.get("voice") or ORIGINAL_VOICE),
+                           "volume": _speaker_volume(entry.get("volume"))}
+            for speaker, entry in stored.items() if isinstance(entry, dict)}
+
+
+def session_speakers(session: sessions.Session) -> list[str]:
+    """The speakers of the session's lines, in order of first appearance."""
+    return list(dict.fromkeys(segment["speaker"] for segment in session.segments))
+
+
+def set_speaker(runtime, session_id: str, speaker: str, *, voice: str, volume: float) -> sessions.Session:
+    """Save one speaker's voice and volume; the default voice at 100% clears its entry."""
+    from h3_app.drama3.speakers import load_speaker
+
+    session = sessions.load(runtime, session_id)
+    if not speaker_settings_available(session):
+        raise H3Error("Per-speaker voices need a session transcribed with Gemini, which tells speakers apart.")
+    speaker, voice = str(speaker or "").strip(), str(voice or ORIGINAL_VOICE)
+    if speaker not in session_speakers(session):
+        raise H3Error("Choose one of this session's speakers.")
+    if voice != ORIGINAL_VOICE:
+        load_speaker(voice, runtime)  # still saved
+    entry = {"voice": voice, "volume": _speaker_volume(volume)}
+
+    def change(latest: sessions.Session) -> None:
+        settings = latest.data.setdefault("speaker_settings", {})
+        if entry == {"voice": ORIGINAL_VOICE, "volume": 100.0}:
+            settings.pop(speaker, None)
+        else:
+            settings[speaker] = entry
+
+    return sessions.modify(session, change)
+
+
+def _plan(session: sessions.Session, indices: list[int], voice_mode: str, runtime=None) -> list[_Line]:
+    """Each line to voice with its reference: a saved voice chosen for its speaker, else a clip of the source."""
+    from h3_app.drama3.speakers import load_speaker
+
     lines = session.segments
     planned = []
     speaker_refs: dict[str, tuple[Path, str]] = {}
+    chosen_voices = {speaker: entry["voice"] for speaker, entry in speaker_settings(session).items()
+                     if entry["voice"] != ORIGINAL_VOICE}
+    saved_refs: dict[str, tuple[Path, str]] = {}
     for index in indices:
         segment = lines[index]
         if not segment["translation"]:
             continue
         own_length = segment["end"] - segment["start"]
-        if voice_mode == VOICE_LINE and segment["source"] and own_length >= MIN_REFERENCE_SECONDS:
+        voice = chosen_voices.get(segment["speaker"])
+        if voice:
+            if voice not in saved_refs:
+                try:
+                    preset = load_speaker(voice, runtime)
+                except H3Error as exc:
+                    raise H3Error(f"{exc} Choose another voice for {segment['speaker']} under Speakers.") from exc
+                saved_refs[voice] = (preset.audio, preset.transcript)
+            reference = saved_refs[voice]
+        elif voice_mode == VOICE_LINE and segment["source"] and own_length >= MIN_REFERENCE_SECONDS:
             reference = (_reference_clip(session, segment), segment["source"])
         else:
             speaker = segment["speaker"]
@@ -414,24 +585,46 @@ def atempo_chain(tempo: float) -> str:
     return ",".join(f"atempo={factor:.6f}" for factor in factors)
 
 
-def _stretch(samples: np.ndarray, rate: int, tempo: float) -> np.ndarray:
-    """Play speech ``tempo`` times faster (below 1: slower), pitch kept, with ffmpeg's atempo."""
+def _stretch(samples: np.ndarray, rate: int, tempo: float, cache: Path | None = None) -> np.ndarray:
+    """Play speech ``tempo`` times faster (below 1: slower), pitch kept, with ffmpeg's atempo.
+
+    With a ``cache`` folder the result is kept there under a hash of the take and the
+    tempo, so a later dub that fits the same take the same way skips ffmpeg.
+    """
     from h3_app.drama3.serving.audio import decode_wav
 
-    with tempfile.TemporaryDirectory(prefix="dub-stretch-") as directory:
+    cached = None
+    if cache is not None:
+        digest = hashlib.blake2b(np.ascontiguousarray(samples, dtype=np.float32).tobytes(), digest_size=16)
+        digest.update(f"{rate}:{tempo:.6f}".encode())
+        cached = cache / f"{digest.hexdigest()}.wav"
+        try:
+            timed = decode_wav(cached.read_bytes())[0]
+            os.utime(cached)  # marks it as used by this dub
+            return timed
+        except (OSError, ValueError, EOFError, wave.Error):
+            cache.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="dub-stretch-", dir=cache) as directory:
         source = _write_wav(samples, rate, Path(directory) / "take.wav")
         target = _ffmpeg(["-i", str(source), "-af", atempo_chain(tempo), "-ar", str(rate), "-ac", "1"],
                          Path(directory) / "timed.wav", timeout=300, action="Fitting a line to its timing")
-        return decode_wav(target.read_bytes())[0]
+        timed = decode_wav(target.read_bytes())[0]
+        if cached is not None:
+            try:
+                os.replace(target, cached)
+            except OSError:  # another line with the same take and tempo is saving it right now
+                pass
+        return timed
 
 
-def match(samples: np.ndarray, rate: int, target: float) -> tuple[np.ndarray, float, str]:
+def match(samples: np.ndarray, rate: int, target: float,
+          cache: Path | None = None) -> tuple[np.ndarray, float, str]:
     """Stretch a take to exactly ``target`` seconds, then pad or trim the last samples."""
     seconds = len(samples) / rate
     if target <= 0 or not len(samples):
         return samples, 1.0, ""
     tempo = seconds / target
-    timed = _stretch(samples, rate, tempo) if abs(seconds - target) > 0.03 else samples
+    timed = _stretch(samples, rate, tempo, cache) if abs(seconds - target) > 0.03 else samples
     size = int(round(target * rate))
     timed = timed[:size] if len(timed) >= size else np.concatenate(
         [timed, np.zeros(size - len(timed), dtype=np.float32)])
@@ -443,27 +636,32 @@ def match(samples: np.ndarray, rate: int, target: float) -> tuple[np.ndarray, fl
     return timed, tempo, note
 
 
-def fit(samples: np.ndarray, rate: int, available: float, max_speed: float) -> tuple[np.ndarray, float, str]:
+def fit(samples: np.ndarray, rate: int, available: float, max_speed: float,
+        cache: Path | None = None) -> tuple[np.ndarray, float, str]:
     """Speed a take up to fit ``available`` seconds, by at most ``max_speed``; reports what it did."""
     seconds = len(samples) / rate
     if seconds <= available + 0.02 or available <= 0:
         return samples, 1.0, ""
     factor = min(seconds / available, max(1.0, float(max_speed)))
-    fitted = _stretch(samples, rate, factor) if factor > 1.01 else samples
+    fitted = _stretch(samples, rate, factor, cache) if factor > 1.01 else samples
     over = len(fitted) / rate - available
     note = f"{over:.1f}s longer than its slot" if over > 0.05 else ""
     return fitted, factor, note
 
 
-def timed_take(take: np.ndarray, lines: list[dict], index: int, duration: float,
-               request: DubRequest) -> tuple[np.ndarray, float, str, float]:
+def timed_take(take: np.ndarray, lines: list[dict], index: int, duration: float, request: DubRequest,
+               cache: Path | None = None) -> tuple[np.ndarray, float, str, float]:
     """The take as it will play: (samples, tempo, note, seconds it was fitted to)."""
     segment = lines[index]
     if request.timing == TIMING_NATURAL:
         available = slot_end(lines, index, duration) - segment["start"]
-        return (*fit(take, RATE, available, request.max_speed), available)
+        return (*fit(take, RATE, available, request.max_speed, cache), available)
     available = segment["end"] - segment["start"]
-    return (*match(take, RATE, available), available)
+    return (*match(take, RATE, available, cache), available)
+
+
+def _timing_cache(session: sessions.Session) -> Path:
+    return session.root / "timed"
 
 
 def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Session, *, runtime, free_gpu,
@@ -524,13 +722,13 @@ def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token
     lines = session.segments
     if not 0 <= index < len(lines):
         raise H3Error(f"No line {index + 1}; the table has {len(lines)} line(s).")
-    planned = _plan(session, [index], request.voice_mode)
+    planned = _plan(session, [index], request.voice_mode, runtime)
     if not planned:
         raise H3Error(f"Line {index + 1} has no translation to speak.")
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
     line = planned[0]
     fitted, speed, note, available = timed_take(line.take, lines, index, session.data.get("duration", 0.0),
-                                                request)
+                                                request, _timing_cache(session))
     details = [f"Line {index + 1}: {len(fitted) / RATE:.1f}s for a {available:.1f}s slot"]
     if not note and abs(speed - 1.0) > 0.01:
         details.append(f"{'sped up' if speed > 1 else 'slowed to'} {speed:.2f}x")
@@ -548,11 +746,31 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
     lines = session.segments
     notes = []
     placed = []
+    gains = {speaker: entry["volume"] / 100.0 for speaker, entry in speaker_settings(session).items()
+             if entry["volume"] != 100.0}
+    with_audio = [line for line in planned if line.take is not None and len(line.take)]
+    cache = _timing_cache(session)
+    started = time.time()
+    with ThreadPoolExecutor(max_workers=min(TIMING_WORKERS, max(1, len(with_audio))),
+                            thread_name_prefix="dub-timing") as pool:
+        # Each worker runs in this job's context, so Interrupt reaches its ffmpeg runs.
+        timed = {line.index: pool.submit(contextvars.copy_context().run, timed_take, line.take, lines, line.index,
+                                         duration, request, cache) for line in with_audio}
+        timed = {index: future.result() for index, future in timed.items()}
+    # Fitted takes this dub did not use belong to old takes or old timings.
+    for path in cache.glob("*.wav") if cache.is_dir() else ():
+        try:
+            if path.stat().st_mtime < started - 10:  # margin for coarse file times
+                path.unlink()
+        except OSError:
+            pass
     for line in planned:
-        if line.take is None or not len(line.take):
+        if line.index not in timed:
             notes.append(f"line {line.index + 1}: no audio, original kept")
             continue
-        fitted, speed, note, _available = timed_take(line.take, lines, line.index, duration, request)
+        fitted, speed, note, _available = timed[line.index]
+        if line.segment["speaker"] in gains:
+            fitted = fitted * np.float32(gains[line.segment["speaker"]])
         line.speed = speed
         if note or line.note:
             notes.append(f"line {line.index + 1}: " + "; ".join(part for part in (note, line.note) if part))
@@ -572,6 +790,8 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
             if index not in voiced:
                 start = int(round(segment["start"] * RATE))
                 original = read_slice(session.path("vocals"), segment["start"], segment["end"])
+                if segment["speaker"] in gains:
+                    original *= np.float32(gains[segment["speaker"]])
                 end = min(len(track), start + len(original))
                 track[start:end] += original[: end - start]
     return track, notes, spoken_ends
@@ -618,7 +838,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     if not chosen:
         raise H3Error("No line is ready to dub: give lines a translation and tick Dub.")
     duration = float(session.data.get("duration") or 0.0) or max(s["end"] for s in lines) + 1.0
-    planned = _plan(session, chosen, request.voice_mode)
+    planned = _plan(session, chosen, request.voice_mode, runtime)
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
 
     yield "Placing lines on the timeline"
@@ -665,6 +885,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
         "timing": request.timing, "max_speed": request.max_speed, "speech_volume": request.speech_volume,
         "background_volume": request.background_volume, "lines": len(lines), "dubbed_lines": len(planned),
         "sped_up_lines": sum(line.speed > 1.01 for line in planned), "session": session.id,
+        "speakers": speaker_settings(session),
     }
     write_snapshot(audio_out, {"family": "Dub & Translate", "settings": settings})
 

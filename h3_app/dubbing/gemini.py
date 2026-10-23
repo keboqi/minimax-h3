@@ -29,10 +29,13 @@ NON_SPEECH = ("Ignore laughter, shouts, singing, crowd noise and background voic
               "dialogue. ")
 TRANSLATE_PROMPT = (
     "Translate each line of this {source}video dialogue into natural, spoken {target} that a voice actor can "
-    "dub. Keep each translation about as long to say as the original so it fits the same timing, and keep "
-    "names, numbers and tone.{notes} Return only a JSON array with exactly {count} strings, in order.\n\n"
-    "Lines:\n{lines}"
+    "dub. {timing} Keep names, numbers and tone.{notes} Return only a JSON array with exactly {count} strings, "
+    "in order.\n\nLines:\n{lines}"
 )
+SAME_LENGTH = "Keep each translation about as long to say as the original so it fits the same timing."
+TIMED = ("Each line gives its text and the seconds it lasts on screen. The translation is dubbed into exactly "
+         "that time, so it must be comfortable to say in it (about 2.5 words or 4.5 CJK characters a second); "
+         "prefer shorter, natural wording over a literal translation when a line is short on time.")
 
 
 def _model(model: str) -> str:
@@ -57,7 +60,8 @@ def transcribe(audio: Path, *, model: str, api_key: str, target_language: str, t
     """Segments, speaker descriptions and the raw reply for one audio file."""
     key = gemini.api_key(api_key)
     prompt = str(custom_prompt or "").strip() or TRANSCRIBE_PROMPT.format(
-        translate_clause=f" and translate it into {target_language} with natural, conversational wording."
+        translate_clause=f" and translate it into {target_language} with natural, conversational wording that "
+                         "can be said in the same time as the original line, since it is dubbed over it."
         if translate else " in its original language without translating it.",
         non_speech=NON_SPEECH if ignore_non_speech else "",
         translated_clause=f" (the {target_language} translation)" if translate else " (an empty string)",
@@ -75,13 +79,20 @@ def transcribe(audio: Path, *, model: str, api_key: str, target_language: str, t
 
 
 def translate(texts: list[str], *, model: str, api_key: str, target_language: str,
-              source_language: str = "", notes: str = "") -> list[str]:
-    """Translate lines in order as one request, so names and tone stay consistent."""
+              source_language: str = "", notes: str = "", seconds: list[float] | None = None) -> list[str]:
+    """Translate lines in order as one request, so names and tone stay consistent.
+
+    ``seconds``, one per line, is how long each line lasts; the translations are worded to fit it.
+    """
     key = gemini.api_key(api_key)
+    timed = seconds is not None and len(seconds) == len(texts)
+    lines = ([{"text": text, "seconds": round(float(length), 1)} for text, length in zip(texts, seconds)]
+             if timed else texts)
     prompt = TRANSLATE_PROMPT.format(
         source=f"{source_language} " if source_language else "", target=target_language,
+        timing=TIMED if timed else SAME_LENGTH,
         notes=f" Context: {notes.strip()}" if notes.strip() else "", count=len(texts),
-        lines=json.dumps(texts, ensure_ascii=False, indent=0),
+        lines=json.dumps(lines, ensure_ascii=False, indent=0),
     )
     with gemini.Session(key) as session:
         raw = _generate(session, _model(model), [{"text": prompt}], json_reply=True)

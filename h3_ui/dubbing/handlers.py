@@ -92,6 +92,10 @@ class DubbingHandlers:
             parts.append(f"{untranslated} untranslated")
         if kept:
             parts.append(f"{kept} keep the original voice")
+        long = pipeline.long_lines(lines)
+        if long:
+            numbers = ", ".join(str(index + 1) for index in long[:12]) + (", …" if len(long) > 12 else "")
+            parts.append(f"{len(long)} may be too long to say in time ({numbers})")
         return " · ".join(parts)
 
     def save_lines(self, session_id, rows):
@@ -134,6 +138,65 @@ class DubbingHandlers:
                 f"Opened **{session.data.get('name') or 'the session'}** with {len(session.segments)} line(s).",
                 self.summary(session), session.data.get("target_language") or gr.skip())
 
+    def _voice_choices(self, current=""):
+        """The original voice, then every saved Drama 3 speaker; a chosen voice since deleted stays listed."""
+        from h3_app.drama3 import speakers as drama3_speakers
+
+        choices = [("Original voice (cloned from the source)", pipeline.ORIGINAL_VOICE)]
+        for entry in drama3_speakers.speaker_names(self._runtime()):
+            choices.append(entry if isinstance(entry, tuple) else (entry, entry))
+        if current and current not in {value for _label, value in choices}:
+            choices.append((f"{current} (no longer saved)", current))
+        return choices
+
+    def _speakers_overview(self, session: sessions.Session) -> str:
+        settings = pipeline.speaker_settings(session)
+        names = dict(self._voice_choices())
+        described = session.data.get("speakers") or {}
+        rows = []
+        for speaker in pipeline.session_speakers(session):
+            entry = settings.get(speaker, {"voice": pipeline.ORIGINAL_VOICE, "volume": 100.0})
+            count = sum(line["speaker"] == speaker for line in session.segments)
+            voice = names.get(entry["voice"], entry["voice"]) if entry["voice"] else "original voice"
+            description = f" ({described[speaker]})" if described.get(speaker) else ""
+            rows.append(f"- **{speaker}**{description} · {count} line(s) · {voice} · {entry['volume']:.0f}%")
+        return "\n".join(rows)
+
+    def speaker_panel(self, session_id, current=None):
+        """Outputs: speakers panel, speaker, voice, volume, overview. Shown only for Gemini sessions."""
+        try:
+            session = sessions.load(self._runtime(), session_id) if session_id else None
+        except H3Error:
+            session = None
+        if session is None or not pipeline.speaker_settings_available(session):
+            return gr.update(visible=False), gr.skip(), gr.skip(), gr.skip(), ""
+        speakers = pipeline.session_speakers(session)
+        chosen = current if current in speakers else (speakers[0] if speakers else None)
+        entry = pipeline.speaker_settings(session).get(chosen, {"voice": pipeline.ORIGINAL_VOICE, "volume": 100.0})
+        described = session.data.get("speakers") or {}
+        labels = [(f"{speaker} · {described[speaker]}" if described.get(speaker) else speaker, speaker)
+                  for speaker in speakers]
+        return (gr.update(visible=True), gr.update(choices=labels, value=chosen),
+                gr.update(choices=self._voice_choices(entry["voice"]), value=entry["voice"]), entry["volume"],
+                self._speakers_overview(session))
+
+    def select_speaker(self, session_id, speaker):
+        """Outputs: voice, volume of the picked speaker."""
+        try:
+            session = sessions.load(self._runtime(), session_id)
+        except H3Error:
+            return gr.skip(), gr.skip()
+        entry = pipeline.speaker_settings(session).get(speaker, {"voice": pipeline.ORIGINAL_VOICE, "volume": 100.0})
+        return gr.update(choices=self._voice_choices(entry["voice"]), value=entry["voice"]), entry["volume"]
+
+    def save_speaker(self, session_id, speaker, voice, volume):
+        """Outputs: overview. Saves the picked speaker's voice and volume for the next preview and dub."""
+        try:
+            session = pipeline.set_speaker(self._runtime(), session_id, speaker, voice=voice, volume=volume)
+        except H3Error as exc:
+            return f"**Not saved:** {exc}"
+        return self._speakers_overview(session)
+
     def clear_results(self):
         """A new session makes the previous one's line picks, preview and dub stale.
 
@@ -159,7 +222,7 @@ class DubbingHandlers:
                 self.summary(result.session))
 
     def analyze_source(self, source, library, separate, separator_model, transcription, source_language, target_language,
-                       translate, translator, aligner, merge_gap, gemini_model, api_key, notes):
+                       translate, translator, aligner, merge_gap, gemini_model, api_key, notes, reuse=True):
         """Outputs: session id, line rows, status, summary."""
         chosen = source or library
         try:
@@ -168,7 +231,7 @@ class DubbingHandlers:
             request = pipeline.AnalyzeRequest(
                 str(chosen), transcription, str(target_language or "").strip(), source_language, bool(translate),
                 translator, bool(separate), separator_model, bool(aligner), float(merge_gap), gemini_model,
-                str(api_key or ""), True, str(notes or ""))
+                str(api_key or ""), True, str(notes or ""), bool(reuse))
             for update in self._gpu(lambda **kw: pipeline.analyze(request, **kw)):
                 if isinstance(update, pipeline.Analysis):
                     yield self._analysis_values(update)

@@ -123,6 +123,15 @@ def proportional_lines(start: float, end: float, text: str) -> list[dict]:
     return lines
 
 
+def translation_prompt(text: str, target: str, background: str = "") -> str:
+    """Hy-MT's own prompt: its plain translation template, or its background-information one."""
+    if background:
+        return (f"[Background Information]\n{background}\nPlease translate the following text into {target}, "
+                f"taking the provided background information into consideration.\n[Source Text]\n{text}")
+    return (f"Translate the following text into {target}.\nNote that you should only output the translated "
+            f"result without any additional explanation:\n{text}")
+
+
 def clean_translation(text: str) -> str:
     cleaned = str(text or "").replace("<|im_end|>", "").replace("<|endoftext|>", "").strip()
     return re.sub(r"^(assistant|translation|translated text)\s*[:：]\s*", "", cleaned, flags=re.I).strip()
@@ -305,6 +314,9 @@ class Worker:
 
     def translate(self, request: dict) -> dict:
         texts = [str(text or "") for text in request.get("texts") or []]
+        # The lines just before each one, as background; the translation notes come first.
+        contexts = [str(text or "").strip() for text in request.get("contexts") or []]
+        contexts += [""] * (len(texts) - len(contexts))
         target = str(request.get("target_language") or "English")
         notes = str(request.get("notes") or "").strip()
         tokenizer, model = self._translator()
@@ -314,12 +326,9 @@ class Worker:
         for first in range(0, len(pending), TRANSLATE_BATCH):
             batch = pending[first:first + TRANSLATE_BATCH]
             prompts = [tokenizer.apply_chat_template(
-                [{"role": "user", "content": (
-                    f"Translate the following text into {target}. "
-                    + (f"Context: {notes}\n" if notes else "")
-                    + f"Note that you should only output the translated result without any additional "
-                      f"explanation:\n\n{text}")}],
-                tokenize=False, add_generation_prompt=True) for _index, text in batch]
+                [{"role": "user", "content": translation_prompt(
+                    text, target, "\n".join(part for part in (notes, contexts[index]) if part))}],
+                tokenize=False, add_generation_prompt=True) for index, text in batch]
             encoded = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
             with torch.inference_mode():
                 generated = model.generate(input_ids=encoded["input_ids"], attention_mask=encoded["attention_mask"],

@@ -7,6 +7,7 @@ sit beside it. Sessions live in the private workspace, which is never served.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -110,8 +111,23 @@ def recent(runtime, limit: int = 30) -> list[dict]:
     return found[:limit]
 
 
+def _copy_hashed(source: Path, target: Path) -> str:
+    """Copy ``source`` to ``target`` in one pass, returning the SHA-256 of its bytes."""
+    digest = hashlib.sha256()
+    with source.open("rb") as reader, target.open("wb") as writer:
+        for block in iter(lambda: reader.read(1 << 20), b""):
+            digest.update(block)
+            writer.write(block)
+    shutil.copystat(source, target)
+    return digest.hexdigest()
+
+
 def create(runtime, source: str | Path, *, video: bool) -> Session:
-    """Copy the source in, so the session outlives the upload that started it."""
+    """Copy the source in, so the session outlives the upload that started it.
+
+    The copy's hash finds earlier sessions of the same file, whose stems and
+    transcripts a new analysis can reuse.
+    """
     source = Path(source)
     if not source.is_file():
         raise H3Error("Choose a video or audio file first.")
@@ -120,13 +136,30 @@ def create(runtime, source: str | Path, *, video: bool) -> Session:
     root = sessions_dir(runtime) / session_id
     root.mkdir(parents=True)
     copied = root / f"source{source.suffix.lower()}"
-    shutil.copy2(source, copied)
+    source_hash = _copy_hashed(source, copied)
     session = Session(root, {
-        "id": session_id, "created": time.time(), "name": source.stem,
+        "id": session_id, "created": time.time(), "name": source.stem, "source_hash": source_hash,
         "video": bool(video), "files": {"source": copied.name}, "segments": [], "speakers": {},
     })
     session.save()
     return session
+
+
+def same_source(session: Session) -> list[Session]:
+    """Other sessions of the same source file, most recently changed first."""
+    source_hash = session.data.get("source_hash")
+    found = []
+    for manifest in session.root.parent.glob(f"*/{MANIFEST}") if source_hash else ():
+        if manifest.parent == session.root:
+            continue
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("source_hash") == source_hash and data.get("id") == manifest.parent.name:
+            found.append(Session(manifest.parent, data))
+    found.sort(key=lambda earlier: earlier.data.get("updated") or 0, reverse=True)
+    return found
 
 
 def load(runtime, session_id: str) -> Session:

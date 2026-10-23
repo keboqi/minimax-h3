@@ -48,6 +48,7 @@ class DubbingView:
     aligner: gr.Checkbox
     merge_gap: gr.Slider
     notes: gr.Textbox
+    reuse: gr.Checkbox
     analyze: gr.Button
     stop_analyze: gr.Button
     analyze_status: gr.Markdown
@@ -62,6 +63,11 @@ class DubbingView:
     preview_audio: gr.Audio
     voice_mode: gr.Radio
     preset: gr.Radio
+    speakers_panel: gr.Accordion
+    speaker: gr.Dropdown
+    speaker_voice: gr.Dropdown
+    speaker_volume: gr.Slider
+    speakers_overview: gr.Markdown
     timing: gr.Radio
     max_speed: gr.Slider
     parallel: gr.Slider
@@ -146,6 +152,9 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                             translate = gr.Checkbox(True, label="Translate now",
                                                     info="Off: transcribe only; translate on the next step.")
                             translator = gr.Dropdown(list(TRANSLATORS), value=TRANSLATOR_HYMT, label="Translator")
+                        reuse = gr.Checkbox(True, label="Reuse earlier results for this file",
+                                            info="An earlier analysis of the same file with the same settings "
+                                                 "lends its separated vocals and transcript. Off: redo both.")
                         with gr.Accordion("Local transcription options", open=False) as local:
                             aligner = gr.Checkbox(True, label="Word timing with Qwen3-ForcedAligner",
                                                   info="Splits long speech into subtitle-sized lines at "
@@ -203,6 +212,15 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                                               info="Each line keeps its own delivery; one voice per speaker is "
                                                    "steadier. Lines under 2 s always use their speaker's voice.")
                         preset = gr.Radio(list(VOICE_PRESETS), value="Balance", label="Delivery")
+                        with gr.Accordion("Speakers", open=False, visible=False) as speakers_panel:
+                            gr.Markdown("Gemini told these speakers apart. Give one a saved Drama 3 voice "
+                                        "instead of its cloned original, or make it louder or quieter in the "
+                                        "dub. Changes save at once.", elem_classes=["h3-song-hint"])
+                            speaker = gr.Dropdown([], value=None, label="Speaker")
+                            with gr.Row():
+                                speaker_voice = gr.Dropdown([], value=None, label="Voice", scale=3)
+                                speaker_volume = gr.Slider(0, 200, value=100, step=5, label="Volume (%)", scale=2)
+                            speakers_overview = gr.Markdown(elem_classes=["h3-dub-summary"])
                         timing = gr.Radio(list(TIMINGS), value=TIMING_MATCH, label="Timing",
                                           info="Match starts and ends every take exactly where the original line "
                                                "does. Natural keeps each take's pace and only speeds up long ones.")
@@ -243,8 +261,9 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
     return DubbingView(
         steps, session, source, library, refresh_library, sessions, reopen, separate, separator_model, pipeline,
         source_language, target_language, translate, translator, gemini, gemini_model, api_key, local, aligner,
-        merge_gap, notes, analyze, stop_analyze, analyze_status, summary, lines, line_numbers, retranslate, preview,
-        new_take, stop_preview, line_status, preview_audio, voice_mode, preset, timing, max_speed, parallel,
+        merge_gap, notes, reuse, analyze, stop_analyze, analyze_status, summary, lines, line_numbers, retranslate,
+        preview, new_take, stop_preview, line_status, preview_audio, voice_mode, preset, speakers_panel, speaker,
+        speaker_voice, speaker_volume, speakers_overview, timing, max_speed, parallel,
         speech_volume, background_volume, keep_original, burn_subtitles, regenerate, dub_summary, run, stop, status,
         video, audio, files,
     )

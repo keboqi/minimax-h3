@@ -180,7 +180,8 @@ class TimingTests(unittest.TestCase):
         same, speed, note = pipeline.fit(take, 24000, 3.0, 1.35)
         self.assertIs(same, take)
         self.assertEqual((speed, note), (1.0, ""))
-        with patch.object(pipeline, "_stretch", side_effect=lambda s, r, f: s[: int(len(s) / f)]) as stretch:
+        with patch.object(pipeline, "_stretch",
+                          side_effect=lambda s, r, f, cache=None: s[: int(len(s) / f)]) as stretch:
             fitted, speed, note = pipeline.fit(take, 24000, 1.0, 1.35)
         self.assertAlmostEqual(stretch.call_args.args[2], 1.35)
         self.assertEqual(speed, 1.35)
@@ -212,12 +213,54 @@ class TimingTests(unittest.TestCase):
 
     def test_match_reports_large_tempo_changes(self):
         take = np.zeros(4 * 24000, dtype=np.float32)
-        with patch.object(pipeline, "_stretch", side_effect=lambda s, r, t: s[: int(len(s) / t)]):
+        with patch.object(pipeline, "_stretch", side_effect=lambda s, r, t, cache=None: s[: int(len(s) / t)]):
             _timed, tempo, note = pipeline.match(take, 24000, 2.0)
             self.assertEqual(tempo, 2.0)
             self.assertIn("shorter translation", note)
             self.assertIn("longer translation", pipeline.match(take, 24000, 8.0)[2])
             self.assertEqual(pipeline.match(take, 24000, 3.5)[2], "")
+
+    def test_long_translations_are_flagged_before_voicing(self):
+        lines = segments.normalize([
+            {"start": 0, "end": 1, "source": "Hi.", "translation": "Bonjour."},
+            {"start": 2, "end": 3, "source": "Go.",
+             "translation": "Il faut absolument que nous partions maintenant avant la nuit."},
+            {"start": 4, "end": 5, "source": "No.", "translation": "Ce texte est beaucoup trop long pour un instant.",
+             "dub": False},
+            {"start": 6, "end": 6.5, "source": "Ok.", "translation": ""},
+        ])
+        self.assertEqual(pipeline.long_lines(lines), [1])
+        self.assertIn("1 translation(s) look too long to say in their line's time: 2.", pipeline.length_advice(lines))
+        self.assertEqual(pipeline.length_advice(lines[:1]), "")
+
+    def test_hy_mt_prompts_follow_its_templates(self):
+        plain = tools_worker.translation_prompt("Hello", "French")
+        self.assertEqual(plain, "Translate the following text into French.\nNote that you should only output "
+                                "the translated result without any additional explanation:\nHello")
+        background = tools_worker.translation_prompt("Hello", "French", "Keep Mei.\nWho is there?")
+        self.assertTrue(background.startswith("[Background Information]\nKeep Mei.\nWho is there?\n"))
+        self.assertTrue(background.endswith("[Source Text]\nHello"))
+
+    def test_gemini_translation_is_told_each_lines_time(self):
+        from h3_app.dubbing import gemini as dub_gemini
+
+        prompts = []
+
+        def generate(_session, _model, parts, *, json_reply):
+            prompts.append(parts[0]["text"])
+            return '["a", "b"]'
+
+        with patch.object(dub_gemini, "_generate", side_effect=generate), \
+                patch.object(dub_gemini, "_model", side_effect=lambda model: model), \
+                patch.object(dub_gemini.gemini, "api_key", return_value="key"), \
+                patch.object(dub_gemini.gemini, "Session"):
+            self.assertEqual(dub_gemini.translate(["One", "Two"], model="m", api_key="", target_language="French",
+                                                  seconds=[1.24, 3.0]), ["a", "b"])
+            dub_gemini.translate(["One", "Two"], model="m", api_key="", target_language="French")
+        self.assertIn('"seconds": 1.2', prompts[0])
+        self.assertIn("seconds it lasts on screen", prompts[0])
+        self.assertIn("about as long to say as the original", prompts[1])
+        self.assertNotIn("seconds", prompts[1])
 
     def test_filter_paths_escape_drive_colons(self):
         self.assertEqual(pipeline._filter_path(Path("C:/a b/it's.srt"))[:12], "'C\\:/a b/it\\")
@@ -324,6 +367,17 @@ class SessionTests(Workspace):
         self.assertEqual(loaded.speech_audio, None)
         with self.assertRaisesRegex(H3Error, "Analyze a source"):
             sessions.load(self.runtime, "../escape")
+
+    def test_sessions_of_the_same_file_find_each_other(self):
+        source, other = self.root / "talk.mp4", self.root / "other.mp4"
+        source.write_bytes(b"data")
+        other.write_bytes(b"different")
+        first = sessions.create(self.runtime, source, video=True)
+        unrelated = sessions.create(self.runtime, other, video=True)
+        second = sessions.create(self.runtime, source, video=True)
+        self.assertEqual(first.data["source_hash"], second.data["source_hash"])
+        self.assertNotEqual(first.data["source_hash"], unrelated.data["source_hash"])
+        self.assertEqual([found.id for found in sessions.same_source(second)], [first.id])
 
 
 class HandlerTests(Workspace):
@@ -448,6 +502,28 @@ class HandlerTests(Workspace):
         self.assertEqual(updates[-1], ("Downloaded **clip.mp4** to Media.", str(target)))
         self.assertTrue(all(path == "" for _status, path in updates[:-1]))
 
+    def test_speaker_panel_shows_only_for_gemini_sessions(self):
+        source = _tone_wav(self.root / "a.wav", 3.0)
+        session = sessions.create(self.runtime, source, video=False)
+        session.segments = [{"start": 0.0, "end": 1.0, "speaker": "speaker1", "source": "a", "translation": "A"},
+                            {"start": 1.5, "end": 2.5, "speaker": "speaker2", "source": "b", "translation": "B"}]
+        session.data["speakers"] = {"speaker2": "older man"}
+        session.save()
+        hidden = self.handlers.speaker_panel(session.id)
+        self.assertEqual(hidden[0]["visible"], False)
+
+        session.data["pipeline"] = pipeline.PIPELINE_GEMINI
+        session.save()
+        panel, speaker, voice, volume, overview = self.handlers.speaker_panel(session.id, "speaker2")
+        self.assertEqual(panel["visible"], True)
+        self.assertEqual((speaker["value"], speaker["choices"][1]), ("speaker2", ("speaker2 · older man", "speaker2")))
+        self.assertEqual((voice["value"], volume), (pipeline.ORIGINAL_VOICE, 100.0))
+        self.assertIn("**speaker2** (older man) · 1 line(s) · original voice · 100%", overview)
+        saved = self.handlers.save_speaker(session.id, "speaker2", pipeline.ORIGINAL_VOICE, 60)
+        self.assertIn("**speaker2** (older man) · 1 line(s) · original voice · 60%", saved)
+        self.assertEqual(self.handlers.select_speaker(session.id, "speaker2")[1], 60.0)
+        self.assertIn("Not saved", self.handlers.save_speaker(session.id, "speaker2", "Nobody", 60))
+
     def test_errors_become_status_lines(self):
         updates = list(self.handlers.analyze_source(None, None, True, "Balanced (BS-Roformer)", pipeline.PIPELINE_LOCAL,
                                                     "Auto-detect", "English", True, pipeline.TRANSLATOR_HYMT,
@@ -518,6 +594,103 @@ class ReviewFixTests(Workspace):
         self.assertEqual([(s["source"], s["translation"]) for s in saved.segments],
                          [("zero", "zéro"), ("one", "one-fr"), ("two", "deux (edited)")])
         self.assertEqual(saved.data["target_language"], "French")
+
+    def test_hy_mt_gets_the_lines_before_each_one(self):
+        session = self.session_with_vocals([
+            {"start": 0.0, "end": 0.5, "source": "one"},
+            {"start": 0.6, "end": 1.0, "source": "two"},
+            {"start": 1.1, "end": 1.5, "source": "three"},
+            {"start": 1.6, "end": 2.0, "source": "four"},
+        ])
+        with patch.object(pipeline.tools, "run", return_value={"texts": ["x", "y"]}) as run:
+            list(pipeline._translate(session, [0, 3], pipeline.AnalyzeRequest("", target_language="French"),
+                                     runtime=self.runtime, free_gpu=lambda: None))
+        self.assertEqual(run.call_args.args[1]["contexts"], ["", "two\nthree"])
+
+    @unittest.skipUnless(HAS_FFMPEG, "ffmpeg is required")
+    def test_fitted_takes_are_cached_and_stale_ones_pruned(self):
+        session = self.session_with_vocals([
+            {"start": 0.0, "end": 1.0, "source": "a", "translation": "A"},
+            {"start": 1.5, "end": 2.5, "source": "b", "translation": "B"},
+        ])
+        tone = (0.2 * np.sin(np.arange(int(1.5 * pipeline.RATE)) / 20)).astype(np.float32)
+        planned = [pipeline._Line(i, session.segments[i], session.path("vocals"), "", take=tone) for i in (0, 1)]
+        cache = session.root / "timed"
+        cache.mkdir()
+        stale = cache / "old.wav"
+        stale.write_bytes(b"x")
+        old = time.time() - 3600
+        os.utime(stale, (old, old))
+        first, _notes, _ends = pipeline._speech_track(session, planned, pipeline.DubRequest(session.id), 3.0)
+        self.assertFalse(stale.exists())
+        self.assertEqual(len(list(cache.glob("*.wav"))), 1)  # both lines fit the same take the same way
+        with patch.object(pipeline, "_ffmpeg", side_effect=AssertionError("cached")):
+            again, _notes, _ends = pipeline._speech_track(session, planned, pipeline.DubRequest(session.id), 3.0)
+        np.testing.assert_allclose(again, first, atol=1e-4)
+
+    def gemini_session(self):
+        session = self.session_with_vocals([
+            {"start": 0.0, "end": 1.0, "speaker": "speaker1", "source": "a", "translation": "A"},
+            {"start": 1.5, "end": 2.5, "speaker": "speaker2", "source": "b", "translation": "B"},
+        ])
+        session.data.update(pipeline=pipeline.PIPELINE_GEMINI, speakers={"speaker2": "older man"})
+        session.save()
+        return session
+
+    def saved_voice(self, name="Alice"):
+        from h3_app.drama3 import speakers as drama3_speakers
+
+        return drama3_speakers.save_speaker(name, _tone_wav(self.root / f"{name}.wav", 3.0), "Hello there.",
+                                            self.runtime)
+
+    def test_speaker_settings_are_offered_only_for_gemini_sessions(self):
+        local = self.session_with_vocals([{"start": 0.0, "end": 1.0, "source": "a", "translation": "A"}])
+        with self.assertRaisesRegex(H3Error, "transcribed with Gemini"):
+            pipeline.set_speaker(self.runtime, local.id, "speaker1", voice="", volume=50)
+        local.data["speaker_settings"] = {"speaker1": {"voice": "", "volume": 50}}
+        self.assertEqual(pipeline.speaker_settings(local), {})
+
+        session = self.gemini_session()
+        voice = self.saved_voice()
+        pipeline.set_speaker(self.runtime, session.id, "speaker2", voice=voice.key, volume=250)
+        self.assertEqual(pipeline.speaker_settings(sessions.load(self.runtime, session.id)),
+                         {"speaker2": {"voice": voice.key, "volume": 200.0}})
+        with self.assertRaisesRegex(H3Error, "this session's speakers"):
+            pipeline.set_speaker(self.runtime, session.id, "speaker9", voice="", volume=100)
+        with self.assertRaisesRegex(H3Error, "no longer available"):
+            pipeline.set_speaker(self.runtime, session.id, "speaker2", voice="Nobody", volume=100)
+        # Back to the defaults clears the entry.
+        pipeline.set_speaker(self.runtime, session.id, "speaker2", voice="", volume=100)
+        self.assertEqual(sessions.load(self.runtime, session.id).data["speaker_settings"], {})
+
+    def test_a_speakers_saved_voice_replaces_its_cloned_reference(self):
+        session = self.gemini_session()
+        voice = self.saved_voice()
+        pipeline.set_speaker(self.runtime, session.id, "speaker2", voice=voice.key, volume=100)
+        session = sessions.load(self.runtime, session.id)
+        planned = pipeline._plan(session, [0, 1], pipeline.VOICE_LINE, self.runtime)
+        self.assertEqual((planned[1].reference, planned[1].transcript), (voice.audio, "Hello there."))
+        self.assertEqual(planned[0].reference.parent.name, "references")  # speaker1 is still cloned
+
+        from h3_app.drama3 import speakers as drama3_speakers
+
+        drama3_speakers.delete_speaker(voice.key, self.runtime)
+        with self.assertRaisesRegex(H3Error, "Choose another voice for speaker2 under Speakers"):
+            pipeline._plan(session, [1], pipeline.VOICE_LINE, self.runtime)
+
+    def test_speaker_volume_scales_its_dubbed_and_original_lines(self):
+        session = self.gemini_session()
+        session.segments = [*session.segments,
+                            {"start": 2.6, "end": 2.9, "speaker": "speaker2", "source": "c", "dub": False}]
+        session.save()
+        pipeline.set_speaker(self.runtime, session.id, "speaker2", voice="", volume=50)
+        session = sessions.load(self.runtime, session.id)
+        take = np.full(pipeline.RATE, 0.4, dtype=np.float32)
+        planned = [pipeline._Line(i, session.segments[i], session.path("vocals"), "", take=take) for i in (0, 1)]
+        track, _notes, _ends = pipeline._speech_track(session, planned, pipeline.DubRequest(session.id), 3.0)
+        self.assertAlmostEqual(float(track[int(0.5 * pipeline.RATE)]), 0.4, places=3)
+        self.assertAlmostEqual(float(track[int(2.0 * pipeline.RATE)]), 0.2, places=3)
+        self.assertAlmostEqual(float(track[int(2.75 * pipeline.RATE)]), 0.25, places=3)  # kept original, halved
 
     def test_translating_into_a_new_language_replaces_every_translation(self):
         session = self.session_with_vocals([
@@ -641,8 +814,10 @@ class DubRenderTests(Workspace):
               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(video)])
         return video
 
-    def analyze(self, video, *, separate):
+    def analyze(self, video, *, separate, calls=None, **settings):
         def fake_tools(op, payload, runtime, **_kwargs):
+            if calls is not None:
+                calls.append(op)
             if op == "separate":
                 out = Path(payload["output_dir"])
                 out.mkdir(parents=True, exist_ok=True)
@@ -657,7 +832,7 @@ class DubRenderTests(Workspace):
                 return {"texts": [f"[{text}] in French" for text in payload["texts"]]}
             raise AssertionError(op)
 
-        request = pipeline.AnalyzeRequest(str(video), target_language="French", separate=separate)
+        request = pipeline.AnalyzeRequest(str(video), target_language="French", separate=separate, **settings)
         with patch.object(pipeline.tools, "run", side_effect=fake_tools):
             updates = list(pipeline.analyze(request, runtime=self.runtime, free_gpu=lambda: None))
         result = updates[-1]
@@ -696,6 +871,24 @@ class DubRenderTests(Workspace):
         self.assertEqual(len(references), 1)
         snapshot = json.loads(Path(str(result.video) + ".settings.json").read_text(encoding="utf-8"))
         self.assertEqual(snapshot["family"], "Dub & Translate")
+
+    def test_reanalysis_reuses_stems_and_transcript_of_the_same_file(self):
+        video = self.make_video()
+        first = self.analyze(video, separate=True)
+        calls = []
+        second = self.analyze(video, separate=True, calls=calls)
+        self.assertEqual(calls, ["translate"])
+        self.assertNotEqual(second.id, first.id)
+        self.assertEqual([s["source"] for s in second.segments], [s["source"] for s in first.segments])
+        self.assertEqual(second.path("vocals").read_bytes(), first.path("vocals").read_bytes())
+        self.assertEqual(second.data["source_language"], "English")
+        # Another transcription setting keeps the stems; Reuse off redoes both.
+        calls.clear()
+        self.analyze(video, separate=True, calls=calls, merge_gap=0.6)
+        self.assertEqual(calls, ["transcribe", "translate"])
+        calls.clear()
+        self.analyze(video, separate=True, calls=calls, reuse=False)
+        self.assertEqual(calls, ["separate", "transcribe", "translate"])
 
     def test_unseparated_dub_ducks_the_original_and_burns_subtitles(self):
         session = self.analyze(self.make_video(), separate=False)

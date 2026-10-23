@@ -44,16 +44,28 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
                                  view.video, view.audio, view.files, view.status], **_QUIET)
     view.session.change(None, inputs=view.session, js=opened_session_js(view.steps), **_QUIET)
     view.summary.change(lambda text: text, inputs=view.summary, outputs=view.dub_summary, **_QUIET)
-    # Edits are saved to the session as they happen; GPU steps read the saved lines.
+    # Gemini sessions show their speakers; opening the panel again picks up newly saved Drama 3 voices.
+    speaker_panel = {"fn": actions.speaker_panel, "inputs": [view.session, view.speaker],
+                     "outputs": [view.speakers_panel, view.speaker, view.speaker_voice, view.speaker_volume,
+                                 view.speakers_overview], **_QUIET}
+    view.session.change(**speaker_panel)
+    view.speakers_panel.expand(**speaker_panel)
+    view.speaker.input(actions.select_speaker, inputs=[view.session, view.speaker],
+                       outputs=[view.speaker_voice, view.speaker_volume], **_QUIET)
+    for event in (view.speaker_voice.input, view.speaker_volume.release):
+        event(actions.save_speaker, inputs=[view.session, view.speaker, view.speaker_voice, view.speaker_volume],
+              outputs=view.speakers_overview, **_QUIET)
+    # Edits are saved to the session as they happen; GPU steps read the saved lines. A renamed
+    # speaker in the table changes the speaker list.
     view.lines.input(actions.save_lines, inputs=[view.session, view.lines],
-                     outputs=[view.lines, view.summary], **_QUIET)
+                     outputs=[view.lines, view.summary], **_QUIET).then(**speaker_panel)
     view.lines.select(actions.select_line, outputs=view.line_numbers, **_QUIET)
 
     analyzed = bind_gpu_action(
         view.analyze.click, owned_generation(actions.analyze_source, FAMILY_ANALYZE),
         inputs=[view.source, view.library, view.separate, view.separator_model, view.pipeline,
                 view.source_language, view.target_language, view.translate, view.translator, view.aligner,
-                view.merge_gap, view.gemini_model, view.api_key, view.notes],
+                view.merge_gap, view.gemini_model, view.api_key, view.notes, view.reuse],
         outputs=[view.session, view.lines, view.analyze_status, view.summary], show_progress="minimal",
         api_name="dub_analyze_source",
     )
