@@ -155,7 +155,7 @@ backends; GPU inference and deployment are validated separately.
   visual conditioning retains the official FP16 path when TensorRT decoding is selected
 - Hardware-aware ComfyUI memory mode selection
 - One-click model unloading and VRAM cache release from the UI
-- Spectrum v0.2.28 in legacy mode as the normal-generation default and experimental Turbo option
+- Spectrum v0.2.29 in legacy mode as the normal-generation default and experimental Turbo option
 - Optional experimental MMH3 tiled/chunked latent refinement for constrained VRAM
 - FirstBlockCache and native ComfyUI EasyCache alternatives
 - Matching local and Modal deployment paths
@@ -362,13 +362,17 @@ The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
 The deployment pins ComfyUI at immutable official-master revision
-`7a28332047b6af638dc6c7f72ef3481a718769fd`, which includes kijai's merged native Fibo 2.0
+`bc5f880dbdd43e426077f42ccec53bb577ffee9f`, which includes kijai's merged native Fibo 2.0
 support ([Comfy-Org/ComfyUI#17240](https://github.com/Comfy-Org/ComfyUI/pull/17240)).
 It is v0.42.1 plus development commits: MOSS RoPE/color-depth controls, H3 PDD LoRA fixes,
 the Fibo model, text encoder and node, a top-p nucleus fix for native text generation, a
-Pad Image node and an opt-in agent host (off unless `--enable-agent`). Its requirements:
-frontend package 1.57.1, Comfy Kitchen 0.2.39, upstream aimdo 0.5.6, workflow templates
-0.11.93 and embedded docs 0.5.14. Return to an official release once one includes Fibo 2.0.
+Pad Image node and an opt-in agent host (off unless `--enable-agent`). It also encodes
+structured Fibo 2.0 negatives as written instead of cleaning them like captions
+([Comfy-Org/ComfyUI#17285](https://github.com/Comfy-Org/ComfyUI/pull/17285)), so our
+text-to-image negative applies as intended, and adds aimdo 0.6.0 dynamic-VRAM KV caches for
+Qwen Image 2.1. Its requirements: frontend package 1.57.1, Comfy Kitchen 0.2.40, upstream
+aimdo 0.6.0, workflow templates 0.11.96 and embedded docs 0.5.14. Return to an official
+release once one includes Fibo 2.0; the v0.42.x tags through v0.42.5 do not.
 v0.42 adds native MOSS-Image, Qwen 3.x decode speedups, TextGenerate cleanup,
 baked-in H3 PDD heads and synchronized CUDA-graph teardown.
 v0.40.0 fixed Qwen Image 2.1 caching under low VRAM and updates shared

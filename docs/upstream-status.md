@@ -7,10 +7,11 @@ page when an item is resolved or a new audit finds one.
 
 ## Waiting for an upstream release
 
-- **ComfyUI** is pinned to official master `7a283320` because Fibo 2.0 support
+- **ComfyUI** is pinned to official master `bc5f880d` (2026-10-23) because
+  Fibo 2.0 support
   ([Comfy-Org/ComfyUI#17240](https://github.com/Comfy-Org/ComfyUI/pull/17240))
-  is not in a release yet. The latest release is v0.42.1. Pin the first
-  release that includes the merge.
+  is not in a release yet. The v0.42.x tags (through v0.42.5) are cut from a
+  release branch without it. Pin the first release that includes the merge.
 
 ## Do not bump without graph changes
 
@@ -45,6 +46,11 @@ page when an item is resolved or a new audit finds one.
 
 ## Unverified
 
+- The 2026-10-23 bump (ComfyUI `bc5f880d`, Kitchen 0.2.40, aimdo 0.6.0,
+  Spectrum v0.2.29) has only passed CPU tests. Smoke-test Fibo 2.0
+  text-to-image, Qwen Image 2.1, Drama 3 and Spectrum H3 forecasting on a GPU.
+  Drama 3 uses Core's `FixedKVBias`/`FixedKVCache` and Qwen3.5 layers, whose
+  signatures were unchanged at the new pin.
 - The Drama 3 SGLang venv now includes `torch_memory_saver==0.0.10`. How it
   interacts with the sleep/checkpoint path has not been tested on a GPU.
 - Drama 3 sleep on drivers 580-609 (Colab) depends on Omni's host-SHM stage

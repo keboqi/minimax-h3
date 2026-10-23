@@ -115,8 +115,8 @@ class ComfyRequirementsTests(unittest.TestCase):
         lines = (SOURCES / "comfy-requirements.txt").read_text().splitlines()
         self.assertIn(f"comfyui-frontend-package=={COMFY_FRONTEND_VERSION}", lines)
         self.assertIn(f"comfy-kitchen=={COMFY_KITCHEN_VERSION}", lines)
-        self.assertIn("comfy-aimdo==0.5.6", lines)
-        self.assertIn("comfyui-workflow-templates==0.11.93", lines)
+        self.assertIn("comfy-aimdo==0.6.0", lines)
+        self.assertIn("comfyui-workflow-templates==0.11.96", lines)
         self.assertIn("comfyui-embedded-docs==0.5.14", lines)
 
 
