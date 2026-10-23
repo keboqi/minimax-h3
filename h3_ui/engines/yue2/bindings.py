@@ -28,12 +28,12 @@ def bind_yue2_view(
         view.prompt_backend,
         view.openai_api_key,
         view.openai_model,
-        view.openai_base_url,
         view.vocals,
         view.language,
         view.use,
         view.lyrics_policy,
         view.notes,
+        view.openai_base_url,
     ]
     bind_prompt_action(
         view.enhance.click,

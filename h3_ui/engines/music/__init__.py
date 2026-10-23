@@ -60,13 +60,13 @@ class MusicHandlers:
         backend: str = "Gemini",
         openai_api_key: str = "",
         openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
-        openai_base_url: str | None = None,
         duration: float = 120,
         vocals: str = "Auto",
         language: str = "Auto",
         use: str = "Auto",
         lyrics_policy: str = "Keep my lyrics",
         notes: str = "",
+        openai_base_url: str | None = None,
     ) -> tuple[str, str, str]:
         return song_writer.enhance_music3_prompt(
             prompt, model, temporary_api_key, lyrics, ref_image_1, ref_image_2, ref_image_3,

@@ -698,19 +698,19 @@ class UiContractTests(unittest.TestCase):
             ("enhance_yue2_prompt", song_brief),
         ):
             inputs = endpoints[endpoint]["inputs"]
-            end = len(inputs) - len(appended)
+            end = len(inputs) - len(appended) - 1
             self.assertEqual(
-                [self.components[id]["props"]["label"] for id in inputs[end - 4:]],
+                [self.components[id]["props"]["label"] for id in inputs[end - 3:]],
                 ["Prompt writer", "Temporary OpenAI API key", "OpenAI-compatible model",
-                 "Temporary OpenAI endpoint", *appended],
+                 *appended, "Temporary OpenAI endpoint"],
             )
             parameters = self.demo.get_api_info()["named_endpoints"][f"/{endpoint}"][
                 "parameters"
             ]
-            self.assertEqual(parameters[end - 4]["parameter_default"], "Gemini")
+            self.assertEqual(parameters[end - 3]["parameter_default"], "Gemini")
             # Appended with defaults so existing API clients keep working.
-            self.assertEqual(parameters[end - 2]["parameter_default"], "openai/gpt-5.6-luna")
-            self.assertIsNone(parameters[end - 1]["parameter_default"])
+            self.assertEqual(parameters[end - 1]["parameter_default"], "openai/gpt-5.6-luna")
+            self.assertIsNone(parameters[-1]["parameter_default"])
             self.assertTrue(all(row["parameter_has_default"] for row in parameters[end:]))
 
         qwen_endpoint = "enhance_qwen_image21_prompt"

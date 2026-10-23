@@ -27,13 +27,13 @@ def bind_music_view(
         view.prompt_backend,
         view.openai_api_key,
         view.openai_model,
-        view.openai_base_url,
         view.duration,
         view.vocals,
         view.language,
         view.use,
         view.lyrics_policy,
         view.notes,
+        view.openai_base_url,
     ]
     bind_prompt_action(
         view.enhance.click,

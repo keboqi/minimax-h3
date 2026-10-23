@@ -170,6 +170,43 @@ class RemotePromptOpenAITests(unittest.TestCase):
             )
         self.assertEqual(writer.call_args.kwargs["openai_base_url"], endpoint)
 
+    def test_song_writers_preserve_legacy_positional_options(self) -> None:
+        from functools import partial
+        from h3_ui.engines.music import MusicHandlers
+        from h3_ui.engines.yue2 import YuE2Handlers
+
+        deps = SimpleNamespace(runtime_config=lambda: self.runtime)
+        credentials = ["OpenAI-compatible", "temporary-key", "writer-model"]
+        options = ["Duet", "French", "Full song", "Polish my lyrics", "softer ending"]
+        music_args = ["idea", "unused", "", "old lyrics", None, None, None,
+                      *credentials, 60, *options]
+        yue_args = ["idea", "unused", "", "old lyrics", "full", 90, *credentials, *options]
+        for label, call, args, seconds, heading in (
+            ("Music UI", MusicHandlers(deps).enhance_music3_prompt, music_args, 60, "CAPTION"),
+            ("YuE2 UI", YuE2Handlers(deps).enhance_yue2_prompt, yue_args, 90, "STYLE"),
+            ("Music writer", partial(song_writer.enhance_music3_prompt, runtime=self.runtime),
+             music_args, 60, "CAPTION"),
+            ("YuE2 writer", partial(song_writer.enhance_yue2_prompt, runtime=self.runtime),
+             yue_args, 90, "STYLE"),
+        ):
+            for endpoint in (None, "https://ui.example.test/v1"):
+                with self.subTest(entry=label, endpoint=endpoint), patch.object(
+                    song_writer.song_brief, "build_brief", wraps=song_writer.song_brief.build_brief
+                ) as brief, patch.object(
+                    song_writer.common, "write_prompt",
+                    return_value=(f"{heading}: Warm pop\nLYRICS: New words", "Enhanced"),
+                ) as writer:
+                    # Old callers omit the endpoint; new callers append it after all existing options.
+                    result = call(*args, *([] if endpoint is None else [endpoint]))
+                    self.assertEqual(result, ("Warm pop", "New words", "Enhanced"))
+                    self.assertEqual(brief.call_args.kwargs["max_seconds"], seconds)
+                    for name, value in zip(("vocals", "language", "use", "lyrics_policy", "notes"), options):
+                        self.assertEqual(brief.call_args.kwargs[name], value)
+                    self.assertEqual(writer.call_args.kwargs["backend"], credentials[0])
+                    self.assertEqual(writer.call_args.kwargs["openai_api_key"], credentials[1])
+                    self.assertEqual(writer.call_args.kwargs["openai_model"], credentials[2])
+                    self.assertEqual(writer.call_args.kwargs["openai_base_url"], endpoint)
+
     def test_missing_key_preserves_original_text(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             style, lyrics, status = song_writer.enhance_yue2_prompt(

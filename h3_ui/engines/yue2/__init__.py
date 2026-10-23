@@ -73,12 +73,12 @@ class YuE2Handlers:
         backend: str = "Gemini",
         openai_api_key: str = "",
         openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
-        openai_base_url: str | None = None,
         vocals: str = "Auto",
         language: str = "Auto",
         use: str = "Auto",
         lyrics_policy: str = "Keep my lyrics",
         notes: str = "",
+        openai_base_url: str | None = None,
     ) -> tuple[str, str, str]:
         return song_writer.enhance_yue2_prompt(
             style, model, temporary_api_key, lyrics, mode, duration,

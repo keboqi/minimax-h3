@@ -335,13 +335,13 @@
         {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Gemini", "type": "type_61"},
         {"parameter_name": "openai_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "openai_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"},
-        {"parameter_name": "openai_base_url", "parameter_has_default": true, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "duration", "parameter_has_default": true, "parameter_default": 120, "type": "type_80"},
         {"parameter_name": "vocals", "parameter_has_default": true, "parameter_default": "Auto", "type": "type_96"},
         {"parameter_name": "language", "parameter_has_default": true, "parameter_default": "Auto", "type": "type_97"},
         {"parameter_name": "use", "parameter_has_default": true, "parameter_default": "Auto", "type": "type_98"},
         {"parameter_name": "lyrics_policy", "parameter_has_default": true, "parameter_default": "Keep my lyrics", "type": "type_99"},
-        {"parameter_name": "notes", "parameter_has_default": true, "parameter_default": "", "type": "type_1"}
+        {"parameter_name": "notes", "parameter_has_default": true, "parameter_default": "", "type": "type_1"},
+        {"parameter_name": "openai_base_url", "parameter_has_default": true, "parameter_default": null, "type": "type_1"}
       ],
       "returns": [
         {"type": "type_1", "component": "Textbox"},
@@ -388,12 +388,12 @@
         {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Gemini", "type": "type_61"},
         {"parameter_name": "openai_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "openai_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"},
-        {"parameter_name": "openai_base_url", "parameter_has_default": true, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "vocals", "parameter_has_default": true, "parameter_default": "Auto", "type": "type_96"},
         {"parameter_name": "language", "parameter_has_default": true, "parameter_default": "Auto", "type": "type_97"},
         {"parameter_name": "use", "parameter_has_default": true, "parameter_default": "Auto", "type": "type_98"},
         {"parameter_name": "lyrics_policy", "parameter_has_default": true, "parameter_default": "Keep my lyrics", "type": "type_99"},
-        {"parameter_name": "notes", "parameter_has_default": true, "parameter_default": "", "type": "type_1"}
+        {"parameter_name": "notes", "parameter_has_default": true, "parameter_default": "", "type": "type_1"},
+        {"parameter_name": "openai_base_url", "parameter_has_default": true, "parameter_default": null, "type": "type_1"}
       ],
       "returns": [
         {"type": "type_1", "component": "Textbox"},
