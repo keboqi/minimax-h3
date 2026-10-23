@@ -150,6 +150,26 @@ class RemotePromptOpenAITests(unittest.TestCase):
             )
         client.assert_called_once_with(base_url=OPENAI_API_ROOT, api_key="server-key", timeout=600.0)
 
+    def test_flux3_and_moss_image_handlers_forward_the_temporary_endpoint(self) -> None:
+        from h3_app.prompt_writers import flux3 as flux3_writer, moss_image as moss_image_writer
+        from h3_ui.engines.flux3 import Flux3Handlers
+        from h3_ui.engines.moss_image import MossImageHandlers
+
+        endpoint = "https://ui.example.test/v1"
+        reply = ("A rewritten prompt", "Enhanced with glm-5.3-flash")
+        with patch.object(flux3_writer, "enhance_flux3_prompt", return_value=reply) as writer:
+            Flux3Handlers(Mock()).enhance_flux3_prompt(
+                "fox", [], 1024, 1024, "unused", "", "OpenAI-compatible", "temporary-key",
+                "glm-5.3-flash", endpoint,
+            )
+        self.assertEqual(writer.call_args.kwargs["openai_base_url"], endpoint)
+        with patch.object(moss_image_writer, "enhance_moss_image_prompt", return_value=reply) as writer:
+            MossImageHandlers(Mock()).enhance_moss_image_prompt(
+                "a cup", 1024, 1024, "Auto", "unused", "", "OpenAI-compatible", "temporary-key",
+                "glm-5.3-flash", endpoint,
+            )
+        self.assertEqual(writer.call_args.kwargs["openai_base_url"], endpoint)
+
     def test_missing_key_preserves_original_text(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             style, lyrics, status = song_writer.enhance_yue2_prompt(

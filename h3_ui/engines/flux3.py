@@ -89,7 +89,7 @@ class Flux3Handlers:
         enhanced, status = flux3_writer.enhance_flux3_prompt(
             prompt, model, temporary_api_key, reference_images, width, height,
             backend=backend, openai_api_key=openai_api_key,
-            openai_model=openai_model, runtime=self.deps.runtime_config(),
+            openai_model=openai_model, openai_base_url=openai_base_url, runtime=self.deps.runtime_config(),
         )
         failed = status.startswith("Prompt enhancement failed:")
         return enhanced, status, gr.skip() if failed else False

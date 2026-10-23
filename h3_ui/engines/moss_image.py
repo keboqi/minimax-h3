@@ -100,7 +100,7 @@ class MossImageHandlers:
         enhanced, status = moss_image_writer.enhance_moss_image_prompt(
             prompt, model, temporary_api_key, width, height, rewrite_mode,
             backend=backend, openai_api_key=openai_api_key,
-            openai_model=openai_model, runtime=self.deps.runtime_config(),
+            openai_model=openai_model, openai_base_url=openai_base_url, runtime=self.deps.runtime_config(),
         )
         failed = status.startswith("Prompt enhancement failed:")
         return enhanced, status, "" if not failed and is_layout_prompt(enhanced) else gr.skip()
