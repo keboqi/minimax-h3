@@ -25,8 +25,6 @@ from typing import Any, Iterable
 MODEL_REPO = "lilcheaty/MiniMax-H3-NVFP4"
 ORIGINAL_MODEL_REPO = "Comfy-Org/MiniMax-H3"
 SINGULARITY_MODEL_REPO = "WarmBloodAban/Minimax-h3_Singularity"
-# Community prune of WarmBloodAban's V2 INT8 in ComfyUI's pruned H3 layout.
-SINGULARITY_V2_MODEL_REPO = "Abiray/Minimax-h3-Singularity-V2-Pruned"
 TURBO_REPO = "lightx2v/Minimax-h3-Turbo"
 LARRY_TURBO_REPO = "larryvrh/MiniMax-H3-Turbo-Lora"
 SINGLE_FRAME_VAE_REPO = "iamkaikai/MiniMax-H3-Single-Frame-VAE-500K"
@@ -309,18 +307,18 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "Singularity · pruned v1.3 INT8",
     ),
     "singularity_v2_fl2va": ModelSpec(
-        SINGULARITY_V2_MODEL_REPO,
+        SINGULARITY_MODEL_REPO,
         "diffusion_models",
-        "Minimax-h3_Singularity_ref2va_v2_Pruned_int8.safetensors",
-        "Singularity V2 · pruned INT8 (Abiray)",
-        expected_sha256="bc7c5efb713a8a5042d2bc177bda343af7f4e6340edb23d3fb2644b336147a50",
+        "Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors",
+        "Singularity V2 · pruned INT8",
+        expected_sha256="d7637c2c35cd30facd9e93778c491f6d82f91c4a441aecbdb4c384a62a5f3d9f",
     ),
     "singularity_v2_ref2va": ModelSpec(
-        SINGULARITY_V2_MODEL_REPO,
+        SINGULARITY_MODEL_REPO,
         "diffusion_models",
-        "Minimax-h3_Singularity_ref2va_v2_Pruned_int8.safetensors",
-        "Singularity V2 · pruned INT8 (Abiray)",
-        expected_sha256="bc7c5efb713a8a5042d2bc177bda343af7f4e6340edb23d3fb2644b336147a50",
+        "Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors",
+        "Singularity V2 · pruned INT8",
+        expected_sha256="d7637c2c35cd30facd9e93778c491f6d82f91c4a441aecbdb4c384a62a5f3d9f",
     ),
     "text_encoder": ModelSpec(
         TEXT_ENCODER_REPO,

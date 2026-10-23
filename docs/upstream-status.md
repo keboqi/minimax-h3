@@ -24,10 +24,11 @@ page when an item is resolved or a new audit finds one.
 
 ## Model candidates
 
-- **Singularity V2 INT8**
-  (`Minimax-h3_Singularity_ref2va_v2_int8.safetensors`, 34.0 GB). v1.3 stays
-  the default. The community prune is available as the opt-in "Singularity V2"
-  base model. Switch the default when an official pruned V2 ships.
+- **Singularity V2 as default.** WarmBloodAban's official
+  `Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors` (2026-10-23) is
+  the opt-in "Singularity V2" base model. v1.3 stays the default and
+  preloaded profile until V2 has been compared on our prompts. There is no
+  official V2 W4A8 prune yet.
 - **Fibo 2.0 turbo LoRA**
   (`loras/fibo_2.0_turbo_lora_avg_rank_270_bf16.safetensors`) is in
   `Comfy-Org/Fibo-2.0` without a model card entry or workflow. Wait for
