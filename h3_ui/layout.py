@@ -39,6 +39,9 @@ class AppViews:
     dubbing: gr.Column | None = None
     create_tab: gr.Tab | None = None
     projects: gr.Column | None = None
+    jobs_tab: gr.Tab | None = None
+    # Every top-level tab, in order; Jobs polls only while it is the open one.
+    main_tabs: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -124,15 +127,15 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
                     drama3 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Dub & Translate", id="dub"):
                     dubbing = gr.Column(elem_classes=["h3-engine-view", "h3-dub-shell"])
-        with gr.Tab("Projects", id="projects"):
+        with gr.Tab("Projects", id="projects") as projects_tab:
             projects = gr.Column(elem_classes=["h3-projects-shell"])
         with gr.Tab("Media", id="media") as gallery_tab:
             gallery = gr.Column(elem_classes=["h3-gallery-shell"])
-        with gr.Tab("Jobs", id="jobs"):
+        with gr.Tab("Jobs", id="jobs") as jobs_tab:
             jobs = gr.Column(elem_classes=["h3-jobs-shell"])
-        with gr.Tab("System", id="system"):
+        with gr.Tab("System", id="system") as system_tab:
             system = gr.Group()
-        with gr.Tab("API & workflows", id="api"):
+        with gr.Tab("API & workflows", id="api") as api_tab:
             api = gr.Group()
     return AppViews(
         tabs,
@@ -159,6 +162,8 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
         dubbing,
         create_tab,
         projects,
+        jobs_tab,
+        (create_tab, projects_tab, gallery_tab, jobs_tab, system_tab, api_tab),
     )
 
 

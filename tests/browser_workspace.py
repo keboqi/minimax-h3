@@ -347,7 +347,32 @@ def run():
                 # A separate browser session cannot see the first session's jobs.
                 other = browser.new_context(viewport={"width": 390, "height": 1000})
                 outsider = other.new_page()
+                polls = []
+                outsider.on(
+                    "request",
+                    lambda request: polls.append(request.url)
+                    if request.method == "POST" and "/run/predict" in request.url
+                    else None,
+                )
                 outsider.goto(url, wait_until="domcontentloaded")
+                outsider.locator('.h3-setup-card[data-settings-ready="true"]').wait_for(
+                    state="attached"
+                )
+
+                def polls_during(milliseconds):
+                    before = len(polls)
+                    outsider.wait_for_timeout(milliseconds)
+                    return len(polls) - before
+
+                # Without unfinished jobs an idle page stops polling after its
+                # first tick, so a hosted server can scale down.
+                outsider.wait_for_timeout(3000)
+                assert polls_during(5000) == 0, polls[-5:]
+                outsider.get_by_role("tab", name="Jobs", exact=True).click()
+                assert polls_during(5000) >= 2, "Jobs did not poll while open"
+                outsider.get_by_role("tab", name="Create", exact=True).click()
+                outsider.wait_for_timeout(2500)
+                assert polls_during(5000) == 0, "Jobs kept polling after it closed"
                 outsider.get_by_role("tab", name="Jobs", exact=True).click()
                 expect(outsider.get_by_text("No jobs yet", exact=True)).to_be_visible()
                 expect(outsider.locator(".h3-job-table")).to_have_count(0)

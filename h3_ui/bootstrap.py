@@ -266,6 +266,8 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 post=services.api_post,
                 summary=app_views.jobs_count,
                 projects_root=app_views.projects,
+                jobs_tab=app_views.jobs_tab,
+                other_tabs=tuple(tab for tab in app_views.main_tabs if tab is not app_views.jobs_tab),
             )
             from h3_ui.system_view import build_readiness_view
             from h3_models import MODEL_SPECS

@@ -566,6 +566,22 @@ class UiContractTests(unittest.TestCase):
         self.assertTrue(audio_updates[5]["visible"])
         self.assertFalse(audio_updates[9]["visible"])
 
+    def test_jobs_poll_restarts_after_every_job_acceptance(self) -> None:
+        # Jobs polls only while needed; every accepted job restarts it in the browser.
+        timer = next(c["id"] for c in self.config["components"] if c["type"] == "timer")
+        accepts = {
+            fn_id for fn_id, block_fn in self.demo.fns.items()
+            if getattr(block_fn.fn, "__module__", "") in {"h3_ui.job_admission", "h3_ui.jobs_view"}
+            and getattr(block_fn.fn, "__name__", "") in {"accept", "accept_retry", "accept_finishing", "accept_project"}
+        }
+        restarted = {
+            dependency["trigger_after"] for dependency in self.config["dependencies"]
+            if dependency["trigger_only_on_success"] and dependency["backend_fn"] is False
+            and dependency["outputs"] == [timer] and '"active": true' in (dependency["js"] or "")
+        }
+        self.assertTrue(accepts)
+        self.assertEqual(accepts - restarted, set())
+
     def test_real_tabs_own_each_view(self) -> None:
         tabs = next(
             component

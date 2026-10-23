@@ -10,7 +10,14 @@ from contextlib import nullcontext
 import gradio as gr
 
 from h3_app.jobs import JOBS, JobCancelled
-from .job_admission import execute_accepted, require_owner, dispatch_failed
+from .job_admission import (
+    START_POLLING_JS,
+    dispatch_failed,
+    execute_accepted,
+    poll_after_acceptance,
+    require_owner,
+    watch_acceptance,
+)
 from .job_bindings import GPU_QUEUE
 
 JOB_SELECTION_JS = """
@@ -99,8 +106,12 @@ def table(jobs, selected=None):
     )
 
 
-def build_jobs_view(root, *, get, post, summary, projects_root=None):
-    """Jobs in ``root``; saved projects in ``projects_root``, or an accordion in Jobs without one."""
+def build_jobs_view(root, *, get, post, summary, projects_root=None, jobs_tab=None, other_tabs=()):
+    """Jobs in ``root``; saved projects in ``projects_root``, or an accordion in Jobs without one.
+
+    Jobs polls every 2 seconds only while this session has unfinished jobs or
+    ``jobs_tab`` is open, so an idle page sends nothing and the server can scale down.
+    """
     with root:
         with gr.Row(equal_height=False, elem_classes=["h3-view-heading"]):
             gr.Markdown(
@@ -166,7 +177,9 @@ def build_jobs_view(root, *, get, post, summary, projects_root=None):
                     save_project = gr.Button("Save prompt, settings & sources")
                 status = gr.Markdown(elem_classes=["h3-job-action-status"])
         ticket = gr.Textbox(visible=False)
+        # Active at load so the first tick finds unfinished jobs; it then stops when idle.
         timer = gr.Timer(2)
+        watching = gr.Checkbox(False, visible=False)
         presentation = gr.State({})
         with gr.Accordion("Browser ownership and recovery", open=False):
             gr.Markdown(
@@ -240,7 +253,7 @@ def build_jobs_view(root, *, get, post, summary, projects_root=None):
     )
 
     def refresh_jobs(
-        selected_id, failed_selection, source_selection, previous, request: gr.Request
+        selected_id, failed_selection, source_selection, previous, watching, request: gr.Request
     ):
         jobs = JOBS.list_owned(require_owner(request))
         choices = [
@@ -287,12 +300,13 @@ def build_jobs_view(root, *, get, post, summary, projects_root=None):
             ),
             *inspected,
             next_presentation,
+            gr.Timer(active=bool(watching or queued or active)),
         )
 
     for event in (timer.tick, refresh.click):
         event(
             refresh_jobs,
-            inputs=[selected, variants, finishing_variant, presentation],
+            inputs=[selected, variants, finishing_variant, presentation, watching],
             outputs=[
                 listing,
                 selected,
@@ -305,11 +319,21 @@ def build_jobs_view(root, *, get, post, summary, projects_root=None):
                 finishing_variant,
                 files,
                 presentation,
+                timer,
             ],
             queue=False,
             api_name=False,
             show_progress="hidden",
         )
+
+    poll_after_acceptance(timer)
+    if jobs_tab is not None:
+        # Browser-side, so switching tabs costs no request.
+        jobs_tab.select(None, js=f"() => [true, ({START_POLLING_JS})()]", outputs=[watching, timer],
+                        queue=False, api_name=False, show_progress="hidden")
+    for tab in other_tabs:
+        tab.select(None, js="() => false", outputs=watching, queue=False, api_name=False,
+                   show_progress="hidden")
 
     def select_row(evt: gr.EventData, request: gr.Request):
         job = JOBS.owned(require_owner(request), evt.job_id)
@@ -598,6 +622,7 @@ def build_jobs_view(root, *, get, post, summary, projects_root=None):
             accept_project, inputs=project, outputs=ticket, queue=False, api_name=False
         ), [project_files, project_status]),
     ):
+        watch_acceptance(accepted)
         dispatched = accepted.success(
             execute_retry,
             inputs=ticket,

@@ -7,6 +7,7 @@ import uuid
 import time
 
 import gradio as gr
+from gradio.context import Context
 
 from h3_app.jobs import CURRENT_JOB, JOBS, JobCancelled
 from h3_app.reference_bindings import ReferenceMap
@@ -20,6 +21,43 @@ def require_owner(request):
         return request_owner(request, JOBS.store)
     except ValueError as exc:
         raise gr.Error(str(exc)) from exc
+
+
+# Runs in the browser, so restarting the Jobs poller costs no request.
+START_POLLING_JS = '() => ({"__type__": "update", "active": true})'
+
+
+def _job_watch():
+    """Acceptance events and Jobs pollers of the Blocks being built."""
+    root = Context.root_block
+    if root is None:
+        return None
+    if not hasattr(root, "h3_job_watch"):
+        root.h3_job_watch = {"events": [], "timers": []}
+    return root.h3_job_watch
+
+
+def _start_after(accepted, timer):
+    accepted.success(None, js=START_POLLING_JS, outputs=timer, queue=False,
+                     api_name=False, show_progress="hidden")
+
+
+def watch_acceptance(accepted):
+    """Restart this page's Jobs pollers once ``accepted`` admits a job."""
+    watch = _job_watch()
+    if watch is not None:
+        watch["events"].append(accepted)
+        for timer in watch["timers"]:
+            _start_after(accepted, timer)
+
+
+def poll_after_acceptance(timer):
+    """Activate ``timer`` after every job acceptance on this page, bound before or after it."""
+    watch = _job_watch()
+    if watch is not None:
+        watch["timers"].append(timer)
+        for accepted in watch["events"]:
+            _start_after(accepted, timer)
 
 
 def dispatch_failed(job_id, request: gr.Request):
@@ -270,6 +308,7 @@ def bind_accepted_action(
         show_progress="hidden",
         js="(...args) => { const bytes = new Uint8Array(16); crypto.getRandomValues(bytes); args[args.length - 1] = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(''); return args; }",
     )
+    watch_acceptance(accepted)
 
     def run_ticket(job_id, request: gr.Request):
         try:
