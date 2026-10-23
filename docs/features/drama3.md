@@ -197,8 +197,10 @@ worker and setup logs under `ComfyUI/output/audio_tools`.
 Drama 3 generates parallel, speaker-based chunks on SGLang-Omni. It has no
 per-request seed. SGLang uses an isolated environment, stays loaded
 between TTS jobs, and sleeps or stops when another engine needs the GPU. The app defaults
-to 8 parallel chunks and zero retries; the server allows 32 concurrent
-requests. Every new take is checked, and one that clearly failed (silent, holding a
+to 16 parallel chunks and zero retries; the server allows 32 concurrent
+requests. More parallel chunks make each line slower but a long script faster,
+since the GPU generates more frames per second in total. Browsers that saved
+the previous default of 8 switch to 16 once. Every new take is checked, and one that clearly failed (silent, holding a
 fifth or less of a long line, or stopped by its length cap) is generated once more
 even with zero retries; more retries give such takes more attempts. Uncertain
 duration and pause advisories are saved with the result and shown in the status only
@@ -256,11 +258,11 @@ SGLang configuration uses these environment variables:
 
 Previously downloaded copies of the pinned checkpoint and existing SGLang
 kernel caches in sibling serving directories are reused when available.
-To reduce graph capture work on startup, the launcher disables prefill CUDA
-graphs and streaming vocoder window graphs, and caps first-frame graph coverage
-at 8 requests. Decode CUDA graphs remain enabled; the server still allows 32
-concurrent requests by default. Prefill runs eagerly, which may increase time
-to first audio.
+The launcher keeps upstream's engine CUDA graphs: decode, breakable prefill
+graphs for batches of up to 2048 tokens, and first-frame graphs for up to 16
+requests. They shorten each line at the cost of a longer cold start and some GPU
+memory; sleep keeps them across engine switches. Streaming vocoder window graphs
+are disabled because the app requests complete WAVs.
 
 When another engine needs the GPU, SGLang sleeps instead of stopping: NVIDIA
 CUDA process checkpointing moves every Omni worker's GPU state to host RAM while

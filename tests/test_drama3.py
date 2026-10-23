@@ -46,7 +46,7 @@ class Drama3RequestTests(unittest.TestCase):
 
     def test_defaults_use_the_full_frame_cap_and_uncapped_top_k(self):
         request = Drama3Request("Hello")
-        self.assertEqual((request.max_frames, request.top_k, request.parallel, request.retries), (8192, 0, 8, 0))
+        self.assertEqual((request.max_frames, request.top_k, request.parallel, request.retries), (8192, 0, 16, 0))
         for frames in (0, 8193):
             with self.subTest(frames=frames), self.assertRaises(H3Error):
                 validate_request(Drama3Request("Hello", voices=((0, "a.wav", "Hello"),), max_frames=frames))
@@ -298,7 +298,7 @@ class Drama3AppInputTests(unittest.TestCase):
             list(drama3_handlers.generate_drama3(*values))
         request = captured["request"]
         self.assertEqual(request.voices, ((5, str(Path("/in") / "h3_gradio/drama3_voices/five.wav"), "Line five."),))
-        self.assertEqual((request.top_k, request.parallel, request.retries), (30, 8, 0))
+        self.assertEqual((request.top_k, request.parallel, request.retries), (30, 16, 0))
         self.assertEqual((request.regenerate, request.remix_only), ((), False))
 
     def captured_request(self, handler, *leading):

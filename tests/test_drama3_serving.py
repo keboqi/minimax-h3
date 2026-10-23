@@ -329,8 +329,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(command[command.index("--tts_engine.gpu_memory_fraction") + 1], "0.55")
         self.assertEqual(command[command.index("--vocoder.gpu_memory_fraction") + 1], "0.08")
         self.assertEqual(command[command.index("--tts_engine.factory.max_running_requests") + 1], "32")
-        self.assertEqual(command[command.index("--tts_engine.engine.cuda_graph_backend_prefill") + 1], "disabled")
-        self.assertEqual(command[command.index("--tts_engine.factory.first_frame_cuda_graph_max_requests") + 1], "8")
+        self.assertEqual(command[command.index("--tts_engine.engine.cuda_graph_backend_prefill") + 1], "breakable")
+        self.assertEqual(command[command.index("--tts_engine.factory.first_frame_cuda_graph_max_requests") + 1], "16")
         self.assertEqual(command[command.index("--vocoder.factory.window_cuda_graphs") + 1], "false")
         self.assertEqual(command[command.index("--vocoder.factory.codec_path") + 1],
                          str(settings.model_dir / "codec.pth"))  # offline: no S2-Pro Hub download

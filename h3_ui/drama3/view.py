@@ -593,7 +593,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                 "[Model and license](https://huggingface.co/fishaudio/drama-3)",
                                 elem_classes=["h3-drama3-note"])
                     with gr.Row():
-                        parallel = gr.Slider(1, 32, value=8, step=1, label="Parallel requests")
+                        parallel = gr.Slider(1, 32, value=16, step=1, label="Parallel requests")
                         retries = gr.Slider(0, 4, value=0, step=1, label="Retries per chunk",
                             info="0 keeps the first take. Retries only near-silent audio.")
                     with gr.Row():

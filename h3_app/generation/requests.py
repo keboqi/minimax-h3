@@ -63,7 +63,7 @@ class Drama3Request:
     top_k: int = 0
     max_frames: int = 8192
     # Speaker chunks generated in parallel on SGLang-Omni.
-    parallel: int = 8
+    parallel: int = 16
     retries: int = 0
     # (speaker number, saved speaker name or "") for status and provenance.
     voice_names: tuple[tuple[int, str], ...] = ()

@@ -91,7 +91,7 @@ Click a line to pick it for the line actions, or type lines such as `3, 5-7`:
   translated and original subtitle tracks are always added.
 - **Advanced → Fresh takes for lines** generates new takes for those lines even
   when they are unchanged. **Parallel requests** sets how many lines Drama 3
-  voices at once.
+  voices at once (16 by default).
 
 Every take is saved by its text, voice clip and preset. Dubbing again after a
 few edits voices only the changed lines. Results go to Media

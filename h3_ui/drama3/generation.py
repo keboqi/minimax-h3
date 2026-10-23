@@ -234,7 +234,7 @@ class GenerationHandlers:
         from h3_ui.drama3.controls import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_SOUND_SLOT_INPUT_NAMES
         slot_count = len(DRAMA3_SLOT_INPUT_NAMES)
         text, slots, settings = values[0], values[1:1 + slot_count], list(values[1 + slot_count:])
-        defaults = [1.0, 0.9, 0, 8192, 8, 0]
+        defaults = [1.0, 0.9, 0, 8192, 16, 0]
         if len(settings) < len(defaults):
             settings += defaults[len(settings):]
         temperature, top_p, top_k, max_frames, parallel, retries = settings[:6]

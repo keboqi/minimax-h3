@@ -107,7 +107,7 @@ class DubRequest:
     voice_mode: str = VOICE_LINE
     preset: str = "Balance"
     timing: str = TIMING_MATCH
-    parallel: int = 8
+    parallel: int = 16
     max_speed: float = 1.35
     speech_volume: float = 100.0
     background_volume: float = 100.0

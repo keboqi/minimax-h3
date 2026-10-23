@@ -35,6 +35,13 @@ class MigrationTests(unittest.TestCase):
             restored, _ = restore_preferences(saved, components)
             self.assertEqual(restored["drama3.voice_engine"], expected)
 
+    def test_drama3_parallel_moves_to_sixteen_once(self):
+        components = {"drama3.parallel": SimpleNamespace(value=16, minimum=1, maximum=32)}
+        for version, saved_value, expected in ((8, 8, 16), (8, 4, 4), (9, 8, 8)):
+            saved = {"schema_version": version, "values": {"drama3.parallel": saved_value}}
+            restored, _ = restore_preferences(saved, components)
+            self.assertEqual(restored["drama3.parallel"], expected)
+
     def components(self):
         return {
             "h3.preset": SimpleNamespace(

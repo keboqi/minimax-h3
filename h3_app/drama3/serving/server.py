@@ -471,9 +471,11 @@ class SglangOmniServer:
             "--tts_engine.gpu_memory_fraction", str(settings.engine_memory),
             "--vocoder.gpu_memory_fraction", str(settings.codec_memory),
             "--tts_engine.factory.max_running_requests", str(settings.max_seqs),
-            # Reduce per-process graph capture on restart; keep decode graphs.
-            "--tts_engine.engine.cuda_graph_backend_prefill", "disabled",
-            "--tts_engine.factory.first_frame_cuda_graph_max_requests", "8",
+            # Upstream's defaults: prefill batches up to 2048 tokens and first frames
+            # of up to 16 requests replay as CUDA graphs. Sleep keeps them across
+            # engine switches, so their capture is paid once per cold start.
+            "--tts_engine.engine.cuda_graph_backend_prefill", "breakable",
+            "--tts_engine.factory.first_frame_cuda_graph_max_requests", "16",
             # This route requests complete WAVs, not streaming codec windows.
             "--vocoder.factory.window_cuda_graphs", "false",
             # SGLang-Omni defaults to fishaudio/s2-pro's codec.pth from the Hub; the

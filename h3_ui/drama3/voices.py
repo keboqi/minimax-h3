@@ -61,7 +61,7 @@ class VoiceHandlers:
             return
         yield str(audio), gr.update(value=transcript, interactive=True), "Voice generated. Preview speech copied as its exact transcript; ready to save."
 
-    def _drama3_design_request(self, temperature, top_p, top_k, max_frames, parallel=8):
+    def _drama3_design_request(self, temperature, top_p, top_k, max_frames, parallel=16):
         """The tab's sampling for voice design; text and voices are filled per take."""
         return generation_requests.Drama3Request(
             "", (), temperature, top_p, top_k, max_frames, int(parallel or 1))
@@ -169,7 +169,7 @@ class VoiceHandlers:
             yield frame(f"Voice generation failed: {exc}")
 
     def generate_drama3_voice_takes(self, key, count, description, transcript, engine="Qwen3-TTS VoiceDesign",
-                                    temperature=1.0, top_p=0.9, top_k=0, max_frames=8192, parallel=8):
+                                    temperature=1.0, top_p=0.9, top_k=0, max_frames=8192, parallel=16):
         """Design up to four new voices for a saved speaker without replacing its clip.
 
         Outputs: one clip per try, the voice choice, the brief the tries were made from

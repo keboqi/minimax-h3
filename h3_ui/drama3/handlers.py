@@ -87,7 +87,7 @@ def _publish_drama3_signatures():
     progress = inspect.Parameter("progress", inspect.Parameter.KEYWORD_ONLY, default=gr.Progress(track_tqdm=False))
     generation = _drama3_signature(("text",), (
         ("temperature", empty), ("top_p", empty), ("top_k", empty), ("max_frames", empty),
-        ("parallel", 8), ("retries", 0), ("script_mode", "Basic"),
+        ("parallel", 16), ("retries", 0), ("script_mode", "Basic"),
         *sound_defaults, ("title", ""),
         # Cast names, so scripts can name their speakers ("Mia: Hello.") instead of tagging them.
         *((f"speaker_{speaker}_name", "") for speaker in range(DRAMA3_VOICE_SLOTS)),

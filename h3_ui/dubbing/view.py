@@ -238,7 +238,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                         with gr.Accordion("Advanced", open=False):
                             regenerate = gr.Textbox(label="Fresh takes for lines", placeholder="e.g. 4, 9-10",
                                                     info="These lines get new takes even when unchanged.")
-                            parallel = gr.Slider(1, 32, value=8, step=1, label="Parallel requests")
+                            parallel = gr.Slider(1, 32, value=16, step=1, label="Parallel requests")
                     with gr.Column(scale=2, min_width=280, elem_classes=["h3-preview-panel", "h3-song-stage"]):
                         card_heading("Dub it", "Unchanged lines reuse their saved takes, so dubbing again after "
                                                "a few fixes is quick.")
