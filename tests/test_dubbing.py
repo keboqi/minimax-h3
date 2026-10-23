@@ -524,6 +524,29 @@ class HandlerTests(Workspace):
         self.assertEqual(self.handlers.select_speaker(session.id, "speaker2")[1], 60.0)
         self.assertIn("Not saved", self.handlers.save_speaker(session.id, "speaker2", "Nobody", 60))
 
+    def test_preview_player_preserves_levels_including_mute_and_boost(self):
+        from h3_app.drama3.serving.audio import decode_wav
+
+        source = _tone_wav(self.root / "a.wav", 1.0)
+        session = sessions.create(self.runtime, source, video=False)
+        session.segments = [{"start": 0, "end": 1, "source": "Hi", "translation": "Salut"}]
+        session.save()
+        player = self.module.gr.Audio(render=False)
+        player.GRADIO_CACHE = str(self.root / "preview-cache")
+        for handler in (self.handlers.preview_line, self.handlers.preview_new_take):
+            for level in (0.0, 0.2, 0.4, 0.8):
+                with self.subTest(handler=handler.__name__, level=level):
+                    samples = np.tile(np.array([-level, level], dtype=np.float32), 100)
+                    preview = pipeline.LinePreview(pipeline.RATE, samples, "Preview ready")
+                    with patch.object(self.handlers, "_hf_token", return_value=None), patch.object(
+                        pipeline, "preview_line", return_value=iter([preview])
+                    ):
+                        value, message = list(handler(session.id, "1", pipeline.VOICE_LINE, "Balance",
+                                                       pipeline.TIMING_MATCH, 1.35, 16))[-1]
+                    played, rate = decode_wav(Path(player.postprocess(value).path).read_bytes())
+                    self.assertEqual((rate, message), (pipeline.RATE, "Preview ready"))
+                    np.testing.assert_allclose(played, samples, atol=2 / 32768)
+
     def test_errors_become_status_lines(self):
         updates = list(self.handlers.analyze_source(None, None, True, "Balanced (BS-Roformer)", pipeline.PIPELINE_LOCAL,
                                                     "Auto-detect", "English", True, pipeline.TRANSLATOR_HYMT,
@@ -691,6 +714,33 @@ class ReviewFixTests(Workspace):
         self.assertAlmostEqual(float(track[int(0.5 * pipeline.RATE)]), 0.4, places=3)
         self.assertAlmostEqual(float(track[int(2.0 * pipeline.RATE)]), 0.2, places=3)
         self.assertAlmostEqual(float(track[int(2.75 * pipeline.RATE)]), 0.25, places=3)  # kept original, halved
+
+    def test_line_preview_matches_dub_speaker_volume_without_changing_the_take(self):
+        session = self.gemini_session()
+        take = np.full(pipeline.RATE, 0.4, dtype=np.float32)
+
+        def synthesize(planned, *_args, **_kwargs):
+            for line in planned:
+                line.take = take
+            return iter(())
+
+        for volume in (0, 50, 100, 200):
+            pipeline.set_speaker(self.runtime, session.id, "speaker2", voice="", volume=volume)
+            session = sessions.load(self.runtime, session.id)
+            request = pipeline.DubRequest(session.id)
+            for index, gain in ((0, 1.0), (1, volume / 100.0)):
+                with self.subTest(volume=volume, speaker=index), patch.object(
+                    pipeline, "_synthesize", side_effect=synthesize
+                ):
+                    preview = list(pipeline.preview_line(request, index, runtime=self.runtime,
+                                                        free_gpu=lambda: None))[-1]
+                    planned = pipeline._plan(session, [index], request.voice_mode, self.runtime)
+                    synthesize(planned)
+                    track, _notes, _ends = pipeline._speech_track(session, planned, request, 3.0)
+                    start = round(session.segments[index]["start"] * pipeline.RATE)
+                    np.testing.assert_allclose(preview.samples, 0.4 * gain)
+                    np.testing.assert_array_equal(preview.samples, track[start:start + len(preview.samples)])
+                    np.testing.assert_array_equal(take, np.full(pipeline.RATE, 0.4, dtype=np.float32))
 
     def test_translating_into_a_new_language_replaces_every_translation(self):
         session = self.session_with_vocals([

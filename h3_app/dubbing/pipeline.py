@@ -729,6 +729,9 @@ def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token
     line = planned[0]
     fitted, speed, note, available = timed_take(line.take, lines, index, session.data.get("duration", 0.0),
                                                 request, _timing_cache(session))
+    volume = speaker_settings(session).get(line.segment["speaker"], {}).get("volume", 100.0)
+    if volume != 100.0:
+        fitted = fitted * np.float32(volume / 100.0)
     details = [f"Line {index + 1}: {len(fitted) / RATE:.1f}s for a {available:.1f}s slot"]
     if not note and abs(speed - 1.0) > 0.01:
         details.append(f"{'sped up' if speed > 1 else 'slowed to'} {speed:.2f}x")

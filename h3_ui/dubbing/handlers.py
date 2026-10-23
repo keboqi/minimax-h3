@@ -15,6 +15,7 @@ from typing import Any, Callable
 import gradio as gr
 
 from h3_app import video_download
+from h3_app.drama3.serving.audio import encode_wav
 from h3_app.dubbing import pipeline, segments as segment_tools, session as sessions
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled, record_failure
@@ -276,7 +277,8 @@ class DubbingHandlers:
                                    regenerate=str(indices[0] + 1) if fresh else "")
             for update in self._gpu(lambda **kw: pipeline.preview_line(request, indices[0], **kw)):
                 if isinstance(update, pipeline.LinePreview):
-                    yield (update.rate, update.samples), update.message
+                    # Gradio peak-normalizes float arrays, undoing the speaker's volume setting.
+                    yield encode_wav(update.samples, update.rate), update.message
                 else:
                     yield gr.skip(), update
         except Exception as exc:
