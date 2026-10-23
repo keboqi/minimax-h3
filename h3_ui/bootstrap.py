@@ -112,7 +112,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 INPUT_IMAGE_FRAME_PRESETS=catalog.INPUT_IMAGE_FRAME_PRESETS,
                 INPUT_IMAGE_UPSCALE_SLOTS=catalog.INPUT_IMAGE_UPSCALE_SLOTS,
                 LARGE_RESOLUTIONS=catalog.LARGE_RESOLUTIONS,
-                LIGHTNING_PROMPT_MODEL=catalog.LIGHTNING_PROMPT_MODEL,
+                OPENAI_PROMPT_MODEL=catalog.OPENAI_PROMPT_MODEL,
                 LOCAL_PROMPT_BASE_MODELS=catalog.LOCAL_PROMPT_BASE_MODELS,
                 MAX_IMAGE_FRAMES=catalog.MAX_IMAGE_FRAMES,
                 MAX_VIDEO_BATCH_COUNT=catalog.MAX_VIDEO_BATCH_COUNT,

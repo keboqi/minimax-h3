@@ -226,7 +226,7 @@ class Flux3WriterTests(unittest.TestCase):
     def test_text_to_image_rewrite_sends_the_target_canvas(self, client):
         client.return_value.chat.completions.create.return_value = self.completion("Full-color outdoor photograph, ...")
         caption, status = flux3_writer.enhance_flux3_prompt(
-            "a fox in snow", "unused", "", [], 1920, 1072, "Lightning AI", "key",
+            "a fox in snow", "unused", "", [], 1920, 1072, "OpenAI-compatible", "key",
             "openai/gpt-6.1-sol", runtime=self.runtime,
         )
         self.assertEqual(caption, "Full-color outdoor photograph, ...")
@@ -244,7 +244,7 @@ class Flux3WriterTests(unittest.TestCase):
                 Image.new("RGB", (8, 8)).save(Path(root) / name)
                 images.append(str(Path(root) / name))
             flux3_writer.enhance_flux3_prompt(
-                "make it dusk", "unused", "", images, 1024, 1024, "Lightning AI", "key", runtime=self.runtime,
+                "make it dusk", "unused", "", images, 1024, 1024, "OpenAI-compatible", "key", runtime=self.runtime,
             )
         request = client.return_value.chat.completions.create.call_args.kwargs
         self.assertTrue(request["messages"][0]["content"].startswith("You are the prompt upsampler of an image-editing model."))

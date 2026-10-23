@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from h3_app.catalog import DEFAULT_LIGHTNING_PROMPT_MODEL
+from h3_app.catalog import DEFAULT_OPENAI_PROMPT_MODEL
 from h3_app import song_brief
 from h3_app.config import RuntimeConfig
 from . import common
@@ -58,8 +58,9 @@ def enhance_music3_prompt(
     ref_image_2: Any,
     ref_image_3: Any,
     backend: str = "Gemini",
-    lightning_api_key: str = "",
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    openai_api_key: str = "",
+    openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+    openai_base_url: str | None = None,
     duration: float = 120,
     vocals: str = song_brief.AUTO,
     language: str = song_brief.AUTO,
@@ -88,8 +89,9 @@ def enhance_music3_prompt(
         target="MiniMax Music 3",
         system_path=runtime.prompt_systems["MiniMax Music 3"],
         backend=backend,
-        lightning_api_key=lightning_api_key,
-        lightning_model=lightning_model,
+        openai_api_key=openai_api_key,
+        openai_model=openai_model,
+        openai_base_url=openai_base_url,
         media_values=(
             ("Music reference image 1", ref_image_1),
             ("Music reference image 2", ref_image_2),
@@ -129,8 +131,9 @@ def enhance_yue2_prompt(
     mode: str,
     duration: float,
     backend: str = "Gemini",
-    lightning_api_key: str = "",
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    openai_api_key: str = "",
+    openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+    openai_base_url: str | None = None,
     vocals: str = song_brief.AUTO,
     language: str = song_brief.AUTO,
     use: str = song_brief.AUTO,
@@ -158,8 +161,9 @@ def enhance_yue2_prompt(
         target="YuE2",
         system_path=runtime.prompt_systems["YuE2"],
         backend=backend,
-        lightning_api_key=lightning_api_key,
-        lightning_model=lightning_model,
+        openai_api_key=openai_api_key,
+        openai_model=openai_model,
+        openai_base_url=openai_base_url,
         media_values=(),
         context=f"{brief}\nExisting lyrics:\n{draft_lyrics or '(none)'}",
     )

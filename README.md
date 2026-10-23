@@ -357,7 +357,8 @@ The deployment attaches the `custom-secret` Modal Secret to both runtime
 services and requires it to contain `HF_TOKEN`. If your existing secret uses a
 different name, deploy with `H3_MODAL_HF_SECRET=your-secret-name`. To make a
 hosted prompt enhancer available without entering a key in the UI, also store
-`GEMINI_API_KEY` and/or `LIGHTNING_API_KEY` in that Modal Secret.
+`GEMINI_API_KEY` and/or `OPENAI_API_KEY` (plus `OPENAI_BASE_URL` for a
+non-OpenAI endpoint) in that Modal Secret.
 The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 

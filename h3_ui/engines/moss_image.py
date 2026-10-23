@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import gradio as gr
 
 from h3_app.prompt_writers import moss_image as moss_image_writer
-from h3_app.catalog import DEFAULT_LIGHTNING_PROMPT_MODEL, DEFAULT_MOSS_IMAGE_PRESET, MOSS_IMAGE_PRESETS
+from h3_app.catalog import DEFAULT_OPENAI_PROMPT_MODEL, DEFAULT_MOSS_IMAGE_PRESET, MOSS_IMAGE_PRESETS
 from h3_app.generation.moss_image import generate_moss_image
 from h3_app.generation.requests import MossImageRequest
 from h3_app.workflows.moss_image_prompt import MOSS_IMAGE_REWRITE_MODES, is_layout_prompt
@@ -94,13 +94,13 @@ class MossImageHandlers:
                                        progress=progress)
 
     def enhance_moss_image_prompt(self, prompt, width, height, rewrite_mode, model, temporary_api_key,
-                                  backend="Gemini", lightning_api_key="",
-                                  lightning_model=DEFAULT_LIGHTNING_PROMPT_MODEL):
+                                  backend="Gemini", openai_api_key="",
+                                  openai_model=DEFAULT_OPENAI_PROMPT_MODEL, openai_base_url=None):
         """Rewrite with OpenMOSS's prompt-enhancer recipe; a Layout clears the manual boxes."""
         enhanced, status = moss_image_writer.enhance_moss_image_prompt(
             prompt, model, temporary_api_key, width, height, rewrite_mode,
-            backend=backend, lightning_api_key=lightning_api_key,
-            lightning_model=lightning_model, runtime=self.deps.runtime_config(),
+            backend=backend, openai_api_key=openai_api_key,
+            openai_model=openai_model, runtime=self.deps.runtime_config(),
         )
         failed = status.startswith("Prompt enhancement failed:")
         return enhanced, status, "" if not failed and is_layout_prompt(enhanced) else gr.skip()
@@ -116,7 +116,7 @@ def build_moss_image_view(root):
             with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
                 prompt = gr.Textbox(label="Image prompt", lines=7,
                     placeholder="Describe the scene, including any text to render in quotes.")
-                with gr.Accordion("Rewrite with Lightning AI or Gemini", open=False):
+                with gr.Accordion("Rewrite with Gemini or an OpenAI-compatible model", open=False):
                     gr.Markdown("Follows OpenMOSS's official prompt-enhancer skill. The writer returns a detailed "
                                 "caption or a Layout with boxes for the width and height below; keep that size "
                                 "when generating a Layout.")

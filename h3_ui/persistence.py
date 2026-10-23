@@ -28,12 +28,12 @@ RESET_BROWSER_SETTINGS_JS = """
 """
 EXTRA_FIELDS = {
     "flux3": ("model", "width", "height", "edit_size", "seed", "steps", "expand_prompt",
-              "prompt_backend", "prompt_model", "lightning_model", "upsampler", "cfg"),
+              "prompt_backend", "prompt_model", "openai_model", "upsampler", "cfg"),
     "moss_image": ("preset", "turbo_variant", "model", "text_encoder", "vae", "width", "height", "seed", "steps",
-                   "cfg", "rewrite_mode", "prompt_backend", "prompt_model", "lightning_model", "accelerate"),
+                   "cfg", "rewrite_mode", "prompt_backend", "prompt_model", "openai_model", "accelerate"),
     "fibo2": ("model", "precision", "width", "height", "edit_size", "seed", "steps", "cfg"),
     "drama3": ("temperature", "top_p", "top_k", "max_frames", "prompt_backend", "prompt_model",
-               "lightning_model", "speaker_mode", "parallel", "retries", "asr_model",
+               "openai_model", "speaker_mode", "parallel", "retries", "asr_model",
                "voice_engine", "skip_existing"),
     "workspace": ("task", "engine"),
     "qwen_image21": (
@@ -60,7 +60,7 @@ EXTRA_FIELDS = {
         "preset",
         "prompt_model",
         "prompt_backend",
-        "lightning_model",
+        "openai_model",
     ),
     "h3": (
         "ref_size",
@@ -72,7 +72,7 @@ EXTRA_FIELDS = {
         "local_prompt_seed",
         "gemini_prompt_model",
         "prompt_writer_backend",
-        "lightning_model",
+        "openai_model",
         "input_upscale_model",
         "input_upscale_seed",
         "input_upscale_force_offload",
@@ -96,7 +96,7 @@ EXTRA_FIELDS = {
         "middle_strength",
         "end_strength",
         "prompt_model",
-        "lightning_model",
+        "openai_model",
     ),
     "music3": (
         "model",
@@ -108,7 +108,7 @@ EXTRA_FIELDS = {
         "ar_cfg",
         "top_k",
         "prompt_model",
-        "lightning_model",
+        "openai_model",
     ),
     "yue2": (
         "model",
@@ -128,7 +128,7 @@ EXTRA_FIELDS = {
         "abc_repetition_penalty",
         "abc_penalty_window",
         "tiled",
-        "lightning_model",
+        "openai_model",
     ),
     "gallery": (
         "ltx25_model",
@@ -186,8 +186,17 @@ def restore_preferences(saved, components):
         # v8 made Qwen Image 2.1 and Music 3 the defaults; task switches staged the previous H3 default.
         values = {name: value for name, value in values.items() if name != "workspace.engine"}
     # Turbo labels name their LoRA versions; carry renamed choices forward.
-    from h3_app.catalog import LEGACY_TURBO_VARIANTS
+    from h3_app.catalog import LEGACY_PROMPT_WRITER_BACKENDS, LEGACY_TURBO_VARIANTS
 
+    # The Lightning AI writer became the OpenAI-compatible writer; keep its backend and model.
+    values = {
+        name.replace(".lightning_model", ".openai_model") if name.endswith(".lightning_model") else name: (
+            LEGACY_PROMPT_WRITER_BACKENDS.get(value, value)
+            if name.endswith(("prompt_backend", "prompt_writer_backend")) and isinstance(value, str)
+            else value
+        )
+        for name, value in values.items()
+    }
     values = {
         name: (
             LEGACY_TURBO_VARIANTS.get(value, value)

@@ -219,7 +219,7 @@ class SongWriterTests(unittest.TestCase):
 
     def music3(self, caption, lyrics, **values):
         return song_writer.enhance_music3_prompt(
-            caption, "unused", "", lyrics, None, None, None, "Lightning AI", "key",
+            caption, "unused", "", lyrics, None, None, None, "OpenAI-compatible", "key",
             runtime=self.runtime, **values,
         )
 
@@ -227,7 +227,7 @@ class SongWriterTests(unittest.TestCase):
         values.setdefault("duration", 120)
         duration = values.pop("duration")
         return song_writer.enhance_yue2_prompt(
-            style, "unused", "", lyrics, "full", duration, "Lightning AI", "key",
+            style, "unused", "", lyrics, "full", duration, "OpenAI-compatible", "key",
             runtime=self.runtime, **values,
         )
 

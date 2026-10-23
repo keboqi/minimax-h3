@@ -115,9 +115,10 @@ class H3View:
     latent_upscale_refine_steps: gr.components.Component
     latent_upscale_settings: gr.components.Component
     latent_upscaler_model: gr.components.Component
-    lightning_api_key: gr.components.Component
-    lightning_model: gr.components.Component
-    lightning_prompt_writer_group: gr.components.Component
+    openai_api_key: gr.components.Component
+    openai_model: gr.components.Component
+    openai_base_url: gr.components.Component
+    openai_prompt_writer_group: gr.components.Component
     local_prompt_base_model: gr.components.Component
     local_prompt_greedy: gr.components.Component
     local_prompt_max_tokens: gr.components.Component
@@ -270,9 +271,10 @@ H3_COMPONENT_ORDER = (
     "latent_upscale_refine_steps",
     "latent_upscale_settings",
     "latent_upscaler_model",
-    "lightning_api_key",
-    "lightning_model",
-    "lightning_prompt_writer_group",
+    "openai_api_key",
+    "openai_model",
+    "openai_base_url",
+    "openai_prompt_writer_group",
     "local_prompt_base_model",
     "local_prompt_greedy",
     "local_prompt_max_tokens",

@@ -33,7 +33,7 @@ def generation_actions(label, *, readiness=None, elem_id=None):
 
 
 def prompt_writer(button_label):
-    """Gemini/Lightning writer controls, its button and its status box."""
+    """Gemini/OpenAI-compatible writer controls, its button and its status box."""
     writer = build_remote_prompt_writer_controls(GEMINI_PROMPT_MODELS, DEFAULT_GEMINI_PROMPT_MODEL)
     enhance = gr.Button(button_label)
     status = gr.Textbox(label="Writer status", lines=2, interactive=False)
@@ -41,7 +41,8 @@ def prompt_writer(button_label):
 
 
 def writer_inputs(writer):
-    return [writer.model, writer.gemini_api_key, writer.backend, writer.lightning_api_key, writer.lightning_model]
+    return [writer.model, writer.gemini_api_key, writer.backend, writer.openai_api_key, writer.openai_model,
+            writer.openai_base_url]
 
 
 def settings_components(view):
@@ -51,7 +52,7 @@ def settings_components(view):
     writer = getattr(view, "writer", None)
     if writer is not None:
         components.update(prompt_backend=writer.backend, prompt_model=writer.model,
-                          lightning_model=writer.lightning_model)
+                          openai_model=writer.openai_model)
     return components
 
 

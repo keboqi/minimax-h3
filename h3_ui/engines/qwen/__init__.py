@@ -7,7 +7,7 @@ import gradio as gr
 
 from h3_app.prompt_writers import qwen as qwen_writer
 from h3_app.catalog import (
-    DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_LIGHTNING_PROMPT_MODEL, GEMINI_PROMPT_MODELS, QWEN_EDIT_SIZE_MANUAL,
+    DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, QWEN_EDIT_SIZE_MANUAL,
     QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX, QWEN_IMAGE21_DEFAULTS,
 )
 from h3_app.errors import H3Error
@@ -121,9 +121,10 @@ class QwenHandlers:
         width: int,
         height: int,
         backend: str = "Gemini",
-        lightning_api_key: str = "",
+        openai_api_key: str = "",
         edit_size: str = QWEN_EDIT_SIZE_MATCH,
-        lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+        openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+        openai_base_url: str | None = None,
     ) -> tuple[str, str]:
         """Describe edits at the size the edit will be generated at."""
         match_input_size, max_resolution = qwen_edit_size_flags(edit_size)
@@ -140,7 +141,8 @@ class QwenHandlers:
                 )
         return qwen_writer.enhance_qwen_image21_prompt(
             prompt, model, temporary_api_key, mode, reference_images, width, height,
-            backend=backend, lightning_api_key=lightning_api_key, lightning_model=lightning_model,
+            backend=backend, openai_api_key=openai_api_key, openai_model=openai_model,
+            openai_base_url=openai_base_url,
             runtime=self.deps.runtime_config(),
         )
 

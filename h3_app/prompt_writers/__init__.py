@@ -1,1 +1,1 @@
-"""Prompt writers, one module per engine, over the shared Gemini and Lightning plumbing in ``common``."""
+"""Prompt writers, one module per engine, over the shared Gemini and OpenAI-compatible plumbing in ``common``."""

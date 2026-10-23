@@ -6,7 +6,7 @@ import gradio as gr
 
 from h3_app.prompt_writers import song as song_writer
 from h3_app.catalog import (
-    DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_LIGHTNING_PROMPT_MODEL, GEMINI_PROMPT_MODELS, YUE2_DEFAULTS,
+    DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, YUE2_DEFAULTS,
 )
 from h3_app.generation import yue2 as yue2_generation
 from h3_app.generation.requests import YuE2Request
@@ -71,8 +71,9 @@ class YuE2Handlers:
         mode: str,
         duration: float,
         backend: str = "Gemini",
-        lightning_api_key: str = "",
-        lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+        openai_api_key: str = "",
+        openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+        openai_base_url: str | None = None,
         vocals: str = "Auto",
         language: str = "Auto",
         use: str = "Auto",
@@ -81,7 +82,7 @@ class YuE2Handlers:
     ) -> tuple[str, str, str]:
         return song_writer.enhance_yue2_prompt(
             style, model, temporary_api_key, lyrics, mode, duration,
-            backend=backend, lightning_api_key=lightning_api_key, lightning_model=lightning_model,
+            backend=backend, openai_api_key=openai_api_key, openai_model=openai_model, openai_base_url=openai_base_url,
             vocals=vocals, language=language, use=use, lyrics_policy=lyrics_policy, notes=notes,
             runtime=self.deps.runtime_config(),
         )

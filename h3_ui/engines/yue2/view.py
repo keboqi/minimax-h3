@@ -27,8 +27,9 @@ class YuE2View:
     prompt_model: gr.Dropdown
     api_key: gr.Textbox
     prompt_backend: gr.Radio
-    lightning_api_key: gr.Textbox
-    lightning_model: gr.Dropdown
+    openai_api_key: gr.Textbox
+    openai_model: gr.Dropdown
+    openai_base_url: gr.Textbox
     enhance: gr.Button
     enhance_status: gr.Textbox
     mode: gr.Dropdown
@@ -340,8 +341,9 @@ def build_yue2_view(
         prompt_model = writer.model
         api_key = writer.gemini_api_key
         prompt_backend = writer.backend
-        lightning_api_key = writer.lightning_api_key
-        lightning_model = writer.lightning_model
+        openai_api_key = writer.openai_api_key
+        openai_model = writer.openai_model
+        openai_base_url = writer.openai_base_url
     return YuE2View(
         style,
         lyrics,
@@ -349,8 +351,9 @@ def build_yue2_view(
         prompt_model,
         api_key,
         prompt_backend,
-        lightning_api_key,
-        lightning_model,
+        openai_api_key,
+        openai_model,
+        openai_base_url,
         enhance,
         enhance_status,
         mode,

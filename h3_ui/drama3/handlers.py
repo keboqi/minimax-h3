@@ -98,8 +98,8 @@ def _publish_drama3_signatures():
         SELF,
         inspect.Parameter("line", inspect.Parameter.POSITIONAL_OR_KEYWORD), *generation, progress])
     Drama3Handlers.enhance_drama3_text.__signature__ = inspect.Signature([SELF, *_drama3_signature(
-        ("text", "speaker_mode", "model", "temporary_api_key", "backend", "lightning_api_key",
-         "lightning_model"), ()),
+        ("text", "speaker_mode", "model", "temporary_api_key", "backend", "openai_api_key",
+         "openai_model", "openai_base_url"), ()),
         *[inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD, default="")
           for name in DRAMA3_CAST_INPUT_NAMES],
         inspect.Parameter("shown_slots", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=DRAMA3_VISIBLE_SLOTS),

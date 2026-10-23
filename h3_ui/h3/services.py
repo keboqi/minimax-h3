@@ -20,7 +20,7 @@ class H3ViewServices:
     DEFAULT_LOCAL_PROMPT_BASE_MODEL: str
     GEMINI_PROMPT_MODELS: Sequence[str]
     DEFAULT_GEMINI_PROMPT_MODEL: str
-    LIGHTNING_PROMPT_MODEL: str
+    OPENAI_PROMPT_MODEL: str
     reference_prompt_help: Callable[[], str]
     INPUT_IMAGE_UPSCALE_SLOTS: Sequence[str]
     INPUT_IMAGE_FRAME_PRESETS: Mapping[str, Any]

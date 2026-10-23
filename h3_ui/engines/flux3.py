@@ -7,7 +7,7 @@ import gradio as gr
 
 from h3_app.prompt_writers import flux3 as flux3_writer
 from h3_app.catalog import (
-    DEFAULT_LIGHTNING_PROMPT_MODEL, QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX,
+    DEFAULT_OPENAI_PROMPT_MODEL, QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH, QWEN_EDIT_SIZE_MAX,
 )
 from h3_app.generation.flux3 import generate_flux3, validate_flux3
 from h3_app.generation.requests import Flux3Request
@@ -83,13 +83,13 @@ class Flux3Handlers:
                                   progress=progress)
 
     def enhance_flux3_prompt(self, prompt, reference_images, width, height, model, temporary_api_key,
-                             backend="Gemini", lightning_api_key="",
-                             lightning_model=DEFAULT_LIGHTNING_PROMPT_MODEL):
+                             backend="Gemini", openai_api_key="",
+                             openai_model=DEFAULT_OPENAI_PROMPT_MODEL, openai_base_url=None):
         """Rewrite with the official upsampler prompt; turn local expansion off on success."""
         enhanced, status = flux3_writer.enhance_flux3_prompt(
             prompt, model, temporary_api_key, reference_images, width, height,
-            backend=backend, lightning_api_key=lightning_api_key,
-            lightning_model=lightning_model, runtime=self.deps.runtime_config(),
+            backend=backend, openai_api_key=openai_api_key,
+            openai_model=openai_model, runtime=self.deps.runtime_config(),
         )
         failed = status.startswith("Prompt enhancement failed:")
         return enhanced, status, gr.skip() if failed else False
@@ -110,7 +110,7 @@ def build_flux3_view(root):
                 expand = gr.Checkbox(value=True, label="Expand the prompt locally",
                     info="Runs BFL's upsampler on the GPU for generation and edits, using all reference images. "
                          "Turned off after a remote rewrite, which already returns an expanded prompt.")
-                with gr.Accordion("Rewrite with Lightning AI or Gemini", open=False):
+                with gr.Accordion("Rewrite with Gemini or an OpenAI-compatible model", open=False):
                     gr.Markdown("Uses BFL's official upsampler instructions. Edits send the reference "
                                 "images and return a full edit caption.")
                     writer, enhance, enhance_status = prompt_writer("Rewrite prompt")

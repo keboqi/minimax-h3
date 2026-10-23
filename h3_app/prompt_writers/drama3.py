@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Iterable
 
-from h3_app.catalog import DEFAULT_LIGHTNING_PROMPT_MODEL
+from h3_app.catalog import DEFAULT_OPENAI_PROMPT_MODEL
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from . import common
@@ -366,8 +366,9 @@ def enhance_drama3_text(
     temporary_api_key: str,
     voices: Iterable[tuple[int, str]] = (),
     backend: str = "Gemini",
-    lightning_api_key: str = "",
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    openai_api_key: str = "",
+    openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+    openai_base_url: str | None = None,
     speaker_mode: str = DRAMA3_SPEAKER_AUTO,
     *,
     runtime: RuntimeConfig,
@@ -412,8 +413,9 @@ def enhance_drama3_text(
         target="Drama 3",
         system_path=runtime.prompt_systems["Drama 3"],
         backend=backend,
-        lightning_api_key=lightning_api_key,
-        lightning_model=lightning_model,
+        openai_api_key=openai_api_key,
+        openai_model=openai_model,
+        openai_base_url=openai_base_url,
         media_values=(),
         context=context,
     )
@@ -426,7 +428,7 @@ def enhance_drama3_text(
         return common.write_prompt(
             prompt=request_text, model=model, temporary_api_key=temporary_api_key,
             target="Drama 3 direction", system_path=direction_prompt, backend=backend,
-            lightning_api_key=lightning_api_key, lightning_model=lightning_model,
+            openai_api_key=openai_api_key, openai_model=openai_model, openai_base_url=openai_base_url,
             media_values=(), context="", request_text=request_text,
         )
 

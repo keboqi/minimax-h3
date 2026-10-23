@@ -3,7 +3,7 @@
 import gradio as gr
 
 from h3_app.prompt_writers import ltx as ltx_writer
-from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_LIGHTNING_PROMPT_MODEL, GEMINI_PROMPT_MODELS
+from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL, GEMINI_PROMPT_MODELS
 from h3_app.catalog import LTX25_DEFAULTS, LTX25_WORKFLOWS
 from h3_app.generation import ltx as ltx_generation
 from h3_app.generation.requests import LtxRequest
@@ -69,12 +69,13 @@ class LtxHandlers:
         width: int,
         height: int,
         backend: str = "Gemini",
-        lightning_api_key: str = "",
-        lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+        openai_api_key: str = "",
+        openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+        openai_base_url: str | None = None,
     ) -> tuple[str, str]:
         return ltx_writer.enhance_ltx25_prompt(
             prompt, model, temporary_api_key, mode, start_image, middle_image, end_image, duration, width,
-            height, backend=backend, lightning_api_key=lightning_api_key, lightning_model=lightning_model,
+            height, backend=backend, openai_api_key=openai_api_key, openai_model=openai_model, openai_base_url=openai_base_url,
             runtime=self.deps.runtime_config(),
         )
 

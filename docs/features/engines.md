@@ -156,8 +156,8 @@ has not been benchmarked here.
 **1M** and **2M resolution presets**, OpenMOSS's recommended range, set common aspect
 ratios on the 16-pixel grid. The FLUX 3 tab has matching **1K** and **2K** presets up to its
 4 MP limit, and a FLUX 3 preset overrides edit size matching, as in Qwen Image 2.1.
-Optional layout boxes use the same JSON format as FLUX 3. **Rewrite with Lightning AI or
-Gemini** follows OpenMOSS's
+Optional layout boxes use the same JSON format as FLUX 3. **Rewrite with Gemini or an
+OpenAI-compatible model** follows OpenMOSS's
 [prompt-enhancer skill](https://github.com/OpenMOSS/MOSS-Image/tree/main/skills/moss-image-prompt-enhancer):
 the selected LLM returns a caption or a pixel Layout draft for the current width and height,
 and the app validates and compiles it with a port of the skill's `compile_prompt.py`.
@@ -205,10 +205,10 @@ optional edited ABC score are accepted with the generation settings.
 ## Prompt writers
 
 The **Qwen Image 2.1**, **LTX-2.5**, **MiniMax Music 3**, and **YuE2** tabs
-also offer Gemini and Lightning AI prompt writers, with Gemini
-(`gemini-3.8-flash`) selected by default. Lightning AI remains selectable and
-uses the same fixed model, server environment key, and temporary key behavior
-as the H3 writer. Each writer uses its own bundled
+also offer Gemini and OpenAI-compatible prompt writers, with Gemini
+(`gemini-3.8-flash`) selected by default. The OpenAI-compatible writer remains
+selectable and uses the same models, `OPENAI_API_KEY` and `OPENAI_BASE_URL`
+environment, and temporary key and endpoint behavior as the H3 writer. Each writer uses its own bundled
 system prompt in `prompts/`: `prompt_qwen_image21.txt`, `prompt_ltx25.txt`,
 `prompt_music3.txt`, or `prompt_yue2.txt`.
 

@@ -79,7 +79,7 @@ their values.
 
 ## Phase 1: Shared services
 
-- `h3_app/llm/gemini.py` and `lightning.py`: one upload, generateContent and
+- `h3_app/llm/gemini.py` and `openai_compatible.py` (was `lightning.py`): one upload, generateContent and
   error path. Dub stops using `prompt_service` private helpers.
 - `h3_app/workers/env.py`: one module that provisions isolated environments
   and runs resident workers, used by SGLang, VoiceDesign/Stable Audio and Dub

@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from h3_app.catalog import DEFAULT_LIGHTNING_PROMPT_MODEL
+from h3_app.catalog import DEFAULT_OPENAI_PROMPT_MODEL
 from h3_app.config import RuntimeConfig
 from . import common
 
@@ -40,8 +40,9 @@ def enhance_flux3_prompt(
     width: int,
     height: int,
     backend: str = "Gemini",
-    lightning_api_key: str = "",
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    openai_api_key: str = "",
+    openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+    openai_base_url: str | None = None,
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str]:
@@ -68,8 +69,9 @@ def enhance_flux3_prompt(
         target=target,
         system_path=runtime.prompt_systems[target],
         backend=backend,
-        lightning_api_key=lightning_api_key,
-        lightning_model=lightning_model,
+        openai_api_key=openai_api_key,
+        openai_model=openai_model,
+        openai_base_url=openai_base_url,
         media_values=tuple(
             (f"the {FLUX3_REFERENCE_ORDINALS[index]} image", image)
             for index, image in enumerate(references)

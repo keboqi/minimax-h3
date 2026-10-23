@@ -143,8 +143,8 @@ class WriterHandlers:
                 "open Speaker voices to upload or generate references.", *updates,
                 *_slot_visibility(shown, previous), *presets)
 
-    def enhance_drama3_text(self, text, speaker_mode, model, temporary_api_key, backend, lightning_api_key,
-                            lightning_model, *slots):
+    def enhance_drama3_text(self, text, speaker_mode, model, temporary_api_key, backend, openai_api_key,
+                            openai_model, openai_base_url, *slots):
         """Apply indexed cast metadata and slot visibility only after validating the complete result."""
         group = self._drama3_writer_group(slots)
         try:
@@ -152,7 +152,7 @@ class WriterHandlers:
             script_mode, sound_context = self._drama3_writer_mode_and_sounds(slots)
             script, status, cast, title = drama3_writer.enhance_drama3_text(
                 text, model, temporary_api_key, names, backend=backend,
-                lightning_api_key=lightning_api_key, lightning_model=lightning_model,
+                openai_api_key=openai_api_key, openai_model=openai_model, openai_base_url=openai_base_url,
                 speaker_mode=speaker_mode, runtime=self._runtime_config(), return_cast=True,
                 cast_context=cast_context, script_mode=script_mode, sound_context=sound_context,
                 return_title=True, speaker_names=self._slot_names(existing),

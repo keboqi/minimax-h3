@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 import gradio as gr
-from h3_ui.prompt_writer_controls import build_lightning_model_dropdown
+from h3_ui.prompt_writer_controls import build_openai_base_url_textbox, build_openai_model_dropdown
 
 if TYPE_CHECKING:
     from ..services import H3ViewServices
@@ -24,9 +24,10 @@ class PromptSection:
     gemini_prompt_model: gr.components.Component
     gemini_prompt_writer_group: gr.components.Component
     help_text: gr.components.Component
-    lightning_api_key: gr.components.Component
-    lightning_model: gr.components.Component
-    lightning_prompt_writer_group: gr.components.Component
+    openai_api_key: gr.components.Component
+    openai_model: gr.components.Component
+    openai_base_url: gr.components.Component
+    openai_prompt_writer_group: gr.components.Component
     local_prompt_base_model: gr.components.Component
     local_prompt_greedy: gr.components.Component
     local_prompt_max_tokens: gr.components.Component
@@ -51,7 +52,7 @@ def build_prompt_section(
     )
     with gr.Accordion("Prompt writer / enhancer", open=False):
         gr.Markdown(
-            "The local MiniMax-H3 8B writer supports T2VA, I2VA, L2VA, and FL2VA. Gemini supports all Reference media; Lightning AI supports text and image enhancement."
+            "The local MiniMax-H3 8B writer supports T2VA, I2VA, L2VA, and FL2VA. Gemini supports all Reference media; OpenAI-compatible models support text and image enhancement."
         )
         prompt_writer_backend = gr.Radio(
             services.PROMPT_WRITER_BACKENDS,
@@ -98,18 +99,19 @@ def build_prompt_section(
                     placeholder="Uses GEMINI_API_KEY when blank",
                 )
         with gr.Group(
-            visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "Lightning AI"
-        ) as lightning_prompt_writer_group:
+            visible=services.DEFAULT_PROMPT_WRITER_BACKEND == "OpenAI-compatible"
+        ) as openai_prompt_writer_group:
             gr.Markdown(
-                "Uses the active text and images plus `prompt.txt`. Video and audio references require Gemini. Set `LIGHTNING_API_KEY` on the server or enter a temporary key; the server does not store UI keys."
+                "Uses the active text and images plus `prompt.txt`. Video and audio references require Gemini. Set `OPENAI_API_KEY` and optionally `OPENAI_BASE_URL` on the server, or enter a temporary key and endpoint; the server does not store UI values."
             )
             with gr.Row():
-                lightning_model = build_lightning_model_dropdown()
-                lightning_api_key = gr.Textbox(
-                    label="Temporary Lightning API key",
+                openai_model = build_openai_model_dropdown()
+                openai_api_key = gr.Textbox(
+                    label="Temporary OpenAI API key",
                     type="password",
-                    placeholder="Uses LIGHTNING_API_KEY when blank",
+                    placeholder="Uses OPENAI_API_KEY when blank",
                 )
+                openai_base_url = build_openai_base_url_textbox()
         enhance_prompt_button = gr.Button("Generate / enhance prompt")
         enhance_prompt_status = gr.Textbox(
             label="Prompt enhancer status", lines=2, interactive=False
@@ -137,9 +139,10 @@ def build_prompt_section(
         gemini_prompt_model=gemini_prompt_model,
         gemini_prompt_writer_group=gemini_prompt_writer_group,
         help_text=help_text,
-        lightning_api_key=lightning_api_key,
-        lightning_model=lightning_model,
-        lightning_prompt_writer_group=lightning_prompt_writer_group,
+        openai_api_key=openai_api_key,
+        openai_model=openai_model,
+        openai_base_url=openai_base_url,
+        openai_prompt_writer_group=openai_prompt_writer_group,
         local_prompt_base_model=local_prompt_base_model,
         local_prompt_greedy=local_prompt_greedy,
         local_prompt_max_tokens=local_prompt_max_tokens,

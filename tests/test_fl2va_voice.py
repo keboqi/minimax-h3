@@ -130,7 +130,7 @@ class Fl2vaVoiceTests(unittest.TestCase):
     def test_all_writers_receive_voice_labels_without_audio_files(self):
         for backend, target in (
             ("Gemini", "_enhance_h3_prompt_with_gemini"),
-            ("Lightning AI", "_enhance_h3_prompt_with_lightning"),
+            ("OpenAI-compatible", "_enhance_h3_prompt_with_openai"),
             ("Local MiniMax-H3 8B", "rewrite_local_h3_prompt"),
         ):
             with self.subTest(backend=backend):

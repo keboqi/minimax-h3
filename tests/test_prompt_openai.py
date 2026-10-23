@@ -1,4 +1,4 @@
-"""Lightning prompt writer contracts shared across the generation tabs."""
+"""OpenAI-compatible prompt writer contracts shared across the generation tabs."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from h3_app.prompt_writers import ltx as ltx_writer, qwen as qwen_writer, song as song_writer
-from h3_app.catalog import LIGHTNING_API_ROOT, LIGHTNING_PROMPT_MODEL
+from h3_app.catalog import OPENAI_API_ROOT, OPENAI_PROMPT_MODEL, OPENAI_PROMPT_MODELS
 
 
-class RemotePromptLightningTests(unittest.TestCase):
+class RemotePromptOpenAITests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -26,28 +26,31 @@ class RemotePromptLightningTests(unittest.TestCase):
         self.runtime = SimpleNamespace(prompt_systems=self.systems)
         self.image = root / "reference.png"
         self.image.write_bytes(b"image bytes")
+        environment = patch.dict(os.environ, {"OPENAI_BASE_URL": ""})
+        environment.start()
+        self.addCleanup(environment.stop)
 
     @staticmethod
     def completion(text: str) -> Mock:
         return Mock(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
 
     @patch("openai.OpenAI")
-    def test_qwen_uses_single_image_context_and_lightning_key(self, client: Mock) -> None:
+    def test_qwen_uses_single_image_context_and_openai_key(self, client: Mock) -> None:
         client.return_value.chat.completions.create.return_value = self.completion(
             "Rewritten edit instruction"
         )
         result, status = qwen_writer.enhance_qwen_image21_prompt(
             "change the sky", "unused Gemini model", "", "Image edit",
-            [str(self.image)], 1024, 1024, "Lightning AI", "temporary-key",
+            [str(self.image)], 1024, 1024, "OpenAI-compatible", "temporary-key",
             runtime=self.runtime,
         )
         self.assertEqual(result, "Rewritten edit instruction")
-        self.assertIn(LIGHTNING_PROMPT_MODEL, status)
+        self.assertIn(OPENAI_PROMPT_MODEL, status)
         client.assert_called_once_with(
-            base_url=LIGHTNING_API_ROOT, api_key="temporary-key", timeout=600.0
+            base_url=OPENAI_API_ROOT, api_key="temporary-key", timeout=600.0
         )
         request = client.return_value.chat.completions.create.call_args.kwargs
-        self.assertEqual(request["model"], LIGHTNING_PROMPT_MODEL)
+        self.assertEqual(request["model"], OPENAI_PROMPT_MODEL)
         self.assertEqual(request["messages"][0]["content"], "Instructions for Qwen Image 2.1")
         content = request["messages"][1]["content"]
         self.assertIn("do not use an <image1> tag", content[0]["text"])
@@ -61,7 +64,7 @@ class RemotePromptLightningTests(unittest.TestCase):
         )
         result, status = ltx_writer.enhance_ltx25_prompt(
             "street scene", "unused", "", "Image to video", str(self.image),
-            None, None, 5.0, 768, 512, "Lightning AI", "temporary-key",
+            None, None, 5.0, 768, 512, "OpenAI-compatible", "temporary-key",
             runtime=self.runtime,
         )
         self.assertEqual(result, "A detailed camera move")
@@ -77,7 +80,7 @@ class RemotePromptLightningTests(unittest.TestCase):
         )
         caption, lyrics, status = song_writer.enhance_music3_prompt(
             "dream pop", "unused", "", "", str(self.image), None, None,
-            "Lightning AI", "temporary-key", runtime=self.runtime,
+            "OpenAI-compatible", "temporary-key", runtime=self.runtime,
         )
         self.assertEqual((caption, lyrics), ("Dream pop with layered vocals", "[Verse] New words"))
         self.assertIn("MiniMax Music 3", status)
@@ -86,7 +89,7 @@ class RemotePromptLightningTests(unittest.TestCase):
         )
         style, lyrics, status = song_writer.enhance_yue2_prompt(
             "folk", "unused", "", "", "full", 90,
-            "Lightning AI", "temporary-key", runtime=self.runtime,
+            "OpenAI-compatible", "temporary-key", runtime=self.runtime,
         )
         self.assertEqual((style, lyrics), ("Warm acoustic folk", "[Chorus] Keep singing"))
         self.assertIn("YuE2", status)
@@ -95,19 +98,67 @@ class RemotePromptLightningTests(unittest.TestCase):
         )
         style, lyrics, _status = song_writer.enhance_yue2_prompt(
             "lo-fi, no vocals", "unused", "", "", "full", 90,
-            "Lightning AI", "temporary-key", runtime=self.runtime,
+            "OpenAI-compatible", "temporary-key", runtime=self.runtime,
         )
         self.assertEqual(style, "Lo-fi instrumental")
         self.assertIn("[Instrumental]", lyrics)
 
+    @patch("openai.OpenAI")
+    def test_base_url_env_selects_compatible_endpoint_and_models(self, client: Mock) -> None:
+        self.assertEqual(OPENAI_PROMPT_MODELS[2:], (
+            "deepseek-v4.1-flash", "deepseek-v4.1-flash-uncensored", "glm-5.3-flash"))
+        client.return_value.chat.completions.create.return_value = self.completion("A rewritten shot")
+        with patch.dict(os.environ, {"OPENAI_BASE_URL": " https://llm.example.test/v1 "}):
+            result, status = ltx_writer.enhance_ltx25_prompt(
+                "street scene", "unused", "", "Text to video", None,
+                None, None, 5.0, 768, 512, "OpenAI-compatible", "temporary-key", "glm-5.3-flash",
+                runtime=self.runtime,
+            )
+        self.assertEqual(result, "A rewritten shot")
+        self.assertIn("glm-5.3-flash", status)
+        client.assert_called_once_with(
+            base_url="https://llm.example.test/v1", api_key="temporary-key", timeout=600.0
+        )
+        self.assertEqual(client.return_value.chat.completions.create.call_args.kwargs["model"], "glm-5.3-flash")
+        client.reset_mock()
+        with patch.dict(os.environ, {"OPENAI_BASE_URL": "https://llm.example.test/v1"}):
+            ltx_writer.enhance_ltx25_prompt(
+                "street scene", "unused", "", "Text to video", None,
+                None, None, 5.0, 768, 512, "OpenAI-compatible", "temporary-key", "deepseek-v4.1-flash",
+                " https://ui.example.test/v1 ", runtime=self.runtime,
+            )
+        client.assert_called_once_with(
+            base_url="https://ui.example.test/v1", api_key="temporary-key", timeout=600.0
+        )
+
     def test_missing_key_preserves_original_text(self) -> None:
-        with patch.dict(os.environ, {"LIGHTNING_API_KEY": ""}):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             style, lyrics, status = song_writer.enhance_yue2_prompt(
                 "Original style", "unused", "", "Original lyrics", "full", 90,
-                "Lightning AI", "", runtime=self.runtime,
+                "OpenAI-compatible", "", runtime=self.runtime,
             )
         self.assertEqual((style, lyrics), ("Original style", "Original lyrics"))
         self.assertIn("Prompt enhancement failed", status)
+
+    def test_saved_lightning_writer_preferences_carry_over(self) -> None:
+        from h3_ui.persistence import restore_preferences
+
+        backends = ("OpenAI-compatible", "Gemini")
+        components = {
+            "flux3.prompt_backend": SimpleNamespace(value="Gemini", choices=backends),
+            "h3.prompt_writer_backend": SimpleNamespace(value="Gemini", choices=("Local MiniMax-H3 8B", *backends)),
+            "flux3.openai_model": SimpleNamespace(value=OPENAI_PROMPT_MODEL, choices=OPENAI_PROMPT_MODELS),
+        }
+        restored, _ = restore_preferences({"values": {
+            "flux3.prompt_backend": "Lightning AI",
+            "h3.prompt_writer_backend": "Lightning AI",
+            "flux3.lightning_model": "openai/gpt-6.1-sol",
+        }}, components)
+        self.assertEqual(restored, {
+            "flux3.prompt_backend": "OpenAI-compatible",
+            "h3.prompt_writer_backend": "OpenAI-compatible",
+            "flux3.openai_model": "openai/gpt-6.1-sol",
+        })
 
 
 if __name__ == "__main__":

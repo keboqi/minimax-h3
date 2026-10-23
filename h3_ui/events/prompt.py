@@ -19,7 +19,7 @@ def bind_prompt(components: AppComponents, services: BootstrapServices) -> None:
         outputs=[
             components.local_prompt_writer_group,
             components.gemini_prompt_writer_group,
-            components.lightning_prompt_writer_group,
+            components.openai_prompt_writer_group,
         ],
         queue=False,
         show_progress="hidden",
@@ -36,7 +36,7 @@ def bind_prompt(components: AppComponents, services: BootstrapServices) -> None:
         components.local_prompt_seed,
         components.gemini_prompt_model,
         components.gemini_api_key,
-        components.lightning_api_key,
+        components.openai_api_key,
         components.mode,
         components.first,
         components.last,
@@ -63,7 +63,8 @@ def bind_prompt(components: AppComponents, services: BootstrapServices) -> None:
         components.fl2va_audio_1,
         components.fl2va_audio_2,
         components.fl2va_audio_3,
-        components.lightning_model,
+        components.openai_model,
+        components.openai_base_url,
     ]
     api_trigger = gr.Button(visible=False).click
     bind_prompt_action(
@@ -88,7 +89,7 @@ def bind_prompt(components: AppComponents, services: BootstrapServices) -> None:
             "local_prompt_seed",
             "gemini_prompt_model",
             "gemini_api_key",
-            "lightning_api_key",
+            "openai_api_key",
             "mode",
             "first",
             "last",
@@ -115,7 +116,8 @@ def bind_prompt(components: AppComponents, services: BootstrapServices) -> None:
             "fl2va_audio_1",
             "fl2va_audio_2",
             "fl2va_audio_3",
-            "lightning_model",
+            "openai_model",
+            "openai_base_url",
         ],
         inputs,
     )

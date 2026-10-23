@@ -1,4 +1,4 @@
-"""Shared prompt-writer plumbing: uploaded media, system prompts and the Gemini/Lightning request."""
+"""Shared prompt-writer plumbing: uploaded media, system prompts and the Gemini/OpenAI-compatible request."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from typing import Any, Iterable
 
 import requests
 
-from h3_app.catalog import GEMINI_PROMPT_MODELS, DEFAULT_LIGHTNING_PROMPT_MODEL
+from h3_app.catalog import GEMINI_PROMPT_MODELS, DEFAULT_OPENAI_PROMPT_MODEL
 from h3_app.errors import H3Error
-from h3_app.llm import gemini, lightning, strip_code_fence
+from h3_app.llm import gemini, openai_compatible, strip_code_fence
 
 
 def uploaded_media_path(value: Any) -> Path | None:
@@ -99,8 +99,9 @@ def write_prompt(
     media_values: Iterable[tuple[str, Any]],
     context: str,
     backend: str = "Gemini",
-    lightning_api_key: str = "",
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    openai_api_key: str = "",
+    openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+    openai_base_url: str | None = None,
     temperature: float = 0.6,
     request_text: str | None = None,
 ) -> tuple[str, str]:
@@ -109,12 +110,13 @@ def write_prompt(
     ``request_text`` replaces the generic wrapper when a writer prompt expects
     the request in its own format, such as FLUX 3's TARGET CANVAS line.
     """
-    if backend == "Lightning AI":
-        return write_prompt_lightning(
+    if backend == "OpenAI-compatible":
+        return write_prompt_openai(
             prompt=prompt,
-            model=lightning_model,
+            model=openai_model,
             request_text=request_text,
-            temporary_api_key=lightning_api_key,
+            temporary_api_key=openai_api_key,
+            temporary_url=openai_base_url,
             target=target,
             system_path=system_path,
             media_values=media_values,
@@ -163,25 +165,26 @@ def write_prompt(
         return str(prompt or ""), f"Prompt enhancement failed: {exc}"
 
 
-def write_prompt_lightning(
+def write_prompt_openai(
     *,
     prompt: str,
-    model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    model: str = DEFAULT_OPENAI_PROMPT_MODEL,
     request_text: str | None = None,
     temporary_api_key: str,
+    temporary_url: str | None = None,
     target: str,
     system_path: Path,
     media_values: Iterable[tuple[str, Any]],
     context: str,
 ) -> tuple[str, str]:
-    """Use the H3 Lightning endpoint with a target-specific prompt and images."""
+    """Use the OpenAI-compatible endpoint with a target-specific prompt and images."""
     try:
-        model = lightning.model(model)
-        key = lightning.api_key(temporary_api_key)
+        model = openai_compatible.model(model)
+        key = openai_compatible.api_key(temporary_api_key)
         system_prompt = read_system_prompt(system_path, target)
         media = media_paths(media_values)
-        if not all(lightning.is_image(path) for _label, path in media):
-            raise H3Error("Lightning AI prompt enhancement supports images only.")
+        if not all(openai_compatible.is_image(path) for _label, path in media):
+            raise H3Error("OpenAI-compatible prompt enhancement supports images only.")
         rough_prompt = str(prompt or "").strip()
         if not rough_prompt and not media:
             raise H3Error("Enter a prompt or upload an image before enhancing.")
@@ -197,11 +200,11 @@ def write_prompt_lightning(
         for label, path in media:
             content.extend((
                 {"type": "text", "text": f"The next uploaded image is {label}."},
-                lightning.image_part(path),
+                openai_compatible.image_part(path),
             ))
-        enhanced = strip_code_fence(lightning.complete(key, model, system_prompt, content))
+        enhanced = strip_code_fence(openai_compatible.complete(key, model, system_prompt, content, temporary_url))
         if not enhanced:
-            raise H3Error("Lightning AI returned no enhanced prompt.")
+            raise H3Error("The OpenAI-compatible model returned no enhanced prompt.")
         return (
             enhanced,
             f"Enhanced {target} prompt with {model} "

@@ -1,4 +1,4 @@
-"""MiniMax H3 prompt writers: local 8B, Gemini and Lightning, with FL2VA voice labels."""
+"""MiniMax H3 prompt writers: local 8B, Gemini and OpenAI-compatible, with FL2VA voice labels."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ from h3_app.catalog import (
     DEFAULT_IMAGE_FRAMES,
     DEFAULT_RESULT_FORMAT,
     GEMINI_PROMPT_MODELS,
-    DEFAULT_LIGHTNING_PROMPT_MODEL,
+    DEFAULT_OPENAI_PROMPT_MODEL,
     MAX_REFERENCE_AUDIOS,
 )
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
-from h3_app.llm import gemini, lightning, strip_code_fence
+from h3_app.llm import gemini, openai_compatible, strip_code_fence
 from h3_app.policy import (
     active_fl2va_voice_references,
     normalize_result_format,
@@ -134,7 +134,7 @@ def _enhance_h3_prompt_with_gemini(
         return str(prompt or ""), f"Prompt enhancement failed: {exc}"
 
 
-def _enhance_h3_prompt_with_lightning(
+def _enhance_h3_prompt_with_openai(
     prompt: str,
     temporary_api_key: str,
     mode: str,
@@ -160,14 +160,15 @@ def _enhance_h3_prompt_with_lightning(
     height: int,
     result_format: str = DEFAULT_RESULT_FORMAT,
     image_frames: int = DEFAULT_IMAGE_FRAMES,
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+    openai_base_url: str | None = None,
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str]:
-    """Generate or enhance an H3 prompt through Lightning's OpenAI API."""
+    """Generate or enhance an H3 prompt through an OpenAI-compatible chat API."""
     try:
-        lightning_model = lightning.model(lightning_model)
-        key = lightning.api_key(temporary_api_key)
+        openai_model = openai_compatible.model(openai_model)
+        key = openai_compatible.api_key(temporary_api_key)
         if not runtime.prompt_system_path.is_file():
             raise H3Error(
                 f"Missing prompt enhancer system prompt: {runtime.prompt_system_path}"
@@ -197,10 +198,10 @@ def _enhance_h3_prompt_with_lightning(
         if not rough_prompt and not media:
             raise H3Error("Enter a prompt or upload an image before enhancing.")
 
-        unsupported = [label for label, path in media if not lightning.is_image(path)]
+        unsupported = [label for label, path in media if not openai_compatible.is_image(path)]
         if unsupported:
             raise H3Error(
-                "Lightning AI prompt enhancement supports text and images; use "
+                "OpenAI-compatible prompt enhancement supports text and images; use "
                 "Gemini for active video or audio references ("
                 + ", ".join(unsupported)
                 + ")."
@@ -230,20 +231,20 @@ def _enhance_h3_prompt_with_lightning(
             content.extend(
                 (
                     {"type": "text", "text": f"The next image is {label}."},
-                    lightning.image_part(path),
+                    openai_compatible.image_part(path),
                 )
             )
         enhanced = strip_code_fence(
-            lightning.complete(key, lightning_model, system_prompt, content)
+            openai_compatible.complete(key, openai_model, system_prompt, content, openai_base_url)
         )
         if not enhanced:
-            raise H3Error("Lightning AI returned no enhanced prompt.")
+            raise H3Error("The OpenAI-compatible model returned no enhanced prompt.")
         return (
             enhanced,
-            f"Enhanced with {lightning_model} using {len(media)} image(s).",
+            f"Enhanced with {openai_model} using {len(media)} image(s).",
         )
     except (H3Error, OSError, ValueError) as exc:
-        return str(prompt or ""), f"Lightning AI prompt enhancement failed: {exc}"
+        return str(prompt or ""), f"OpenAI-compatible prompt enhancement failed: {exc}"
 
 
 def fl2va_prompt_voice_context(prompt: str, mode: str, *slots: Any):
@@ -292,7 +293,7 @@ def enhance_h3_prompt(
     local_seed: int,
     gemini_model: str,
     gemini_api_key: str,
-    lightning_api_key: str,
+    openai_api_key: str,
     mode: str,
     first_image: Any,
     last_image: Any,
@@ -319,7 +320,8 @@ def enhance_h3_prompt(
     fl2va_audio_1: Any = None,
     fl2va_audio_2: Any = None,
     fl2va_audio_3: Any = None,
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+    openai_base_url: str | None = None,
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str]:
@@ -380,11 +382,11 @@ def enhance_h3_prompt(
                 runtime=runtime,
             )
         )
-    if backend == "Lightning AI":
+    if backend == "OpenAI-compatible":
         return finish(
-            _enhance_h3_prompt_with_lightning(
+            _enhance_h3_prompt_with_openai(
                 prompt,
-                lightning_api_key,
+                openai_api_key,
                 mode,
                 first_image,
                 last_image,
@@ -408,7 +410,8 @@ def enhance_h3_prompt(
                 height,
                 result_format,
                 image_frames,
-                lightning_model,
+                openai_model,
+                openai_base_url,
                 runtime=runtime,
             )
         )

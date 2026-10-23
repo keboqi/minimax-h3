@@ -92,7 +92,7 @@ class MigrationTests(unittest.TestCase):
         for field in (
             "h3.prompt",
             "h3.gemini_api_key",
-            "h3.lightning_api_key",
+            "h3.openai_api_key",
             "h3.first",
             "gallery.confirm_delete",
             "h3.image_selection",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from h3_app.catalog import DEFAULT_LIGHTNING_PROMPT_MODEL
+from h3_app.catalog import DEFAULT_OPENAI_PROMPT_MODEL
 from h3_app.config import RuntimeConfig
 from . import common
 
@@ -15,8 +15,9 @@ def enhance_moss_image_prompt(
     height: int,
     rewrite_mode: str = "Auto",
     backend: str = "Gemini",
-    lightning_api_key: str = "",
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    openai_api_key: str = "",
+    openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+    openai_base_url: str | None = None,
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str]:
@@ -39,8 +40,9 @@ def enhance_moss_image_prompt(
         target="MOSS-Image",
         system_path=runtime.prompt_systems["MOSS-Image"],
         backend=backend,
-        lightning_api_key=lightning_api_key,
-        lightning_model=lightning_model,
+        openai_api_key=openai_api_key,
+        openai_model=openai_model,
+        openai_base_url=openai_base_url,
         media_values=(),
         context="",
         request_text=(

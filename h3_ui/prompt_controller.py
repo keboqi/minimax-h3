@@ -10,7 +10,7 @@ import gradio as gr
 from h3_app.jobs import JOBS
 from h3_app.prompt_writers import h3 as h3_writer
 from h3_app.catalog import (
-    DEFAULT_LIGHTNING_PROMPT_MODEL,
+    DEFAULT_OPENAI_PROMPT_MODEL,
     DEFAULT_IMAGE_FRAMES,
     DEFAULT_RESULT_FORMAT,
 )
@@ -40,7 +40,7 @@ class PromptController:
         local_seed: int,
         gemini_model: str,
         gemini_api_key: str,
-        lightning_api_key: str,
+        openai_api_key: str,
         mode: str,
         first_image: Any,
         last_image: Any,
@@ -67,7 +67,8 @@ class PromptController:
         fl2va_audio_1: Any = None,
         fl2va_audio_2: Any = None,
         fl2va_audio_3: Any = None,
-        lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+        openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+        openai_base_url: str | None = None,
     ) -> tuple[str, str]:
         lease = (
             JOBS.maintenance("prompt-enhance")
@@ -86,7 +87,7 @@ class PromptController:
                 local_seed,
                 gemini_model,
                 gemini_api_key,
-                lightning_api_key,
+                openai_api_key,
                 mode,
                 first_image,
                 last_image,
@@ -113,7 +114,8 @@ class PromptController:
                 fl2va_audio_1,
                 fl2va_audio_2,
                 fl2va_audio_3,
-                lightning_model=lightning_model,
+                openai_model=openai_model,
+                openai_base_url=openai_base_url,
                 runtime=self.services._runtime_config(),
             )
 
@@ -123,5 +125,5 @@ class PromptController:
         return (
             gr.update(visible=local_selected),
             gr.update(visible=backend == "Gemini"),
-            gr.update(visible=backend == "Lightning AI"),
+            gr.update(visible=backend == "OpenAI-compatible"),
         )

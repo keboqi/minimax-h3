@@ -6,7 +6,7 @@ import gradio as gr
 
 from h3_app.prompt_writers import song as song_writer
 from h3_app.catalog import (
-    DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_LIGHTNING_PROMPT_MODEL, GEMINI_PROMPT_MODELS, MUSIC3_DEFAULTS,
+    DEFAULT_GEMINI_PROMPT_MODEL, DEFAULT_OPENAI_PROMPT_MODEL, GEMINI_PROMPT_MODELS, MUSIC3_DEFAULTS,
 )
 from h3_app.generation import music as music_generation
 from h3_app.generation.requests import MusicRequest
@@ -58,8 +58,9 @@ class MusicHandlers:
         ref_image_2: Any,
         ref_image_3: Any,
         backend: str = "Gemini",
-        lightning_api_key: str = "",
-        lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+        openai_api_key: str = "",
+        openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+        openai_base_url: str | None = None,
         duration: float = 120,
         vocals: str = "Auto",
         language: str = "Auto",
@@ -69,7 +70,7 @@ class MusicHandlers:
     ) -> tuple[str, str, str]:
         return song_writer.enhance_music3_prompt(
             prompt, model, temporary_api_key, lyrics, ref_image_1, ref_image_2, ref_image_3,
-            backend=backend, lightning_api_key=lightning_api_key, lightning_model=lightning_model,
+            backend=backend, openai_api_key=openai_api_key, openai_model=openai_model, openai_base_url=openai_base_url,
             duration=duration, vocals=vocals, language=language, use=use, lyrics_policy=lyrics_policy,
             notes=notes, runtime=self.deps.runtime_config(),
         )

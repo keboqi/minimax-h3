@@ -30,22 +30,22 @@ class ApplicationAdaptersTests(unittest.TestCase):
         catalog.start()
         self.addCleanup(catalog.stop)
 
-    def test_h3_lightning_writer(self):
+    def test_h3_openai_writer(self):
         with (
             unittest.mock.patch.dict(
-                app.os.environ, {"LIGHTNING_API_KEY": "selftest-lightning-key"}
+                app.os.environ, {"OPENAI_API_KEY": "selftest-openai-key", "OPENAI_BASE_URL": ""}
             ),
             unittest.mock.patch("openai.OpenAI") as openai_client,
         ):
             completion = unittest.mock.Mock()
             completion.choices = [
                 unittest.mock.Mock(
-                    message=unittest.mock.Mock(content="Rewritten Lightning prompt")
+                    message=unittest.mock.Mock(content="Rewritten OpenAI prompt")
                 )
             ]
             openai_client.return_value.chat.completions.create.return_value = completion
-            rewritten, lightning_status = (
-                h3_writer._enhance_h3_prompt_with_lightning(
+            rewritten, openai_status = (
+                h3_writer._enhance_h3_prompt_with_openai(
                     prompt="A moonlit tracking shot",
                     temporary_api_key="",
                     mode="Text to video",
@@ -72,17 +72,17 @@ class ApplicationAdaptersTests(unittest.TestCase):
                     runtime=app._runtime_config(),
                 )
             )
-            self.assertEqual(rewritten, "Rewritten Lightning prompt")
-            self.assertIn(app.LIGHTNING_PROMPT_MODEL, lightning_status)
+            self.assertEqual(rewritten, "Rewritten OpenAI prompt")
+            self.assertIn(app.OPENAI_PROMPT_MODEL, openai_status)
             openai_client.assert_called_once_with(
-                base_url=_catalog.LIGHTNING_API_ROOT,
-                api_key="selftest-lightning-key",
+                base_url=_catalog.OPENAI_API_ROOT,
+                api_key="selftest-openai-key",
                 timeout=600.0,
             )
             request = (
                 openai_client.return_value.chat.completions.create.call_args.kwargs
             )
-            self.assertEqual(request["model"], app.LIGHTNING_PROMPT_MODEL)
+            self.assertEqual(request["model"], app.OPENAI_PROMPT_MODEL)
             self.assertEqual(request["messages"][0]["role"], "system")
             self.assertIn(
                 "A moonlit tracking shot", request["messages"][1]["content"][0]["text"]

@@ -66,20 +66,34 @@ DEFAULT_GEMINI_PROMPT_MODEL = "gemini-3.8-flash"
 GEMINI_API_ROOT = "https://generativelanguage.googleapis.com"
 
 
-LIGHTNING_PROMPT_MODELS = ("openai/gpt-5.6-luna", "openai/gpt-6.1-sol")
+OPENAI_PROMPT_MODELS = (
+    "openai/gpt-5.6-luna",
+    "openai/gpt-6.1-sol",
+    "deepseek-v4.1-flash",
+    "deepseek-v4.1-flash-uncensored",
+    "glm-5.3-flash",
+)
 
 
-DEFAULT_LIGHTNING_PROMPT_MODEL = LIGHTNING_PROMPT_MODELS[0]
+DEFAULT_OPENAI_PROMPT_MODEL = OPENAI_PROMPT_MODELS[0]
 
 
-# Legacy name for the default Lightning writer.
-LIGHTNING_PROMPT_MODEL = DEFAULT_LIGHTNING_PROMPT_MODEL
+# Legacy name for the default OpenAI-compatible writer.
+OPENAI_PROMPT_MODEL = DEFAULT_OPENAI_PROMPT_MODEL
 
 
-LIGHTNING_API_ROOT = "https://lightning.ai/api/v1/"
+# Optional OpenAI-compatible endpoint; the official OpenAI API is used when it is unset.
+OPENAI_BASE_URL_ENV = "OPENAI_BASE_URL"
 
 
-PROMPT_WRITER_BACKENDS = ("Local MiniMax-H3 8B", "Gemini", "Lightning AI")
+OPENAI_API_ROOT = "https://api.openai.com/v1"
+
+
+PROMPT_WRITER_BACKENDS = ("Local MiniMax-H3 8B", "Gemini", "OpenAI-compatible")
+
+
+# Saved browser preferences from before the switch to an OpenAI-compatible writer.
+LEGACY_PROMPT_WRITER_BACKENDS = {"Lightning AI": "OpenAI-compatible"}
 
 
 DEFAULT_PROMPT_WRITER_BACKEND = "Gemini"

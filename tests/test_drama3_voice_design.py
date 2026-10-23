@@ -170,7 +170,7 @@ class VoiceDesignTests(unittest.TestCase):
             self.assertEqual(selection[6]["value"], saved.description)
             voices = ["Upload a clip", None, ""] * 16
             voices[15:18] = [saved.name, None, ""]
-            result = drama3_handlers.enhance_drama3_text("Original", "Auto", "model", "", "Lightning AI", "key", "llm",
+            result = drama3_handlers.enhance_drama3_text("Original", "Auto", "model", "", "OpenAI-compatible", "key", "llm", "",
                                                     *voices, *([""] * 48), 4)
             self.assertEqual(result[17:19], (saved.name, saved.description))
             self.assertIn("A measured baritone.", writer.call_args.kwargs["context"])
@@ -365,7 +365,7 @@ class CastSlotTests(unittest.TestCase):
         runtime = SimpleNamespace(prompt_systems={"Drama 3": Path("prompts/prompt_drama3.txt")})
         with patch.object(drama3_handlers, "_runtime_config", return_value=runtime), \
                 patch.object(writers_common, "write_prompt", return_value=(response, "Enhanced prompt")):
-            return drama3_handlers.enhance_drama3_text("Original", "Auto", "model", "", "Lightning AI", "key", "llm",
+            return drama3_handlers.enhance_drama3_text("Original", "Auto", "model", "", "OpenAI-compatible", "key", "llm", "",
                                                   *voices, *metadata, 4)
 
     def test_writer_populates_the_matching_slot_and_reveals_sparse_ids(self):

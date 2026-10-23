@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from h3_app.catalog import DEFAULT_LIGHTNING_PROMPT_MODEL
+from h3_app.catalog import DEFAULT_OPENAI_PROMPT_MODEL
 from h3_app.config import RuntimeConfig
 from . import common
 
@@ -21,8 +21,9 @@ def enhance_ltx25_prompt(
     width: int,
     height: int,
     backend: str = "Gemini",
-    lightning_api_key: str = "",
-    lightning_model: str = DEFAULT_LIGHTNING_PROMPT_MODEL,
+    openai_api_key: str = "",
+    openai_model: str = DEFAULT_OPENAI_PROMPT_MODEL,
+    openai_base_url: str | None = None,
     *,
     runtime: RuntimeConfig,
 ) -> tuple[str, str]:
@@ -33,8 +34,9 @@ def enhance_ltx25_prompt(
         target="LTX-2.5",
         system_path=runtime.prompt_systems["LTX-2.5"],
         backend=backend,
-        lightning_api_key=lightning_api_key,
-        lightning_model=lightning_model,
+        openai_api_key=openai_api_key,
+        openai_model=openai_model,
+        openai_base_url=openai_base_url,
         media_values=(
             ("Start keyframe", start_image),
             ("Middle keyframe", middle_image),

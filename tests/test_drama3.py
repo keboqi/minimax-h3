@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 from h3_app.drama3 import speakers as drama3_speakers
 from h3_app.prompt_writers import drama3 as drama3_writer
-from h3_app.catalog import LIGHTNING_PROMPT_MODELS
+from h3_app.catalog import OPENAI_PROMPT_MODELS
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.generation.drama3 import transcribe_drama3_audio, validate_drama3 as validate_request
@@ -169,16 +169,16 @@ class Drama3WriterTests(unittest.TestCase):
         self.runtime = SimpleNamespace(prompt_systems={"Drama 3": ROOT / "prompts" / "prompt_drama3.txt"})
 
     @patch("openai.OpenAI")
-    def test_rewrite_sends_voice_context_and_selected_lightning_model(self, client):
+    def test_rewrite_sends_voice_context_and_selected_openai_model(self, client):
         client.return_value.chat.completions.create.return_value = completion(
             "<|speaker:0|> [warm] Welcome back.\n<|speaker:1|> [laughs] Finally!"
         )
         script, status = drama3_writer.enhance_drama3_text(
             "ALICE: Welcome back.\nBOB: Finally!", "unused", "", [(0, "Alice")],
-            "Lightning AI", "key", LIGHTNING_PROMPT_MODELS[1], runtime=self.runtime,
+            "OpenAI-compatible", "key", OPENAI_PROMPT_MODELS[1], runtime=self.runtime,
         )
         self.assertTrue(script.startswith("<|speaker:0|>"))
-        self.assertIn(LIGHTNING_PROMPT_MODELS[1], status)
+        self.assertIn(OPENAI_PROMPT_MODELS[1], status)
         request = client.return_value.chat.completions.create.call_args.kwargs
         self.assertEqual(request["model"], "openai/gpt-6.1-sol")
         self.assertIn("Start every spoken turn line with the speaker's name", request["messages"][0]["content"])
@@ -201,7 +201,7 @@ class Drama3WriterTests(unittest.TestCase):
                                                   "Drama 3 direction": ROOT / "prompts" / "prompt_drama3_direction.txt"})
         script, status, cast = drama3_writer.enhance_drama3_text(
             "The door creaked open. “Is someone there?” Nobody answered her.", "unused", "", (),
-            "Lightning AI", "key", runtime=runtime, return_cast=True)
+            "OpenAI-compatible", "key", runtime=runtime, return_cast=True)
         self.assertEqual(script, "<|speaker:0|> The door [hushed] creaked open.\n<|speaker:1|> Is someone [nervous] there?\n"
                                  "<|speaker:0|> Nobody answered [tense, low] <slow>her</slow>.")
         self.assertIn("A direction pass added cues to 3 line(s), 3 of 3 now directed.", status)
@@ -217,7 +217,7 @@ class Drama3WriterTests(unittest.TestCase):
             "<|speaker:0|> Hi<|audio_separator|><|speaker:1|> Yo"
         )
         script, status = drama3_writer.enhance_drama3_text(
-            "hi", "unused", "", (), "Lightning AI", "key", runtime=self.runtime,
+            "hi", "unused", "", (), "OpenAI-compatible", "key", runtime=self.runtime,
         )
         self.assertEqual(script, "hi")
         self.assertIn("audio_separator", status)
@@ -225,7 +225,7 @@ class Drama3WriterTests(unittest.TestCase):
     def rewrite(self, client, reply, mode, voices=()):
         client.return_value.chat.completions.create.return_value = completion(reply)
         result = drama3_writer.enhance_drama3_text(
-            "ALICE: Hi.\nBOB: Yo.", "unused", "", voices, "Lightning AI", "key",
+            "ALICE: Hi.\nBOB: Yo.", "unused", "", voices, "OpenAI-compatible", "key",
             speaker_mode=mode, runtime=self.runtime,
         )
         request = client.return_value.chat.completions.create.call_args
@@ -264,12 +264,12 @@ class Drama3WriterTests(unittest.TestCase):
         self.assertIn("decide from the text", user)
         self.assertEqual(script, "<|speaker:0|> Hi.\n<|speaker:5|> Yo.")
 
-    def test_unknown_lightning_model_is_rejected(self):
+    def test_unknown_openai_model_is_rejected(self):
         script, status = drama3_writer.enhance_drama3_text(
-            "hi", "unused", "", (), "Lightning AI", "key", "openai/unknown", runtime=self.runtime,
+            "hi", "unused", "", (), "OpenAI-compatible", "key", "openai/unknown", runtime=self.runtime,
         )
         self.assertEqual(script, "hi")
-        self.assertIn("Unsupported Lightning AI prompt model", status)
+        self.assertIn("Unsupported OpenAI-compatible prompt model", status)
 
 
 class Drama3AppInputTests(unittest.TestCase):

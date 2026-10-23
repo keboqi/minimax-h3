@@ -673,8 +673,8 @@ class UiContractTests(unittest.TestCase):
 
             return bool(visit(self.config["layout"], False))
 
-        # The Lightning fields must start hidden while Gemini is the default writer.
-        for label in ("Temporary Lightning API key", "Temporary Gemini API key"):
+        # The OpenAI-compatible fields must start hidden while Gemini is the default writer.
+        for label in ("Temporary OpenAI API key", "Temporary OpenAI endpoint", "Temporary Gemini API key"):
             keys = [
                 c["id"]
                 for c in self.config["components"]
@@ -683,7 +683,7 @@ class UiContractTests(unittest.TestCase):
             self.assertEqual(len(keys), 8, label)
             for key in keys:
                 self.assertEqual(
-                    hidden_by_ancestor(key), label.startswith("Temporary Lightning"), label
+                    hidden_by_ancestor(key), label.startswith("Temporary OpenAI"), label
                 )
 
         endpoints = {
@@ -700,38 +700,43 @@ class UiContractTests(unittest.TestCase):
             inputs = endpoints[endpoint]["inputs"]
             end = len(inputs) - len(appended)
             self.assertEqual(
-                [self.components[id]["props"]["label"] for id in inputs[end - 3:]],
-                ["Prompt writer", "Temporary Lightning API key", "Lightning model", *appended],
+                [self.components[id]["props"]["label"] for id in inputs[end - 4:]],
+                ["Prompt writer", "Temporary OpenAI API key", "OpenAI-compatible model",
+                 "Temporary OpenAI endpoint", *appended],
             )
             parameters = self.demo.get_api_info()["named_endpoints"][f"/{endpoint}"][
                 "parameters"
             ]
-            self.assertEqual(parameters[end - 3]["parameter_default"], "Gemini")
+            self.assertEqual(parameters[end - 4]["parameter_default"], "Gemini")
             # Appended with defaults so existing API clients keep working.
-            self.assertEqual(parameters[end - 1]["parameter_default"], "openai/gpt-5.6-luna")
+            self.assertEqual(parameters[end - 2]["parameter_default"], "openai/gpt-5.6-luna")
+            self.assertIsNone(parameters[end - 1]["parameter_default"])
             self.assertTrue(all(row["parameter_has_default"] for row in parameters[end:]))
 
         qwen_endpoint = "enhance_qwen_image21_prompt"
         qwen_inputs = endpoints[qwen_endpoint]["inputs"]
         self.assertEqual(
-            [self.components[id]["props"]["label"] for id in qwen_inputs[-4:]],
-            ["Prompt writer", "Temporary Lightning API key", "Edit output size", "Lightning model"],
+            [self.components[id]["props"]["label"] for id in qwen_inputs[-5:]],
+            ["Prompt writer", "Temporary OpenAI API key", "Edit output size", "OpenAI-compatible model",
+             "Temporary OpenAI endpoint"],
         )
         qwen_parameters = self.demo.get_api_info()["named_endpoints"][
             f"/{qwen_endpoint}"
         ]["parameters"]
-        self.assertEqual(qwen_parameters[-4]["parameter_default"], "Gemini")
-        self.assertEqual(qwen_parameters[-1]["parameter_default"], "openai/gpt-5.6-luna")
+        self.assertEqual(qwen_parameters[-5]["parameter_default"], "Gemini")
+        self.assertEqual(qwen_parameters[-2]["parameter_default"], "openai/gpt-5.6-luna")
+        self.assertIsNone(qwen_parameters[-1]["parameter_default"])
 
-        lightning_models = [
+        openai_models = [
             component for component in self.config["components"]
-            if component.get("props", {}).get("label") == "Lightning model"
+            if component.get("props", {}).get("label") == "OpenAI-compatible model"
         ]
-        self.assertEqual(len(lightning_models), len(writers))
-        for dropdown in lightning_models:
+        self.assertEqual(len(openai_models), len(writers))
+        for dropdown in openai_models:
             self.assertEqual(dropdown["props"]["value"], "openai/gpt-5.6-luna")
             self.assertEqual([choice[1] for choice in dropdown["props"]["choices"]],
-                             ["openai/gpt-5.6-luna", "openai/gpt-6.1-sol"])
+                             ["openai/gpt-5.6-luna", "openai/gpt-6.1-sol", "deepseek-v4.1-flash",
+                              "deepseek-v4.1-flash-uncensored", "glm-5.3-flash"])
 
     def test_optional_engine_writers_voices_and_transcription_are_bound(self) -> None:
         api = self.demo.get_api_info()["named_endpoints"]
@@ -742,12 +747,12 @@ class UiContractTests(unittest.TestCase):
                                  "parallel", "retries", "script_mode", *sound_slots, "title",
                                  *[f"speaker_{n}_name" for n in range(16)]])
         enhance = [row["parameter_name"] for row in api["/enhance_drama3_text"]["parameters"]]
-        self.assertEqual(enhance[:7], ["text", "speaker_mode", "model", "temporary_api_key",
-                                       "backend", "lightning_api_key", "lightning_model"])
+        self.assertEqual(enhance[:8], ["text", "speaker_mode", "model", "temporary_api_key",
+                                       "backend", "openai_api_key", "openai_model", "openai_base_url"])
         metadata = [f"speaker_{n}_{field}" for n in range(16)
                     for field in ("name", "description", "preview_text")]
         # The shown slot count is a hidden Number so browser-side handlers can read it.
-        self.assertEqual(enhance[7:], [*slots, *metadata, "shown_slots", "script_mode", "speaker_group"])
+        self.assertEqual(enhance[8:], [*slots, *metadata, "shown_slots", "script_mode", "speaker_group"])
         voice = api["/generate_drama3_voice"]
         self.assertEqual([row["parameter_name"] for row in voice["parameters"]],
                          ["description", "preview_text", "language", "engine",
@@ -762,7 +767,8 @@ class UiContractTests(unittest.TestCase):
                          ["Auto", "Adapt to voices", "Single"])
         flux = [row["parameter_name"] for row in api["/enhance_flux3_prompt"]["parameters"]]
         self.assertEqual(flux, ["prompt", "reference_images", "width", "height", "model",
-                                "temporary_api_key", "backend", "lightning_api_key", "lightning_model"])
+                                "temporary_api_key", "backend", "openai_api_key", "openai_model",
+                                "openai_base_url"])
 
         labels = {c["id"]: c.get("props", {}).get("label") for c in self.config["components"]}
         endpoints = {d.get("api_name"): d for d in self.config["dependencies"]}
@@ -1643,7 +1649,7 @@ class UiContractTests(unittest.TestCase):
                 gradio_app, "_runtime_config", return_value=mock.sentinel.runtime
             ),
         ):
-            for backend in ("Lightning AI", "Gemini"):
+            for backend in ("OpenAI-compatible", "Gemini"):
                 arguments[1] = backend
                 self.assertEqual(
                     gradio_app.PROMPTS.enhance_h3_prompt(*arguments), ("rewritten", "ok")
