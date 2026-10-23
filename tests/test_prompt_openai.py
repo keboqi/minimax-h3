@@ -50,7 +50,8 @@ class RemotePromptOpenAITests(unittest.TestCase):
             base_url=OPENAI_API_ROOT, api_key="temporary-key", timeout=600.0
         )
         request = client.return_value.chat.completions.create.call_args.kwargs
-        self.assertEqual(request["model"], OPENAI_PROMPT_MODEL)
+        # OpenAI's own API takes the router name without its openai/ prefix.
+        self.assertEqual(request["model"], OPENAI_PROMPT_MODEL.removeprefix("openai/"))
         self.assertEqual(request["messages"][0]["content"], "Instructions for Qwen Image 2.1")
         content = request["messages"][1]["content"]
         self.assertIn("do not use an <image1> tag", content[0]["text"])
@@ -131,6 +132,24 @@ class RemotePromptOpenAITests(unittest.TestCase):
             base_url="https://ui.example.test/v1", api_key="temporary-key", timeout=600.0
         )
 
+    @patch("openai.OpenAI")
+    def test_temporary_endpoint_never_receives_the_server_key(self, client: Mock) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "server-key"}):
+            result, status = ltx_writer.enhance_ltx25_prompt(
+                "street scene", "unused", "", "Text to video", None,
+                None, None, 5.0, 768, 512, "OpenAI-compatible", "", "glm-5.3-flash",
+                "https://attacker.example.test/v1", runtime=self.runtime,
+            )
+            self.assertEqual(result, "street scene")
+            self.assertIn("temporary API key", status)
+            client.assert_not_called()
+            ltx_writer.enhance_ltx25_prompt(
+                "street scene", "unused", "", "Text to video", None,
+                None, None, 5.0, 768, 512, "OpenAI-compatible", "", "glm-5.3-flash",
+                runtime=self.runtime,
+            )
+        client.assert_called_once_with(base_url=OPENAI_API_ROOT, api_key="server-key", timeout=600.0)
+
     def test_missing_key_preserves_original_text(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             style, lyrics, status = song_writer.enhance_yue2_prompt(
@@ -148,16 +167,20 @@ class RemotePromptOpenAITests(unittest.TestCase):
             "flux3.prompt_backend": SimpleNamespace(value="Gemini", choices=backends),
             "h3.prompt_writer_backend": SimpleNamespace(value="Gemini", choices=("Local MiniMax-H3 8B", *backends)),
             "flux3.openai_model": SimpleNamespace(value=OPENAI_PROMPT_MODEL, choices=OPENAI_PROMPT_MODELS),
+            "drama3.openai_model": SimpleNamespace(value=OPENAI_PROMPT_MODEL, choices=OPENAI_PROMPT_MODELS,
+                                                   allow_custom_value=True),
         }
         restored, _ = restore_preferences({"values": {
             "flux3.prompt_backend": "Lightning AI",
             "h3.prompt_writer_backend": "Lightning AI",
             "flux3.lightning_model": "openai/gpt-6.1-sol",
+            "drama3.openai_model": "my-model",
         }}, components)
         self.assertEqual(restored, {
             "flux3.prompt_backend": "OpenAI-compatible",
             "h3.prompt_writer_backend": "OpenAI-compatible",
             "flux3.openai_model": "openai/gpt-6.1-sol",
+            "drama3.openai_model": "my-model",  # typed models survive a reload
         })
 
 

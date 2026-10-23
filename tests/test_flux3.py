@@ -231,7 +231,7 @@ class Flux3WriterTests(unittest.TestCase):
         )
         self.assertEqual(caption, "Full-color outdoor photograph, ...")
         request = client.return_value.chat.completions.create.call_args.kwargs
-        self.assertEqual(request["model"], "openai/gpt-6.1-sol")
+        self.assertEqual(request["model"], "gpt-6.1-sol")  # bare ID on OpenAI's own API
         self.assertEqual(request["messages"][0]["content"], upsampler_system())
         self.assertEqual(request["messages"][1]["content"][0]["text"], "TARGET CANVAS: 16:9\na fox in snow")
 

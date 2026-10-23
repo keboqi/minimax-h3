@@ -25,13 +25,15 @@ def build_openai_model_dropdown() -> gr.Dropdown:
         choices=list(OPENAI_PROMPT_MODELS),
         value=DEFAULT_OPENAI_PROMPT_MODEL,
         label="OpenAI-compatible model",
+        info="Pick one or type any model your endpoint serves.",
+        allow_custom_value=True,
     )
 
 
 def build_openai_base_url_textbox() -> gr.Textbox:
     return gr.Textbox(
         label="Temporary OpenAI endpoint",
-        placeholder="Uses OPENAI_BASE_URL, else the official OpenAI API, when blank",
+        placeholder="Uses OPENAI_BASE_URL, else the official OpenAI API, when blank; needs a temporary key",
     )
 
 

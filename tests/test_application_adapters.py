@@ -82,7 +82,7 @@ class ApplicationAdaptersTests(unittest.TestCase):
             request = (
                 openai_client.return_value.chat.completions.create.call_args.kwargs
             )
-            self.assertEqual(request["model"], app.OPENAI_PROMPT_MODEL)
+            self.assertEqual(request["model"], app.OPENAI_PROMPT_MODEL.removeprefix("openai/"))
             self.assertEqual(request["messages"][0]["role"], "system")
             self.assertIn(
                 "A moonlit tracking shot", request["messages"][1]["content"][0]["text"]

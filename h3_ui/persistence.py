@@ -154,7 +154,8 @@ PERSISTED_NAMES = frozenset(
 
 
 def sanitize(component, value):
-    choices = getattr(component, "choices", None)
+    # A dropdown that takes typed values keeps a saved custom one.
+    choices = None if getattr(component, "allow_custom_value", False) else getattr(component, "choices", None)
     if choices is not None:
         choices = [
             choice[1] if isinstance(choice, (tuple, list)) else choice

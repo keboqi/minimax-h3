@@ -7,15 +7,27 @@ import os
 from pathlib import Path
 from typing import Any
 
-from h3_app.catalog import DEFAULT_OPENAI_PROMPT_MODEL, OPENAI_API_ROOT, OPENAI_BASE_URL_ENV, OPENAI_PROMPT_MODELS
+from h3_app.catalog import DEFAULT_OPENAI_PROMPT_MODEL, OPENAI_API_ROOT, OPENAI_BASE_URL_ENV
 from h3_app.errors import H3Error
 
 from . import media_type
 
 
-def api_key(temporary_key: str | None) -> str:
-    """A key entered in the UI, else OPENAI_API_KEY; never stored."""
-    key = str(temporary_key or "").strip() or os.getenv("OPENAI_API_KEY", "").strip()
+def api_key(temporary_key: str | None, temporary_url: str | None = None) -> str:
+    """A key entered in the UI, else OPENAI_API_KEY; never stored.
+
+    The server's key goes only to the server's endpoint, so an endpoint entered
+    in the UI needs a key entered with it.
+    """
+    key = str(temporary_key or "").strip()
+    if key:
+        return key
+    if str(temporary_url or "").strip():
+        raise H3Error(
+            "Enter a temporary API key with the temporary endpoint; the server's "
+            "OPENAI_API_KEY is sent only to OPENAI_BASE_URL or the official OpenAI API."
+        )
+    key = os.getenv("OPENAI_API_KEY", "").strip()
     if not key:
         raise H3Error(
             "Set OPENAI_API_KEY in the server environment or enter a temporary "
@@ -31,10 +43,8 @@ def endpoint(temporary_url: str | None = None) -> str:
 
 
 def model(name: str | None) -> str:
-    selected = str(name or "").strip() or DEFAULT_OPENAI_PROMPT_MODEL
-    if selected not in OPENAI_PROMPT_MODELS:
-        raise H3Error(f"Unsupported OpenAI-compatible prompt model: {selected}")
-    return selected
+    """Any model the endpoint serves; the catalog list only offers suggestions."""
+    return str(name or "").strip() or DEFAULT_OPENAI_PROMPT_MODEL
 
 
 def is_image(path: Path) -> bool:
@@ -53,8 +63,12 @@ def complete(key: str, model_name: str, system_prompt: str, content: list[dict[s
     """The assistant's reply text. Client errors become H3Error with the same message."""
     from openai import OpenAI, OpenAIError
 
+    base_url = endpoint(temporary_url)
+    if base_url.rstrip("/") == OPENAI_API_ROOT:
+        # Router names such as openai/gpt-6.1-sol are bare model IDs on OpenAI's own API.
+        model_name = model_name.removeprefix("openai/")
     try:
-        client = OpenAI(base_url=endpoint(temporary_url), api_key=key, timeout=600.0)
+        client = OpenAI(base_url=base_url, api_key=key, timeout=600.0)
         completion = client.chat.completions.create(
             model=model_name,
             messages=[

@@ -39,7 +39,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/staging.py, media_tools.py | Input staging, media inspection, controlled subprocesses and post-processing |
 | h3_app/media.py, outputs.py, gallery_store.py | Contained discovery, explicit output context and complete managed gallery inventory |
 | h3_app/provenance.py | Atomic sidecars, copied-media provenance and escaped metadata rendering. Listeners in `SNAPSHOT_LISTENERS` hear of each new sidecar; the media catalog registers there, so provenance imports neither the catalog nor the gallery |
-| h3_app/prompt_writers/ | One prompt writer module per engine (h3, ltx, qwen, flux3, moss_image, song, drama3) over `common.py`'s uploaded-media handling and Gemini/Lightning request |
+| h3_app/prompt_writers/ | One prompt writer module per engine (h3, ltx, qwen, flux3, moss_image, song, drama3) over `common.py`'s uploaded-media handling and Gemini/OpenAI-compatible request |
 | h3_app/llm/ | Gemini and OpenAI-compatible clients: transient keys, temporary Gemini file uploads, generation |
 | h3_app/workers/ | Isolated uv environments, setup steps with cancellation, and resident JSON-line worker processes |
 | prompts/ | Writer system prompts for each engine, read through h3_app/config.py |

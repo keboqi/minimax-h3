@@ -180,7 +180,7 @@ class Drama3WriterTests(unittest.TestCase):
         self.assertTrue(script.startswith("<|speaker:0|>"))
         self.assertIn(OPENAI_PROMPT_MODELS[1], status)
         request = client.return_value.chat.completions.create.call_args.kwargs
-        self.assertEqual(request["model"], "openai/gpt-6.1-sol")
+        self.assertEqual(request["model"], "gpt-6.1-sol")  # bare ID on OpenAI's own API
         self.assertIn("Start every spoken turn line with the speaker's name", request["messages"][0]["content"])
         user = request["messages"][1]["content"][0]["text"]
         self.assertIn('- speaker_id 0 ("Alice") uses a cloned reference voice', user)
@@ -264,12 +264,15 @@ class Drama3WriterTests(unittest.TestCase):
         self.assertIn("decide from the text", user)
         self.assertEqual(script, "<|speaker:0|> Hi.\n<|speaker:5|> Yo.")
 
-    def test_unknown_openai_model_is_rejected(self):
-        script, status = drama3_writer.enhance_drama3_text(
-            "hi", "unused", "", (), "OpenAI-compatible", "key", "openai/unknown", runtime=self.runtime,
+    @patch("openai.OpenAI")
+    def test_a_typed_model_goes_to_the_endpoint_unchanged(self, client):
+        client.return_value.chat.completions.create.return_value = completion("<|speaker:0|> [warm] Hi.")
+        drama3_writer.enhance_drama3_text(
+            "hi", "unused", "", (), "OpenAI-compatible", "key", " my-model ",
+            "https://llm.example.test/v1", runtime=self.runtime,
         )
-        self.assertEqual(script, "hi")
-        self.assertIn("Unsupported OpenAI-compatible prompt model", status)
+        request = client.return_value.chat.completions.create.call_args_list[0].kwargs
+        self.assertEqual(request["model"], "my-model")
 
 
 class Drama3AppInputTests(unittest.TestCase):

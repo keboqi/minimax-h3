@@ -180,7 +180,7 @@ def write_prompt_openai(
     """Use the OpenAI-compatible endpoint with a target-specific prompt and images."""
     try:
         model = openai_compatible.model(model)
-        key = openai_compatible.api_key(temporary_api_key)
+        key = openai_compatible.api_key(temporary_api_key, temporary_url)
         system_prompt = read_system_prompt(system_path, target)
         media = media_paths(media_values)
         if not all(openai_compatible.is_image(path) for _label, path in media):

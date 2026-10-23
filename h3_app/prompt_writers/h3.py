@@ -168,7 +168,7 @@ def _enhance_h3_prompt_with_openai(
     """Generate or enhance an H3 prompt through an OpenAI-compatible chat API."""
     try:
         openai_model = openai_compatible.model(openai_model)
-        key = openai_compatible.api_key(temporary_api_key)
+        key = openai_compatible.api_key(temporary_api_key, openai_base_url)
         if not runtime.prompt_system_path.is_file():
             raise H3Error(
                 f"Missing prompt enhancer system prompt: {runtime.prompt_system_path}"
