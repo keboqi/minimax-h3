@@ -14,7 +14,7 @@ from h3_app.errors import H3Error
 from h3_app.generation import requests as generation_requests
 from h3_app.jobs import JobCancelled
 
-_CUE = re.compile(r"<\|[^|]*\|>|<[^>]*>|\[[^\]]*\]")
+_CUE = re.compile(r"<\|[^|]*\|>|<[^>]*>|\[[^\]]*\]|\{[^{}\n]*\}")
 
 
 class GenerationHandlers:

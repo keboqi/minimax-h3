@@ -83,7 +83,12 @@ are preserved. Invalid or
 inconsistent writer responses leave the current script and slots in place.
 
 The writer directs most lines, narration included, with Fish Audio cues and the
-seven scoped tags. It also says whether it preserved supplied text or wrote from a
+seven scoped tags, briefing each cue like a note to a voice actor (the feeling plus the
+line's intent or who it is aimed at). It keeps a speaker's continuous passage in one
+staging block, since consecutive lines of one speaker are generated as one take, and
+pins a sound to a sentence mid-passage only when it must land on those words. Each new
+voice's preview is written as a calm reference: two to four sentences, about 10–20
+seconds, in the character's everyday mood. It also says whether it preserved supplied text or wrote from a
 brief; a preserved source is always checked line by line, and missing phrases are
 reported in the status. The app then repairs placements Drama 3 performs poorly: a
 cue that opens a line moves after its opening words, ellipses become commas or
@@ -115,6 +120,20 @@ tags, and `<#seconds#>` pauses each have theirs.
 The writer starts every voice description by naming the voice's sex ("A female
 voice: ..."), since voice design otherwise guesses from roles such as "mother" and
 sometimes guesses wrong; the status names any description that still does not say.
+
+Chinese characters with several readings can carry a pronunciation note: tone-number
+pinyin in braces right after the characters, one syllable per character, such as
+`把书还{huan2}给他` or `尉迟{yu4 chi2}恭` (tone 5 is neutral; write ü as `v`). The
+writer adds notes only where a reading is easy to get wrong: a character away from its
+everyday reading with little context to settle it, names and titles with special
+readings, and literary readings. It leaves ordinary words such as 银行 or 还是 alone. The
+script, subtitles, takes and the writer's checks keep the characters; only the request
+to Drama 3 replaces each noted character with Drama 3's phoneme tag
+(`<|phoneme_start|>huan2<|phoneme_end|>`). A note must follow exactly as many Chinese
+characters as it has syllables; a malformed note is an error, as is a raw `<|phoneme_…|>`
+tag in **Speech text**. The director keeps the writer's notes, and **Speech text**
+colors them like attribute values. Notes change a line's text, so a line takes a new take
+when a note is added or changed.
 
 In **Speaker voices**, each speaker has a collapsible panel titled with its
 index, name, and whether a voice is ready (for example `Speaker 2 · Mia · voice
@@ -166,6 +185,24 @@ deletions also update any currently selected voice slots.
 **Delete group and all its speakers** removes the selected custom group together
 with its saved clips and presets, then switches back to Global. Copies saved in
 other groups are unaffected. Global itself cannot be deleted.
+
+Scripted clients reach the same library through API-only endpoints, which have no
+controls on the page:
+
+| Endpoint | Parameters | Returns |
+| --- | --- | --- |
+| `/drama3_library_groups` | | every group, Global first |
+| `/drama3_library_speakers` | `group` | the group's own speakers: name, group, key, description, exact transcript, clip SHA-256 |
+| `/drama3_library_save_speaker` | `group`, `name`, `audio`, `transcript`, `description` | the saved entry; creates the group, replaces a same-named speaker |
+| `/drama3_library_speaker_clip` | `group`, `name` | a copy of the clip and its entry |
+| `/drama3_library_sounds` | | every saved sound: name, description, duration, clip SHA-256 |
+| `/drama3_library_save_sound` | `name`, `audio`, `description`, `duration` | the saved entry |
+| `/drama3_library_sound_clip` | `name` | a copy of the clip and its entry |
+| `/drama3_result_details` | `result` (the file name `/generate_drama3` returned) | the result's settings: every take with its key, check and line timings |
+
+Clips are saved byte for byte, so a client can compare digests to keep its own copy
+in step. A take key from `/drama3_result_details` is the `line` argument of
+`/regenerate_drama3_line`. Saved sounds have no groups.
 
 **Try new voices** designs one to four fresh clips for the selected speaker from
 its voice description and exact clip transcript, using the Cast's **Voice

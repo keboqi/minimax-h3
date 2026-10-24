@@ -18,6 +18,9 @@ def validate_drama3_text(text, location="Speech text"):
         raise H3Error(f"{location} is empty.")
     for match in TOKEN.finditer(text):
         tag = SPEAKER_TAG.fullmatch(match.group(0))
+        if tag is None and match.group(0).startswith("<|phoneme_"):
+            raise H3Error(f"{location} contains {match.group(0)}; write a pronunciation as pinyin after the "
+                          "word instead, e.g. 银行{yin2 hang2}.")
         if tag is None:
             raise H3Error(f"{location} contains {match.group(0)}; Drama 3 only accepts speaker tags there.")
         digits = tag.group(1)
@@ -25,6 +28,11 @@ def validate_drama3_text(text, location="Speech text"):
             raise H3Error(f"Drama 3 speaker tags are <|speaker:0|> to <|speaker:{MAX_SPEAKER}|>.")
     if len(re.findall(r"<\|", text)) != len(TOKEN.findall(text)):
         raise H3Error(f"{location} has an unterminated <| token.")
+    from h3_app.drama3.phonemes import note_problems
+
+    problems = note_problems(text)
+    if problems:
+        raise H3Error(f"{location}: {problems[0]}")
     return text
 
 

@@ -13,7 +13,7 @@ from .tree import SpeechTurn
 
 # About one or two sentences of speech; Fish Audio's own chunker uses 300 bytes.
 CHUNK_BYTES = 400
-CONTROL = re.compile(r"<\|[^|>]*\|>|\[[^\[\]]*\]|</?[A-Za-z][\w-]*>")
+CONTROL = re.compile(r"<\|[^|>]*\|>|\[[^\[\]]*\]|</?[A-Za-z][\w-]*>|\{[^{}\n]*\}")
 WIDE_CHAR = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]")
 # A sentence ends at terminal punctuation outside a cue; cues never contain line breaks.
 # Full-width punctuation needs no following space (Chinese/Japanese) and keeps a closing quote.
@@ -53,8 +53,8 @@ def parse_turns_with_effects(script: str) -> list[SpeechTurn]:
 
 
 # Audible events sound once where they stand; every other bracketed cue sets the delivery after it.
-AUDIBLE_EVENTS = frozenset({"laughs", "laughing", "sighs", "gasps", "clears throat", "chuckles", "sniffs",
-                            "scoffs", "groans", "exhales", "inhales", "coughs"})
+AUDIBLE_EVENTS = frozenset({"laughs", "laughing", "small laugh", "sighs", "gasps", "clears throat", "chuckles",
+                            "sniffs", "scoffs", "groans", "shaky breath", "exhales", "inhales", "coughs"})
 _CUE = re.compile(r"\[([^\[\]]*)\]")
 _PHRASE_BREAK = ",，、;；:：—.!?。！？"
 
@@ -66,8 +66,8 @@ def delivery_cues(text: str) -> list[str]:
 
 
 def _outside_markup(text: str) -> Iterable[tuple[int, str]]:
-    """(index, character) of ``text`` outside [cues] and <tags>."""
-    square = angle = 0
+    """(index, character) of ``text`` outside [cues], <tags> and {pronunciation notes}."""
+    square = angle = brace = 0
     for index, ch in enumerate(text):
         if ch == "[":
             square += 1
@@ -77,7 +77,11 @@ def _outside_markup(text: str) -> Iterable[tuple[int, str]]:
             angle += 1
         elif ch == ">":
             angle = max(0, angle - 1)
-        elif not square and not angle:
+        elif ch == "{":
+            brace += 1
+        elif ch == "}":
+            brace = max(0, brace - 1)
+        elif not square and not angle and not brace:
             yield index, ch
 
 
@@ -119,6 +123,9 @@ def insert_cue(text: str, cue: str) -> str | None:
     cut = opening_cut(text)
     if cut is None:
         return None
+    # A word keeps its pronunciation note: 银行{yin2 hang2} is never split by a cue.
+    while cut < len(text) and text[cut] == "{" and "}" in text[cut:]:
+        cut = text.index("}", cut) + 1
     left, right = text[:cut].rstrip(), text[cut:].lstrip()
     # CJK punctuation needs no space before the cue, as in "当星辰排列成十字，[ominous] 诸神".
     separator = "" if CJK_JOIN.search(left) else " "

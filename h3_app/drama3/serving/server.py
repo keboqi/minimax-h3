@@ -496,7 +496,10 @@ class SglangOmniServer:
             sampling["top_k"] = 1 << 30
         # No reference lets Drama 3 invent the voice from the text's cues (voice design).
         references = [] if reference is None else [{"audio_path": str(Path(reference).resolve()), "text": transcript}]
-        return {"input": text, "response_format": "wav", "max_new_tokens": max_new_tokens,
+        from h3_app.drama3.phonemes import to_phoneme_tags
+
+        # Pronunciation notes (银行{yin2 hang2}) reach Drama 3 as its phoneme tags.
+        return {"input": to_phoneme_tags(text), "response_format": "wav", "max_new_tokens": max_new_tokens,
                 **sampling, "references": references}
 
 

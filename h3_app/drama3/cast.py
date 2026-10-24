@@ -91,7 +91,7 @@ def parse_script_cast_and_sounds(response: str) -> tuple[str, list[dict], list[d
             raise H3Error("A character name must map to only one speaker ID.")
         names.add(fields["name"].casefold())
         # Qwen's preview is spoken text, never Drama control syntax or stage directions.
-        if any(char in fields["preview_text"] for char in "<>[]"):
+        if any(char in fields["preview_text"] for char in "<>[]{}"):
             raise H3Error(f"Speaker {speaker}'s preview must contain only spoken words, without controls.")
         ids.add(speaker)
         cast.append({"speaker_id": speaker, **fields})

@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import re
 
-from h3_app.drama3.serving.planner import WIDE_CHAR, insert_cue
+from h3_app.drama3.phonemes import note_problems
+from h3_app.drama3.serving.planner import AUDIBLE_EVENTS, WIDE_CHAR, insert_cue
 from h3_app.drama3.serving.speaker_effects import SPEAKER_EFFECTS
 from h3_app.workflows.drama3 import SPEAKER_TAG
 
 SCOPED_TAGS = ("whisper", "soft", "emphasis", "stress", "forceful", "fast", "slow")
 # Audible events may legitimately close a line: "I did it! [laughs]".
-TRAILING_EVENTS = frozenset({"laughs", "laughing", "sighs", "gasps", "clears throat"})
+TRAILING_EVENTS = AUDIBLE_EVENTS
 MAX_CUE_WORDS = 5
 MAX_CUES_PER_LINE = 2
 # A script with fewer directed lines than this share gets a note (and a direction pass).
@@ -28,7 +29,7 @@ _OPENING_SCOPED_RE = re.compile(rf"^<({'|'.join(SCOPED_TAGS)})>", re.IGNORECASE)
 _OPENING_CUE_RE = re.compile(r"^\[([^\[\]]*)\]\s*")
 _SCOPED_RE = re.compile(rf"</?(?:{'|'.join(SCOPED_TAGS)})>", re.IGNORECASE)
 _LEADING_EFFECTS_RE = re.compile(rf"^((?:\s*<(?:{'|'.join(SPEAKER_EFFECTS)})>)*)\s*", re.IGNORECASE)
-_MARKUP_RE = re.compile(r"<\|[^|>]*\|>|\[[^\[\]]*\]|<[^<>]*>")
+_MARKUP_RE = re.compile(r"<\|[^|>]*\|>|\[[^\[\]]*\]|<[^<>]*>|\{[^{}\n]*\}")
 _CJK_RE = re.compile(r"[㐀-鿿豈-﫿]")
 _CLAUSE_SPLIT_RE = re.compile(r"[，。！？；：、,.!?;:…“”\"‘’'（）()《》\[\]—~\-\s]+")
 # Phrases end at punctuation, not at spaces: an English phrase is several words.
@@ -236,7 +237,9 @@ def merge_direction(script: str, directed: str) -> tuple[str, int, int]:
         old_effects, new_effects = _LEADING_EFFECTS_RE.match(old_body), _LEADING_EFFECTS_RE.match(new_body)
         same = (old_tag.group(0) == new_tag.group(0)
                 and "".join(old_effects.group(1).split()) == "".join(new_effects.group(1).split())
-                and _words_only(old_body) == _words_only(new_body))
+                and _words_only(old_body) == _words_only(new_body)
+                # A cue or space between a word and its pronunciation note would detach the note.
+                and not note_problems(new_body))
         if same and new_body != old_body:
             merged.append(f"{indent}{old_tag.group(0)} {new_body}")
             taken += 1

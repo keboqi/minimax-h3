@@ -70,6 +70,14 @@ class Drama3Actions:
     drama3_take_audio: Callable | None = None
     drama3_subtitles: Callable | None = None
     preload_drama3_models: Callable | None = None
+    drama3_library_groups: Callable | None = None
+    drama3_library_speakers: Callable | None = None
+    drama3_library_save_speaker: Callable | None = None
+    drama3_library_speaker_clip: Callable | None = None
+    drama3_library_sounds: Callable | None = None
+    drama3_library_save_sound: Callable | None = None
+    drama3_library_sound_clip: Callable | None = None
+    drama3_result_details: Callable | None = None
 
     @classmethod
     def of(cls, handlers, *, interrupt: Callable, speaker_library_actions: object | None = None):
@@ -411,7 +419,44 @@ def _bind_takes(view, actions, generation_inputs):
     view.stop.click(fn=None, cancels=jobs, queue=False, api_name=False)
 
 
+def _bind_library_api(actions):
+    """API-only endpoints for scripted clients: saved speakers, saved sounds and result details.
+
+    Each endpoint has its own hidden trigger, so none of them runs from the page.
+    """
+    if actions.drama3_library_speakers is None:
+        return
+    with gr.Group(visible=False):
+        group = gr.Textbox(label="Speaker group", value="Global")
+        name = gr.Textbox(label="Name")
+        clip = gr.File(label="Clip", type="filepath")
+        transcript = gr.Textbox(label="Exact transcript")
+        description = gr.Textbox(label="Description")
+        duration = gr.Number(label="Duration", value=5, precision=0)
+        result = gr.Textbox(label="Result file name")
+        listing = gr.JSON(label="Listing")
+        entry = gr.JSON(label="Saved entry")
+        details = gr.JSON(label="Result details")
+        download = gr.File(label="Saved clip")
+    quiet = {"queue": False, "show_progress": "hidden"}
+    for fn, inputs, outputs, api_name in (
+        (actions.drama3_library_groups, [], listing, "drama3_library_groups"),
+        (actions.drama3_library_speakers, [group], listing, "drama3_library_speakers"),
+        (actions.drama3_library_save_speaker, [group, name, clip, transcript, description], entry,
+         "drama3_library_save_speaker"),
+        (actions.drama3_library_speaker_clip, [group, name], [download, entry], "drama3_library_speaker_clip"),
+        (actions.drama3_library_sounds, [], listing, "drama3_library_sounds"),
+        (actions.drama3_library_save_sound, [name, clip, description, duration], entry,
+         "drama3_library_save_sound"),
+        (actions.drama3_library_sound_clip, [name], [download, entry], "drama3_library_sound_clip"),
+        (actions.drama3_result_details, [result], details, "drama3_result_details"),
+    ):
+        if fn is not None:
+            gr.Button(visible=False).click(fn, inputs=inputs, outputs=outputs, api_name=api_name, **quiet)
+
+
 def bind_drama3(view, actions):
+    _bind_library_api(actions)
     _bind_script_mode(view, actions)
     script_events = _bind_writer(view, actions)
     store_events = _bind_voice_slots(view, actions)

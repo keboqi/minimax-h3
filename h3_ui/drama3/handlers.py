@@ -14,6 +14,7 @@ from typing import Any, Callable
 import gradio as gr
 
 from .generation import GenerationHandlers
+from .library_api import LibraryApiHandlers
 from .sounds import SoundHandlers
 from .speakers import SpeakerHandlers
 from .voices import DRAMA3_VOICE_DESIGN_SETTINGS, VoiceHandlers
@@ -30,7 +31,8 @@ class Drama3Services:
     resolve_result: Callable[[Any], Any] = lambda path: path
 
 
-class Drama3Handlers(GenerationHandlers, WriterHandlers, VoiceHandlers, SpeakerHandlers, SoundHandlers):
+class Drama3Handlers(GenerationHandlers, WriterHandlers, VoiceHandlers, SpeakerHandlers, SoundHandlers,
+                     LibraryApiHandlers):
     """Every Soundstage handler, bound to one set of runtime services."""
 
     def __init__(self, services: Drama3Services):
