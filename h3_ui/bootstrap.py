@@ -21,8 +21,8 @@ from h3_ui.engines.controls import settings_components
 from h3_ui.drama3.view import DRAMA3_SCRIPT_HIGHLIGHT_JS, DRAMA3_SUBTITLES_JS, build_drama3_view
 from h3_ui import audio_probe_cache
 
-# Ctrl/Cmd+Enter presses the visible engine's generate button. Disabled
-# buttons swallow the shortcut so it never falls through to other handlers.
+# Ctrl/Cmd+Enter presses the visible engine's generate button. Disabled or
+# busy buttons swallow the shortcut so it never falls through to other handlers.
 GENERATE_SHORTCUT_JS = """
 () => {
   if (window.h3GenerateShortcut) return;
@@ -33,7 +33,7 @@ GENERATE_SHORTCUT_JS = """
       .find((candidate) => candidate.offsetParent !== null);
     if (!button) return;
     event.preventDefault();
-    if (!button.disabled) button.click();
+    if (!button.disabled && !button.classList.contains("h3-busy")) button.click();
   });
 }
 """

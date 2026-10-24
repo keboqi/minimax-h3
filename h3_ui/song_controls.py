@@ -189,7 +189,7 @@ def bind_write_and_generate(
         js=(
             "async (status) => { for (let i = 0; i < 50; i++) { "
             f"const b = document.getElementById({generate_id!r}); "
-            "if (b && !b.disabled) { b.click(); return status + ' Starting a take.'; } "
+            "if (b && !b.disabled && !b.classList.contains('h3-busy')) { b.click(); return status + ' Starting a take.'; } "
             "await new Promise((r) => setTimeout(r, 100)); } "
             "return status + ' No take started: Generate is not available yet. "
             "Press Generate when the current take finishes.'; }"

@@ -312,8 +312,10 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-workspace .h3-generation-buttons > button { min-width: 100px; min-height: 44px; white-space: nowrap; }
 .h3-workspace .h3-generation-buttons > button:not(.h3-primary-action) { border: 1px solid var(--h3-border); }
 .h3-workspace .h3-primary-action { font-weight: 650; }
-.h3-workspace .h3-primary-action:not(:disabled) { box-shadow: 0 4px 14px #087f6c40; }
+.h3-workspace .h3-primary-action:not(:disabled):not(.h3-busy) { box-shadow: 0 4px 14px #087f6c40; }
 .h3-workspace button:disabled { cursor: not-allowed; opacity: .6; }
+/* A GPU button while its job runs (job_admission.busy_updates). */
+button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-shortcut-hint { margin: 6px 0 0; font-size: 12px; color: var(--h3-muted); }
 @media (pointer: coarse) { .h3-workspace .h3-shortcut-hint { display: none; } }
 .h3-workspace kbd { padding: 1px 6px; border: 1px solid var(--h3-border); border-bottom-width: 2px; border-radius: 5px; background: var(--h3-surface); font: 600 11px/1.5 ui-monospace, monospace; }

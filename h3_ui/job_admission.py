@@ -125,14 +125,31 @@ def execute_accepted(job_id: str, request: gr.Request):
                 close()
 
 
-GENERATING_LABEL = "Generating\u2026"
+BUSY_CLASS = "h3-busy"
+# What a GPU button reads while its job runs, by its label's leading words;
+# a button whose label is not listed keeps it and only greys out.
+BUSY_LABELS = (
+    ("Regenerate", "Regenerating…"),
+    ("Generate", "Generating…"),
+    ("Analyze", "Analyzing…"),
+    ("Translate", "Translating…"),
+    ("Preview", "Previewing…"),
+    ("New take", "Generating…"),
+    ("Remix", "Remixing…"),
+    ("Auto transcribe", "Transcribing…"),
+    ("Upscale", "Upscaling…"),
+    ("Enhance", "Enhancing…"),
+    ("Download", "Downloading…"),
+    ("Compile", "Compiling…"),
+    ("Unload", "Unloading…"),
+)
 
 
 def family_busy(owner, family):
     """Whether this process still runs or queues a job of the family.
 
     Jobs restored from an earlier process await reconciliation and never stream
-    here, so counting them would leave Generate reading Generating… forever.
+    here, so counting them would leave Interrupt enabled forever.
     """
     return any(
         job.family == family and job.finished_at is None and not job.recovered
@@ -140,10 +157,24 @@ def family_busy(owner, family):
     )
 
 
-def busy_label(component):
-    """A Generate button's original label, so it can read Generating… while its job runs."""
-    label = getattr(component, "value", None) if isinstance(component, gr.Button) else None
-    return label if isinstance(label, str) and label.startswith("Generate") else None
+def busy_updates(component):
+    """``(busy, idle)`` updates for a visible GPU button, or None for any other trigger.
+
+    Busy greys the button out and blocks clicks with a class rather than
+    ``interactive``: readiness checks own ``interactive`` and would re-enable it
+    mid-job. A listed label reads its busy wording, e.g. Analyzing….
+    """
+    if not isinstance(component, gr.Button) or component.visible is False:
+        return None
+    classes = component.elem_classes or []
+    classes = [classes] if isinstance(classes, str) else list(classes)
+    label = component.value if isinstance(component.value, str) else ""
+    busy_label = next((busy for verb, busy in BUSY_LABELS if label.startswith(verb)), None)
+    busy = {"elem_classes": [*classes, BUSY_CLASS]}
+    idle = {"elem_classes": classes}
+    if busy_label is not None:
+        busy["value"], idle["value"] = busy_label, label
+    return gr.update(**busy), gr.update(**idle)
 
 
 def bind_accepted_action(
@@ -177,8 +208,8 @@ def bind_accepted_action(
     canvas_controls = getattr(getattr(trigger, "__self__", None), "h3_canvas", ())
     stop_control = getattr(getattr(trigger, "__self__", None), "h3_stop", None)
     busy_button = getattr(trigger, "__self__", None)
-    idle_label = busy_label(busy_button)
-    if idle_label is None:
+    busy = busy_updates(busy_button)
+    if busy is None:
         busy_button = None
     accept_outputs = [ticket]
     if stop_control is not None:
@@ -266,7 +297,7 @@ def bind_accepted_action(
         if stop_control is not None:
             results.append(gr.update(interactive=True))
         if busy_button is not None:
-            results.append(gr.update(value=GENERATING_LABEL))
+            results.append(busy[0])
         return tuple(results) if len(results) > 1 else job_id
 
     # Preserve request injection even though acceptance has a variadic wrapper.
@@ -340,15 +371,14 @@ def bind_accepted_action(
     if idle_outputs:
 
         def stop_availability(request: gr.Request):
-            # Queued jobs of the same family keep Interrupt and Generating… until the last one ends.
-            running = family_busy(require_owner(request), callback.job_family)
+            # Queued jobs of the same family keep Interrupt enabled until the last one ends.
+            # The button itself is busy only while this event runs: it takes no second click.
             updates = []
             if stop_control is not None:
+                running = family_busy(require_owner(request), callback.job_family)
                 updates.append(gr.update(interactive=running))
             if busy_button is not None:
-                updates.append(
-                    gr.update(value=GENERATING_LABEL if running else idle_label)
-                )
+                updates.append(busy[1])
             return tuple(updates) if len(updates) > 1 else updates[0]
 
         for completion in (event, failed):
@@ -359,6 +389,15 @@ def bind_accepted_action(
                 api_name=False,
                 show_progress="hidden",
             )
+    if busy_button is not None and stop_control is not None:
+        # Interrupt frees the button too, should the cancelled event never report its end.
+        stop_control.click(
+            lambda: busy[1],
+            outputs=busy_button,
+            queue=False,
+            api_name=False,
+            show_progress="hidden",
+        )
     event.acceptance = accepted
     event.ticket = ticket
     return event

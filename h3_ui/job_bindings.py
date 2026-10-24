@@ -30,7 +30,15 @@ def bind_gpu_action(trigger, callback=None, **options):
             reference_map=reference_map,
             resolver=resolver,
         )
-    return trigger(callback, **options, **GPU_QUEUE)
+    from .job_admission import busy_updates
+
+    busy = busy_updates(component)
+    if busy is None:
+        return trigger(callback, **options, **GPU_QUEUE)
+    quiet = {"outputs": component, "queue": False, "api_name": False, "show_progress": "hidden"}
+    event = trigger(lambda: busy[0], **quiet).then(callback, **options, **GPU_QUEUE)
+    event.then(lambda: busy[1], **quiet)
+    return event
 
 
 def bind_prompt_action(trigger, callback=None, **options):
