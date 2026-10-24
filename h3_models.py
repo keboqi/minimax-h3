@@ -1718,6 +1718,8 @@ def sync_models(
         downloaded_keys: set[str] = set()
         download_failures: list[tuple[str, Exception]] = []
         if stale:
+            # hf_xet reads this when its first transfer starts; set it before then.
+            os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
             workers = max(1, min(download_workers, len(stale)))
             print(
                 f"{log_prefix} downloading {len(stale)} model files "

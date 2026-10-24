@@ -109,6 +109,8 @@ def ensure_model(settings: ServerSettings, *, token=None, log=print) -> Path:
     marker = target / ".h3-complete"
     if marker.is_file():
         return target
+    # hf_xet reads this when its first transfer starts; set it before then.
+    os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
     from huggingface_hub import snapshot_download
 
     log(f"[drama3-serving] Downloading {DRAMA3_HF_REPO}@{DRAMA3_HF_REVISION[:12]} (~44 GB, first use only).")
