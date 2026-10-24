@@ -105,7 +105,7 @@ class Drama3LibraryApiTests(unittest.TestCase):
         triggers = {dep["api_name"]: dep["targets"][0][0] for dep in config["dependencies"]
                     if str(dep.get("api_name", "")).startswith(("drama3_library", "drama3_result"))}
         components = {component["id"]: component for component in config["components"]}
-        self.assertEqual(len(triggers), 8)
+        self.assertEqual(len(triggers), 9)  # with /drama3_result_audio, covered by the batch API tests
         self.assertTrue(all(components[target]["props"].get("visible") is False for target in triggers.values()))
 
 

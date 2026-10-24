@@ -144,3 +144,13 @@ class LibraryApiHandlers:
         if not settings:
             raise gr.Error(f'No Drama 3 result named "{name}" was found.')
         return settings
+
+    def drama3_result_audio(self, result):
+        """A copy of a Drama 3 result's audio, found by its file name as /generate_drama3_batch lists it."""
+        name = Path(str(result or "").split("?", 1)[0]).name
+        if not re.search(r"[0-9a-f]{32}", name):
+            raise gr.Error("Pass the result file name listed by /generate_drama3_batch.")
+        path = Path(self.services.resolve_result(name))
+        if not self._result_settings(name) or not path.is_file():
+            raise gr.Error(f'No Drama 3 result named "{name}" was found.')
+        return _export(path, path.stem)

@@ -7,6 +7,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import uuid
 
 import gradio as gr
 
@@ -126,6 +127,87 @@ class Drama3BatchApiTests(unittest.TestCase):
         self.assertIn("no audio", listing[1]["error"])
         self.assertEqual(len(files), 1)
 
+    def _saved_cast(self):
+        from h3_app.drama3 import sounds, speakers
+
+        clip = self.root / "voice.wav"
+        clip.write_bytes(b"RIFF" + b"v" * 80)
+        speakers.save_speaker("林夕", clip, "你好，今天天气不错。", self.runtime, "A female voice.", "雨夜")
+        speakers.save_speaker("narrator", clip, "故事从这里开始。", self.runtime, "A male voice.", "雨夜")
+        sounds.save_sound("night_rain", clip, "Steady rain", 20, self.runtime)
+
+    def _fake_render(self, requests):
+        """Stand-in for the Drama 3 run: a result with a snapshot whose second take fails until regenerated."""
+        from h3_app.generation.results import GenerationUpdate, fresh_audio
+        from h3_app.provenance import write_snapshot
+
+        def run(request, services, runtime, **_kwargs):
+            requests.append(request)
+            yield GenerationUpdate(None, "Planned 2 chunk(s)")
+            if "BROKEN" in request.text:
+                yield GenerationUpdate(None, "Error: Script rejected\n\ntimings")
+                return
+            result = self.runtime.output_dir / "drama3" / f"{request.title}_{uuid.uuid4().hex}.mp3"
+            result.parent.mkdir(parents=True, exist_ok=True)
+            result.write_bytes(b"ID3" + b"m" * 80)
+            fixed = "b" * 32 in request.regenerate
+            write_snapshot(result, {"family": "Drama 3", "settings": {"title": request.title, "chunks": [
+                {"name": "narrator", "take": "a" * 32, "check": "ok", "ok": True},
+                {"name": "林夕", "take": "b" * 32, "check": "ok" if fixed else "no speech", "ok": fixed}]}})
+            yield GenerationUpdate(fresh_audio(result), "Drama 3 complete · 2 chunks")
+        return run
+
+    def test_batch_render_uses_saved_voices_fixes_failed_takes_and_isolates_broken_jobs(self):
+        import dataclasses
+
+        self._saved_cast()
+        self.runtime.input_dir = self.root / "input"
+        requests = []
+        jobs = [
+            {"id": "ch01", "title": "第一章", "text": "narrator: 雨夜。\n林夕: 有人吗？", "script_mode": "Advanced (sound enhanced)",
+             "temperature": 2.0, "top_p": 1.0, "top_k": 30, "speakers": [
+                 {"slot": 0, "name": "narrator", "group": "雨夜", "voice": "narrator"},
+                 {"slot": 1, "name": "林夕", "group": "雨夜", "voice": "林夕"}], "sounds": [{"name": "night_rain"}]},
+            {"id": "ch02", "title": "第二章", "text": "BROKEN", "speakers": [
+                {"slot": 0, "name": "narrator", "group": "雨夜", "voice": "narrator"}]},
+            {"id": "ch03", "title": "第三章", "text": "narrator: 天亮了。", "speakers": [
+                {"slot": 0, "name": "narrator", "group": "雨夜", "voice": "nobody"}]},
+        ]
+        services = dataclasses.replace(self.handlers.services, resolve_result=lambda path: path)
+        with patch("h3_app.generation.drama3.generate_drama3", self._fake_render(requests)), \
+                patch.object(self.handlers, "services", services), \
+                patch.object(self.handlers, "stage_file", side_effect=lambda path, *_a, **_k: Path(path).name):
+            updates = list(self.handlers.generate_drama3_batch(json.dumps(jobs, ensure_ascii=False), 1))
+        listing, status = updates[-1]
+        self.assertEqual(status, "Batch finished: 1/3 job(s) rendered.")
+        self.assertEqual([(entry["id"], entry["ok"]) for entry in listing],
+                         [("ch01", True), ("ch02", False), ("ch03", False)])
+        first = listing[0]
+        self.assertEqual((first["failed"], first["rounds"]), ([], 1))
+        self.assertRegex(first["result"], r"[0-9a-f]{32}\.mp3$")
+        self.assertIn("Script rejected", listing[1]["error"])
+        self.assertIn("nobody", listing[2]["error"])
+        # ch01 ran twice (the second time regenerating only its failed take); ch02 once; ch03 never.
+        self.assertEqual([request.title for request in requests], ["第一章", "第一章", "第二章"])
+        self.assertEqual(requests[1].regenerate, ("b" * 32,))
+        self.assertEqual(requests[0].voice_names, ((0, "narrator"), (1, "林夕")))
+        self.assertEqual([voice[2] for voice in requests[0].voices], ["故事从这里开始。", "你好，今天天气不错。"])
+        self.assertEqual([(name, duration) for name, _path, _desc, duration in requests[0].sounds], [("night_rain", 20)])
+        self.assertTrue(all(Path(path).parent == self.runtime.input_dir for _s, path, _t in requests[0].voices))
+        with self.assertRaisesRegex(gr.Error, "0 to 3"):
+            list(self.handlers.generate_drama3_batch(json.dumps(jobs), 9))
+
+        # The listed result's audio and details come back by file name.
+        found = next(self.runtime.output_dir.rglob(first["result"]))
+        services = dataclasses.replace(self.handlers.services, resolve_result=lambda path: found)
+        with patch.object(self.handlers, "services", services):
+            audio = Path(self.handlers.drama3_result_audio(first["result"]))
+            self.addCleanup(lambda: (audio.unlink(missing_ok=True), audio.parent.rmdir()))
+            self.assertEqual(audio.read_bytes(), found.read_bytes())
+            self.assertEqual(self.handlers.drama3_result_details(first["result"])["chunks"][1]["ok"], True)
+        with self.assertRaisesRegex(gr.Error, "file name"):
+            self.handlers.drama3_result_audio("nothing.mp3")
+
     def test_old_served_copies_are_pruned(self):
         from h3_ui.drama3 import library_api
 
@@ -156,10 +238,13 @@ class Drama3BatchApiTests(unittest.TestCase):
             bind_drama3(view, _drama3_actions())
         api = demo.get_api_info()["named_endpoints"]
         parameters = {name: [row["parameter_name"] for row in api[name]["parameters"]] for name in (
-            "/generate_drama3_voices_batch", "/generate_drama3_sounds_batch", "/preload_drama3_models")}
+            "/generate_drama3_voices_batch", "/generate_drama3_sounds_batch", "/generate_drama3_batch",
+            "/preload_drama3_models", "/drama3_result_audio")}
         self.assertEqual(parameters, {
             "/generate_drama3_voices_batch": ["briefs", "language"],
             "/generate_drama3_sounds_batch": ["sounds"],
+            "/generate_drama3_batch": ["jobs", "fix_rounds"],
+            "/drama3_result_audio": ["result"],
             "/preload_drama3_models": ["voice_engine", "script_mode"],
         })
         config = json.loads(json.dumps(demo.get_config_file(), default=str))
@@ -167,7 +252,7 @@ class Drama3BatchApiTests(unittest.TestCase):
         triggers = {dep["api_name"]: dep["targets"][0][0] for dep in config["dependencies"]
                     if dep.get("api_name") in wanted}
         components = {component["id"]: component for component in config["components"]}
-        self.assertEqual(len(triggers), 3)
+        self.assertEqual(len(triggers), 5)
         self.assertTrue(all(components[target]["props"].get("visible") is False for target in triggers.values()))
 
 

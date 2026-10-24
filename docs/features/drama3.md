@@ -198,11 +198,34 @@ controls on the page:
 | `/drama3_library_sounds` | | every saved sound: name, description, duration, clip SHA-256 |
 | `/drama3_library_save_sound` | `name`, `audio`, `description`, `duration` | the saved entry |
 | `/drama3_library_sound_clip` | `name` | a copy of the clip and its entry |
-| `/drama3_result_details` | `result` (the file name `/generate_drama3` returned) | the result's settings: every take with its key, check and line timings |
+| `/drama3_result_details` | `result` (the file name `/generate_drama3` returned) | the result's settings: every take with its key, check (`ok` false for a take kept after every attempt failed) and line timings |
+| `/drama3_result_audio` | `result` (a file name `/generate_drama3_batch` listed) | a copy of that result's audio |
 
 Clips are saved byte for byte, so a client can compare digests to keep its own copy
 in step. A take key from `/drama3_result_details` is the `line` argument of
 `/regenerate_drama3_line`. Saved sounds have no groups.
+
+Batch endpoints let a script keep the GPU busy with one queue job per stage instead
+of one per item. Each is a single GPU-queue job; an invalid or failed item fails
+alone:
+
+| Endpoint | Parameters | Returns |
+| --- | --- | --- |
+| `/generate_drama3_voices_batch` | `briefs` (JSON list of `{name, description, preview_text[, language]}`), `language` | the clips and a listing `{name, ok, file, transcript, error}` per brief (Qwen VoiceDesign, one worker request) |
+| `/generate_drama3_sounds_batch` | `sounds` (JSON list of `{name, description, duration}`) | the clips and a listing `{name, ok, file, error}` per sound (Stable Audio 3 Medium, one worker request) |
+| `/generate_drama3_batch` | `jobs` (JSON list), `fix_rounds` (0-3, default 1) | yields `(listing, status)`; one listing entry `{id, ok, result, status, failed, rounds, error}` per finished job |
+| `/preload_drama3_models` | `voice_engine`, `script_mode` | the preload status |
+
+A `/generate_drama3_batch` job is `{id, text, title, script_mode, temperature,
+top_p, top_k, max_frames, parallel, retries, speakers, sounds}`. Each speaker is
+`{slot, name, group, voice}`: the saved speaker `voice` in `group` gives the clip
+and exact transcript, and `name` is the Cast name the script's lines use. Each
+sound is `{name}` of a saved sound. Nothing is uploaded, so a client saves its
+voices and sounds once and renders a whole book from them. The jobs run back to
+back; after each one, takes that still fail their check are generated again up to
+`fix_rounds` times before the next job starts. Every finished job is listed as soon
+as it is done, so a client can fetch its audio (`/drama3_result_audio`) and details
+while the next job renders. An interrupt stops the batch.
 
 **Try new voices** designs one to four fresh clips for the selected speaker from
 its voice description and exact clip transcript, using the Cast's **Voice

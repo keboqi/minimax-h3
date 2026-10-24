@@ -729,6 +729,8 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                         "speaker_effects": list(t.chunk.speaker_effects),
                         "check": (t.check.reason if t.check is not None
                                   else "reused" if t.attempts == 0 else "skipped"),
+                        # False only for a take kept after every attempt failed its check.
+                        "ok": t.check is None or t.check.ok,
                         "warnings": list(t.check.warnings) if t.check is not None else [],
                         "seconds": round(len(t.samples) / t.rate, 2),
                         **({"start": timings[t.chunk.index][0], "end": timings[t.chunk.index][1],

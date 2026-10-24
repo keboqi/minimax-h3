@@ -78,8 +78,10 @@ class Drama3Actions:
     drama3_library_save_sound: Callable | None = None
     drama3_library_sound_clip: Callable | None = None
     drama3_result_details: Callable | None = None
+    drama3_result_audio: Callable | None = None
     generate_drama3_voices_batch: Callable | None = None
     generate_drama3_sounds_batch: Callable | None = None
+    generate_drama3_batch: Callable | None = None
 
     @classmethod
     def of(cls, handlers, *, interrupt: Callable, speaker_library_actions: object | None = None):
@@ -422,7 +424,7 @@ def _bind_takes(view, actions, generation_inputs):
 
 
 def _bind_library_api(actions):
-    """API-only endpoints for scripted clients: saved speakers, saved sounds and result details.
+    """API-only endpoints for scripted clients: saved speakers, saved sounds, result details and audio.
 
     Each endpoint has its own hidden trigger, so none of them runs from the page.
     """
@@ -452,6 +454,7 @@ def _bind_library_api(actions):
          "drama3_library_save_sound"),
         (actions.drama3_library_sound_clip, [name], [download, entry], "drama3_library_sound_clip"),
         (actions.drama3_result_details, [result], details, "drama3_result_details"),
+        (actions.drama3_result_audio, [result], download, "drama3_result_audio"),
     ):
         if fn is not None:
             gr.Button(visible=False).click(fn, inputs=inputs, outputs=outputs, api_name=api_name, **quiet)
@@ -472,10 +475,10 @@ def _preload_callback(actions, input_names):
 
 
 def _bind_batch_api(actions):
-    """API-only GPU endpoints for scripted clients: batch voices, batch sounds and model preload.
+    """API-only GPU endpoints for scripted clients: batch voices, sounds and renders, and model preload.
 
     Each is one GPU-queue job, so a script pays one model load and one queue wait for a whole
-    cast or soundscape. Hidden triggers keep them off the page.
+    cast, soundscape or book. Hidden triggers keep them off the page.
     """
     if actions.generate_drama3_voices_batch is None:
         return
@@ -488,11 +491,16 @@ def _bind_batch_api(actions):
         clips = gr.File(label="Clips", file_count="multiple", type="filepath")
         listing = gr.JSON(label="Listing")
         preload_status = gr.Textbox(label="Preload status")
+        jobs = gr.Textbox(label="Render jobs (JSON list)")
+        fix_rounds = gr.Number(label="Failed-take rounds", value=1, precision=0)
+        render_status = gr.Textbox(label="Batch status")
     for fn, family, inputs, outputs, api_name in (
         (actions.generate_drama3_voices_batch, "drama3_voice", [briefs, language], [clips, listing],
          "generate_drama3_voices_batch"),
         (actions.generate_drama3_sounds_batch, "drama3_sound", [sound_items], [clips, listing],
          "generate_drama3_sounds_batch"),
+        (actions.generate_drama3_batch, "drama3", [jobs, fix_rounds], [listing, render_status],
+         "generate_drama3_batch"),
     ):
         if fn is not None:
             bind_gpu_action(gr.Button(visible=False).click, owned_generation(fn, family), inputs=inputs,
