@@ -133,6 +133,23 @@ class BatchApiHandlers:
             script_mode=str(item.get("script_mode") or "Basic"), sounds=tuple(sounds),
             title=clean_title(item.get("title")))
 
+    def _render_batch_job(self, request, listing, label):
+        """Run one render, yielding ``(listing, status)`` progress; returns (result path, final status)."""
+        from h3_app.generation.drama3 import generate_drama3 as run_drama3
+        from h3_app.progress import no_progress
+
+        output, status = None, ""
+        for update in run_drama3(request, self._generation_services(), self._runtime_config(),
+                                 progress=no_progress, free_gpu=self.free_comfy_vram):
+            status = str(update.status or "")
+            output = update.output or output
+            yield listing, f"{label}: {(status.splitlines() or [''])[0]}"
+        if status.startswith("Error") or not output:
+            raise H3Error((status.splitlines() or ["no result"])[0].removeprefix("Error: "))
+        if isinstance(output, dict):
+            output = output.get("value") or output.get("path")
+        return str(output), status
+
     def generate_drama3_batch(self, jobs, fix_rounds=1):
         """Render many Drama 3 scripts back to back in one GPU job, from saved speakers and sounds.
 
@@ -150,9 +167,7 @@ class BatchApiHandlers:
         """
         from dataclasses import replace
 
-        from h3_app.generation.drama3 import generate_drama3 as run_drama3
         from h3_app.jobs import JobCancelled, check_cancelled
-        from h3_app.progress import no_progress
 
         items = _items(jobs, "jobs")
         try:
@@ -170,20 +185,10 @@ class BatchApiHandlers:
             try:
                 request = self._batch_render_request(item)
                 for attempt in range(rounds + 1):
-                    output, status = None, ""
-                    for update in run_drama3(request, self._generation_services(), self._runtime_config(),
-                                             progress=no_progress, free_gpu=self.free_comfy_vram):
-                        status = str(update.status or "")
-                        output = update.output or output
-                        yield listing, f"{label}: {(status.splitlines() or [''])[0]}"
-                    if status.startswith("Error") or not output:
-                        raise H3Error((status.splitlines() or ["no result"])[0].removeprefix("Error: "))
-                    if isinstance(output, dict):
-                        output = output.get("value") or output.get("path")
+                    output, status = yield from self._render_batch_job(request, listing, label)
                     failed = [chunk["take"] for chunk in self._result_settings(output).get("chunks") or []
                               if chunk.get("take") and chunk.get("ok") is False]
-                    entry.update(ok=True, result=Path(str(output)).name, status=status, failed=failed,
-                                 rounds=attempt)
+                    entry.update(ok=True, result=Path(output).name, status=status, failed=failed, rounds=attempt)
                     if not failed or attempt == rounds:
                         break
                     request = replace(request, regenerate=tuple(failed))
@@ -191,7 +196,8 @@ class BatchApiHandlers:
             except JobCancelled:
                 raise
             except Exception as exc:  # one broken script must not cost the rest of the book
-                entry.update(ok=False, error=str(exc))
+                # A failed repair round keeps the render it started from.
+                entry.update(ok=bool(entry["result"]), error=str(exc))
             # A render reports an interrupt as its error status; the batch stops there too.
             check_cancelled()
             listing.append(entry)

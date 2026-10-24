@@ -137,9 +137,7 @@ class LibraryApiHandlers:
         ``result`` is the result's file name or URL as the client received it; its 32-hex
         id finds the original under the output folders.
         """
-        name = Path(str(result or "").split("?", 1)[0]).name
-        if not re.search(r"[0-9a-f]{32}", name):
-            raise gr.Error("Pass the result file name returned by /generate_drama3.")
+        name = _result_name(result)
         settings = self._result_settings(name)
         if not settings:
             raise gr.Error(f'No Drama 3 result named "{name}" was found.')
@@ -147,10 +145,16 @@ class LibraryApiHandlers:
 
     def drama3_result_audio(self, result):
         """A copy of a Drama 3 result's audio, found by its file name as /generate_drama3_batch lists it."""
-        name = Path(str(result or "").split("?", 1)[0]).name
-        if not re.search(r"[0-9a-f]{32}", name):
-            raise gr.Error("Pass the result file name listed by /generate_drama3_batch.")
+        name = _result_name(result)
         path = Path(self.services.resolve_result(name))
         if not self._result_settings(name) or not path.is_file():
             raise gr.Error(f'No Drama 3 result named "{name}" was found.')
         return _export(path, path.stem)
+
+
+def _result_name(result) -> str:
+    """The file name in a result name or URL as a client received it; its 32-hex id finds the original."""
+    name = Path(str(result or "").split("?", 1)[0]).name
+    if not re.search(r"[0-9a-f]{32}", name):
+        raise gr.Error("Pass the result file name returned by /generate_drama3 or /generate_drama3_batch.")
+    return name
