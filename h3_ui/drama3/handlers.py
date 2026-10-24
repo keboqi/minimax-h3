@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 import gradio as gr
 
+from .batch_api import BatchApiHandlers
 from .generation import GenerationHandlers
 from .library_api import LibraryApiHandlers
 from .sounds import SoundHandlers
@@ -32,7 +33,7 @@ class Drama3Services:
 
 
 class Drama3Handlers(GenerationHandlers, WriterHandlers, VoiceHandlers, SpeakerHandlers, SoundHandlers,
-                     LibraryApiHandlers):
+                     LibraryApiHandlers, BatchApiHandlers):
     """Every Soundstage handler, bound to one set of runtime services."""
 
     def __init__(self, services: Drama3Services):

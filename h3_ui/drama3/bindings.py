@@ -78,6 +78,8 @@ class Drama3Actions:
     drama3_library_save_sound: Callable | None = None
     drama3_library_sound_clip: Callable | None = None
     drama3_result_details: Callable | None = None
+    generate_drama3_voices_batch: Callable | None = None
+    generate_drama3_sounds_batch: Callable | None = None
 
     @classmethod
     def of(cls, handlers, *, interrupt: Callable, speaker_library_actions: object | None = None):
@@ -455,8 +457,55 @@ def _bind_library_api(actions):
             gr.Button(visible=False).click(fn, inputs=inputs, outputs=outputs, api_name=api_name, **quiet)
 
 
+def _preload_callback(actions, input_names):
+    """The model preload as a GPU-queue job; an interrupt ends it quietly, since a preload is optional."""
+    run = owned_generation(actions.preload_drama3_models, "drama3_preload", input_names)
+
+    def preload(*args):
+        try:
+            yield from run(*args)
+        except JobCancelled:
+            return
+
+    preload.__signature__, preload.__annotations__ = run.__signature__, run.__annotations__
+    return preload
+
+
+def _bind_batch_api(actions):
+    """API-only GPU endpoints for scripted clients: batch voices, batch sounds and model preload.
+
+    Each is one GPU-queue job, so a script pays one model load and one queue wait for a whole
+    cast or soundscape. Hidden triggers keep them off the page.
+    """
+    if actions.generate_drama3_voices_batch is None:
+        return
+    with gr.Group(visible=False):
+        briefs = gr.Textbox(label="Voice briefs (JSON list)")
+        language = gr.Textbox(label="Default preview language", value="Auto")
+        sound_items = gr.Textbox(label="Sounds (JSON list)")
+        engine = gr.Textbox(label="Voice engine", value=ENGINE_QWEN)
+        mode = gr.Textbox(label="Script mode", value="Advanced (sound enhanced)")
+        clips = gr.File(label="Clips", file_count="multiple", type="filepath")
+        listing = gr.JSON(label="Listing")
+        preload_status = gr.Textbox(label="Preload status")
+    for fn, family, inputs, outputs, api_name in (
+        (actions.generate_drama3_voices_batch, "drama3_voice", [briefs, language], [clips, listing],
+         "generate_drama3_voices_batch"),
+        (actions.generate_drama3_sounds_batch, "drama3_sound", [sound_items], [clips, listing],
+         "generate_drama3_sounds_batch"),
+    ):
+        if fn is not None:
+            bind_gpu_action(gr.Button(visible=False).click, owned_generation(fn, family), inputs=inputs,
+                            outputs=outputs, show_progress="hidden", api_name=api_name)
+    if actions.preload_drama3_models is not None:
+        gr.Button(visible=False).click(_preload_callback(actions, ("voice_engine", "script_mode")),
+                                       inputs=[engine, mode], outputs=preload_status, show_progress="hidden",
+                                       api_name="preload_drama3_models", **GPU_QUEUE)
+
+
 def bind_drama3(view, actions):
     _bind_library_api(actions)
+    _bind_batch_api(actions)
     _bind_script_mode(view, actions)
     script_events = _bind_writer(view, actions)
     store_events = _bind_voice_slots(view, actions)
@@ -528,16 +577,7 @@ def _bind_preload(started, view, actions):
         return None
     sounds = bool(view.sounds) and view.script_mode is not None and actions.generate_drama3_sounds is not None
     inputs = [view.voice_engine, *([view.script_mode] if sounds else [])]
-    run = owned_generation(actions.preload_drama3_models, "drama3_preload",
-                           ("voice_engine", "script_mode")[:len(inputs)])
-
-    def preload(*args):
-        try:
-            yield from run(*args)
-        except JobCancelled:
-            return
-
-    preload.__signature__, preload.__annotations__ = run.__signature__, run.__annotations__
+    preload = _preload_callback(actions, ("voice_engine", "script_mode")[:len(inputs)])
     return started.then(preload, inputs=inputs, outputs=view.auto_preload_status, show_progress="hidden",
                         api_name=False, **GPU_QUEUE)
 

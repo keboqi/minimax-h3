@@ -626,7 +626,8 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                          interactive=False, wrap=True, visible=False, max_height=520,
                                          column_widths=["6%", "16%", "58%", "10%", "10%"])
                 with gr.Column(scale=2, min_width=280, elem_classes=["h3-drama3-line-panel"]):
-                    take_line = gr.Dropdown([], label="Line", info="Generate speech reuses unchanged lines.")
+                    take_line = gr.Dropdown([], label="Line", info="Generate speech reuses unchanged lines.",
+                                            allow_custom_value=True)
                     take_audio = gr.Audio(label="Line take (before staging and effects)", type="numpy",
                                           interactive=False)
                     with gr.Row(elem_classes=["h3-generation-buttons"]):

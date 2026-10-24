@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+import time
 
 import gradio as gr
 
@@ -45,10 +46,27 @@ def _speaker_key(group, name) -> str:
     return "group:" + json.dumps([group, str(name or "")], ensure_ascii=False)
 
 
+EXPORT_PREFIXES = ("h3-drama3-export-", "h3-drama3-library-")
+EXPORT_MAX_AGE_SECONDS = 6 * 3600
+
+
+def _prune_exports():
+    """Drop old served copies; Gradio has copied each one into its own cache by the time it is sent."""
+    cutoff = time.time() - EXPORT_MAX_AGE_SECONDS
+    for prefix in EXPORT_PREFIXES:
+        for folder in Path(tempfile.gettempdir()).glob(prefix + "*"):
+            try:
+                if folder.is_dir() and not folder.is_symlink() and folder.stat().st_mtime < cutoff:
+                    shutil.rmtree(folder, ignore_errors=True)
+            except OSError:
+                continue
+
+
 def _export(audio: Path, name: str) -> str:
     """A served copy of a private clip, named after its preset."""
+    _prune_exports()
     slug = re.sub(r"[^\w.-]+", "_", name, flags=re.UNICODE).strip("._")[:48] or "clip"
-    folder = Path(tempfile.mkdtemp(prefix="h3-drama3-library-"))
+    folder = Path(tempfile.mkdtemp(prefix=EXPORT_PREFIXES[0]))
     target = folder / f"{slug}{audio.suffix.lower()}"
     shutil.copyfile(audio, target)
     return str(target)

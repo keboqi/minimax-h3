@@ -36,6 +36,42 @@ def cached_sound_path(output_dir: Path, description: str, duration: int) -> Path
     return output_dir / f"StableAudio3_cache_{digest}.wav"
 
 
+def _worker_item(description: str, duration: int, target: Path) -> dict:
+    return {"prompt": description, "duration": duration, "seed": -1, "steps": 8, "cfg_scale": 1.0,
+            "output": str(target.resolve())}
+
+
+def generate_sound_results(items, runtime, *, free_gpu, hf_token: str | None = None) -> list[tuple[Path | None, str]]:
+    """One worker run for ``[(description, duration)]`` where a clip that fails stays with its item.
+
+    Returns ``[(Path | None, error)]`` in the same order; only a worker failure fails the run.
+    """
+    validated = [validate_sound_inputs(description, duration) for description, duration in items]
+    output_dir = runtime.output_dir / "drama3_sounds"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    targets = [output_dir / f"StableAudio3_{uuid.uuid4().hex}.wav" for _item in validated]
+    try:
+        reply = audio_tools.run(
+            "stable_audio",
+            {"items": [_worker_item(desc, dur, target) for (desc, dur), target in zip(validated, targets)],
+             "keep_going": True},
+            runtime, free_gpu=free_gpu, hf_token=hf_token)
+    except BaseException:
+        for target in targets:
+            target.unlink(missing_ok=True)
+        raise
+    errors = (reply or {}).get("errors") or []
+    results = []
+    for position, target in enumerate(targets):
+        error = errors[position] if position < len(errors) else ""
+        if not error and target.is_file() and target.stat().st_size > 44:
+            results.append((target, ""))
+        else:
+            target.unlink(missing_ok=True)
+            results.append((None, error or "Stable Audio 3 Medium returned no audio."))
+    return results
+
+
 def generate_sound_references(
     items: list[tuple[str, int | float] | dict],
     runtime,
@@ -76,16 +112,7 @@ def generate_sound_references(
             target = output_dir / f"StableAudio3_{token}.wav"
         created_paths.append(target)
         worker_indices.append(idx)
-        worker_items.append(
-            {
-                "prompt": desc,
-                "duration": dur,
-                "seed": -1,
-                "steps": 8,
-                "cfg_scale": 1.0,
-                "output": str(target.resolve()),
-            }
-        )
+        worker_items.append(_worker_item(desc, dur, target))
 
     if not worker_items:
         return [path for path in results if path is not None]

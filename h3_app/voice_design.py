@@ -44,3 +44,42 @@ def generate_reference(description, text, language, runtime, *, free_gpu, hf_tok
         result.unlink(missing_ok=True)
         raise
     return result, text
+
+
+def generate_references(briefs, runtime, *, free_gpu, hf_token=None):
+    """Design several voices in one worker request: ``[(description, text, language)]``.
+
+    Returns ``[(Path | None, transcript, error)]`` in the same order. A brief that fails
+    validation or synthesis does not stop the others.
+    """
+    output = runtime.output_dir / "drama3_voices"
+    output.mkdir(parents=True, exist_ok=True)
+    results = [None] * len(briefs)
+    items, positions = [], []
+    for index, (description, text, language) in enumerate(briefs):
+        try:
+            description, text, language = validate_inputs(description, text, language)
+        except H3Error as exc:
+            results[index] = (None, str(text or "").strip(), str(exc))
+            continue
+        target = output / f"QwenVoiceDesign_{uuid.uuid4().hex}.wav"
+        items.append({"description": description, "text": text, "language": language,
+                      "output": str(target.resolve())})
+        positions.append((index, target, text))
+    if not items:
+        return results
+    try:
+        reply = audio_tools.run("voice_design", {"items": items}, runtime, free_gpu=free_gpu, hf_token=hf_token)
+    except BaseException:
+        for _index, target, _text in positions:
+            target.unlink(missing_ok=True)
+        raise
+    errors = (reply or {}).get("errors") or []
+    for position, (index, target, text) in enumerate(positions):
+        error = errors[position] if position < len(errors) else ""
+        if not error and target.is_file() and target.stat().st_size > 44:
+            results[index] = (target, text, "")
+        else:
+            target.unlink(missing_ok=True)
+            results[index] = (None, text, error or "Qwen VoiceDesign returned no audio.")
+    return results

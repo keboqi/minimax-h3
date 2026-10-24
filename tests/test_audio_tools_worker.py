@@ -137,6 +137,32 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(sound.write.call_args_list[0].args[2], 24000)
         self.assertEqual(worker.loaded, ["voice_design"])
 
+    def test_voice_batch_keeps_each_failure_with_its_item(self):
+        worker = worker_module.Worker(self.root)
+
+        def design(item):
+            if item["text"] == "bad":
+                raise RuntimeError("empty audio")
+            return item["output"]
+
+        items = [{"text": "ok", "output": "a.wav"}, {"text": "bad", "output": "b.wav"},
+                 {"text": "ok", "output": "c.wav", "items": ["ignored"]}]
+        with patch.object(worker, "design_one_voice", side_effect=design), patch("traceback.print_exc"):
+            reply = worker.handle({"op": "voice_design", "items": items})
+        self.assertEqual(reply["outputs"], ["a.wav", None, "c.wav"])
+        self.assertEqual(reply["errors"][0], "")
+        self.assertIn("empty audio", reply["errors"][1])
+
+    def test_each_item_raises_unless_asked_to_keep_going(self):
+        def make(item):
+            raise RuntimeError(item)
+
+        with self.assertRaises(RuntimeError):
+            worker_module.Worker.each_item(["x"], make, keep_going=False)
+        with patch("traceback.print_exc"):
+            self.assertEqual(worker_module.Worker.each_item(["x"], make, keep_going=True),
+                             {"outputs": [None], "errors": ["RuntimeError: x"]})
+
     def test_load_request_preloads_the_named_model_without_generating(self):
         worker = worker_module.Worker(self.root)
         with patch.object(worker, "load_stable_audio") as load_sound, \

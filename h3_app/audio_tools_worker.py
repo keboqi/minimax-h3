@@ -163,21 +163,46 @@ class Worker:
             )
         return self.voice_design
 
+    @staticmethod
+    def each_item(items, make, *, keep_going: bool) -> dict:
+        """Run ``make`` per item. With ``keep_going`` a failure stays with its item.
+
+        ``outputs[i]`` is the written file or None, and ``errors[i]`` explains a None.
+        """
+        outputs, errors = [], []
+        for item in items:
+            try:
+                outputs.append(make(item))
+                errors.append("")
+            except Exception as exc:
+                if not keep_going:
+                    raise
+                traceback.print_exc()
+                outputs.append(None)
+                errors.append(f"{type(exc).__name__}: {exc}")
+        return {"outputs": outputs, "errors": errors}
+
     def design_voice(self, request: dict) -> dict:
+        # A batch (``items``) designs a whole cast on the resident model; one bad brief never loses the rest.
+        if "items" in request:
+            return self.each_item(request["items"], self.design_one_voice, keep_going=True)
+        return {"outputs": [self.design_one_voice(request)]}
+
+    def design_one_voice(self, item: dict) -> str:
         import numpy as np
         import soundfile as sf
 
         model = self.load_voice_design()
         with self.torch().inference_mode():
             wavs, rate = model.generate_voice_design(
-                text=request["text"], language=request["language"], instruct=request["description"],
+                text=item["text"], language=item["language"], instruct=item["description"],
                 max_new_tokens=4096,
             )
         samples = np.asarray(wavs[0])
         if not samples.size or not np.isfinite(samples).all():
             raise RuntimeError("Qwen VoiceDesign returned empty or invalid audio.")
-        sf.write(request["output"], samples, rate, subtype="PCM_16")
-        return {"outputs": [request["output"]]}
+        sf.write(item["output"], samples, rate, subtype="PCM_16")
+        return item["output"]
 
     def load_stable_audio(self):
         if self.stable_audio is None:
@@ -215,40 +240,42 @@ class Worker:
 
         torch = self.torch()
         model, sample_rate, sample_size = self.load_stable_audio()
-        outputs = []
+
+        def one(item):
+            prompt = str(item["prompt"]).strip()
+            duration = max(1, min(int(item.get("duration", 5)), MAX_SOUND_SECONDS))
+            conditioning = [{"prompt": prompt, "seconds_start": 0, "seconds_total": duration}]
+            # Unknown keywords pass through **sampler_kwargs down to the transformer blocks,
+            # so only the function's own parameters and the sampler's go here.
+            output = generate_diffusion_cond_inpaint(
+                model,
+                steps=int(item.get("steps", 8)),
+                cfg_scale=float(item.get("cfg_scale", 1.0)),
+                conditioning=conditioning,
+                sample_size=sample_size,
+                sigma_max=1.0,
+                sampler_type="pingpong",
+                device="cuda:0",
+                seed=int(item.get("seed", -1)),
+                apg_scale=1.0,
+            )
+            # Generation runs about six seconds past seconds_total; keep only the requested length.
+            output = output[..., : duration * sample_rate].squeeze(0).to(torch.float32)
+            peak = torch.max(torch.abs(output))
+            if peak > 0:
+                output = output.div(peak).clamp(-1.0, 1.0)
+            audio = output.cpu().numpy()
+            # Channels-first (C, N) -> (N, C): Drama 3 mixes in stereo, so the model's
+            # stereo image is kept; a mono result stays mono.
+            audio = np.asarray(audio.T if audio.ndim == 2 else audio.reshape(-1), dtype=np.float32)
+            if not audio.size or not np.isfinite(audio).all():
+                raise RuntimeError(f"Stable Audio 3 Medium returned empty or invalid audio for '{prompt}'.")
+            sf.write(item["output"], audio, sample_rate, subtype="PCM_16")
+            return item["output"]
+
+        # ``keep_going`` (the batch API) keeps a failed clip with its item; otherwise one failure fails the run.
         with torch.inference_mode():
-            for item in request["items"]:
-                prompt = str(item["prompt"]).strip()
-                duration = max(1, min(int(item.get("duration", 5)), MAX_SOUND_SECONDS))
-                conditioning = [{"prompt": prompt, "seconds_start": 0, "seconds_total": duration}]
-                # Unknown keywords pass through **sampler_kwargs down to the transformer blocks,
-                # so only the function's own parameters and the sampler's go here.
-                output = generate_diffusion_cond_inpaint(
-                    model,
-                    steps=int(item.get("steps", 8)),
-                    cfg_scale=float(item.get("cfg_scale", 1.0)),
-                    conditioning=conditioning,
-                    sample_size=sample_size,
-                    sigma_max=1.0,
-                    sampler_type="pingpong",
-                    device="cuda:0",
-                    seed=int(item.get("seed", -1)),
-                    apg_scale=1.0,
-                )
-                # Generation runs about six seconds past seconds_total; keep only the requested length.
-                output = output[..., : duration * sample_rate].squeeze(0).to(torch.float32)
-                peak = torch.max(torch.abs(output))
-                if peak > 0:
-                    output = output.div(peak).clamp(-1.0, 1.0)
-                audio = output.cpu().numpy()
-                # Channels-first (C, N) -> (N, C): Drama 3 mixes in stereo, so the model's
-                # stereo image is kept; a mono result stays mono.
-                audio = np.asarray(audio.T if audio.ndim == 2 else audio.reshape(-1), dtype=np.float32)
-                if not audio.size or not np.isfinite(audio).all():
-                    raise RuntimeError(f"Stable Audio 3 Medium returned empty or invalid audio for '{prompt}'.")
-                sf.write(item["output"], audio, sample_rate, subtype="PCM_16")
-                outputs.append(item["output"])
-        return {"outputs": outputs}
+            return self.each_item(request["items"], one, keep_going=bool(request.get("keep_going")))
 
 
 def serve(models_dir: str, requests=None, replies=None) -> None:
