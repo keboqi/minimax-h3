@@ -62,6 +62,26 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(missing_source_phrases(self.SOURCE, script), ["陈念咬紧牙", "不属于她的羞耻在她脸上炸开"])
         self.assertIn("2 source phrase(s)", coverage_note(self.SOURCE, script))
 
+    def test_one_corrected_slip_per_phrase_counts_as_spoken(self):
+        self.assertEqual(missing_source_phrases(
+            "We walked to teh river at dawn, and I said see you their.",
+            "<|speaker:0|> We walked to the river [softly] at dawn, and I said see you there.",
+            source_mode="preserve"), [])
+        self.assertEqual(missing_source_phrases(
+            "陈念以经走了，她说明天在见。",
+            "<|speaker:0|> 陈念已经走了，[softly] 她说明天再见。",
+            source_mode="preserve"), [])
+        self.assertEqual(missing_source_phrases(  # a removed accidental repeat
+            "She opened the the door slowly.",
+            "<|speaker:0|> She opened the door slowly.",
+            source_mode="preserve"), [])
+
+    def test_a_phrase_with_two_changed_words_is_reported(self):
+        self.assertEqual(missing_source_phrases(
+            "She opened the heavy door slowly",
+            "<|speaker:0|> She closed the wooden door slowly.",
+            source_mode="preserve"), ["She opened the heavy door slowly"])
+
     def test_a_brief_is_not_checked(self):
         self.assertIsNone(missing_source_phrases(
             "two friends arguing about pizza toppings for thirty seconds",

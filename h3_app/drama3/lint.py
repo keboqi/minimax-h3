@@ -264,12 +264,34 @@ def _bigrams(units: list[str]) -> set[tuple[str, str]]:
     return set(zip(units, units[1:]))
 
 
+def _skip_bigrams(units: list[str]) -> set[tuple[str, str]]:
+    return set(zip(units, units[2:]))
+
+
+def _fixed_slip_bigrams(units: list[str], spoken_bigrams: set, spoken_skips: set) -> int:
+    """Missing bigrams one corrected unit explains: the writer fixes obvious typos.
+
+    A replaced unit drops the two bigrams around it while its neighbours stay two
+    apart in the script; a removed duplicate leaves them adjacent. A slip at either
+    end of the phrase drops one bigram and leaves no such trace.
+    """
+    pairs = list(zip(units, units[1:]))
+    hits = [pair in spoken_bigrams for pair in pairs]
+    best = int(not hits[0]) or int(not hits[-1])
+    for k in range(1, len(units) - 1):
+        around = (units[k - 1], units[k + 1])
+        if not hits[k - 1] and not hits[k] and (around in spoken_skips or around in spoken_bigrams):
+            return 2
+    return best
+
+
 def missing_source_phrases(source: str, script: str, *, min_units: int = 4,
                            source_mode: str = "") -> list[str] | None:
     """Source phrases the script does not speak, or ``None`` when the source is a brief.
 
     A phrase counts as spoken when most of its unit bigrams appear in the script,
-    so punctuation changes, split quotes and normalized spellings still match.
+    so punctuation changes, split quotes and normalized spellings still match, and
+    a phrase whose only change is one corrected word or character also counts.
     ``source_mode`` is the writer's own reading of the source: "preserve" checks it
     however much is missing, "brief" skips the check, and otherwise a source whose
     phrases are mostly missing is taken for a brief.
@@ -277,7 +299,9 @@ def missing_source_phrases(source: str, script: str, *, min_units: int = 4,
     if source_mode == "brief":
         return None
     spoken = _MARKUP_RE.sub(" ", str(script or ""))
-    spoken_bigrams = _bigrams(_units(spoken)) | _bigrams(_units(_CLAUSE_SPLIT_RE.sub("", spoken)))
+    spoken_units = (_units(spoken), _units(_CLAUSE_SPLIT_RE.sub("", spoken)))
+    spoken_bigrams = set().union(*map(_bigrams, spoken_units))
+    spoken_skips = set().union(*map(_skip_bigrams, spoken_units))
     phrases = [phrase.strip() for phrase in _PHRASE_SPLIT_RE.split(_MARKUP_RE.sub(" ", str(source or "")))]
     checked, missing = 0, []
     for phrase in phrases:
@@ -286,7 +310,9 @@ def missing_source_phrases(source: str, script: str, *, min_units: int = 4,
             continue
         checked += 1
         grams = _bigrams(units)
-        if sum(gram in spoken_bigrams for gram in grams) < 0.75 * len(grams):
+        missed = sum(gram not in spoken_bigrams for gram in grams)
+        # Spoken when mostly matched, or when one corrected slip explains every miss.
+        if missed > 0.25 * len(grams) and missed > _fixed_slip_bigrams(units, spoken_bigrams, spoken_skips):
             missing.append(phrase)
     if not checked or (source_mode != "preserve" and len(missing) > checked / 2):
         return None  # a brief or a translation request, not lines to preserve
