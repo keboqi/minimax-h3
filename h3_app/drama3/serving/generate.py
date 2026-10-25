@@ -651,7 +651,10 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
             continue
         saved = take_store.load_take(store, keys[chunk.index])
         if saved is not None:
-            takes[chunk.index] = Take(chunk, *saved, attempts=0, check=None)
+            # Saved takes keep only their audio; checking it again keeps a failed take failed.
+            check = audio.check_take(*saved, expected_seconds(chunk.text),
+                                     max_seconds=budget(chunk) / FRAMES_PER_SECOND)
+            takes[chunk.index] = Take(chunk, *saved, attempts=0, check=check)
     reused = len(takes)
     pending_chunks = [chunk for chunk in chunks if chunk.index not in takes]
     if getattr(request, "remix_only", False) and pending_chunks:
@@ -727,9 +730,9 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                         "text": t.chunk.text, "take": keys[t.chunk.index], "reused": t.attempts == 0,
                         "attempts": t.attempts,
                         "speaker_effects": list(t.chunk.speaker_effects),
-                        "check": (t.check.reason if t.check is not None
-                                  else "reused" if t.attempts == 0 else "skipped"),
-                        # False only for a take kept after every attempt failed its check.
+                        "check": t.check.reason if t.check is not None else "skipped",
+                        # False only for a take kept after every attempt failed its check
+                        # (a saved take is checked again when reused).
                         "ok": t.check is None or t.check.ok,
                         "warnings": list(t.check.warnings) if t.check is not None else [],
                         "seconds": round(len(t.samples) / t.rate, 2),
@@ -745,7 +748,8 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     take_store.prune(store)
     progress(1, desc="Complete")
     note = (f"\n{len(failed)} chunk(s) kept their best take after every attempt failed a check: "
-            + "; ".join(f"chunk {t.chunk.index + 1} ({t.chunk.speaker}, {t.attempts} attempt(s)) "
+            + "; ".join(f"chunk {t.chunk.index + 1} ({t.chunk.speaker}, "
+                        f"{f'{t.attempts} attempt(s)' if t.attempts else 'saved take'}) "
                         f"{t.check.reason}" for t in failed)) if failed else ""
     # Uncertain advisories stay in the result's details unless retries were asked for.
     advised = [take for take in ordered if request.retries and take.check is not None and take.check.warnings]

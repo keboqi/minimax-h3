@@ -1118,6 +1118,21 @@ class TakeReuseTests(unittest.TestCase):
             self.assertEqual(self.inputs(fake), ["Listen."])
             self.assertEqual(self.keys(snapshot)[1:], keys)
 
+    def test_a_reused_take_keeps_its_failed_check(self):
+        def silent_reply(payload):
+            if payload["input"] == "Ready to go?":
+                return float_wav(tone(0.0, silent_tail=expected_seconds(payload["input"])))
+            return self.speech(payload)
+
+        self.run_route(self.request(self.SCRIPT), silent_reply)
+        fake, updates, snapshot = self.run_route(self.request(self.SCRIPT), self.speech)
+        fake.speech.assert_not_called()
+        chunks = snapshot.call_args.args[1]["settings"]["chunks"]
+        self.assertEqual([chunk["reused"] for chunk in chunks], [True, True, True])
+        self.assertEqual([chunk["ok"] for chunk in chunks], [True, True, False])
+        self.assertEqual(chunks[2]["check"], "no speech")
+        self.assertIn("chunk 3 (Alice, saved take) no speech", updates[-1].status)
+
     def test_unreadable_takes_are_generated_again(self):
         _fake, _updates, first = self.run_route(self.request(self.SCRIPT), self.speech)
         broken = Path(self.temp.name) / "workspace" / "drama3_takes" / f"{self.keys(first)[0]}.wav"

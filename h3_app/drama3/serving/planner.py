@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import re
 from typing import Iterable
 
+from h3_app.drama3.phonemes import NOTE_RE
 from h3_app.workflows.drama3 import SPEAKER_TAG
 
 from .speaker_effects import extract_speaker_effects
@@ -123,9 +124,13 @@ def insert_cue(text: str, cue: str) -> str | None:
     cut = opening_cut(text)
     if cut is None:
         return None
-    # A word keeps its pronunciation note: 银行{yin2 hang2} is never split by a cue.
-    while cut < len(text) and text[cut] == "{" and "}" in text[cut:]:
-        cut = text.index("}", cut) + 1
+    # A word keeps its pronunciation note: neither 银行{yin2 hang2} nor 尉迟恭{yu4 chi2 gong1}
+    # is ever split by a cue, which moves past the note instead.
+    for note in NOTE_RE.finditer(text):
+        if note.start() - len(note.group(1).split()) < cut < note.end():
+            cut = note.end()
+    if not _has_words(text[cut:]):
+        return None
     left, right = text[:cut].rstrip(), text[cut:].lstrip()
     # CJK punctuation needs no space before the cue, as in "当星辰排列成十字，[ominous] 诸神".
     separator = "" if CJK_JOIN.search(left) else " "

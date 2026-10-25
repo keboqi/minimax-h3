@@ -58,6 +58,12 @@ class PhonemeNoteTests(unittest.TestCase):
         self.assertEqual(expected_seconds("尉迟{yu4 chi2}恭来了"), expected_seconds("尉迟恭来了"))
         # A cue after the opening words never separates a word from its note.
         self.assertEqual(insert_cue("银行{yin2 hang2}关门了", "[sad]"), "银行{yin2 hang2} [sad] 关门了")
+        # The opening two characters may end inside a longer noted word, or start one.
+        self.assertEqual(insert_cue("尉迟恭{yu4 chi2 gong1}来了", "[sad]"), "尉迟恭{yu4 chi2 gong1} [sad] 来了")
+        self.assertEqual(insert_cue("我银行{yin2 hang2}关门了", "[sad]"), "我银行{yin2 hang2} [sad] 关门了")
+        self.assertEqual(insert_cue("我去银行{yin2 hang2}了", "[sad]"), "我去 [sad] 银行{yin2 hang2}了")
+        # Nothing spoken after the noted word leaves no place for the cue.
+        self.assertIsNone(insert_cue("尉迟恭{yu4 chi2 gong1}", "[sad]"))
 
     def test_coverage_subtitles_and_direction_keep_the_characters(self):
         from h3_app.drama3.lint import merge_direction, missing_source_phrases
