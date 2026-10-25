@@ -59,8 +59,13 @@ class StepStrip:
 
     def button(self, label: str, index: int, *, variant: str = "secondary",
                press: str = "", classes: tuple[str, ...] = ()) -> gr.Button:
-        """A button that opens step ``index`` and, with ``press``, clicks that element."""
-        then = f"document.getElementById({press!r})?.click(); " if press else ""
+        """A button that opens step ``index`` and, with ``press``, clicks that element.
+
+        The press waits two frames: the first time a step opens, its buttons are wired
+        only after the tab has rendered, and an earlier click is lost.
+        """
+        then = (f"requestAnimationFrame(() => requestAnimationFrame(() => "
+                f"document.getElementById({press!r})?.click())); ") if press else ""
         button = gr.Button(label, variant=variant, elem_classes=["h3-song-nav", *classes])
         button.click(None, js=self.go(index, then), queue=False, api_name=False)
         return button

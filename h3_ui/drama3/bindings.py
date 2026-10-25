@@ -617,37 +617,39 @@ def _bind_auto(view, actions, generation_inputs):
     )
     checked = rewritten.success(drama3_auto_rewritten, inputs=view.enhance_status, outputs=view.auto_status,
                                 **QUIET)
-    steps = [rewritten, checked]
+    # Each step with where its status shows: Auto runs on Speak, but the writer, voice and
+    # sound statuses stay on their own steps, so a failure names the one to read.
+    writer, cast = "Writer status on the Script step", "The status on the Cast & sounds step"
+    steps = [(rewritten, writer), (checked, writer)]
     if view.sounds and actions.sync_drama3_script_sounds is not None:
         checked = _sync_script_sounds(checked.success, view, actions)
-        steps.append(checked)
+        steps.append((checked, cast))
     voiced = _bind_voice_batch(checked.success, view, actions)
-    steps.append(voiced)
+    steps.append((voiced, cast))
     store_events = []
     if view.auto_save_speakers is not None and actions.save_all_drama3_speakers is not None:
         voiced = _bind_auto_save(voiced, view, actions)
-        steps.append(voiced)
+        steps.append((voiced, cast))
         store_events.append(voiced)
     if view.sounds and actions.generate_drama3_sounds is not None:
         counted = voiced.success(drama3_auto_sound_slots, inputs=[view.script_mode, view.shown_sound_slots],
                                  outputs=[view.auto_sound_slots, view.auto_status], **QUIET)
         sounded = _bind_sound_batch(counted.success, view, actions, view.auto_sound_slots)
         ready = sounded.success(lambda: "Auto: generating speech\u2026", outputs=view.auto_status, **QUIET)
-        steps += [counted, sounded, ready]
+        steps += [(counted, cast), (sounded, cast), (ready, cast)]
     else:
         ready = voiced.success(lambda: "Auto: voices done. Generating speech\u2026",
                                outputs=view.auto_status, **QUIET)
-        steps.append(ready)
+        steps.append((ready, cast))
     spoken = bind_gpu_action(
         ready.success, owned_view_generation(actions.generate_drama3, "drama3", generation_inputs),
         inputs=generation_inputs, outputs=[view.output, view.status], show_progress="minimal",
         api_name=False,
     )
-    steps.append(spoken)
+    steps.append((spoken, "Generation progress"))
     spoken.success(lambda: ("Auto: done.", *idle), outputs=controls, **QUIET)
-    for step in steps:
-        step.failure(lambda: ("Auto stopped. See the step's status for the reason.", *idle),
-                     outputs=controls, **QUIET)
+    for step, where in steps:
+        step.failure(lambda where=where: (f"Auto stopped. {where} says why.", *idle), outputs=controls, **QUIET)
 
     def stop_auto(request: gr.Request):
         for family in ("drama3_preload", "drama3_voice", "drama3_sound", "drama3"):
@@ -656,7 +658,7 @@ def _bind_auto(view, actions, generation_inputs):
 
     stopped = view.stop_auto.click(stop_auto, outputs=controls, queue=False, api_name=False)
     # Gradio can cancel queued work only; status and slot updates run immediately.
-    queued = [step for step in steps if step.get("queue") is not False]
+    queued = [step for step, _where in steps if step.get("queue") is not False]
     stopped.then(fn=None, cancels=queued + ([preloaded] if preloaded is not None else []),
                  queue=False, api_name=False)
     return store_events

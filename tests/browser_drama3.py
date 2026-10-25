@@ -28,6 +28,7 @@ BUDGETS = {
     "generate all voices": 2,  # admission, then the queued job
     "remove a speaker": 0,
     "add a speaker": 0,
+    "open a step": 0,
     "speech preset": 0,
 }
 
@@ -95,13 +96,14 @@ def run():
                     counts[label] = len(posts)
 
                 panel = form.locator("button", has_text="Speaker voices").first
-                form.get_by_text("Rewrite as a Drama 3 script", exact=True).click()
                 form.get_by_text("Use another chat model", exact=True).click()
                 form.get_by_label("Pasted writer reply").fill(writer_reply())
                 measure("apply 16-speaker reply",
                         lambda: form.get_by_role("button", name="Apply pasted reply").click())
+                # Moving between steps happens in the browser.
+                form.get_by_role("tab", name="Cast & sounds").click()
                 expect(panel).to_contain_text("16 speakers · 0 with a voice")
-                expect(panel).to_have_class(re.compile(r"\bopen\b"))  # the Cast column starts open
+                expect(panel).to_have_class(re.compile(r"\bopen\b"))  # Speaker voices starts open
                 expect(form.locator("button", has_text="Speaker 15 · Character 15")).to_have_count(1)
                 # Voice slots start collapsed.
                 form.locator("button", has_text="Speaker 0 · Character 0").click()
@@ -122,6 +124,7 @@ def run():
                 # The removed slot came back cleared.
                 expect(panel).to_contain_text("16 speakers · 15 with a voice")
                 expect(form.locator("button", has_text="Speaker 15")).not_to_contain_text("Character")
+                measure("open a step", lambda: form.get_by_role("tab", name="Speak").click())
                 measure("speech preset", lambda: form.get_by_label("Expressive", exact=True).check())
                 assert not errors, errors
                 browser.close()

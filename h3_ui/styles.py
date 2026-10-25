@@ -503,17 +503,9 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-dub-line-actions { flex-wrap: wrap; gap: 6px; }
 .h3-workspace .h3-dub-line-actions > button { flex: 1 1 120px !important; min-width: 0 !important; border-radius: 8px; }
 .h3-workspace .h3-dub-library > button { align-self: flex-end; min-height: 40px; }
-/* Drama 3: Script over Cast on the left beside a sticky Speak stage,
-   a Lines review below, and visible outlines on the small secondary buttons. */
+/* Soundstage: Song's four-step strip (Script, Cast & sounds, Speak, Review lines) with sticky action
+   cards, and visible outlines on the small secondary buttons. */
 .h3-workspace .h3-drama3 .styler { gap: 8px; background: transparent; }
-.h3-workspace .h3-drama3-intro { padding: 2px 4px 6px; }
-.h3-workspace .h3-drama3-intro h2 { margin: 2px 0 4px; font-size: 22px; letter-spacing: -.03em; }
-.h3-workspace .h3-drama3-intro p:not(.h3-eyebrow) { margin: 0; color: var(--h3-muted); font-size: 13px; }
-.h3-workspace .h3-drama3 .h3-composer .block:has(> .html-container .h3-panel-heading) { margin-top: 10px; }
-.h3-workspace .h3-drama3 .h3-composer .block:has(> .html-container .h3-panel-heading) ~ .block:has(> .html-container .h3-panel-heading) {
-  margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--h3-border); border-radius: 0;
-}
-.h3-workspace .h3-drama3 .h3-panel-heading code { font-size: 11px; padding: 1px 4px; border-radius: 4px; background: var(--h3-muted-surface); }
 .h3-workspace .h3-drama3-script textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 14px; line-height: 1.65; }
 /* Syntax colors after VS Code's Light+ and Dark+ themes; the mirror sits under the textarea. */
 .h3-workspace .h3-drama3-script {
@@ -588,10 +580,6 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-drama3-auto .h3-generation-buttons > button { flex: 1 1 200px; min-height: 40px; white-space: normal; }
 .h3-workspace .h3-drama3-auto-heading strong { color: var(--h3-accent); font-size: 14px; }
 .h3-workspace .h3-drama3-auto-heading p { margin: 2px 0 0; color: var(--h3-muted); font-size: 12px; }
-.h3-workspace .h3-drama3-auto-bar { flex-wrap: wrap; gap: 8px 12px; align-items: center; }
-.h3-workspace .h3-drama3-auto-bar > :first-child { flex: 1 1 220px; min-width: 0; }
-.h3-workspace .h3-drama3-auto-bar > .h3-generation-buttons { flex: 2 1 320px; gap: 8px; }
-.h3-workspace .h3-drama3-left { gap: 16px; }
 .h3-workspace .h3-drama3-subtitles ol { position: relative; max-height: 220px; overflow-y: auto; margin: 0; padding: 6px; list-style: none; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
 .h3-workspace .h3-drama3-subtitles li { display: flex; gap: 10px; margin: 0; padding: 6px 10px; border-radius: 8px; cursor: pointer; color: var(--h3-muted); font-size: 14px; line-height: 1.5; transition: background 160ms ease, color 160ms ease; }
 .h3-workspace .h3-drama3-subtitles li:hover { background: var(--h3-surface); }
@@ -599,8 +587,7 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-drama3-subtitles li.active { color: var(--h3-text); background: var(--h3-surface); box-shadow: inset 3px 0 var(--h3-accent); }
 .h3-workspace .h3-subtitle-speaker { flex: 0 0 auto; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--h3-accent); font-size: 12px; font-weight: 650; padding-top: 2px; }
 .h3-workspace .h3-subtitle-text { min-width: 0; }
-.h3-workspace .h3-drama3-lines { gap: 10px; margin-top: 16px; }
-.h3-workspace .h3-drama3-line-panel { gap: 10px; padding: 12px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
+.h3-workspace .h3-drama3-lines { gap: 10px; }
 .h3-workspace .h3-drama3-lines .h3-generation-buttons > button { flex: 1 1 140px; min-height: 40px; }
 /* Clip, unlike hidden, does not create the scroll container that would pin the stage in place.
    Top level, because Gradio scopes rules inside @media under .gradio-container, which then never match it. */

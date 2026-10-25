@@ -758,6 +758,24 @@ class Drama3AutoTests(unittest.TestCase):
         self.assertTrue(label_writers)
         self.assertFalse(any(label_writers))
 
+    def test_soundstage_is_four_steps_and_auto_on_script_presses_auto_on_speak(self):
+        import gradio as gr
+        from h3_ui.application import _drama3_actions
+        from h3_ui.drama3.view import AUTO_ID, build_drama3_view
+        from h3_ui.drama3.bindings import bind_drama3
+
+        with gr.Blocks() as demo:
+            view = build_drama3_view(gr.Group())
+            bind_drama3(view, _drama3_actions())
+        self.assertEqual([tab.label for tab in view.steps.tabs.children],
+                         ["Script", "Cast & sounds", "Speak", "Review lines"])
+        self.assertEqual(view.auto.elem_id, AUTO_ID)
+        # Step buttons only run browser code, so moving between steps sends no request.
+        auto_shortcuts = [fn for fn in demo.fns.values() if fn.js and AUTO_ID in fn.js]
+        self.assertEqual(len(auto_shortcuts), 1)
+        self.assertIsNone(auto_shortcuts[0].fn)
+        self.assertFalse(view.take_actions.visible)
+
     def test_failed_rewrite_stops_auto_with_the_writer_reason(self):
         import gradio as gr
         from h3_ui.drama3.bindings import drama3_auto_rewritten

@@ -7,25 +7,33 @@ Open **Create → Soundstage** to begin.
 
 ## Compose and generate
 
-1. Enter a draft or a script in **Speech text**. Start each line with a speaker's
-   name from **Cast**, such as `Mia: Hello.` (a full-width `：` works too), and add cues
-   such as `[laughs]` for delivery. `Speaker 2:` means Cast slot 2 whatever its name.
-   Text before the first named line, or prose that names nobody, is read by the
-   first speaker with a voice. In a script that names its speakers, a line starting
-   with a name not in Cast is an error, so a typo is not read aloud. Older scripts
-   with `<|speaker:N|>` tags still work.
-2. Choose **Basic** for dialogue or **Advanced** (the default) for sound effects,
-   music and vocal effects. Basic keeps those tags in the script but ignores them.
-3. Use **Auto: rewrite, voice, sound and speak** for the full workflow, or open
-   **Rewrite as a Drama 3 script** and review the result before proceeding.
-4. In the **Cast** column, use **Speaker voices** to choose a saved group, manage presets,
-   upload clips, or generate a cast. Every speaker in the script needs a voice. The panel title shows the selected group and how many
-   speakers it holds. In Advanced mode, review **Sound effects and music** too.
-5. In the **Speak** column, choose a **Speech preset** (**Expressive** by default).
-   **Generate speech** renders the current script and references without rewriting them.
+Soundstage works in four steps, laid out like Song and Dub & Translate: **Script**,
+**Cast & sounds**, **Speak** and **Review lines**. Each step pairs a working card
+with an action card that holds its next move; the action card stays in view while
+you scroll. Moving between steps happens in the browser and sends no request.
 
-Script and Cast stack on the left with Speak beside them; Speak stays in view while
-you scroll. **Auto** sits under the speech text.
+1. **Script.** Enter a draft or a script in **Speech text**. Start each line with a
+   speaker's name from the cast, such as `Mia: Hello.` (a full-width `：` works too),
+   and add cues such as `[laughs]` for delivery. `Speaker 2:` means cast slot 2
+   whatever its name. Text before the first named line, or prose that names nobody,
+   is read by the first speaker with a voice. In a script that names its speakers, a
+   line starting with a name not in the cast is an error, so a typo is not read aloud.
+   Older scripts with `<|speaker:N|>` tags still work. Choose **Basic** for dialogue
+   or **Advanced** (the default) for sound effects, music and vocal effects; Basic
+   keeps those tags in the script but ignores them. **Rewrite script** turns any text
+   into a Drama 3 script and fills the cast; review the result before moving on.
+2. **Cast & sounds.** Use **Speaker voices** to choose a saved group, manage presets,
+   upload clips, or generate a cast. Every speaker in the script needs a voice. The
+   panel title shows the selected group and how many speakers it holds. In Advanced
+   mode, review **Sound effects and music** too. **Generate all speaker voices** makes
+   every missing voice in one job.
+3. **Speak.** Choose a **Speech preset** (**Expressive** by default). **Generate
+   speech** renders the current script and references without rewriting them.
+4. **Review lines.** Hear, regenerate or remix single lines (see **Takes** below).
+
+**Auto: rewrite, voice, sound and speak** does steps 1–3 in one go. It lives on
+Speak, and the Script step has a shortcut that opens Speak and starts it. When Auto
+stops, its status names the step whose status says why.
 
 Under the player, the result's lines scroll as subtitles: the line being spoken is
 highlighted as it plays and follows the player when you seek, and clicking a line
@@ -43,8 +51,8 @@ Drama 3 receives only each line's text with its speaker's clip and transcript, n
 a speaker number or name. Repeated identical lines have separate
 takes, distinguished by their occurrence order. **Generate speech** reuses saved takes, so
 after editing a script only changed lines are generated; when nothing changed, the
-mix is rebuilt without starting SGLang-Omni. After a result, **Lines** appears under
-the studio: a table of every line with its length and whether it was reused. Click
+mix is rebuilt without starting SGLang-Omni. After a result, the **Review lines** step
+shows a table of every line with its length and whether it was reused. Click
 a row (or choose a line) to hear that line's take, before staging and effects. Click
 **Regenerate line** for a new take of just that line, or **Remix** to rebuild the
 mix from saved takes after changing sounds, staging or vocal effects (which are
@@ -67,8 +75,8 @@ step that needs it, and the line under the Auto status says which.
 
 ## Script writer and cast
 
-To use a chat model outside the app, open **Use another chat model** under
-**Rewrite as a Drama 3 script** and click **Copy full writer prompt**; a running
+To use a chat model outside the app, open **Use another chat model** on the
+Script step and click **Copy full writer prompt**; a running
 rewrite keeps going. The prompt contains the system prompt, the current speaker slots, and the speech text.
 Paste the model's JSON reply (code fences and surrounding chat text are fine)
 and click **Apply pasted reply**; it is validated like the built-in writer
