@@ -17,10 +17,12 @@ Modal launches use the same UI.
 The studio layout separates composition, output settings, and preview into
 clearly marked sections, with a shared teal palette in light and dark mode.
 The H3 composer keeps inputs and the prompt beside results and generation
-actions. Recipes and output essentials stay visible; advanced controls are
-collapsed below. Generate actions sit directly under the result, and
+actions. Recipes and output essentials stay visible; every other setting sits
+below in **Fine-tune**, one named tab per group (Model & sampling; Size, seed &
+canvas; Prompt writer; Speed & attention; Memory & decoding; Upscale & finish;
+Input upscaling). Generate actions sit directly under the result, and
 Ctrl/⌘+Enter generates with the visible engine.
-Mobile section links jump to compose, generate, and preview.
+Mobile section links jump to compose, generate, preview, and settings.
 Create supports H3,
 LTX 2.5, Qwen Image 2.1, FLUX 3, MOSS-Image, Fibo 2.0, MiniMax Music 3, YuE2,
 [Soundstage](docs/features/drama3.md), the audio production workspace powered by Drama 3, and

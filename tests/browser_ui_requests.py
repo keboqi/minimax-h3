@@ -143,8 +143,7 @@ def run(report=False):
                     page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for()
 
                 counts["load"] = recorder.measure(page, load, quiet=3)
-                page.get_by_text("Advanced settings", exact=True).click()
-                page.get_by_text("Exact dimensions, seed & image frames", exact=True).click()
+                page.get_by_role("tab", name="Size, seed & canvas", exact=True).click()
                 recorder.settle(page)
 
                 def size_preset():
@@ -161,7 +160,7 @@ def run(report=False):
                     expect(card).to_contain_text("1280")
 
                 counts["width blur"] = recorder.measure(page, width_blur)
-                page.get_by_text("Sampling steps (advanced)", exact=True).click()
+                page.get_by_role("tab", name="Model & sampling", exact=True).click()
                 recorder.settle(page)
                 steps = (
                     page.get_by_text("Steps", exact=True)

@@ -92,13 +92,12 @@ def run():
                     card.get_by_text("Generation canvas", exact=True)
                 ).to_be_visible()
                 card.get_by_text("Execution details", exact=True).click()
-                page.get_by_text("Advanced settings", exact=True).click()
                 preset = page.locator("#h3-output-settings")
                 preset.get_by_label("Quality", exact=True).check()
                 expect(card).to_contain_text("Turbo · 8 steps")
                 expect(card).not_to_contain_text("Modified")
                 expect(card).to_contain_text("Base model: Singularity")
-                page.get_by_text("Sampling steps (advanced)", exact=True).click()
+                page.get_by_role("tab", name="Model & sampling", exact=True).click()
                 steps = (
                     page.get_by_text("Steps", exact=True)
                     .locator('xpath=ancestor::div[contains(@class,"block")][1]')
@@ -112,13 +111,10 @@ def run():
                 expect(card).to_contain_text("Normal · 20 steps")
                 page.get_by_label("Turbo", exact=True).check()
                 expect(card).to_contain_text("Turbo · 10 steps")
-                page.get_by_text("Changes these settings", exact=True).click()
                 page.get_by_role("button", name="Restore preset settings").click()
-                page.get_by_text("Changes these settings", exact=True).click()
                 expect(card).to_contain_text("Turbo · 8 steps")
                 expect(card).not_to_contain_text("Modified")
                 # Semantic Bridge starts on, is FL2VA-only, and remembers its preference.
-                page.get_by_role("tab", name="Model & memory", exact=True).click()
                 bridge = page.get_by_label("Semantic Bridge (experimental)", exact=True)
                 expect(bridge).to_be_checked()
                 bridge.uncheck()
@@ -145,6 +141,7 @@ def run():
                 expect(bridge).to_be_enabled()
                 expect(bridge).to_be_checked()
                 expect(strength).to_have_value("0.15")
+                page.get_by_role("tab", name="Memory & decoding", exact=True).click()
                 encoder_attention = page.get_by_label(
                     "Qwen small input attention", exact=True
                 )
@@ -155,6 +152,7 @@ def run():
                 encoder_attention.uncheck()
                 expect(card).to_contain_text("Server backend")
                 # Persist a genuine override and verify another session starts clean.
+                page.get_by_role("tab", name="Model & sampling", exact=True).click()
                 steps.fill("11")
                 steps.press("Tab")
                 expect(card).to_contain_text("Turbo · 11 steps")
@@ -168,16 +166,15 @@ def run():
                 expect(card).to_contain_text("Turbo · 11 steps")
                 expect(card).to_contain_text("Quality")
                 expect(card).to_contain_text("Server backend")
-                page.get_by_text("Advanced settings", exact=True).click()
-                page.get_by_role("tab", name="Model & memory", exact=True).click()
+                page.get_by_role("tab", name="Memory & decoding", exact=True).click()
                 expect(
                     page.get_by_label("Qwen small input attention", exact=True)
                 ).not_to_be_checked()
                 expect(card).to_contain_text("Experimental v1 · strength 0.15")
                 # Restoration must retain a non-default mode and its overrides.
+                page.get_by_role("tab", name="Model & sampling", exact=True).click()
                 page.get_by_label("Normal", exact=True).check()
                 expect(card).to_contain_text("Normal · 20 steps")
-                page.get_by_text("Sampling steps (advanced)", exact=True).click()
                 steps.fill("14")
                 steps.press("Tab")
                 expect(card).to_contain_text("Normal · 14 steps")
@@ -186,8 +183,7 @@ def run():
                 page.locator('.h3-setup-card[data-settings-ready="true"]').wait_for()
                 expect(card).to_contain_text("Normal · 14 steps")
                 expect(card).to_contain_text("Quality")
-                page.get_by_text("Advanced settings", exact=True).click()
-                page.get_by_role("tab", name="Model & memory", exact=True).click()
+                page.get_by_role("tab", name="Model & sampling", exact=True).click()
                 page.get_by_label("Turbo", exact=True).check()
                 expect(card).to_contain_text("Turbo · 11 steps")
                 second = browser.new_context()
@@ -199,15 +195,12 @@ def run():
                 expect(second_page.locator(".h3-setup-card")).to_contain_text(
                     "Turbo · 4 steps"
                 )
-                second_page.get_by_text("Advanced settings", exact=True).click()
-                second_page.get_by_role(
-                    "tab", name="Model & memory", exact=True
-                ).click()
                 expect(
                     second_page.get_by_label(
                         "Semantic Bridge (experimental)", exact=True
                     )
                 ).to_be_checked()
+                second_page.get_by_role("tab", name="Memory & decoding", exact=True).click()
                 expect(
                     second_page.get_by_label("Qwen small input attention", exact=True)
                 ).not_to_be_checked()
@@ -222,7 +215,7 @@ def run():
                 ).check()
                 expect(card).to_contain_text("Native 2× refinement")
                 page.get_by_role(
-                    "tab", name="Sampling & performance", exact=True
+                    "tab", name="Speed & attention", exact=True
                 ).click()
                 page.get_by_label("Sol-Attn", exact=True).check()
                 expect(page.get_by_text("Sol-Attn tau", exact=True)).to_be_visible()
@@ -232,7 +225,7 @@ def run():
                 page.get_by_label("SLA", exact=True).check()
                 expect(page.get_by_text("Sol-Attn tau", exact=True)).not_to_be_visible()
                 # Tiled finishing exposes splitting only as an unchecked fallback.
-                page.get_by_role("tab", name="Upscaling & finishing", exact=True).click()
+                page.get_by_role("tab", name="Upscale & finish", exact=True).click()
                 finishing = page.get_by_label("After generation", exact=True)
                 finishing.click()
                 page.get_by_role("option", name="LTX-2.5 Tiled Upscale", exact=True).click()
@@ -245,7 +238,7 @@ def run():
                 finishing.click()
                 page.get_by_role("option", name="None", exact=True).click()
                 expect(split).not_to_be_visible()
-                page.get_by_role("tab", name="Sampling & performance", exact=True).click()
+                page.get_by_role("tab", name="Speed & attention", exact=True).click()
                 # Layout must keep result metadata inside the two-column H3 row.
                 artifact = ROOT / ".cache" / "ui-review"
                 artifact.mkdir(parents=True, exist_ok=True)

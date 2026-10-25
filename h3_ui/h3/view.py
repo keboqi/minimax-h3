@@ -5,6 +5,7 @@ from dataclasses import dataclass, fields
 from typing import Any, Mapping
 import gradio as gr
 from .services import H3ViewServices
+from ..step_cards import StepStrip, card_heading
 from .sections.finishing import build_finishing_section
 from .sections.input_upscale import build_input_upscale_section
 from .sections.model import build_model_section
@@ -399,19 +400,58 @@ def build_h3_view(
     return H3View(**{field.name: controls[field.name] for field in fields(H3View)})
 
 
+# Fine-tune groups every setting beyond Compose's basics by what it changes.
+MODEL_TAB, SIZE_TAB, WRITER_TAB, SPEED_TAB, MEMORY_TAB, FINISH_TAB, INPUTS_TAB = range(7)
+SETTINGS_TABS = (
+    ("Model & sampling", "Which checkpoint runs, Normal or Turbo, and how many steps it samples."),
+    ("Size, seed & canvas", "Exact width and height, the start-frame size cap, a fixed seed and the image canvas."),
+    ("Prompt writer", "The service Generate / enhance prompt uses, with its model and keys."),
+    ("Speed & attention", "Attention backend and sampling acceleration. The defaults suit most jobs."),
+    ("Memory & decoding", "Text encoder, model offloading, input reuse, and the video encoder and decoder."),
+    ("Upscale & finish", "Raise resolution during sampling, or run an upscaling pass after generation."),
+    ("Input upscaling", "Upscale uploaded frames or reference pictures with SeedVR2 before generating."),
+)
+
+
+def _build_settings_tabs(root):
+    """Fine-tune: one tab per settings group, each with an empty column to fill."""
+    with root:
+        card_heading(
+            "Fine-tune",
+            "Everything beyond the basics, grouped by what it changes. A recipe sets most of it; "
+            "your own edits show as Modified under Next run.",
+        )
+        settings = StepStrip(gr.Tabs(
+            selected=MODEL_TAB, elem_id="h3-settings-tabs",
+            elem_classes=["h3-settings-tabs"], overflow_behavior="wrap",
+        ))
+        parents = []
+        with settings.tabs:
+            for index, (label, detail) in enumerate(SETTINGS_TABS):
+                with gr.Tab(label, id=index, elem_classes=["h3-settings-tab"]) as tab:
+                    card_heading(label, detail)
+                    # Audio results hide finishing, so that group is its whole tab.
+                    parents.append(tab if index == FINISH_TAB else gr.Column())
+                    if index == MODEL_TAB:
+                        # Sampling and Semantic Bridge come from other sections, in this order.
+                        parents.extend((gr.Column(), gr.Column()))
+    return settings, parents
+
+
 def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=None):
     if advanced_root is None:
         raise ValueError("Workspace composition requires an advanced settings root.")
-    with advanced_root:
-        with gr.Tabs():
-            with gr.Tab("Model & memory"):
-                model_root = gr.Group()
-            with gr.Tab("Sampling & performance"):
-                performance_section = gr.Group()
-            with gr.Tab("Upscaling & finishing"):
-                finishing_section = gr.Group()
-            with gr.Tab("Input images"):
-                input_root = gr.Group()
+    settings, parents = _build_settings_tabs(advanced_root)
+    (
+        model_root, sampling_root, bridge_root, size_root, writer_root,
+        performance_section, memory_root, finishing_section, input_root,
+    ) = parents
+
+    def link(label, index):
+        return lambda: settings.button(
+            label, index, classes=("h3-settings-link",), reveal=True
+        )
+
     with generation_view:
         with gr.Column(
             scale=6,
@@ -425,7 +465,10 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
             )
             conditioning_root = gr.Group()
             references_section = build_references_section(defaults, services)
-            prompt_section = build_prompt_section(defaults, services)
+            prompt_section = build_prompt_section(
+                defaults, services, writer_parent=writer_root,
+                writer_link=link("Writer service & keys →", WRITER_TAB),
+            )
             with gr.Column(elem_id="h3-output-settings"):
                 gr.HTML(
                     '<div class="h3-panel-heading"><span class="h3-step" aria-hidden="true">02</span>'
@@ -436,22 +479,24 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
                     value="Singularity",
                     label="Recipe",
                     interactive=True,
-                    info="Applies generation defaults. Keeps your prompt, media and output size.",
+                    info="Sets the model, sampling, speed and memory settings in Fine-tune. Keeps your prompt, media and output size.",
                 )
-                with gr.Accordion("Changes these settings", open=False):
-                    gr.Markdown(
-                        "Recipes change sampling, text encoding, memory, attention, refinement and decoding. Singularity also selects its checkpoint; other recipes keep the selected checkpoint. Prompt, media and output intent are preserved. Explicit edits appear in the next-run summary."
-                    )
+                with gr.Row(elem_classes=["h3-settings-links"]):
                     restore_preset = gr.Button("Restore preset settings", size="sm")
+                    link("Model & sampling →", MODEL_TAB)()
                 model_section = build_model_section(
                     defaults,
                     services,
-                    advanced_parent=model_root,
+                    advanced_parent=memory_root,
                     conditioning_parent=conditioning_root,
+                    model_parent=model_root,
+                    bridge_parent=bridge_root,
                 )
                 output_settings_section = gr.Column(elem_classes=["h3-essentials"])
                 output_section = build_output_section(
-                    defaults, services, output_settings_section
+                    defaults, services, output_settings_section,
+                    details_parent=size_root,
+                    details_link=link("Exact size, seed & canvas →", SIZE_TAB),
                 )
         with gr.Column(
             scale=6,
@@ -514,7 +559,7 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
                     defaults, services, action_root=action_root
                 )
     performance_controls = build_performance_section(
-        defaults, services, performance_section
+        defaults, services, performance_section, sampling_parent=sampling_root
     )
     finishing_controls = build_finishing_section(defaults, services, finishing_section)
     with input_root:

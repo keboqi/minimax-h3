@@ -31,7 +31,8 @@ class AppViews:
     engine_tabs: gr.Tabs | None = None
     engine_help: gr.Markdown | None = None
     jobs_count: gr.HTML | None = None
-    generation_settings: gr.Accordion | None = None
+    # Fine-tune: the H3 settings tabs under Compose and Preview.
+    generation_settings: gr.Column | None = None
     flux3: gr.Group | None = None
     drama3: gr.Group | None = None
     moss_image: gr.Group | None = None
@@ -102,13 +103,11 @@ def create_workspace_views(*, summary_root=None) -> AppViews:
             with gr.Tabs(selected="h3", elem_id="h3-engine-tabs") as engine_tabs:
                 with gr.Tab("MiniMax H3", id="h3"):
                     gr.HTML(
-                        '<nav class="h3-mobile-nav" aria-label="Workspace sections"><a href="#h3-composer">Compose</a><a href="#h3-generate-actions">Generate</a><a href="#h3-preview">Preview</a></nav>',
+                        '<nav class="h3-mobile-nav" aria-label="Workspace sections"><a href="#h3-composer">Compose</a><a href="#h3-generate-actions">Generate</a><a href="#h3-preview">Preview</a><a href="#h3-fine-tune">Settings</a></nav>',
                         elem_classes=["h3-mobile-nav-container"],
                     )
                     generation = gr.Row(elem_classes=["h3-generator-shell"])
-                    generation_settings = gr.Accordion(
-                        "Advanced settings", open=False, elem_id="h3-advanced-settings"
-                    )
+                    generation_settings = gr.Column(elem_id="h3-fine-tune")
                 with gr.Tab("LTX 2.5", id="ltx"):
                     ltx25 = gr.Group(elem_classes=["h3-engine-view"])
                 with gr.Tab("Qwen Image 2.1", id="qwen"):

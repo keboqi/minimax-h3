@@ -46,9 +46,6 @@ def build_finishing_section(
     finishing_section: gr.blocks.BlockContext,
 ) -> FinishingSection:
     with finishing_section:
-        gr.Markdown(
-            "Increase resolution during sampling or run an optional finishing pass."
-        )
         gr.Markdown("**Native latent upscale**")
         latent_upscale = gr.Checkbox(
             value=defaults["latent_upscale"],

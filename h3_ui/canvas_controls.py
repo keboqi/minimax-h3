@@ -70,7 +70,7 @@ def bind_canvas_controls(components, resolve_dimensions, controller, presets):
                 "Input-derived image canvas; the first frame determines aligned dimensions.",
             )
         if tier == "custom" or ratio == "Custom":
-            return gr.skip(), gr.skip(), "Use Width and Height in Exact dimensions."
+            return gr.skip(), gr.skip(), "Use Width and Height in Fine-tune → Size, seed & canvas."
         name = choices.get(tier, {}).get(ratio)
         if name is None:
             return (

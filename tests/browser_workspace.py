@@ -144,38 +144,22 @@ def run():
                 )
                 h3.get_by_label("Text to video", exact=True).check()
                 expect(
-                    h3.get_by_text("Model & generation (advanced)", exact=True)
-                ).to_have_count(0)
-                expect(
                     h3.get_by_role(
                         "slider", name="range slider for Seconds", exact=True
                     )
                 ).to_be_visible()
                 expect(h3.get_by_text("Base model", exact=True)).to_have_count(0)
-                page.locator("#h3-advanced-settings").get_by_text(
-                    "Advanced settings", exact=True
-                ).click()
-                expect(
-                    page.locator("#h3-advanced-settings").get_by_text(
-                        "Generation", exact=True
-                    )
-                ).to_be_visible()
-                expect(
-                    page.locator("#h3-advanced-settings").get_by_text(
-                        "Base model", exact=True
-                    )
-                ).to_be_visible()
-                page.locator("#h3-advanced-settings").get_by_role(
-                    "tab", name="Sampling & performance", exact=True
-                ).click()
-                expect(
-                    page.locator("#h3-advanced-settings").get_by_text(
-                        "Attention", exact=True
-                    )
-                ).to_be_visible()
-                page.locator("#h3-advanced-settings").get_by_text(
-                    "Advanced settings", exact=True
-                ).click()
+                # Fine-tune holds every other setting, one named tab per group.
+                fine_tune = page.locator("#h3-fine-tune")
+                expect(fine_tune.get_by_text("Generation", exact=True)).to_be_visible()
+                expect(fine_tune.get_by_text("Base model", exact=True)).to_be_visible()
+                fine_tune.get_by_role("tab", name="Speed & attention", exact=True).click()
+                expect(fine_tune.get_by_text("Attention", exact=True)).to_be_visible()
+                # A Compose link opens its tab and brings it into view.
+                page.evaluate("window.scrollTo(0, 0)")
+                h3.get_by_role("button", name="Exact size, seed & canvas →", exact=True).click()
+                expect(fine_tune.get_by_label("Width", exact=True)).to_be_in_viewport()
+                fine_tune.get_by_role("tab", name="Model & sampling", exact=True).click()
                 expect(
                     page.locator('#h3-engine-tabs > div > [role="tablist"]')
                 ).to_be_hidden()

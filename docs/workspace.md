@@ -30,7 +30,7 @@ through a validated engine value, including engines outside the initial task.
 | Area | Behavior |
 |---|---|
 | Shell | Create, Projects, Media, Jobs, System and API/workflows; task-filtered choices and remembered engines |
-| H3 | Compact composer/results; collapsed Output & recipe and tabbed Advanced settings; mobile Compose/Preview links |
+| H3 | Compose (inputs, prompt, recipe, output essentials) beside Preview & generate; Fine-tune tabs for every other setting; mobile Compose/Generate/Preview/Settings links |
 | Engines | H3, LTX, Qwen, Music and YuE2 share the shell, ownership, GPU queue and guarded prompt review |
 | References | Stable slots/tags, shared sparse-to-dense translation, repair after replacement/removal |
 | Prompt review | Preview, Accept, Keep and Undo; stale suggestions reject changed drafts or conditioning |

@@ -1,5 +1,7 @@
 """Guided-step building blocks shared by Song and Dub & Translate: intro, card headings, step strip.
 
+H3's Fine-tune tabs reuse the card heading and the strip's tab-opening buttons.
+
 The CSS classes keep their original ``h3-song-*`` names, which the stylesheet targets.
 """
 
@@ -41,14 +43,18 @@ class StepStrip:
     def step(self, index: int, label: str) -> gr.Tab:
         return gr.Tab(label, id=index, render_children=True, elem_classes=["h3-song-step"])
 
-    def go(self, index: int, then: str = "") -> str:
-        """Browser code that opens step ``index``, then runs ``then``."""
+    def go(self, index: int, then: str = "", *, reveal: bool = False) -> str:
+        """Browser code that opens step ``index``, then runs ``then``.
+
+        The strip scrolls into view when its top has scrolled away, or always with ``reveal``.
+        """
+        scroll = "true" if reveal else "root.getBoundingClientRect().top < 0"
         return (
             "() => { "
             f"const root = document.getElementById({self.tabs.elem_id!r}); "
             "const tab = root && root.querySelectorAll(':scope > .tab-wrapper [role=\"tab\"]')"
             f"[{int(index)}]; "
-            "if (tab) { tab.click(); if (root.getBoundingClientRect().top < 0) "
+            f"if (tab) {{ tab.click(); if ({scroll}) "
             "root.scrollIntoView({ block: 'start', behavior: 'smooth' }); } "
             f"{then}}}"
         )
@@ -58,7 +64,7 @@ class StepStrip:
         trigger.click(None, js=self.go(index), queue=False, api_name=False)
 
     def button(self, label: str, index: int, *, variant: str = "secondary",
-               press: str = "", classes: tuple[str, ...] = ()) -> gr.Button:
+               press: str = "", classes: tuple[str, ...] = (), reveal: bool = False) -> gr.Button:
         """A button that opens step ``index`` and, with ``press``, clicks that element.
 
         The press waits two frames: the first time a step opens, its buttons are wired
@@ -67,7 +73,7 @@ class StepStrip:
         then = (f"requestAnimationFrame(() => requestAnimationFrame(() => "
                 f"document.getElementById({press!r})?.click())); ") if press else ""
         button = gr.Button(label, variant=variant, elem_classes=["h3-song-nav", *classes])
-        button.click(None, js=self.go(index, then), queue=False, api_name=False)
+        button.click(None, js=self.go(index, then, reveal=reveal), queue=False, api_name=False)
         return button
 
 

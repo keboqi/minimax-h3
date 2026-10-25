@@ -38,6 +38,7 @@ class PerformanceSection:
     sol_step_off: gr.components.Component
     sol_tau: gr.components.Component
     sol_thresh_type: gr.components.Component
+    steps: gr.components.Component
     turbo_variant: gr.components.Component
 
 
@@ -45,11 +46,11 @@ def build_performance_section(
     defaults: Mapping[str, Any],
     services: H3ViewServices,
     performance_section: gr.blocks.BlockContext,
+    *,
+    sampling_parent=None,
 ) -> PerformanceSection:
-    with performance_section:
-        gr.Markdown(
-            "Tune Turbo, attention, and caching. Defaults are recommended for most jobs."
-        )
+    """Turbo, steps and scheduler in ``sampling_parent``; attention and caching in ``performance_section``."""
+    with sampling_parent if sampling_parent is not None else performance_section:
         turbo_variant = gr.Radio(
             list(services.TURBO_SETTINGS),
             value=defaults["turbo_variant"],
@@ -62,12 +63,15 @@ def build_performance_section(
                 "with video/audio shifts 12/2; reference conditioning is experimental."
             ),
         )
-        scheduler = gr.Radio(
-            ["simple", "beta", "normal"],
-            value=defaults["scheduler"],
-            label="Scheduler",
-            info="Controls how sampling steps are distributed across denoising.",
-        )
+        with gr.Row():
+            steps = gr.Slider(4, 30, value=defaults["steps"], step=1, label="Steps")
+            scheduler = gr.Radio(
+                ["simple", "beta", "normal"],
+                value=defaults["scheduler"],
+                label="Scheduler",
+                info="Controls how sampling steps are distributed across denoising.",
+            )
+    with performance_section:
         attention_mode = gr.Radio(
             ["Sage 2", "Kitchen", "SLA", "Veda", "Sol-Attn", "Auto"],
             value=defaults["attention_mode"],
@@ -152,7 +156,8 @@ def build_performance_section(
                 )
             sol_step_off = gr.State(0.0)
             sol_sink_tokens = gr.State(0)
-        with gr.Accordion("Sampling acceleration", open=False):
+        with gr.Column():
+            gr.Markdown("**Sampling acceleration**")
             cache_mode = gr.Radio(
                 ["Spectrum", "FirstBlockCache", "EasyCache", "Off"],
                 value=defaults["cache_mode"],
@@ -278,5 +283,6 @@ def build_performance_section(
         sol_step_off=sol_step_off,
         sol_tau=sol_tau,
         sol_thresh_type=sol_thresh_type,
+        steps=steps,
         turbo_variant=turbo_variant,
     )

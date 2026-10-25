@@ -39,7 +39,14 @@ def build_model_section(
     *,
     advanced_parent=None,
     conditioning_parent=None,
+    model_parent=None,
+    bridge_parent=None,
 ) -> ModelSection:
+    """Conditioning in ``conditioning_parent``; base model and generation in
+    ``model_parent``; Semantic Bridge in ``bridge_parent``; encoders, decoders and
+    memory in ``advanced_parent``. A missing parent falls back to the current one."""
+    model_parent = model_parent if model_parent is not None else advanced_parent
+    bridge_parent = bridge_parent if bridge_parent is not None else model_parent
     with (
         conditioning_parent if conditioning_parent is not None else nullcontext(),
         gr.Row(elem_classes=["h3-mode-row"]),
@@ -56,32 +63,37 @@ def build_model_section(
             info="H3 always samples vision and audio; this selects what is decoded and shown.",
             visible=False,
         )
-    with advanced_parent if advanced_parent is not None else nullcontext(), gr.Row():
+    with model_parent if model_parent is not None else nullcontext():
         model_profile = gr.Radio(
             services.MODEL_PROFILE_CHOICES,
             value=defaults["model_profile"],
             label="Base model",
             info="Speed uses the rebuilt single-pass NVFP4 files. Quality uses the mixed NVFP4/FP8/INT8 ConvRot files. Original uses the official BF16 files. Singularity uses the fine-tuned pruned v1.3 INT8 checkpoint. Speed, Original and Singularity download when first selected.",
         )
-    with (
-        advanced_parent if advanced_parent is not None else nullcontext(),
-        gr.Accordion("Model & generation (advanced)", open=advanced_parent is not None),
-        gr.Row(),
-    ):
         generation_mode = gr.Radio(
             ["Normal", "Turbo"],
             value=defaults["generation_mode"],
             label="Generation",
-            info="Turbo uses the implementation selected in Performance & sampling. LightX2V uses the matching reference adapter; Larry reference mode is experimental.",
+            info="Turbo uses the Turbo implementation below. LightX2V uses the matching reference adapter; Larry reference mode is experimental.",
         )
-    with (
-        advanced_parent if advanced_parent is not None else nullcontext(),
-        gr.Accordion(
-            "Model and memory (advanced)",
-            open=advanced_parent is not None,
-            elem_classes=["h3-advanced-block"],
-        ),
-    ):
+    with bridge_parent if bridge_parent is not None else nullcontext():
+        semantic_bridge = gr.Checkbox(
+            value=defaults["semantic_bridge"],
+            label="Semantic Bridge (experimental)",
+            interactive=defaults["mode"] != "Reference media",
+            info="May improve prompt adherence. Downloads an 11 MB adapter on first use. FL2VA only; disabled for reference media.",
+        )
+        semantic_bridge_alpha = gr.Slider(
+            0.0,
+            1.0,
+            step=0.01,
+            value=defaults["semantic_bridge_alpha"],
+            visible=defaults["semantic_bridge"]
+            and defaults["mode"] != "Reference media",
+            label="Semantic Bridge strength",
+            info="Start at 0.10; try 0.15 for a stronger effect. Higher values can reduce quality. Uses per-token magnitude matching.",
+        )
+    with advanced_parent if advanced_parent is not None else nullcontext():
         with gr.Row():
             text_encoder = gr.Dropdown(
                 choices=list(services.H3_TEXT_ENCODER_CHOICES),
@@ -104,22 +116,6 @@ def build_model_section(
             value=defaults["encoder_small_input"],
             label="Qwen small input attention",
             info="On: upstream PyTorch/basic attention. Off: the server attention backend (Kitchen in this app). Applies to Qwen text and vision encoding. Changing this rebuilds conditioning on the next generation. The diffusion Sage 2 selection does not change the encoder backend.",
-        )
-        semantic_bridge = gr.Checkbox(
-            value=defaults["semantic_bridge"],
-            label="Semantic Bridge (experimental)",
-            interactive=defaults["mode"] != "Reference media",
-            info="May improve prompt adherence. Downloads an 11 MB adapter on first use. FL2VA only; disabled for reference media.",
-        )
-        semantic_bridge_alpha = gr.Slider(
-            0.0,
-            1.0,
-            step=0.01,
-            value=defaults["semantic_bridge_alpha"],
-            visible=defaults["semantic_bridge"]
-            and defaults["mode"] != "Reference media",
-            label="Semantic Bridge strength",
-            info="Start at 0.10; try 0.15 for a stronger effect. Higher values can reduce quality. Uses per-token magnitude matching.",
         )
         video_encoder = gr.Dropdown(
             choices=["Original", "LightVAE Lite"],

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping
+from contextlib import nullcontext
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 import gradio as gr
 from h3_ui.prompt_writer_controls import build_openai_base_url_textbox, build_openai_model_dropdown
 
@@ -40,8 +41,13 @@ class PromptSection:
 
 
 def build_prompt_section(
-    defaults: Mapping[str, Any], services: H3ViewServices
+    defaults: Mapping[str, Any],
+    services: H3ViewServices,
+    *,
+    writer_parent=None,
+    writer_link: Callable[[], Any] | None = None,
 ) -> PromptSection:
+    """The prompt and its enhance action; the writer service goes in ``writer_parent``."""
     help_text = gr.Markdown(services.mode_help("Text to video"), visible=False)
     prompt = gr.Textbox(
         label="Prompt",
@@ -50,7 +56,7 @@ def build_prompt_section(
         placeholder="A quiet seaside town at sunrise. The camera drifts over the rooftops as waves break in the distance…",
         elem_classes=["h3-prompt-editor"],
     )
-    with gr.Accordion("Prompt writer / enhancer", open=False):
+    with writer_parent if writer_parent is not None else nullcontext():
         gr.Markdown(
             "The local MiniMax-H3 8B writer supports T2VA, I2VA, L2VA, and FL2VA. Gemini supports all Reference media; OpenAI-compatible models support text and image enhancement."
         )
@@ -112,7 +118,16 @@ def build_prompt_section(
                     placeholder="Uses OPENAI_API_KEY when blank",
                 )
                 openai_base_url = build_openai_base_url_textbox()
-        enhance_prompt_button = gr.Button("Generate / enhance prompt")
+    with gr.Accordion("Prompt writer / enhancer", open=False):
+        gr.Markdown(
+            "Drafts a prompt from your idea and media, or enhances the one above. "
+            "You review the suggestion before it replaces your prompt.",
+            elem_classes=["h3-song-hint"],
+        )
+        with gr.Row(elem_classes=["h3-settings-links"]):
+            enhance_prompt_button = gr.Button("Generate / enhance prompt")
+            if writer_link is not None:
+                writer_link()
         enhance_prompt_status = gr.Textbox(
             label="Prompt enhancer status", lines=2, interactive=False
         )

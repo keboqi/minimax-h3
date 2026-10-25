@@ -652,6 +652,7 @@ class UiContractTests(unittest.TestCase):
             component
             for component in self.config["components"]
             if component.get("props", {}).get("label") == "Prompt writer"
+            and component["type"] == "radio"  # H3's Fine-tune tab shares the name
         ]
         self.assertEqual(len(writers), 8)
         for writer in writers:
@@ -1095,7 +1096,15 @@ class UiContractTests(unittest.TestCase):
                 *(ids(child) for child in node.get("children", []))
             )
 
-        composer_ids = ids(self.find_layout_node(composer_id))
+        # Seed sits in Fine-tune; other engines reuse both labels.
+        fine_tune_id = next(
+            c["id"]
+            for c in self.config["components"]
+            if c["props"].get("elem_id") == "h3-fine-tune"
+        )
+        composer_ids = ids(self.find_layout_node(composer_id)) | ids(
+            self.find_layout_node(fine_tune_id)
+        )
 
         def handler(label):
             control_ids = {
@@ -1306,8 +1315,16 @@ class UiContractTests(unittest.TestCase):
             self.components[cid].get("props", {}).get("elem_classes") == ["h3-primary-action"]
             for cid in first_change_dep["outputs"]
         ))
-        dimensions_accordion = controls["Exact dimensions, seed & image frames"]
-        self.assertFalse(dimensions_accordion["props"]["open"])
+        # Exact dimensions live in Fine-tune's size tab, out of the composer.
+        size_tab = next(
+            c for c in self.config["components"]
+            if c["type"] == "tabitem" and c.get("props", {}).get("label") == "Size, seed & canvas"
+        )
+
+        def ids_under(node):
+            return {node["id"]} | set().union(*(ids_under(n) for n in node.get("children", [])))
+
+        self.assertIn(h3_width_id, ids_under(self.find_layout_node(size_tab["id"])))
 
         # 3. Start-frame auto cap triggers on .change (so preset changes trigger
         # auto resolution) and refreshes the summary in the same response.
@@ -1822,7 +1839,7 @@ class UiContractTests(unittest.TestCase):
         }
         composer = self.find_layout_node(by_id["h3-composer"]["id"])
         preview = self.find_layout_node(by_id["h3-preview"]["id"])
-        advanced = self.find_layout_node(by_id["h3-advanced-settings"]["id"])
+        advanced = self.find_layout_node(by_id["h3-fine-tune"]["id"])
 
         def descendants(node):
             return {node["id"]} | set().union(
@@ -1885,7 +1902,17 @@ class UiContractTests(unittest.TestCase):
                 for i in descendants(advanced)
             },
         )
-        self.assertFalse(by_id["h3-advanced-settings"]["props"]["open"])
+        tab_labels = [
+            self.components[node["id"]]["props"]["label"]
+            for node in self.find_layout_node(by_id["h3-settings-tabs"]["id"])["children"]
+        ]
+        self.assertEqual(tab_labels, [
+            "Model & sampling", "Size, seed & canvas", "Prompt writer", "Speed & attention",
+            "Memory & decoding", "Upscale & finish", "Input upscaling",
+        ])
+        # Compose keeps the basics; tuning controls live only in Fine-tune.
+        for label in ("Steps", "Seed", "Width", "Attention", "Text encoder", "Prompt writer"):
+            self.assertNotIn(label, labels)
 
     def test_presentation_state_is_pure_and_semantic(self) -> None:
         self.assertTrue(mode_presentation("First / last frame").show_frames)

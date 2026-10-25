@@ -216,12 +216,27 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-workspace .h3-result-player { min-height: 260px; background: var(--h3-muted-surface); border-style: dashed; }
 .h3-workspace .h3-result-player .empty { flex-direction: column; gap: 10px; color: var(--h3-muted); }
 .h3-workspace .h3-result-player .empty::after { content: "Your video will appear here"; font-size: 13px; }
-.h3-workspace #h3-advanced-settings { border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-surface); margin-top: 6px; }
+/* Fine-tune: H3 settings beyond Compose, one tab per group, styled like Song's steps without numbers. */
+.h3-workspace #h3-fine-tune { gap: 12px; margin-top: 20px; padding: 16px; border: 1px solid var(--h3-border); border-radius: 16px; background: var(--h3-surface); box-shadow: 0 4px 18px #122e2106; scroll-margin-top: 16px; }
+.h3-workspace .h3-settings-tabs { border: 0; background: transparent; padding: 0; scroll-margin-top: 16px; }
+.h3-workspace .h3-settings-tabs > .tab-wrapper { border: 0; margin-bottom: 12px; padding: 0; }
+.h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; border: 0; padding: 0; }
+.h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button { display: flex; align-items: center; min-width: 0; min-height: 48px; margin: 0; padding: 8px 14px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-surface); color: var(--h3-muted); font-size: 14px; font-weight: 600; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: border-color .15s, background .15s, color .15s; }
+.h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button::after { display: none; }
+.h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button:hover { color: var(--h3-text); border-color: var(--h3-disclosure-border); }
+.h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button[aria-selected="true"] { color: var(--h3-text); border-color: var(--h3-accent); background: color-mix(in srgb, var(--h3-accent) 7%, var(--h3-surface)); box-shadow: inset 0 -3px var(--h3-accent); }
+.h3-workspace .h3-settings-tabs > [role="tabpanel"] { border: 1px solid var(--h3-border); border-radius: 12px; padding: 16px; background: var(--h3-surface); }
+.h3-workspace .h3-settings-tab > .column { gap: 12px; }
+.h3-workspace .h3-settings-links { flex-wrap: wrap; gap: 6px; }
+.h3-workspace .h3-settings-links { align-items: center; }
+.h3-workspace .h3-settings-links > button { flex: 0 1 auto !important; min-width: 0 !important; min-height: 36px; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; }
+.h3-workspace .h3-settings-links > button:not(.h3-settings-link) { border: 1px solid var(--h3-border); }
+.h3-workspace button.h3-settings-link { border-color: transparent; background: transparent; color: var(--h3-accent); box-shadow: none; }
+.h3-workspace button.h3-settings-link:hover { background: var(--h3-muted-surface); }
 /* Give every Gradio disclosure the same visible, clickable header. The accent
    rail lives on the container so it runs down the open content too, tying the
    revealed controls to their header instead of the surrounding page. */
-.h3-workspace .gr-accordion,
-.h3-workspace #h3-advanced-settings.gr-accordion {
+.h3-workspace .gr-accordion {
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--h3-disclosure-border);
@@ -489,6 +504,10 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   .h3-workspace .h3-song-badge { display: none; }
   .h3-workspace .h3-song-intro { padding: 8px 0 16px; }
   .h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] { gap: 4px; }
+  .h3-workspace #h3-fine-tune { padding: 12px; }
+  .h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button { min-height: 44px; padding: 6px 10px; font-size: 13px; white-space: normal; }
+  .h3-workspace .h3-settings-tabs > [role="tabpanel"] { padding: 10px; }
   .h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button { flex-direction: column; justify-content: center; gap: 4px; min-height: 64px; padding: 6px 2px; font-size: 11px; line-height: 1.2; text-align: center; white-space: normal; }
 }
 /* Dub & Translate: Song's stepper with three steps (Source, Review lines, Dub). */
