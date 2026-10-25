@@ -2,6 +2,7 @@
 import ast
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
@@ -13,18 +14,29 @@ class ModalLifecycleTests(unittest.TestCase):
     def setUp(self):
         path = Path(__file__).resolve().parents[1] / "modal_h3.py"
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        service = next(node for node in tree.body
-                       if isinstance(node, ast.ClassDef) and node.name == "H3Service")
+        nodes = {node.name: node for node in tree.body
+                 if isinstance(node, (ast.ClassDef, ast.FunctionDef))}
+        service = nodes["H3Service"]
         self.hooks = {
             method.name: ast.literal_eval(method.decorator_list[0].keywords[0].value)
             for method in service.body if isinstance(method, ast.FunctionDef)
             and method.name in {"start", "check_services"}
         }
+        self.preloaded_hooks = {
+            method.name: method.decorator_list[0].keywords[0].value.value
+            for method in nodes["PreloadedService"].body if isinstance(method, ast.FunctionDef)
+            and method.name in {"start", "resume"}
+        }
         # Execute the real lifecycle bodies without SDK decoration or image builds.
-        service.decorator_list = []
-        for method in service.body:
-            if isinstance(method, ast.FunctionDef):
-                method.decorator_list = []
+        body = [nodes[name] for name in (
+            "start_comfy", "gradio_env", "publish_gradio", "wait_for_preload",
+            "H3Service", "PreloadedService",
+        )]
+        for node in body:
+            node.decorator_list = []
+            for method in getattr(node, "body", ()):
+                if isinstance(method, ast.FunctionDef):
+                    method.decorator_list = []
         self.calls = Mock()
         self.comfy = Mock(name="comfy_process")
         self.gradio = Mock(name="gradio_process")
@@ -38,16 +50,24 @@ class ModalLifecycleTests(unittest.TestCase):
             "UI_PORT": 7860,
             "os": SimpleNamespace(getenv=Mock(return_value=None)),
             "print": Mock(),
-            "subprocess": SimpleNamespace(Popen=self.calls.launch),
+            "subprocess": SimpleNamespace(Popen=self.calls.launch, PIPE="pipe"),
             "prepare_runtime_models": self.calls.prepare,
             "sync_ltx25_workflows": self.calls.sync,
             "service_env": Mock(return_value={}),
             "wait_for_service": self.calls.ready,
             "wait_for_comfy_frontend": self.calls.frontend,
             "volume": SimpleNamespace(commit=self.calls.commit),
+            "time": time,
+            "SNAPSHOT_READY": PurePosixPath("/tmp/h3-snapshot-preload-ready"),
+            "PRELOAD_TIMEOUT": 60,
         }
-        exec(compile(ast.Module(body=[service], type_ignores=[]), str(path), "exec"), self.env)
+        exec(compile(ast.Module(body=body, type_ignores=[]), str(path), "exec"), self.env)
         self.service = self.env["H3Service"]()
+
+    def preloaded(self, target="video"):
+        self.env["wait_for_preload"] = self.calls.preload
+        service = type("Preloaded", (self.env["PreloadedService"],), {"preload": target})()
+        return service
 
     def test_snapshot_captures_comfy_without_workspace_state(self):
         self.assertEqual(self.hooks, {"start": True, "check_services": False})
@@ -153,6 +173,49 @@ class ModalLifecycleTests(unittest.TestCase):
             restored = store.catalog_page(kind="Image", favorite=True)[0][0]
             self.assertEqual(restored["tags"], ["saved"])
             self.assertTrue(restored["favorite"])
+
+    def test_preloaded_snapshot_loads_models_before_capture(self):
+        self.assertEqual(self.preloaded_hooks, {"start": True, "resume": False})
+        service = self.preloaded("soundstage")
+        service.start()
+        self.assertEqual([call[0] for call in self.calls.mock_calls], [
+            "prepare", "sync", "launch", "ready", "launch", "preload", "commit",
+        ])
+        launch = self.calls.launch.call_args
+        self.assertEqual(launch.args, (["python", "-u", "/opt/h3/gradio_app.py"],))
+        self.assertEqual(launch.kwargs["stdin"], "pipe")
+        self.assertEqual(launch.kwargs["env"]["H3_SNAPSHOT_PRELOAD"], "soundstage")
+        self.assertEqual(launch.kwargs["env"]["H3_SNAPSHOT_READY_FILE"], "/tmp/h3-snapshot-preload-ready")
+        self.assertIs(self.calls.preload.call_args.args[0], self.gradio)
+        self.gradio.stdin.write.assert_not_called()
+
+    def test_preloaded_restore_starts_ui_without_relaunching(self):
+        service = self.preloaded()
+        service.start()
+        self.calls.reset_mock()
+        service.resume()
+        self.assertEqual([call[0] for call in self.calls.mock_calls], [
+            "ready", "ready", "commit", "frontend",
+        ])
+        self.gradio.stdin.write.assert_called_once_with(b"serve\n")
+        self.assertIs(self.calls.ready.call_args_list[1].args[1], self.gradio)
+        self.calls.launch.assert_not_called()
+        self.calls.prepare.assert_not_called()
+
+    def test_preloaded_restore_waits_for_comfy_before_ui(self):
+        service = self.preloaded()
+        service.start()
+        self.calls.reset_mock()
+        self.calls.ready.side_effect = RuntimeError("ComfyUI exited")
+        with self.assertRaisesRegex(RuntimeError, "ComfyUI exited"):
+            service.resume()
+        self.gradio.stdin.write.assert_not_called()
+        self.calls.commit.assert_not_called()
+
+    def test_preload_exit_fails_the_snapshot(self):
+        process = Mock(poll=Mock(return_value=3), returncode=3)
+        with self.assertRaisesRegex(RuntimeError, "exited before its models loaded: 3"):
+            self.env["wait_for_preload"](process, timeout=5, label="video preload")
 
 
 if __name__ == "__main__":

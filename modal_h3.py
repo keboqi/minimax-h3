@@ -916,7 +916,102 @@ def storage_console():
     serve(Path(DATA), volume, port=UI_PORT, script_dir=Path(ROOT))
 
 
-@app.cls(
+def start_comfy() -> subprocess.Popen:
+    """Prepare the volume layout and start ComfyUI; returns once it answers."""
+    print(
+        "[modal-h3] Hugging Face token injected: "
+        + ("yes" if os.getenv("HF_TOKEN") else "no"),
+        flush=True,
+    )
+    prepare_runtime_models()
+
+    # User workflow files live in the image filesystem rather than the model
+    # volume. Re-sync before snapshotting so a reused image layer can never
+    # expose newer UI mappings without their corresponding JSON templates.
+    workflow_source = (
+        Path(COMFY) / "custom_nodes" / "ComfyUI-LTXVideo"
+        / "example_workflows" / "2.5"
+    )
+    workflow_destination = (
+        Path(COMFY) / "user" / "default" / "workflows" / "LTX 2.5"
+    )
+    workflows = sync_ltx25_workflows(workflow_source, workflow_destination)
+    print(
+        f"[modal-h3] runtime-synced {len(workflows)} official LTX 2.5 "
+        f"workflows to {workflow_destination}",
+        flush=True,
+    )
+
+    env = service_env()
+
+    comfy_args = [
+        "python",
+        "-u",
+        "main.py",
+        "--listen",
+        "127.0.0.1",
+        "--port",
+        str(COMFY_PORT),
+        "--fast",
+        "fp16_accumulation",
+        "--use-ck-attention",
+    ]
+    print("[modal-h3] Dense/fallback attention: Comfy Kitchen", flush=True)
+    comfy_args += ["--enable-cors-header", "*"]
+
+    print("[modal-h3] Launching ComfyUI", flush=True)
+    comfy_process = subprocess.Popen(
+        comfy_args,
+        cwd=COMFY.as_posix(),
+        env=env,
+    )
+    wait_for_service(
+        f"http://127.0.0.1:{COMFY_PORT}/system_stats",
+        comfy_process,
+        timeout=20 * 60,
+        label="ComfyUI",
+    )
+    return comfy_process
+
+
+def gradio_env() -> dict[str, str]:
+    env = service_env()
+    env["GRADIO_SERVER_NAME"] = "0.0.0.0"
+    env["GRADIO_SERVER_PORT"] = str(UI_PORT)
+    return env
+
+
+def publish_gradio(gradio_process: subprocess.Popen) -> None:
+    """Wait for the UI, persist its workspace, and check the ComfyUI proxy."""
+    wait_for_service(
+        f"http://127.0.0.1:{UI_PORT}/",
+        gradio_process,
+        timeout=10 * 60,
+        label="Gradio",
+    )
+    # Persist the initialized database and owner secret before serving the UI;
+    # do not depend on a background volume commit for the next cold start.
+    volume.commit()
+    print(
+        f"[modal-h3] Public Gradio server is listening on port {UI_PORT}",
+        flush=True,
+    )
+    try:
+        wait_for_comfy_frontend(
+            f"http://127.0.0.1:{UI_PORT}/comfyui/",
+            gradio_process,
+            timeout=30,
+            label="ComfyUI proxy",
+        )
+    except Exception as exc:
+        print(
+            "[modal-h3] WARNING: Main UI is running, but "
+            f"/comfyui asset validation failed: {exc}",
+            flush=True,
+        )
+
+
+GPU_SERVICE = dict(
     gpu=GPU,
     cpu=1,
     memory=1024,
@@ -931,64 +1026,15 @@ def storage_console():
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
 )
+
+
+@app.cls(**GPU_SERVICE)
 @modal.concurrent(max_inputs=100)
 class H3Service:
     @modal.enter(snap=True)
     def start(self):
         print("[modal-h3] Starting MiniMax H3 service", flush=True)
-        print(
-            "[modal-h3] Hugging Face token injected: "
-            + ("yes" if os.getenv("HF_TOKEN") else "no"),
-            flush=True,
-        )
-        prepare_runtime_models()
-
-        # User workflow files live in the image filesystem rather than the model
-        # volume. Re-sync before snapshotting so a reused image layer can never
-        # expose newer UI mappings without their corresponding JSON templates.
-        workflow_source = (
-            Path(COMFY) / "custom_nodes" / "ComfyUI-LTXVideo"
-            / "example_workflows" / "2.5"
-        )
-        workflow_destination = (
-            Path(COMFY) / "user" / "default" / "workflows" / "LTX 2.5"
-        )
-        workflows = sync_ltx25_workflows(workflow_source, workflow_destination)
-        print(
-            f"[modal-h3] runtime-synced {len(workflows)} official LTX 2.5 "
-            f"workflows to {workflow_destination}",
-            flush=True,
-        )
-
-        env = service_env()
-
-        comfy_args = [
-            "python",
-            "-u",
-            "main.py",
-            "--listen",
-            "127.0.0.1",
-            "--port",
-            str(COMFY_PORT),
-            "--fast",
-            "fp16_accumulation",
-            "--use-ck-attention",
-        ]
-        print("[modal-h3] Dense/fallback attention: Comfy Kitchen", flush=True)
-        comfy_args += ["--enable-cors-header", "*"]
-
-        print("[modal-h3] Launching ComfyUI", flush=True)
-        self.comfy_process = subprocess.Popen(
-            comfy_args,
-            cwd=COMFY.as_posix(),
-            env=env,
-        )
-        wait_for_service(
-            f"http://127.0.0.1:{COMFY_PORT}/system_stats",
-            self.comfy_process,
-            timeout=20 * 60,
-            label="ComfyUI",
-        )
+        self.comfy_process = start_comfy()
 
     @modal.enter(snap=False)
     def check_services(self):
@@ -1001,45 +1047,167 @@ class H3Service:
             timeout=20 * 60,
             label="ComfyUI after restore",
         )
-        env = service_env()
-        env["GRADIO_SERVER_NAME"] = "0.0.0.0"
-        env["GRADIO_SERVER_PORT"] = str(UI_PORT)
         print("[modal-h3] Launching Gradio", flush=True)
         self.gradio_process = subprocess.Popen(
             ["python", "-u", UI.as_posix()],
-            env=env,
+            env=gradio_env(),
         )
-        wait_for_service(
-            f"http://127.0.0.1:{UI_PORT}/",
-            self.gradio_process,
-            timeout=10 * 60,
-            label="Gradio",
-        )
-        # Persist the initialized database and owner secret before serving the UI;
-        # do not depend on a background volume commit for the next cold start.
-        volume.commit()
-        print(
-            f"[modal-h3] Public Gradio server is listening on port {UI_PORT}",
-            flush=True,
-        )
-        try:
-            wait_for_comfy_frontend(
-                f"http://127.0.0.1:{UI_PORT}/comfyui/",
-                self.gradio_process,
-                timeout=30,
-                label="ComfyUI proxy",
-            )
-        except Exception as exc:
-            print(
-                "[modal-h3] WARNING: Main UI is running, but "
-                f"/comfyui asset validation failed: {exc}",
-                flush=True,
-            )
+        publish_gradio(self.gradio_process)
 
     @modal.web_server(
         UI_PORT,
         startup_timeout=3600,
         label="h3",
+        requires_proxy_auth=PROXY_AUTH,
+    )
+    def serve(self):
+        """Expose the servers initialized by the snapshot lifecycle hooks."""
+
+
+# Preloaded endpoints: the snapshot also holds a workflow's default models on the
+# GPU, so a restored container serves its first request without loading them.
+# Prism Studio loads them before opening the workspace (h3_ui/snapshot_preload.py)
+# and builds the UI only after each restore, against the current volume.
+SNAPSHOT_READY = PurePosixPath("/tmp/h3-snapshot-preload-ready")
+PRELOAD_TIMEOUT = 55 * 60  # A first start downloads the default models.
+# Files the loaded Soundstage processes keep open stay off the volume while a
+# snapshot is taken; their caches and logs are copied to the volume instead.
+SNAPSHOT_LOCAL = PurePosixPath("/opt/h3-snapshot")
+SNAPSHOT_DRAMA3_DATA = SNAPSHOT_LOCAL / "drama3-serving"
+SNAPSHOT_AUDIO_TOOLS_LOGS = SNAPSHOT_LOCAL / "audio_tools"
+
+
+def wait_for_preload(process: subprocess.Popen, *, timeout: int, label: str) -> None:
+    print(f"[modal-h3] Waiting for {label}", flush=True)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(
+                f"{label} exited before its models loaded: {process.returncode}"
+            )
+        if Path(SNAPSHOT_READY).is_file():
+            print(f"[modal-h3] {label} finished", flush=True)
+            return
+        time.sleep(2)
+    raise TimeoutError(f"{label} did not finish in {timeout}s")
+
+
+class PreloadedService:
+    """Snapshot lifecycle shared by the preloaded endpoints; ``preload`` names the workflow."""
+
+    preload = ""
+
+    def preload_env(self) -> dict[str, str]:
+        return {}
+
+    def persist(self) -> None:
+        """Copy container-local caches and logs to the volume."""
+
+    @modal.enter(snap=True)
+    def start(self):
+        print(f"[modal-h3] Starting MiniMax H3 with {self.preload} models", flush=True)
+        self.comfy_process = start_comfy()
+        Path(SNAPSHOT_READY).unlink(missing_ok=True)
+        env = gradio_env()
+        env.update(
+            self.preload_env(),
+            H3_SNAPSHOT_PRELOAD=self.preload,
+            H3_SNAPSHOT_READY_FILE=SNAPSHOT_READY.as_posix(),
+        )
+        print("[modal-h3] Launching Gradio to preload models", flush=True)
+        self.gradio_process = subprocess.Popen(
+            ["python", "-u", UI.as_posix()],
+            env=env,
+            stdin=subprocess.PIPE,
+        )
+        wait_for_preload(
+            self.gradio_process,
+            timeout=PRELOAD_TIMEOUT,
+            label=f"{self.preload} preload",
+        )
+        # Restore resolves volume paths before any hook runs; commit downloads and
+        # caches synchronously now, as a background commit is no barrier.
+        self.persist()
+        volume.commit()
+
+    @modal.enter(snap=False)
+    def resume(self):
+        wait_for_service(
+            f"http://127.0.0.1:{COMFY_PORT}/system_stats",
+            self.comfy_process,
+            timeout=20 * 60,
+            label="ComfyUI after restore",
+        )
+        print("[modal-h3] Starting the Gradio UI after restore", flush=True)
+        self.gradio_process.stdin.write(b"serve\n")
+        self.gradio_process.stdin.flush()
+        publish_gradio(self.gradio_process)
+
+    @modal.exit()
+    def stop(self):
+        try:
+            self.persist()
+            volume.commit()
+        except Exception as exc:
+            print(f"[modal-h3] Could not persist runtime caches: {exc}", flush=True)
+
+
+@app.cls(**GPU_SERVICE)
+@modal.concurrent(max_inputs=100)
+class H3VideoService(PreloadedService):
+    """The MiniMax H3 tab's default Video workflow models, loaded in ComfyUI."""
+
+    preload = "video"
+
+    @modal.web_server(
+        UI_PORT,
+        startup_timeout=3600,
+        label="h3-video",
+        requires_proxy_auth=PROXY_AUTH,
+    )
+    def serve(self):
+        """Expose the servers initialized by the snapshot lifecycle hooks."""
+
+
+@app.cls(**GPU_SERVICE)
+@modal.concurrent(max_inputs=100)
+class H3SoundstageService(PreloadedService):
+    """Soundstage Auto's default models: Qwen VoiceDesign, Stable Audio 3 and Drama 3 on SGLang-Omni."""
+
+    preload = "soundstage"
+
+    def preload_env(self) -> dict[str, str]:
+        local = Path(SNAPSHOT_DRAMA3_DATA)
+        # Seed compiled kernels; never inherit earlier logs or reference media.
+        if (Path(DRAMA3_SGLANG_DATA) / "cache").is_dir():
+            shutil.copytree(
+                Path(DRAMA3_SGLANG_DATA) / "cache", local / "cache", dirs_exist_ok=True,
+            )
+        for name in ("cache", "logs", "media"):
+            (local / name).mkdir(parents=True, exist_ok=True)
+        Path(SNAPSHOT_AUDIO_TOOLS_LOGS).mkdir(parents=True, exist_ok=True)
+        return {
+            "H3_DRAMA3_SGLANG_DATA": local.as_posix(),
+            "H3_AUDIO_TOOLS_LOG_DIR": SNAPSHOT_AUDIO_TOOLS_LOGS.as_posix(),
+        }
+
+    def persist(self) -> None:
+        local = Path(SNAPSHOT_DRAMA3_DATA)
+        for name in ("cache", "logs"):
+            if (local / name).is_dir():
+                shutil.copytree(
+                    local / name, Path(DRAMA3_SGLANG_DATA) / name, dirs_exist_ok=True,
+                )
+        if Path(SNAPSHOT_AUDIO_TOOLS_LOGS).is_dir():
+            shutil.copytree(
+                Path(SNAPSHOT_AUDIO_TOOLS_LOGS), Path(OUTPUT) / "audio_tools",
+                dirs_exist_ok=True,
+            )
+
+    @modal.web_server(
+        UI_PORT,
+        startup_timeout=3600,
+        label="h3-soundstage",
         requires_proxy_auth=PROXY_AUTH,
     )
     def serve(self):

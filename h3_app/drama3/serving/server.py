@@ -31,6 +31,10 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # tensors through host SHM; this platform, a module for the Omni venv, does so.
 SHM_PLATFORM_DIR = Path(__file__).with_name("omni_platform")
 SHM_PLATFORM_SPEC = "h3_omni_shm:ShmCudaPlatform"
+# Set while a Modal memory snapshot of the loaded server is pending. Modal captures
+# the CUDA state itself, so a launch then skips the driver checkpoint job; servers
+# started after the restore get sleep again. The captured one stops instead.
+SNAPSHOT_CAPTURE = threading.Event()
 
 
 class SpeechRequestError(H3Error):
@@ -255,7 +259,7 @@ class SglangOmniServer:
         env = self.server_env()
         self._checkpoint_helper = None
         self._checkpoint_baseline = 0
-        if settings.sleep_mode == "auto" and not self._sleep_disabled:
+        if settings.sleep_mode == "auto" and not self._sleep_disabled and not SNAPSHOT_CAPTURE.is_set():
             try:
                 helper, ipc = checkpoint.prepare_helper(settings.runtime_dir / "cache")
                 self._checkpoint_baseline = checkpoint.device_memory()[0]
@@ -532,6 +536,12 @@ def release_for_job(family: str) -> None:
     elif family not in {"drama3", "drama3_voice", "drama3_sound", "drama3_preload",
                         "dubbing_analyze", "dubbing_lines", "dubbing"}:
         release_all()
+
+
+def server_ready() -> bool:
+    """Whether the managed SGLang server is running, awake and healthy."""
+    with _SERVER_LOCK:
+        return _SERVER is not None and _SERVER.running() and not _SERVER.sleeping and _SERVER.healthy()
 
 
 def release_all() -> None:

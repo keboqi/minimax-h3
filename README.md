@@ -311,8 +311,9 @@ modal secret create custom-secret HF_TOKEN="$HF_TOKEN"
 modal deploy modal_h3.py
 ```
 
-Deployment exposes two independent URLs: `storage` for the CPU-only
-**H3 Storage Console** and `h3` for GPU generation. Open the **storage** URL
+Deployment exposes four independent URLs: `storage` for the CPU-only
+**H3 Storage Console**, and three GPU endpoints that serve the same app: `h3`,
+`h3-video` and `h3-soundstage` (see **Preloaded endpoints** below). Open the **storage** URL
 printed by Modal first. The console uses a separate lightweight image with
 Modal's default CPU and RAM; opening it does not start the expensive GPU
 endpoint or ComfyUI. Its **Models** tab prepares checkpoints and LoRAs; its
@@ -330,6 +331,33 @@ Model weights continue to load on demand during generation. Use the Modal
 Containers tab to confirm snapshot restoration and measure cold-start latency.
 Changes to the shared volume do not invalidate snapshots, so redeploy after
 changing the installed model inventory to capture fresh startup state.
+
+### Preloaded endpoints
+
+`h3-video` and `h3-soundstage` also hold a workflow's default models on the GPU
+in their snapshot, so a restored container's first job skips loading them:
+
+- `h3-video` runs the MiniMax H3 tab's default Video request once (the
+  `/generate_video` defaults: Singularity, Turbo, 5 s at 1376×768 with latent
+  upscale) and keeps ComfyUI's models loaded. The warmup clip is deleted.
+- `h3-soundstage` loads what Soundstage's Auto uses by default: Qwen
+  VoiceDesign, Stable Audio 3 Medium (Advanced scripts), then Drama 3 on
+  SGLang-Omni. The snapshot is refused if any of them does not load.
+
+The models load in the Gradio process before it opens the workspace; after each
+restore it builds the UI against the current volume, as `h3` does. The first
+snapshot downloads any missing default models, so it takes longer than `h3`'s.
+On `h3-soundstage`, SGLang-Omni's kernel caches and logs and the VoiceDesign/Stable
+Audio worker log stay in the container while it runs (open files must not be on
+the volume when a snapshot is taken); they are copied to the volume when the
+snapshot is taken and when the container stops. The captured SGLang-Omni server
+stops instead of sleeping when another engine needs the GPU; a server started
+after that sleeps as usual. Other engines still work on both endpoints, loading
+their models on demand.
+
+All three GPU endpoints share the volume and its workspace database, so use one
+at a time, as with the storage console below. `H3_MODAL_MIN_CONTAINERS` applies
+to each of them.
 
 The **Media library** tab browses videos, images and audio from the shared
 volume with the same search, favorites, tags, lineage, settings, A/B
@@ -350,7 +378,7 @@ catalog tabs. Each tab can add its entire family to the batch selection.
 removal requires the confirmation checkbox. Failed downloads are listed for
 retry, and completed files remain saved to the shared volume.
 
-Stop the GPU endpoint before downloading or removing models, or before
+Stop the GPU endpoints before downloading or removing models, or before
 importing, annotating or deleting media, then start it after you finish: both
 services write the same workspace database on the volume. Modal volumes require a reload to see another
 container's commits, and their file locks do not coordinate separate containers.

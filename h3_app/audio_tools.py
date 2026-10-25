@@ -31,7 +31,8 @@ __all__ = ["RequestFailed", "ResidentWorker", "loaded_models", "preload", "relea
 
 
 def log_dir(runtime) -> Path:
-    path = runtime.output_dir / "audio_tools"
+    # A Modal snapshot keeps the worker's log open, so it must not live on the volume then.
+    path = Path(os.getenv("H3_AUDIO_TOOLS_LOG_DIR") or runtime.output_dir / "audio_tools")
     path.mkdir(parents=True, exist_ok=True)
     return path
 

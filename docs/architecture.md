@@ -49,6 +49,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/audio_tools.py, audio_tools_worker.py, voice_design.py, stable_audio.py | The isolated resident worker for Qwen VoiceDesign and Stable Audio, and its clients |
 | h3_app/server.py | Configured FastAPI routes and HTTP/WebSocket proxy |
 | h3_ui/application.py | Startup and runtime configuration, the ComfyUI and file effects controllers and engines receive, the full H3 `generate`, and the controller and handler singletons. Controllers never import it; tests patch its effects and find a name's owner with `tests/app_targets.py` |
+| h3_ui/snapshot_preload.py | Modal's `h3-video` and `h3-soundstage` endpoints: loads the default H3 Video or Soundstage models before the workspace opens, then waits for the snapshot restore to start the UI |
 | h3_ui/bootstrap.py, contracts.py | UI composition; contracts.py holds the catalog and service records passed to event registration |
 | h3_ui/drama3/ | Soundstage view, bindings, slot controls and saved-speaker library. handlers.py builds `Drama3Handlers` from explicit `Drama3Services`; its generation, writer, voices, speakers and sounds methods live in one module each |
 | h3_app/dubbing/ | Dub & Translate sessions, line helpers, Gemini transcription, the isolated tools worker (separation, OmniVAD + Qwen3-ASR, Hy-MT) and the Drama 3 dub/mix pipeline |

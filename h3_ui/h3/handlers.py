@@ -73,6 +73,23 @@ def mode_help(mode: str) -> str:
     return "Prompt-only generation using FL2VA with native stereo audio."
 
 
+def default_request(prompt: str) -> dict[str, Any]:
+    """Every ``generate`` argument for a text-only run with the MiniMax H3 tab's Video defaults."""
+    values = dict(UI_DEFAULTS)
+    values.setdefault("sol_step_off", 0.0)
+    values.setdefault("sol_sink_tokens", 0)
+    values.setdefault("ltx25_model", DEFAULT_LTX25_MODEL)
+    values.update(
+        {f"ref_image_{index}": None for index in range(1, MAX_REFERENCE_IMAGES + 1)},
+        **{f"ref_video_{index}": None for index in range(1, MAX_REFERENCE_VIDEOS + 1)},
+        **{f"ref_audio_{index}": None for index in range(1, MAX_REFERENCE_AUDIOS + 1)},
+        prompt=prompt,
+        first_image=None,
+        last_image=None,
+    )
+    return values
+
+
 def api_guide() -> str:
     defaults = UI_DEFAULTS
     return f"""## Generate through the API\n\nThe `/generate_video` endpoint accepts a prompt and preserves the existing **Video** defaults from the **MiniMax H3** tab, including default-on reuse of unchanged prompt/media conditioning:\n\n`{defaults["mode"]}` · `{defaults["model_profile"]}` · `{defaults["generation_mode"]} / {defaults["turbo_variant"]}` · `{defaults["duration"]}s` · `{defaults["width"]}×{defaults["height"]}` · `{defaults["steps"]} steps` · `{defaults["scheduler"]}` scheduler · random seed\n\nInstall the client and submit a job:\n\n```bash\npip install gradio_client\n```\n\n```python\nfrom gradio_client import Client\n\nclient = Client("http://127.0.0.1:7860")\ndownload_url, status = client.predict(\n    "A cinematic tracking shot through a rain-soaked neon city",\n    api_name="/generate_video",\n)\nprint(download_url)\nprint(status)\n```\n\n`download_url` is an HTTP URL served by this app, so it can be opened in a browser or downloaded with `curl -L -O` while the app is running.\n\nFor every control exposed by the MiniMax H3 tab, including **Image** and **Audio** result formats, use `/generate_video_advanced` and inspect the app's [OpenAPI schema](/gradio_api/openapi.json) for its current parameter list. Image selections can be persisted through `/save_h3_image_frames`. API requests share the same single-job queue as the UI.\n"""
@@ -88,19 +105,7 @@ class H3Handlers:
         self, prompt: str, request: gr.Request, progress=gr.Progress(track_tqdm=False)
     ):
         """Generate with UI defaults and return a reusable public download URL."""
-        values = dict(UI_DEFAULTS)
-        values.setdefault("sol_step_off", 0.0)
-        values.setdefault("sol_sink_tokens", 0)
-        values.setdefault("ltx25_model", DEFAULT_LTX25_MODEL)
-        values.update(
-            {f"ref_image_{index}": None for index in range(1, MAX_REFERENCE_IMAGES + 1)},
-            **{f"ref_video_{index}": None for index in range(1, MAX_REFERENCE_VIDEOS + 1)},
-            **{f"ref_audio_{index}": None for index in range(1, MAX_REFERENCE_AUDIOS + 1)},
-            prompt=prompt,
-            first_image=None,
-            last_image=None,
-        )
-        for video, status in self.services.generate(**values, progress=progress):
+        for video, status in self.services.generate(**default_request(prompt), progress=progress):
             download_url = (
                 self.services.download_url(video, request) if video is not None else None
             )

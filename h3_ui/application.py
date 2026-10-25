@@ -1143,6 +1143,10 @@ def main() -> None:
         },
         flush=True,
     )
+    from h3_ui.snapshot_preload import run_before_serving
+
+    # Modal's preloaded endpoints load models here, before the workspace opens.
+    run_before_serving()
     demo = build_ui().queue(default_concurrency_limit=1, max_size=8)
     app = build_server(demo, allowed_paths)
     host = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
