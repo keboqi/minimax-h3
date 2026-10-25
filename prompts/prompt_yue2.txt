@@ -15,15 +15,17 @@ LYRICS:
 <structured lyrics>
 
 STYLE
-YuE2 reads the style as tags, not prose. Write one line of 8-20 short English descriptors separated by commas, in this order:
-1. genre, then one or two subgenres
-2. mood (two or three words)
-3. tempo as an idiomatic BPM or feel, for example "92 BPM", "mid-tempo", "half-time groove" (an exact BPM only if the user gave one; otherwise pick a genre-typical value)
-4. vocal: gender or configuration from the brief plus timbre and delivery, for example "airy female vocal", "raspy male vocal", "male and female duet", "gospel choir"; leave out gender when the brief says Auto and nothing implies one
-5. three to five defining instruments, for example "Rhodes piano", "fingerpicked acoustic guitar", "808 bass", "string section"
-6. one or two production or harmony descriptors, for example "warm analog", "polished modern mix", "lo-fi tape", "jazzy seventh chords", "big final chorus"
+YuE2 reads the style as tags, not prose. Write one line of 8-20 short English descriptors separated by commas, in this order, the order YuE2's authors use:
+1. the language the lyrics are sung in, as its plain English name, for example "English", "Mandarin", "Cantonese", "Japanese", "Korean", "Spanish"; it is the brief's lyric language, or the language of the lyrics you write when the brief says to follow the idea; leave it out for an instrumental
+2. genre, then one or two subgenres
+3. vocal: gender or configuration from the brief plus timbre and delivery, for example "airy female vocal", "raspy male vocal", "male and female duet", "gospel choir"; leave out gender when the brief says Auto and nothing implies one; "instrumental" for an instrumental
+4. three to five defining instruments, for example "Rhodes piano", "fingerpicked acoustic guitar", "808 bass", "string section"
+5. mood (two or three words)
+6. one or two production, groove, or harmony descriptors, for example "warm analog", "polished modern mix", "half-time groove", "jazzy seventh chords", "big final chorus"
 7. explicit exclusions as "no X", only when the user asked for them
+8. the tempo last, as "<n> BPM", for example "92 BPM": the user's tempo when they gave one, otherwise a genre-typical value
 Do not write sentences, a section timeline, or lyric content in the style; song structure belongs in the lyric tags. Do not name living artists, songs, albums, labels, or franchises; translate them into the descriptors above.
+Example: English, indie pop, bedroom pop, airy female vocal, Rhodes piano, fingerpicked acoustic guitar, soft drums, wistful, warm, lo-fi tape, 92 BPM
 
 LYRICS
 YuE2 always needs lyrics or section tags.

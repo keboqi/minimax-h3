@@ -176,6 +176,33 @@ class SongCheckTests(unittest.TestCase):
             song_brief.estimate_seconds(bars, bpm=90),
         )
 
+    def test_reused_score_flags_lines_that_left_its_melody(self) -> None:
+        sung = "[Verse]\nDragging little wires\nUnder neon skies\n\n[Chorus]\nHold on tonight"
+        yue2 = dict(engine="YuE2", description="indie pop, 100 BPM", score_lyrics=sung)
+        self.assertNotIn("reused score", self.texts(lyrics=sung, **yue2))
+        # One syllable either way still fits the notes; a longer line does not.
+        near = sung.replace("Hold on tonight", "Hold on for tonight")
+        self.assertNotIn("reused score", self.texts(lyrics=near, **yue2))
+        far = sung.replace("Under neon skies", "Underneath the flickering neon skies")
+        text = self.texts(lyrics=far, **yue2)
+        self.assertIn("1 line(s) changed length since the reused score", text)
+        self.assertIn("(4 → 9 syllables)", text)
+        fewer = self.texts(lyrics="[Verse]\nDragging little wires", **yue2)
+        self.assertIn("sung with 3 lines; the lyrics now have 1", fewer)
+        # No reused score, blank lyrics, or Music 3: nothing to compare.
+        self.assertNotIn("reused score", self.texts(engine="YuE2", lyrics=far))
+        self.assertNotIn("reused score", self.texts(lyrics="", **yue2))
+        self.assertNotIn("reused score", self.texts(lyrics=far, score_lyrics=sung))
+
+    def test_only_the_reused_score_itself_is_compared(self) -> None:
+        from h3_ui.song_controls import reused_score_lyrics
+
+        words = {"score": "X:1\nK:C\nCDEF|", "lyrics": "[Verse]\nOne"}
+        self.assertEqual(reused_score_lyrics("X:1\nK:C\nCDEF|\n", "full", words), "[Verse]\nOne")
+        self.assertEqual(reused_score_lyrics("X:1\nK:C\nGABc|", "full", words), "")
+        self.assertEqual(reused_score_lyrics("X:1\nK:C\nCDEF|", "off", words), "")
+        self.assertEqual(reused_score_lyrics("X:1", "full", None), "")
+
     def test_take_note_flags_cut_off_and_early_endings(self) -> None:
         self.assertIn("may be cut", song_brief.take_note(119.4, 120))
         self.assertIn("ended on its own", song_brief.take_note(104, 120))
@@ -471,9 +498,10 @@ class SongTakeHistoryTests(unittest.TestCase):
         history, last_score = result[0], result[-1]
         self.assertEqual(last_score, "X:1\nK:D")
         self.assertEqual(self.handler(demo, "add")("m.mp3", history, {}), (gr.skip(),) * 8)
-        self.assertEqual(self.handler(demo, "take_score")(history, "0", "full"), ("X:1\nK:D", "melody"))
-        self.assertEqual(self.handler(demo, "latest_score")(history, "off"), ("X:1\nK:D", "melody"))
-        self.assertEqual(self.handler(demo, "latest_score")([], "off"), (gr.skip(), gr.skip()))
+        words = {"score": "X:1\nK:D", "lyrics": ""}
+        self.assertEqual(self.handler(demo, "take_score")(history, "0", "full"), ("X:1\nK:D", "melody", words))
+        self.assertEqual(self.handler(demo, "latest_score")(history, "off"), ("X:1\nK:D", "melody", words))
+        self.assertEqual(self.handler(demo, "latest_score")([], "off"), (gr.skip(),) * 3)
 
     def test_takes_record_drafts_compare_and_reuse(self) -> None:
         facts = {"a.mp3": {"seed": 1, "seconds": 61, "score": "X:1"},
@@ -500,8 +528,10 @@ class SongTakeHistoryTests(unittest.TestCase):
         reuse = self.handler(demo, "reuse")
         self.assertEqual(reuse(history, "0"), ("pop", "[Verse]\nOne", ""))
         self.assertEqual(self.handler(demo, "take_seed")(history, "1"), 2)
-        score, mode = self.handler(demo, "take_score")(history, "0", "off")
+        score, mode, words = self.handler(demo, "take_score")(history, "0", "off")
         self.assertEqual((score, mode), ("X:1", "full"))
+        # The song check compares later lyrics with the words take A sang.
+        self.assertEqual(words, {"score": "X:1", "lyrics": "[Verse]\nOne"})
         capture = self.handler(demo, "<lambda>")
         self.assertEqual(capture("rock", "words", ""), {"style": "rock", "lyrics": "words", "abc": ""})
 

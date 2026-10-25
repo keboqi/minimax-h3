@@ -36,10 +36,12 @@ class SongTakes:
     reuse_draft: gr.Button
     use_seed: gr.Button
     reuse_score: gr.Button | None
+    # The score reused last and the lyrics its take sang, for the song check.
+    score_words: gr.State
 
 
 def build_take_history(*, with_score: bool) -> SongTakes:
-    history, pending = gr.State([]), gr.State(None)
+    history, pending, score_words = gr.State([]), gr.State(None), gr.State(None)
     summary = gr.HTML(_summary(0), elem_classes=["h3-song-takes"])
     with gr.Row(equal_height=False):
         with gr.Column(min_width=200):
@@ -54,7 +56,7 @@ def build_take_history(*, with_score: bool) -> SongTakes:
         use_seed = gr.Button("Use take A's seed", size="sm")
         reuse_score = gr.Button("Reuse take A's score", size="sm") if with_score else None
     return SongTakes(history, pending, summary, take_a, take_b, audio_a, audio_b, details,
-                     reuse_draft, use_seed, reuse_score)
+                     reuse_draft, use_seed, reuse_score, score_words)
 
 
 def bind_take_history(
@@ -153,27 +155,28 @@ def bind_take_history(
 
     if takes.reuse_score is not None:
         takes.reuse_score.click(
-            take_score, inputs=[takes.history, takes.take_a, mode], outputs=[score, mode],
-            queue=False, api_name=False,
+            take_score, inputs=[takes.history, takes.take_a, mode],
+            outputs=[score, mode, takes.score_words], queue=False, api_name=False,
         )
     if reuse_last_score is not None:
         reuse_last_score.click(
-            latest_score, inputs=[takes.history, mode], outputs=[score, mode],
-            queue=False, api_name=False,
+            latest_score, inputs=[takes.history, mode],
+            outputs=[score, mode, takes.score_words], queue=False, api_name=False,
         )
 
 
 def _score_and_mode(take, current_mode):
-    """A take's score and the composition mode to sing it in."""
+    """A take's score, the composition mode to sing it in, and the words it was sung with."""
     value = (take or {}).get("score") or ""
     if not value:
-        return gr.skip(), gr.skip()
+        return gr.skip(), gr.skip(), gr.skip()
+    words = {"score": value, "lyrics": str((take.get("draft") or {}).get("lyrics") or "")}
     # Sing a score in the mode it was planned in: a melody-only score is not a
     # full arrangement. Without that record, a score still needs a planning mode.
     planned = take.get("score_mode")
     if planned in {"full", "melody"}:
-        return value, planned
-    return value, ("full" if current_mode == "off" else gr.skip())
+        return value, planned, words
+    return value, ("full" if current_mode == "off" else gr.skip()), words
 
 
 def _summary(count: int) -> str:

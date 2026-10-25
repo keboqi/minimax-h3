@@ -81,7 +81,8 @@ def song_check_panel(engine: str, max_seconds: float) -> gr.HTML:
 
 def render_recap(*, engine: str, sound_label: str, description: str, lyrics: str,
                  max_seconds: float, vocals: str = song_brief.AUTO,
-                 language: str = song_brief.AUTO, use: str = song_brief.AUTO) -> str:
+                 language: str = song_brief.AUTO, use: str = song_brief.AUTO,
+                 score_lyrics: str = "") -> str:
     """What the next take will use: the sound, the voice, and the song check."""
     sound = " ".join(description.split())
     if len(sound) > 220:
@@ -102,7 +103,7 @@ def render_recap(*, engine: str, sound_label: str, description: str, lyrics: str
     )
     check = song_brief.render_check(
         engine=engine, description=description, lyrics=lyrics,
-        max_seconds=max_seconds, vocals=vocals, use=use,
+        max_seconds=max_seconds, vocals=vocals, use=use, score_lyrics=score_lyrics,
     )
     return (
         '<div class="h3-song-recap"><dl>'
@@ -111,14 +112,25 @@ def render_recap(*, engine: str, sound_label: str, description: str, lyrics: str
     )
 
 
-def bind_song_check(view, engine: str, description: gr.Textbox, sound_label: str) -> None:
-    """Re-check the draft in the browser session on every edit; no GPU, no network."""
-    inputs = [description, view.lyrics, view.duration, view.vocals, view.use, view.language]
+def bind_song_check(
+    view, engine: str, description: gr.Textbox, sound_label: str,
+    *, score: gr.Textbox | None = None, mode: gr.Dropdown | None = None,
+    score_words: gr.State | None = None,
+) -> None:
+    """Re-check the draft in the browser session on every edit; no GPU, no network.
 
-    def check(text, lyrics, duration, vocals, use, language):
+    With ``score_words`` the check also compares the lyrics with the words a
+    reused score was sung with.
+    """
+    inputs = [description, view.lyrics, view.duration, view.vocals, view.use, view.language]
+    if score is not None and mode is not None and score_words is not None:
+        inputs += [score, mode, score_words]
+
+    def check(text, lyrics, duration, vocals, use, language, *reused):
         values = dict(
             engine=engine, description=text or "", lyrics=lyrics or "",
             max_seconds=float(duration or 1), vocals=vocals, use=use,
+            score_lyrics=reused_score_lyrics(*reused) if reused else "",
         )
         return (
             song_brief.render_check(**values),
@@ -130,6 +142,18 @@ def bind_song_check(view, engine: str, description: gr.Textbox, sound_label: str
         fn=check, inputs=inputs, outputs=[view.song_check, view.recap],
         queue=False, api_name=False, show_progress="hidden",
     )
+
+
+def reused_score_lyrics(score: str, mode: str, words) -> str:
+    """The words the score in the field was sung with, while it is a reused take's score.
+
+    An edited or pasted score, or No score, leaves nothing to compare.
+    """
+    if not words or mode == "off":
+        return ""
+    if str(score or "").strip() != str(words.get("score") or "").strip():
+        return ""
+    return str(words.get("lyrics") or "")
 
 
 def bind_write_and_generate(

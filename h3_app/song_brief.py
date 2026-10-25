@@ -536,6 +536,61 @@ class Finding:
     text: str
 
 
+# A reused score has a note for every syllable of the words it was sung with;
+# more than this many syllables either way and the line drifts off the tune.
+SCORE_DRIFT_SYLLABLES = 1
+
+
+@dataclass(frozen=True)
+class ScoreDrift:
+    old_lines: int
+    new_lines: int
+    moved: tuple[tuple[str, int, int], ...]  # (new line, old syllables, new syllables)
+
+
+def _sung_lines(lyrics: str) -> list[str]:
+    return [line for section in parse_lyrics(lyrics) for line in section.lines]
+
+
+def score_drift(sung_with: str, lyrics: str) -> ScoreDrift | None:
+    """How new words sit on a score sung with other words; None for the same words.
+
+    Lines are compared in order, the way the melody carries them.
+    """
+    old, new = _sung_lines(sung_with), _sung_lines(lyrics)
+    if not str(sung_with or "").strip() or old == new:
+        return None
+    moved = tuple(
+        (line, syllables(before), syllables(line))
+        for before, line in zip(old, new)
+        if abs(syllables(before) - syllables(line)) > SCORE_DRIFT_SYLLABLES
+    )
+    return ScoreDrift(len(old), len(new), moved)
+
+
+def _score_drift_findings(sung_with: str, lyrics: str) -> list[Finding]:
+    drift = score_drift(sung_with, lyrics) if str(lyrics or "").strip() else None
+    if drift is None:
+        return []
+    if drift.old_lines != drift.new_lines:
+        return [Finding(
+            "warn",
+            f"The reused score was sung with {drift.old_lines} lines; the lyrics now have "
+            f"{drift.new_lines}. Its melody follows the old lines, so words may land in the wrong "
+            "section. Keep the line count, or clear the score to plan a new one.",
+        )]
+    if not drift.moved:
+        return []
+    line, before, after = drift.moved[0]
+    return [Finding(
+        "warn",
+        f"{len(drift.moved)} line(s) changed length since the reused score was sung, such as "
+        f"“{_clip(line)}” ({before} → {after} syllables). The melody has notes for the old words, "
+        "so these lines may drift off the tune. Match the old syllable count, or clear the score "
+        "to plan a new one.",
+    )]
+
+
 def check_song(
     *,
     engine: str,
@@ -544,8 +599,12 @@ def check_song(
     max_seconds: float,
     vocals: str = AUTO,
     use: str = AUTO,
+    score_lyrics: str = "",
 ) -> tuple[SongPlan, list[LyricSection], float, list[Finding]]:
-    """Producer's pre-flight check of the current draft. No network, no GPU."""
+    """Producer's pre-flight check of the current draft. No network, no GPU.
+
+    ``score_lyrics`` are the words a reused score was sung with, if any.
+    """
     bpm = detect_bpm(description)
     plan = plan_song(max_seconds, vocals=vocals, use=use, idea=description, bpm=bpm)
     tempo, genre = plan.bpm, plan.genre
@@ -567,9 +626,10 @@ def check_song(
         if words > 45 or str(description or "").count(".") > 1:
             findings.append(Finding(
                 "tip",
-                "YuE2 follows short comma-separated tags best (genre, mood, tempo, voice, "
-                "instruments). Write turns a long description into tags.",
+                "YuE2 follows short comma-separated tags best (language, genre, voice, "
+                "instruments, mood, BPM last). Write turns a long description into tags.",
             ))
+        findings.extend(_score_drift_findings(score_lyrics, lyrics))
     if plan.instrumental and sung:
         findings.append(Finding(
             "warn", "You chose an instrumental, but the lyrics contain words that will be sung.",
@@ -649,10 +709,11 @@ def render_check(
     max_seconds: float,
     vocals: str = AUTO,
     use: str = AUTO,
+    score_lyrics: str = "",
 ) -> str:
     plan, sections, estimate, findings = check_song(
         engine=engine, description=description, lyrics=lyrics,
-        max_seconds=max_seconds, vocals=vocals, use=use,
+        max_seconds=max_seconds, vocals=vocals, use=use, score_lyrics=score_lyrics,
     )
     limit = float(max_seconds)
     if sections:

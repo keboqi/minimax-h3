@@ -48,7 +48,8 @@ def bind_yue2_view(
         drafts=[view.style, view.lyrics], status=view.enhance_status,
         review=view.enhance.h3_review, generate_id=view.run.elem_id,
     )
-    bind_song_check(view, "YuE2", view.style, "Style")
+    bind_song_check(view, "YuE2", view.style, "Style", score=view.abc, mode=view.mode,
+                    score_words=view.takes.score_words)
     bind_take_history(
         view.takes, run=view.run, output=view.output, seed=view.seed, take_facts=take_facts,
         score=view.abc, mode=view.mode,

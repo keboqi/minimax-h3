@@ -81,11 +81,15 @@ else, and opens the Lyrics step to review it. **Generate another take** records
 the current draft again.
 
 Song with YuE2 follows the same four steps and choices. Its writer turns the
-idea into a short comma-separated style tag line, which YuE2 reads best, and
-its **Lyrics & score** step has **Lyrics** and **Score** tabs. After a take that
+idea into a short comma-separated style tag line, which YuE2 reads best, in
+the order YuE2's authors use: the sung language first and the BPM last. Its
+**Lyrics & score** step has **Lyrics** and **Score** tabs. After a take that
 planned or used a score, the **Score** tab shows it; **Reuse this score for the
 next take** keeps the melody while the style or sound changes; **Reuse take A's
-score** in **Your takes** does the same for any earlier take. Scores are saved
+score** in **Your takes** does the same for any earlier take. While a reused
+score is in use, the song check compares the lyrics with the words that take
+sang: it flags a changed line count and any line that gained or lost more than
+one syllable, since the melody has notes for the old words. Scores are saved
 beside the song as `<song>.score.abc` and deleted with it. The **Generate** step
 holds the composition mode (plan melody + chords, plan melody only, or no
 score); the Idea step offers 1-, 2-, 3-, or 5-minute duration presets. YuE2
