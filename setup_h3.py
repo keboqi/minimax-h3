@@ -62,6 +62,7 @@ from h3_requirements import (
     HUGGINGFACE_HUB_REQUIREMENT,
     INSTALL_CONSTRAINTS,
     KERNELS_VERSION,
+    TRANSFORMERS_REQUIREMENT,
     KORNIA_VERSION,
     KORNIA_RS_VERSION,
     LTX_HDR_REQUIREMENTS,
@@ -660,7 +661,7 @@ def install_environment(comfy: Path) -> None:
         uv_pip(
             f"gradio=={GRADIO_VERSION}",
             HUGGINGFACE_HUB_REQUIREMENT,
-            "transformers>=4.57.1",
+            TRANSFORMERS_REQUIREMENT,
             "diffusers>=0.36,<0.37",
             f"kernels=={KERNELS_VERSION}",
             "accelerate>=1.12",

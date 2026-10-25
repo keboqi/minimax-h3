@@ -25,6 +25,8 @@ SCIPY_VERSION = "1.15.3"
 HUGGINGFACE_HUB_REQUIREMENT = "huggingface-hub>=1.5,<2"
 # Transformers' fine-grained FP8 loader requires this exact minor release.
 KERNELS_VERSION = "0.16.0"
+# Transformers 5.15-5.17 accept kernels 0.16; 5.18 and later require 0.17.
+TRANSFORMERS_REQUIREMENT = "transformers>=4.57.1,<5.18"
 # Pinned LTXVideo uses torch.nn.functional.pad instead of Kornia's removed
 # pyramid.pad export.
 KORNIA_VERSION = "0.8.3"
@@ -87,7 +89,13 @@ ABI_CONSTRAINTS = (
     f"numpy=={NUMPY_VERSION}",
     f"scipy=={SCIPY_VERSION}",
 )
-INSTALL_CONSTRAINTS = (*ABI_CONSTRAINTS, HUGGINGFACE_HUB_REQUIREMENT)
+# Node installs must not move Transformers and kernels apart.
+INSTALL_CONSTRAINTS = (
+    *ABI_CONSTRAINTS,
+    HUGGINGFACE_HUB_REQUIREMENT,
+    TRANSFORMERS_REQUIREMENT,
+    f"kernels=={KERNELS_VERSION}",
+)
 
 PINNED_REQUIREMENTS = frozenset(
     {"torch", "torchvision", "torchaudio", "numpy", "scipy", "huggingface-hub"}
@@ -475,11 +483,17 @@ def selftest() -> None:
         "numpy==1.26.4",
         "scipy==1.15.3",
     )
-    assert INSTALL_CONSTRAINTS == (*ABI_CONSTRAINTS, "huggingface-hub>=1.5,<2")
+    assert INSTALL_CONSTRAINTS == (
+        *ABI_CONSTRAINTS,
+        "huggingface-hub>=1.5,<2",
+        "transformers>=4.57.1,<5.18",
+        "kernels==0.16.0",
+    )
     assert KORNIA_VERSION == "0.8.3"
     assert KORNIA_RS_VERSION == "0.1.14"
     assert LTX_HDR_REQUIREMENTS == ("colour-science==0.4.6", "openimageio==3.0.12.0")
     assert KERNELS_VERSION == "0.16.0"
+    assert TRANSFORMERS_REQUIREMENT == "transformers>=4.57.1,<5.18"
     assert COMFY_REF == "bc5f880dbdd43e426077f42ccec53bb577ffee9f"
     assert DRAMA3_REF == "67a733a96890637dc27b1914974ad00c569405fb"
     assert COMFY_KITCHEN_VERSION == "0.2.40"
