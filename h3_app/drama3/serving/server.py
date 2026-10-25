@@ -32,8 +32,9 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 SHM_PLATFORM_DIR = Path(__file__).with_name("omni_platform")
 SHM_PLATFORM_SPEC = "h3_omni_shm:ShmCudaPlatform"
 # Set while a Modal memory snapshot of the loaded server is pending. Modal captures
-# the CUDA state itself, so a launch then skips the driver checkpoint job; servers
-# started after the restore get sleep again. The captured one stops instead.
+# the CUDA state itself, so a launch then skips the driver checkpoint job and routes
+# stage tensors through host SHM instead of CUDA IPC; servers started after the
+# restore get sleep again. The captured one stops instead.
 SNAPSHOT_CAPTURE = threading.Event()
 
 
@@ -259,7 +260,12 @@ class SglangOmniServer:
         env = self.server_env()
         self._checkpoint_helper = None
         self._checkpoint_baseline = 0
-        if settings.sleep_mode == "auto" and not self._sleep_disabled and not SNAPSHOT_CAPTURE.is_set():
+        if SNAPSHOT_CAPTURE.is_set():
+            # Modal's snapshot checkpoints each CUDA process, and outside a driver job
+            # it cannot capture memory the stages share over CUDA IPC.
+            env.update(PYTHONPATH=str(SHM_PLATFORM_DIR), SGLANG_OMNI_PLATFORM_SPEC=SHM_PLATFORM_SPEC)
+            self.log_line("Snapshot capture: Omni stages exchange tensors through host SHM")
+        elif settings.sleep_mode == "auto" and not self._sleep_disabled:
             try:
                 helper, ipc = checkpoint.prepare_helper(settings.runtime_dir / "cache")
                 self._checkpoint_baseline = checkpoint.device_memory()[0]

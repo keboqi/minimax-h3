@@ -384,6 +384,22 @@ class LifecycleTests(unittest.TestCase):
                 self.assertEqual(self.server._checkpoint_helper, None if mode == 'off' else Path('/helper'))
                 self.assertTrue(popen.call_args.kwargs['start_new_session'])
 
+    def test_snapshot_capture_starts_on_shm_without_checkpoint_job(self):
+        server.SNAPSHOT_CAPTURE.set()
+        self.addCleanup(server.SNAPSHOT_CAPTURE.clear)
+        with patch.object(cp, 'prepare_helper') as prepare, \
+                patch.object(server.subprocess, 'Popen') as popen, \
+                patch.object(server.atexit, 'register'):
+            self.server._start()
+            self.server._log.close()
+            self.server._log = None
+        command, env = popen.call_args.args[0], popen.call_args.kwargs['env']
+        self.assertEqual(command, self.server.command())
+        self.assertEqual(env['SGLANG_OMNI_PLATFORM_SPEC'], server.SHM_PLATFORM_SPEC)
+        self.assertEqual(env['PYTHONPATH'], str(server.SHM_PLATFORM_DIR))
+        prepare.assert_not_called()
+        self.assertIsNone(self.server._checkpoint_helper)
+
     def test_wrapped_start_failure_retries_once_without_checkpoint(self):
         self.server.process = None
         order = []

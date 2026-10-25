@@ -351,6 +351,8 @@ On `h3-soundstage`, SGLang-Omni's kernel caches and logs and the VoiceDesign/Sta
 Audio worker log stay in the container while it runs (open files must not be on
 the volume when a snapshot is taken); they are copied to the volume when the
 snapshot is taken and when the container stops. The captured SGLang-Omni server
+passes tensors between its stages through host shared memory rather than CUDA
+IPC, which Modal's snapshot cannot capture outside a driver checkpoint job, and
 stops instead of sleeping when another engine needs the GPU; a server started
 after that sleeps as usual. Other engines still work on both endpoints, loading
 their models on demand.
