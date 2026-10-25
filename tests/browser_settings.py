@@ -210,10 +210,15 @@ def run():
                 choose_engine(page, "Song", "MiniMax H3")
                 expect(card).to_contain_text("Audio · 5 seconds")
                 expect(card).not_to_contain_text("H3 output")
+                # Audio keeps the finishing tab but hides its controls behind the note.
+                page.get_by_role("tab", name="Upscale & finish", exact=True).click()
+                expect(page.get_by_text("Video and image results only.", exact=False)).to_be_visible()
+                expect(page.get_by_label("After generation", exact=True)).not_to_be_visible()
                 page.locator(".h3-task-picker").get_by_label(
                     "Video", exact=True
                 ).check()
                 expect(card).to_contain_text("Native 2× refinement")
+                expect(page.get_by_label("After generation", exact=True)).to_be_visible()
                 page.get_by_role(
                     "tab", name="Speed & attention", exact=True
                 ).click()

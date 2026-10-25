@@ -44,9 +44,7 @@ def build_model_section(
 ) -> ModelSection:
     """Conditioning in ``conditioning_parent``; base model and generation in
     ``model_parent``; Semantic Bridge in ``bridge_parent``; encoders, decoders and
-    memory in ``advanced_parent``. A missing parent falls back to the current one."""
-    model_parent = model_parent if model_parent is not None else advanced_parent
-    bridge_parent = bridge_parent if bridge_parent is not None else model_parent
+    memory in ``advanced_parent``. A missing parent leaves its controls in the current one."""
     with (
         conditioning_parent if conditioning_parent is not None else nullcontext(),
         gr.Row(elem_classes=["h3-mode-row"]),

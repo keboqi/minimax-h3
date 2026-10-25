@@ -216,19 +216,8 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 .h3-workspace .h3-result-player { min-height: 260px; background: var(--h3-muted-surface); border-style: dashed; }
 .h3-workspace .h3-result-player .empty { flex-direction: column; gap: 10px; color: var(--h3-muted); }
 .h3-workspace .h3-result-player .empty::after { content: "Your video will appear here"; font-size: 13px; }
-/* Fine-tune: H3 settings beyond Compose, one tab per group, styled like Song's steps without numbers. */
-.h3-workspace #h3-fine-tune { gap: 12px; margin-top: 20px; padding: 16px; border: 1px solid var(--h3-border); border-radius: 16px; background: var(--h3-surface); box-shadow: 0 4px 18px #122e2106; scroll-margin-top: 16px; }
-.h3-workspace .h3-settings-tabs { border: 0; background: transparent; padding: 0; scroll-margin-top: 16px; }
-.h3-workspace .h3-settings-tabs > .tab-wrapper { border: 0; margin-bottom: 12px; padding: 0; }
-.h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; border: 0; padding: 0; }
-.h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button { display: flex; align-items: center; min-width: 0; min-height: 48px; margin: 0; padding: 8px 14px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-surface); color: var(--h3-muted); font-size: 14px; font-weight: 600; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: border-color .15s, background .15s, color .15s; }
-.h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button::after { display: none; }
-.h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button:hover { color: var(--h3-text); border-color: var(--h3-disclosure-border); }
-.h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button[aria-selected="true"] { color: var(--h3-text); border-color: var(--h3-accent); background: color-mix(in srgb, var(--h3-accent) 7%, var(--h3-surface)); box-shadow: inset 0 -3px var(--h3-accent); }
-.h3-workspace .h3-settings-tabs > [role="tabpanel"] { border: 1px solid var(--h3-border); border-radius: 12px; padding: 16px; background: var(--h3-surface); }
-.h3-workspace .h3-settings-tab > .column { gap: 12px; }
-.h3-workspace .h3-settings-links { flex-wrap: wrap; gap: 6px; }
-.h3-workspace .h3-settings-links { align-items: center; }
+/* Small buttons in Compose: an action, and links that open a Fine-tune tab. */
+.h3-workspace .h3-settings-links { flex-wrap: wrap; align-items: center; gap: 6px; }
 .h3-workspace .h3-settings-links > button { flex: 0 1 auto !important; min-width: 0 !important; min-height: 36px; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; }
 .h3-workspace .h3-settings-links > button:not(.h3-settings-link) { border: 1px solid var(--h3-border); }
 .h3-workspace button.h3-settings-link { border-color: transparent; background: transparent; color: var(--h3-accent); box-shadow: none; }
@@ -436,18 +425,29 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-song-intro h2 { margin: 5px 0 8px; font-size: clamp(24px, 2.4vw, 34px); letter-spacing: -.045em; font-weight: 650; }
 .h3-workspace .h3-song-intro p:not(.h3-eyebrow) { margin: 0; color: var(--h3-muted); font-size: 14px; }
 .h3-workspace .h3-song-badge { border: 1px solid var(--h3-border); border-radius: 999px; padding: 9px 14px; font-size: 10px; letter-spacing: .14em; color: var(--h3-accent); white-space: nowrap; }
-.h3-workspace .h3-song-steps { counter-reset: h3-song-step; border: 0; background: transparent; padding: 0; }
-.h3-workspace .h3-song-steps > .tab-wrapper { border: 0; margin-bottom: 14px; padding: 0; }
-.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; border: 0; padding: 0; }
-.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button { counter-increment: h3-song-step; display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 54px; margin: 0; padding: 8px 14px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-surface); color: var(--h3-muted); font-size: 14px; font-weight: 600; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: border-color .15s, background .15s, color .15s; }
+/* Fine-tune (.h3-settings-tabs) shares the stepper's look, without numbers. Plain selector
+   lists, not :is(): Gradio's scoping splits on commas inside :is() and inflates specificity. */
+.h3-workspace .h3-song-steps, .h3-workspace .h3-settings-tabs { border: 0; background: transparent; padding: 0; }
+.h3-workspace .h3-song-steps { counter-reset: h3-song-step; }
+.h3-workspace .h3-song-steps > .tab-wrapper, .h3-workspace .h3-settings-tabs > .tab-wrapper { border: 0; margin-bottom: 14px; padding: 0; }
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"], .h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; border: 0; padding: 0; }
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button { counter-increment: h3-song-step; gap: 10px; min-height: 54px; }
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button, .h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button { display: flex; align-items: center; min-width: 0; margin: 0; padding: 8px 14px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-surface); color: var(--h3-muted); font-size: 14px; font-weight: 600; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: border-color .15s, background .15s, color .15s; }
 .h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button::before { content: counter(h3-song-step); display: grid; place-items: center; flex: none; width: 28px; height: 28px; border: 1px solid var(--h3-border); border-radius: 999px; background: var(--h3-muted-surface); color: var(--h3-accent); font-size: 12px; font-weight: 700; }
-.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button::after { display: none; }
-.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button:hover { color: var(--h3-text); border-color: var(--h3-disclosure-border); }
-.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button[aria-selected="true"] { color: var(--h3-text); border-color: var(--h3-accent); background: color-mix(in srgb, var(--h3-accent) 7%, var(--h3-surface)); box-shadow: inset 0 -3px var(--h3-accent); }
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button::after, .h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button::after { display: none; }
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button:hover, .h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button:hover { color: var(--h3-text); border-color: var(--h3-disclosure-border); }
+.h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button[aria-selected="true"], .h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button[aria-selected="true"] { color: var(--h3-text); border-color: var(--h3-accent); background: color-mix(in srgb, var(--h3-accent) 7%, var(--h3-surface)); box-shadow: inset 0 -3px var(--h3-accent); }
 .h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button[aria-selected="true"]::before { border-color: var(--h3-accent); background: var(--h3-accent); color: var(--h3-surface); }
 /* Steps before the open one read as visited. */
 .h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button:has(~ button[aria-selected="true"])::before { content: "✓"; background: color-mix(in srgb, var(--h3-accent) 14%, var(--h3-surface)); border-color: color-mix(in srgb, var(--h3-accent) 40%, var(--h3-border)); }
 .h3-workspace .h3-song-steps > [role="tabpanel"] { border: 0; padding: 0; background: transparent; }
+.h3-workspace #h3-fine-tune { gap: 12px; margin-top: 20px; padding: 16px; border: 1px solid var(--h3-border); border-radius: 16px; background: var(--h3-surface); box-shadow: 0 4px 18px #122e2106; scroll-margin-top: 16px; }
+.h3-workspace .h3-settings-tabs { scroll-margin-top: 16px; }
+.h3-workspace .h3-settings-tabs > .tab-wrapper { margin-bottom: 12px; }
+.h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] { grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }
+.h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button { min-height: 48px; }
+.h3-workspace .h3-settings-tabs > [role="tabpanel"] { border: 1px solid var(--h3-border); border-radius: 12px; padding: 16px; background: var(--h3-surface); }
+.h3-workspace .h3-settings-tab > .column { gap: 12px; }
 .h3-workspace .h3-song-card-heading h3 { margin: 0; font-size: 18px; letter-spacing: -.025em; }
 .h3-workspace .h3-song-card-heading p { margin: 4px 0 0; font-size: 13px; color: var(--h3-muted); }
 .h3-workspace .h3-song-stage button.h3-song-nav, .h3-workspace .h3-song-stage .h3-primary-action { min-height: 44px; border-radius: 10px; }
