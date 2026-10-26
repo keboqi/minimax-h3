@@ -249,7 +249,7 @@ class ColabLauncherTests(unittest.TestCase):
             python.write_text("#!/usr/bin/env bash\nprintf 'selected-venv\\n'\n", encoding="utf-8")
             python.chmod(0o755)
             run_script = root / "run_h3.sh"
-            run_script.write_text('printf "%s\\n" "$VIRTUAL_ENV"\npython3 --version\nprintf "%s\\n" "${PYTHONPATH-unset}"\n', encoding="utf-8")
+            run_script.write_text('printf "%s\\n" "$VIRTUAL_ENV"\npython3 --version\nprintf "%s\\n" "${PYTHONPATH-unset}"\nprintf "%s\\n" "$H3_DRAMA3_SGLANG_CHECKPOINT"\n', encoding="utf-8")
             tree = ast.parse(cell_source("launcher_source ="))
             conditional = next(node for node in tree.body if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "USE_RAM_FOR_QWEN")
             command_assignment = next(node for node in conditional.orelse if isinstance(node, ast.Assign))
@@ -262,8 +262,12 @@ class ColabLauncherTests(unittest.TestCase):
             launcher = root / "run_h3_colab.sh"
             launcher.write_text(namespace["launcher_source"], encoding="utf-8")
             env = dict(os.environ, VIRTUAL_ENV="wrong-environment", PYTHONPATH="inherited-conflict")
+            env.pop("H3_DRAMA3_SGLANG_CHECKPOINT", None)
             result = subprocess.run([str(bash), launcher.as_posix()], env=env, capture_output=True, text=True, check=True)
-            self.assertEqual(result.stdout.splitlines(), [shell_path(venv), "selected-venv", "unset"])
+            self.assertEqual(result.stdout.splitlines(), [shell_path(venv), "selected-venv", "unset", "int4"])
+            chosen = subprocess.run([str(bash), launcher.as_posix()], env=dict(env, H3_DRAMA3_SGLANG_CHECKPOINT="fp8"),
+                                    capture_output=True, text=True, check=True)
+            self.assertEqual(chosen.stdout.splitlines()[-1], "fp8")
             python.unlink()
             failed = subprocess.run([str(bash), launcher.as_posix()], env=env, capture_output=True, text=True)
             self.assertNotEqual(failed.returncode, 0)
@@ -284,7 +288,7 @@ class ColabLogStreamingTests(unittest.TestCase):
     def setUp(self):
         self.run = load_function("run_colab_launcher", dict(
             os=os, subprocess=subprocess, signal=signal,
-            ENABLE_CLOUDFLARE_TUNNEL=True, ENABLE_GRADIO_SHARE=False,
+            ENABLE_CLOUDFLARE_TUNNEL=True, ENABLE_GRADIO_SHARE=False, DRAMA3_CHECKPOINT="fp8",
         ))
 
     def run_child_fixture(self, script, output):
@@ -294,6 +298,7 @@ class ColabLogStreamingTests(unittest.TestCase):
             self.assertEqual(kwargs["env"]["PYTHONUNBUFFERED"], "1")
             self.assertEqual(kwargs["env"]["ENABLE_CLOUDFLARE_TUNNEL"], "true")
             self.assertEqual(kwargs["env"]["GRADIO_SHARE"], "false")
+            self.assertEqual(kwargs["env"]["H3_DRAMA3_SGLANG_CHECKPOINT"], "fp8")
             return original_popen([sys.executable, "-u", "-c", script], **kwargs)
         with patch.object(subprocess, "Popen", side_effect=open_fixture), contextlib.redirect_stdout(output):
             self.run("fixture.sh")
@@ -445,6 +450,7 @@ class CloudflareTests(unittest.TestCase):
             popen.assert_called_once()
             self.assertEqual(popen.call_args.kwargs["env"]["ENABLE_CLOUDFLARE_TUNNEL"], "false")
             self.assertEqual(popen.call_args.kwargs["env"]["GRADIO_SHARE"], "true")
+            self.assertEqual(popen.call_args.kwargs["env"]["H3_DRAMA3_SGLANG_CHECKPOINT"], "int4")
 
     def test_public_url_defaults_and_overrides(self):
         for environment, expected in (

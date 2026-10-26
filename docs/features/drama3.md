@@ -329,7 +329,9 @@ The default checkpoint is the official FP8 release: a 41.5 GB download with 37 G
 of engine weights. `H3_DRAMA3_SGLANG_CHECKPOINT=int4` switches to Fish Audio's official
 4-bit GPTQ release, which downloads 24 GB and holds 20.8 GiB of weights. In SGLang-Omni's
 benchmark it was about 8% slower per request at the same WER. Each checkpoint has its
-own pinned revision and folder, and the Storage console can fetch either.
+own pinned revision and folder, and the Storage console can fetch either. The Colab
+notebook serves int4 by default; its launch cell has a Drama 3 checkpoint option, and
+`run_h3_colab.sh` keeps an `H3_DRAMA3_SGLANG_CHECKPOINT` already set in the Terminal.
 
 The engine's memory share is sized to its checkpoint: the weights plus 12 GiB for the
 KV cache (20 KiB per token), linear-attention state (about 64 MiB per request), CUDA
