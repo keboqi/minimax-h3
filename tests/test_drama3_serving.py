@@ -267,6 +267,31 @@ class ServerTests(unittest.TestCase):
         self.assertEqual((custom.engine_memory, custom.codec_memory, custom.max_seqs, custom.port),
                          (0.6, 0.1, 8, 9000))
 
+    def test_int4_checkpoint_has_its_own_pin_and_a_smaller_engine_share(self):
+        runtime = SimpleNamespace(script_dir=Path("/app"), comfy_dir=Path("/app/ComfyUI"))
+        with patch.dict("os.environ", {"H3_DRAMA3_SGLANG_CHECKPOINT": "INT4"}, clear=True):
+            int4 = server.ServerSettings.from_environment(runtime)
+        self.assertEqual(int4.checkpoint, "int4")
+        self.assertIsNone(int4.engine_memory)
+        self.assertEqual(int4.model_dir.name, "fishaudio--drama-3-int4--a6f588691a13")
+        self.assertEqual(self.settings.model_dir.name, "fishaudio--drama-3--e0a9218aa488")
+        rtx_pro_6000 = 97887  # MiB, as nvidia-smi reports it
+        self.assertEqual(self.settings.engine_fraction(rtx_pro_6000), 0.513)  # (37 + 12) / 95.6 GiB
+        self.assertEqual(int4.engine_fraction(rtx_pro_6000), 0.343)  # (20.8 + 12) / 95.6 GiB
+        self.assertEqual(int4.engine_fraction(None), 0.343)
+        self.assertEqual(self.settings_for(engine_memory=0.6).engine_fraction(rtx_pro_6000), 0.6)
+        self.assertEqual(self.settings.engine_fraction(24 * 1024), 0.9)  # never the whole GPU
+        with self.assertRaisesRegex(ValueError, "fp8, int4"):
+            self.settings_for(checkpoint="nvfp4")
+
+    def test_free_vram_check_uses_the_checkpoint_engine_share(self):
+        progress = MagicMock()
+        with patch.object(server, "gpu_memory", return_value=(45 * 1024, 97887, "")):
+            # 32.8 GiB of engine plus 7.6 GiB of codec fit in 45 GiB; FP8's 56.7 GiB do not.
+            server.SglangOmniServer(self.settings_for(checkpoint="int4")).check_free_vram(progress, evict=False)
+            with self.assertRaisesRegex(H3Error, "needs about 56.7 GiB"):
+                server.SglangOmniServer(self.settings).check_free_vram(progress, evict=False)
+
     def test_existing_pinned_checkpoint_is_reused_after_storage_rename(self):
         settings = self.settings_for(model_root=Path(self.temp.name) / "models" / "serving")
         target = settings.model_dir
@@ -324,7 +349,9 @@ class ServerTests(unittest.TestCase):
                 stream.write(b"\x1b[32m[tts_engine] Init parallel ends.\x1b[0m\nLoad weight end. elapsed=21.50 s, type=Dra")
             timeline.read(12)
             with path.open("ab") as stream:
-                stream.write(b"ma3\rCapturing batches (bs=8)\r\nfirst-frame graphs for 16 requests, captured in 4.20 s\n")
+                stream.write(b"ma3\rCapturing batches (bs=8)\r\nfirst-frame graphs for 16 requests, captured in 4.20 s\n"
+                             b"Post-capture KV sizing: KV cache allocated. dtype: torch.bfloat16, #tokens: 250000\n"
+                             b"Post-capture KV sizing: max_running_requests 32 -> 24\n")
             timeline.read(70)
             summary = timeline.summary(75)
         self.assertEqual(timeline.first_output, 12)
@@ -333,6 +360,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual([line.split("  ")[-1] for line in summary[2:]], [
             "Load weight end. elapsed=21.50 s, type=Drama3",
             "first-frame graphs for 16 requests, captured in 4.20 s",
+            "Post-capture KV sizing: KV cache allocated. dtype: torch.bfloat16, #tokens: 250000",
+            "Post-capture KV sizing: max_running_requests 32 -> 24",
         ])
         self.assertTrue(summary[2].strip().startswith("70s"))
 
@@ -349,7 +378,7 @@ class ServerTests(unittest.TestCase):
         instance = server.SglangOmniServer(settings)
         command = instance.command()
         self.assertEqual(command[1:3], ["serve", "--model-path"])
-        self.assertEqual(command[command.index("--tts_engine.gpu_memory_fraction") + 1], "0.55")
+        self.assertEqual(command[command.index("--tts_engine.gpu_memory_fraction") + 1], "0.513")
         self.assertEqual(command[command.index("--vocoder.gpu_memory_fraction") + 1], "0.08")
         self.assertEqual(command[command.index("--tts_engine.factory.max_running_requests") + 1], "32")
         self.assertEqual(command[command.index("--tts_engine.engine.cuda_graph_backend_prefill") + 1], "breakable")

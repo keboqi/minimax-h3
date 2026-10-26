@@ -20,7 +20,7 @@ from typing import Callable
 import requests
 from requests.adapters import HTTPAdapter
 
-from h3_requirements import DRAMA3_HF_REPO, DRAMA3_HF_REVISION
+from h3_requirements import DRAMA3_HF_REPO, DRAMA3_HF_REVISION, DRAMA3_INT4_HF_REPO, DRAMA3_INT4_HF_REVISION
 
 from h3_app.errors import H3Error
 
@@ -28,9 +28,32 @@ from . import checkpoint, environment
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # SGLang's own phase timings ("Load weight end. elapsed=12.34 s", "Capture decode
-# CUDA graph end. elapsed=...") and Drama 3's first-frame graphs ("captured in 4.20 s").
-TIMED_LINE = re.compile(r"(?:elapsed=|captured in )\d+(?:\.\d+)? ?s\b")
+# CUDA graph end. elapsed=..."), Drama 3's first-frame graphs ("captured in 4.20 s"),
+# and the KV and linear-attention state pools the engine memory left room for.
+BREAKDOWN_LINE = re.compile(r"(?:elapsed=|captured in )\d+(?:\.\d+)? ?s\b|KV cache allocated|"
+                            r"Mamba Cache is allocated|max_running_requests (?:is capped|\d+ ->)")
 STARTUP_POLL_SECONDS = 1.0
+
+
+@dataclass(frozen=True)
+class Drama3Checkpoint:
+    repo: str
+    revision: str
+    download_gb: float
+    weights_gib: float  # engine weights on the GPU, as SGLang reports them
+
+
+CHECKPOINTS = {
+    "fp8": Drama3Checkpoint(DRAMA3_HF_REPO, DRAMA3_HF_REVISION, 41.5, 37.0),
+    "int4": Drama3Checkpoint(DRAMA3_INT4_HF_REPO, DRAMA3_INT4_HF_REVISION, 24.0, 20.8),
+}
+# Engine memory beyond the weights: the KV cache (20 KiB per token across Drama 3's
+# 10 full-attention layers, so 32 requests of 8k tokens take 5 GiB), linear-attention
+# state (about 64 MiB per request), CUDA graphs and decode buffers. Each start logs
+# the pools it allowed, and any cap on running requests, in its startup breakdown.
+ENGINE_HEADROOM_GIB = 12.0
+# Without nvidia-smi, assume the RTX PRO 6000's 95.6 GiB.
+FALLBACK_GPU_GIB = 95.6
 # Drivers that cannot checkpoint CUDA IPC need Omni's stages to exchange
 # tensors through host SHM; this platform, a module for the Omni venv, does so.
 SHM_PLATFORM_DIR = Path(__file__).with_name("omni_platform")
@@ -56,8 +79,10 @@ class ServerSettings:
     data_dir: Path
     model_root: Path
     port: int = 8096
-    # The engine's share of total GPU memory: 37 GB of weights plus KV cache.
-    engine_memory: float = 0.55
+    checkpoint: str = "fp8"
+    # The engine's share of total GPU memory; None sizes it to the checkpoint's
+    # weights plus ENGINE_HEADROOM_GIB. Sleep and Modal snapshots copy all of it.
+    engine_memory: float | None = None
     codec_memory: float = 0.08
     max_seqs: int = 32
     start_timeout: float = 1800.0
@@ -67,31 +92,47 @@ class ServerSettings:
     def __post_init__(self):
         if self.sleep_mode not in {"auto", "off"}:
             raise ValueError("H3_DRAMA3_SGLANG_SLEEP must be auto or off")
+        if self.checkpoint not in CHECKPOINTS:
+            raise ValueError(f"H3_DRAMA3_SGLANG_CHECKPOINT must be one of {', '.join(CHECKPOINTS)}")
 
     @classmethod
     def from_environment(cls, runtime) -> "ServerSettings":
         env = os.environ
+        engine_memory = env.get("H3_DRAMA3_SGLANG_ENGINE_MEMORY")
         return cls(
             venv=environment.default_venv(runtime.script_dir),
             data_dir=Path(env.get("H3_DRAMA3_SGLANG_DATA") or runtime.comfy_dir.parent / "drama3-serving"),
             model_root=Path(env.get("H3_DRAMA3_SGLANG_MODELS") or runtime.comfy_dir / "models" / "drama3_serving"),
             port=int(env.get("H3_DRAMA3_SGLANG_PORT", "8096")),
-            engine_memory=float(env.get("H3_DRAMA3_SGLANG_ENGINE_MEMORY", "0.55")),
+            checkpoint=env.get("H3_DRAMA3_SGLANG_CHECKPOINT", "fp8").lower(),
+            engine_memory=float(engine_memory) if engine_memory else None,
             codec_memory=float(env.get("H3_DRAMA3_SGLANG_CODEC_MEMORY", "0.08")),
             max_seqs=int(env.get("H3_DRAMA3_SGLANG_MAX_SEQS", "32")),
             sleep_mode=env.get("H3_DRAMA3_SGLANG_SLEEP", "auto").lower(),
         )
 
     @property
+    def pin(self) -> Drama3Checkpoint:
+        return CHECKPOINTS[self.checkpoint]
+
+    def engine_fraction(self, total_mib: float | None) -> float:
+        """The engine's share of a GPU with ``total_mib`` (None when unknown)."""
+        if self.engine_memory is not None:
+            return self.engine_memory
+        total_gib = total_mib / 1024 if total_mib else FALLBACK_GPU_GIB
+        return round(min(0.9, (self.pin.weights_gib + ENGINE_HEADROOM_GIB) / total_gib), 3)
+
+    @property
     def model_dir(self) -> Path:
-        target = self.model_root / f"{DRAMA3_HF_REPO.replace('/', '--')}--{DRAMA3_HF_REVISION[:12]}"
+        pin = self.pin
+        target = self.model_root / f"{pin.repo.replace('/', '--')}--{pin.revision[:12]}"
         if not target.exists():
             # Reuse the pinned checkpoint in an earlier sibling serving directory.
-            # Removing a backend must not force another 44 GB download.
+            # Removing a backend must not force another download.
             candidates = sorted(self.model_root.parent.glob(f"*/{target.name}"))
             for candidate in candidates:
                 marker = candidate / ".h3-complete"
-                if marker.is_file() and marker.read_text(encoding="utf-8").strip() == DRAMA3_HF_REVISION:
+                if marker.is_file() and marker.read_text(encoding="utf-8").strip() == pin.revision:
                     return candidate
         return target
 
@@ -140,7 +181,7 @@ class StartupTimeline:
                 continue
             if self.first_output is None:
                 self.first_output = elapsed
-            if TIMED_LINE.search(line):
+            if BREAKDOWN_LINE.search(line):
                 self.timed.append((elapsed, line[:200]))
 
     def summary(self, total: float) -> list[str]:
@@ -161,9 +202,10 @@ def ensure_model(settings: ServerSettings, *, token=None, log=print) -> Path:
     os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
     from huggingface_hub import snapshot_download
 
-    log(f"[drama3-serving] Downloading {DRAMA3_HF_REPO}@{DRAMA3_HF_REVISION[:12]} (~44 GB, first use only).")
-    snapshot_download(DRAMA3_HF_REPO, revision=DRAMA3_HF_REVISION, local_dir=target, token=token)
-    marker.write_text(DRAMA3_HF_REVISION, encoding="utf-8")
+    pin = settings.pin
+    log(f"[drama3-serving] Downloading {pin.repo}@{pin.revision[:12]} (~{pin.download_gb:.0f} GB, first use only).")
+    snapshot_download(pin.repo, revision=pin.revision, local_dir=target, token=token)
+    marker.write_text(pin.revision, encoding="utf-8")
     return target
 
 
@@ -279,7 +321,7 @@ class SglangOmniServer:
         if memory is None:
             return
         free, total, holders = memory
-        needed = (self.settings.engine_memory + self.settings.codec_memory) * total
+        needed = (self.settings.engine_fraction(total) + self.settings.codec_memory) * total
         if free < needed and evict:
             memory = reclaim_audio_tools() or memory
             free, total, holders = memory
@@ -528,10 +570,11 @@ class SglangOmniServer:
 
     def command(self) -> list[str]:
         settings = self.settings
+        memory = gpu_memory()
         return [
             str(environment.executable(settings.venv, "sgl-omni")), "serve",
             "--model-path", str(settings.model_dir), "--host", "127.0.0.1", "--port", str(settings.port),
-            "--tts_engine.gpu_memory_fraction", str(settings.engine_memory),
+            "--tts_engine.gpu_memory_fraction", str(settings.engine_fraction(memory and memory[1])),
             "--vocoder.gpu_memory_fraction", str(settings.codec_memory),
             "--tts_engine.factory.max_running_requests", str(settings.max_seqs),
             # Upstream's defaults: prefill batches up to 2048 tokens and first frames

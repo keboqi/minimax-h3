@@ -315,7 +315,8 @@ SGLang configuration uses these environment variables:
 
 | Variable | Default |
 | --- | --- |
-| `H3_DRAMA3_SGLANG_ENGINE_MEMORY` | `0.55` of GPU memory |
+| `H3_DRAMA3_SGLANG_CHECKPOINT` | `fp8` (official `fishaudio/drama-3`); `int4` for official `fishaudio/drama-3-int4` |
+| `H3_DRAMA3_SGLANG_ENGINE_MEMORY` | the checkpoint's weights plus 12 GiB, as a share of GPU memory |
 | `H3_DRAMA3_SGLANG_CODEC_MEMORY` | `0.08` of GPU memory |
 | `H3_DRAMA3_SGLANG_MAX_SEQS` | `32` |
 | `H3_DRAMA3_SGLANG_PORT` | `8096` |
@@ -323,6 +324,20 @@ SGLang configuration uses these environment variables:
 | `H3_DRAMA3_SGLANG_DATA` | `drama3-serving` beside ComfyUI |
 | `H3_DRAMA3_SGLANG_MODELS` | `ComfyUI/models/drama3_serving` |
 | `H3_DRAMA3_SGLANG_SLEEP` | `auto`; use `off` for stop/restart only |
+
+The default checkpoint is the official FP8 release: a 41.5 GB download with 37 GiB
+of engine weights. `H3_DRAMA3_SGLANG_CHECKPOINT=int4` switches to Fish Audio's official
+4-bit GPTQ release, which downloads 24 GB and holds 20.8 GiB of weights. In SGLang-Omni's
+benchmark it was about 8% slower per request at the same WER. Each checkpoint has its
+own pinned revision and folder, and the Storage console can fetch either.
+
+The engine's memory share is sized to its checkpoint: the weights plus 12 GiB for the
+KV cache (20 KiB per token), linear-attention state (about 64 MiB per request), CUDA
+graphs and buffers. On a 95.6 GiB RTX PRO 6000 that is 0.513 for FP8 (previously
+0.55) and 0.343 for int4. A smaller share also shrinks what sleep moves to host RAM
+and what a Modal memory snapshot holds. Set `H3_DRAMA3_SGLANG_ENGINE_MEMORY` to
+override it. The startup breakdown lists the KV and state pools SGLang allocated,
+and any line where SGLang capped running requests below `H3_DRAMA3_SGLANG_MAX_SEQS`.
 
 Previously downloaded copies of the pinned checkpoint and existing SGLang
 kernel caches in sibling serving directories are reused when available.

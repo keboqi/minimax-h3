@@ -61,6 +61,11 @@ DRAMA3_SGLANG_OMNI_REPO = "https://github.com/sgl-project/sglang-omni.git"
 DRAMA3_SGLANG_OMNI_REF = "8200f49934d66de591c035cab1c626c0600905fa"  # v0.1.9
 DRAMA3_HF_REPO = "fishaudio/drama-3"
 DRAMA3_HF_REVISION = "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
+# Opt-in official 4-bit GPTQ quantization (H3_DRAMA3_SGLANG_CHECKPOINT=int4): 24 GB to
+# download instead of 41.5 GB and 20.8 GiB of engine weights instead of 37 GiB, about
+# 8% slower per request at the same WER (SGLang-Omni's Drama 3 cookbook).
+DRAMA3_INT4_HF_REPO = "fishaudio/drama-3-int4"
+DRAMA3_INT4_HF_REVISION = "a6f588691a13b6607cb09f9800556487ab7aa0fe"
 COMFY_KITCHEN_VERSION = "0.2.40"
 COMFY_FRONTEND_VERSION = "1.57.1"
 WSPROTO_VERSION = "1.2.0"

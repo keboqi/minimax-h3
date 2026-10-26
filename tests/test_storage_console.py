@@ -70,6 +70,9 @@ class ModelManagerTests(unittest.TestCase):
         runtime = ServerSettings(venv=Path(), data_dir=Path(self.temp.name) / "drama3-serving",
                                  model_root=root / "drama3_serving")
         self.assertEqual(self.manager._path("drama3_sglang_checkpoint"), runtime.model_dir)
+        int4 = ServerSettings(venv=Path(), data_dir=Path(self.temp.name) / "drama3-serving",
+                              model_root=root / "drama3_serving", checkpoint="int4")
+        self.assertEqual(self.manager._path("drama3_sglang_int4"), int4.model_dir)
         groups = catalog_groups()
         self.assertIn("drama3_sglang_checkpoint", groups["Drama 3"])
         self.assertEqual(groups[AUDIO_TOOLS_FAMILY], ("qwen_voice_design", "stable_audio3_medium"))
@@ -97,11 +100,12 @@ class ModelManagerTests(unittest.TestCase):
                 patch.object(manager_module, "sync_models") as files, \
                 patch.dict("os.environ", {"HF_TOKEN": "token"}):
             message, _rows = self.manager.download(list(SNAPSHOT_SPECS))
-        self.assertIn("3/3", message)
+        self.assertIn("4/4", message)
         files.assert_not_called()
         self.assertEqual([call.args for call in audio.call_args_list], [
             ("voice_design", str(self.manager.root)), ("stable_audio", str(self.manager.root)),
         ])
+        self.assertEqual([call.args[0].checkpoint for call in drama.call_args_list], ["fp8", "int4"])
         settings, = drama.call_args.args
         self.assertEqual(settings.model_root, self.manager.root / "drama3_serving")
         self.assertEqual(drama.call_args.kwargs["token"], "token")

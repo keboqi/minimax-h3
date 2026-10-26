@@ -2,7 +2,7 @@
 
 Stop the H3 app first (it shares the GPU and port 8096), then run from the
 workspace with the app's Python: `python3 -m tests.colab_drama3_sleep`.
-On first use it prepares the SGLang venv and downloads the ~44 GB checkpoint.
+On first use it prepares the SGLang venv and downloads the pinned checkpoint (H3_DRAMA3_SGLANG_CHECKPOINT).
 On drivers 580-609 it also proves the stage workers run the host SHM platform.
 `--compare-ipc` finally restarts without sleep (stock CUDA IPC) to time the
 same speech, so the SHM transport's cost is visible. Prints a JSON report and

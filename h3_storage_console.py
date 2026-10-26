@@ -85,36 +85,45 @@ def _audio_tools_download(model: str, root: Path) -> None:
     audio_tools_worker.download(model, str(root))
 
 
-def _drama3_settings(root: Path):
+def _drama3_settings(root: Path, checkpoint: str = "fp8"):
     from h3_app.drama3.serving.server import ServerSettings
 
     # Match the GPU endpoint's H3_DRAMA3_SGLANG_MODELS and H3_DRAMA3_SGLANG_DATA.
     return ServerSettings(venv=Path(), data_dir=root.parent / "drama3-serving",
-                          model_root=root / "drama3_serving")
+                          model_root=root / "drama3_serving", checkpoint=checkpoint)
 
 
-def _drama3_path(root: Path) -> Path:
-    return _drama3_settings(root).model_dir
+def _drama3_path(checkpoint: str, root: Path) -> Path:
+    return _drama3_settings(root, checkpoint).model_dir
 
 
-def _drama3_ready(root: Path) -> bool:
-    return (_drama3_path(root) / ".h3-complete").is_file()
+def _drama3_ready(checkpoint: str, root: Path) -> bool:
+    return (_drama3_path(checkpoint, root) / ".h3-complete").is_file()
 
 
-def _drama3_download(root: Path) -> None:
+def _drama3_download(checkpoint: str, root: Path) -> None:
     from h3_app.drama3.serving.server import ensure_model
 
-    ensure_model(_drama3_settings(root), token=os.environ.get("HF_TOKEN"),
+    ensure_model(_drama3_settings(root, checkpoint), token=os.environ.get("HF_TOKEN"),
                  log=lambda message: print(f"[storage-console] {message}", flush=True))
 
 
-def _snapshot_specs() -> dict[str, SnapshotSpec]:
-    from h3_requirements import DRAMA3_HF_REPO
+def _drama3_spec(checkpoint: str, description: str) -> SnapshotSpec:
+    from h3_app.drama3.serving.server import CHECKPOINTS
 
+    pin = CHECKPOINTS[checkpoint]
+    return SnapshotSpec(
+        "Drama 3", pin.repo, f"{description} (~{pin.download_gb:.0f} GB)",
+        partial(_drama3_path, checkpoint), partial(_drama3_ready, checkpoint),
+        partial(_drama3_download, checkpoint),
+    )
+
+
+def _snapshot_specs() -> dict[str, SnapshotSpec]:
     return {
-        "drama3_sglang_checkpoint": SnapshotSpec(
-            "Drama 3", DRAMA3_HF_REPO, "Drama 3 official checkpoint for SGLang-Omni (~44 GB)",
-            _drama3_path, _drama3_ready, _drama3_download,
+        "drama3_sglang_checkpoint": _drama3_spec("fp8", "Drama 3 official FP8 checkpoint for SGLang-Omni"),
+        "drama3_sglang_int4": _drama3_spec(
+            "int4", "Drama 3 official int4 checkpoint (H3_DRAMA3_SGLANG_CHECKPOINT=int4)",
         ),
         "qwen_voice_design": SnapshotSpec(
             AUDIO_TOOLS_FAMILY, "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign", "Qwen3-TTS VoiceDesign",
@@ -229,6 +238,7 @@ def model_presets() -> dict[str, tuple[str, ...]]:
             *fibo, FIBO2_MODEL_CHOICES["Edit Turbo"][DEFAULT_FIBO2_PRECISION], FIBO2_TEXT_ENCODERS["edit"],
         ),
         "Drama 3 SGLang-Omni checkpoint": ("drama3_sglang_checkpoint",),
+        "Drama 3 SGLang-Omni int4 checkpoint": ("drama3_sglang_int4",),
         "Qwen VoiceDesign + Stable Audio": ("qwen_voice_design", "stable_audio3_medium"),
     }
 
