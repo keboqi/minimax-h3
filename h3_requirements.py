@@ -264,6 +264,9 @@ DRAMA3_SGLANG_SMOKE = (
 
 # Mirrors sglang-omni's [tool.uv] override-dependencies for Linux.
 DRAMA3_SGLANG_OVERRIDES = "protobuf>=6.31.1,<7.0.0\n"
+# Bytecode compiled at install time; otherwise each fresh container (Modal bakes the
+# venv into its image) compiles torch, sglang and transformers in every stage process.
+DRAMA3_SGLANG_PIP_FLAGS = ("--prerelease=allow", "--compile-bytecode")
 
 
 def drama3_sglang_fingerprint() -> str:
@@ -271,7 +274,7 @@ def drama3_sglang_fingerprint() -> str:
     import hashlib
 
     pins = "|".join((DRAMA3_SGLANG_PYTHON, DRAMA3_SGLANG_OMNI_REPO, DRAMA3_SGLANG_OMNI_REF,
-                     DRAMA3_SGLANG_TORCH_BACKEND, DRAMA3_SGLANG_OVERRIDES))
+                     DRAMA3_SGLANG_TORCH_BACKEND, DRAMA3_SGLANG_OVERRIDES, *DRAMA3_SGLANG_PIP_FLAGS))
     return hashlib.sha256(pins.encode("utf-8")).hexdigest()
 
 
@@ -288,7 +291,7 @@ def drama3_sglang_install_commands(venv: str | Path, uv: str | list[str] = "uv")
         # git-URL install, so apply the same override explicitly.
         [python, "-c", f"open({overrides!r}, 'w').write({DRAMA3_SGLANG_OVERRIDES!r})"],
         # SGLang pins Torch 2.13; name the CUDA wheel because builders have no GPU.
-        [*uv, "pip", "install", "--python", python, "--prerelease=allow",
+        [*uv, "pip", "install", "--python", python, *DRAMA3_SGLANG_PIP_FLAGS,
          f"--torch-backend={DRAMA3_SGLANG_TORCH_BACKEND}", "--overrides", overrides,
          f"sglang-omni[fishaudio] @ git+{DRAMA3_SGLANG_OMNI_REPO}@{DRAMA3_SGLANG_OMNI_REF}"],
         [python, "-c", DRAMA3_SGLANG_SMOKE],

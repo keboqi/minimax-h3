@@ -195,6 +195,7 @@ class EnvironmentTests(unittest.TestCase):
         self.assertIn("protobuf>=6.31.1,<7.0.0", commands[1][-1])
         self.assertEqual(commands[2][commands[2].index("--overrides") + 1], "/opt/h3/drama3-sglang-venv/h3-overrides.txt")
         self.assertIn("--prerelease=allow", commands[2])
+        self.assertIn("--compile-bytecode", commands[2])
         self.assertIn("--torch-backend=cu130", commands[2])
         self.assertTrue(commands[2][-1].startswith("sglang-omni[fishaudio] @ git+https://github.com/sgl-project/sglang-omni.git@8200f49"))
         self.assertEqual(environment.default_venv(Path("/app")), Path("/app/h3/drama3-sglang-venv"))
@@ -312,6 +313,28 @@ class ServerTests(unittest.TestCase):
                 patch.object(server.threading, "Thread") as thread:
             server.persist_caches()
             thread.return_value.start.assert_called_once()
+
+    def test_startup_breakdown_stamps_upstream_timings_after_the_launch_offset(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "server.log"
+            path.write_bytes(b"Starting SGLang-Omni: --vocoder.factory.codec_path elapsed=1.00 s\n")
+            timeline = server.StartupTimeline(path, path.stat().st_size)
+            timeline.read(1)
+            with path.open("ab") as stream:
+                stream.write(b"\x1b[32m[tts_engine] Init parallel ends.\x1b[0m\nLoad weight end. elapsed=21.50 s, type=Dra")
+            timeline.read(12)
+            with path.open("ab") as stream:
+                stream.write(b"ma3\rCapturing batches (bs=8)\r\nfirst-frame graphs for 16 requests, captured in 4.20 s\n")
+            timeline.read(70)
+            summary = timeline.summary(75)
+        self.assertEqual(timeline.first_output, 12)
+        self.assertIn("ready after 75s", summary[0])
+        self.assertIn("first server output", summary[1])
+        self.assertEqual([line.split("  ")[-1] for line in summary[2:]], [
+            "Load weight end. elapsed=21.50 s, type=Drama3",
+            "first-frame graphs for 16 requests, captured in 4.20 s",
+        ])
+        self.assertTrue(summary[2].strip().startswith("70s"))
 
     def test_startup_progress_is_not_written_back_into_the_server_log(self):
         instance = server.SglangOmniServer(self.settings)

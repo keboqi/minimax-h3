@@ -326,6 +326,13 @@ SGLang configuration uses these environment variables:
 
 Previously downloaded copies of the pinned checkpoint and existing SGLang
 kernel caches in sibling serving directories are reused when available.
+The environment is installed with precompiled bytecode, so a fresh container does
+not compile torch and sglang in every stage process at startup; environments
+installed before this rebuild once. After each start the server log (and the app
+log) lists a startup breakdown: when the server first printed output, and
+SGLang's own weight-load and CUDA graph capture timings, each stamped with its
+time since launch. The stage processes start concurrently, so their timings
+overlap.
 The launcher keeps upstream's engine CUDA graphs: decode, breakable prefill
 graphs for batches of up to 2048 tokens, and first-frame graphs for up to 16
 requests. They shorten each line at the cost of a longer cold start and some GPU

@@ -27,6 +27,10 @@ from h3_app.errors import H3Error
 from . import checkpoint, environment
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
+# SGLang's own phase timings ("Load weight end. elapsed=12.34 s", "Capture decode
+# CUDA graph end. elapsed=...") and Drama 3's first-frame graphs ("captured in 4.20 s").
+TIMED_LINE = re.compile(r"(?:elapsed=|captured in )\d+(?:\.\d+)? ?s\b")
+STARTUP_POLL_SECONDS = 1.0
 # Drivers that cannot checkpoint CUDA IPC need Omni's stages to exchange
 # tensors through host SHM; this platform, a module for the Omni venv, does so.
 SHM_PLATFORM_DIR = Path(__file__).with_name("omni_platform")
@@ -108,6 +112,45 @@ class ServerSettings:
         return self.data_dir
 
 
+class StartupTimeline:
+    """Server log lines stamped with seconds since launch, summarized once it is ready.
+
+    The stage processes start concurrently, so their timings overlap rather than add up.
+    """
+
+    def __init__(self, path: Path | None, offset: int = 0):
+        self.path = path
+        self.offset = offset
+        self.first_output: float | None = None
+        self.timed: list[tuple[float, str]] = []
+        self._partial = ""
+
+    def read(self, elapsed: float) -> None:
+        try:
+            with self.path.open("rb") as stream:
+                stream.seek(self.offset)
+                data = stream.read()
+        except (OSError, AttributeError):
+            return
+        self.offset += len(data)
+        *lines, self._partial = re.split(r"[\r\n]", self._partial + data.decode("utf-8", errors="replace"))
+        for line in lines:
+            line = ANSI.sub("", line).strip()
+            if not line:
+                continue
+            if self.first_output is None:
+                self.first_output = elapsed
+            if TIMED_LINE.search(line):
+                self.timed.append((elapsed, line[:200]))
+
+    def summary(self, total: float) -> list[str]:
+        lines = [f"Startup breakdown: ready after {total:.0f}s (times since launch, within {STARTUP_POLL_SECONDS:.0f}s)"]
+        if self.first_output is not None:
+            lines.append(f"  {self.first_output:4.0f}s  first server output (process spawn and imports before it)")
+        lines += [f"  {at:4.0f}s  {line}" for at, line in self.timed]
+        return lines
+
+
 def ensure_model(settings: ServerSettings, *, token=None, log=print) -> Path:
     """Download the pinned official checkpoint once."""
     target = settings.model_dir
@@ -181,6 +224,7 @@ class SglangOmniServer:
         self._log = None
         self._lock = threading.RLock()
         self._checkpoint_helper: Path | None = None
+        self._timeline: StartupTimeline | None = None
         self._checkpoint_baseline = 0
         self._checkpoint: checkpoint.CudaCheckpoint | None = None
         self._sleep_disabled = False
@@ -282,6 +326,7 @@ class SglangOmniServer:
                 self.log_line(f"Sleep unavailable; using stop/restart: {exc}")
         self._uncertain_request = False
         self.log_line(f"Starting {self.label}: {' '.join(command)}")
+        self._timeline = StartupTimeline(self.log_path, self._log.tell())
         self.process = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL,
                                         stdout=self._log, stderr=subprocess.STDOUT, start_new_session=True)
         atexit.register(self.stop)
@@ -300,9 +345,15 @@ class SglangOmniServer:
 
     def _wait_healthy(self, progress: Callable[[str], None]) -> None:
         started, reported = time.monotonic(), 0.0
+        timeline = self._timeline or StartupTimeline(self.log_path)
         while time.monotonic() - started < self.settings.start_timeout:
+            timeline.read(time.monotonic() - started)
             if self.healthy():
-                self.log_line(f"{self.label} ready after {time.monotonic() - started:.0f}s")
+                total = time.monotonic() - started
+                timeline.read(total)
+                self.log_line(f"{self.label} ready after {total:.0f}s")
+                for line in timeline.summary(total):
+                    self.log_line(line)
                 persist_caches()
                 return
             if self.process is not None and self.process.poll() is not None:
@@ -314,7 +365,7 @@ class SglangOmniServer:
             if elapsed - reported >= 30:  # Modal logs show startup without the UI
                 self.log_line(message, to_file=False)  # never echo back into the tailed log
                 reported = elapsed
-            time.sleep(3)
+            time.sleep(STARTUP_POLL_SECONDS)
         raise H3Error(f"{self.label} did not become ready in {self.settings.start_timeout:.0f}s. "
                       f"Last log lines:\n{self.log_tail()}")
 
