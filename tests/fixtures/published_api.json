@@ -149,7 +149,7 @@
         {"parameter_name": "fl2va_audio_1", "parameter_has_default": true, "parameter_default": null, "type": "type_10"},
         {"parameter_name": "fl2va_audio_2", "parameter_has_default": true, "parameter_default": null, "type": "type_10"},
         {"parameter_name": "fl2va_audio_3", "parameter_has_default": true, "parameter_default": null, "type": "type_10"},
-        {"parameter_name": "openai_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"},
+        {"parameter_name": "openai_model", "parameter_has_default": true, "parameter_default": "gpt-6-luna", "type": "type_90"},
         {"parameter_name": "openai_base_url", "parameter_has_default": true, "parameter_default": null, "type": "type_1"}
       ],
       "returns": [
@@ -243,7 +243,7 @@
         {"parameter_name": "height", "parameter_has_default": true, "parameter_default": 544, "type": "type_12"},
         {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Gemini", "type": "type_61"},
         {"parameter_name": "openai_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
-        {"parameter_name": "openai_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"},
+        {"parameter_name": "openai_model", "parameter_has_default": true, "parameter_default": "gpt-6-luna", "type": "type_90"},
         {"parameter_name": "openai_base_url", "parameter_has_default": true, "parameter_default": null, "type": "type_1"}
       ],
       "returns": [
@@ -297,7 +297,7 @@
         {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Gemini", "type": "type_61"},
         {"parameter_name": "openai_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
         {"parameter_name": "edit_size", "parameter_has_default": true, "parameter_default": "Match first image size", "type": "type_67"},
-        {"parameter_name": "openai_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"},
+        {"parameter_name": "openai_model", "parameter_has_default": true, "parameter_default": "gpt-6-luna", "type": "type_90"},
         {"parameter_name": "openai_base_url", "parameter_has_default": true, "parameter_default": null, "type": "type_1"}
       ],
       "returns": [
@@ -334,7 +334,7 @@
         {"parameter_name": "ref_image_3", "parameter_has_default": false, "parameter_default": null, "type": "type_9"},
         {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Gemini", "type": "type_61"},
         {"parameter_name": "openai_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
-        {"parameter_name": "openai_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"},
+        {"parameter_name": "openai_model", "parameter_has_default": true, "parameter_default": "gpt-6-luna", "type": "type_90"},
         {"parameter_name": "duration", "parameter_has_default": true, "parameter_default": 120, "type": "type_80"},
         {"parameter_name": "vocals", "parameter_has_default": true, "parameter_default": "Auto", "type": "type_96"},
         {"parameter_name": "language", "parameter_has_default": true, "parameter_default": "Auto", "type": "type_97"},
@@ -387,7 +387,7 @@
         {"parameter_name": "duration", "parameter_has_default": true, "parameter_default": 180, "type": "type_84"},
         {"parameter_name": "backend", "parameter_has_default": true, "parameter_default": "Gemini", "type": "type_61"},
         {"parameter_name": "openai_api_key", "parameter_has_default": false, "parameter_default": null, "type": "type_1"},
-        {"parameter_name": "openai_model", "parameter_has_default": true, "parameter_default": "openai/gpt-5.6-luna", "type": "type_90"},
+        {"parameter_name": "openai_model", "parameter_has_default": true, "parameter_default": "gpt-6-luna", "type": "type_90"},
         {"parameter_name": "vocals", "parameter_has_default": true, "parameter_default": "Auto", "type": "type_96"},
         {"parameter_name": "language", "parameter_has_default": true, "parameter_default": "Auto", "type": "type_97"},
         {"parameter_name": "use", "parameter_has_default": true, "parameter_default": "Auto", "type": "type_98"},
@@ -1491,11 +1491,7 @@
     "type_90": {
       "type": "string",
       "enum": [
-        "openai/gpt-5.6-luna",
-        "openai/gpt-6.1-sol",
-        "deepseek-v4.1-flash",
-        "deepseek-v4.1-flash-uncensored",
-        "glm-5.3-flash"
+        "gpt-6-luna"
       ]
     },
     "type_91": {

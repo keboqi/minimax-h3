@@ -11,7 +11,6 @@ from unittest.mock import Mock, patch
 
 from h3_app.drama3 import speakers as drama3_speakers
 from h3_app.prompt_writers import drama3 as drama3_writer
-from h3_app.catalog import OPENAI_PROMPT_MODELS
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
 from h3_app.generation.drama3 import transcribe_drama3_audio, validate_drama3 as validate_request
@@ -175,10 +174,10 @@ class Drama3WriterTests(unittest.TestCase):
         )
         script, status = drama3_writer.enhance_drama3_text(
             "ALICE: Welcome back.\nBOB: Finally!", "unused", "", [(0, "Alice")],
-            "OpenAI-compatible", "key", OPENAI_PROMPT_MODELS[1], runtime=self.runtime,
+            "OpenAI-compatible", "key", "openai/gpt-6.1-sol", runtime=self.runtime,
         )
         self.assertTrue(script.startswith("<|speaker:0|>"))
-        self.assertIn(OPENAI_PROMPT_MODELS[1], status)
+        self.assertIn("openai/gpt-6.1-sol", status)
         request = client.return_value.chat.completions.create.call_args.kwargs
         self.assertEqual(request["model"], "gpt-6.1-sol")  # bare ID on OpenAI's own API
         self.assertIn("Start every spoken turn line with the speaker's name", request["messages"][0]["content"])

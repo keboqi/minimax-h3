@@ -66,13 +66,17 @@ DEFAULT_GEMINI_PROMPT_MODEL = "gemini-3.8-flash"
 GEMINI_API_ROOT = "https://generativelanguage.googleapis.com"
 
 
-OPENAI_PROMPT_MODELS = (
+OPENAI_PROMPT_MODELS = ("gpt-6-luna",)
+
+
+# Former presets; a saved choice of one falls back to the current default.
+LEGACY_OPENAI_PROMPT_MODELS = frozenset({
     "openai/gpt-5.6-luna",
     "openai/gpt-6.1-sol",
     "deepseek-v4.1-flash",
     "deepseek-v4.1-flash-uncensored",
     "glm-5.3-flash",
-)
+})
 
 
 DEFAULT_OPENAI_PROMPT_MODEL = OPENAI_PROMPT_MODELS[0]

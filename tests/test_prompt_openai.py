@@ -106,8 +106,7 @@ class RemotePromptOpenAITests(unittest.TestCase):
 
     @patch("openai.OpenAI")
     def test_base_url_env_selects_compatible_endpoint_and_models(self, client: Mock) -> None:
-        self.assertEqual(OPENAI_PROMPT_MODELS[2:], (
-            "deepseek-v4.1-flash", "deepseek-v4.1-flash-uncensored", "glm-5.3-flash"))
+        self.assertEqual(OPENAI_PROMPT_MODELS, ("gpt-6-luna",))
         client.return_value.chat.completions.create.return_value = self.completion("A rewritten shot")
         with patch.dict(os.environ, {"OPENAI_BASE_URL": " https://llm.example.test/v1 "}):
             result, status = ltx_writer.enhance_ltx25_prompt(
@@ -131,6 +130,39 @@ class RemotePromptOpenAITests(unittest.TestCase):
         client.assert_called_once_with(
             base_url="https://ui.example.test/v1", api_key="temporary-key", timeout=600.0
         )
+
+    def test_pasted_operation_url_becomes_the_base_url(self) -> None:
+        from h3_app.llm import openai_compatible
+
+        for pasted in (
+            "https://res.services.ai.azure.com/openai/v1/responses",
+            "https://res.services.ai.azure.com/openai/v1/chat/completions/",
+            "https://res.services.ai.azure.com/openai/v1/",
+        ):
+            self.assertEqual(openai_compatible.endpoint(pasted),
+                             "https://res.services.ai.azure.com/openai/v1")
+
+    @patch("openai.OpenAI")
+    def test_azure_gets_bare_deployment_names_and_a_clear_missing_deployment_error(
+        self, client: Mock
+    ) -> None:
+        import httpx
+        from openai import NotFoundError
+
+        from h3_app.errors import H3Error
+        from h3_app.llm import openai_compatible
+
+        url = "https://res.services.ai.azure.com/openai/v1"
+        create = client.return_value.chat.completions.create
+        create.return_value = self.completion("ok")
+        openai_compatible.complete("key", "openai/gpt-6-luna", "system", [], url)
+        self.assertEqual(create.call_args.kwargs["model"], "gpt-6-luna")
+
+        response = httpx.Response(404, request=httpx.Request("POST", url))
+        create.side_effect = NotFoundError(
+            "Error code: 404 - DeploymentNotFound", response=response, body=None)
+        with self.assertRaisesRegex(H3Error, "no deployment named 'gpt-5.6-luna'"):
+            openai_compatible.complete("key", "openai/gpt-5.6-luna", "system", [], url)
 
     @patch("openai.OpenAI")
     def test_temporary_endpoint_never_receives_the_server_key(self, client: Mock) -> None:
@@ -227,7 +259,7 @@ class RemotePromptOpenAITests(unittest.TestCase):
             "drama3.openai_model": SimpleNamespace(value=OPENAI_PROMPT_MODEL, choices=OPENAI_PROMPT_MODELS,
                                                    allow_custom_value=True),
         }
-        restored, _ = restore_preferences({"values": {
+        restored, _ = restore_preferences({"schema_version": 9, "values": {
             "flux3.prompt_backend": "Lightning AI",
             "h3.prompt_writer_backend": "Lightning AI",
             "flux3.lightning_model": "openai/gpt-6.1-sol",
@@ -236,7 +268,7 @@ class RemotePromptOpenAITests(unittest.TestCase):
         self.assertEqual(restored, {
             "flux3.prompt_backend": "OpenAI-compatible",
             "h3.prompt_writer_backend": "OpenAI-compatible",
-            "flux3.openai_model": "openai/gpt-6.1-sol",
+            "flux3.openai_model": "gpt-6-luna",  # a former preset falls back to the default
             "drama3.openai_model": "my-model",  # typed models survive a reload
         })
 

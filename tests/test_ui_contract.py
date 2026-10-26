@@ -710,7 +710,7 @@ class UiContractTests(unittest.TestCase):
             ]
             self.assertEqual(parameters[end - 3]["parameter_default"], "Gemini")
             # Appended with defaults so existing API clients keep working.
-            self.assertEqual(parameters[end - 1]["parameter_default"], "openai/gpt-5.6-luna")
+            self.assertEqual(parameters[end - 1]["parameter_default"], "gpt-6-luna")
             self.assertIsNone(parameters[-1]["parameter_default"])
             self.assertTrue(all(row["parameter_has_default"] for row in parameters[end:]))
 
@@ -725,7 +725,7 @@ class UiContractTests(unittest.TestCase):
             f"/{qwen_endpoint}"
         ]["parameters"]
         self.assertEqual(qwen_parameters[-5]["parameter_default"], "Gemini")
-        self.assertEqual(qwen_parameters[-2]["parameter_default"], "openai/gpt-5.6-luna")
+        self.assertEqual(qwen_parameters[-2]["parameter_default"], "gpt-6-luna")
         self.assertIsNone(qwen_parameters[-1]["parameter_default"])
 
         openai_models = [
@@ -734,10 +734,9 @@ class UiContractTests(unittest.TestCase):
         ]
         self.assertEqual(len(openai_models), len(writers))
         for dropdown in openai_models:
-            self.assertEqual(dropdown["props"]["value"], "openai/gpt-5.6-luna")
+            self.assertEqual(dropdown["props"]["value"], "gpt-6-luna")
             self.assertEqual([choice[1] for choice in dropdown["props"]["choices"]],
-                             ["openai/gpt-5.6-luna", "openai/gpt-6.1-sol", "deepseek-v4.1-flash",
-                              "deepseek-v4.1-flash-uncensored", "glm-5.3-flash"])
+                             ["gpt-6-luna"])
 
     def test_optional_engine_writers_voices_and_transcription_are_bound(self) -> None:
         api = self.demo.get_api_info()["named_endpoints"]

@@ -6,6 +6,7 @@ import base64
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from h3_app.catalog import DEFAULT_OPENAI_PROMPT_MODEL, OPENAI_API_ROOT, OPENAI_BASE_URL_ENV
 from h3_app.errors import H3Error
@@ -36,10 +37,22 @@ def api_key(temporary_key: str | None, temporary_url: str | None = None) -> str:
     return key
 
 
+_OPERATION_SUFFIXES = ("/chat/completions", "/responses", "/completions")
+
+
 def endpoint(temporary_url: str | None = None) -> str:
-    """An endpoint entered in the UI, else OPENAI_BASE_URL, else the official OpenAI API; never stored."""
-    return (str(temporary_url or "").strip() or os.getenv(OPENAI_BASE_URL_ENV, "").strip()
-            or OPENAI_API_ROOT)
+    """An endpoint entered in the UI, else OPENAI_BASE_URL, else the official OpenAI API; never stored.
+
+    Portals such as Azure AI Foundry show the full operation URL
+    (``.../openai/v1/responses``); the client appends its own path, so a pasted
+    operation suffix is dropped to leave the base URL.
+    """
+    url = (str(temporary_url or "").strip() or os.getenv(OPENAI_BASE_URL_ENV, "").strip()
+           or OPENAI_API_ROOT).rstrip("/")
+    for suffix in _OPERATION_SUFFIXES:
+        if url.lower().endswith(suffix):
+            return url[: -len(suffix)]
+    return url
 
 
 def model(name: str | None) -> str:
@@ -61,11 +74,13 @@ def image_part(path: Path) -> dict[str, Any]:
 def complete(key: str, model_name: str, system_prompt: str, content: list[dict[str, Any]],
              temporary_url: str | None = None) -> str:
     """The assistant's reply text. Client errors become H3Error with the same message."""
-    from openai import OpenAI, OpenAIError
+    from openai import NotFoundError, OpenAI, OpenAIError
 
     base_url = endpoint(temporary_url)
-    if base_url.rstrip("/") == OPENAI_API_ROOT:
-        # Router names such as openai/gpt-6.1-sol are bare model IDs on OpenAI's own API.
+    azure = (urlparse(base_url).hostname or "").endswith(".azure.com")
+    if base_url == OPENAI_API_ROOT or azure:
+        # Router names such as openai/gpt-6.1-sol are bare model IDs on OpenAI's own API,
+        # and Azure deployment names cannot contain a slash.
         model_name = model_name.removeprefix("openai/")
     try:
         client = OpenAI(base_url=base_url, api_key=key, timeout=600.0)
@@ -77,5 +92,12 @@ def complete(key: str, model_name: str, system_prompt: str, content: list[dict[s
             ],
         )
         return str(completion.choices[0].message.content or "")
+    except NotFoundError as exc:
+        if azure and "DeploymentNotFound" in str(exc):
+            raise H3Error(
+                f"Azure has no deployment named {model_name!r}. Type the deployment's Name "
+                "from its Details page into OpenAI-compatible model."
+            ) from exc
+        raise H3Error(str(exc)) from exc
     except (OpenAIError, IndexError) as exc:
         raise H3Error(str(exc)) from exc

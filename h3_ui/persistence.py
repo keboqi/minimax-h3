@@ -10,7 +10,7 @@ from .settings_controller import SETTING_NAMES
 # Keep the transport key/secret so existing encrypted v3 values remain readable.
 _STORAGE_KEY = "minimax-h3:settings:v3"
 _BROWSER_STATE_SECRET = "minimax-h3-ui-settings-v3"
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 # Runs only in the browser: drop every saved H3 preference, then reload so the
 # page restores from the app defaults in a brand-new session.
 RESET_BROWSER_SETTINGS_JS = """
@@ -201,6 +201,14 @@ def restore_preferences(saved, components):
         )
         for name, value in values.items()
     }
+    if version < 10:
+        from h3_app.catalog import LEGACY_OPENAI_PROMPT_MODELS
+
+        # v10 replaced the OpenAI-compatible presets with gpt-6-luna; older saves picked a former preset.
+        values = {
+            name: value for name, value in values.items()
+            if not (name.endswith(".openai_model") and value in LEGACY_OPENAI_PROMPT_MODELS)
+        }
     values = {
         name: (
             LEGACY_TURBO_VARIANTS.get(value, value)
