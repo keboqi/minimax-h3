@@ -187,7 +187,7 @@ def _ready_server(settings, server, label, free_gpu, hf_token, *, evict=True) ->
                                lambda _progress: environment.prepare(settings.venv))
     yield from _with_heartbeat("Downloading the Drama 3 checkpoint",
                                lambda _progress: ensure_model(settings, token=hf_token))
-    yield from _with_heartbeat(f"Freeing ComfyUI VRAM and starting {label}",
+    yield from _with_heartbeat(f"Starting {label}",
                                lambda report: server.ensure_ready(free_gpu, report, evict=evict))
 
 

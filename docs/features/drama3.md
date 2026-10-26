@@ -264,7 +264,13 @@ worker and setup logs under `ComfyUI/output/audio_tools`.
 
 Drama 3 generates parallel, speaker-based chunks on SGLang-Omni. It has no
 per-request seed. SGLang uses an isolated environment, stays loaded
-between TTS jobs, and sleeps or stops when another engine needs the GPU. The app defaults
+between TTS jobs, and sleeps or stops when another engine needs the GPU. Image jobs
+(Qwen Image 2.1, FLUX 3, MOSS Image, Fibo 2) leave it awake when the GPU outside its
+reserved share still gives them `H3_DRAMA3_IMAGE_ROOM_GIB` (default 48): on a 95.6 GiB
+RTX PRO 6000 the int4 checkpoint leaves about 53 GiB and stays loaded, while FP8 leaves
+about 37 GiB and sleeps. Video, music and other engines always sleep it. In the other
+direction, a speech job unloads ComfyUI's models only when SGLang has to start or wake
+and the GPU lacks room for it; an awake server never unloads them. The app defaults
 to 16 parallel chunks and zero retries; the server allows 32 concurrent
 requests. More parallel chunks make each line slower but a long script faster,
 since the GPU generates more frames per second in total. Browsers that saved
@@ -324,6 +330,7 @@ SGLang configuration uses these environment variables:
 | `H3_DRAMA3_SGLANG_DATA` | `drama3-serving` beside ComfyUI |
 | `H3_DRAMA3_SGLANG_MODELS` | `ComfyUI/models/drama3_serving` |
 | `H3_DRAMA3_SGLANG_SLEEP` | `auto`; use `off` for stop/restart only |
+| `H3_DRAMA3_IMAGE_ROOM_GIB` | `48`; GPU room an image job needs outside the server before it stays awake |
 
 The default checkpoint is the official FP8 release: a 41.5 GB download with 37 GiB
 of engine weights. `H3_DRAMA3_SGLANG_CHECKPOINT=int4` switches to Fish Audio's official
@@ -358,8 +365,8 @@ are disabled because the app requests complete WAVs.
 
 When another engine needs the GPU, SGLang sleeps instead of stopping: NVIDIA
 CUDA process checkpointing moves every Omni worker's GPU state to host RAM while
-the processes stay alive, and the next speech job unloads ComfyUI and restores
-them. On Modal's RTX PRO 6000 this freed 73 GiB in 8.5s and woke in 5.8s,
+the processes stay alive, and the next speech job restores them, unloading ComfyUI
+first when the GPU lacks room for the restore. On Modal's RTX PRO 6000 this freed 73 GiB in 8.5s and woke in 5.8s,
 versus a 156s cold start. Sleeping state does not survive app/container exit,
 and **Unload all models** discards it.
 

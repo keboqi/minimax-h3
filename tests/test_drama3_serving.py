@@ -261,8 +261,10 @@ class ServerTests(unittest.TestCase):
                                        "H3_DRAMA3_SGLANG_ENGINE_MEMORY": "0.6",
                                        "H3_DRAMA3_SGLANG_CODEC_MEMORY": "0.1",
                                        "H3_DRAMA3_SGLANG_MAX_SEQS": "8",
-                                       "H3_DRAMA3_SGLANG_PORT": "9000"}, clear=True):
+                                       "H3_DRAMA3_SGLANG_PORT": "9000",
+                                       "H3_DRAMA3_IMAGE_ROOM_GIB": "40"}, clear=True):
             custom = server.ServerSettings.from_environment(runtime)
+        self.assertEqual((defaults.image_room_gib, custom.image_room_gib), (48.0, 40.0))
         self.assertEqual(custom.data_dir, Path("/data/d3"))
         self.assertEqual((custom.engine_memory, custom.codec_memory, custom.max_seqs, custom.port),
                          (0.6, 0.1, 8, 9000))
@@ -399,13 +401,41 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(uncapped["top_k"], 1 << 30)
         self.assertEqual(sampling["top_k"], 0)
 
-    def test_a_loaded_server_is_reused_after_releasing_comfyui(self):
+    def test_a_loaded_server_is_reused_without_unloading_comfyui(self):
         instance = server.SglangOmniServer(self.settings)
         instance.running = lambda: True
         instance.healthy = lambda timeout=2.0: True
         free = MagicMock()
         instance.ensure_ready(free)
-        free.assert_called_once()
+        free.assert_not_called()
+
+    def test_cold_start_unloads_comfyui_only_when_the_gpu_lacks_room(self):
+        instance = server.SglangOmniServer(self.settings_for(checkpoint="int4"))
+        instance._start = MagicMock()
+        instance._wait_healthy = MagicMock()
+        free = MagicMock()
+        # int4 reserves about 40.4 GiB of a 95.6 GiB GPU.
+        with patch.object(server, "gpu_memory", return_value=(60 * 1024, 97887, "")):
+            instance.ensure_ready(free)
+        free.assert_not_called()
+        instance.process = None
+        with patch.object(server, "gpu_memory", side_effect=[(30 * 1024, 97887, ""), (30 * 1024, 97887, ""),
+                                                             (90 * 1024, 97887, "")]):
+            instance.ensure_ready(free)
+        free.assert_called_once_with()
+
+    def test_waking_unloads_comfyui_only_when_the_checkpoint_does_not_fit(self):
+        instance = server.SglangOmniServer(self.settings)
+        instance.running = lambda: True
+        instance.healthy = lambda timeout=10: True
+        asleep = MagicMock(required_vram=40 * 2**30)
+        free = MagicMock()
+        for free_mib, unloads in ((50 * 1024, 0), (20 * 1024, 1)):
+            instance._checkpoint = asleep
+            with patch.object(server, "gpu_memory", side_effect=[(free_mib, 97887, ""), (90 * 1024, 97887, "")]):
+                instance.ensure_ready(free)
+            self.assertEqual(free.call_count, unloads)
+            self.assertIsNone(instance._checkpoint)
     def test_cold_start_frees_gpu_then_waits_for_health(self):
         instance = server.SglangOmniServer(self.settings)
         order = []
@@ -437,6 +467,32 @@ class ServerTests(unittest.TestCase):
             server.release_for_job("drama3")
             release_all.assert_not_called()
             server.release_for_job("qwen_image21")
+            release_all.assert_called_once_with()
+
+    def test_image_jobs_keep_an_awake_server_only_when_the_rest_of_the_gpu_fits_them(self):
+        int4 = server.SglangOmniServer(self.settings_for(checkpoint="int4"))
+        fp8 = server.SglangOmniServer(self.settings)
+        for instance in (int4, fp8):
+            instance.running = lambda: True
+        with patch.object(server, "gpu_memory", return_value=(1024, 97887, "")):
+            self.assertTrue(int4.leaves_image_room())  # about 53 GiB outside the server
+            self.assertFalse(fp8.leaves_image_room())  # about 37 GiB
+            demanding = server.SglangOmniServer(self.settings_for(checkpoint="int4", image_room_gib=60))
+            demanding.running = lambda: True
+            self.assertFalse(demanding.leaves_image_room())
+        int4._checkpoint = MagicMock()  # asleep: nothing to keep
+        self.assertFalse(int4.leaves_image_room())
+        int4._checkpoint = None
+        with patch.object(server, "_SERVER", int4), patch.object(server, "release_all") as release_all, \
+                patch.object(server, "gpu_memory", return_value=(1024, 97887, "")):
+            for family in ("qwen_image21", "flux3", "moss_image", "fibo2"):
+                server.release_for_job(family)
+            release_all.assert_not_called()
+            server.release_for_job("h3")  # video still takes the whole GPU
+            release_all.assert_called_once_with()
+        with patch.object(server, "_SERVER", fp8), patch.object(server, "release_all") as release_all, \
+                patch.object(server, "gpu_memory", return_value=(1024, 97887, "")):
+            server.release_for_job("flux3")
             release_all.assert_called_once_with()
     def test_the_job_lock_runs_claim_hooks_before_the_job(self):
         from h3_app.jobs import JobCoordinator

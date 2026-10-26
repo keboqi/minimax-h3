@@ -54,6 +54,12 @@ CHECKPOINTS = {
 ENGINE_HEADROOM_GIB = 12.0
 # Without nvidia-smi, assume the RTX PRO 6000's 95.6 GiB.
 FALLBACK_GPU_GIB = 95.6
+# Image jobs leave a loaded server awake when the rest of the GPU still gives them
+# image_room_gib (H3_DRAMA3_IMAGE_ROOM_GIB). On the RTX PRO 6000 int4 leaves about
+# 53 GiB and stays loaded; FP8 leaves about 37 GiB and sleeps as before.
+IMAGE_FAMILIES = frozenset({"qwen_image21", "flux3", "moss_image", "fibo2"})
+# CUDA contexts of the Omni stage processes, beyond their memory fractions.
+PROCESS_OVERHEAD_GIB = 2.0
 # Drivers that cannot checkpoint CUDA IPC need Omni's stages to exchange
 # tensors through host SHM; this platform, a module for the Omni venv, does so.
 SHM_PLATFORM_DIR = Path(__file__).with_name("omni_platform")
@@ -88,6 +94,7 @@ class ServerSettings:
     start_timeout: float = 1800.0
     request_timeout: float = 900.0
     sleep_mode: str = "auto"
+    image_room_gib: float = 48.0
 
     def __post_init__(self):
         if self.sleep_mode not in {"auto", "off"}:
@@ -109,6 +116,7 @@ class ServerSettings:
             codec_memory=float(env.get("H3_DRAMA3_SGLANG_CODEC_MEMORY", "0.08")),
             max_seqs=int(env.get("H3_DRAMA3_SGLANG_MAX_SEQS", "32")),
             sleep_mode=env.get("H3_DRAMA3_SGLANG_SLEEP", "auto").lower(),
+            image_room_gib=float(env.get("H3_DRAMA3_IMAGE_ROOM_GIB", "48")),
         )
 
     @property
@@ -121,6 +129,10 @@ class ServerSettings:
             return self.engine_memory
         total_gib = total_mib / 1024 if total_mib else FALLBACK_GPU_GIB
         return round(min(0.9, (self.pin.weights_gib + ENGINE_HEADROOM_GIB) / total_gib), 3)
+
+    def footprint_mib(self, total_mib: float) -> float:
+        """GPU memory the engine and codec reserve on a GPU with ``total_mib``."""
+        return (self.engine_fraction(total_mib) + self.codec_memory) * total_mib
 
     @property
     def model_dir(self) -> Path:
@@ -321,7 +333,7 @@ class SglangOmniServer:
         if memory is None:
             return
         free, total, holders = memory
-        needed = (self.settings.engine_fraction(total) + self.settings.codec_memory) * total
+        needed = self.settings.footprint_mib(total)
         if free < needed and evict:
             memory = reclaim_audio_tools() or memory
             free, total, holders = memory
@@ -413,14 +425,23 @@ class SglangOmniServer:
 
     def ensure_ready(self, free_gpu: Callable[[], None], progress: Callable[[str], None] = lambda _m: None,
                      *, evict: bool = True) -> None:
-        """Free ComfyUI's VRAM, then restore, reuse, or start the server.
+        """Reuse, restore, or start the server, freeing ComfyUI's VRAM only when it lacks room.
 
         Without ``evict`` the VoiceDesign/Stable Audio worker stays loaded; a GPU
         without room for the server then raises instead.
         """
         with self._lock:
-            free_gpu()
+            if self.running() and not self.sleeping and self.healthy():
+                return  # an awake server's memory is already reserved; ComfyUI keeps its models
+            freed = []
+
+            def free_once():  # a failed wake falls through to a start; unload ComfyUI once
+                if not freed:
+                    freed.append(True)
+                    free_gpu()
+
             if self.sleeping and self.running():
+                self._free_comfy_if_short(free_once, self._checkpoint.required_vram / 2**20)
                 # Leave it asleep on insufficient VRAM so the user can unload
                 # other models and retry without losing the checkpoint.
                 memory = gpu_memory()
@@ -446,6 +467,8 @@ class SglangOmniServer:
             # Also clean up surviving workers when the parent has exited.
             if self.process is not None:
                 self.stop()
+            memory = gpu_memory()
+            self._free_comfy_if_short(free_once, self.settings.footprint_mib(memory[1]) if memory else None)
             self.check_free_vram(progress, evict=evict)
             try:
                 self._launch(progress)
@@ -458,6 +481,26 @@ class SglangOmniServer:
                 self.log_line("Checkpoint-enabled launch failed; retrying ordinary startup once")
                 self.check_free_vram(progress, evict=evict)
                 self._launch(progress)
+
+    @staticmethod
+    def _free_comfy_if_short(free_gpu: Callable[[], None], needed_mib: float | None) -> None:
+        """Unload ComfyUI's models unless the GPU already has ``needed_mib`` free (None: unknown)."""
+        memory = gpu_memory()
+        if needed_mib is None or memory is None or memory[0] < needed_mib:
+            free_gpu()
+
+    def leaves_image_room(self) -> bool:
+        """Whether an awake server leaves an image job ``image_room_gib`` of the GPU."""
+        with self._lock:
+            if not self.running() or self.sleeping:
+                return False
+            memory = gpu_memory()
+            total = memory[1] if memory else FALLBACK_GPU_GIB * 1024
+            room = (total - self.settings.footprint_mib(total)) / 1024 - PROCESS_OVERHEAD_GIB
+            fits = room >= self.settings.image_room_gib
+            self.log_line(f"Image job: {room:.1f} GiB of the GPU is outside {self.label}; "
+                          + ("staying awake" if fits else f"sleeping (needs {self.settings.image_room_gib:g} GiB)"))
+            return fits
 
     def _launch(self, progress: Callable[[str], None]) -> None:
         try:
@@ -630,12 +673,20 @@ def release_for_job(family: str) -> None:
 
     Voice and sound design, Auto's preload and Dub & Translate share the GPU with a
     loaded server; dubbing's transcription tools release it only when VRAM is short.
+    Image engines share it while the rest of the GPU leaves them enough room.
     """
     if family == "unload":
         stop_all()
+    elif family in IMAGE_FAMILIES and image_room_beside_server():
+        return
     elif family not in {"drama3", "drama3_voice", "drama3_sound", "drama3_preload",
                         "dubbing_analyze", "dubbing_lines", "dubbing"}:
         release_all()
+
+
+def image_room_beside_server() -> bool:
+    with _SERVER_LOCK:
+        return _SERVER is not None and _SERVER.leaves_image_room()
 
 
 def server_ready() -> bool:
