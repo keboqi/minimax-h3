@@ -66,6 +66,32 @@ def comparison_html(left, right):
     )
 
 
+LINEAGE_EMPTY = '<p class="h3-lineage-empty">Select an output to see where it came from.</p>'
+
+
+def lineage_html(path, metadata, sources, copies):
+    """Sources, this item, its enhanced copies and the job that made it, oldest first."""
+    settings = metadata.get("settings") or {}
+    steps = [(Path(source).name, "Made from", False) for source, _metadata in sources]
+    if not sources and settings.get("source"):
+        steps.append((settings["source"], "Made from", False))
+    steps.append((Path(path).name, " · ".join(
+        part for part in ("This item", metadata.get("family") or (metadata.get("_media") or {}).get("family")) if part
+    ), True))
+    for copy_path, copy_metadata in copies:
+        method = (copy_metadata.get("settings") or {}).get("method") or copy_metadata.get("family")
+        steps.append((Path(copy_path).name, "Enhanced copy" + (f" · {method}" if method else ""), False))
+    if metadata.get("job_id"):
+        steps.append((f"Job {str(metadata['job_id'])[:8]}", "The run that made this item", False))
+    current_mark = ' aria-current="true"'
+    items = "".join(
+        f"<li{current_mark if current else ''}><strong>{escape(name)}</strong>"
+        f"<span>{escape(note)}</span></li>"
+        for name, note, current in steps
+    )
+    return f'<ol class="h3-lineage" aria-label="Lineage">{items}</ol>'
+
+
 def build_library_tools(
     root, list_paths, *, view, system_root, validate_path, preview_media
 ):
@@ -88,6 +114,7 @@ def build_library_tools(
             favorite = gr.Checkbox(label="Favorite")
         save = gr.Button("Save asset annotations")
         status = gr.Markdown()
+        lineage_view = gr.HTML(LINEAGE_EMPTY)
         with gr.Accordion("Asset identity and lineage", open=False, max_height=400):
             lineage = gr.JSON(label="Asset identity and lineage")
     pair = gr.State({"a": None, "b": None})
@@ -186,16 +213,19 @@ def build_library_tools(
     def inspect_asset(mode, path):
         asset_id = selected_id(mode, path)
         if not asset_id:
-            return "", False, None
+            return "", False, None, LINEAGE_EMPTY
         row = resolve(asset_id)
+        metadata = json.loads(row["metadata"])
+        sources, copies = JOBS.store.asset_lineage(asset_id)
         return (
             ", ".join(json.loads(row["tags"])),
             bool(row["favorite"]),
             {
                 "asset_id": asset_id,
                 "filename": Path(row["path"]).name,
-                "settings_and_lineage": {key: value for key, value in json.loads(row["metadata"]).items() if key != "_media"},
+                "settings_and_lineage": {key: value for key, value in metadata.items() if key != "_media"},
             },
+            lineage_html(row["path"], metadata, sources, copies),
         )
 
     def slot_preview(asset_id, slot, request):
@@ -347,6 +377,7 @@ def build_library_tools(
             tags,
             favorite,
             lineage,
+            lineage_view,
             snapshot_component,
             add_a,
             add_b,

@@ -386,7 +386,18 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace #h3-library-kind .wrap label { flex: 0 0 auto; }
 .h3-workspace .h3-gallery-toolbar .h3-gallery-filter { flex: 0 1 180px !important; }
 .h3-workspace .h3-gallery-status-row { flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; }
-.h3-workspace .h3-gallery-status-row > * { flex: 0 1 auto !important; min-width: 0 !important; }
+.h3-workspace .h3-gallery-status-row > * { flex: 0 1 auto !important; width: auto !important; min-width: 0 !important; }
+/* Thumbnails follow the media type: square images, wide video and audio. */
+.h3-workspace #generated-video-gallery .thumbnail-item { aspect-ratio: 16 / 10 !important; height: auto !important; }
+.h3-workspace:has(#h3-library-kind input[value="Image"]:checked) #generated-video-gallery .thumbnail-item { aspect-ratio: 1 !important; }
+.h3-workspace .h3-gallery-inspector { scroll-margin-top: 12px; }
+.h3-workspace .h3-lineage { list-style: none; margin: 0; padding: 0; }
+.h3-workspace .h3-lineage li { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 6px 0 6px 22px; }
+.h3-workspace .h3-lineage li::before { content: ""; position: absolute; left: 0; top: 11px; width: 10px; height: 10px; border: 2px solid var(--h3-accent); border-radius: 50%; background: var(--h3-surface); box-sizing: border-box; }
+.h3-workspace .h3-lineage li:not(:last-child)::after { content: ""; position: absolute; left: 4px; top: 23px; bottom: -9px; width: 2px; background: var(--h3-border); }
+.h3-workspace .h3-lineage li[aria-current="true"]::before { background: var(--h3-accent); }
+.h3-workspace .h3-lineage strong { font-size: 14px; overflow-wrap: anywhere; }
+.h3-workspace .h3-lineage span, .h3-workspace .h3-lineage-empty { font-size: 12px; color: var(--h3-muted); }
 .h3-workspace .h3-gallery-counts { color: var(--h3-muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 .h3-workspace .h3-gallery-title-row { align-items: center; gap: 12px; }
 .h3-workspace .h3-gallery-title-row > .h3-gallery-download { flex: 1 1 auto !important; min-width: 0; }

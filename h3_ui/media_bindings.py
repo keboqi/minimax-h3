@@ -309,6 +309,18 @@ def bind_gallery_view(
         trigger_mode="always_last",
     )
     synchronize(selected)
+    # On a phone the inspector stacks under the grid; bring it into view after a pick.
+    view.grid.select(
+        None,
+        js="""() => {
+            if (!window.matchMedia('(max-width: 767px)').matches) return;
+            const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            document.querySelector('.h3-gallery-inspector')?.scrollIntoView({behavior: smooth ? 'smooth' : 'auto', block: 'start'});
+        }""",
+        queue=False,
+        show_progress="hidden",
+        api_name=False,
+    )
     mutation_outputs = [
         view.grid,
         view.paths,

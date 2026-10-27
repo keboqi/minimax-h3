@@ -502,6 +502,9 @@ def run():
                 ).click()
                 expect(page.locator("body")).to_contain_text("Asset annotations saved.")
                 phase[0] = "Media star, counts, live search and sort"
+                expect(page.locator("ol.h3-lineage [aria-current=true]")).to_contain_text("alpha.png")
+                box = page.locator("#generated-video-gallery .thumbnail-item").first.bounding_box()
+                assert abs(box["width"] - box["height"]) <= 2, box
                 star = page.locator(".h3-gallery-star")
                 expect(star).to_have_text("★ Favorite")
                 star.click()

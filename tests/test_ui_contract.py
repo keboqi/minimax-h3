@@ -285,7 +285,8 @@ class UiContractTests(unittest.TestCase):
                     "Image", [str(image)], str(image), {"a": None, "b": None}
                 )
                 self.assertEqual(result[2]["asset_id"], identity)
-                self.assertTrue(result[4]["interactive"])
+                self.assertIn("h3-lineage", result[3])
+                self.assertTrue(result[5]["interactive"])
                 with self.assertRaises(gr.Error):
                     compare({"a": identity, "b": outside_id})
                 video = config.outputs_dir / "video.mp4"
@@ -300,8 +301,8 @@ class UiContractTests(unittest.TestCase):
                     "Image", [str(image)], str(image), {"a": identity, "b": None}
                 )
                 self.assertIsNone(result[2])
-                self.assertFalse(result[4]["interactive"])
-                self.assertEqual(result[6], {"a": None, "b": None})
+                self.assertFalse(result[5]["interactive"])
+                self.assertEqual(result[7], {"a": None, "b": None})
                 with self.assertRaises(gr.Error):
                     compare({"a": identity, "b": identity})
 

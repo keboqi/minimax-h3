@@ -401,6 +401,39 @@ class WorkspaceStoreTests(unittest.TestCase):
         self.assertEqual(counts, {"Video": 3, "Audio": 1})
         self.assertEqual(engines, {"Video": ["LTX-2.5", "MiniMax H3"], "Audio": ["YuE2"]})
 
+    def test_asset_lineage_follows_source_ids_and_legacy_source_names(self):
+        paths = {name: self.root / name for name in ("source.mp4", "upscaled.mp4", "legacy.png", "photo.png")}
+        for path in paths.values():
+            path.write_bytes(b"media")
+        source_id = self.store.index_asset(paths["source.mp4"], "Video", {"family": "MiniMax H3"})
+        copy_id = self.store.index_asset(paths["upscaled.mp4"], "Video", {"source_asset_ids": [source_id]})
+        photo_id = self.store.index_asset(paths["photo.png"], "Image", {})
+        self.store.index_asset(paths["legacy.png"], "Image", {"settings": {"source": "photo.png"}})
+
+        sources, copies = self.store.asset_lineage(source_id)
+        self.assertEqual(sources, [])
+        self.assertEqual([Path(path).name for path, _ in copies], ["upscaled.mp4"])
+        sources, copies = self.store.asset_lineage(copy_id)
+        self.assertEqual([Path(path).name for path, _ in sources], ["source.mp4"])
+        self.assertEqual(copies, [])
+        self.assertEqual([Path(path).name for path, _ in self.store.asset_lineage(photo_id)[1]], ["legacy.png"])
+        self.assertEqual(self.store.asset_lineage("missing"), ([], []))
+
+    def test_lineage_timeline_lists_source_item_copies_and_job_escaped(self):
+        from h3_ui.library_tools import lineage_html
+
+        html = lineage_html(
+            "/out/a<b>.png", {"family": "SeedVR2", "job_id": "abcdef123456", "settings": {"source": "ignored.png"}},
+            [("/out/origin.png", {})], [("/out/a_2x.png", {"settings": {"method": "SeedVR2 2x"}})],
+        )
+        self.assertEqual(
+            [part.split("</strong>")[0] for part in html.split("<strong>")[1:]],
+            ["origin.png", "a&lt;b&gt;.png", "a_2x.png", "Job abcdef12"],
+        )
+        self.assertIn('aria-current="true"><strong>a&lt;b&gt;.png', html)
+        self.assertIn("Enhanced copy · SeedVR2 2x", html)
+        self.assertIn("ignored.png", lineage_html("/out/x.png", {"settings": {"source": "ignored.png"}}, [], []))
+
     def test_large_input_copy_does_not_block_monitoring(self):
         source = self.root / "source.png"
         source.write_bytes(b"source")

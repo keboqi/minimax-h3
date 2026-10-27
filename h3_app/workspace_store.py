@@ -486,6 +486,32 @@ class WorkspaceStore:
             records.append(record)
         return records, total
 
+    def asset_lineage(self, asset_id, *, limit=8):
+        """The assets this one was made from, and copies made from it (newest first).
+
+        Snapshots link outputs by ``source_asset_ids``; image enhancements written
+        before that also name their source file in ``settings.source``.
+        """
+        with self.connect() as db:
+            row = db.execute("SELECT path, metadata FROM assets WHERE id=?", (asset_id,)).fetchone()
+            if row is None:
+                return [], []
+            source_ids = json.loads(row["metadata"]).get("source_asset_ids") or []
+            sources = db.execute(
+                "SELECT path, metadata FROM assets WHERE id IN (SELECT value FROM json_each(?)) LIMIT ?",
+                (json.dumps(source_ids), limit),
+            ).fetchall()
+            copies = db.execute(
+                "SELECT path, metadata FROM assets WHERE available=1 AND id<>? AND ("
+                "EXISTS (SELECT 1 FROM json_each(metadata, '$.source_asset_ids') WHERE value=?) "
+                "OR json_extract(metadata, '$.settings.source')=?) ORDER BY modified DESC LIMIT ?",
+                (asset_id, asset_id, Path(row["path"]).name, limit),
+            ).fetchall()
+        return (
+            [(item["path"], json.loads(item["metadata"])) for item in sources],
+            [(item["path"], json.loads(item["metadata"])) for item in copies],
+        )
+
     def catalog_summary(self, *, roots=None):
         """Counts per media kind and the engines (families) present in each."""
         where, params = self._catalog_scope(roots)
