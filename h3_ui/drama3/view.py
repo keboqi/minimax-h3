@@ -155,7 +155,7 @@ STAGE = ["h3-preview-panel", "h3-song-stage", "h3-drama3-stage"]
 # Gradio's waveform player keeps its <audio> element out of the DOM, so media elements are
 # registered as they get a source; each visible subtitle panel follows the player whose file
 # (or, for a blob source, whose length) matches its result, so playing and seeking both sync.
-# Clicking a line seeks the player to it.
+# Clicking a line, or its segment on the timeline, seeks the player to it.
 DRAMA3_SUBTITLES_JS = """
 () => {
   if (window.h3Drama3Subtitles) return;
@@ -214,6 +214,17 @@ DRAMA3_SUBTITLES_JS = """
         line.classList.toggle("active", highlighted.includes(line));
         line.classList.toggle("past", time >= 0 && Number(line.dataset.end) <= time && !highlighted.includes(line));
       }
+      // The timeline's segments follow their subtitle lines; the playhead follows the player.
+      for (const segment of box.querySelectorAll(".h3-drama3-segment")) {
+        const line = lines[Number(segment.dataset.line)];
+        if (line && line !== segment) segment.classList.toggle("active", highlighted.includes(line));
+      }
+      const head = box.querySelector(".h3-drama3-playhead");
+      const duration = Number(box.dataset.duration) || player?.duration || 0;
+      if (head?.style) {
+        head.hidden = !(time >= 0 && duration > 0);
+        head.style.left = `${Math.min(100, Math.max(0, time / duration * 100))}%`;
+      }
       if (active && box.h3Active !== active) {
         const list = box.querySelector("ol");
         list.scrollTo({ top: active.offsetTop - (list.clientHeight - active.offsetHeight) / 2, behavior: "smooth" });
@@ -223,7 +234,7 @@ DRAMA3_SUBTITLES_JS = """
   };
   setInterval(sync, 200);
   document.addEventListener("click", (event) => {
-    const line = event.target.closest?.(".h3-drama3-subtitles li");
+    const line = event.target.closest?.(".h3-drama3-subtitles :is(li, .h3-drama3-segment)");
     const player = line && playerFor(line.closest(".h3-drama3-subtitles"));
     if (!player) return;
     player.currentTime = Number(line.dataset.start);
@@ -342,9 +353,82 @@ DRAMA3_SCRIPT_HIGHLIGHT_JS = """
 """
 
 
+# The cast grid shows one card per shown speaker slot and the picked slot below it as the
+# speaker's editor. It reads each slot's title (kept current by bindings.py and the writer)
+# and only hides the other slots, so every slot keeps its components and bindings. The first
+# speaker is picked at first, a new slot from Add speaker when it appears, and the last one
+# when the picked slot is removed.
+DRAMA3_CAST_JS = """
+() => {
+  if (window.h3Drama3Cast) return;
+  window.h3Drama3Cast = true;
+  const NARRATOR = new Set(["narrator", "narration", "旁白", "storyteller", "story teller"]);
+  const STATUS = { "saved voice": ["Saved voice", "ready"], "voice ready": ["Voice ready", "ready"] };
+  const escape = (text) => text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const card = (slot) => {
+    const title = slot.querySelector("button.label-wrap > span:first-child")?.textContent ?? "";
+    const parts = title.split(" · ").map((part) => part.trim());
+    const status = STATUS[parts.at(-1)];
+    const name = parts.slice(1, status ? -1 : undefined).join(" · ");
+    return { id: slot.id, number: parts[0] || "Speaker", name, status };
+  };
+  const render = (grid) => {
+    const panel = grid.closest(".h3-drama3-voices");
+    if (!panel) return;
+    // Gradio leaves a slot Add speaker has not shown out of the page, or marks it .hidden.
+    const slots = [...panel.querySelectorAll(".h3-drama3-voice-slot")].filter((slot) => !slot.closest(".hidden"));
+    const cards = slots.map(card);
+    let picked = grid.h3Pick ?? grid.dataset.picked;
+    grid.h3Pick = undefined;
+    if (cards.length === Number(grid.dataset.count || cards.length) + 1) picked = cards.at(-1).id;
+    // At first the first speaker; after the picked slot is removed, the last one left.
+    if (!cards.some((item) => item.id === picked)) picked = (grid.dataset.picked ? cards.at(-1) : cards[0])?.id;
+    grid.dataset.count = cards.length;
+    let tone = 0;
+    const html = cards.map((item) => {
+      const kind = NARRATOR.has(item.name.toLowerCase()) ? "narrator" : item.name ? String(tone++ % 8) : "none";
+      const [label, state] = item.status ?? ["Needs a voice", "missing"];
+      return `<button type="button" class="h3-drama3-cast-card h3-drama3-tone-${kind}" data-slot="${item.id}" `
+        + `data-state="${state}" aria-pressed="${item.id === picked}">`
+        + `<span class="h3-drama3-cast-avatar" aria-hidden="true">${escape((item.name || "#").slice(0, 1).toUpperCase())}</span>`
+        + `<span class="h3-drama3-cast-name">${escape(item.name || "Unnamed")}</span>`
+        + `<span class="h3-drama3-cast-slot">${escape(item.number)}</span>`
+        + `<span class="h3-drama3-cast-state">${label}</span></button>`;
+    }).join("");
+    if (grid.h3Html !== html) {
+      grid.h3Html = html;
+      grid.innerHTML = html;
+    }
+    for (const slot of slots) slot.classList.toggle("h3-drama3-cast-off", slot.id !== picked);
+    if ((grid.dataset.picked ?? "") !== (picked ?? "")) {
+      grid.dataset.picked = picked ?? "";
+      open(picked);
+    }
+  };
+  // Open a picked slot that was folded; the user may fold it again.
+  const open = (id) => {
+    const header = id && document.getElementById(id)?.querySelector("button.label-wrap");
+    if (header && !header.classList.contains("open")) header.click();
+  };
+  setInterval(() => {
+    for (const grid of document.querySelectorAll(".h3-drama3-cast")) if (grid.offsetParent) render(grid);
+  }, 200);
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest?.(".h3-drama3-cast-card");
+    const grid = button?.closest(".h3-drama3-cast");
+    if (!grid) return;
+    if (button.dataset.slot === grid.dataset.picked) return open(button.dataset.slot);
+    grid.h3Pick = button.dataset.slot;
+    render(grid);
+  });
+}
+"""
+
+
 def _voice_slot(speaker, names):
-    with gr.Accordion(drama3_slot_title(speaker), open=False,
-                      visible=speaker < DRAMA3_VISIBLE_SLOTS, elem_classes=["h3-drama3-slot"]) as group:
+    with gr.Accordion(drama3_slot_title(speaker), open=True, elem_id=f"h3-drama3-voice-{speaker}",
+                      visible=speaker < DRAMA3_VISIBLE_SLOTS,
+                      elem_classes=["h3-drama3-slot", "h3-drama3-voice-slot"]) as group:
         with gr.Row(equal_height=True):
             preset = gr.Dropdown(drama3_voice_choices(names), value=UPLOAD_VOICE,
                                  label=f"Speaker {speaker} voice")
@@ -521,7 +605,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                      "Every speaker needs a voice: upload a reference clip, generate one from a "
                                      "description, or reuse a saved speaker. Advanced scripts also need sounds.")
                         with gr.Accordion(drama3_voices_title(group="Global", group_size=group_size),
-                                          open=True) as voices_panel:
+                                          open=True, elem_classes=["h3-drama3-voices"]) as voices_panel:
                             with gr.Group(elem_classes=["h3-drama3-toolbar"]):
                                 with gr.Row(equal_height=True):
                                     speaker_group = gr.Dropdown(list(speaker_groups), value="Global",
@@ -538,6 +622,9 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                 speaker_group_status = gr.Markdown(
                                     "Global voices are available in every group.", elem_classes=["h3-drama3-note"])
                             speaker_library = build_speaker_library(speaker_groups, library_open)
+                            # Filled in the browser by DRAMA3_CAST_JS from the slots below.
+                            gr.HTML('<div class="h3-drama3-cast" role="group" aria-label="Cast: pick a speaker '
+                                    'to edit"></div>', elem_classes=["h3-drama3-cast-block"])
                             voices = tuple(_voice_slot(speaker, list(speaker_names))
                                            for speaker in range(DRAMA3_VOICE_SLOTS))
                             shown_slots = gr.Number(DRAMA3_VISIBLE_SLOTS, precision=0, visible=False)

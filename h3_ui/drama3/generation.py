@@ -15,6 +15,55 @@ from h3_app.generation import requests as generation_requests
 from h3_app.jobs import JobCancelled
 
 _CUE = re.compile(r"<\|[^|]*\|>|<[^>]*>|\[[^\]]*\]|\{[^{}\n]*\}")
+# The script box's name colors: the narrator has its own, characters take eight in turn.
+_NAME_TONES = 8
+
+
+def _stage_tones(speakers):
+    """Each speaker's color and place in the stereo image, by name, in order of first line.
+
+    Places follow the mix (``speaker_positions``): the narrator is centred, and characters
+    spread to both sides only when there are two or more of them.
+    """
+    from h3_app.drama3.serving.generate import CHARACTER_POSITIONS, NARRATOR_NAMES
+
+    ordered = list(dict.fromkeys(speakers))
+    characters = [name for name in ordered if " ".join(name.split()).casefold() not in NARRATOR_NAMES]
+    spread = len(characters) >= 2
+    tones = {name: ("narrator", 0.0) for name in ordered}
+    tones.update((name, (str(index % _NAME_TONES),
+                         CHARACTER_POSITIONS[index % len(CHARACTER_POSITIONS)] if spread else 0.0))
+                 for index, name in enumerate(characters))
+    return tones
+
+
+def _timeline_html(entries, tones, duration):
+    """One lane of the result's lines, placed by time and colored by speaker; clicking one seeks."""
+    duration = duration or max(end for *_, end in entries)
+    if duration <= 0:
+        return ""
+    segments = "".join(
+        f'<button type="button" class="h3-drama3-segment h3-drama3-tone-{tones[speaker][0]}" '
+        f'data-line="{index}" data-start="{start:.3f}" '
+        f'style="left: {min(start / duration, 1) * 100:.2f}%; width: {max(end - start, 0) / duration * 100:.2f}%" '
+        f'title="{html.escape(f"{speaker}: {text}")}" aria-label="{html.escape(f"Play from {speaker}: {text}")}">'
+        f'</button>'
+        for index, (speaker, text, start, end) in enumerate(entries))
+    return (f'<div class="h3-drama3-timeline" role="group" aria-label="Lines on the timeline">'
+            f'{segments}<span class="h3-drama3-playhead" aria-hidden="true" hidden></span></div>')
+
+
+def _stage_html(tones):
+    """Where each voice stands, left to right, as the mix places it."""
+    voices = "".join(
+        f'<span role="listitem" class="h3-drama3-stage-voice h3-drama3-tone-{tone}" '
+        f'data-row="{row % 2}" style="left: {(position + 1) * 50:.1f}%">{html.escape(name)}</span>'
+        for row, (name, (tone, position)) in enumerate(tones.items()))
+    return ('<div class="h3-drama3-stage-map"><span class="h3-drama3-stage-label">Stage</span>'
+            f'<div class="h3-drama3-stage-field" role="list" aria-label="Where each voice stands, left to right">'
+            f'{voices}<span class="h3-drama3-stage-side" aria-hidden="true">L</span>'
+            '<span class="h3-drama3-stage-side" aria-hidden="true">C</span>'
+            '<span class="h3-drama3-stage-side" aria-hidden="true">R</span></div></div>')
 
 
 class GenerationHandlers:
@@ -155,35 +204,41 @@ class GenerationHandlers:
         return [chunk for chunk in self._result_settings(output).get("chunks") or [] if chunk.get("take")]
 
     def drama3_subtitles(self, output):
-        """Subtitle lines for a result, timed to the mix; the browser highlights the one playing.
+        """A result's lines on a timeline, as subtitles, and on the stage, all timed to the mix.
 
-        Results from before line timings were recorded have none, and the panel stays hidden.
+        The browser highlights the line playing and moves the timeline's playhead. Results
+        from before line timings were recorded have none, and the panel stays hidden.
         """
         if isinstance(output, dict):
             output = output.get("path") or output.get("value")
         settings = self._result_settings(output)
-        lines = []
+        entries = []
         for chunk in settings.get("chunks") or []:
             if chunk.get("start") is None:
                 continue
-            speaker = chunk.get("name") or f"Speaker {chunk.get('speaker', 0)}"
+            speaker = str(chunk.get("name") or f"Speaker {chunk.get('speaker', 0)}")
             # A take can hold several script lines; results from before line timings show it whole.
             for line in chunk.get("lines") or [chunk]:
                 text = " ".join(_CUE.sub(" ", str(line.get("text", ""))).split())
                 if not text or line.get("start") is None:
                     continue
-                lines.append(
-                    f'<li data-start="{float(line["start"]):.3f}" data-end="{float(line.get("end", line["start"])):.3f}">'
-                    f'<span class="h3-subtitle-speaker">{html.escape(str(speaker))}</span>'
-                    f'<span class="h3-subtitle-text">{html.escape(text)}</span></li>')
-        if not lines:
+                start = float(line["start"])
+                entries.append((speaker, text, start, float(line.get("end", start))))
+        if not entries:
             return gr.update(value="", visible=False)
+        tones = _stage_tones(speaker for speaker, *_ in entries)
+        lines = "".join(
+            f'<li data-start="{start:.3f}" data-end="{end:.3f}">'
+            f'<span class="h3-subtitle-speaker h3-drama3-tone-{tones[speaker][0]}">{html.escape(speaker)}</span>'
+            f'<span class="h3-subtitle-text">{html.escape(text)}</span></li>'
+            for speaker, text, start, end in entries)
+        duration = float(settings.get("duration") or 0)
         # The result's 32-hex id is in every copy's file name, so the browser can find its player.
         media = re.search(r"[0-9a-f]{32}", Path(str(output)).name)
         return gr.update(visible=True, value=(
             f'<div class="h3-drama3-subtitles" data-media="{media.group(0) if media else ""}" '
-            f'data-duration="{float(settings.get("duration") or 0):.3f}">'
-            f'<ol>{"".join(lines)}</ol></div>'))
+            f'data-duration="{duration:.3f}">'
+            f'{_timeline_html(entries, tones, duration)}<ol>{lines}</ol>{_stage_html(tones)}</div>'))
 
     def drama3_take_selected(self, output, evt: gr.SelectData):
         """The take key of the takes-table row the user clicked."""

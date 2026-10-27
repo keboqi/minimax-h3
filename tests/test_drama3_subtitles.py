@@ -87,6 +87,37 @@ class SubtitlePlaybackTests(unittest.TestCase):
         }""")
         self.assertEqual(frames, [[1, 1], [2, 1], [3, 0]])
 
+    def test_timeline_segments_and_playhead_follow_the_player(self):
+        states = run_js("""() => {
+            let tick;
+            globalThis.setInterval = fn => { tick = fn; };
+            globalThis.window = {};
+            class Media { set src(value) { this._src = value; } get src() { return this._src; } play() {} }
+            globalThis.HTMLMediaElement = Media;
+            const toggles = () => ({ toggle(name, value) { this[name] = value; } });
+            const lines = [[0, 2], [3, 5]].map(([start, end], index) => ({
+                dataset: { start: String(start), end: String(end) }, classList: toggles(),
+                offsetTop: index * 20, offsetHeight: 20,
+            }));
+            const segments = lines.map((_, index) => ({ dataset: { line: String(index) }, classList: toggles() }));
+            const head = { hidden: true, style: {} };
+            const box = {
+                dataset: { media: "result", duration: "10" }, offsetParent: {},
+                querySelectorAll: sel => sel === "li" ? lines : segments,
+                querySelector: sel => sel === "ol" ? { clientHeight: 100, scrollTo() {} } : head,
+            };
+            globalThis.document = { querySelectorAll: () => [box], addEventListener() {} };
+            (""" + subtitle_controller() + """)();
+            const player = new Media();
+            player.src = "result.mp3";
+            return [1, 4].map(time => {
+                player.currentTime = time;
+                tick();
+                return [segments.map(segment => Boolean(segment.classList.active)), head.hidden, head.style.left];
+            });
+        }""")
+        self.assertEqual(states, [[[True, False], False, "10%"], [[False, True], False, "40%"]])
+
     def test_seeking_backwards_recomputes_the_active_lines(self):
         self.assertEqual(self.playback([[1, 2], [4, 5]], [0, 1.5, 4.5, 1.5, 0]),
                          [[], [0], [1], [0], []])

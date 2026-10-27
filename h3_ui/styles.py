@@ -526,8 +526,9 @@ button.h3-busy { pointer-events: none; opacity: .6; }
    cards, and visible outlines on the small secondary buttons. */
 .h3-workspace .h3-drama3 .styler { gap: 8px; background: transparent; }
 .h3-workspace .h3-drama3-script textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 14px; line-height: 1.65; }
-/* Syntax colors after VS Code's Light+ and Dark+ themes; the mirror sits under the textarea. */
-.h3-workspace .h3-drama3-script {
+/* Syntax colors after VS Code's Light+ and Dark+ themes; the mirror sits under the textarea.
+   The cast grid and the result's timeline, subtitles and stage reuse the name colors. */
+.h3-workspace :is(.h3-drama3-script, .h3-drama3-cast, .h3-drama3-subtitles) {
   --h3-hl-text: #1f2328; --h3-hl-punct: #800000; --h3-hl-cue: #008000; --h3-hl-pause: #098658;
   --h3-hl-keyword: #af00db; --h3-hl-tag: #800000; --h3-hl-effect: #267f99; --h3-hl-attr: #e50000;
   --h3-hl-value: #0000ff; --h3-hl-sound: #795e26; --h3-hl-sequence: #b35c00; --h3-hl-narrator: #5b6b80;
@@ -535,7 +536,7 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   --h3-hl-name0: #c92a2a; --h3-hl-name1: #1864ab; --h3-hl-name2: #2b8a3e; --h3-hl-name3: #6741d9;
   --h3-hl-name4: #d9480f; --h3-hl-name5: #9c36b5; --h3-hl-name6: #c2255c; --h3-hl-name7: #a07800;
 }
-.dark .h3-workspace .h3-drama3-script {
+.dark .h3-workspace :is(.h3-drama3-script, .h3-drama3-cast, .h3-drama3-subtitles) {
   --h3-hl-text: #d4d4d4; --h3-hl-punct: #808080; --h3-hl-cue: #6a9955; --h3-hl-pause: #b5cea8;
   --h3-hl-keyword: #c586c0; --h3-hl-tag: #569cd6; --h3-hl-effect: #4ec9b0; --h3-hl-attr: #9cdcfe;
   --h3-hl-value: #ce9178; --h3-hl-sound: #dcdcaa; --h3-hl-sequence: #d7ba7d; --h3-hl-narrator: #94a3b8;
@@ -606,6 +607,58 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-drama3-subtitles li.active { color: var(--h3-text); background: var(--h3-surface); box-shadow: inset 3px 0 var(--h3-accent); }
 .h3-workspace .h3-subtitle-speaker { flex: 0 0 auto; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--h3-accent); font-size: 12px; font-weight: 650; padding-top: 2px; }
 .h3-workspace .h3-subtitle-text { min-width: 0; }
+/* Speaker tones: the narrator's and the eight character colors of the script box. */
+.h3-workspace .h3-drama3-tone-narrator { --h3-tone: var(--h3-hl-narrator); }
+.h3-workspace .h3-drama3-tone-none { --h3-tone: var(--h3-muted); }
+.h3-workspace .h3-drama3-tone-0 { --h3-tone: var(--h3-hl-name0); }
+.h3-workspace .h3-drama3-tone-1 { --h3-tone: var(--h3-hl-name1); }
+.h3-workspace .h3-drama3-tone-2 { --h3-tone: var(--h3-hl-name2); }
+.h3-workspace .h3-drama3-tone-3 { --h3-tone: var(--h3-hl-name3); }
+.h3-workspace .h3-drama3-tone-4 { --h3-tone: var(--h3-hl-name4); }
+.h3-workspace .h3-drama3-tone-5 { --h3-tone: var(--h3-hl-name5); }
+.h3-workspace .h3-drama3-tone-6 { --h3-tone: var(--h3-hl-name6); }
+.h3-workspace .h3-drama3-tone-7 { --h3-tone: var(--h3-hl-name7); }
+.h3-workspace .h3-drama3-subtitles .h3-subtitle-speaker { color: var(--h3-tone, var(--h3-accent)); }
+/* Cast grid: one card per shown speaker; only the picked speaker's slot shows below. */
+.h3-workspace .h3-drama3-cast-off { display: none !important; }
+.h3-workspace .h3-drama3-cast { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
+.h3-workspace .h3-drama3-cast-card {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "avatar name" "avatar slot" "state state";
+  gap: 2px 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--h3-border); border-radius: 12px;
+  background: color-mix(in srgb, var(--h3-tone) 7%, var(--h3-surface)); color: var(--h3-text); font: inherit; text-align: left; cursor: pointer;
+}
+.h3-workspace .h3-drama3-cast-card:hover { border-color: var(--h3-disclosure-border); }
+.h3-workspace .h3-drama3-cast-card[aria-pressed="true"] { border-color: var(--h3-accent); box-shadow: inset 0 0 0 1px var(--h3-accent); }
+.h3-workspace .h3-drama3-cast-card:focus-visible { outline: 2px solid var(--h3-focus); outline-offset: 2px; }
+.h3-workspace .h3-drama3-cast-avatar { grid-area: avatar; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--h3-tone); color: var(--h3-surface); font-weight: 700; }
+.h3-workspace .h3-drama3-cast-name { grid-area: name; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+.h3-workspace .h3-drama3-cast-slot { grid-area: slot; color: var(--h3-muted); font-size: 12px; }
+.h3-workspace .h3-drama3-cast-state { grid-area: state; justify-self: start; margin-top: 6px; padding: 1px 8px; border-radius: 999px; background: var(--h3-disclosure); color: var(--h3-accent); font-size: 12px; font-weight: 600; }
+.h3-workspace .h3-drama3-cast-card[data-state="missing"] .h3-drama3-cast-state { background: transparent; color: var(--h3-text); box-shadow: inset 0 0 0 1px var(--h3-disclosure-border); }
+/* The result's lines on one timeline lane; clicking a segment seeks, the playhead follows the player. */
+.h3-workspace .h3-drama3-timeline { position: relative; height: 40px; margin-bottom: 8px; border: 1px solid var(--h3-border); border-radius: 10px; background: var(--h3-muted-surface); overflow: hidden; }
+.h3-workspace .h3-drama3-segment {
+  position: absolute; top: 6px; bottom: 6px; min-width: 3px; padding: 0; border: 0; border-radius: 4px; cursor: pointer;
+  background: color-mix(in srgb, var(--h3-tone) 28%, var(--h3-surface)); box-shadow: inset 0 -3px var(--h3-tone);
+}
+.h3-workspace .h3-drama3-segment:is(:hover, .active) { background: color-mix(in srgb, var(--h3-tone) 55%, var(--h3-surface)); }
+.h3-workspace .h3-drama3-segment.active { outline: 2px solid var(--h3-text); outline-offset: -2px; }
+.h3-workspace .h3-drama3-segment:focus-visible { z-index: 1; outline: 2px solid var(--h3-focus); outline-offset: 1px; }
+.h3-workspace .h3-drama3-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--h3-text); pointer-events: none; }
+.h3-workspace .h3-drama3-playhead[hidden] { display: none; }
+/* The stage: each voice where the mix places it, left to right. */
+.h3-workspace .h3-drama3-stage-map { position: relative; margin-top: 10px; padding: 10px 56px 24px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
+.h3-workspace .h3-drama3-stage-label { position: absolute; top: 10px; left: 12px; color: var(--h3-muted); font-size: 12px; font-weight: 650; }
+.h3-workspace .h3-drama3-stage-field { position: relative; height: 58px; border-bottom: 1px solid var(--h3-border); }
+.h3-workspace .h3-drama3-stage-voice {
+  position: absolute; top: 2px; max-width: 40%; transform: translateX(-50%); padding: 2px 10px; border-radius: 999px; overflow: hidden;
+  background: var(--h3-tone); color: var(--h3-surface); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap;
+}
+.h3-workspace .h3-drama3-stage-voice[data-row="1"] { top: 28px; }
+.h3-workspace .h3-drama3-stage-side { position: absolute; bottom: -20px; transform: translateX(-50%); color: var(--h3-muted); font-size: 11px; }
+.h3-workspace .h3-drama3-stage-side:nth-last-child(3) { left: 0; }
+.h3-workspace .h3-drama3-stage-side:nth-last-child(2) { left: 50%; }
+.h3-workspace .h3-drama3-stage-side:nth-last-child(1) { left: 100%; }
 .h3-workspace .h3-drama3-lines { gap: 10px; }
 .h3-workspace .h3-drama3-lines .h3-generation-buttons > button { flex: 1 1 140px; min-height: 40px; }
 /* Clip, unlike hidden, does not create the scroll container that would pin the stage in place.

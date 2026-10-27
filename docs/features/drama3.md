@@ -24,7 +24,9 @@ you scroll. Moving between steps happens in the browser and sends no request.
    into a Drama 3 script and fills the cast; review the result before moving on.
 2. **Cast & sounds.** Use **Speaker voices** to choose a saved group, manage presets,
    upload clips, or generate a cast. Every speaker in the script needs a voice. The
-   panel title shows the selected group and how many speakers it holds. In Advanced
+   panel title shows the selected group and how many speakers it holds, and a card
+   per speaker shows its name and whether its voice is ready; click a card to edit
+   that speaker below. In Advanced
    mode, review **Sound effects and music** too. **Generate all speaker voices** makes
    every missing voice in one job.
 3. **Speak.** Choose a **Speech preset** (**Expressive** by default). **Generate
@@ -35,9 +37,12 @@ you scroll. Moving between steps happens in the browser and sends no request.
 Speak, and the Script step has a shortcut that opens Speak and starts it. When Auto
 stops, its status names the step whose status says why.
 
-Under the player, the result's lines scroll as subtitles: the line being spoken is
-highlighted as it plays and follows the player when you seek, and clicking a line
-jumps to it. Bracketed cues and tags are left out. Consecutive lines of one speaker
+Under the player, a timeline shows each line as a segment in its speaker's color, with
+a playhead that follows the player; clicking a segment jumps to it. Below it the
+result's lines scroll as subtitles: the line being spoken is highlighted as it plays
+and follows the player when you seek, and clicking a line jumps to it. The stage
+underneath shows where each voice stands in the stereo mix (see the end of this
+section). Speakers keep the colors their names have in **Speech text**. Bracketed cues and tags are left out. Consecutive lines of one speaker
 are spoken as one take, so each line's time inside the take is placed at the pauses
 between them, or estimated from its length when the take has too few pauses. Results
 made before this feature have no line timings and show no subtitles; Remix gives older
@@ -143,9 +148,11 @@ tag in **Speech text**. The director keeps the writer's notes, and **Speech text
 colors them like attribute values. Notes change a line's text, so a line takes a new take
 when a note is added or changed.
 
-In **Speaker voices**, each speaker has a collapsible panel titled with its
-index, name, and whether a voice is ready (for example `Speaker 2 · Mia · voice
-ready`). Upload and transcribe a reference clip, or edit the voice description
+In **Speaker voices**, each shown speaker has a card with its name, slot and whether
+its voice is ready or saved; the first speaker is picked at first, and **Add speaker**
+picks the new one. The picked speaker's panel, titled with its index, name, and
+whether a voice is ready (for example `Speaker 2 · Mia · voice ready`), opens below
+the cards; the other speakers' panels stay hidden but keep their settings. Upload and transcribe a reference clip, or edit the voice description
 and preview speech and click **Generate voice**. Its synthesis text becomes the
 reference transcript automatically, and each panel shows its own progress and
 errors. The **Speaker voices** title counts the shown speakers and how many

@@ -404,9 +404,18 @@ class Drama3AppInputTests(unittest.TestCase):
         self.assertIn("Mia &amp; Co", update["value"])
         self.assertIn('<span class="h3-subtitle-text">Hello !</span>', update["value"])
         self.assertIn("Speaker 2</span><span class=\"h3-subtitle-text\">Who is it?", update["value"])
-        self.assertIn('<li data-start="5.300" data-end="6.000"><span class="h3-subtitle-speaker">Leo</span>'
+        # Characters take the script box's name colors in order of first line.
+        self.assertIn('<li data-start="5.300" data-end="6.000"><span class="h3-subtitle-speaker h3-drama3-tone-2">Leo</span>'
                       '<span class="h3-subtitle-text">Two.</span>', update["value"])
         self.assertEqual(update["value"].count("<li"), 4)  # a cue-only line has nothing to show
+        # Each line is a timeline segment placed on the 9.5 s mix, and seeks from its start.
+        self.assertEqual(update["value"].count('class="h3-drama3-segment'), 4)
+        self.assertIn('data-line="3" data-start="5.300" style="left: 55.79%; width: 7.37%"', update["value"])
+        self.assertIn('title="Mia &amp; Co: Hello !"', update["value"])
+        # Three characters spread across the stage as the mix places them.
+        self.assertIn('h3-drama3-tone-0" data-row="0" style="left: 35.0%">Mia &amp; Co</span>', update["value"])
+        self.assertIn('h3-drama3-tone-1" data-row="1" style="left: 65.0%">Speaker 2</span>', update["value"])
+        self.assertIn('h3-drama3-tone-2" data-row="0" style="left: 42.5%">Leo</span>', update["value"])
         self.assertFalse(old["visible"])  # results from before line timings were recorded
         self.assertFalse(drama3_handlers.drama3_subtitles(None)["visible"])
 

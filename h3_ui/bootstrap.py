@@ -18,7 +18,7 @@ from .media_view import build_gallery_view
 from h3_ui.drama3.bindings import bind_drama3
 from h3_ui.engines import FEATURES
 from h3_ui.engines.controls import settings_components
-from h3_ui.drama3.view import DRAMA3_SCRIPT_HIGHLIGHT_JS, DRAMA3_SUBTITLES_JS, build_drama3_view
+from h3_ui.drama3.view import DRAMA3_CAST_JS, DRAMA3_SCRIPT_HIGHLIGHT_JS, DRAMA3_SUBTITLES_JS, build_drama3_view
 from h3_ui import audio_probe_cache
 
 # Ctrl/Cmd+Enter presses the visible engine's generate button. Disabled or
@@ -325,5 +325,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         demo.load(None, js=GENERATE_SHORTCUT_JS, api_name=False)
         demo.load(None, js=DRAMA3_SUBTITLES_JS, api_name=False)
         demo.load(None, js=DRAMA3_SCRIPT_HIGHLIGHT_JS, api_name=False)
+        demo.load(None, js=DRAMA3_CAST_JS, api_name=False)
     demo.h3_css = H3_SETUP_CSS + H3_WORKSPACE_CSS
     return demo
