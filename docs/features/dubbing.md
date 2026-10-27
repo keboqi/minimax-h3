@@ -7,13 +7,19 @@ lines** and **Dub**. A finished analysis opens Review lines.
 
 ## 1 · Source
 
-Upload a video or audio file, or pick one from **Or pick from Media**; choosing
-one clears the other. To use an online video, first download it in **Media →
-Download from a URL** (see below). Choose the **Spoken language**, the language
-to **Dub into**, and any **Translation notes**.
+Pick the source in one of three tabs: **Upload** a video or audio file, choose
+one **From Media** (an upload and a Media pick replace each other), or open an
+**Earlier session**. The card below shows the picked file's kind, length and
+size. To use an online video, first download it in **Media → Download from a
+URL** (see below). Choose the **Spoken language**, the language to **Dub into**
+(any language can be typed), and any **Translation notes**.
 
-**Continue an earlier session** reopens an analyzed session, with its edited
-lines and dub language, for example after reloading the page.
+**Earlier session** lists analyzed sessions; opening one restores its edited
+lines and dub language, for example after reloading the page, and opens Review
+lines.
+
+**More options** holds the settings below; its title sums them up while it is
+closed.
 
 **Separate vocals from the background** (on by default) splits the soundtrack
 with audio-separator. The music and effects then stay under the dub, and voice
@@ -22,9 +28,9 @@ default) and Quality (Mel-Band-Roformer). With separation off, the original
 soundtrack is ducked under the dub, so the original voices remain faintly
 audible.
 
-The action card on the right, **Find and translate the lines**, chooses how:
+**How to find the lines** offers three transcriptions as cards:
 
-- **Local: Qwen3-ASR + aligner + Hy-MT** runs entirely on this server. OmniVAD
+- **Qwen3-ASR on this server** runs entirely on this server. OmniVAD
   finds speech, and pauses shorter than **Join pauses shorter than** become one
   span. Qwen3-ASR 1.7B transcribes each span. Qwen3-ForcedAligner 0.6B times
   every word, so long speech is cut into subtitle-sized lines at sentence ends.
@@ -32,7 +38,7 @@ The action card on the right, **Find and translate the lines**, chooses how:
   spans are split at sentence ends and timed by their share of the text.
   Hy-MT2 1.8B then translates the lines. Local transcription does not separate
   speakers: every line is `speaker1`, and each line is voiced from its own audio.
-- **Local: MOSS Transcribe + Diarize + Hy-MT** tells speakers apart on this
+- **MOSS on this server** tells speakers apart on this
   server, so each speaker keeps their own voice and gets the per-speaker
   settings below. MOSS-Transcribe-Diarize transcribes the whole recording (up to
   90 minutes) in one pass with speaker labels and timestamps; long turns are
@@ -47,23 +53,43 @@ The action card on the right, **Find and translate the lines**, chooses how:
 in **Translate again**. **Translation notes** pass names, terms and tone to the
 translator. Turn off **Translate now** to transcribe only.
 
+The **Analyze** card on the right lists the steps the analysis will take, such
+as separating vocals, transcribing and translating, and marks the one running.
+
 The first local run installs the isolated tools environment (see
 [Runtime](#runtime)) and downloads the models into
 `ComfyUI/models/dubbing`.
 
 ## 2 · Review lines
 
-Every line has Start, End, Speaker, Original, Translation and **Dub**. The
-summary above the table counts the lines ready to dub, the speakers and the
-lines still untranslated. Edits save to the session as you type; when an edit
-changes the order (a new Start time) or removes a row, the table is renumbered
-to match. A new row is saved once it has a start, an end and text. Edits made
-while a job runs are kept: jobs write only their own results. Untick **Dub** to keep a
-line's original voice. With separation, every line that is not voiced (unticked,
-untranslated or failed) keeps its original voice; without stems the original
-soundtrack plays under every line anyway.
+The board lists every line with its time, speaker, original and translation.
+Its summary counts the lines ready to dub, the speakers, the lines still
+untranslated and those that may be too long to say in their time (Drama 3's
+estimate of their spoken length needs more than 1.6x speed). Lines are flagged
+*Not translated*, *May be too long* or *Original voice*; the filters show all
+lines, those that need attention, the untranslated ones or one speaker's. Above
+the lines, a timeline has a row per speaker: striped lines need attention and
+faded ones keep their original voice. Click a line, on the board or the
+timeline, to edit it in the inspector beside it.
 
-Click a line to pick it for the line actions, or type lines such as `3, 5-7`:
+The inspector edits the focused line: its Start, End, Speaker (pick one or type
+a new name), Original, Translation and **Dub this line**. A text field saves
+when you leave it, times when you leave them or press Enter; a line given a new
+start moves to its place, and the inspector follows it. Under the fields, a note
+says whether the translation fits the line's time. ‹ and › move to the previous
+and next line; **Add a line after** and **Delete line** change the list. Each
+line's switch on the board turns Dub on or off. Edits made while a job runs are
+kept: jobs write only their own results. With separation, every line that is not
+voiced (switched off, untranslated or failed) keeps its original voice; without
+stems the original soundtrack plays under every line anyway.
+
+**Edit as a table** shows every line at once for bulk edits: changes save as you
+type, and when an edit changes the order (a new Start time) or removes a row, the
+table is renumbered to match. A new row is saved once it has a start, an end and
+text.
+
+Tick lines on the board to pick them for the line actions; without picks they
+use the focused line:
 
 - **Preview** voices the first picked line, fits it to its timing and plays it.
   It reuses the line's saved take.
@@ -74,16 +100,21 @@ Click a line to pick it for the line actions, or type lines such as `3, 5-7`:
 
 ## 3 · Dub
 
-**Speakers** appears for sessions transcribed with MOSS or Gemini: give a speaker
-a saved Drama 3 voice instead of its cloned original, or change its volume.
+The **Dub it** card says what the dub will do: how many lines it voices, how
+many keep their original voice or are untranslated, and which lines may sound
+rushed.
 
-- **Voice**: *Each line's own voice* clones every line from its original audio,
+**Speakers** appears for sessions transcribed with MOSS or Gemini, with a card
+per speaker: give a speaker a saved Drama 3 voice instead of its cloned
+original, or change its volume. Changes save at once.
+
+- **Clone from**: *Each line's own voice* clones every line from its original audio,
   which keeps each line's delivery. *One voice per speaker* uses each speaker's
   best clip (the longest one between 3 and 15 seconds), which is steadier.
   Lines shorter than 2 seconds always use their speaker's clip.
 - **Delivery**: Strict, Balance (default) or Expressive Drama 3 sampling.
 - **Timing**:
-  - *Match the original timing* (default) stretches every take with FFmpeg's
+  - *Match the original* (default) stretches every take with FFmpeg's
     `atempo`, pitch preserved, so it starts and ends exactly where the original
     line does, as index-tts-vllm's FFmpeg duration control does. Lines sped up
     more than 1.6x or slowed below 0.75x are listed under **Check**; a shorter or

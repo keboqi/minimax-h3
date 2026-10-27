@@ -20,6 +20,7 @@ from h3_app.dubbing import pipeline, segments as segment_tools, session as sessi
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled, record_failure
 
+from . import presenters
 from .player import player_html
 
 LIBRARY_LIMIT = 200
@@ -33,6 +34,23 @@ class DubbingServices:
     free_gpu: Callable[[], None]
     # (mode) -> newest-first managed media paths for "Video" or "Audio".
     list_media: Callable[[str], list]
+
+
+def _line_key(index: int, line: dict) -> dict:
+    """What names a line across saves: its place, start and original text."""
+    return {"index": index, "start": line["start"], "source": line["source"]}
+
+
+def _find_line(lines: list[dict], key) -> int | None:
+    """The index of the line ``key`` names, preferring its old place when several match; None if gone."""
+    if not isinstance(key, dict) or key.get("start") is None:
+        return None
+    start, source = round(float(key["start"]), 3), str(key.get("source") or "").strip()
+    found = [index for index, line in enumerate(lines)
+             if round(float(line["start"]), 3) == start and str(line["source"]).strip() == source]
+    if not found:
+        return None
+    return key.get("index") if key.get("index") in found else found[0]
 
 
 class DubbingHandlers:
@@ -70,41 +88,199 @@ class DubbingHandlers:
             choices += [(f"{mode} · {Path(path).name}", str(path)) for path in paths[:LIBRARY_LIMIT]]
         return gr.update(choices=choices, value=current if current in {path for _label, path in choices} else None)
 
-    def session_choices(self):
+    # -- Source -------------------------------------------------------------
+
+    def recent_sessions(self):
         """Analyzed sessions to reopen, most recent first."""
-        choices = []
-        for data in sessions.recent(self._runtime()):
-            lines = data.get("segments") or []
-            when = time.strftime("%b %d, %H:%M", time.localtime(data.get("updated") or data.get("created") or 0))
-            target = data.get("target_language") or "untranslated"
-            choices.append((f"{data.get('name') or 'Untitled'} · {len(lines)} line(s) · {target} · {when}", data["id"]))
-        return gr.update(choices=choices, value=None)
+        return presenters.recent_value(self._runtime())
+
+    def open_recent(self, recent):
+        """Outputs: as :meth:`open_session`, for the session chosen in the earlier-sessions list."""
+        recent = recent if isinstance(recent, dict) else {}
+        listed, chosen = recent.get("sessions") or [], recent.get("chosen")
+        if not isinstance(chosen, int) or not 0 <= chosen < len(listed):
+            return self.open_session(None)
+        return self.open_session(listed[chosen]["id"])
+
+    def source_card(self, source, library=None):
+        """The picked file: an upload wins over a Media pick."""
+        return presenters.source_card(source or library)
+
+    def analysis_plan(self, separate, separator_model, reuse, transcription, translate, translator,
+                      target_language):
+        return presenters.plan_html(self._plan_steps(separate, separator_model, reuse, transcription, translate,
+                                                     translator, target_language))
+
+    @staticmethod
+    def _plan_steps(separate, separator_model, reuse, transcription, translate, translator, target_language):
+        return presenters.plan_steps(
+            separate=bool(separate), separator_model=str(separator_model or ""), reuse=bool(reuse),
+            transcription=str(transcription or pipeline.PIPELINE_LOCAL), translate=bool(translate),
+            translator=str(translator or pipeline.TRANSLATOR_HYMT),
+            target_language=str(target_language or "").strip())
+
+    def options_label(self, separate, separator_model, reuse, transcription, aligner, merge_gap):
+        return gr.update(label=presenters.options_label(
+            separate=bool(separate), separator_model=str(separator_model or ""), reuse=bool(reuse),
+            transcription=str(transcription or ""), aligner=bool(aligner), merge_gap=float(merge_gap or 0)))
+
+    # -- Review lines -------------------------------------------------------
+
+    def _session(self, session_id) -> sessions.Session | None:
+        try:
+            return sessions.load(self._runtime(), session_id) if session_id else None
+        except H3Error:
+            return None
 
     def summary(self, session: sessions.Session) -> str:
         """One line on what the next dub will voice."""
-        lines = session.segments
-        if not lines:
-            return "No lines yet."
-        ready = sum(bool(s["translation"]) and s.get("dub", True) for s in lines)
-        untranslated = sum(not s["translation"] for s in lines)
-        kept = sum(bool(s["translation"]) and not s.get("dub", True) for s in lines)
-        speakers = len({s["speaker"] for s in lines})
-        target = session.data.get("target_language") or "the target language"
-        parts = [f"**{ready} of {len(lines)} line(s) ready** to dub into {target}", f"{speakers} speaker(s)"]
-        if untranslated:
-            parts.append(f"{untranslated} untranslated")
-        if kept:
-            parts.append(f"{kept} keep the original voice")
-        long = pipeline.long_lines(lines)
-        if long:
-            numbers = ", ".join(str(index + 1) for index in long[:12]) + (", …" if len(long) > 12 else "")
-            parts.append(f"{len(long)} may be too long to say in time ({numbers})")
-        return " · ".join(parts)
+        return presenters.summary_html(session) if session.segments else "No lines yet."
+
+    def board_for(self, session_id, board=None):
+        session = self._session(session_id)
+        return presenters.board_value(session, board) if session is not None else presenters.empty_board()
+
+    def _inspector(self, session: sessions.Session | None, board) -> tuple:
+        """The focused line in the inspector, its key, and the line numbers the line actions use.
+
+        Outputs: heading, start, end, speaker, original, translation, dub, fit, line numbers, key.
+        The key names the line the inspector shows, so its saves reach that line even after
+        the board's focus has moved on or the lines were re-sorted.
+        """
+        focus = presenters.board_focus(board)
+        lines = session.segments if session is not None else []
+        if focus is None or not 0 <= focus < len(lines):
+            return (presenters.inspector_heading(session, None), "", "", gr.update(choices=[], value=None), "", "",
+                    True, "", "", None)
+        line = lines[focus]
+        speakers = pipeline.session_speakers(session)
+        return (presenters.inspector_heading(session, focus), segment_tools.format_time(line["start"]),
+                segment_tools.format_time(line["end"]),
+                gr.update(choices=[(presenters.speaker_label(s), s) for s in speakers], value=line["speaker"]),
+                line["source"], line["translation"], bool(line.get("dub", True)), presenters.fit_note(line),
+                presenters.line_numbers(presenters.board_picks(board) or [focus]), _line_key(focus, line))
+
+    def focus_line(self, session_id, board):
+        """Outputs: as :meth:`_inspector`."""
+        return self._inspector(self._session(session_id), board)
+
+    def step_line(self, session_id, board, step: int):
+        """The board with its focus moved to the previous or next line."""
+        session = self._session(session_id)
+        if session is None:
+            return gr.skip()
+        focus = presenters.board_focus(board)
+        return presenters.board_value(session, board, focus=0 if focus is None else focus + step)
+
+    def pick_lines(self, board):
+        """The picked lines, or the focused one, as the line actions' numbers."""
+        picks = presenters.board_picks(board)
+        focus = presenters.board_focus(board)
+        return presenters.line_numbers(picks or ([focus] if focus is not None else []))
+
+    def _change_lines(self, session_id, board, change):
+        """Apply ``change(lines)`` to the saved lines; it returns the line to focus afterwards, or None.
+
+        Returns the session and the board, or the status saying why nothing was saved.
+        """
+        session = self._session(session_id)
+        if session is None:
+            return None, None, "Analyze a source first; edits apply to an analyzed session."
+        lines = [dict(line) for line in session.segments]
+        try:
+            target = change(lines)
+            session = sessions.update_segments(self._runtime(), session.id, lines)
+        except (H3Error, ValueError) as exc:
+            return None, None, f"**Not saved:** {exc}"
+        # Saving sorts the lines by time: follow the changed line to its new place.
+        focus = presenters.board_focus(board) if target is None else _find_line(session.segments, target)
+        return session, presenters.board_value(session, board, focus=focus), ""
+
+    def save_focused(self, session_id, key, board, start, end, speaker, original, translation, dub):
+        """Save the inspector's fields to the line it shows, found by ``key``.
+
+        Outputs: board, table rows, inspector heading, fit, status, key.
+        """
+        begin, finish = segment_tools.parse_time(start), segment_tools.parse_time(end)
+
+        def change(lines):
+            index = _find_line(lines, key)
+            if index is None:
+                raise H3Error("That line has changed; click it on the board again.")
+            if begin is None or finish is None:
+                raise H3Error("Start and end need times such as 01:13.5.")
+            if not str(original or "").strip() and not str(translation or "").strip():
+                raise H3Error("A line needs its original text or a translation.")
+            lines[index].update(start=begin, end=max(finish, begin + segment_tools.MIN_SEGMENT_SECONDS),
+                                speaker=segment_tools.speaker_id(speaker), source=str(original or "").strip(),
+                                translation=str(translation or "").strip(), dub=bool(dub))
+            return lines[index]
+
+        session, value, status = self._change_lines(session_id, board, change)
+        if session is None:
+            return gr.skip(), gr.skip(), gr.skip(), gr.skip(), status, gr.skip()
+        focus = value["focus"]
+        line = session.segments[focus]
+        # The viewer may have clicked another line while this saved; only a line that moved
+        # takes the focus with it.
+        value["keepFocus"] = focus == key.get("index")
+        return (value, segment_tools.to_rows(session.segments), presenters.inspector_heading(session, focus),
+                presenters.fit_note(line), "", _line_key(focus, line))
+
+    def _edit_lines(self, session_id, board, change, done: str):
+        """Outputs: board, table rows, status. The inspector follows the board's focus afterwards."""
+        session, value, status = self._change_lines(session_id, board, change)
+        if session is None:
+            return gr.skip(), gr.skip(), status
+        return value, segment_tools.to_rows(session.segments), done
+
+    def toggle_dub(self, session_id, board):
+        """A Dub switch on the board; it focuses that line. Outputs: board, table rows, status."""
+        changed = board.get("changed") if isinstance(board, dict) else None
+        index = changed.get("line") if isinstance(changed, dict) else None
+
+        def change(lines):
+            if not isinstance(index, int) or not 0 <= index < len(lines):
+                raise H3Error("That line is no longer there.")
+            lines[index]["dub"] = bool(changed.get("dub"))
+            return lines[index]
+
+        return self._edit_lines(session_id, board, change, "")
+
+    def add_line(self, session_id, board):
+        """A new line after the focused one, filling the gap before the next line. Outputs: board, rows, status."""
+        focus = presenters.board_focus(board)
+
+        def change(lines):
+            after = lines[focus] if focus is not None and 0 <= focus < len(lines) else None
+            start = round(after["end"] + 0.05, 3) if after else 0.0
+            later = [line["start"] for line in lines if line["start"] > start]
+            end = round(min(later) - 0.05, 3) if later and min(later) - 0.05 > start + 0.5 else start + 1.5
+            speaker = after["speaker"] if after else segment_tools.DEFAULT_SPEAKER
+            line = {"start": start, "end": end, "speaker": speaker, "source": "…", "translation": "", "dub": True}
+            lines.append(line)
+            return line
+
+        return self._edit_lines(session_id, board, change, "Added a line: type its original text and translation.")
+
+    def delete_line(self, session_id, board):
+        """Remove the focused line. Outputs: board, table rows, status."""
+        focus = presenters.board_focus(board)
+
+        def change(lines):
+            if focus is None or not 0 <= focus < len(lines):
+                raise H3Error("Pick a line on the board first.")
+            if len(lines) == 1:
+                raise H3Error("A session keeps at least one line.")
+            lines.pop(focus)
+            return None
+
+        return self._edit_lines(session_id, board, change, "Line deleted.")
 
     def save_lines(self, session_id, rows):
-        """Save the editor's rows as the session's lines (runs on every edit).
+        """Save the table's rows as the session's lines (runs on every edit).
 
-        Outputs: line rows, summary. Saving sorts lines by time and drops empty ones; when
+        Outputs: line rows, status. Saving sorts lines by time and drops empty ones; when
         that changes the order or numbering of the finished rows, the table is redrawn so
         the line numbers used by the line actions match what is saved. A row still being
         filled in (no times or text yet) stays in the editor until it is complete.
@@ -130,104 +306,73 @@ class DubbingHandlers:
         return (saved if redraw else gr.skip()), self.summary(session) + note
 
     def open_session(self, session_id):
-        """Outputs: session id, line rows, status, summary, target language."""
+        """Outputs: session id, board, table rows, status, target language."""
         if not session_id:
             return gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
         try:
             session = sessions.load(self._runtime(), session_id)
         except H3Error as exc:
-            return gr.skip(), gr.skip(), f"**Error:** {exc}", gr.skip(), gr.skip()
-        return (session.id, segment_tools.to_rows(session.segments),
+            return gr.skip(), gr.skip(), gr.skip(), f"**Error:** {exc}", gr.skip()
+        return (session.id, presenters.board_value(session), segment_tools.to_rows(session.segments),
                 f"Opened **{session.data.get('name') or 'the session'}** with {len(session.segments)} line(s).",
-                self.summary(session), session.data.get("target_language") or gr.skip())
+                session.data.get("target_language") or gr.skip())
 
-    def _voice_choices(self, current=""):
-        """The original voice, then every saved Drama 3 speaker; a chosen voice since deleted stays listed."""
+    # -- Dub ----------------------------------------------------------------
+
+    def _voice_choices(self):
+        """The original voice, then every saved Drama 3 speaker."""
         from h3_app.drama3 import speakers as drama3_speakers
 
-        choices = [("Original voice (cloned from the source)", pipeline.ORIGINAL_VOICE)]
+        choices = [("Cloned from the original", pipeline.ORIGINAL_VOICE)]
         for entry in drama3_speakers.speaker_names(self._runtime()):
             choices.append(entry if isinstance(entry, tuple) else (entry, entry))
-        if current and current not in {value for _label, value in choices}:
-            choices.append((f"{current} (no longer saved)", current))
         return choices
 
-    def _speakers_overview(self, session: sessions.Session) -> str:
-        settings = pipeline.speaker_settings(session)
-        names = dict(self._voice_choices())
-        described = session.data.get("speakers") or {}
-        rows = []
-        for speaker in pipeline.session_speakers(session):
-            entry = settings.get(speaker, {"voice": pipeline.ORIGINAL_VOICE, "volume": 100.0})
-            count = sum(line["speaker"] == speaker for line in session.segments)
-            voice = names.get(entry["voice"], entry["voice"]) if entry["voice"] else "original voice"
-            description = f" ({described[speaker]})" if described.get(speaker) else ""
-            rows.append(f"- **{speaker}**{description} · {count} line(s) · {voice} · {entry['volume']:.0f}%")
-        return "\n".join(rows)
-
-    def speaker_panel(self, session_id, current=None):
-        """Outputs: speakers panel, speaker, voice, volume, overview. Shown only when speakers were told apart."""
-        try:
-            session = sessions.load(self._runtime(), session_id) if session_id else None
-        except H3Error:
-            session = None
+    def speakers(self, session_id):
+        """Outputs: speakers panel, speaker cards. Shown only when the transcription told speakers apart."""
+        session = self._session(session_id)
         if session is None or not pipeline.speaker_settings_available(session):
-            return gr.update(visible=False), gr.skip(), gr.skip(), gr.skip(), ""
+            return gr.update(visible=False), gr.skip()
+        return gr.update(visible=True), presenters.speakers_value(session, self._voice_choices())
+
+    def save_speaker(self, session_id, cards):
+        """Save the changed card's voice and volume for the next preview and dub. Outputs: status."""
+        session = self._session(session_id)
+        cards = cards if isinstance(cards, dict) else {}
+        index = cards.get("changed")
+        entries = cards.get("speakers") or []
+        if session is None or not isinstance(index, int) or not 0 <= index < len(entries):
+            return gr.skip()
         speakers = pipeline.session_speakers(session)
-        chosen = current if current in speakers else (speakers[0] if speakers else None)
-        entry = pipeline.speaker_settings(session).get(chosen, {"voice": pipeline.ORIGINAL_VOICE, "volume": 100.0})
-        described = session.data.get("speakers") or {}
-        labels = [(f"{speaker} · {described[speaker]}" if described.get(speaker) else speaker, speaker)
-                  for speaker in speakers]
-        return (gr.update(visible=True), gr.update(choices=labels, value=chosen),
-                gr.update(choices=self._voice_choices(entry["voice"]), value=entry["voice"]), entry["volume"],
-                self._speakers_overview(session))
-
-    def select_speaker(self, session_id, speaker):
-        """Outputs: voice, volume of the picked speaker."""
+        if index >= len(speakers):
+            return "**Not saved:** the speakers changed; open the Dub step again."
+        entry = entries[index]
         try:
-            session = sessions.load(self._runtime(), session_id)
-        except H3Error:
-            return gr.skip(), gr.skip()
-        entry = pipeline.speaker_settings(session).get(speaker, {"voice": pipeline.ORIGINAL_VOICE, "volume": 100.0})
-        return gr.update(choices=self._voice_choices(entry["voice"]), value=entry["voice"]), entry["volume"]
-
-    def save_speaker(self, session_id, speaker, voice, volume):
-        """Outputs: overview. Saves the picked speaker's voice and volume for the next preview and dub."""
-        try:
-            session = pipeline.set_speaker(self._runtime(), session_id, speaker, voice=voice, volume=volume)
-        except H3Error as exc:
+            pipeline.set_speaker(self._runtime(), session.id, speakers[index], voice=str(entry.get("voice") or ""),
+                                 volume=float(entry.get("volume", 100)))
+        except (H3Error, TypeError, ValueError) as exc:
             return f"**Not saved:** {exc}"
-        return self._speakers_overview(session)
+        return ""
+
+    def readiness(self, session_id):
+        return presenters.readiness_html(self._session(session_id))
 
     def clear_results(self):
         """A new session makes the previous one's line picks, preview and dub stale.
 
         Outputs: line numbers, line status, preview, fresh takes, player, video, audio, subtitles, dub status.
         """
-        return "", "", None, "", gr.update(value="", visible=False), gr.update(value=None, visible=True), None, None, ""
+        return ("", "", None, "", gr.update(value="", visible=False), gr.update(value=None, visible=True), None,
+                None, "")
 
-    def select_line(self, event: gr.SelectData):
-        """Clicking a row picks its line for the line actions; an unsaved row has no number yet."""
-        row = getattr(event, "row_value", None)
-        if row is not None:
-            number = row[0] if row else None
-        else:
-            index = event.index[0] if isinstance(event.index, (list, tuple)) else event.index
-            number = None if index is None else int(index) + 1
-        try:
-            return str(int(number))
-        except (TypeError, ValueError):
-            return gr.skip()
-
-    def _analysis_values(self, result: pipeline.Analysis):
-        return (result.session.id, segment_tools.to_rows(result.session.segments), result.message,
-                self.summary(result.session))
-
-    def analyze_source(self, source, library, separate, separator_model, transcription, source_language, target_language,
-                       translate, translator, aligner, merge_gap, gemini_model, api_key, notes, reuse=True):
-        """Outputs: session id, line rows, status, summary."""
+    def analyze_source(self, source, library, separate, separator_model, transcription, source_language,
+                       target_language, translate, translator, aligner, merge_gap, gemini_model, api_key, notes,
+                       reuse=True):
+        """Outputs: session id, board, table rows, status, plan. The plan marks the step running."""
         chosen = source or library
+        steps = self._plan_steps(separate, separator_model, reuse, transcription, translate, translator,
+                                 target_language)
+        active = None
         try:
             if not chosen:
                 raise H3Error("Upload a video or audio file, or pick one from Media.")
@@ -237,27 +382,34 @@ class DubbingHandlers:
                 str(api_key or ""), True, str(notes or ""), bool(reuse))
             for update in self._gpu(lambda **kw: pipeline.analyze(request, **kw)):
                 if isinstance(update, pipeline.Analysis):
-                    yield self._analysis_values(update)
+                    session = update.session
+                    yield (session.id, presenters.board_value(session), segment_tools.to_rows(session.segments),
+                           update.message, presenters.plan_html(steps, finished=True))
                 else:
-                    yield gr.skip(), gr.skip(), update, gr.skip()
+                    active = presenters.step_for_status(update) or active
+                    yield gr.skip(), gr.skip(), gr.skip(), update, presenters.plan_html(steps, active=active)
         except Exception as exc:
-            yield gr.skip(), gr.skip(), self._failed(exc), gr.skip()
+            yield gr.skip(), gr.skip(), gr.skip(), self._failed(exc), presenters.plan_html(steps)
 
-    def translate_lines(self, session_id, line_numbers, target_language, translator, gemini_model, api_key, notes):
-        """Outputs: line rows, line status, summary."""
+    def translate_lines(self, session_id, board, target_language, translator, gemini_model, api_key, notes):
+        """Translate the picked lines again; with none picked, fill the untranslated ones.
+
+        Outputs: board, table rows, line status.
+        """
         try:
             session = sessions.load(self._runtime(), session_id)
-            indices = segment_tools.parse_line_numbers(line_numbers, len(session.segments)) or None
+            indices = [index for index in presenters.board_picks(board) if index < len(session.segments)] or None
             request = pipeline.AnalyzeRequest("", target_language=str(target_language or "").strip(),
                                               translator=translator, gemini_model=gemini_model,
                                               api_key=str(api_key or ""), notes=str(notes or ""))
             for update in self._gpu(lambda **kw: pipeline.retranslate(session_id, indices, request, **kw)):
                 if isinstance(update, pipeline.Analysis):
-                    yield segment_tools.to_rows(update.session.segments), update.message, self.summary(update.session)
+                    yield (presenters.board_value(update.session, board),
+                           segment_tools.to_rows(update.session.segments), update.message)
                 else:
-                    yield gr.skip(), update, gr.skip()
+                    yield gr.skip(), gr.skip(), update
         except Exception as exc:
-            yield gr.skip(), self._failed(exc), gr.skip()
+            yield gr.skip(), gr.skip(), self._failed(exc)
 
     def _dub_request(self, session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume=100,
                      background_volume=100, keep_original=True, burn_subtitles=False, regenerate=""):

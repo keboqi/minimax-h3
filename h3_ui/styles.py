@@ -579,18 +579,143 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   .h3-workspace .h3-settings-tabs > [role="tabpanel"] { padding: 10px; }
   .h3-workspace .h3-song-steps > .tab-wrapper > [role="tablist"] > button { flex-direction: column; justify-content: center; gap: 4px; min-height: 64px; padding: 6px 2px; font-size: 11px; line-height: 1.2; text-align: center; white-space: normal; }
 }
-/* Dub & Translate: Song's stepper with three steps (Source, Review lines, Dub). */
+/* Dub & Translate: Song's stepper with three steps (Source, Review lines, Dub). Speakers reuse
+   Soundstage's name colors. */
 .h3-workspace .h3-dub .h3-song-steps > .tab-wrapper > [role="tablist"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.h3-workspace .h3-dub-summary p { margin: 0; padding: 10px 12px; border: 1px solid var(--h3-border); border-radius: 10px; background: var(--h3-muted-surface); font-size: 13px; color: var(--h3-muted); }
-.h3-workspace .h3-dub-summary strong { color: var(--h3-text); }
+.h3-workspace .h3-dub .tone-0 { --h3-tone: var(--h3-hl-name0); }
+.h3-workspace .h3-dub .tone-1 { --h3-tone: var(--h3-hl-name1); }
+.h3-workspace .h3-dub .tone-2 { --h3-tone: var(--h3-hl-name2); }
+.h3-workspace .h3-dub .tone-3 { --h3-tone: var(--h3-hl-name3); }
+.h3-workspace .h3-dub .tone-4 { --h3-tone: var(--h3-hl-name4); }
+.h3-workspace .h3-dub .tone-5 { --h3-tone: var(--h3-hl-name5); }
+.h3-workspace .h3-dub .tone-6 { --h3-tone: var(--h3-hl-name6); }
+.h3-workspace .h3-dub .tone-7 { --h3-tone: var(--h3-hl-name7); }
 .h3-workspace .h3-dub-status p { margin: 0; font-size: 13px; color: var(--h3-muted); overflow-wrap: anywhere; }
 .h3-workspace .h3-dub-status p:empty { display: none; }
+.h3-workspace .h3-dub-library > button { align-self: flex-end; min-height: 40px; }
+/* Source: the picked file, languages, transcription cards and the analysis plan. */
+.h3-workspace .h3-dub-source-tabs { border: 1px solid var(--h3-border); border-radius: 12px; padding: 4px 10px 10px; }
+.h3-workspace .h3-dub-source-card { display: flex; align-items: center; gap: 14px; padding: 12px; border: 1px solid var(--h3-border); border-radius: 12px; }
+.h3-workspace .h3-dub-source-card.empty { border-style: dashed; color: var(--h3-muted); font-size: 13px; }
+.h3-workspace .h3-dub-source-card p { margin: 2px 0 0; color: var(--h3-muted); font-size: 13px; }
+.h3-workspace .h3-dub-source-card strong { overflow-wrap: anywhere; }
+.h3-workspace .h3-dub-source-kind { flex: none; display: grid; place-items: center; width: 64px; height: 44px; border-radius: 8px; background: #111b18; color: #a9bdb3; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.h3-workspace .h3-dub-languages { flex-wrap: wrap; align-items: flex-end; }
+.h3-workspace .h3-dub-languages > .block { flex: 1 1 200px !important; }
+.h3-workspace .h3-dub-languages > .block.h3-dub-arrow-cell { flex: 0 0 24px !important; min-width: 24px !important; align-self: center; }
+.h3-workspace .h3-dub-arrow { display: block; color: var(--h3-muted); font-size: 20px; text-align: center; }
+.h3-workspace .h3-dub-choices { margin: 0; padding: 0; border: 0; min-width: 0; }
+.h3-workspace .h3-dub-choices legend { margin-bottom: 8px; font-size: 13px; font-weight: 600; color: var(--h3-text); }
+.h3-workspace .h3-dub-choice-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.h3-workspace .h3-dub-choice { display: flex; gap: 10px; padding: 14px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-surface); cursor: pointer; transition: border-color .15s, background .15s; }
+.h3-workspace .h3-dub-choice:hover { border-color: var(--h3-disclosure-border); }
+.h3-workspace .h3-dub-choice.on { border-color: var(--h3-accent); background: color-mix(in srgb, var(--h3-accent) 6%, var(--h3-surface)); box-shadow: inset 0 0 0 1px var(--h3-accent); }
+.h3-workspace .h3-dub-choice input { flex: none; margin-top: 3px; accent-color: var(--h3-accent); width: 16px; height: 16px; border-radius: 50%; }
+.h3-workspace .h3-dub-choice > span { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.h3-workspace .h3-dub-choice strong { font-size: 14px; color: var(--h3-text); }
+.h3-workspace .h3-dub-choice span span { font-size: 12px; line-height: 1.45; color: var(--h3-muted); }
+.h3-workspace .h3-dub-options { border-radius: 12px; }
+.h3-workspace .h3-dub-plan { display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.h3-workspace .h3-dub-plan li { display: flex; gap: 12px; color: var(--h3-muted); }
+.h3-workspace .h3-dub-plan li > span:last-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; }
+.h3-workspace .h3-dub-plan strong { font-size: 14px; font-weight: 600; color: var(--h3-text); }
+.h3-workspace .h3-dub-plan-mark { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--h3-border); border-radius: 50%; font-size: 11px; font-variant-numeric: tabular-nums; }
+.h3-workspace .h3-dub-plan li.current .h3-dub-plan-mark { border-color: var(--h3-accent); color: var(--h3-accent); animation: h3-dub-pulse 1.2s ease-in-out infinite; }
+.h3-workspace .h3-dub-plan li.done .h3-dub-plan-mark { border-color: var(--h3-accent); background: var(--h3-accent); color: var(--h3-surface); }
+@keyframes h3-dub-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--h3-accent) 25%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .h3-workspace .h3-dub-plan li.current .h3-dub-plan-mark { animation: none; } }
+.h3-workspace .h3-dub-recent { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.h3-workspace .h3-dub-recent li + li { border-top: 1px solid var(--h3-border); }
+.h3-workspace .h3-dub-recent button { display: flex; justify-content: space-between; gap: 12px; width: 100%; min-height: 48px; padding: 8px 6px; border: 0; border-radius: 8px; background: transparent; color: var(--h3-text); font: inherit; text-align: left; cursor: pointer; }
+.h3-workspace .h3-dub-recent button:hover { background: var(--h3-muted-surface); }
+.h3-workspace .h3-dub-recent button > span:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.h3-workspace .h3-dub-recent button > span:first-child span, .h3-workspace .h3-dub-recent-when { font-size: 12px; color: var(--h3-muted); }
+.h3-workspace .h3-dub-recent-when { flex: none; white-space: nowrap; }
+.h3-workspace .h3-dub-board-empty { margin: 0; padding: 18px 12px; color: var(--h3-muted); font-size: 13px; }
+/* Review lines: the board (filters, timeline, lines) and the inspector beside it. */
+.h3-workspace .h3-dub-board { display: flex; flex-direction: column; gap: 12px; }
+.h3-workspace .h3-dub-board-head { display: flex; flex-direction: column; gap: 10px; }
+.h3-workspace .h3-dub-board-head p { margin: 0; font-size: 13px; color: var(--h3-muted); }
+.h3-workspace .h3-dub-board-head strong { color: var(--h3-text); }
+.h3-workspace .h3-dub-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.h3-workspace .h3-dub-filters button { min-height: 34px; padding: 0 12px; border: 1px solid var(--h3-border); border-radius: 999px; background: var(--h3-surface); color: var(--h3-text); font: inherit; font-size: 13px; cursor: pointer; }
+.h3-workspace .h3-dub-filters button span { color: var(--h3-muted); font-variant-numeric: tabular-nums; }
+.h3-workspace .h3-dub-filters button[aria-pressed="true"] { border-color: var(--h3-text); background: var(--h3-text); color: var(--h3-surface); }
+.h3-workspace .h3-dub-filters button[aria-pressed="true"] span { color: inherit; opacity: .75; }
+.h3-workspace .h3-dub-timeline { display: grid; grid-template-columns: minmax(64px, max-content) minmax(0, 1fr); gap: 6px 10px; padding: 10px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
+.h3-workspace .h3-dub-lane { display: contents; }
+.h3-workspace .h3-dub-lane-name { align-self: center; overflow: hidden; color: var(--h3-tone); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.h3-workspace .h3-dub-lane-track { position: relative; height: 26px; border-radius: 6px; background: var(--h3-surface); }
+.h3-workspace .h3-dub-seg { position: absolute; top: 4px; bottom: 4px; min-width: 3px; padding: 0; border: 0; border-radius: 4px; background: var(--h3-tone); cursor: pointer; }
+.h3-workspace .h3-dub-seg.warn { background-image: repeating-linear-gradient(135deg, transparent 0 4px, rgba(255, 255, 255, .55) 4px 7px); }
+.h3-workspace .h3-dub-seg.off { opacity: .35; }
+.h3-workspace .h3-dub-seg.focus { box-shadow: 0 0 0 2px var(--h3-surface), 0 0 0 4px var(--h3-text); z-index: 1; }
+.h3-workspace .h3-dub-seg:focus-visible { outline: 2px solid var(--h3-focus); outline-offset: 2px; }
+.h3-workspace .h3-dub-ticks { grid-column: 2; display: flex; justify-content: space-between; color: var(--h3-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.h3-workspace .h3-dub-picked { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 8px 8px 14px; border-radius: 10px; background: var(--h3-text); color: var(--h3-surface); font-size: 13px; }
+.h3-workspace .h3-dub-picked button { min-height: 32px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--h3-surface) 40%, transparent); border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.h3-workspace .h3-dub-rows { max-height: min(640px, 62vh); overflow-y: auto; border: 1px solid var(--h3-border); border-radius: 12px; }
+.h3-workspace .h3-dub-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) 40px; gap: 10px; align-items: start; padding: 10px 12px; background: var(--h3-surface); }
+.h3-workspace .h3-dub-row + .h3-dub-row { border-top: 1px solid var(--h3-border); }
+.h3-workspace .h3-dub-row.picked { background: color-mix(in srgb, var(--h3-accent) 4%, var(--h3-surface)); }
+.h3-workspace .h3-dub-row.focus { background: color-mix(in srgb, var(--h3-accent) 9%, var(--h3-surface)); box-shadow: inset 3px 0 var(--h3-accent); }
+.h3-workspace .h3-dub-row > input[type="checkbox"]:not(.h3-dub-switch) { margin: 4px 0 0; width: 16px; height: 16px; accent-color: var(--h3-accent); }
+.h3-workspace .h3-dub-row-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--h3-text); font: inherit; text-align: left; cursor: pointer; }
+.h3-workspace .h3-dub-row-main:focus-visible { outline: 2px solid var(--h3-focus); outline-offset: 4px; border-radius: 6px; }
+.h3-workspace .h3-dub-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; color: var(--h3-muted); font-variant-numeric: tabular-nums; }
+.h3-workspace .h3-dub-row-number { min-width: 20px; font-weight: 600; }
+.h3-workspace .h3-dub-speaker { padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--h3-tone) 16%, var(--h3-surface)); color: var(--h3-text); font-weight: 600; }
+.h3-workspace .h3-dub-flag { padding: 1px 8px; border-radius: 999px; background: var(--h3-muted-surface); color: var(--h3-text); }
+.h3-workspace .h3-dub-flag.warn { background: color-mix(in srgb, #d97706 18%, var(--h3-surface)); }
+.h3-workspace .h3-dub-flag.bad { background: color-mix(in srgb, #dc2626 16%, var(--h3-surface)); }
+.h3-workspace .h3-dub-row-text { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 2px 16px; line-height: 1.5; }
+.h3-workspace .h3-dub-row-source { color: var(--h3-muted); font-size: 13px; }
+.h3-workspace .h3-dub-row-translation { font-size: 14px; font-weight: 500; }
+.h3-workspace .h3-dub-row-translation.none { color: var(--h3-muted); font-style: italic; font-weight: 400; }
+.h3-workspace .h3-dub-row.off .h3-dub-row-translation { color: var(--h3-muted); font-weight: 400; }
+.h3-workspace .h3-dub-switch { appearance: none; -webkit-appearance: none; position: relative; width: 36px; height: 22px; margin: 2px 0 0; border-radius: 11px; background: var(--h3-border); cursor: pointer; }
+.h3-workspace .h3-dub-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--h3-surface); transition: left .15s; }
+.h3-workspace .h3-dub-switch:checked { background: var(--h3-accent); }
+.h3-workspace .h3-dub-switch:checked::after { left: 17px; }
+.h3-workspace .h3-dub-switch:focus-visible { outline: 2px solid var(--h3-focus); outline-offset: 2px; }
+.h3-workspace .h3-dub-table { border-radius: 12px; }
 .h3-workspace .h3-dub-lines { border-radius: 12px; }
 .h3-workspace .h3-dub-lines tbody td:first-child { color: var(--h3-muted); font-variant-numeric: tabular-nums; }
 .h3-workspace .h3-dub-lines tbody td:is(:nth-child(2), :nth-child(3)) { font-variant-numeric: tabular-nums; }
-.h3-workspace .h3-dub-line-actions { flex-wrap: wrap; gap: 6px; }
-.h3-workspace .h3-dub-line-actions > button { flex: 1 1 120px !important; min-width: 0 !important; border-radius: 8px; }
-.h3-workspace .h3-dub-library > button { align-self: flex-end; min-height: 40px; }
+.h3-workspace .h3-dub-inspector { position: sticky; top: 12px; }
+.h3-workspace .h3-dub-inspector-top { align-items: center; }
+.h3-workspace .h3-dub-inspector-head h3 { margin: 0; font-size: 18px; letter-spacing: -.02em; }
+.h3-workspace .h3-dub-inspector-head p { margin: 4px 0 0; font-size: 13px; color: var(--h3-muted); font-variant-numeric: tabular-nums; }
+.h3-workspace .h3-dub-step-line { min-height: 40px; font-size: 18px; border-radius: 10px; }
+.h3-workspace .h3-dub-fit p { margin: 0; padding: 10px 12px; border: 1px solid var(--h3-border); border-radius: 10px; font-size: 13px; color: var(--h3-muted); }
+.h3-workspace .h3-dub-fit p:empty { display: none; }
+.h3-workspace .h3-dub-fit strong { color: var(--h3-text); }
+.h3-workspace .h3-dub-line-actions, .h3-workspace .h3-dub-line-edits { flex-wrap: wrap; gap: 6px; }
+.h3-workspace .h3-dub-line-actions > button { flex: 1 1 110px !important; min-width: 0 !important; border-radius: 8px; }
+.h3-workspace .h3-dub-line-edits > button { flex: 1 1 120px !important; min-width: 0 !important; border-radius: 8px; }
+/* Dub: speaker cards, segmented choices and what the dub will do. */
+.h3-workspace .h3-dub-speakers-group { gap: 10px; padding: 0 0 6px; border: 0; background: transparent; }
+.h3-workspace .h3-dub-speaker-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.h3-workspace .h3-dub-speaker-card { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-surface); }
+.h3-workspace .h3-dub-speaker-head { display: flex; align-items: center; gap: 10px; }
+.h3-workspace .h3-dub-speaker-head > span:last-child { display: flex; flex-direction: column; min-width: 0; font-size: 12px; color: var(--h3-muted); }
+.h3-workspace .h3-dub-speaker-head strong { font-size: 14px; color: var(--h3-text); }
+.h3-workspace .h3-dub-avatar { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--h3-tone); color: var(--h3-surface); font-size: 13px; font-weight: 700; }
+.h3-workspace .h3-dub-speaker-card label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--h3-text); }
+.h3-workspace .h3-dub-speaker-card select { min-height: 40px; padding: 0 10px; border: 1px solid var(--h3-border); border-radius: 8px; background: var(--h3-surface); color: var(--h3-text); font: inherit; font-weight: 400; }
+.h3-workspace .h3-dub-speaker-card input[type="range"] { accent-color: var(--h3-accent); }
+.h3-workspace .h3-dub-volume-label { display: flex; justify-content: space-between; }
+.h3-workspace .h3-dub-volume-label span { font-weight: 400; color: var(--h3-muted); font-variant-numeric: tabular-nums; }
+.h3-workspace .h3-dub-segmented .wrap { display: flex; flex-wrap: wrap; gap: 2px; padding: 3px; border-radius: 10px; background: var(--h3-muted-surface); }
+.h3-workspace .h3-dub-segmented .wrap > label { flex: 1 1 auto; justify-content: center; margin: 0; border: 0; border-radius: 8px; background: transparent; box-shadow: none; }
+.h3-workspace .h3-dub-segmented .wrap > label.selected { background: var(--h3-surface); box-shadow: 0 1px 2px #0000001a; }
+.h3-workspace .h3-dub-segmented .wrap > label input { position: absolute; opacity: 0; pointer-events: none; }
+.h3-workspace .h3-dub-readiness p { margin: 0 0 10px; font-size: 13px; color: var(--h3-muted); }
+.h3-workspace .h3-dub-readiness strong { color: var(--h3-text); }
+.h3-workspace .h3-dub-readiness dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; margin: 0; font-size: 14px; }
+.h3-workspace .h3-dub-readiness dt { color: var(--h3-muted); }
+.h3-workspace .h3-dub-readiness dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.h3-workspace .h3-dub-readiness .h3-dub-readiness-warning { display: flex; flex-direction: column; gap: 2px; margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, #d97706 14%, var(--h3-surface)); color: var(--h3-text); }
 /* The dub result player: picture with captions, transport, voice/music/subtitle switches, synced lines. */
 .h3-workspace .h3-dub-player { display: flex; flex-direction: column; gap: 10px; }
 .h3-workspace .h3-dub-player-screen { position: relative; overflow: hidden; border-radius: 12px; background: #111b18; }
@@ -628,7 +753,7 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-drama3-script textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 14px; line-height: 1.65; }
 /* Syntax colors after VS Code's Light+ and Dark+ themes; the mirror sits under the textarea.
    The cast grid and the result's timeline, subtitles and stage reuse the name colors. */
-.h3-workspace :is(.h3-drama3-script, .h3-drama3-cast, .h3-drama3-subtitles) {
+.h3-workspace :is(.h3-drama3-script, .h3-drama3-cast, .h3-drama3-subtitles, .h3-dub) {
   --h3-hl-text: #1f2328; --h3-hl-punct: #800000; --h3-hl-cue: #008000; --h3-hl-pause: #098658;
   --h3-hl-keyword: #af00db; --h3-hl-tag: #800000; --h3-hl-effect: #267f99; --h3-hl-attr: #e50000;
   --h3-hl-value: #0000ff; --h3-hl-sound: #795e26; --h3-hl-sequence: #b35c00; --h3-hl-narrator: #5b6b80;
@@ -636,7 +761,7 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   --h3-hl-name0: #c92a2a; --h3-hl-name1: #1864ab; --h3-hl-name2: #2b8a3e; --h3-hl-name3: #6741d9;
   --h3-hl-name4: #d9480f; --h3-hl-name5: #9c36b5; --h3-hl-name6: #c2255c; --h3-hl-name7: #a07800;
 }
-.dark .h3-workspace :is(.h3-drama3-script, .h3-drama3-cast, .h3-drama3-subtitles) {
+.dark .h3-workspace :is(.h3-drama3-script, .h3-drama3-cast, .h3-drama3-subtitles, .h3-dub) {
   --h3-hl-text: #d4d4d4; --h3-hl-punct: #808080; --h3-hl-cue: #6a9955; --h3-hl-pause: #b5cea8;
   --h3-hl-keyword: #c586c0; --h3-hl-tag: #569cd6; --h3-hl-effect: #4ec9b0; --h3-hl-attr: #9cdcfe;
   --h3-hl-value: #ce9178; --h3-hl-sound: #dcdcaa; --h3-hl-sequence: #d7ba7d; --h3-hl-narrator: #94a3b8;

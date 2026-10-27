@@ -477,8 +477,8 @@ class HandlerTests(Workspace):
         rows, status = self.handlers.save_lines(
             created.id, [[1, "00:00.000", "00:01.000", "speaker1", "Hi", "Hola", True],
                          [2, "00:02.000", "00:03.000", "speaker1", "Yo", "", True]])
-        self.assertEqual(status, "**1 of 2 line(s) ready** to dub into the target language · 1 speaker(s) · "
-                                 "1 untranslated")
+        self.assertEqual(status, "2 lines · 1 speaker · <strong>1 ready</strong> to dub into the target "
+                                 "language · 1 untranslated")
         self.assertEqual(rows, self.module.gr.skip())  # nothing moved: the table is left as typed
 
     def test_a_library_pick_survives_a_refresh_while_still_listed(self):
@@ -509,23 +509,107 @@ class HandlerTests(Workspace):
         created.segments = [{"start": 0, "end": 1, "source": "Hi", "translation": "Salut"}]
         created.data["target_language"] = "French"
         created.save()
-        choices = self.handlers.session_choices()["choices"]
-        self.assertEqual([value for _label, value in choices], [created.id])  # unanalyzed sessions are hidden
-        self.assertTrue(choices[0][0].startswith("talk · 1 line(s) · French · "))
-        session_id, rows, status, summary, target = self.handlers.open_session(created.id)
+        recent = self.handlers.recent_sessions()
+        self.assertEqual([entry["id"] for entry in recent["sessions"]], [created.id])  # unanalyzed ones are hidden
+        self.assertEqual((recent["sessions"][0]["name"], recent["sessions"][0]["detail"]),
+                         ("talk", "French · 1 line · 1 speaker"))
+        session_id, board, rows, status, target = self.handlers.open_recent({**recent, "chosen": 0})
         self.assertEqual((session_id, rows[0][4], target), (created.id, "Hi", "French"))
+        self.assertEqual((board["focus"], board["lines"][0]["translation"]), (0, "Salut"))
         self.assertIn("Opened **talk**", status)
-        self.assertIn("1 of 1 line(s) ready", summary)
-        self.assertIn("Error", self.handlers.open_session("f" * 32)[2])
+        self.assertIn("Error", self.handlers.open_session("f" * 32)[3])
+        self.assertEqual(self.handlers.open_recent({**recent, "chosen": 7}), (self.module.gr.skip(),) * 5)
         self.assertNotEqual(empty.id, created.id)
 
-    def test_clicking_a_row_picks_its_line_number(self):
-        def event(row, index):
-            return SimpleNamespace(row_value=row, index=index)
+    def board_session(self):
+        source = self.root / "talk.wav"
+        source.write_bytes(b"x")
+        created = sessions.create(self.runtime, source, video=False)
+        created.segments = [
+            {"start": 0.0, "end": 1.0, "speaker": "speaker1", "source": "One <b>", "translation": "Un"},
+            {"start": 2.0, "end": 3.0, "speaker": "speaker2", "source": "Two", "translation": ""},
+            {"start": 4.0, "end": 5.0, "speaker": "speaker1", "source": "Three", "translation": "Trois",
+             "dub": False}]
+        created.save()
+        return created
 
-        self.assertEqual(self.handlers.select_line(event([3.0, "00:01.000"], [2, 4])), "3")
-        self.assertEqual(self.handlers.select_line(event([None, ""], [5, 1])), self.module.gr.skip())
-        self.assertEqual(self.handlers.select_line(SimpleNamespace(index=[1, 0])), "2")
+    def test_the_board_escapes_text_and_flags_lines(self):
+        created = self.board_session()
+        board = self.handlers.board_for(created.id)
+        self.assertEqual(board["lines"][0]["source"], "One &lt;b&gt;")
+        self.assertEqual([line["flags"] for line in board["lines"]], [[], ["empty"], ["off"]])
+        self.assertEqual([(s["label"], s["count"]) for s in board["speakers"]], [("Speaker 1", 2), ("Speaker 2", 1)])
+        self.assertEqual(board["focus"], 0)
+        # The viewer's focus, picks and filter carry over while the session stays the same.
+        kept = self.handlers.board_for(created.id, {**board, "focus": 2, "picked": [1, 2, 9], "filter": "empty"})
+        self.assertEqual((kept["focus"], kept["picked"], kept["filter"]), (2, [1, 2], "empty"))
+        other = self.handlers.board_for(created.id, {**board, "session": "x", "focus": 2})
+        self.assertEqual(other["focus"], 0)
+
+    def test_the_inspector_follows_the_focus_and_picks_drive_the_line_actions(self):
+        created = self.board_session()
+        board = {**self.handlers.board_for(created.id), "focus": 1}
+        heading, start, end, speaker, original, translation, dub, fit, numbers, key = self.handlers.focus_line(
+            created.id, board)
+        self.assertIn("Line 2 of 3", heading)
+        self.assertEqual((start, end, speaker["value"], original, translation, dub, numbers),
+                         ("00:02.000", "00:03.000", "speaker2", "Two", "", True, "2"))
+        self.assertEqual(key, {"index": 1, "start": 2.0, "source": "Two"})
+        self.assertIn("No translation yet", fit)
+        self.assertEqual(self.handlers.pick_lines({**board, "picked": [0, 1, 2]}), "1-3")
+        self.assertEqual(self.handlers.pick_lines({**board, "picked": []}), "2")
+        moved = self.handlers.step_line(created.id, board, 1)
+        self.assertEqual(moved["focus"], 2)
+        self.assertEqual(self.handlers.step_line(created.id, moved, 1)["focus"], 2)  # stays on the last line
+
+    def test_inspector_edits_save_and_follow_the_line_when_it_moves(self):
+        created = self.board_session()
+        board = {**self.handlers.board_for(created.id), "focus": 0}
+        key = self.handlers.focus_line(created.id, board)[-1]
+        value, rows, heading, fit, status, key = self.handlers.save_focused(
+            created.id, key, board, "00:06.000", "00:07.000", "speaker3", "One", "Uno", True)
+        self.assertEqual(status, "")
+        self.assertEqual((value["focus"], rows[2][4], rows[2][3]), (2, "One", "speaker3"))
+        self.assertEqual(key, {"index": 2, "start": 6.0, "source": "One"})
+        self.assertFalse(value["keepFocus"])  # the line moved, and the focus moves with it
+        self.assertIn("Line 3 of 3", heading)
+        self.assertIn("Not saved", self.handlers.save_focused(created.id, key, value, "soon", "", "", "x", "",
+                                                              True)[4])
+        self.assertIn("Not saved", self.handlers.save_focused(created.id, key, value, "6", "7", "", "", "",
+                                                              True)[4])
+
+    def test_a_late_save_reaches_the_inspected_line_not_the_newly_focused_one(self):
+        created = self.board_session()
+        board = {**self.handlers.board_for(created.id), "focus": 0}
+        key = self.handlers.focus_line(created.id, board)[-1]
+        # The viewer left line 1's translation by clicking line 3: the save arrives with the new focus,
+        # and tells the browser to keep whichever line the viewer has focused since.
+        value = self.handlers.save_focused(created.id, key, {**board, "focus": 2}, "00:00.000", "00:01.000",
+                                           "speaker1", "One <b>", "Un !", True)[0]
+        self.assertTrue(value["keepFocus"])
+        lines = sessions.load(self.runtime, created.id).segments
+        self.assertEqual([line["translation"] for line in lines], ["Un !", "", "Trois"])
+        # A line edited elsewhere (here, its text in the table) is no longer the one the inspector shows.
+        sessions.update_segments(self.runtime, created.id, [{**lines[0], "source": "Changed"}, *lines[1:]])
+        status = self.handlers.save_focused(created.id, key, board, "00:00.000", "00:01.000", "speaker1",
+                                            "One <b>", "Un", True)[4]
+        self.assertIn("click it on the board again", status)
+
+    def test_dub_switches_and_adding_or_deleting_lines(self):
+        created = self.board_session()
+        board = self.handlers.board_for(created.id)
+        value, _rows, status = self.handlers.toggle_dub(created.id, {**board, "changed": {"line": 2, "dub": True}})
+        self.assertEqual((status, value["focus"], value["lines"][2]["dub"]), ("", 2, True))
+        added, _rows, status = self.handlers.add_line(created.id, {**value, "focus": 0})
+        self.assertEqual((len(added["lines"]), added["focus"]), (4, 1))  # the new line, focused
+        self.assertIn("Added a line", status)
+        self.assertEqual(sessions.load(self.runtime, created.id).segments[1]["start"], 1.05)
+        deleted, _rows, status = self.handlers.delete_line(created.id, added)
+        self.assertEqual((len(deleted["lines"]), status), (3, "Line deleted."))
+        only = self.handlers.board_for(created.id)
+        for _ in range(2):
+            only = self.handlers.delete_line(created.id, {**only, "focus": 0})[0]
+        self.assertIn("at least one line", self.handlers.delete_line(created.id, only)[2])
 
     def test_saving_redraws_the_table_when_numbering_changes(self):
         source = self.root / "a.wav"
@@ -578,30 +662,28 @@ class HandlerTests(Workspace):
         self.assertEqual(updates[-1], ("Downloaded **clip.mp4** to Media.", str(target)))
         self.assertTrue(all(path == "" for _status, path in updates[:-1]))
 
-    def test_speaker_panel_shows_only_for_sessions_with_speakers(self):
+    def test_speaker_cards_show_only_for_sessions_with_speakers(self):
         source = _tone_wav(self.root / "a.wav", 3.0)
         session = sessions.create(self.runtime, source, video=False)
         session.segments = [{"start": 0.0, "end": 1.0, "speaker": "speaker1", "source": "a", "translation": "A"},
                             {"start": 1.5, "end": 2.5, "speaker": "speaker2", "source": "b", "translation": "B"}]
         session.data["speakers"] = {"speaker2": "older man"}
         session.save()
-        hidden = self.handlers.speaker_panel(session.id)
-        self.assertEqual(hidden[0]["visible"], False)
+        self.assertEqual(self.handlers.speakers(session.id)[0]["visible"], False)
         session.data["pipeline"] = pipeline.PIPELINE_MOSS
         session.save()
-        self.assertEqual(self.handlers.speaker_panel(session.id)[0]["visible"], True)
-
-        session.data["pipeline"] = pipeline.PIPELINE_GEMINI
-        session.save()
-        panel, speaker, voice, volume, overview = self.handlers.speaker_panel(session.id, "speaker2")
+        with patch.object(self.handlers, "_voice_choices", return_value=[("Cloned", pipeline.ORIGINAL_VOICE)]):
+            panel, cards = self.handlers.speakers(session.id)
         self.assertEqual(panel["visible"], True)
-        self.assertEqual((speaker["value"], speaker["choices"][1]), ("speaker2", ("speaker2 · older man", "speaker2")))
-        self.assertEqual((voice["value"], volume), (pipeline.ORIGINAL_VOICE, 100.0))
-        self.assertIn("**speaker2** (older man) · 1 line(s) · original voice · 100%", overview)
-        saved = self.handlers.save_speaker(session.id, "speaker2", pipeline.ORIGINAL_VOICE, 60)
-        self.assertIn("**speaker2** (older man) · 1 line(s) · original voice · 60%", saved)
-        self.assertEqual(self.handlers.select_speaker(session.id, "speaker2")[1], 60.0)
-        self.assertIn("Not saved", self.handlers.save_speaker(session.id, "speaker2", "Nobody", 60))
+        self.assertEqual([(card["label"], card["detail"], card["volume"]) for card in cards["speakers"]],
+                         [("Speaker 1", "1 line", 100.0), ("Speaker 2", "1 line · older man", 100.0)])
+        cards["speakers"][1]["volume"] = 60
+        self.assertEqual(self.handlers.save_speaker(session.id, {**cards, "changed": 1}), "")
+        self.assertEqual(pipeline.speaker_settings(sessions.load(self.runtime, session.id)),
+                         {"speaker2": {"voice": pipeline.ORIGINAL_VOICE, "volume": 60.0}})
+        cards["speakers"][1]["voice"] = "Nobody"
+        self.assertIn("Not saved", self.handlers.save_speaker(session.id, {**cards, "changed": 1}))
+        self.assertEqual(self.handlers.save_speaker(session.id, {**cards, "changed": None}), self.module.gr.skip())
 
     def test_preview_player_preserves_levels_including_mute_and_boost(self):
         from h3_app.drama3.serving.audio import decode_wav
@@ -630,7 +712,7 @@ class HandlerTests(Workspace):
         updates = list(self.handlers.analyze_source(None, None, True, "Balanced (BS-Roformer)", pipeline.PIPELINE_LOCAL,
                                                     "Auto-detect", "English", True, pipeline.TRANSLATOR_HYMT,
                                                     True, 0.35, "gemini-3.8-flash", "", ""))
-        self.assertIn("Upload a video or audio file", updates[-1][2])
+        self.assertIn("Upload a video or audio file", updates[-1][3])
         updates = list(self.handlers.generate_dub("", pipeline.VOICE_LINE, "Balance", pipeline.TIMING_MATCH, 1.35,
                                                   8, 100, 100, True, False, ""))
         self.assertIn("Analyze a source first", updates[-1][4])
