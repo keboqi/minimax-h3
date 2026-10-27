@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass, fields
+from html import escape
 from typing import Any, Mapping
 import gradio as gr
 from .services import H3ViewServices
@@ -400,6 +401,43 @@ def build_h3_view(
     return H3View(**{field.name: controls[field.name] for field in fields(H3View)})
 
 
+def panel_heading(step: str, title: str, detail: str = "") -> str:
+    """A numbered composer section heading: 01 Compose, 02 Preview & generate, 03 Fine-tune."""
+    return (
+        f'<div class="h3-panel-heading"><span class="h3-step" aria-hidden="true">{step}</span>'
+        f"<div><h3>{escape(title)}</h3>" + (f"<p>{escape(detail)}</p>" if detail else "") + "</div></div>"
+    )
+
+
+# Badges each Fine-tune tab with how many of its settings differ from the recipe,
+# read from the Next run card's data-changed-tabs. The badge is aria-hidden so the
+# tab keeps its plain name; the card itself lists every change with its tab.
+CHANGED_TABS_JS = """
+const apply = () => {
+  const card = element.querySelector('[data-changed-tabs]');
+  const strip = document.getElementById('h3-settings-tabs');
+  if (!card || !strip) return;
+  let counts = {};
+  try { counts = JSON.parse(card.dataset.changedTabs || '{}'); } catch (_) {}
+  strip.querySelectorAll(':scope > .tab-wrapper [role="tab"]').forEach(tab => {
+    const label = tab.dataset.h3Label ??= tab.textContent.trim();
+    const count = counts[label] || 0;
+    let badge = tab.querySelector('.h3-tab-changes');
+    if (!count) { badge?.remove(); return; }
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'h3-tab-changes';
+      badge.setAttribute('aria-hidden', 'true');
+      tab.append(badge);
+    }
+    badge.textContent = String(count);
+  });
+};
+new MutationObserver(apply).observe(element, {childList: true, subtree: true, attributes: true});
+apply();
+"""
+
+
 # Fine-tune groups every setting beyond Compose's basics by what it changes.
 MODEL_TAB, SIZE_TAB, WRITER_TAB, SPEED_TAB, MEMORY_TAB, FINISH_TAB, INPUTS_TAB = range(7)
 SETTINGS_TABS = (
@@ -444,11 +482,11 @@ def _settings_tab(index, parts=1):
 
 def _build_fine_tune(root) -> FineTune:
     with root:
-        card_heading(
-            "Fine-tune",
-            "Everything beyond the basics, grouped by what it changes. A recipe sets most of it; "
-            "your own edits show as Modified under Next run.",
-        )
+        gr.HTML(panel_heading(
+            "03", "Fine-tune",
+            "Everything beyond the basics, grouped by what it changes. Values follow the recipe; "
+            "a tab's badge counts the settings you changed there.",
+        ))
         tabs = StepStrip(gr.Tabs(
             selected=MODEL_TAB, elem_id="h3-settings-tabs",
             elem_classes=["h3-settings-tabs"], overflow_behavior="wrap",
@@ -482,10 +520,7 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
             elem_id="h3-composer",
             elem_classes=["h3-composer", "h3-run-panel"],
         ):
-            gr.HTML(
-                '<div class="h3-panel-heading"><span class="h3-step" aria-hidden="true">01</span>'
-                '<div><h3>Compose</h3></div></div>'
-            )
+            gr.HTML(panel_heading("01", "Compose"))
             conditioning_root = gr.Group()
             references_section = build_references_section(defaults, services)
             prompt_section = build_prompt_section(
@@ -493,16 +528,13 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
                 writer_link=link("Writer service & keys →", WRITER_TAB),
             )
             with gr.Column(elem_id="h3-output-settings"):
-                gr.HTML(
-                    '<div class="h3-panel-heading"><span class="h3-step" aria-hidden="true">02</span>'
-                    '<div><h3>Make it fit</h3><p>Choose a recipe and your output settings.</p></div></div>'
-                )
                 preset = gr.Radio(
                     ["Singularity", "Quality", "Balanced", "Fast"],
                     value="Singularity",
                     label="Recipe",
                     interactive=True,
-                    info="Sets sampling, attention, memory, refinement and decoding in Fine-tune; Singularity also picks its checkpoint. Keeps your prompt, media and output size.",
+                    info="Sets Fine-tune's sampling, attention, memory, refinement and decoding. Keeps your prompt, media and output size.",
+                    elem_classes=["h3-recipe-cards"],
                 )
                 with gr.Row(elem_classes=["h3-settings-links"]):
                     restore_preset = gr.Button("Restore preset settings", size="sm")
@@ -576,6 +608,7 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
                     lightvae_decoder=defaults["lightvae_decoder"],
                 ),
                 elem_classes=["h3-settings-summary"],
+                js_on_load=CHANGED_TABS_JS,
             )
             with results_root:
                 results_section = build_results_section(

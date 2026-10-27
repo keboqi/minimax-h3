@@ -78,16 +78,18 @@ def run():
                     decoder = card.locator(".h3-setup-detail").filter(
                         has_text="Decoder"
                     )
-                    expect(decoder).to_contain_text("LynnReal Light INT8")
+                    expect(decoder).to_contain_text("LightVAE Lite")
+                    expect(decoder).not_to_contain_text("INT8")
                     presets = page.locator("fieldset").filter(
                         has=page.get_by_text("Recipe", exact=True)
                     )
                     presets.get_by_label("Quality", exact=True).check()
-                    expect(decoder).to_contain_text("INT8 ConvRot")
+                    expect(decoder).to_contain_text("Official INT8")
                     presets.get_by_label("Fast", exact=True).check()
-                    expect(decoder).to_contain_text("LynnReal Light INT8")
+                    expect(decoder).to_contain_text("LightVAE Lite INT8 ConvRot")
                     presets.get_by_label("Singularity", exact=True).check()
-                    expect(decoder).to_contain_text("LynnReal Light INT8")
+                    expect(decoder).to_contain_text("LightVAE Lite")
+                    expect(decoder).not_to_contain_text("INT8")
                     page.get_by_label("First / last frame", exact=True).check()
                     output = page.locator("#h3-output-settings")
                     expect(output).to_be_visible()

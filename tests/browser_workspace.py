@@ -253,14 +253,16 @@ def run():
                 prompt.fill("Request A")
                 expect(generate).to_be_enabled()
                 generate.click()
+                # A running GPU button greys out and ignores clicks until its job ends.
+                busy = page.locator("button.h3-primary-action.h3-busy")
+                expect(busy).to_have_text("Generating…")
                 prompt.fill("Request B fail")
-                generate.click()
                 page.get_by_role("tab", name="Jobs", exact=True).click()
                 expect(page.locator(".h3-job-table")).to_contain_text(
-                    "queued", timeout=10000
+                    "running", timeout=10000
                 )
                 captured = requests.get(url + "/test/jobs", timeout=2).json()
-                assert len(captured) == 2, captured
+                assert len(captured) == 1, captured
                 first_row = page.locator(f'[data-job-id="{captured[0]["id"]}"]')
                 first_row.click()
                 expect(page.get_by_label("Job", exact=True)).to_have_value(
@@ -273,24 +275,32 @@ def run():
                 from h3_app.contracts import GENERATION_FIELDS
 
                 prompt_index = GENERATION_FIELDS.index("prompt") + 1
-                assert [job["values"][prompt_index] for job in captured] == [
-                    "Request A",
-                    "Request B fail",
-                ], captured
+                # The running request remains its own snapshot after the form edit.
+                assert captured[0]["values"][prompt_index] == "Request A", captured
                 requests.post(url + "/test/release-a", timeout=2).raise_for_status()
-                # The second request remains its own snapshot after the form edit.
                 expect(page.locator(".h3-job-table")).to_contain_text(
-                    "failed", timeout=20000
+                    "completed", timeout=20000
                 )
-                captured = requests.get(url + "/test/jobs", timeout=2).json()
-                failed = captured[1]
-                assert (
-                    captured[0]["state"] == "completed" and failed["state"] == "failed"
-                ), captured
                 # A selected running job updates its actions without reselecting.
                 expect(
                     page.get_by_role("button", name="Cancel selected job", exact=True)
                 ).to_be_disabled()
+                page.get_by_role("tab", name="Create", exact=True).click()
+                expect(busy).to_have_count(0)
+                generate.click()
+                page.get_by_role("tab", name="Jobs", exact=True).click()
+                expect(page.locator(".h3-job-table")).to_contain_text(
+                    "failed", timeout=20000
+                )
+                captured = requests.get(url + "/test/jobs", timeout=2).json()
+                assert [job["values"][prompt_index] for job in captured] == [
+                    "Request A",
+                    "Request B fail",
+                ], captured
+                failed = captured[1]
+                assert (
+                    captured[0]["state"] == "completed" and failed["state"] == "failed"
+                ), captured
                 # Native dropdown chooses the failed job by its visible stable ID.
                 failed_row = page.locator(f'[data-job-id="{failed["id"]}"]')
                 failed_row.focus()

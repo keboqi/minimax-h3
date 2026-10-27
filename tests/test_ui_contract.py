@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import h3_app.prompt_writers.h3
 import h3_ui.h3.layout
+import h3_ui.h3.view
+import html
+import json
 import httpx as _httpx
 import h3_app.model_service as _model_service
 import h3_app.catalog as _catalog
@@ -2038,6 +2041,15 @@ class UiContractTests(unittest.TestCase):
         self.assertIn("LightX2V v1.1 / 8-step 768p", summary)
         self.assertIn("Original &lt;unsafe&gt;", summary)
         self.assertNotIn("Original <unsafe>", summary)
+        # Fine-tune's tab badges count each recipe change under the tab that holds it.
+        changed_tabs = json.loads(
+            html.unescape(re.search(r'data-changed-tabs="([^"]*)"', summary).group(1))
+        )
+        self.assertEqual(changed_tabs.get("Memory & decoding"), 1)
+        self.assertLessEqual(
+            set(changed_tabs), {label for label, _ in h3_ui.h3.view.SETTINGS_TABS}
+        )
+        self.assertIn("NVFP4 / AWQ → BF16 · Memory &amp; decoding", summary)
         split_summary = gradio_app.H3.compact_settings_summary(
             "Text to video",
             "Original",

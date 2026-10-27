@@ -68,7 +68,7 @@ def build_results_section(
             elem_classes=["h3-status"],
         )
     gr.HTML(
-        '<div class="h3-panel-heading"><span class="h3-step" aria-hidden="true">03</span>'
+        '<div class="h3-panel-heading"><span class="h3-step" aria-hidden="true">02</span>'
         '<div><h3>Preview &amp; generate</h3>'
         '<p>Your latest result stays here as you refine your next idea.</p></div></div>'
     )

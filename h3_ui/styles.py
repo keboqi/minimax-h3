@@ -448,6 +448,19 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button { min-height: 48px; }
 .h3-workspace .h3-settings-tabs > [role="tabpanel"] { border: 1px solid var(--h3-border); border-radius: 12px; padding: 16px; background: var(--h3-surface); }
 .h3-workspace .h3-settings-tab > .column { gap: 12px; }
+/* A tab whose settings differ from the recipe: the count comes from the Next run card. */
+.h3-workspace .h3-settings-tabs .h3-tab-changes { flex-shrink: 0; min-width: 18px; margin-left: auto; padding: 0 6px; border-radius: 999px; background: #fbf1dc; color: #7a4f00; font-size: 11px; font-weight: 650; line-height: 18px; text-align: center; }
+.dark .h3-workspace .h3-settings-tabs .h3-tab-changes { background: #4a3a14; color: #fde7b0; }
+.h3-workspace .h3-settings-tabs > .tab-wrapper > [role="tablist"] > button:has(.h3-tab-changes) { gap: 8px; }
+/* Recipes as cards; each card's line says what the recipe is for. */
+.h3-workspace .h3-recipe-cards .wrap { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.h3-workspace .h3-recipe-cards .wrap > label { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start !important; gap: 2px 8px; min-height: 64px; text-align: left !important; margin: 0; padding: 10px 12px; border: 1.5px solid var(--h3-border); border-radius: 10px; background: var(--h3-surface); font-weight: 600; }
+.h3-workspace .h3-recipe-cards .wrap > label:has(input:checked) { border-color: var(--h3-accent); background: color-mix(in srgb, var(--h3-accent) 7%, var(--h3-surface)); }
+.h3-workspace .h3-recipe-cards .wrap > label::after { flex-basis: 100%; padding-left: 24px; color: var(--h3-muted); font-size: 12px; font-weight: 400; }
+.h3-workspace .h3-recipe-cards .wrap > label[data-testid="Singularity-radio-label"]::after { content: "Fine-tuned checkpoint" / ""; }
+.h3-workspace .h3-recipe-cards .wrap > label[data-testid="Quality-radio-label"]::after { content: "Final renders" / ""; }
+.h3-workspace .h3-recipe-cards .wrap > label[data-testid="Balanced-radio-label"]::after { content: "Detail and speed" / ""; }
+.h3-workspace .h3-recipe-cards .wrap > label[data-testid="Fast-radio-label"]::after { content: "Quick drafts" / ""; }
 .h3-workspace .h3-song-card-heading h3 { margin: 0; font-size: 18px; letter-spacing: -.025em; }
 .h3-workspace .h3-song-card-heading p { margin: 4px 0 0; font-size: 13px; color: var(--h3-muted); }
 .h3-workspace .h3-song-stage button.h3-song-nav, .h3-workspace .h3-song-stage .h3-primary-action { min-height: 44px; border-radius: 10px; }
@@ -674,6 +687,7 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   .h3-workspace .h3-drama3 :is(.h3-drama3-toolbar, .h3-drama3-clip) { padding: 6px; }
 }
 .h3-workspace .h3-mobile-nav { display: none; }
+.h3-workspace .h3-mobile-nav a { border-radius: 8px; text-decoration: none; }
 @media (max-width: 767px) {
   .h3-workspace { padding: 12px 6px 24px; }
   .h3-workspace .h3-hero h1 { font-size: 22px; }

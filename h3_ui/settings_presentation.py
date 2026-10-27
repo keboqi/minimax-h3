@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from html import escape
 from h3_app.decoder_intent import VideoDecoder
 from h3_app.settings import ResolvedSettings
@@ -26,6 +27,27 @@ LABELS = {
     "cache_mode": "Acceleration",
     "dimensions": "Dimensions",
     "image_frames": "Image frames",
+}
+
+# The Fine-tune tab holding each recipe setting; the tab strip badges count changes per tab.
+FINE_TUNE_TABS = {
+    "steps": "Model & sampling",
+    "scheduler": "Model & sampling",
+    "turbo_variant": "Model & sampling",
+    "semantic_bridge": "Model & sampling",
+    "auto_megapixels": "Size, seed & canvas",
+    "attention_mode": "Speed & attention",
+    "sla_preset": "Speed & attention",
+    "sol_tau": "Speed & attention",
+    "sol_thresh_type": "Speed & attention",
+    "sol_exact_mode": "Speed & attention",
+    "sol_dense_steps": "Speed & attention",
+    "cache_mode": "Speed & attention",
+    "text_encoder": "Memory & decoding",
+    "stage_model_offload": "Memory & decoding",
+    "encoder_small_input": "Memory & decoding",
+    "latent_upscale_refine_steps": "Upscale & finish",
+    "latent_upscale_refine_lora": "Upscale & finish",
 }
 
 
@@ -63,9 +85,17 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
         return f'<div class="h3-setup-detail"><dt>{esc(label)}</dt><dd>{esc(value)}</dd></div>'
 
     changes = "".join(
-        detail(LABELS.get(key, key), f"{before} → {after}")
+        detail(
+            LABELS.get(key, key),
+            f"{before} → {after}"
+            + (f" · {FINE_TUNE_TABS[key]}" if key in FINE_TUNE_TABS else ""),
+        )
         for key, (before, after) in differences.items()
     )
+    changed_tabs: dict[str, int] = {}
+    for key in differences:
+        if key in FINE_TUNE_TABS:
+            changed_tabs[FINE_TUNE_TABS[key]] = changed_tabs.get(FINE_TUNE_TABS[key], 0) + 1
     changes = (
         f'<details class="h3-setup-disclosure"><summary>{len(differences)} changes from {esc(effective.preset)}</summary><dl class="h3-setup-changes">{changes}</dl></details>'
         if differences
@@ -185,7 +215,8 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
         "Base sampling", f"{effective.generation_mode} · {sampling.steps} steps"
     )
     return (
-        f'<section class="h3-setup-card" aria-label="Next run" data-settings-ready="{str(bool(extras.get("_settings_ready"))).lower()}">'
+        f'<section class="h3-setup-card" aria-label="Next run" data-settings-ready="{str(bool(extras.get("_settings_ready"))).lower()}"'
+        f' data-changed-tabs="{esc(json.dumps(changed_tabs))}">'
         f'<div class="h3-setup-heading"><strong>Next run</strong><span>{esc(title)}</span></div>'
         f'<dl class="h3-setup-metrics">{metrics}</dl>'
         f'<div class="h3-setup-context"><span>Base model: {esc(effective.model_profile)}</span><span>{esc(seed)}</span>'
