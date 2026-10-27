@@ -707,8 +707,10 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             steps.button("← Script", SCRIPT)
                             steps.button("Next: speak →", SPEAK, variant="primary")
             with steps.step(SPEAK, "Speak"):
+                # The result (player, timeline, subtitles and stage) outgrows the mostly folded
+                # settings, so here the stage column takes the wider share and scrolls with the page.
                 with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
-                    with gr.Column(scale=3, min_width=360, elem_classes=["h3-composer"]):
+                    with gr.Column(scale=2, min_width=300, elem_classes=["h3-composer"]):
                         card_heading("How it should sound", "Unchanged lines reuse their saved takes, so speaking "
                                                             "again after a few fixes is quick.")
                         sampling_preset = gr.Radio(
@@ -747,7 +749,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             # Models Auto loads on the GPU while the writer rewrites the script.
                             auto_preload_status = gr.Markdown("", elem_classes=["h3-drama3-note"])
                             auto_sound_slots = gr.Number(0, precision=0, visible=False)
-                    with gr.Column(scale=2, min_width=300, elem_classes=STAGE):
+                    with gr.Column(scale=3, min_width=360, elem_classes=[*STAGE, "h3-drama3-result"]):
                         card_heading("Speak it", "Every line goes out with its speaker's voice; the mix adds "
                                                  "sounds and effects.")
                         with gr.Column(elem_classes=["h3-action-dock"]):

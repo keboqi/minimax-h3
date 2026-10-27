@@ -613,7 +613,7 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-drama3-auto .h3-generation-buttons > button { flex: 1 1 200px; min-height: 40px; white-space: normal; }
 .h3-workspace .h3-drama3-auto-heading strong { color: var(--h3-accent); font-size: 14px; }
 .h3-workspace .h3-drama3-auto-heading p { margin: 2px 0 0; color: var(--h3-muted); font-size: 12px; }
-.h3-workspace .h3-drama3-subtitles ol { position: relative; max-height: 220px; overflow-y: auto; margin: 0; padding: 6px; list-style: none; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
+.h3-workspace .h3-drama3-subtitles ol { position: relative; max-height: min(360px, 45vh); overflow-y: auto; margin: 0; padding: 6px; list-style: none; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
 .h3-workspace .h3-drama3-subtitles li { display: flex; gap: 10px; margin: 0; padding: 6px 10px; border-radius: 8px; cursor: pointer; color: var(--h3-muted); font-size: 14px; line-height: 1.5; transition: background 160ms ease, color 160ms ease; }
 .h3-workspace .h3-drama3-subtitles li:hover { background: var(--h3-surface); }
 .h3-workspace .h3-drama3-subtitles li.past { opacity: .7; }
@@ -690,6 +690,8 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .gradio-container:has(.h3-drama3-stage), .h3-workspace .h3-drama3, .h3-workspace .h3-drama3 > .styler { overflow: clip !important; }
 @media (min-width: 768px) {
   .h3-workspace .h3-drama3-stage { position: sticky; top: 12px; }
+  /* A long result is taller than the window; pinned, its end would stay out of reach. */
+  .h3-workspace .h3-drama3-stage.h3-drama3-result { position: static; }
 }
 @media (max-width: 767px) {
   .h3-workspace .h3-drama3.h3-engine-view { padding: 6px; }
