@@ -88,8 +88,8 @@ def build_media_image_destinations(view, destinations, *, validate_path):
     ]
     shown = reference_targets[0].h3_reference_shown if reference_targets else None
     add_reference = reference_targets[0].h3_reference_add if reference_targets else None
-    with view.inspector:
-        with gr.Group(visible=False) as group:
+    with view.actions:
+        with gr.Group(visible=False, elem_classes=["h3-gallery-set-as"]) as group:
             with gr.Row():
                 destination = gr.Dropdown(
                     choices=list(destinations), label="Set as", value=None,

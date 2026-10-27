@@ -84,7 +84,7 @@ runpy.run_module('tests.workspace_fixture',run_name='__main__')
                         player = page.locator(".h3-gallery-player video")
                         expect(player).to_have_attribute("src", url + "/downloads/gradio/alpha.mp4", timeout=1500)
                         selection = monotonic() - started
-                        page.get_by_text("Enhance selected media", exact=True).first.click()
+                        page.get_by_role("tab", name="Enhance selected media", exact=True).click()
                         method = page.get_by_label("Method", exact=True)
                         page.locator("#h3-library-kind").get_by_label("Image", exact=True).check()
                         expect(thumbs).to_have_count(2, timeout=2500)

@@ -1726,7 +1726,7 @@ class UiContractTests(unittest.TestCase):
         self.assertIsNone(dependency["trigger_after"])
         self.assertEqual(dependency["trigger_mode"], "always_last")
         self.assertIn((mode, "change"), dependency["targets"])
-        self.assertEqual(len(dependency["targets"]), 7)
+        self.assertEqual(len(dependency["targets"]), 10)
         self.assertTrue(any(trigger == "select" for _, trigger in dependency["targets"]))
         browse_events = [
             d for d in self.config["dependencies"]
@@ -1750,7 +1750,7 @@ class UiContractTests(unittest.TestCase):
                 "Audio", {"query": "missing", "favorite": True}, 48, None,
                 gradio_app.gr.EventData(event.inputs[0], {}), "missing", True,
             )
-        inventory.assert_called_once_with("Audio", "missing", True, limit=48)
+        inventory.assert_called_once_with("Audio", "missing", True, limit=48, engine="", sort="newest")
         self.assertEqual(len(values), 15)
         self.assertEqual(values[0], {"__type__": "update", "visible": False, "value": None})
         self.assertEqual(values[2], {"__type__": "update", "visible": True, "value": None})
@@ -1781,8 +1781,8 @@ class UiContractTests(unittest.TestCase):
                 "Image", filters, 48, None,
                 gradio_app.gr.EventData(event.inputs[3], {}), "  cats  ", True,
             )
-            inventory.assert_called_once_with("Image", "cats", True, limit=48)
-            self.assertEqual(filters, {"query": "cats", "favorite": True, "_mode": "Image"})
+            inventory.assert_called_once_with("Image", "cats", True, limit=48, engine="", sort="newest")
+            self.assertEqual(filters, {"query": "cats", "favorite": True, "engine": "", "sort": "newest", "_mode": "Image"})
             self.assertEqual(searched[:10], (gradio_app.gr.skip(),) * 10)
             self.assertEqual(searched[13], 48)
             self.assertTrue(searched[14]["interactive"])
@@ -1791,7 +1791,7 @@ class UiContractTests(unittest.TestCase):
                 "Image", filters, 48, None,
                 gradio_app.gr.EventData(more, {}), "cats", True,
             )
-            inventory.assert_called_once_with("Image", "cats", True, limit=96)
+            inventory.assert_called_once_with("Image", "cats", True, limit=96, engine="", sort="newest")
             self.assertEqual(expanded[13], 96)
             self.assertTrue(expanded[14]["interactive"])
 
@@ -1815,7 +1815,7 @@ class UiContractTests(unittest.TestCase):
                 "Image", filters, 96, None,
                 gradio_app.gr.EventData(more, {}), "old", False,
             )
-            inventory.assert_called_once_with("Image", "old", False, limit=48)
+            inventory.assert_called_once_with("Image", "old", False, limit=48, engine="", sort="newest")
             self.assertEqual([update["visible"] for update in switched[:3]], [False, True, False])
             self.assertEqual(switched[7]["choices"], [
                 _catalog.SEEDVR2_UPSCALE, _catalog.LTX25_CQ_IMAGE_ENHANCER,
@@ -1825,15 +1825,40 @@ class UiContractTests(unittest.TestCase):
                 "Image", filters, 96, None,
                 gradio_app.gr.EventData(more, {}), "new query", True,
             )
-            inventory.assert_called_once_with("Image", "new query", True, limit=48)
+            inventory.assert_called_once_with("Image", "new query", True, limit=48, engine="", sort="newest")
             self.assertEqual(filtered[13], 48)
             inventory.reset_mock()
             replayed = event.fn(
                 "Image", filters, 48, None,
                 gradio_app.gr.EventData(event.inputs[0], {}), "latest query", False,
             )
-            inventory.assert_called_once_with("Image", "latest query", False, limit=48)
+            inventory.assert_called_once_with("Image", "latest query", False, limit=48, engine="", sort="newest")
             self.assertEqual(replayed[:10], (gradio_app.gr.skip(),) * 10)
+
+    def test_media_engine_and_sort_filter_and_reset_engine_on_type_switch(self):
+        from h3_app.gallery_store import AssetInventory
+
+        event = next(
+            event for event in self.demo.fns.values()
+            if getattr(event.fn, "__name__", "") == "browse_library"
+        )
+        refresh = inspect.getclosurevars(event.fn).nonlocals["refresh_page"]
+        index = inspect.getclosurevars(refresh).nonlocals["index"]
+        filters = {"query": "", "favorite": False, "_mode": "Video"}
+        empty = lambda mode, *args, **kwargs: AssetInventory(mode, (), (), 0)
+        with mock.patch.object(index, "inventory", side_effect=empty) as inventory:
+            event.fn(
+                "Video", filters, 48, None,
+                gradio_app.gr.EventData(event.inputs[5], {}), "", False, "MiniMax H3", "name",
+            )
+            inventory.assert_called_once_with("Video", "", False, limit=48, engine="MiniMax H3", sort="name")
+            inventory.reset_mock()
+            event.fn(
+                "Image", filters, 48, None,
+                gradio_app.gr.EventData(event.inputs[0], {}), "", False, "MiniMax H3", "name",
+            )
+            inventory.assert_called_once_with("Image", "", False, limit=48, engine="", sort="name")
+            self.assertEqual(filters["engine"], "")
 
     def test_h3_progressive_section_order(self) -> None:
         by_id = {

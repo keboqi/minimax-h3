@@ -7,6 +7,7 @@ from threading import Event
 from types import SimpleNamespace
 from contextlib import closing
 import json
+import os
 import sqlite3
 import unittest
 from unittest.mock import patch
@@ -369,6 +370,36 @@ class WorkspaceStoreTests(unittest.TestCase):
         self.assertEqual(row["id"], asset_id)
         self.assertEqual(row["tags"], ["keep"])
         self.assertEqual(row["metadata"], {"seed": 7})
+
+    def test_catalog_filters_by_engine_sorts_and_summarizes(self):
+        records = []
+        for modified, (name, kind, media) in enumerate((
+            ("b_old.mp4", "Video", {"family": "LTX-2.5", "caption": "LTX-2.5 · b_old.mp4"}),
+            # Rows cataloged before _media.family existed keep it only in the caption.
+            ("a_new.mp4", "Video", {"caption": "MiniMax H3 · a_new.mp4 · 2026-10-27"}),
+            ("c_mid.mp4", "Video", {"family": "MiniMax H3", "caption": "MiniMax H3 · c_mid.mp4"}),
+            ("song.wav", "Audio", {"family": "YuE2", "caption": "YuE2 · song.wav"}),
+        )):
+            path = self.root / "media" / name
+            path.parent.mkdir(exist_ok=True)
+            path.write_bytes(b"media")
+            os.utime(path, (1000 + modified * 10, 1000 + modified * 10))
+            records.append((path, kind, {"_media": media}))
+        self.store.index_assets(records)
+        roots = (self.root / "media",)
+
+        def names(**options):
+            rows, total = self.store.catalog_page(kind="Video", roots=roots, **options)
+            return [Path(row["path"]).name for row in rows], total
+
+        self.assertEqual(names(), (["c_mid.mp4", "a_new.mp4", "b_old.mp4"], 3))
+        self.assertEqual(names(sort="oldest")[0], ["b_old.mp4", "a_new.mp4", "c_mid.mp4"])
+        self.assertEqual(names(sort="name")[0], ["a_new.mp4", "b_old.mp4", "c_mid.mp4"])
+        self.assertEqual(names(engine="MiniMax H3"), (["c_mid.mp4", "a_new.mp4"], 2))
+        self.assertEqual(names(engine="LTX-2.5", limit=0), ([], 1))
+        counts, engines = self.store.catalog_summary(roots=roots)
+        self.assertEqual(counts, {"Video": 3, "Audio": 1})
+        self.assertEqual(engines, {"Video": ["LTX-2.5", "MiniMax H3"], "Audio": ["YuE2"]})
 
     def test_large_input_copy_does_not_block_monitoring(self):
         source = self.root / "source.png"

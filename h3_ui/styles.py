@@ -370,6 +370,47 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-gallery-card { border: 1px solid var(--h3-border); border-radius: 10px; }
 .h3-workspace .h3-gallery-download { overflow-wrap: anywhere; }
 .h3-workspace .h3-gallery-danger-actions { gap: 8px; }
+/* Media: header actions, one-line toolbar, inspector tabs and the compare tray. */
+.h3-workspace .h3-visually-hidden-label [data-testid="block-info"] { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.h3-workspace .h3-gallery-header { flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.h3-workspace .h3-gallery-header > .h3-gallery-heading { flex: 1 1 360px !important; margin-bottom: 0; }
+.h3-workspace .h3-gallery-header > .h3-gallery-header-actions { flex: 0 0 auto !important; width: auto !important; flex-wrap: nowrap; justify-content: flex-end; gap: 8px; }
+.h3-workspace .h3-gallery-header-actions > button { flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; min-height: 40px; padding: 0 16px; white-space: nowrap; }
+.h3-workspace .h3-gallery-panel { padding: 16px; gap: 12px; background: var(--h3-surface); }
+.h3-workspace .h3-gallery-toolbar { padding: 8px 10px; background: var(--h3-surface); }
+/* Gradio groups the toolbar's form controls into one box; lay them out as one line instead. */
+.h3-workspace .h3-gallery-toolbar > .form { flex: 1 1 auto !important; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 12px; border: 0; background: transparent; box-shadow: none; }
+.h3-workspace .h3-gallery-toolbar > .form > * { border: 0; background: transparent; box-shadow: none; }
+.h3-workspace .h3-gallery-toolbar > .form > .block:has(textarea, input[type="text"]) { flex: 1 1 260px !important; }
+.h3-workspace #h3-library-kind { flex: 0 0 auto !important; width: auto !important; padding: 0; border: 0; background: transparent; }
+.h3-workspace #h3-library-kind .wrap label { flex: 0 0 auto; }
+.h3-workspace .h3-gallery-toolbar .h3-gallery-filter { flex: 0 1 180px !important; }
+.h3-workspace .h3-gallery-status-row { flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; }
+.h3-workspace .h3-gallery-status-row > * { flex: 0 1 auto !important; min-width: 0 !important; }
+.h3-workspace .h3-gallery-counts { color: var(--h3-muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.h3-workspace .h3-gallery-title-row { align-items: center; gap: 12px; }
+.h3-workspace .h3-gallery-title-row > .h3-gallery-download { flex: 1 1 auto !important; min-width: 0; }
+.h3-workspace .h3-gallery-star { min-height: 40px; color: #8a4600; }
+.dark .h3-workspace .h3-gallery-star { color: #f3b46a; }
+.h3-workspace #h3-library-kind .wrap { flex-wrap: nowrap; gap: 4px; padding: 4px; border-radius: 9px; background: var(--h3-disclosure); }
+.h3-workspace #h3-library-kind .wrap label { min-height: 36px; padding: 0 14px; border: 0; border-radius: 6px; background: transparent; box-shadow: none; }
+.h3-workspace #h3-library-kind .wrap label.selected { background: var(--h3-surface); color: var(--h3-text); font-weight: 600; box-shadow: 0 1px 2px #0000001f; }
+.h3-workspace #h3-library-kind .wrap input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.h3-workspace #h3-library-kind .wrap label:has(input:focus-visible) { outline: 2px solid var(--h3-focus); outline-offset: 2px; }
+.h3-workspace .h3-gallery-browse { gap: 12px; }
+.h3-workspace .h3-gallery-more { align-self: center; max-width: 220px; }
+.h3-workspace .h3-gallery-inspector { gap: 12px; }
+.h3-workspace .h3-gallery-actions-row { gap: 8px; }
+.h3-workspace .h3-gallery-set-as { padding: 8px; }
+.h3-workspace .h3-inspector-tabs button[role="tab"] { min-height: 40px; font-size: 14px; }
+.h3-workspace :is(.h3-media-inspector, .h3-media-annotations, .h3-gallery-enhance) { gap: 12px; padding-top: 8px; }
+.h3-workspace .h3-gallery-note p { margin: 0; font-size: 13px; color: var(--h3-muted); }
+.h3-workspace .h3-gallery-danger { border: 0; border-top: 1px solid var(--h3-border); border-radius: 0; background: transparent; box-shadow: none; }
+.h3-workspace .h3-gallery-danger > button.label-wrap { color: #b42318; }
+.dark .h3-workspace .h3-gallery-danger > button.label-wrap { color: #f5a097; }
+.h3-workspace .h3-gallery-confirm { padding: 12px; border: 1px solid #f1c3bd; border-radius: 8px; background: #fdf3f2; }
+.dark .h3-workspace .h3-gallery-confirm { border-color: #7f2a22; background: #3a1714; }
+.h3-workspace .h3-compare-tray { padding: 16px; gap: 12px; border: 1px solid var(--h3-disclosure-border); border-radius: 12px; background: var(--h3-disclosure); }
 .h3-workspace .h3-jobs-workspace { align-items: flex-start; gap: 20px; }
 .h3-workspace .h3-job-history { min-width: 0; }
 .h3-workspace .h3-job-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0 0 16px; }
@@ -416,6 +457,10 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   .h3-workspace :is(.h3-gallery-toolbar, .h3-gallery-filters) > * { width: 100%; min-width: 0 !important; }
   .h3-workspace .h3-gallery-status { overflow-wrap: anywhere; }
   .h3-workspace .h3-library-button { width: 100% !important; flex-basis: auto !important; }
+  .h3-workspace .h3-gallery-header > .h3-gallery-header-actions { width: 100% !important; flex-wrap: wrap; justify-content: stretch; }
+  .h3-workspace .h3-gallery-header-actions > button { flex: 1 1 40% !important; }
+  .h3-workspace .h3-gallery-toolbar > .form > * { flex: 1 1 100% !important; width: 100%; }
+  .h3-workspace #h3-library-kind .wrap label { flex: 1 1 0; justify-content: center; }
 }
 /* Song: four steps (Idea, Lyrics, Generate, Listen & refine); each pairs a working
    card with an action card that holds the step's next move. */

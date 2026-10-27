@@ -31,7 +31,7 @@ class ImageLibraryTests(unittest.TestCase):
                     ref.h3_reference_shown = shown
                     ref.h3_reference_add = add
                 view = SimpleNamespace(
-                    inspector=gr.Column(), mode=gr.Radio(["Image", "Video"]),
+                    actions=gr.Column(), mode=gr.Radio(["Image", "Video"]),
                     selected=gr.State(None),
                 )
                 build_media_image_destinations(

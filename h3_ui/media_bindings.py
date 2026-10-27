@@ -62,6 +62,8 @@ def bind_gallery_view(
             filter_values.get("query", ""),
             filter_values.get("favorite", False),
             limit=limit,
+            engine=filter_values.get("engine", ""),
+            sort=filter_values.get("sort", "newest"),
         )
         page = refresh(mode, limit, paths=matching)
         return page_values(page, limit, request, index.versions.get(mode))
@@ -85,8 +87,27 @@ def bind_gallery_view(
             None,
         )
 
+    def summary_updates(mode, filter_values):
+        # Counts per type beside the status; the Engine list follows the type. Writing
+        # the counts into the Media type choices would re-trigger its change event.
+        counts, engines = index.summary()
+        engine = filter_values.get("engine", "")
+        options = [("All engines", ""), *((name, name) for name in engines.get(mode, []))]
+        return (
+            " · ".join(f"{kind} {counts.get(kind, 0)}" for kind in ("Video", "Image", "Audio")),
+            gr.update(choices=options, value=engine if engine in dict(options).values() else ""),
+        )
+
     def synchronize(event, *, refreshed=False):
         if refreshed:
+            event.then(
+                summary_updates,
+                inputs=[view.mode, filters],
+                outputs=[view.counts, view.engine],
+                queue=False,
+                show_progress="hidden",
+                api_name=False,
+            )
             event = event.then(
                 validate_selection,
                 inputs=[view.mode, view.paths, view.selected],
@@ -177,14 +198,19 @@ def bind_gallery_view(
             controls[6] = gr.update(value=False)
         return controls
 
-    def browse_parameters(mode, current, shown, evt, text, favorite):
+    def browse_parameters(mode, current, shown, evt, text, favorite, engine="", sort="newest"):
         target = evt.target
         mode_changed = mode != current.get("_mode", mode) or (
             "_mode" not in current and target is view.mode
         )
         query, starred = text.strip(), bool(favorite)
-        filters_changed = query != current.get("query", "") or starred != current.get("favorite", False)
-        current.update(query=query, favorite=starred)
+        # Engines differ per media type, so a type switch shows every engine again.
+        engine, sort = ("" if mode_changed else engine or ""), sort or "newest"
+        filters_changed = (query, starred, engine, sort) != (
+            current.get("query", ""), current.get("favorite", False),
+            current.get("engine", ""), current.get("sort", "newest"),
+        )
+        current.update(query=query, favorite=starred, engine=engine, sort=sort)
         current["_mode"] = mode
         # Gradio replays a deferred dependency with its original event target,
         # but its inputs contain the latest controls. Use those inputs to reset
@@ -197,15 +223,20 @@ def bind_gallery_view(
         )
         return controls, limit
 
-    def browse_library(mode, current, shown, request: gr.Request, evt: gr.EventData, text="", favorite=False):
-        controls, limit = browse_parameters(mode, current, shown, evt, text, favorite)
+    def browse_library(mode, current, shown, request: gr.Request, evt: gr.EventData, text="", favorite=False,
+                       engine="", sort="newest"):
+        controls, limit = browse_parameters(mode, current, shown, evt, text, favorite, engine, sort)
         return (*controls, *refresh_page(mode, current, limit, request=request))
 
     browse_triggers = [
         view.mode.change, tab.select, view.refresh.click, view.show_more.click,
         view.search.click, view.query.submit, view.favorite_only.input,
+        # Live search: typing or deleting filters as you go; always_last drops stale keystrokes.
+        # change, not input: Gradio fires input only for typed characters. No event writes
+        # to the search box, so its change event cannot loop back here.
+        view.query.change, view.engine.input, view.sort.input,
     ]
-    browse_inputs = [view.mode, filters, view.shown, view.query, view.favorite_only]
+    browse_inputs = [view.mode, filters, view.shown, view.query, view.favorite_only, view.engine, view.sort]
     # One dependency serializes all user browsing actions, so a late search or
     # pagination response cannot replace the final media-type switch.
     refreshed = gr.on(

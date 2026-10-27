@@ -10,6 +10,7 @@ import gradio as gr
 from h3_app.jobs import JOBS
 from h3_app.errors import H3Error
 from .media_previews import browser_gallery_items, browser_file_update
+from .media_view import favorite_label
 
 VIDEO_JS = """
 const setup = () => {
@@ -73,27 +74,29 @@ def build_library_tools(
 
     index = AssetIndex(JOBS.store, list_paths)
     view.search.h3_asset_index = index
-    with view.inspector:
+    with view.actions:
         with gr.Row(elem_classes=["h3-compare-selection-actions"]):
             add_a = gr.Button("Add to compare A", interactive=False)
             add_b = gr.Button("Add to compare B", interactive=False)
-    with view.inspector:
-        with gr.Accordion("Tags & lineage", open=False):
-            gr.Markdown(
-                "Organize this asset with tags and favorites. Annotations are shared across the library."
-            )
-            with gr.Row():
-                tags = gr.Textbox(label="Tags (comma separated)")
-                favorite = gr.Checkbox(label="Favorite")
-            save = gr.Button("Save asset annotations")
-            status = gr.Markdown()
-            with gr.Accordion("Asset identity and lineage", open=False, max_height=400):
-                lineage = gr.JSON(label="Asset identity and lineage")
-    pair = gr.State({"a": None, "b": None})
-    with root, gr.Accordion("Compare two outputs", open=False) as comparison:
+    with view.annotations:
         gr.Markdown(
-            "Select a thumbnail in the library, then add it to A or B. Compare two different images or two different videos. "
-            "Your picks stay here while you search and browse. Adding another media type starts a new pair."
+            "Organize this asset with tags and favorites. Annotations are shared across the library.",
+            elem_classes=["h3-gallery-note"],
+        )
+        with gr.Row():
+            tags = gr.Textbox(label="Tags (comma separated)")
+            favorite = gr.Checkbox(label="Favorite")
+        save = gr.Button("Save asset annotations")
+        status = gr.Markdown()
+        with gr.Accordion("Asset identity and lineage", open=False, max_height=400):
+            lineage = gr.JSON(label="Asset identity and lineage")
+    pair = gr.State({"a": None, "b": None})
+    # A tray under the library; it appears once A or B holds an item.
+    with root, gr.Group(visible=False, elem_classes=["h3-compare-tray"]) as comparison:
+        gr.Markdown(
+            "### Compare two outputs\nAdd two different images or two different videos. "
+            "Your picks stay here while you search and browse. Adding another media type starts a new pair.",
+            elem_classes=["h3-gallery-section-title"],
         )
         with gr.Row(equal_height=True, elem_classes=["h3-compare-slots"]):
             with gr.Column(min_width=140):
@@ -244,7 +247,7 @@ def build_library_tools(
             message or pair_status(current),
             gr.update(value=None, visible=False),
             "",
-            gr.update(open=True),
+            gr.update(visible=bool(current["a"] or current["b"])),
         )
 
     def assign(slot, mode, path, current, request):
@@ -334,6 +337,7 @@ def build_library_tools(
             gr.update(interactive=can_add),
             gr.update(interactive=can_add),
             *updates,
+            gr.update(value=favorite_label(inspected[1]), interactive=bool(inspected[2])),
         )
 
     view.selected.h3_sync = (
@@ -353,6 +357,7 @@ def build_library_tools(
             comparison_status,
             images,
             videos,
+            view.favorite_toggle,
         ],
     )
 
@@ -369,6 +374,40 @@ def build_library_tools(
         inputs=[view.mode, view.selected, tags, favorite],
         outputs=status,
         queue=False,
+        api_name=False,
+    )
+
+    def autosave(mode, path, text, starred):
+        # Leaving the tags box or ticking Favorite saves; with nothing selected it stays quiet.
+        if not selected_id(mode, path):
+            return gr.skip(), gr.skip()
+        return annotate(mode, path, text, starred), favorite_label(starred)
+
+    for trigger in (tags.blur, favorite.input):
+        trigger(
+            autosave,
+            inputs=[view.mode, view.selected, tags, favorite],
+            outputs=[status, view.favorite_toggle],
+            queue=False,
+            show_progress="hidden",
+            api_name=False,
+        )
+
+    def toggle_favorite(mode, path, text, starred):
+        starred = not starred
+        annotate(mode, path, text, starred)
+        return (
+            starred,
+            favorite_label(starred),
+            "Added to favorites." if starred else "Removed from favorites.",
+        )
+
+    view.favorite_toggle.click(
+        toggle_favorite,
+        inputs=[view.mode, view.selected, tags, favorite],
+        outputs=[favorite, view.favorite_toggle, status],
+        queue=False,
+        show_progress="hidden",
         api_name=False,
     )
 

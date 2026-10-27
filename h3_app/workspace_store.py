@@ -30,6 +30,22 @@ _INDEX_ASSET_SQL = (
 )
 
 
+# Media rows record their family in _media.family; older rows only have it as
+# the caption's first segment ("MiniMax H3 · name.mp4 · …").
+_CAPTION_SQL = "json_extract(metadata, '$._media.caption')"
+_FAMILY_SQL = (
+    "COALESCE(json_extract(metadata, '$._media.family'), "
+    f"substr({_CAPTION_SQL}, 1, instr({_CAPTION_SQL}, ' · ') - 1))"
+)
+# rtrim strips the file name back to the last separator, leaving the directory.
+_NAME_SQL = "lower(substr(path, length(rtrim(path, replace(replace(path, '/', ''), '\\', ''))) + 1))"
+_CATALOG_ORDER = {
+    "newest": "modified DESC",
+    "oldest": "modified ASC",
+    "name": _NAME_SQL + " ASC, modified DESC",
+}
+
+
 class WorkspaceStore:
     def __init__(self, root, *, database=None):
         self.root = Path(root).resolve()
@@ -430,26 +446,36 @@ class WorkspaceStore:
             results.append(data)
         return results
 
-    def catalog_page(self, *, kind, query="", favorite=False, limit=None, roots=None):
-        """Read a bounded, persisted media page without touching output files."""
-        pattern = "%" + query.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    def _catalog_scope(self, roots):
+        """Available, cataloged assets under the managed roots: the shared FROM/WHERE."""
         where = (
             "FROM assets a JOIN media_catalog c ON c.asset_id=a.id LEFT JOIN annotations n ON a.id=n.asset_id "
-            "WHERE available=1 AND kind=? AND (?=0 OR n.favorite=1) "
+            "WHERE available=1 "
         )
-        params = (kind, int(favorite))
-        if query.strip():
-            where += "AND lower(path || ' ' || COALESCE(n.tags,'[]') || ' ' || metadata) LIKE ? ESCAPE '\\' "
-            params += (pattern,)
+        params = ()
         if roots:
             prefixes = tuple(str(root) + os.sep for root in roots)
             where += "AND (" + " OR ".join("substr(path,1,?)=?" for _ in prefixes) + ") "
             params += tuple(value for prefix in prefixes for value in (len(prefix), prefix))
+        return where, params
+
+    def catalog_page(self, *, kind, query="", favorite=False, limit=None, roots=None, engine="", sort="newest"):
+        """Read a bounded, persisted media page without touching output files."""
+        pattern = "%" + query.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        where, params = self._catalog_scope(roots)
+        where += "AND kind=? AND (?=0 OR n.favorite=1) "
+        params += (kind, int(favorite))
+        if query.strip():
+            where += "AND lower(path || ' ' || COALESCE(n.tags,'[]') || ' ' || metadata) LIKE ? ESCAPE '\\' "
+            params += (pattern,)
+        if engine:
+            where += f"AND {_FAMILY_SQL}=? "
+            params += (engine,)
         with self.connect() as db:
             total = db.execute("SELECT COUNT(*) " + where, params).fetchone()[0]
             rows = db.execute(
                 "SELECT a.*, COALESCE(n.tags,'[]') AS tags, COALESCE(n.favorite,0) AS favorite "
-                + where + "ORDER BY modified DESC LIMIT ?",
+                + where + "ORDER BY " + _CATALOG_ORDER.get(sort, _CATALOG_ORDER["newest"]) + " LIMIT ?",
                 (*params, -1 if limit is None else max(0, int(limit))),
             ).fetchall()
         records = []
@@ -459,6 +485,20 @@ class WorkspaceStore:
             record["tags"] = json.loads(record["tags"])
             records.append(record)
         return records, total
+
+    def catalog_summary(self, *, roots=None):
+        """Counts per media kind and the engines (families) present in each."""
+        where, params = self._catalog_scope(roots)
+        counts, engines = {}, {}
+        with self.connect() as db:
+            for kind, family, count in db.execute(
+                f"SELECT kind, {_FAMILY_SQL} AS family, COUNT(*) " + where + "GROUP BY kind, family ORDER BY family",
+                params,
+            ):
+                counts[kind] = counts.get(kind, 0) + count
+                if family:
+                    engines.setdefault(kind, []).append(family)
+        return counts, engines
 
     def forget_asset(self, source):
         with self.connect() as db:

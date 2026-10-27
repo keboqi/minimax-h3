@@ -20,16 +20,20 @@ class AssetIndex:
         self.versions = {}
         self.lock = RLock()
 
-    def inventory(self, mode, query="", favorite=False, *, limit=None):
+    def inventory(self, mode, query="", favorite=False, *, limit=None, engine="", sort="newest"):
         rows, total = self.store.catalog_page(
             kind=mode, query=query.strip(), favorite=favorite, limit=limit,
-            roots=self.catalog.roots if self.catalog else None,
+            roots=self.catalog.roots if self.catalog else None, engine=engine, sort=sort,
         )
         paths = tuple(Path(row["path"]) for row in rows)
         with self.lock:
             self.inventories[mode] = set(paths)
             self.versions[mode] = max((row["metadata"]["_media"]["registered_ns"] for row in rows), default=0)
         return AssetInventory(mode, paths, tuple(rows), total)
+
+    def summary(self):
+        """Item counts per media type and the engines found in each."""
+        return self.store.catalog_summary(roots=self.catalog.roots if self.catalog else None)
 
     def paths(self, mode, query="", favorite=False):
         return set(self.inventory(mode, query, favorite).paths)

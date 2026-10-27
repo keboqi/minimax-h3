@@ -67,6 +67,7 @@ class MediaCatalog:
         details["_media"] = {
             "version": 1, "size": info.st_size, "mtime_ns": info.st_mtime_ns,
             "registered_ns": time.time_ns(),
+            "family": family,
             "thumbnail": thumbnail.name if thumbnail else None,
             "preview_available": available,
             "caption": f"{family} · {path.name} · {timestamp} · {info.st_size / (1024 * 1024):.1f} MB",
