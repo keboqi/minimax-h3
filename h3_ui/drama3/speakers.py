@@ -76,22 +76,23 @@ class SpeakerHandlers:
         ]
 
     def select_drama3_speaker(self, name):
-        """Show the upload controls, or a saved speaker's transcript in their place."""
+        """Show the upload controls, or a saved speaker's transcript and clip in their place."""
         from h3_app.drama3 import speakers as drama3_speakers
         from h3_ui.drama3.controls import UPLOAD_VOICE
         if not name or name == UPLOAD_VOICE:
             return (gr.update(visible=True), gr.update(value="", interactive=True),
                     gr.update(visible=True), gr.update(visible=False), "", gr.skip(),
-                    gr.update(interactive=True), gr.skip(), None)
+                    gr.update(interactive=True), gr.skip(), None, gr.update(value=None, visible=False))
         try:
             saved = drama3_speakers.load_speaker(name, self._runtime_config())
         except H3Error as exc:
             return (gr.update(visible=True), gr.update(interactive=True),
                     gr.update(visible=True), gr.update(visible=False), str(exc), gr.skip(),
-                    gr.update(interactive=True), gr.skip(), gr.skip())
+                    gr.update(interactive=True), gr.skip(), gr.skip(), gr.update(value=None, visible=False))
         return (gr.update(visible=False), gr.update(value=saved.transcript, interactive=False),
                 gr.update(visible=False), gr.update(visible=True), f'Using saved speaker "{saved.name}".',
-                saved.name, gr.update(value=saved.description, interactive=False), saved.transcript, None)
+                saved.name, gr.update(value=saved.description, interactive=False), saved.transcript, None,
+                gr.update(value=str(saved.audio), visible=True))
 
     def save_drama3_speaker(self, slot, name, audio, transcript, count, description="", group="Global"):
         from h3_app.drama3 import speakers as drama3_speakers

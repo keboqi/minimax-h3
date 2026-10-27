@@ -168,6 +168,8 @@ class VoiceDesignTests(unittest.TestCase):
             self.assertEqual(selection[1]["value"], "Uploaded words.")
             self.assertEqual(selection[5], saved.name)
             self.assertEqual(selection[6]["value"], saved.description)
+            self.assertEqual((selection[9]["value"], selection[9]["visible"]), (str(saved.audio), True))
+            self.assertEqual(drama3_handlers.select_drama3_speaker("Upload a clip")[9]["visible"], False)
             voices = ["Upload a clip", None, ""] * 16
             voices[15:18] = [saved.name, None, ""]
             result = drama3_handlers.enhance_drama3_text("Original", "Auto", "model", "", "OpenAI-compatible", "key", "llm", "",

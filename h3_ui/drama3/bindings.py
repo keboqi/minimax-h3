@@ -312,7 +312,8 @@ def _bind_voice_slots(view, actions):
         slot.preset.change(
             actions.select_drama3_speaker, inputs=[slot.preset],
             outputs=[slot.upload, slot.transcript, slot.save_row, slot.delete, slot.status,
-                     slot.save_name, slot.description, slot.preview_text, slot.audio], **QUIET,
+                     slot.save_name, slot.description, slot.preview_text, slot.audio, slot.saved_audio],
+            **QUIET,
         )
         store_events.append(slot.save.click(
             lambda name, audio, transcript, description, group, speaker=slot.speaker: actions.save_drama3_speaker(

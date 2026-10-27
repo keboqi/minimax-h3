@@ -57,6 +57,7 @@ class Drama3VoiceSlot:
     stop: gr.Button
     status: gr.Markdown
     has_clip: gr.Checkbox
+    saved_audio: gr.Audio
 
 
 @dataclass(frozen=True)
@@ -436,6 +437,9 @@ def _voice_slot(speaker, names):
                                    info=f'Script lines start with this name, or with "Speaker {speaker}:".')
         description = gr.Textbox(label=f"Speaker {speaker} voice description", lines=2,
                                   placeholder="Age range, pitch, timbre, accent, articulation and pace.")
+        # A saved speaker hides the upload controls, so its clip plays here instead.
+        saved_audio = gr.Audio(label=f"Speaker {speaker} saved voice", type="filepath", interactive=False,
+                               visible=False)
         with gr.Group(elem_classes=["h3-drama3-clip"]) as upload:
             with gr.Row(equal_height=False):
                 with gr.Column(min_width=220):
@@ -476,6 +480,7 @@ def _voice_slot(speaker, names):
         stop=stop,
         status=status,
         has_clip=has_clip,
+        saved_audio=saved_audio,
     )
 
 

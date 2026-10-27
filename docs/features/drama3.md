@@ -178,7 +178,9 @@ engine:
 Preview speech is separate from the current clip's transcript: editing a future
 preview does not change the words paired with an existing clip. Uploading a new
 clip clears the previous transcript. **Save speaker** stores either kind of clip
-with its exact transcript, name, and description; older presets still load.
+with its exact transcript, name, and description; older presets still load. Picking
+a saved speaker in a slot replaces the upload controls with a player for its
+saved clip, so you can listen to it without opening the library.
 
 Use **Speaker preset group** inside **Speaker voices** to select or create a story/series
 group and reuse it across chapters. Rewrites and newly named speaker slots select
