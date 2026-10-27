@@ -791,6 +791,14 @@ class GenerateTests(unittest.TestCase):
         self.assertEqual([[(line["text"], line["start"], line["end"]) for line in chunk["lines"]]
                           for chunk in settings["chunks"]],
                          [[(chunk["text"], chunk["start"], chunk["end"])] for chunk in settings["chunks"]])
+        # Sounds in playback order: the bed from the scene's start until past the last line,
+        # and the thunder alongside the line it shares a block with, for its whole clip.
+        rain, thunder = settings["sounds"]
+        self.assertEqual((rain["name"], rain["loop"], rain["start"]), ("rain_bgm", True, 0.0))
+        self.assertGreater(rain["end"], spans[2][1])
+        self.assertLessEqual(rain["end"], settings["duration"])
+        self.assertEqual((thunder["name"], thunder["loop"], thunder["start"]), ("thunder", False, spans[2][0]))
+        self.assertAlmostEqual(thunder["end"] - thunder["start"], 0.5, delta=0.01)
 
 
 class TreeAndSpeakerEffectsTests(unittest.TestCase):

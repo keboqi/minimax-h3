@@ -37,20 +37,53 @@ def _stage_tones(speakers):
     return tones
 
 
-def _timeline_html(entries, tones, duration):
-    """One lane of the result's lines, placed by time and colored by speaker; clicking one seeks."""
-    duration = duration or max(end for *_, end in entries)
+def _rows(spans):
+    """A row for each (start, end) so clips that overlap in time sit on different rows, and the count."""
+    ends, rows = [], [0] * len(spans)
+    for index in sorted(range(len(spans)), key=lambda index: spans[index][0]):
+        start, end = spans[index]
+        # Back-to-back clips share a row; a small overlap from rounding does not open a new one.
+        row = next((row for row, last in enumerate(ends) if last <= start + 0.01), len(ends))
+        ends[row:row + 1] = [end]
+        rows[index] = row
+    return rows, max(len(ends), 1)
+
+
+def _place(start, end, duration, row):
+    return (f'data-start="{start:.3f}" data-end="{end:.3f}" style="left: {min(start / duration, 1) * 100:.2f}%; '
+            f'width: {max(end - start, 0) / duration * 100:.2f}%; --row: {row}"')
+
+
+def _timeline_html(entries, tones, duration, sounds=()):
+    """The result's lines and sounds on lanes, placed by time; clicking one seeks.
+
+    Voices are colored by speaker and sounds by kind (looped beds, one-shot cues). Clips that
+    play at the same time, like overlapping speech or music under an effect, stack in rows.
+    """
+    duration = duration or max(end for *_, end in [*entries, *sounds])
     if duration <= 0:
         return ""
-    segments = "".join(
+    rows, count = _rows([(start, end) for *_, start, end in entries])
+    lanes = [("Voices", count, "".join(
         f'<button type="button" class="h3-drama3-segment h3-drama3-tone-{tones[speaker][0]}" '
-        f'data-line="{index}" data-start="{start:.3f}" '
-        f'style="left: {min(start / duration, 1) * 100:.2f}%; width: {max(end - start, 0) / duration * 100:.2f}%" '
+        f'data-line="{index}" {_place(start, end, duration, row)} '
         f'title="{html.escape(f"{speaker}: {text}")}" aria-label="{html.escape(f"Play from {speaker}: {text}")}">'
         f'</button>'
-        for index, (speaker, text, start, end) in enumerate(entries))
-    return (f'<div class="h3-drama3-timeline" role="group" aria-label="Lines on the timeline">'
-            f'{segments}<span class="h3-drama3-playhead" aria-hidden="true" hidden></span></div>')
+        for index, ((speaker, text, start, end), row) in enumerate(zip(entries, rows))))]
+    if sounds:
+        rows, count = _rows([(start, end) for *_, start, end in sounds])
+        lanes.append(("Sounds", count, "".join(
+            f'<button type="button" class="h3-drama3-segment h3-drama3-sound h3-drama3-tone-{"bed" if loop else "cue"}" '
+            f'{_place(start, end, duration, row)} '
+            f'title="{html.escape(name + (" (looped)" if loop else " (one-shot)"))}" '
+            f'aria-label="{html.escape(f"Play from sound: {name}")}"><span>{html.escape(name)}</span></button>'
+            for (name, loop, start, end), row in zip(sounds, rows))))
+    names = "".join(f'<span style="--rows: {count}">{label}</span>' for label, count, _ in lanes)
+    tracks = "".join(f'<div class="h3-drama3-lane" style="--rows: {count}">{segments}</div>'
+                     for _, count, segments in lanes)
+    return (f'<div class="h3-drama3-timeline" role="group" aria-label="Voices and sounds on the timeline">'
+            f'<div class="h3-drama3-lane-names" aria-hidden="true">{names}</div><div class="h3-drama3-lanes">'
+            f'{tracks}<span class="h3-drama3-playhead" aria-hidden="true" hidden></span></div></div>')
 
 
 def _stage_html(tones):
@@ -204,7 +237,7 @@ class GenerationHandlers:
         return [chunk for chunk in self._result_settings(output).get("chunks") or [] if chunk.get("take")]
 
     def drama3_subtitles(self, output):
-        """A result's lines on a timeline, as subtitles, and on the stage, all timed to the mix.
+        """A result's lines and sounds on a timeline, its lines as subtitles and its voices on the stage.
 
         The browser highlights the line playing and moves the timeline's playhead. Results
         from before line timings were recorded have none, and the panel stays hidden.
@@ -227,6 +260,9 @@ class GenerationHandlers:
         if not entries:
             return gr.update(value="", visible=False)
         tones = _stage_tones(speaker for speaker, *_ in entries)
+        sounds = [(str(sound.get("name") or "Sound"), bool(sound.get("loop")), float(sound["start"]),
+                   float(sound.get("end", sound["start"])))
+                  for sound in settings.get("sounds") or [] if sound.get("start") is not None]
         lines = "".join(
             f'<li data-start="{start:.3f}" data-end="{end:.3f}">'
             f'<span class="h3-subtitle-speaker h3-drama3-tone-{tones[speaker][0]}">{html.escape(speaker)}</span>'
@@ -238,7 +274,7 @@ class GenerationHandlers:
         return gr.update(visible=True, value=(
             f'<div class="h3-drama3-subtitles" data-media="{media.group(0) if media else ""}" '
             f'data-duration="{duration:.3f}">'
-            f'{_timeline_html(entries, tones, duration)}<ol>{lines}</ol>{_stage_html(tones)}</div>'))
+            f'{_timeline_html(entries, tones, duration, sounds)}<ol>{lines}</ol>{_stage_html(tones)}</div>'))
 
     def drama3_take_selected(self, output, evt: gr.SelectData):
         """The take key of the takes-table row the user clicked."""

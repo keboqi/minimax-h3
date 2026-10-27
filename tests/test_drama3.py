@@ -389,11 +389,13 @@ class Drama3AppInputTests(unittest.TestCase):
             result.write_bytes(b"mp3")
             write_snapshot(result, {"family": "Drama 3", "settings": {"duration": 9.5, "chunks": [
                 {"speaker": 0, "name": "Mia & Co", "text": "[whispers] Hello <there>!", "start": 0.0, "end": 1.25},
-                {"speaker": 2, "text": "<phone_call> Who is it?", "start": 1.55, "end": 3.0},
+                {"speaker": 2, "text": "<phone_call> Who is it?", "start": 1.0, "end": 3.0},
                 {"speaker": 0, "text": "[laughs]", "start": 3.2, "end": 4.0},
                 {"speaker": 1, "name": "Leo", "text": "One. Two.", "start": 4.3, "end": 6.0, "lines": [
                     {"text": "One.", "start": 4.3, "end": 5.0}, {"text": "Two.", "start": 5.3, "end": 6.0}]},
-            ]}})
+            ], "sounds": [{"name": "rain", "loop": True, "start": 0.0, "end": 9.5},
+                          {"name": "thunder", "loop": False, "start": 1.0, "end": 2.0},
+                          {"name": "door <slam>", "loop": False, "start": 2.0, "end": 2.5}]}})
             update = drama3_handlers.drama3_subtitles(str(result))
             write_snapshot(result, {"family": "Drama 3", "settings": {"chunks": [{"speaker": 0, "text": "Old."}]}})
             old = drama3_handlers.drama3_subtitles(str(result))
@@ -409,8 +411,20 @@ class Drama3AppInputTests(unittest.TestCase):
                       '<span class="h3-subtitle-text">Two.</span>', update["value"])
         self.assertEqual(update["value"].count("<li"), 4)  # a cue-only line has nothing to show
         # Each line is a timeline segment placed on the 9.5 s mix, and seeks from its start.
-        self.assertEqual(update["value"].count('class="h3-drama3-segment'), 4)
-        self.assertIn('data-line="3" data-start="5.300" style="left: 55.79%; width: 7.37%"', update["value"])
+        self.assertEqual(update["value"].count('class="h3-drama3-segment h3-drama3-tone-'), 4)
+        self.assertIn('data-line="3" data-start="5.300" data-end="6.000" style="left: 55.79%; width: 7.37%; --row: 0"',
+                      update["value"])
+        # Speaker 2 talks over Mia, so the voices lane takes a second row for them.
+        self.assertIn('<div class="h3-drama3-lane" style="--rows: 2">', update["value"])
+        self.assertIn('data-line="1" data-start="1.000" data-end="3.000" style="left: 10.53%; width: 21.05%; --row: 1"',
+                      update["value"])
+        # Sounds get their own lane: the rain bed under everything, and the thunder then the door
+        # sharing the second row because one ends as the other starts.
+        self.assertIn('<span style="--rows: 2">Voices</span><span style="--rows: 2">Sounds</span>', update["value"])
+        self.assertIn('h3-drama3-sound h3-drama3-tone-bed" data-start="0.000" data-end="9.500" '
+                      'style="left: 0.00%; width: 100.00%; --row: 0"', update["value"])
+        self.assertIn('h3-drama3-tone-cue" data-start="2.000" data-end="2.500" style="left: 21.05%; width: 5.26%; --row: 1" '
+                      'title="door &lt;slam&gt; (one-shot)"', update["value"])
         self.assertIn('title="Mia &amp; Co: Hello !"', update["value"])
         # Three characters spread across the stage as the mix places them.
         self.assertIn('h3-drama3-tone-0" data-row="0" style="left: 35.0%">Mia &amp; Co</span>', update["value"])

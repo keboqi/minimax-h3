@@ -27,7 +27,7 @@ you scroll. Moving between steps happens in the browser and sends no request.
    panel title shows the selected group and how many speakers it holds, and a card
    per speaker shows its name and whether its voice is ready; click a card to edit
    that speaker below. In Advanced
-   mode, review **Sound effects and music** too. **Generate all speaker voices** makes
+   mode, review **Sound effects and music** too; it has the same cards, one per sound. **Generate all speaker voices** makes
    every missing voice in one job.
 3. **Speak.** Choose a **Speech preset** (**Expressive** by default). **Generate
    speech** renders the current script and references without rewriting them.
@@ -37,8 +37,13 @@ you scroll. Moving between steps happens in the browser and sends no request.
 Speak, and the Script step has a shortcut that opens Speak and starts it. When Auto
 stops, its status names the step whose status says why.
 
-Under the player, a timeline shows each line as a segment in its speaker's color, with
-a playhead that follows the player; clicking a segment jumps to it. Below it the
+Under the player, a timeline shows each line as a segment in its speaker's color on a
+**Voices** lane, and each sound on a **Sounds** lane, colored apart for looped beds
+(ambience, music) and one-shot effects, with a playhead that follows the player;
+clicking a segment jumps to it. Clips that play at the same time stack in rows, such
+as speakers talking over each other in a parallel block, or an effect over the music
+bed. Results made before sound timings were recorded show no Sounds lane until they
+are remixed. Below it the
 result's lines scroll as subtitles: the line being spoken is highlighted as it plays
 and follows the player when you seek, and clicking a line jumps to it. The stage
 underneath shows where each voice stands in the stereo mix (see the end of this

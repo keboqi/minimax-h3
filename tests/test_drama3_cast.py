@@ -20,7 +20,7 @@ def cast_controller():
 
 # Slots as Gradio renders them: a title in the accordion header, and .hidden while not shown.
 # Each step changes the page, runs one poll, and reports the grid's cards and the shown slot.
-PAGE = """(titles, shown, steps) => {
+PAGE = """(titles, shown, steps, kind) => {
     let tick, click;
     globalThis.setInterval = fn => { tick = fn; };
     globalThis.window = {};
@@ -31,13 +31,13 @@ PAGE = """(titles, shown, steps) => {
     const slots = titles.map((title, index) => {
         const header = { classList: classes(["open"]), clicks: 0,
                          click() { this.clicks += 1; this.classList.toggle("open", !this.classList.contains("open")); } };
-        return { id: `h3-drama3-voice-${index}`, title, shown: index < shown, header, classList: classes(),
+        return { id: `h3-drama3-${kind === "sounds" ? "sound" : "voice"}-${index}`, title, shown: index < shown, header, classList: classes(),
                  closest(sel) { return sel === ".hidden" && !this.shown ? this : null; },
                  querySelector(sel) { return sel === "button.label-wrap" ? header : { textContent: this.title }; } };
     });
     const panel = { querySelectorAll: () => slots };
-    const grid = { dataset: {}, offsetParent: {}, innerHTML: "",
-                   closest: sel => sel === ".h3-drama3-voices" ? panel : sel === ".h3-drama3-cast" ? grid : null };
+    const grid = { dataset: kind ? { kind } : {}, offsetParent: {}, innerHTML: "",
+                   closest: sel => sel === `.h3-drama3-${kind || "voices"}` ? panel : sel === ".h3-drama3-cast" ? grid : null };
     globalThis.document = {
         querySelectorAll: () => [grid],
         getElementById: id => slots.find(slot => slot.id === id),
@@ -47,6 +47,7 @@ PAGE = """(titles, shown, steps) => {
     const report = () => ({
         cards: [...grid.innerHTML.matchAll(/tone-(\\w+)" data-slot="([^"]+)" data-state="(\\w+)" aria-pressed="(\\w+)">.*?cast-name">([^<]*)</g)]
             .map(([, tone, slot, state, pressed, name]) => [name, tone, state, pressed === "true"]),
+        states: [...grid.innerHTML.matchAll(/cast-state">([^<]*)</g)].map(([, label]) => label),
         visible: slots.filter(slot => slot.shown && !slot.classList.contains("h3-drama3-cast-off")).map(slot => slot.id),
         opened: slots.map(slot => slot.header.clicks),
     });
@@ -69,8 +70,8 @@ class CastGridTests(unittest.TestCase):
     TITLES = ["Speaker 0 · narrator · saved voice", "Speaker 1 · Mara", "Speaker 2 · Tobias · voice ready",
               "Speaker 3"]
 
-    def run_page(self, steps, shown=3):
-        return run_js(PAGE.replace("{controller}", cast_controller()), self.TITLES, shown, steps)
+    def run_page(self, steps, shown=3, titles=TITLES, kind=None):
+        return run_js(PAGE.replace("{controller}", cast_controller()), titles, shown, steps, kind)
 
     def test_cards_follow_slot_titles_and_the_first_speaker_is_picked(self):
         [first] = self.run_page([["poll", None]])
@@ -98,6 +99,18 @@ class CastGridTests(unittest.TestCase):
         _, filled = self.run_page([["poll", None], ["title", [1, "Speaker 1 · Mara · voice ready"]]])
         self.assertEqual(filled["cards"][1], ["Mara", "0", "ready", False])
         self.assertEqual(filled["visible"], ["h3-drama3-voice-0"])
+
+
+    def test_sound_cards_share_the_sound_color_and_ask_for_a_clip(self):
+        [first] = self.run_page([["poll", None]], titles=["Sound 0 · rain · saved sound", "Sound 1 · thunder",
+                                                          "Sound 2 · door · clip ready"], kind="sounds")
+        self.assertEqual(first["cards"], [
+            ["rain", "cue", "ready", True],
+            ["thunder", "cue", "missing", False],
+            ["door", "cue", "ready", False],
+        ])
+        self.assertEqual(first["states"], ["Saved sound", "Needs a clip", "Clip ready"])
+        self.assertEqual(first["visible"], ["h3-drama3-sound-0"])
 
 
 if __name__ == "__main__":

@@ -37,7 +37,7 @@ class SubtitlePlaybackTests(unittest.TestCase):
             }));
             const box = {
                 dataset: { media: "result", duration: "10" }, offsetParent: {},
-                querySelectorAll: () => lines,
+                querySelectorAll: sel => sel === "li" ? lines : [],
                 querySelector: () => ({ clientHeight: 100, scrollTo() {} }),
             };
             globalThis.document = {
@@ -100,6 +100,8 @@ class SubtitlePlaybackTests(unittest.TestCase):
                 offsetTop: index * 20, offsetHeight: 20,
             }));
             const segments = lines.map((_, index) => ({ dataset: { line: String(index) }, classList: toggles() }));
+            // A sound has no subtitle line; it lights while it plays.
+            segments.push({ dataset: { start: "0.5", end: "2" }, classList: toggles() });
             const head = { hidden: true, style: {} };
             const box = {
                 dataset: { media: "result", duration: "10" }, offsetParent: {},
@@ -116,7 +118,7 @@ class SubtitlePlaybackTests(unittest.TestCase):
                 return [segments.map(segment => Boolean(segment.classList.active)), head.hidden, head.style.left];
             });
         }""")
-        self.assertEqual(states, [[[True, False], False, "10%"], [[False, True], False, "40%"]])
+        self.assertEqual(states, [[[True, False, True], False, "10%"], [[False, True, False], False, "40%"]])
 
     def test_seeking_backwards_recomputes_the_active_lines(self):
         self.assertEqual(self.playback([[1, 2], [4, 5]], [0, 1.5, 4.5, 1.5, 0]),

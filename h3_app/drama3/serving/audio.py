@@ -528,6 +528,8 @@ class Mix:
     audio: np.ndarray
     advance: int  # where the timeline moves on; sound tails beyond it overlap what follows
     speech_offset: int  # where the block's speech starts in ``audio``
+    # Per input track: how long a sound plays from the block's start (a bed loops to its tail); 0 for speech.
+    sound_lengths: tuple[int, ...] = ()
 
 
 def _fade(samples: np.ndarray, fade_in: int, fade_out: int) -> np.ndarray:
@@ -578,6 +580,7 @@ def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
     avg_speech_rms = float(np.mean(speech_rms_values)) if speech_rms_values else 0.0
 
     sounds: list[tuple[np.ndarray, bool]] = []
+    played: dict[int, int] = {}
     for track in sound_tracks:
         samples = shape(track["audio"]).copy()
         loop = bool(track.get("loop", False))
@@ -590,6 +593,7 @@ def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
             samples = samples * float(min(avg_speech_rms * 0.7 / current_rms, 2.0))
         samples = samples * float(track.get("volume", 1.0))
         sounds.append((samples.astype(np.float32, copy=False), loop))
+        played[id(track)] = len(samples)
 
     length = max([offset + len(t["audio"]) for t in speech_tracks] + [len(arr) for arr, _bed in sounds])
     speech = np.zeros((length, 2) if stereo else length, dtype=np.float32)
@@ -603,7 +607,7 @@ def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
     for arr, bed in sounds:
         mixed[: len(arr)] += arr * _along(duck[: len(arr)], arr) if bed and duck is not None else arr
     advance = speech_end if speech_tracks else max(len(arr) for arr, _bed in sounds)
-    return Mix(mixed, advance, offset)
+    return Mix(mixed, advance, offset, tuple(played.get(id(track), 0) for track in normalized))
 
 
 # Loudness of the finished mix (ITU-R BS.1770). A mono file plays on both speakers,

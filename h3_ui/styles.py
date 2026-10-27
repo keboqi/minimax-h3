@@ -648,15 +648,26 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-drama3-cast-slot { grid-area: slot; color: var(--h3-muted); font-size: 12px; }
 .h3-workspace .h3-drama3-cast-state { grid-area: state; justify-self: start; margin-top: 6px; padding: 1px 8px; border-radius: 999px; background: var(--h3-disclosure); color: var(--h3-accent); font-size: 12px; font-weight: 600; }
 .h3-workspace .h3-drama3-cast-card[data-state="missing"] .h3-drama3-cast-state { background: transparent; color: var(--h3-text); box-shadow: inset 0 0 0 1px var(--h3-disclosure-border); }
-/* The result's lines on one timeline lane; clicking a segment seeks, the playhead follows the player. */
-.h3-workspace .h3-drama3-timeline { position: relative; height: 40px; margin-bottom: 8px; border: 1px solid var(--h3-border); border-radius: 10px; background: var(--h3-muted-surface); overflow: hidden; }
+/* The result's voices and sounds on lanes, one row per clip playing at the same time;
+   clicking a segment seeks, the playhead follows the player. */
+.h3-workspace .h3-drama3-timeline { display: flex; margin-bottom: 8px; border: 1px solid var(--h3-border); border-radius: 10px; background: var(--h3-muted-surface); overflow: hidden; }
+.h3-workspace .h3-drama3-lane-names { display: flex; flex: 0 0 auto; flex-direction: column; border-right: 1px solid var(--h3-border); }
+.h3-workspace :is(.h3-drama3-lane-names > span, .h3-drama3-lane) { box-sizing: border-box; height: calc(var(--rows) * 24px + 8px); }
+.h3-workspace :is(.h3-drama3-lane-names > span + span, .h3-drama3-lane + .h3-drama3-lane) { border-top: 1px dashed var(--h3-border); }
+.h3-workspace .h3-drama3-lane-names > span { display: flex; align-items: center; padding: 0 10px; color: var(--h3-muted); font-size: 11px; font-weight: 650; }
+.h3-workspace .h3-drama3-lanes { position: relative; flex: 1 1 auto; min-width: 0; }
+.h3-workspace .h3-drama3-lane { position: relative; }
 .h3-workspace .h3-drama3-segment {
-  position: absolute; top: 6px; bottom: 6px; min-width: 3px; padding: 0; border: 0; border-radius: 4px; cursor: pointer;
+  position: absolute; top: calc(4px + var(--row, 0) * 24px); height: 20px; min-width: 3px; padding: 0; border: 0; border-radius: 4px; cursor: pointer;
   background: color-mix(in srgb, var(--h3-tone) 28%, var(--h3-surface)); box-shadow: inset 0 -3px var(--h3-tone);
 }
 .h3-workspace .h3-drama3-segment:is(:hover, .active) { background: color-mix(in srgb, var(--h3-tone) 55%, var(--h3-surface)); }
 .h3-workspace .h3-drama3-segment.active { outline: 2px solid var(--h3-text); outline-offset: -2px; }
 .h3-workspace .h3-drama3-segment:focus-visible { z-index: 1; outline: 2px solid var(--h3-focus); outline-offset: 1px; }
+.h3-workspace .h3-drama3-sound { display: flex; align-items: center; padding: 0 6px; color: var(--h3-text); font-size: 11px; text-align: left; }
+.h3-workspace .h3-drama3-sound > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h3-workspace .h3-drama3-tone-bed { --h3-tone: var(--h3-hl-effect); }
+.h3-workspace .h3-drama3-tone-cue { --h3-tone: var(--h3-hl-sound); }
 .h3-workspace .h3-drama3-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--h3-text); pointer-events: none; }
 .h3-workspace .h3-drama3-playhead[hidden] { display: none; }
 /* The stage: each voice where the mix places it, left to right. */

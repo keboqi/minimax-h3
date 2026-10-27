@@ -440,6 +440,11 @@ def _edge_texts(node: TreeNode, ctx: _Render) -> tuple[str, str, str, str] | Non
     return chunks[0].speaker, chunks[0].text, chunks[-1].speaker, chunks[-1].text
 
 
+def _sound_span(node: SoundNode, length: int) -> tuple[tuple[str, int], tuple[int, int, dict]]:
+    """A ``spans`` entry for a sound cue playing ``length`` samples from where its block starts."""
+    return ("sound", id(node)), (0, length, {"name": node.name or node.description, "loop": node.loop})
+
+
 def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarray, int]:
     """(audio, advance): ``node`` rendered, and where the timeline moves on after it.
 
@@ -484,6 +489,8 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
         volume = node.volume * audio.distance_gain(node.distance)
         if volume != 1.0:
             samples = (samples * float(volume)).astype(np.float32, copy=False)
+        if spans is not None:
+            spans.update([_sound_span(node, len(samples))])
         return samples, len(samples)
 
     if isinstance(node, SequentialNode):
@@ -513,21 +520,29 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
         # A scene block whose voices share one place sets the room for the sounds inside it.
         ctx = replace(ctx, room=_scene_room(node, ctx) or ctx.room)
         tracks: list[dict] = []
-        child_spans: dict[int, tuple[int, int, list[tuple[int, int]]]] = {}
+        track_spans: list[dict | None] = []  # each child's own spans; None for a cue mixed here
         for child in node.children:
             if isinstance(child, SoundNode):
                 # Volume and distance apply after the mix levels the sound to the speech.
                 tracks.append({"audio": _placed_sound(child, ctx), "loop": child.loop, "is_sound": True,
                                "volume": child.volume * audio.distance_gain(child.distance)})
+                track_spans.append(None)
             else:
-                # Parallel tracks all start together, so child offsets differ only by the speech lead-in.
+                child_spans: dict = {}
                 child_audio, advance = _render(child, ctx, child_spans)
                 tracks.append({"audio": child_audio, "advance": advance, "loop": False,
                                "is_sound": is_sound_only_node(child), "volume": 1.0})
+                track_spans.append(child_spans)
         mix = audio.mix_parallel(tracks, rate)
         if spans is not None:
-            spans.update((index, (start + mix.speech_offset, end + mix.speech_offset, lines))
-                         for index, (start, end, lines) in child_spans.items())
+            for child, track, own, length in zip(node.children, tracks, track_spans, mix.sound_lengths):
+                if own is None:
+                    spans.update([_sound_span(child, length)])
+                    continue
+                # Parallel tracks all start together; speech waits for the lead-in, sounds do not.
+                shift = 0 if track["is_sound"] else mix.speech_offset
+                spans.update((key, (start + shift, end + shift, lines))
+                             for key, (start, end, lines) in own.items())
         return mix.audio, mix.advance
 
     return np.zeros((0, 2), dtype=np.float32), 0
@@ -547,7 +562,8 @@ def _render_ast(
     """Recursively render a Drama 3 AST node into (frames, 2) float32 stereo audio at ``rate``.
 
     ``spans``, when given, receives each chunk's (start, end) samples in the returned audio,
-    keyed by chunk index, with the (start, end) of each of its script lines inside the take.
+    keyed by chunk index, with the (start, end) of each of its script lines inside the take;
+    and each sound cue's, keyed ``("sound", id)``, with its name and whether it loops.
     ``gains`` scales each speaker's takes (see ``speaker_gains``) and ``positions`` places
     them left to right (see ``speaker_positions``); unlisted speakers are centred.
     """
@@ -709,7 +725,11 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
         return round(min(sample, len(joined)) / rate, 3)
 
     timings = {index: (seconds(start), seconds(end), [(seconds(start + a), seconds(start + b)) for a, b in lines])
-               for index, (start, end, lines) in spans.items()}
+               for index, (start, end, lines) in spans.items() if isinstance(index, int)}
+    # When each sound cue plays, in playback order.
+    sound_timings = sorted(({**info, "start": seconds(start), "end": seconds(end)}
+                            for key, (start, end, info) in spans.items() if not isinstance(key, int)),
+                           key=lambda sound: (sound["start"], sound["end"]))
     stamp = time.strftime("%Y%m%d-%H%M%S")
     title = str(getattr(request, "title", "") or "").strip()
     # A full 32-hex id lets the UI find this file (and its settings) from Gradio's cached copy.
@@ -740,6 +760,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                             "lines": [{"text": text, "start": start, "end": end} for text, (start, end)
                                       in zip(t.chunk.lines or (t.chunk.text,), timings[t.chunk.index][2])]}
                            if t.chunk.index in timings else {})} for t in ordered],
+            "sounds": sound_timings,
             "duration": round(len(joined) / rate, 3),
         },
     })
