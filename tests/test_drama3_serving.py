@@ -935,6 +935,9 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         sounds_only = audio.mix_parallel([{"audio": tone(2.0), "is_sound": True},
                                           {"audio": tone(3.0), "is_sound": True}], RATE)
         self.assertEqual(sounds_only.advance, 3 * RATE)
+        # Each track's played length, in track order, for the result's sound timings.
+        self.assertEqual(mix.sound_lengths, (0, 5 * RATE))
+        self.assertEqual(audio.mix_parallel([{"audio": tone(0.0), "is_sound": True}], RATE).sound_lengths, (0,))
 
     def test_sound_tracks_duck_while_speech_is_audible(self):
         speech = np.concatenate([np.zeros(RATE, dtype=np.float32), tone(1.0), np.zeros(RATE, dtype=np.float32)])

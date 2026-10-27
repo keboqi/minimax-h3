@@ -528,7 +528,7 @@ class Mix:
     audio: np.ndarray
     advance: int  # where the timeline moves on; sound tails beyond it overlap what follows
     speech_offset: int  # where the block's speech starts in ``audio``
-    # Per input track: how long a sound plays from the block's start (a bed loops to its tail); 0 for speech.
+    # Per track: how long a sound plays from the block's start (a bed loops to its tail); 0 for speech.
     sound_lengths: tuple[int, ...] = ()
 
 
@@ -564,7 +564,7 @@ def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
             })
     valid = [t for t in normalized if t.get("audio") is not None and len(t["audio"]) > 0]
     if not valid:
-        return Mix(np.zeros(0, dtype=np.float32), 0, 0)
+        return Mix(np.zeros(0, dtype=np.float32), 0, 0, (0,) * len(normalized))
     # Mono tracks join a stereo block on both channels.
     stereo = any(np.ndim(t["audio"]) == 2 for t in valid)
     shape = lambda arr: as_stereo(arr) if stereo else np.asarray(arr, dtype=np.float32).reshape(-1)  # noqa: E731

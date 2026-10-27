@@ -440,12 +440,17 @@ def _edge_texts(node: TreeNode, ctx: _Render) -> tuple[str, str, str, str] | Non
     return chunks[0].speaker, chunks[0].text, chunks[-1].speaker, chunks[-1].text
 
 
+# Where things play in a render, in samples: a chunk's (start, end, its lines' (start, end) inside
+# the take) keyed by chunk index, and a sound cue's (start, end, {name, loop}) keyed ("sound", id).
+Spans = dict[int | tuple[str, int], tuple[int, int, list[tuple[int, int]] | dict]]
+
+
 def _sound_span(node: SoundNode, length: int) -> tuple[tuple[str, int], tuple[int, int, dict]]:
     """A ``spans`` entry for a sound cue playing ``length`` samples from where its block starts."""
     return ("sound", id(node)), (0, length, {"name": node.name or node.description, "loop": node.loop})
 
 
-def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarray, int]:
+def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarray, int]:
     """(audio, advance): ``node`` rendered, and where the timeline moves on after it.
 
     Audio past ``advance`` is a sound's tail, mixed under whatever follows.
@@ -497,7 +502,7 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
         placed: list[tuple[int, np.ndarray]] = []
         cursor, previous = 0, None  # previous: the last speech before this child, with no pause or sound between
         for child in node.children:
-            child_spans: dict[int, tuple[int, int, list[tuple[int, int]]]] = {}
+            child_spans: Spans = {}
             seg, advance = _render(child, ctx, child_spans)
             if seg.size == 0:
                 continue
@@ -520,7 +525,7 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
         # A scene block whose voices share one place sets the room for the sounds inside it.
         ctx = replace(ctx, room=_scene_room(node, ctx) or ctx.room)
         tracks: list[dict] = []
-        track_spans: list[dict | None] = []  # each child's own spans; None for a cue mixed here
+        track_spans: list[Spans | None] = []  # each child's own spans; None for a cue mixed here
         for child in node.children:
             if isinstance(child, SoundNode):
                 # Volume and distance apply after the mix levels the sound to the speech.
@@ -528,7 +533,7 @@ def _render(node: TreeNode, ctx: _Render, spans: dict | None) -> tuple[np.ndarra
                                "volume": child.volume * audio.distance_gain(child.distance)})
                 track_spans.append(None)
             else:
-                child_spans: dict = {}
+                child_spans: Spans = {}
                 child_audio, advance = _render(child, ctx, child_spans)
                 tracks.append({"audio": child_audio, "advance": advance, "loop": False,
                                "is_sound": is_sound_only_node(child), "volume": 1.0})
@@ -555,7 +560,7 @@ def _render_ast(
     sound_clips: dict[str, Path],
     rate: int,
     decoded: dict[Path, np.ndarray] | None = None,
-    spans: dict[int, tuple[int, int, list[tuple[int, int]]]] | None = None,
+    spans: Spans | None = None,
     gains: dict[str, float] | None = None,
     positions: dict[str, float] | None = None,
 ) -> np.ndarray:
@@ -714,7 +719,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
 
     ordered = [takes[chunk.index] for chunk in chunks]
     rate = ordered[0].rate
-    spans: dict[int, tuple[int, int, list[tuple[int, int]]]] = {}
+    spans: Spans = {}
     joined = _render_ast(tree, node_chunks, takes, sound_clips, rate, spans=spans, gains=speaker_gains(takes),
                          positions=speaker_positions(chunks))
     joined = audio.master(joined, rate)

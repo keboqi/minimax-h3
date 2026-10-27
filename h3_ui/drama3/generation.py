@@ -44,7 +44,10 @@ def _rows(spans):
         start, end = spans[index]
         # Back-to-back clips share a row; a small overlap from rounding does not open a new one.
         row = next((row for row, last in enumerate(ends) if last <= start + 0.01), len(ends))
-        ends[row:row + 1] = [end]
+        if row == len(ends):
+            ends.append(end)
+        else:
+            ends[row] = end
         rows[index] = row
     return rows, max(len(ends), 1)
 
