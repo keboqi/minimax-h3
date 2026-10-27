@@ -1,8 +1,9 @@
 """Dub & Translate: turn a source into timed lines, then voice them with Drama 3 and remix.
 
 Analysis extracts the soundtrack, optionally separates vocals from the background,
-and transcribes with Gemini or locally (OmniVAD + Qwen3-ASR + ForcedAligner, then
-Hy-MT). Dubbing clones each line's voice from the original audio, fits the take to
+and transcribes with Gemini or locally: OmniVAD + Qwen3-ASR + ForcedAligner, or
+MOSS-Transcribe-Diarize on SGLang-Omni, which also tells speakers apart; Hy-MT then
+translates. Dubbing clones each line's voice from the original audio, fits the take to
 its slot, lays the lines on the timeline and mixes them over the background. Takes
 are content-keyed, so an unchanged line is never generated twice.
 
@@ -34,12 +35,15 @@ from h3_app.errors import H3Error
 from h3_app.media_tools import probe_audio_seconds, run_media_process
 from h3_app.provenance import write_snapshot
 
-from . import gemini, segments as segment_tools, session as sessions, tools
+from . import gemini, moss, segments as segment_tools, session as sessions, tools, tools_worker
 
 RATE = 44100
 PIPELINE_LOCAL = "Local: Qwen3-ASR + aligner + Hy-MT"
+PIPELINE_MOSS = "Local: MOSS Transcribe + Diarize + Hy-MT"
 PIPELINE_GEMINI = "Gemini (cloud)"
-PIPELINES = (PIPELINE_LOCAL, PIPELINE_GEMINI)
+PIPELINES = (PIPELINE_LOCAL, PIPELINE_MOSS, PIPELINE_GEMINI)
+# Transcriptions that tell speakers apart, so each speaker can get its own voice and volume.
+SPEAKER_PIPELINES = frozenset({PIPELINE_MOSS, PIPELINE_GEMINI})
 TRANSLATOR_HYMT = "Hy-MT 1.8B (local)"
 TRANSLATOR_GEMINI = "Gemini"
 TRANSLATORS = (TRANSLATOR_HYMT, TRANSLATOR_GEMINI)
@@ -74,6 +78,8 @@ CONTEXT_LINES = 2
 # A speaker's voice setting: empty clones it from the source, otherwise a saved Drama 3 speaker's key.
 ORIGINAL_VOICE = ""
 SPEAKER_VOLUME = (0.0, 200.0)
+# The result player's separate tracks sit beside the outputs in this folder, which Media skips.
+PLAYER_DIR = ".dub-player"
 
 
 # ---------------------------------------------------------------------------
@@ -123,12 +129,28 @@ class Analysis:
 
 
 @dataclass
+class Player:
+    """What the result player plays: the speech tracks and background apart, so either voice and the
+    music can be switched while it plays, and each line's original and translated subtitle times."""
+
+    video: Path | None
+    dub: Path
+    original: Path
+    music: Path | None
+    duration: float
+    lines: list[dict]
+    target_language: str = ""
+    source_language: str = ""
+
+
+@dataclass
 class Dub:
     session: sessions.Session
     audio: Path
     video: Path | None
     subtitles: list[Path]
     message: str
+    player: Player | None = None
 
 
 @dataclass
@@ -267,6 +289,17 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
     if transcript is not None:
         yield "Reusing the transcript from an earlier analysis of this file"
         reused.append("transcript")
+    elif request.pipeline == PIPELINE_MOSS:
+        duration = float(session.data.get("duration") or 0.0)
+        found = yield from blocking(
+            "Finding speakers and transcribing with MOSS",
+            lambda report: moss.transcribe(runtime, speech, duration=duration, free_gpu=free_gpu,
+                                           hf_token=hf_token, report=report))
+        found = moss_lines(found)
+        if not found:
+            raise H3Error("No speech was found in this source.")
+        transcript = {"segments": found, "speakers": {speaker: "" for speaker in
+                                                      dict.fromkeys(s["speaker"] for s in found)}}
     elif request.pipeline == PIPELINE_GEMINI:
         upload = _ffmpeg(["-i", str(speech), "-ac", "1", "-c:a", "libmp3lame", "-b:a", "96k"],
                          session.root / "speech.mp3", action="Preparing audio for Gemini")
@@ -319,13 +352,28 @@ def _transcript_key(request: AnalyzeRequest) -> str:
     """The settings a transcript depends on, beyond the source file itself."""
     settings: dict[str, Any] = {"pipeline": request.pipeline,
                                 "separator": request.separator_model if request.separate else ""}
-    if request.pipeline == PIPELINE_GEMINI:
+    if request.pipeline == PIPELINE_MOSS:
+        settings.update(model=f"{moss.MODEL_REPO}@{moss.MODEL_REVISION[:12]}")
+    elif request.pipeline == PIPELINE_GEMINI:
         settings.update(model=request.gemini_model, ignore_non_speech=bool(request.ignore_non_speech),
                         target=str(request.target_language or "").strip() if request.translate else "")
     else:
         settings.update(language=_language(request.source_language), aligner=bool(request.aligner),
                         merge_gap=round(float(request.merge_gap), 3))
     return json.dumps(settings, sort_keys=True)
+
+
+def moss_lines(found: list[dict]) -> list[dict]:
+    """MOSS's speaker turns as subtitle-sized lines: long turns are split at sentence ends."""
+    lines = []
+    for turn in found:
+        start, end, text = float(turn["start"]), float(turn["end"]), str(turn.get("text") or "")
+        parts = ([{"start": start, "end": end, "text": text}]
+                 if end - start <= tools_worker.MAX_LINE_SECONDS and len(text) <= tools_worker.MAX_LINE_CHARS
+                 else tools_worker.proportional_lines(start, end, text))
+        lines += [{"start": part["start"], "end": part["end"], "speaker": turn.get("speaker"), "source": part["text"]}
+                  for part in parts]
+    return segment_tools.normalize(lines)
 
 
 def _earlier_stems(earlier: list[sessions.Session], model: str) -> sessions.Session | None:
@@ -473,8 +521,8 @@ def speaker_reference(lines: list[dict], speaker: str) -> int | None:
 
 
 def speaker_settings_available(session: sessions.Session) -> bool:
-    """Per-speaker settings need real speakers, and only Gemini's transcription tells them apart."""
-    return session.data.get("pipeline") == PIPELINE_GEMINI
+    """Per-speaker settings need real speakers, which only MOSS and Gemini tell apart."""
+    return session.data.get("pipeline") in SPEAKER_PIPELINES
 
 
 def _speaker_volume(value: Any) -> float:
@@ -486,7 +534,7 @@ def _speaker_volume(value: Any) -> float:
 
 
 def speaker_settings(session: sessions.Session) -> dict[str, dict]:
-    """``{speaker: {"voice": key or ORIGINAL_VOICE, "volume": percent}}``; empty unless from Gemini."""
+    """``{speaker: {"voice": key or ORIGINAL_VOICE, "volume": percent}}``; empty without real speakers."""
     stored = session.data.get("speaker_settings")
     if not speaker_settings_available(session) or not isinstance(stored, dict):
         return {}
@@ -506,7 +554,8 @@ def set_speaker(runtime, session_id: str, speaker: str, *, voice: str, volume: f
 
     session = sessions.load(runtime, session_id)
     if not speaker_settings_available(session):
-        raise H3Error("Per-speaker voices need a session transcribed with Gemini, which tells speakers apart.")
+        raise H3Error("Per-speaker voices need a session transcribed with MOSS or Gemini, which tell speakers "
+                      "apart.")
     speaker, voice = str(speaker or "").strip(), str(voice or ORIGINAL_VOICE)
     if speaker not in session_speakers(session):
         raise H3Error("Choose one of this session's speakers.")
@@ -834,6 +883,43 @@ def _output_stem(session: sessions.Session, language: str) -> str:
     return f"{name}_{tag}_{time.strftime('%Y%m%d-%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
+def _prune_players(output_dir: Path) -> None:
+    """Drop player tracks whose dub was deleted from Media (each folder is named after its outputs)."""
+    root = output_dir / PLAYER_DIR
+    for folder in root.iterdir() if root.is_dir() else ():
+        if folder.is_dir() and not (output_dir / f"{folder.name}.mp3").exists():
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+def _player(session: sessions.Session, speech: Path, folder: Path, *, separated: bool, speech_gain: float,
+            background_gain: float, video: Path | None, mixed: Path, lines: list[dict],
+            spoken_ends: dict[int, float], duration: float, language: str) -> Player:
+    """The dub's voice, the original voice and the background as separate tracks for the result player.
+
+    Without separation the background still holds the original voices, so the player
+    switches between the finished mix and the original soundtrack, with no music switch.
+    """
+    folder.mkdir(parents=True, exist_ok=True)
+
+    def encode(source: Path, name: str, gain: float) -> Path:
+        return _ffmpeg(["-i", str(source), "-af", f"volume={gain:.3f}", "-c:a", "libmp3lame", "-q:a", "4"],
+                       folder / name, action="Preparing the result player")
+
+    if separated:
+        dub_track = encode(speech, "dub.mp3", speech_gain)
+        music = encode(session.path("backing"), "music.mp3", background_gain)
+        original = encode(session.path("vocals"), "original.mp3", 1.0)
+    else:
+        dub_track, music = mixed, None
+        original = encode(session.path("audio"), "original.mp3", 1.0)
+    shown = subtitle_lines(lines, spoken_ends)
+    cues = [{"start": line["start"], "end": line["end"], "shown_end": shown[index]["end"],
+             "speaker": line["speaker"], "source": line["source"], "translation": line["translation"]}
+            for index, line in enumerate(lines) if line["source"] or line["translation"]]
+    return Player(video, dub_track, original, music, duration, cues, language,
+                  session.data.get("source_language", ""))
+
+
 def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[str | Dub]:
     session = sessions.load(runtime, request.session_id)
     lines = session.segments
@@ -928,6 +1014,11 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
                             timeout=runtime.generation_timeout, action="Writing the dubbed video")
         write_snapshot(video_out, {"family": "Dub & Translate", "settings": {
             **settings, "original_track": request.keep_original_track, "burned_subtitles": request.burn_subtitles}})
+    yield "Preparing the result player"
+    _prune_players(output_dir)
+    player = _player(session, speech, output_dir / PLAYER_DIR / stem, separated=separated, speech_gain=speech_gain,
+                     background_gain=background_gain, video=video_out, mixed=audio_out, lines=lines,
+                     spoken_ends=spoken_ends, duration=duration + overrun, language=language)
     for work_file in (speech, mix):
         work_file.unlink(missing_ok=True)
     # Only this field is the dub's: lines edited while it ran stay as saved.
@@ -941,4 +1032,4 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
         message += f"; matched to the original timing ({sped} sped up, {slowed} slowed down)"
     if notes:
         message += ".\n\nCheck: " + "; ".join(notes[:12]) + ("; …" if len(notes) > 12 else "")
-    yield Dub(session, audio_out, video_out, subtitles, message + ("" if notes else "."))
+    yield Dub(session, audio_out, video_out, subtitles, message + ("" if notes else "."), player)

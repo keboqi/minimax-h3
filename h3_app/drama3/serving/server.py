@@ -124,7 +124,12 @@ class ServerSettings:
         return CHECKPOINTS[self.checkpoint]
 
     def engine_fraction(self, total_mib: float | None) -> float:
-        """The engine's share of a GPU with ``total_mib`` (None when unknown)."""
+        """The engine's share of a GPU with ``total_mib`` (None when unknown).
+
+        A share of the whole GPU, whatever else holds memory at launch: SGLang-Omni's
+        colocated stages budget ``total × gpu_memory_fraction`` minus their own use (the
+        vocoder likewise), unlike plain SGLang's ``mem_fraction_static`` (see the MOSS server).
+        """
         if self.engine_memory is not None:
             return self.engine_memory
         total_gib = total_mib / 1024 if total_mib else FALLBACK_GPU_GIB
@@ -270,6 +275,11 @@ def reclaim_audio_tools():
 class SglangOmniServer:
     label = "SGLang-Omni"
     health_path = "/health"
+    log_prefix = "drama3-serving"
+    log_name = "sglang-omni"
+    # Processes holding a CUDA context while serving: Drama 3's preprocessing, engine and vocoder.
+    cuda_workers = 3
+    memory_settings = "H3_DRAMA3_SGLANG_ENGINE_MEMORY + CODEC_MEMORY"
 
     def __init__(self, settings: ServerSettings):
         self.settings = settings
@@ -320,7 +330,7 @@ class SglangOmniServer:
         return env
 
     def log_line(self, text: str, *, to_file: bool = True) -> None:
-        print(f"[drama3-serving] {text}", flush=True)
+        print(f"[{self.log_prefix}] {text}", flush=True)
         if to_file and self._log is not None:
             self._log.write((text + "\n").encode("utf-8", errors="replace"))
 
@@ -343,7 +353,7 @@ class SglangOmniServer:
         if free < needed:
             raise H3Error(
                 f"{message}, but {self.label} needs about {needed / 1024:.1f} GiB "
-                f"(H3_DRAMA3_SGLANG_ENGINE_MEMORY + CODEC_MEMORY). Still holding VRAM: {holders or 'unknown'}. "
+                f"({self.memory_settings}). Still holding VRAM: {holders or 'unknown'}. "
                 "Unload models from System and retry."
             )
 
@@ -352,7 +362,7 @@ class SglangOmniServer:
         settings.media_dir.mkdir(parents=True, exist_ok=True)
         logs = settings.runtime_dir / "logs"
         logs.mkdir(parents=True, exist_ok=True)
-        self.log_path = logs / f"sglang-omni-{time.strftime('%Y%m%d-%H%M%S')}.log"
+        self.log_path = logs / f"{self.log_name}-{time.strftime('%Y%m%d-%H%M%S')}.log"
         self._log = self.log_path.open("ab", buffering=0)
         command = self.command()
         env = self.server_env()
@@ -450,7 +460,7 @@ class SglangOmniServer:
                 if memory is not None and memory[0] * 2**20 < self._checkpoint.required_vram:
                     raise H3Error("Not enough free GPU memory to wake SGLang; unload other models and retry.")
                 started = time.monotonic()
-                progress("Waking SGLang-Omni from host RAM")
+                progress(f"Waking {self.label} from host RAM")
                 try:
                     self._checkpoint.wake()
                     if not self.healthy(timeout=10):
@@ -520,10 +530,10 @@ class SglangOmniServer:
             if (self.running() and self._checkpoint_helper is not None
                     and not self._uncertain_request and not self._sleep_disabled):
                 started = time.monotonic()
-                self.log_line("Putting SGLang-Omni to sleep; preserving CUDA state in host RAM")
+                self.log_line(f"Putting {self.label} to sleep; preserving CUDA state in host RAM")
                 self._checkpoint = checkpoint.CudaCheckpoint(
                     self._checkpoint_helper, self.process.pid,
-                    baseline_used=self._checkpoint_baseline, log=self.log_line,
+                    baseline_used=self._checkpoint_baseline, log=self.log_line, min_workers=self.cuda_workers,
                 )
                 try:
                     self._checkpoint.sleep()

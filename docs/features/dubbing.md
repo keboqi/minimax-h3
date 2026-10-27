@@ -32,6 +32,13 @@ The action card on the right, **Find and translate the lines**, chooses how:
   spans are split at sentence ends and timed by their share of the text.
   Hy-MT2 1.8B then translates the lines. Local transcription does not separate
   speakers: every line is `speaker1`, and each line is voiced from its own audio.
+- **Local: MOSS Transcribe + Diarize + Hy-MT** tells speakers apart on this
+  server, so each speaker keeps their own voice and gets the per-speaker
+  settings below. MOSS-Transcribe-Diarize transcribes the whole recording (up to
+  90 minutes) in one pass with speaker labels and timestamps; long turns are
+  split into subtitle-sized lines at sentence ends, and Hy-MT2 translates them.
+  It runs on SGLang-Omni, so it needs Linux, like Soundstage (see
+  [Runtime](#runtime)).
 - **Gemini (cloud)** uploads the vocals (or the soundtrack) once. Gemini
   returns timed lines with speaker labels and their translations. The key comes
   from `GEMINI_API_KEY`, or from **Gemini API key for this session**.
@@ -67,6 +74,9 @@ Click a line to pick it for the line actions, or type lines such as `3, 5-7`:
 
 ## 3 · Dub
 
+**Speakers** appears for sessions transcribed with MOSS or Gemini: give a speaker
+a saved Drama 3 voice instead of its cloned original, or change its volume.
+
 - **Voice**: *Each line's own voice* clones every line from its original audio,
   which keeps each line's delivery. *One voice per speaker* uses each speaker's
   best clip (the longest one between 3 and 15 seconds), which is steadier.
@@ -92,6 +102,15 @@ Click a line to pick it for the line actions, or type lines such as `3, 5-7`:
 - **Advanced → Fresh takes for lines** generates new takes for those lines even
   when they are unchanged. **Parallel requests** sets how many lines Drama 3
   voices at once (16 by default).
+
+The finished dub opens in a player beside the files. It plays the dub with
+**Dub** or **Original** voice, **Background music** on or off, and subtitles in
+the translation, the original, both or none. The lines below it follow playback;
+click one to jump there. Translated subtitles use the dub's timing, original ones
+the source's. Without vocal separation the music cannot be switched off: the
+player switches between the finished mix and the original soundtrack. Its
+separate tracks are kept in `gradio_outputs/dubbing/.dub-player`, which Media
+does not list, and are removed once their dub is deleted from Media.
 
 Every take is saved by its text, voice clip and preset. Dubbing again after a
 few edits voices only the changed lines. Results go to Media
@@ -133,7 +152,21 @@ choice.
   separate job families: each **Interrupt** stops only its own step. A
   download's Interrupt stops yt-dlp at its next progress update.
 - Speech uses Drama 3 on SGLang-Omni, so dubbing requires Linux, like Soundstage.
-  Transcription, translation and downloads have no such limit.
+  Transcription with Qwen3-ASR or Gemini, translation and downloads have no such
+  limit.
+- MOSS runs as a second SGLang-Omni server from Drama 3's environment (the
+  pinned SGLang-Omni release serves it), on port 8097 (`H3_MOSS_SGLANG_PORT`).
+  The checkpoint downloads once into `ComfyUI/models/dubbing/moss`. It keeps
+  about 19 GiB (`H3_MOSS_SGLANG_MEMORY_GIB`), index-tts-vllm's 0.20 of an empty
+  RTX PRO 6000: room for one 90-minute request's full context, with one request
+  at a time. SGLang's `--mem-fraction-static` is a share of the memory free when
+  the server starts, not of the whole GPU, so each launch sets it from the free
+  memory then (for example 0.41 beside an awake Drama 3). A launch needs about
+  21 GiB free.
+  After each analysis it sleeps, keeping its CUDA state in host RAM, and the next
+  analysis wakes it in seconds; every other job sleeps it too, and unloading
+  models stops it. `H3_MOSS_SGLANG_SLEEP=off` stops it instead of sleeping. When
+  the GPU is short, the idle dubbing tools stop first, then Drama 3 sleeps.
 - Sessions (source copy, soundtrack and stems, references, lines) live in
   `.h3-workspace/dubbing/<session>`. Sessions untouched for 14 days are removed
   when a new one starts.

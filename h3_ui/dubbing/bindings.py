@@ -41,10 +41,10 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
     # A new session (analyzed or reopened) clears the last one's results and opens Review lines.
     view.session.change(actions.clear_results,
                         outputs=[view.line_numbers, view.line_status, view.preview_audio, view.regenerate,
-                                 view.video, view.audio, view.files, view.status], **_QUIET)
+                                 view.player, view.video, view.audio, view.files, view.status], **_QUIET)
     view.session.change(None, inputs=view.session, js=opened_session_js(view.steps), **_QUIET)
     view.summary.change(lambda text: text, inputs=view.summary, outputs=view.dub_summary, **_QUIET)
-    # Gemini sessions show their speakers; opening the panel again picks up newly saved Drama 3 voices.
+    # Sessions from MOSS or Gemini show their speakers; opening the panel again picks up newly saved Drama 3 voices.
     speaker_panel = {"fn": actions.speaker_panel, "inputs": [view.session, view.speaker],
                      "outputs": [view.speakers_panel, view.speaker, view.speaker_voice, view.speaker_volume,
                                  view.speakers_overview], **_QUIET}
@@ -90,7 +90,7 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
         inputs=[view.session, view.voice_mode, view.preset, view.timing, view.max_speed, view.parallel,
                 view.speech_volume,
                 view.background_volume, view.keep_original, view.burn_subtitles, view.regenerate],
-        outputs=[view.video, view.audio, view.files, view.status], show_progress="minimal",
+        outputs=[view.player, view.video, view.audio, view.files, view.status], show_progress="minimal",
         api_name="dub_generate",
     )
     # Each Interrupt stops only its own step's family, so stopping a preview leaves a running dub alone.

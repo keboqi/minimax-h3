@@ -20,6 +20,8 @@ from h3_app.dubbing import pipeline, segments as segment_tools, session as sessi
 from h3_app.errors import H3Error
 from h3_app.jobs import JobCancelled, record_failure
 
+from .player import player_html
+
 LIBRARY_LIMIT = 200
 _DOWNLOAD_STOPS: dict[str, set[threading.Event]] = {}
 _DOWNLOAD_LOCK = threading.Lock()
@@ -164,7 +166,7 @@ class DubbingHandlers:
         return "\n".join(rows)
 
     def speaker_panel(self, session_id, current=None):
-        """Outputs: speakers panel, speaker, voice, volume, overview. Shown only for Gemini sessions."""
+        """Outputs: speakers panel, speaker, voice, volume, overview. Shown only when speakers were told apart."""
         try:
             session = sessions.load(self._runtime(), session_id) if session_id else None
         except H3Error:
@@ -201,9 +203,9 @@ class DubbingHandlers:
     def clear_results(self):
         """A new session makes the previous one's line picks, preview and dub stale.
 
-        Outputs: line numbers, line status, preview, fresh takes, video, audio, subtitles, dub status.
+        Outputs: line numbers, line status, preview, fresh takes, player, video, audio, subtitles, dub status.
         """
-        return "", "", None, "", gr.update(value=None, visible=True), None, None, ""
+        return "", "", None, "", gr.update(value="", visible=False), gr.update(value=None, visible=True), None, None, ""
 
     def select_line(self, event: gr.SelectData):
         """Clicking a row picks its line for the line actions; an unsaved row has no number yet."""
@@ -294,19 +296,21 @@ class DubbingHandlers:
 
     def generate_dub(self, session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume, background_volume,
                      keep_original, burn_subtitles, regenerate):
-        """Outputs: video, audio, subtitle files, status."""
+        """Outputs: player, video, audio, subtitle files, status."""
         try:
             request = self._dub_request(session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume,
                                    background_volume, keep_original, burn_subtitles, regenerate)
             for update in self._gpu(lambda **kw: pipeline.dub(request, **kw)):
                 if isinstance(update, pipeline.Dub):
                     video = str(update.video) if update.video else None
-                    yield (gr.update(value=video, visible=video is not None), str(update.audio),
+                    shown = (gr.update(value=player_html(update.player, key=update.audio.stem), visible=True)
+                             if update.player is not None else gr.update(value="", visible=False))
+                    yield (shown, gr.update(value=video, visible=video is not None), str(update.audio),
                            [str(path) for path in update.subtitles], update.message)
                 else:
-                    yield gr.skip(), gr.skip(), gr.skip(), update
+                    yield gr.skip(), gr.skip(), gr.skip(), gr.skip(), update
         except Exception as exc:
-            yield gr.skip(), gr.skip(), gr.skip(), self._failed(exc)
+            yield gr.skip(), gr.skip(), gr.skip(), gr.skip(), self._failed(exc)
 
     def _cookie_store(self):
         return video_download.CookieStore(video_download.cookies_dir(self._runtime()))

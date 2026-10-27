@@ -20,6 +20,7 @@ from h3_app.dubbing.pipeline import (
 from h3_app.dubbing.segments import TABLE_HEADERS, TABLE_TYPES
 
 from ..step_cards import StepStrip, card_heading, intro, step_strip
+from .player import ELEM_CLASS as PLAYER_CLASS, PLAYER_JS
 
 SOURCE, LINES, DUB = range(3)
 STEPS_ID = "h3-dub-steps"
@@ -80,6 +81,7 @@ class DubbingView:
     run: gr.Button
     stop: gr.Button
     status: gr.Markdown
+    player: gr.HTML
     video: gr.Video
     audio: gr.Audio
     files: gr.File
@@ -142,7 +144,8 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                                      "Finds who speaks when, transcribes every line and translates it. "
                                      "You review each line next.")
                         pipeline = gr.Radio(list(PIPELINES), value=PIPELINE_LOCAL, label="Transcription",
-                                            info="Local runs on this server. Gemini also tells speakers apart.")
+                                            info="Local runs on this server; MOSS needs Linux. MOSS and Gemini "
+                                                 "also tell speakers apart, so each keeps their own voice.")
                         with gr.Group(visible=False) as gemini:
                             gemini_model = gr.Dropdown(list(gemini_models), value=default_gemini_model,
                                                        label="Gemini model")
@@ -213,7 +216,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                                                    "steadier. Lines under 2 s always use their speaker's voice.")
                         preset = gr.Radio(list(VOICE_PRESETS), value="Balance", label="Delivery")
                         with gr.Accordion("Speakers", open=False, visible=False) as speakers_panel:
-                            gr.Markdown("Gemini told these speakers apart. Give one a saved Drama 3 voice "
+                            gr.Markdown("MOSS or Gemini told these speakers apart. Give one a saved Drama 3 voice "
                                         "instead of its cloned original, or make it louder or quieter in the "
                                         "dub. Changes save at once.", elem_classes=["h3-song-hint"])
                             speaker = gr.Dropdown([], value=None, label="Speaker")
@@ -249,9 +252,12 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                                                 elem_classes=["h3-primary-action"])
                                 stop = gr.Button("Interrupt", scale=1, interactive=False)
                             status = gr.Markdown(elem_classes=["h3-dub-status"])
-                        video = gr.Video(label="Dubbed video", interactive=False)
-                        audio = gr.Audio(label="Dubbed audio", type="filepath", interactive=False)
-                        files = gr.File(label="Subtitles", file_count="multiple", interactive=False, height=96)
+                        # The dub with either voice, the music on or off and synced subtitles.
+                        player = gr.HTML("", visible=False, js_on_load=PLAYER_JS, elem_classes=[PLAYER_CLASS])
+                        with gr.Accordion("Dubbed files", open=False):
+                            video = gr.Video(label="Dubbed video", interactive=False)
+                            audio = gr.Audio(label="Dubbed audio", type="filepath", interactive=False)
+                            files = gr.File(label="Subtitles", file_count="multiple", interactive=False, height=96)
                         with gr.Row(elem_classes=["h3-song-step-nav"]):
                             steps.button("← Fix lines", LINES)
                         gr.Markdown("Every dub is also saved to **Media**.", elem_classes=["h3-song-hint"])
@@ -265,7 +271,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
         preview, new_take, stop_preview, line_status, preview_audio, voice_mode, preset, speakers_panel, speaker,
         speaker_voice, speaker_volume, speakers_overview, timing, max_speed, parallel,
         speech_volume, background_volume, keep_original, burn_subtitles, regenerate, dub_summary, run, stop, status,
-        video, audio, files,
+        player, video, audio, files,
     )
 
 

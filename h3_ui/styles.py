@@ -591,6 +591,37 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-dub-line-actions { flex-wrap: wrap; gap: 6px; }
 .h3-workspace .h3-dub-line-actions > button { flex: 1 1 120px !important; min-width: 0 !important; border-radius: 8px; }
 .h3-workspace .h3-dub-library > button { align-self: flex-end; min-height: 40px; }
+/* The dub result player: picture with captions, transport, voice/music/subtitle switches, synced lines. */
+.h3-workspace .h3-dub-player { display: flex; flex-direction: column; gap: 10px; }
+.h3-workspace .h3-dub-player-screen { position: relative; overflow: hidden; border-radius: 12px; background: #111b18; }
+.h3-workspace .h3-dub-player-screen video { display: block; width: 100%; max-height: 420px; cursor: pointer; }
+.h3-workspace .h3-dub-player-poster { display: grid; place-items: center; min-height: 120px; color: #a9bdb3; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+.h3-workspace .h3-dub-player-caption { position: absolute; left: 4%; right: 4%; bottom: 6%; display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; text-align: center; }
+.h3-workspace .h3-dub-player-caption span { max-width: 100%; padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, .62); color: #ffffff; font-size: 15px; line-height: 1.4; white-space: pre-line; }
+.h3-workspace .h3-dub-player-caption span:empty { display: none; }
+.h3-workspace .h3-dub-player-caption [data-caption-source] { color: #d7e3de; font-size: 13px; }
+.h3-workspace .h3-dub-player-transport { display: flex; align-items: center; gap: 10px; }
+.h3-workspace .h3-dub-player-transport button { min-width: 72px; min-height: 40px; border: 0; border-radius: 10px; background: var(--h3-accent); color: var(--h3-surface); font-weight: 600; cursor: pointer; }
+.h3-workspace .h3-dub-player-transport input { flex: 1; min-width: 0; accent-color: var(--h3-accent); }
+.h3-workspace .h3-dub-player-time { color: var(--h3-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.h3-workspace .h3-dub-player-options { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 13px; }
+.h3-workspace .h3-dub-player-options fieldset { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; border: 0; }
+.h3-workspace .h3-dub-player-options legend { float: left; margin-right: 8px; color: var(--h3-muted); }
+.h3-workspace .h3-dub-player-options label { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; cursor: pointer; }
+.h3-workspace .h3-dub-player-options input { accent-color: var(--h3-accent); }
+.h3-workspace .h3-dub-player-check span { color: var(--h3-muted); }
+.h3-workspace .h3-dub-player-select select { min-height: 32px; padding: 2px 8px; border: 1px solid var(--h3-border); border-radius: 8px; background: var(--h3-surface); color: var(--h3-text); }
+.h3-workspace .h3-dub-player-note { margin: 0; color: var(--h3-muted); font-size: 12px; }
+.h3-workspace .h3-dub-player-note:empty { display: none; }
+.h3-workspace .h3-dub-player-cues { max-height: min(320px, 40vh); overflow-y: auto; margin: 0; padding: 6px; list-style: none; border: 1px solid var(--h3-border); border-radius: 12px; background: var(--h3-muted-surface); }
+.h3-workspace .h3-dub-player-cues li { display: flex; gap: 10px; padding: 6px 10px; border-radius: 8px; cursor: pointer; color: var(--h3-muted); font-size: 14px; line-height: 1.45; }
+.h3-workspace .h3-dub-player-cues li:hover { background: var(--h3-surface); }
+.h3-workspace .h3-dub-player-cues li.past { opacity: .7; }
+.h3-workspace .h3-dub-player-cues li.active { color: var(--h3-text); background: var(--h3-surface); box-shadow: inset 3px 0 var(--h3-accent); }
+.h3-workspace .h3-dub-cue-time { flex: none; padding-top: 1px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.h3-workspace .h3-dub-cue-speaker { flex: none; max-width: 25%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--h3-accent); font-size: 12px; font-weight: 650; padding-top: 1px; }
+.h3-workspace .h3-dub-cue-text { display: flex; flex-direction: column; min-width: 0; }
+.h3-workspace .h3-dub-cue-source { font-size: 12px; opacity: .8; }
 /* Soundstage: Song's four-step strip (Script, Cast & sounds, Speak, Review lines) with sticky action
    cards, and visible outlines on the small secondary buttons. */
 .h3-workspace .h3-drama3 .styler { gap: 8px; background: transparent; }

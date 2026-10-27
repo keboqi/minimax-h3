@@ -19,7 +19,7 @@ import wave
 import numpy as np
 
 from h3_app import video_download
-from h3_app.dubbing import pipeline, segments, session as sessions, tools, tools_worker
+from h3_app.dubbing import moss, pipeline, segments, session as sessions, tools, tools_worker
 from h3_app.errors import H3Error
 
 HAS_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
@@ -158,6 +158,82 @@ class WorkerHelperTests(unittest.TestCase):
     def test_modal_builds_the_dub_tools_with_gcc(self):
         source = (Path(__file__).resolve().parents[1] / "modal_h3.py").read_text(encoding="utf-8")
         self.assertIn('f"CC=gcc CXX=g++ {shlex.join(command)}" for command in dub_tools_install_commands', source)
+
+    def test_moss_replies_become_timed_speaker_lines(self):
+        reply = {"text": "ignored", "segments": [
+            {"start": 0.48, "end": 1.66, "text": "[S01]Welcome everyone"},
+            {"start": 2.1, "end": 4.25, "text": "[S02] The new pipeline [3.0] is ready"},
+            {"start": 5.0, "end": 5.2, "text": "[S01]"}]}
+        self.assertEqual(moss.reply_lines(reply), [
+            {"start": 0.48, "end": 1.66, "speaker": "S01", "text": "Welcome everyone"},
+            {"start": 2.1, "end": 4.25, "speaker": "S02", "text": "The new pipeline is ready"}])
+        # Without parsed segments the raw transcript is read; a missing end runs to the next start.
+        compact = ("[0.48][S01]Welcome everyone[1.66][5.00][S01]No end time here"
+                   "[6.20][S02]Last words")
+        self.assertEqual(moss.reply_lines({"text": compact, "segments": []}, duration=7.0), [
+            {"start": 0.48, "end": 1.66, "speaker": "S01", "text": "Welcome everyone"},
+            {"start": 5.0, "end": 6.2, "speaker": "S01", "text": "No end time here"},
+            {"start": 6.2, "end": 7.0, "speaker": "S02", "text": "Last words"}])
+        self.assertEqual(moss.parse_transcript("no tags at all"), [])
+
+    def test_long_moss_turns_split_into_subtitle_lines(self):
+        long_text = "This is one sentence. " * 8
+        lines = pipeline.moss_lines([{"start": 0.0, "end": 20.0, "speaker": "S02", "text": long_text},
+                                     {"start": 21.0, "end": 22.0, "speaker": "S01", "text": "Short."}])
+        self.assertGreater(len(lines), 2)
+        self.assertTrue(all(line["speaker"] == "speaker2" for line in lines[:-1]))
+        self.assertEqual(lines[-1], {"start": 21.0, "end": 22.0, "speaker": "speaker1", "source": "Short.",
+                                     "translation": "", "dub": True})
+
+    def test_moss_serves_from_drama3s_sglang_environment(self):
+        from h3_app.drama3.serving import environment
+
+        runtime = runtime_for(Path("/tmp/h3"))
+        with patch.dict(os.environ):
+            os.environ.pop("H3_MOSS_SGLANG_MEMORY_GIB", None)
+            settings = moss.MossSettings.from_environment(runtime)
+        self.assertEqual(settings.venv, environment.default_venv(runtime.script_dir))
+        # SGLang takes the fraction of the memory free at launch: 19 GiB on an empty RTX PRO 6000
+        # is 0.2 of it, and beside an awake Drama 3 (about 46 GiB left) a larger share.
+        self.assertEqual(settings.memory_fraction(95.6 * 1024), 0.199)
+        self.assertEqual(settings.memory_fraction(46 * 1024), 0.413)
+        self.assertEqual(settings.memory_fraction(15 * 1024), moss.MAX_FRACTION)
+        self.assertAlmostEqual(settings.footprint_mib() / 1024, 21.1, places=1)
+        with patch.object(moss, "gpu_memory", return_value=(46 * 1024.0, 95.6 * 1024, "")):
+            command = moss.MossServer(settings).command()
+        self.assertEqual(command[1:3], ["serve", "--model-path"])
+        flag = lambda name: command[command.index(name) + 1]
+        self.assertEqual(flag("--asr.engine.mem_fraction_static"), "0.413")
+        self.assertEqual((flag("--asr.engine.max_running_requests"), flag("--asr.engine.cuda_graph_max_bs")),
+                         ("1", "1"))
+
+    def test_other_jobs_sleep_moss_and_unload_stops_it(self):
+        with patch.object(moss, "release_all") as release, patch.object(moss, "stop_all") as stop:
+            moss.release_for_job(moss.FAMILY)
+            release.assert_not_called()
+            for family in ("dubbing", "dubbing_lines", "drama3", "ltx"):
+                moss.release_for_job(family)
+            self.assertEqual(release.call_count, 4)
+            moss.release_for_job("unload")
+            stop.assert_called_once()
+
+    def test_moss_sleeps_once_its_lines_are_back(self):
+        server = unittest.mock.Mock()
+        server.transcribe.return_value = {"segments": [{"start": 0.0, "end": 1.0, "text": "[S01]Hi"}]}
+        runtime = runtime_for(Path("/tmp/h3"))
+        with patch.object(moss, "supported", return_value=True), patch.object(moss, "shared_server", return_value=server), \
+                patch.object(moss.environment, "prepare"), patch.object(moss, "ensure_model"), \
+                patch.object(moss, "_make_room"):
+            lines = moss.transcribe(runtime, Path("speech.wav"), duration=10.0, free_gpu=lambda: None)
+            self.assertEqual(lines, [{"start": 0.0, "end": 1.0, "speaker": "S01", "text": "Hi"}])
+            server.ensure_ready.assert_called_once()
+            server.release.assert_called_once()
+            server.transcribe.side_effect = H3Error("boom")
+            with self.assertRaises(H3Error):
+                moss.transcribe(runtime, Path("speech.wav"), duration=10.0, free_gpu=lambda: None)
+            self.assertEqual(server.release.call_count, 2)
+            with self.assertRaisesRegex(H3Error, "up to 90 minutes"):
+                moss.transcribe(runtime, Path("speech.wav"), duration=91 * 60.0, free_gpu=lambda: None)
 
     def test_other_jobs_stop_the_worker(self):
         with patch.object(tools, "stop") as stop:
@@ -502,7 +578,7 @@ class HandlerTests(Workspace):
         self.assertEqual(updates[-1], ("Downloaded **clip.mp4** to Media.", str(target)))
         self.assertTrue(all(path == "" for _status, path in updates[:-1]))
 
-    def test_speaker_panel_shows_only_for_gemini_sessions(self):
+    def test_speaker_panel_shows_only_for_sessions_with_speakers(self):
         source = _tone_wav(self.root / "a.wav", 3.0)
         session = sessions.create(self.runtime, source, video=False)
         session.segments = [{"start": 0.0, "end": 1.0, "speaker": "speaker1", "source": "a", "translation": "A"},
@@ -511,6 +587,9 @@ class HandlerTests(Workspace):
         session.save()
         hidden = self.handlers.speaker_panel(session.id)
         self.assertEqual(hidden[0]["visible"], False)
+        session.data["pipeline"] = pipeline.PIPELINE_MOSS
+        session.save()
+        self.assertEqual(self.handlers.speaker_panel(session.id)[0]["visible"], True)
 
         session.data["pipeline"] = pipeline.PIPELINE_GEMINI
         session.save()
@@ -554,7 +633,7 @@ class HandlerTests(Workspace):
         self.assertIn("Upload a video or audio file", updates[-1][2])
         updates = list(self.handlers.generate_dub("", pipeline.VOICE_LINE, "Balance", pipeline.TIMING_MATCH, 1.35,
                                                   8, 100, 100, True, False, ""))
-        self.assertIn("Analyze a source first", updates[-1][3])
+        self.assertIn("Analyze a source first", updates[-1][4])
 
     def test_cookie_handlers(self):
         status, sites, cleared = self.handlers.import_curl_cookies(
@@ -666,9 +745,9 @@ class ReviewFixTests(Workspace):
         return drama3_speakers.save_speaker(name, _tone_wav(self.root / f"{name}.wav", 3.0), "Hello there.",
                                             self.runtime)
 
-    def test_speaker_settings_are_offered_only_for_gemini_sessions(self):
+    def test_speaker_settings_are_offered_only_for_sessions_with_speakers(self):
         local = self.session_with_vocals([{"start": 0.0, "end": 1.0, "source": "a", "translation": "A"}])
-        with self.assertRaisesRegex(H3Error, "transcribed with Gemini"):
+        with self.assertRaisesRegex(H3Error, "transcribed with MOSS or Gemini"):
             pipeline.set_speaker(self.runtime, local.id, "speaker1", voice="", volume=50)
         local.data["speaker_settings"] = {"speaker1": {"voice": "", "volume": 50}}
         self.assertEqual(pipeline.speaker_settings(local), {})
@@ -882,8 +961,15 @@ class DubRenderTests(Workspace):
                 return {"texts": [f"[{text}] in French" for text in payload["texts"]]}
             raise AssertionError(op)
 
+        def fake_moss(runtime, audio, *, duration, **_kwargs):
+            if calls is not None:
+                calls.append("moss")
+            return [{"start": 0.2, "end": 2.6, "speaker": "S01", "text": "First line here."},
+                    {"start": 2.8, "end": 3.6, "speaker": "S02", "text": "Second."}]
+
         request = pipeline.AnalyzeRequest(str(video), target_language="French", separate=separate, **settings)
-        with patch.object(pipeline.tools, "run", side_effect=fake_tools):
+        with patch.object(pipeline.tools, "run", side_effect=fake_tools), \
+                patch.object(pipeline.moss, "transcribe", side_effect=fake_moss):
             updates = list(pipeline.analyze(request, runtime=self.runtime, free_gpu=lambda: None))
         result = updates[-1]
         self.assertIsInstance(result, pipeline.Analysis)
@@ -921,6 +1007,52 @@ class DubRenderTests(Workspace):
         self.assertEqual(len(references), 1)
         snapshot = json.loads(Path(str(result.video) + ".settings.json").read_text(encoding="utf-8"))
         self.assertEqual(snapshot["family"], "Dub & Translate")
+
+    def test_dub_keeps_separate_player_tracks_out_of_media(self):
+        from h3_ui.dubbing.player import player_html
+
+        session = self.analyze(self.make_video(), separate=True)
+        with patch.object(pipeline, "_synthesize", side_effect=self.fake_synthesize):
+            result = list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime,
+                                       free_gpu=lambda: None))[-1]
+        player = result.player
+        folder = self.runtime.outputs_dir / "dubbing" / pipeline.PLAYER_DIR / result.audio.stem
+        self.assertEqual({player.dub.parent, player.original.parent, player.music.parent}, {folder})
+        self.assertEqual(player.video, result.video)
+        self.assertAlmostEqual(self.duration(player.music), 4.0, delta=0.15)
+        self.assertEqual([cue["translation"] for cue in player.lines],
+                         ["[First line here.] in French", "[Second.] in French"])
+        # The translated subtitle stays up while the long first take plays, but not into line 2.
+        self.assertGreaterEqual(player.lines[0]["shown_end"], player.lines[0]["end"])
+        self.assertLess(player.lines[0]["shown_end"], player.lines[1]["start"])
+        html = player_html(player, key=result.audio.stem)
+        self.assertIn("data-music", html)
+        self.assertIn('data-shown-end="', html)
+        self.assertIn("Dub (French)", html)
+        # Deleting the dub from Media lets the next dub drop its player tracks.
+        result.audio.unlink()
+        pipeline._prune_players(self.runtime.outputs_dir / "dubbing")
+        self.assertFalse(folder.exists())
+
+    def test_unseparated_player_switches_between_the_mix_and_the_original(self):
+        from h3_ui.dubbing.player import player_html
+
+        session = self.analyze(self.make_video(), separate=False)
+        with patch.object(pipeline, "_synthesize", side_effect=self.fake_synthesize):
+            result = list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime,
+                                       free_gpu=lambda: None))[-1]
+        self.assertIsNone(result.player.music)
+        self.assertEqual(result.player.dub, result.audio)
+        self.assertTrue(result.player.original.is_file())
+        self.assertIn("needs vocal separation", player_html(result.player, key="k"))
+
+    def test_moss_transcription_tells_speakers_apart(self):
+        calls = []
+        session = self.analyze(self.make_video(), separate=False, calls=calls, pipeline=pipeline.PIPELINE_MOSS)
+        self.assertEqual(calls, ["moss", "translate"])
+        self.assertEqual([s["speaker"] for s in session.segments], ["speaker1", "speaker2"])
+        self.assertTrue(pipeline.speaker_settings_available(session))
+        self.assertIn(moss.MODEL_REPO, json.loads(session.data["transcript"]["key"])["model"])
 
     def test_reanalysis_reuses_stems_and_transcript_of_the_same_file(self):
         video = self.make_video()

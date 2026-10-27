@@ -162,8 +162,9 @@ def available_ram(proc: Path = Path("/proc"), cgroup: Path = Path("/sys/fs/cgrou
 
 
 class CudaCheckpoint:
-    def __init__(self, helper: Path, group: int, *, baseline_used: int = 0, log=print):
+    def __init__(self, helper: Path, group: int, *, baseline_used: int = 0, log=print, min_workers: int = 3):
         self.helper = helper
+        self.min_workers = min_workers
         self.group = group
         self.members: dict[int, Process] = {}
         self.workers: list[Process] = []
@@ -192,9 +193,9 @@ class CudaCheckpoint:
         if self.group not in self.members:
             raise RuntimeError("Managed Omni process group is no longer alive")
         self.workers = cuda_workers(self.members)
-        # Preprocessing, engine and vocoder each hold a context (the serving
-        # parent may too). Fewer means a worker is missing or unreadable.
-        if len(self.workers) < 3:
+        # Every stage holds a context (Drama 3's preprocessing, engine and vocoder;
+        # the serving parent may too). Fewer means a worker is missing or unreadable.
+        if len(self.workers) < self.min_workers:
             raise RuntimeError(f"Cannot identify the Omni GPU workers from local device handles; "
                                f"group={list(self.members)}, CUDA workers={[p.pid for p in self.workers]}")
         before, total = device_memory()
