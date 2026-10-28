@@ -1,7 +1,7 @@
 """Runtime configuration and stable Gradio API adapters."""
 
 from __future__ import annotations
-from h3_app.public_url import launch_cloudflare, public_url_settings, stop_cloudflare
+from h3_app.public_url import launch_cloudflare, public_url_settings, start_gradio_share, stop_cloudflare
 
 from .prompt_controller import PromptController, PromptServices
 from .model_controller import ModelController, ModelServices
@@ -1200,8 +1200,8 @@ def main() -> None:
                     port, cache_dir=SCRIPT_DIR / ".cache" / "cloudflared"
                 )
             if share_enabled:
-                try:
-                    share_url = gradio_networking.setup_tunnel(
+                share_url = start_gradio_share(
+                    lambda: gradio_networking.setup_tunnel(
                         local_host="127.0.0.1",
                         local_port=port,
                         share_token=demo.share_token,
@@ -1211,11 +1211,22 @@ def main() -> None:
                         share_server_tls_certificate=getattr(
                             demo, "share_server_tls_certificate", None
                         ),
-                    )
-                    print(f"[h3-ui] Public Gradio URL: {share_url}", flush=True)
-                except Exception as exc:
+                    ),
+                    stop=shutdown_requested,
+                )
+                # The workspace carries queue updates over WebSockets, so a
+                # Cloudflare quick tunnel serves it fully when Share is down.
+                if (
+                    share_url is None
+                    and cloudflare_process is None
+                    and not shutdown_requested.is_set()
+                ):
                     print(
-                        f"[h3-ui] Could not create Gradio share link: {exc}", flush=True
+                        "[h3-ui] Gradio Share is unavailable; opening a Cloudflare URL instead",
+                        flush=True,
+                    )
+                    cloudflare_process = launch_cloudflare(
+                        port, cache_dir=SCRIPT_DIR / ".cache" / "cloudflared"
                     )
         while server_thread.is_alive() and (not shutdown_requested.is_set()):
             server_thread.join(timeout=0.5)

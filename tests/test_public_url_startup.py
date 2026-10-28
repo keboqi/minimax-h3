@@ -11,14 +11,14 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from h3_app.public_url import public_url_settings
+from h3_app.public_url import public_url_settings, start_gradio_share
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class PublicUrlStartupTests(unittest.TestCase):
-    def run_launcher(self, environment, *, started=True, launch_error=None, stop_error=None):
+    def run_launcher(self, environment, *, started=True, launch_error=None, stop_error=None, share_error=None):
         tree = ast.parse((ROOT / "h3_ui/application.py").read_text(encoding="utf-8"))
         main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main")
         with TemporaryDirectory() as directory:
@@ -32,6 +32,7 @@ class PublicUrlStartupTests(unittest.TestCase):
             launch = Mock(side_effect=launch_error)
             stop = Mock(side_effect=stop_error)
             gradio = Mock()
+            gradio.setup_tunnel.side_effect = share_error
             namespace = dict(
                 argparse=argparse, os=os, Path=Path,
                 INPUT_DIR=root / "input", OUTPUT_DIR=root / "output",
@@ -40,7 +41,7 @@ class PublicUrlStartupTests(unittest.TestCase):
                 MODELS_CONFIG=root / "models.json",
                 SERVER_ATTENTION_BACKEND="sol", SERVER_DENSE_ATTENTION_BACKEND="comfy-kitchen",
                 build_ui=Mock(return_value=demo), build_server=Mock(),
-                public_url_settings=public_url_settings,
+                public_url_settings=public_url_settings, start_gradio_share=start_gradio_share,
                 threading=SimpleNamespace(Event=Mock(return_value=Mock(is_set=Mock(return_value=False))), Thread=Mock(return_value=thread)),
                 signal=Mock(),
                 uvicorn=SimpleNamespace(Server=Mock(return_value=server), Config=Mock()),
@@ -70,6 +71,33 @@ class PublicUrlStartupTests(unittest.TestCase):
         launch.assert_not_called()
         gradio.setup_tunnel.assert_called_once()
         stop.assert_called_once_with(None)
+
+    def test_unavailable_gradio_share_falls_back_to_cloudflare(self):
+        launch, stop, gradio = self.run_launcher(
+            {"GRADIO_SHARE": "true", "ENABLE_CLOUDFLARE_TUNNEL": "false", "GRADIO_SERVER_PORT": "9876"},
+            share_error=ValueError("Could not create share URL"),
+        )
+        gradio.setup_tunnel.assert_called()
+        self.assertEqual(launch.call_args.args, (9876,))
+        stop.assert_called_once_with(launch.return_value)
+
+    def test_share_retries_until_the_relay_answers(self):
+        setup = Mock(side_effect=[ValueError("connection refused"), ValueError("again"), "https://x.gradio.live"])
+        stop = Mock(wait=Mock(return_value=False))
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(start_gradio_share(setup, stop=stop), "https://x.gradio.live")
+        self.assertEqual(setup.call_count, 3)
+        self.assertEqual([call.args for call in stop.wait.call_args_list], [(5,), (15,)])
+        self.assertIn("attempt 2 of 3 failed: again", output.getvalue())
+
+    def test_share_gives_up_after_its_attempts_or_on_shutdown(self):
+        setup = Mock(side_effect=ValueError("refused\nfrpc log"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertIsNone(start_gradio_share(setup, stop=Mock(wait=Mock(return_value=False))))
+            self.assertEqual(setup.call_count, 3)
+            setup.reset_mock()
+            self.assertIsNone(start_gradio_share(setup, stop=Mock(wait=Mock(return_value=True))))
+            self.assertEqual(setup.call_count, 1)
 
     def test_local_only_starts_no_tunnel(self):
         launch, _, gradio = self.run_launcher({"ENABLE_CLOUDFLARE_TUNNEL": "false"})

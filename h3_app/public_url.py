@@ -22,6 +22,27 @@ def public_url_settings() -> tuple[bool, bool]:
     return cloudflare, share
 
 
+def start_gradio_share(setup, *, stop, attempts: int = 3, delays=(5, 15)) -> str | None:
+    """Open a Gradio Share link, retrying while its relay refuses connections.
+
+    The share relay is sometimes briefly unreachable, from Colab especially.
+    Returns None once every attempt fails, or as soon as ``stop`` is set while
+    waiting to retry, so the caller can fall back to another tunnel.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            url = setup()
+        except Exception as exc:
+            reason = (str(exc).strip().splitlines() or [type(exc).__name__])[0]
+            print(f"[h3-ui] Gradio share link attempt {attempt} of {attempts} failed: {reason}", flush=True)
+        else:
+            print(f"[h3-ui] Public Gradio URL: {url}", flush=True)
+            return url
+        if attempt < attempts and stop.wait(delays[min(attempt, len(delays)) - 1]):
+            return None
+    return None
+
+
 def cloudflared_binary(cache_dir: Path) -> str:
     installed = shutil.which("cloudflared")
     if installed:

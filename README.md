@@ -264,6 +264,9 @@ default and prints the ComfyUI proxy URL alongside it. It uses `cloudflared` fro
 `PATH`, or downloads it into `.cache/cloudflared` on Linux and Windows.
 Set `ENABLE_CLOUDFLARE_TUNNEL=false` for local access only. To use Gradio Share,
 set `GRADIO_SHARE=true`; this disables Cloudflare unless explicitly enabled.
+Gradio's share relay sometimes refuses connections, from Colab especially, so the
+launcher tries three times, 5 and 15 seconds apart, then opens a Cloudflare URL
+instead.
 Modal continues to use its own public endpoint.
 
 Cloudflare's [Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/#limitations)
