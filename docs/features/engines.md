@@ -79,6 +79,11 @@ encoder and other controls retain their chosen values when switching presets.
 **Official Turbo (8-step)** uses Kijai's LoRA extraction of the official
 Qwen-Image-2.1-Turbo checkpoint from
 [Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1#turbo).
+
+The optional [Pruna adapters](https://huggingface.co/PrunaAI/P-Q-Image-2.1-Comfy)
+provide 5-, 6- and 8-step generation and editing, with their published Euler
+schedules and CFG 1. They were trained at 1K resolution; larger outputs have not
+been validated here. Their Qwen research license restricts use.
 Only the approximately 913 MB adapter downloads on first use; the selected
 base BF16/INT8 model, text encoder, and VAE are reused. It uses ComfyUI's native
 LoRA loader at strength 1, eight Euler steps, CFG 1, and accelerator Off.
@@ -132,6 +137,13 @@ the six-step runtime, though results and timing depend on the request and
 hardware. The Fast, Normal, and Quality presets retain their existing settings.
 
 ## MOSS-Image
+
+To edit an image, add up to four reference images and describe the desired change.
+Adding references selects Turbo Off, 30 steps and CFG 4; the edit adapter downloads
+on first use. Reference images are scaled to a 512-pixel long edge for conditioning,
+while width and height control the output canvas. Layout boxes and Spectrum are
+not used for editing. SFT is the recommended starting model; multi-reference and
+Base-model quality should be evaluated independently.
 
 The **MOSS-Image** tab runs [MOSS-Image SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT)
 on ComfyUI's native MOSS-Image support. Every file in

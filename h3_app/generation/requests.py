@@ -37,6 +37,7 @@ class MossImageRequest:
     cfg: float = 1.0
     layout: str = ""
     accelerate: bool = True
+    reference_images: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

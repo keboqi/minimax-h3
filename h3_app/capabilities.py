@@ -47,7 +47,7 @@ ENGINES += (
     EngineCapability("flux3", "FLUX 3 Image Klein", ("Image",),
                      "Distilled image generation and editing with up to ten references."),
     EngineCapability("moss_image", "MOSS-Image", ("Image",),
-                     "OpenMOSS 5B text-to-image with text rendering, layout boxes and 4- or 8-step Turbo LoRAs."),
+                     "OpenMOSS 5B image generation and reference editing, with layout boxes and Turbo LoRAs."),
     EngineCapability("fibo2", "Fibo 2.0", ("Image",),
                      "Dev image generation and editing, with 4-step Edit Turbo and ordered reference images."),
     EngineCapability("drama3", "Soundstage (Drama 3)", ("TTS",),

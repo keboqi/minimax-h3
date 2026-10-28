@@ -116,8 +116,8 @@ class ComfyRequirementsTests(unittest.TestCase):
         self.assertIn(f"comfyui-frontend-package=={COMFY_FRONTEND_VERSION}", lines)
         self.assertIn(f"comfy-kitchen=={COMFY_KITCHEN_VERSION}", lines)
         self.assertIn("comfy-aimdo==0.6.0", lines)
-        self.assertIn("comfyui-workflow-templates==0.11.96", lines)
-        self.assertIn("comfyui-embedded-docs==0.5.14", lines)
+        self.assertIn("comfyui-workflow-templates==0.11.97", lines)
+        self.assertIn("comfyui-embedded-docs==0.5.15", lines)
 
 
 @unittest.skipUnless((SOURCES / "comfy-minimax-vae.py").is_file(), "pinned native H3 VAE not downloaded")

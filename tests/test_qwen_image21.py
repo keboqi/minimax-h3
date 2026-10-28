@@ -680,6 +680,38 @@ class QwenImage21WorkflowTests(unittest.TestCase):
         self.assertEqual(spectrum["inputs"]["warmup_steps"], 10)
         self.assertEqual(spectrum["inputs"]["tail_actual_steps"], 8)
 
+    def test_pruna_variants_use_published_comfy_schedules(self):
+        from h3_app.model_service import qwen_image21_model_keys
+        from h3_storage_console import model_presets
+
+        cases = (
+            ("Pruna v0.2 (6-step)", "qwen_image21_pruna_v02_lora", 6,
+             "1.0, 0.961054, 0.918949, 0.769302, 0.545554, 0.222292, 0.0"),
+            ("Pruna v0.2 Upsampled (6-step)", "qwen_image21_pruna_v02_upsampled_lora", 6,
+             "1.0, 0.961054, 0.918949, 0.769302, 0.545554, 0.222292, 0.0"),
+            ("Pruna v0.1 (5-step)", "qwen_image21_pruna_v01_5_lora", 5,
+             "1.0, 0.94, 0.857143, 0.666667, 0.4, 0.0"),
+            ("Pruna v0.1 (8-step)", "qwen_image21_pruna_v01_8_lora", 8,
+             "1.0, 0.933333, 0.857143, 0.769231, 0.666667, 0.545455, 0.4, 0.222222, 0.0"),
+        )
+        for variant, key, steps, expected_sigmas in cases:
+            with self.subTest(variant=variant):
+                self.assertEqual(qwen_turbo_defaults(variant), (steps, 1., "euler", "Off"))
+                self.assertEqual(qwen_image21_model_keys("BF16", "BF16", variant)[-1], key)
+                self.assertIn(key, model_presets()["Qwen Image 2.1 + Turbo LoRAs"])
+                self.assertEqual(MODEL_SPECS[key].repo_id, "PrunaAI/P-Q-Image-2.1-Comfy")
+                for references in ((), ("target.png",)):
+                    graph = self._build(references, bool(references), steps=steps, turbo_variant=variant)
+                    lora = self._by_type(graph, "LoraLoaderModelOnly")[0][1]
+                    self.assertEqual(lora["inputs"]["lora_name"], MODEL_SPECS[key].local_name)
+                    self.assertEqual(lora["inputs"]["strength_model"], 1.0)
+                    sigmas = self._by_type(graph, "ManualSigmas")[0][1]
+                    self.assertEqual(sigmas["inputs"]["sigmas"], expected_sigmas)
+                    self.assertTrue({node["class_type"] for node in graph.values()} <=
+                                    required_qwen_image21_nodes(editing=bool(references), turbo=True, pruna=True))
+                with self.assertRaisesRegex(ValueError, "Euler"):
+                    self._build(steps=steps, turbo_variant=variant, sampler_name="heun")
+
     def test_lightning_uses_native_adapter_and_resolution_aware_schedule_for_generation_and_editing(self):
         from h3_app.model_service import qwen_image21_model_keys
         from h3_storage_console import model_presets

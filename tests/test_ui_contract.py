@@ -176,7 +176,7 @@ class UiContractTests(unittest.TestCase):
             if (c["type"] == "image" and c["props"].get("interactive") is not False)
             or (c["type"] == "file" and c["props"].get("file_types") == ["image"])
         ]
-        self.assertEqual(len(image_inputs), 21)
+        self.assertEqual(len(image_inputs), 22)
         pickers = [
             c for c in self.config["components"]
             if c["type"] == "gallery" and c["props"].get("label") == "Library images"
@@ -200,7 +200,8 @@ class UiContractTests(unittest.TestCase):
             if c["type"] == "dropdown" and c["props"].get("label") == "Set as"
         )
         choices = [choice[0] for choice in dropdown["props"]["choices"]]
-        self.assertEqual(len(choices), 11)
+        self.assertEqual(len(choices), 12)
+        self.assertIn("MOSS-Image · Edit reference images (optional, up to 4)", choices)
         self.assertIn("Fibo 2.0 · Reference images (optional for Dev, up to 4)", choices)
         self.assertIn("FLUX 3 · Reference images (optional, up to 10)", choices)
         self.assertIn("H3 · First frame (auto resolution)", choices)
@@ -636,9 +637,11 @@ class UiContractTests(unittest.TestCase):
             "Reference images (optional for Dev, up to 4)", "Width", "Height", "Edit output size",
             "Seed (-1 random)", "Steps", "CFG"])
         moss = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_moss_image")
-        accelerate = self.components[moss["inputs"][-1]]
+        accelerate = self.components[moss["inputs"][-2]]
         self.assertEqual(accelerate["props"]["label"], "Accelerate with Spectrum")
         self.assertIs(accelerate["props"]["value"], True)
+        self.assertEqual(self.components[moss["inputs"][-1]]["props"]["label"],
+                         "Edit reference images (optional, up to 4)")
 
     def test_all_gemini_prompt_writers_default_to_flash_3_8(self) -> None:
         models = [

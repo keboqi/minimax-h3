@@ -40,6 +40,7 @@ YUE2_REPO = "Comfy-Org/YuE2"
 QWEN_IMAGE21_REPO = "Comfy-Org/Qwen-Image-2.1"
 QWEN_IMAGE21_LIGHTNING_REPO = "lightx2v/Qwen-Image-2.1-Lightning"
 QWEN_IMAGE21_VIGGLE_REPO = "Viggle/Qwen-Image-2.1-viggle-turbo"
+QWEN_IMAGE21_PRUNA_REPO = "PrunaAI/P-Q-Image-2.1-Comfy"
 MOSS_IMAGE_REPO = "Comfy-Org/MOSS-Image"
 MOSS_IMAGE_DMD_REPO = "lodestones/MOSS-Image-SFT-8-steps-dmd"
 MOSS_IMAGE_4STEP_REPO = "akhaliq/MOSS-Image-SFT-4-steps"
@@ -182,6 +183,11 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "Lodestones MOSS-Image SFT 8-step DMD LoRA",
         local_filename="moss_image_sft_dmd_8step_lora.safetensors",
         expected_sha256="4abb14e39c1a59018907581e609f43616ec6810126144ec2b1d2e6f8969628fe",
+    ),
+    "moss_image_edit_lora": ModelSpec(
+        MOSS_IMAGE_REPO, "loras", "loras/moss_image_edit_lora_rank_64_bf16.safetensors",
+        "MOSS-Image Edit LoRA",
+        expected_sha256="17a48b8c605dcffdedb92a2b887d18cf316505be90802717669fb6556098dcdf",
     ),
     # Frozen v2.0 name: the canonical lora.safetensors is overwritten by later releases.
     "moss_image_4step_v2_lora": ModelSpec(
@@ -787,6 +793,26 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         local_filename="qwen_image_2.1_lightning_4step.safetensors",
         expected_sha256="53c69320d4163da51032f90275074028cb098556039c72b45f8dce9f0f9e34a3",
     ),
+    "qwen_image21_pruna_v02_lora": ModelSpec(
+        QWEN_IMAGE21_PRUNA_REPO, "loras", "p_q_image_2.1_6_steps_v0.2_comfyui_bf16.safetensors",
+        "Pruna v0.2 6-step LoRA",
+        expected_sha256="683877d06c234b8bd8b870855b38b914642a41d050593db7661faf57d66596b0",
+    ),
+    "qwen_image21_pruna_v02_upsampled_lora": ModelSpec(
+        QWEN_IMAGE21_PRUNA_REPO, "loras", "p_q_image_2.1_6_steps_upsampled_v0.2_comfyui_bf16.safetensors",
+        "Pruna v0.2 upsampled 6-step LoRA",
+        expected_sha256="b10e6231bebc4852d921f168366fdb0f495ff867bcabd592a0626ca11dba7561",
+    ),
+    "qwen_image21_pruna_v01_5_lora": ModelSpec(
+        QWEN_IMAGE21_PRUNA_REPO, "loras", "p_q_image_2.1_5_steps_v0.1_comfyui_bf16.safetensors",
+        "Pruna v0.1 5-step LoRA",
+        expected_sha256="1e6bf020221d890bfd838f99f1136a4cacc33a07a14752d583ed99e7c35673c6",
+    ),
+    "qwen_image21_pruna_v01_8_lora": ModelSpec(
+        QWEN_IMAGE21_PRUNA_REPO, "loras", "p_q_image_2.1_8_steps_v0.1_comfyui_bf16.safetensors",
+        "Pruna v0.1 8-step LoRA",
+        expected_sha256="0c9ff10dc5f8007ed53db3e9084f7082b60d5c82d4e2eb74326048e0d55740eb",
+    ),
     "qwen_image21_viggle_v02_lora": ModelSpec(
         QWEN_IMAGE21_VIGGLE_REPO,
         "loras",
@@ -930,10 +956,17 @@ DEFAULT_QWEN_IMAGE21_TEXT_ENCODER = "BF16"
 QWEN_IMAGE21_OFFICIAL_TURBO = "Official Turbo (8-step)"
 QWEN_IMAGE21_LIGHTNING = "LightX2V Lightning (4-step)"
 QWEN_IMAGE21_LIGHTNING_6STEP = "LightX2V Lightning (6-step, community)"
+QWEN_IMAGE21_PRUNA_MODES = {
+    "Pruna v0.2 (6-step)": ("qwen_image21_pruna_v02_lora", 6),
+    "Pruna v0.2 Upsampled (6-step)": ("qwen_image21_pruna_v02_upsampled_lora", 6),
+    "Pruna v0.1 (5-step)": ("qwen_image21_pruna_v01_5_lora", 5),
+    "Pruna v0.1 (8-step)": ("qwen_image21_pruna_v01_8_lora", 8),
+}
 QWEN_IMAGE21_TURBO_MODES = {
     QWEN_IMAGE21_OFFICIAL_TURBO: ("qwen_image21_official_turbo_lora", 8),
     QWEN_IMAGE21_LIGHTNING: ("qwen_image21_lightning_lora", 4),
     QWEN_IMAGE21_LIGHTNING_6STEP: ("qwen_image21_lightning_lora", 6),
+    **QWEN_IMAGE21_PRUNA_MODES,
     "Viggle Turbo v0.2.1 (6-step)": ("qwen_image21_viggle_v02_lora", 6),
     "Viggle Turbo v0.3 (6-step)": ("qwen_image21_viggle_v03_lora", 6),
     "Viggle Turbo v0.3 (9-step)": ("qwen_image21_viggle_v03_lora", 9),
@@ -949,6 +982,10 @@ QWEN_IMAGE21_MODEL_KEYS = (
     "qwen_image21_vae",
     "qwen_image21_official_turbo_lora",
     "qwen_image21_lightning_lora",
+    "qwen_image21_pruna_v02_lora",
+    "qwen_image21_pruna_v02_upsampled_lora",
+    "qwen_image21_pruna_v01_5_lora",
+    "qwen_image21_pruna_v01_8_lora",
     "qwen_image21_viggle_v02_lora",
     "qwen_image21_viggle_v03_lora",
 )
@@ -996,6 +1033,7 @@ MOSS_IMAGE_MODEL_KEYS = (
     *MOSS_IMAGE_TEXT_ENCODER_CHOICES.values(),
     *MOSS_IMAGE_VAE_CHOICES.values(),
     *dict.fromkeys(key for key, _steps in MOSS_IMAGE_TURBO_MODES.values()),
+    "moss_image_edit_lora",
 )
 FIBO2_PRECISION_BF16 = "BF16"
 FIBO2_PRECISION_INT8 = "INT8 ConvRot (lower VRAM)"
@@ -1929,6 +1967,10 @@ def selftest() -> None:
         "qwen_image21_vae",
         "qwen_image21_official_turbo_lora",
         "qwen_image21_lightning_lora",
+        "qwen_image21_pruna_v02_lora",
+        "qwen_image21_pruna_v02_upsampled_lora",
+        "qwen_image21_pruna_v01_5_lora",
+        "qwen_image21_pruna_v01_8_lora",
         "qwen_image21_viggle_v02_lora",
         "qwen_image21_viggle_v03_lora",
     }

@@ -1,5 +1,39 @@
 # Upstream status
 
+## Targeted recheck — 2026-10-28
+
+This recheck focused on the new Core release and model/LoRA candidates, not a
+fresh comparison of every pinned repository or Python package.
+
+- **ComfyUI v0.43.0** is now pinned and includes native Fibo 2.0, its negative-prompt fix,
+  MOSS edit support and the MOSS memory change. Frontend is paired at 1.57.4.
+  Validate graph execution and GPU workflows. [Release notes](https://github.com/Comfy-Org/ComfyUI/releases/tag/v0.43.0).
+- **PTD RefAsymOPD LoRAs** are promising experimental Ref2VA accelerators:
+  the authors offer 6- and 8-step weights and claim improved quality over plain
+  PTD. They use per-step adapters and PDD heads, and require their custom nodes
+  plus ComfyUI-PTD; they are not a drop-in ordinary H3 LoRA. Evaluate on the
+  official H3 base and benchmark video/audio quality and memory before considering
+  compatibility with Singularity or a default change. [Model card](https://huggingface.co/taobao-content-ai/MiniMax-H3-PTD-RefAsymOPD-LoRAs).
+- **MOSS edit and color-depth adapters** offer new functionality rather than
+  checkpoint upgrades. Edit is integrated with Core's native reference conditioning;
+  validate its output on a GPU. Color-depth still needs a conditioning graph and UI.
+  [Edit model](https://huggingface.co/chinoll/Moss-Image-Edit),
+  [color-depth model](https://huggingface.co/darask0/MOSS-Image-color-depth-control).
+- **Singularity V2** remains an opt-in candidate. Its author reports stronger
+  prompt adherence and an audio-reference fix; compare against v1.3 on our
+  prompts and reference audio before changing the default. [Model card](https://huggingface.co/WarmBloodAban/Minimax-h3_Singularity).
+- **Fibo turbo LoRA** still has no documented settings in the Comfy-Org model
+  card; keep waiting rather than assuming settings from the separate fused turbo
+  checkpoint. [Files](https://huggingface.co/Comfy-Org/Fibo-2.0/tree/main).
+- **Viggle v0.3** is already present in the working tree. Upstream describes it
+  as a different quality tradeoff from v0.2.1, not a strict upgrade; its 9-step
+  hybrid requires seven LoRA steps followed by two base steps. The local graph
+  implements a split, but inference parity and quality still need GPU validation.
+  [Model card](https://huggingface.co/Viggle/Qwen-Image-2.1-viggle-turbo).
+
+The Core and frontend pins were updated after this recheck. No model defaults
+were changed, and no GPU inference or full test suite was run.
+
 Open upstream items as of the 2026-10-25 component audit. Pins live in
 `h3_sources.py` and `h3_requirements.py`. Earlier dated audits are in git
 history (`git log --diff-filter=D -- 'docs/upstream-audit-*'`). Update this
@@ -89,13 +123,13 @@ requirements. No full test suite, package installation, or GPU inference was run
 Local evidence is in `.cache/component-audit-2026-10-25/`; model candidates below
 are carried forward from the previous audit, not a fresh model-repository review.
 
-## Waiting for an upstream release
+## Previously waiting for an upstream release
 
 - **ComfyUI** is pinned to official master `bc5f880d` (2026-10-23) because
   Fibo 2.0 support
   ([Comfy-Org/ComfyUI#17240](https://github.com/Comfy-Org/ComfyUI/pull/17240))
   is not in a release yet. The v0.42.x tags (through v0.42.5) are cut from a
-  release branch without it. Pin the first release that includes the merge.
+  release branch without it. v0.43.0 now includes the merge; see the recheck above.
 
 ## Do not bump without graph changes
 

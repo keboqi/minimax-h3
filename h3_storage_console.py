@@ -220,6 +220,8 @@ def model_presets() -> dict[str, tuple[str, ...]]:
         "Qwen Image 2.1 + Turbo LoRAs": (
             *qwen, "qwen_image21_official_turbo_lora",
             "qwen_image21_lightning_lora",
+            "qwen_image21_pruna_v02_lora", "qwen_image21_pruna_v02_upsampled_lora",
+            "qwen_image21_pruna_v01_5_lora", "qwen_image21_pruna_v01_8_lora",
             "qwen_image21_viggle_v02_lora", "qwen_image21_viggle_v03_lora",
         ),
         "LTX 2.5 defaults": ltx,
@@ -230,6 +232,7 @@ def model_presets() -> dict[str, tuple[str, ...]]:
         "YuE2 defaults": (YUE2_MODEL_CHOICES[DEFAULT_YUE2_MODEL],),
         "FLUX 3 defaults": ("flux3_nvfp4", "flux3_text_encoder", "flux3_vae", "flux3_upsampler"),
         "MOSS-Image defaults": moss,
+        "MOSS-Image + editing": (*moss, "moss_image_edit_lora"),
         "MOSS-Image + Turbo LoRAs": (
             *moss, *dict.fromkeys(key for key, _steps in MOSS_IMAGE_TURBO_MODES.values()),
         ),

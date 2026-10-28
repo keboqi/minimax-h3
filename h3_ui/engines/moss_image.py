@@ -1,12 +1,13 @@
 """MOSS-Image in Create: view, presets, bindings and handlers."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 import gradio as gr
 
 from h3_app.prompt_writers import moss_image as moss_image_writer
 from h3_app.catalog import DEFAULT_OPENAI_PROMPT_MODEL, DEFAULT_MOSS_IMAGE_PRESET, MOSS_IMAGE_PRESETS
-from h3_app.generation.moss_image import generate_moss_image
+from h3_app.generation.moss_image import generate_moss_image, validate_moss_image
 from h3_app.generation.requests import MossImageRequest
 from h3_app.workflows.moss_image_prompt import MOSS_IMAGE_REWRITE_MODES, is_layout_prompt
 from h3_models import (
@@ -15,6 +16,7 @@ from h3_models import (
 )
 
 from ..job_bindings import bind_prompt_action
+from ..image_library import build_image_file_input
 from ..prompt_writer_controls import RemotePromptWriterControls
 from .controls import (
     QUIET, bind_generation, bind_resolution_presets, generation_actions, prompt_writer, resolution_presets,
@@ -57,6 +59,7 @@ class MossImageView:
     resolution_small: gr.Dropdown
     resolution_large: gr.Dropdown
     accelerate: gr.Checkbox
+    reference_images: gr.File
 
 
 def moss_image_preset_values(preset):
@@ -84,12 +87,19 @@ class MossImageHandlers:
         self.deps = deps
 
     def generate_moss_image(self, prompt, preset, turbo_variant, model_choice, text_encoder_choice, vae_choice,
-                            width, height, seed, steps, cfg, layout="", accelerate=True,
+                            width, height, seed, steps, cfg, layout="", accelerate=True, reference_images=None,
                             progress=gr.Progress(track_tqdm=False)):
+        paths = reference_images or []
+        if isinstance(paths, (str, Path)):
+            paths = [paths]
         request = MossImageRequest(
             prompt, preset, turbo_variant, model_choice, text_encoder_choice, vae_choice, width, height, seed,
-            steps, cfg, layout or "", accelerate,
+            steps, cfg, layout or "", accelerate, tuple(str(path) for path in paths),
         )
+        validate_moss_image(request)
+        request = replace(request, reference_images=tuple(
+            self.deps.stage_file(path, "moss_image_references", reuse=True) for path in request.reference_images
+        ))
         yield from generate_moss_image(request, self.deps.generation_services(), self.deps.runtime_config(),
                                        progress=progress)
 
@@ -110,12 +120,14 @@ def build_moss_image_view(root):
     turbo, steps_default, cfg_default, model_default, vae_default = MOSS_IMAGE_PRESETS[DEFAULT_MOSS_IMAGE_PRESET]
     with root:
         gr.Markdown("## MOSS-Image\nOpenMOSS MOSS-Image SFT and Base text-to-image with strong text rendering and "
-                    "optional layout boxes. Weights download on first use from "
+                    "optional layout boxes or reference-image editing. Weights download on first use from "
                     "[Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image).")
         with gr.Row(equal_height=False, elem_classes=["h3-generator-shell"]):
             with gr.Column(scale=3, min_width=320, elem_classes=["h3-composer"]):
                 prompt = gr.Textbox(label="Image prompt", lines=7,
                     placeholder="Describe the scene, including any text to render in quotes.")
+                references = build_image_file_input(label="Edit reference images (optional, up to 4)",
+                                                    file_count="multiple", file_types=["image"], type="filepath")
                 with gr.Accordion("Rewrite with Gemini or an OpenAI-compatible model", open=False):
                     gr.Markdown("Follows OpenMOSS's official prompt-enhancer skill. The writer returns a detailed "
                                 "caption or a Layout with boxes for the width and height below; keep that size "
@@ -164,11 +176,15 @@ def build_moss_image_view(root):
                 run, stop, status = generation_actions("Generate image")
     return MossImageView(prompt, preset, turbo_variant, model, text_encoder, vae, width, height, seed, steps, cfg,
                          layout, output, run, stop, status, rewrite_mode, writer, enhance, enhance_status,
-                         resolution_small, resolution_large, accelerate)
+                         resolution_small, resolution_large, accelerate, references)
 
 
 def bind_moss_image(view, deps: EngineDeps) -> MossImageHandlers:
     handlers = MossImageHandlers(deps)
+    view.reference_images.change(lambda paths: ("Off", 30, 4.0, False) if paths else
+                                 tuple(gr.skip() for _ in range(4)), inputs=view.reference_images,
+                                 outputs=[view.turbo_variant, view.steps, view.cfg, view.accelerate],
+                                 queue=False, api_name=False)
     bind_resolution_presets(view)
     bind_prompt_action(
         view.enhance.click, handlers.enhance_moss_image_prompt,
@@ -187,9 +203,10 @@ def bind_moss_image(view, deps: EngineDeps) -> MossImageHandlers:
     bind_generation(view, "moss_image", handlers.generate_moss_image, deps.interrupt, [
         view.prompt, view.preset, view.turbo_variant, view.model, view.text_encoder, view.vae, view.width,
         view.height,
-        view.seed, view.steps, view.cfg, view.layout, view.accelerate,
+        view.seed, view.steps, view.cfg, view.layout, view.accelerate, view.reference_images,
     ])
     return handlers
 
 
-FEATURE = EngineFeature("moss_image", lambda root, deps: build_moss_image_view(root), bind_moss_image)
+FEATURE = EngineFeature("moss_image", lambda root, deps: build_moss_image_view(root), bind_moss_image,
+                        library_label="MOSS-Image", library_inputs=lambda view: (view.reference_images,))

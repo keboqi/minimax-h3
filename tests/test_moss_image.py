@@ -41,6 +41,23 @@ def nodes(graph, class_type):
 
 
 class MossImagePresetTests(unittest.TestCase):
+    def test_edit_uses_reference_conditioning_and_separate_lora(self):
+        graph = graph_for("Balanced", reference_images=("a.png", "b.png"), steps=30, cfg=4)
+        lora, = nodes(graph, "LoraLoaderModelOnly")
+        self.assertEqual(lora["lora_name"], "moss_image_edit_lora_rank_64_bf16.safetensors")
+        positive, negative = nodes(graph, "TextEncodeMOSSImageEdit")
+        self.assertEqual(positive["edit_format"], "Moss-Image-Edit")
+        self.assertEqual(negative["prompt"], "")
+        self.assertEqual(positive["images.image_1"], negative["images.image_1"])
+        self.assertEqual(positive["images.image_2"], negative["images.image_2"])
+        self.assertEqual(len(nodes(graph, "H3MossEditReference")), 2)
+        self.assertFalse(nodes(graph, "SpectrumMOSSImageAdaptive"))
+        self.assertEqual(nodes(graph, "KSampler")[0]["scheduler"], "simple")
+        with self.assertRaisesRegex(H3Error, "Turbo Off"):
+            validate_moss_image(MossImageRequest("edit", reference_images=("a.png",)))
+        with self.assertRaisesRegex(H3Error, "four"):
+            validate_moss_image(MossImageRequest("edit", turbo_variant="Off", reference_images=("a",) * 5))
+
     def test_spectrum_defaults_on_after_guidance_and_can_be_disabled(self):
         graph = graph_for("Quality")
         spectrum, = nodes(graph, "SpectrumMOSSImageAdaptive")

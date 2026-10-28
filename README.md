@@ -116,8 +116,8 @@ backends; GPU inference and deployment are validated separately.
 - Audio results decode the native H3 stereo soundtrack without creating a video
 - A dedicated Qwen Image 2.1 tab for native text-to-image generation and
   multi-reference image editing
-- A MOSS-Image tab for OpenMOSS MOSS-Image SFT and Base text-to-image generation with
-  Fast (8-step Turbo LoRA), Balanced and Quality presets, plus default-on Spectrum acceleration
+- A MOSS-Image tab for OpenMOSS SFT and Base text-to-image generation and reference-image
+  editing, with Fast, Balanced and Quality presets and optional Spectrum acceleration
 - Fibo 2.0 Dev generation/editing and Edit Turbo, with ordered reference images
 - A dedicated LTX-2.5 text/image-to-video tab with synchronized audio
 - A dedicated MiniMax Music 3 tab for caption-and-lyrics song generation
@@ -398,18 +398,17 @@ non-OpenAI endpoint) in that Modal Secret.
 The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
-The deployment pins ComfyUI at immutable official-master revision
-`bc5f880dbdd43e426077f42ccec53bb577ffee9f`, which includes kijai's merged native Fibo 2.0
+The deployment pins ComfyUI v0.43.0 at immutable revision
+`426f5eea52a7ece1dd599fff4cb6cd1f352ddd24`, which includes kijai's merged native Fibo 2.0
 support ([Comfy-Org/ComfyUI#17240](https://github.com/Comfy-Org/ComfyUI/pull/17240)).
-It is v0.42.1 plus development commits: MOSS RoPE/color-depth controls, H3 PDD LoRA fixes,
+It includes MOSS RoPE/color-depth and edit controls, H3 PDD LoRA fixes,
 the Fibo model, text encoder and node, a top-p nucleus fix for native text generation, a
 Pad Image node and an opt-in agent host (off unless `--enable-agent`). It also encodes
 structured Fibo 2.0 negatives as written instead of cleaning them like captions
 ([Comfy-Org/ComfyUI#17285](https://github.com/Comfy-Org/ComfyUI/pull/17285)), so our
 text-to-image negative applies as intended, and adds aimdo 0.6.0 dynamic-VRAM KV caches for
-Qwen Image 2.1. Its requirements: frontend package 1.57.1, Comfy Kitchen 0.2.40, upstream
-aimdo 0.6.0, workflow templates 0.11.96 and embedded docs 0.5.14. Return to an official
-release once one includes Fibo 2.0; the v0.42.x tags through v0.42.5 do not.
+Qwen Image 2.1. Its requirements: frontend package 1.57.4, Comfy Kitchen 0.2.40, upstream
+aimdo 0.6.0, workflow templates 0.11.97 and embedded docs 0.5.15.
 v0.42 adds native MOSS-Image, Qwen 3.x decode speedups, TextGenerate cleanup,
 baked-in H3 PDD heads and synchronized CUDA-graph teardown.
 v0.40.0 fixed Qwen Image 2.1 caching under low VRAM and updates shared

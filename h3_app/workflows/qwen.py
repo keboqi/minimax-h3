@@ -17,6 +17,7 @@ from h3_models import (
     QWEN_IMAGE21_LIGHTNING_6STEP,
     QWEN_IMAGE21_MODEL_CHOICES,
     QWEN_IMAGE21_OFFICIAL_TURBO,
+    QWEN_IMAGE21_PRUNA_MODES,
     QWEN_IMAGE21_TEXT_ENCODER_CHOICES,
     QWEN_IMAGE21_TURBO_MODES,
     QWEN_IMAGE21_PROMPT_ENHANCERS,
@@ -40,6 +41,13 @@ QWEN_IMAGE21_LIGHTNING_6STEP_SIGMAS = (
 # The UI exposes the strength so a better value can be found; it applies to both step counts.
 QWEN_IMAGE21_LIGHTNING_STRENGTH = 0.5
 
+# https://huggingface.co/PrunaAI/P-Q-Image-2.1-Comfy, published final sigmas.
+PRUNA_SIGMAS = {
+    5: (1.0, 0.94, 0.857143, 0.666667, 0.4, 0.0),
+    6: (1.0, 0.961054, 0.918949, 0.769302, 0.545554, 0.222292, 0.0),
+    8: (1.0, 0.933333, 0.857143, 0.769231, 0.666667, 0.545455, 0.4, 0.222222, 0.0),
+}
+
 
 def qwen_prompt_enhancer_key(choice, *, editing):
     if choice == "Off":
@@ -60,6 +68,7 @@ def required_qwen_image21_nodes(
     official_turbo: bool = False,
     lightning: bool = False,
     lightning_6step: bool = False,
+    pruna: bool = False,
     scheduler: str = QWEN_IMAGE21_DYNAMIC_SCHEDULER,
     prompt_enhancer: str = "Off",
 ) -> set[str]:
@@ -93,7 +102,7 @@ def required_qwen_image21_nodes(
             nodes.add("H3Qwen21Sigmas")
     if viggle:
         nodes.add("H3Qwen21ViggleLora")
-    if official_turbo:
+    if official_turbo or pruna:
         nodes |= {"LoraLoaderModelOnly", "ManualSigmas"}
     if lightning:
         nodes |= {
@@ -152,7 +161,8 @@ def build_qwen_image21_graph(
     official_turbo = turbo_variant == QWEN_IMAGE21_OFFICIAL_TURBO
     lightning_6step = turbo_variant == QWEN_IMAGE21_LIGHTNING_6STEP
     lightning = turbo_variant == QWEN_IMAGE21_LIGHTNING or lightning_6step
-    viggle = turbo and not (official_turbo or lightning)
+    pruna = turbo_variant in QWEN_IMAGE21_PRUNA_MODES
+    viggle = turbo and not (official_turbo or lightning or pruna)
     nine_step = viggle and QWEN_IMAGE21_TURBO_MODES[turbo_variant][1] == 9
     if lightning and not 0.0 < float(lightning_strength) <= 1.5:
         raise ValueError("Lightning LoRA strength must be greater than 0 and at most 1.5.")
@@ -162,6 +172,8 @@ def build_qwen_image21_graph(
             raise ValueError(f"{turbo_variant} requires {expected_steps} steps and CFG 1.")
         if nine_step and (sampler_name != "euler" or accelerator.lower() != "off"):
             raise ValueError("Viggle nine-step mode requires Euler and accelerator Off.")
+        if pruna and (sampler_name != "euler" or accelerator.lower() != "off"):
+            raise ValueError("Pruna requires Euler and accelerator Off.")
         if official_turbo and (sampler_name != "euler" or accelerator.lower() != "off"):
             raise ValueError("Official Turbo requires Euler and accelerator Off.")
         if lightning and (sampler_name != "euler" or accelerator.lower() != "off"):
@@ -248,7 +260,7 @@ def build_qwen_image21_graph(
             lora_name=MODEL_SPECS[lora_key].local_name,
         )
         sampled_model = Graph.out(viggle_model)
-    elif official_turbo or lightning:
+    elif official_turbo or lightning or pruna:
         lora_model = graph.add(
             "LoraLoaderModelOnly",
             model=sampled_model,
@@ -281,7 +293,11 @@ def build_qwen_image21_graph(
             cfg=float(cfg),
         )
         sampler = graph.add("KSamplerSelect", sampler_name=str(sampler_name))
-        if official_turbo:
+        if pruna:
+            sigmas = graph.add(
+                "ManualSigmas", sigmas=", ".join(map(str, PRUNA_SIGMAS[expected_steps])),
+            )
+        elif official_turbo:
             sigmas = graph.add(
                 "ManualSigmas",
                 sigmas=", ".join(map(str, QWEN_IMAGE21_OFFICIAL_TURBO_SIGMAS)),

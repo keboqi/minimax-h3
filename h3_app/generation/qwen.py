@@ -17,6 +17,7 @@ from h3_models import (
     QWEN_IMAGE21_LIGHTNING,
     QWEN_IMAGE21_LIGHTNING_6STEP,
     QWEN_IMAGE21_OFFICIAL_TURBO,
+    QWEN_IMAGE21_PRUNA_MODES,
     QWEN_IMAGE21_TURBO_MODES,
 )
 
@@ -163,7 +164,8 @@ def generate_qwen_image21(
         official_turbo = request.turbo_variant == QWEN_IMAGE21_OFFICIAL_TURBO
         lightning_6step = request.turbo_variant == QWEN_IMAGE21_LIGHTNING_6STEP
         lightning = request.turbo_variant == QWEN_IMAGE21_LIGHTNING or lightning_6step
-        viggle = turbo and not (official_turbo or lightning)
+        pruna = request.turbo_variant in QWEN_IMAGE21_PRUNA_MODES
+        viggle = turbo and not (official_turbo or lightning or pruna)
         reference_limit = 3 if viggle else 10
         separate_inputs = editing and bool(request.batch_edit_inputs)
         if not separate_inputs and len(references) > reference_limit:
@@ -206,6 +208,8 @@ def generate_qwen_image21(
             raise H3Error("CFG must be between 0 and 20.")
         if turbo and cfg != 1.0:
             raise H3Error(f"{request.turbo_variant} requires CFG 1.")
+        if pruna and request.sampler_name != "euler":
+            raise H3Error("Pruna requires Euler sampling.")
         if official_turbo and request.sampler_name != "euler":
             raise H3Error("Official Turbo requires Euler sampling.")
         if lightning and request.sampler_name != "euler":
@@ -258,6 +262,7 @@ def generate_qwen_image21(
                 use_spectrum=accelerator.lower() != "off",
                 turbo=turbo,
                 viggle=viggle,
+                pruna=pruna,
                 nine_step=nine_step,
                 official_turbo=official_turbo,
                 lightning=lightning,

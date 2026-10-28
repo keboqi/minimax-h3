@@ -5,7 +5,7 @@ from h3_app.progress import no_progress
 from h3_app.workflows.flux3_layout import parse_flux3_layout
 from h3_app.workflows.moss_image import (
     MOSS_SPECTRUM_NODE, build_moss_image_graph, moss_image_model_keys, moss_spectrum_enabled,
-    validate_moss_image_sampling,
+    validate_moss_edit, validate_moss_image_sampling,
 )
 from h3_app.workflows.moss_image_prompt import is_layout_prompt
 
@@ -25,6 +25,7 @@ def validate_moss_image(request):
     whole_number(request.steps, 1, 100, "Steps")
     check_cfg(request.cfg, 1, 10, "MOSS-Image CFG must be between 1 and 10.")
     try:
+        validate_moss_edit(request.reference_images, request.turbo_variant, request.layout, request.prompt)
         moss_image_model_keys(request.model_choice, request.text_encoder_choice, request.turbo_variant,
                               request.vae_choice)
         validate_moss_image_sampling(request.turbo_variant, request.steps, request.cfg,
@@ -38,7 +39,7 @@ def validate_moss_image(request):
 
 def _prepare(request, values, info, runtime):
     # Installs that predate the Spectrum-MOSS pin keep the original graph.
-    wanted = moss_spectrum_enabled(request.accelerate, request.turbo_variant, request.steps)
+    wanted = not request.reference_images and moss_spectrum_enabled(request.accelerate, request.turbo_variant, request.steps)
     spectrum = wanted and MOSS_SPECTRUM_NODE in info
     if wanted and not spectrum:
         yield GenerationUpdate(None, "Spectrum-MOSS is not installed; using the original sampler. "
@@ -49,8 +50,11 @@ def _prepare(request, values, info, runtime):
     )
     keys = moss_image_model_keys(request.model_choice, request.text_encoder_choice,
                                  request.turbo_variant, request.vae_choice)
+    if request.reference_images:
+        keys += ("moss_image_edit_lora",)
     return PreparedImage(graph, keys, {
         "layout_box_count": len(parse_flux3_layout(request.layout)),
+        "reference_count": len(request.reference_images),
         "spectrum_applied": spectrum,
         "scheduler": "sgm_uniform" if spectrum else "simple",
     }, size_note(values))

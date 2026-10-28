@@ -43,11 +43,9 @@ VIDEO_DOWNLOAD_REQUIREMENTS = ("yt-dlp[default]>=2026.8.19", "deno>=2.5")
 H3_AUDIO_T8_REPO = "https://github.com/T8mars/comfyui-minimax-h3-audio-T8.git"
 H3_AUDIO_T8_REF = "6063fafbd9c3b85c5ff40aef435ae11b2844e558"
 
-# ComfyUI master after native Fibo 2.0 merged (Comfy-Org/ComfyUI#17240), with the Fibo
-# structured-negative fix (#17285), aimdo 0.6.0 Qwen Image 2.1 KV caches and frontend 1.57.1.
-# Return to an official release once one includes Fibo 2.0.
+# Official release with native Fibo 2.0, MOSS edit and Qwen Image 2.1 KV caches.
 # Keep this source paired with Kitchen 0.2.40 and Drama's new/old cache compatibility.
-COMFY_REF = "bc5f880dbdd43e426077f42ccec53bb577ffee9f"
+COMFY_REF = "426f5eea52a7ece1dd599fff4cb6cd1f352ddd24"  # v0.43.0
 # Drama 3 speech runs on SGLang-Omni; this node pack supplies the Qwen3-ASR transcription nodes.
 DRAMA3_REPO = "https://github.com/PedroMarinhoDev/ComfyUI-Drama3.git"
 # CUDA expert kernels/graphs, plus compatibility with Core's new Qwen cache API.
@@ -67,7 +65,7 @@ DRAMA3_HF_REVISION = "e0a9218aa48888270f06ef1ed9ea67622c0e17d2"
 DRAMA3_INT4_HF_REPO = "fishaudio/drama-3-int4"
 DRAMA3_INT4_HF_REVISION = "a6f588691a13b6607cb09f9800556487ab7aa0fe"
 COMFY_KITCHEN_VERSION = "0.2.40"
-COMFY_FRONTEND_VERSION = "1.57.1"
+COMFY_FRONTEND_VERSION = "1.57.4"
 WSPROTO_VERSION = "1.2.0"
 # Drama 3 speaker vocal effects; without it they fall back to cruder scipy versions.
 PEDALBOARD_VERSION = "0.9.19"
@@ -502,10 +500,10 @@ def selftest() -> None:
     assert LTX_HDR_REQUIREMENTS == ("colour-science==0.4.6", "openimageio==3.0.12.0")
     assert KERNELS_VERSION == "0.16.0"
     assert TRANSFORMERS_REQUIREMENT == "transformers>=4.57.1,<5.18"
-    assert COMFY_REF == "bc5f880dbdd43e426077f42ccec53bb577ffee9f"
+    assert COMFY_REF == "426f5eea52a7ece1dd599fff4cb6cd1f352ddd24"
     assert DRAMA3_REF == "67a733a96890637dc27b1914974ad00c569405fb"
     assert COMFY_KITCHEN_VERSION == "0.2.40"
-    assert COMFY_FRONTEND_VERSION == "1.57.1"
+    assert COMFY_FRONTEND_VERSION == "1.57.4"
     assert WSPROTO_VERSION == "1.2.0"
     assert len(LTX25_WORKFLOW_FILENAMES) == 12
     with tempfile.TemporaryDirectory() as temp:
