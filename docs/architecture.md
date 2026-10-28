@@ -44,7 +44,7 @@ The UI describes the **next run**. Each completed output has an independent **se
 | h3_app/workers/ | Isolated uv environments, setup steps with cancellation, and resident JSON-line worker processes |
 | prompts/ | Writer system prompts for each engine, read through h3_app/config.py |
 | h3_app/song_brief.py, h3_ui/song_controls.py, song_takes.py | Song planning and checks, Song-specific controls and the session take history for Music 3 and YuE2 |
-| h3_ui/step_cards.py | The guided step strip, intro and card headings shared by Song and Dub & Translate |
+| h3_ui/step_cards.py | The guided step strip shared by Soundstage and Dub & Translate, and the intro and card headings Song uses too |
 | h3_app/drama3/ | Soundstage cast, script lint, speaker and sound libraries, voice design, and Drama 3 on SGLang-Omni in serving/ (environment, planner, takes, mixing, checkpointed sleep). serving/speech.py is the line-speaking interface other features use |
 | h3_app/audio_tools.py, audio_tools_worker.py, voice_design.py, stable_audio.py | The isolated resident worker for Qwen VoiceDesign and Stable Audio, and its clients |
 | h3_app/server.py | Configured FastAPI routes and HTTP/WebSocket proxy |

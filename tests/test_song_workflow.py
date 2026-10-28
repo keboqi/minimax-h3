@@ -424,44 +424,77 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class SongStepTests(unittest.TestCase):
-    """The four-step Song layout: every step mounted, browser-side navigation."""
+class GuidedStepTests(unittest.TestCase):
+    """The step strip Soundstage and Dub share: every step mounted, browser-side navigation."""
 
     def test_steps_stay_mounted_and_buttons_open_the_right_step(self) -> None:
         import gradio as gr
 
-        from h3_ui.song_controls import DRAFT, LISTEN
         from h3_ui.step_cards import step_strip
 
         with gr.Blocks() as demo:
             steps = step_strip("h3-test-steps")
             with steps.tabs:
-                for index, label in enumerate(("Idea", "Lyrics", "Generate", "Listen & refine")):
+                for index, label in enumerate(("Source", "Lines", "Dub")):
                     with steps.step(index, label):
                         gr.Textbox()
             with steps.tabs:
-                with steps.step(LISTEN + 1, "Spare"):
-                    steps.button("Revise", DRAFT, press="h3-test-write")
+                with steps.step(3, "Spare"):
+                    steps.button("Revise", 1, press="h3-test-write")
         config = demo.get_config_file()
         tabs = [c["props"] for c in config["components"] if c["type"] == "tabitem"]
         self.assertTrue(all(props["render_children"] for props in tabs))
         script = next(d["js"] for d in config["dependencies"] if d.get("js"))
         self.assertIn("getElementById('h3-test-steps')", script)
-        self.assertIn(f"[{DRAFT}]", script)
+        self.assertIn("[1]", script)
         self.assertIn("getElementById('h3-test-write')?.click()", script)
 
-    def test_recap_escapes_the_idea_and_names_the_voice(self) -> None:
-        from h3_ui.song_controls import render_recap
 
-        html = render_recap(engine="YuE2", sound_label="Style", description="<b>synth</b> pop",
-                            lyrics=SONG, max_seconds=120, vocals="Duet", language="English")
-        self.assertIn("&lt;b&gt;synth&lt;/b&gt; pop", html)
-        self.assertIn("Duet · English", html)
-        self.assertIn("h3-song-timeline", html)
-        empty = render_recap(engine="MiniMax Music 3", sound_label="Sound", description="",
-                             lyrics="", max_seconds=60, vocals=song_brief.INSTRUMENTAL)
-        self.assertIn("Not described yet", empty)
-        self.assertIn("Instrumental", empty)
+class SongStudioTests(unittest.TestCase):
+    """The one-screen Song studio: three columns, browser-only helpers."""
+
+    def test_section_buttons_add_tags_and_repeat_the_last_chorus(self) -> None:
+        import gradio as gr
+
+        from h3_ui.song_controls import SECTION_INSERTS, section_inserts
+
+        with gr.Blocks() as demo:
+            section_inserts(gr.Textbox())
+        scripts = [d["js"] for d in demo.get_config_file()["dependencies"] if d.get("js")]
+        self.assertEqual(len(scripts), len(SECTION_INSERTS) + 1)
+        for tag, script in zip(SECTION_INSERTS, scripts):
+            self.assertIn(f"'[{tag}]\\n'", script)
+            # Python escapes must not reach the browser as raw newlines inside a JS string.
+            self.assertNotIn("\n", script)
+        self.assertIn(".pop() || '[Chorus]\\n'", scripts[-1])
+
+    def test_both_song_views_are_one_studio_of_three_columns(self) -> None:
+        import gradio as gr
+
+        from h3_ui.engines.music.view import build_music_view
+        from h3_ui.engines.yue2.view import build_yue2_view
+
+        common = dict(prompt_models=["gemini-3.8-flash"], default_prompt_model="gemini-3.8-flash",
+                      model_choices=["model"])
+        with gr.Blocks() as demo:
+            music = build_music_view(gr.Group(), defaults=dict(
+                duration=120, model="model", seed=-1, tiled_decode=True, steps=30, cfg=1.0, ar_cfg=1.0,
+                top_k=50), **common)
+            build_yue2_view(gr.Group(), defaults=dict(
+                duration=120, model="model", seed=-1, tiled_decode=True, steps=30, cfg=1.0, mode="full",
+                temperature=1.0, top_p=0.9, top_k=50, repetition_penalty=1.1, max_abc_tokens=2000,
+                abc_temperature=1.0, abc_top_p=0.9, abc_top_k=50, abc_repetition_penalty=1.0,
+                abc_penalty_window=100), **common)
+        components = demo.get_config_file()["components"]
+        ids = {c["props"].get("elem_id") for c in components}
+        for engine in ("music3", "yue2"):
+            for part in ("brief", "draft", "takes"):
+                self.assertIn(f"h3-{engine}-{part}", ids)
+        self.assertFalse([c for c in components if c["type"] == "tabitem"
+                          and c["props"].get("label") in {"Idea", "Generate", "Listen & refine"}])
+        revise = next(d["js"] for d in demo.get_config_file()["dependencies"]
+                      if d.get("js") and f"getElementById('{music.enhance.elem_id}')?.click()" in d["js"])
+        self.assertTrue(revise)
 
 
 class SongTakeHistoryTests(unittest.TestCase):

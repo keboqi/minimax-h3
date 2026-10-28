@@ -435,12 +435,9 @@ def run():
                     choose_engine(page, task, label)
                     form = page.locator('#h3-engine-tabs > [role="tabpanel"]:visible')
                     form.get_by_label(field, exact=True).fill("Fixture request")
-                    if task == "Song":
-                        # Song walks Idea → Lyrics → Generate; YuE2 needs lyrics too.
-                        form.get_by_role("button", name="I have my own lyrics →", exact=True).click()
-                        if label == "YuE2":
-                            form.get_by_label(re.compile(r"Lyrics and song structure")).fill("[verse]\nFixture")
-                        form.get_by_role("button", name="Next: generate →", exact=True).click()
+                    if task == "Song" and label == "YuE2":
+                        # The studio shows brief, draft and Generate together; YuE2 needs lyrics too.
+                        form.get_by_label(re.compile(r"Lyrics and song structure")).fill("[verse]\nFixture")
                     form.get_by_role("button", name=action, exact=True).click()
                     expect(
                         form.get_by_label("Generation progress", exact=True)

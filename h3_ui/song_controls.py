@@ -1,15 +1,60 @@
-"""Song-specific building blocks for the guided Music 3 and YuE2 views."""
+"""Song-specific building blocks for the Music 3 and YuE2 studio views."""
 
 from __future__ import annotations
-
-from html import escape
 
 import gradio as gr
 
 from h3_app import song_brief
 
-# The four steps every Song view walks through, in order.
-IDEA, DRAFT, TAKE, LISTEN = range(4)
+from .step_cards import card_heading
+
+# The studio's three columns, side by side on a wide screen and stacked in this order on a phone.
+BRIEF, DRAFT, TAKES = "brief", "draft", "takes"
+
+
+def studio_column(engine_id: str, part: str, *, scale: int, min_width: int, title: str,
+                  detail: str = "") -> gr.Column:
+    """One studio column, opened with its heading; enter it with ``with``."""
+    column = gr.Column(scale=scale, min_width=min_width, elem_id=f"h3-{engine_id}-{part}",
+                       elem_classes=["h3-song-col", f"h3-song-{part}"])
+    with column:
+        card_heading(title, detail)
+    return column
+
+
+def reveal(trigger: gr.Button, elem_id: str) -> None:
+    """Bring a column into view on press; on a wide screen it is already there."""
+    trigger.click(
+        None, queue=False, api_name=False,
+        js=f"() => document.getElementById({elem_id!r})?.scrollIntoView({{ block: 'nearest', behavior: 'smooth' }})",
+    )
+
+
+def press(label: str, elem_id: str, *, variant: str = "secondary") -> gr.Button:
+    """A second button for an action that lives elsewhere: clicking it presses ``elem_id``."""
+    button = gr.Button(label, variant=variant)
+    button.click(None, js=f"() => document.getElementById({elem_id!r})?.click()", queue=False, api_name=False)
+    return button
+
+
+# Section tags the insert buttons add, in the spelling both writers use.
+SECTION_INSERTS = ("Verse", "Pre-Chorus", "Chorus", "Bridge", "Instrumental")
+
+
+def section_inserts(lyrics: gr.Textbox) -> None:
+    """Add a section tag at the end of the lyrics, or repeat the last chorus; browser only."""
+    end = r"(lyrics) => { const text = (lyrics || '').replace(/\s+$/, ''); return (text ? text + '\n\n' : '') + "
+    with gr.Row(elem_classes=["h3-song-sections"]):
+        for tag in SECTION_INSERTS:
+            gr.Button(f"+ {tag}", size="sm", min_width=0).click(
+                None, inputs=lyrics, outputs=lyrics, queue=False, api_name=False,
+                js=end + f"'[{tag}]\\n'; }}",
+            )
+        # The last [Chorus] block, up to the next tag; without one, a new empty chorus.
+        gr.Button("Repeat chorus", size="sm", min_width=0).click(
+            None, inputs=lyrics, outputs=lyrics, queue=False, api_name=False,
+            js=end + r"((text.match(/\[chorus[^\]]*\][^\[]*/gi) || []).pop() || '[Chorus]\n').trim() + '\n'; }",
+        )
 
 
 def duration_presets(slider: gr.Slider, presets) -> None:
@@ -79,41 +124,8 @@ def song_check_panel(engine: str, max_seconds: float) -> gr.HTML:
     )
 
 
-def render_recap(*, engine: str, sound_label: str, description: str, lyrics: str,
-                 max_seconds: float, vocals: str = song_brief.AUTO,
-                 language: str = song_brief.AUTO, use: str = song_brief.AUTO,
-                 score_lyrics: str = "") -> str:
-    """What the next take will use: the sound, the voice, and the song check."""
-    sound = " ".join(description.split())
-    if len(sound) > 220:
-        sound = sound[:219] + "…"
-    if vocals == song_brief.INSTRUMENTAL:
-        voice = "Instrumental"
-    else:
-        voice = " · ".join((
-            "Voice chosen from your idea" if vocals == song_brief.AUTO else vocals,
-            "language from your idea" if language in (song_brief.AUTO, "", None) else str(language),
-        ))
-    if use not in (song_brief.AUTO, "", None):
-        voice += f" · {use}"
-    rows = (
-        (sound_label, escape(sound) if sound else
-         '<em>Not described yet. Add it on the Idea step, or press Write the song.</em>'),
-        ("Voice", escape(voice)),
-    )
-    check = song_brief.render_check(
-        engine=engine, description=description, lyrics=lyrics,
-        max_seconds=max_seconds, vocals=vocals, use=use, score_lyrics=score_lyrics,
-    )
-    return (
-        '<div class="h3-song-recap"><dl>'
-        + "".join(f"<div><dt>{escape(name)}</dt><dd>{value}</dd></div>" for name, value in rows)
-        + f"</dl>{check}</div>"
-    )
-
-
 def bind_song_check(
-    view, engine: str, description: gr.Textbox, sound_label: str,
+    view, engine: str, description: gr.Textbox,
     *, score: gr.Textbox | None = None, mode: gr.Dropdown | None = None,
     score_words: gr.State | None = None,
 ) -> None:
@@ -122,24 +134,20 @@ def bind_song_check(
     With ``score_words`` the check also compares the lyrics with the words a
     reused score was sung with.
     """
-    inputs = [description, view.lyrics, view.duration, view.vocals, view.use, view.language]
+    inputs = [description, view.lyrics, view.duration, view.vocals, view.use]
     if score is not None and mode is not None and score_words is not None:
         inputs += [score, mode, score_words]
 
-    def check(text, lyrics, duration, vocals, use, language, *reused):
-        values = dict(
+    def check(text, lyrics, duration, vocals, use, *reused):
+        return song_brief.render_check(
             engine=engine, description=text or "", lyrics=lyrics or "",
             max_seconds=float(duration or 1), vocals=vocals, use=use,
             score_lyrics=reused_score_lyrics(*reused) if reused else "",
         )
-        return (
-            song_brief.render_check(**values),
-            render_recap(sound_label=sound_label, language=language, **values),
-        )
 
     gr.on(
         triggers=[component.change for component in inputs],
-        fn=check, inputs=inputs, outputs=[view.song_check, view.recap],
+        fn=check, inputs=inputs, outputs=view.song_check,
         queue=False, api_name=False, show_progress="hidden",
     )
 

@@ -7,7 +7,7 @@ Open **Create → Soundstage** to begin.
 
 ## Compose and generate
 
-Soundstage works in four steps, laid out like Song and Dub & Translate: **Script**,
+Soundstage works in four steps, laid out like Dub & Translate: **Script**,
 **Cast & sounds**, **Speak** and **Review lines**. Each step pairs a working card
 with an action card that holds its next move; the action card stays in view while
 you scroll. Moving between steps happens in the browser and sends no request.
