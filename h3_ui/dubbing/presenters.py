@@ -218,7 +218,7 @@ def step_for_status(status: str) -> str | None:
         return SEPARATION
     if "translat" in text and "transcrib" not in text:
         return TRANSLATION
-    if any(word in text for word in ("transcrib", "speakers", "speech", "gemini")):
+    if any(word in text for word in ("transcrib", "speakers", "speech", "gemini", "align")):
         return TRANSCRIPTION
     return None
 

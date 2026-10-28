@@ -36,7 +36,7 @@ from h3_app.errors import H3Error
 from h3_app.media_tools import probe_audio_seconds, run_media_process
 from h3_app.provenance import read_snapshot, write_snapshot
 
-from . import gemini, moss, segments as segment_tools, session as sessions, tools, tools_worker
+from . import gemini, moss, refinement, segments as segment_tools, session as sessions, tools, tools_worker
 
 RATE = 44100
 PIPELINE_LOCAL = "Local: Qwen3-ASR + aligner + Hy-MT"
@@ -106,6 +106,7 @@ class AnalyzeRequest:
     notes: str = ""
     # Take the stems and transcript from an earlier analysis of the same file when its settings match.
     reuse: bool = True
+    refine_timestamps: bool = False
 
 
 @dataclass(frozen=True)
@@ -252,6 +253,8 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
     target_language = str(request.target_language or "").strip()
     if request.translate and not target_language:
         raise H3Error("Choose the language to dub into.")
+    if request.refine_timestamps and request.pipeline == PIPELINE_LOCAL and not request.aligner:
+        raise H3Error("Enable Qwen3 word timing before refining it with Align.")
     session = sessions.create(runtime, request.source, video=is_video(request.source))
     session.data.update(pipeline=request.pipeline, target_language=target_language,
                         source_language=_language(request.source_language))
@@ -286,6 +289,7 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
     key = _transcript_key(request)
     transcript = _earlier_transcript(earlier, key)
     speech = session.speech_audio
+    groups = []
     if transcript is not None:
         yield "Reusing the transcript from an earlier analysis of this file"
         reused.append("transcript")
@@ -315,7 +319,8 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
             "Finding speech and transcribing with Qwen3-ASR",
             lambda report: tools.run("transcribe", {"audio": str(speech), "language": _language(
                 request.source_language) or None, "aligner": bool(request.aligner),
-                "merge_gap": float(request.merge_gap)}, runtime, free_gpu=free_gpu, hf_token=hf_token,
+                "merge_gap": float(request.merge_gap), "word_details": request.refine_timestamps},
+                runtime, free_gpu=free_gpu, hf_token=hf_token,
                 report=report))
         if not reply.get("segments"):
             raise H3Error("No speech was found in this source.")
@@ -325,6 +330,10 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
             "speakers": {segment_tools.DEFAULT_SPEAKER: "Single voice (local transcription)"},
             "language": reply.get("language") or "",
         }
+        groups = reply.get("groups") or []
+    if request.refine_timestamps and request.pipeline == PIPELINE_LOCAL and "refinement" not in transcript:
+        transcript = yield from _refine_timestamps(
+            session, transcript, groups, runtime=runtime)
     # Kept as transcribed, before edits and later translations, for the next analysis of this file.
     session.data["transcript"] = {**transcript, "key": key}
     session.segments, session.data["speakers"] = transcript["segments"], dict(transcript["speakers"])
@@ -345,6 +354,8 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
     if reused:
         message += (f" Reused the {' and '.join(reused)} from an earlier analysis of this file; untick "
                     "Reuse earlier results to redo them.")
+    if transcript.get("refinement"):
+        message += " " + transcript["refinement"]["summary"]
     yield Analysis(session, message + length_advice(session.segments))
 
 
@@ -352,6 +363,8 @@ def _transcript_key(request: AnalyzeRequest) -> str:
     """The settings a transcript depends on, beyond the source file itself."""
     settings: dict[str, Any] = {"pipeline": request.pipeline,
                                 "separator": request.separator_model if request.separate else ""}
+    if request.pipeline == PIPELINE_LOCAL and request.refine_timestamps:
+        settings.update(refinement=refinement.REVISION, language=_language(request.source_language))
     if request.pipeline == PIPELINE_MOSS:
         settings.update(model=f"{moss.MODEL_REPO}@{moss.MODEL_REVISION[:12]}")
     elif request.pipeline == PIPELINE_GEMINI:
@@ -361,6 +374,49 @@ def _transcript_key(request: AnalyzeRequest) -> str:
         settings.update(language=_language(request.source_language), aligner=bool(request.aligner),
                         merge_gap=round(float(request.merge_gap), 3))
     return json.dumps(settings, sort_keys=True)
+
+
+def _refine_timestamps(session, transcript, groups, *, runtime):
+    """Preserve the baseline and per-word evidence; any failed group keeps its original line cuts."""
+    baseline = transcript["segments"]
+    audit = {"revision": refinement.REVISION, "original_segments": baseline, "groups": [
+        {"start": group["start"], "end": group["end"], "language": group.get("language", ""),
+         "original_words": group.get("words", []), "status": "original"} for group in groups]}
+    try:
+        refinement.check_runtime()
+        if not groups:
+            raise H3Error("The transcription returned no acoustic word timings to refine.")
+        group_lines = segment_tools.normalize({**line, "source": line["text"]}
+                                              for group in groups for line in group["lines"])
+        if group_lines != baseline:
+            raise H3Error("The word-timing groups do not match the original transcript lines.")
+        for group in groups:
+            group["language_code"] = refinement.language_code(group.get("language"))
+        if not any(group["language_code"] and group.get("words") for group in groups):
+            raise H3Error("No speech group has acoustic word timing in one of Align's supported languages.")
+        results = yield from blocking(
+            "Refining speech boundaries with Align",
+            lambda report: refinement.refine(session.speech_audio, groups, tools_worker.models_root(
+                runtime.comfy_dir / "models"), timeout=runtime.generation_timeout, report=report))
+        if not isinstance(results, list) or len(results) != len(groups):
+            raise H3Error("Align returned invalid speech groups.")
+        lines, accepted, corrected = [], 0, 0
+        for index, (group, result) in enumerate(zip(groups, results)):
+            try:
+                parts, evidence = refinement.apply_group(group, result, session.data["duration"])
+                accepted += 1
+                corrected += evidence["status"] == "refined"
+            except (ValueError, KeyError, TypeError) as exc:
+                parts = group["lines"]
+                evidence = {"status": "original", "error": str(exc), "original_words": group.get("words", [])}
+            lines += [{**part, "source": part["text"]} for part in parts]
+            audit["groups"][index].update(evidence)
+        transcript = {**transcript, "segments": segment_tools.normalize(lines)}
+        audit["summary"] = (f"Used acoustic word timing for {accepted}/{len(groups)} speech groups "
+                            f"({corrected} refined by Align); the others kept their original cuts.")
+    except (H3Error, OSError, ValueError) as exc:
+        audit["summary"] = f"Align refinement skipped; original timing kept. {exc}"
+    return {**transcript, "refinement": audit}
 
 
 def moss_lines(found: list[dict]) -> list[dict]:

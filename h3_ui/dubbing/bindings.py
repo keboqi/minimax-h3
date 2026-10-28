@@ -26,7 +26,7 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
         view.analyze.click, owned_generation(actions.analyze_source, FAMILY_ANALYZE),
         inputs=[view.source, view.library, view.separate, view.separator_model, view.pipeline,
                 view.source_language, view.target_language, view.translate, view.translator, view.aligner,
-                view.merge_gap, view.gemini_model, view.api_key, view.notes, view.reuse],
+                view.merge_gap, view.gemini_model, view.api_key, view.notes, view.reuse, view.refine_timestamps],
         outputs=[view.session, view.board, view.lines, view.analyze_status, view.plan], show_progress="minimal",
         api_name="dub_analyze_source",
     )
@@ -110,6 +110,8 @@ def _bind_source(view: DubbingView, *, task, create_tab, actions) -> None:
     view.translator.change(gemini_visibility, inputs=[view.pipeline, view.translator], outputs=view.gemini,
                            **_QUIET)
     view.pipeline.choose(local_visibility, inputs=view.pipeline, outputs=view.local, **_QUIET)
+    view.pipeline.choose(local_visibility,
+                         inputs=view.pipeline, outputs=view.refine_timestamps, **_QUIET)
     view.separate.change(lambda on: gr.update(visible=bool(on)), inputs=view.separate,
                          outputs=view.separator_model, **_QUIET)
 

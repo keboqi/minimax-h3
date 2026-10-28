@@ -53,6 +53,38 @@ audible.
 in **Translate again**. **Translation notes** pass names, terms and tone to the
 translator. Turn off **Translate now** to transcribe only.
 
+**Refine speech boundaries with Align (experimental)** adds
+[Desert Ant Labs Align](https://desertant.com/models/align/) after local
+Qwen transcription. It is off by default so the same source can be compared with
+and without refinement: **Qwen3-ASR → Qwen3-ForcedAligner → Align**. ASR and forced
+alignment run on VAD speech chunks, not the full recording. Align receives each
+chunk's word timings and a matching audio window with context on either side.
+VAD chunks remain pause-based, with no hard duration cap on uninterrupted speech.
+MOSS keeps its existing transcription and speaker timing pipeline.
+
+Align adjusts acoustic word timestamps. Line cuts use the first word's start
+and the last word's end, keeping the existing text and speaker labels. These
+cuts feed both subtitles and voice-reference extraction; reference clips still
+include their small safety padding. Refinement cannot guarantee exact boundaries
+and does not correct a wrong transcript or speaker assignment.
+
+The published Node native runtime supports Linux x64/arm64 and Apple silicon;
+Windows requires Linux/WSL for this option. Install Node.js 22+ with npm on the
+server. On first use the app installs the pinned Align 4.2.1 SDK under
+`ComfyUI/models/dubbing/align-runtime`; model downloads use `align-models` beside
+it. The SDK's license reporting remains enabled. Align supports English, Chinese,
+Japanese, Korean, French, German, Spanish, Portuguese and Italian. Unsupported
+languages, missing timing, runtime failures or invalid corrections keep the
+original line cuts, with a status message. Numbers and mixed-language speech
+need particular attention during listening tests.
+
+The session's saved `transcript.refinement` contains the original segments,
+original word timestamps, accepted output word timestamps and fallback reasons.
+Refinement settings are part of the transcript cache key. Untick **Reuse earlier
+results** to rerun a failed refinement. Align uses the
+[Desert Ant Labs source-available license](https://license.desertant.com/1.0).
+MOSS and Gemini are unaffected by this option.
+
 The **Analyze** card on the right lists the steps the analysis will take, such
 as separating vocals, transcribing and translating, and marks the one running.
 

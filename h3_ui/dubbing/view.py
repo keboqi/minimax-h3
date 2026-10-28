@@ -79,6 +79,7 @@ class DubbingView:
     local: gr.Group
     aligner: gr.Checkbox
     merge_gap: gr.Slider
+    refine_timestamps: gr.Checkbox
     plan: gr.HTML
     analyze: gr.Button
     stop_analyze: gr.Button
@@ -238,6 +239,10 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                                                       label="Join pauses shorter than (s)",
                                                       info="Speech separated by a shorter pause is transcribed "
                                                            "together.")
+                            refine_timestamps = gr.Checkbox(False, label="Refine speech boundaries with Align (experimental)",
+                                info="Uses [Desert Ant Labs Align](https://desertant.com/models/align/). "
+                                     "Refines Qwen's word timing on speech chunks. Keeps original timing on "
+                                     "failure. Requires Linux and Node.js 22+.")
                     with gr.Column(scale=2, min_width=280, elem_classes=["h3-preview-panel", "h3-song-stage"]):
                         card_heading("Analyze", "Review lines opens when it is done.")
                         plan = gr.HTML(default_plan())
@@ -364,7 +369,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
     return DubbingView(
         steps, session, source, library, refresh_library, media_tab, sessions_tab, recent, source_card,
         source_language, target_language, notes, pipeline, translate, translator, gemini, gemini_model, api_key,
-        options, separate, separator_model, reuse, local, aligner, merge_gap, plan, analyze, stop_analyze,
+        options, separate, separator_model, reuse, local, aligner, merge_gap, refine_timestamps, plan, analyze, stop_analyze,
         analyze_status, board, lines, inspected, inspector, previous_line, next_line, start, end, speaker, original,
         translation, line_dub, fit, add_line, delete_line, line_numbers, preview, new_take, retranslate,
         stop_preview, line_status, preview_audio, speakers_panel, speakers, speakers_status, voice_mode, preset,

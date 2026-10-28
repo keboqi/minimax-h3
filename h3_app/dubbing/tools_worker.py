@@ -311,7 +311,7 @@ class Worker:
         if not spans:
             return {"segments": [], "language": "", "spans": 0}
         asr = self._asr(aligner)
-        segments, languages = [], []
+        segments, languages, groups = [], [], []
         for first in range(0, len(spans), ASR_BATCH):
             batch = spans[first:first + ASR_BATCH]
             clips = [(samples[int(s * ASR_RATE):int(e * ASR_RATE)], ASR_RATE) for s, e in batch]
@@ -332,10 +332,21 @@ class Worker:
                     languages.append(str(result.language).split(",")[0])
                 stamps = getattr(result, "time_stamps", None)
                 items = list(getattr(stamps, "items", None) or stamps or [])
-                segments += lines_from_alignment(items, start, end, text)
+                parts = lines_from_alignment(items, start, end, text)
+                segments += parts
+                if request.get("word_details"):
+                    groups.append({"start": start, "end": end, "text": text,
+                                   "language": str(getattr(result, "language", "") or language or ""),
+                                   "lines": parts,
+                                   "words": [{"text": str(item.text).strip(), "start": start + float(item.start_time),
+                                              "end": min(end, start + float(item.end_time))} for item in items
+                                             if getattr(item, "text", None)
+                                             and getattr(item, "start_time", None) is not None
+                                             and getattr(item, "end_time", None) is not None
+                                             and min(end, start + float(item.end_time)) > start + float(item.start_time)]})
             print(f"Transcribed {min(first + ASR_BATCH, len(spans))}/{len(spans)} speech spans", file=sys.stderr)
         detected = max(set(languages), key=languages.count) if languages else ""
-        return {"segments": segments, "language": detected, "spans": len(spans)}
+        return {"segments": segments, "language": detected, "spans": len(spans), "groups": groups}
 
     # -- translation --------------------------------------------------------
 

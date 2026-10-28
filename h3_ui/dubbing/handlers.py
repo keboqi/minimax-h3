@@ -367,7 +367,7 @@ class DubbingHandlers:
 
     def analyze_source(self, source, library, separate, separator_model, transcription, source_language,
                        target_language, translate, translator, aligner, merge_gap, gemini_model, api_key, notes,
-                       reuse=True):
+                       reuse=True, refine_timestamps=False):
         """Outputs: session id, board, table rows, status, plan. The plan marks the step running."""
         chosen = source or library
         steps = self._plan_steps(separate, separator_model, reuse, transcription, translate, translator,
@@ -379,7 +379,7 @@ class DubbingHandlers:
             request = pipeline.AnalyzeRequest(
                 str(chosen), transcription, str(target_language or "").strip(), source_language, bool(translate),
                 translator, bool(separate), separator_model, bool(aligner), float(merge_gap), gemini_model,
-                str(api_key or ""), True, str(notes or ""), bool(reuse))
+                str(api_key or ""), True, str(notes or ""), bool(reuse), bool(refine_timestamps))
             for update in self._gpu(lambda **kw: pipeline.analyze(request, **kw)):
                 if isinstance(update, pipeline.Analysis):
                     session = update.session
