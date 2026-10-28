@@ -26,7 +26,10 @@ const fmt = (seconds) => {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 };
 const bind = (root) => {
-  players.get(root)?.controller.abort();
+  // The patch may have swapped the media elements too; the detached old ones would play on, out of reach.
+  const old = players.get(root);
+  old?.controller.abort();
+  old?.media.forEach((media) => { if (!media.isConnected) media.pause(); });
   const controller = new AbortController(), signal = controller.signal;
   root.dataset.bound = "true";
   const voice = root.querySelector("[data-voice]");

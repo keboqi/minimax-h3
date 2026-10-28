@@ -1195,7 +1195,7 @@ class DubRenderTests(Workspace):
         exported = pipeline.export_subtitled_video(str(result.video), str(result.subtitles[0]), runtime=self.runtime)
         self.assertNotEqual(exported, result.video)
         self.assertEqual(result.video.read_bytes(), original_bytes)
-        self.assertEqual(self.streams(exported), ["video", "audio"])
+        self.assertEqual(self.streams(exported), ["video", "audio", "subtitle", "subtitle"])
         self.assertEqual(result.player.video, result.video)
         snapshot = pipeline.read_snapshot(exported)
         self.assertTrue(snapshot["settings"]["burned_subtitles"])
@@ -1242,7 +1242,7 @@ class DubRenderTests(Workspace):
                                        runtime=self.runtime, free_gpu=lambda: None))[-1]
         exported = pipeline.export_subtitled_video(str(result.video), str(result.subtitles[0]), runtime=self.runtime)
         self.assertGreater(self.duration(exported, "v:0"), 4.55)
-        self.assertEqual(self.streams(exported), ["video", "audio", "audio"])
+        self.assertEqual(self.streams(exported), ["video", "audio", "audio", "subtitle", "subtitle"])
 
     def test_match_stretches_a_take_to_exactly_its_line(self):
         tone = (0.2 * np.sin(np.arange(2 * pipeline.RATE) / 20)).astype(np.float32)

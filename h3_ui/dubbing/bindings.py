@@ -37,7 +37,7 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
         outputs=[view.board, view.lines, view.line_status], show_progress="minimal", api_name=False,
     )
     translated.then(actions.focus_line, inputs=[view.session, view.board], outputs=inspector_outputs(view),
-                    **_QUIET)
+                    **_QUIET).then(**_readiness(view, actions))
     line_inputs = [view.session, view.line_numbers, view.voice_mode, view.preset, view.timing, view.max_speed,
                    view.parallel]
     previewed = bind_gpu_action(
@@ -120,9 +120,15 @@ def inspector_outputs(view: DubbingView) -> list:
             view.fit, view.line_numbers, view.inspected]
 
 
+def _readiness(view: DubbingView, actions) -> dict:
+    """The Dub step's summary of what the next dub will voice; it follows every line edit."""
+    return {"fn": actions.readiness, "inputs": view.session, "outputs": view.readiness, **_QUIET}
+
+
 def _bind_review(view: DubbingView, *, actions) -> None:
     focus = {"fn": actions.focus_line, "inputs": [view.session, view.board], "outputs": inspector_outputs(view),
              **_QUIET}
+    readiness = _readiness(view, actions)
     # A new session (analyzed or reopened) clears the last one's results and opens Review lines.
     view.session.change(actions.clear_results,
                         outputs=[view.line_numbers, view.line_status, view.preview_audio, view.regenerate,
@@ -139,9 +145,9 @@ def _bind_review(view: DubbingView, *, actions) -> None:
     # Switching Dub, adding or deleting a line changes the list; the inspector then follows the focus.
     changed = {"inputs": [view.session, view.board], "outputs": [view.board, view.lines, view.line_status],
                **_QUIET}
-    view.board.dub(actions.toggle_dub, **changed).then(**focus)
-    view.add_line.click(actions.add_line, **changed).then(**focus)
-    view.delete_line.click(actions.delete_line, **changed).then(**focus)
+    view.board.dub(actions.toggle_dub, **changed).then(**focus).then(**readiness)
+    view.add_line.click(actions.add_line, **changed).then(**focus).then(**readiness)
+    view.delete_line.click(actions.delete_line, **changed).then(**focus).then(**readiness)
 
     # The inspector saves a field once it is left (times also on Enter), so a half-typed time
     # does not move the line; the speaker and Dub save when changed.
@@ -151,12 +157,13 @@ def _bind_review(view: DubbingView, *, actions) -> None:
                        view.translation, view.line_dub], **_QUIET}
     for event in (view.start.blur, view.start.submit, view.end.blur, view.end.submit, view.original.blur,
                   view.translation.blur, view.speaker.input, view.line_dub.input):
-        event(**save)
+        event(**save).then(**readiness)
 
     # The table saves as it is edited; the board and inspector follow.
     view.lines.input(actions.save_lines, inputs=[view.session, view.lines],
                      outputs=[view.lines, view.line_status], **_QUIET).then(
-        actions.board_for, inputs=[view.session, view.board], outputs=view.board, **_QUIET).then(**focus)
+        actions.board_for, inputs=[view.session, view.board], outputs=view.board, **_QUIET).then(**focus).then(
+        **readiness)
 
 
 def _bind_dub(view: DubbingView, *, actions) -> None:
@@ -168,8 +175,8 @@ def _bind_dub(view: DubbingView, *, actions) -> None:
     view.steps.tabs.select(**speakers)
     view.speakers.save(actions.save_speaker, inputs=[view.session, view.speakers], outputs=view.speakers_status,
                        **_QUIET)
-    readiness = {"fn": actions.readiness, "inputs": view.session, "outputs": view.readiness, **_QUIET}
-    # Refreshed when the session arrives and whenever a step opens, after any edits to its lines.
+    readiness = _readiness(view, actions)
+    # Also refreshed when the session arrives and whenever a step opens.
     view.session.change(**readiness)
     view.steps.tabs.select(**readiness)
     view.timing.choose(speed_visibility, inputs=view.timing, outputs=view.max_speed, **_QUIET)

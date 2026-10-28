@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 from typing import Any, Callable, Iterator
@@ -882,6 +883,18 @@ def _output_stem(session: sessions.Session, language: str) -> str:
     return f"{name}_{tag}_{time.strftime('%Y%m%d-%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
+def _video_seconds(source: Path) -> float | None:
+    """The first video stream's length, or None when it cannot be read."""
+    cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=duration",
+           "-of", "csv=p=0", str(source)]
+    try:
+        proc = run_media_process(cmd, capture_output=True, text=True, timeout=30)
+        seconds = float(proc.stdout.split()[0])
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
+    return seconds if proc.returncode == 0 and seconds > 0 else None
+
+
 def export_subtitled_video(video: str, subtitles: str, *, runtime) -> Path:
     """Burn a finished dub's subtitles into a new export, preserving its audio tracks."""
     root = (runtime.outputs_dir / "dubbing").resolve()
@@ -895,11 +908,18 @@ def export_subtitled_video(video: str, subtitles: str, *, runtime) -> Path:
     if not duration:
         raise H3Error("Could not read the dubbed video's duration.")
     target = root / f"{source.stem}_subtitled_{uuid.uuid4().hex[:8]}.mp4"
-    # Pad before drawing captions so an overrun displays its changing subtitles on the held frame.
-    filters = f"tpad=stop_mode=clone:stop_duration={duration:.3f},subtitles={_filter_path(captions)}"
-    result = _ffmpeg(["-i", str(source), "-map", "0:v:0", "-map", "0:a?",
+    # A dub longer than the picture holds its last frame: pad by the overrun (the whole duration
+    # when the picture cannot be measured; -t trims it) before drawing captions, so the held
+    # frame still shows the changing subtitles.
+    picture = _video_seconds(source)
+    overrun = duration - picture if picture else duration
+    filters = f"subtitles={_filter_path(captions)}"
+    if overrun > 0.05:
+        filters = f"tpad=stop_mode=clone:stop_duration={overrun:.3f}," + filters
+    # The selectable subtitle tracks are kept alongside the burned-in ones.
+    result = _ffmpeg(["-i", str(source), "-map", "0:v:0", "-map", "0:a?", "-map", "0:s?",
                       "-vf", filters, "-t", f"{duration:.3f}", "-c:v", "libx264", "-crf", "18",
-                      "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "copy",
+                      "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "copy", "-c:s", "copy",
                       "-movflags", "+faststart"], target, timeout=runtime.generation_timeout,
                      action="Exporting video with burned-in subtitles")
     original = read_snapshot(source) or {}
