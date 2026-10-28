@@ -64,6 +64,7 @@ class Take:
     attempts: int  # 0 for a saved take
     check: audio.TakeCheck | None
     wav: bytes = b""  # the server's response, saved for reuse
+    line_bounds: list[tuple[int, int]] | None = None  # tidied audio at take.rate
 
 
 def frame_budget(text: str, limit: int) -> int:
@@ -470,6 +471,9 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
             # Lines are found before effects, whose filtering can blur the pauses between them.
             lines = audio.line_bounds(tidied, rate, [max(expected_seconds(line), 0.3)
                                                      for line in chunk.lines or (chunk.text,)])
+            if take.line_bounds is not None:
+                lines = [(round(start * rate / take.rate), round(end * rate / take.rate))
+                         for start, end in take.line_bounds]
             if chunk.speaker_effects:
                 dry = len(tidied)
                 tidied = apply_speaker_effects(tidied, rate, chunk.speaker_effects)
@@ -718,6 +722,26 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                                              f"({time.monotonic() - started:.0f}s)")
 
     ordered = [takes[chunk.index] for chunk in chunks]
+    alignment_notes = []
+    multiline = [take for take in ordered if len(take.chunk.lines) > 1]
+    if multiline:
+        from .alignment import align_take
+        from h3_app.dubbing import tools
+
+        yield GenerationUpdate(None, "Aligning subtitle lines to generated speech…")
+        try:
+            for take in multiline:
+                job = CURRENT_JOB.get()
+                if job is not None:
+                    job.check()
+                try:
+                    take.line_bounds = align_take(take, store, runtime, free_gpu=free_gpu, hf_token=hf_token)
+                except Exception as exc:
+                    if job is not None:
+                        job.check()
+                    alignment_notes.append(f"chunk {take.chunk.index + 1}: {exc}")
+        finally:
+            tools.stop()  # release alignment VRAM before the next speech job
     rate = ordered[0].rate
     spans: Spans = {}
     joined = _render_ast(tree, node_chunks, takes, sound_clips, rate, spans=spans, gains=speaker_gains(takes),
@@ -761,6 +785,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                         "ok": t.check is None or t.check.ok,
                         "warnings": list(t.check.warnings) if t.check is not None else [],
                         "seconds": round(len(t.samples) / t.rate, 2),
+                        "subtitle_timing": "aligned" if t.line_bounds is not None else "estimated",
                         **({"start": timings[t.chunk.index][0], "end": timings[t.chunk.index][1],
                             "lines": [{"text": text, "start": start, "end": end} for text, (start, end)
                                       in zip(t.chunk.lines or (t.chunk.text,), timings[t.chunk.index][2])]}
@@ -782,6 +807,8 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     if advised:
         note += "\nAudio advisories (takes kept): " + "; ".join(
             f"chunk {t.chunk.index + 1}: {t.check.reason}" for t in advised)
+    if alignment_notes:
+        note += "\nEstimated subtitle timing (alignment unavailable): " + "; ".join(alignment_notes)
     reuse_note = f" ({reused} reused)" if reused else ""
     yield GenerationUpdate(fresh_audio(result), f"Drama 3 ({label}) complete · {len(chunks)} chunks{reuse_note} · "
                                         f"{len(joined) / rate:.1f}s in {time.monotonic() - started:.0f}s{note}")

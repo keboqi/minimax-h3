@@ -142,6 +142,36 @@ def clean_translation(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def aligned_line_bounds(lines: list[str], items: list[dict]) -> list[tuple[float, float]]:
+    """Map aligned words/CJK characters to script lines, ignoring punctuation and spaces."""
+    import math
+    import unicodedata
+
+    def normalized(text):
+        return "".join(c for c in unicodedata.normalize("NFKC", text).casefold() if c.isalnum())
+
+    texts = [normalized(line) for line in lines]
+    units = [(normalized(item["text"]), float(item["start"]), float(item["end"])) for item in items]
+    units = [(text, start, end) for text, start, end in units if text]
+    if not all(texts) or "".join(texts) != "".join(text for text, _, _ in units):
+        raise ValueError("Aligned text does not match the script")
+    previous = 0.0
+    for _, start, end in units:
+        if not math.isfinite(start) or not math.isfinite(end) or start < previous or end <= start:
+            raise ValueError("Invalid alignment timestamps")
+        previous = end
+    bounds, index = [], 0
+    for text in texts:
+        first, remaining = index, len(text)
+        while index < len(units) and remaining > 0:
+            remaining -= len(units[index][0])
+            index += 1
+        if remaining != 0:
+            raise ValueError("An aligned word crosses a script line boundary")
+        bounds.append((units[first][1], units[index - 1][2]))
+    return bounds
+
+
 class Worker:
     def __init__(self, models_dir: Path):
         self.root = models_root(models_dir)
@@ -170,6 +200,8 @@ class Worker:
         op = request.get("op")
         if op == "separate":
             return self.separate(request)
+        if op == "align_lines":
+            return self.align_lines(request)
         if op == "transcribe":
             return self.transcribe(request)
         if op == "translate":
@@ -239,6 +271,17 @@ class Worker:
             forced_aligner_kwargs=kwargs if aligner else None, **kwargs)
         self.models[key] = model
         return model
+
+    def align_lines(self, request: dict) -> dict:
+        """Align the supplied script, rather than an ASR paraphrase, to a tidied take."""
+        model = self._asr(True)
+        language = model.transcribe(audio=request["audio"], return_time_stamps=False)[0].language
+        if not language or "," in language:
+            raise ValueError("Cannot align an unknown or mixed language take")
+        result = model.forced_aligner.align(audio=request["audio"],
+                                            text=" ".join(request["lines"]), language=language)[0]
+        items = [{"text": item.text, "start": item.start_time, "end": item.end_time} for item in result]
+        return {"bounds": aligned_line_bounds(request["lines"], items)}
 
     @staticmethod
     def _speech_spans(audio_16k, duration: float) -> list[tuple[float, float]]:

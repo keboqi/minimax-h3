@@ -27,9 +27,9 @@ FAMILY_ANALYZE, FAMILY_LINES, FAMILY_DUB = "dubbing_analyze", "dubbing_lines", "
 FAMILIES = frozenset({FAMILY_ANALYZE, FAMILY_LINES, FAMILY_DUB})
 WORKER = Path(__file__).with_name("tools_worker.py")
 # Free VRAM (MiB) wanted before a request's models load: weights plus working room.
-LOAD_HEADROOM_MIB = {"separate": 4 * 1024, "transcribe": 7 * 1024, "translate": 6 * 1024}
+LOAD_HEADROOM_MIB = {"separate": 4 * 1024, "transcribe": 7 * 1024, "align_lines": 7 * 1024, "translate": 6 * 1024}
 # The worker's loaded-model names start with these, per request.
-OP_MODELS = {"separate": "separator:", "transcribe": "asr", "translate": "translator"}
+OP_MODELS = {"separate": "separator:", "transcribe": "asr", "align_lines": "asr+aligner", "translate": "translator"}
 
 
 def log_dir(runtime) -> Path:

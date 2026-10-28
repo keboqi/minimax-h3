@@ -33,7 +33,7 @@ import numpy as np
 from h3_app.catalog import VIDEO_EXTENSIONS
 from h3_app.errors import H3Error
 from h3_app.media_tools import probe_audio_seconds, run_media_process
-from h3_app.provenance import write_snapshot
+from h3_app.provenance import read_snapshot, write_snapshot
 
 from . import gemini, moss, segments as segment_tools, session as sessions, tools, tools_worker
 
@@ -118,7 +118,6 @@ class DubRequest:
     speech_volume: float = 100.0
     background_volume: float = 100.0
     keep_original_track: bool = True
-    burn_subtitles: bool = False
     regenerate: tuple[int, ...] = ()
 
 
@@ -883,6 +882,34 @@ def _output_stem(session: sessions.Session, language: str) -> str:
     return f"{name}_{tag}_{time.strftime('%Y%m%d-%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
+def export_subtitled_video(video: str, subtitles: str, *, runtime) -> Path:
+    """Burn a finished dub's subtitles into a new export, preserving its audio tracks."""
+    root = (runtime.outputs_dir / "dubbing").resolve()
+    source, captions = Path(video).resolve(), Path(subtitles).resolve()
+    if (source.parent != root or captions.parent != root or source.suffix != ".mp4"
+            or captions.suffix != ".srt" or not captions.name.startswith(source.stem + ".")
+            or captions.name.endswith(".original.srt")
+            or not source.is_file() or not captions.is_file()):
+        raise H3Error("Generate a video dub with translated subtitles first; its files must still exist.")
+    duration = probe_audio_seconds(source)
+    if not duration:
+        raise H3Error("Could not read the dubbed video's duration.")
+    target = root / f"{source.stem}_subtitled_{uuid.uuid4().hex[:8]}.mp4"
+    # Pad before drawing captions so an overrun displays its changing subtitles on the held frame.
+    filters = f"tpad=stop_mode=clone:stop_duration={duration:.3f},subtitles={_filter_path(captions)}"
+    result = _ffmpeg(["-i", str(source), "-map", "0:v:0", "-map", "0:a?",
+                      "-vf", filters, "-t", f"{duration:.3f}", "-c:v", "libx264", "-crf", "18",
+                      "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "copy",
+                      "-movflags", "+faststart"], target, timeout=runtime.generation_timeout,
+                     action="Exporting video with burned-in subtitles")
+    original = read_snapshot(source) or {}
+    write_snapshot(result, {"family": "Dub & Translate", "source_asset_ids": [original["asset_id"]]
+                           if original.get("asset_id") else [], "settings": {
+        **original.get("settings", {}), "source": source.name, "burned_subtitles": True,
+        "subtitle_file": captions.name}})
+    return result
+
+
 def _prune_players(output_dir: Path) -> None:
     """Drop player tracks whose dub was deleted from Media (each folder is named after its outputs)."""
     root = output_dir / PLAYER_DIR
@@ -980,7 +1007,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
 
     video_out = None
     if session.data.get("video"):
-        yield "Writing the dubbed video" + (" with burned-in subtitles" if request.burn_subtitles else "")
+        yield "Writing the dubbed video"
         source = session.path("source")
         inputs = ["-i", str(source), "-i", str(mix)]
         maps = ["-map", "0:v:0", "-map", "1:a:0"]
@@ -998,22 +1025,12 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
             metadata += [f"-metadata:s:s:{number}",
                          f"language={_language_code(session.data.get('source_language', '') if original else language)}",
                          f"-metadata:s:s:{number}", f"title={'Original' if original else language or 'Translated'}"]
-        # A dub longer than the source keeps going over the last frame: re-encoding holds it
-        # (tpad); a copied stream simply ends, and players show its last frame.
-        filters = []
-        if request.burn_subtitles and subtitles:
-            filters.append(f"subtitles={_filter_path(subtitles[0])}")
-        if filters and overrun > 0.05:
-            filters.append(f"tpad=stop_mode=clone:stop_duration={overrun:.3f}")
-        video_codec = ["-c:v", "copy"]
-        if filters:
-            video_codec = ["-vf", ",".join(filters), "-c:v", "libx264", "-crf", "18",
-                           "-preset", "veryfast", "-pix_fmt", "yuv420p"]
-        video_out = _ffmpeg([*inputs, *maps, *video_codec, "-c:a", "aac", "-b:a", "192k", "-c:s", "mov_text",
+        # Keep the picture unchanged; subtitle burning is a separate export after generation.
+        video_out = _ffmpeg([*inputs, *maps, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-c:s", "mov_text",
                              *metadata, "-movflags", "+faststart"], output_dir / f"{stem}.mp4",
                             timeout=runtime.generation_timeout, action="Writing the dubbed video")
         write_snapshot(video_out, {"family": "Dub & Translate", "settings": {
-            **settings, "original_track": request.keep_original_track, "burned_subtitles": request.burn_subtitles}})
+            **settings, "original_track": request.keep_original_track, "burned_subtitles": False}})
     yield "Preparing the result player"
     _prune_players(output_dir)
     player = _player(session, speech, output_dir / PLAYER_DIR / stem, separated=separated, speech_gain=speech_gain,

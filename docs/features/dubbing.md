@@ -127,9 +127,14 @@ original, or change its volume. Changes save at once.
 - Translated subtitles stay on screen while a line is still being spoken, up to
   the next line.
 - **Dub volume** and **Background volume** set the mix.
-- **Keep the original audio as a second track** and **Burn translated subtitles
-  into the video** shape the video. Burning re-encodes it with x264; selectable
-  translated and original subtitle tracks are always added.
+- **Keep the original audio as a second track** adds the source soundtrack to
+  the dubbed video. Generation copies the picture without re-encoding and adds
+  selectable translated and original subtitle tracks.
+- After generation, **Export video with burned-in translated subtitles** makes
+  a new MP4 in Media using the completed dub's translated subtitles. It re-encodes
+  the picture with x264 and copies all audio tracks, without generating voices
+  again. The original dub and interactive player remain uncaptioned. The export
+  holds the last frame when the dub runs longer than the source.
 - **Advanced → Fresh takes for lines** generates new takes for those lines even
   when they are unchanged. **Parallel requests** sets how many lines Drama 3
   voices at once (16 by default).

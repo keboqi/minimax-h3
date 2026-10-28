@@ -118,7 +118,6 @@ class DubbingView:
     speech_volume: gr.Slider
     background_volume: gr.Slider
     keep_original: gr.Checkbox
-    burn_subtitles: gr.Checkbox
     advanced: gr.Accordion
     regenerate: gr.Textbox
     parallel: gr.Slider
@@ -130,6 +129,10 @@ class DubbingView:
     video: gr.Video
     audio: gr.Audio
     files: gr.File
+    export_source: gr.State
+    export_subtitles: gr.Button
+    exported_video: gr.File
+    export_status: gr.Markdown
 
 
 def opened_session_js(steps: StepStrip) -> str:
@@ -327,9 +330,6 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                                                           label="Background music and effects (%)")
                         keep_original = gr.Checkbox(True, label="Keep the original audio as a second track",
                                                     info="Players can switch between the dub and the original.")
-                        burn_subtitles = gr.Checkbox(False, label="Burn translated subtitles into the video",
-                                                     info="Re-encodes the video. Selectable subtitle tracks are "
-                                                          "always added.")
                         with gr.Accordion("Advanced: 16 parallel requests, no forced fresh takes", open=False,
                                           elem_classes=["h3-dub-options"]) as advanced:
                             regenerate = gr.Textbox(label="Fresh takes for lines", placeholder="e.g. 4, 9-10",
@@ -350,6 +350,11 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                             video = gr.Video(label="Dubbed video", interactive=False)
                             audio = gr.Audio(label="Dubbed audio", type="filepath", interactive=False)
                             files = gr.File(label="Subtitles", file_count="multiple", interactive=False, height=96)
+                        export_source = gr.State(None)
+                        export_subtitles = gr.Button("Export video with burned-in translated subtitles",
+                                                     interactive=False)
+                        export_status = gr.Markdown()
+                        exported_video = gr.File(label="Video with burned-in subtitles", interactive=False)
                         with gr.Row(elem_classes=["h3-song-step-nav"]):
                             steps.button("← Fix lines", LINES)
                         gr.Markdown("Every dub is also saved to **Media**.", elem_classes=["h3-song-hint"])
@@ -363,8 +368,9 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
         analyze_status, board, lines, inspected, inspector, previous_line, next_line, start, end, speaker, original,
         translation, line_dub, fit, add_line, delete_line, line_numbers, preview, new_take, retranslate,
         stop_preview, line_status, preview_audio, speakers_panel, speakers, speakers_status, voice_mode, preset,
-        timing, max_speed, speech_volume, background_volume, keep_original, burn_subtitles, advanced, regenerate,
+        timing, max_speed, speech_volume, background_volume, keep_original, advanced, regenerate,
         parallel, readiness, run, stop, status, player, video, audio, files,
+        export_source, export_subtitles, exported_video, export_status,
     )
 
 

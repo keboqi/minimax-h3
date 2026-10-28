@@ -417,3 +417,13 @@ the same speech over stock CUDA IPC. In the server log, `asleep after` /
 `awake after` confirm a sleep/wake cycle; `Sleep unavailable` means an ordinary
 restart.
 
+
+
+Subtitle timing: chunks containing multiple script lines are aligned against their generated speech
+with Qwen3-ASR's ForcedAligner in the isolated dubbing tools environment. The first such job may
+install that environment and download the ASR/alignment weights. Alignment runs on tidied speech
+before staging and effects; its timestamps follow resampling and the final mix placement. Results
+are cached by audio content and script line boundaries, so remixes reuse them and regenerated takes
+invalidate them. If alignment is unavailable or invalid, generation finishes with estimated timing
+and reports the affected chunks in its completion message. Result snapshots record `subtitle_timing`
+for each chunk. Remix an older result to produce a new file with aligned subtitle timing.

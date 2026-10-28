@@ -360,10 +360,10 @@ class DubbingHandlers:
     def clear_results(self):
         """A new session makes the previous one's line picks, preview and dub stale.
 
-        Outputs: line numbers, line status, preview, fresh takes, player, video, audio, subtitles, dub status.
+        Outputs: line controls, result files/status, export source/button/file/status.
         """
         return ("", "", None, "", gr.update(value="", visible=False), gr.update(value=None, visible=True), None,
-                None, "")
+                None, "", None, gr.update(interactive=False), None, "")
 
     def analyze_source(self, source, library, separate, separator_model, transcription, source_language,
                        target_language, translate, translator, aligner, merge_gap, gemini_model, api_key, notes,
@@ -412,14 +412,14 @@ class DubbingHandlers:
             yield gr.skip(), gr.skip(), self._failed(exc)
 
     def _dub_request(self, session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume=100,
-                     background_volume=100, keep_original=True, burn_subtitles=False, regenerate=""):
+                     background_volume=100, keep_original=True, regenerate=""):
         session = sessions.load(self._runtime(), session_id)
         fresh = tuple(segment_tools.parse_line_numbers(regenerate, len(session.segments)))
         return pipeline.DubRequest(
             session_id, voice_mode=voice_mode, preset=preset, timing=timing, parallel=int(parallel),
             max_speed=float(max_speed), speech_volume=float(speech_volume),
             background_volume=float(background_volume), keep_original_track=bool(keep_original),
-            burn_subtitles=bool(burn_subtitles), regenerate=fresh)
+            regenerate=fresh)
 
     def _preview(self, session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, *, fresh: bool):
         try:
@@ -447,22 +447,39 @@ class DubbingHandlers:
         yield from self._preview(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, fresh=True)
 
     def generate_dub(self, session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume, background_volume,
-                     keep_original, burn_subtitles, regenerate):
-        """Outputs: player, video, audio, subtitle files, status."""
+                     keep_original, regenerate):
+        """Outputs: player, files, status, and a frozen export source for this result."""
+        yield (gr.skip(), gr.skip(), gr.skip(), gr.skip(), "Generating dub…", None,
+               gr.update(interactive=False), None, "")
         try:
             request = self._dub_request(session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume,
-                                   background_volume, keep_original, burn_subtitles, regenerate)
+                                   background_volume, keep_original, regenerate)
             for update in self._gpu(lambda **kw: pipeline.dub(request, **kw)):
                 if isinstance(update, pipeline.Dub):
                     video = str(update.video) if update.video else None
                     shown = (gr.update(value=player_html(update.player, key=update.audio.stem), visible=True)
                              if update.player is not None else gr.update(value="", visible=False))
+                    export = ({"video": video, "subtitles": str(update.subtitles[0])}
+                              if video and update.subtitles and not update.subtitles[0].name.endswith(".original.srt")
+                              else None)
                     yield (shown, gr.update(value=video, visible=video is not None), str(update.audio),
-                           [str(path) for path in update.subtitles], update.message)
+                           [str(path) for path in update.subtitles], update.message, export,
+                           gr.update(interactive=export is not None), None, "")
                 else:
-                    yield gr.skip(), gr.skip(), gr.skip(), gr.skip(), update
+                    yield gr.skip(), gr.skip(), gr.skip(), gr.skip(), update, *([gr.skip()] * 4)
         except Exception as exc:
-            yield gr.skip(), gr.skip(), gr.skip(), gr.skip(), self._failed(exc)
+            yield gr.skip(), gr.skip(), gr.skip(), gr.skip(), self._failed(exc), *([gr.skip()] * 4)
+
+    def export_subtitles(self, source):
+        """Export the completed dub without regenerating voices or replacing the player."""
+        try:
+            if not source:
+                raise H3Error("Generate a video dub first.")
+            yield None, "Exporting video with burned-in translated subtitles…"
+            path = pipeline.export_subtitled_video(source["video"], source["subtitles"], runtime=self._runtime())
+            yield str(path), "Export saved to Media."
+        except Exception as exc:
+            yield gr.skip(), self._failed(exc)
 
     def _cookie_store(self):
         return video_download.CookieStore(video_download.cookies_dir(self._runtime()))

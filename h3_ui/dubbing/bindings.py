@@ -51,10 +51,15 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
     dubbed = bind_gpu_action(
         view.run.click, owned_generation(actions.generate_dub, FAMILY_DUB),
         inputs=[view.session, view.voice_mode, view.preset, view.timing, view.max_speed, view.parallel,
-                view.speech_volume, view.background_volume, view.keep_original, view.burn_subtitles,
+                view.speech_volume, view.background_volume, view.keep_original,
                 view.regenerate],
-        outputs=[view.player, view.video, view.audio, view.files, view.status], show_progress="minimal",
+        outputs=[view.player, view.video, view.audio, view.files, view.status, view.export_source,
+                 view.export_subtitles, view.exported_video, view.export_status], show_progress="minimal",
         api_name="dub_generate",
+    )
+    view.export_subtitles.click(
+        actions.export_subtitles, inputs=view.export_source, outputs=[view.exported_video, view.export_status],
+        concurrency_limit=1, show_progress="minimal", api_name=False,
     )
     # Each Interrupt stops only its own step's family, so stopping a preview leaves a running dub alone.
     for stop, status, family, events in (
@@ -121,7 +126,8 @@ def _bind_review(view: DubbingView, *, actions) -> None:
     # A new session (analyzed or reopened) clears the last one's results and opens Review lines.
     view.session.change(actions.clear_results,
                         outputs=[view.line_numbers, view.line_status, view.preview_audio, view.regenerate,
-                                 view.player, view.video, view.audio, view.files, view.status], **_QUIET)
+                                 view.player, view.video, view.audio, view.files, view.status, view.export_source,
+                                 view.export_subtitles, view.exported_video, view.export_status], **_QUIET)
     view.session.change(None, inputs=view.session, js=opened_session_js(view.steps), **_QUIET)
     view.session.change(**focus)
 

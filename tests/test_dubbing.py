@@ -714,7 +714,7 @@ class HandlerTests(Workspace):
                                                     True, 0.35, "gemini-3.8-flash", "", ""))
         self.assertIn("Upload a video or audio file", updates[-1][3])
         updates = list(self.handlers.generate_dub("", pipeline.VOICE_LINE, "Balance", pipeline.TIMING_MATCH, 1.35,
-                                                  8, 100, 100, True, False, ""))
+                                                  8, 100, 100, True, ""))
         self.assertIn("Analyze a source first", updates[-1][4])
 
     def test_cookie_handlers(self):
@@ -723,6 +723,36 @@ class HandlerTests(Workspace):
         self.assertEqual((status, cleared), ("Saved 1 cookie(s) for bilibili.com.", ""))
         self.assertIn("**bilibili.com** (1)", sites)
         self.assertIn("Deleted", self.handlers.delete_cookies("bilibili.com")[0])
+
+    def test_subtitle_export_uses_finished_files_and_clears_with_the_session(self):
+        source = {"video": "finished.mp4", "subtitles": "finished.french.srt"}
+        with patch.object(pipeline, "export_subtitled_video", return_value=Path("export.mp4")) as export:
+            updates = list(self.handlers.export_subtitles(source))
+        export.assert_called_once_with("finished.mp4", "finished.french.srt", runtime=self.runtime)
+        self.assertEqual(updates[-1], ("export.mp4", "Export saved to Media."))
+        self.assertIn("Generate a video dub first", list(self.handlers.export_subtitles(None))[-1][1])
+        cleared = self.handlers.clear_results()
+        self.assertIsNone(cleared[9])
+        self.assertFalse(cleared[10]["interactive"])
+        self.assertIsNone(cleared[11])
+
+    def test_export_is_bound_separately_from_generation(self):
+        from h3_ui.dubbing.view import build_dubbing_view
+        from h3_ui.dubbing.bindings import bind_dubbing
+
+        gr = self.module.gr
+        with gr.Blocks() as demo:
+            task = gr.Radio(["Dub"], value="Dub")
+            with gr.Tab("Create") as tab:
+                view = build_dubbing_view(gr.Column(), gemini_models=["model"], default_gemini_model="model")
+            bind_dubbing(view, task=task, create_tab=tab, interrupt=lambda: None, actions=self.handlers)
+        generation = next(fn for fn in demo.fns.values() if fn.api_name == "dub_generate")
+        self.assertEqual(len(generation.inputs), 10)
+        self.assertEqual(len(generation.outputs), 9)
+        export = next(fn for fn in demo.fns.values() if fn.fn == self.handlers.export_subtitles)
+        self.assertEqual(export.inputs, [view.export_source])
+        self.assertEqual(export.outputs, [view.exported_video, view.export_status])
+        self.assertFalse(view.export_subtitles.interactive)
 
 
 
@@ -1154,14 +1184,24 @@ class DubRenderTests(Workspace):
         self.analyze(video, separate=True, calls=calls, reuse=False)
         self.assertEqual(calls, ["separate", "transcribe", "translate"])
 
-    def test_unseparated_dub_ducks_the_original_and_burns_subtitles(self):
+    def test_unseparated_dub_then_separate_subtitle_export(self):
         session = self.analyze(self.make_video(), separate=False)
         self.assertIsNone(session.path("backing"))
         with patch.object(pipeline, "_synthesize", side_effect=self.fake_synthesize):
-            result = list(pipeline.dub(pipeline.DubRequest(session.id, keep_original_track=False,
-                                                           burn_subtitles=True),
+            result = list(pipeline.dub(pipeline.DubRequest(session.id, keep_original_track=False),
                                        runtime=self.runtime, free_gpu=lambda: None))[-1]
         self.assertEqual(self.streams(result.video), ["video", "audio", "subtitle", "subtitle"])
+        original_bytes = result.video.read_bytes()
+        exported = pipeline.export_subtitled_video(str(result.video), str(result.subtitles[0]), runtime=self.runtime)
+        self.assertNotEqual(exported, result.video)
+        self.assertEqual(result.video.read_bytes(), original_bytes)
+        self.assertEqual(self.streams(exported), ["video", "audio"])
+        self.assertEqual(result.player.video, result.video)
+        snapshot = pipeline.read_snapshot(exported)
+        self.assertTrue(snapshot["settings"]["burned_subtitles"])
+        self.assertEqual(snapshot["settings"]["source"], result.video.name)
+        with self.assertRaises(pipeline.H3Error):
+            pipeline.export_subtitled_video(str(result.video), str(result.subtitles[1]), runtime=self.runtime)
 
     def long_last_line(self, planned, request, session, **_kwargs):
         # Line 2 starts at 2.8 s in a 4 s source: 2.5 s at 1.35x still ends near 4.65 s.
@@ -1198,10 +1238,11 @@ class DubRenderTests(Workspace):
     def test_burned_video_holds_its_last_frame_under_a_long_last_line(self):
         session = self.analyze(self.make_video(), separate=False)
         with patch.object(pipeline, "_synthesize", side_effect=self.long_last_line):
-            result = list(pipeline.dub(pipeline.DubRequest(session.id, burn_subtitles=True,
-                                                           timing=pipeline.TIMING_NATURAL),
+            result = list(pipeline.dub(pipeline.DubRequest(session.id, timing=pipeline.TIMING_NATURAL),
                                        runtime=self.runtime, free_gpu=lambda: None))[-1]
-        self.assertGreater(self.duration(result.video, "v:0"), 4.55)
+        exported = pipeline.export_subtitled_video(str(result.video), str(result.subtitles[0]), runtime=self.runtime)
+        self.assertGreater(self.duration(exported, "v:0"), 4.55)
+        self.assertEqual(self.streams(exported), ["video", "audio", "audio"])
 
     def test_match_stretches_a_take_to_exactly_its_line(self):
         tone = (0.2 * np.sin(np.arange(2 * pipeline.RATE) / 20)).astype(np.float32)
