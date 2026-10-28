@@ -18,12 +18,16 @@ from h3_app.dubbing.segments import format_time
 ELEM_CLASS = "h3-dub-player-panel"
 
 PLAYER_JS = """
-const players = new Set();
+// Gradio patches a new value into the existing DOM, so a regenerated result can reuse the old root:
+// its listeners are dropped through the AbortController before it is bound again.
+const players = new Map();
 const fmt = (seconds) => {
   const whole = Math.max(0, Math.floor(seconds || 0));
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 };
 const bind = (root) => {
+  players.get(root)?.controller.abort();
+  const controller = new AbortController(), signal = controller.signal;
   root.dataset.bound = "true";
   const voice = root.querySelector("[data-voice]");
   const picture = root.querySelector("[data-picture]"), music = root.querySelector("[data-music]");
@@ -36,7 +40,8 @@ const bind = (root) => {
   const list = root.querySelector("[data-cues]"), cues = [...root.querySelectorAll("[data-cues] li")];
   const duration = Number(root.dataset.duration) || 0;
   let dragging = false, lit = null;
-  players.add({ root, media: [voice, ...followers] });
+  players.set(root, { controller, media: [voice, ...followers] });
+  const on = (target, name, handler, options) => target?.addEventListener(name, handler, { ...options, signal });
 
   const align = (force) => {
     for (const media of followers) {
@@ -72,7 +77,9 @@ const bind = (root) => {
     }
     const current = active.at(-1) || null;
     if (current && current !== lit && !voice.paused) {
-      list.scrollTo({ top: current.offsetTop - (list.clientHeight - current.offsetHeight) / 2, behavior: "smooth" });
+      // Measured against the list itself: offsetTop is relative to whichever ancestor is positioned.
+      const offset = current.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
+      list.scrollTo({ top: offset - (list.clientHeight - current.offsetHeight) / 2, behavior: "smooth" });
     }
     lit = current;
   };
@@ -85,32 +92,33 @@ const bind = (root) => {
     play.textContent = playing ? "Pause" : "Play";
     play.setAttribute("aria-pressed", playing ? "true" : "false");
   };
-  voice.addEventListener("play", () => { align(true); label(true); });
+  // Starting playback brings the current line into view even if it was already lit while paused.
+  on(voice, "play", () => { align(true); label(true); lit = null; render(); });
   for (const name of ["pause", "ended"]) {
-    voice.addEventListener(name, () => { followers.forEach((media) => media.pause()); label(false); render(); });
+    on(voice, name, () => { followers.forEach((media) => media.pause()); label(false); render(); });
   }
-  voice.addEventListener("seeked", () => { align(true); render(); });
-  voice.addEventListener("timeupdate", () => { if (!voice.paused) align(false); render(); });
-  voice.addEventListener("loadedmetadata", render);
-  play.addEventListener("click", () => {
+  on(voice, "seeked", () => { align(true); render(); });
+  on(voice, "timeupdate", () => { if (!voice.paused) align(false); render(); });
+  on(voice, "loadedmetadata", render);
+  on(play, "click", () => {
     if (!voice.paused) { voice.pause(); return; }
     voice.play().then(() => { state.textContent = ""; })
       .catch(() => { state.textContent = "Playback unavailable. Check browser codec support."; });
   });
-  picture?.addEventListener("click", () => play.click());
-  seek.addEventListener("pointerdown", () => { dragging = true; });
-  seek.addEventListener("change", () => { dragging = false; });
-  seek.addEventListener("input", () => jump(Number(seek.value)));
-  musicToggle?.addEventListener("change", () => { if (music) music.muted = !musicToggle.checked; });
-  subtitles.addEventListener("change", () => {
+  on(picture, "click", () => play.click());
+  on(seek, "pointerdown", () => { dragging = true; });
+  on(seek, "change", () => { dragging = false; });
+  on(seek, "input", () => jump(Number(seek.value)));
+  on(musicToggle, "change", () => { if (music) music.muted = !musicToggle.checked; });
+  on(subtitles, "change", () => {
     root.dataset.subtitles = subtitles.value;
     render();
   });
   for (const choice of root.querySelectorAll("[data-voice-choice]")) {
-    choice.addEventListener("change", () => {
+    on(choice, "change", () => {
       if (!choice.checked) return;
       const time = voice.currentTime, playing = !voice.paused;
-      voice.addEventListener("loadedmetadata", () => {
+      on(voice, "loadedmetadata", () => {
         voice.currentTime = time;
         if (playing) voice.play().catch(() => {});
         align(true);
@@ -119,7 +127,7 @@ const bind = (root) => {
       voice.src = choice.value;
     });
   }
-  list.addEventListener("click", (event) => {
+  on(list, "click", (event) => {
     const cue = event.target.closest("li");
     if (cue) jump(Number(cue.dataset.start));
   });
@@ -127,10 +135,11 @@ const bind = (root) => {
 };
 const setup = () => {
   // A new result replaces the old player; a detached element would keep playing.
-  for (const player of [...players]) {
-    if (!player.root.isConnected) {
+  for (const [root, player] of [...players]) {
+    if (!root.isConnected) {
+      player.controller.abort();
       player.media.forEach((media) => media.pause());
-      players.delete(player);
+      players.delete(root);
     }
   }
   for (const root of element.querySelectorAll(".h3-dub-player:not([data-bound])")) bind(root);
@@ -141,7 +150,13 @@ setup();
 
 
 def file_url(path: Path) -> str:
-    return "/gradio_api/file=" + quote(str(Path(path).resolve()).replace("\\", "/"), safe="/:=")
+    """The served URL, versioned by mtime so a regenerated file at the same path is not served from cache."""
+    path = Path(path).resolve()
+    try:
+        version = f"?v={path.stat().st_mtime_ns}"
+    except OSError:
+        version = ""
+    return "/gradio_api/file=" + quote(str(path).replace("\\", "/"), safe="/:=") + version
 
 
 def _language(name: str, fallback: str) -> str:
