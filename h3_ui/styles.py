@@ -221,10 +221,26 @@ div.h3-workspace.column { display: grid; grid-template-columns: auto auto minmax
 .h3-workspace #h3-main-tabs > [role="tabpanel"] { border: 0; padding: 0; background: transparent; }
 .h3-workspace #h3-engine-tabs > [role="tabpanel"] { border: 0; padding: 0; background: transparent; }
 .h3-workspace .h3-mobile-nav-container { display: none; }
-.h3-workspace .h3-engine-bar { align-items: center; gap: 16px; padding: 4px 0 8px; }
-.h3-workspace .h3-engine-bar > .block:not(.h3-engine-help) { flex: 0 1 280px; }
-.h3-workspace .h3-engine-help { flex: 1 1 320px; max-width: 760px; color: var(--h3-muted); font-size: 13px; padding-inline: 4px; }
-.h3-workspace .h3-engine-help p { margin: 0; }
+/* Engine: one line under the top bar, a segmented pill row then a one-line description. */
+.h3-workspace .h3-engine-bar { flex-wrap: nowrap; align-items: center; gap: 16px; padding: 2px 2px 10px; }
+.h3-workspace .h3-engine-bar > fieldset { flex: 0 0 auto; width: auto !important; display: flex; align-items: center; gap: 10px; min-width: 0; margin: 0; padding: 0; border: 0; background: transparent; box-shadow: none; }
+.h3-workspace .h3-engine-bar > fieldset > [data-testid="block-info"] { position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; clip-path: none; white-space: nowrap; color: var(--h3-muted); font-size: 13px; font-weight: 600; }
+.h3-workspace .h3-engine-bar fieldset > .wrap { display: flex; flex-wrap: nowrap; gap: 2px; padding: 3px; border: 1px solid var(--h3-border); border-radius: 10px; background: var(--h3-surface); }
+.h3-workspace .h3-engine-bar label:has(input[type="radio"]) { position: relative; display: flex; align-items: center; min-height: 34px; margin: 0; padding: 0 14px; border: 0; border-radius: 7px; background: transparent; box-shadow: none; color: var(--h3-muted); font-weight: 500; white-space: nowrap; cursor: pointer; }
+.h3-workspace .h3-engine-bar label:has(input[type="radio"]):hover { color: var(--h3-text); background: var(--h3-muted-surface); }
+.h3-workspace .h3-engine-bar label input[type="radio"] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.h3-workspace .h3-engine-bar label:has(input:checked) { color: var(--h3-accent-ink); background: var(--h3-accent-soft); font-weight: 600; }
+.h3-workspace .h3-engine-bar label:has(input:focus-visible) { outline: 2px solid var(--h3-focus); outline-offset: 1px; }
+.h3-workspace .h3-engine-bar > .h3-engine-help { flex: 1 1 0; min-width: 0; padding: 0; border: 0; background: transparent; box-shadow: none; }
+.h3-workspace .h3-engine-help { color: var(--h3-muted); font-size: 13px; }
+.h3-workspace .h3-engine-help p { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 767px) {
+  .h3-workspace .h3-engine-bar { flex-wrap: wrap; gap: 6px 12px; }
+  .h3-workspace .h3-engine-bar > fieldset { max-width: 100%; }
+  .h3-workspace .h3-engine-bar fieldset > .wrap { overflow-x: auto; }
+  .h3-workspace .h3-engine-bar > .h3-engine-help { flex-basis: 100%; }
+  .h3-workspace .h3-engine-help p { white-space: normal; }
+}
 .h3-workspace #h3-engine-tabs > div:has(> [role="tablist"]) { display: none; }
 .h3-workspace .h3-generator-shell { gap: 20px; align-items: flex-start; }
 .h3-workspace .h3-composer, .h3-workspace .h3-preview-panel { min-width: 0; }

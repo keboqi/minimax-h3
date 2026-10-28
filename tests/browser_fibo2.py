@@ -11,7 +11,7 @@ import time
 import requests
 from PIL import Image
 from playwright.sync_api import expect, sync_playwright
-from tests.browser_navigation import choose_engine
+from tests.browser_navigation import choose_engine, engine_pill
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,8 +86,7 @@ def run():
                     jobs = requests.get(url + "/test/jobs", timeout=5).json()
                     job = next(job for job in jobs if job["family"] == "fibo2")
                     assert job["values"][1] == "Edit Turbo" and job["values"][8:10] == [4, 1]
-                    page.get_by_label("Engine", exact=True).click()
-                    page.get_by_role("option", name="MOSS-Image", exact=True).click()
+                    engine_pill(page, "MOSS-Image").check()
                     accelerate = view.get_by_label("Accelerate with Spectrum")
                     expect(accelerate).to_be_checked()
                     saved = page.evaluate("JSON.stringify(localStorage)")

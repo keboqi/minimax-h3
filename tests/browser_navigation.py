@@ -7,9 +7,8 @@ def choose_engine(page, task, engine):
     """Pick a task, then an engine, and wait until the engine choice holds.
 
     A task switch replaces the engine choices and restores that task's
-    remembered engine in its own response. Opening the Engine list before that
-    response lands lets it replace an immediate pick, and Gradio's open option
-    list throws when its choices shrink underneath it.
+    remembered engine in its own response; a pick made before that response
+    lands is replaced by it, so the pick repeats until it holds.
     """
     posts = []
 
@@ -26,14 +25,18 @@ def choose_engine(page, task, engine):
     finally:
         page.remove_listener("request", record)
     page.wait_for_timeout(100)
-    dropdown = page.get_by_label("Engine", exact=True)
+    pill = engine_pill(page, engine)
     for _ in range(5):
-        dropdown.click()
-        page.get_by_role("option", name=engine, exact=True).click()
+        pill.check()
         page.wait_for_timeout(300)
-        if dropdown.input_value() == engine:
+        if pill.is_checked():
             return
-    expect(dropdown).to_have_value(engine)
+    expect(pill).to_be_checked()
+
+
+def engine_pill(page, engine):
+    """The Engine row's choice for ``engine``, by its visible name."""
+    return page.locator(".h3-engine-bar").get_by_label(engine, exact=True)
 
 
 def open_create(page):

@@ -27,7 +27,7 @@ class AppViews:
     system: gr.Group | None = None
     jobs: gr.Column | None = None
     task: gr.Radio | None = None
-    engine: gr.Dropdown | None = None
+    engine: gr.Radio | None = None
     engine_tabs: gr.Tabs | None = None
     engine_help: gr.Markdown | None = None
     jobs_count: gr.HTML | None = None
@@ -98,13 +98,15 @@ def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
             if task_root is None:
                 with gr.Row(elem_classes=["h3-task-picker"]):
                     task = task_picker()
-            with gr.Row(elem_classes=["h3-engine-bar"], equal_height=True):
-                engine = gr.Dropdown(
+            # One line: the task's engines as pills, then the chosen engine's description.
+            with gr.Row(elem_classes=["h3-engine-bar"]):
+                engine = gr.Radio(
                     [(e.label, e.id) for e in engines_for_task("Video")],
                     value="h3",
                     label="Engine",
+                    container=False,
                     scale=0,
-                    min_width=240,
+                    min_width=0,
                     interactive=False,
                 )
                 engine_help = gr.Markdown(
