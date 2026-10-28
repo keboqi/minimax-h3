@@ -1,19 +1,32 @@
 """MOSS-Image text-to-image over the shared ComfyUI image job, with optional Spectrum-MOSS."""
 
+from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL
 from h3_app.errors import H3Error
 from h3_app.progress import no_progress
 from h3_app.workflows.flux3_layout import parse_flux3_layout
 from h3_app.workflows.moss_image import (
-    MOSS_SPECTRUM_NODE, build_moss_image_graph, moss_image_model_keys, moss_spectrum_enabled,
-    validate_moss_edit, validate_moss_image_sampling,
+    MOSS_IMAGE_EDIT_SIZE_MAX, MOSS_IMAGE_EDIT_SIZES, MOSS_IMAGE_MAX_PIXELS, MOSS_SPECTRUM_NODE,
+    build_moss_image_graph, moss_image_model_keys, moss_spectrum_enabled, validate_moss_edit,
+    validate_moss_image_sampling,
 )
 from h3_app.workflows.moss_image_prompt import is_layout_prompt
 
 from .checks import check_cfg, check_seed, whole_number
-from .image_jobs import ImageEngine, PreparedImage, output_naming, run_image_job, size_note
+from .image_jobs import ImageEngine, PreparedImage, aspect_edit_dimensions, output_naming, run_image_job, size_note
+from .qwen import first_reference_dimensions
 from .results import GenerationUpdate
 
 MOSS_IMAGE_FAMILY = "MOSS-Image"
+
+
+def resolve_moss_image_dimensions(request, *, input_dir=None):
+    """Edits default to the first reference's size; manual size applies otherwise."""
+    if not request.reference_images or request.edit_size == QWEN_EDIT_SIZE_MANUAL:
+        return int(request.width), int(request.height)
+    size = first_reference_dimensions(request.reference_images[0], input_dir)
+    return aspect_edit_dimensions(*size, maximize=request.edit_size == MOSS_IMAGE_EDIT_SIZE_MAX,
+                                  max_pixels=MOSS_IMAGE_MAX_PIXELS, min_side=256, max_side=2048, grid=16,
+                                  label=MOSS_IMAGE_FAMILY)
 
 
 def validate_moss_image(request):
@@ -24,6 +37,8 @@ def validate_moss_image(request):
     whole_number(request.height, 256, 2048, "Height", 16)
     whole_number(request.steps, 1, 100, "Steps")
     check_cfg(request.cfg, 1, 10, "MOSS-Image CFG must be between 1 and 10.")
+    if request.edit_size not in MOSS_IMAGE_EDIT_SIZES:
+        raise H3Error("Choose a valid MOSS-Image edit output size.")
     try:
         validate_moss_edit(request.reference_images, request.turbo_variant, request.layout, request.prompt)
         moss_image_model_keys(request.model_choice, request.text_encoder_choice, request.turbo_variant,
@@ -38,6 +53,7 @@ def validate_moss_image(request):
 
 
 def _prepare(request, values, info, runtime):
+    values["width"], values["height"] = resolve_moss_image_dimensions(request, input_dir=runtime.input_dir)
     # Installs that predate the Spectrum-MOSS pin keep the original graph.
     wanted = not request.reference_images and moss_spectrum_enabled(request.accelerate, request.turbo_variant, request.steps)
     spectrum = wanted and MOSS_SPECTRUM_NODE in info
@@ -45,7 +61,7 @@ def _prepare(request, values, info, runtime):
         yield GenerationUpdate(None, "Spectrum-MOSS is not installed; using the original sampler. "
                                      "Rerun setup and restart ComfyUI to enable it.")
     graph = build_moss_image_graph(
-        **{k: v for k, v in values.items() if k not in {"preset", "accelerate"}}, accelerate=spectrum,
+        **{k: v for k, v in values.items() if k not in {"preset", "accelerate", "edit_size"}}, accelerate=spectrum,
         **output_naming(),
     )
     keys = moss_image_model_keys(request.model_choice, request.text_encoder_choice,

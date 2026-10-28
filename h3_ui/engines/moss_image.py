@@ -6,9 +6,13 @@ from pathlib import Path
 import gradio as gr
 
 from h3_app.prompt_writers import moss_image as moss_image_writer
-from h3_app.catalog import DEFAULT_OPENAI_PROMPT_MODEL, DEFAULT_MOSS_IMAGE_PRESET, MOSS_IMAGE_PRESETS
+from h3_app.catalog import (
+    DEFAULT_OPENAI_PROMPT_MODEL, DEFAULT_MOSS_IMAGE_PRESET, MOSS_IMAGE_PRESETS, QWEN_EDIT_SIZE_MANUAL,
+    QWEN_EDIT_SIZE_MATCH,
+)
 from h3_app.generation.moss_image import generate_moss_image, validate_moss_image
 from h3_app.generation.requests import MossImageRequest
+from h3_app.workflows.moss_image import MOSS_IMAGE_EDIT_SIZES
 from h3_app.workflows.moss_image_prompt import MOSS_IMAGE_REWRITE_MODES, is_layout_prompt
 from h3_models import (
     DEFAULT_MOSS_IMAGE_TEXT_ENCODER, MOSS_IMAGE_MODEL_CHOICES, MOSS_IMAGE_TEXT_ENCODER_CHOICES,
@@ -60,6 +64,7 @@ class MossImageView:
     resolution_large: gr.Dropdown
     accelerate: gr.Checkbox
     reference_images: gr.File
+    edit_size: gr.Radio
 
 
 def moss_image_preset_values(preset):
@@ -88,13 +93,13 @@ class MossImageHandlers:
 
     def generate_moss_image(self, prompt, preset, turbo_variant, model_choice, text_encoder_choice, vae_choice,
                             width, height, seed, steps, cfg, layout="", accelerate=True, reference_images=None,
-                            progress=gr.Progress(track_tqdm=False)):
+                            edit_size=QWEN_EDIT_SIZE_MATCH, progress=gr.Progress(track_tqdm=False)):
         paths = reference_images or []
         if isinstance(paths, (str, Path)):
             paths = [paths]
         request = MossImageRequest(
             prompt, preset, turbo_variant, model_choice, text_encoder_choice, vae_choice, width, height, seed,
-            steps, cfg, layout or "", accelerate, tuple(str(path) for path in paths),
+            steps, cfg, layout or "", accelerate, tuple(str(path) for path in paths), edit_size,
         )
         validate_moss_image(request)
         request = replace(request, reference_images=tuple(
@@ -148,6 +153,10 @@ def build_moss_image_view(root):
                 with gr.Row():
                     width = gr.Slider(256, 2048, value=1024, step=16, label="Width")
                     height = gr.Slider(256, 2048, value=1024, step=16, label="Height")
+                edit_size = gr.Radio(list(MOSS_IMAGE_EDIT_SIZES), value=QWEN_EDIT_SIZE_MATCH,
+                    label="Edit output size", visible=False,
+                    info="Keep the first reference's aspect ratio at its own size (capped at 2 MP), "
+                         "scale it toward 2 MP, or use the width and height above. Applies only to edits.")
                 with gr.Accordion("Model and sampling", open=False):
                     turbo_variant = gr.Dropdown(["Off", *MOSS_IMAGE_TURBO_MODES], value=turbo, label="Turbo LoRA",
                         info="A step-distilled LoRA sets its own step count and CFG 1. "
@@ -176,16 +185,19 @@ def build_moss_image_view(root):
                 run, stop, status = generation_actions("Generate image")
     return MossImageView(prompt, preset, turbo_variant, model, text_encoder, vae, width, height, seed, steps, cfg,
                          layout, output, run, stop, status, rewrite_mode, writer, enhance, enhance_status,
-                         resolution_small, resolution_large, accelerate, references)
+                         resolution_small, resolution_large, accelerate, references, edit_size)
 
 
 def bind_moss_image(view, deps: EngineDeps) -> MossImageHandlers:
     handlers = MossImageHandlers(deps)
-    view.reference_images.change(lambda paths: ("Off", 30, 4.0, False) if paths else
-                                 tuple(gr.skip() for _ in range(4)), inputs=view.reference_images,
-                                 outputs=[view.turbo_variant, view.steps, view.cfg, view.accelerate],
+    view.reference_images.change(lambda paths: (*(("Off", 30, 4.0, False) if paths else
+                                                  tuple(gr.skip() for _ in range(4))),
+                                                gr.update(visible=bool(paths))),
+                                 inputs=view.reference_images,
+                                 outputs=[view.turbo_variant, view.steps, view.cfg, view.accelerate, view.edit_size],
                                  queue=False, api_name=False)
-    bind_resolution_presets(view)
+    # As in FLUX 3, a chosen preset takes priority over the edit output size.
+    bind_resolution_presets(view, extra_outputs=(view.edit_size,), extra_values=(QWEN_EDIT_SIZE_MANUAL,))
     bind_prompt_action(
         view.enhance.click, handlers.enhance_moss_image_prompt,
         inputs=[view.prompt, view.width, view.height, view.rewrite_mode, *writer_inputs(view.writer)],
@@ -203,7 +215,7 @@ def bind_moss_image(view, deps: EngineDeps) -> MossImageHandlers:
     bind_generation(view, "moss_image", handlers.generate_moss_image, deps.interrupt, [
         view.prompt, view.preset, view.turbo_variant, view.model, view.text_encoder, view.vae, view.width,
         view.height,
-        view.seed, view.steps, view.cfg, view.layout, view.accelerate, view.reference_images,
+        view.seed, view.steps, view.cfg, view.layout, view.accelerate, view.reference_images, view.edit_size,
     ])
     return handlers
 

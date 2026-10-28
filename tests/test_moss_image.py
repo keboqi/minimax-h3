@@ -7,12 +7,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from h3_app.catalog import DEFAULT_MOSS_IMAGE_PRESET, MOSS_IMAGE_PRESETS
+from h3_app.catalog import (
+    DEFAULT_MOSS_IMAGE_PRESET, MOSS_IMAGE_PRESETS, QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH,
+)
 from h3_app.errors import H3Error
 from h3_app.generation.flux3 import validate_flux3
-from h3_app.generation.moss_image import generate_moss_image as generate_optional_engine, validate_moss_image
+from h3_app.generation.moss_image import (
+    generate_moss_image as generate_optional_engine, resolve_moss_image_dimensions, validate_moss_image,
+)
 from h3_app.generation.requests import MossImageRequest
-from h3_app.workflows.moss_image import build_moss_image_graph, moss_image_model_keys
+from h3_app.workflows.moss_image import (
+    MOSS_IMAGE_EDIT_SIZE_MAX, MOSS_IMAGE_MAX_PIXELS, build_moss_image_graph, moss_image_model_keys,
+)
 from h3_models import (
     LAZY_OPTIONAL_MODEL_KEYS, MODEL_SPECS, MOSS_IMAGE_4STEP_V2, MOSS_IMAGE_DMD_8STEP, MOSS_IMAGE_MODEL_KEYS,
     MOSS_IMAGE_SFT_BF16, MOSS_IMAGE_SFT_INT8, MOSS_IMAGE_TURBO_MODES, MOSS_IMAGE_VAE_FULL,
@@ -48,8 +54,11 @@ class MossImagePresetTests(unittest.TestCase):
         positive, negative = nodes(graph, "TextEncodeMOSSImageEdit")
         self.assertEqual(positive["edit_format"], "Moss-Image-Edit")
         self.assertEqual(negative["prompt"], "")
+        # The native node's autogrow slots start at image_0, which is required.
+        self.assertEqual(sorted(k for k in positive if k.startswith("images.")),
+                         ["images.image_0", "images.image_1"])
+        self.assertEqual(positive["images.image_0"], negative["images.image_0"])
         self.assertEqual(positive["images.image_1"], negative["images.image_1"])
-        self.assertEqual(positive["images.image_2"], negative["images.image_2"])
         self.assertEqual(len(nodes(graph, "H3MossEditReference")), 2)
         self.assertFalse(nodes(graph, "SpectrumMOSSImageAdaptive"))
         self.assertEqual(nodes(graph, "KSampler")[0]["scheduler"], "simple")
@@ -57,6 +66,52 @@ class MossImagePresetTests(unittest.TestCase):
             validate_moss_image(MossImageRequest("edit", reference_images=("a.png",)))
         with self.assertRaisesRegex(H3Error, "four"):
             validate_moss_image(MossImageRequest("edit", turbo_variant="Off", reference_images=("a",) * 5))
+
+    def resolve(self, edit_size, source=(1920, 1080), refs=("a.png",), width=1248, height=832):
+        request = MossImageRequest("edit", turbo_variant="Off", steps=30, cfg=4.0, reference_images=refs,
+                                   width=width, height=height, edit_size=edit_size)
+        with patch("h3_app.generation.moss_image.first_reference_dimensions", return_value=source):
+            return resolve_moss_image_dimensions(request)
+
+    def test_edit_sizes_keep_the_first_reference_aspect_ratio_under_2mp(self):
+        self.assertEqual(MossImageRequest("x").edit_size, QWEN_EDIT_SIZE_MATCH)
+        self.assertEqual(self.resolve(QWEN_EDIT_SIZE_MATCH), (1920, 1072))  # own area, under the 2 MP cap
+        self.assertEqual(self.resolve(QWEN_EDIT_SIZE_MATCH, source=(4000, 3000)), (1680, 1248))
+        self.assertEqual(self.resolve(QWEN_EDIT_SIZE_MATCH, source=(640, 480)), (640, 480))
+        self.assertEqual(self.resolve(MOSS_IMAGE_EDIT_SIZE_MAX, source=(640, 480)), (1680, 1248))
+        self.assertEqual(self.resolve(MOSS_IMAGE_EDIT_SIZE_MAX, source=(1024, 1024)), (1456, 1456))
+        self.assertEqual(self.resolve(QWEN_EDIT_SIZE_MANUAL), (1248, 832))
+        self.assertEqual(self.resolve(MOSS_IMAGE_EDIT_SIZE_MAX, refs=()), (1248, 832))  # generation uses width/height
+        for size in (self.resolve(MOSS_IMAGE_EDIT_SIZE_MAX, source=source) for source in ((3000, 1000), (1000, 3000))):
+            self.assertLessEqual(size[0] * size[1], MOSS_IMAGE_MAX_PIXELS)
+            self.assertLessEqual(max(size), 2048)
+        with self.assertRaisesRegex(H3Error, "edit output size"):
+            validate_moss_image(MossImageRequest("edit", edit_size="Huge"))
+
+    def test_edit_graph_samples_on_the_resolved_canvas(self):
+        request = MossImageRequest("edit", preset="Balanced", turbo_variant="Off", model_choice=MOSS_IMAGE_SFT_BF16,
+                                   vae_choice=MOSS_IMAGE_VAE_FULL, steps=30, cfg=4.0, seed=5,
+                                   reference_images=("a.png",))
+        submitted = {}
+
+        def submit(graph, _client_id):
+            submitted.update(graph)
+            return "job"
+
+        info = {n["class_type"]: {} for n in graph_for("Balanced", reference_images=("a.png",), steps=30,
+                                                         cfg=4).values()}
+        info["CLIPLoader"] = {"input": {"required": {"type": [["flux3", "moss_image"]]}}}
+        execution = SimpleNamespace(
+            object_info=lambda: info,
+            submit_prompt=submit, poll_comfy_progress=lambda *args: iter(()), wait_for_history=lambda *args: {})
+        services = SimpleNamespace(models=Mock(), execution=execution, media=SimpleNamespace(
+            resolve_image_outputs=lambda *args: [Path("moss_image_1_a.png")]))
+        with (patch("h3_app.generation.moss_image.first_reference_dimensions", return_value=(1920, 1080)),
+              patch("h3_app.generation.image_jobs.write_snapshot")):
+            results = list(generate_optional_engine(request, services, SimpleNamespace(input_dir=None)))
+        self.assertIn("MOSS-Image complete", results[-1].status)
+        latent, = nodes(submitted, "EmptyFlux2LatentImage")
+        self.assertEqual((latent["width"], latent["height"]), (1920, 1072))
 
     def test_spectrum_defaults_on_after_guidance_and_can_be_disabled(self):
         graph = graph_for("Quality")
@@ -294,7 +349,7 @@ class MossImageRequestTests(unittest.TestCase):
         services = SimpleNamespace(models=models, execution=execution, media=SimpleNamespace(
             resolve_image_outputs=lambda *args: [Path("moss_image_1_a.png")]))
         with patch("h3_app.generation.image_jobs.write_snapshot") as snapshot:
-            results = list(generate_optional_engine(request, services, SimpleNamespace()))
+            results = list(generate_optional_engine(request, services, SimpleNamespace(input_dir=None)))
         self.assertNotIn("Error:", results[-1].status)
         self.assertIn("MOSS-Image complete", results[-1].status)
         models.ensure_model_keys.assert_called_once_with(("moss_image_sft_bf16", "moss_image_text_int8", "flux3_vae"))
@@ -321,7 +376,7 @@ class MossImageRequestTests(unittest.TestCase):
         services = SimpleNamespace(models=Mock(), execution=execution, media=SimpleNamespace(
             resolve_image_outputs=lambda *args: [Path("moss_image_1_a.png")]))
         with patch("h3_app.generation.image_jobs.write_snapshot") as snapshot:
-            results = list(generate_optional_engine(request, services, SimpleNamespace()))
+            results = list(generate_optional_engine(request, services, SimpleNamespace(input_dir=None)))
         self.assertIn("MOSS-Image complete", results[-1].status)
         self.assertTrue(any("Spectrum-MOSS is not installed" in update.status for update in results))
         self.assertFalse(nodes(submitted, "SpectrumMOSSImageAdaptive"))

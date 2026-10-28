@@ -637,11 +637,15 @@ class UiContractTests(unittest.TestCase):
             "Reference images (optional for Dev, up to 4)", "Width", "Height", "Edit output size",
             "Seed (-1 random)", "Steps", "CFG"])
         moss = next(d for d in self.config["dependencies"] if d.get("api_name") == "generate_moss_image")
-        accelerate = self.components[moss["inputs"][-2]]
+        accelerate = self.components[moss["inputs"][-3]]
         self.assertEqual(accelerate["props"]["label"], "Accelerate with Spectrum")
         self.assertIs(accelerate["props"]["value"], True)
-        self.assertEqual(self.components[moss["inputs"][-1]]["props"]["label"],
+        self.assertEqual(self.components[moss["inputs"][-2]]["props"]["label"],
                          "Edit reference images (optional, up to 4)")
+        edit_size = self.components[moss["inputs"][-1]]["props"]
+        self.assertEqual((edit_size["label"], edit_size["value"]), ("Edit output size", "Match first image size"))
+        self.assertEqual([choice[1] for choice in edit_size["choices"]],
+                         ["Match first image size", "Max resolution (up to 2 MP)", "Use width and height above"])
 
     def test_all_gemini_prompt_writers_default_to_flash_3_8(self) -> None:
         models = [

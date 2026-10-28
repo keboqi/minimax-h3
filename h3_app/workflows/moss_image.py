@@ -2,6 +2,7 @@
 
 import json
 
+from h3_app.catalog import QWEN_EDIT_SIZE_MANUAL, QWEN_EDIT_SIZE_MATCH
 from h3_app.graph import Graph
 from h3_models import (
     DEFAULT_MOSS_IMAGE_VAE,
@@ -21,6 +22,10 @@ from .moss_image_prompt import is_layout_prompt
 MOSS_IMAGE_BASE_CFG = 3.0
 MOSS_IMAGE_UNCOND_SKIP_LAYERS = "22"
 MOSS_SPECTRUM_NODE = "SpectrumMOSSImageAdaptive"
+# Edit sizes stop at the 2M presets' ceiling (1456 x 1456), the top of OpenMOSS's recommended range.
+MOSS_IMAGE_MAX_PIXELS = 1456 * 1456
+MOSS_IMAGE_EDIT_SIZE_MAX = "Max resolution (up to 2 MP)"
+MOSS_IMAGE_EDIT_SIZES = (QWEN_EDIT_SIZE_MATCH, MOSS_IMAGE_EDIT_SIZE_MAX, QWEN_EDIT_SIZE_MANUAL)
 
 
 def validate_moss_edit(reference_images, turbo_variant, layout, prompt):
@@ -107,7 +112,7 @@ def build_moss_image_graph(*, model_choice, text_encoder_choice, prompt, turbo_v
                      character_boxes="")
     if reference_images:
         images = {f"images.image_{i}": add("H3MossEditReference", image=add("LoadImage", image=path))
-                  for i, path in enumerate(reference_images, 1)}
+                  for i, path in enumerate(reference_images)}
         positive = add("TextEncodeMOSSImageEdit", clip=clip, prompt=prompt, vae=vae,
                        edit_format="Moss-Image-Edit", image_strength=1.0, **images)
         negative = add("TextEncodeMOSSImageEdit", clip=clip, prompt="", vae=vae,
