@@ -212,6 +212,11 @@ choice.
   Transformers 4.57.6, and audio-separator needs NumPy 2. The environment is
   installed on first use with `uv`; Modal bakes it into the image. Logs go to
   `ComfyUI/output/dub_tools`.
+- First-use setup reports whether it is creating the environment, installing
+  packages or checking imports. Installer output appears in the backend console
+  and in `setup_*.log` under that log directory; the UI shows its latest output.
+  This shared Python setup precedes ASR and Align. A ready environment is reused
+  without reinstalling packages.
 - The tools worker stays loaded between steps of a dubbing session. Any other
   GPU job stops it, and the dub's speech step stops it before Drama 3 starts.
   When VRAM is short, loading a tool first unloads the worker's other models,

@@ -42,13 +42,13 @@ def models_dir(runtime) -> Path:
     return (runtime.comfy_dir / "models").resolve()
 
 
-def prepare(runtime, log: Path) -> Path:
+def prepare(runtime, log: Path, *, report=None) -> Path:
     venv = Path(os.getenv("H3_DUB_TOOLS_VENV") or runtime.script_dir / "h3" / "dub-tools-venv")
     # audio-separator's diffq ships only as source and compiles a C extension.
     return worker_env.prepare_venv(
         venv, log, name="Dub & Translate", label=LABEL, fingerprint=fingerprint(),
         ready_marker=READY_MARKER, install_commands=install_commands, timeout=2400,
-        env=worker_env.compiler_env())
+        env=worker_env.compiler_env(), report=report)
 
 
 _SLOT = WorkerSlot()
@@ -102,8 +102,7 @@ def run(op: str, payload: dict, runtime, *, free_gpu, hf_token: str | None = Non
     with _SLOT.lock:
         logs = log_dir(runtime)
         if _SLOT.running() is None:
-            report(f"Preparing the {LABEL} environment (first use installs it)")
-            python = prepare(runtime, logs / f"setup_{time.strftime('%Y%m%d-%H%M%S')}.log")
+            python = prepare(runtime, logs / f"setup_{time.strftime('%Y%m%d-%H%M%S')}.log", report=report)
             models = models_dir(runtime)
             env = {"HF_HOME": str(layout.models_root(models) / "hf"), "HF_XET_HIGH_PERFORMANCE": "1",
                    **({"HF_TOKEN": hf_token} if hf_token else {})}
@@ -113,6 +112,7 @@ def run(op: str, payload: dict, runtime, *, free_gpu, hf_token: str | None = Non
         worker = _SLOT.worker
 
         def make_room_and_request():
+            report(f"Running dubbing tool: {op}; worker log: {worker.log_path}")
             _make_room(op, worker, free_gpu)
             return worker.request({"op": op, **payload}, runtime.generation_timeout)
 
