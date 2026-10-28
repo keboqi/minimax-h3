@@ -123,6 +123,9 @@ text.
 Tick lines on the board to pick them for the line actions; without picks they
 use the focused line:
 
+- **Listen to original** plays the first picked line (or the focused line) from
+  the original soundtrack at its current Start and End, without padding or voice
+  generation. Its player is separate from the dub preview for comparison.
 - **Preview** voices the first picked line, fits it to its timing and plays it.
   It reuses the line's saved take.
 - **New take** records the line again; the dub then uses the new take.

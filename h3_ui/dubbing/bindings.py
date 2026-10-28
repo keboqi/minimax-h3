@@ -40,6 +40,10 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
                     **_QUIET).then(**_readiness(view, actions))
     line_inputs = [view.session, view.line_numbers, view.voice_mode, view.preset, view.timing, view.max_speed,
                    view.parallel]
+    view.listen_original.click(actions.listen_original, inputs=[view.session, view.line_numbers],
+                               outputs=[view.original_audio, view.line_status], **_QUIET)
+    for event in (view.session.change, view.line_numbers.change, view.start.input, view.end.input):
+        event(lambda: None, outputs=view.original_audio, **_QUIET)
     previewed = bind_gpu_action(
         view.preview.click, owned_generation(actions.preview_line, FAMILY_LINES), inputs=line_inputs,
         outputs=[view.preview_audio, view.line_status], show_progress="minimal", api_name=False,

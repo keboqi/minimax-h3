@@ -438,6 +438,19 @@ class DubbingHandlers:
         except Exception as exc:
             yield gr.skip(), self._failed(exc)
 
+    def listen_original(self, session_id, line_numbers):
+        """Outputs: original audio player, line status. Reads the first selected line without a GPU job."""
+        try:
+            runtime = self._runtime()
+            session = sessions.load(runtime, session_id)
+            indices = segment_tools.parse_line_numbers(line_numbers, len(session.segments))
+            if not indices:
+                raise H3Error("Select a line to listen to its original audio.")
+            clip = pipeline.original_line(session_id, indices[0], runtime=runtime)
+            return gr.update(value=encode_wav(clip.samples, clip.rate), label=clip.message), clip.message
+        except Exception as exc:
+            return gr.skip(), self._failed(exc)
+
     def preview_line(self, session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel):
         """Outputs: preview audio, line status. Voices the first listed line, reusing its saved take."""
         yield from self._preview(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, fresh=False)

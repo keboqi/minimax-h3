@@ -103,11 +103,13 @@ class DubbingView:
     delete_line: gr.Button
     line_numbers: gr.Textbox
     preview: gr.Button
+    listen_original: gr.Button
     new_take: gr.Button
     retranslate: gr.Button
     stop_preview: gr.Button
     line_status: gr.Markdown
     preview_audio: gr.Audio
+    original_audio: gr.Audio
     # Dub
     speakers_panel: gr.Group
     speakers: gr.HTML
@@ -288,14 +290,17 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                         line_numbers = gr.Textbox(visible=False)
                         inspected = gr.State(None)
                         with gr.Row(elem_classes=["h3-dub-line-actions"]):
+                            listen_original = gr.Button("Listen to original")
                             preview = gr.Button("Preview", variant="primary")
                             new_take = gr.Button("New take")
                             retranslate = gr.Button("Translate again")
                             stop_preview = gr.Button("Interrupt", interactive=False)
                         line_status = gr.Markdown(elem_classes=["h3-dub-status"])
-                        preview_audio = gr.Audio(label="Line preview", show_label=False, type="numpy",
+                        original_audio = gr.Audio(label="Original segment", type="numpy", interactive=False)
+                        preview_audio = gr.Audio(label="Dub preview", type="numpy",
                                                  interactive=False)
-                        gr.Markdown("Preview hears the line fitted to its timing; New take records it again, and "
+                        gr.Markdown("Listen to original plays the source segment at its current Start and End. "
+                                    "Preview hears the dub fitted to its timing; New take records it again, and "
                                     "the dub keeps the newest take. With lines picked on the board, these use "
                                     "them; Translate again with none fills the untranslated lines.",
                                     elem_classes=["h3-song-hint"])
@@ -371,8 +376,8 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
         source_language, target_language, notes, pipeline, translate, translator, gemini, gemini_model, api_key,
         options, separate, separator_model, reuse, local, aligner, merge_gap, refine_timestamps, plan, analyze, stop_analyze,
         analyze_status, board, lines, inspected, inspector, previous_line, next_line, start, end, speaker, original,
-        translation, line_dub, fit, add_line, delete_line, line_numbers, preview, new_take, retranslate,
-        stop_preview, line_status, preview_audio, speakers_panel, speakers, speakers_status, voice_mode, preset,
+        translation, line_dub, fit, add_line, delete_line, line_numbers, preview, listen_original, new_take, retranslate,
+        stop_preview, line_status, preview_audio, original_audio, speakers_panel, speakers, speakers_status, voice_mode, preset,
         timing, max_speed, speech_volume, background_volume, keep_original, advanced, regenerate,
         parallel, readiness, run, stop, status, player, video, audio, files,
         export_source, export_subtitles, exported_video, export_status,

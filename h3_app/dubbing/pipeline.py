@@ -822,6 +822,23 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
     take_store.prune(store)
 
 
+def original_line(session_id: str, index: int, *, runtime) -> LinePreview:
+    """The original soundtrack at the saved line's exact cuts; no padding or synthesis."""
+    session = sessions.load(runtime, session_id)
+    lines = session.segments
+    if not 0 <= index < len(lines):
+        raise H3Error(f"No line {index + 1}; the table has {len(lines)} line(s).")
+    audio = session.path("audio")
+    if audio is None or not audio.is_file():
+        raise H3Error("This session's original soundtrack is missing. Analyze the source again.")
+    line = lines[index]
+    samples = read_slice(audio, line["start"], line["end"])
+    if not samples.size:
+        raise H3Error("This line's times are outside the original audio. Adjust its Start and End.")
+    return LinePreview(RATE, samples, f"Original line {index + 1}: "
+                       f"{segment_tools.format_time(line['start'])}–{segment_tools.format_time(line['end'])}.")
+
+
 def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token=None) -> Iterator[str | LinePreview]:
     session = sessions.load(runtime, request.session_id)
     lines = session.segments

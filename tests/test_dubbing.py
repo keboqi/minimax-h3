@@ -685,6 +685,38 @@ class HandlerTests(Workspace):
         self.assertIn("Not saved", self.handlers.save_speaker(session.id, {**cards, "changed": 1}))
         self.assertEqual(self.handlers.save_speaker(session.id, {**cards, "changed": None}), self.module.gr.skip())
 
+    def test_listen_original_uses_exact_source_cuts_without_translation_or_gpu(self):
+        from h3_app.drama3.serving.audio import decode_wav
+
+        source = _tone_wav(self.root / "original.wav", 2.0, level=0.2)
+        session = sessions.create(self.runtime, source, video=False)
+        session.set_file("audio", session.path("source"))
+        vocals = _tone_wav(session.root / "vocals.wav", 2.0, level=0.8)
+        session.set_file("vocals", vocals)
+        session.segments = [{"start": 0.25, "end": 0.75, "source": "Hello", "translation": "", "dub": False}]
+        session.save()
+        with patch.object(self.handlers, "_gpu", side_effect=AssertionError("Original playback needs no GPU")):
+            value, message = self.handlers.listen_original(session.id, "1")
+        samples, rate = decode_wav(value["value"])
+        expected = pipeline.read_slice(session.path("audio"), 0.25, 0.75)
+        self.assertEqual((rate, len(samples)), (pipeline.RATE, int(0.5 * pipeline.RATE)))
+        np.testing.assert_allclose(samples, expected, atol=2 / 32768)
+        self.assertIn("Original line 1", message)
+        self.assertIn("00:00.250", value["label"])
+        # Reload the edited cuts; the old slice is never cached.
+        session.segments = [{**session.segments[0], "start": 0.5, "end": 1.5}]
+        session.save()
+        value, _ = self.handlers.listen_original(session.id, "1")
+        self.assertEqual(len(decode_wav(value["value"])[0]), pipeline.RATE)
+
+    def test_listen_original_reports_missing_selection_or_source(self):
+        source = _tone_wav(self.root / "original.wav", 1.0)
+        session = sessions.create(self.runtime, source, video=False)
+        session.segments = [{"start": 0, "end": 1, "source": "Hello"}]
+        session.save()
+        self.assertIn("Select a line", self.handlers.listen_original(session.id, "")[1])
+        self.assertIn("soundtrack is missing", self.handlers.listen_original(session.id, "1")[1])
+
     def test_preview_player_preserves_levels_including_mute_and_boost(self):
         from h3_app.drama3.serving.audio import decode_wav
 
