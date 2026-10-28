@@ -34,3 +34,11 @@ def choose_engine(page, task, engine):
         if dropdown.input_value() == engine:
             return
     expect(dropdown).to_have_value(engine)
+
+
+def open_create(page):
+    """Return to Create: the top bar's current task stands in for the hidden Create tab."""
+    page.locator(".h3-task-picker label:has(input:checked)").click()
+    expect(page.locator('#h3-main-tabs [role="tab"][data-tab-id="create"]')).to_have_attribute(
+        "aria-selected", "true"
+    )

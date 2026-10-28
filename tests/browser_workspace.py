@@ -12,7 +12,7 @@ import time
 import requests
 from PIL import Image
 from playwright.sync_api import sync_playwright, expect
-from tests.browser_navigation import choose_engine
+from tests.browser_navigation import choose_engine, open_create
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -285,7 +285,7 @@ def run():
                 expect(
                     page.get_by_role("button", name="Cancel selected job", exact=True)
                 ).to_be_disabled()
-                page.get_by_role("tab", name="Create", exact=True).click()
+                open_create(page)
                 expect(busy).to_have_count(0)
                 generate.click()
                 page.get_by_role("tab", name="Jobs", exact=True).click()
@@ -322,7 +322,7 @@ def run():
                 assert captured[-1]["retry_of"] == failed["id"]
                 assert captured[-1]["seeds"] == failed["seeds"]
                 # A rejected queue handoff must become a terminal failed job.
-                page.get_by_role("tab", name="Create", exact=True).click()
+                open_create(page)
                 prompt.fill("Rejected handoff")
                 expect(generate).to_be_enabled()
                 requests.post(url + "/test/queue/0", timeout=2).raise_for_status()
@@ -364,7 +364,7 @@ def run():
                 assert polls_during(5000) == 0, polls[-5:]
                 outsider.get_by_role("tab", name="Jobs", exact=True).click()
                 assert polls_during(5000) >= 2, "Jobs did not poll while open"
-                outsider.get_by_role("tab", name="Create", exact=True).click()
+                open_create(outsider)
                 outsider.wait_for_timeout(2500)
                 assert polls_during(5000) == 0, "Jobs kept polling after it closed"
                 outsider.get_by_role("tab", name="Jobs", exact=True).click()
@@ -431,7 +431,7 @@ def run():
                     ("Song", "YuE2", re.compile(r"Song idea / style tags"), "Generate with YuE2"),
                 ):
                     phase[0] = f"engine switch: {label}"
-                    page.get_by_role("tab", name="Create", exact=True).click()
+                    open_create(page)
                     choose_engine(page, task, label)
                     form = page.locator('#h3-engine-tabs > [role="tabpanel"]:visible')
                     form.get_by_label(field, exact=True).fill("Fixture request")
@@ -676,7 +676,7 @@ def run():
                         assert page.evaluate(
                             "document.documentElement.scrollWidth <= innerWidth + 2"
                         ), f"{tab_name} dark overflows at {width}px"
-                page.get_by_role("tab", name="Create", exact=True).click()
+                open_create(page)
                 page.set_viewport_size({"width": 1280, "height": 1000})
                 page.evaluate("document.documentElement.style.zoom = '2'")
                 assert page.evaluate(
@@ -686,7 +686,7 @@ def run():
                     path=str(ARTIFACTS / "h3-200-percent.png"), full_page=True
                 )
                 page.evaluate("document.documentElement.style.zoom = '1'")
-                page.get_by_role("tab", name="Create", exact=True).focus()
+                page.locator(".h3-task-picker input:checked").focus()
                 page.keyboard.press("Tab")
                 assert page.evaluate("document.activeElement !== document.body")
                 assert page.locator('[role="status"]').count() > 0

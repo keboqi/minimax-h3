@@ -14,6 +14,12 @@ storage paths, and APIs remain compatible.
 `bash run_h3.sh` and `python gradio_app.py` launch the workspace. Local and
 Modal launches use the same UI.
 
+One top bar holds the navigation, so the centre of the window stays for the
+work: the Create tasks (Video, Image, Song, Soundstage, Dub & Translate), then
+Projects, Media, Jobs, System and API & workflows, with backend and job status
+at the right. Picking a task opens it from any tab; its engine choice sits at
+the top of Create. On narrow windows the bar stacks into scrolling rows.
+
 The studio layout separates composition, output settings, and preview into
 clearly marked sections, with a shared teal palette in light and dark mode.
 The H3 composer keeps inputs and the prompt beside results and generation

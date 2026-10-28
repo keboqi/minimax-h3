@@ -38,6 +38,20 @@ GENERATE_SHORTCUT_JS = """
 }
 """
 
+# The top bar's tasks stand in for the hidden Create tab: picking one, even the
+# current task, opens Create from Media, Jobs or any other tab.
+TASK_OPENS_CREATE_JS = """
+() => {
+  if (window.h3TaskOpensCreate) return;
+  window.h3TaskOpensCreate = true;
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".h3-workspace-header .h3-task-picker label")) return;
+    const create = document.querySelector('#h3-main-tabs [role="tab"][data-tab-id="create"]');
+    if (create && create.getAttribute("aria-selected") !== "true") create.click();
+  });
+}
+"""
+
 
 def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Blocks:
     audio_probe_cache.install()
@@ -47,19 +61,21 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
         gr.Blocks(title="Prism Studio", fill_width=True) as demo,
         gr.Column(elem_classes=["h3-workspace"]),
     ):
+        # The top bar: brand, Create tasks, then the main tab row (placed by CSS), then status.
         with gr.Row(elem_classes=["h3-workspace-header"]):
             gr.HTML(
                 '<header class="h3-hero"><span class="h3-brand-mark" aria-hidden="true">PS</span>'
-                '<div><p class="h3-eyebrow">Video · Image · Music · Audio</p>'
-                '<h1>Prism Studio</h1></div></header>',
-                scale=3,
+                '<h1>Prism Studio</h1></header>',
+                scale=0,
+                min_width=0,
             )
-            summary_root = gr.Column(scale=2, elem_classes=["h3-header-status"])
+            task_root = gr.Column(scale=0, min_width=0, elem_classes=["h3-task-picker"])
+            summary_root = gr.Column(scale=0, min_width=0, elem_classes=["h3-header-status"])
             with summary_root:
                 system_summary = gr.HTML(
                     services.compact_backend_status(initial_backend)
                 )
-        app_views = create_app_views(summary_root=summary_root)
+        app_views = create_app_views(summary_root=summary_root, task_root=task_root)
         with app_views.system if app_views is not None else nullcontext():
             gr.Markdown(
                 "## System\nManage your backend, memory, and browser preferences. "
@@ -323,6 +339,7 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             navigation=navigation,
         )
         demo.load(None, js=GENERATE_SHORTCUT_JS, api_name=False)
+        demo.load(None, js=TASK_OPENS_CREATE_JS, api_name=False)
         demo.load(None, js=DRAMA3_SUBTITLES_JS, api_name=False)
         demo.load(None, js=DRAMA3_SCRIPT_HIGHLIGHT_JS, api_name=False)
         demo.load(None, js=DRAMA3_CAST_JS, api_name=False)

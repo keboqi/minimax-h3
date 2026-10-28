@@ -70,36 +70,47 @@ FORMAT_FOR_TASK = {"Video": "Video", "Image": "Image", "Audio / Music": "Audio",
 TASK_LABELS = {"TTS": "Soundstage", "Audio / Music": "Song", "Dub": "Dub & Translate"}
 
 
-def create_app_views(*, summary_root=None) -> AppViews:
-    return create_workspace_views(summary_root=summary_root)
+def create_app_views(*, summary_root=None, task_root=None) -> AppViews:
+    return create_workspace_views(summary_root=summary_root, task_root=task_root)
 
 
-def create_workspace_views(*, summary_root=None) -> AppViews:
+def create_workspace_views(*, summary_root=None, task_root=None) -> AppViews:
+    """``task_root`` places the task picker in the top bar; without one it sits atop Create."""
     with summary_root if summary_root is not None else nullcontext():
         jobs_count = gr.HTML(
             '<p class="h3-system-status" role="status">No active jobs in this session.</p>',
             elem_classes=["h3-jobs-summary"],
         )
+
+    def task_picker():
+        # Keep persisted task values stable while updating the visible names.
+        return gr.Radio(
+            [(TASK_LABELS.get(task, task), task) for task in TASKS],
+            value="Video", label="Task", show_label=False, container=False, interactive=False,
+        )
+
+    if task_root is not None:
+        with task_root:
+            task = task_picker()
     tabs = gr.Tabs(elem_id="h3-main-tabs", selected="create", overflow_behavior="wrap")
     with tabs:
         with gr.Tab("Create", id="create") as create_tab:
-            with gr.Row(elem_classes=["h3-task-picker"]):
-                # Keep persisted task values stable while updating the visible names.
-                task = gr.Radio(
-                    [(TASK_LABELS.get(task, task), task) for task in TASKS],
-                    value="Video", label="Task", scale=2, interactive=False
-                )
+            if task_root is None:
+                with gr.Row(elem_classes=["h3-task-picker"]):
+                    task = task_picker()
+            with gr.Row(elem_classes=["h3-engine-bar"], equal_height=True):
                 engine = gr.Dropdown(
                     [(e.label, e.id) for e in engines_for_task("Video")],
                     value="h3",
                     label="Engine",
-                    scale=1,
+                    scale=0,
+                    min_width=240,
                     interactive=False,
                 )
-            engine_help = gr.Markdown(
-                engines_for_task("Video")[0].description,
-                elem_classes=["h3-engine-help"],
-            )
+                engine_help = gr.Markdown(
+                    engines_for_task("Video")[0].description,
+                    elem_classes=["h3-engine-help"],
+                )
             with gr.Tabs(selected="h3", elem_id="h3-engine-tabs") as engine_tabs:
                 with gr.Tab("MiniMax H3", id="h3"):
                     gr.HTML(

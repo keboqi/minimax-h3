@@ -11,7 +11,7 @@ import time
 
 from PIL import Image
 from playwright.sync_api import expect, sync_playwright
-from tests.browser_navigation import choose_engine
+from tests.browser_navigation import choose_engine, open_create
 import requests
 
 
@@ -170,7 +170,7 @@ uvicorn.run(server, host='127.0.0.1', port={port}, log_level='warning')
                     expect(media.get_by_text("Added image to H3 · Reference images · Picture 3. Open Create to use it.", exact=True)).to_be_visible()
                     set_as("Qwen · Input / reference images")
                     expect(media.get_by_text("Added image to Qwen · Input / reference images. Open Create to use it.", exact=True)).to_be_visible()
-                    page.get_by_role("tab", name="Create", exact=True).click()
+                    open_create(page)
                     expect(inputs.get_by_role("row")).to_have_count(3)
                     choose_engine(page, "Video", "MiniMax H3")
                     page.get_by_label("First / last frame", exact=True).check()

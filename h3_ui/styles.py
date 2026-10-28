@@ -132,6 +132,8 @@ H3_WORKSPACE_CSS = """
   --h3-border: #dbe3df;
   --h3-accent: #087f6c;
   --h3-focus: #087f6c;
+  --h3-accent-soft: #e3f1ec;
+  --h3-accent-ink: #065f51;
   --h3-disclosure: #edf4f1;
   --h3-disclosure-hover: #e0eee7;
   --h3-disclosure-border: #b7ccc2;
@@ -171,6 +173,7 @@ H3_WORKSPACE_CSS = """
   --h3-muted: #a9bdb3;
   --h3-border: #34463e;
   --h3-accent: #66d8bb; --h3-focus: #66d8bb;
+  --h3-accent-soft: #1f3d35; --h3-accent-ink: #8ee6cf;
   --h3-disclosure: #20362f;
   --h3-disclosure-hover: #2b473e;
   --h3-disclosure-border: #4b6b5e;
@@ -180,28 +183,47 @@ body:has(.h3-workspace), .gradio-container:has(.h3-workspace) { background: #f2f
 /* The workspace fills the window; Gradio's own 32px side padding would only add empty margins. */
 .gradio-container:has(.h3-workspace) .main.app { padding: 8px clamp(0px, 1vw, 16px); }
 :is(.dark body, body.dark):has(.h3-workspace), .dark .gradio-container:has(.h3-workspace) { background: #111b18; }
-.h3-workspace .h3-hero { display: flex; align-items: center; gap: 16px; padding: 0; }
-.h3-workspace .h3-brand-mark { display: grid; place-items: center; width: 54px; height: 54px; flex-shrink: 0; border-radius: 16px; background: #087f6c; color: white; font-size: 22px; font-weight: 750; letter-spacing: -.06em; }
-.h3-workspace .h3-hero h1 { font-size: 25px; line-height: 1.25; letter-spacing: -.035em; margin: 4px 0; }
-.h3-workspace .h3-hero p { color: var(--h3-muted); margin: 0; }
+/* Top bar: the header row and the main tab row share the workspace grid's first row.
+   Brand, Create tasks, the other main tabs, then status; the Create tab itself is
+   hidden because the tasks open it. */
+div.h3-workspace.column { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; column-gap: 20px; row-gap: var(--layout-gap); align-content: start; }
+.h3-workspace > *, .h3-workspace #h3-main-tabs > * { grid-column: 1 / -1; min-width: 0; }
+.h3-workspace::before { content: ""; grid-row: 1; grid-column: 1 / -1; margin: -12px -24px 4px; background: var(--h3-surface); border-bottom: 1px solid var(--h3-border); }
+.h3-workspace .h3-workspace-header, .h3-workspace #h3-main-tabs { display: contents !important; }
+.h3-workspace .h3-workspace-header > *, .h3-workspace #h3-main-tabs > .tab-wrapper { grid-row: 1; z-index: 1; min-width: 0 !important; margin: -12px 0 4px; min-height: 60px; display: flex; align-items: center; border: 0; padding: 0; background: transparent; }
+.h3-workspace .h3-workspace-header > .block:has(.h3-hero) { grid-column: 1; }
+.h3-workspace .h3-workspace-header > .h3-task-picker { grid-column: 2; align-items: stretch; }
+.h3-workspace #h3-main-tabs > .tab-wrapper { grid-column: 3; align-items: stretch; }
+.h3-workspace .h3-workspace-header > .h3-header-status { grid-column: 4; flex-direction: column; align-items: flex-end; justify-content: center; gap: 2px; font-size: 12px; }
+.h3-workspace .h3-hero { display: flex; align-items: center; gap: 10px; padding: 0; }
+.h3-workspace .h3-brand-mark { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: 9px; background: #087f6c; color: white; font-size: 13px; font-weight: 750; letter-spacing: -.04em; }
+.h3-workspace .h3-hero h1 { font-size: 16px; line-height: 1.2; letter-spacing: -.02em; margin: 0; white-space: nowrap; }
 .h3-workspace .h3-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--h3-accent); margin: 0; }
-.h3-workspace .h3-workspace-header { align-items: center; gap: 24px; padding: 0 0 8px; }
 .h3-workspace .html-container { padding: 0; }
-.h3-workspace .h3-header-status p { margin: 0; }
-.h3-workspace .h3-header-status { gap: 2px; min-width: 240px; border-left: 1px solid var(--h3-border); padding-left: 20px; font-size: 12px; }
+.h3-workspace .h3-header-status p { margin: 0; white-space: nowrap; }
 .h3-workspace .h3-header-status :is(.h3-system-ready, .h3-system-warning, .h3-system-status) { padding: 0; margin: 0; }
-.h3-workspace #h3-main-tabs > div > [role="tablist"] { gap: 6px; border-bottom: 1px solid var(--h3-border); padding: 0 0 6px; }
-.h3-workspace #h3-main-tabs > div > [role="tablist"] > button { min-height: 44px; padding: 10px 22px; border: 1px solid transparent; border-radius: 9px; color: var(--h3-muted); font-weight: 600; background: transparent; }
-.h3-workspace #h3-main-tabs > div > [role="tablist"] > button:hover { background: var(--h3-surface); color: var(--h3-text); }
-.h3-workspace #h3-main-tabs > div > [role="tablist"] > button[aria-selected="true"] { color: var(--h3-accent); border-color: var(--h3-border); background: var(--h3-surface); box-shadow: 0 2px 4px #122e2110; }
+.h3-workspace .h3-task-picker :is(.form, .block, fieldset, .wrap) { display: flex; align-items: stretch; height: 100%; margin: 0; padding: 0; border: 0; box-shadow: none; background: transparent; gap: 2px; flex-wrap: nowrap; }
+.h3-workspace .h3-task-picker label:has(input[type="radio"]) { position: relative; display: flex; align-items: center; min-height: 0; margin: 0; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; box-shadow: none; color: var(--h3-muted); font-weight: 500; white-space: nowrap; cursor: pointer; }
+.h3-workspace .h3-task-picker label:has(input[type="radio"]):hover { color: var(--h3-text); }
+.h3-workspace .h3-task-picker label input[type="radio"] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.h3-workspace .h3-task-picker label:has(input:focus-visible) { outline: 2px solid var(--h3-focus); outline-offset: -4px; border-radius: 6px; }
+.h3-workspace .h3-task-picker label:has(input:checked) { border-bottom-color: var(--h3-accent); color: var(--h3-accent); font-weight: 600; }
+/* Away from Create no task is the current place. */
+.h3-workspace:has(#h3-main-tabs [data-tab-id="create"][aria-selected="false"]) .h3-task-picker label:has(input:checked) { border-bottom-color: transparent; color: var(--h3-muted); font-weight: 500; }
+.h3-workspace #h3-main-tabs > .tab-wrapper::before { content: ""; align-self: center; width: 1px; height: 24px; margin-right: 12px; background: var(--h3-border); }
+.h3-workspace #h3-main-tabs > div > [role="tablist"] { display: flex; flex-wrap: nowrap; align-items: center; gap: 2px; height: auto; border: 0; padding: 0; overflow: visible; }
+.h3-workspace #h3-main-tabs > div > [role="tablist"]::after, .h3-workspace #h3-main-tabs > div > [role="tablist"] > button::after { display: none; }
+.h3-workspace #h3-main-tabs > div > [role="tablist"] > button { min-height: 40px; padding: 0 12px; border: 0; border-radius: 8px; color: var(--h3-muted); font-weight: 500; background: transparent; white-space: nowrap; }
+.h3-workspace #h3-main-tabs > div > [role="tablist"] > button[data-tab-id="create"] { display: none; }
+.h3-workspace #h3-main-tabs > div > [role="tablist"] > button:hover { background: var(--h3-muted-surface); color: var(--h3-text); }
+.h3-workspace #h3-main-tabs > div > [role="tablist"] > button[aria-selected="true"] { color: var(--h3-accent-ink); background: var(--h3-accent-soft); font-weight: 600; }
+.h3-workspace #h3-main-tabs > div > [role="tablist"] > button[aria-selected="true"]::after { display: none; }
 .h3-workspace #h3-main-tabs > [role="tabpanel"] { border: 0; padding: 0; background: transparent; }
 .h3-workspace #h3-engine-tabs > [role="tabpanel"] { border: 0; padding: 0; background: transparent; }
 .h3-workspace .h3-mobile-nav-container { display: none; }
-.h3-workspace .h3-task-picker { padding: 6px 10px; align-items: center; background: var(--h3-surface); border: 1px solid var(--h3-border); border-radius: 14px; }
-.h3-workspace .h3-task-picker > .form { border: 0; box-shadow: none; }
-.h3-workspace .h3-task-picker label:has(input[type="radio"]) { min-height: 40px; padding-inline: 18px; border-radius: 8px; }
-.h3-workspace .h3-task-picker label:has(input:checked) { border-color: var(--h3-accent); color: var(--h3-accent); background: var(--h3-muted-surface); }
-.h3-workspace .h3-engine-help { color: var(--h3-muted); font-size: 12px; padding-inline: 4px; }
+.h3-workspace .h3-engine-bar { align-items: center; gap: 16px; padding: 4px 0 8px; }
+.h3-workspace .h3-engine-bar > .block:not(.h3-engine-help) { flex: 0 1 280px; }
+.h3-workspace .h3-engine-help { flex: 1 1 320px; max-width: 760px; color: var(--h3-muted); font-size: 13px; padding-inline: 4px; }
 .h3-workspace .h3-engine-help p { margin: 0; }
 .h3-workspace #h3-engine-tabs > div:has(> [role="tablist"]) { display: none; }
 .h3-workspace .h3-generator-shell { gap: 20px; align-items: flex-start; }
@@ -914,26 +936,37 @@ button.h3-busy { pointer-events: none; opacity: .6; }
   .h3-workspace .h3-drama3 .gr-accordion > div[data-testid="accordion-content"] { padding: 8px 6px 8px 9px; }
   .h3-workspace .h3-drama3 :is(.h3-drama3-toolbar, .h3-drama3-clip) { padding: 6px; }
 }
+/* Narrower windows stack the bar's parts; each row scrolls sideways instead of wrapping. */
+@media (max-width: 1100px) {
+  div.h3-workspace.column { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .h3-workspace::before { grid-row: 1 / span 2; }
+  .h3-workspace #h3-main-tabs > .tab-wrapper { grid-column: 2; overflow-x: auto; }
+  .h3-workspace .h3-workspace-header > .h3-header-status { grid-column: 3; }
+  .h3-workspace .h3-workspace-header > .h3-task-picker { grid-row: 2; grid-column: 1 / -1; margin: 0 0 4px; min-height: 48px; overflow-x: auto; }
+}
+@media (max-width: 767px) {
+  div.h3-workspace.column { grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; }
+  .h3-workspace::before { grid-row: 1 / span 3; margin: -12px -6px 4px; }
+  .h3-workspace .h3-workspace-header > *, .h3-workspace #h3-main-tabs > .tab-wrapper { margin: 0; min-height: 44px; }
+  .h3-workspace .h3-workspace-header > .block:has(.h3-hero) { grid-row: 1; grid-column: 1; margin-top: -12px; min-height: 56px; }
+  .h3-workspace .h3-workspace-header > .h3-header-status { grid-row: 1; grid-column: 2; margin-top: -12px; min-height: 56px; max-width: 180px; font-size: 11px; }
+  .h3-workspace .h3-header-status p { white-space: normal; text-align: right; }
+  .h3-workspace #h3-main-tabs > .tab-wrapper { grid-row: 2; grid-column: 1 / -1; }
+  .h3-workspace #h3-main-tabs > .tab-wrapper::before { display: none; }
+  .h3-workspace .h3-workspace-header > .h3-task-picker { grid-row: 3; grid-column: 1 / -1; }
+}
 .h3-workspace .h3-mobile-nav { display: none; }
 .h3-workspace .h3-mobile-nav a { border-radius: 8px; text-decoration: none; }
 @media (max-width: 767px) {
   .h3-workspace { padding: 12px 6px 24px; }
-  .h3-workspace .h3-hero h1 { font-size: 22px; }
-  .h3-workspace .h3-hero p { font-size: 12px; }
-  .h3-workspace .h3-header-status { border-left: 0; border-top: 1px solid var(--h3-border); padding: 10px 0 0; margin-top: 12px; min-width: 0; }
-  .h3-workspace #h3-main-tabs > div > [role="tablist"] { gap: 2px; }
-  .h3-workspace #h3-main-tabs > div > [role="tablist"] > button { padding: 8px 12px; }
   .h3-workspace :is(.h3-composer, .h3-engine-view) { padding: 12px; }
-  .h3-workspace .h3-task-picker > * { min-width: 0 !important; }
   .h3-workspace .h3-generator-shell { flex-direction: column; }
   .h3-workspace .h3-composer, .h3-workspace .h3-preview-panel { width: 100%; min-width: 0 !important; }
 }
 @media (max-width: 767px) {
-  .h3-workspace .h3-workspace-header { flex-direction: column; gap: 0; align-items: stretch; }
   .h3-workspace .h3-mobile-nav-container { display: block; }
   .h3-workspace .h3-mobile-nav { display: flex; gap: 8px; }
   .h3-workspace .h3-mode-row { flex-direction: column; }
-  .h3-workspace .h3-task-picker { padding: 8px; }
   .h3-workspace .h3-preview-panel { padding: 8px; }
   .h3-workspace .h3-drama3 .h3-generation-buttons > button {
     flex: 1 1 100%; min-width: 0; white-space: normal;
