@@ -55,8 +55,8 @@ translator. Turn off **Translate now** to transcribe only.
 
 **Refine speech boundaries with Align (experimental)** adds
 [Desert Ant Labs Align](https://desertant.com/models/align/) after local
-Qwen transcription. It is off by default so the same source can be compared with
-and without refinement: **Qwen3-ASR → Qwen3-ForcedAligner → Align**. ASR and forced
+Qwen transcription. It is on by default; turn it off to compare the same source
+without refinement: **Qwen3-ASR → Qwen3-ForcedAligner → Align**. ASR and forced
 alignment run on VAD speech chunks, not the full recording. Align receives each
 chunk's word timings and a matching audio window with context on either side.
 VAD chunks remain pause-based, with no hard duration cap on uninterrupted speech.

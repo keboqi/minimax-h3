@@ -86,11 +86,12 @@ class RefinementTests(unittest.TestCase):
             self.assertEqual(refinement.language_code(language), "")
 
     def test_refinement_changes_only_qwen_transcript_cache_key(self):
-        plain = pipeline.AnalyzeRequest("a.wav", source_language="English")
-        refined = pipeline.AnalyzeRequest("a.wav", source_language="English", refine_timestamps=True)
+        plain = pipeline.AnalyzeRequest("a.wav", source_language="English", refine_timestamps=False)
+        refined = pipeline.AnalyzeRequest("a.wav", source_language="English")
         self.assertNotEqual(pipeline._transcript_key(plain), pipeline._transcript_key(refined))
         for backend in (pipeline.PIPELINE_GEMINI, pipeline.PIPELINE_MOSS):
-            self.assertEqual(pipeline._transcript_key(pipeline.AnalyzeRequest("a", pipeline=backend)),
+            self.assertEqual(pipeline._transcript_key(pipeline.AnalyzeRequest("a", pipeline=backend,
+                                                                            refine_timestamps=False)),
                              pipeline._transcript_key(pipeline.AnalyzeRequest("a", pipeline=backend,
                                                                             refine_timestamps=True)))
 

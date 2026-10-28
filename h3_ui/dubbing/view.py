@@ -241,7 +241,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                                                       label="Join pauses shorter than (s)",
                                                       info="Speech separated by a shorter pause is transcribed "
                                                            "together.")
-                            refine_timestamps = gr.Checkbox(False, label="Refine speech boundaries with Align (experimental)",
+                            refine_timestamps = gr.Checkbox(True, label="Refine speech boundaries with Align (experimental)",
                                 info="Uses [Desert Ant Labs Align](https://desertant.com/models/align/). "
                                      "Refines Qwen's word timing on speech chunks. Keeps original timing on "
                                      "failure. Requires Linux and Node.js 22+.")

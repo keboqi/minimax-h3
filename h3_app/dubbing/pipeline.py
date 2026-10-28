@@ -106,7 +106,7 @@ class AnalyzeRequest:
     notes: str = ""
     # Take the stems and transcript from an earlier analysis of the same file when its settings match.
     reuse: bool = True
-    refine_timestamps: bool = False
+    refine_timestamps: bool = True
 
 
 @dataclass(frozen=True)

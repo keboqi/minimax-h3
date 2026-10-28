@@ -367,7 +367,7 @@ class DubbingHandlers:
 
     def analyze_source(self, source, library, separate, separator_model, transcription, source_language,
                        target_language, translate, translator, aligner, merge_gap, gemini_model, api_key, notes,
-                       reuse=True, refine_timestamps=False):
+                       reuse=True, refine_timestamps=True):
         """Outputs: session id, board, table rows, status, plan. The plan marks the step running."""
         chosen = source or library
         steps = self._plan_steps(separate, separator_model, reuse, transcription, translate, translator,
