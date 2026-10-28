@@ -112,9 +112,18 @@ def run(op: str, payload: dict, runtime, *, free_gpu, hf_token: str | None = Non
         worker = _SLOT.worker
 
         def make_room_and_request():
-            report(f"Running dubbing tool: {op}; worker log: {worker.log_path}")
+            report("Making GPU room for dubbing tools")
             _make_room(op, worker, free_gpu)
-            return worker.request({"op": op, **payload}, runtime.generation_timeout)
+            step = {"separate": "Separating vocals from the background", "transcribe": "Transcribing speech with Qwen3",
+                    "align_lines": "Aligning speech with Qwen3", "translate": "Translating lines with Hy-MT"}.get(op, op)
+            report(step)
+            print(f"[{LABEL}] {step}; worker log: {worker.log_path}", flush=True)
+
+            def worker_progress(message):
+                print(f"[{LABEL}] {message}", flush=True)
+                report(message)
+
+            return worker.request({"op": op, **payload}, runtime.generation_timeout, report=worker_progress)
 
         reply = _SLOT.reaping(worker, make_room_and_request)
     persist_caches()  # Commit downloaded weights when running on Modal's volume.

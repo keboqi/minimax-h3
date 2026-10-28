@@ -217,6 +217,9 @@ choice.
   and in `setup_*.log` under that log directory; the UI shows its latest output.
   This shared Python setup precedes ASR and Align. A ready environment is reused
   without reinstalling packages.
+- After setup, worker progress replaces the preparation status: loading audio,
+  detecting speech, loading models, separating vocals and processing ASR or
+  translation batches. These updates appear in the UI and backend console.
 - The tools worker stays loaded between steps of a dubbing session. Any other
   GPU job stops it, and the dub's speech step stops it before Drama 3 starts.
   When VRAM is short, loading a tool first unloads the worker's other models,

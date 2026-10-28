@@ -183,6 +183,12 @@ class Worker:
     def loaded(self) -> list[str]:
         return sorted(self.models)
 
+    def progress(self, message: str) -> None:
+        print(message, file=sys.stderr, flush=True)
+        report = getattr(self, "_report", None)
+        if report is not None:
+            report(message)
+
     @staticmethod
     def torch():
         import torch
@@ -229,6 +235,7 @@ class Worker:
         key = f"separator:{model}"
         separator = self.models.get(key)
         if separator is None:
+            self.progress("Loading or downloading the vocal separation model")
             # One separator at a time; another model replaces it.
             for name in [name for name in self.models if name.startswith("separator:")]:
                 self.unload(name)
@@ -239,6 +246,7 @@ class Worker:
         separator.output_dir = str(output_dir)
         if getattr(separator, "model_instance", None) is not None:
             separator.model_instance.output_dir = str(output_dir)
+        self.progress("Separating vocals from the background")
         files = separator.separate(request["input"], {"Vocals": "vocals", "Instrumental": "backing"})
         found = {}
         for name in files:
@@ -262,6 +270,7 @@ class Worker:
         from huggingface_hub import snapshot_download
         from qwen_asr import Qwen3ASRModel
 
+        self.progress("Loading or downloading Qwen3-ASR" + (" and Qwen3-ForcedAligner" if aligner else ""))
         self.unload("asr")
         key = "asr+aligner" if aligner else "asr"
         kwargs = {"dtype": self.dtype(), "device_map": self.device()}
@@ -298,6 +307,7 @@ class Worker:
         return [(max(0.0, s), min(duration, e)) for s, e in result.get("timestamps") or [] if e > s]
 
     def transcribe(self, request: dict) -> dict:
+        self.progress("Loading audio for Qwen3 speech detection")
         import librosa
         import numpy as np
 
@@ -306,6 +316,7 @@ class Worker:
         duration = len(samples) / ASR_RATE
         aligner = bool(request.get("aligner", True))
         language = request.get("language") or None
+        self.progress("Detecting speech with OmniVAD")
         spans = merge_spans(self._speech_spans(samples, duration), float(request.get("merge_gap", VAD_MERGE_GAP)))
         spans = [(s, e) for s, e in spans if e - s >= MIN_SPAN_SECONDS]
         if not spans:
@@ -314,6 +325,8 @@ class Worker:
         segments, languages, groups = [], [], []
         for first in range(0, len(spans), ASR_BATCH):
             batch = spans[first:first + ASR_BATCH]
+            self.progress(f"Transcribing speech chunks {first + 1}-{first + len(batch)} of {len(spans)}"
+                          + (" with word timing" if aligner else ""))
             clips = [(samples[int(s * ASR_RATE):int(e * ASR_RATE)], ASR_RATE) for s, e in batch]
             try:
                 results = asr.transcribe(audio=clips, language=language, return_time_stamps=aligner)
@@ -344,7 +357,7 @@ class Worker:
                                              and getattr(item, "start_time", None) is not None
                                              and getattr(item, "end_time", None) is not None
                                              and min(end, start + float(item.end_time)) > start + float(item.start_time)]})
-            print(f"Transcribed {min(first + ASR_BATCH, len(spans))}/{len(spans)} speech spans", file=sys.stderr)
+            self.progress(f"Transcribed {min(first + ASR_BATCH, len(spans))}/{len(spans)} speech chunks")
         detected = max(set(languages), key=languages.count) if languages else ""
         return {"segments": segments, "language": detected, "spans": len(spans), "groups": groups}
 
@@ -356,6 +369,7 @@ class Worker:
         from huggingface_hub import snapshot_download
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
+        self.progress("Loading or downloading the Hy-MT translation model")
         path = snapshot_download(TRANSLATOR_ID)
         tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
         tokenizer.padding_side = "left"
@@ -379,6 +393,7 @@ class Worker:
         pending = [(index, text) for index, text in enumerate(texts) if text.strip()]
         for first in range(0, len(pending), TRANSLATE_BATCH):
             batch = pending[first:first + TRANSLATE_BATCH]
+            self.progress(f"Translating lines {first + 1}-{first + len(batch)} of {len(pending)} with Hy-MT")
             prompts = [tokenizer.apply_chat_template(
                 [{"role": "user", "content": translation_prompt(
                     text, target, "\n".join(part for part in (notes, contexts[index]) if part))}],
@@ -392,7 +407,7 @@ class Worker:
             width = encoded["input_ids"].shape[-1]
             for (index, _text), row in zip(batch, generated):
                 out[index] = clean_translation(tokenizer.decode(row[width:], skip_special_tokens=True))
-            print(f"Translated {min(first + TRANSLATE_BATCH, len(pending))}/{len(pending)} lines", file=sys.stderr)
+            self.progress(f"Translated {min(first + TRANSLATE_BATCH, len(pending))}/{len(pending)} lines")
         return {"texts": out}
 
 
@@ -411,6 +426,13 @@ def serve(models_dir: str, requests=None, replies=None) -> None:
         if not line.strip():
             continue
         request = json.loads(line)
+
+        def report(message):
+            replies.write(json.dumps({"id": request.get("id"), "event": "progress", "status": message},
+                                     ensure_ascii=False) + "\n")
+            replies.flush()
+
+        worker._report = report if request.get("progress") else None
         try:
             reply = {"ok": True, **worker.handle(request)}
         except Exception as exc:

@@ -47,10 +47,11 @@ class ResidentWorker:
     def running(self) -> bool:
         return self.process.poll() is None
 
-    def request(self, payload: dict, timeout: float) -> dict:
+    def request(self, payload: dict, timeout: float, *, report=None) -> dict:
         request_id = next(self._ids)
         try:
-            self.process.stdin.write((json.dumps({**payload, "id": request_id}) + "\n").encode("utf-8"))
+            self.process.stdin.write((json.dumps({**payload, "id": request_id,
+                **({"progress": True} if report is not None else {})}) + "\n").encode("utf-8"))
             self.process.stdin.flush()
         except OSError as exc:
             raise H3Error(f"{self.label} worker is not accepting requests. See {self.log_path}.") from exc
@@ -67,6 +68,10 @@ class ResidentWorker:
                 self.process.wait()
                 raise H3Error(f"{self.label} worker exited (code {self.process.returncode}). See {self.log_path}.")
             if reply.get("id") != request_id:
+                continue
+            if reply.get("event") == "progress":
+                if report is not None:
+                    report(str(reply.get("status") or ""))
                 continue
             self.loaded = set(reply.get("loaded") or ())
             if not reply.get("ok"):
