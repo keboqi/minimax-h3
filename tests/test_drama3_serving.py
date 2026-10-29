@@ -947,7 +947,7 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
     def test_pedalboard_output_is_peak_limited(self):
         from h3_app.drama3.serving import speaker_effects
 
-        with patch.object(speaker_effects, "_try_apply_pedalboard", lambda samples, rate, effects: samples * 6):
+        with patch.object(speaker_effects, "_try_apply_pedalboard", lambda samples, rate, effects, in_room=False: samples * 6):
             processed = speaker_effects.apply_speaker_effects(tone(0.2), RATE, ("radio_broadcast",))
         self.assertAlmostEqual(float(np.max(np.abs(processed))), 0.95, places=3)
 
@@ -1127,7 +1127,7 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         (knock,) = iter_sound_nodes(tree)
         calls = []
         with patch.object(generate, "apply_speaker_effects",
-                          side_effect=lambda samples, rate, effects: calls.append(effects) or samples):
+                          side_effect=lambda samples, rate, effects, **_: calls.append(effects) or samples):
             dry = generate._placed_sound(knock, ctx)
             self.assertEqual(calls, [])  # outside a scene: as recorded
             in_room = generate._placed_sound(knock, generate.replace(ctx, room="small_room"))

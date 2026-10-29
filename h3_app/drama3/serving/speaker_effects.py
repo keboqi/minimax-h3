@@ -38,6 +38,10 @@ SPEAKER_TAGS: tuple[str, ...] = (*SPEAKER_EFFECTS, *DISTANCE_TAGS)
 # Place effects heard as a real room (see ``rooms``), by the room each names.
 ROOM_EFFECT_ROOMS = {"reverb_small_room": "small_room", "reverb_large_hall": "large_hall"}
 
+# Effects that carry a reverb of their own: a space, of which a voice is heard in only one.
+SPACE_EFFECTS = frozenset({"metallic_helmet", "stadium_announcement", "dream_sequence", "underwater",
+                           "monster_voice", "ghost_spirit", "giant_titan", "fairy_tiny", "ancient_god"})
+
 SPEAKER_EFFECT_SET: frozenset[str] = frozenset(SPEAKER_TAGS)
 _EFFECT_ALTERNATION = "|".join(re.escape(name) for name in SPEAKER_TAGS)
 SPEAKER_EFFECT_TAG_RE = re.compile(rf"</?({_EFFECT_ALTERNATION})\s*>", re.IGNORECASE)
@@ -77,12 +81,15 @@ def apply_speaker_effects(
     samples: np.ndarray,
     rate: int,
     effects: tuple[str, ...] | list[str],
+    *,
+    in_room: bool = False,
 ) -> np.ndarray:
     """Apply chained vocal DSP effects to 1D float32 audio samples.
 
     A real room's tag adds that room folded to mono and cut to the take's length; the mix
     renders rooms in stereo with their tails instead (see ``rooms``). Distance tags are
-    placement, not effects, and are skipped.
+    placement, not effects, and are skipped. A voice ``in_room``, or tagged with one, leaves
+    out its effects' own reverb: two spaces stacked wash the words out.
     """
     from .rooms import room_wet
 
@@ -91,6 +98,8 @@ def apply_speaker_effects(
     if not active or audio.size == 0 or rate <= 0:
         return audio
 
+    in_room = in_room or any(name in ROOM_EFFECT_ROOMS for name in active)
+    # Stacked effects keep one reverb between them, the last one's; a room leaves none.
     out, pending = audio, []
     # Effects run in their written order, so a room comes before the device it is heard through.
     for effect_name in [*active, None]:
@@ -98,11 +107,12 @@ def apply_speaker_effects(
             pending.append(effect_name)
             continue
         if pending:
-            processed = _try_apply_pedalboard(out, rate, pending)
+            processed = _try_apply_pedalboard(out, rate, pending, in_room)
             if processed is None:
                 processed = out.copy()
-                for name in pending:
-                    processed = _apply_scipy_effect(processed, rate, name)
+                for index, name in enumerate(pending):
+                    spaced_later = any(later in SPACE_EFFECTS for later in pending[index + 1:])
+                    processed = _apply_scipy_effect(processed, rate, name, in_room or spaced_later)
             out, pending = processed, []
         if effect_name is not None:
             out = out + room_wet(out, rate, ROOM_EFFECT_ROOMS[effect_name])[: len(out)].mean(axis=1)
@@ -117,6 +127,7 @@ def _try_apply_pedalboard(
     audio: np.ndarray,
     rate: int,
     effects: list[str],
+    in_room: bool = False,
 ) -> np.ndarray | None:
     try:
         from pedalboard import (  # type: ignore[import-not-found]
@@ -137,11 +148,13 @@ def _try_apply_pedalboard(
     except Exception:
         return None
 
+    # Each preset keeps the dry voice in front: echoes stay short and few, and a preset's
+    # own reverb is its space, left out when the voice is heard in a real room instead.
     presets = {
         "phone_call": [
             HighpassFilter(cutoff_frequency_hz=400),
-            LowpassFilter(cutoff_frequency_hz=3200),
-            Distortion(drive_db=12),
+            LowpassFilter(cutoff_frequency_hz=3400),
+            Distortion(drive_db=8),
             Compressor(threshold_db=-18, ratio=6),
             Gain(gain_db=-3),
         ],
@@ -153,80 +166,80 @@ def _try_apply_pedalboard(
             Gain(gain_db=2),
         ],
         "walkie_talkie": [
-            HighpassFilter(cutoff_frequency_hz=550),
-            LowpassFilter(cutoff_frequency_hz=2600),
-            Distortion(drive_db=22),
+            HighpassFilter(cutoff_frequency_hz=500),
+            LowpassFilter(cutoff_frequency_hz=2800),
+            Distortion(drive_db=14),
             Bitcrush(bit_depth=10),
-            Compressor(threshold_db=-24, ratio=10),
-            Gain(gain_db=-6),
+            Compressor(threshold_db=-24, ratio=8),
+            Gain(gain_db=-5),
         ],
         "bad_signal": [
-            HighpassFilter(cutoff_frequency_hz=600),
-            LowpassFilter(cutoff_frequency_hz=2200),
-            Bitcrush(bit_depth=7),
-            Phaser(rate_hz=4.0, depth=0.8, mix=0.7),
-            Distortion(drive_db=15),
-            Gain(gain_db=-4),
+            HighpassFilter(cutoff_frequency_hz=550),
+            LowpassFilter(cutoff_frequency_hz=2600),
+            Bitcrush(bit_depth=8),
+            Phaser(rate_hz=4.0, depth=0.6, mix=0.45),
+            Distortion(drive_db=10),
+            Gain(gain_db=-3),
         ],
         "megaphone": [
-            HighpassFilter(cutoff_frequency_hz=700),
-            LowpassFilter(cutoff_frequency_hz=3800),
-            PeakFilter(cutoff_frequency_hz=1800, gain_db=10, q=2.5),
-            Distortion(drive_db=25),
-            Delay(delay_seconds=0.08, feedback=0.2, mix=0.25),
-            Compressor(threshold_db=-15, ratio=8),
-            Gain(gain_db=-6),
+            HighpassFilter(cutoff_frequency_hz=600),
+            LowpassFilter(cutoff_frequency_hz=4000),
+            PeakFilter(cutoff_frequency_hz=1800, gain_db=6, q=2.0),
+            Distortion(drive_db=14),
+            Delay(delay_seconds=0.08, feedback=0.1, mix=0.15),
+            Compressor(threshold_db=-15, ratio=4),
+            Gain(gain_db=-4),
         ],
         "old_gramophone": [
-            HighpassFilter(cutoff_frequency_hz=650),
-            LowpassFilter(cutoff_frequency_hz=2400),
-            PeakFilter(cutoff_frequency_hz=1200, gain_db=8, q=3.0),
+            HighpassFilter(cutoff_frequency_hz=500),
+            LowpassFilter(cutoff_frequency_hz=3000),
+            PeakFilter(cutoff_frequency_hz=1200, gain_db=6, q=2.0),
             Bitcrush(bit_depth=11),
-            Chorus(rate_hz=0.8, depth=0.35, mix=0.3),
-            Distortion(drive_db=14),
-            Gain(gain_db=-4),
+            Chorus(rate_hz=0.8, depth=0.25, mix=0.2),
+            Distortion(drive_db=8),
+            Gain(gain_db=-3),
         ],
         "metallic_helmet": [
             HighpassFilter(cutoff_frequency_hz=300),
-            LowpassFilter(cutoff_frequency_hz=4000),
-            PeakFilter(cutoff_frequency_hz=900, gain_db=6, q=4.0),
-            Delay(delay_seconds=0.015, feedback=0.45, mix=0.4),
-            Reverb(room_size=0.08, damping=0.1, wet_level=0.35, dry_level=0.75, width=0.2),
+            LowpassFilter(cutoff_frequency_hz=4500),
+            PeakFilter(cutoff_frequency_hz=900, gain_db=5, q=4.0),
+            Delay(delay_seconds=0.012, feedback=0.35, mix=0.3),
+            Reverb(room_size=0.08, damping=0.1, wet_level=0.2, dry_level=0.9, width=0.2),
             Compressor(threshold_db=-16, ratio=4),
         ],
         "stadium_announcement": [
-            HighpassFilter(cutoff_frequency_hz=450),
-            LowpassFilter(cutoff_frequency_hz=4200),
-            Distortion(drive_db=10),
-            Delay(delay_seconds=0.22, feedback=0.45, mix=0.45),
-            Reverb(room_size=0.92, damping=0.35, wet_level=0.5, dry_level=0.6),
+            HighpassFilter(cutoff_frequency_hz=350),
+            LowpassFilter(cutoff_frequency_hz=5000),
+            Distortion(drive_db=6),
+            Delay(delay_seconds=0.22, feedback=0.25, mix=0.2),
+            Reverb(room_size=0.85, damping=0.4, wet_level=0.3, dry_level=0.85),
             Gain(gain_db=-2),
         ],
         "dream_sequence": [
-            LowpassFilter(cutoff_frequency_hz=5000),
-            Chorus(rate_hz=0.6, depth=0.4, mix=0.4),
-            Phaser(rate_hz=0.3, depth=0.5, mix=0.3),
-            Delay(delay_seconds=0.3, feedback=0.4, mix=0.3),
-            Reverb(room_size=0.9, damping=0.2, wet_level=0.55, dry_level=0.55),
+            LowpassFilter(cutoff_frequency_hz=6000),
+            Chorus(rate_hz=0.6, depth=0.3, mix=0.3),
+            Phaser(rate_hz=0.3, depth=0.4, mix=0.2),
+            Delay(delay_seconds=0.3, feedback=0.25, mix=0.15),
+            Reverb(room_size=0.8, damping=0.3, wet_level=0.3, dry_level=0.85),
         ],
         "underwater": [
-            LowpassFilter(cutoff_frequency_hz=450),
-            Phaser(rate_hz=1.8, depth=0.7, mix=0.6),
-            Chorus(rate_hz=1.2, depth=0.5, mix=0.4),
-            Reverb(room_size=0.6, damping=0.8, wet_level=0.4, dry_level=0.6),
+            LowpassFilter(cutoff_frequency_hz=1000),
+            Phaser(rate_hz=1.2, depth=0.5, mix=0.35),
+            Chorus(rate_hz=0.9, depth=0.35, mix=0.25),
+            Reverb(room_size=0.5, damping=0.8, wet_level=0.2, dry_level=0.85),
             Gain(gain_db=4),
         ],
         "robotic_voice": [
-            Chorus(rate_hz=2.5, depth=0.6, centre_delay_ms=12.0, feedback=0.5, mix=0.6),
-            Phaser(rate_hz=1.5, depth=0.8, feedback=0.6, mix=0.5),
+            Chorus(rate_hz=2.5, depth=0.5, centre_delay_ms=12.0, feedback=0.3, mix=0.45),
+            Phaser(rate_hz=1.5, depth=0.6, feedback=0.4, mix=0.3),
             Bitcrush(bit_depth=10),
             HighpassFilter(cutoff_frequency_hz=200),
         ],
         "monster_voice": [
-            PitchShift(semitones=-6),
-            Distortion(drive_db=15),
-            LowpassFilter(cutoff_frequency_hz=2800),
-            Reverb(room_size=0.6, damping=0.5, wet_level=0.3, dry_level=0.8),
+            PitchShift(semitones=-5),
+            Distortion(drive_db=10),
+            LowpassFilter(cutoff_frequency_hz=3800),
+            Reverb(room_size=0.5, damping=0.5, wet_level=0.15, dry_level=0.95),
             Gain(gain_db=-2),
         ],
         "intimate_whisper": [
@@ -237,40 +250,40 @@ def _try_apply_pedalboard(
             Gain(gain_db=3),
         ],
         "ghost_spirit": [
-            HighpassFilter(cutoff_frequency_hz=350),
-            PitchShift(semitones=2),
-            Chorus(rate_hz=1.5, depth=0.7, feedback=0.4, mix=0.6),
-            Delay(delay_seconds=0.18, feedback=0.55, mix=0.45),
-            Reverb(room_size=0.95, damping=0.15, wet_level=0.65, dry_level=0.45),
+            HighpassFilter(cutoff_frequency_hz=250),
+            PitchShift(semitones=1),
+            Chorus(rate_hz=1.2, depth=0.5, feedback=0.2, mix=0.35),
+            Delay(delay_seconds=0.16, feedback=0.2, mix=0.15),
+            Reverb(room_size=0.8, damping=0.3, wet_level=0.3, dry_level=0.85),
         ],
         "giant_titan": [
-            PitchShift(semitones=-8),
-            PeakFilter(cutoff_frequency_hz=110, gain_db=8, q=1.0),
-            LowpassFilter(cutoff_frequency_hz=2200),
-            Distortion(drive_db=10),
-            Reverb(room_size=0.88, damping=0.4, wet_level=0.4, dry_level=0.75),
-            Compressor(threshold_db=-16, ratio=5),
+            PitchShift(semitones=-6),
+            PeakFilter(cutoff_frequency_hz=110, gain_db=6, q=1.0),
+            LowpassFilter(cutoff_frequency_hz=3500),
+            Distortion(drive_db=6),
+            Reverb(room_size=0.8, damping=0.4, wet_level=0.2, dry_level=0.9),
+            Compressor(threshold_db=-16, ratio=4),
             Gain(gain_db=-2),
         ],
         "fairy_tiny": [
             PitchShift(semitones=6),
             HighpassFilter(cutoff_frequency_hz=350),
-            Chorus(rate_hz=2.2, depth=0.25, mix=0.35),
-            Reverb(room_size=0.4, damping=0.3, wet_level=0.25, dry_level=0.85),
+            Chorus(rate_hz=2.2, depth=0.25, mix=0.3),
+            Reverb(room_size=0.4, damping=0.3, wet_level=0.2, dry_level=0.9),
         ],
         "alien_voice": [
             PitchShift(semitones=-2),
-            Phaser(rate_hz=6.0, depth=0.9, feedback=0.75, mix=0.7),
-            Delay(delay_seconds=0.025, feedback=0.65, mix=0.5),
-            Chorus(rate_hz=3.5, depth=0.6, mix=0.5),
+            Phaser(rate_hz=5.0, depth=0.7, feedback=0.5, mix=0.4),
+            Delay(delay_seconds=0.02, feedback=0.3, mix=0.2),
+            Chorus(rate_hz=3.0, depth=0.4, mix=0.3),
             HighpassFilter(cutoff_frequency_hz=250),
         ],
         "ancient_god": [
             PitchShift(semitones=-3),
             PeakFilter(cutoff_frequency_hz=140, gain_db=5, q=1.2),
-            Chorus(rate_hz=0.8, depth=0.5, feedback=0.3, mix=0.5),
-            Delay(delay_seconds=0.12, feedback=0.35, mix=0.35),
-            Reverb(room_size=0.95, damping=0.2, wet_level=0.5, dry_level=0.65, width=1.0),
+            Chorus(rate_hz=0.8, depth=0.4, feedback=0.2, mix=0.3),
+            Delay(delay_seconds=0.12, feedback=0.15, mix=0.12),
+            Reverb(room_size=0.85, damping=0.3, wet_level=0.3, dry_level=0.85, width=1.0),
             Compressor(threshold_db=-18, ratio=4),
         ],
     }
@@ -278,6 +291,9 @@ def _try_apply_pedalboard(
     plugins = []
     for effect_name in effects:
         plugins.extend(presets.get(effect_name, ()))
+    spaces = [index for index, plugin in enumerate(plugins) if isinstance(plugin, Reverb)]
+    keep = set() if in_room else set(spaces[-1:])  # one space per voice, the last one written
+    plugins = [plugin for index, plugin in enumerate(plugins) if index not in spaces or index in keep]
     if not plugins:
         return audio
     board = Pedalboard(plugins)
@@ -396,41 +412,42 @@ def _pitch_shift_preserve_len(audio: np.ndarray, semitones: float) -> np.ndarray
     return _wsola_stretch(resampled, audio.size)
 
 
-def _apply_scipy_effect(audio: np.ndarray, rate: int, effect_name: str) -> np.ndarray:
+def _apply_scipy_effect(audio: np.ndarray, rate: int, effect_name: str, in_room: bool = False) -> np.ndarray:
+    reverb = (lambda samples, *_args: samples) if in_room else _reverb  # the room is the space
     if effect_name == "phone_call":
-        return _distort(_bandpass(audio, rate, 400, 3200), 8.0) * 0.75
+        return _distort(_bandpass(audio, rate, 400, 3400), 6.0) * 0.75
     if effect_name == "radio_broadcast":
         return _distort(_bandpass(audio, rate, 120, 6000), 4.0) * 0.9
     if effect_name == "walkie_talkie":
-        return _bitcrush(_distort(_bandpass(audio, rate, 550, 2600), 14.0), 10) * 0.65
+        return _bitcrush(_distort(_bandpass(audio, rate, 500, 2800), 10.0), 10) * 0.65
     if effect_name == "bad_signal":
-        return _ring_mod(_bitcrush(_bandpass(audio, rate, 600, 2200), 7), rate, 4.0, 0.35) * 0.75
+        return _ring_mod(_bitcrush(_bandpass(audio, rate, 550, 2600), 8), rate, 4.0, 0.3) * 0.75
     if effect_name == "megaphone":
-        return _delay(_distort(_bandpass(audio, rate, 700, 3800), 16.0), rate, 0.08, 0.2, 0.25) * 0.65
+        return _delay(_distort(_bandpass(audio, rate, 600, 4000), 10.0), rate, 0.08, 0.1, 0.15) * 0.7
     if effect_name == "old_gramophone":
-        return _bitcrush(_distort(_bandpass(audio, rate, 650, 2400), 10.0), 11) * 0.75
+        return _bitcrush(_distort(_bandpass(audio, rate, 500, 3000), 6.0), 11) * 0.75
     if effect_name == "metallic_helmet":
-        return _reverb(_delay(_bandpass(audio, rate, 300, 4000), rate, 0.015, 0.45, 0.4), rate, 0.15, 0.35, 0.75)
+        return reverb(_delay(_bandpass(audio, rate, 300, 4500), rate, 0.012, 0.35, 0.3), rate, 0.15, 0.2, 0.9)
     if effect_name == "stadium_announcement":
-        return _reverb(_delay(_bandpass(audio, rate, 450, 4200), rate, 0.22, 0.45, 0.45), rate, 0.92, 0.5, 0.6)
+        return reverb(_delay(_bandpass(audio, rate, 350, 5000), rate, 0.22, 0.25, 0.2), rate, 0.85, 0.3, 0.85)
     if effect_name == "dream_sequence":
-        return _reverb(_delay(_lowpass(audio, rate, 5000), rate, 0.3, 0.4, 0.3), rate, 0.9, 0.55, 0.55)
+        return reverb(_delay(_lowpass(audio, rate, 6000), rate, 0.3, 0.25, 0.15), rate, 0.8, 0.3, 0.85)
     if effect_name == "underwater":
-        return _reverb(_lowpass(audio, rate, 450), rate, 0.6, 0.4, 0.6) * 1.3
+        return reverb(_lowpass(audio, rate, 1000), rate, 0.5, 0.2, 0.85) * 1.3
     if effect_name == "robotic_voice":
-        return _bitcrush(_ring_mod(_highpass(audio, rate, 200), rate, 55.0, 0.45), 10)
+        return _bitcrush(_ring_mod(_highpass(audio, rate, 200), rate, 55.0, 0.35), 10)
     if effect_name == "monster_voice":
-        return _reverb(_lowpass(_distort(_pitch_shift_preserve_len(audio, -6.0), 10.0), rate, 2800), rate, 0.6, 0.3, 0.8)
+        return reverb(_lowpass(_distort(_pitch_shift_preserve_len(audio, -5.0), 7.0), rate, 3800), rate, 0.5, 0.15, 0.95)
     if effect_name == "intimate_whisper":
         return (_highpass(audio, rate, 80) * 1.25).astype(np.float32, copy=False)
     if effect_name == "ghost_spirit":
-        return _reverb(_delay(_highpass(_pitch_shift_preserve_len(audio, 2.0), rate, 350), rate, 0.18, 0.55, 0.45), rate, 0.95, 0.65, 0.45)
+        return reverb(_delay(_highpass(_pitch_shift_preserve_len(audio, 1.0), rate, 250), rate, 0.16, 0.2, 0.15), rate, 0.8, 0.3, 0.85)
     if effect_name == "giant_titan":
-        return _reverb(_lowpass(_distort(_pitch_shift_preserve_len(audio, -8.0), 8.0), rate, 2200), rate, 0.88, 0.4, 0.75)
+        return reverb(_lowpass(_distort(_pitch_shift_preserve_len(audio, -6.0), 5.0), rate, 3500), rate, 0.8, 0.2, 0.9)
     if effect_name == "fairy_tiny":
-        return _reverb(_highpass(_pitch_shift_preserve_len(audio, 6.0), rate, 350), rate, 0.4, 0.25, 0.85)
+        return reverb(_highpass(_pitch_shift_preserve_len(audio, 6.0), rate, 350), rate, 0.4, 0.2, 0.9)
     if effect_name == "alien_voice":
-        return _delay(_ring_mod(_highpass(_pitch_shift_preserve_len(audio, -2.0), rate, 250), rate, 35.0, 0.45), rate, 0.025, 0.65, 0.5)
+        return _delay(_ring_mod(_highpass(_pitch_shift_preserve_len(audio, -2.0), rate, 250), rate, 35.0, 0.3), rate, 0.02, 0.3, 0.2)
     if effect_name == "ancient_god":
-        return _reverb(_delay(_pitch_shift_preserve_len(audio, -3.0), rate, 0.12, 0.35, 0.35), rate, 0.95, 0.5, 0.65)
+        return reverb(_delay(_pitch_shift_preserve_len(audio, -3.0), rate, 0.12, 0.15, 0.12), rate, 0.85, 0.3, 0.85)
     return audio

@@ -29,7 +29,7 @@ from h3_app.workflows.drama3 import MAX_FRAMES, SPEAKER_TAG, request_cast, speak
 from . import audio, environment, rooms, takes as take_store
 from .planner import Chunk, expected_seconds, plan_turns_chunks
 from .server import ServerSettings, SpeechRequestError, ensure_model, persist_caches, shared_server
-from .speaker_effects import DISTANCE_TAGS, ROOM_EFFECT_ROOMS, apply_speaker_effects
+from .speaker_effects import DISTANCE_TAGS, ROOM_EFFECT_ROOMS, SPACE_EFFECTS, apply_speaker_effects
 from .tree import (
     ParallelNode,
     PauseNode,
@@ -524,7 +524,7 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
                 effects, room = tuple(dict.fromkeys((*effects, room))), None
             if effects:
                 dry = len(tidied)
-                tidied = apply_speaker_effects(tidied, rate, effects)
+                tidied = apply_speaker_effects(tidied, rate, effects, in_room=room is not None)
                 if dry and len(tidied) != dry:
                     lines = [(start * len(tidied) // dry, end * len(tidied) // dry) for start, end in lines]
                     if words is not None:
@@ -535,7 +535,9 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
             # The room hears the voice as spoken; distance changes only what reaches the listener directly.
             wets.append(rooms.room_wet(tidied, rate, room, send=NEAR_ROOM_SEND if distance == "near" else 1.0)
                         if room else None)
-            tidied = audio.voice_distance(tidied, rate, distance, in_room=room is not None)
+            # An effect with its own reverb already gives a far voice its space.
+            spaced = room is not None or any(effect in SPACE_EFFECTS for effect in effects)
+            tidied = audio.voice_distance(tidied, rate, distance, in_room=spaced)
             position = ctx.positions.get(chunk.speaker, 0.0)
             ctx.placements[chunk.index] = position
             rendered_turns.append((chunk.speaker, audio.pan_mono(tidied, position), chunk.text))

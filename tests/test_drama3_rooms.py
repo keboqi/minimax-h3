@@ -204,5 +204,72 @@ class StagedMixTests(unittest.TestCase):
         np.testing.assert_array_equal(apply_speaker_effects(voice_, RATE, ("far",)), voice_)  # placement only
 
 
+class StackedSpaceTests(unittest.TestCase):
+    """A voice is heard in one space: stacked reverbs wash the words out."""
+
+    def boards(self, effects, in_room):
+        """The plugins the effects chain builds."""
+        from unittest.mock import patch
+
+        import pedalboard
+
+        from h3_app.drama3.serving import speaker_effects
+
+        seen = []
+
+        class Board:
+            def __init__(self, plugins):
+                seen.append(plugins)
+
+            def __call__(self, samples, rate):
+                return samples
+
+        with patch.object(pedalboard, "Pedalboard", Board):
+            speaker_effects.apply_speaker_effects(voice(0.2), RATE, effects, in_room=in_room)
+        return [type(plugin).__name__ for plugins in seen for plugin in plugins]
+
+    def setUp(self):
+        try:
+            import pedalboard  # noqa: F401
+        except ImportError:
+            self.skipTest("pedalboard not installed")
+
+    def test_a_room_replaces_an_effects_own_reverb(self):
+        self.assertIn("Reverb", self.boards(("ghost_spirit",), in_room=False))
+        self.assertNotIn("Reverb", self.boards(("ghost_spirit",), in_room=True))
+        self.assertNotIn("Reverb", self.boards(("reverb_large_hall", "ghost_spirit"), in_room=False))
+        self.assertIn("PitchShift", self.boards(("ghost_spirit",), in_room=True))  # the character stays
+
+    def test_stacked_effects_keep_one_reverb(self):
+        self.assertEqual(self.boards(("ghost_spirit", "ancient_god", "dream_sequence"), in_room=False)
+                         .count("Reverb"), 1)
+
+    def test_fallback_drops_the_reverb_a_room_or_later_effect_replaces(self):
+        from unittest.mock import patch
+
+        from h3_app.drama3.serving import speaker_effects
+
+        calls = []
+        real = speaker_effects._reverb
+        with patch.object(speaker_effects, "_try_apply_pedalboard", lambda *args: None), \
+                patch.object(speaker_effects, "_reverb", lambda *args: calls.append(1) or real(*args)):
+            speaker_effects.apply_speaker_effects(voice(0.2), RATE, ("ghost_spirit", "ancient_god"))
+            self.assertEqual(len(calls), 1)
+            speaker_effects.apply_speaker_effects(voice(0.2), RATE, ("ghost_spirit",), in_room=True)
+            self.assertEqual(len(calls), 1)
+
+    def test_a_ghost_in_a_hall_keeps_its_words(self):
+        # Syllables at ~4 Hz: the rhythm that carries the words must survive the effect and the room.
+        from scipy import signal
+
+        t = np.arange(3 * RATE) / RATE
+        dry = (voice(3.0) * np.clip(np.sin(2 * np.pi * 4.3 * t), 0, None) ** 2).astype(np.float32)
+        processed = apply_speaker_effects(dry, RATE, ("ghost_spirit",), in_room=True)
+        processed = processed + rooms.room_wet(processed, RATE, "large_hall")[: len(dry)].mean(axis=1)
+        sos = signal.butter(2, 20, "lowpass", fs=RATE, output="sos")
+        envelope = [signal.sosfiltfilt(sos, np.abs(x)) for x in (dry, processed)]
+        self.assertGreater(np.corrcoef(*envelope)[0, 1], 0.85)
+
+
 if __name__ == "__main__":
     unittest.main()

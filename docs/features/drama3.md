@@ -362,6 +362,13 @@ rooms. When a scene sets no room and its voices share one place effect, its one-
 effects get that place, as before; ambience and music loops never do, since they are
 the room already.
 
+A voice is heard in one space. Effects with a reverb of their own (`<ghost_spirit>`,
+`<ancient_god>`, `<giant_titan>`, ...) leave it out when the line is in a room, keeping
+only their character (pitch, chorus, a short echo); several such effects on one line keep
+only the last one's reverb; and a `<far>` voice whose effect has a reverb skips the far
+reflections. The mix enforces this whatever the script says, and each preset keeps the
+dry voice in front, so the words stay clear.
+
 The same block can place its characters for that scene: `stage="Mia=-0.5, Leo=0.4"`
 (names as the lines use them, -1 left to 1 right). Characters it does not name keep
 their places, and the narrator stays centred. A line can also come from further off
