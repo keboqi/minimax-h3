@@ -46,11 +46,14 @@ const bind = (root) => {
   players.set(root, { controller, media: [voice, ...followers] });
   const on = (target, name, handler, options) => target?.addEventListener(name, handler, { ...options, signal });
 
+  // Each re-seek drops what a follower has buffered, so on a slow link small drift is left alone
+  // and a follower still finishing its last seek is not sent another.
   const align = (force) => {
     for (const media of followers) {
+      if (media.seeking && !force) continue;
       const end = Number.isFinite(media.duration) ? media.duration : Infinity;
       const target = Math.min(voice.currentTime, end);
-      if (force || Math.abs(media.currentTime - target) > 0.25) {
+      if (force || Math.abs(media.currentTime - target) > 0.45) {
         try { media.currentTime = target; } catch (_) { /* metadata not loaded yet */ }
       }
       if (!voice.paused && media.paused && target < end - 0.05) media.play().catch(() => {});
@@ -100,6 +103,9 @@ const bind = (root) => {
   for (const name of ["pause", "ended"]) {
     on(voice, name, () => { followers.forEach((media) => media.pause()); label(false); render(); });
   }
+  // While the voice waits for data the picture and music wait with it, then catch up.
+  on(voice, "waiting", () => followers.forEach((media) => media.pause()));
+  on(voice, "playing", () => align(false));
   on(voice, "seeked", () => { align(true); render(); });
   on(voice, "timeupdate", () => { if (!voice.paused) align(false); render(); });
   on(voice, "loadedmetadata", render);
@@ -176,7 +182,7 @@ def player_html(player: pipeline.Player, *, key: str) -> str:
                   f'src="{escape(file_url(player.video), quote=True)}"></video>')
     else:
         screen = '<div class="h3-dub-player-poster" aria-hidden="true">Audio</div>'
-    music = (f'<audio data-music preload="auto" src="{escape(file_url(player.music), quote=True)}"></audio>'
+    music = (f'<audio data-music preload="metadata" src="{escape(file_url(player.music), quote=True)}"></audio>'
              if player.music is not None else "")
     toggle = ('<label class="h3-dub-player-check"><input type="checkbox" data-music-toggle checked> '
               'Background music</label>' if player.music is not None else
@@ -198,7 +204,7 @@ def player_html(player: pipeline.Player, *, key: str) -> str:
         f'<div class="h3-dub-player" data-duration="{player.duration:.3f}" data-subtitles="translation">'
         f'<div class="h3-dub-player-screen">{screen}<div class="h3-dub-player-caption" aria-hidden="true">'
         '<span data-caption-translation></span><span data-caption-source></span></div></div>'
-        f'<audio data-voice preload="auto" src="{escape(dub, quote=True)}"></audio>{music}'
+        f'<audio data-voice preload="metadata" src="{escape(dub, quote=True)}"></audio>{music}'
         '<div class="h3-dub-player-transport">'
         '<button type="button" data-play aria-pressed="false">Play</button>'
         f'<input type="range" data-seek min="0" max="{player.duration:.3f}" step="0.01" value="0" '

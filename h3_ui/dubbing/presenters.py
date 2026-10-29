@@ -58,6 +58,9 @@ def summary_html(session: sessions.Session, long: set[int] | None = None) -> str
              f"<strong>{ready} ready</strong> to dub into {target}"]
     if untranslated:
         parts.append(f"{untranslated} untranslated")
+    failed = pipeline.take_problems(session)
+    if failed:
+        parts.append(f"{len(failed)} with a failed take")
     if long:
         parts.append(f"{len(long)} may be too long to say in time")
     return " · ".join(parts)
@@ -76,6 +79,7 @@ def board_value(session: sessions.Session, previous=None, *, focus: int | None =
     order = list(dict.fromkeys(s["speaker"] for s in lines))
     index = {speaker: number for number, speaker in enumerate(order)}
     long = set(pipeline.long_lines(lines))
+    failed = pipeline.take_problems(session)
     items = []
     for number, line in enumerate(lines):
         flags = []
@@ -83,13 +87,17 @@ def board_value(session: sessions.Session, previous=None, *, focus: int | None =
             flags.append("off")
         elif not line["translation"]:
             flags.append("empty")
-        elif number in long:
-            flags.append("long")
+        else:
+            if number in failed:
+                flags.append("failed")
+            if number in long:
+                flags.append("long")
         items.append({
             "s": line["start"], "e": line["end"], "time": f"{clock(line['start'])} – {clock(line['end'])}",
             "speaker": index[line["speaker"]], "label": escape(speaker_label(line["speaker"])),
             "tone": index[line["speaker"]] % TONES, "source": escape(line["source"]),
             "translation": escape(line["translation"]), "dub": bool(line.get("dub", True)), "flags": flags,
+            "problem": escape(failed.get(number, ""), quote=True),
         })
     count = len(items)
     focus = previous.get("focus") if focus is None else focus
@@ -298,11 +306,19 @@ def readiness_html(session: sessions.Session | None) -> str:
             ("Untranslated (kept as is)", str(untranslated)),
             ("Speakers", str(len({s["speaker"] for s in lines})))]
     facts = "".join(f"<dt>{name}</dt><dd>{value}</dd>" for name, value in rows)
-    long = pipeline.long_lines(lines)
+    failed = sorted(index for index in pipeline.take_problems(session) if lines[index].get("dub", True))
     warning = ""
+    if failed:
+        numbers = line_numbers(failed)
+        warning += (f'<p class="h3-dub-readiness-warning"><strong>{_plural(len(failed), "line")} with a failed '
+                    f"take</strong><span>{'Lines' if len(failed) > 1 else 'Line'} {numbers}: generation failed "
+                    "or kept a take that failed its check. Use New take on "
+                    f"{'them' if len(failed) > 1 else 'it'} in Review lines, or enter {numbers} under Fresh "
+                    "takes for lines, then dub again; the other lines reuse their takes.</span></p>")
+    long = pipeline.long_lines(lines)
     if long:
         numbers = ", ".join(str(index + 1) for index in long[:12]) + (", …" if len(long) > 12 else "")
-        warning = (f'<p class="h3-dub-readiness-warning"><strong>{_plural(len(long), "line")} may sound rushed</strong>'
+        warning += (f'<p class="h3-dub-readiness-warning"><strong>{_plural(len(long), "line")} may sound rushed</strong>'
                    f"<span>{'Lines' if len(long) > 1 else 'Line'} {numbers} "
                    f"{'look' if len(long) > 1 else 'looks'} too long for the time. Shorten "
                    f"{'them' if len(long) > 1 else 'it'} in Review lines, or use Natural pace.</span></p>")

@@ -81,6 +81,12 @@ ORIGINAL_VOICE = ""
 SPEAKER_VOLUME = (0.0, 200.0)
 # The result player's separate tracks sit beside the outputs in this folder, which Media skips.
 PLAYER_DIR = ".dub-player"
+# Constant bitrate: browsers seek a long variable-bitrate MP3 by estimate and land seconds away
+# from the reported time, so the dub would drift from its subtitles after every seek.
+PLAYER_MP3 = ("-c:a", "libmp3lame", "-b:a", "128k")
+# Session key for lines whose take failed its check or could not be generated, shown in Review lines.
+TAKE_PROBLEMS = "take_problems"
+OUTPUT_MP3 = ("-c:a", "libmp3lame", "-b:a", "192k")
 
 
 # ---------------------------------------------------------------------------
@@ -804,22 +810,72 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
         yield update.status
 
     started, done = time.monotonic(), 0
+    outcomes: dict[int, tuple[dict, str]] = {}
     lines = [(line, line.segment["translation"], staged[line.reference], line.transcript) for line in pending]
-    with closing(speaker.speak(lines, sampling=sampling, parallel=request.parallel,
-                               thread_prefix="dub-sglang")) as batches:
-        for batch in batches:
-            for spoken in batch:
-                line = spoken.key
-                line.take = _resample(audio.tidy_take(spoken.samples, spoken.rate), spoken.rate, RATE)
-                line.note = f"kept its best take ({spoken.problem})" if spoken.problem else ""
-                try:
-                    take_store.save_take(store, line.key, spoken.wav)
-                except OSError as exc:  # a full disk must not fail the dub
-                    line.note = f"take not saved: {exc}"
-                done += 1
-            yield f"Voicing lines: {done}/{len(pending)} ({time.monotonic() - started:.0f}s)"
+    try:
+        with closing(speaker.speak(lines, sampling=sampling, parallel=request.parallel,
+                                   thread_prefix="dub-sglang", keep_going=True)) as batches:
+            for batch in batches:
+                for spoken in batch:
+                    line = spoken.key
+                    outcomes[line.index] = (line.segment, spoken.problem)
+                    done += 1
+                    if not spoken.samples.size:  # rejected: the line keeps no take and is marked for review
+                        line.note = spoken.problem
+                        continue
+                    line.take = _resample(audio.tidy_take(spoken.samples, spoken.rate), spoken.rate, RATE)
+                    line.note = f"kept its best take ({spoken.problem})" if spoken.problem else ""
+                    try:
+                        take_store.save_take(store, line.key, spoken.wav)
+                    except OSError as exc:  # a full disk must not fail the dub
+                        line.note = f"take not saved: {exc}"
+                yield f"Voicing lines: {done}/{len(pending)} ({time.monotonic() - started:.0f}s)"
+    finally:
+        # Recorded even when interrupted, so the lines voiced so far keep their marks.
+        if outcomes:
+            _record_take_problems(session, outcomes)
     persist_caches()
     take_store.prune(store)
+
+
+def take_problems(session: sessions.Session) -> dict[int, str]:
+    """Lines whose current take failed its check or could not be generated, with why.
+
+    A mark belongs to the line as it was voiced: once its start or translation changes,
+    or lines are added or removed before it, the mark no longer matches and is ignored.
+    """
+    stored = session.data.get(TAKE_PROBLEMS)
+    lines = session.segments
+    found = {}
+    for key, entry in (stored.items() if isinstance(stored, dict) else ()):
+        try:
+            index = int(key)
+            matches = (isinstance(entry, dict) and 0 <= index < len(lines)
+                       and lines[index]["translation"] == entry.get("translation")
+                       and abs(lines[index]["start"] - float(entry.get("start"))) < 0.0005)
+        except (TypeError, ValueError):
+            continue
+        if matches:
+            found[index] = str(entry.get("reason") or "failed")
+    return found
+
+
+def _record_take_problems(session: sessions.Session, outcomes: dict[int, tuple[dict, str]]) -> None:
+    """Mark lines whose new take failed, clear those that now have a good one, and drop stale marks."""
+
+    def change(latest: sessions.Session) -> None:
+        marks = {str(index): {"reason": reason, "translation": latest.segments[index]["translation"],
+                              "start": latest.segments[index]["start"]}
+                 for index, reason in take_problems(latest).items()}
+        for index, (segment, problem) in outcomes.items():
+            if problem:
+                marks[str(index)] = {"reason": problem, "translation": segment["translation"],
+                                     "start": segment["start"]}
+            else:
+                marks.pop(str(index), None)
+        latest.data[TAKE_PROBLEMS] = marks
+
+    sessions.modify(session, change)
 
 
 def original_line(session_id: str, index: int, *, runtime) -> LinePreview:
@@ -849,6 +905,9 @@ def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token
         raise H3Error(f"Line {index + 1} has no translation to speak.")
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
     line = planned[0]
+    if line.take is None or not len(line.take):
+        raise H3Error(f"Line {index + 1}: {line.note or 'no audio was generated'}. Try New take again, "
+                      "or edit its translation.")
     fitted, speed, note, available = timed_take(line.take, lines, index, session.data.get("duration", 0.0),
                                                 request, _timing_cache(session))
     volume = speaker_settings(session).get(line.segment["speaker"], {}).get("volume", 100.0)
@@ -891,7 +950,7 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
             pass
     for line in planned:
         if line.index not in timed:
-            notes.append(f"line {line.index + 1}: no audio, original kept")
+            notes.append(f"line {line.index + 1}: {line.note or 'no audio'}, original kept")
             continue
         fitted, speed, note, _available = timed[line.index]
         if line.segment["speaker"] in gains:
@@ -1022,7 +1081,7 @@ def _player(session: sessions.Session, speech: Path, folder: Path, *, separated:
     folder.mkdir(parents=True, exist_ok=True)
 
     def encode(source: Path, name: str, gain: float) -> Path:
-        return _ffmpeg(["-i", str(source), "-af", f"volume={gain:.3f}", "-c:a", "libmp3lame", "-q:a", "4"],
+        return _ffmpeg(["-i", str(source), "-af", f"volume={gain:.3f}", *PLAYER_MP3],
                        folder / name, action="Preparing the result player")
 
     if separated:
@@ -1085,7 +1144,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
             path = output_dir / f"{stem}.{re.sub(r'[^A-Za-z0-9]+', '', suffix).lower() or 'dub'}.srt"
             path.write_text(text, encoding="utf-8")
             subtitles.append(path)
-    audio_out = _ffmpeg(["-i", str(mix), "-c:a", "libmp3lame", "-q:a", "2"], output_dir / f"{stem}.mp3",
+    audio_out = _ffmpeg(["-i", str(mix), *OUTPUT_MP3], output_dir / f"{stem}.mp3",
                         action="Encoding the dubbed audio")
     settings = {
         "source": session.data.get("name"), "target_language": language,

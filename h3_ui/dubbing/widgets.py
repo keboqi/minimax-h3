@@ -56,12 +56,15 @@ BOARD_TEMPLATE = r"""${(() => {
   const speakers = v.speakers || [];
   const picked = new Set(v.picked || []);
   const filter = v.filter || 'all';
-  const needs = (l) => l.flags.includes('long') || l.flags.includes('empty');
-  const tests = { all: () => true, attention: needs, empty: (l) => l.flags.includes('empty') };
+  const needs = (l) => l.flags.includes('long') || l.flags.includes('empty') || l.flags.includes('failed');
+  const tests = { all: () => true, attention: needs, empty: (l) => l.flags.includes('empty'),
+    failed: (l) => l.flags.includes('failed') };
   const shown = (l) => filter.startsWith('speaker:') ? l.speaker === Number(filter.slice(8)) : (tests[filter] || tests.all)(l);
   const count = (test) => lines.filter(test).length;
+  // The Failed takes chip appears only while some line has one (or it is the chosen filter).
   const chips = [['all', 'All', lines.length], ['attention', 'Needs attention', count(needs)],
     ['empty', 'Not translated', count(tests.empty)],
+    ...(count(tests.failed) || filter === 'failed' ? [['failed', 'Failed takes', count(tests.failed)]] : []),
     ...(speakers.length > 1 ? speakers.map((s) => ['speaker:' + s.k, s.label, s.count]) : [])]
     .map(([key, label, n]) => `<button type="button" data-filter="${key}" aria-pressed="${key === filter}">${label} <span>${n}</span></button>`).join('');
   const span = Math.max(v.duration || 0, ...lines.map((l) => l.e)) || 1;
@@ -71,6 +74,7 @@ BOARD_TEMPLATE = r"""${(() => {
     `<button type="button" class="h3-dub-seg tone-${l.tone}${i === v.focus ? ' focus' : ''}${needs(l) ? ' warn' : ''}${l.dub ? '' : ' off'}" data-seg="${i}" style="left:${(l.s / span * 100).toFixed(3)}%;width:${Math.max(0.2, (l.e - l.s) / span * 100).toFixed(3)}%" aria-label="Line ${i + 1}, ${l.time}" title="Line ${i + 1}"></button>`).join('')}</div></div>`).join('');
   const flag = (l) => l.flags.includes('off') ? `<span class="h3-dub-flag">Original voice</span>`
     : l.flags.includes('empty') ? `<span class="h3-dub-flag bad">Not translated</span>`
+    : l.flags.includes('failed') ? `<span class="h3-dub-flag bad" title="${l.problem || ''}">Take failed</span>`
     : l.flags.includes('long') ? `<span class="h3-dub-flag warn">May be too long</span>` : '';
   const rows = lines.map((l, i) => !shown(l) ? '' : `<div class="h3-dub-row${i === v.focus ? ' focus' : ''}${picked.has(i) ? ' picked' : ''}${l.dub ? '' : ' off'}" data-row="${i}">
 <input type="checkbox" data-pick="${i}" ${picked.has(i) ? 'checked' : ''} aria-label="Pick line ${i + 1}">

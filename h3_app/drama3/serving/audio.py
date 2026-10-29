@@ -81,7 +81,11 @@ def encode_wav(samples: np.ndarray, rate: int) -> bytes:
 
 
 def save_mp3(samples: np.ndarray, rate: int, target: Path) -> None:
-    """Encode the joined PCM once, publishing only a complete MP3."""
+    """Encode the joined PCM once, publishing only a complete MP3.
+
+    Constant bitrate: browsers seek a variable-bitrate MP3 by estimate and land away from
+    the time they report, so the subtitles lit after a click would sit on the wrong speech.
+    """
     pending = target.with_suffix(".mp3.partial")
     try:
         with tempfile.TemporaryDirectory(prefix="drama3-audio-") as directory:
@@ -89,7 +93,7 @@ def save_mp3(samples: np.ndarray, rate: int, target: Path) -> None:
             source.write_bytes(encode_wav(samples, rate))
             proc = run_media_process(
                 ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(source),
-                 "-c:a", "libmp3lame", "-q:a", "0", "-f", "mp3", str(pending)],
+                 "-c:a", "libmp3lame", "-b:a", "256k", "-f", "mp3", str(pending)],
                 partial_outputs=(pending,),
             )
             if proc.returncode != 0 or not pending.is_file() or pending.stat().st_size == 0:

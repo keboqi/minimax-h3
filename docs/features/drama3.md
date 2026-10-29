@@ -296,7 +296,9 @@ when retries are enabled. Separately, a dropped connection or
 HTTP 5xx from the server is retried twice per request. Missing `<sound>` clips
 are generated before any speech, so a sound failure stops the job early. A
 failed chunk or **Interrupt** returns at once without waiting for requests still
-running on the server. Completed speech is saved as MP3.
+running on the server. Completed speech is saved as a constant-bitrate (256k)
+MP3: browsers seek a variable-bitrate MP3 by estimate, so clicking a subtitle line
+or timeline segment could land on different speech than the one lit.
 
 The mix follows the script. Gaps between speakers follow the lines: a line cut off
 with a dash is barged in on, a question or exclamation is answered quickly, and a

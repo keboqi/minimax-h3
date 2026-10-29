@@ -817,6 +817,69 @@ class ReviewFixTests(Workspace):
         self.assertAlmostEqual(float(track[int(2.0 * pipeline.RATE)]), 0.5, places=3)
         self.assertEqual(float(track[int(0.25 * pipeline.RATE)]), 0.0)
 
+    def test_failed_takes_are_marked_for_review_until_a_good_take_replaces_them(self):
+        from h3_app.drama3.serving.audio import encode_wav
+        from h3_app.drama3.serving.speech import SpokenLine
+        from h3_ui.dubbing import presenters
+
+        session = self.session_with_vocals([
+            {"start": 0.0, "end": 0.8, "source": "a", "translation": "A"},
+            {"start": 1.0, "end": 1.8, "source": "b", "translation": "B"},
+            {"start": 2.0, "end": 2.8, "source": "c", "translation": "C"},
+        ])
+        tone = (0.2 * np.sin(np.arange(24000 // 2) / 8)).astype(np.float32)
+        outcomes = {"A": "", "B": "no speech", "C": "generation failed: bad request"}
+
+        class FakeSpeaker:
+            def __init__(self, _runtime):
+                pass
+
+            reference = staticmethod(Path)
+            budget = staticmethod(lambda _text: 100)
+            ready = staticmethod(lambda *_args: iter(()))
+
+            @staticmethod
+            def speak(lines, **_kwargs):
+                spoken = []
+                for key, text, _reference, _transcript in lines:
+                    rejected = outcomes[text].startswith("generation failed")
+                    samples = np.zeros(0, dtype=np.float32) if rejected else tone
+                    spoken.append(SpokenLine(key, b"" if rejected else encode_wav(tone, 24000), samples,
+                                             0 if rejected else 24000, outcomes[text]))
+                yield spoken
+
+        def synthesize(regenerate=()):
+            latest = sessions.load(self.runtime, session.id)
+            planned = pipeline._plan(latest, [0, 1, 2], pipeline.VOICE_LINE, self.runtime)
+            with patch("h3_app.drama3.serving.speech.LineSpeaker", FakeSpeaker), \
+                    patch("h3_app.drama3.serving.speech.persist_caches"), patch.object(pipeline.tools, "stop"):
+                list(pipeline._synthesize(planned, pipeline.DubRequest(session.id, regenerate=regenerate), latest,
+                                          runtime=self.runtime, free_gpu=lambda: None))
+            return planned
+
+        planned = synthesize()
+        self.assertIsNone(planned[2].take)  # rejected: no take, the dub keeps its original voice
+        self.assertIsNotNone(planned[1].take)  # failed its check: the best take is still used
+        latest = sessions.load(self.runtime, session.id)
+        self.assertEqual(pipeline.take_problems(latest), {1: "no speech", 2: "generation failed: bad request"})
+        board = presenters.board_value(latest)
+        self.assertEqual([line["flags"] for line in board["lines"]], [[], ["failed"], ["failed"]])
+        self.assertEqual(board["lines"][1]["problem"], "no speech")
+        self.assertIn("2 with a failed take", board["summary"])
+        self.assertIn("Lines 2-3: generation failed", presenters.readiness_html(latest))
+
+        # Editing a line's translation makes its mark stale.
+        segments = latest.segments
+        segments[2]["translation"] = "C again"
+        sessions.update_segments(self.runtime, session.id, segments)
+        self.assertEqual(pipeline.take_problems(sessions.load(self.runtime, session.id)), {1: "no speech"})
+
+        # A fresh take that passes clears the mark; reused takes leave the others as they were.
+        outcomes.update({"B": "", "C again": "generation failed: still bad"})
+        synthesize(regenerate=(1,))
+        self.assertEqual(pipeline.take_problems(sessions.load(self.runtime, session.id)),
+                         {2: "generation failed: still bad"})
+
     def test_translations_land_on_the_latest_saved_lines(self):
         session = self.session_with_vocals([
             {"start": 0.0, "end": 1.0, "source": "one"},
@@ -1125,6 +1188,14 @@ class DubRenderTests(Workspace):
             line.take = (0.2 * np.sin(np.arange(int(seconds * pipeline.RATE)) / 20)).astype(np.float32)
         yield "voiced"
 
+    def assert_constant_bitrate(self, *paths):
+        # LAME tags a constant-bitrate MP3 "Info" and a variable one "Xing"; browsers seek only the
+        # former exactly, so the player's tracks must stay constant or the dub drifts from its subtitles.
+        for path in paths:
+            head = Path(path).read_bytes()[:4096]
+            self.assertIn(b"Info", head, path)
+            self.assertNotIn(b"Xing", head, path)
+
     def streams(self, path):
         probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type",
                                 "-of", "json", str(path)], check=True, capture_output=True, text=True)
@@ -1164,6 +1235,7 @@ class DubRenderTests(Workspace):
         self.assertEqual({player.dub.parent, player.original.parent, player.music.parent}, {folder})
         self.assertEqual(player.video, result.video)
         self.assertAlmostEqual(self.duration(player.music), 4.0, delta=0.15)
+        self.assert_constant_bitrate(player.dub, player.original, player.music, result.audio)
         self.assertEqual([cue["translation"] for cue in player.lines],
                          ["[First line here.] in French", "[Second.] in French"])
         # The translated subtitle stays up while the long first take plays, but not into line 2.
@@ -1188,6 +1260,7 @@ class DubRenderTests(Workspace):
         self.assertIsNone(result.player.music)
         self.assertEqual(result.player.dub, result.audio)
         self.assertTrue(result.player.original.is_file())
+        self.assert_constant_bitrate(result.player.dub, result.player.original)
         self.assertIn("needs vocal separation", player_html(result.player, key="k"))
 
     def test_moss_transcription_tells_speakers_apart(self):

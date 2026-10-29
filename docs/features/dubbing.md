@@ -174,6 +174,22 @@ original, or change its volume. Changes save at once.
   when they are unchanged. **Parallel requests** sets how many lines Drama 3
   voices at once (16 by default).
 
+### Failed takes
+
+Each line gets up to two attempts. A take fails its check when it is silent,
+holds far less speech than its text needs, or runs until the length cap; a
+dropped connection or HTTP 5xx is retried twice before the attempt counts. When
+both attempts fail, the line keeps the better of them. When Drama 3 rejects the
+line itself (an HTTP 4xx, or audio it cannot return), the dub carries on, and that
+line keeps its original voice. A server that is down still stops the dub.
+
+Both kinds are marked **Take failed** in Review lines, with the reason on hover.
+They count under **Needs attention** and get a **Failed takes** filter, and the
+**Dub it** card lists their numbers. To fix them, use **New take** on a line, or
+enter the numbers under **Fresh takes for lines**, then dub again: every other
+line reuses its saved take. A mark clears when the line gets a take that passes,
+and it no longer applies once the line's start or translation is edited.
+
 The finished dub opens in a player beside the files. It plays the dub with
 **Dub** or **Original** voice, **Background music** on or off, and subtitles in
 the translation, the original, both or none. The lines below it follow playback;
@@ -182,6 +198,13 @@ the source's. Without vocal separation the music cannot be switched off: the
 player switches between the finished mix and the original soundtrack. Its
 separate tracks are kept in `gradio_outputs/dubbing/.dub-player`, which Media
 does not list, and are removed once their dub is deleted from Media.
+
+The player's tracks and the MP3 mix are constant-bitrate MP3s: browsers seek a
+long variable-bitrate MP3 by estimate and land seconds away from the time they
+report, which put the dub seconds off its subtitles after every jump. The
+tracks load only their headers until played, the picture and music pause while
+the voice buffers, and they are re-synced only when more than 0.45 s off, so a
+slow connection is not flooded with fresh seeks of the video.
 
 Every take is saved by its text, voice clip and preset. Dubbing again after a
 few edits voices only the changed lines. Results go to Media

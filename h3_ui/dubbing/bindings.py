@@ -61,6 +61,10 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
                  view.export_subtitles, view.exported_video, view.export_status], show_progress="minimal",
         api_name="dub_generate",
     )
+    # Voicing marks lines whose take failed (and clears ones that now have a good take).
+    for voiced in (previewed, retaken, dubbed):
+        voiced.then(actions.board_for, inputs=[view.session, view.board], outputs=view.board,
+                    **_QUIET).then(**_readiness(view, actions))
     view.export_subtitles.click(
         actions.export_subtitles, inputs=view.export_source, outputs=[view.exported_video, view.export_status],
         concurrency_limit=1, show_progress="minimal", api_name=False,

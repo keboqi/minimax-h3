@@ -111,6 +111,16 @@ class AudioTests(unittest.TestCase):
         np.testing.assert_allclose(pcm, samples, atol=1e-4)
         with self.assertRaises(ValueError):
             audio.decode_wav(b"not a wav")
+
+    def test_saved_mp3_is_constant_bitrate_so_subtitle_clicks_seek_exactly(self):
+        # LAME tags a constant-bitrate MP3 "Info" and a variable one "Xing"; browsers seek only the former exactly.
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "speech.mp3"
+            audio.save_mp3(np.concatenate([tone(1.0), np.zeros(RATE, dtype=np.float32), tone(1.0)]), RATE, target)
+            head = target.read_bytes()[:4096]
+        self.assertIn(b"Info", head)
+        self.assertNotIn(b"Xing", head)
+
     def test_take_checks(self):
         self.assertTrue(audio.check_take(tone(4.0), RATE, 4.0).ok)
         self.assertEqual(audio.check_take(np.zeros(RATE * 10, np.float32), RATE, 4.0).reason, "no speech")
@@ -1151,6 +1161,33 @@ class LineSpeakerTests(unittest.TestCase):
         self.assertEqual(spoken["b"].problem, "no speech")
         # The failed line is tried once more; the good one only once.
         self.assertEqual(fake.speech.call_count, 2 + generate.AUTOMATIC_RETRIES)
+
+    def test_keep_going_returns_a_rejected_line_without_audio_but_server_failures_still_stop(self):
+        good = "Hello there, friend."
+
+        def speech(payload):
+            if payload["input"] != good:
+                raise server.SpeechRequestError("bad request", 400)
+            return float_wav(tone(expected_seconds(good)))
+
+        lines = [("a", good, None, None), ("b", "Rejected line.", None, None)]
+        speaker, _fake = self.speaker(speech)
+        with self.assertRaisesRegex(server.SpeechRequestError, "bad request"):
+            [line for batch in speaker.speak(lines, sampling={}, parallel=1) for line in batch]
+        speaker, _fake = self.speaker(speech)
+        spoken = {line.key: line for batch in speaker.speak(lines, sampling={}, parallel=2, keep_going=True)
+                  for line in batch}
+        self.assertEqual(spoken["a"].problem, "")
+        self.assertEqual(spoken["b"].samples.size, 0)
+        self.assertIn("generation failed: bad request", spoken["b"].problem)
+
+        def down(_payload):
+            raise server.SpeechRequestError("server error", 503)
+
+        speaker, _fake = self.speaker(down)
+        with patch.object(generate, "TRANSPORT_BACKOFF_SECONDS", 0), \
+                self.assertRaisesRegex(server.SpeechRequestError, "server error"):
+            [line for batch in speaker.speak(lines[:1], sampling={}, parallel=1, keep_going=True) for line in batch]
 
 
 class TakeReuseTests(unittest.TestCase):

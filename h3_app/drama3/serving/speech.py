@@ -21,7 +21,7 @@ from h3_app.jobs import CURRENT_JOB
 from h3_app.workflows.drama3 import MAX_FRAMES
 
 from . import generate
-from .server import ServerSettings, persist_caches, shared_server
+from .server import ServerSettings, SpeechRequestError, persist_caches, shared_server
 
 __all__ = ["LineSpeaker", "SpokenLine", "persist_caches", "run_blocking"]
 
@@ -64,19 +64,27 @@ class LineSpeaker:
         yield from generate._ready_server(self.settings, self.server, generate.LABEL, free_gpu, hf_token)
 
     def speak(self, lines: list[tuple[Any, str, Path, str]], *, sampling: dict, parallel: int,
-              thread_prefix: str = "drama3-lines") -> Iterator[list[SpokenLine]]:
+              thread_prefix: str = "drama3-lines", keep_going: bool = False) -> Iterator[list[SpokenLine]]:
         """Voice ``(key, text, reference, transcript)`` lines, ``parallel`` at a time.
 
         Yields the lines finished in each heartbeat (possibly none). An Interrupt
-        cancels the pending requests.
+        cancels the pending requests. With ``keep_going`` a line the server rejects
+        (an HTTP 4xx, or audio it cannot return) comes back without samples and with
+        its error as the problem, so the other lines still finish; a server that is
+        down or failing every request still stops the batch.
         """
 
         def synthesize(line, stopped: threading.Event) -> SpokenLine:
             key, text, reference, transcript = line
-            attempt = generate.best_take(
-                self.server, text=text, reference=reference, transcript=transcript,
-                max_new_tokens=self.budget(text), sampling=sampling,
-                attempts=generate.AUTOMATIC_RETRIES + 1, stopped=stopped)
+            try:
+                attempt = generate.best_take(
+                    self.server, text=text, reference=reference, transcript=transcript,
+                    max_new_tokens=self.budget(text), sampling=sampling,
+                    attempts=generate.AUTOMATIC_RETRIES + 1, stopped=stopped)
+            except (SpeechRequestError, ValueError) as exc:
+                if not keep_going or (isinstance(exc, SpeechRequestError) and exc.status >= 500):
+                    raise
+                return SpokenLine(key, b"", np.zeros(0, dtype=np.float32), 0, f"generation failed: {exc}")
             problem = "" if attempt.check.ok else attempt.check.reason
             return SpokenLine(key, attempt.wav, attempt.samples, attempt.rate, problem)
 
