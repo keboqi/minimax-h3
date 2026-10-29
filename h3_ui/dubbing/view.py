@@ -139,6 +139,7 @@ class DubbingView:
     export_subtitles: gr.Button
     exported_video: gr.File
     export_status: gr.Markdown
+    word_timing: gr.Checkbox
 
 
 def opened_session_js(steps: StepStrip) -> str:
@@ -343,6 +344,10 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                                                           label="Background music and effects (%)")
                         keep_original = gr.Checkbox(True, label="Keep the original audio as a second track",
                                                     info="Players can switch between the dub and the original.")
+                        word_timing = gr.Checkbox(
+                            False, label="Word-by-word subtitles",
+                            info="Times every word of both subtitle tracks with Qwen3's aligner. To add it to a "
+                                 "finished dub, turn it on and dub again: unchanged lines keep their takes.")
                         with gr.Accordion("Advanced: 16 parallel requests, no forced fresh takes", open=False,
                                           elem_classes=["h3-dub-options"]) as advanced:
                             regenerate = gr.Textbox(label="Fresh takes for lines", placeholder="e.g. 4, 9-10",
@@ -383,7 +388,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
         stop_preview, line_status, preview_audio, original_audio, speakers_panel, speakers, speakers_status, voice_mode, preset,
         timing, max_speed, speech_volume, background_volume, keep_original, advanced, regenerate,
         parallel, readiness, run, stop, status, player, video, audio, files,
-        export_source, export_subtitles, exported_video, export_status,
+        export_source, export_subtitles, exported_video, export_status, word_timing,
     )
 
 

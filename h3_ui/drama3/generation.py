@@ -13,6 +13,7 @@ from h3_app.prompt_writers import drama3 as drama3_writer
 from h3_app.errors import H3Error
 from h3_app.generation import requests as generation_requests
 from h3_app.jobs import JobCancelled
+from h3_ui.subtitle_words import word_spans_html
 
 _CUE = re.compile(r"<\|[^|]*\|>|<[^>]*>|\[[^\]]*\]|\{[^{}\n]*\}")
 # The script box's name colors: the narrator has its own, characters take eight in turn.
@@ -253,7 +254,7 @@ class GenerationHandlers:
         if isinstance(output, dict):
             output = output.get("path") or output.get("value")
         settings = self._result_settings(output)
-        entries, pans = [], {}
+        entries, pans, words = [], {}, []
         for chunk in settings.get("chunks") or []:
             if chunk.get("start") is None:
                 continue
@@ -267,6 +268,7 @@ class GenerationHandlers:
                     continue
                 start = float(line["start"])
                 entries.append((speaker, text, start, float(line.get("end", start))))
+                words.append(line.get("words"))
         if not entries:
             return gr.update(value="", visible=False)
         tones = _stage_tones((speaker for speaker, *_ in entries), pans)
@@ -276,8 +278,8 @@ class GenerationHandlers:
         lines = "".join(
             f'<li data-start="{start:.3f}" data-end="{end:.3f}">'
             f'<span class="h3-subtitle-speaker h3-drama3-tone-{tones[speaker][0]}">{html.escape(speaker)}</span>'
-            f'<span class="h3-subtitle-text">{html.escape(text)}</span></li>'
-            for speaker, text, start, end in entries)
+            f'<span class="h3-subtitle-text">{word_spans_html(text, line_words)}</span></li>'
+            for (speaker, text, start, end), line_words in zip(entries, words))
         duration = float(settings.get("duration") or 0)
         # The result's 32-hex id is in every copy's file name, so the browser can find its player.
         media = re.search(r"[0-9a-f]{32}", Path(str(output)).name)
@@ -332,7 +334,7 @@ class GenerationHandlers:
     def _drama3_job(self, values, progress, **options):
         from h3_app.generation.drama3 import generate_drama3 as run_drama3, validate_drama3
         from h3_app.drama3.cast import clean_title
-        from h3_ui.drama3.controls import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_SOUND_SLOT_INPUT_NAMES
+        from h3_ui.drama3.controls import DRAMA3_SLOT_INPUT_NAMES, DRAMA3_SOUND_SLOT_INPUT_NAMES, DRAMA3_VOICE_SLOTS
         slot_count = len(DRAMA3_SLOT_INPUT_NAMES)
         text, slots, settings = values[0], values[1:1 + slot_count], list(values[1 + slot_count:])
         defaults = [1.0, 0.9, 0, 8192, 16, 0]
@@ -346,11 +348,14 @@ class GenerationHandlers:
         title = clean_title(settings[sound_end]) if len(settings) > sound_end else ""
         voices, names = self._drama3_voices(slots)
         # Lines start with these names; each line is sent with its named speaker's clip.
-        names = self._cast_names(names, settings[sound_end + 1:])
+        names_end = sound_end + 1 + DRAMA3_VOICE_SLOTS
+        names = self._cast_names(names, settings[sound_end + 1:names_end])
+        # Word-by-word subtitles come last.
+        word_timing = bool(settings[names_end]) if len(settings) > names_end else False
         sounds = self._drama3_sounds(sound_slots)
         request = generation_requests.Drama3Request(
             text, voices, temperature, top_p, top_k, max_frames, parallel, retries, tuple(names),
-            script_mode=script_mode, sounds=sounds, title=title, **options,
+            script_mode=script_mode, sounds=sounds, title=title, word_timing=word_timing, **options,
         )
         validate_drama3(request)
         # SGLang-Omni reads staged clips by absolute path.

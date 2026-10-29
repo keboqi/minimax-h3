@@ -763,8 +763,8 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-dub-player-screen video { display: block; width: 100%; max-height: 420px; cursor: pointer; }
 .h3-workspace .h3-dub-player-poster { display: grid; place-items: center; min-height: 120px; color: #a9bdb3; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
 .h3-workspace .h3-dub-player-caption { position: absolute; left: 4%; right: 4%; bottom: 6%; display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; text-align: center; }
-.h3-workspace .h3-dub-player-caption span { max-width: 100%; padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, .62); color: #ffffff; font-size: 15px; line-height: 1.4; white-space: pre-line; }
-.h3-workspace .h3-dub-player-caption span:empty { display: none; }
+.h3-workspace .h3-dub-player-caption > span { max-width: 100%; padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, .62); color: #ffffff; font-size: 15px; line-height: 1.4; white-space: pre-line; }
+.h3-workspace .h3-dub-player-caption > span:empty { display: none; }
 .h3-workspace .h3-dub-player-caption [data-caption-source] { color: #d7e3de; font-size: 13px; }
 .h3-workspace .h3-dub-player-transport { display: flex; align-items: center; gap: 10px; }
 .h3-workspace .h3-dub-player-transport button { min-width: 72px; min-height: 40px; border: 0; border-radius: 10px; background: var(--h3-accent); color: var(--h3-surface); font-weight: 600; cursor: pointer; }
@@ -873,6 +873,12 @@ button.h3-busy { pointer-events: none; opacity: .6; }
 .h3-workspace .h3-drama3-subtitles li.active { color: var(--h3-text); background: var(--h3-surface); box-shadow: inset 3px 0 var(--h3-accent); }
 .h3-workspace .h3-subtitle-speaker { flex: 0 0 auto; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--h3-accent); font-size: 12px; font-weight: 650; padding-top: 2px; }
 .h3-workspace .h3-subtitle-text { min-width: 0; }
+/* Word-by-word subtitles: a lit line dims what is still to come and marks the word being said. */
+.h3-workspace .h3-word { border-radius: 3px; transition: color 90ms ease, background 90ms ease; }
+.h3-workspace li.active .h3-word:not(.spoken) { color: var(--h3-muted); }
+.h3-workspace .h3-word.current { color: var(--h3-accent); background: color-mix(in srgb, var(--h3-accent) 16%, transparent); }
+.h3-workspace .h3-dub-player-caption .h3-word:not(.spoken) { color: rgba(255, 255, 255, .6); }
+.h3-workspace .h3-dub-player-caption .h3-word.current { color: #ffd76a; background: none; }
 /* Speaker tones: the narrator's and the eight character colors of the script box. */
 .h3-workspace .h3-drama3-tone-narrator { --h3-tone: var(--h3-hl-narrator); }
 .h3-workspace .h3-drama3-tone-none { --h3-tone: var(--h3-muted); }

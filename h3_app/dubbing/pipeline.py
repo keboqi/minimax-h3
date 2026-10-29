@@ -35,6 +35,7 @@ import numpy as np
 
 from h3_app.catalog import VIDEO_EXTENSIONS
 from h3_app.errors import H3Error
+from h3_app.jobs import JobCancelled
 from h3_app.media_tools import probe_audio_seconds, run_media_process
 from h3_app.provenance import read_snapshot, write_snapshot
 
@@ -141,6 +142,8 @@ class DubRequest:
     background_volume: float = 100.0
     keep_original_track: bool = True
     regenerate: tuple[int, ...] = ()
+    # Time every subtitle word with Qwen3's aligner; unchanged lines reuse their takes and timing.
+    word_timing: bool = False
 
 
 @dataclass
@@ -1123,11 +1126,13 @@ def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token
 
 
 def _speech_track(session: sessions.Session, planned: list[_Line], request: DubRequest,
-                  duration: float) -> tuple[np.ndarray, list[str], dict[int, tuple[float, float]]]:
+                  duration: float, clips: dict[int, np.ndarray] | None = None,
+                  ) -> tuple[np.ndarray, list[str], dict[int, tuple[float, float]]]:
     """The dubbed speech on the source's timeline, the check notes, and where each voiced line plays.
 
     A last line still too long after the speed-up runs past the end of the source
-    instead of being cut off; the timeline grows to hold it.
+    instead of being cut off; the timeline grows to hold it. ``clips``, when given,
+    receives each voiced line's fitted take as placed, keyed by line index.
     """
     lines = session.segments
     notes = []
@@ -1163,6 +1168,8 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
     for index, start, fitted in placed:
         track[start:start + len(fitted)] += fitted
         spoken[index] = (start / RATE, (start + len(fitted)) / RATE)
+        if clips is not None:
+            clips[index] = fitted
     if len(track) > source_length + RATE // 20:
         notes.append(f"the dub runs {(len(track) - source_length) / RATE:.1f}s past the end of the source")
     voiced = set(spoken)
@@ -1177,6 +1184,69 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
                 end = min(len(track), start + len(original))
                 track[start:end] += original[: end - start]
     return track, notes, spoken
+
+
+def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int, tuple[float, float]],
+                  clips: dict[int, np.ndarray], *, runtime, free_gpu, hf_token=None,
+                  notes: list[str]) -> Iterator[str]:
+    """Each line's ``{"source": words, "translation": words}`` on the player's timeline, where Qwen3 aligns them.
+
+    The translation is timed on its fitted take as placed, the source on the original voice.
+    Results are cached by clip audio and text, so a re-dub aligns only the lines that changed;
+    a line that cannot be aligned keeps plain subtitles.
+    """
+    from h3_app.drama3.serving.audio import encode_wav
+
+    rate = tools_worker.ASR_RATE
+    original = session.path("vocals") or session.path("audio")
+    jobs = []  # (index, field, offset, wav, text)
+    for index, line in enumerate(lines):
+        if original is not None and line["source"].strip() and line["end"] > line["start"]:
+            samples = read_slice(original, line["start"], line["end"])
+            jobs.append((index, "source", line["start"], samples, line["source"]))
+        if index in clips and line["translation"].strip():
+            jobs.append((index, "translation", spoken[index][0], clips[index], line["translation"]))
+    cache = session.root / "word_timing"
+    found, pending = {}, []
+    for index, field, offset, samples, text in jobs:
+        wav = encode_wav(_resample(np.asarray(samples, dtype=np.float32), RATE, rate), rate)
+        path = cache / f"{hashlib.sha256(wav + text.encode()).hexdigest()}.json"
+        try:
+            found[(index, field)] = (offset, json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            pending.append((index, field, offset, wav, text, path))
+    if pending:
+        try:
+            with tempfile.TemporaryDirectory(prefix="dub-words-", dir=session.root) as directory:
+                payload = []
+                for number, (*_, wav, text, _path) in enumerate(pending):
+                    clip = Path(directory) / f"{number}.wav"
+                    clip.write_bytes(wav)
+                    payload.append({"audio": str(clip), "text": text})
+                reply = yield from blocking("Timing subtitle words with Qwen3", lambda report: tools.run(
+                    "align_words", {"clips": payload}, runtime, free_gpu=free_gpu, hf_token=hf_token,
+                    report=report))
+            words = reply.get("words") or []
+            if len(words) != len(pending):
+                raise H3Error("The aligner returned word timing for the wrong number of lines.")
+            cache.mkdir(parents=True, exist_ok=True)
+            for (index, field, offset, _wav, _text, path), timed in zip(pending, words):
+                found[(index, field)] = (offset, timed)
+                try:
+                    path.write_text(json.dumps(timed, ensure_ascii=False), encoding="utf-8")
+                except OSError:
+                    pass
+        except JobCancelled:
+            raise
+        except Exception as exc:  # the dub is finished; only its word highlighting is lost
+            notes.append(f"word-by-word subtitles unavailable for {len(pending)} line(s): {exc}")
+    timings: dict[int, dict[str, list[dict]]] = {}
+    for (index, field), (offset, timed) in found.items():
+        if timed:
+            timings.setdefault(index, {})[field] = [
+                {"text": word["text"], "start": round(offset + float(word["start"]), 3),
+                 "end": round(offset + float(word["end"]), 3)} for word in timed]
+    return timings
 
 
 def subtitle_lines(lines: list[dict], spoken: dict[int, tuple[float, float]]) -> list[dict]:
@@ -1271,7 +1341,8 @@ def _prune_players(output_dir: Path) -> None:
 
 def _player(session: sessions.Session, speech: Path, folder: Path, *, separated: bool, speech_gain: float,
             background_gain: float, video: Path | None, mixed: Path, lines: list[dict],
-            spoken: dict[int, tuple[float, float]], duration: float, language: str) -> Player:
+            spoken: dict[int, tuple[float, float]], duration: float, language: str,
+            words: dict[int, dict[str, list[dict]]] | None = None) -> Player:
     """The dub's voice, the original voice and the background as separate tracks for the result player.
 
     Without separation the background still holds the original voices, so the player
@@ -1293,7 +1364,9 @@ def _player(session: sessions.Session, speech: Path, folder: Path, *, separated:
     shown = subtitle_lines(lines, spoken)
     cues = [{"start": line["start"], "end": line["end"], "shown_start": shown[index]["start"],
              "shown_end": shown[index]["end"],
-             "speaker": line["speaker"], "source": line["source"], "translation": line["translation"]}
+             "speaker": line["speaker"], "source": line["source"], "translation": line["translation"],
+             "source_words": (words or {}).get(index, {}).get("source", []),
+             "translation_words": (words or {}).get(index, {}).get("translation", [])}
             for index, line in enumerate(lines) if line["source"] or line["translation"]]
     return Player(video, dub_track, original, music, duration, cues, language,
                   session.data.get("source_language", ""))
@@ -1310,7 +1383,8 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
 
     yield "Placing lines on the timeline"
-    track, notes, spoken = _speech_track(session, planned, request, duration)
+    clips: dict[int, np.ndarray] = {}
+    track, notes, spoken = _speech_track(session, planned, request, duration, clips)
     _record_timing_problems(session, planned)
     overrun = max(0.0, len(track) / RATE - duration)
     speech = _write_wav(track, RATE, session.root / "speech.wav")
@@ -1354,6 +1428,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
         "timing": request.timing, "max_speed": request.max_speed, "speech_volume": request.speech_volume,
         "background_volume": request.background_volume, "lines": len(lines), "dubbed_lines": len(planned),
         "sped_up_lines": sum(line.speed > 1.01 for line in planned), "session": session.id,
+        "word_timing": bool(request.word_timing),
         "speakers": speaker_settings(session),
     }
     write_snapshot(audio_out, {"family": "Dub & Translate", "settings": settings})
@@ -1384,11 +1459,17 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
                             timeout=runtime.generation_timeout, action="Writing the dubbed video")
         write_snapshot(video_out, {"family": "Dub & Translate", "settings": {
             **settings, "original_track": request.keep_original_track, "burned_subtitles": False}})
+    words = {}
+    if request.word_timing:
+        yield "Timing subtitle words"
+        words = yield from _word_timings(session, lines, spoken, clips, runtime=runtime, free_gpu=free_gpu,
+                                         hf_token=hf_token, notes=notes)
+    clips.clear()
     yield "Preparing the result player"
     _prune_players(output_dir)
     player = _player(session, speech, output_dir / PLAYER_DIR / stem, separated=separated, speech_gain=speech_gain,
                      background_gain=background_gain, video=video_out, mixed=audio_out, lines=lines,
-                     spoken=spoken, duration=duration + overrun, language=language)
+                     spoken=spoken, duration=duration + overrun, language=language, words=words)
     for work_file in (speech, mix):
         work_file.unlink(missing_ok=True)
     # Only this field is the dub's: lines edited while it ran stay as saved.

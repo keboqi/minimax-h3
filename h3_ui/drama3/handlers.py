@@ -94,6 +94,7 @@ def _publish_drama3_signatures():
         *sound_defaults, ("title", ""),
         # Cast names, so scripts can name their speakers ("Mia: Hello.") instead of tagging them.
         *((f"speaker_{speaker}_name", "") for speaker in range(DRAMA3_VOICE_SLOTS)),
+        ("word_timing", False),
     ))
     Drama3Handlers.generate_drama3.__signature__ = inspect.Signature([SELF, *generation, progress])
     Drama3Handlers.remix_drama3.__signature__ = inspect.Signature([SELF, *generation, progress])

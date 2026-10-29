@@ -23,6 +23,7 @@ from h3_app.dubbing import moss, pipeline, segments, session as sessions, tools,
 from h3_app.errors import H3Error
 
 HAS_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+REAL_WORD_TIMINGS = pipeline._word_timings
 
 
 def runtime_for(root: Path):
@@ -39,6 +40,15 @@ class Workspace(unittest.TestCase):
         env = patch.dict(os.environ, {"H3_WORKSPACE_DIR": str(self.root / "workspace")})
         env.start()
         self.addCleanup(env.stop)
+
+        # A dub times its subtitle words on the real tools worker; tests of that call REAL_WORD_TIMINGS.
+        def no_word_timing(*_args, **_kwargs):
+            return {}
+            yield
+
+        words = patch.object(pipeline, "_word_timings", no_word_timing)
+        words.start()
+        self.addCleanup(words.stop)
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -841,7 +851,7 @@ class HandlerTests(Workspace):
                 view = build_dubbing_view(gr.Column(), gemini_models=["model"], default_gemini_model="model")
             bind_dubbing(view, task=task, create_tab=tab, interrupt=lambda: None, actions=self.handlers)
         generation = next(fn for fn in demo.fns.values() if fn.api_name == "dub_generate")
-        self.assertEqual(len(generation.inputs), 10)
+        self.assertEqual(len(generation.inputs), 11)
         self.assertEqual(len(generation.outputs), 9)
         export = next(fn for fn in demo.fns.values() if fn.fn == self.handlers.export_subtitles)
         self.assertEqual(export.inputs, [view.export_source])
@@ -1361,6 +1371,44 @@ class DubRenderTests(Workspace):
         result.audio.unlink()
         pipeline._prune_players(self.runtime.outputs_dir / "dubbing")
         self.assertFalse(folder.exists())
+
+    def test_dub_player_lights_aligned_words_and_reuses_their_timing(self):
+        import re
+        from h3_ui.dubbing.player import player_html
+
+        calls = []
+
+        def fake_tools(op, payload, runtime, **_kwargs):
+            calls.append(op)
+            return {"words": [[{"text": word, "start": .1 * number, "end": .1 * number + .08}
+                               for number, word in enumerate(re.findall(r"\w+", clip["text"]))]
+                              for clip in payload["clips"]]}
+
+        session = self.analyze(self.make_video(), separate=True)
+        timed = pipeline.DubRequest(session.id, word_timing=True)
+        with patch.object(pipeline, "_synthesize", side_effect=self.fake_synthesize), \
+                patch.object(pipeline, "_word_timings", REAL_WORD_TIMINGS), \
+                patch.object(pipeline.tools, "run", side_effect=fake_tools):
+            plain = list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime,
+                                      free_gpu=lambda: None))[-1]
+            self.assertEqual(calls, [])  # off by default
+            self.assertEqual(plain.player.lines[0]["translation_words"], [])
+            first = list(pipeline.dub(timed, runtime=self.runtime, free_gpu=lambda: None))[-1]
+            again = list(pipeline.dub(timed, runtime=self.runtime, free_gpu=lambda: None))[-1]
+        self.assertEqual(calls, ["align_words"])  # the second dub's clips are unchanged
+        cue = first.player.lines[0]
+        self.assertEqual(cue["translation_words"][0]["start"], round(cue["shown_start"], 3))
+        self.assertEqual(cue["source_words"][0]["start"], round(cue["start"], 3))
+        self.assertEqual(again.player.lines, first.player.lines)
+        self.assertIn('class="h3-word"', player_html(first.player, key="k"))
+
+        with patch.object(pipeline, "_synthesize", side_effect=self.fake_synthesize), \
+                patch.object(pipeline, "_word_timings", REAL_WORD_TIMINGS), \
+                patch.object(pipeline.tools, "run", side_effect=H3Error("no aligner")):
+            shutil.rmtree(session.root / "word_timing", ignore_errors=True)
+            failed = list(pipeline.dub(timed, runtime=self.runtime, free_gpu=lambda: None))[-1]
+        self.assertIn("word-by-word subtitles unavailable", failed.message)
+        self.assertEqual(failed.player.lines[0]["translation_words"], [])
 
     def test_unseparated_player_switches_between_the_mix_and_the_original(self):
         from h3_ui.dubbing.player import player_html

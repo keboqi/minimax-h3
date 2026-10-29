@@ -142,34 +142,43 @@ def clean_translation(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def aligned_line_bounds(lines: list[str], items: list[dict]) -> list[tuple[float, float]]:
-    """Map aligned words/CJK characters to script lines, ignoring punctuation and spaces."""
-    import math
+def normalized_text(text: str) -> str:
+    """Letters and digits only, NFKC-folded: how aligned units are compared with a script."""
     import unicodedata
 
-    def normalized(text):
-        return "".join(c for c in unicodedata.normalize("NFKC", text).casefold() if c.isalnum())
+    return "".join(c for c in unicodedata.normalize("NFKC", str(text)).casefold() if c.isalnum())
 
-    texts = [normalized(line) for line in lines]
-    units = [(normalized(item["text"]), float(item["start"]), float(item["end"])) for item in items]
-    units = [(text, start, end) for text, start, end in units if text]
-    if not all(texts) or "".join(texts) != "".join(text for text, _, _ in units):
+
+def aligned_line_words(lines: list[str], items: list[dict]) -> list[list[dict]]:
+    """Each script line's aligned words/CJK characters, ignoring punctuation and spaces."""
+    import math
+
+    texts = [normalized_text(line) for line in lines]
+    units = [(str(item["text"]).strip(), normalized_text(item["text"]), float(item["start"]), float(item["end"]))
+             for item in items]
+    units = [unit for unit in units if unit[1]]
+    if not all(texts) or "".join(texts) != "".join(unit[1] for unit in units):
         raise ValueError("Aligned text does not match the script")
     previous = 0.0
-    for _, start, end in units:
+    for _, _, start, end in units:
         if not math.isfinite(start) or not math.isfinite(end) or start < previous or end <= start:
             raise ValueError("Invalid alignment timestamps")
         previous = end
-    bounds, index = [], 0
+    words, index = [], 0
     for text in texts:
         first, remaining = index, len(text)
         while index < len(units) and remaining > 0:
-            remaining -= len(units[index][0])
+            remaining -= len(units[index][1])
             index += 1
         if remaining != 0:
             raise ValueError("An aligned word crosses a script line boundary")
-        bounds.append((units[first][1], units[index - 1][2]))
-    return bounds
+        words.append([{"text": word, "start": start, "end": end} for word, _, start, end in units[first:index]])
+    return words
+
+
+def aligned_line_bounds(lines: list[str], items: list[dict]) -> list[tuple[float, float]]:
+    """Map aligned words/CJK characters to script lines, ignoring punctuation and spaces."""
+    return [(line[0]["start"], line[-1]["end"]) for line in aligned_line_words(lines, items)]
 
 
 class Worker:
@@ -208,6 +217,8 @@ class Worker:
             return self.separate(request)
         if op == "align_lines":
             return self.align_lines(request)
+        if op == "align_words":
+            return self.align_words(request)
         if op == "transcribe":
             return self.transcribe(request)
         if op == "translate":
@@ -290,7 +301,45 @@ class Worker:
         result = model.forced_aligner.align(audio=request["audio"],
                                             text=" ".join(request["lines"]), language=language)[0]
         items = [{"text": item.text, "start": item.start_time, "end": item.end_time} for item in result]
-        return {"bounds": aligned_line_bounds(request["lines"], items)}
+        words = aligned_line_words(request["lines"], items)
+        return {"bounds": [(line[0]["start"], line[-1]["end"]) for line in words], "words": words}
+
+    def align_words(self, request: dict) -> dict:
+        """Word timing for many short clips, each with its own text; None where a clip cannot be aligned."""
+        model = self._asr(True)
+        clips = list(request.get("clips") or [])
+        out: list[list[dict] | None] = [None] * len(clips)
+        for first in range(0, len(clips), ASR_BATCH):
+            batch = list(range(first, min(first + ASR_BATCH, len(clips))))
+            self.progress(f"Timing words in clips {first + 1}-{batch[-1] + 1} of {len(clips)}")
+            audio = [clips[index]["audio"] for index in batch]
+            languages = [str(getattr(result, "language", "") or "")
+                         for result in model.transcribe(audio=audio, return_time_stamps=False)]
+            ready = [(index, language) for index, language in zip(batch, languages)
+                     if language and "," not in language and normalized_text(clips[index].get("text", ""))]
+            try:
+                results = model.forced_aligner.align(
+                    audio=[clips[index]["audio"] for index, _ in ready],
+                    text=[clips[index]["text"] for index, _ in ready],
+                    language=[language for _, language in ready]) if ready else []
+            except Exception:
+                traceback.print_exc()
+                results = []
+                for index, language in ready:  # one bad clip must not cost the others their timing
+                    try:
+                        results.append(model.forced_aligner.align(audio=clips[index]["audio"],
+                                                                  text=clips[index]["text"], language=language)[0])
+                    except Exception:
+                        results.append(None)
+            for (index, _), result in zip(ready, results):
+                if result is None:
+                    continue
+                items = [{"text": item.text, "start": item.start_time, "end": item.end_time} for item in result]
+                try:
+                    out[index] = aligned_line_words([clips[index]["text"]], items)[0]
+                except (ValueError, TypeError):
+                    pass
+        return {"words": out}
 
     @staticmethod
     def _speech_spans(audio_16k, duration: float) -> list[tuple[float, float]]:

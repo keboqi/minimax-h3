@@ -534,7 +534,8 @@ class GenerateTests(unittest.TestCase):
             clip.write_bytes(audio.encode_wav(tone(1.0), RATE))
             self.clips[speaker] = str(clip)
 
-    def run_route(self, request, speech, server_class=server.SglangOmniServer):
+    def run_route(self, request, speech, server_class=server.SglangOmniServer,
+                  align=ValueError("no aligner in tests")):
         fake = MagicMock()
         fake.speech.side_effect = speech
         fake.payload.side_effect = server_class(None).payload
@@ -542,7 +543,8 @@ class GenerateTests(unittest.TestCase):
                                        "H3_WORKSPACE_DIR": str(Path(self.temp.name) / "workspace")}), \
                 patch.object(generate, "shared_server", return_value=fake), \
                 patch.object(generate.environment, "prepare"), patch.object(generate, "ensure_model"), \
-                patch.object(generate, "write_snapshot") as snapshot:
+                patch.object(generate, "write_snapshot") as snapshot,                 patch("h3_app.drama3.serving.alignment.align_take", side_effect=align) as self.align_take:
+            # Subtitle alignment would start the real Qwen3 tools worker; takes keep estimated timing.
             updates = list(generate.generate_drama3_served(request, runtime=self.runtime, free_gpu=lambda: None))
         return fake, updates, snapshot
 
@@ -651,6 +653,25 @@ class GenerateTests(unittest.TestCase):
             fake, updates, _snapshot = self.run_route(request, speech)
         self.assertEqual(fake.speech.call_count, 3)
         self.assertIsNotNone(updates[-1].output)
+
+    def test_word_timing_aligns_every_take_only_when_asked(self):
+        def align(take, *_args, **_kwargs):
+            samples = len(audio.tidy_take(take.samples, take.rate))
+            return [(0, samples)], [[("Hello", 0.0, samples / take.rate)]]
+
+        def speech(payload):
+            return float_wav(tone(expected_seconds(payload["input"])))
+
+        voices = ((0, self.clips[0], "Reference 0."),)
+        self.run_route(Drama3Request("Hello.", voices=voices), speech, align=align)
+        self.align_take.assert_not_called()  # one line per take needs no alignment by default
+        _fake, _updates, snapshot = self.run_route(Drama3Request("Hello.", voices=voices, word_timing=True),
+                                                   speech, align=align)
+        self.assertEqual(self.align_take.call_count, 1)  # the saved take is aligned, not spoken again
+        settings = snapshot.call_args.args[1]["settings"]
+        self.assertTrue(settings["word_timing"])
+        self.assertTrue(settings["chunks"][0]["reused"])
+        self.assertEqual([word["text"] for word in settings["chunks"][0]["lines"][0]["words"]], ["Hello"])
 
     def test_client_errors_are_not_retried(self):
         def speech(payload):

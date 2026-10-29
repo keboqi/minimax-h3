@@ -3,7 +3,8 @@
 The voice track is the clock; the muted picture and the background music follow it,
 so switching the voice or the music never interrupts playback. Subtitles come from
 the dub's own lines: each line's original timing, and the translated timing that
-stays up while its dubbed take is still being spoken. Clicking a line seeks to it.
+stays up while its dubbed take is still being spoken. Lines the aligner timed light word
+by word, in the list and the captions. Clicking a line seeks to it.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from urllib.parse import quote
 
 from h3_app.dubbing import pipeline
 from h3_app.dubbing.segments import format_time
+from h3_ui.subtitle_words import word_spans_html
 
 ELEM_CLASS = "h3-dub-player-panel"
 
@@ -66,15 +68,32 @@ const bind = (root) => {
     const translation = time >= translatedStart && time < translatedEnd, source = time >= start && time < end;
     return mode === "translation" ? translation : mode === "source" ? source : translation || source;
   };
+  // Timed words light as they are said, each against its own track's timing.
+  const light = (cue, field, on, time) => {
+    for (const word of cue.querySelectorAll(`${field} .h3-word`)) {
+      const start = Number(word.dataset.start), end = Number(word.dataset.end);
+      word.classList.toggle("spoken", on && start <= time);
+      word.classList.toggle("current", on && start <= time && time < end + 0.08);
+    }
+  };
+  // Captions copy the shown lines' word spans, so they light along with the list.
+  const caption = (target, field, cueMode, wanted) => {
+    const parts = wanted ? cues.filter((cue) => shown(cue, cueMode)).map((cue) => cue.querySelector(field))
+      .filter((part) => part?.textContent) : [];
+    target.replaceChildren(...parts.flatMap((part, index) => [
+      ...(index ? [document.createTextNode("\\n")] : []), ...[...part.childNodes].map((node) => node.cloneNode(true))]));
+  };
   const render = () => {
     const time = voice.currentTime, mode = subtitles.value;
     if (!dragging) seek.value = String(time);
     clock.textContent = `${fmt(time)} / ${fmt(duration || voice.duration)}`;
     const active = cues.filter((cue) => shown(cue, mode === "off" ? "both" : mode));
-    const text = (field, cueMode) => cues.filter((cue) => shown(cue, cueMode))
-      .map((cue) => cue.querySelector(field)?.textContent || "").filter(Boolean).join("\\n");
-    captionTranslation.textContent = mode === "translation" || mode === "both" ? text(".h3-dub-cue-translation", "translation") : "";
-    captionSource.textContent = mode === "source" || mode === "both" ? text(".h3-dub-cue-source", "source") : "";
+    for (const cue of cues) {
+      light(cue, ".h3-dub-cue-translation", shown(cue, "translation"), time);
+      light(cue, ".h3-dub-cue-source", shown(cue, "source"), time);
+    }
+    caption(captionTranslation, ".h3-dub-cue-translation", "translation", mode === "translation" || mode === "both");
+    caption(captionSource, ".h3-dub-cue-source", "source", mode === "source" || mode === "both");
     for (const cue of cues) {
       cue.classList.toggle("active", active.includes(cue));
       cue.classList.toggle("past", !active.includes(cue)
@@ -97,8 +116,16 @@ const bind = (root) => {
     play.textContent = playing ? "Pause" : "Play";
     play.setAttribute("aria-pressed", playing ? "true" : "false");
   };
+  // timeupdate fires only a few times a second, too coarse for words: while playing, render every frame.
+  let frame = 0;
+  const follow = () => {
+    cancelAnimationFrame(frame);
+    if (voice.paused || signal.aborted) return;
+    render();
+    frame = requestAnimationFrame(follow);
+  };
   // Starting playback brings the current line into view even if it was already lit while paused.
-  on(voice, "play", () => { align(true); label(true); lit = null; render(); });
+  on(voice, "play", () => { align(true); label(true); lit = null; render(); follow(); });
   for (const name of ["pause", "ended"]) {
     on(voice, name, () => { followers.forEach((media) => media.pause()); label(false); render(); });
   }
@@ -193,8 +220,9 @@ def player_html(player: pipeline.Player, *, key: str) -> str:
         f'data-shown-start="{cue["shown_start"]:.3f}" data-shown-end="{cue["shown_end"]:.3f}">'
         f'<span class="h3-dub-cue-time">{format_time(cue["start"])[:-4]}</span>'
         + (f'<span class="h3-dub-cue-speaker">{escape(cue["speaker"])}</span>' if speakers else "")
-        + f'<span class="h3-dub-cue-text"><span class="h3-dub-cue-translation">{escape(cue["translation"])}</span>'
-        f'<span class="h3-dub-cue-source">{escape(cue["source"])}</span></span></li>'
+        + f'<span class="h3-dub-cue-text"><span class="h3-dub-cue-translation">'
+        f'{word_spans_html(cue["translation"], cue.get("translation_words"))}</span>'
+        f'<span class="h3-dub-cue-source">{word_spans_html(cue["source"], cue.get("source_words"))}</span></span></li>'
         for cue in player.lines)
     group = escape(f"h3-dub-voice-{key}", quote=True)
     note = ("" if player.music is not None else

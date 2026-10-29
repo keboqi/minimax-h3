@@ -140,6 +140,7 @@ class Drama3View:
     regenerate_line: gr.Button | None = None
     remix: gr.Button | None = None
     title: gr.Textbox | None = None
+    word_timing: gr.Checkbox | None = None
     take_audio: gr.Audio | None = None
     subtitles: gr.HTML | None = None
     steps: StepStrip | None = None
@@ -212,8 +213,15 @@ DRAMA3_SUBTITLES_JS = """
       const highlighted = playing.length ? playing : started.slice(-1);
       const active = highlighted.at(-1) ?? null;
       for (const line of lines) {
-        line.classList.toggle("active", highlighted.includes(line));
-        line.classList.toggle("past", time >= 0 && Number(line.dataset.end) <= time && !highlighted.includes(line));
+        const lit = highlighted.includes(line);
+        line.classList.toggle("active", lit);
+        line.classList.toggle("past", time >= 0 && Number(line.dataset.end) <= time && !lit);
+        // Aligned lines light word by word: what has been said, and the word being said.
+        for (const word of line.querySelectorAll(".h3-word")) {
+          const start = Number(word.dataset.start), end = Number(word.dataset.end);
+          word.classList.toggle("spoken", lit && start <= time);
+          word.classList.toggle("current", lit && start <= time && time < end + 0.08);
+        }
       }
       // Voice segments follow their subtitle lines, sounds light while they play;
       // the playhead follows the player.
@@ -717,6 +725,11 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                             list(DRAMA3_SAMPLING_PRESETS), value="Expressive", label="Speech preset",
                             info="Strict keeps delivery controlled; Expressive adds variation.",
                         )
+                        word_timing = gr.Checkbox(
+                            False, label="Word-by-word subtitles",
+                            info="Times every word with Qwen3's aligner after speaking. To add it to a result, "
+                                 "turn it on and Remix or generate again: saved takes are only aligned, not "
+                                 "spoken again.")
                         with gr.Accordion("Speech settings", open=False):
                             gr.Markdown("Drama 3 runs on SGLang-Omni (Linux, CUDA). Lines go out in parallel with "
                                         "their speaker's clip. The checkpoint downloads on first use. "
@@ -853,6 +866,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         take_line=take_line,
         regenerate_line=regenerate_line,
         remix=remix,
+        word_timing=word_timing,
         title=title,
         take_audio=take_audio,
         subtitles=subtitles,

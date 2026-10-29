@@ -56,7 +56,7 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
         view.run.click, owned_generation(actions.generate_dub, FAMILY_DUB),
         inputs=[view.session, view.voice_mode, view.preset, view.timing, view.max_speed, view.parallel,
                 view.speech_volume, view.background_volume, view.keep_original,
-                view.regenerate],
+                view.regenerate, view.word_timing],
         outputs=[view.player, view.video, view.audio, view.files, view.status, view.export_source,
                  view.export_subtitles, view.exported_video, view.export_status], show_progress="minimal",
         api_name="dub_generate",

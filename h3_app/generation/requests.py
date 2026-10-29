@@ -75,6 +75,8 @@ class Drama3Request:
     # Saved-take keys to generate again; remix_only rebuilds the mix from saved takes alone.
     regenerate: tuple[str, ...] = ()
     remix_only: bool = False
+    # Time every word with Qwen3's aligner for word-by-word subtitles.
+    word_timing: bool = False
     # Names the output file; "" keeps the default name.
     title: str = ""
 

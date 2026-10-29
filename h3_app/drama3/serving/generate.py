@@ -65,6 +65,7 @@ class Take:
     check: audio.TakeCheck | None
     wav: bytes = b""  # the server's response, saved for reuse
     line_bounds: list[tuple[int, int]] | None = None  # tidied audio at take.rate
+    line_words: list[list[tuple[str, float, float]]] | None = None  # each line's words, seconds in the tidied take
 
 
 def frame_budget(text: str, limit: int) -> int:
@@ -467,6 +468,7 @@ class _Render:
     room: str | None = None  # the enclosing scene's room or place effect, heard by its one-shot sounds
     scene_room: str | None = None  # the enclosing scene's ``room``, heard by its in-world voices too
     placements: dict[int, float] = field(default_factory=dict)  # each chunk's stereo position, as mixed
+    words: dict[int, list[list[tuple[str, int, int]]]] = field(default_factory=dict)  # samples inside the take
 
 
 def _edge_texts(node: TreeNode, ctx: _Render) -> tuple[str, str, str, str] | None:
@@ -511,6 +513,8 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
             if take.line_bounds is not None:
                 lines = [(round(start * rate / take.rate), round(end * rate / take.rate))
                          for start, end in take.line_bounds]
+            words = [[(text, round(start * rate), round(end * rate)) for text, start, end in line]
+                     for line in take.line_words] if take.line_words is not None else None
             room = _voice_room(chunk, ctx)
             distance = next((effect for effect in chunk.speaker_effects if effect in DISTANCE_TAGS), "")
             # Real rooms and distance are placed below; the other effects shape the voice itself.
@@ -523,6 +527,11 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
                 tidied = apply_speaker_effects(tidied, rate, effects)
                 if dry and len(tidied) != dry:
                     lines = [(start * len(tidied) // dry, end * len(tidied) // dry) for start, end in lines]
+                    if words is not None:
+                        words = [[(text, start * len(tidied) // dry, end * len(tidied) // dry)
+                                  for text, start, end in line] for line in words]
+            if words is not None:
+                ctx.words[chunk.index] = words
             # The room hears the voice as spoken; distance changes only what reaches the listener directly.
             wets.append(rooms.room_wet(tidied, rate, room, send=NEAR_ROOM_SEND if distance == "near" else 1.0)
                         if room else None)
@@ -639,6 +648,7 @@ def _render_ast(
     gains: dict[str, float] | None = None,
     positions: dict[str, float] | None = None,
     placements: dict[int, float] | None = None,
+    words: dict[int, list[list[tuple[str, int, int]]]] | None = None,
 ) -> np.ndarray:
     """Recursively render a Drama 3 AST node into (frames, 2) float32 stereo audio at ``rate``.
 
@@ -648,10 +658,12 @@ def _render_ast(
     ``gains`` scales each speaker's takes (see ``speaker_gains``) and ``positions`` places
     them left to right (see ``speaker_positions``); unlisted speakers are centred. A scene's
     ``stage`` moves the speakers it names. ``placements``, when given, receives each chunk's
-    position as mixed, keyed by chunk index.
+    position as mixed, keyed by chunk index; ``words``, each aligned take's words per script
+    line as (text, start, end) samples inside the take.
     """
     ctx = _Render(node_chunks, takes, sound_clips, rate, {} if decoded is None else decoded, gains or {},
-                  positions or {}, placements={} if placements is None else placements)
+                  positions or {}, placements={} if placements is None else placements,
+                  words={} if words is None else words)
     return _render(node, ctx, spans)[0]
 
 
@@ -797,30 +809,39 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
 
     ordered = [takes[chunk.index] for chunk in chunks]
     alignment_notes = []
-    multiline = [take for take in ordered if len(take.chunk.lines) > 1]
-    if multiline:
+    # A take of several lines is aligned to cut them; word-by-word subtitles align every take,
+    # saved ones too, so turning them on and remixing adds them without speaking again.
+    # Only a multi-line take's failure leaves estimated line timing worth a note.
+    word_timing = bool(getattr(request, "word_timing", False))
+    aligned = ordered if word_timing else [take for take in ordered if len(take.chunk.lines) > 1]
+    if aligned:
         from .alignment import align_take
         from h3_app.dubbing import tools
 
-        yield GenerationUpdate(None, "Aligning subtitle lines to generated speech…")
+        yield GenerationUpdate(None, "Aligning subtitle words to generated speech…" if word_timing
+                               else "Aligning subtitle lines to generated speech…")
         try:
-            for take in multiline:
+            for take in aligned:
                 job = CURRENT_JOB.get()
                 if job is not None:
                     job.check()
                 try:
-                    take.line_bounds = align_take(take, store, runtime, free_gpu=free_gpu, hf_token=hf_token)
+                    take.line_bounds, words = align_take(take, store, runtime, free_gpu=free_gpu,
+                                                         hf_token=hf_token)
+                    take.line_words = words if word_timing else None
                 except Exception as exc:
                     if job is not None:
                         job.check()
-                    alignment_notes.append(f"chunk {take.chunk.index + 1}: {exc}")
+                    if len(take.chunk.lines) > 1:
+                        alignment_notes.append(f"chunk {take.chunk.index + 1}: {exc}")
         finally:
             tools.stop()  # release alignment VRAM before the next speech job
     rate = ordered[0].rate
     spans: Spans = {}
     placements: dict[int, float] = {}
+    word_spans: dict[int, list[list[tuple[str, int, int]]]] = {}
     joined = _render_ast(tree, node_chunks, takes, sound_clips, rate, spans=spans, gains=speaker_gains(takes),
-                         positions=speaker_positions(chunks), placements=placements)
+                         positions=speaker_positions(chunks), placements=placements, words=word_spans)
     joined = audio.master(audio.add_room_tone(joined, rate), rate)
 
     # Where each take and script line plays in the mix, for synced subtitles;
@@ -830,6 +851,10 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
 
     timings = {index: (seconds(start), seconds(end), [(seconds(start + a), seconds(start + b)) for a, b in lines])
                for index, (start, end, lines) in spans.items() if isinstance(index, int)}
+    # Each line's words where the mix plays them; a word the trimmed mix cuts off is dropped.
+    line_words = {index: [[{"text": text, "start": seconds(spans[index][0] + a), "end": seconds(spans[index][0] + b)}
+                           for text, a, b in line if spans[index][0] + a < len(joined)] for line in lines]
+                  for index, lines in word_spans.items() if index in spans}
     # When each sound cue plays, in playback order.
     sound_timings = sorted(({**info, "start": seconds(start), "end": seconds(end)}
                             for key, (start, end, info) in spans.items() if not isinstance(key, int)),
@@ -850,6 +875,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
             "retries": request.retries, "reference_count": len(request.voices),
             "script_mode": getattr(request, "script_mode", "Basic"),
             "sound_count": len(sound_nodes),
+            "word_timing": word_timing,
             "chunks": [{"speaker": t.chunk.speaker, "name": t.chunk.speaker,
                         "text": t.chunk.text, "take": keys[t.chunk.index], "reused": t.attempts == 0,
                         "attempts": t.attempts,
@@ -863,8 +889,12 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                         "seconds": round(len(t.samples) / t.rate, 2),
                         "subtitle_timing": "aligned" if t.line_bounds is not None else "estimated",
                         **({"start": timings[t.chunk.index][0], "end": timings[t.chunk.index][1],
-                            "lines": [{"text": text, "start": start, "end": end} for text, (start, end)
-                                      in zip(t.chunk.lines or (t.chunk.text,), timings[t.chunk.index][2])]}
+                            "lines": [{"text": text, "start": start, "end": end,
+                                       **({"words": line_words[t.chunk.index][number]}
+                                          if t.chunk.index in line_words
+                                          and number < len(line_words[t.chunk.index]) else {})}
+                                      for number, (text, (start, end)) in enumerate(
+                                          zip(t.chunk.lines or (t.chunk.text,), timings[t.chunk.index][2]))]}
                            if t.chunk.index in timings else {})} for t in ordered],
             "sounds": sound_timings,
             "duration": round(len(joined) / rate, 3),

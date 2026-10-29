@@ -19,8 +19,8 @@ def subtitle_controller():
 
 
 class SubtitlePlaybackTests(unittest.TestCase):
-    def playback(self, timings, times):
-        return run_js("""(timings, times) => {
+    def playback(self, timings, times, words=False):
+        return run_js("""(timings, times, words) => {
             let tick;
             globalThis.setInterval = fn => { tick = fn; };
             globalThis.window = {};
@@ -30,10 +30,13 @@ class SubtitlePlaybackTests(unittest.TestCase):
                 play() {}
             }
             globalThis.HTMLMediaElement = Media;
-            const lines = timings.map(([start, end], index) => ({
-                index, dataset: { start: String(start), end: String(end) },
-                classList: { toggle(name, value) { this[name] = value; } },
+            const toggles = () => ({ toggle(name, value) { this[name] = value; } });
+            const lines = timings.map(([start, end, spans = []], index) => ({
+                index, dataset: { start: String(start), end: String(end) }, classList: toggles(),
                 offsetTop: index * 20, offsetHeight: 20,
+                words: spans.map(([wordStart, wordEnd]) => ({
+                    dataset: { start: String(wordStart), end: String(wordEnd) }, classList: toggles() })),
+                querySelectorAll(sel) { return sel === ".h3-word" ? this.words : []; },
             }));
             const box = {
                 dataset: { media: "result", duration: "10" }, offsetParent: {},
@@ -50,9 +53,11 @@ class SubtitlePlaybackTests(unittest.TestCase):
             return times.map(time => {
                 player.currentTime = time;
                 tick();
+                if (words) return lines.map(line => line.words.map(word =>
+                    word.classList.current ? "current" : word.classList.spoken ? "spoken" : ""));
                 return lines.filter(line => line.classList.active).map(line => line.index);
             });
-        }""", timings, times)
+        }""", timings, times, words)
 
     def test_parallel_traversal_order_does_not_override_later_speech(self):
         self.assertEqual(self.playback([[0, 2], [5, 7], [0, 1]], [5.5]), [[1]])
@@ -97,7 +102,7 @@ class SubtitlePlaybackTests(unittest.TestCase):
             const toggles = () => ({ toggle(name, value) { this[name] = value; } });
             const lines = [[0, 2], [3, 5]].map(([start, end], index) => ({
                 dataset: { start: String(start), end: String(end) }, classList: toggles(),
-                offsetTop: index * 20, offsetHeight: 20,
+                offsetTop: index * 20, offsetHeight: 20, querySelectorAll: () => [],
             }));
             const segments = lines.map((_, index) => ({ dataset: { line: String(index) }, classList: toggles() }));
             // A sound has no subtitle line; it lights while it plays.
@@ -119,6 +124,14 @@ class SubtitlePlaybackTests(unittest.TestCase):
             });
         }""")
         self.assertEqual(states, [[[True, False, True], False, "10%"], [[False, True, False], False, "40%"]])
+
+    def test_the_lit_line_lights_word_by_word(self):
+        timings = [[0, 2, [[0, .5], [.6, 1.4], [1.5, 2]]], [3, 4, [[3, 4]]]]
+        self.assertEqual(self.playback(timings, [.8, 1.49, 3.5], words=True), [
+            [["spoken", "current", ""], [""]],
+            [["spoken", "spoken", ""], [""]],  # between words: what was said stays lit
+            [["", "", ""], ["current"]],  # a line no longer lit drops its words
+        ])
 
     def test_seeking_backwards_recomputes_the_active_lines(self):
         self.assertEqual(self.playback([[1, 2], [4, 5]], [0, 1.5, 4.5, 1.5, 0]),

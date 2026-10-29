@@ -733,13 +733,13 @@ class Drama3SoundAndEffectValidationTests(unittest.TestCase):
 
         gen_drama = owned_generation(drama3_handlers.generate_drama3, "drama3")
         # 1 text + 48 speaker inputs + 6 settings + 1 script_mode + 80 sound slot inputs + 1 title
-        # + 16 speaker names = 153
-        self.assertEqual(len(gen_drama.job_input_names), 153)
+        # + 16 speaker names + 1 word_timing = 154
+        self.assertEqual(len(gen_drama.job_input_names), 154)
         gen_sounds = owned_generation(drama3_handlers.generate_drama3_sounds, "drama3_sound")
         # 1 shown_sound_slots + 1 skip_existing_sounds + 80 sound slot inputs = 82
         self.assertEqual(len(gen_sounds.job_input_names), 82)
-        self.assertEqual(len(owned_generation(drama3_handlers.remix_drama3, "drama3").job_input_names), 153)
-        self.assertEqual(len(owned_generation(drama3_handlers.regenerate_drama3_line, "drama3").job_input_names), 154)
+        self.assertEqual(len(owned_generation(drama3_handlers.remix_drama3, "drama3").job_input_names), 154)
+        self.assertEqual(len(owned_generation(drama3_handlers.regenerate_drama3_line, "drama3").job_input_names), 155)
         gen_sound = owned_generation(drama3_handlers.generate_drama3_sound, "drama3_sound")
         self.assertEqual(len(gen_sound.job_input_names), 2)
 

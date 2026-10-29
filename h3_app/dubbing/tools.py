@@ -27,9 +27,11 @@ FAMILY_ANALYZE, FAMILY_LINES, FAMILY_DUB = "dubbing_analyze", "dubbing_lines", "
 FAMILIES = frozenset({FAMILY_ANALYZE, FAMILY_LINES, FAMILY_DUB})
 WORKER = Path(__file__).with_name("tools_worker.py")
 # Free VRAM (MiB) wanted before a request's models load: weights plus working room.
-LOAD_HEADROOM_MIB = {"separate": 4 * 1024, "transcribe": 7 * 1024, "align_lines": 7 * 1024, "translate": 6 * 1024}
+LOAD_HEADROOM_MIB = {"separate": 4 * 1024, "transcribe": 7 * 1024, "align_lines": 7 * 1024,
+                     "align_words": 7 * 1024, "translate": 6 * 1024}
 # The worker's loaded-model names start with these, per request.
-OP_MODELS = {"separate": "separator:", "transcribe": "asr", "align_lines": "asr+aligner", "translate": "translator"}
+OP_MODELS = {"separate": "separator:", "transcribe": "asr", "align_lines": "asr+aligner",
+             "align_words": "asr+aligner", "translate": "translator"}
 
 
 def log_dir(runtime) -> Path:
@@ -115,7 +117,8 @@ def run(op: str, payload: dict, runtime, *, free_gpu, hf_token: str | None = Non
             report("Making GPU room for dubbing tools")
             _make_room(op, worker, free_gpu)
             step = {"separate": "Separating vocals from the background", "transcribe": "Transcribing speech with Qwen3",
-                    "align_lines": "Aligning speech with Qwen3", "translate": "Translating lines with Hy-MT"}.get(op, op)
+                    "align_lines": "Aligning speech with Qwen3", "align_words": "Timing subtitle words with Qwen3",
+                    "translate": "Translating lines with Hy-MT"}.get(op, op)
             report(step)
             print(f"[{LABEL}] {step}; worker log: {worker.log_path}", flush=True)
 

@@ -756,7 +756,7 @@ class UiContractTests(unittest.TestCase):
         sound_slots = [f"sound_{n}_{field}" for n in range(16) for field in ("preset", "audio", "name", "description", "duration")]
         self.assertEqual(drama, ["text", *slots, "temperature", "top_p", "top_k", "max_frames",
                                  "parallel", "retries", "script_mode", *sound_slots, "title",
-                                 *[f"speaker_{n}_name" for n in range(16)]])
+                                 *[f"speaker_{n}_name" for n in range(16)], "word_timing"])
         enhance = [row["parameter_name"] for row in api["/enhance_drama3_text"]["parameters"]]
         self.assertEqual(enhance[:8], ["text", "speaker_mode", "model", "temporary_api_key",
                                        "backend", "openai_api_key", "openai_model", "openai_base_url"])

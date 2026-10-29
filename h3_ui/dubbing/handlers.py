@@ -412,14 +412,14 @@ class DubbingHandlers:
             yield gr.skip(), gr.skip(), self._failed(exc)
 
     def _dub_request(self, session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume=100,
-                     background_volume=100, keep_original=True, regenerate=""):
+                     background_volume=100, keep_original=True, regenerate="", word_timing=False):
         session = sessions.load(self._runtime(), session_id)
         fresh = tuple(segment_tools.parse_line_numbers(regenerate, len(session.segments)))
         return pipeline.DubRequest(
             session_id, voice_mode=voice_mode, preset=preset, timing=timing, parallel=int(parallel),
             max_speed=float(max_speed), speech_volume=float(speech_volume),
             background_volume=float(background_volume), keep_original_track=bool(keep_original),
-            regenerate=fresh)
+            regenerate=fresh, word_timing=bool(word_timing))
 
     def _preview(self, session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, *, fresh: bool):
         try:
@@ -460,13 +460,13 @@ class DubbingHandlers:
         yield from self._preview(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, fresh=True)
 
     def generate_dub(self, session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume, background_volume,
-                     keep_original, regenerate):
+                     keep_original, regenerate, word_timing=False):
         """Outputs: player, files, status, and a frozen export source for this result."""
         yield (gr.skip(), gr.skip(), gr.skip(), gr.skip(), "Generating dub…", None,
                gr.update(interactive=False), None, "")
         try:
             request = self._dub_request(session_id, voice_mode, preset, timing, max_speed, parallel, speech_volume,
-                                   background_volume, keep_original, regenerate)
+                                   background_volume, keep_original, regenerate, word_timing)
             for update in self._gpu(lambda **kw: pipeline.dub(request, **kw)):
                 if isinstance(update, pipeline.Dub):
                     video = str(update.video) if update.video else None
