@@ -571,13 +571,13 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
     if isinstance(node, SequentialNode):
         placed: list[tuple[int, np.ndarray]] = []
         cursor, previous = 0, None  # previous: the last speech before this child, with no pause or sound between
-        last_start = last_advance = 0
+        floor = 0  # the earliest an overlap may start what follows
         for child in node.children:
             if isinstance(child, PauseNode) and child.seconds < 0:
                 # A written overlap: what follows starts this much before the previous child ends,
-                # in place of the usual gap, never past half of the previous child.
+                # in place of the usual gap, never past half of its last line.
                 if placed:
-                    cursor = max(cursor + int(round(child.seconds * rate)), last_start + last_advance // 2)
+                    cursor = max(cursor + int(round(child.seconds * rate)), floor)
                 previous = None
                 continue
             child_spans: Spans = {}
@@ -586,11 +586,18 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
                 continue
             edges = None if isinstance(child, PauseNode) or is_sound_only_node(child) else _edge_texts(child, ctx)
             if edges is not None and previous is not None:
-                # A barge-in's negative gap overlaps the previous child, never past half of it.
+                # A barge-in's negative gap overlaps the previous child, never past half of its last line.
                 gap = int(rate * audio.turn_gap(previous[1], edges[1], previous[0] == edges[0]))
-                cursor = max(cursor + gap, last_start + last_advance // 2)
+                cursor = max(cursor + gap, floor)
             placed.append((cursor, seg))
-            last_start, last_advance = cursor, advance
+            # A speech block holds several lines: half of the whole block could reach back before
+            # its last line starts, putting what follows ahead of the line it answers.
+            floor = cursor + advance // 2
+            speech = [entry for key, entry in child_spans.items() if isinstance(key, int)]
+            if speech:
+                start, end, lines = max(speech, key=lambda entry: entry[0])
+                first, last = (start + lines[-1][0], start + lines[-1][1]) if lines else (start, end)
+                floor = cursor + first + (last - first) // 2
             if spans is not None:
                 spans.update((index, (start + cursor, end + cursor, lines))
                              for index, (start, end, lines) in child_spans.items())

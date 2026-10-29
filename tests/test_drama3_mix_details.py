@@ -49,14 +49,16 @@ class MixDetailTests(unittest.TestCase):
                                       np.zeros((RATE, 2), np.float32))  # a silent mix stays silent
 
     def test_a_negative_pause_makes_the_next_line_barge_in(self):
-        def spans_of(script):
+        def spans_of(script, seconds=()):
             names = {"Mia": "Mia", "Leo": "Leo"}
             tree = parse_drama3_tree(script, resolve=names.get)
             node_chunks, takes = {}, {}
             for speech in iter_speech_nodes(tree):
                 chunks = plan_turns_chunks(speech.turns, start_index=len(takes))
                 node_chunks[id(speech)] = chunks
-                takes.update((chunk.index, generate.Take(chunk, noise(1.0, 0.2), RATE, 1, None)) for chunk in chunks)
+                takes.update((chunk.index, generate.Take(
+                    chunk, noise(seconds[chunk.index] if chunk.index < len(seconds) else 1.0, 0.2), RATE, 1, None))
+                    for chunk in chunks)
             spans = {}
             generate._render_ast(tree, node_chunks, takes, {}, RATE, spans=spans)
             return spans
@@ -69,6 +71,11 @@ class MixDetailTests(unittest.TestCase):
         self.assertAlmostEqual((barge[0][1] - barge[1][0]) / RATE, 0.3, delta=0.01)  # Leo comes in over Mia
         held = spans_of("Mia: I was going to say.\n<#1.5#>\nLeo: Yes.")
         self.assertAlmostEqual((held[1][0] - held[0][1]) / RATE, 1.5, delta=0.01)
+        # A long overlap after a block of several lines reaches back at most half its last line,
+        # so the reply never starts before the line it answers.
+        short = spans_of("Mia: I was going to say something long.\nLeo: No.\n<#-2#>\nMia: Fine.",
+                         seconds=(4.0, 0.4, 1.0))
+        self.assertGreaterEqual(short[2][0], short[1][0] + (short[1][1] - short[1][0]) // 2 - 1)
 
 
 if __name__ == "__main__":
