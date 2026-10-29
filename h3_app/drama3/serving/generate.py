@@ -546,7 +546,7 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
                          for chunk, offset, lines in zip(chunks, offsets, line_offsets))
         return joined, advance
 
-    if isinstance(node, PauseNode):
+    if isinstance(node, PauseNode):  # a negative pause is an overlap, placed by its sequence
         silence = np.zeros((max(0, int(round(node.seconds * rate))), 2), dtype=np.float32)
         return silence, len(silence)
 
@@ -564,6 +564,13 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
         cursor, previous = 0, None  # previous: the last speech before this child, with no pause or sound between
         last_start = last_advance = 0
         for child in node.children:
+            if isinstance(child, PauseNode) and child.seconds < 0:
+                # A written overlap: what follows starts this much before the previous child ends,
+                # in place of the usual gap, never past half of the previous child.
+                if placed:
+                    cursor = max(cursor + int(round(child.seconds * rate)), last_start + last_advance // 2)
+                previous = None
+                continue
             child_spans: Spans = {}
             seg, advance = _render(child, ctx, child_spans)
             if seg.size == 0:

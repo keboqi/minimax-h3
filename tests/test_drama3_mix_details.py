@@ -1,4 +1,4 @@
-"""Soundstage mix details: edge breaths, one-shot onsets and room tone."""
+"""Soundstage mix details: edge breaths, one-shot onsets, room tone and written barge-ins."""
 
 from __future__ import annotations
 
@@ -6,7 +6,9 @@ import unittest
 
 import numpy as np
 
-from h3_app.drama3.serving import audio
+from h3_app.drama3.serving import audio, generate
+from h3_app.drama3.serving.planner import plan_turns_chunks
+from h3_app.drama3.serving.tree import PauseNode, iter_speech_nodes, parse_drama3_tree
 
 RATE = 16000
 
@@ -45,6 +47,28 @@ class MixDetailTests(unittest.TestCase):
         self.assertAlmostEqual(tone_db, loudness - audio.ROOM_TONE_BELOW_DB, delta=4)
         np.testing.assert_array_equal(audio.add_room_tone(np.zeros((RATE, 2), np.float32), RATE),
                                       np.zeros((RATE, 2), np.float32))  # a silent mix stays silent
+
+    def test_a_negative_pause_makes_the_next_line_barge_in(self):
+        def spans_of(script):
+            names = {"Mia": "Mia", "Leo": "Leo"}
+            tree = parse_drama3_tree(script, resolve=names.get)
+            node_chunks, takes = {}, {}
+            for speech in iter_speech_nodes(tree):
+                chunks = plan_turns_chunks(speech.turns, start_index=len(takes))
+                node_chunks[id(speech)] = chunks
+                takes.update((chunk.index, generate.Take(chunk, noise(1.0, 0.2), RATE, 1, None)) for chunk in chunks)
+            spans = {}
+            generate._render_ast(tree, node_chunks, takes, {}, RATE, spans=spans)
+            return spans
+
+        self.assertEqual(parse_drama3_tree("Mia: Hi.\n<#-0.3#>\nLeo: No.").children[1], PauseNode(-0.3))
+        self.assertEqual(parse_drama3_tree("Mia: Hi.\n<#-9#>\nLeo: No.").children[1], PauseNode(-2.0))
+        plain = spans_of("Mia: I was going to say.\nLeo: Yes.")
+        barge = spans_of("Mia: I was going to say.\n<#-0.3#>\nLeo: Yes.")
+        self.assertGreater(plain[1][0], plain[0][1])  # the usual gap
+        self.assertAlmostEqual((barge[0][1] - barge[1][0]) / RATE, 0.3, delta=0.01)  # Leo comes in over Mia
+        held = spans_of("Mia: I was going to say.\n<#1.5#>\nLeo: Yes.")
+        self.assertAlmostEqual((held[1][0] - held[0][1]) / RATE, 1.5, delta=0.01)
 
 
 if __name__ == "__main__":

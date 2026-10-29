@@ -23,7 +23,9 @@ SOUND_PARSE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 ATTR_RE = re.compile(r'(\w+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+))')
-PAUSE_TAG_RE = re.compile(r"<#\s*(\d+(?:\.\d+)?)\s*#>")
+# <#1.5#> holds a beat; <#-0.3#> makes what follows start that much before the previous line ends.
+PAUSE_TAG_RE = re.compile(r"<#\s*(-?\d+(?:\.\d+)?)\s*#>")
+MAX_OVERLAP_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -244,8 +246,8 @@ def _expand_speaker_line(speaker: str, raw_body: str) -> list[SpeechTurn | Pause
             seconds = float(match.group(1))
         except ValueError:
             seconds = 0.0
-        if seconds > 0:
-            items.append(PauseNode(seconds=min(seconds, 30.0)))
+        if seconds:
+            items.append(PauseNode(seconds=max(-MAX_OVERLAP_SECONDS, min(seconds, 30.0))))
         last_end = match.end()
     raw_tail = raw_body[last_end:]
     tail_body, tail_effects = extract_speaker_effects(raw_tail)
@@ -344,8 +346,8 @@ def parse_drama3_tree(script: str, *, default_speaker: str = "Speaker 0",
             mode, items = stack[-1]
             flush_turns(mode, items, pending_stack[-1])
             seconds = float(pause_only.group(1))
-            if seconds > 0:
-                items.append(PauseNode(seconds=min(seconds, 30.0)))
+            if seconds:
+                items.append(PauseNode(seconds=max(-MAX_OVERLAP_SECONDS, min(seconds, 30.0))))
             continue
 
         raw_body = token

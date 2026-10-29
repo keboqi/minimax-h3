@@ -258,7 +258,7 @@ DRAMA3_SCRIPT_HIGHLIGHT_JS = """
   const escape = (text) => text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
   const span = (kind, text) => text ? `<span class="h3-hl-${kind}">${escape(text)}</span>` : "";
   const NAME = /^([ \\t]*)([^\\s:：<>\\[\\]|#][^:：<>\\[\\]|\\n]{0,63}?)([ \\t]*[:：])/;
-  const TOKEN = /(\\[[^\\[\\]\\n]*\\])|(<#\\s*\\d+(?:\\.\\d+)?\\s*#>)|(<\\|[^|>\\n]*\\|>)|(<\\/?)([A-Za-z_][\\w-]*)([^<>\\n]*?)(\\/?>)|(\\{[^{}\\n]*\\})/g;
+  const TOKEN = /(\\[[^\\[\\]\\n]*\\])|(<#\\s*-?\\d+(?:\\.\\d+)?\\s*#>)|(<\\|[^|>\\n]*\\|>)|(<\\/?)([A-Za-z_][\\w-]*)([^<>\\n]*?)(\\/?>)|(\\{[^{}\\n]*\\})/g;
   const ATTR = /([\\w-]+)(\\s*=\\s*)("[^"]*"|'[^']*'|[^\\s>]+)?/g;
   // The narrator has its own color; characters take the name colors in order of first line,
   // so no two share one until a ninth character.

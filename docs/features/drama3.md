@@ -312,7 +312,9 @@ and short gaps between lines, so beds do not pump up between phrases. One-shot e
 and stingers start on their first sound (up to half a second of leading dead air is
 cut, so they land on their words) and always play to their end. A faint room tone, 50 dB
 under the mix's loudness, runs under the whole result, so pauses never drop to digital
-silence. Each speaker's takes are evened out toward the
+silence. A negative pause between two lines, such as `<#-0.3#>`, makes the next line
+start that much before the previous one ends (at most 2 s, and never past half of the
+previous line), for an interruption of a line that does not end in a dash. Each speaker's takes are evened out toward the
 cast's typical level (by at most 6 dB, so whispers and shouts keep their contrast).
 Speaker vocal effects use Spotify's `pedalboard`, which setup installs; without it
 they fall back to simpler SciPy versions.
