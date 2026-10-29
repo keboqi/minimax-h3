@@ -23,8 +23,8 @@ import gradio as gr
 
 from h3_app.dubbing.pipeline import (
     PIPELINE_GEMINI, PIPELINE_LOCAL, PIPELINE_MOSS, SEPARATOR_MODELS, SOURCE_LANGUAGES, TARGET_LANGUAGES,
-    TIMING_MATCH, TIMING_NATURAL, TRANSLATOR_GEMINI, TRANSLATOR_HYMT, TRANSLATORS, VOICE_LINE, VOICE_MODES,
-    VOICE_PRESETS,
+    TIMING_MATCH, TIMING_NATURAL, TIMING_SMART, TRANSLATOR_GEMINI, TRANSLATOR_HYMT, TRANSLATORS, VOICE_LINE,
+    VOICE_MODES, VOICE_PRESETS,
 )
 from h3_app.dubbing.segments import TABLE_HEADERS, TABLE_TYPES
 
@@ -44,6 +44,9 @@ TRANSCRIPTIONS = (
      "Tells speakers apart and describes them. Uploads the vocals; needs an API key."),
 )
 TIMING_CHOICES = (
+    (TIMING_SMART, "Smart timing",
+     "Keeps each take's own pace, using the silence around it, shorter pauses and a gentle speed-up before "
+     "anything faster. Lines still too long are marked."),
     (TIMING_MATCH, "Match the original",
      "Every take starts and ends where its line does. Best for lip-sync and on-screen cues."),
     (TIMING_NATURAL, "Natural pace",
@@ -329,10 +332,10 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                             preset = gr.Radio(list(VOICE_PRESETS), value="Balance", label="Delivery",
                                               elem_classes=["h3-dub-segmented"], min_width=220)
                         card_heading("Timing")
-                        timing = widgets.choice_cards(TIMING_CHOICES, TIMING_MATCH, label="Timing",
+                        timing = widgets.choice_cards(TIMING_CHOICES, TIMING_SMART, label="Timing",
                                                       name="h3-dub-timing")
                         max_speed = gr.Slider(1.0, 2.0, value=1.35, step=0.05, label="Maximum speed-up",
-                                              visible=False, info="Takes still too long overlap the next line.")
+                                              info="Takes still too long at this speed overlap the next line.")
                         card_heading("Mix and output")
                         with gr.Row():
                             speech_volume = gr.Slider(0, 200, value=100, step=5, label="Dub volume (%)")
@@ -394,7 +397,7 @@ def local_visibility(pipeline: str):
 
 
 def speed_visibility(timing: str):
-    return gr.update(visible=timing == TIMING_NATURAL)
+    return gr.update(visible=timing in (TIMING_SMART, TIMING_NATURAL))
 
 
 def advanced_label(parallel, regenerate):

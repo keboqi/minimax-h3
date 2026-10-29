@@ -149,7 +149,24 @@ original, or change its volume. Changes save at once.
   Lines shorter than 2 seconds always use their speaker's clip.
 - **Delivery**: Strict, Balance (default) or Expressive Drama 3 sampling.
 - **Timing**:
-  - *Match the original* (default) stretches every take with FFmpeg's
+  - *Smart timing* (default) keeps each take as Drama 3 spoke it whenever it
+    fits, and otherwise tries, in order, until it does:
+    1. playing into the silence after the line, up to 0.1 s before the next one;
+    2. starting up to 0.3 s early, into silence the previous dubbed line left;
+    3. shortening pauses inside the take longer than 0.25 s to 0.15 s;
+    4. speeding up to 1.25x;
+    5. pushing the next line up to 0.5 s later, out of time its own take does
+       not need, then speeding up to 1.25x again;
+    6. speeding up to **Maximum speed-up**. Such a line is marked **Too long**
+       in Review lines and listed on the **Dub it** card. If it still does not
+       fit, it overlaps the next line by what is left; raise Maximum speed-up
+       to squeeze it in instead, or shorten its translation.
+
+    Shorter takes stay as they are. Lines that keep their original voice are
+    never moved, two speakers who overlap in the source may overlap in the dub,
+    and no line starts more than 0.5 s late. Translated subtitles start and end
+    with the dubbed line. Preview assumes the other lines fill their own time.
+  - *Match the original* stretches every take with FFmpeg's
     `atempo`, pitch preserved, so it starts and ends exactly where the original
     line does, as index-tts-vllm's FFmpeg duration control does. Lines sped up
     more than 1.6x or slowed below 0.75x are listed under **Check**; a shorter or
@@ -160,7 +177,7 @@ original, or change its volume. Changes save at once.
     last line runs past the end of the source rather than being cut. The audio
     gets longer; a re-encoded video (burned subtitles) holds its last frame.
 - Translated subtitles stay on screen while a line is still being spoken, up to
-  the next line.
+  the next line. With Smart timing they also start when the dubbed line does.
 - **Dub volume** and **Background volume** set the mix.
 - **Keep the original audio as a second track** adds the source soundtrack to
   the dubbed video. Generation copies the picture without re-encoding and adds

@@ -17,7 +17,9 @@ from contextlib import closing
 import contextvars
 from dataclasses import dataclass
 import hashlib
+import heapq
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -58,10 +60,20 @@ VOICE_LINE = "Each line's own voice"
 VOICE_SPEAKER = "One voice per speaker"
 VOICE_MODES = (VOICE_LINE, VOICE_SPEAKER)
 # Match stretches every take to its line's original length with ffmpeg, as index-tts-vllm's
-# duration control does; Natural only speeds up long takes, by at most the chosen limit.
+# duration control does; Natural only speeds up long takes, by at most the chosen limit;
+# Smart keeps each take's own pace and fits long ones into the silence around them first.
+TIMING_SMART = "Smart timing"
 TIMING_MATCH = "Match the original timing"
 TIMING_NATURAL = "Natural pace"
-TIMINGS = (TIMING_MATCH, TIMING_NATURAL)
+TIMINGS = (TIMING_SMART, TIMING_MATCH, TIMING_NATURAL)
+# Smart timing: the silence kept between dubbed lines, how much earlier a line may start and
+# later a line may be pushed, the speed-up that still sounds natural, and the pauses inside a
+# take it shortens (longer than the first, down to the second) before speeding anything up.
+SMART_GAP = 0.1
+SMART_LEAD = 0.3
+SMART_DELAY = 0.5
+SMART_SPEED = 1.25
+SMART_PAUSE = (0.25, 0.15)
 # Matched takes changed more than this are reported: their translation is much longer or shorter.
 TEMPO_WARNING = (0.75, 1.6)
 # Drama 3 sampling (temperature, top_p, top_k); Soundstage offers the same three.
@@ -85,8 +97,10 @@ PLAYER_DIR = ".dub-player"
 # from the reported time, so the dub would drift from its subtitles after every seek.
 PLAYER_MP3 = ("-c:a", "libmp3lame", "-b:a", "128k")
 OUTPUT_MP3 = ("-c:a", "libmp3lame", "-b:a", "192k")
-# Session key for lines whose take failed its check or could not be generated, shown in Review lines.
+# Session keys for lines shown in Review lines: their take failed its check or could not be
+# generated, or Smart timing found them still too long in the last dub.
 TAKE_PROBLEMS = "take_problems"
+TIMING_PROBLEMS = "timing_problems"
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +134,7 @@ class DubRequest:
     session_id: str
     voice_mode: str = VOICE_LINE
     preset: str = "Balance"
-    timing: str = TIMING_MATCH
+    timing: str = TIMING_SMART
     parallel: int = 16
     max_speed: float = 1.35
     speech_volume: float = 100.0
@@ -177,6 +191,7 @@ class _Line:
     take: np.ndarray | None = None
     note: str = ""
     speed: float = 1.0
+    timing_problem: str = ""  # Smart timing still found it too long; it is marked for review
 
 
 # ---------------------------------------------------------------------------
@@ -771,6 +786,168 @@ def timed_take(take: np.ndarray, lines: list[dict], index: int, duration: float,
     return (*match(take, RATE, available, cache), available)
 
 
+@dataclass(frozen=True)
+class SmartPlacement:
+    start: float  # where the take starts on the timeline
+    seconds: float  # how long it plays once fitted
+    tighten: bool  # its inner pauses are shortened
+    tempo: float
+    room: float  # the time it could use without overlapping, borrowing included
+    squeezed: bool  # still too long after the gentle speed-up: sped up to the limit, and marked
+
+
+def smart_layout(lines: list[dict], natural: dict[int, float], tightened: Callable[[int], float],
+                 max_speed: float) -> dict[int, SmartPlacement]:
+    """Place each voiced line (``natural``: its take's own length) on the timeline, trying in turn:
+
+    1. its own length at its own start, into the silence before the next line (less SMART_GAP);
+    2. starting up to SMART_LEAD earlier, into silence the previous dubbed line left;
+    3. its inner pauses shortened (``tightened`` gives that length);
+    4. speeding up to SMART_SPEED;
+    5. pushing the next line up to SMART_DELAY later, out of the time that line will not use,
+       then speeding up to SMART_SPEED again;
+    6. speeding up to ``max_speed`` and marking it; what still does not fit overlaps the next line.
+
+    Lines not in ``natural`` keep their original voice at their original times and are not moved.
+    Lines that overlap in the source (two speakers at once) do not hold each other back. A line is
+    never started more than SMART_DELAY late, so an overlap cannot push every later line along.
+    """
+    gentle = min(SMART_SPEED, max(1.0, float(max_speed)))
+    # The line each one must end before: the first later line that does not overlap it in the source.
+    next_line = [next((later for later in range(index + 1, len(lines))
+                       if lines[later]["start"] >= line["end"] - 1e-6), None)
+                 for index, line in enumerate(lines)]
+
+    def slack(index: int) -> float:
+        """How far a dubbed line can be pushed and still play at its own length before its own next line."""
+        if index not in natural:
+            return 0.0
+        if next_line[index] is None:
+            return SMART_DELAY
+        room = lines[next_line[index]]["start"] - SMART_GAP - lines[index]["start"]
+        return min(SMART_DELAY, max(0.0, room - natural[index]))
+
+    def fits(start: float, seconds: float, end_limit: float) -> bool:
+        return start + seconds <= end_limit + 1e-6
+
+    def sped(start: float, seconds: float, end_limit: float, cap: float) -> float | None:
+        """The tempo that fits ``seconds`` between ``start`` and ``end_limit``, if it is at most ``cap``."""
+        room = end_limit - start
+        return seconds / room if room > 0 and seconds <= room * cap else None
+
+    placements: dict[int, SmartPlacement] = {}
+    finished: list[tuple[float, float]] = []  # (original end, placed end) of the lines before
+    previous_end = None
+    for index, line in enumerate(lines):
+        while finished and finished[0][0] <= line["start"] + 1e-6:
+            placed_end = heapq.heappop(finished)[1]
+            previous_end = placed_end if previous_end is None else max(previous_end, placed_end)
+        if index not in natural:
+            heapq.heappush(finished, (line["end"], line["end"]))
+            continue
+        after = line["start"] if previous_end is None else min(previous_end + SMART_GAP,
+                                                              line["start"] + SMART_DELAY)
+        normal, earliest = max(line["start"], after), max(0.0, line["start"] - SMART_LEAD, after)
+        following = next_line[index]
+        limit = math.inf if following is None else lines[following]["start"] - SMART_GAP
+        borrowed = limit if following is None else limit + slack(following)
+        seconds, tighten, tempo, squeezed = natural[index], False, 1.0, False
+        if not fits(earliest, seconds, limit):
+            short = tightened(index)
+            if short < seconds - 0.01:
+                seconds, tighten = short, True
+        if fits(earliest, seconds, limit):
+            end_limit = limit
+        elif (speed := sped(earliest, seconds, limit, gentle)) is not None:
+            tempo, end_limit = speed, limit
+        elif fits(earliest, seconds, borrowed):
+            end_limit = borrowed
+        elif (speed := sped(earliest, seconds, borrowed, gentle)) is not None:
+            tempo, end_limit = speed, borrowed
+        else:
+            room = borrowed - earliest
+            tempo = max(1.0, min(seconds / room if room > 0 else math.inf, float(max_speed)))
+            end_limit, squeezed = borrowed, True
+        length = seconds / tempo
+        start = earliest if tempo > 1.0 else max(earliest, min(normal, end_limit - length))
+        placements[index] = SmartPlacement(round(start, 3), length, tighten, tempo, end_limit - earliest, squeezed)
+        heapq.heappush(finished, (line["end"], start + length))
+    return placements
+
+
+def smart_note(placement: SmartPlacement) -> str:
+    """Why a squeezed line is marked: how fast it plays and whether it still overlaps."""
+    over = placement.seconds - placement.room
+    if over > 0.05:
+        return f"too long even at {placement.tempo:.2f}x: overlaps the next line by {over:.1f}s"
+    return f"too long for its slot: sped up {placement.tempo:.2f}x"
+
+
+@dataclass(frozen=True)
+class Timed:
+    samples: np.ndarray
+    start: float
+    speed: float
+    note: str
+    available: float
+    squeezed: bool = False
+
+
+def place_takes(planned: list[_Line], lines: list[dict], duration: float, request: DubRequest,
+                cache: Path | None = None, *, assume_others: bool = False) -> dict[int, Timed]:
+    """Each voiced line's take as it will play and where it starts, for any timing.
+
+    With ``assume_others`` (a single-line preview), Smart timing assumes every other line to dub
+    fills exactly its own original time.
+    """
+    with_audio = [line for line in planned if line.take is not None and len(line.take)]
+
+    def run(work: Callable[[_Line], Timed]) -> dict[int, Timed]:
+        # Each worker runs in this job's context, so Interrupt reaches its ffmpeg runs.
+        with ThreadPoolExecutor(max_workers=min(TIMING_WORKERS, max(1, len(with_audio))),
+                                thread_name_prefix="dub-timing") as pool:
+            futures = {line.index: pool.submit(contextvars.copy_context().run, work, line) for line in with_audio}
+            return {index: future.result() for index, future in futures.items()}
+
+    if request.timing != TIMING_SMART:
+        def classic(line: _Line) -> Timed:
+            fitted, speed, note, available = timed_take(line.take, lines, line.index, duration, request, cache)
+            return Timed(fitted, line.segment["start"], speed, note, available)
+
+        return run(classic)
+
+    from h3_app.drama3.serving.audio import shorten_pauses
+
+    by_index = {line.index: line for line in with_audio}
+    natural = {index: len(line.take) / RATE for index, line in by_index.items()}
+    if assume_others:
+        natural.update({index: line["end"] - line["start"] for index, line in enumerate(lines)
+                        if index not in natural and line["translation"] and line.get("dub", True)})
+    shortened: dict[int, np.ndarray] = {}
+
+    def tightened(index: int) -> float:
+        if index not in by_index:
+            return natural[index]
+        if index not in shortened:
+            longer_than, keep = SMART_PAUSE
+            shortened[index] = shorten_pauses(by_index[index].take, RATE, longer_than=longer_than, keep=keep)
+        return len(shortened[index]) / RATE
+
+    layout = smart_layout(lines, natural, tightened, request.max_speed)
+
+    def smart(line: _Line) -> Timed:
+        placement = layout[line.index]
+        samples = shortened[line.index] if placement.tighten else line.take
+        if placement.tempo > 1.005:
+            samples = _stretch(samples, RATE, placement.tempo, cache)
+        # Never longer than planned, so the gap before the next line holds.
+        samples = samples[:int(round(placement.seconds * RATE))]
+        note = smart_note(placement) if placement.squeezed else ""
+        return Timed(samples, placement.start, placement.tempo, note, placement.room, placement.squeezed)
+
+    return run(smart)
+
+
 def _timing_cache(session: sessions.Session) -> Path:
     return session.root / "timed"
 
@@ -844,8 +1021,8 @@ def _take_mark(segment: dict) -> tuple[float, str]:
     return round(float(segment["start"]), 3), str(segment["translation"])
 
 
-def _stored_marks(session: sessions.Session) -> dict[tuple[float, str], str]:
-    stored = session.data.get(TAKE_PROBLEMS)
+def _stored_marks(session: sessions.Session, key: str) -> dict[tuple[float, str], str]:
+    stored = session.data.get(key)
     marks = {}
     for entry in stored if isinstance(stored, list) else ():
         try:
@@ -855,11 +1032,25 @@ def _stored_marks(session: sessions.Session) -> dict[tuple[float, str], str]:
     return marks
 
 
-def take_problems(session: sessions.Session) -> dict[int, str]:
-    """The lines the next dub voices whose current take failed its check or could not be generated, with why."""
-    marks = _stored_marks(session)
+def _save_marks(latest: sessions.Session, key: str, marks: dict[tuple[float, str], str]) -> None:
+    latest.data[key] = [{"start": start, "translation": translation, "reason": reason}
+                        for (start, translation), reason in marks.items()]
+
+
+def _line_marks(session: sessions.Session, key: str) -> dict[int, str]:
+    marks = _stored_marks(session, key)
     return {index: marks[_take_mark(line)] for index, line in enumerate(session.segments)
             if line["translation"] and line.get("dub", True) and _take_mark(line) in marks}
+
+
+def take_problems(session: sessions.Session) -> dict[int, str]:
+    """The lines the next dub voices whose current take failed its check or could not be generated, with why."""
+    return _line_marks(session, TAKE_PROBLEMS)
+
+
+def timing_problems(session: sessions.Session) -> dict[int, str]:
+    """The lines Smart timing found still too long in the last dub, with how fast they played."""
+    return _line_marks(session, TIMING_PROBLEMS)
 
 
 def _record_take_problems(session: sessions.Session, outcomes: dict[int, tuple[dict, str]]) -> None:
@@ -867,16 +1058,21 @@ def _record_take_problems(session: sessions.Session, outcomes: dict[int, tuple[d
 
     def change(latest: sessions.Session) -> None:
         current = {_take_mark(line) for line in latest.segments}
-        marks = {mark: reason for mark, reason in _stored_marks(latest).items() if mark in current}
+        marks = {mark: reason for mark, reason in _stored_marks(latest, TAKE_PROBLEMS).items() if mark in current}
         for segment, problem in outcomes.values():
             if problem:
                 marks[_take_mark(segment)] = problem
             else:
                 marks.pop(_take_mark(segment), None)
-        latest.data[TAKE_PROBLEMS] = [{"start": start, "translation": translation, "reason": reason}
-                                      for (start, translation), reason in marks.items()]
+        _save_marks(latest, TAKE_PROBLEMS, marks)
 
     sessions.modify(session, change)
+
+
+def _record_timing_problems(session: sessions.Session, planned: list[_Line]) -> None:
+    """Replace the timing marks with this dub's: they describe its layout, not the takes."""
+    marks = {_take_mark(line.segment): line.timing_problem for line in planned if line.timing_problem}
+    sessions.modify(session, lambda latest: _save_marks(latest, TIMING_PROBLEMS, marks))
 
 
 def original_line(session_id: str, index: int, *, runtime) -> LinePreview:
@@ -909,12 +1105,17 @@ def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token
     if line.take is None or not len(line.take):
         raise H3Error(f"Line {index + 1}: {line.note or 'no audio was generated'}. Try New take again, "
                       "or edit its translation.")
-    fitted, speed, note, available = timed_take(line.take, lines, index, session.data.get("duration", 0.0),
-                                                request, _timing_cache(session))
+    timed = place_takes(planned, lines, session.data.get("duration", 0.0), request, _timing_cache(session),
+                        assume_others=True)[index]
+    fitted, speed, note = timed.samples, timed.speed, timed.note
     volume = speaker_settings(session).get(line.segment["speaker"], {}).get("volume", 100.0)
     if volume != 100.0:
         fitted = fitted * np.float32(volume / 100.0)
-    details = [f"Line {index + 1}: {len(fitted) / RATE:.1f}s for a {available:.1f}s slot"]
+    slot = "an open" if math.isinf(timed.available) else f"a {timed.available:.1f}s"
+    details = [f"Line {index + 1}: {len(fitted) / RATE:.1f}s for {slot} slot"]
+    shift = timed.start - line.segment["start"]
+    if abs(shift) >= 0.05:
+        details.append(f"starts {abs(shift):.1f}s {'late' if shift > 0 else 'early'}")
     if not note and abs(speed - 1.0) > 0.01:
         details.append(f"{'sped up' if speed > 1 else 'slowed to'} {speed:.2f}x")
     details += [part for part in (note, line.note) if part]
@@ -922,8 +1123,8 @@ def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token
 
 
 def _speech_track(session: sessions.Session, planned: list[_Line], request: DubRequest,
-                  duration: float) -> tuple[np.ndarray, list[str], dict[int, float]]:
-    """The dubbed speech on the source's timeline, the check notes, and where each voiced line ends.
+                  duration: float) -> tuple[np.ndarray, list[str], dict[int, tuple[float, float]]]:
+    """The dubbed speech on the source's timeline, the check notes, and where each voiced line plays.
 
     A last line still too long after the speed-up runs past the end of the source
     instead of being cut off; the timeline grows to hold it.
@@ -933,15 +1134,9 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
     placed = []
     gains = {speaker: entry["volume"] / 100.0 for speaker, entry in speaker_settings(session).items()
              if entry["volume"] != 100.0}
-    with_audio = [line for line in planned if line.take is not None and len(line.take)]
     cache = _timing_cache(session)
     started = time.time()
-    with ThreadPoolExecutor(max_workers=min(TIMING_WORKERS, max(1, len(with_audio))),
-                            thread_name_prefix="dub-timing") as pool:
-        # Each worker runs in this job's context, so Interrupt reaches its ffmpeg runs.
-        timed = {line.index: pool.submit(contextvars.copy_context().run, timed_take, line.take, lines, line.index,
-                                         duration, request, cache) for line in with_audio}
-        timed = {index: future.result() for index, future in timed.items()}
+    timed = place_takes(planned, lines, duration, request, cache)
     # Fitted takes this dub did not use belong to old takes or old timings.
     for path in cache.glob("*.wav") if cache.is_dir() else ():
         try:
@@ -953,22 +1148,24 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
         if line.index not in timed:
             notes.append(f"line {line.index + 1}: {line.note or 'no audio'}, original kept")
             continue
-        fitted, speed, note, _available = timed[line.index]
+        result = timed[line.index]
+        fitted = result.samples
         if line.segment["speaker"] in gains:
             fitted = fitted * np.float32(gains[line.segment["speaker"]])
-        line.speed = speed
-        if note or line.note:
-            notes.append(f"line {line.index + 1}: " + "; ".join(part for part in (note, line.note) if part))
-        placed.append((line.index, int(round(line.segment["start"] * RATE)), fitted))
+        line.speed = result.speed
+        line.timing_problem = result.note if result.squeezed else ""
+        if result.note or line.note:
+            notes.append(f"line {line.index + 1}: " + "; ".join(part for part in (result.note, line.note) if part))
+        placed.append((line.index, int(round(result.start * RATE)), fitted))
     source_length = int(round(duration * RATE))
     track = np.zeros(max([source_length] + [start + len(fitted) for _, start, fitted in placed]), dtype=np.float32)
-    spoken_ends = {}
+    spoken = {}
     for index, start, fitted in placed:
         track[start:start + len(fitted)] += fitted
-        spoken_ends[index] = (start + len(fitted)) / RATE
+        spoken[index] = (start / RATE, (start + len(fitted)) / RATE)
     if len(track) > source_length + RATE // 20:
         notes.append(f"the dub runs {(len(track) - source_length) / RATE:.1f}s past the end of the source")
-    voiced = set(spoken_ends)
+    voiced = set(spoken)
     if session.path("vocals") is not None:
         # Every line not voiced here (unticked, untranslated or failed) keeps its original voice.
         for index, segment in enumerate(lines):
@@ -979,21 +1176,22 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
                     original *= np.float32(gains[segment["speaker"]])
                 end = min(len(track), start + len(original))
                 track[start:end] += original[: end - start]
-    return track, notes, spoken_ends
+    return track, notes, spoken
 
 
-def subtitle_lines(lines: list[dict], spoken_ends: dict[int, float]) -> list[dict]:
-    """Translated subtitles that stay up while a dubbed line is still being spoken.
-
-    A line may extend to its spoken end but never past the next line's start, except the last.
+def subtitle_lines(lines: list[dict], spoken: dict[int, tuple[float, float]]) -> list[dict]:
+    """Translated subtitles timed to the dub: each starts with its dubbed line and stays up while
+    it is still being spoken, but never past the next line's start, except the last.
     """
+    starts = [spoken[index][0] if index in spoken else line["start"] for index, line in enumerate(lines)]
     shown = []
     for index, line in enumerate(lines):
-        end = max(line["end"], spoken_ends.get(index, line["end"]))
-        later = [s["start"] for s in lines[index + 1:] if s["start"] > line["start"]]
+        start, spoken_end = spoken.get(index, (line["start"], line["end"]))
+        end = max(line["end"], spoken_end)
+        later = [starts[other] for other in range(index + 1, len(lines)) if lines[other]["start"] > line["start"]]
         if later:
-            end = min(end, max(line["end"], min(later) - LINE_GAP))
-        shown.append({**line, "end": round(end, 3)})
+            end = min(end, max(min(line["end"], spoken_end), min(later) - LINE_GAP))
+        shown.append({**line, "start": round(start, 3), "end": round(max(end, start + 0.05), 3)})
     return shown
 
 
@@ -1073,7 +1271,7 @@ def _prune_players(output_dir: Path) -> None:
 
 def _player(session: sessions.Session, speech: Path, folder: Path, *, separated: bool, speech_gain: float,
             background_gain: float, video: Path | None, mixed: Path, lines: list[dict],
-            spoken_ends: dict[int, float], duration: float, language: str) -> Player:
+            spoken: dict[int, tuple[float, float]], duration: float, language: str) -> Player:
     """The dub's voice, the original voice and the background as separate tracks for the result player.
 
     Without separation the background still holds the original voices, so the player
@@ -1092,8 +1290,9 @@ def _player(session: sessions.Session, speech: Path, folder: Path, *, separated:
     else:
         dub_track, music = mixed, None
         original = encode(session.path("audio"), "original.mp3", 1.0)
-    shown = subtitle_lines(lines, spoken_ends)
-    cues = [{"start": line["start"], "end": line["end"], "shown_end": shown[index]["end"],
+    shown = subtitle_lines(lines, spoken)
+    cues = [{"start": line["start"], "end": line["end"], "shown_start": shown[index]["start"],
+             "shown_end": shown[index]["end"],
              "speaker": line["speaker"], "source": line["source"], "translation": line["translation"]}
             for index, line in enumerate(lines) if line["source"] or line["translation"]]
     return Player(video, dub_track, original, music, duration, cues, language,
@@ -1111,7 +1310,8 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
 
     yield "Placing lines on the timeline"
-    track, notes, spoken_ends = _speech_track(session, planned, request, duration)
+    track, notes, spoken = _speech_track(session, planned, request, duration)
+    _record_timing_problems(session, planned)
     overrun = max(0.0, len(track) / RATE - duration)
     speech = _write_wav(track, RATE, session.root / "speech.wav")
     del track
@@ -1139,7 +1339,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     stem = _output_stem(session, language)
     subtitles = []
     for field_name, suffix in (("translation", language or "dub"), ("source", "original")):
-        shown = subtitle_lines(lines, spoken_ends) if field_name == "translation" else lines
+        shown = subtitle_lines(lines, spoken) if field_name == "translation" else lines
         text = segment_tools.to_srt(shown, field_name)
         if text.strip():
             path = output_dir / f"{stem}.{re.sub(r'[^A-Za-z0-9]+', '', suffix).lower() or 'dub'}.srt"
@@ -1188,7 +1388,7 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     _prune_players(output_dir)
     player = _player(session, speech, output_dir / PLAYER_DIR / stem, separated=separated, speech_gain=speech_gain,
                      background_gain=background_gain, video=video_out, mixed=audio_out, lines=lines,
-                     spoken_ends=spoken_ends, duration=duration + overrun, language=language)
+                     spoken=spoken, duration=duration + overrun, language=language)
     for work_file in (speech, mix):
         work_file.unlink(missing_ok=True)
     # Only this field is the dub's: lines edited while it ran stay as saved.
@@ -1196,7 +1396,11 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     sped = sum(line.speed > 1.01 for line in planned)
     slowed = sum(line.speed < 0.99 for line in planned)
     message = f"Dubbed {len(planned)} line(s) into {language or 'the target language'}"
-    if request.timing == TIMING_NATURAL:
+    if request.timing == TIMING_SMART:
+        squeezed = sum(bool(line.timing_problem) for line in planned)
+        message += f"; {sped} sped up to fit" if sped else ""
+        message += f", {squeezed} still too long (marked in Review lines)" if squeezed else ""
+    elif request.timing == TIMING_NATURAL:
         message += f"; {sped} sped up to fit" if sped else ""
     elif sped or slowed:
         message += f"; matched to the original timing ({sped} sped up, {slowed} slowed down)"

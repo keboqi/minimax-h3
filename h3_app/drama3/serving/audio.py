@@ -177,16 +177,25 @@ def tidy_take(samples: np.ndarray, rate: int) -> np.ndarray:
         return samples[:0]
     pad = int(EDGE_PAD_SECONDS / FRAME_SECONDS)
     first, last = max(0, voiced[0] - pad), min(len(silent), voiced[-1] + 1 + pad)
-    keep_frames = int(KEPT_GAP / FRAME_SECONDS)
-    pieces, cursor = [], first
-    for start, end in _runs(silent[first:last]):
-        start, end = start + first, end + first
-        if (end - start) * FRAME_SECONDS > MAX_INTERNAL_GAP:
+    return shorten_pauses(samples[first * size:last * size], rate, longer_than=MAX_INTERNAL_GAP, keep=KEPT_GAP)
+
+
+def shorten_pauses(samples: np.ndarray, rate: int, *, longer_than: float, keep: float) -> np.ndarray:
+    """Shorten every silence inside the take longer than ``longer_than`` seconds to ``keep`` seconds.
+
+    Silence at either edge is not a pause and is left as it is.
+    """
+    silent = _silent_frames(samples, rate)
+    size = max(1, int(rate * FRAME_SECONDS))
+    keep_frames = int(round(keep / FRAME_SECONDS))
+    pieces, cursor = [], 0
+    for start, end in _runs(silent):
+        if start > 0 and end < len(silent) and (end - start) * FRAME_SECONDS > longer_than:
             half = keep_frames // 2
             pieces.append(samples[cursor * size:(start + half) * size])
             cursor = end - (keep_frames - half)
-    pieces.append(samples[cursor * size:last * size])
-    return np.concatenate(pieces) if pieces else samples[:0]
+    pieces.append(samples[cursor * size:])
+    return np.concatenate(pieces)
 
 
 MIN_LINE_PAUSE = 0.12  # a shorter silence inside a take is a breath, not the end of a line

@@ -61,6 +61,9 @@ def summary_html(session: sessions.Session, long: set[int] | None = None) -> str
     failed = pipeline.take_problems(session)
     if failed:
         parts.append(f"{len(failed)} with a failed take")
+    rushed = pipeline.timing_problems(session)
+    if rushed:
+        parts.append(f"{len(rushed)} too long in the last dub")
     if long:
         parts.append(f"{len(long)} may be too long to say in time")
     return " · ".join(parts)
@@ -80,6 +83,7 @@ def board_value(session: sessions.Session, previous=None, *, focus: int | None =
     index = {speaker: number for number, speaker in enumerate(order)}
     long = set(pipeline.long_lines(lines))
     failed = pipeline.take_problems(session)
+    rushed = pipeline.timing_problems(session)
     items = []
     for number, line in enumerate(lines):
         flags = []
@@ -90,6 +94,8 @@ def board_value(session: sessions.Session, previous=None, *, focus: int | None =
         else:
             if number in failed:
                 flags.append("failed")
+            if number in rushed:
+                flags.append("rushed")
             if number in long:
                 flags.append("long")
         items.append({
@@ -98,6 +104,7 @@ def board_value(session: sessions.Session, previous=None, *, focus: int | None =
             "tone": index[line["speaker"]] % TONES, "source": escape(line["source"]),
             "translation": escape(line["translation"]), "dub": bool(line.get("dub", True)), "flags": flags,
             "problem": escape(failed.get(number, ""), quote=True),
+            "timing": escape(rushed.get(number, ""), quote=True),
         })
     count = len(items)
     focus = previous.get("focus") if focus is None else focus
@@ -315,6 +322,15 @@ def readiness_html(session: sessions.Session | None) -> str:
                     "or kept a take that failed its check. Use New take on "
                     f"{'them' if len(failed) > 1 else 'it'} in Review lines, or enter {numbers} under Fresh "
                     "takes for lines, then dub again; the other lines reuse their takes.</span></p>")
+    rushed = sorted(pipeline.timing_problems(session))
+    if rushed:
+        numbers = line_numbers(rushed)
+        warning += (f'<p class="h3-dub-readiness-warning"><strong>{_plural(len(rushed), "line")} too long in '
+                    f"the last dub</strong><span>{'Lines' if len(rushed) > 1 else 'Line'} {numbers} did not "
+                    "fit even after Smart timing used the silence around "
+                    f"{'them' if len(rushed) > 1 else 'it'} and sped up to Maximum speed-up. Shorten "
+                    f"{'their translations' if len(rushed) > 1 else 'its translation'} in Review lines, or "
+                    "raise Maximum speed-up.</span></p>")
     long = pipeline.long_lines(lines)
     if long:
         numbers = ", ".join(str(index + 1) for index in long[:12]) + (", …" if len(long) > 12 else "")

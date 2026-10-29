@@ -56,7 +56,7 @@ BOARD_TEMPLATE = r"""${(() => {
   const speakers = v.speakers || [];
   const picked = new Set(v.picked || []);
   const filter = v.filter || 'all';
-  const needs = (l) => l.flags.includes('long') || l.flags.includes('empty') || l.flags.includes('failed');
+  const needs = (l) => ['long', 'empty', 'failed', 'rushed'].some((flag) => l.flags.includes(flag));
   const tests = { all: () => true, attention: needs, empty: (l) => l.flags.includes('empty'),
     failed: (l) => l.flags.includes('failed') };
   const shown = (l) => filter.startsWith('speaker:') ? l.speaker === Number(filter.slice(8)) : (tests[filter] || tests.all)(l);
@@ -75,6 +75,7 @@ BOARD_TEMPLATE = r"""${(() => {
   const flag = (l) => l.flags.includes('off') ? `<span class="h3-dub-flag">Original voice</span>`
     : l.flags.includes('empty') ? `<span class="h3-dub-flag bad">Not translated</span>`
     : l.flags.includes('failed') ? `<span class="h3-dub-flag bad" title="${l.problem || ''}">Take failed</span>`
+    : l.flags.includes('rushed') ? `<span class="h3-dub-flag warn" title="${l.timing || ''}">Too long</span>`
     : l.flags.includes('long') ? `<span class="h3-dub-flag warn">May be too long</span>` : '';
   const rows = lines.map((l, i) => !shown(l) ? '' : `<div class="h3-dub-row${i === v.focus ? ' focus' : ''}${picked.has(i) ? ' picked' : ''}${l.dub ? '' : ' off'}" data-row="${i}">
 <input type="checkbox" data-pick="${i}" ${picked.has(i) ? 'checked' : ''} aria-label="Pick line ${i + 1}">

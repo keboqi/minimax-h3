@@ -59,13 +59,12 @@ const bind = (root) => {
       if (!voice.paused && media.paused && target < end - 0.05) media.play().catch(() => {});
     }
   };
+  // The translated subtitle follows the dub, which Smart timing may start a little earlier or later.
   const shown = (cue, mode) => {
-    const time = voice.currentTime, start = Number(cue.dataset.start);
-    const end = Number(cue.dataset.end), translatedEnd = Number(cue.dataset.shownEnd);
-    if (time < start) return false;
-    if (mode === "translation") return time < translatedEnd;
-    if (mode === "source") return time < end;
-    return time < Math.max(end, translatedEnd);
+    const time = voice.currentTime, start = Number(cue.dataset.start), end = Number(cue.dataset.end);
+    const translatedStart = Number(cue.dataset.shownStart), translatedEnd = Number(cue.dataset.shownEnd);
+    const translation = time >= translatedStart && time < translatedEnd, source = time >= start && time < end;
+    return mode === "translation" ? translation : mode === "source" ? source : translation || source;
   };
   const render = () => {
     const time = voice.currentTime, mode = subtitles.value;
@@ -138,7 +137,7 @@ const bind = (root) => {
   }
   on(list, "click", (event) => {
     const cue = event.target.closest("li");
-    if (cue) jump(Number(cue.dataset.start));
+    if (cue) jump(Math.min(Number(cue.dataset.start), Number(cue.dataset.shownStart)));
   });
   render();
 };
@@ -190,7 +189,8 @@ def player_html(player: pipeline.Player, *, key: str) -> str:
               'Background music <span>(needs vocal separation)</span></label>')
     speakers = len({cue["speaker"] for cue in player.lines}) > 1
     cues = "".join(
-        f'<li data-start="{cue["start"]:.3f}" data-end="{cue["end"]:.3f}" data-shown-end="{cue["shown_end"]:.3f}">'
+        f'<li data-start="{cue["start"]:.3f}" data-end="{cue["end"]:.3f}" '
+        f'data-shown-start="{cue["shown_start"]:.3f}" data-shown-end="{cue["shown_end"]:.3f}">'
         f'<span class="h3-dub-cue-time">{format_time(cue["start"])[:-4]}</span>'
         + (f'<span class="h3-dub-cue-speaker">{escape(cue["speaker"])}</span>' if speakers else "")
         + f'<span class="h3-dub-cue-text"><span class="h3-dub-cue-translation">{escape(cue["translation"])}</span>'

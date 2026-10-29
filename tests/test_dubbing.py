@@ -278,9 +278,71 @@ class TimingTests(unittest.TestCase):
     def test_subtitles_stay_up_while_a_line_is_spoken_but_not_over_the_next(self):
         lines = segments.normalize([{"start": 0, "end": 1, "source": "a", "translation": "A"},
                                     {"start": 3, "end": 4, "source": "b", "translation": "B"}])
-        shown = pipeline.subtitle_lines(lines, {0: 5.0, 1: 6.5})
+        shown = pipeline.subtitle_lines(lines, {0: (0.0, 5.0), 1: (3.0, 6.5)})
         self.assertEqual([s["end"] for s in shown], [2.95, 6.5])
         self.assertEqual([s["end"] for s in pipeline.subtitle_lines(lines, {})], [1.0, 4.0])
+
+    def smart(self, spans, natural, tightened=None, max_speed=1.35):
+        lines = segments.normalize([{"start": s, "end": e, "source": "x", "translation": "y"} for s, e in spans])
+        return pipeline.smart_layout(lines, natural, tightened or (lambda index: natural[index]), max_speed)
+
+    # Line 1 sits between a short line 0 (its take ends at 0.8) and line 2 at 2.6: its own slot ends at
+    # 2.5 (before the 0.1 s gap) and it may start from 0.9 (0.1 s after line 0's take).
+    SPANS = [(0, 1), (1.2, 2.0), (2.6, 3.0)]
+
+    def test_smart_keeps_a_take_that_fits_at_its_own_start_and_pace(self):
+        placed = self.smart(self.SPANS, {0: 0.8, 1: 1.2, 2: 0.3})
+        self.assertEqual((placed[1].start, placed[1].tempo, placed[1].tighten), (1.2, 1.0, False))
+        self.assertAlmostEqual(placed[1].seconds, 1.2)
+
+    def test_smart_starts_a_long_take_only_as_early_as_it_needs(self):
+        placed = self.smart(self.SPANS, {0: 0.8, 1: 1.4, 2: 0.3})[1]
+        self.assertEqual((placed.start, placed.tempo, placed.tighten), (1.1, 1.0, False))
+
+    def test_smart_shortens_pauses_before_speeding_up(self):
+        placed = self.smart(self.SPANS, {0: 0.8, 1: 1.8, 2: 0.3}, tightened=lambda index: 1.5)[1]
+        self.assertTrue(placed.tighten)
+        self.assertEqual((placed.start, placed.tempo), (1.0, 1.0))
+        self.assertAlmostEqual(placed.seconds, 1.5)
+
+    def test_smart_speeds_up_gently_within_its_own_slot(self):
+        placed = self.smart(self.SPANS, {0: 0.8, 1: 1.8, 2: 0.3})[1]
+        self.assertEqual(placed.start, 0.9)
+        self.assertAlmostEqual(placed.tempo, 1.8 / 1.6)
+        self.assertFalse(placed.squeezed)
+
+    def test_smart_pushes_the_next_line_into_time_it_does_not_need(self):
+        placed = self.smart(self.SPANS, {0: 0.8, 1: 2.3, 2: 0.3})
+        self.assertAlmostEqual(placed[1].tempo, 2.3 / 2.1)  # 1.6 s of its own slot and 0.5 s of line 2's
+        self.assertAlmostEqual(placed[2].start, 3.1)  # line 2 starts 0.5 s late, 0.1 s after line 1
+        self.assertAlmostEqual(placed[2].start - (placed[1].start + placed[1].seconds), 0.1)
+        self.assertFalse(placed[1].squeezed)
+
+    def test_smart_speeds_up_to_the_limit_marks_and_never_moves_original_voice_lines(self):
+        placed = self.smart(self.SPANS, {0: 0.8, 1: 3.0})  # line 2 keeps its original voice
+        self.assertNotIn(2, placed)
+        self.assertTrue(placed[1].squeezed)
+        self.assertEqual(placed[1].tempo, 1.35)
+        self.assertIn("overlaps the next line by 0.6s", pipeline.smart_note(placed[1]))
+        self.assertIn("sped up 1.35x", pipeline.smart_note(self.smart(self.SPANS, {0: 0.8, 1: 2.16})[1]))
+
+    def test_smart_never_starts_a_line_more_than_half_a_second_late(self):
+        placed = self.smart([(0, 1), (1.2, 2.0), (2.1, 3.0)], {0: 0.8, 1: 5.0, 2: 0.5})
+        self.assertAlmostEqual(placed[2].start, 2.1 + pipeline.SMART_DELAY)
+
+    def test_smart_lets_speakers_who_overlap_in_the_source_overlap(self):
+        placed = self.smart([(0, 2), (1, 3)], {0: 2.0, 1: 2.0})
+        self.assertEqual([placed[0].start, placed[1].start], [0.0, 1.0])
+        self.assertEqual([placed[0].tempo, placed[1].tempo], [1.0, 1.0])
+
+    def test_shorten_pauses_keeps_edges_and_shortens_long_inner_silence(self):
+        from h3_app.drama3.serving.audio import shorten_pauses
+
+        rate, sound = 24000, np.full(24000 // 2, 0.3, dtype=np.float32)
+        quiet = lambda seconds: np.zeros(int(seconds * rate), dtype=np.float32)
+        take = np.concatenate([quiet(0.2), sound, quiet(0.6), sound, quiet(0.2), sound, quiet(0.2)])
+        short = shorten_pauses(take, rate, longer_than=0.25, keep=0.15)
+        self.assertAlmostEqual(len(short) / rate, len(take) / rate - 0.45, delta=0.02)
 
     def test_atempo_chain_keeps_each_stage_in_range(self):
         self.assertEqual(pipeline.atempo_chain(3.0), "atempo=2.000000,atempo=1.500000")
@@ -817,6 +879,44 @@ class ReviewFixTests(Workspace):
         self.assertAlmostEqual(float(track[int(2.0 * pipeline.RATE)]), 0.5, places=3)
         self.assertEqual(float(track[int(0.25 * pipeline.RATE)]), 0.0)
 
+    def test_smart_timing_places_takes_shifts_subtitles_and_marks_lines_still_too_long(self):
+        from h3_ui.dubbing import presenters
+
+        session = self.session_with_vocals([
+            {"start": 0.0, "end": 0.8, "source": "a", "translation": "A"},
+            {"start": 1.0, "end": 1.6, "source": "b", "translation": "B"},
+            {"start": 2.0, "end": 2.8, "source": "c", "translation": "C"},
+        ])
+        take = lambda seconds: np.full(int(seconds * pipeline.RATE), 0.3, dtype=np.float32)
+        planned = [pipeline._Line(i, session.segments[i], session.path("vocals"), "", take=take(seconds))
+                   for i, seconds in ((0, 0.5), (1, 3.0), (2, 0.3))]
+        request = pipeline.DubRequest(session.id, timing=pipeline.TIMING_SMART)
+        track, notes, spoken = pipeline._speech_track(session, planned, request, 3.0)
+        # Line 1 starts 0.3 s early, plays at the 1.35x limit, still overlaps and is noted.
+        self.assertAlmostEqual(spoken[1][0], 0.7, places=3)
+        self.assertAlmostEqual(spoken[1][1] - spoken[1][0], 3.0 / 1.35, delta=0.03)
+        self.assertEqual(spoken[0], (0.0, 0.5))
+        self.assertTrue(planned[1].timing_problem.startswith("too long even at 1.35x"))
+        self.assertTrue(any(note.startswith("line 2: too long even at 1.35x") for note in notes))
+        self.assertAlmostEqual(spoken[2][0], 2.5, places=3)  # pushed by at most SMART_DELAY
+        self.assertAlmostEqual(float(track[int(0.75 * pipeline.RATE)]), 0.3, places=3)
+        shown = pipeline.subtitle_lines(session.segments, spoken)
+        self.assertEqual([line["start"] for line in shown], [0.0, 0.7, 2.5])
+
+        pipeline._record_timing_problems(session, planned)
+        latest = sessions.load(self.runtime, session.id)
+        self.assertEqual(list(pipeline.timing_problems(latest)), [1])
+        board = presenters.board_value(latest)
+        self.assertEqual(board["lines"][1]["flags"], ["rushed"])
+        self.assertIn("overlaps the next line", board["lines"][1]["timing"])
+        self.assertIn("1 too long in the last dub", board["summary"])
+        self.assertIn("Line 2 did not fit", presenters.readiness_html(latest))
+        # The next dub replaces the marks: in another timing nothing is marked.
+        for line in planned:
+            line.timing_problem = ""
+        pipeline._record_timing_problems(session, planned)
+        self.assertEqual(pipeline.timing_problems(sessions.load(self.runtime, session.id)), {})
+
     def test_failed_takes_are_marked_for_review_until_a_good_take_replaces_them(self):
         from h3_app.drama3.serving.audio import encode_wav
         from h3_app.drama3.serving.speech import SpokenLine
@@ -1219,7 +1319,8 @@ class DubRenderTests(Workspace):
         self.assertTrue(session.path("vocals").is_file())
         self.assertAlmostEqual(session.data["duration"], 4.0, delta=0.1)
         with patch.object(pipeline, "_synthesize", side_effect=self.fake_synthesize):
-            updates = list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime,
+            request = pipeline.DubRequest(session.id, timing=pipeline.TIMING_MATCH)
+            updates = list(pipeline.dub(request, runtime=self.runtime,
                                         free_gpu=lambda: None))
         result = updates[-1]
         self.assertIsInstance(result, pipeline.Dub)
@@ -1335,7 +1436,8 @@ class DubRenderTests(Workspace):
     def test_matched_timing_keeps_a_long_last_line_inside_the_source(self):
         session = self.analyze(self.make_video(), separate=True)
         with patch.object(pipeline, "_synthesize", side_effect=self.long_last_line):
-            result = list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime,
+            request = pipeline.DubRequest(session.id, timing=pipeline.TIMING_MATCH)
+            result = list(pipeline.dub(request, runtime=self.runtime,
                                        free_gpu=lambda: None))[-1]
         self.assertAlmostEqual(self.duration(result.audio), 4.0, delta=0.1)
         self.assertNotIn("past the end", result.message)
