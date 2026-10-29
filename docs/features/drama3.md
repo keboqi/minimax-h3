@@ -367,7 +367,10 @@ A voice is heard in one space. Effects with a reverb of their own (`<ghost_spiri
 only their character (pitch, chorus, a short echo); several such effects on one line keep
 only the last one's reverb; and a `<far>` voice whose effect has a reverb skips the far
 reflections. The mix enforces this whatever the script says, and each preset keeps the
-dry voice in front, so the words stay clear.
+dry voice in front, so the words stay clear. An effect also keeps the line at the voice's
+level (a megaphone or a giant a dB or two louder, a ghost or a fairy a dB softer), so an
+effected line neither jumps out of the scene nor sinks into it, with or without
+`pedalboard`.
 
 The same block can place its characters for that scene: `stage="Mia=-0.5, Leo=0.4"`
 (names as the lines use them, -1 left to 1 right). Characters it does not name keep

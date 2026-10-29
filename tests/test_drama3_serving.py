@@ -944,12 +944,23 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
                     near = power[np.abs(freqs - expected) < 30].sum()
                     self.assertGreater(near / power.sum(), 0.9)
 
-    def test_pedalboard_output_is_peak_limited(self):
+    def test_effects_keep_the_voices_level_and_stay_under_full_scale(self):
         from h3_app.drama3.serving import speaker_effects
 
-        with patch.object(speaker_effects, "_try_apply_pedalboard", lambda samples, rate, effects, in_room=False: samples * 6):
-            processed = speaker_effects.apply_speaker_effects(tone(0.2), RATE, ("radio_broadcast",))
+        sample = tone(0.4)
+        for gain in (6, 0.3):  # a hot or a quiet effect chain comes back to the voice's level
+            with patch.object(speaker_effects, "_try_apply_pedalboard", lambda samples, *_a, g=gain: samples * g):
+                processed = speaker_effects.apply_speaker_effects(sample, RATE, ("radio_broadcast",))
+            self.assertAlmostEqual(float(np.max(np.abs(processed))), 0.3, places=2)
+        with patch.object(speaker_effects, "_try_apply_pedalboard", lambda samples, *_a: samples * 6):
+            processed = speaker_effects.apply_speaker_effects(sample * 3, RATE, ("megaphone",))  # +2 dB
         self.assertAlmostEqual(float(np.max(np.abs(processed))), 0.95, places=3)
+        for effect in ("ghost_spirit", "walkie_talkie", "giant_titan"):  # pedalboard and fallback agree
+            with self.subTest(effect=effect):
+                board = speaker_effects.apply_speaker_effects(sample, RATE, (effect,))
+                with patch.object(speaker_effects, "_try_apply_pedalboard", lambda *_a: None):
+                    fallback = speaker_effects.apply_speaker_effects(sample, RATE, (effect,))
+                self.assertLess(abs(20 * np.log10(np.std(board) / np.std(fallback))), 1.5)
 
     def test_bed_leads_in_fades_and_tails_past_the_speech(self):
         speech_track = tone(2.0)

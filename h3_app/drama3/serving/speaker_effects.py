@@ -42,6 +42,13 @@ ROOM_EFFECT_ROOMS = {"reverb_small_room": "small_room", "reverb_large_hall": "la
 SPACE_EFFECTS = frozenset({"metallic_helmet", "stadium_announcement", "dream_sequence", "underwater",
                            "monster_voice", "ghost_spirit", "giant_titan", "fairy_tiny", "ancient_god"})
 
+# Effects come out at the dry voice's level, except these, heard a little louder or softer.
+EFFECT_LEVEL_DB = {"megaphone": 2.0, "stadium_announcement": 1.5, "giant_titan": 2.0, "ancient_god": 1.5,
+                   "monster_voice": 1.0, "fairy_tiny": -1.0, "ghost_spirit": -1.0, "bad_signal": -1.0}
+MAX_LEVEL_MATCH_DB = 15.0  # never lift a nearly silenced effect into a roar of its noise
+# Ring modulation (Hz, mix) after an effect's plugins: the metallic buzz of a machine voice.
+RING_MODS = {"robotic_voice": (50.0, 0.4), "alien_voice": (35.0, 0.3)}
+
 SPEAKER_EFFECT_SET: frozenset[str] = frozenset(SPEAKER_TAGS)
 _EFFECT_ALTERNATION = "|".join(re.escape(name) for name in SPEAKER_TAGS)
 SPEAKER_EFFECT_TAG_RE = re.compile(rf"</?({_EFFECT_ALTERNATION})\s*>", re.IGNORECASE)
@@ -116,11 +123,35 @@ def apply_speaker_effects(
             out, pending = processed, []
         if effect_name is not None:
             out = out + room_wet(out, rate, ROOM_EFFECT_ROOMS[effect_name])[: len(out)].mean(axis=1)
+    out = _match_level(audio, out, rate, sum(EFFECT_LEVEL_DB.get(name, 0.0) for name in active))
     # Drive and gain stages can push either path past full scale.
     peak = float(np.max(np.abs(out))) if out.size else 0.0
     if peak > 1.0:
         out = out * (0.95 / peak)
     return out.astype(np.float32, copy=False)
+
+
+def _match_level(dry: np.ndarray, wet: np.ndarray, rate: int, offset_db: float) -> np.ndarray:
+    """``wet`` at ``dry``'s voiced level plus ``offset_db``.
+
+    Speakers are evened out before effects, so an effect changes a voice's colour, not how
+    loud its lines sit in the scene; the pedalboard and SciPy versions land at one level.
+    Both are measured where the dry voice speaks, so an echo filling the pauses does not
+    count as a quieter voice.
+    """
+    from .audio import FRAME_SECONDS, _silent_frames
+
+    size = max(1, int(rate * FRAME_SECONDS))
+    silent = _silent_frames(dry, rate)
+    if not silent.size or silent.all() or len(wet) < silent.size * size:
+        return wet
+
+    def level(samples):
+        frames = samples[: silent.size * size].reshape(-1, size)[~silent].astype(np.float64)
+        return 10.0 * np.log10(max(float(np.mean(frames ** 2)), 1e-12))
+
+    gain = 10.0 ** ((level(dry) + offset_db - level(wet)) / 20.0)
+    return (wet * min(gain, 10.0 ** (MAX_LEVEL_MATCH_DB / 20.0))).astype(np.float32, copy=False)
 
 
 def _try_apply_pedalboard(
@@ -223,22 +254,22 @@ def _try_apply_pedalboard(
             Reverb(room_size=0.8, damping=0.3, wet_level=0.3, dry_level=0.85),
         ],
         "underwater": [
-            LowpassFilter(cutoff_frequency_hz=1000),
+            LowpassFilter(cutoff_frequency_hz=1200),
             Phaser(rate_hz=1.2, depth=0.5, mix=0.35),
             Chorus(rate_hz=0.9, depth=0.35, mix=0.25),
             Reverb(room_size=0.5, damping=0.8, wet_level=0.2, dry_level=0.85),
             Gain(gain_db=4),
         ],
-        "robotic_voice": [
-            Chorus(rate_hz=2.5, depth=0.5, centre_delay_ms=12.0, feedback=0.3, mix=0.45),
-            Phaser(rate_hz=1.5, depth=0.6, feedback=0.4, mix=0.3),
-            Bitcrush(bit_depth=10),
+        "robotic_voice": [  # with a ring modulator after: a steady metallic buzz, not a wobble
             HighpassFilter(cutoff_frequency_hz=200),
+            Delay(delay_seconds=0.008, feedback=0.4, mix=0.3),
+            Bitcrush(bit_depth=10),
         ],
         "monster_voice": [
             PitchShift(semitones=-5),
             Distortion(drive_db=10),
-            LowpassFilter(cutoff_frequency_hz=3800),
+            PeakFilter(cutoff_frequency_hz=2500, gain_db=4, q=1.0),  # consonants survive the drop
+            LowpassFilter(cutoff_frequency_hz=4500),
             Reverb(room_size=0.5, damping=0.5, wet_level=0.15, dry_level=0.95),
             Gain(gain_db=-2),
         ],
@@ -259,7 +290,8 @@ def _try_apply_pedalboard(
         "giant_titan": [
             PitchShift(semitones=-6),
             PeakFilter(cutoff_frequency_hz=110, gain_db=6, q=1.0),
-            LowpassFilter(cutoff_frequency_hz=3500),
+            PeakFilter(cutoff_frequency_hz=2500, gain_db=5, q=1.0),
+            LowpassFilter(cutoff_frequency_hz=4500),
             Distortion(drive_db=6),
             Reverb(room_size=0.8, damping=0.4, wet_level=0.2, dry_level=0.9),
             Compressor(threshold_db=-16, ratio=4),
@@ -281,24 +313,25 @@ def _try_apply_pedalboard(
         "ancient_god": [
             PitchShift(semitones=-3),
             PeakFilter(cutoff_frequency_hz=140, gain_db=5, q=1.2),
-            Chorus(rate_hz=0.8, depth=0.4, feedback=0.2, mix=0.3),
-            Delay(delay_seconds=0.12, feedback=0.15, mix=0.12),
-            Reverb(room_size=0.85, damping=0.3, wet_level=0.3, dry_level=0.85, width=1.0),
+            PeakFilter(cutoff_frequency_hz=2500, gain_db=4, q=1.0),
+            Chorus(rate_hz=0.8, depth=0.3, feedback=0.1, mix=0.25),
+            Delay(delay_seconds=0.12, feedback=0.1, mix=0.1),
+            Reverb(room_size=0.85, damping=0.3, wet_level=0.25, dry_level=0.9, width=1.0),
             Compressor(threshold_db=-18, ratio=4),
         ],
     }
 
-    plugins = []
-    for effect_name in effects:
-        plugins.extend(presets.get(effect_name, ()))
-    spaces = [index for index, plugin in enumerate(plugins) if isinstance(plugin, Reverb)]
-    keep = set() if in_room else set(spaces[-1:])  # one space per voice, the last one written
-    plugins = [plugin for index, plugin in enumerate(plugins) if index not in spaces or index in keep]
-    if not plugins:
-        return audio
-    board = Pedalboard(plugins)
-    processed = board(audio, rate)
-    return np.asarray(processed, dtype=np.float32).reshape(-1)
+    chains = [(name, presets.get(name, [])) for name in effects]
+    spaces = [plugin for _name, plugins in chains for plugin in plugins if isinstance(plugin, Reverb)]
+    keep = [] if in_room else spaces[-1:]  # one space per voice, the last one written
+    out = np.asarray(audio, dtype=np.float32)
+    for name, plugins in chains:
+        plugins = [plugin for plugin in plugins if not isinstance(plugin, Reverb) or plugin in keep]
+        if plugins:
+            out = np.asarray(Pedalboard(plugins)(out, rate), dtype=np.float32).reshape(-1)
+        if name in RING_MODS:
+            out = _ring_mod(out, rate, *RING_MODS[name])
+    return out
 
 
 def _highpass(audio: np.ndarray, rate: int, cutoff_hz: float) -> np.ndarray:
@@ -433,21 +466,21 @@ def _apply_scipy_effect(audio: np.ndarray, rate: int, effect_name: str, in_room:
     if effect_name == "dream_sequence":
         return reverb(_delay(_lowpass(audio, rate, 6000), rate, 0.3, 0.25, 0.15), rate, 0.8, 0.3, 0.85)
     if effect_name == "underwater":
-        return reverb(_lowpass(audio, rate, 1000), rate, 0.5, 0.2, 0.85) * 1.3
+        return reverb(_lowpass(audio, rate, 1200), rate, 0.5, 0.2, 0.85)
     if effect_name == "robotic_voice":
-        return _bitcrush(_ring_mod(_highpass(audio, rate, 200), rate, 55.0, 0.35), 10)
+        return _bitcrush(_ring_mod(_delay(_highpass(audio, rate, 200), rate, 0.008, 0.4, 0.3), rate, *RING_MODS[effect_name]), 10)
     if effect_name == "monster_voice":
-        return reverb(_lowpass(_distort(_pitch_shift_preserve_len(audio, -5.0), 7.0), rate, 3800), rate, 0.5, 0.15, 0.95)
+        return reverb(_lowpass(_distort(_pitch_shift_preserve_len(audio, -5.0), 7.0), rate, 4500), rate, 0.5, 0.15, 0.95)
     if effect_name == "intimate_whisper":
         return (_highpass(audio, rate, 80) * 1.25).astype(np.float32, copy=False)
     if effect_name == "ghost_spirit":
         return reverb(_delay(_highpass(_pitch_shift_preserve_len(audio, 1.0), rate, 250), rate, 0.16, 0.2, 0.15), rate, 0.8, 0.3, 0.85)
     if effect_name == "giant_titan":
-        return reverb(_lowpass(_distort(_pitch_shift_preserve_len(audio, -6.0), 5.0), rate, 3500), rate, 0.8, 0.2, 0.9)
+        return reverb(_lowpass(_distort(_pitch_shift_preserve_len(audio, -6.0), 5.0), rate, 4500), rate, 0.8, 0.2, 0.9)
     if effect_name == "fairy_tiny":
         return reverb(_highpass(_pitch_shift_preserve_len(audio, 6.0), rate, 350), rate, 0.4, 0.2, 0.9)
     if effect_name == "alien_voice":
-        return _delay(_ring_mod(_highpass(_pitch_shift_preserve_len(audio, -2.0), rate, 250), rate, 35.0, 0.3), rate, 0.02, 0.3, 0.2)
+        return _delay(_ring_mod(_highpass(_pitch_shift_preserve_len(audio, -2.0), rate, 250), rate, *RING_MODS[effect_name]), rate, 0.02, 0.3, 0.2)
     if effect_name == "ancient_god":
-        return reverb(_delay(_pitch_shift_preserve_len(audio, -3.0), rate, 0.12, 0.15, 0.12), rate, 0.85, 0.3, 0.85)
+        return reverb(_delay(_pitch_shift_preserve_len(audio, -3.0), rate, 0.12, 0.1, 0.1), rate, 0.85, 0.25, 0.9)
     return audio
