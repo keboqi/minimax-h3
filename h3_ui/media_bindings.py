@@ -12,6 +12,7 @@ from h3_app.catalog import (
     LTX25_SAME_RESOLUTION_OPTIONS,
     LTX25_SDR_TO_HDR,
     LTX25_TILED_UPSCALE,
+    H3_REGENERATE_MODELS,
 )
 from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 from .media_view import GalleryView
@@ -260,9 +261,12 @@ def bind_gallery_view(
             gr.update(visible=value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER),
             gr.update(visible=value == seedvr_option),
             gr.update(
-                visible=value in ltx_options
+                visible=value in ltx_options | set(H3_REGENERATE_MODELS)
                 and value not in {LTX25_CQ_ENHANCER, LTX25_SDR_TO_HDR},
                 info=(
+                    "Experimental H3 refiner + LightX2V, three Euler steps. Describe the source scene. "
+                    "Preserves frames, fps and audio; best tested on short 24 fps drafts. Uses the default H3 model profile."
+                    if value in H3_REGENERATE_MODELS else
                     "Describe texture, lighting and sharpness only; named subjects can repeat across tiles. "
                     "Uses spatial tiles and temporal streaming. Segment splitting is an advanced fallback."
                     if value == LTX25_TILED_UPSCALE else
@@ -274,6 +278,7 @@ def bind_gallery_view(
                         else "Optional but recommended. Uses the finishing model selected here."
                     )
                 ),
+                label="Scene prompt",
             ),
             gr.update(visible=value in ltx_options),
             gr.update(visible=value in ltx_options),

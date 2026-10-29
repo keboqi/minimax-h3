@@ -329,7 +329,7 @@ def build_gallery_view(
                                 info="Used only for this finishing request. Downloaded on first use.",
                             )
                             ltx25_prompt = gr.Textbox(
-                                label="LTX-2.5 scene prompt",
+                                label="Scene prompt",
                                 placeholder="Describe the source scene and desired fine detail",
                                 lines=3,
                                 visible=False,

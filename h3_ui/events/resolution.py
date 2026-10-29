@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import gradio as gr
-from h3_app.catalog import AI_POSTPROCESS_OPTIONS, LTX25_TILED_UPSCALE, LTX25_UPSCALE, SEEDVR2_UPSCALE
+from h3_app.catalog import AI_POSTPROCESS_OPTIONS, LTX25_TILED_UPSCALE, LTX25_UPSCALE, SEEDVR2_UPSCALE, H3_REGENERATE_MODELS
 
 from typing import TYPE_CHECKING
 
@@ -22,8 +22,11 @@ def bind_resolution(
             gr.update(visible=value in AI_POSTPROCESS_OPTIONS),
             gr.update(visible=value == SEEDVR2_UPSCALE),
             gr.update(
-                visible=value in {LTX25_UPSCALE, LTX25_TILED_UPSCALE},
+                visible=value in {LTX25_UPSCALE, LTX25_TILED_UPSCALE} | set(H3_REGENERATE_MODELS),
                 value=(
+                    "Experimental H3 refiner + LightX2V, three Euler steps; LMS Sharp is not included. "
+                    "Uses the default H3 model profile and the generation scene prompt. Models download on first use."
+                    if value in H3_REGENERATE_MODELS else
                     "Uses spatial tiles and temporal streaming. The detail-refinement adapter "
                     "downloads on first use. Uses a neutral detail prompt; segment splitting is an advanced fallback."
                     if value == LTX25_TILED_UPSCALE else

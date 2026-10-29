@@ -52,9 +52,12 @@ from h3_app.catalog import (
     SPECTRUM_DEFAULT_INPUTS,
     STANDARD_TURBO_LORA_SETTINGS,
     REFINEMENT_LORA_SETTINGS,
+    H3_REGENERATE_MODELS,
+    H3_REGENERATE_SIGMAS,
 )
 from h3_app.errors import H3Error
 from h3_models import MODEL_SPECS
+from h3_app.workflows.regenerate import add_regenerate_model
 from h3_app.graph import Graph
 from h3_app.model_types import ModelConfig, trt_vae_engine_name
 from h3_app.policy import (
@@ -81,6 +84,8 @@ def turbo_required_nodes(
     lora_filename: str = "",
 ) -> set[str]:
     """Return the external node contract for one normalized Turbo variant."""
+    if turbo_variant in H3_REGENERATE_MODELS:
+        return {CORE_LORA_LOADER_NODE, CORE_SAMPLER_NODE, "ManualSigmas", "H3RegeneratePrepareLatent"}
     if turbo_variant in STANDARD_TURBO_LORA_SETTINGS:
         required = {CORE_LORA_LOADER_NODE, CORE_SAMPLER_NODE}
         if turbo_variant == DMAD_4STEP_LORA:
@@ -578,11 +583,13 @@ def h3_refinement_lora_model(
     variant: str, available_nodes: set[str],
 ) -> list[Any]:
     """Rebuild the model branch with one refinement LoRA on the same base."""
-    if variant not in REFINEMENT_LORA_SETTINGS:
+    if variant not in REFINEMENT_LORA_SETTINGS and variant not in H3_REGENERATE_MODELS:
         raise H3Error(f"Unknown refinement LoRA: {variant}")
     node = graph.nodes[model_ref[0]]
     inputs = node["inputs"]
     if node["class_type"] == "UNETLoader":
+        if variant in H3_REGENERATE_MODELS:
+            return add_regenerate_model(graph, model_ref, variant)
         return add_turbo_model_patch(
             graph, model_ref, lora_name=lora_name, turbo_variant=variant,
             strength=REFINEMENT_LORA_SETTINGS[variant].strength,
@@ -617,7 +624,7 @@ def add_refinement_model(
         graph, model_ref, lora_name=lora_name, variant=variant,
         available_nodes=available_nodes,
     )
-    sigma_shifts = turbo_sigma_shifts(variant, lora_name)
+    sigma_shifts = None if variant in H3_REGENERATE_MODELS else turbo_sigma_shifts(variant, lora_name)
     if sigma_shifts is not None:
         model = Graph.out(graph.add(
             H3_SIGMA_SHIFT_NODE, model=model,
@@ -689,6 +696,8 @@ def finish_sampling(
                 initial_conditioning_ref,
                 initial_latent_ref,
             )
+    if refinement_variant in H3_REGENERATE_MODELS:
+        latent_upscale_refine_steps = 3
     noise = graph.add("RandomNoise", noise_seed=int(seed))
     refinement_model_ref = (
         h3_refinement_attention_model(
@@ -726,15 +735,21 @@ def finish_sampling(
     if latent_upscale_model_name is not None:
         if initial_conditioning_ref is None or initial_latent_ref is None:
             raise H3Error("H3 latent upscaling requires a low-resolution H3 stage.")
-        refine_sigmas = graph.add(
-            "SplitSigmas",
-            # Changing the adapter keeps the same low-denoise intervals so
-            # it does not turn refinement into a fresh high-noise generation.
-            sigmas=Graph.out(sigmas),
-            step=int(steps) - int(latent_upscale_refine_steps),
-        )
+        regenerate = refinement_variant in H3_REGENERATE_MODELS
+        if regenerate:
+            refine_sigmas = graph.add("ManualSigmas", sigmas=H3_REGENERATE_SIGMAS)
+            refine_sigmas_ref = Graph.out(refine_sigmas)
+        else:
+            # Adapter replacements keep the draft schedule's low-noise tail.
+            refine_sigmas = graph.add(
+                "SplitSigmas", sigmas=Graph.out(sigmas),
+                step=int(steps) - int(latent_upscale_refine_steps),
+            )
+            refine_sigmas_ref = Graph.out(refine_sigmas, 1)
         refinement_sampler = sampler
-        if refinement_lora_name is not None:
+        if regenerate:
+            refinement_sampler = graph.add(CORE_SAMPLER_NODE, sampler_name="euler")
+        elif refinement_lora_name is not None:
             refinement_sampler = (
                 graph.add(LARRY_TURBO_SAMPLER_NODE)
                 if refinement_variant not in STANDARD_TURBO_LORA_SETTINGS
@@ -793,6 +808,10 @@ def finish_sampling(
             audio_latent=Graph.out(separated, 1),
         )
         combined_ref = Graph.out(combined)
+        if regenerate:
+            combined_ref = Graph.out(graph.add(
+                "H3RegeneratePrepareLatent", latent=combined_ref, audio_vae=audio_vae_ref,
+            ))
         if stage_model_offload:
             (
                 _unused_conditioning,
@@ -830,7 +849,7 @@ def finish_sampling(
                 latent=combined_ref,
                 noise=Graph.out(noise),
                 sampler=Graph.out(refinement_sampler),
-                sigmas=Graph.out(refine_sigmas, 1),
+                sigmas=refine_sigmas_ref,
                 cfg=1.0,
                 temporal_split_param=Graph.out(temporal_params),
                 spatial_split_param=Graph.out(spatial_params),
@@ -843,7 +862,7 @@ def finish_sampling(
                 noise=Graph.out(noise),
                 guider=Graph.out(guider),
                 sampler=Graph.out(refinement_sampler),
-                sigmas=Graph.out(refine_sigmas, 1),
+                sigmas=refine_sigmas_ref,
                 latent_image=combined_ref,
             )
         audio_samples = initial_sampled_ref
@@ -1436,6 +1455,8 @@ def required_nodes_for(
             H3_SEPARATE_AV_LATENT_NODE,
             H3_COMBINE_AV_LATENT_NODE,
         }
+        if latent_upscale_method in H3_REGENERATE_MODELS:
+            common |= turbo_required_nodes(latent_upscale_method)
         if (
             resolve_h3_latent_upscale_method(latent_upscale_method)
             == H3_LATENT_UPSCALE_SPLIT

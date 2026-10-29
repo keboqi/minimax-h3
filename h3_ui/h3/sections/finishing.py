@@ -85,6 +85,7 @@ def build_finishing_section(
                     "Same as generation preserves the generation LoRA. Choose a different "
                     "LoRA for just the high-resolution pass; downloaded on first use. "
                     "LoRA step labels describe training, not the number of refinement steps. "
+                    "Regenerate methods use their own adapter stack and three-step schedule. "
                     "PDMD and DMAD are experimental."
                 ),
             )
@@ -96,6 +97,10 @@ def build_finishing_section(
                     "Full-frame is the normal path. MMH3 Split Upscale "
                     "re-samples temporal chunks and spatial tiles for jobs "
                     "that cannot fit a full target-resolution pass."
+                    " Regenerate rank 16/384 uses a dedicated refiner plus LightX2V "
+                    "with three Euler steps, overriding refinement steps and LoRA above. "
+                    "Rank 16 downloads 155 MB; rank 384 downloads 5.87 GB. "
+                    "Both are experimental; LMS Sharp is not included."
                 ),
             )
             with gr.Group(
@@ -190,7 +195,7 @@ def build_finishing_section(
             value=defaults["postprocess"],
             label="After generation",
             info=(
-                "Optionally run SeedVR2 or LTX-2.5 upscaling immediately after the base H3 "
+                "Optionally run SeedVR2, H3 Regenerate or LTX-2.5 upscaling immediately after the base H3 "
                 "video finishes. The source video remains in the gallery."
             ),
         )

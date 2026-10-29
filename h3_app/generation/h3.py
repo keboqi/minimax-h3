@@ -16,6 +16,7 @@ from h3_app.progress import ProgressCallback, no_progress
 from h3_app.provenance import write_snapshot
 from h3_app.status import StageTimings, progress_status
 from h3_models import MODEL_SPECS
+from h3_app.catalog import H3_REGENERATE_MODELS
 
 from .construct_graph import construct_graph
 from .finish_video import finish_video, make_finishing_retry, retain_finishing
@@ -86,6 +87,11 @@ def generate(
             stage_model_offload=prepared.effective_stage_offload,
             postprocess=request.finishing.postprocess,
             latent_upscale=request.finishing.latent_upscale,
+            latent_upscale_refine_steps=request.finishing.latent_upscale_refine_steps,
+            latent_upscale_refine_lora=request.finishing.latent_upscale_refine_lora,
+            regenerate_refiner=(
+                prepared.refinement_lora_name if prepared.refinement_variant in H3_REGENERATE_MODELS else None
+            ),
             model_filename=prepared.selected_model,
             text_encoder_filename=prepared.selected_text_encoder,
             attention_mode=(
@@ -207,13 +213,18 @@ def generate(
             f"{'on' if request.media.reuse_unchanged_inputs else 'off'}"
         )
         if request.finishing.latent_upscale:
+            refinement_status = (
+                "3 Euler refinement steps · refiner + LightX2V · "
+                if prepared.refinement_variant in H3_REGENERATE_MODELS else
+                f"{int(request.finishing.latent_upscale_refine_steps)} low-denoise refinement steps · "
+                f"LoRA {request.finishing.latent_upscale_refine_lora} · "
+            )
             queued_status += (
                 f"\n\nH3 latent upscale: {request.finishing.latent_upscaler_model} · "
                 f"full {prepared.effective_steps}-step generation at "
                 f"{prepared.latent_source_width}×{prepared.latent_source_height} → "
                 f"{prepared.resolved_width}×{prepared.resolved_height} · "
-                f"{int(request.finishing.latent_upscale_refine_steps)} low-denoise refinement steps · "
-                f"LoRA {request.finishing.latent_upscale_refine_lora} · "
+                f"{refinement_status}"
                 f"{prepared.resolved_latent_upscale_method}."
             )
             if prepared.latent_split_config is not None:

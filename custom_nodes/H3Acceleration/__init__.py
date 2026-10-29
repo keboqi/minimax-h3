@@ -2100,7 +2100,72 @@ class H3LTXHDRConditioning:
             return hashlib.sha256(stream.read()).hexdigest()
 
 
+class H3RegenerateEncodeVideo:
+    """Pad to H3's temporal grid without dropping any source frames."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"images": ("IMAGE",), "vae": ("VAE",)}}
+
+    RETURN_TYPES = ("LATENT", "INT", "INT")
+    RETURN_NAMES = ("video_latent", "padded_frames", "source_frames")
+    FUNCTION = "encode"
+    CATEGORY = "H3/Regenerate"
+
+    def encode(self, images, vae):
+        count = images.shape[0]
+        if count < 1:
+            raise ValueError("Regenerate needs at least one video frame")
+        padded = max(5, count)
+        padded += (5 - padded) % 17
+        if padded > count:
+            images = torch.cat((images, images[-1:].expand(padded - count, -1, -1, -1)))
+        samples = vae.encode_tiled(
+            images[..., :3], tile_x=512, tile_y=512, overlap=64,
+            tile_t=64, overlap_t=8,
+        )
+        return ({"samples": samples}, padded, count)
+
+
+class H3RegeneratePrepareLatent:
+    """Refine video against clean encoded silence; preserve delivery audio elsewhere."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"latent": ("LATENT",), "audio_vae": ("VAE",)}}
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "prepare"
+    CATEGORY = "H3/Regenerate"
+
+    def prepare(self, latent, audio_vae):
+        samples = latent["samples"]
+        if not getattr(samples, "is_nested", False) or len(samples.tensors) != 2:
+            raise ValueError("Regenerate expects a MiniMax H3 AV latent")
+        video, audio = samples.tensors
+        # H3 audio has 40 latent frames/sec; its VAE consumes [B, samples, stereo].
+        if video.ndim != 5 or video.shape[1] != 24 or audio.ndim != 4 or audio.shape[1:3] != (32, 2):
+            raise ValueError("Regenerate expects H3 video [B,24,T,H,W] and audio [B,32,2,T]")
+        silence = torch.zeros((1, audio.shape[-1] * 800, 2), dtype=torch.float32)
+        encoded = audio_vae.encode(silence)
+        if encoded.shape[-1] < audio.shape[-1]:
+            encoded = torch.cat((encoded, encoded[..., -1:].expand(
+                -1, -1, -1, audio.shape[-1] - encoded.shape[-1],
+            )), dim=-1)
+        encoded = encoded[..., :audio.shape[-1]].to(video)
+        encoded = encoded.expand(video.shape[0], -1, -1, -1)
+        out = latent.copy()
+        out["samples"] = comfy.nested_tensor.NestedTensor((video, encoded))
+        # Native H3 masks set the audio timestep to clean and prevent audio sampling.
+        out["noise_mask"] = comfy.nested_tensor.NestedTensor((
+            torch.ones_like(video), torch.zeros_like(encoded),
+        ))
+        return (out,)
+
+
 NODE_CLASS_MAPPINGS = {
+    "H3RegenerateEncodeVideo": H3RegenerateEncodeVideo,
+    "H3RegeneratePrepareLatent": H3RegeneratePrepareLatent,
     "H3MossEditReference": H3MossEditReference,
     "H3LTXPadVideoFrames": H3LTXPadVideoFrames,
     "H3Flux3EditPrompt": H3Flux3EditPrompt,

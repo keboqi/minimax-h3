@@ -323,6 +323,7 @@ class ModelsServices:
     model_file_is_ready: ModelFileIsReady
     unload_prompt_rewriter: UnloadPromptRewriter
     ensure_model_keys: Callable[[tuple[str, ...]], bool]
+    ensure_h3_regenerate_models: Callable[[ModelConfig, str], bool]
 
 
 @dataclass(frozen=True)

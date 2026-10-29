@@ -14,6 +14,7 @@ from h3_app.catalog import (
     DEFAULT_SLA_PRESET,
     GENERATION_POSTPROCESS_OPTIONS,
     H3_LATENT_UPSCALE_STANDARD,
+    H3_REGENERATE_MODELS,
     H3_SEMANTIC_BRIDGE_NODE,
     LARRY_TURBO,
     REFINEMENT_LORA_SETTINGS,
@@ -344,8 +345,17 @@ def _prepare_latent_upscale(request, services, runtime, models, *, width, height
         return _LatentUpscale(source_size=(width, height), size=(width, height))
     refinement_lora_name = None
     refinement_variant = None
+    method = resolve_h3_latent_upscale_method(request.finishing.latent_upscale_method)
     refine_choice = request.finishing.latent_upscale_refine_lora
-    if refine_choice != SAME_REFINEMENT_LORA:
+    if method in H3_REGENERATE_MODELS:
+        refinement_variant = method
+        key = H3_REGENERATE_MODELS[method]
+        refinement_lora_name = MODEL_SPECS[key].local_name
+        progress(0, desc=f"Preparing {method}")
+        services.models.ensure_model_keys((key, "turbo_lora"))
+        # This schedule is independent of the draft's sampler and step count.
+        request.finishing.latent_upscale_refine_steps = 3
+    elif refine_choice != SAME_REFINEMENT_LORA:
         if refine_choice not in REFINEMENT_LORA_SETTINGS:
             raise H3Error(f"Unknown refinement LoRA: {refine_choice}")
         refinement_variant = refine_choice
@@ -356,9 +366,6 @@ def _prepare_latent_upscale(request, services, runtime, models, *, width, height
             raise H3Error(f"{refine_choice} refinement LoRA is not configured.")
         progress(0, desc=f"Preparing {refine_choice} refinement LoRA")
         services.models.ensure_turbo_lora(models, refine_choice, request.media.mode)
-    method = resolve_h3_latent_upscale_method(
-        request.finishing.latent_upscale_method
-    )
     split_config = resolve_h3_split_upscale_config(
         method,
         tile_width=request.finishing.latent_split_tile_width,
@@ -372,7 +379,7 @@ def _prepare_latent_upscale(request, services, runtime, models, *, width, height
     )
     source_width, source_height, width, height = h3_latent_upscale_dimensions(width, height)
     refine_steps = int(request.finishing.latent_upscale_refine_steps)
-    if refine_steps < 1 or refine_steps >= effective_steps:
+    if method not in H3_REGENERATE_MODELS and (refine_steps < 1 or refine_steps >= effective_steps):
         raise H3Error(
             "H3 latent upscale refinement steps must be at least 1 and smaller "
             f"than the total {effective_steps} sampling steps."
@@ -404,7 +411,7 @@ def _prepare_latent_upscale(request, services, runtime, models, *, width, height
                           (source_width, source_height), (width, height))
 
 
-def _check_backend_extras(request, services, available, *, use_lightvae, started, progress):
+def _check_backend_extras(request, services, available, *, use_lightvae, started, progress, models=None):
     """LightVAE, Semantic Bridge and finishing nodes the backend must offer."""
     if use_lightvae and "LightVAELoader" not in available:
         raise H3Error(
@@ -426,7 +433,7 @@ def _check_backend_extras(request, services, available, *, use_lightvae, started
         services.models.ensure_h3_semantic_bridge()
     if request.finishing.postprocess in COMFY_UPSCALE_OPTIONS:
         missing_upscale_nodes = (
-            required_upscale_nodes(request.finishing.postprocess) - available
+            required_upscale_nodes(request.finishing.postprocess, models) - available
         )
         if missing_upscale_nodes:
             raise H3Error(
@@ -638,7 +645,7 @@ def prepare_h3(
     info = services.execution.object_info()
     available = set(info)
     yield from _check_backend_extras(
-        request, services, available, use_lightvae=use_lightvae, started=started, progress=progress
+        request, services, available, use_lightvae=use_lightvae, started=started, progress=progress, models=models
     )
     attention = _resolve_attention(
         request, effective, services, use_turbo=turbo.use_turbo,

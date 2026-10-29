@@ -487,6 +487,12 @@ class UiContractTests(unittest.TestCase):
             [True, False, True, True, True, True, True],
         )
         self.assertIn("texture", tiled_updates[2]["info"])
+        for option in _catalog.H3_REGENERATE_MODELS:
+            self.assertIn(option, choices)
+            regenerate_updates = callback(option)
+            self.assertEqual([u["visible"] for u in regenerate_updates],
+                             [True, False, True, False, False, True, False])
+            self.assertIn("H3 refiner", regenerate_updates[2]["info"])
         split_controls = [
             c for c in self.config["components"]
             if c.get("props", {}).get("label", "").startswith("Advanced: split source")
@@ -2008,6 +2014,8 @@ class UiContractTests(unittest.TestCase):
             == "High-resolution refinement method"
         )
         choices = method["props"]["choices"]
+        for option in _catalog.H3_REGENERATE_MODELS:
+            self.assertIn((option, option), choices)
         self.assertIn(
             (
                 gradio_app.H3_LATENT_UPSCALE_SPLIT,

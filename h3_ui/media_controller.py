@@ -18,6 +18,7 @@ from h3_app import gallery_store
 from h3_app.catalog import (
     AUDIO_EXTENSIONS,
     COMFY_POSTPROCESS_OPTIONS,
+    H3_REGENERATE_MODELS,
     IMAGE_EXTENSIONS,
     LTX25_CQ_IMAGE_ENHANCER,
     LTX25_POSTPROCESS_MODELS,
@@ -64,6 +65,7 @@ class MediaServices:
     ensure_ltx25_upscale_models: Callable[..., bool]
     ensure_seedvr2_upscale_models: Callable[..., bool]
     ensure_cq_image_enhance_models: Callable[[], bool]
+    ensure_h3_regenerate_models: Callable[..., bool]
     build_seedvr2_image_upscale_graph: Callable[..., dict]
     build_cq_image_enhance_graph: Callable[..., dict]
     build_upscale_graph: Callable[..., dict]
@@ -586,13 +588,17 @@ class MediaController:
                 return
             models = self.services.load_model_config()
             available = set(self.services.object_info())
-            missing = required_upscale_nodes(option) - available
+            missing = required_upscale_nodes(option, models) - available
             if missing:
                 raise H3Error(
                     f"{option} is unavailable. Missing ComfyUI nodes: "
                     + ", ".join(sorted(missing))
                 )
-            if option == SEEDVR2_UPSCALE:
+            if option in H3_REGENERATE_MODELS:
+                yield self.gallery_media_progress_result(f"Checking {option} models")
+                downloaded = self.services.ensure_h3_regenerate_models(models, option)
+                stage_bucket = "h3_regenerate"
+            elif option == SEEDVR2_UPSCALE:
                 model_status = f"SeedVR2 {seedvr2_model}"
                 yield self.gallery_media_progress_result(
                     f"Checking {model_status} models"

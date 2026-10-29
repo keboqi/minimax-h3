@@ -97,6 +97,10 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         if "LTXVTiledFusionSampler" in workflow_classes:
             return "Preparing LTX video latents"
         return "Preparing LTX-2.5 audio-video latents"
+    if name == "H3RegenerateEncodeVideo":
+        return "Encoding video for H3 Regenerate"
+    if name == "H3RegeneratePrepareLatent":
+        return "Preparing H3 refinement with clean silence"
     if name == "VAEEncodeTiled":
         if "SeedVR2Preprocess" in workflow_classes:
             if image_only:

@@ -86,6 +86,18 @@ class ModelSpec:
 
 
 MODEL_SPECS: dict[str, ModelSpec] = {
+    "h3_regenerate_refiner_16": ModelSpec(
+        "Kijai/MiniMax-H3-experimental", "loras",
+        "loras/minimax_h3_open_regenerate_2k_refiner_rank_16_bf16.safetensors",
+        "Open H3 Regenerate 2K refiner only · rank 16 BF16",
+        expected_sha256="add559cd92e2b17b42ac080516b476df120903e485fc98add4538e0217820fbd",
+    ),
+    "h3_regenerate_refiner_384": ModelSpec(
+        "Kijai/MiniMax-H3-experimental", "loras",
+        "loras/minimax_h3_open_regenerate_2k_refiner_rank_384_bf16.safetensors",
+        "Open H3 Regenerate 2K refiner only · rank 384 BF16",
+        expected_sha256="4bf30291343eef5e51ee867ba37dd31bce3133d1da1ace1a245a7130b88818c2",
+    ),
     "flux3_nvfp4": ModelSpec(
         "black-forest-labs/flux-3-image-klein-comfy", "diffusion_models",
         "diffusion_models/flux3-image-klein-nvfp4.safetensors", "FLUX 3 Klein distilled NVFP4",
@@ -1052,6 +1064,8 @@ DRAMA3_ASR_CHOICES = {"1.7B (quality)": "drama3_asr", "0.6B (smaller)": "drama3_
 DEFAULT_DRAMA3_ASR = "1.7B (quality)"
 DRAMA3_ASR_MODEL_KEYS = tuple(DRAMA3_ASR_CHOICES.values())
 LAZY_OPTIONAL_MODEL_KEYS = (
+    "h3_regenerate_refiner_16",
+    "h3_regenerate_refiner_384",
     *FLUX3_MODEL_KEYS,
     *MOSS_IMAGE_MODEL_KEYS,
     *FIBO2_MODEL_KEYS,

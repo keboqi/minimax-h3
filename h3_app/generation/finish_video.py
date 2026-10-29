@@ -11,6 +11,7 @@ from typing import Generator
 
 from h3_app.catalog import (
     COMFY_UPSCALE_OPTIONS,
+    H3_REGENERATE_MODELS,
     LTX25_UPSCALE_OPTIONS,
     LTX25_TILED_UPSCALE,
     SEEDVR2_UPSCALE,
@@ -118,7 +119,15 @@ def finish_video(
     clip_outputs: list[Path] = []
     try:
         if request.finishing.postprocess in COMFY_UPSCALE_OPTIONS:
-            if request.finishing.postprocess == SEEDVR2_UPSCALE:
+            if request.finishing.postprocess in H3_REGENERATE_MODELS:
+                stage_bucket = "h3_regenerate"
+                yield GenerationUpdate(None, progress_status(
+                    f"Checking {request.finishing.postprocess} models", started=started,
+                ))
+                downloaded = services.models.ensure_h3_regenerate_models(
+                    prepared.models, request.finishing.postprocess,
+                )
+            elif request.finishing.postprocess == SEEDVR2_UPSCALE:
                 model_status = f"SeedVR2 {request.finishing.seedvr2_model}"
                 stage_bucket = "seedvr2_upscale"
                 yield GenerationUpdate(

@@ -16,6 +16,7 @@ from h3_app.catalog import (
     LTX25_POSTPROCESS_MODELS,
     LTX25_SDR_TO_HDR,
     LTX25_UPSCALE,
+    H3_REGENERATE_MODELS,
 )
 from h3_app.config import RuntimeConfig
 from h3_app.errors import H3Error
@@ -713,6 +714,34 @@ def ensure_cq_image_enhance_models(*, runtime: RuntimeConfig) -> bool:
         download_workers=2, files=spec_files(CQ_IMAGE_MODEL_KEYS),
         failure="On-demand CQ image download did not produce {name}.",
     )
+
+
+def ensure_h3_regenerate_models(models: ModelConfig, option: str, *, runtime: RuntimeConfig) -> bool:
+    """Provision the default H3 FL2VA profile and the selected refiner on demand."""
+    if option not in H3_REGENERATE_MODELS:
+        raise H3Error(f"Unknown H3 Regenerate option: {option}")
+    keys = ("h3_latent_upscaler_3d_bf16", "turbo_lora", H3_REGENERATE_MODELS[option])
+    files = spec_files(keys)
+    # Reject missing custom encoders before downloading a potentially large base model.
+    encoder_key = next((key for key, spec in MODEL_SPECS.items()
+                        if spec.folder == "text_encoders" and spec.local_name == models.text_encoder), None)
+    if encoder_key:
+        keys += (encoder_key,)
+        files[encoder_key] = models.text_encoder
+    elif not model_file_is_ready(_models_root(runtime) / "text_encoders" / models.text_encoder):
+        raise H3Error(f"Configured H3 text encoder is missing: {models.text_encoder}")
+    profile_key = models.profile_key(models.default_profile)
+    downloaded = [
+        ensure_profile_model(profile_key, models.profile(profile_key), "Text to video", runtime=runtime),
+        ensure_base_video_vae(models, runtime=runtime),
+        ensure_audio_vae(models, runtime=runtime),
+        ensure_models(
+            keys,
+            runtime=runtime, log_prefix="[h3-regenerate-on-demand]",
+            files=files,
+        ),
+    ]
+    return any(downloaded)
 
 
 def ensure_ltx25_upscale_models(

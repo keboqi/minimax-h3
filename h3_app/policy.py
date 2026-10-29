@@ -17,6 +17,7 @@ from h3_app.catalog import (
     LEGACY_TURBO_VARIANTS,
     H3_LATENT_UPSCALE_SPLIT,
     H3_LATENT_UPSCALE_STANDARD,
+    H3_REGENERATE_MODELS,
     IMAGE_VAE_CHOICES,
     LIGHTX2V_4STEP_TURBO,
     LIGHTX2V_8STEP_TURBO,
@@ -144,6 +145,7 @@ class H3SplitUpscaleConfig:
 def resolve_h3_latent_upscale_method(value: str | None) -> str:
     normalized = str(value or H3_LATENT_UPSCALE_STANDARD).strip().lower()
     aliases = {
+        **{name.lower(): name for name in H3_REGENERATE_MODELS},
         "full-frame": H3_LATENT_UPSCALE_STANDARD,
         "full frame": H3_LATENT_UPSCALE_STANDARD,
         "standard": H3_LATENT_UPSCALE_STANDARD,
@@ -156,8 +158,8 @@ def resolve_h3_latent_upscale_method(value: str | None) -> str:
         return aliases[normalized]
     except KeyError as exc:
         raise H3Error(
-            "Unknown H3 latent upscale method. Choose full-frame refinement or "
-            "MMH3 Split Upscale."
+            "Unknown H3 latent upscale method. Choose full-frame refinement, "
+            "MMH3 Split Upscale or H3 Regenerate."
         ) from exc
 
 
@@ -173,7 +175,7 @@ def resolve_h3_split_upscale_config(
     seam_denoise: float,
     seam_polish: str,
 ) -> H3SplitUpscaleConfig | None:
-    if resolve_h3_latent_upscale_method(method) == H3_LATENT_UPSCALE_STANDARD:
+    if resolve_h3_latent_upscale_method(method) != H3_LATENT_UPSCALE_SPLIT:
         return None
 
     resolved_tile_width = int(tile_width)

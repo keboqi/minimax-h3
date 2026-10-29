@@ -17,8 +17,10 @@ from h3_app.catalog import (
     LTX25_UPSCALE,
     LTX25_TILED_UPSCALE,
     SEEDVR2_UPSCALE,
+    H3_REGENERATE_MODELS,
 )
 from h3_app.errors import H3Error
+from h3_app.workflows.regenerate import build_h3_regenerate_graph, required_h3_regenerate_nodes
 from h3_app.graph import Graph
 from h3_app.model_types import (
     ModelConfig,
@@ -672,7 +674,9 @@ def build_ltx25_tiled_upscale_graph(
     return graph.nodes
 
 
-def required_upscale_nodes(option: str) -> set[str]:
+def required_upscale_nodes(option: str, models: ModelConfig | None = None) -> set[str]:
+    if option in H3_REGENERATE_MODELS:
+        return required_h3_regenerate_nodes(models)
     if option == LTX25_TILED_UPSCALE:
         return required_ltx25_tiled_upscale_nodes()
     if option == SEEDVR2_UPSCALE:
@@ -796,6 +800,14 @@ def build_upscale_graph(
     output_nonce: str = "",
 ) -> tuple[dict[str, Any], int]:
     """Build one selected AI post-processing workflow and return its sampler steps."""
+    if option in H3_REGENERATE_MODELS:
+        if width is None or height is None:
+            raise H3Error("H3 Regenerate requires the source video dimensions.")
+        return build_h3_regenerate_graph(
+            option=option, source_video=source_video, seed=seed, models=models,
+            target_width=target_width or width * 2, target_height=target_height or height * 2,
+            prompt=prompt, fps=fps, output_stamp=output_stamp, output_nonce=output_nonce,
+        ), 3
     if option == SEEDVR2_UPSCALE:
         return (
             build_seedvr2_upscale_graph(

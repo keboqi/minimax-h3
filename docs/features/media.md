@@ -62,6 +62,20 @@ lower peak VRAM is more important than avoiding an H3 model reload on the next
 generation. **48 fps interpolation** remains available as a non-upscale option
 and requires FFmpeg on the server `PATH`.
 
+**H3 Regenerate 2K · rank 16** and **rank 384 (experimental)** process existing
+videos using the default configured H3 FL2VA model, H3 text encoder and official
+VAEs. The selected refiner, LightX2V companion and BF16 latent upscaler download
+on first use. The source is fitted to half the target dimensions, encoded to H3
+latents, upscaled 2x, refined with three Euler steps, decoded and resized to the
+requested output. Frames are padded by repeating the last frame to H3's temporal
+grid and trimmed back afterwards; original frame count, fps and audio are retained.
+The optional **Scene prompt** describes the source scene. Short 24 fps drafts are
+closest to the upstream recipe; other lengths, frame rates and Ref2VA-derived
+footage need visual validation. This route processes the full clip without the
+upstream demo's fixed five-second crop. It can require substantial VRAM and may
+change faces or fine details. LMS Sharp and the upstream SoL-Engine fast runtime
+are not included. Restart ComfyUI after updating to register the new H3 nodes.
+
 Gallery also offers **LTX-2.5 IC-LoRA Decompression** to remove compression
 artifacts and **LTX-2.5 IC-LoRA Deblur** to restore defocused footage. These
 options preserve the source resolution and audio; the target-resolution selector
