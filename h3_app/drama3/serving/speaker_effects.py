@@ -32,8 +32,14 @@ SPEAKER_EFFECTS: tuple[str, ...] = (
     "ancient_god",
 )
 
-SPEAKER_EFFECT_SET: frozenset[str] = frozenset(SPEAKER_EFFECTS)
-_EFFECT_ALTERNATION = "|".join(re.escape(name) for name in SPEAKER_EFFECTS)
+# Where a voice stands, written in the effect slot; the mix places the voice, no effect runs.
+DISTANCE_TAGS: tuple[str, ...] = ("far", "near")
+SPEAKER_TAGS: tuple[str, ...] = (*SPEAKER_EFFECTS, *DISTANCE_TAGS)
+# Place effects heard as a real room (see ``rooms``), by the room each names.
+ROOM_EFFECT_ROOMS = {"reverb_small_room": "small_room", "reverb_large_hall": "large_hall"}
+
+SPEAKER_EFFECT_SET: frozenset[str] = frozenset(SPEAKER_TAGS)
+_EFFECT_ALTERNATION = "|".join(re.escape(name) for name in SPEAKER_TAGS)
 SPEAKER_EFFECT_TAG_RE = re.compile(rf"</?({_EFFECT_ALTERNATION})\s*>", re.IGNORECASE)
 _OPENING_EFFECT_TAG_RE = re.compile(rf"<({_EFFECT_ALTERNATION})\s*>", re.IGNORECASE)
 
@@ -72,17 +78,34 @@ def apply_speaker_effects(
     rate: int,
     effects: tuple[str, ...] | list[str],
 ) -> np.ndarray:
-    """Apply chained vocal DSP effects to 1D float32 audio samples."""
+    """Apply chained vocal DSP effects to 1D float32 audio samples.
+
+    A real room's tag adds that room folded to mono and cut to the take's length; the mix
+    renders rooms in stereo with their tails instead (see ``rooms``). Distance tags are
+    placement, not effects, and are skipped.
+    """
+    from .rooms import room_wet
+
     audio = np.asarray(samples, dtype=np.float32).reshape(-1)
-    active = [name.lower() for name in effects if name and name.lower() in SPEAKER_EFFECT_SET]
+    active = [name.lower() for name in effects if name and name.lower() in SPEAKER_EFFECTS]
     if not active or audio.size == 0 or rate <= 0:
         return audio
 
-    out = _try_apply_pedalboard(audio, rate, active)
-    if out is None:
-        out = audio.copy()
-        for effect_name in active:
-            out = _apply_scipy_effect(out, rate, effect_name)
+    out, pending = audio, []
+    # Effects run in their written order, so a room comes before the device it is heard through.
+    for effect_name in [*active, None]:
+        if effect_name is not None and effect_name not in ROOM_EFFECT_ROOMS:
+            pending.append(effect_name)
+            continue
+        if pending:
+            processed = _try_apply_pedalboard(out, rate, pending)
+            if processed is None:
+                processed = out.copy()
+                for name in pending:
+                    processed = _apply_scipy_effect(processed, rate, name)
+            out, pending = processed, []
+        if effect_name is not None:
+            out = out + room_wet(out, rate, ROOM_EFFECT_ROOMS[effect_name])[: len(out)].mean(axis=1)
     # Drive and gain stages can push either path past full scale.
     peak = float(np.max(np.abs(out))) if out.size else 0.0
     if peak > 1.0:
@@ -170,12 +193,6 @@ def _try_apply_pedalboard(
             Delay(delay_seconds=0.015, feedback=0.45, mix=0.4),
             Reverb(room_size=0.08, damping=0.1, wet_level=0.35, dry_level=0.75, width=0.2),
             Compressor(threshold_db=-16, ratio=4),
-        ],
-        "reverb_small_room": [
-            Reverb(room_size=0.2, damping=0.6, wet_level=0.25, dry_level=0.85, width=0.5),
-        ],
-        "reverb_large_hall": [
-            Reverb(room_size=0.85, damping=0.3, wet_level=0.45, dry_level=0.7, width=1.0),
         ],
         "stadium_announcement": [
             HighpassFilter(cutoff_frequency_hz=450),
@@ -394,10 +411,6 @@ def _apply_scipy_effect(audio: np.ndarray, rate: int, effect_name: str) -> np.nd
         return _bitcrush(_distort(_bandpass(audio, rate, 650, 2400), 10.0), 11) * 0.75
     if effect_name == "metallic_helmet":
         return _reverb(_delay(_bandpass(audio, rate, 300, 4000), rate, 0.015, 0.45, 0.4), rate, 0.15, 0.35, 0.75)
-    if effect_name == "reverb_small_room":
-        return _reverb(audio, rate, 0.2, 0.25, 0.85)
-    if effect_name == "reverb_large_hall":
-        return _reverb(audio, rate, 0.85, 0.45, 0.7)
     if effect_name == "stadium_announcement":
         return _reverb(_delay(_bandpass(audio, rate, 450, 4200), rate, 0.22, 0.45, 0.45), rate, 0.92, 0.5, 0.6)
     if effect_name == "dream_sequence":

@@ -116,7 +116,12 @@ class PromptExampleTests(unittest.TestCase):
         tree = parse_drama3_tree(script)
         turns = [turn for node in iter_speech_nodes(tree) for turn in node.turns]
         self.assertTrue(all(not turn.speaker_effects for turn in turns if turn.speaker == 0))  # narrator stays dry
-        self.assertIn(("fairy_tiny", "reverb_small_room"), {turn.speaker_effects for turn in turns})
+        self.assertIn(("fairy_tiny",), {turn.speaker_effects for turn in turns})
+        # The hiding place sets its room and stage once, so its lines carry no place effect.
+        scenes = [node for node in tree.children if getattr(node, "room", "")]
+        self.assertEqual([scene.room for scene in scenes], ["large_hall", "small_room"])
+        self.assertEqual(scenes[1].stage, (("守护精灵", 0.4), ("林夕", -0.3)))
+        self.assertFalse(any("reverb" in effect for turn in turns for effect in turn.speaker_effects))
         sounds = iter_sound_nodes(tree)
         self.assertTrue(all(sound.duration for sound in sounds))
         self.assertEqual({sound.name for sound in sounds if sound.loop},

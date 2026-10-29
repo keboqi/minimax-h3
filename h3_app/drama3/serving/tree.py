@@ -8,10 +8,12 @@ from typing import Any, Callable, Union
 
 from h3_app.workflows.drama3 import NAME_LINE
 
+from .rooms import SCENE_ROOMS, scene_room_name
 from .speaker_effects import extract_speaker_effects, has_speaker_effects, strip_speaker_effects
 
 SPEAKER_LINE_RE = re.compile(r"^<\|speaker:(\d+)\|>\s*(.*)$")
-CONTAINER_TAG_RE = re.compile(r"(</?(?:parallel|sequential)\s*>)", re.IGNORECASE)
+# An opening tag may carry attributes: <parallel room="small_room" stage="Mia=-0.4">.
+CONTAINER_TAG_RE = re.compile(r"(</?(?:parallel|sequential)\b[^<>]*>)", re.IGNORECASE)
 SOUND_BLOCK_RE = re.compile(
     r"(<sound\b[^>]*>.*?</sound\s*>)",
     re.IGNORECASE | re.DOTALL,
@@ -61,6 +63,8 @@ class SequentialNode:
 @dataclass(frozen=True)
 class ParallelNode:
     children: tuple["TreeNode", ...]
+    room: str = ""  # the scene's room (``rooms.SCENE_ROOMS``), heard by its in-world voices
+    stage: tuple[tuple[str, float], ...] = ()  # (speaker, position -1 left to 1 right) in this scene
 
 
 TreeNode = Union[
@@ -146,6 +150,43 @@ def sound_placement_attrs(node: SoundNode) -> list[str]:
     if node.distance:
         attrs.append(f'distance="{node.distance}"')
     return attrs
+
+
+STAGE_ENTRY_RE = re.compile(r"\s*([^=,;]+?)\s*=\s*(-?\d*\.?\d+)\s*(?:[,;]|$)")
+
+
+def tag_attrs(tag: str) -> dict[str, str]:
+    """A tag's attributes by lowercase name."""
+    return {match.group(1).lower(): (match.group(2) or match.group(3) or match.group(4) or "").strip()
+            for match in ATTR_RE.finditer(tag)}
+
+
+def staging_problems(tag: str) -> list[str]:
+    """What is wrong with a ``<parallel ...>`` tag's ``room`` and ``stage``, for the writer's status."""
+    attrs, problems = tag_attrs(tag), []
+    if "room" in attrs and not scene_room_name(attrs["room"]):
+        problems.append(f'unknown room "{attrs["room"]}" (rooms: {", ".join(SCENE_ROOMS)})')
+    if "stage" in attrs:
+        entries = [entry for entry in re.split(r"[,;]", attrs["stage"]) if entry.strip()]
+        bad = [entry.strip() for entry in entries if not STAGE_ENTRY_RE.fullmatch(entry)]
+        if bad or not entries:
+            problems.append(f'stage "{attrs["stage"]}" is not written Name=position, ...')
+    return problems
+
+
+def parse_parallel_attrs(tag: str, resolve: Callable[[str], str | None] | None = None) -> dict[str, Any]:
+    """The ``room`` and ``stage`` of a ``<parallel ...>`` tag; invalid values are left out.
+
+    ``stage="Mia=-0.4, Leo=0.5"`` names speakers as the script's lines do and places each
+    from -1 (left) to 1 (right).
+    """
+    attrs = tag_attrs(tag)
+    stage = []
+    for match in STAGE_ENTRY_RE.finditer(attrs.get("stage", "")):
+        name = " ".join(match.group(1).split())
+        label = (resolve(name) if resolve else None) or name
+        stage.append((label, max(-1.0, min(float(match.group(2)), 1.0))))
+    return {"room": scene_room_name(attrs.get("room", "")), "stage": tuple(stage)}
 
 
 def default_sound_name(description: str) -> str:
@@ -247,15 +288,17 @@ def parse_drama3_tree(script: str, *, default_speaker: str = "Speaker 0",
         pending_turns.clear()
 
     pending_stack: list[list[SpeechTurn]] = [[]]
+    attrs_stack: list[dict[str, Any]] = [{}]  # each open <parallel>'s room and stage
     active_speaker = default_speaker
 
     for token in tokens:
         lower = token.lower()
-        if lower.startswith("<parallel") and lower.endswith(">"):
+        if CONTAINER_TAG_RE.fullmatch(token) and lower.startswith("<parallel"):
             mode, items = stack[-1]
             flush_turns(mode, items, pending_stack[-1])
             stack.append(("parallel", []))
             pending_stack.append([])
+            attrs_stack.append(parse_parallel_attrs(token, resolve))
             continue
         if lower.startswith("</parallel") and lower.endswith(">"):
             mode, items = stack[-1]
@@ -263,16 +306,18 @@ def parse_drama3_tree(script: str, *, default_speaker: str = "Speaker 0",
             if len(stack) > 1 and mode == "parallel":
                 stack.pop()
                 pending_stack.pop()
+                attrs = attrs_stack.pop()
                 parent_mode, parent_items = stack[-1]
                 flush_turns(parent_mode, parent_items, pending_stack[-1])
                 if items:
-                    parent_items.append(ParallelNode(children=tuple(items)))
+                    parent_items.append(ParallelNode(children=tuple(items), **attrs))
             continue
-        if lower.startswith("<sequential") and lower.endswith(">"):
+        if CONTAINER_TAG_RE.fullmatch(token) and lower.startswith("<sequential"):
             mode, items = stack[-1]
             flush_turns(mode, items, pending_stack[-1])
             stack.append(("sequential", []))
             pending_stack.append([])
+            attrs_stack.append({})
             continue
         if lower.startswith("</sequential") and lower.endswith(">"):
             mode, items = stack[-1]
@@ -280,6 +325,7 @@ def parse_drama3_tree(script: str, *, default_speaker: str = "Speaker 0",
             if len(stack) > 1 and mode == "sequential":
                 stack.pop()
                 pending_stack.pop()
+                attrs_stack.pop()
                 parent_mode, parent_items = stack[-1]
                 flush_turns(parent_mode, parent_items, pending_stack[-1])
                 if items:
@@ -335,11 +381,13 @@ def parse_drama3_tree(script: str, *, default_speaker: str = "Speaker 0",
     while len(stack) > 1:
         mode, items = stack.pop()
         pending = pending_stack.pop()
+        attrs = attrs_stack.pop()
         flush_turns(mode, items, pending)
         parent_mode, parent_items = stack[-1]
         flush_turns(parent_mode, parent_items, pending_stack[-1])
         if items:
-            node = ParallelNode(children=tuple(items)) if mode == "parallel" else SequentialNode(children=tuple(items))
+            node = (ParallelNode(children=tuple(items), **attrs) if mode == "parallel"
+                    else SequentialNode(children=tuple(items)))
             parent_items.append(node)
 
     root_mode, root_items = stack[0]

@@ -440,6 +440,33 @@ def place_sound(samples: np.ndarray, rate: int, pan: tuple[float, float] | None 
     return out.astype(np.float32, copy=False)
 
 
+FAR_VOICE_LOWPASS_HZ = 3500.0  # gentler than a far sound's, so far speech stays intelligible
+
+
+def voice_distance(samples: np.ndarray, rate: int, distance: str, *, in_room: bool) -> np.ndarray:
+    """What reaches the listener directly from a mono voice ``distance`` ("far" or "near") away.
+
+    A far voice loses its highs and drops about 8 dB. In a room the room's level stays,
+    so the voice sounds further away inside it; outside one it gets the few reflections a
+    far sound gets. A near voice is about 2 dB closer.
+    """
+    mono = np.asarray(samples, dtype=np.float32).reshape(-1)
+    if distance not in DISTANCE_GAINS or not mono.size:
+        return mono
+    if distance == "far":
+        from scipy import signal
+
+        sos = signal.butter(2, min(FAR_VOICE_LOWPASS_HZ / (0.5 * rate), 0.99), btype="lowpass", output="sos")
+        mono = signal.sosfilt(sos, mono).astype(np.float32)
+        if not in_room:
+            dry = mono.copy()
+            for seconds, gain in FAR_REFLECTIONS:
+                offset = int(seconds * rate)
+                if offset < len(dry):
+                    mono[offset:] += dry[:-offset] * gain
+    return (mono * DISTANCE_GAINS[distance]).astype(np.float32, copy=False)
+
+
 LOOP_CROSSFADE_SECONDS = 0.5
 LOOP_SEARCH_SECONDS = 2.0  # how far before a clip's end a better loop point is looked for
 

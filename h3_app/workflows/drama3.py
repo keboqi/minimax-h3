@@ -133,8 +133,9 @@ def tags_to_names(script, names):
                          str(script or ""))
 
 
-_BLOCK = re.compile(r"(<sound\b[^>]*>.*?</sound\s*>|</?(?:parallel|sequential)\s*>)", re.IGNORECASE | re.DOTALL)
-_OPEN_CONTAINER = re.compile(r"<(?:parallel|sequential)\s*>", re.IGNORECASE)
+_BLOCK = re.compile(r"(<sound\b[^>]*>.*?</sound\s*>|</?(?:parallel|sequential)\b[^<>]*>)",
+                    re.IGNORECASE | re.DOTALL)
+_OPEN_CONTAINER = re.compile(r"<(?:parallel|sequential)\b[^<>]*>", re.IGNORECASE)
 _CLOSE_CONTAINER = re.compile(r"</(?:parallel|sequential)\s*>", re.IGNORECASE)
 
 

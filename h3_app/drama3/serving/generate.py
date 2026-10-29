@@ -5,7 +5,7 @@ from __future__ import annotations
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 import contextvars
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
 from pathlib import Path
 import re
@@ -26,10 +26,10 @@ from h3_app.jobs import CURRENT_JOB
 from h3_app.provenance import write_snapshot
 from h3_app.workflows.drama3 import MAX_FRAMES, SPEAKER_TAG, request_cast, speaker_label
 
-from . import audio, environment, takes as take_store
+from . import audio, environment, rooms, takes as take_store
 from .planner import Chunk, expected_seconds, plan_turns_chunks
 from .server import ServerSettings, SpeechRequestError, ensure_model, persist_caches, shared_server
-from .speaker_effects import apply_speaker_effects
+from .speaker_effects import DISTANCE_TAGS, ROOM_EFFECT_ROOMS, apply_speaker_effects
 from .tree import (
     ParallelNode,
     PauseNode,
@@ -356,8 +356,13 @@ def _placed_sound(node: SoundNode, ctx: "_Render") -> np.ndarray:
     samples = _decoded_sound(clip_path, ctx.rate, ctx.decoded)
     if node.pan is not None or node.distance:
         samples = audio.place_sound(samples, ctx.rate, node.pan, node.distance)
-    if ctx.room and not node.loop:
-        # A one-shot happens in the scene's room, as its voices do; beds are that room already.
+    # A one-shot happens in the scene's room, as its voices do; beds are that room already.
+    if ctx.room in rooms.ROOMS and not node.loop:
+        wet = rooms.room_wet(samples.mean(axis=1), ctx.rate, ctx.room)
+        placed = np.zeros((len(wet), samples.shape[1]), dtype=np.float32)
+        placed[: len(samples)] = samples
+        samples = placed + wet  # the room rings on past the clip
+    elif ctx.room and not node.loop:
         samples = np.stack([apply_speaker_effects(samples[:, channel], ctx.rate, (ctx.room,))[: len(samples)]
                             for channel in range(samples.shape[1])], axis=1)
     return samples
@@ -365,13 +370,36 @@ def _placed_sound(node: SoundNode, ctx: "_Render") -> np.ndarray:
 
 # Place effects that describe the space a scene happens in, which its sounds share.
 ROOM_EFFECTS = ("reverb_small_room", "reverb_large_hall", "underwater", "dream_sequence")
+# A voice heard through a device or in a space of its own is not in the scene's room.
+OWN_SPACE_EFFECTS = frozenset({"phone_call", "radio_broadcast", "walkie_talkie", "bad_signal", "old_gramophone",
+                               "stadium_announcement", "underwater", "dream_sequence"})
+NEAR_ROOM_SEND = 0.6  # a near voice is heard more directly, with less of the room
 
 
 def _scene_room(node: TreeNode, ctx: "_Render") -> str | None:
-    """The one place effect the voices inside ``node`` carry, if they agree on one."""
-    rooms = {effect for speech in iter_speech_nodes(node) for chunk in ctx.node_chunks.get(id(speech), [])
-             for effect in chunk.speaker_effects if effect in ROOM_EFFECTS}
-    return rooms.pop() if len(rooms) == 1 else None
+    """The room of the scene ``node`` holds: its ``room``, else the one place its voices agree on."""
+    if getattr(node, "room", ""):
+        return node.room
+    places = {ROOM_EFFECT_ROOMS.get(effect, effect) for speech in iter_speech_nodes(node)
+              for chunk in ctx.node_chunks.get(id(speech), []) for effect in chunk.speaker_effects
+              if effect in ROOM_EFFECTS}
+    return places.pop() if len(places) == 1 else None
+
+
+def _voice_room(chunk: Chunk, ctx: "_Render") -> str | None:
+    """The room a line is heard in: its own place tag, else its scene's ``room`` for an in-world voice.
+
+    The narrator, a voice through a device and a voice in a space of its own stay out of
+    the scene's room.
+    """
+    own = [ROOM_EFFECT_ROOMS[effect] for effect in chunk.speaker_effects if effect in ROOM_EFFECT_ROOMS]
+    if own:
+        return own[0]
+    if ctx.scene_room is None or is_narrator(chunk.speaker):
+        return None
+    if any(effect in OWN_SPACE_EFFECTS for effect in chunk.speaker_effects):
+        return None
+    return ctx.scene_room
 
 
 # Speakers' takes are brought this close to the cast's typical level, never by more.
@@ -406,6 +434,10 @@ NARRATOR_NAMES = frozenset({"narrator", "narration", "旁白", "storyteller", "s
 CHARACTER_POSITIONS = (-0.3, 0.3, -0.15, 0.15, -0.45, 0.45)
 
 
+def is_narrator(speaker: str) -> bool:
+    return " ".join(str(speaker).split()).casefold() in NARRATOR_NAMES
+
+
 def speaker_positions(chunks: list[Chunk]) -> dict[str, float]:
     """Where each speaker stands in the stereo image.
 
@@ -414,7 +446,7 @@ def speaker_positions(chunks: list[Chunk]) -> dict[str, float]:
     voice or a single character stays centred.
     """
     characters = [speaker for speaker in dict.fromkeys(chunk.speaker for chunk in chunks)
-                  if " ".join(speaker.split()).casefold() not in NARRATOR_NAMES]
+                  if not is_narrator(speaker)]
     if len(characters) < 2:
         return {}
     return {speaker: CHARACTER_POSITIONS[index % len(CHARACTER_POSITIONS)]
@@ -430,7 +462,9 @@ class _Render:
     decoded: dict[Path, np.ndarray]
     gains: dict[str, float]
     positions: dict[str, float]
-    room: str | None = None  # the enclosing scene's place effect, applied to its one-shot sounds
+    room: str | None = None  # the enclosing scene's room or place effect, heard by its one-shot sounds
+    scene_room: str | None = None  # the enclosing scene's ``room``, heard by its in-world voices too
+    placements: dict[int, float] = field(default_factory=dict)  # each chunk's stereo position, as mixed
 
 
 def _edge_texts(node: TreeNode, ctx: _Render) -> tuple[str, str, str, str] | None:
@@ -461,6 +495,7 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
         chunks = ctx.node_chunks.get(id(node), [])
         rendered_turns: list[tuple[str, np.ndarray, str]] = []  # stereo, placed
         line_offsets: list[list[tuple[int, int]]] = []
+        wets: list[np.ndarray | None] = []  # each take's room, which rings on past it
         for chunk in chunks:
             take = ctx.takes[chunk.index]
             tidied = audio.tidy_take(take.samples, take.rate)
@@ -474,20 +509,40 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
             if take.line_bounds is not None:
                 lines = [(round(start * rate / take.rate), round(end * rate / take.rate))
                          for start, end in take.line_bounds]
-            if chunk.speaker_effects:
+            room = _voice_room(chunk, ctx)
+            distance = next((effect for effect in chunk.speaker_effects if effect in DISTANCE_TAGS), "")
+            # Real rooms and distance are placed below; the other effects shape the voice itself.
+            effects = tuple(effect for effect in chunk.speaker_effects
+                            if effect not in ROOM_EFFECT_ROOMS and effect not in DISTANCE_TAGS)
+            if room in rooms.STYLIZED_ROOMS:  # a scene underwater or in a dream: its voices carry it
+                effects, room = tuple(dict.fromkeys((*effects, room))), None
+            if effects:
                 dry = len(tidied)
-                tidied = apply_speaker_effects(tidied, rate, chunk.speaker_effects)
+                tidied = apply_speaker_effects(tidied, rate, effects)
                 if dry and len(tidied) != dry:
                     lines = [(start * len(tidied) // dry, end * len(tidied) // dry) for start, end in lines]
-            placed = audio.pan_mono(tidied, ctx.positions.get(chunk.speaker, 0.0))
-            rendered_turns.append((chunk.speaker, placed, chunk.text))
+            # The room hears the voice as spoken; distance changes only what reaches the listener directly.
+            wets.append(rooms.room_wet(tidied, rate, room, send=NEAR_ROOM_SEND if distance == "near" else 1.0)
+                        if room else None)
+            tidied = audio.voice_distance(tidied, rate, distance, in_room=room is not None)
+            position = ctx.positions.get(chunk.speaker, 0.0)
+            ctx.placements[chunk.index] = position
+            rendered_turns.append((chunk.speaker, audio.pan_mono(tidied, position), chunk.text))
             line_offsets.append(lines)
         offsets: list[tuple[int, int]] = []
         joined = audio.join_takes(rendered_turns, rate, offsets)
+        advance = len(joined)
+        tails = [(start, wet) for (start, _end), wet in zip(offsets, wets) if wet is not None]
+        if tails:
+            out = np.zeros((max(advance, *(start + len(wet) for start, wet in tails)), 2), dtype=np.float32)
+            out[:advance] = joined
+            for start, wet in tails:
+                out[start:start + len(wet)] += wet
+            joined = out
         if spans is not None:
             spans.update((chunk.index, (*offset, lines))
                          for chunk, offset, lines in zip(chunks, offsets, line_offsets))
-        return joined, len(joined)
+        return joined, advance
 
     if isinstance(node, PauseNode):
         silence = np.zeros((max(0, int(round(node.seconds * rate))), 2), dtype=np.float32)
@@ -526,8 +581,11 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
         return out, cursor
 
     if isinstance(node, ParallelNode):
-        # A scene block whose voices share one place sets the room for the sounds inside it.
-        ctx = replace(ctx, room=_scene_room(node, ctx) or ctx.room)
+        # A scene's room is heard by the sounds inside it, and its voices when the script sets it;
+        # its stage places the speakers it names for this scene.
+        stage = {speaker: position for speaker, position in node.stage if not is_narrator(speaker)}
+        ctx = replace(ctx, room=_scene_room(node, ctx) or ctx.room, scene_room=node.room or ctx.scene_room,
+                      positions={**ctx.positions, **stage} if stage else ctx.positions)
         tracks: list[dict] = []
         track_spans: list[Spans | None] = []  # each child's own spans; None for a cue mixed here
         for child in node.children:
@@ -567,6 +625,7 @@ def _render_ast(
     spans: Spans | None = None,
     gains: dict[str, float] | None = None,
     positions: dict[str, float] | None = None,
+    placements: dict[int, float] | None = None,
 ) -> np.ndarray:
     """Recursively render a Drama 3 AST node into (frames, 2) float32 stereo audio at ``rate``.
 
@@ -574,10 +633,12 @@ def _render_ast(
     keyed by chunk index, with the (start, end) of each of its script lines inside the take;
     and each sound cue's, keyed ``("sound", id)``, with its name and whether it loops.
     ``gains`` scales each speaker's takes (see ``speaker_gains``) and ``positions`` places
-    them left to right (see ``speaker_positions``); unlisted speakers are centred.
+    them left to right (see ``speaker_positions``); unlisted speakers are centred. A scene's
+    ``stage`` moves the speakers it names. ``placements``, when given, receives each chunk's
+    position as mixed, keyed by chunk index.
     """
     ctx = _Render(node_chunks, takes, sound_clips, rate, {} if decoded is None else decoded, gains or {},
-                  positions or {})
+                  positions or {}, placements={} if placements is None else placements)
     return _render(node, ctx, spans)[0]
 
 
@@ -744,8 +805,9 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
             tools.stop()  # release alignment VRAM before the next speech job
     rate = ordered[0].rate
     spans: Spans = {}
+    placements: dict[int, float] = {}
     joined = _render_ast(tree, node_chunks, takes, sound_clips, rate, spans=spans, gains=speaker_gains(takes),
-                         positions=speaker_positions(chunks))
+                         positions=speaker_positions(chunks), placements=placements)
     joined = audio.master(joined, rate)
 
     # Where each take and script line plays in the mix, for synced subtitles;
@@ -779,6 +841,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
                         "text": t.chunk.text, "take": keys[t.chunk.index], "reused": t.attempts == 0,
                         "attempts": t.attempts,
                         "speaker_effects": list(t.chunk.speaker_effects),
+                        **({"pan": round(placements[t.chunk.index], 3)} if t.chunk.index in placements else {}),
                         "check": t.check.reason if t.check is not None else "skipped",
                         # False only for a take kept after every attempt failed its check
                         # (a saved take is checked again when reused).

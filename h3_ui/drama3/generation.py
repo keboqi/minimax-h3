@@ -19,11 +19,13 @@ _CUE = re.compile(r"<\|[^|]*\|>|<[^>]*>|\[[^\]]*\]|\{[^{}\n]*\}")
 _NAME_TONES = 8
 
 
-def _stage_tones(speakers):
+def _stage_tones(speakers, pans=None):
     """Each speaker's color and place in the stereo image, by name, in order of first line.
 
     Places follow the mix (``speaker_positions``): the narrator is centred, and characters
-    spread to both sides only when there are two or more of them.
+    spread to both sides only when there are two or more of them. ``pans`` holds where the
+    mix placed each speaker's first line, which a scene's ``stage`` can move; results from
+    before it was recorded have none.
     """
     from h3_app.drama3.serving.generate import CHARACTER_POSITIONS, NARRATOR_NAMES
 
@@ -34,6 +36,9 @@ def _stage_tones(speakers):
     tones.update((name, (str(index % _NAME_TONES),
                          CHARACTER_POSITIONS[index % len(CHARACTER_POSITIONS)] if spread else 0.0))
                  for index, name in enumerate(characters))
+    for name, pan in (pans or {}).items():
+        if name in tones:
+            tones[name] = (tones[name][0], float(pan))
     return tones
 
 
@@ -248,11 +253,13 @@ class GenerationHandlers:
         if isinstance(output, dict):
             output = output.get("path") or output.get("value")
         settings = self._result_settings(output)
-        entries = []
+        entries, pans = [], {}
         for chunk in settings.get("chunks") or []:
             if chunk.get("start") is None:
                 continue
             speaker = str(chunk.get("name") or f"Speaker {chunk.get('speaker', 0)}")
+            if chunk.get("pan") is not None:
+                pans.setdefault(speaker, chunk["pan"])
             # A take can hold several script lines; results from before line timings show it whole.
             for line in chunk.get("lines") or [chunk]:
                 text = " ".join(_CUE.sub(" ", str(line.get("text", ""))).split())
@@ -262,7 +269,7 @@ class GenerationHandlers:
                 entries.append((speaker, text, start, float(line.get("end", start))))
         if not entries:
             return gr.update(value="", visible=False)
-        tones = _stage_tones(speaker for speaker, *_ in entries)
+        tones = _stage_tones((speaker for speaker, *_ in entries), pans)
         sounds = [(str(sound.get("name") or "Sound"), bool(sound.get("loop")), float(sound["start"]),
                    float(sound.get("end", sound["start"])))
                   for sound in settings.get("sounds") or [] if sound.get("start") is not None]

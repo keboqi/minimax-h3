@@ -318,10 +318,32 @@ stereo image (clips generated before this were mono and play in the centre). In
 Advanced mode a sound can be placed with `pan="-0.6"` (-1 left to 1 right), moved
 during the clip with `pan="-0.8,0"`, and set `distance="far"` (muffled, quieter, with
 room reflections) or `distance="near"`; the writer adds these where the story implies
-a position. When a scene's voices share one place effect (`<reverb_small_room>`,
-`<reverb_large_hall>`, `<underwater>` or `<dream_sequence>`), its one-shot effects
-get the same room, so a knock and a voice sound like one space; ambience and music
-loops do not. A loop repeats from the point near its end that best matches its
+a position.
+
+A scene can set its room once on its master block: `<parallel room="small_room">`.
+Rooms are `small_room`, `medium_room`, `large_hall`, `outdoors`, `underwater` and
+`dream_sequence`. Every character line and one-shot effect in the block is heard in that
+room; the narrator stays outside it, and a voice through a device (`<phone_call>`,
+`<radio_broadcast>`, ...) or with a place effect of its own keeps that instead. The four
+real rooms are rendered by convolution with stereo room responses the app generates
+(early reflections of a shoebox room, then a diffuse tail that decays faster in the
+highs). The room is mixed beside the dry voice, so the voice keeps its level and its
+place while the room surrounds the listener, and each line's room rings on into the
+gap after it. `<reverb_small_room>` and `<reverb_large_hall>` on a line use the same
+rooms. When a scene sets no room and its voices share one place effect, its one-shot
+effects get that place, as before; ambience and music loops never do, since they are
+the room already.
+
+The same block can place its characters for that scene: `stage="Mia=-0.5, Leo=0.4"`
+(names as the lines use them, -1 left to 1 right). Characters it does not name keep
+their places, and the narrator stays centred. A line can also come from further off
+or close by: `<far>` or `<near>` right after the speaker's name. A far voice loses its
+highs and is quieter while its room stays, so it sounds further away inside the room;
+a near voice takes less of the room. None of these are sent to Drama 3. A room or stage
+changes only the mix, so Remix applies it to saved takes; a distance tag also splits a
+speaker's passage where the distance changes, so lines it regroups are generated again.
+The stage under the player shows
+each speaker where the mix placed their first line. A loop repeats from the point near its end that best matches its
 start, so its seams are crossfaded where they are least audible. The finished mix is brought to -16 LUFS with a look-ahead limiter holding
 peaks under -1.5 dBFS, linked across both channels. Remix applies all of this to older
 results too.

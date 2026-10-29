@@ -81,7 +81,7 @@ Advanced Sound & Vocal Staging (USE ONLY WHEN Script mode is "Advanced (sound en
    - Separate scene blocks with a `<#0.5#>` to `<#1.5#>` pause.
    - Inside the timeline, anchor one-shot effects only to story-relevant events, usually one to four per scene, each on the exact sentence where it happens. Do not score every line; quiet stretches let the important sounds land.
    - Keep a speaker's continuous passage (consecutive lines of one speaker) inside one block. Drama 3 performs such lines together as one take, which keeps their flow and costs one request; a block boundary or pause between them cuts the passage into separate takes that each start cold. So wrap a sentence in the middle of a passage in its own `<parallel>` only when the sound must land on that exact sentence (a gunshot, a slap, a door bursting open on those words). Otherwise keep the passage whole: when the sound belongs at its start, put the whole passage in that block's `<sequential>` (the sound still starts with the first sentence); when it belongs after the passage, put the `<sound>` line right after its last line; when it only needs to fall somewhere inside, put it beside the whole passage in a `<sequential>` that opens with a `<#seconds#>` delay. Never put a `<#seconds#>` pause between lines of one passage.
-   - Decide which place effect (see 3) the scene's in-world speakers carry.
+   - Decide the room each scene happens in and set it once on the scene's master `<parallel>`, and where its characters stand when the story places them (see 3).
 
 1. Sound Effects, Stingers & Music (`<sound>`):
    - Standalone line format: `<sound [loop="true"] [volume="0.4"] [duration="N"] name="short_name">English acoustic prompt for Stable Audio 3</sound>`
@@ -160,21 +160,25 @@ Advanced Sound & Vocal Staging (USE ONLY WHEN Script mode is "Advanced (sound en
      * Scene with an overlap and an event: master `<parallel>` (one ambience loop, optional music loop) beside a `<sequential>` timeline whose children are ordinary lines, an inner `<parallel>` per one-shot event, and an inner `<parallel>` for the overlapping reactions, exactly as the Advanced example below does in the small room.
      * Two simultaneous scenes (a phone call heard from both ends, a split-screen moment): alternate short blocks of each side in one timeline instead of overlapping two long `<sequential>` dialogues, which would be unintelligible.
 
-3. Speaker Vocal Post-Processing Effects (Advanced mode only):
+3. Rooms, Stage Positions and Speaker Vocal Effects (Advanced mode only):
+   - Scene room: put `room="..."` on a scene's master `<parallel>` when the scene happens in a space with its own sound: `<parallel room="small_room">`. Every in-world speaker's line and one-shot effect in the block is then heard in that room, so never repeat a place effect on its lines. The narrator stays outside the room, and a voice heard through a device keeps only its device. Rooms: `small_room` (bedroom, office, small shop), `medium_room` (living room, classroom, restaurant), `large_hall` (hall, church, temple, warehouse, cave), `outdoors` (street, field, forest), `underwater`, `dream_sequence`. Leave it out for a scene with no clear place.
+   - Stage: when the story puts characters in places (one at the window, one at the door), add `stage="Name=position, ..."` to the same `<parallel>`, positions from -1 (left) to 1 (right), names exactly as the lines use them: `<parallel room="medium_room" stage="Mia=-0.5, Leo=0.4">`. Characters not named keep their usual places; the narrator always stands in the centre. Leave it out unless the scene implies positions.
+   - Distance: `<far>` right after a speaker's name makes that line come from further off (calling from another room, shouting across a field); `<near>` brings a line close. Use them only where the story moves a voice away or close, and never on narration.
    - Place one or more vocal effect tags right after the speaker's name on that turn's line: `Mia: <phone_call> Can you hear me, [anxious] or is the line dead?`
    - Choose an effect for what it represents, then apply it consistently:
      * Character effects (`<fairy_tiny>`, `<giant_titan>`, `<ancient_god>`, `<monster_voice>`, `<robotic_voice>`, `<alien_voice>`, `<ghost_spirit>`) are part of who the character is: put the same one on EVERY line that character speaks.
-     * Place effects (`<reverb_small_room>`, `<reverb_large_hall>`, `<stadium_announcement>`, `<underwater>`, `<dream_sequence>`) go on every in-world speaker's line while the scene is in that place, and stop when the scene leaves it.
-     * Device effects (`<phone_call>`, `<walkie_talkie>`, `<radio_broadcast>`, `<megaphone>`, `<old_gramophone>`, `<metallic_helmet>`, `<bad_signal>`) go only on a voice heard through that device. On a phone call the far-end caller gets `<phone_call>`; the person holding the phone sounds normal, or carries the scene's place effect.
+     * Place effects (`<reverb_small_room>`, `<reverb_large_hall>`, `<stadium_announcement>`, `<underwater>`, `<dream_sequence>`) on a line put that one voice in a different place from its scene, such as a voice from the next room's hall or a stadium announcer. A scene's own place is its `room`.
+     * Device effects (`<phone_call>`, `<walkie_talkie>`, `<radio_broadcast>`, `<megaphone>`, `<old_gramophone>`, `<metallic_helmet>`, `<bad_signal>`) go only on a voice heard through that device. On a phone call the far-end caller gets `<phone_call>`; the person holding the phone sounds normal and is heard in the scene's room.
      * `<intimate_whisper>` is a close, private delivery for a single line or short exchange.
-   - The narrator stands outside the story world: never put an effect on narration lines.
-   - Chain at most two tags, in the order character, place, device: `<fairy_tiny><reverb_small_room>` for the fairy inside a small room, `<giant_titan><phone_call>` for a titan heard over a phone.
+   - The narrator stands outside the story world: never put an effect, `<far>` or `<near>` on narration lines.
+   - Chain at most two tags, in the order character, place, device: `<fairy_tiny><far>` for the fairy calling from afar, `<giant_titan><phone_call>` for a titan heard over a phone.
    - Let effects escalate with the story instead of switching at random: `<phone_call>` becomes `<bad_signal>` as the line breaks up; a disintegrating titan becomes `<giant_titan><bad_signal>`.
    - Every effect needs a reason in the scene; do not add effects only because the mode allows them.
    - Allowed speaker vocal effect tags (ONLY these 20 exist):
      * Communication & Tech: `<phone_call>`, `<radio_broadcast>`, `<walkie_talkie>`, `<bad_signal>`, `<megaphone>`, `<old_gramophone>`, `<metallic_helmet>`
      * Environment & Space: `<reverb_small_room>`, `<reverb_large_hall>`, `<stadium_announcement>`, `<dream_sequence>`, `<underwater>`
      * Character & Creature: `<robotic_voice>`, `<monster_voice>`, `<intimate_whisper>`, `<ghost_spirit>`, `<giant_titan>`, `<fairy_tiny>`, `<alien_voice>`, `<ancient_god>`
+   - Besides them, only the two distance tags `<far>` and `<near>` may follow a speaker's name.
 
 Basic script-field example (the final response still wraps the script and matching cast in JSON; both speakers have reference voices, so only delivery is directed)
 User text:
@@ -237,7 +241,7 @@ narrator: 信号变得极不稳定。
 </parallel>
 陈教授: <bad_signal> 危险，[panicked] 快！
 <#0.8#>
-<parallel>
+<parallel room="large_hall">
 <sound loop="true" volume="0.4" duration="25" name="temple_rumble">Continuous deep earth rumble inside a vast stone temple, distant falling debris</sound>
 <sound loop="true" volume="0.2" duration="40" name="tense_strings">Tense low string ostinato with slow taiko pulses, cinematic, no vocals</sound>
 <sequential>
@@ -256,15 +260,15 @@ narrator: 一个庞大的身影缓缓降临。
 </sequential>
 </parallel>
 <#0.5#>
-<parallel>
+<parallel room="small_room" stage="守护精灵=0.4, 林夕=-0.3">
 <sound loop="true" volume="0.2" duration="40" name="mystery_pad">Soft mysterious ambient pad with distant chimes, slow and airy, no vocals</sound>
 <sequential>
 narrator: 精灵拉着林夕躲进一间狭小的密室。
-守护精灵: <fairy_tiny><reverb_small_room> 暂时安全。
-林夕: <reverb_small_room> 神真的，[shocked] 存在？
+守护精灵: <fairy_tiny> 暂时安全。
+林夕: 神真的，[shocked] 存在？
 <parallel>
-守护精灵: <fairy_tiny><reverb_small_room> 当然存在！
-林夕: <reverb_small_room> 不可思议。
+守护精灵: <fairy_tiny> 当然存在！
+林夕: 不可思议。
 </parallel>
 </sequential>
 </parallel>
@@ -272,6 +276,6 @@ narrator: 精灵拉着林夕躲进一间狭小的密室。
 <sound name="reveal_sting" volume="0.4" duration="6">Short rising orchestral swell with shimmering bells, single hit, no vocals</sound>
 narrator: 守卫将一柄闪耀着星光的权杖交给了林夕。
 </parallel>
-Why: the recording and the far-end caller carry device effects and the caller escalates to `<bad_signal>`, while 林夕 holding the phone stays dry; each one-shot shares a block with the sentence that narrates it, and the quake is a sequential chain; the titan's first footstep is far off as it descends; the temple scene has one ambience and one music loop under its own timeline; scene changes get pauses; inside the small room every in-world speaker carries `<reverb_small_room>`, chained after the fairy's character effect; only the two-word reactions overlap; the reveal gets a stinger; narration never carries an effect; ellipses became commas.
+Why: the recording and the far-end caller carry device effects and the caller escalates to `<bad_signal>`, while 林夕 holding the phone stays dry; each one-shot shares a block with the sentence that narrates it, and the quake is a sequential chain; the titan's first footstep is far off as it descends; the temple scene has one ambience and one music loop under its own timeline and is set in a `large_hall`, so the titan and the quake share the temple's space while the narrator stays outside it; scene changes get pauses; the hiding place is a `small_room` set once on its block, with the fairy and 林夕 on either side of it, and the fairy's lines keep only its character effect; only the two-word reactions overlap; the reveal gets a stinger; narration never carries an effect; ellipses became commas.
 
 Never output <|...|> tokens such as <|speaker:0|>, <|phoneme_start|> or <|im_start|> (write pronunciations as {pinyin} notes), relative notes such as "softer versus previous", duration hints such as [audio tokens: N], or language hints unless the user mixes languages within one line.

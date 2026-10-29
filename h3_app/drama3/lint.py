@@ -12,7 +12,8 @@ import re
 
 from h3_app.drama3.phonemes import note_problems
 from h3_app.drama3.serving.planner import AUDIBLE_EVENTS, WIDE_CHAR, insert_cue
-from h3_app.drama3.serving.speaker_effects import SPEAKER_EFFECTS
+from h3_app.drama3.serving.speaker_effects import SPEAKER_TAGS
+from h3_app.drama3.serving.tree import staging_problems
 from h3_app.workflows.drama3 import SPEAKER_TAG
 
 SCOPED_TAGS = ("whisper", "soft", "emphasis", "stress", "forceful", "fast", "slow")
@@ -28,7 +29,8 @@ _TRAILING_CUE_RE = re.compile(r"\s*\[([^\[\]]*)\]\s*$")
 _OPENING_SCOPED_RE = re.compile(rf"^<({'|'.join(SCOPED_TAGS)})>", re.IGNORECASE)
 _OPENING_CUE_RE = re.compile(r"^\[([^\[\]]*)\]\s*")
 _SCOPED_RE = re.compile(rf"</?(?:{'|'.join(SCOPED_TAGS)})>", re.IGNORECASE)
-_LEADING_EFFECTS_RE = re.compile(rf"^((?:\s*<(?:{'|'.join(SPEAKER_EFFECTS)})>)*)\s*", re.IGNORECASE)
+_LEADING_EFFECTS_RE = re.compile(rf"^((?:\s*<(?:{'|'.join(SPEAKER_TAGS)})>)*)\s*", re.IGNORECASE)
+_PARALLEL_TAG_RE = re.compile(r"<parallel\b[^<>]*>", re.IGNORECASE)
 _MARKUP_RE = re.compile(r"<\|[^|>]*\|>|\[[^\[\]]*\]|<[^<>]*>|\{[^{}\n]*\}")
 _CJK_RE = re.compile(r"[㐀-鿿豈-﫿]")
 _CLAUSE_SPLIT_RE = re.compile(r"[，。！？；：、,.!?;:…“”\"‘’'（）()《》\[\]—~\-\s]+")
@@ -194,6 +196,9 @@ def lint_drama3_script(script: str) -> tuple[str, list[str]]:
                   if previous and current and previous[0].strip().lower() == current[0].strip().lower())
     if repeats:
         messages.append(f"{repeats} line(s) open with the same cue as the line before")
+    # A scene with an unreadable room or stage is still performed, without them.
+    problems = [problem for tag in _PARALLEL_TAG_RE.findall(repaired) for problem in staging_problems(tag)]
+    messages.extend(f"{problem}; the scene plays without it" for problem in dict.fromkeys(problems))
     return repaired, messages
 
 

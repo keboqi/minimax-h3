@@ -1089,15 +1089,20 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
                             "<|speaker:0|> The fairy whispered.\n"
                             "<|speaker:1|> <fairy_tiny><reverb_small_room> Hush.\n"
                             "<|speaker:2|> <reverb_small_room> Why?\n</sequential>\n</parallel>")
-        self.assertEqual(generate._scene_room(tree, ctx), "reverb_small_room")  # the narrator stays outside
+        self.assertEqual(generate._scene_room(tree, ctx), "small_room")  # the narrator stays outside
         (knock,) = iter_sound_nodes(tree)
         calls = []
         with patch.object(generate, "apply_speaker_effects",
                           side_effect=lambda samples, rate, effects: calls.append(effects) or samples):
-            generate._placed_sound(knock, ctx)
+            dry = generate._placed_sound(knock, ctx)
             self.assertEqual(calls, [])  # outside a scene: as recorded
-            generate._placed_sound(knock, generate.replace(ctx, room="reverb_small_room"))
-            self.assertEqual(calls, [("reverb_small_room",)] * 2)  # each channel
+            in_room = generate._placed_sound(knock, generate.replace(ctx, room="small_room"))
+            self.assertEqual(calls, [])  # a real room is convolved, not a vocal effect
+            self.assertGreater(len(in_room), len(dry))  # and rings on past the clip
+            room = in_room[: len(dry)] - dry  # mixed beside the knock, which keeps its level
+            self.assertLess(float(np.sqrt(np.mean(room ** 2))), 0.5 * float(np.sqrt(np.mean(dry ** 2))))
+            generate._placed_sound(knock, generate.replace(ctx, room="underwater"))
+            self.assertEqual(calls, [("underwater",)] * 2)  # a stylized place stays an effect, on each channel
 
         tree, ctx = context("<parallel>\n<sound name=\"knock\">Knock</sound>\n"
                             "<|speaker:1|> <reverb_small_room> Hush.\n</parallel>\n"
