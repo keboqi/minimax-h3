@@ -162,6 +162,12 @@ tag in **Speech text**. The director keeps the writer's notes, and **Speech text
 colors them like attribute values. Notes change a line's text, so a line takes a new take
 when a note is added or changed.
 
+English names and rare words take the same kind of note in CMU Arpabet, uppercase
+phonemes with a stress digit (0-2) on every vowel, right after the word:
+`Siobhan{SH IH0 V AO1 N}` or `Leicester{L EH1 S T ER0}`. The request to Drama 3 replaces
+the word and its note with one phoneme tag; everything else keeps the word. The writer
+adds these only for names and words a reader would plausibly misread.
+
 In **Speaker voices**, each shown speaker has a card with its name, slot and whether
 its voice is ready or saved; the first speaker is picked at first, and **Add speaker**
 picks the new one. The picked speaker's panel, titled with its index, name, and

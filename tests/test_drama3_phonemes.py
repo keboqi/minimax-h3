@@ -1,4 +1,4 @@
-"""Pinyin pronunciation notes: written after the characters in scripts, sent to Drama 3 as phoneme tags."""
+"""Pronunciation notes (pinyin, and Arpabet for English): written after the words in scripts, sent to Drama 3 as phoneme tags."""
 
 import json
 import unittest
@@ -98,6 +98,25 @@ class PhonemeNoteTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "tone number"):
             parse_script_cast_and_sounds(json.dumps(
                 {"script": "narrator: 他又长{zhang}高了。", "speakers": [speaker]}, ensure_ascii=False))
+
+    def test_english_notes_become_one_phoneme_tag_for_the_word(self):
+        self.assertEqual(to_phoneme_tags("Ask Siobhan{SH IH0 V AO1 N} first."),
+                         f"Ask {TAG.format('SH IH0 V AO1 N')} first.")
+        self.assertEqual(to_phoneme_tags("O'Neill{OW0 N IY1 L} and 银行{yin2 hang2}"),
+                         f"{TAG.format('OW0 N IY1 L')} and {TAG.format('yin2')}{TAG.format('hang2')}")
+        self.assertEqual(strip_notes("Leicester{L EH1 S T ER0} Square"), "Leicester Square")
+        self.assertEqual(note_problems("Leicester{L EH1 S T ER0}"), [])
+        self.assertIn("stress digit", note_problems("Leicester{L EH S T ER0}")[0])  # a vowel without stress
+        self.assertIn("follow the English word", note_problems("Hello {HH AH0 L OW1}")[0])
+        self.assertIn("no vowel", note_problems("Psst{P S T}")[0])
+        with self.assertRaises(H3Error):
+            to_phoneme_tags("Hello {HH AH0 L OW1}")
+
+    def test_a_cue_never_splits_an_english_word_from_its_note(self):
+        from h3_app.drama3.serving.planner import insert_cue
+
+        self.assertEqual(insert_cue("Siobhan{SH IH0 V AO1 N} waited.", "[softly]"),
+                         "Siobhan{SH IH0 V AO1 N} [softly] waited.")
 
     def test_writer_prompt_asks_for_risky_readings_only(self):
         from pathlib import Path
