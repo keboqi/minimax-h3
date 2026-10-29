@@ -880,6 +880,17 @@ class ReviewFixTests(Workspace):
         self.assertEqual(pipeline.take_problems(sessions.load(self.runtime, session.id)),
                          {2: "generation failed: still bad"})
 
+        # A line added before it moves the mark along; a line no longer dubbed is not reported.
+        segments = sessions.load(self.runtime, session.id).segments
+        sessions.update_segments(self.runtime, session.id, [
+            {"start": 0.0, "end": 0.4, "source": "new", "translation": "N"}, *segments])
+        self.assertEqual(pipeline.take_problems(sessions.load(self.runtime, session.id)),
+                         {3: "generation failed: still bad"})
+        segments = sessions.load(self.runtime, session.id).segments
+        segments[3]["dub"] = False
+        sessions.update_segments(self.runtime, session.id, segments)
+        self.assertEqual(pipeline.take_problems(sessions.load(self.runtime, session.id)), {})
+
     def test_translations_land_on_the_latest_saved_lines(self):
         session = self.session_with_vocals([
             {"start": 0.0, "end": 1.0, "source": "one"},

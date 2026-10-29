@@ -306,7 +306,7 @@ def readiness_html(session: sessions.Session | None) -> str:
             ("Untranslated (kept as is)", str(untranslated)),
             ("Speakers", str(len({s["speaker"] for s in lines})))]
     facts = "".join(f"<dt>{name}</dt><dd>{value}</dd>" for name, value in rows)
-    failed = sorted(index for index in pipeline.take_problems(session) if lines[index].get("dub", True))
+    failed = sorted(pipeline.take_problems(session))
     warning = ""
     if failed:
         numbers = line_numbers(failed)

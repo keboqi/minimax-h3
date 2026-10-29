@@ -84,9 +84,9 @@ PLAYER_DIR = ".dub-player"
 # Constant bitrate: browsers seek a long variable-bitrate MP3 by estimate and land seconds away
 # from the reported time, so the dub would drift from its subtitles after every seek.
 PLAYER_MP3 = ("-c:a", "libmp3lame", "-b:a", "128k")
+OUTPUT_MP3 = ("-c:a", "libmp3lame", "-b:a", "192k")
 # Session key for lines whose take failed its check or could not be generated, shown in Review lines.
 TAKE_PROBLEMS = "take_problems"
-OUTPUT_MP3 = ("-c:a", "libmp3lame", "-b:a", "192k")
 
 
 # ---------------------------------------------------------------------------
@@ -838,42 +838,43 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
     take_store.prune(store)
 
 
-def take_problems(session: sessions.Session) -> dict[int, str]:
-    """Lines whose current take failed its check or could not be generated, with why.
+def _take_mark(segment: dict) -> tuple[float, str]:
+    """What a failed-take mark is filed under: the line as it was voiced, not its position,
+    so adding or deleting other lines keeps it, and editing this line's start or text drops it."""
+    return round(float(segment["start"]), 3), str(segment["translation"])
 
-    A mark belongs to the line as it was voiced: once its start or translation changes,
-    or lines are added or removed before it, the mark no longer matches and is ignored.
-    """
+
+def _stored_marks(session: sessions.Session) -> dict[tuple[float, str], str]:
     stored = session.data.get(TAKE_PROBLEMS)
-    lines = session.segments
-    found = {}
-    for key, entry in (stored.items() if isinstance(stored, dict) else ()):
+    marks = {}
+    for entry in stored if isinstance(stored, list) else ():
         try:
-            index = int(key)
-            matches = (isinstance(entry, dict) and 0 <= index < len(lines)
-                       and lines[index]["translation"] == entry.get("translation")
-                       and abs(lines[index]["start"] - float(entry.get("start"))) < 0.0005)
-        except (TypeError, ValueError):
+            marks[_take_mark(entry)] = str(entry.get("reason") or "failed")
+        except (AttributeError, KeyError, TypeError, ValueError):
             continue
-        if matches:
-            found[index] = str(entry.get("reason") or "failed")
-    return found
+    return marks
+
+
+def take_problems(session: sessions.Session) -> dict[int, str]:
+    """The lines the next dub voices whose current take failed its check or could not be generated, with why."""
+    marks = _stored_marks(session)
+    return {index: marks[_take_mark(line)] for index, line in enumerate(session.segments)
+            if line["translation"] and line.get("dub", True) and _take_mark(line) in marks}
 
 
 def _record_take_problems(session: sessions.Session, outcomes: dict[int, tuple[dict, str]]) -> None:
     """Mark lines whose new take failed, clear those that now have a good one, and drop stale marks."""
 
     def change(latest: sessions.Session) -> None:
-        marks = {str(index): {"reason": reason, "translation": latest.segments[index]["translation"],
-                              "start": latest.segments[index]["start"]}
-                 for index, reason in take_problems(latest).items()}
-        for index, (segment, problem) in outcomes.items():
+        current = {_take_mark(line) for line in latest.segments}
+        marks = {mark: reason for mark, reason in _stored_marks(latest).items() if mark in current}
+        for segment, problem in outcomes.values():
             if problem:
-                marks[str(index)] = {"reason": problem, "translation": segment["translation"],
-                                     "start": segment["start"]}
+                marks[_take_mark(segment)] = problem
             else:
-                marks.pop(str(index), None)
-        latest.data[TAKE_PROBLEMS] = marks
+                marks.pop(_take_mark(segment), None)
+        latest.data[TAKE_PROBLEMS] = [{"start": start, "translation": translation, "reason": reason}
+                                      for (start, translation), reason in marks.items()]
 
     sessions.modify(session, change)
 
