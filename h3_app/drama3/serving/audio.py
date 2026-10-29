@@ -22,7 +22,10 @@ MAX_INTERNAL_GAP = 1.0  # longer silences inside a take are shortened ...
 KEPT_GAP = 0.5  # ... to this
 TURN_GAP = 0.3  # between speakers
 SAME_SPEAKER_GAP = 0.12  # between chunks of one speaker
-CUT_OFF_GAP = 0.04  # after a line cut off with a dash, the next speaker barges in
+# After a line cut off with a dash the next speaker barges in over its last word: a negative gap,
+# which also covers the two takes' edge padding.
+CUT_OFF_GAP = -0.3
+HEATED_GAP = 0.12  # in a heated exchange the reply comes in hard
 QUICK_REPLY_GAP = 0.22  # an answer to a question or exclamation comes quickly
 WEIGHTED_GAP = 0.6  # before a line that opens slow, sad or hushed
 
@@ -103,7 +106,7 @@ def save_mp3(samples: np.ndarray, rate: int, target: Path) -> None:
         pending.unlink(missing_ok=True)
 
 
-def _silent_frames(samples: np.ndarray, rate: int) -> np.ndarray:
+def _silent_frames(samples: np.ndarray, rate: int, below_peak_db: float = 30.0) -> np.ndarray:
     size = max(1, int(rate * FRAME_SECONDS))
     frames = samples[: len(samples) // size * size].reshape(-1, size)
     if not len(frames):
@@ -112,7 +115,7 @@ def _silent_frames(samples: np.ndarray, rate: int) -> np.ndarray:
     # Quiet/whispered takes need a lower threshold, including when trimming.
     # This is an activity detector, not a speech recognizer.
     peak = float(rms.max())
-    threshold = max(10 ** (-75 / 20), min(10 ** (SILENCE_DBFS / 20), peak * 10 ** (-30 / 20)))
+    threshold = max(10 ** (-75 / 20), min(10 ** (SILENCE_DBFS / 20), peak * 10 ** (-below_peak_db / 20)))
     return rms < threshold
 
 
@@ -168,16 +171,28 @@ def check_take(samples: np.ndarray, rate: int, expected_seconds: float,
     return TakeCheck(True, "; ".join(warnings) or "ok", seconds, voiced, score, tuple(warnings))
 
 
+# Edges are found with a lower threshold than activity, so a soft breath before a line or a
+# sigh trailing after it is kept; the cut is faded so it never clicks.
+EDGE_BELOW_PEAK_DB = 42.0
+EDGE_FADE_SECONDS = 0.02
+
+
 def tidy_take(samples: np.ndarray, rate: int) -> np.ndarray:
-    """Trim edge silence and shorten long silences inside the take."""
-    silent = _silent_frames(samples, rate)
+    """Trim edge silence, keeping soft breaths at the edges, and shorten long silences inside the take."""
+    if _silent_frames(samples, rate).all():
+        return samples[:0]
+    silent = _silent_frames(samples, rate, EDGE_BELOW_PEAK_DB)
     size = max(1, int(rate * FRAME_SECONDS))
     voiced = np.flatnonzero(~silent)
-    if not len(voiced):
-        return samples[:0]
     pad = int(EDGE_PAD_SECONDS / FRAME_SECONDS)
     first, last = max(0, voiced[0] - pad), min(len(silent), voiced[-1] + 1 + pad)
-    return shorten_pauses(samples[first * size:last * size], rate, longer_than=MAX_INTERNAL_GAP, keep=KEPT_GAP)
+    trimmed = np.array(samples[first * size:last * size], dtype=np.float32)
+    fade = min(int(EDGE_FADE_SECONDS * rate), len(trimmed) // 4)
+    if fade > 0:
+        ramp = np.sin(np.linspace(0.0, np.pi / 2, fade, dtype=np.float32)) ** 2
+        trimmed[:fade] *= ramp
+        trimmed[-fade:] *= ramp[::-1]
+    return shorten_pauses(trimmed, rate, longer_than=MAX_INTERNAL_GAP, keep=KEPT_GAP)
 
 
 def shorten_pauses(samples: np.ndarray, rate: int, *, longer_than: float, keep: float) -> np.ndarray:
@@ -256,13 +271,18 @@ _WEIGHTED_CUE = re.compile(r"\[[^\]]*\b(?:sad|sadly|soft|softly|slow|slowly|quie
                            r"hesitantly|gentle|gently|tired|weary|grief|grieving|whisper|whispering|whispers|"
                            r"reluctant|reluctantly|heavy|somber|sombre|mournful|tearful)\b[^\]]*\]|<(?:slow|soft|whisper)>",
                            re.IGNORECASE)
+_HEATED_CUE = re.compile(r"\[[^\]]*\b(?:angry|angrily|furious|furiously|enraged|shouting|shouts|yelling|yells|"
+                         r"screaming|screams|snapping|snaps|urgent|urgently|panicked|panicking|panic|frantic|"
+                         r"frantically|desperate|desperately|heated|accusing|outraged|fierce|fiercely)\b[^\]]*\]"
+                         r"|<(?:fast|forceful)>", re.IGNORECASE)
 
 
 def turn_gap(previous_text: str, next_text: str, same_speaker: bool) -> float:
     """Silence before ``next_text``, shaped by how ``previous_text`` ends and how the next line opens.
 
-    A line cut off with a dash is barged in on, a question or exclamation is answered
-    quickly, and a line opening slow, sad or hushed gets a longer breath before it.
+    A line cut off with a dash is barged in on (a negative gap: the takes overlap), a
+    line opening slow, sad or hushed gets a longer breath before it, a heated line or a
+    reply to one comes in hard, and a question or exclamation is answered quickly.
     """
     if same_speaker:
         return SAME_SPEAKER_GAP
@@ -273,6 +293,8 @@ def turn_gap(previous_text: str, next_text: str, same_speaker: bool) -> float:
     # A cue shapes the words after it, so only the line's first words set its entry.
     if _WEIGHTED_CUE.search(opening[:80]):
         return WEIGHTED_GAP
+    if _HEATED_CUE.search(opening[:80]) or _HEATED_CUE.search(str(previous_text or "")):
+        return HEATED_GAP
     if ending.endswith(("?", "!", "？", "！")):
         return QUICK_REPLY_GAP
     return TURN_GAP
@@ -280,28 +302,34 @@ def turn_gap(previous_text: str, next_text: str, same_speaker: bool) -> float:
 
 def join_takes(takes: list[tuple], rate: int,
                spans: list[tuple[int, int]] | None = None) -> np.ndarray:
-    """Concatenate (speaker, samples[, text]) in order with short gaps.
+    """Join (speaker, samples[, text]) in order with short gaps; a negative gap overlaps the takes.
 
     With texts the gap follows the lines (see ``turn_gap``); without, it is the plain turn
-    or same-speaker gap. ``spans``, when given, receives each take's (start, end) sample
-    offsets in the result.
+    or same-speaker gap. An overlap never reaches past half of either take. ``spans``,
+    when given, receives each take's (start, end) sample offsets in the result.
     """
-    pieces, previous, cursor = [], None, 0
+    placed, previous, cursor = [], None, 0
     for speaker, samples, *text in takes:
         text = text[0] if text else None
+        samples = samples.astype(np.float32)
         if previous is not None:
-            previous_speaker, previous_text = previous
+            previous_speaker, previous_text, previous_length = previous
             same = speaker == previous_speaker
             gap = (turn_gap(previous_text, text, same) if text is not None and previous_text is not None
                    else SAME_SPEAKER_GAP if same else TURN_GAP)
-            pieces.append(np.zeros((int(rate * gap), *np.shape(samples)[1:]), dtype=np.float32))
-            cursor += len(pieces[-1])
-        pieces.append(samples.astype(np.float32))
+            cursor += max(int(rate * gap), -min(previous_length, len(samples)) // 2)
+        placed.append((cursor, samples))
         if spans is not None:
             spans.append((cursor, cursor + len(samples)))
         cursor += len(samples)
-        previous = (speaker, text)
-    return np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
+        previous = (speaker, text, len(samples))
+    if not placed:
+        return np.zeros(0, dtype=np.float32)
+    out = np.zeros((max(start + len(samples) for start, samples in placed), *np.shape(placed[0][1])[1:]),
+                   dtype=np.float32)
+    for start, samples in placed:
+        out[start:start + len(samples)] += samples
+    return out
 
 
 def active_level_db(samples: np.ndarray, rate: int) -> float | None:
@@ -440,6 +468,55 @@ def place_sound(samples: np.ndarray, rate: int, pan: tuple[float, float] | None 
     return out.astype(np.float32, copy=False)
 
 
+ONSET_PREROLL_SECONDS = 0.01
+MAX_ONSET_TRIM_SECONDS = 0.5
+
+
+def trim_onset(samples: np.ndarray, rate: int) -> np.ndarray:
+    """A one-shot clip from just before its first sound, so it lands on its cue.
+
+    Generated clips often open with a little dead air; at most ``MAX_ONSET_TRIM_SECONDS``
+    of it goes, so a sound that deliberately starts late is not cut into.
+    """
+    level = np.abs(np.asarray(samples, dtype=np.float32))
+    level = level.max(axis=1) if level.ndim == 2 else level
+    if not level.size or float(level.max()) <= 0.0:
+        return samples
+    first = int(np.argmax(level > float(level.max()) * 10 ** (-40 / 20)))
+    cut = max(0, min(first - int(ONSET_PREROLL_SECONDS * rate), int(MAX_ONSET_TRIM_SECONDS * rate)))
+    return samples[cut:]
+
+
+ROOM_TONE_BELOW_DB = 50.0  # room tone sits this far under the mix's loudness: felt in silences, never heard over speech
+ROOM_TONE_BAND_HZ = (60.0, 2000.0)
+
+
+def add_room_tone(samples: np.ndarray, rate: int) -> np.ndarray:
+    """``samples`` (frames, 2) over a faint, steady room tone, so no gap drops to digital silence."""
+    from scipy import signal
+
+    if np.ndim(samples) != 2 or not len(samples):
+        return samples
+    loudness = integrated_loudness(samples, rate)
+    if loudness is None:
+        return samples
+    rng = np.random.default_rng(20261029)
+    sos = signal.butter(2, [ROOM_TONE_BAND_HZ[0] / (0.5 * rate), min(ROOM_TONE_BAND_HZ[1] / (0.5 * rate), 0.99)],
+                        btype="bandpass", output="sos")
+    # Filtered white noise keeps about this share of its power in the band, so its level is known
+    # without measuring; blocks keep a long mix's memory small.
+    band_rms = np.sqrt((ROOM_TONE_BAND_HZ[1] - ROOM_TONE_BAND_HZ[0]) / (0.5 * rate))
+    gain = 10 ** ((loudness - ROOM_TONE_BELOW_DB) / 20) / band_rms
+    out = np.array(samples, dtype=np.float32)
+    state = np.zeros((sos.shape[0], 2, 2))
+    block = 10 * rate
+    for start in range(0, len(out), block):
+        noise = rng.standard_normal((min(block, len(out) - start), 2))
+        filtered, state = signal.sosfilt(sos, noise, axis=0, zi=state)
+        out[start:start + len(filtered)] += (filtered * gain).astype(np.float32)
+    return out
+
+
 FAR_VOICE_LOWPASS_HZ = 3500.0  # gentler than a far sound's, so far speech stays intelligible
 
 
@@ -530,16 +607,21 @@ LOOP_TAIL_SECONDS = 1.0  # ... and fade out over this after the block's speech, 
 SCENE_LEAD_IN_SECONDS = 0.8  # a block with a bed is heard for this long before its speech
 DUCK_DEPTH_DB = 12.0
 DUCK_ATTACK_SECONDS = 0.05
-DUCK_RELEASE_SECONDS = 0.3
+DUCK_RELEASE_SECONDS = 0.6
+# Speech stays "on" this long after it stops, so a bed holds its dip through breaths and
+# short turn gaps instead of pumping up between every phrase.
+DUCK_HOLD_SECONDS = 0.35
 DUCK_FRAME_SECONDS = 0.01
 
 
 def speech_duck_gain(speech: np.ndarray, rate: int, *, depth_db: float = DUCK_DEPTH_DB,
-                     attack: float = DUCK_ATTACK_SECONDS, release: float = DUCK_RELEASE_SECONDS) -> np.ndarray:
+                     attack: float = DUCK_ATTACK_SECONDS, release: float = DUCK_RELEASE_SECONDS,
+                     hold: float = DUCK_HOLD_SECONDS) -> np.ndarray:
     """Per-sample gain for sound tracks: ``depth_db`` lower while ``speech`` is audible.
 
     A sidechain envelope follower: 10 ms frames above the silence floor pull the
-    gain down over ``attack`` and let it recover over ``release`` once speech stops.
+    gain down over ``attack``, hold it for ``hold`` after speech stops, then let it
+    recover over ``release``.
     """
     samples = np.asarray(speech, dtype=np.float32).reshape(-1)
     if samples.size == 0 or rate <= 0:
@@ -550,6 +632,12 @@ def speech_duck_gain(speech: np.ndarray, rate: int, *, depth_db: float = DUCK_DE
     padded[: samples.size] = samples
     rms = np.sqrt(np.mean(padded.reshape(count, frame) ** 2, axis=1))
     speaking = 20.0 * np.log10(np.maximum(rms, 1e-10)) > SILENCE_DBFS
+    held = int(round(hold / DUCK_FRAME_SECONDS))
+    if held > 0 and speaking.any():
+        # Frames since speech was last heard; within the hold they still count as speaking.
+        index = np.arange(count)
+        last = np.maximum.accumulate(np.where(speaking, index, -held - 1))
+        speaking = index - last <= held
     floor = float(10.0 ** (-abs(depth_db) / 20.0))
     down = float(np.exp(-DUCK_FRAME_SECONDS / max(attack, 1e-4)))
     up = float(np.exp(-DUCK_FRAME_SECONDS / max(release, 1e-4)))

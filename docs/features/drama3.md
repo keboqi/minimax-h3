@@ -123,8 +123,9 @@ reply that changes lines, sounds or staging is ignored. Pasted replies from anot
 chat model are not sent to the director.
 
 A long turn is sent to Drama 3 in several requests, and each request starts
-afresh, so a request without its own delivery cue repeats the turn's last one
-(never an audible event such as [laughs]) after its opening words.
+afresh, so a request whose first sentence has no delivery cue of its own repeats the
+turn's last one (never an audible event such as [laughs]) after its opening words; a cue
+later in the request takes over from there.
 
 The writer's script is formatted for reading: each turn, sound, and
 `<parallel>`/`<sequential>` tag sits on its own line, indented two spaces per
@@ -301,11 +302,17 @@ MP3: browsers seek a variable-bitrate MP3 by estimate, so clicking a subtitle li
 or timeline segment could land on different speech than the one lit.
 
 The mix follows the script. Gaps between speakers follow the lines: a line cut off
-with a dash is barged in on, a question or exclamation is answered quickly, and a
-line opening slow, sad or hushed gets a longer breath. In Advanced mode, a block with
+with a dash is talked over (the next speaker comes in over its last word), a line
+opening slow, sad or hushed gets a longer breath, a heated line (angry, shouting,
+urgent, `<fast>`, `<forceful>`) or the reply to one comes in hard, and a question or
+exclamation is answered quickly. In Advanced mode, a block with
 an ambience or music loop opens with it alone for 0.8 s; loops fade in, dip under
-speech and fade out over a second under whatever follows, and one-shot effects and
-stingers always play to their end. Each speaker's takes are evened out toward the
+speech and fade out over a second under whatever follows. A dip holds through breaths
+and short gaps between lines, so beds do not pump up between phrases. One-shot effects
+and stingers start on their first sound (up to half a second of leading dead air is
+cut, so they land on their words) and always play to their end. A faint room tone, 50 dB
+under the mix's loudness, runs under the whole result, so pauses never drop to digital
+silence. Each speaker's takes are evened out toward the
 cast's typical level (by at most 6 dB, so whispers and shouts keep their contrast).
 Speaker vocal effects use Spotify's `pedalboard`, which setup installs; without it
 they fall back to simpler SciPy versions.
@@ -348,7 +355,8 @@ start, so its seams are crossfaded where they are least audible. The finished mi
 peaks under -1.5 dBFS, linked across both channels. Remix applies all of this to older
 results too.
 
-Each take is trimmed at its edges and long silences inside it are shortened,
+Each take is trimmed at its edges, keeping a soft breath before a line or a sigh
+after it and fading the cut, and long silences inside it are shortened,
 because the model sometimes generates spurious gaps; use `<#N#>` pause tags for
 intended pauses. **Balance** uses uncapped top-k; **Strict** and **Expressive**
 use top-k 30. Saved custom sampling settings remain respected. Zero top-k is sent

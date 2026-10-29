@@ -88,9 +88,15 @@ class PlannerTests(unittest.TestCase):
         self.assertIn(", [tense, low] and no light", chunks[1].text)
         self.assertNotIn("[sighs]", chunks[1].text)
         self.assertTrue(chunks[1].lines[0].startswith(chunks[1].text.split(" Door")[0]))
-        # A request with its own delivery cue keeps it, and later requests carry that one.
-        self.assertIn("[hushed]", chunks[-1].text)
-        self.assertEqual(chunks[-1].text.count("[tense, low]"), 0)
+        # A request whose own cue comes later still opens with the carried one, so its first
+        # sentence does not fall back to the voice's neutral read; its own cue takes over after.
+        last = chunks[-1].text
+        self.assertIn("[hushed]", last)
+        if not last.startswith("Then"):
+            self.assertEqual(last.count("[tense, low]"), 1)
+            self.assertLess(last.index("[tense, low]"), last.index("[hushed]"))
+        self.assertEqual(plan_chunks("<|speaker:0|> " + body + " Then, [hushed] a sound.")[-1].text.count("[hushed]"),
+                         1)
         # The lines a request speaks are still cut where the script's lines meet.
         self.assertEqual(chunks[-1].lines[-1], "Then, [hushed] a sound.")
         self.assertEqual(plan_chunks("<|speaker:0|> Plain line.")[0].text, "Plain line.")
@@ -951,15 +957,17 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
 
     def test_sound_tracks_duck_while_speech_is_audible(self):
         speech = np.concatenate([np.zeros(RATE, dtype=np.float32), tone(1.0), np.zeros(RATE, dtype=np.float32)])
-        gain = audio.speech_duck_gain(speech, RATE)
+        gain = audio.speech_duck_gain(np.concatenate([speech, np.zeros(2 * RATE, dtype=np.float32)]), RATE)
 
         def level(start, end):
             return float(np.mean(gain[int(start * RATE):int(end * RATE)]))
 
         self.assertAlmostEqual(level(0.0, 0.9), 1.0, places=3)  # before speech
         self.assertAlmostEqual(level(1.3, 1.9), 10 ** (-audio.DUCK_DEPTH_DB / 20), places=2)  # under speech
-        self.assertGreater(level(2.0, 2.1), level(1.3, 1.9))  # recovering after speech
-        self.assertAlmostEqual(level(2.8, 3.0), 1.0, places=1)  # released
+        # Held through a breath-length gap, then recovering.
+        self.assertAlmostEqual(level(2.0, 2.0 + audio.DUCK_HOLD_SECONDS - 0.02), level(1.3, 1.9), places=2)
+        self.assertGreater(level(2.5, 2.6), level(1.3, 1.9))
+        self.assertAlmostEqual(level(4.5, 5.0), 1.0, delta=0.02)  # released
 
         noise = np.random.default_rng(0).uniform(-0.1, 0.1, 8 * RATE).astype(np.float32)
 
@@ -983,8 +991,13 @@ class TreeAndSpeakerEffectsTests(unittest.TestCase):
         self.assertEqual(audio.turn_gap("Where were you?", "I was [sad, soft voice] at the grave.", False),
                          audio.WEIGHTED_GAP)
         self.assertEqual(audio.turn_gap("It rained.", "<reverb_small_room> We waited.", False), audio.TURN_GAP)
+        self.assertEqual(audio.turn_gap("You lied to me!", "I [angry] had no choice.", False), audio.HEATED_GAP)
+        self.assertEqual(audio.turn_gap("Get [shouting] out of here.", "Fine.", False), audio.HEATED_GAP)
         joined = audio.join_takes([("Mia", tone(1.0), "Wait —"), ("Leo", tone(1.0), "No.")], RATE)
+        self.assertLess(audio.CUT_OFF_GAP, 0)  # the interruption overlaps the cut-off line's tail
         self.assertAlmostEqual(len(joined) / RATE, 2.0 + audio.CUT_OFF_GAP, places=2)
+        short = audio.join_takes([("Mia", tone(0.2), "No —"), ("Leo", tone(1.0), "Yes.")], RATE)
+        self.assertAlmostEqual(len(short) / RATE, 1.1, places=2)  # never overlapping past half a take
 
     def test_master_reaches_the_loudness_target_under_the_peak_ceiling(self):
         quiet = tone(6.0) * 0.3  # about -25 LUFS

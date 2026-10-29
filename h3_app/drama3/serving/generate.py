@@ -354,6 +354,8 @@ def _placed_sound(node: SoundNode, ctx: "_Render") -> np.ndarray:
     if clip_path is None:
         raise H3Error(f'Missing sound clip for "{node.name or node.description}".')
     samples = _decoded_sound(clip_path, ctx.rate, ctx.decoded)
+    if not node.loop:  # a one-shot starts on its first sound, not on the clip's dead air
+        samples = audio.trim_onset(samples, ctx.rate)
     if node.pan is not None or node.distance:
         samples = audio.place_sound(samples, ctx.rate, node.pan, node.distance)
     # A one-shot happens in the scene's room, as its voices do; beds are that room already.
@@ -560,6 +562,7 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
     if isinstance(node, SequentialNode):
         placed: list[tuple[int, np.ndarray]] = []
         cursor, previous = 0, None  # previous: the last speech before this child, with no pause or sound between
+        last_start = last_advance = 0
         for child in node.children:
             child_spans: Spans = {}
             seg, advance = _render(child, ctx, child_spans)
@@ -567,8 +570,11 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
                 continue
             edges = None if isinstance(child, PauseNode) or is_sound_only_node(child) else _edge_texts(child, ctx)
             if edges is not None and previous is not None:
-                cursor += int(rate * audio.turn_gap(previous[1], edges[1], previous[0] == edges[0]))
+                # A barge-in's negative gap overlaps the previous child, never past half of it.
+                gap = int(rate * audio.turn_gap(previous[1], edges[1], previous[0] == edges[0]))
+                cursor = max(cursor + gap, last_start + last_advance // 2)
             placed.append((cursor, seg))
+            last_start, last_advance = cursor, advance
             if spans is not None:
                 spans.update((index, (start + cursor, end + cursor, lines))
                              for index, (start, end, lines) in child_spans.items())
@@ -808,7 +814,7 @@ def generate_drama3_served(request, *, runtime, free_gpu: Callable[[], None], hf
     placements: dict[int, float] = {}
     joined = _render_ast(tree, node_chunks, takes, sound_clips, rate, spans=spans, gains=speaker_gains(takes),
                          positions=speaker_positions(chunks), placements=placements)
-    joined = audio.master(joined, rate)
+    joined = audio.master(audio.add_room_tone(joined, rate), rate)
 
     # Where each take and script line plays in the mix, for synced subtitles;
     # a mix trimmed to fit cuts the last ones short.

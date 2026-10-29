@@ -205,8 +205,10 @@ def plan_turns_chunks(
             size = _visible(piece)
             lines = _cut(piece, [end - position for end in ends[:-1] if position < end < position + size])
             position += size
-            # Each request starts fresh, so a turn split across requests repeats its last delivery cue.
-            if cue and not delivery_cues(piece) and lines and piece.startswith(lines[0]):
+            # Each request starts fresh, so a turn split across requests repeats its last delivery cue
+            # in its first sentence, unless that sentence sets its own.
+            opening = _sentences(piece, limit)[0] if piece else ""
+            if cue and not delivery_cues(opening) and lines and piece.startswith(lines[0]):
                 carried = insert_cue(lines[0], cue)
                 if carried is not None:
                     piece, lines = carried + piece[len(lines[0]):], (carried, *lines[1:])
