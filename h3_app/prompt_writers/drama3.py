@@ -330,15 +330,15 @@ def drama3_direction_request(script: str, cast: Iterable[dict], script_mode: str
 
 
 def direct_drama3_script(script: str, cast: list[dict], script_mode: str, ask) -> tuple[str, str]:
-    """(script, note): an under-directed tagged script with a director's cues merged in.
+    """(script, note): an under- or shallowly directed tagged script with a director's cues merged in.
 
     ``ask(request_text)`` returns the director's (reply, status). A script already
-    directed enough, a failed request, or a reply that changes words keeps its lines.
+    directed well enough, a failed request, or a reply that changes words keeps its lines.
     """
-    from h3_app.drama3.lint import direction_share, merge_direction, under_directed
+    from h3_app.drama3.lint import direction_share, merge_direction, needs_direction
     from h3_app.workflows.drama3 import names_to_tags, tags_to_names
 
-    if not under_directed(script):
+    if not needs_direction(script):
         return script, ""
     names = {int(entry["speaker_id"]): entry["name"] for entry in cast}
     try:

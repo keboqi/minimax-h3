@@ -220,6 +220,29 @@ class DirectionMergeTests(unittest.TestCase):
                 self.assertEqual(taken, 0)
                 self.assertEqual(merged.split("\n")[3], "  <|speaker:1|> <phone_call> Hello? Is someone there?")
 
+    def test_shallow_direction_also_gets_a_direction_pass(self):
+        from h3_app.drama3.lint import needs_direction, shallow_direction
+
+        bare = "\n".join(f"<|speaker:{n % 2}|> Line {n}, [{cue}] spoken." for n, cue in
+                         enumerate(["serious", "calm", "sad", "serious", "angry"]))
+        self.assertFalse(under_directed(bare))  # every line carries a cue ...
+        self.assertIn("single bare word", shallow_direction(bare))  # ... but a weak one
+        self.assertTrue(needs_direction(bare))
+        self.assertIn("direction is shallow", " ".join(lint_drama3_script(bare)[1]))
+        repeated = "\n".join(f"<|speaker:1|> Line {n}, [{cue}] spoken." for n, cue in
+                             enumerate(["tense, low", "warm and kind", "tense, low", "quietly hurt", "tense, low"]))
+        self.assertIn("repeats [tense, low] 3 times", shallow_direction(repeated))
+        directed = ["warm and kind", "quietly hurt", "to him, pleading", "trying to sound casual", "close to tears",
+                    "turning on him", "with heavy sadness", "bright and eager"]
+        flat_run = "\n".join([f"<|speaker:1|> Hi, [{cue}] there." for cue in directed[:5]]
+                             + [f"<|speaker:0|> Plain line {n}." for n in range(5)]
+                             + [f"<|speaker:1|> Bye, [{cue}] now." for cue in directed[5:]])
+        self.assertFalse(under_directed(flat_run))
+        self.assertIn("5 lines in a row", shallow_direction(flat_run))
+        rich = ("<|speaker:0|> The door [hushed] creaked open.\n<|speaker:1|> Hello [nervous, speaking quickly] there?\n"
+                "<|speaker:0|> Nobody [tense, low] answered.\n<|speaker:1|> I [to herself, bitter] knew it.")
+        self.assertEqual(shallow_direction(rich), "")
+
     def test_direction_pass_runs_only_for_under_directed_scripts(self):
         cast = [{"speaker_id": 0, "name": "narrator", "description": "Calm."},
                 {"speaker_id": 1, "name": "Mia", "description": "Bright."}]

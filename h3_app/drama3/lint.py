@@ -159,6 +159,44 @@ def under_directed(script: str) -> bool:
     return total >= 3 and directed < MIN_DIRECTED_SHARE * total
 
 
+# Shallow direction: most cues are one bare word, one speaker keeps repeating a cue, or a
+# long stretch of lines goes undirected, though enough lines carry something.
+MIN_SHALLOW_CUES = 4
+MAX_BARE_SHARE = 0.6
+MAX_REPEATS = 3
+MAX_FLAT_RUN = 5
+
+
+def shallow_direction(script: str) -> str:
+    """Why a script's direction is too shallow to perform well, or "" when it is not."""
+    lines = [(match.group(1), body[match.end():]) for body in (line.lstrip(" \t") for line in str(script or "").split("\n"))
+             if (match := SPEAKER_TAG.match(body))]
+    cues = [(speaker, cue.strip().lower()) for speaker, body in lines for cue in CUE_RE.findall(body)
+            if cue.strip().lower() not in AUDIBLE_EVENTS]
+    if len(cues) >= MIN_SHALLOW_CUES:
+        bare = sum(len(re.findall(r"[\w']+", cue)) == 1 for _speaker, cue in cues)
+        if bare > MAX_BARE_SHARE * len(cues):
+            return f"{bare} of {len(cues)} cues are a single bare word"
+        counts: dict[tuple[str, str], int] = {}
+        for key in cues:
+            counts[key] = counts.get(key, 0) + 1
+        (speaker, cue), most = max(counts.items(), key=lambda item: item[1])
+        if most >= MAX_REPEATS and most * 3 >= sum(n for (who, _), n in counts.items() if who == speaker):
+            return f"one speaker repeats [{cue}] {most} times"
+    run = longest = 0
+    for _speaker, body in lines:
+        run = 0 if is_directed(body) else run + 1
+        longest = max(longest, run)
+    if longest >= MAX_FLAT_RUN:
+        return f"{longest} lines in a row carry no direction"
+    return ""
+
+
+def needs_direction(script: str) -> bool:
+    """Whether a script should get a direction pass: too few directed lines, or shallow direction."""
+    return under_directed(script) or bool(shallow_direction(script))
+
+
 def lint_drama3_script(script: str) -> tuple[str, list[str]]:
     """The script with risky cue placements repaired, plus notes for the status line."""
     notes = dict.fromkeys(("unwrapped", "moved", "dropped", "ellipses", "pauses", "capped", "trailing", "long"), 0)
@@ -191,6 +229,8 @@ def lint_drama3_script(script: str) -> tuple[str, list[str]]:
     if under_directed(repaired):
         directed, total = direction_share(repaired)
         messages.append(f"only {directed} of {total} lines carry delivery direction")
+    elif shallow := shallow_direction(repaired):
+        messages.append(f"direction is shallow: {shallow}")
     cues = [CUE_RE.findall(body) for body in speaker_lines(repaired)]
     repeats = sum(1 for previous, current in zip(cues, cues[1:])
                   if previous and current and previous[0].strip().lower() == current[0].strip().lower())

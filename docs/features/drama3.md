@@ -114,9 +114,17 @@ periods, pause and silence cues are removed, and cues beyond one per sentence an
 two per line are dropped. The status reports each repair, lines that repeat the
 previous line's cue, and a script that leaves most lines undirected.
 
-When fewer than 60% of a script's lines (of three or more) carry direction,
-**Rewrite** and **Auto** make one more call to the same chat model, a performance
-director (`prompt_drama3_direction.txt`) that may only insert cues and scoped tags.
+The writer plans each scene before directing it (what each character wants and hides,
+whom each line is aimed at, where the scene turns) and uses contrast: narration stays
+restrained and the strongest delivery is kept for turning points. In Advanced mode it
+also adds a few short listener reactions under dialogue, such as `Mm.` or
+`Right. [scoffs]`, delayed into gaps of the line they answer.
+
+When fewer than 60% of a script's lines (of three or more) carry direction, or the
+direction is shallow (most cues are one bare word, one speaker repeats a cue three
+times or more, or five lines in a row go undirected), **Rewrite** and **Auto** make one
+more call to the same chat model, a performance director
+(`prompt_drama3_direction.txt`) that may only insert, sharpen or move cues and scoped tags.
 Each of its lines is accepted only when the speaker, vocal effects and every word
 and punctuation mark are unchanged; other lines keep the writer's version, and a
 reply that changes lines, sounds or staging is ignored. Pasted replies from another
