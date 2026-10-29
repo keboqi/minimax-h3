@@ -53,6 +53,11 @@ between them, or estimated from its length when the take has too few pauses. Res
 made before this feature have no line timings and show no subtitles; Remix gives older
 results per-line timings without generating anything.
 
+**Speech settings → Word-by-word subtitles** (off by default) times every word with
+Qwen3's forced aligner after speaking, and the subtitles light each word as it is said.
+To add it to an existing result, turn it on and Remix or generate again: saved takes are
+aligned, not spoken again. A take the aligner cannot time keeps plain line subtitles.
+
 ### Takes
 
 Every generated line is saved as a take, keyed by its text, speaker name, voice clip
@@ -475,3 +480,6 @@ are cached by audio content and script line boundaries, so remixes reuse them an
 invalidate them. If alignment is unavailable or invalid, generation finishes with estimated timing
 and reports the affected chunks in its completion message. Result snapshots record `subtitle_timing`
 for each chunk. Remix an older result to produce a new file with aligned subtitle timing.
+With Word-by-word subtitles on, every take is aligned (not only multi-line chunks), its word
+times follow effects and placement like the line times, and alignment caches that hold only line
+times are aligned again.

@@ -76,6 +76,19 @@ class MixDetailTests(unittest.TestCase):
         short = spans_of("Mia: I was going to say something long.\nLeo: No.\n<#-2#>\nMia: Fine.",
                          seconds=(4.0, 0.4, 1.0))
         self.assertGreaterEqual(short[2][0], short[1][0] + (short[1][1] - short[1][0]) // 2 - 1)
+        # After a line with a listener's reaction delayed under it, the line answered is the one
+        # that ends last, not the reaction that starts last.
+        reacted = spans_of("<parallel>\nMia: I was going to say something long.\n<sequential>\n<#0.2#>\n"
+                           "Leo: Mm.\n</sequential>\n</parallel>\n<#-2#>\nLeo: Fine.", seconds=(3.0, 0.4, 1.0))
+        self.assertGreaterEqual(reacted[2][0], reacted[0][0] + (reacted[0][1] - reacted[0][0]) // 2 - 1)
+
+    def test_a_barge_in_inside_a_take_reaches_back_at_most_half_the_last_line(self):
+        # Mia's take holds a long line and a short cut-off one: Leo may not start before half of it.
+        mia, last = noise(2.0, 0.2), (int(1.7 * RATE), 2 * RATE)
+        spans = []
+        audio.join_takes([("Mia", mia, "I was going to say. But —"), ("Leo", noise(1.0, 0.2), "No.")], RATE,
+                         spans, [[(0, int(1.5 * RATE)), last], [(0, RATE)]])
+        self.assertEqual(spans[1][0], last[0] + (last[1] - last[0]) // 2)
 
 
 if __name__ == "__main__":

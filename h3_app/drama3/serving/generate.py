@@ -541,7 +541,7 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
             rendered_turns.append((chunk.speaker, audio.pan_mono(tidied, position), chunk.text))
             line_offsets.append(lines)
         offsets: list[tuple[int, int]] = []
-        joined = audio.join_takes(rendered_turns, rate, offsets)
+        joined = audio.join_takes(rendered_turns, rate, offsets, line_offsets)
         advance = len(joined)
         tails = [(start, wet) for (start, _end), wet in zip(offsets, wets) if wet is not None]
         if tails:
@@ -593,10 +593,11 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
             # A speech block holds several lines: half of the whole block could reach back before
             # its last line starts, putting what follows ahead of the line it answers.
             floor = cursor + advance // 2
-            speech = [entry for key, entry in child_spans.items() if isinstance(key, int)]
+            # The line that ends last is the one answered, not a short reaction delayed under it.
+            speech = [(start + lines[-1][0], start + lines[-1][1]) if lines else (start, end)
+                      for key, (start, end, lines) in child_spans.items() if isinstance(key, int)]
             if speech:
-                start, end, lines = max(speech, key=lambda entry: entry[0])
-                first, last = (start + lines[-1][0], start + lines[-1][1]) if lines else (start, end)
+                first, last = max(speech, key=lambda bounds: (bounds[1], bounds[0]))
                 floor = cursor + first + (last - first) // 2
             if spans is not None:
                 spans.update((index, (start + cursor, end + cursor, lines))

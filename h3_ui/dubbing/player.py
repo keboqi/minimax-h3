@@ -68,18 +68,31 @@ const bind = (root) => {
     const translation = time >= translatedStart && time < translatedEnd, source = time >= start && time < end;
     return mode === "translation" ? translation : mode === "source" ? source : translation || source;
   };
-  // Timed words light as they are said, each against its own track's timing.
-  const light = (cue, field, on, time) => {
+  // Timed words light as they are said, each against its own track's timing. Said words stay lit
+  // while the line is still active for the other track, so they do not dim back mid-line.
+  const light = (cue, field, on, active, time) => {
     for (const word of cue.querySelectorAll(`${field} .h3-word`)) {
       const start = Number(word.dataset.start), end = Number(word.dataset.end);
-      word.classList.toggle("spoken", on && start <= time);
+      word.classList.toggle("spoken", (on || active) && start <= time);
       word.classList.toggle("current", on && start <= time && time < end + 0.08);
     }
   };
-  // Captions copy the shown lines' word spans, so they light along with the list.
+  // Captions copy the shown lines' word spans, so they light along with the list. They are copied
+  // again only when the shown lines change; otherwise the copies take the words' classes, so
+  // their colour transitions play.
+  const captionParts = new Map();
   const caption = (target, field, cueMode, wanted) => {
     const parts = wanted ? cues.filter((cue) => shown(cue, cueMode)).map((cue) => cue.querySelector(field))
       .filter((part) => part?.textContent) : [];
+    const before = captionParts.get(target) || [];
+    if (parts.length === before.length && parts.every((part, index) => part === before[index])) {
+      const copies = target.querySelectorAll(".h3-word");
+      parts.flatMap((part) => [...part.querySelectorAll(".h3-word")]).forEach((word, index) => {
+        if (copies[index] && copies[index].className !== word.className) copies[index].className = word.className;
+      });
+      return;
+    }
+    captionParts.set(target, parts);
     target.replaceChildren(...parts.flatMap((part, index) => [
       ...(index ? [document.createTextNode("\\n")] : []), ...[...part.childNodes].map((node) => node.cloneNode(true))]));
   };
@@ -89,8 +102,9 @@ const bind = (root) => {
     clock.textContent = `${fmt(time)} / ${fmt(duration || voice.duration)}`;
     const active = cues.filter((cue) => shown(cue, mode === "off" ? "both" : mode));
     for (const cue of cues) {
-      light(cue, ".h3-dub-cue-translation", shown(cue, "translation"), time);
-      light(cue, ".h3-dub-cue-source", shown(cue, "source"), time);
+      const isActive = active.includes(cue);
+      light(cue, ".h3-dub-cue-translation", shown(cue, "translation"), isActive, time);
+      light(cue, ".h3-dub-cue-source", shown(cue, "source"), isActive, time);
     }
     caption(captionTranslation, ".h3-dub-cue-translation", "translation", mode === "translation" || mode === "both");
     caption(captionSource, ".h3-dub-cue-source", "source", mode === "source" || mode === "both");

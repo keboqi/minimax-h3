@@ -179,6 +179,12 @@ original, or change its volume. Changes save at once.
 - Translated subtitles stay on screen while a line is still being spoken, up to
   the next line. With Smart timing they also start when the dubbed line does.
 - **Dub volume** and **Background volume** set the mix.
+- **Word-by-word subtitles** (off by default) times every word of both subtitle
+  tracks with Qwen3's forced aligner: translations against their fitted takes,
+  sources against the original voice, cached per clip. The player's line list and
+  captions light each word as it is said. To add it to a finished dub, turn it on
+  and dub again: unchanged lines keep their takes. Lines the aligner cannot time
+  keep plain subtitles.
 - **Keep the original audio as a second track** adds the source soundtrack to
   the dubbed video. Generation copies the picture without re-encoding and adds
   selectable translated and original subtitle tracks.

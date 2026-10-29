@@ -301,28 +301,36 @@ def turn_gap(previous_text: str, next_text: str, same_speaker: bool) -> float:
 
 
 def join_takes(takes: list[tuple], rate: int,
-               spans: list[tuple[int, int]] | None = None) -> np.ndarray:
+               spans: list[tuple[int, int]] | None = None,
+               lines: list[list[tuple[int, int]]] | None = None) -> np.ndarray:
     """Join (speaker, samples[, text]) in order with short gaps; a negative gap overlaps the takes.
 
     With texts the gap follows the lines (see ``turn_gap``); without, it is the plain turn
-    or same-speaker gap. An overlap never reaches past half of either take. ``spans``,
-    when given, receives each take's (start, end) sample offsets in the result.
+    or same-speaker gap. An overlap never reaches past half of either take, nor, with each
+    take's ``lines`` (start, end) inside it, past half of the previous take's last line.
+    ``spans``, when given, receives each take's (start, end) sample offsets in the result.
     """
     placed, previous, cursor = [], None, 0
-    for speaker, samples, *text in takes:
+    for index, (speaker, samples, *text) in enumerate(takes):
         text = text[0] if text else None
         samples = samples.astype(np.float32)
         if previous is not None:
-            previous_speaker, previous_text, previous_length = previous
+            previous_speaker, previous_text, previous_reach = previous
             same = speaker == previous_speaker
             gap = (turn_gap(previous_text, text, same) if text is not None and previous_text is not None
                    else SAME_SPEAKER_GAP if same else TURN_GAP)
-            cursor += max(int(rate * gap), -min(previous_length, len(samples)) // 2)
+            cursor += max(int(rate * gap), -min(previous_reach, len(samples) // 2))
         placed.append((cursor, samples))
         if spans is not None:
             spans.append((cursor, cursor + len(samples)))
         cursor += len(samples)
-        previous = (speaker, text, len(samples))
+        # How far the next take may reach back into this one: half of it, or of its last line.
+        reach = len(samples) // 2
+        own = lines[index] if lines is not None and index < len(lines) else None
+        if own:
+            first, last = own[-1]
+            reach = min(reach, max(0, len(samples) - (first + (last - first) // 2)))
+        previous = (speaker, text, reach)
     if not placed:
         return np.zeros(0, dtype=np.float32)
     out = np.zeros((max(start + len(samples) for start, samples in placed), *np.shape(placed[0][1])[1:]),

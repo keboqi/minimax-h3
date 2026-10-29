@@ -126,7 +126,8 @@ class PhonemeNoteTests(unittest.TestCase):
         self.assertIn("Do not mark ordinary words", prompt)
         director = (Path(__file__).resolve().parents[1] / "prompts" / "prompt_drama3_direction.txt").read_text(
             encoding="utf-8")
-        self.assertIn("pinyin pronunciation note", director)
+        self.assertIn("pinyin such as 还{huan2}", director)
+        self.assertIn("Arpabet such as Siobhan{SH IH0 V AO1 N}", director)
 
 
 if __name__ == "__main__":
