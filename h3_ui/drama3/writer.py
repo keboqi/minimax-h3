@@ -257,3 +257,72 @@ class WriterHandlers:
             updates[3 * idx:3 * idx + 3] = [name, desc, int(dur)]
 
         return (*updates, *_sound_slot_visibility(max_slot + 1, shown))
+
+    def load_drama3_example(self, group="Global"):
+        """Load the comprehensive Soundstage example story, its speakers, and its sounds/music beds."""
+        from h3_app.drama3 import speakers as drama3_speakers
+        from h3_app.drama3.example_story import (
+            EXAMPLE_STORY_SCRIPT,
+            EXAMPLE_STORY_SPEAKERS,
+            EXAMPLE_STORY_TITLE,
+        )
+        from h3_app.drama3.serving.tree import extract_script_sounds
+        from h3_app.workflows.drama3 import format_script
+        from h3_ui.drama3.controls import (
+            DRAMA3_SLOT_INPUT_NAMES,
+            DRAMA3_SOUND_SLOTS,
+            DRAMA3_VOICE_SLOTS,
+            UPLOAD_VOICE,
+            _slot_visibility,
+            _sound_slot_visibility,
+        )
+
+        script = format_script(EXAMPLE_STORY_SCRIPT)
+        cast = list(EXAMPLE_STORY_SPEAKERS)
+        sounds = extract_script_sounds(EXAMPLE_STORY_SCRIPT)
+
+        updates = [""] * len(DRAMA3_SLOT_INPUT_NAMES)
+        presets = [gr.update(value=UPLOAD_VOICE)] * DRAMA3_VOICE_SLOTS if group is not None else []
+        match = (
+            drama3_speakers.speaker_matcher(self._runtime_config(), group)
+            if group is not None
+            else None
+        )
+        for entry in cast:
+            speaker = entry["speaker_id"]
+            name = entry["name"]
+            description = entry["description"]
+            if match is not None:
+                saved = match(name)
+                if saved:
+                    presets[speaker] = gr.update(value=saved.key)
+                    name, description = saved.name, saved.description or description
+            updates[3 * speaker : 3 * speaker + 3] = [name, description, entry["preview_text"]]
+
+        sound_updates = []
+        for idx in range(DRAMA3_SOUND_SLOTS):
+            if idx < len(sounds):
+                item = sounds[idx]
+                sound_updates.extend([item["name"], item["description"], int(item["duration"])])
+            else:
+                sound_updates.extend(["", "", 5])
+
+        status = (
+            f'Loaded example story "{EXAMPLE_STORY_TITLE}": {len(cast)} speakers and '
+            f"{len(sounds)} sound/music cues across 4 scenes. "
+            "Next: open Cast & sounds to generate speaker voices and sounds, then Speak."
+        )
+        return (
+            script,
+            status,
+            *updates,
+            *_slot_visibility(len(cast)),
+            *presets,
+            EXAMPLE_STORY_TITLE,
+            drama3_writer.DRAMA3_SCRIPT_ADVANCED,
+            drama3_writer.DRAMA3_SPEAKER_AUTO,
+            *sound_updates,
+            *_sound_slot_visibility(len(sounds)),
+            gr.update(visible=True, open=True),
+        )
+

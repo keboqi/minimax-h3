@@ -102,6 +102,20 @@ class RoomResponseTests(unittest.TestCase):
         self.assertLess(len(response) / RATE, 0.03)
         self.assertGreater(rms(response), 0.0)
 
+    def test_stage_position_shifts_early_room_reflections_toward_the_speaker_side(self):
+        early_left, _ = rooms._early(rooms.ROOMS["small_room"], RATE, position=-0.7)
+        early_right, _ = rooms._early(rooms.ROOMS["small_room"], RATE, position=0.7)
+        first_reflections = slice(0, int(0.01 * RATE))
+        self.assertGreater(rms(early_left[first_reflections, 0]), rms(early_left[first_reflections, 1]))
+        self.assertGreater(rms(early_right[first_reflections, 1]), rms(early_right[first_reflections, 0]))
+        np.testing.assert_allclose(early_left[:, 0], early_right[:, 1], rtol=1e-5, atol=1e-6)
+        predelay = int(rooms.ROOMS["small_room"].predelay * RATE)
+        onset = slice(predelay, predelay + int(0.008 * RATE))
+        left_ir = rooms.room_response("small_room", RATE, position=-0.7)
+        right_ir = rooms.room_response("small_room", RATE, position=0.7)
+        self.assertGreater(rms(left_ir[onset, 0]), rms(left_ir[onset, 1]))
+        self.assertGreater(rms(right_ir[onset, 1]), rms(right_ir[onset, 0]))
+
 
 class StagingParseTests(unittest.TestCase):
     def test_parallel_carries_room_and_stage(self):
@@ -206,13 +220,57 @@ class StagedMixTests(unittest.TestCase):
         self.assertGreater(rms(far_mix[end:]) / rms(near_mix[end:]), 0.8)
 
     def test_far_voice_outside_a_room_and_near_voice(self):
+        from scipy import signal
+
         voice_ = voice()
         far = audio.voice_distance(voice_, RATE, "far", in_room=False)
         self.assertLess(rms(far), rms(voice_))
         self.assertEqual(len(far), len(voice_))
         near = audio.voice_distance(voice_, RATE, "near", in_room=True)
         self.assertAlmostEqual(rms(near) / rms(voice_), audio.DISTANCE_GAINS["near"], places=3)
+        self.assertEqual(len(near), len(voice_))
+        # Proximity effect warms the low chest (<220 Hz) and adds breath air (>4.5 kHz) relative to mid-band.
+        low = signal.butter(2, 220 / (0.5 * RATE), "lowpass", output="sos")
+        mid = signal.butter(2, [400 / (0.5 * RATE), 2500 / (0.5 * RATE)], "bandpass", output="sos")
+        high = signal.butter(2, 4500 / (0.5 * RATE), "highpass", output="sos")
+        self.assertGreater(rms(signal.sosfilt(low, near)) / rms(signal.sosfilt(mid, near)),
+                           rms(signal.sosfilt(low, voice_)) / rms(signal.sosfilt(mid, voice_)))
+        self.assertGreater(rms(signal.sosfilt(high, near)) / rms(signal.sosfilt(mid, near)),
+                           rms(signal.sosfilt(high, voice_)) / rms(signal.sosfilt(mid, voice_)))
         np.testing.assert_array_equal(audio.voice_distance(voice_, RATE, "", in_room=True), voice_)
+
+    def test_sequential_sound_cue_in_a_room_advances_at_dry_end_and_keeps_subtitle_sync(self):
+        from pathlib import Path
+        from unittest.mock import patch
+
+        script = (
+            '<parallel room="large_hall">\n'
+            '  <sequential>\n'
+            '    <sound name="door_slam" duration="0.5">Door slam</sound>\n'
+            '    Mia: Who is there?\n'
+            '  </sequential>\n'
+            '</parallel>'
+        )
+        names = {"Mia": "Mia"}
+        tree = parse_drama3_tree(script, resolve=names.get)
+        speech = iter_speech_nodes(tree)[0]
+        chunks = plan_turns_chunks(speech.turns, start_index=0)
+        line_audio = voice(0.8)
+        takes = {0: generate.Take(chunks[0], line_audio, RATE, 1, None)}
+        hit = np.ones((int(0.5 * RATE), 2), dtype=np.float32) * 0.2
+        spans = {}
+        with patch.object(audio, "load_audio_file", return_value=hit):
+            mixed = generate._render_ast(
+                tree, {id(speech): chunks}, takes, {"door_slam": Path("door_slam.wav")}, RATE, spans=spans
+            )
+        start, end, line_spans = spans[0]
+        # Mia's line starts right when the dry 0.5s door slam finishes (8000 samples, not waiting
+        # for the hall's 1.8s reverb tail), and the subtitle span matches the exact slice where Mia speaks.
+        self.assertEqual(start, int(0.5 * RATE))
+        self.assertEqual(end - start, len(line_audio))
+        self.assertEqual([(start + s, start + e) for s, e in line_spans], [(start, end)])
+        self.assertGreater(rms(mixed[start:end]), 0.05)
+
 
     def test_vocal_effect_room_tags_keep_the_take_length(self):
         voice_ = voice()

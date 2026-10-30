@@ -171,6 +171,26 @@ class RepairTests(unittest.TestCase):
         self.assertEqual(lint_drama3_script(directed)[1], ["1 line(s) open with the same cue as the line before"])
         self.assertFalse(under_directed("<|speaker:0|> Hi.\n<|speaker:1|> Yo."))  # too short to judge
 
+    def test_redundant_room_tags_and_narrator_effect_tags_are_stripped(self):
+        raw = (
+            '<parallel room="small_room">\n'
+            '  narrator: <far> The room [hushed] was cold.\n'
+            '  Mia: <reverb_small_room> Who [nervous] is there?\n'
+            '  Leo: <phone_call> Stay [urgent] where you are.\n'
+            '</parallel>'
+        )
+        cleaned, notes = lint_drama3_script(raw)
+        self.assertEqual(cleaned.split("\n"), [
+            '<parallel room="small_room">',
+            '  narrator: The room [hushed] was cold.',
+            '  Mia: Who [nervous] is there?',
+            '  Leo: <phone_call> Stay [urgent] where you are.',
+            '</parallel>',
+        ])
+        self.assertIn("removed 1 redundant room effect tag(s) already set by the scene", notes)
+        self.assertIn("removed 1 vocal effect or distance tag(s) from narration", notes)
+
+
 
 class DirectionMergeTests(unittest.TestCase):
     SCRIPT = ("<|speaker:0|> The door creaked open. Nobody was there.\n"

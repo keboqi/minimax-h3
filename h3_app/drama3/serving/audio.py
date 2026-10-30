@@ -23,11 +23,13 @@ KEPT_GAP = 0.5  # ... to this
 TURN_GAP = 0.3  # between speakers
 SAME_SPEAKER_GAP = 0.12  # between chunks of one speaker
 # After a line cut off with a dash the next speaker barges in over its last word: a negative gap,
-# which also covers the two takes' edge padding.
+# which also covers the two takes' edge padding. Narration never barges in over a character.
 CUT_OFF_GAP = -0.3
+NARRATOR_CUT_GAP = 0.08
 HEATED_GAP = 0.12  # in a heated exchange the reply comes in hard
 QUICK_REPLY_GAP = 0.22  # an answer to a question or exclamation comes quickly
 WEIGHTED_GAP = 0.6  # before a line that opens slow, sad or hushed
+_NARRATOR_LABELS = frozenset({"narrator", "narration", "旁白", "storyteller", "story teller"})
 
 
 def decode_wav(data: bytes, *, keep_channels: bool = False) -> tuple[np.ndarray, int]:
@@ -277,23 +279,41 @@ _HEATED_CUE = re.compile(r"\[[^\]]*\b(?:angry|angrily|furious|furiously|enraged|
                          r"|<(?:fast|forceful)>", re.IGNORECASE)
 
 
-def turn_gap(previous_text: str, next_text: str, same_speaker: bool) -> float:
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?。！？;；])\s*(?![^\[]*\])")
+
+
+def _closing_sentence(text: str) -> str:
+    """The final sentence of ``text``, whose delivery sets the hand-off to the next speaker."""
+    parts = [part.strip() for part in _SENTENCE_SPLIT.split(str(text or "")) if part.strip()]
+    return parts[-1] if parts else str(text or "")
+
+
+def _is_narrator_label(speaker: object) -> bool:
+    return isinstance(speaker, str) and " ".join(speaker.split()).casefold() in _NARRATOR_LABELS
+
+
+def turn_gap(previous_text: str, next_text: str, same_speaker: bool, *,
+             narrator_turn: bool = False) -> float:
     """Silence before ``next_text``, shaped by how ``previous_text`` ends and how the next line opens.
 
-    A line cut off with a dash is barged in on (a negative gap: the takes overlap), a
-    line opening slow, sad or hushed gets a longer breath before it, a heated line or a
-    reply to one comes in hard, and a question or exclamation is answered quickly.
+    A line cut off with a dash is barged in on (a negative gap: the takes overlap) unless
+    narration is speaking before or after it; a line opening slow, sad or hushed gets a
+    longer breath before it; a heated line or a reply to one comes in hard; and a question
+    or exclamation is answered quickly.
     """
     if same_speaker:
         return SAME_SPEAKER_GAP
     ending = _TRAILING_MARKUP.sub("", str(previous_text or "")).rstrip().rstrip(_CLOSING_QUOTES).rstrip()
     if ending.endswith(("—", "–", "-", "~")):
-        return CUT_OFF_GAP
+        return NARRATOR_CUT_GAP if narrator_turn else CUT_OFF_GAP
     opening = _LEADING_MARKUP.sub("", str(next_text or ""))
     # A cue shapes the words after it, so only the line's first words set its entry.
     if _WEIGHTED_CUE.search(opening[:80]):
         return WEIGHTED_GAP
-    if _HEATED_CUE.search(opening[:80]) or _HEATED_CUE.search(str(previous_text or "")):
+    closing = _closing_sentence(previous_text)
+    if _HEATED_CUE.search(opening[:80]) or (
+        _HEATED_CUE.search(closing) and not _WEIGHTED_CUE.search(closing)
+    ):
         return HEATED_GAP
     if ending.endswith(("?", "!", "？", "！")):
         return QUICK_REPLY_GAP
@@ -317,7 +337,9 @@ def join_takes(takes: list[tuple], rate: int,
         if previous is not None:
             previous_speaker, previous_text, previous_reach = previous
             same = speaker == previous_speaker
-            gap = (turn_gap(previous_text, text, same) if text is not None and previous_text is not None
+            narrator = _is_narrator_label(previous_speaker) or _is_narrator_label(speaker)
+            gap = (turn_gap(previous_text, text, same, narrator_turn=narrator)
+                   if text is not None and previous_text is not None
                    else SAME_SPEAKER_GAP if same else TURN_GAP)
             cursor += max(int(rate * gap), -min(previous_reach, len(samples) // 2))
         placed.append((cursor, samples))
@@ -497,6 +519,7 @@ def trim_onset(samples: np.ndarray, rate: int) -> np.ndarray:
 
 ROOM_TONE_BELOW_DB = 50.0  # room tone sits this far under the mix's loudness: felt in silences, never heard over speech
 ROOM_TONE_BAND_HZ = (60.0, 2000.0)
+ROOM_TONE_WARMTH_HZ = 350.0  # rolls off highs (-6 dB/oct) so the tone is warm room air, not hiss
 
 
 def add_room_tone(samples: np.ndarray, rate: int) -> np.ndarray:
@@ -509,11 +532,14 @@ def add_room_tone(samples: np.ndarray, rate: int) -> np.ndarray:
     if loudness is None:
         return samples
     rng = np.random.default_rng(20261029)
-    sos = signal.butter(2, [ROOM_TONE_BAND_HZ[0] / (0.5 * rate), min(ROOM_TONE_BAND_HZ[1] / (0.5 * rate), 0.99)],
-                        btype="bandpass", output="sos")
-    # Filtered white noise keeps about this share of its power in the band, so its level is known
-    # without measuring; blocks keep a long mix's memory small.
-    band_rms = np.sqrt((ROOM_TONE_BAND_HZ[1] - ROOM_TONE_BAND_HZ[0]) / (0.5 * rate))
+    nyq = 0.5 * rate
+    band = signal.butter(2, [ROOM_TONE_BAND_HZ[0] / nyq, min(ROOM_TONE_BAND_HZ[1] / nyq, 0.99)],
+                         btype="bandpass", output="sos")
+    warm = signal.butter(1, min(ROOM_TONE_WARMTH_HZ / nyq, 0.99), btype="lowpass", output="sos")
+    sos = np.vstack([band, warm])
+    impulse = np.zeros(max(64, int(0.1 * rate)), dtype=np.float64)
+    impulse[0] = 1.0
+    band_rms = max(float(np.sqrt(np.sum(signal.sosfilt(sos, impulse) ** 2))), 1e-6)
     gain = 10 ** ((loudness - ROOM_TONE_BELOW_DB) / 20) / band_rms
     out = np.array(samples, dtype=np.float32)
     state = np.zeros((sos.shape[0], 2, 2))
@@ -526,6 +552,8 @@ def add_room_tone(samples: np.ndarray, rate: int) -> np.ndarray:
 
 
 FAR_VOICE_LOWPASS_HZ = 3500.0  # gentler than a far sound's, so far speech stays intelligible
+NEAR_VOICE_WARMTH_HZ = 220.0
+NEAR_VOICE_AIR_HZ = 4500.0
 
 
 def voice_distance(samples: np.ndarray, rate: int, distance: str, *, in_room: bool) -> np.ndarray:
@@ -533,7 +561,7 @@ def voice_distance(samples: np.ndarray, rate: int, distance: str, *, in_room: bo
 
     A far voice loses its highs and drops about 8 dB. In a room the room's level stays,
     so the voice sounds further away inside it; outside one it gets the few reflections a
-    far sound gets. A near voice is about 2 dB closer.
+    far sound gets. A near voice is about 2 dB closer with close-mic chest warmth and air.
     """
     mono = np.asarray(samples, dtype=np.float32).reshape(-1)
     if distance not in DISTANCE_GAINS or not mono.size:
@@ -549,6 +577,19 @@ def voice_distance(samples: np.ndarray, rate: int, distance: str, *, in_room: bo
                 offset = int(seconds * rate)
                 if offset < len(dry):
                     mono[offset:] += dry[:-offset] * gain
+    elif distance == "near" and rate > 2 * NEAR_VOICE_WARMTH_HZ:
+        from scipy import signal
+
+        nyq = 0.5 * rate
+        low = signal.sosfilt(signal.butter(2, min(NEAR_VOICE_WARMTH_HZ / nyq, 0.99), btype="lowpass", output="sos"),
+                             mono)
+        high = (signal.sosfilt(signal.butter(2, min(NEAR_VOICE_AIR_HZ / nyq, 0.99), btype="highpass", output="sos"),
+                               mono) if nyq > NEAR_VOICE_AIR_HZ else 0.0)
+        shaped = (mono + 0.45 * low + 0.3 * high).astype(np.float32)
+        shaped_rms = float(np.sqrt(np.mean(shaped.astype(np.float64) ** 2)))
+        orig_rms = float(np.sqrt(np.mean(mono.astype(np.float64) ** 2)))
+        if shaped_rms > 1e-9:
+            mono = (shaped * (orig_rms / shaped_rms)).astype(np.float32)
     return (mono * DISTANCE_GAINS[distance]).astype(np.float32, copy=False)
 
 
@@ -677,6 +718,54 @@ def _fade(samples: np.ndarray, fade_in: int, fade_out: int) -> np.ndarray:
     return samples
 
 
+DUCK_LOW_HZ = 200.0  # sub-bass warmth below this dips gently under speech instead of dropping out
+DUCK_LOW_SHARE = 0.4
+ONE_SHOT_FORMANT_HZ = (500.0, 3000.0)  # vocal formants carved slightly in a one-shot while speech is active
+ONE_SHOT_DUCK_DB = 3.5
+
+
+def _speech_rms(samples: np.ndarray, rate: int) -> float:
+    """RMS of a speech track's voiced frames, so pauses and delayed entries do not lower its measured level."""
+    arr = np.asarray(samples, dtype=np.float64)
+    mono = arr.mean(axis=1) if arr.ndim == 2 else arr.reshape(-1)
+    silent = _silent_frames(mono.astype(np.float32), rate)
+    if silent.size and not silent.all():
+        size = max(1, int(rate * FRAME_SECONDS))
+        voiced = arr[: silent.size * size].reshape(silent.size, size, *arr.shape[1:])[~silent]
+        return float(np.sqrt(np.mean(voiced ** 2)))
+    return float(np.sqrt(np.mean(arr ** 2)))
+
+
+def _duck_sound(arr: np.ndarray, duck_env: np.ndarray, rate: int, *, bed: bool) -> np.ndarray:
+    """Apply frequency-aware sidechain ducking to a looped bed or a one-shot sound track.
+
+    Beds dip across the speech range while retaining low-end warmth (< 200 Hz). One-shot
+    effects keep their full impact and transients, carving only the 500–3000 Hz vocal
+    formant band slightly while speech is active.
+    """
+    from scipy import signal
+
+    nyq = 0.5 * rate
+    env = duck_env[: len(arr)]
+    if bed:
+        scaled = arr * _along(env, arr)
+        if nyq > DUCK_LOW_HZ and len(arr) > 8:
+            sos = signal.butter(2, min(DUCK_LOW_HZ / nyq, 0.99), btype="lowpass", output="sos")
+            low = signal.sosfilt(sos, arr, axis=0).astype(np.float32)
+            warmthlift = (env ** DUCK_LOW_SHARE - env).astype(np.float32)
+            scaled = scaled + low * _along(warmthlift, arr)
+        return scaled
+    if nyq > ONE_SHOT_FORMANT_HZ[1] and len(arr) > 8:
+        sos = signal.butter(
+            2, [ONE_SHOT_FORMANT_HZ[0] / nyq, min(ONE_SHOT_FORMANT_HZ[1] / nyq, 0.99)],
+            btype="bandpass", output="sos",
+        )
+        formant = signal.sosfilt(sos, arr, axis=0).astype(np.float32)
+        carve = (1.0 - env ** (ONE_SHOT_DUCK_DB / DUCK_DEPTH_DB)).astype(np.float32)
+        return arr - formant * _along(carve, arr)
+    return arr
+
+
 def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
     """Mix a ``<parallel>`` block's speech and sound tracks.
 
@@ -711,8 +800,7 @@ def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
     offset = int(SCENE_LEAD_IN_SECONDS * rate) if speech_tracks and has_bed else 0
     speech_end = offset + max((int(t.get("advance", len(t["audio"]))) for t in speech_tracks), default=0)
 
-    speech_rms_values = [float(np.sqrt(np.mean(np.asarray(t["audio"], dtype=np.float64) ** 2)))
-                         for t in speech_tracks]
+    speech_rms_values = [_speech_rms(t["audio"], rate) for t in speech_tracks]
     avg_speech_rms = float(np.mean(speech_rms_values)) if speech_rms_values else 0.0
 
     sounds: list[tuple[np.ndarray, bool]] = []
@@ -736,12 +824,12 @@ def mix_parallel(tracks: list[dict | tuple], rate: int) -> Mix:
     for track in speech_tracks:
         arr = shape(track["audio"])
         speech[offset:offset + len(arr)] += arr
-    # Only looped beds (ambience, music) dip under speech; a one-shot effect or stinger
-    # is usually anchored to the sentence that narrates it and must stay in front.
+    # Looped beds dip under speech while keeping low-end warmth; one-shot effects and
+    # stingers stay in front, gently carving only the vocal formant band during speech.
     duck = speech_duck_gain(speech.mean(axis=1) if stereo else speech, rate) if speech_tracks else None
     mixed = speech.copy()
     for arr, bed in sounds:
-        mixed[: len(arr)] += arr * _along(duck[: len(arr)], arr) if bed and duck is not None else arr
+        mixed[: len(arr)] += _duck_sound(arr, duck, rate, bed=bed) if duck is not None else arr
     advance = speech_end if speech_tracks else max(len(arr) for arr, _bed in sounds)
     return Mix(mixed, advance, offset, tuple(played.get(id(track), 0) for track in normalized))
 

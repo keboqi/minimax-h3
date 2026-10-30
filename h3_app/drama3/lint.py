@@ -12,8 +12,9 @@ import re
 
 from h3_app.drama3.phonemes import note_problems
 from h3_app.drama3.serving.planner import AUDIBLE_EVENTS, WIDE_CHAR, insert_cue
-from h3_app.drama3.serving.speaker_effects import SPEAKER_TAGS
-from h3_app.drama3.serving.tree import staging_problems
+from h3_app.drama3.serving.rooms import scene_room_name
+from h3_app.drama3.serving.speaker_effects import ROOM_EFFECT_ROOMS, SPEAKER_TAGS
+from h3_app.drama3.serving.tree import staging_problems, tag_attrs
 from h3_app.workflows.drama3 import SPEAKER_TAG
 
 SCOPED_TAGS = ("whisper", "soft", "emphasis", "stress", "forceful", "fast", "slow")
@@ -30,7 +31,12 @@ _OPENING_SCOPED_RE = re.compile(rf"^<({'|'.join(SCOPED_TAGS)})>", re.IGNORECASE)
 _OPENING_CUE_RE = re.compile(r"^\[([^\[\]]*)\]\s*")
 _SCOPED_RE = re.compile(rf"</?(?:{'|'.join(SCOPED_TAGS)})>", re.IGNORECASE)
 _LEADING_EFFECTS_RE = re.compile(rf"^((?:\s*<(?:{'|'.join(SPEAKER_TAGS)})>)*)\s*", re.IGNORECASE)
+_SINGLE_EFFECT_RE = re.compile(rf"<({'|'.join(SPEAKER_TAGS)})>", re.IGNORECASE)
+_NARRATOR_LINE_RE = re.compile(r"^(?P<prefix>(?:narrator|narration|旁白|story\s*teller)[ \t]*[:：])[ \t]*(?P<body>.*)$",
+                               re.IGNORECASE)
+_NAMED_SPEAKER_LINE_RE = re.compile(r"^(?P<prefix>[^<>:\n\r]{1,40}[:：])[ \t]*(?P<body>.*)$")
 _PARALLEL_TAG_RE = re.compile(r"<parallel\b[^<>]*>", re.IGNORECASE)
+_PARALLEL_CLOSE_RE = re.compile(r"</parallel\s*>", re.IGNORECASE)
 _MARKUP_RE = re.compile(r"<\|[^|>]*\|>|\[[^\[\]]*\]|<[^<>]*>|\{[^{}\n]*\}")
 _CJK_RE = re.compile(r"[㐀-鿿豈-﫿]")
 _CLAUSE_SPLIT_RE = re.compile(r"[，。！？；：、,.!?;:…“”\"‘’'（）()《》\[\]—~\-\s]+")
@@ -84,10 +90,24 @@ def _cap_cues(spoken: str, notes: dict[str, int]) -> str:
     return _drop_cues(spoken, keep)
 
 
-def _repair_line(body: str, notes: dict[str, int]) -> str:
+def _strip_redundant_room_effects(effects: str, active_room: str, notes: dict[str, int]) -> str:
+    if not effects or not active_room:
+        return effects
+    kept: list[str] = []
+    for match in _SINGLE_EFFECT_RE.finditer(effects):
+        name = match.group(1).lower()
+        if ROOM_EFFECT_ROOMS.get(name) == active_room or name == active_room:
+            notes["redundant_room"] += 1
+        else:
+            kept.append(f"<{name}>")
+    return "".join(kept)
+
+
+def _repair_line(body: str, notes: dict[str, int], *, active_room: str = "") -> str:
     effects_match = _LEADING_EFFECTS_RE.match(body)
     effects = effects_match.group(1).strip() if effects_match else ""
     spoken = body[effects_match.end():] if effects_match else body
+    effects = _strip_redundant_room_effects(effects, active_room, notes)
 
     spoken = _repair_ellipses(spoken, notes)
 
@@ -199,14 +219,40 @@ def needs_direction(script: str) -> bool:
 
 def lint_drama3_script(script: str) -> tuple[str, list[str]]:
     """The script with risky cue placements repaired, plus notes for the status line."""
-    notes = dict.fromkeys(("unwrapped", "moved", "dropped", "ellipses", "pauses", "capped", "trailing", "long"), 0)
+    notes = dict.fromkeys(
+        ("unwrapped", "moved", "dropped", "ellipses", "pauses", "capped", "trailing", "long",
+         "redundant_room", "narrator_effects"),
+        0,
+    )
     lines = []
+    room_stack: list[str] = []
     for line in str(script or "").split("\n"):
         body = line.lstrip(" \t")
+        indent = line[:len(line) - len(body)]
+        for open_tag in _PARALLEL_TAG_RE.findall(body):
+            room_stack.append(scene_room_name(tag_attrs(open_tag).get("room", "")))
+        active_room = next((room for room in reversed(room_stack) if room), "")
         match = SPEAKER_TAG.match(body)
         if match:
-            indent = line[:len(line) - len(body)]
-            line = f"{indent}{match.group(0)} {_repair_line(body[match.end():].strip(), notes)}"
+            line = f"{indent}{match.group(0)} {_repair_line(body[match.end():].strip(), notes, active_room=active_room)}"
+        elif narrator_match := _NARRATOR_LINE_RE.match(body):
+            narrator_body = narrator_match.group("body")
+            effects_match = _LEADING_EFFECTS_RE.match(narrator_body)
+            if effects_match and effects_match.group(1).strip():
+                notes["narrator_effects"] += len(_SINGLE_EFFECT_RE.findall(effects_match.group(1)))
+                narrator_body = narrator_body[effects_match.end():].strip()
+            line = f"{indent}{narrator_match.group('prefix')} {narrator_body}".rstrip()
+        elif named_match := _NAMED_SPEAKER_LINE_RE.match(body):
+            named_body = named_match.group("body")
+            effects_match = _LEADING_EFFECTS_RE.match(named_body)
+            if effects_match and effects_match.group(1).strip() and active_room:
+                effects = _strip_redundant_room_effects(effects_match.group(1).strip(), active_room, notes)
+                rest = named_body[effects_match.end():].strip()
+                named_body = f"{effects} {rest}".strip() if effects else rest
+                line = f"{indent}{named_match.group('prefix')} {named_body}".rstrip()
+        for _close_tag in _PARALLEL_CLOSE_RE.findall(body):
+            if room_stack:
+                room_stack.pop()
         lines.append(line)
     repaired = "\n".join(lines)
     messages = []
@@ -224,6 +270,10 @@ def lint_drama3_script(script: str) -> tuple[str, list[str]]:
         messages.append(f"removed {notes['capped']} cue(s) beyond one per sentence and {MAX_CUES_PER_LINE} per line")
     if notes["trailing"]:
         messages.append(f"removed {notes['trailing']} cue(s) at line ends, which shape no words")
+    if notes["redundant_room"]:
+        messages.append(f"removed {notes['redundant_room']} redundant room effect tag(s) already set by the scene")
+    if notes["narrator_effects"]:
+        messages.append(f"removed {notes['narrator_effects']} vocal effect or distance tag(s) from narration")
     if notes["long"]:
         messages.append(f"{notes['long']} cue(s) run over {MAX_CUE_WORDS} words; shorter cues are more reliable")
     if under_directed(repaired):

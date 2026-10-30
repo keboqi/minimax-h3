@@ -151,6 +151,7 @@ class Drama3View:
     take_audio: gr.Audio | None = None
     subtitles: gr.HTML | None = None
     steps: StepStrip | None = None
+    load_example: gr.Button | None = None
 
 
 SCRIPT, CAST, SPEAK, REVIEW = range(4)
@@ -589,6 +590,9 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                         card_heading("What should they say?",
                                      "Start each line with a speaker's name from the cast, such as Mia:, and add "
                                      "[cues] in brackets. Or paste any text and let the writer script it.")
+                        with gr.Row(elem_classes=["h3-drama3-inline-actions"]):
+                            load_example = gr.Button("Load example story", size="sm",
+                                                     elem_id="h3-drama3-load-example")
                         title = gr.Textbox(label="Title", max_lines=1, placeholder="Chapter or story title",
                                            info="Names the output file. The writer fills it from the script.")
                         text = gr.Textbox(label="Speech text", lines=18, max_lines=60,
@@ -900,4 +904,5 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         take_audio=take_audio,
         subtitles=subtitles,
         steps=steps,
+        load_example=load_example,
     )

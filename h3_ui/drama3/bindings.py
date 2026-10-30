@@ -84,6 +84,7 @@ class Drama3Actions:
     generate_drama3_voices_batch: Callable | None = None
     generate_drama3_sounds_batch: Callable | None = None
     generate_drama3_batch: Callable | None = None
+    load_drama3_example: Callable | None = None
 
     @classmethod
     def of(cls, handlers, *, interrupt: Callable, speaker_library_actions: object | None = None):
@@ -223,6 +224,31 @@ def _bind_writer(view, actions):
         inputs=[view.text, view.speaker_mode, *writer_inputs(view.writer), *writer_slots],
         outputs=writer_outputs, show_progress="minimal", api_name="enhance_drama3_text",
     )
+    if view.load_example is not None and actions.load_drama3_example is not None:
+        example_inputs = [view.speaker_group] if view.speaker_group is not None else []
+        example_outputs = [
+            *writer_outputs,
+            *([view.script_mode] if view.script_mode is not None else []),
+            view.speaker_mode,
+            *(
+                [
+                    *drama3_sound_meta_inputs(view),
+                    view.shown_sound_slots,
+                    *[slot.group for slot in view.sounds],
+                    view.add_sound,
+                    view.remove_sound,
+                    view.sounds_panel,
+                ]
+                if view.sounds
+                else []
+            ),
+        ]
+        view.load_example.click(
+            actions.load_drama3_example,
+            inputs=example_inputs,
+            outputs=example_outputs,
+            **QUIET,
+        )
     return enhanced, applied
 
 

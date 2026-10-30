@@ -363,7 +363,8 @@ def _placed_sound(node: SoundNode, ctx: "_Render") -> np.ndarray:
         samples = audio.place_sound(samples, ctx.rate, node.pan, node.distance)
     # A one-shot happens in the scene's room, as its voices do; beds are that room already.
     if ctx.room in rooms.ROOMS and not node.loop:
-        wet = rooms.room_wet(samples.mean(axis=1), ctx.rate, ctx.room)
+        sound_pos = sum(node.pan) / 2 if node.pan is not None else 0.0
+        wet = rooms.room_wet(samples.mean(axis=1), ctx.rate, ctx.room, position=sound_pos)
         placed = np.zeros((len(wet), samples.shape[1]), dtype=np.float32)
         placed[: len(samples)] = samples
         samples = placed + wet  # the room rings on past the clip
@@ -536,14 +537,17 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
             if words is not None:
                 ctx.words[chunk.index] = words
             take.alignment_scale = (len(tidied) / rate / original_seconds) if original_seconds else 1.0
-            # The room hears the voice as spoken; distance changes only what reaches the listener directly.
-            wets.append(rooms.room_wet(tidied, rate, room, send=NEAR_ROOM_SEND if distance == "near" else 1.0)
-                        if room else None)
+            position = ctx.positions.get(chunk.speaker, 0.0)
+            ctx.placements[chunk.index] = position
+            # The room hears the voice at its stage position; distance changes only what reaches the listener directly.
+            wets.append(
+                rooms.room_wet(tidied, rate, room, send=NEAR_ROOM_SEND if distance == "near" else 1.0,
+                               position=position)
+                if room else None
+            )
             # An effect with its own reverb already gives a far voice its space.
             spaced = room is not None or any(effect in SPACE_EFFECTS for effect in effects)
             tidied = audio.voice_distance(tidied, rate, distance, in_room=spaced)
-            position = ctx.positions.get(chunk.speaker, 0.0)
-            ctx.placements[chunk.index] = position
             rendered_turns.append((chunk.speaker, audio.pan_mono(tidied, position), chunk.text))
             line_offsets.append(lines)
         offsets: list[tuple[int, int]] = []
@@ -570,9 +574,13 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
         volume = node.volume * audio.distance_gain(node.distance)
         if volume != 1.0:
             samples = (samples * float(volume)).astype(np.float32, copy=False)
+        sound_pos = round(float(np.clip(sum(node.pan) / 2, -1.0, 1.0)), 2) if node.pan is not None else 0.0
+        tail_extra = (len(rooms.room_response(ctx.room, rate, sound_pos)) - 1
+                      if ctx.room in rooms.ROOMS and not node.loop and len(samples) else 0)
+        advance = max(0, len(samples) - tail_extra)
         if spans is not None:
-            spans.update([_sound_span(node, len(samples))])
-        return samples, len(samples)
+            spans.update([_sound_span(node, advance)])
+        return samples, advance
 
     if isinstance(node, SequentialNode):
         placed: list[tuple[int, np.ndarray]] = []
@@ -593,7 +601,9 @@ def _render(node: TreeNode, ctx: _Render, spans: Spans | None) -> tuple[np.ndarr
             edges = None if isinstance(child, PauseNode) or is_sound_only_node(child) else _edge_texts(child, ctx)
             if edges is not None and previous is not None:
                 # A barge-in's negative gap overlaps the previous child, never past half of its last line.
-                gap = int(rate * audio.turn_gap(previous[1], edges[1], previous[0] == edges[0]))
+                narrator = is_narrator(previous[0]) or is_narrator(edges[0])
+                gap = int(rate * audio.turn_gap(previous[1], edges[1], previous[0] == edges[0],
+                                                narrator_turn=narrator))
                 cursor = max(cursor + gap, floor)
             placed.append((cursor, seg))
             # A speech block holds several lines: half of the whole block could reach back before

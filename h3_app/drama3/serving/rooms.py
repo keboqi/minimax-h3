@@ -64,16 +64,18 @@ def _image(index: int, source: float, length: float) -> float:
     return index * length + (source if index % 2 == 0 else length - source)
 
 
-def _early(room: Room, rate: int) -> tuple[np.ndarray, float]:
+def _early(room: Room, rate: int, position: float = 0.0) -> tuple[np.ndarray, float]:
     """(early reflections at both ears, mixing time in seconds), times relative to the direct sound."""
     width, depth, height = room.size
     listener = np.array([width / 2, depth * 0.35, min(1.6, height - 0.3)])
-    source = listener + np.array([0.0, min(room.source_distance, depth * 0.6), 0.0])
+    lateral = float(np.clip(position, -1.0, 1.0)) * min(room.source_distance * 0.7, width * 0.35)
+    source = np.array([float(np.clip(listener[0] + lateral, 0.25, width - 0.25)),
+                       listener[1] + min(room.source_distance, depth * 0.6), listener[2]])
     volume = width * depth * height
     surface = 2 * (width * depth + width * height + depth * height)
     if room.open_air:
         order = 1
-        walls, floor = 0.3, 0.75
+        walls, floor = 1.0, 0.75
     else:
         order = MAX_ORDER
         alpha = float(np.clip(0.161 * volume / (surface * room.rt60), 0.05, 0.95))  # Sabine
@@ -131,13 +133,13 @@ def _late(room: Room, rate: int, mixing: float, length: int, seed: int) -> np.nd
     return tail
 
 
-@lru_cache(maxsize=32)
-def room_response(name: str, rate: int) -> np.ndarray:
+@lru_cache(maxsize=64)
+def room_response(name: str, rate: int, position: float = 0.0) -> np.ndarray:
     """``name``'s stereo response at ``rate``, (frames, 2) float32 with unit energy per channel."""
     from scipy import signal
 
     room = ROOMS[name]
-    early, mixing = _early(room, rate)
+    early, mixing = _early(room, rate, position)
     # Leave the reflection's bandpass time to settle even when there is no diffuse tail.
     length = (len(early) + int(0.02 * rate) if room.open_air else
               min(int((mixing + 1.2 * room.rt60 * LOW_DECAY) * rate), int(MAX_SECONDS * rate)))
@@ -161,16 +163,19 @@ def room_response(name: str, rate: int) -> np.ndarray:
     return response
 
 
-def room_wet(samples: np.ndarray, rate: int, name: str, *, send: float = 1.0) -> np.ndarray:
+def room_wet(samples: np.ndarray, rate: int, name: str, *, send: float = 1.0,
+             position: float = 0.0) -> np.ndarray:
     """The room ``name`` adds to a mono sound: stereo, as long as the sound plus the room's tail.
 
-    ``send`` scales the room's own level, as ``near`` voices take less of it.
+    ``send`` scales the room's own level, as ``near`` voices take less of it; ``position``
+    places the source across the room (-1 left to 1 right) so early reflections match its stage.
     """
     from scipy import signal
 
     mono = np.asarray(samples, dtype=np.float32).reshape(-1)
     if not mono.size or name not in ROOMS:
         return np.zeros((len(mono), 2), dtype=np.float32)
-    response = room_response(name, rate)
+    placed = round(float(np.clip(position, -1.0, 1.0)), 2)
+    response = room_response(name, rate, placed)
     wet = np.stack([signal.oaconvolve(mono, response[:, channel]) for channel in range(2)], axis=1)
     return (wet * (ROOMS[name].send * send)).astype(np.float32, copy=False)

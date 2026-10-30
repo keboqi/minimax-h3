@@ -90,6 +90,68 @@ class MixDetailTests(unittest.TestCase):
                          spans, [[(0, int(1.5 * RATE)), last], [(0, RATE)]])
         self.assertEqual(spans[1][0], last[0] + (last[1] - last[0]) // 2)
 
+    def test_narrator_never_barges_in_over_a_cut_off_character_line(self):
+        # Dialogue-to-dialogue overlaps on a dash, but narrator-to-dialogue or dialogue-to-narrator cuts cleanly.
+        self.assertLess(audio.turn_gap("Wait —", "No!", False), 0.0)
+        self.assertEqual(audio.turn_gap("Wait —", "The line went dead.", False, narrator_turn=True),
+                         audio.NARRATOR_CUT_GAP)
+        spans = []
+        audio.join_takes([("Mia", noise(1.0, 0.2), "Wait —"), ("narrator", noise(1.0, 0.2), "She froze.")],
+                         RATE, spans)
+        self.assertGreater(spans[1][0], spans[0][1])
+
+    def test_heated_cue_checks_only_the_closing_sentence_of_a_chunk(self):
+        # An earlier sentence's [angry] cue does not rush a turn that closes quietly.
+        self.assertEqual(
+            audio.turn_gap("I [angry] told you to stop! Look at me now.", "Okay.", False),
+            audio.TURN_GAP,
+        )
+        self.assertEqual(
+            audio.turn_gap("Listen to me. Get [angry] out!", "Fine!", False),
+            audio.HEATED_GAP,
+        )
+
+    def test_room_tone_concentrates_warmth_in_the_low_band(self):
+        from scipy import signal
+
+        speech = np.concatenate([noise(2.0, 0.2), np.zeros(RATE, dtype=np.float32)])
+        toned = audio.add_room_tone(np.stack([speech, speech], axis=1), RATE)
+        gap = toned[-RATE // 2:, 0]
+        low = signal.sosfilt(signal.butter(2, 400 / (0.5 * RATE), "lowpass", output="sos"), gap)
+        high = signal.sosfilt(signal.butter(2, [1000 / (0.5 * RATE), 2000 / (0.5 * RATE)], "bandpass", output="sos"),
+                              gap)
+        self.assertGreater(np.sqrt(np.mean(low ** 2)), 1.5 * np.sqrt(np.mean(high ** 2)))
+
+    def test_parallel_mix_measures_voiced_speech_rms_and_shapes_spectral_ducking(self):
+        from scipy import signal
+
+        # A speech track with a long silent lead-in still calibrates sound beds against active speech RMS.
+        active = noise(1.0, 0.2, seed=2)
+        delayed_speech = np.concatenate([np.zeros(3 * RATE, dtype=np.float32), active])
+        bed = np.stack([noise(4.0, 0.2, seed=3), noise(4.0, 0.2, seed=4)], axis=1)
+        mixed_delayed = audio.mix_parallel([(delayed_speech, False), (bed, True, True, 1.0)], RATE).audio
+        mixed_direct = audio.mix_parallel([(active, False), (bed[:RATE], True, True, 1.0)], RATE).audio
+        lead = int(audio.SCENE_LEAD_IN_SECONDS * RATE)
+        # During the active 1.0s speech segment, both mixes have essentially identical RMS (speech + ducked bed).
+        self.assertAlmostEqual(
+            float(np.sqrt(np.mean(mixed_delayed[lead + 3 * RATE : lead + 4 * RATE] ** 2))),
+            float(np.sqrt(np.mean(mixed_direct[lead : lead + RATE] ** 2))),
+            delta=0.03,
+        )
+        # Spectral ducking on a looped bed keeps sub-200Hz warmth higher relative to the 500-3000Hz vocal band.
+        duck_gain = float(10.0 ** (-audio.DUCK_DEPTH_DB / 20.0))
+        ducked_bed = audio._duck_sound(bed[:RATE], np.full(RATE, duck_gain, dtype=np.float32), RATE, bed=True)
+        low_sos = signal.butter(2, 180 / (0.5 * RATE), "lowpass", output="sos")
+        mid_sos = signal.butter(2, [500 / (0.5 * RATE), 3000 / (0.5 * RATE)], "bandpass", output="sos")
+        low_ratio = np.sqrt(np.mean(signal.sosfilt(low_sos, ducked_bed[:, 0]) ** 2)) / np.sqrt(
+            np.mean(signal.sosfilt(low_sos, bed[:RATE, 0]) ** 2)
+        )
+        mid_ratio = np.sqrt(np.mean(signal.sosfilt(mid_sos, ducked_bed[:, 0]) ** 2)) / np.sqrt(
+            np.mean(signal.sosfilt(mid_sos, bed[:RATE, 0]) ** 2)
+        )
+        self.assertGreater(low_ratio, 1.8 * mid_ratio)
+
+
 
 if __name__ == "__main__":
     unittest.main()
