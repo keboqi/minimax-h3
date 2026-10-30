@@ -113,7 +113,7 @@ class LauncherOptionTests(unittest.TestCase):
     def test_launcher_starts_preparation_before_the_servers(self):
         source = (ROOT / "run_h3.sh").read_text(encoding="utf-8")
         self.assertIn('PREPARE_MODELS="${H3_PREPARE_MODELS-h3}"', source)
-        self.assertLess(source.index('h3_prepare.py'), source.index('log "Starting ComfyUI'))
+        self.assertLess(source.index('h3_prepare.py'), source.index('starting ComfyUI at'))
         # The servers decide when the launcher exits; preparation never does.
         self.assertIn('wait -n "$COMFY_PID" "$GRADIO_PID"', source)
 

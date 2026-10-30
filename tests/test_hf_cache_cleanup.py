@@ -167,6 +167,40 @@ class HfCacheCleanupTests(unittest.TestCase):
             # Cached file must have been removed immediately
             self.assertFalse(cached_file.exists())
 
+    def test_download_links_the_cached_blob_instead_of_copying(self):
+        with TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            repo = temp / "hub" / "models--org--repo"
+            blob = repo / "blobs" / "abc123"
+            blob.parent.mkdir(parents=True)
+            blob.write_bytes(b"complete download")
+            cached = repo / "snapshots" / "rev1" / "weights.bin"
+            cached.parent.mkdir(parents=True)
+            try:
+                cached.symlink_to(blob)
+            except OSError:
+                os.link(blob, cached)  # Windows without symlink rights, like the Hub
+            dest = temp / "comfy" / "weights.bin"
+            dest.parent.mkdir()
+            spec = h3_models.ModelSpec(
+                repo_id="org/repo", folder="test", filename="weights.bin", source="test"
+            )
+            plan = {
+                "key": "test_key", "spec": spec, "dest": dest,
+                "revision": "rev1", "size": blob.stat().st_size,
+            }
+            with (
+                patch("huggingface_hub.hf_hub_download", return_value=str(cached)),
+                patch.object(h3_models.shutil, "copy2", side_effect=AssertionError("copied")),
+            ):
+                h3_models._download_model(plan, token=None, log_prefix="[test]")
+
+            self.assertEqual(dest.read_bytes(), b"complete download")
+            # The cache entry is gone; the model file keeps the downloaded bytes.
+            self.assertFalse(cached.exists() or cached.is_symlink())
+            self.assertFalse(blob.exists())
+            self.assertFalse(dest.with_suffix(".bin.partial").exists())
+
     def test_failed_copy_keeps_download_for_retry_and_removes_partial(self):
         with TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)
@@ -189,6 +223,7 @@ class HfCacheCleanupTests(unittest.TestCase):
 
             with (
                 patch("huggingface_hub.hf_hub_download", return_value=str(cached)),
+                patch.object(h3_models.os, "link", side_effect=OSError("cross-device link")),
                 patch.object(h3_models.shutil, "copy2", side_effect=fail_copy),
             ):
                 with self.assertRaisesRegex(OSError, "disk full"):

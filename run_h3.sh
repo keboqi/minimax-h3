@@ -405,7 +405,11 @@ case "${PREPARE_MODELS,,}" in
     ;;
   *)
     log "Background model preparation: $PREPARE_MODELS"
-    "$PYTHON_BIN" -u "$SCRIPT_DIR/h3_prepare.py" \
+    # Yield CPU and disk to the starting servers; downloads still run at full speed when idle.
+    prepare_priority=()
+    command -v nice >/dev/null 2>&1 && prepare_priority+=(nice -n 10)
+    command -v ionice >/dev/null 2>&1 && ionice -c 3 true 2>/dev/null && prepare_priority+=(ionice -c 3)
+    "${prepare_priority[@]}" "$PYTHON_BIN" -u "$SCRIPT_DIR/h3_prepare.py" \
       --install-dir "$INSTALL_DIR" \
       --groups "$PREPARE_MODELS" &
     PREPARE_PID=$!
@@ -415,7 +419,7 @@ esac
 free_port "$COMFY_PORT"
 free_port "$GRADIO_SERVER_PORT"
 
-log "Starting ComfyUI at $COMFY_URL"
+log "Setup finished after ${SECONDS}s; starting ComfyUI at $COMFY_URL"
 log "Memory profile: $COMFYUI_MEMORY_MODE"
 (
   cd "$COMFY_DIR"
@@ -459,6 +463,8 @@ while time.monotonic() < deadline:
 
 raise SystemExit(f"Timed out waiting for ComfyUI: {last_error}")
 PY
+
+log "ComfyUI ready after ${SECONDS}s"
 
 export COMFY_DIR="$COMFY_DIR"
 export COMFY_URL="$COMFY_URL"
@@ -507,7 +513,7 @@ while time.monotonic() < deadline:
 raise SystemExit(f"Timed out waiting for the main Gradio UI: {last_error}")
 PY
 
-log "MiniMax H3 is ready at http://127.0.0.1:$GRADIO_SERVER_PORT"
+log "MiniMax H3 is ready at http://127.0.0.1:$GRADIO_SERVER_PORT (${SECONDS}s after launch)"
 log "Checking the /comfyui proxy"
 if ! "$PYTHON_BIN" - "http://127.0.0.1:$GRADIO_SERVER_PORT/comfyui/" "$GRADIO_PID" "$SCRIPT_DIR" <<'PY'
 import os

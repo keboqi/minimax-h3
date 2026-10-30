@@ -1474,8 +1474,17 @@ def _remove_hf_cache(
                 snapshots_dir = repo_dir / "snapshots"
                 for blob_file in blob_candidates:
                     try:
-                        # Hard links still in use have more than one directory entry.
-                        if blob_file.stat().st_nlink > 1:
+                        # Hard links still in use have more than one directory entry;
+                        # the destination may be one of them (_download_model links it).
+                        blob_stat = blob_file.stat()
+                        own_links = 1
+                        try:
+                            dest_stat = dest.stat() if dest else None
+                        except OSError:
+                            dest_stat = None
+                        if dest_stat and (dest_stat.st_dev, dest_stat.st_ino) == (blob_stat.st_dev, blob_stat.st_ino):
+                            own_links = 2
+                        if blob_stat.st_nlink > own_links:
                             continue
                         # Symlinks do not increase st_nlink; check every snapshot.
                         if snapshots_dir.is_dir() and any(
@@ -1649,7 +1658,13 @@ def _download_model(
 
     tmp = dest.with_suffix(dest.suffix + ".partial")
     try:
-        shutil.copy2(cached, tmp)
+        tmp.unlink(missing_ok=True)
+        try:
+            # Share the cached blob's bytes; removing the cache entry then frees
+            # nothing but the link, so a multi-gigabyte file is written only once.
+            os.link(cached.resolve(), tmp)
+        except OSError:
+            shutil.copy2(cached, tmp)  # another filesystem, or no hard links
         if tmp.stat().st_size != cached.stat().st_size:
             raise RuntimeError(f"Copied size mismatch for {spec.filename}")
         os.replace(tmp, dest)
