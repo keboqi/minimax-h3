@@ -40,9 +40,10 @@ class RoomResponseTests(unittest.TestCase):
                 self.assertEqual(response.shape[1], 2)
                 self.assertTrue(np.all(np.isfinite(response)))
                 np.testing.assert_allclose(np.sum(response.astype(np.float64) ** 2), 2.0, rtol=1e-3)
-                # Independent tails per ear: the room surrounds the listener instead of sitting in the middle.
-                tail = response[int(0.1 * RATE):]
-                self.assertLess(abs(np.corrcoef(tail[:, 0], tail[:, 1])[0, 1]), 0.3)
+                if not rooms.ROOMS[name].open_air:
+                    # Indoor diffuse tails surround the listener; open air has no such tail.
+                    tail = response[int(0.1 * RATE):]
+                    self.assertLess(abs(np.corrcoef(tail[:, 0], tail[:, 1])[0, 1]), 0.3)
                 self.assertIs(rooms.room_response(name, RATE), response)  # computed once
 
     def test_larger_rooms_ring_longer_and_tails_decay(self):
@@ -82,6 +83,24 @@ class RoomResponseTests(unittest.TestCase):
         self.assertEqual(rooms.scene_room_name("reverb_small_room"), "small_room")
         self.assertEqual(rooms.scene_room_name("dream-sequence"), "dream_sequence")
         self.assertEqual(rooms.scene_room_name("kitchen"), "")
+
+    def test_everyday_rooms_keep_dialogue_dry_and_hall_has_audible_space(self):
+        dry = voice(2.0)
+        for name in ("small_room", "medium_room", "outdoors"):
+            with self.subTest(room=name):
+                wet = rooms.room_wet(dry, RATE, name)
+                self.assertLess(rms(wet[:len(dry)]) / rms(dry), 0.1)
+                # After a phrase stops, ordinary spaces must not leave a prominent wash.
+                tail = wet[len(dry):len(dry) + RATE // 4]
+                tail = np.pad(tail, ((0, max(0, RATE // 4 - len(tail))), (0, 0)))
+                self.assertLess(rms(tail) / rms(dry), 0.02)
+        hall = rooms.room_wet(dry, RATE, "large_hall")
+        self.assertGreater(rms(hall[:len(dry)]) / rms(dry), 0.12)
+
+    def test_outdoors_has_only_a_short_ground_reflection(self):
+        response = rooms.room_response("outdoors", RATE)
+        self.assertLess(len(response) / RATE, 0.03)
+        self.assertGreater(rms(response), 0.0)
 
 
 class StagingParseTests(unittest.TestCase):
@@ -158,7 +177,8 @@ class StagedMixTests(unittest.TestCase):
             return rms(audio_[end:end + RATE // 4])
 
         self.assertEqual(ringing(mixed, 0), 0.0)  # the narrator stays outside the room
-        self.assertGreater(ringing(mixed, 1), 0.001)  # Mia's line rings on into the pause
+        self.assertGreater(ringing(mixed, 1), 0.0)  # Mia has a subtle tail into the pause
+        self.assertLess(ringing(mixed, 1), 0.02 * rms(voice()))
         self.assertEqual(ringing(dry, 1), 0.0)
         self.assertEqual(ringing(mixed, 2), 0.0)  # the caller is on the phone, not in the room
 

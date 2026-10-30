@@ -349,13 +349,19 @@ room reflections) or `distance="near"`; the writer adds these where the story im
 a position.
 
 A scene can set its room once on its master block: `<parallel room="small_room">`.
+Most dialogue should stay dry, as in a movie: the writer omits `room` unless hearing
+the acoustics matters to the scene. A location alone does not call for reverb;
+ambience and relevant sound effects can establish it. Stage positions work without a room.
 Rooms are `small_room`, `medium_room`, `large_hall`, `outdoors`, `underwater` and
 `dream_sequence`. Every character line and one-shot effect in the block is heard in that
 room; the narrator stays outside it, and a voice through a device (`<phone_call>`,
 `<radio_broadcast>`, ...) or with a place effect of its own keeps that instead. The four
-real rooms are rendered by convolution with stereo room responses the app generates
-(early reflections of a shoebox room, then a diffuse tail that decays faster in the
-highs). The room is mixed beside the dry voice, so the voice keeps its level and its
+real spaces are rendered by convolution with stereo responses the app generates.
+Small and medium rooms use quiet early reflections with short, subdued tails
+(0.22 and 0.38 second mid-band decay times); a large hall keeps an audible 1.5 second
+decay when the scene calls for it. Outdoors adds only a faint ground reflection,
+with no diffuse tail or simulated walls. Indoor tails decay faster in the highs.
+The room is mixed beside the dry voice, so the voice keeps its level and its
 place while the room surrounds the listener, and each line's room rings on into the
 gap after it. `<reverb_small_room>` and `<reverb_large_hall>` on a line use the same
 rooms. When a scene sets no room and its voices share one place effect, its one-shot

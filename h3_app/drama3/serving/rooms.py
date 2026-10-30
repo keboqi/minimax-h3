@@ -1,8 +1,9 @@
 """Rooms a scene is heard in: generated stereo room responses, convolved beside the dry sound.
 
 Each room's response is computed once in numpy: early reflections from a shoebox room
-(image sources up to the third order, heard at two ears), then a diffuse tail of
-independent noise per channel that decays faster in the highs, as real rooms do. The
+(image sources up to the third order, heard at two ears), with a diffuse indoor tail of
+independent noise per channel that decays faster in the highs. Outdoors has only a
+quiet ground reflection. Ordinary rooms keep the reflections short and subdued. The
 direct sound is left out, so the response is only the room: it is mixed beside the dry
 voice, whose level and position stay as they are, and its tail rings on past the take.
 """
@@ -20,8 +21,6 @@ EAR_OFFSET = 0.09  # metres from the head's centre to each ear
 MAX_ORDER = 3
 LOW_SPLIT_HZ, HIGH_SPLIT_HZ = 300.0, 3000.0
 LOW_DECAY, HIGH_DECAY = 1.1, 0.5  # each band's decay time as a share of the mid band's
-EARLY_SHARE = 0.35  # the early reflections' share of a room's energy; the tail has the rest
-OPEN_AIR_EARLY_SHARE = 0.8
 MAX_SECONDS = 3.0
 
 
@@ -32,17 +31,21 @@ class Room:
     send: float  # the room's level beside the dry sound
     source_distance: float = 1.5  # metres from the listener to the voice
     predelay: float = 0.0  # extra seconds before the first reflection
-    open_air: bool = False  # outdoors: the ground reflects, distant walls barely
+    open_air: bool = False  # outdoors: only the ground reflects, with no diffuse tail
     low_cut: float = 180.0  # the room's own lows and highs are rolled off so it never muddies speech
     high_cut: float = 7000.0
+    early_share: float = 0.85  # ordinary dialogue gets mostly short reflections, very little tail
 
 
 ROOMS = {
-    "small_room": Room((3.8, 3.2, 2.5), 0.42, 0.24, source_distance=1.2),
-    "medium_room": Room((6.5, 5.0, 2.8), 0.7, 0.27, source_distance=1.8, predelay=0.004),
-    "large_hall": Room((26.0, 18.0, 11.0), 1.9, 0.34, source_distance=4.0, predelay=0.015,
-                       low_cut=140.0, high_cut=6000.0),
-    "outdoors": Room((60.0, 60.0, 30.0), 0.35, 0.12, source_distance=2.0, open_air=True),
+    # Dialogue-first levels: the room suggests the setting without washing out the words.
+    "small_room": Room((3.8, 3.2, 2.5), 0.22, 0.055, source_distance=1.2,
+                       high_cut=5500.0, early_share=0.92),
+    "medium_room": Room((6.5, 5.0, 2.8), 0.38, 0.06, source_distance=1.8, predelay=0.004),
+    "large_hall": Room((26.0, 18.0, 11.0), 1.5, 0.16, source_distance=4.0, predelay=0.02,
+                       low_cut=180.0, high_cut=5500.0, early_share=0.45),
+    "outdoors": Room((60.0, 60.0, 30.0), 0.35, 0.025, source_distance=2.0, open_air=True,
+                     early_share=1.0),
 }
 # Places that are a sound of their own rather than a real room; their vocal effects make them.
 STYLIZED_ROOMS = ("underwater", "dream_sequence")
@@ -81,7 +84,10 @@ def _early(room: Room, rate: int) -> tuple[np.ndarray, float]:
         for ny in range(-order, order + 1):
             for nz in range(-order, order + 1):
                 reflections = abs(nx) + abs(ny) + abs(nz)
-                if not 0 < reflections <= order or (room.open_air and nz > 0):
+                if not 0 < reflections <= order:
+                    continue
+                # Open air has a ground reflection, no imaginary walls or ceiling.
+                if room.open_air and (nx != 0 or ny != 0 or nz != -1):
                     continue
                 image = np.array([_image(nx, source[0], width), _image(ny, source[1], depth),
                                   _image(nz, source[2], height)])
@@ -132,11 +138,14 @@ def room_response(name: str, rate: int) -> np.ndarray:
 
     room = ROOMS[name]
     early, mixing = _early(room, rate)
-    length = min(int((mixing + 1.2 * room.rt60 * LOW_DECAY) * rate), int(MAX_SECONDS * rate))
+    # Leave the reflection's bandpass time to settle even when there is no diffuse tail.
+    length = (len(early) + int(0.02 * rate) if room.open_air else
+              min(int((mixing + 1.2 * room.rt60 * LOW_DECAY) * rate), int(MAX_SECONDS * rate)))
     length = max(length, len(early))
-    late = _late(room, rate, mixing, length, zlib.crc32(name.encode()))
+    late = (np.zeros((length, 2), dtype=np.float64) if room.open_air else
+            _late(room, rate, mixing, length, zlib.crc32(name.encode())))
     early = np.pad(early, ((0, length - len(early)), (0, 0)))
-    share = OPEN_AIR_EARLY_SHARE if room.open_air else EARLY_SHARE
+    share = room.early_share
 
     def unit(part):
         energy = float(np.sum(part ** 2)) / 2
