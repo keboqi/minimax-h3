@@ -141,6 +141,10 @@ class Drama3View:
     remix: gr.Button | None = None
     title: gr.Textbox | None = None
     word_timing: gr.Checkbox | None = None
+    repair_words: gr.Button | None = None
+    stop_repair_words: gr.Button | None = None
+    alignment_result: gr.State | None = None
+    alignment_status: gr.Markdown | None = None
     take_audio: gr.Audio | None = None
     subtitles: gr.HTML | None = None
     steps: StepStrip | None = None
@@ -804,6 +808,16 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                 regenerate_line = gr.Button("Regenerate line", variant="primary")
                                 remix = gr.Button("Remix")
                             regenerate_line.h3_stop = remix.h3_stop = stop
+                            alignment_result = gr.State(None)
+                            with gr.Row():
+                                repair_words = gr.Button("Generate / repair word alignment", interactive=False)
+                                stop_repair_words = gr.Button("Interrupt alignment", interactive=False)
+                            repair_words.h3_stop = stop_repair_words
+                            alignment_status = gr.Markdown("Word alignment has not been checked for this result.",
+                                                           elem_classes=["h3-drama3-note"])
+                            gr.Markdown("Align this result from its saved takes without regenerating speech or "
+                                        "remixing. Missing timings are retried; successful ones are reused.",
+                                        elem_classes=["h3-song-hint"])
                 with gr.Row(elem_classes=["h3-song-step-nav"]):
                     steps.button("← Speak", SPEAK)
                     steps.button("Generate speech again", SPEAK, press=GENERATE_ID)
@@ -867,6 +881,10 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         regenerate_line=regenerate_line,
         remix=remix,
         word_timing=word_timing,
+        repair_words=repair_words,
+        stop_repair_words=stop_repair_words,
+        alignment_result=alignment_result,
+        alignment_status=alignment_status,
         title=title,
         take_audio=take_audio,
         subtitles=subtitles,

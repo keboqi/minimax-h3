@@ -63,10 +63,11 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
     )
     aligned = bind_gpu_action(
         view.align_words.click, owned_generation(actions.align_words, FAMILY_WORDS),
-        inputs=[view.session], outputs=[view.player, view.status], show_progress="minimal", api_name=False,
+        inputs=[view.session], outputs=[view.player, view.alignment_status], show_progress="minimal", api_name=False,
     )
-    view.audio.change(lambda path: gr.update(interactive=bool(path)), inputs=view.audio,
-                      outputs=view.align_words, **_QUIET)
+    view.audio.change(lambda path: (gr.update(interactive=bool(path)),
+                                   "Word alignment has not been checked for this result."), inputs=view.audio,
+                      outputs=[view.align_words, view.alignment_status], **_QUIET)
     # Voicing marks lines whose take failed (and clears ones that now have a good take).
     for voiced in (previewed, retaken, dubbed):
         voiced.then(actions.board_for, inputs=[view.session, view.board], outputs=view.board,
@@ -80,7 +81,7 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
         (view.stop_analyze, view.analyze_status, FAMILY_ANALYZE, [analyzed]),
         (view.stop_preview, view.line_status, FAMILY_LINES, [translated, previewed, retaken]),
         (view.stop, view.status, FAMILY_DUB, [dubbed]),
-        (view.stop_align_words, view.status, FAMILY_WORDS, [aligned]),
+        (view.stop_align_words, view.alignment_status, FAMILY_WORDS, [aligned]),
     ):
         stopped = stop.click(owned_interrupt(interrupt, family), outputs=status, queue=False, api_name=False)
         stopped.then(fn=None, cancels=events, queue=False, api_name=False)

@@ -338,7 +338,7 @@ def readiness_html(session: sessions.Session | None) -> str:
         numbers = line_numbers(failed)
         warning += (f'<p class="h3-dub-readiness-warning"><strong>{_plural(len(failed), "line")} with a failed '
                     f"take</strong><span>{'Lines' if len(failed) > 1 else 'Line'} {numbers}: generation failed "
-                    "or kept a take that failed its check. Use New take on "
+                    "or its take failed an audio check. Use Preview on "
                     f"{'them' if len(failed) > 1 else 'it'} in Review lines, or enter {numbers} under Fresh "
                     "takes for lines, then dub again; the other lines reuse their takes.</span></p>")
     rushed = sorted(pipeline.timing_problems(session))

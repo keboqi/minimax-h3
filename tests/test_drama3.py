@@ -779,6 +779,14 @@ class Drama3AutoTests(unittest.TestCase):
             label_writers += ["value" in update]
         self.assertTrue(label_writers)
         self.assertFalse(any(label_writers))
+        from h3_app.jobs import JOBS
+        self.assertEqual(JOBS.callbacks["drama3_words"].__name__, "repair_drama3_words")
+        self.assertEqual(JOBS.callbacks["drama3_words"].job_input_names, ("output",))
+        self.assertIs(view.repair_words.h3_stop, view.stop_repair_words)
+        config = demo.get_config_file()
+        self.assertTrue(any((view.repair_words._id, "click") in [tuple(t) for t in dep["targets"]]
+                            for dep in config["dependencies"]))
+        self.assertTrue(any(fn.outputs == [view.subtitles, view.alignment_status] for fn in demo.fns.values()))
 
     def test_soundstage_is_four_steps_and_auto_on_script_presses_auto_on_speak(self):
         import gradio as gr

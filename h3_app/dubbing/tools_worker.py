@@ -34,6 +34,10 @@ SEPARATOR_MODELS = {
     "Quality (Mel-Band-Roformer)": "model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt",
 }
 ASR_RATE = 16000
+# Qwen3-ForcedAligner languages: https://github.com/QwenLM/Qwen3-ASR#released-models-description-and-download
+ALIGNMENT_LANGUAGES = dict(zip(
+    ("zh", "en", "yue", "fr", "de", "it", "ja", "ko", "pt", "ru", "es"),
+    ("Chinese", "English", "Cantonese", "French", "German", "Italian", "Japanese", "Korean", "Portuguese", "Russian", "Spanish")))
 # OmniVAD spans closer than this are one utterance; longer ones are cut at aligned sentence ends.
 VAD_MERGE_GAP = 0.35
 MAX_LINE_SECONDS = 12.0
@@ -338,12 +342,39 @@ class Worker:
         model = self._asr(True)
         clips = list(request.get("clips") or [])
         out: list[list[dict] | None] = [None] * len(clips)
+        errors = [""] * len(clips)
         for first in range(0, len(clips), ASR_BATCH):
             batch = list(range(first, min(first + ASR_BATCH, len(clips))))
             self.progress(f"Timing words in clips {first + 1}-{batch[-1] + 1} of {len(clips)}")
-            audio = [clips[index]["audio"] for index in batch]
-            languages = [str(getattr(result, "language", "") or "")
-                         for result in model.transcribe(audio=audio, return_time_stamps=False)]
+            languages = []
+            detect = []
+            names = {name.casefold(): name for name in ALIGNMENT_LANGUAGES.values()}
+            for position, index in enumerate(batch):
+                requested = str(clips[index].get("language") or "").strip()
+                language = ALIGNMENT_LANGUAGES.get(requested.casefold()) or names.get(requested.casefold(), "")
+                languages.append(language)
+                if not language:
+                    if requested.casefold() not in {"", "auto", "auto-detect", "unknown"}:
+                        errors[index] = f"Word alignment does not support language: {requested}"
+                    else:
+                        detect.append((position, index))
+            try:
+                detected = model.transcribe(audio=[clips[index]["audio"] for _, index in detect],
+                                            return_time_stamps=False) if detect else []
+            except Exception:
+                # A batch failure must not prevent the other clips from aligning.
+                detected = []
+                for _, index in detect:
+                    try:
+                        detected.append(model.transcribe(audio=clips[index]["audio"], return_time_stamps=False)[0])
+                    except Exception as exc:
+                        detected.append(None)
+                        errors[index] = f"Language detection failed: {exc}"
+            for (position, _), result in zip(detect, detected):
+                languages[position] = str(getattr(result, "language", "") or "")
+            for index, language in zip(batch, languages):
+                if not language or "," in language:
+                    errors[index] = errors[index] or f"Cannot align unknown or mixed language ({language or 'not detected'})"
             ready = [(index, language) for index, language in zip(batch, languages)
                      if language and "," not in language and normalized_text(clips[index].get("text", ""))]
             try:
@@ -354,21 +385,23 @@ class Worker:
             except Exception:
                 traceback.print_exc()
                 results = []
-                for index, language in ready:  # one bad clip must not cost the others their timing
-                    try:
-                        results.append(model.forced_aligner.align(audio=clips[index]["audio"],
-                                                                  text=clips[index]["text"], language=language)[0])
-                    except Exception:
-                        results.append(None)
-            for (index, _), result in zip(ready, results):
-                if result is None:
-                    continue
+
+            def validate(result, text):
                 items = [{"text": item.text, "start": item.start_time, "end": item.end_time} for item in result]
+                return aligned_line_words([text], items)[0]
+
+            for position, (index, language) in enumerate(ready):
                 try:
-                    out[index] = aligned_line_words([clips[index]["text"]], items)[0]
-                except (ValueError, TypeError):
-                    pass
-        return {"words": out}
+                    out[index] = validate(results[position], clips[index]["text"])
+                except (ValueError, TypeError, AttributeError, IndexError):
+                    # Retry invalid batch results individually too, not just batch exceptions.
+                    try:
+                        result = model.forced_aligner.align(audio=clips[index]["audio"],
+                                                           text=clips[index]["text"], language=language)[0]
+                        out[index] = validate(result, clips[index]["text"])
+                    except Exception as exc:
+                        errors[index] = f"Word alignment failed: {exc}"
+        return {"words": out, "errors": errors}
 
     @staticmethod
     def _speech_spans(audio_16k, duration: float) -> list[tuple[float, float]]:

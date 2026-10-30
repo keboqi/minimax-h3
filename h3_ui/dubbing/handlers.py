@@ -424,6 +424,8 @@ class DubbingHandlers:
             regenerate=fresh, word_timing=bool(word_timing))
 
     def _preview(self, session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, *, fresh: bool):
+        # Remove the previous player's audio immediately, including on failure.
+        yield None, "Generating a fresh translated preview…" if fresh else "Preparing a saved translated take…"
         try:
             session = sessions.load(self._runtime(), session_id)
             indices = segment_tools.parse_line_numbers(line_numbers, len(session.segments))
@@ -438,7 +440,7 @@ class DubbingHandlers:
                 else:
                     yield gr.skip(), update
         except Exception as exc:
-            yield gr.skip(), self._failed(exc)
+            yield None, self._failed(exc)
 
     def listen_original(self, session_id, line_numbers):
         """Outputs: original audio player, line status. Reads the first selected line without a GPU job."""
@@ -454,8 +456,8 @@ class DubbingHandlers:
             return gr.skip(), self._failed(exc)
 
     def preview_line(self, session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel):
-        """Outputs: preview audio, line status. Voices the first listed line, reusing its saved take."""
-        yield from self._preview(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, fresh=False)
+        """Generate a fresh take of the selected translation, then preview its fitted audio."""
+        yield from self._preview(session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel, fresh=True)
 
     def preview_new_take(self, session_id, line_numbers, voice_mode, preset, timing, max_speed, parallel):
         """Outputs: preview audio, line status. A new take of the first listed line, which the dub then uses."""

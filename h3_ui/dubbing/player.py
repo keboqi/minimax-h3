@@ -10,6 +10,7 @@ by word, in the list and the captions. Clicking a line seeks to it.
 from __future__ import annotations
 
 from html import escape
+import hashlib
 from pathlib import Path
 from urllib.parse import quote
 
@@ -45,7 +46,7 @@ const bind = (root) => {
   const list = root.querySelector("[data-cues]"), cues = [...root.querySelectorAll("[data-cues] li")];
   const duration = Number(root.dataset.duration) || 0;
   let dragging = false, lit = null;
-  players.set(root, { controller, media: [voice, ...followers] });
+  players.set(root, { controller, media: [voice, ...followers], revision: root.dataset.revision });
   const on = (target, name, handler, options) => target?.addEventListener(name, handler, { ...options, signal });
 
   // Each re-seek drops what a follower has buffered, so on a slow link small drift is left alone
@@ -191,9 +192,16 @@ const setup = () => {
       players.delete(root);
     }
   }
-  for (const root of element.querySelectorAll(".h3-dub-player:not([data-bound])")) bind(root);
+  for (const root of element.querySelectorAll(".h3-dub-player")) {
+    const previous = players.get(root);
+    // Gradio can patch a repaired player's children while retaining its root and
+    // data-bound attribute. Rebind to the new media/cues instead of keeping stale nodes.
+    if (!previous || previous.revision !== root.dataset.revision
+        || previous.media[0] !== root.querySelector("[data-voice]")) bind(root);
+  }
 };
-new MutationObserver(setup).observe(element, { childList: true, subtree: true });
+new MutationObserver(setup).observe(element, { childList: true, subtree: true,
+  attributes: true, attributeFilter: ["data-revision"] });
 setup();
 """
 
@@ -255,8 +263,9 @@ def player_html(player: pipeline.Player, *, key: str) -> str:
     note = ("" if player.music is not None else
             '<p class="h3-dub-player-note">This source was analyzed without vocal separation, so the dub plays '
             "as one mix with its background.</p>")
+    revision = hashlib.sha256(cues.encode()).hexdigest()[:16]
     return (
-        f'<div class="h3-dub-player" data-duration="{player.duration:.3f}" data-subtitles="translation">'
+        f'<div class="h3-dub-player" data-revision="{revision}" data-duration="{player.duration:.3f}" data-subtitles="translation">'
         f'<div class="h3-dub-player-screen">{screen}<div class="h3-dub-player-caption" aria-hidden="true">'
         '<span data-caption-translation></span><span data-caption-source></span></div></div>'
         f'<audio data-voice preload="metadata" src="{escape(dub, quote=True)}"></audio>{music}'

@@ -261,6 +261,41 @@ class ServerTests(unittest.TestCase):
         instance.stop()
         self.assertIsNot(instance.http(), session)  # a stopped server drops its pooled connections
 
+    def test_speech_trace_records_exact_target_reference_and_returned_audio(self):
+        instance = server.SglangOmniServer(self.settings)
+        text = "穿过树叶，一边走一边蹦跳着他们的小靴子"
+        original = "Slicing through leaves and bouncing their booties as they go"
+        payload = instance.payload(text=text, reference=Path(self.temp.name) / "reference.wav",
+                                   transcript=original, max_new_tokens=256,
+                                   sampling={"temperature": 1, "top_p": .9, "top_k": 0})
+        response = MagicMock(ok=True, content=b"generated-wav")
+        with patch.object(instance.http(), "post", return_value=response) as post, \
+                patch.object(instance, "log_line") as log:
+            self.assertEqual(instance.speech(payload), b"generated-wav")
+        self.assertEqual(post.call_args.kwargs["json"]["input"], text)
+        self.assertEqual(post.call_args.kwargs["json"]["references"][0]["text"], original)
+        self.assertIn(text, log.call_args_list[0].args[0])
+        self.assertIn(original, log.call_args_list[0].args[0])
+        self.assertIn("sha256=", log.call_args_list[1].args[0])
+
+    def test_speech_trace_io_failures_do_not_prevent_or_discard_audio(self):
+        instance = server.SglangOmniServer(self.settings)
+        for position in (0, 1):
+            for error in (OSError("log disk full"), ValueError("log stream closed")):
+                with self.subTest(position=position, error=error):
+                    failures = [None, None]
+                    failures[position] = error
+                    with patch.object(instance.http(), "post", return_value=MagicMock(ok=True, content=b"valid-wav")) as post, \
+                            patch.object(instance, "log_line", side_effect=failures):
+                        self.assertEqual(instance.speech({"input": "Target dialogue"}), b"valid-wav")
+                    self.assertEqual(post.call_count, 1)
+                    self.assertEqual(instance._active_requests, 0)
+                    self.assertFalse(instance._uncertain_request)
+        with patch.object(instance.http(), "post", return_value=MagicMock(ok=False, status_code=400, text="bad input")), \
+                patch.object(instance, "log_line", side_effect=OSError("log disk full")):
+            with self.assertRaisesRegex(server.SpeechRequestError, "HTTP 400"):
+                instance.speech({"input": "Target dialogue"})
+
     def test_sglang_environment_overrides_and_defaults(self):
         runtime = SimpleNamespace(script_dir=Path("/app"), comfy_dir=Path("/app/ComfyUI"))
         with patch.dict("os.environ", {}, clear=True):
@@ -672,6 +707,35 @@ class GenerateTests(unittest.TestCase):
         self.assertTrue(settings["word_timing"])
         self.assertTrue(settings["chunks"][0]["reused"])
         self.assertEqual([word["text"] for word in settings["chunks"][0]["lines"][0]["words"]], ["Hello"])
+
+    def test_single_line_word_alignment_failure_is_reported(self):
+        request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),), word_timing=True)
+        _fake, updates, snapshot = self.run_route(request,
+            lambda payload: float_wav(tone(expected_seconds(payload["input"]))), align=ValueError("no alignment"))
+        self.assertIn("chunk 1: no alignment", updates[-1].status)
+        self.assertIn("Generate / repair word alignment", updates[-1].status)
+        self.assertIn("alignment", snapshot.call_args.args[1]["settings"]["chunks"][0])
+
+    def test_repair_generated_result_uses_exact_saved_take_without_speech_or_remix(self):
+        from h3_app.drama3.serving.alignment import repair_result
+        from h3_app.provenance import write_snapshot, read_snapshot
+
+        request = Drama3Request("Hello.", voices=((0, self.clips[0], "Reference 0."),))
+        _fake, updates, snapshot = self.run_route(request,
+            lambda payload: float_wav(tone(expected_seconds(payload["input"]))))
+        path = Path(updates[-1].output["value"])
+        write_snapshot(path, snapshot.call_args.args[1])
+        before = (path.stat().st_mtime_ns, path.read_bytes())
+        with patch.dict("os.environ", {"H3_WORKSPACE_DIR": str(Path(self.temp.name) / "workspace")}), \
+                patch("h3_app.dubbing.tools.run", return_value={"bounds": [[.05, .2]],
+                    "words": [[{"text": "Hello", "start": .05, "end": .2}]]}) as align, \
+                patch.object(generate, "best_take", side_effect=AssertionError("must not generate")), \
+                patch.object(generate, "_render_ast", side_effect=AssertionError("must not remix")):
+            message = list(repair_result(path, self.runtime, free_gpu=lambda: None))[-1]
+        self.assertIn("All word timings generated: 1/1", message)
+        self.assertEqual(align.call_count, 1)
+        self.assertTrue(read_snapshot(path)["settings"]["chunks"][0]["lines"][0]["words"])
+        self.assertEqual(before, (path.stat().st_mtime_ns, path.read_bytes()))
 
     def test_client_errors_are_not_retried(self):
         def speech(payload):
@@ -1324,20 +1388,33 @@ class TakeReuseTests(unittest.TestCase):
             self.assertEqual(self.inputs(fake), ["Listen."])
             self.assertEqual(self.keys(snapshot)[1:], keys)
 
-    def test_a_reused_take_keeps_its_failed_check(self):
+    def test_failed_generated_takes_are_not_cached_and_are_retried(self):
         def silent_reply(payload):
             if payload["input"] == "Ready to go?":
                 return float_wav(tone(0.0, silent_tail=expected_seconds(payload["input"])))
             return self.speech(payload)
 
-        self.run_route(self.request(self.SCRIPT), silent_reply)
+        _fake, _updates, failed = self.run_route(self.request(self.SCRIPT), silent_reply)
+        failed_key = self.keys(failed)[2]
+        self.assertFalse((Path(self.temp.name) / "workspace" / "drama3_takes" / f"{failed_key}.wav").exists())
         fake, updates, snapshot = self.run_route(self.request(self.SCRIPT), self.speech)
-        fake.speech.assert_not_called()
+        self.assertEqual(self.inputs(fake), ["Ready to go?"])
         chunks = snapshot.call_args.args[1]["settings"]["chunks"]
-        self.assertEqual([chunk["reused"] for chunk in chunks], [True, True, True])
-        self.assertEqual([chunk["ok"] for chunk in chunks], [True, True, False])
-        self.assertEqual(chunks[2]["check"], "no speech")
-        self.assertIn("chunk 3 (Alice, saved take) no speech", updates[-1].status)
+        self.assertEqual([chunk["reused"] for chunk in chunks], [True, True, False])
+        self.assertTrue(all(chunk["ok"] for chunk in chunks))
+
+    def test_old_failed_cached_take_cannot_remix_and_generate_retries_it(self):
+        from h3_app.drama3.serving import takes as take_store
+
+        _fake, _updates, first = self.run_route(self.request(self.SCRIPT), self.speech)
+        key = self.keys(first)[2]
+        root = Path(self.temp.name) / "workspace" / "drama3_takes"
+        take_store.save_take(root, key, float_wav(np.zeros(RATE, np.float32)))
+        with self.assertRaisesRegex(H3Error, "Cannot remix failed saved takes.*chunk 3: no speech"):
+            self.run_route(self.request(self.SCRIPT, remix_only=True), self.speech)
+        fake, _updates, snapshot = self.run_route(self.request(self.SCRIPT), self.speech)
+        self.assertEqual(self.inputs(fake), ["Ready to go?"])
+        self.assertTrue(all(chunk["ok"] for chunk in snapshot.call_args.args[1]["settings"]["chunks"]))
 
     def test_unreadable_takes_are_generated_again(self):
         _fake, _updates, first = self.run_route(self.request(self.SCRIPT), self.speech)

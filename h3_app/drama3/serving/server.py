@@ -7,12 +7,15 @@ stop the server. The next TTS job restores the workers or restarts the server.
 from __future__ import annotations
 
 import atexit
+import hashlib
+import json
 import os
 import re
 import signal
 import subprocess
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -600,17 +603,30 @@ class SglangOmniServer:
                 self._session = session
             return self._session
 
+    def _speech_trace(self, text: str) -> None:
+        """Optional diagnostics must never prevent or discard a speech response."""
+        try:
+            with self._lock:
+                self.log_line(text)
+        except (OSError, ValueError):
+            pass
+
     def speech(self, payload: dict) -> bytes:
         with self._lock:
             if self.sleeping:
                 raise H3Error("SGLang is asleep; wake it before generating speech.")
             self._active_requests += 1
         try:
+            request_id = uuid.uuid4().hex[:12]
+            self._speech_trace(f"Speech request {request_id}: " + json.dumps({
+                "input": payload.get("input"), "references": payload.get("references", [])}, ensure_ascii=False))
             response = self.http().post(f"{self.base_url}/v1/audio/speech", json=payload,
                                         timeout=self.settings.request_timeout)
             if not response.ok:
                 raise SpeechRequestError(f"{self.label} speech request failed (HTTP {response.status_code}): "
                                          f"{response.text[:500]}", response.status_code)
+            self._speech_trace(f"Speech response {request_id}: {len(response.content)} bytes, "
+                               f"sha256={hashlib.sha256(response.content).hexdigest()}")
             return response.content
         except requests.RequestException:
             # A client timeout does not prove GPU work has stopped remotely.

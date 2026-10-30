@@ -23,7 +23,8 @@ def snapshot_path(path: str | Path) -> Path:
     return path.with_name(path.name + ".settings.json")
 
 
-def write_snapshot(path: str | Path, settings: Mapping[str, Any]) -> None:
+def write_snapshot(path: str | Path, settings: Mapping[str, Any], *, record_job: bool = True) -> None:
+    """Write metadata; in-place repairs can retain the supplied execution identity."""
     destination = snapshot_path(path)
     temporary = destination.with_name(destination.name + f".{uuid.uuid4().hex}.tmp")
     payload = {"schema_version": 1, "output": Path(path).name, **settings}
@@ -31,7 +32,7 @@ def write_snapshot(path: str | Path, settings: Mapping[str, Any]) -> None:
         uuid.NAMESPACE_URL, Path(path).resolve().as_uri()
     ).hex
     job = CURRENT_JOB.get()
-    if job is not None:
+    if job is not None and record_job:
         payload.update(
             application_job_id=job.id, variant=job.variant, retry_of=job.retry_of
         )

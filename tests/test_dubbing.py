@@ -904,6 +904,22 @@ class HandlerTests(Workspace):
                     self.assertEqual((rate, message), (pipeline.RATE, "Preview ready"))
                     np.testing.assert_allclose(played, samples, atol=2 / 32768)
 
+    def test_preview_forces_fresh_take_and_clears_previous_audio_on_failure(self):
+        session = self.board_session()
+        with patch.object(self.handlers, "_hf_token", return_value=None), \
+                patch.object(pipeline, "preview_line", return_value=iter([
+                    pipeline.LinePreview(pipeline.RATE, np.zeros(100), "Fresh preview ready")])) as preview:
+            updates = list(self.handlers.preview_line(session.id, "1", pipeline.VOICE_LINE, "Balance",
+                                                      pipeline.TIMING_MATCH, 1.35, 16))
+        self.assertIsNone(updates[0][0])
+        self.assertEqual(preview.call_args.args[0].regenerate, (0,))
+        with patch.object(self.handlers, "_hf_token", return_value=None), \
+                patch.object(pipeline, "preview_line", side_effect=H3Error("translated generation failed")):
+            updates = list(self.handlers.preview_line(session.id, "1", pipeline.VOICE_LINE, "Balance",
+                                                      pipeline.TIMING_MATCH, 1.35, 16))
+        self.assertIsNone(updates[-1][0])
+        self.assertIn("translated generation failed", updates[-1][1])
+
     def test_errors_become_status_lines(self):
         updates = list(self.handlers.analyze_source(None, None, True, "Balanced (BS-Roformer)", pipeline.PIPELINE_LOCAL,
                                                     "Auto-detect", "English", True, pipeline.TRANSLATOR_HYMT,
@@ -976,7 +992,7 @@ class HandlerTests(Workspace):
         config = demo.get_config_file()
         self.assertTrue(any((view.align_words._id, "click") in [tuple(target) for target in dep["targets"]]
                             for dep in config["dependencies"]))
-        self.assertTrue(any(fn.outputs == [view.player, view.status] for fn in demo.fns.values()))
+        self.assertTrue(any(fn.outputs == [view.player, view.alignment_status] for fn in demo.fns.values()))
         self.assertFalse(view.align_words.interactive)
         from h3_app.jobs import JOBS
         self.assertEqual(JOBS.callbacks[tools.FAMILY_DUB].__name__, "generate_dub")
@@ -1028,6 +1044,58 @@ class ReviewFixTests(Workspace):
         session.save()
         return session
 
+    def test_failed_translated_speech_stops_dub_before_original_audio_fallback(self):
+        session = self.session_with_vocals([
+            {"start": 0, "end": 2.5, "source": "English original", "translation": "中文译文"}])
+        with patch.object(pipeline, "_synthesize", return_value=iter(())), \
+                patch.object(pipeline, "_speech_track") as mix:
+            with self.assertRaisesRegex(H3Error, "Translated speech generation failed: line 1"):
+                list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime, free_gpu=lambda: None))
+        mix.assert_not_called()
+
+    def test_chinese_translation_reaches_tts_and_fresh_requests_bypass_cached_take(self):
+        from unittest.mock import MagicMock
+        from h3_app.drama3.serving import server, speech, audio
+
+        text = "穿过树叶，一边走一边蹦跳着他们的小靴子"
+        original = "Slicing through leaves and bouncing their booties as they go"
+        session = self.session_with_vocals([{ "start": 0, "end": 2.5,
+                                             "source": original, "translation": text}])
+        fake = MagicMock()
+        fake.payload.side_effect = server.SglangOmniServer(None).payload
+        tone = (.2 * np.sin(np.arange(pipeline.RATE * 3) / 20)).astype(np.float32)
+        fake.speech.return_value = audio.encode_wav(tone, pipeline.RATE)
+
+        def synthesize(fresh=False):
+            planned = pipeline._plan(session, [0], pipeline.VOICE_LINE, self.runtime)
+            list(pipeline._synthesize(planned, pipeline.DubRequest(session.id, regenerate=(0,) if fresh else ()),
+                                      session, runtime=self.runtime, free_gpu=lambda: None))
+            return planned[0]
+
+        with patch.dict(os.environ, {"H3_DRAMA3_SGLANG_DATA": str(self.root / "data")}), \
+                patch.object(speech, "shared_server", return_value=fake), \
+                patch.object(speech.LineSpeaker, "ready", return_value=iter(())), \
+                patch.object(speech, "persist_caches"), patch.object(pipeline.tools, "stop"), \
+                patch.object(pipeline.tools, "run", side_effect=AssertionError("No ASR checks for generation")):
+            first = synthesize()
+            cached = synthesize()
+            self.assertEqual(fake.speech.call_count, 1)
+            fresh = synthesize(fresh=True)
+            self.assertEqual(fake.speech.call_count, 2)
+            payload = fake.speech.call_args.args[0]
+            self.assertEqual(payload["input"], text)
+            self.assertEqual(payload["references"][0]["text"], original)
+            self.assertEqual(first.key, cached.key)
+            self.assertEqual(first.key, fresh.key)
+            lines = session.segments
+            lines[0]["translation"] = text + "."
+            session.segments = lines
+            session.save()
+            punctuated = synthesize()
+            self.assertNotEqual(first.key, punctuated.key)
+            self.assertEqual(fake.speech.call_count, 3)
+            self.assertEqual(fake.speech.call_args.args[0]["input"], text + ".")
+
     def test_failed_word_timings_are_reported_and_retried_including_old_null_cache(self):
         import hashlib
 
@@ -1062,7 +1130,7 @@ class ReviewFixTests(Workspace):
             self.assertNotIn("source", first[0])
             self.assertEqual(set(first[1]), {"source", "translation"})
             self.assertNotIn("translation", first[2])
-            self.assertIn("original lines 1; translated lines 3", notes[0])
+            self.assertIn("original lines 1; translated lines 3", " ".join(notes))
             self.assertTrue(all(not path.exists() for path in failed_paths))
             # Older app versions saved failed results as null or []. Both must retry.
             for path, value in zip(failed_paths, ("null", "[]")):
@@ -1076,6 +1144,52 @@ class ReviewFixTests(Workspace):
             self.assertEqual(again[2]["source"][0]["start"], 2.0)
             self.assertEqual(list(collect())[-1], again)
             self.assertEqual(len(calls), 2)
+
+    def test_word_timings_outside_audio_are_retried_and_never_reported_as_complete(self):
+        session = self.session_with_vocals([
+            {"start": 0, "end": .8, "source": "Hello", "translation": "Salut"}])
+        clips = {0: np.full(pipeline.RATE, .2, dtype=np.float32)}
+        spoken = {0: (0, 1)}
+        notes, calls = [], []
+        valid = True
+        existing = {0: {"source": [{"text": "Hello", "start": 100, "end": 101}],
+                        "translation": [{"text": "Salut", "start": 100, "end": 101}]}}
+
+        def fake_tools(_op, payload, _runtime, **_kwargs):
+            calls.append(len(payload["clips"]))
+            return {"words": [[{"text": clip["text"], "start": .1 if valid else 100,
+                                "end": .4 if valid else 101}] for clip in payload["clips"]]}
+
+        def collect(previous=None):
+            result = yield from REAL_WORD_TIMINGS(session, session.segments, spoken, clips, runtime=self.runtime,
+                free_gpu=lambda: None, notes=notes, existing=previous)
+            yield result
+
+        with patch.object(pipeline.tools, "run", side_effect=fake_tools):
+            first = list(collect(existing))[-1]
+            self.assertEqual(calls, [2])
+            self.assertEqual(set(first[0]), {"source", "translation"})
+            cache = session.root / "word_timing"
+            for path in cache.glob("*.json"):
+                words = json.loads(path.read_text(encoding="utf-8"))
+                words[0].update(start=100, end=101)
+                path.write_text(json.dumps(words), encoding="utf-8")
+            self.assertEqual(list(collect())[-1], first)
+            self.assertEqual(calls, [2, 2])
+            for path in cache.glob("*.json"):
+                path.unlink()
+            valid = False
+            notes.clear()
+            self.assertEqual(list(collect())[-1], {})
+            self.assertIn("Word timing falls outside the audio clip", " ".join(notes))
+            self.assertEqual(list(cache.glob("*.json")), [])
+            valid = True
+            self.assertEqual(list(collect())[-1], first)
+            self.assertEqual(calls, [2, 2, 2, 2])
+
+        # Allow rounding at the clip edge without retaining words beyond playback.
+        self.assertEqual(pipeline._validated_word_timing("Hi", [{"text": "Hi", "start": .1, "end": 1.01}], 1),
+                         [{"text": "Hi", "start": .1, "end": 1}])
 
     def test_untranslated_lines_keep_their_original_voice(self):
         session = self.session_with_vocals([
@@ -1167,8 +1281,10 @@ class ReviewFixTests(Workspace):
             return planned
 
         planned = synthesize()
-        self.assertIsNone(planned[2].take)  # rejected: no take, the dub keeps its original voice
-        self.assertIsNotNone(planned[1].take)  # failed its check: the best take is still used
+        self.assertIsNone(planned[2].take)
+        self.assertIsNone(planned[1].take)  # failed checks must not become cached translated speech
+        from h3_app.drama3.serving.takes import takes_root
+        self.assertFalse((takes_root(self.runtime) / f"{planned[1].key}.wav").exists())
         latest = sessions.load(self.runtime, session.id)
         self.assertEqual(pipeline.take_problems(latest), {1: "no speech", 2: "generation failed: bad request"})
         board = presenters.board_value(latest)
@@ -1673,7 +1789,9 @@ class DubRenderTests(Workspace):
             return {"words": [None if len(calls) == 1 and i == 0 else
                               [{"text": word, "start": j * .1, "end": j * .1 + .08}
                                for j, word in enumerate(re.findall(r"\w+", clip["text"]))]
-                              for i, clip in enumerate(payload["clips"])]}
+                              for i, clip in enumerate(payload["clips"])],
+                    "errors": ["Cannot align unknown language" if len(calls) == 1 and i == 0 else ""
+                               for i in range(len(payload["clips"]))]}
 
         import re
         with patch.object(pipeline, "_word_timings", REAL_WORD_TIMINGS), \
@@ -1683,14 +1801,17 @@ class DubRenderTests(Workspace):
             first = list(pipeline.align_dub_words(session.id, runtime=self.runtime, free_gpu=lambda: None))[-1]
             self.assertIn("1 still missing", first.message)
             self.assertIn("original lines 1", first.message)
+            self.assertIn("original line 1: Cannot align unknown language", first.message)
             self.assertIn("Word timing unavailable: original", player_html(first.player, key="first"))
             fixed = list(pipeline.align_dub_words(session.id, runtime=self.runtime, free_gpu=lambda: None))[-1]
             self.assertIn("All word timings generated", fixed.message)
+            self.assertIn("Newly aligned this run: 1", fixed.message)
             self.assertEqual(calls[1], [dub.player.lines[0]["source"]])
             self.assertNotIn("Edited", " ".join(calls[0]))
             self.assertNotIn("Word timing unavailable", player_html(fixed.player, key="fixed"))
             cached = list(pipeline.align_dub_words(session.id, runtime=self.runtime, free_gpu=lambda: None))[-1]
             self.assertEqual(cached.player.lines, fixed.player.lines)
+            self.assertIn("Newly aligned this run: 0", cached.message)
             self.assertEqual(len(calls), 2)
         self.assertEqual(before, {path: (path.stat().st_mtime_ns, path.read_bytes()) for path in assets})
         self.assertEqual(sessions.load(self.runtime, session.id).segments[0]["translation"], "Edited translation")

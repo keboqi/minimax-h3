@@ -985,6 +985,8 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
                 hf_token=None) -> Iterator[str]:
     """Fill each line's ``take`` (mono at RATE), reusing saved takes unless regeneration was asked."""
     from h3_app.drama3.serving import audio, takes as take_store
+    from h3_app.drama3.serving.generate import FRAMES_PER_SECOND
+    from h3_app.drama3.serving.planner import expected_seconds
     from h3_app.drama3.serving.speech import LineSpeaker, persist_caches
 
     temperature, top_p, top_k = VOICE_PRESETS.get(request.preset, VOICE_PRESETS["Balance"])
@@ -992,6 +994,7 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
     speaker = LineSpeaker(runtime)
     store = take_store.takes_root(runtime)
     forced = set(request.regenerate)
+    previous_problems = take_problems(session)
     occurrences: dict[str, int] = {}
     staged: dict[Path, Path] = {}
     for line in planned:
@@ -1002,9 +1005,17 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
         occurrence = occurrences.get(content, 0)
         occurrences[content] = occurrence + 1
         line.key = take_store.occurrence_key(content, occurrence)
-        saved = None if line.index in forced else take_store.load_take(store, line.key)
+        # Failed takes from older versions must not be replayed indefinitely.
+        previous_problem = previous_problems.get(line.index)
+        saved = None if line.index in forced or previous_problem else take_store.load_take(store, line.key)
         if saved is not None:
-            line.take = _resample(audio.tidy_take(*saved), saved[1], RATE)
+            try:
+                check = audio.check_take(saved[0], saved[1], expected_seconds(line.segment["translation"]),
+                                         max_seconds=speaker.budget(line.segment["translation"]) / FRAMES_PER_SECOND)
+                if check.ok:
+                    line.take = _resample(audio.tidy_take(*saved), saved[1], RATE)
+            except ValueError:
+                pass
     pending = [line for line in planned if line.take is None]
     reused = len(planned) - len(pending)
     if not pending:
@@ -1026,11 +1037,18 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
                     line = spoken.key
                     outcomes[line.index] = (line.segment, spoken.problem)
                     done += 1
-                    if not spoken.samples.size:  # rejected: the line keeps no take and is marked for review
-                        line.note = spoken.problem
+                    if spoken.problem or not spoken.samples.size:
+                        line.note = spoken.problem or "no translated audio returned"
+                        line.take = None
+                        # Remove a stale failed take at this identity; it must never
+                        # masquerade as a successful translation in a later job.
+                        try:
+                            (store / f"{line.key}.wav").unlink(missing_ok=True)
+                        except OSError:
+                            pass
                         continue
                     line.take = _resample(audio.tidy_take(spoken.samples, spoken.rate), spoken.rate, RATE)
-                    line.note = f"kept its best take ({spoken.problem})" if spoken.problem else ""
+                    line.note = ""
                     try:
                         take_store.save_take(store, line.key, spoken.wav)
                     except OSError as exc:  # a full disk must not fail the dub
@@ -1141,7 +1159,8 @@ def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token
     if volume != 100.0:
         fitted = fitted * np.float32(volume / 100.0)
     slot = "an open" if math.isinf(timed.available) else f"a {timed.available:.1f}s"
-    details = [f"Line {index + 1}: {len(fitted) / RATE:.1f}s for {slot} slot"]
+    details = [f"Line {index + 1}: {len(fitted) / RATE:.1f}s for {slot} slot",
+               "fresh translated take" if index in request.regenerate else "saved translated take"]
     shift = timed.start - line.segment["start"]
     if abs(shift) >= 0.05:
         details.append(f"starts {abs(shift):.1f}s {'late' if shift > 0 else 'early'}")
@@ -1200,7 +1219,8 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
         notes.append(f"the dub runs {(len(track) - source_length) / RATE:.1f}s past the end of the source")
     voiced = set(spoken)
     if session.path("vocals") is not None:
-        # Every line not voiced here (unticked, untranslated or failed) keeps its original voice.
+        # Unticked or untranslated lines keep their original voice. The caller
+        # rejects failed translated takes before reaching this mixing step.
         for index, segment in enumerate(lines):
             if index not in voiced:
                 start = int(round(segment["start"] * RATE))
@@ -1212,9 +1232,17 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
     return track, notes, spoken
 
 
+def _validated_word_timing(text: str, words, duration: float) -> list[dict]:
+    """Accept only complete timings that can actually play within this clip."""
+    timed = tools_worker.aligned_line_words([text], words)[0]
+    if not timed or any(word["start"] >= duration or word["end"] > duration + .02 for word in timed):
+        raise ValueError("Word timing falls outside the audio clip")
+    return [{**word, "end": min(duration, word["end"])} for word in timed]
+
+
 def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int, tuple[float, float]],
                   clips: dict[int, np.ndarray], *, runtime, free_gpu, hf_token=None,
-                  notes: list[str]) -> Iterator[str]:
+                  notes: list[str], existing: dict | None = None) -> Iterator[str]:
     """Each line's ``{"source": words, "translation": words}`` on the player's timeline, where Qwen3 aligns them.
 
     The translation is timed on its fitted take as placed, the source on the original voice.
@@ -1235,16 +1263,27 @@ def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int
     cache = session.root / "word_timing"
     found, pending = {}, []
     for index, field, offset, samples, text in jobs:
+        duration = len(samples) / RATE
+        previous = (existing or {}).get(index, {}).get(field)
+        if previous:
+            try:
+                timed = _validated_word_timing(text, [
+                    {"text": word["text"], "start": round(float(word["start"]) - offset, 3),
+                     "end": round(float(word["end"]) - offset, 3)} for word in previous], duration)
+                found[(index, field)] = (offset, timed)
+                continue
+            except (ValueError, TypeError, KeyError):
+                pass
         wav = encode_wav(_resample(np.asarray(samples, dtype=np.float32), RATE, rate), rate)
         path = cache / f"{hashlib.sha256(wav + text.encode()).hexdigest()}.json"
         try:
             timed = json.loads(path.read_text(encoding="utf-8"))
             # Older caches include null/empty failures. Only complete, valid word
             # timings may suppress another alignment attempt.
-            timed = tools_worker.aligned_line_words([text], timed)[0]
+            timed = _validated_word_timing(text, timed, duration)
             found[(index, field)] = (offset, timed)
         except (OSError, ValueError, TypeError, KeyError):
-            pending.append((index, field, offset, wav, text, path))
+            pending.append((index, field, offset, duration, wav, text, path))
     if pending:
         try:
             with tempfile.TemporaryDirectory(prefix="dub-words-", dir=session.root) as directory:
@@ -1252,7 +1291,9 @@ def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int
                 for number, (*_, wav, text, _path) in enumerate(pending):
                     clip = Path(directory) / f"{number}.wav"
                     clip.write_bytes(wav)
-                    payload.append({"audio": str(clip), "text": text})
+                    field = pending[number][1]
+                    language = session.data.get("source_language" if field == "source" else "target_language", "")
+                    payload.append({"audio": str(clip), "text": text, "language": language})
                 reply = yield from blocking("Timing subtitle words with Qwen3", lambda report: tools.run(
                     "align_words", {"clips": payload}, runtime, free_gpu=free_gpu, hf_token=hf_token,
                     report=report))
@@ -1260,10 +1301,15 @@ def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int
             if len(words) != len(pending):
                 raise H3Error("The aligner returned word timing for the wrong number of lines.")
             cache.mkdir(parents=True, exist_ok=True)
-            for (index, field, offset, _wav, text, path), timed in zip(pending, words):
+            errors = reply.get("errors") or []
+            for position, ((index, field, offset, duration, _wav, text, path), timed) in enumerate(zip(pending, words)):
                 try:
-                    timed = tools_worker.aligned_line_words([text], timed)[0]
-                except (ValueError, TypeError, KeyError):
+                    timed = _validated_word_timing(text, timed, duration)
+                except (ValueError, TypeError, KeyError) as exc:
+                    reason = (str(errors[position])[:240] if position < len(errors) and errors[position]
+                              else str(exc) if timed else "No valid word timings returned")
+                    label = "original" if field == "source" else "translated"
+                    notes.append(f"{label} line {index + 1}: {reason}")
                     continue
                 found[(index, field)] = (offset, timed)
                 try:
@@ -1427,6 +1473,11 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     planned = _plan(session, chosen, request.voice_mode, runtime)
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
 
+    failed = [line for line in planned if line.take is None or not len(line.take)]
+    if failed:
+        reasons = "; ".join(f"line {line.index + 1}: {line.note or 'no translated audio returned'}" for line in failed[:20])
+        raise H3Error(f"Translated speech generation failed: {reasons}. "
+                      "Use Preview to generate a fresh take, or untick these lines to keep their original voice.")
     yield "Placing lines on the timeline"
     clips: dict[int, np.ndarray] = {}
     track, notes, spoken = _speech_track(session, planned, request, duration, clips)
@@ -1566,20 +1617,35 @@ def align_dub_words(session_id: str, *, runtime, free_gpu, hf_token=None) -> Ite
             clips = {int(index): archive[index] for index in archive.files}
     except (OSError, ValueError, KeyError) as exc:
         raise H3Error("This dub has no saved alignment audio. Generate the dub once to enable this button.") from exc
-    frozen = sessions.Session(session.root, {"files": saved["files"]})
+    frozen = sessions.Session(session.root, {"files": saved["files"],
+        "source_language": saved["player"].get("source_language", ""),
+        "target_language": saved["player"].get("target_language", "")})
     if frozen.speech_audio is None or not frozen.speech_audio.is_file():
         raise H3Error("The original audio is no longer available. Analyze the source again.")
     lines = saved["lines"]
     spoken = {int(index): tuple(bounds) for index, bounds in saved["spoken"].items()}
     notes = []
+    cue_indices = [index for index, line in enumerate(lines) if line["source"] or line["translation"]]
+    existing = {}
+    for index, cue in zip(cue_indices, saved["player"]["lines"]):
+        for field in ("source", "translation"):
+            timed = cue.get(f"{field}_words") or []
+            try:
+                offset = lines[index]["start"] if field == "source" else spoken[index][0]
+                duration = (lines[index]["end"] - offset if field == "source" else len(clips[index]) / RATE)
+                _validated_word_timing(lines[index][field], [
+                    {"text": word["text"], "start": round(float(word["start"]) - offset, 3),
+                     "end": round(float(word["end"]) - offset, 3)} for word in timed], duration)
+            except (ValueError, TypeError, KeyError):
+                continue
+            existing.setdefault(index, {})[field] = timed
     yield "Generating missing word timings; reusing successful alignments"
     words = yield from _word_timings(frozen, lines, spoken, clips, runtime=runtime, free_gpu=free_gpu,
-                                     hf_token=hf_token, notes=notes)
+                                     hf_token=hf_token, notes=notes, existing=existing)
     data = saved["player"]
     for field in ("video", "dub", "original", "music"):
         data[field] = Path(data[field]) if data[field] else None
     player = Player(**data)
-    cue_indices = [index for index, line in enumerate(lines) if line["source"] or line["translation"]]
     for index, cue in zip(cue_indices, player.lines):
         cue["source_words"] = words.get(index, {}).get("source", [])
         cue["translation_words"] = words.get(index, {}).get("translation", [])
@@ -1588,10 +1654,16 @@ def align_dub_words(session_id: str, *, runtime, free_gpu, hf_token=None) -> Ite
                 for field in ("source", "translation")
                 if line[field].strip() and (field == "source" or index in clips)]
     completed = sum(bool(words.get(index, {}).get(field)) for index, field in expected)
+    before = sum(bool(existing.get(index, {}).get(field)) for index, field in expected)
     message = (f"All word timings generated: {completed}/{len(expected)} eligible original and translated tracks aligned."
                if completed == len(expected) else
                f"Word timings generated: {completed}/{len(expected)} line tracks aligned; "
                f"{len(expected) - completed} still missing. " + " ".join(notes))
+    message += (f" Newly aligned this run: {max(0, completed - before)}; already aligned: {before}. "
+                "The player below has been refreshed; replay it without generating the dub again."
+                if completed == len(expected) else
+                f" Newly aligned this run: {max(0, completed - before)}; already aligned: {before}. "
+                "Missing tracks still use plain subtitles. Generating the dub again is not required to apply a successful repair.")
     saved["player"] = asdict(player)
     (folder / "alignment.json").write_text(json.dumps(saved, ensure_ascii=False, default=str), encoding="utf-8")
     yield WordAlignment(player, message)

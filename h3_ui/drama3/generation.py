@@ -178,6 +178,29 @@ class GenerationHandlers:
         """Rebuild the mix from saved takes, with the current sounds and effects; nothing is generated."""
         yield from self._drama3_job(values, progress, remix_only=True)
 
+    def repair_drama3_words(self, output):
+        """Refresh subtitle metadata for the existing audio; speech and mix remain unchanged."""
+        from h3_app.drama3.serving.alignment import repair_result
+        from h3_app.dubbing import tools
+        from h3_models import resolve_hf_token
+
+        if isinstance(output, dict):
+            output = output.get("path") or output.get("value")
+        try:
+            if not output:
+                raise H3Error("Generate speech first.")
+            source = self.services.resolve_result(output)
+            for message in repair_result(source, self._runtime_config(), free_gpu=self.free_comfy_vram,
+                                         hf_token=resolve_hf_token()):
+                yield gr.skip(), message
+            yield self.drama3_subtitles(output), message
+        except JobCancelled:
+            raise
+        except Exception as exc:
+            yield gr.skip(), f"Word alignment unavailable: {exc}"
+        finally:
+            tools.stop()
+
     def preload_drama3_models(self, voice_engine, script_mode="Basic"):
         """Load what Auto needs while the writer works: the voice design engine, Stable Audio, then SGLang-Omni.
 
@@ -278,7 +301,9 @@ class GenerationHandlers:
         lines = "".join(
             f'<li data-start="{start:.3f}" data-end="{end:.3f}">'
             f'<span class="h3-subtitle-speaker h3-drama3-tone-{tones[speaker][0]}">{html.escape(speaker)}</span>'
-            f'<span class="h3-subtitle-text">{word_spans_html(text, line_words)}</span></li>'
+            f'<span class="h3-subtitle-text">{word_spans_html(text, line_words)}'
+            + ('<small> · Word timing unavailable; use Generate / repair word alignment.</small>'
+               if settings.get("word_timing") and not line_words else '') + '</span></li>'
             for (speaker, text, start, end), line_words in zip(entries, words))
         duration = float(settings.get("duration") or 0)
         # The result's 32-hex id is in every copy's file name, so the browser can find its player.

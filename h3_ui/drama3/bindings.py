@@ -65,6 +65,7 @@ class Drama3Actions:
     switch_drama3_script_mode: Callable | None = None
     regenerate_drama3_line: Callable | None = None
     remix_drama3: Callable | None = None
+    repair_drama3_words: Callable | None = None
     drama3_takes: Callable | None = None
     drama3_take_selected: Callable | None = None
     drama3_take_audio: Callable | None = None
@@ -422,6 +423,19 @@ def _bind_takes(view, actions, generation_inputs):
         )
     ]
     view.stop.click(fn=None, cancels=jobs, queue=False, api_name=False)
+    if view.repair_words is not None and actions.repair_drama3_words is not None:
+        # Keep the result locator as state: accepting an Audio input would rename
+        # its pinned copy and lose the original output's snapshot identity.
+        view.output.change(lambda output: (gr.update(interactive=bool(output)), output,
+                                           "Word alignment has not been checked for this result."), inputs=view.output,
+                           outputs=[view.repair_words, view.alignment_result, view.alignment_status], **QUIET)
+        aligned = bind_gpu_action(
+            view.repair_words.click, owned_generation(actions.repair_drama3_words, "drama3_words"),
+            inputs=[view.alignment_result], outputs=[view.subtitles, view.alignment_status], api_name=False,
+            show_progress="minimal")
+        view.stop_repair_words.click(owned_interrupt(actions.interrupt, "drama3_words"), outputs=view.alignment_status,
+                                     queue=False, api_name=False).then(fn=None, cancels=[aligned],
+                                                                      queue=False, api_name=False)
 
 
 def _bind_library_api(actions):

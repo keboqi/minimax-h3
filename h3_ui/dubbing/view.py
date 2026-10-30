@@ -143,6 +143,7 @@ class DubbingView:
     word_timing: gr.Checkbox
     align_words: gr.Button
     stop_align_words: gr.Button
+    alignment_status: gr.Markdown
 
 
 def opened_session_js(steps: StepStrip) -> str:
@@ -311,8 +312,8 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                         preview_audio = gr.Audio(label="Dub preview", type="numpy",
                                                  interactive=False)
                         gr.Markdown("Listen to original plays the source segment at its current Start and End. "
-                                    "Preview hears the dub fitted to its timing; New take records it again, and "
-                                    "the dub keeps the newest take. With lines picked on the board, these use "
+                                    "Preview and New take generate a fresh translated take and fit it to its timing; "
+                                    "Generate dub reuses the newest saved take. With lines picked on the board, these use "
                                     "them; Translate again with none fills the untranslated lines.",
                                     elem_classes=["h3-song-hint"])
                         with gr.Row(elem_classes=["h3-dub-line-edits"]):
@@ -374,6 +375,8 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                         with gr.Row():
                             align_words = gr.Button("Generate / repair word alignment", interactive=False)
                             stop_align_words = gr.Button("Interrupt alignment", interactive=False)
+                        alignment_status = gr.Markdown("Word alignment has not been checked for this result.",
+                                                       elem_classes=["h3-dub-status"])
                         gr.Markdown("Align the latest dub without generating voices again. Successful word "
                                     "timings are reused; missing timings are retried.", elem_classes=["h3-song-hint"])
                         with gr.Accordion("Dubbed files", open=False):
@@ -403,6 +406,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
         timing, max_speed, speech_volume, background_volume, keep_original, advanced, regenerate,
         parallel, readiness, run, stop, status, player, video, audio, files,
         export_source, export_subtitles, exported_video, export_status, word_timing, align_words, stop_align_words,
+        alignment_status,
     )
 
 
