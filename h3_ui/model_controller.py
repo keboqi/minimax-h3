@@ -249,9 +249,9 @@ class ModelController:
             models, model_choice, runtime=self.services._runtime_config()
         )
 
-    def ensure_h3_regenerate_models(self, models: ModelConfig, option: str) -> bool:
+    def ensure_h3_regenerate_models(self, models: ModelConfig, option: str, **kwargs) -> bool:
         return model_service.ensure_h3_regenerate_models(
-            models, option, runtime=self.services._runtime_config()
+            models, option, runtime=self.services._runtime_config(), **kwargs
         )
 
     def ensure_ltx25_upscale_models(

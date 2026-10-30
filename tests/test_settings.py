@@ -11,6 +11,7 @@ from h3_app.settings import (
     OutputSettings,
     ResolutionContext,
     SamplingSettings,
+    PIKA_FLEX,
     preset_settings,
     resolve_settings,
     transition_modes,
@@ -50,16 +51,18 @@ class SettingsTests(unittest.TestCase):
                 disabled = replace(request, finishing=replace(request.finishing, latent_upscale=False))
                 self.assertEqual(resolve_settings(disabled).effective.sampling.latent_upscale_refine_steps, 6)
 
-    def test_singularity_default_matches_fast_and_selects_base(self):
+    def test_singularity_default_uses_pika_and_selects_base(self):
         self.assertEqual(GenerationRequest().preset, "Singularity")
         self.assertEqual(GenerationRequest().model_profile, "Singularity")
         self.assertTrue(GenerationRequest().semantic_bridge)
         for mode in ("Normal", "Turbo"):
-            self.assertEqual(preset_settings("Singularity", mode), preset_settings("Fast", mode))
+            expected = replace(preset_settings("Fast", mode), turbo_variant=PIKA_FLEX,
+                               steps=6 if mode == "Turbo" else 15)
+            self.assertEqual(preset_settings("Singularity", mode), expected)
             for action in ("preset", "restore"):
                 _, values = transition_modes(None, {"preset": "Singularity", "generation_mode": mode, "model_profile": "Speed", "prompt": "keep", "width": 864}, action)
                 self.assertEqual(values["model_profile"], "Singularity")
-                self.assertEqual(values["steps"], preset_settings("Fast", mode).steps)
+                self.assertEqual(values["steps"], preset_settings("Singularity", mode).steps)
                 self.assertEqual(values["prompt"], "keep")
                 self.assertEqual(values["width"], 864)
 
@@ -115,7 +118,7 @@ class SettingsTests(unittest.TestCase):
                 preset_settings(n, "Turbo").steps
                 for n in ("Fast", "Balanced", "Quality")
             ],
-            [4, 6, 8],
+            [4, 6, 6],
         )
         self.assertEqual(
             [
@@ -124,11 +127,15 @@ class SettingsTests(unittest.TestCase):
             ],
             [15, 18, 20],
         )
+        for name in ("Singularity", "Balanced", "Quality"):
+            self.assertEqual(preset_settings(name, "Turbo").turbo_variant, PIKA_FLEX)
+            self.assertEqual(preset_settings(name, "Turbo").steps, 6)
         self.assertEqual(preset_settings("Quality", "Normal").text_encoder, "INT8 ConvRot")
         self.assertFalse(preset_settings("Quality", "Normal").stage_model_offload)
 
     def test_manual_and_required_changes_are_distinct(self):
         r = GenerationRequest(
+            preset="Fast",
             sampling=replace(
                 preset_settings("Fast", "Turbo"), steps=8, text_encoder="BF16"
             )
@@ -146,7 +153,7 @@ class SettingsTests(unittest.TestCase):
 
     def test_inactive_overrides_are_not_modifications(self):
         r = GenerationRequest(
-            sampling=replace(SamplingSettings(), sol_tau=0.7, sol_exact_mode="exact_kv")
+            sampling=replace(preset_settings("Singularity", "Turbo"), sol_tau=0.7, sol_exact_mode="exact_kv")
         )
         self.assertEqual(resolve_settings(r).differences(), {})
         r = replace(r, sampling=replace(r.sampling, attention_mode="Sol-Attn"))

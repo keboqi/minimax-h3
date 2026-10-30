@@ -18,6 +18,7 @@ from h3_app import gallery_store
 from h3_app.catalog import (
     AUDIO_EXTENSIONS,
     COMFY_POSTPROCESS_OPTIONS,
+    H3_REFINEMENT,
     H3_REGENERATE_MODELS,
     IMAGE_EXTENSIONS,
     LTX25_CQ_IMAGE_ENHANCER,
@@ -558,6 +559,7 @@ class MediaController:
         upscale_resolution: str,
         request: gr.Request,
         progress=gr.Progress(track_tqdm=False),
+        *, h3_refinement=None,
     ):
         """Create a new post-processed output from one selected gallery video."""
         started = time.monotonic()
@@ -588,15 +590,18 @@ class MediaController:
                 return
             models = self.services.load_model_config()
             available = set(self.services.object_info())
-            missing = required_upscale_nodes(option, models) - available
+            missing = (required_upscale_nodes(option, models, h3_refinement or {})
+                       if option == H3_REFINEMENT else required_upscale_nodes(option, models)) - available
             if missing:
                 raise H3Error(
                     f"{option} is unavailable. Missing ComfyUI nodes: "
                     + ", ".join(sorted(missing))
                 )
-            if option in H3_REGENERATE_MODELS:
+            if option in H3_REGENERATE_MODELS or option == H3_REFINEMENT:
                 yield self.gallery_media_progress_result(f"Checking {option} models")
-                downloaded = self.services.ensure_h3_regenerate_models(models, option)
+                downloaded = self.services.ensure_h3_regenerate_models(
+                    models, option, **({"refinement": h3_refinement or {}} if option == H3_REFINEMENT else {})
+                )
                 stage_bucket = "h3_regenerate"
             elif option == SEEDVR2_UPSCALE:
                 model_status = f"SeedVR2 {seedvr2_model}"
@@ -632,6 +637,28 @@ class MediaController:
                     metadata.width, metadata.height, upscale_resolution
                 )
             )
+
+            def completed_video(result):
+                # Snapshot publication also indexes the finished asset and prepares
+                # its preview before the gallery reads the catalog again.
+                self.services.write_snapshot(result, {
+                    "source_asset_ids": [uuid.uuid5(uuid.NAMESPACE_URL, source.resolve().as_uri()).hex],
+                    "settings": {
+                        "source": source.name,
+                        "method": option,
+                        "seed": actual_seed,
+                        "prompt": ltx25_prompt,
+                        "source_resolution": f"{metadata.width}×{metadata.height}",
+                        "target_resolution": f"{target_width}×{target_height}",
+                        "seedvr2_model": seedvr2_model,
+                        "ltx25_model": ltx25_model,
+                        **((h3_refinement or {}) if option == H3_REFINEMENT else {}),
+                    },
+                })
+                return self.gallery_media_processed_result(
+                    "Video", result, option, time.monotonic() - started, request
+                )
+
             use_split = option in LTX25_POSTPROCESS_MODELS and bool(
                 split_upscale
             )
@@ -666,6 +693,7 @@ class MediaController:
                     target_width=target_width,
                     target_height=target_height,
                     fps=metadata.fps,
+                    **({"refinement": h3_refinement or {}} if option == H3_REFINEMENT else {}),
                 )
             client_id = str(uuid.uuid4())
             ws = None
@@ -758,9 +786,7 @@ class MediaController:
                     frame_count=metadata.frame_count,
                 )
                 progress(1, desc="Complete")
-                yield self.gallery_media_processed_result(
-                    "Video", result, option, time.monotonic() - started, request
-                )
+                yield completed_video(result)
                 return
             queued_at = time.time()
             prompt_id = self.services.submit_prompt(graph, client_id)
@@ -799,9 +825,7 @@ class MediaController:
                 self.services.wait_for_history(prompt_id), queued_at
             )
             progress(1, desc="Complete")
-            yield self.gallery_media_processed_result(
-                "Video", result, option, time.monotonic() - started, request
-            )
+            yield completed_video(result)
         except Exception as exc:
             record_failure(exc)
             yield self.gallery_media_progress_result(
@@ -991,6 +1015,7 @@ class MediaController:
         upscale_resolution: str,
         request: gr.Request,
         progress=gr.Progress(track_tqdm=False),
+        *, h3_refinement=None,
     ):
         """Dispatch gallery enhancement according to the active media library."""
         media_mode = self.gallery_media_mode(mode)
@@ -1024,6 +1049,7 @@ class MediaController:
             upscale_resolution,
             request,
             progress,
+            h3_refinement=h3_refinement,
         )
 
     def _delete_generated_media(self, selected_media, mode):

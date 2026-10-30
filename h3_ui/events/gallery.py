@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from h3_app.catalog import AI_POSTPROCESS_OPTIONS, LTX25_UPSCALE, SEEDVR2_UPSCALE
 
+from h3_app.refinement import H3_REFINEMENT_INPUTS
 from ..contracts import AppComponents
 from ..media_bindings import bind_gallery_view
 
@@ -30,4 +31,5 @@ def bind_gallery(components: AppComponents, services: BootstrapServices) -> None
         empty=services.empty_generated_media_gallery,
         list_paths=services.list_media_paths,
         download_actions=services.dubbing_actions,
+        h3_refinement_inputs=[getattr(components, name) for name in H3_REFINEMENT_INPUTS],
     )

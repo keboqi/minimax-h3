@@ -92,7 +92,7 @@ class TiledUpscaleTests(unittest.TestCase):
                         "wait_for_history": {}, "resolve_output": result,
                         "concat_upscaled_clips": result,
                         "cleanup_upscale_clip_batch": None,
-                        "gallery_media_processed_result": "complete",
+                        "gallery_media_processed_result": "complete", "write_snapshot": None,
                     }
                     mocks = {name: stack.enter_context(patch.object(owner(app, name), name, return_value=value))
                              for name, value in values.items()}

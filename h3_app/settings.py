@@ -47,14 +47,14 @@ class SamplingSettings:
 
 PRESET_FIELDS = tuple(SamplingSettings.__dataclass_fields__)
 PRESETS = {
-    "Singularity": SamplingSettings(steps=15),
+    "Singularity": SamplingSettings(steps=15, turbo_variant=PIKA_FLEX),
     "Fast": SamplingSettings(steps=15),
     "Balanced": SamplingSettings(
         steps=18,
         sol_tau=1.0,
         sol_exact_mode="exact_kv",
         auto_megapixels="2 MP",
-        turbo_variant=LARRY,
+        turbo_variant=PIKA_FLEX,
         sla_preset="Balanced",
         text_encoder="INT8 ConvRot",
     ),
@@ -65,7 +65,7 @@ PRESETS = {
         scheduler="beta",
         sol_exact_mode="exact_kv_and_rows",
         auto_megapixels="4 MP",
-        turbo_variant=LIGHTX2V_8STEP,
+        turbo_variant=PIKA_FLEX,
         sla_preset="Quality",
         text_encoder="INT8 ConvRot",
     ),

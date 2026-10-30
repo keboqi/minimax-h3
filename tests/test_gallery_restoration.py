@@ -308,7 +308,7 @@ class GalleryRestorationTests(unittest.TestCase):
                         "concat_upscaled_clips": result,
                         "cleanup_upscale_clip_batch": None,
                         "unload_comfy_models": None,
-                        "gallery_media_processed_result": "complete",
+                        "gallery_media_processed_result": "complete", "write_snapshot": None,
                         "postprocess_video": None,
                         "upscale_target_dimensions": None,
                     }

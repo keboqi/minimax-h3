@@ -16,7 +16,7 @@ from h3_app.generation.preparation import _prepare_latent_upscale
 from h3_app.media_types import UpscaleClipBatch, VideoMetadata
 from h3_app.policy import resolve_h3_latent_upscale_method, resolve_h3_split_upscale_config
 from h3_app.workflows import h3, upscale
-from h3_models import MODEL_SPECS, PRELOAD_MODEL_KEYS
+from h3_models import MODEL_SPECS, PRELOAD_MODEL_KEYS, H3_LATENT_UPSCALER_MODEL_CHOICES
 from h3_ui import application as app
 from tests.app_targets import owner
 from h3_app.model_types import ModelConfig, ModelProfile
@@ -176,7 +176,7 @@ class RegenerateGraphTests(unittest.TestCase):
                         "prepare_upscale_clip_batch": UpscaleClipBatch(("source.mp4",)),
                         "submit_prompt": "job", "poll_comfy_progress": [], "wait_for_history": {},
                         "resolve_output": result, "cleanup_upscale_clip_batch": None,
-                        "gallery_media_processed_result": "complete",
+                        "gallery_media_processed_result": "complete", "write_snapshot": None,
                     }
                     mocks = {name: stack.enter_context(patch.object(owner(app, name), name, return_value=value))
                              for name, value in values.items()}
@@ -206,6 +206,99 @@ class RegenerateGraphTests(unittest.TestCase):
                     mocks["ensure_h3_regenerate_models"].assert_called_once_with(models, option)
                     mocks["ensure_ltx25_upscale_models"].assert_not_called()
                     self.assertEqual(build.call_count, 1)
+
+
+class SharedRefinementTests(unittest.TestCase):
+    models = RegenerateGraphTests.models
+    def test_shared_settings_drive_precision_steps_lora_and_split(self):
+        models = self.models()
+        models.dmad_4step_lora = "dmad.safetensors"
+        precision_choice = next(name for name, key in H3_LATENT_UPSCALER_MODEL_CHOICES.items()
+                                if key == "h3_latent_upscaler_3d_fp32")
+        settings = dict(steps=4, latent_upscale_method=catalog.H3_LATENT_UPSCALE_SPLIT,
+                        latent_upscaler_model=precision_choice, latent_upscale_refine_steps=1,
+                        latent_upscale_refine_lora=catalog.DMAD_4STEP_LORA,
+                        latent_split_tile_width=768, latent_split_chunk_frames=90)
+        graph, steps = upscale.build_upscale_graph(
+            option=catalog.H3_REFINEMENT, source_video="source.mp4", seed=42, models=models,
+            width=960, height=544, fps=29.97, refinement=settings,
+        )
+        nodes = {n["class_type"]: n["inputs"] for n in graph.values()}
+        self.assertEqual(steps, 1)
+        self.assertEqual(nodes[catalog.H3_LATENT_UPSCALER_LOADER_NODE]["precision"], "fp32")
+        self.assertEqual(nodes["LoraLoaderModelOnly"]["lora_name"], "dmad.safetensors")
+        self.assertEqual(nodes["KSamplerSelect"]["sampler_name"], "lcm")
+        self.assertEqual(nodes["SplitSigmas"]["step"], 3)
+        self.assertEqual(nodes[catalog.H3_SPLIT_SPATIAL_PARAMS_NODE]["tile_width"], 768)
+        self.assertEqual(nodes[catalog.H3_SPLIT_TEMPORAL_PARAMS_NODE]["chunk_frames"], 90)
+        self.assertEqual(nodes["CreateVideo"]["fps"], 29.97)
+        self.assertLessEqual(set(nodes), upscale.required_upscale_nodes(catalog.H3_REFINEMENT, models, settings))
+
+    def test_full_frame_and_regenerate_choices_use_shared_settings(self):
+        models = self.models()
+        for method in (catalog.H3_LATENT_UPSCALE_STANDARD, *catalog.H3_REGENERATE_MODELS):
+            with self.subTest(method=method):
+                graph, steps = app.build_upscale_graph(
+                    option=catalog.H3_REFINEMENT, source_video="source.mp4", seed=42, models=models,
+                    width=960, height=544, refinement=dict(latent_upscale_method=method,
+                        generation_mode="Normal", steps=4, latent_upscale_refine_steps=1),
+                )
+                nodes = {n["class_type"]: n["inputs"] for n in graph.values()}
+                self.assertNotIn(catalog.H3_SPLIT_UPSCALE_NODE, nodes)
+                if method in catalog.H3_REGENERATE_MODELS:
+                    self.assertEqual(steps, 3)
+                    self.assertEqual(nodes["ManualSigmas"]["sigmas"], catalog.H3_REGENERATE_SIGMAS)
+                else:
+                    self.assertEqual(steps, 1)
+                    self.assertNotIn("LoraLoaderModelOnly", nodes)
+                    self.assertEqual(nodes["SplitSigmas"]["step"], 3)
+
+    def test_shared_model_downloads_follow_selected_profile_upscaler_and_lora(self):
+        models = self.models()
+        models.text_encoder = MODEL_SPECS["text_encoder"].local_name
+        models.profiles["other"] = ModelProfile("Other", "other.safetensors", "other-ref.safetensors")
+        models.dmad_4step_lora = "dmad.safetensors"
+        precision_choice = next(name for name, key in H3_LATENT_UPSCALER_MODEL_CHOICES.items()
+                                if key == "h3_latent_upscaler_3d_fp16")
+        settings = dict(model_profile="Other", latent_upscaler_model=precision_choice,
+                        latent_upscale_refine_lora=catalog.DMAD_4STEP_LORA)
+        with ExitStack() as stack:
+            effects = {name: stack.enter_context(patch.object(model_service, name, return_value=False))
+                       for name in ("ensure_profile_model", "ensure_base_video_vae", "ensure_audio_vae",
+                                    "ensure_models", "ensure_turbo_lora")}
+            model_service.ensure_h3_regenerate_models(models, catalog.H3_REFINEMENT,
+                                                     runtime=Mock(), refinement=settings)
+            self.assertEqual(effects["ensure_profile_model"].call_args.args[0], "other")
+            keys = effects["ensure_models"].call_args.args[0]
+            self.assertIn("h3_latent_upscaler_3d_fp16", keys)
+            self.assertFalse(set(keys) & set(catalog.H3_REGENERATE_MODELS.values()))
+            self.assertEqual(effects["ensure_turbo_lora"].call_args.args,
+                             (models, catalog.DMAD_4STEP_LORA, "Text to video"))
+
+    def test_shared_refinement_routes_settings_through_media_and_downloads(self):
+        models = self.models()
+        source, result = Path("source.mp4"), Path("upscaled.mp4")
+        settings = dict(latent_upscale_method=catalog.H3_REGENERATE_384)
+        with ExitStack() as stack:
+            values = {
+                "managed_video_path": source, "load_model_config": models,
+                "object_info": upscale.required_upscale_nodes(catalog.H3_REFINEMENT, models, settings),
+                "ensure_h3_regenerate_models": False,
+                "probe_video_metadata": VideoMetadata(24, 960, 544, 5, 120, True),
+                "prepare_upscale_clip_batch": UpscaleClipBatch(("source.mp4",)),
+                "submit_prompt": "job", "poll_comfy_progress": [], "wait_for_history": {},
+                "resolve_output": result, "cleanup_upscale_clip_batch": None,
+                "gallery_media_processed_result": "complete", "write_snapshot": None,
+            }
+            mocks = {name: stack.enter_context(patch.object(owner(app, name), name, return_value=value))
+                     for name, value in values.items()}
+            build = stack.enter_context(patch.object(app, "build_upscale_graph", wraps=app.build_upscale_graph))
+            updates = list(app.MEDIA.postprocess_selected_gallery_media(
+                "Video", str(source), catalog.H3_REFINEMENT, 42, "unused", "unused", "A bird flies",
+                False, False, 5.0, "2560 × 2560", request=Mock(), progress=Mock(), h3_refinement=settings))
+            self.assertEqual(updates[-1], "complete")
+            self.assertEqual(build.call_args.kwargs["refinement"], settings)
+            mocks["ensure_h3_regenerate_models"].assert_called_once_with(models, catalog.H3_REFINEMENT, refinement=settings)
 
 
 class RegenerateNodeTests(unittest.TestCase):

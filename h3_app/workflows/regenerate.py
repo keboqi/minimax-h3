@@ -11,6 +11,9 @@ from h3_app.catalog import (
     H3_LATENT_UPSCALER_NODE,
     H3_LATENT_UPSCALER_LOADER_NODE,
     H3_REFINEMENT_COMPILER_GUARD_NODE,
+    H3_REFINEMENT,
+    H3_SPLIT_TEMPORAL_PARAMS_NODE, H3_SPLIT_SPATIAL_PARAMS_NODE, H3_SPLIT_UPSCALE_NODE,
+    LARRY_TURBO_SAMPLER_NODE, PIKA_FLEX, PIKA_FLEX_SIGMAS,
     H3_REGENERATE_MODELS,
     H3_REGENERATE_SIGMAS,
     H3_SEPARATE_AV_LATENT_NODE,
@@ -18,7 +21,8 @@ from h3_app.catalog import (
 from h3_app.errors import H3Error
 from h3_app.graph import Graph
 from h3_app.model_types import ModelConfig
-from h3_app.policy import snap32
+from h3_app.policy import snap32, turbo_sampler_name, turbo_uses_custom_nodes
+from h3_app.refinement import resolve_refinement
 from h3_models import MODEL_SPECS
 from h3_app.workflows.latent_upscale import add_h3_latent_upscale
 
@@ -38,7 +42,7 @@ def add_regenerate_model(graph: Graph, model_ref: list[Any], option: str) -> lis
     return model_ref
 
 
-def required_h3_regenerate_nodes(models: ModelConfig | None = None) -> set[str]:
+def required_h3_regenerate_nodes(models: ModelConfig | None = None, refinement=None) -> set[str]:
     required = {
         "LoadVideo", "GetVideoComponents", "ImageScale", "UNETLoader",
         "LoraLoaderModelOnly", "CLIPLoader", "VAELoader", "MiniMaxH3ImageToVideo",
@@ -49,7 +53,18 @@ def required_h3_regenerate_nodes(models: ModelConfig | None = None) -> set[str]:
         "SamplerCustomAdvanced", "VAEDecodeTiled", "ImageFromBatch", "CreateVideo", "SaveVideo",
         H3_REFINEMENT_COMPILER_GUARD_NODE,
     }
-    if models and "convrot" in models.profile(models.default_profile).fl2va.lower():
+    profile = models.default_profile if models else None
+    if refinement is not None and models is not None:
+        from .h3 import turbo_required_nodes
+        config = resolve_refinement(refinement, models)
+        profile = config["settings"]["model_profile"]
+        if config["lora"]:
+            required |= turbo_required_nodes(config["variant"], config["lora"])
+        if config["variant"] not in H3_REGENERATE_MODELS:
+            required |= {"BasicScheduler", "SplitSigmas"}
+        if config["split"]:
+            required |= {H3_SPLIT_TEMPORAL_PARAMS_NODE, H3_SPLIT_SPATIAL_PARAMS_NODE, H3_SPLIT_UPSCALE_NODE}
+    if models and "convrot" in models.profile(profile).fl2va.lower():
         required.add(CHUNK_FEED_FORWARD_NODE)
     return required
 
@@ -57,11 +72,13 @@ def required_h3_regenerate_nodes(models: ModelConfig | None = None) -> set[str]:
 def build_h3_regenerate_graph(
     *, option: str, source_video: str, seed: int, models: ModelConfig,
     target_width: int, target_height: int, prompt: str = "", fps: float = 24.0,
-    output_stamp: str = "0", output_nonce: str = "",
+    output_stamp: str = "0", output_nonce: str = "", refinement=None,
 ) -> dict[str, Any]:
     """Existing video -> H3 encode -> learned 2x -> refiner; retain source timing/audio."""
-    if option not in H3_REGENERATE_MODELS:
+    if option not in H3_REGENERATE_MODELS and option != H3_REFINEMENT:
         raise H3Error(f"Unknown H3 Regenerate option: {option}")
+    config = resolve_refinement(refinement, models) if option == H3_REFINEMENT else None
+    variant = config["variant"] if config else option
     base_width, base_height = snap32(target_width / 2), snap32(target_height / 2)
     graph = Graph()
     loaded = graph.add("LoadVideo", file=source_video)
@@ -82,16 +99,25 @@ def build_h3_regenerate_graph(
     empty = graph.add(H3_SEPARATE_AV_LATENT_NODE, latent=Graph.out(conditioning, 1))
     upscaled = add_h3_latent_upscale(
         graph, Graph.out(encoded),
-        model_name=MODEL_SPECS["h3_latent_upscaler_3d_bf16"].local_name,
-        precision="bf16", width=base_width * 2, height=base_height * 2,
+        model_name=config["model_name"] if config else MODEL_SPECS["h3_latent_upscaler_3d_bf16"].local_name,
+        precision=config["precision"] if config else "bf16", width=base_width * 2, height=base_height * 2,
     )
     combined = graph.add(
         H3_COMBINE_AV_LATENT_NODE, video_latent=upscaled, audio_latent=Graph.out(empty, 1),
     )
-    prepared = graph.add("H3RegeneratePrepareLatent", latent=Graph.out(combined), audio_vae=Graph.out(audio_vae))
-    model_name = models.profile(models.default_profile).fl2va
+    latent = Graph.out(combined)
+    latent = Graph.out(graph.add("H3RegeneratePrepareLatent", latent=latent, audio_vae=Graph.out(audio_vae)))
+    model_name = models.profile(config["settings"]["model_profile"] if config else models.default_profile).fl2va
     base = graph.add("UNETLoader", unet_name=model_name, weight_dtype="default")
-    model = add_regenerate_model(graph, Graph.out(base), option)
+    model = Graph.out(base)
+    if variant in H3_REGENERATE_MODELS:
+        model = add_regenerate_model(graph, model, variant)
+    elif config["lora"]:
+        from .h3 import add_refinement_model, turbo_required_nodes
+        model = add_refinement_model(
+            graph, model, lora_name=config["lora"], variant=variant,
+            available_nodes=turbo_required_nodes(variant, config["lora"]),
+        )
     if "convrot" in model_name.lower():
         model = Graph.out(graph.add(
             CHUNK_FEED_FORWARD_NODE, model=model, enabled=True,
@@ -100,12 +126,40 @@ def build_h3_regenerate_graph(
     model = Graph.out(graph.add(H3_REFINEMENT_COMPILER_GUARD_NODE, model=model, min_video_volume=1_500_000))
     guider = graph.add("BasicGuider", model=model, conditioning=Graph.out(conditioning))
     noise = graph.add("RandomNoise", noise_seed=int(seed))
-    sampler = graph.add("KSamplerSelect", sampler_name="euler")
-    sigmas = graph.add("ManualSigmas", sigmas=H3_REGENERATE_SIGMAS)
-    sampled = graph.add(
-        "SamplerCustomAdvanced", noise=Graph.out(noise), guider=Graph.out(guider),
-        sampler=Graph.out(sampler), sigmas=Graph.out(sigmas), latent_image=Graph.out(prepared),
-    )
+    if variant in H3_REGENERATE_MODELS:
+        sampler = graph.add("KSamplerSelect", sampler_name="euler")
+        sigmas = Graph.out(graph.add("ManualSigmas", sigmas=H3_REGENERATE_SIGMAS))
+    else:
+        sampler = (
+            graph.add(LARRY_TURBO_SAMPLER_NODE)
+            if config["lora"] and turbo_uses_custom_nodes(variant)
+            else graph.add("KSamplerSelect", sampler_name=turbo_sampler_name(variant, config["lora"]))
+        )
+        schedule = (
+            graph.add("ManualSigmas", sigmas=PIKA_FLEX_SIGMAS)
+            if variant == PIKA_FLEX else graph.add(
+                "BasicScheduler", model=model, scheduler=config["settings"]["scheduler"],
+                steps=config["total"], denoise=1.0,
+            )
+        )
+        sigmas = Graph.out(graph.add("SplitSigmas", sigmas=Graph.out(schedule), step=config["total"] - config["steps"]), 1)
+    split = config["split"] if config else None
+    if split:
+        temporal = graph.add(H3_SPLIT_TEMPORAL_PARAMS_NODE, chunk_frames=split.chunk_frames,
+            temporal_overlap_frames=split.temporal_overlap_frames, anchor_strength=0.999,
+            motion_anchor_frames="22", identity_anchor_frames=24)
+        spatial = graph.add(H3_SPLIT_SPATIAL_PARAMS_NODE, tile_width=split.tile_width,
+            tile_height=split.tile_height, overlap_ratio=split.overlap_ratio,
+            fade_ratio=split.fade_ratio, min_tile_size=256, seam_denoise=split.seam_denoise)
+        sampled = graph.add(H3_SPLIT_UPSCALE_NODE, model=model, conditioning=Graph.out(conditioning),
+            latent=latent, noise=Graph.out(noise), sampler=Graph.out(sampler), sigmas=sigmas,
+            cfg=1.0, temporal_split_param=Graph.out(temporal), spatial_split_param=Graph.out(spatial),
+            seam_polish=split.seam_polish, color_match=True)
+    else:
+        sampled = graph.add(
+            "SamplerCustomAdvanced", noise=Graph.out(noise), guider=Graph.out(guider),
+            sampler=Graph.out(sampler), sigmas=sigmas, latent_image=latent,
+        )
     video_latent = graph.add(H3_SEPARATE_AV_LATENT_NODE, latent=Graph.out(sampled))
     decoded = graph.add(
         "VAEDecodeTiled", samples=Graph.out(video_latent), vae=Graph.out(vae),
@@ -119,7 +173,7 @@ def build_h3_regenerate_graph(
     video = graph.add("CreateVideo", images=Graph.out(final), audio=Graph.out(components, 1), fps=float(fps), bit_depth=8)
     graph.add(
         "SaveVideo", video=Graph.out(video),
-        filename_prefix=f"h3/regenerate_{H3_REGENERATE_MODELS[option]}_{output_stamp}_{output_nonce}",
+        filename_prefix=f"h3/regenerate_{H3_REGENERATE_MODELS.get(variant, 'refinement')}_{output_stamp}_{output_nonce}",
         format="auto", codec="auto",
     )
     return graph.nodes

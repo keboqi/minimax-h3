@@ -169,3 +169,51 @@ class AssetIndexTests(TestCase):
         self.assertEqual(result.read_bytes(), b"complete processed video")
         self.assertEqual(self.index.paths("Video"), {result})
         self.assertTrue(read_snapshot(result)["source_asset_ids"])
+
+    def test_ai_video_enhancement_is_indexed_before_gallery_refresh_without_history_scan(self):
+        from h3_app.catalog import H3_REFINEMENT, LTX25_TILED_UPSCALE
+        for option, split in ((H3_REFINEMENT, False), (LTX25_TILED_UPSCALE, True)):
+            with self.subTest(option=option):
+                source = self.runtime.outputs_dir / "source.mp4"
+                source.write_bytes(b"source video")
+                result = self.runtime.outputs_dir / ("split.mp4" if split else "refinement.mp4")
+                result.write_bytes(b"finished video")
+                services = SimpleNamespace(
+                    _runtime_config=lambda: self.runtime,
+                    load_model_config=Mock(), object_info=lambda: {},
+                    ensure_h3_regenerate_models=Mock(return_value=False),
+                    ensure_ltx25_upscale_models=Mock(return_value=False),
+                    probe_video_metadata=lambda path: SimpleNamespace(width=960, height=544, fps=24,
+                        duration=5, frame_count=120),
+                    upscale_target_dimensions=lambda *args: (1920, 1088),
+                    prepare_upscale_clip_batch=lambda *args, **kwargs: SimpleNamespace(
+                        sources=("one.mp4", "two.mp4") if split else ("one.mp4",), temporary_inputs=split),
+                    build_upscale_graph=lambda **kwargs: ({}, 2),
+                    submit_prompt=lambda *args: "job", poll_comfy_progress=lambda *args: [],
+                    wait_for_history=lambda *args: {}, resolve_output=lambda *args: result,
+                    concat_upscaled_clips=lambda *args, **kwargs: result,
+                    cleanup_upscale_clip_batch=Mock(), write_snapshot=write_snapshot,
+                )
+                controller = MediaController(services)
+
+                def refresh(*args):
+                    self.assertIn(result, self.index.paths("Video"))
+                    self.scan.assert_not_called()
+                    return "complete"
+
+                with patch.object(controller, "managed_video_path", return_value=source), patch.object(
+                    controller, "gallery_media_processed_result", side_effect=refresh,
+                ), patch("h3_ui.media_controller.required_upscale_nodes", return_value=set()), patch(
+                    "h3_app.gallery_store.gallery_thumbnail", return_value=None,
+                ):
+                    updates = list(controller.postprocess_selected_gallery_media(
+                        "Video", str(source), option, 42, "unused", "unused", "fine detail",
+                        False, split, 5, "1920 × 1920", request=Mock(), progress=Mock(),
+                        h3_refinement={"latent_upscale_refine_steps": 1},
+                    ))
+                self.assertEqual(updates[-1], "complete", updates)
+                snapshot = read_snapshot(result)
+                self.assertEqual(snapshot["settings"]["method"], option)
+                self.assertTrue(snapshot["source_asset_ids"])
+                if not split:
+                    self.assertEqual(snapshot["settings"]["latent_upscale_refine_steps"], 1)

@@ -169,7 +169,13 @@ class UiContractTests(unittest.TestCase):
                          if method["id"] in d["inputs"]
                          and any(self.components[i].get("props", {}).get("label") == "Target resolution" for i in d["inputs"])
                          and any(self.components[i].get("props", {}).get("label") == "Seed (-1 random)" for i in d["inputs"]))
-        self.assertEqual(len(admission["inputs"]), 12)  # 11 captured values + request key
+        from h3_app.refinement import H3_REFINEMENT_INPUTS
+        self.assertIn(_catalog.H3_REFINEMENT, choices)
+        self.assertEqual(len(admission["inputs"]), 12 + len(H3_REFINEMENT_INPUTS))
+        labels = [self.components[i].get("props", {}).get("label") for i in admission["inputs"]]
+        self.assertIn("High-resolution refinement method", labels)
+        self.assertIn("High-resolution refinement LoRA", labels)
+        self.assertIn("Latent upscaler model", labels)
 
     def test_all_generator_image_inputs_have_library_selection(self):
         image_inputs = [

@@ -12,6 +12,7 @@ from h3_app.catalog import (
     LTX25_SAME_RESOLUTION_OPTIONS,
     LTX25_SDR_TO_HDR,
     LTX25_TILED_UPSCALE,
+    H3_REFINEMENT,
     H3_REGENERATE_MODELS,
 )
 from .job_bindings import bind_gpu_action, owned_generation, owned_interrupt
@@ -36,6 +37,7 @@ def bind_gallery_view(
     empty: Callable[..., Any],
     list_paths: Callable[..., Any] | None = None,
     download_actions: Any = None,
+    h3_refinement_inputs=None,
 ) -> None:
     page_size = 48
 
@@ -261,9 +263,12 @@ def bind_gallery_view(
             gr.update(visible=value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER),
             gr.update(visible=value == seedvr_option),
             gr.update(
-                visible=value in ltx_options | set(H3_REGENERATE_MODELS)
+                visible=value in ltx_options | set(H3_REGENERATE_MODELS) | {H3_REFINEMENT}
                 and value not in {LTX25_CQ_ENHANCER, LTX25_SDR_TO_HDR},
                 info=(
+                    "Uses the current Minimax H3 native upscale settings: method, upscaler precision, "
+                    "refinement steps, LoRA and split settings. Preserves source timing and audio."
+                    if value == H3_REFINEMENT else
                     "Experimental H3 refiner + LightX2V, three Euler steps. Describe the source scene. "
                     "Preserves frames, fps and audio; best tested on short 24 fps drafts. Uses the default H3 model profile."
                     if value in H3_REGENERATE_MODELS else
@@ -373,7 +378,7 @@ def bind_gallery_view(
     if postprocess is not None:
         bind_postprocess(
             view, selected_ltx_model, postprocess, interrupt,
-            mutation_outputs, sync_more, synchronize,
+            mutation_outputs, sync_more, synchronize, h3_refinement_inputs,
         )
     from .media_actions import bind_safe_deletion
 
@@ -396,13 +401,29 @@ def bind_gallery_view(
 
 def bind_postprocess(
     view, selected_ltx_model, postprocess, interrupt,
-    mutation_outputs, sync_more, synchronize,
+    mutation_outputs, sync_more, synchronize, h3_refinement_inputs=None,
 ):
     """Bind the GPU enhancement actions; GPU-free deployments omit them."""
     page_outputs = [view.grid, view.paths, view.status, view.shown, view.show_more]
+    callback = postprocess
+    input_names = None
+    if h3_refinement_inputs:
+        import inspect
+        from h3_app.refinement import H3_REFINEMENT_INPUTS
+        input_names = [name for name, param in inspect.signature(postprocess).parameters.items()
+                       if name not in {"request", "progress"} and param.kind != inspect.Parameter.KEYWORD_ONLY]
+        input_names += [f"h3_{name}" for name in H3_REFINEMENT_INPUTS]
+
+        def callback(*values, request: gr.Request):
+            count = len(H3_REFINEMENT_INPUTS)
+            yield from postprocess(
+                *values[:-count], request=request,
+                h3_refinement=dict(zip(H3_REFINEMENT_INPUTS, values[-count:])),
+            )
+
     post_event = bind_gpu_action(
         view.post_run.click,
-        owned_generation(postprocess, "gallery"),
+        owned_generation(callback, "gallery", input_names=input_names),
         inputs=[
             view.mode,
             view.selected,
@@ -415,6 +436,7 @@ def bind_postprocess(
             view.split_upscale,
             view.split_seconds,
             view.upscale_resolution,
+            *(h3_refinement_inputs or []),
         ],
         outputs=mutation_outputs + [view.post_status],
         show_progress="minimal",

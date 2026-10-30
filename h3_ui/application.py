@@ -174,7 +174,7 @@ MEDIA = MediaController(MediaServices(
     ensure_ltx25_upscale_models=lambda *args, **kwargs: MODELS.ensure_ltx25_upscale_models(*args, **kwargs),
     ensure_seedvr2_upscale_models=lambda *args, **kwargs: MODELS.ensure_seedvr2_upscale_models(*args, **kwargs),
     ensure_cq_image_enhance_models=lambda: MODELS.ensure_cq_image_enhance_models(),
-    ensure_h3_regenerate_models=lambda *args: MODELS.ensure_h3_regenerate_models(*args),
+    ensure_h3_regenerate_models=lambda *args, **kwargs: MODELS.ensure_h3_regenerate_models(*args, **kwargs),
     build_seedvr2_image_upscale_graph=lambda *args, **kwargs: build_seedvr2_image_upscale_graph(*args, **kwargs),
     build_cq_image_enhance_graph=lambda *args, **kwargs: build_cq_image_enhance_graph(*args, **kwargs),
     build_upscale_graph=lambda *args, **kwargs: build_upscale_graph(*args, **kwargs),
@@ -485,6 +485,7 @@ def build_upscale_graph(
     target_width: int | None = None,
     target_height: int | None = None,
     fps: float = 24.0,
+    refinement=None,
 ) -> tuple[dict[str, Any], int]:
     return upscale_workflow.build_upscale_graph(
         option=option,
@@ -499,6 +500,7 @@ def build_upscale_graph(
         target_width=target_width,
         target_height=target_height,
         fps=fps,
+        refinement=refinement,
         output_stamp=str(int(time.time())),
         output_nonce=uuid.uuid4().hex[:8],
     )

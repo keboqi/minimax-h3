@@ -62,6 +62,13 @@ lower peak VRAM is more important than avoiding an H3 model reload on the next
 generation. **48 fps interpolation** remains available as a non-upscale option
 and requires FFmpeg on the server `PATH`.
 
+**H3 refinement** uses the current **MiniMax H3 → Upscale → Native latent upscale**
+settings for existing videos: upscaler model/precision, refinement method, steps,
+LoRA and MMH3 split controls. “Same as generation” follows the current H3 sampling
+mode and LoRA. The gallery's target resolution and scene prompt apply to this run;
+source frame count, fps and audio are preserved. Regenerate methods use their
+fixed three-step schedule and dedicated adapter stack.
+
 **H3 Regenerate 2K · rank 16** and **rank 384 (experimental)** process existing
 videos using the default configured H3 FL2VA model, H3 text encoder and official
 VAEs. The selected refiner, LightX2V companion and BF16 latent upscaler download
