@@ -30,7 +30,6 @@ from h3_app.catalog import (
     VIDEO_EXTENSIONS,
 )
 from h3_app.errors import H3Error
-from h3_app.media_types import UpscaleClipBatch
 from h3_app.jobs import record_failure
 from h3_app.provenance import copy_media, score_path, snapshot_path
 from h3_app.status import progress_status
@@ -83,9 +82,6 @@ class MediaServices:
     upscale_target_dimensions: Callable[..., Any]
     postprocess_video: Callable[..., Path]
     probe_video_metadata: Callable[..., Any]
-    prepare_upscale_clip_batch: Callable[..., Any]
-    concat_upscaled_clips: Callable[..., Path]
-    cleanup_upscale_clip_batch: Callable[..., None]
     write_snapshot: Callable[..., Any]
 
 
@@ -554,8 +550,6 @@ class MediaController:
         ltx25_model: str,
         ltx25_prompt: str,
         force_offload: bool,
-        split_upscale: bool,
-        split_seconds: float,
         upscale_resolution: str,
         request: gr.Request,
         progress=gr.Progress(track_tqdm=False),
@@ -564,14 +558,18 @@ class MediaController:
         """Create a new post-processed output from one selected gallery video."""
         started = time.monotonic()
         ws: websocket.WebSocket | None = None
-        clip_batch: UpscaleClipBatch | None = None
-        clip_outputs: list[Path] = []
         try:
             if not selected_video:
                 raise H3Error("Select a gallery video first.")
-            if option not in POSTPROCESS_OPTIONS:
+            if option not in POSTPROCESS_OPTIONS and option not in H3_REGENERATE_MODELS:
                 raise H3Error("Choose a post-processing method.")
             source = self.managed_video_path(selected_video)
+            if option == H3_REFINEMENT:
+                from h3_app.refinement import refinement_settings
+                h3_settings = refinement_settings(h3_refinement)
+                seed = h3_settings["seed"]
+                ltx25_prompt = h3_settings.get("prompt", "")
+                force_offload = h3_settings.get("generation_force_offload", h3_settings["upscale_force_offload"])
             actual_seed = (
                 random.randrange(0, 2**63 - 1)
                 if int(seed) < 0
@@ -589,6 +587,14 @@ class MediaController:
                 )
                 return
             models = self.services.load_model_config()
+            if option == H3_REFINEMENT:
+                metadata = self.services.probe_video_metadata(source)
+                target_width, target_height = self.services.upscale_target_dimensions(
+                    metadata.width, metadata.height, upscale_resolution)
+                h3_refinement = {**(h3_refinement or {}),
+                                 "_attention_backend": self.services._runtime_config().attention_backend,
+                                 "_source_duration": metadata.duration,
+                                 "_target_width": target_width, "_target_height": target_height}
             available = set(self.services.object_info())
             missing = (required_upscale_nodes(option, models, h3_refinement or {})
                        if option == H3_REFINEMENT else required_upscale_nodes(option, models)) - available
@@ -629,7 +635,7 @@ class MediaController:
                 yield self.gallery_media_progress_result(
                     f"{option} models downloaded"
                 )
-            metadata = self.services.probe_video_metadata(source)
+            metadata = metadata if option == H3_REFINEMENT else self.services.probe_video_metadata(source)
             target_width, target_height = (
                 (metadata.width, metadata.height)
                 if option in LTX25_SAME_RESOLUTION_OPTIONS
@@ -644,6 +650,8 @@ class MediaController:
                 self.services.write_snapshot(result, {
                     "source_asset_ids": [uuid.uuid5(uuid.NAMESPACE_URL, source.resolve().as_uri()).hex],
                     "settings": {
+                        **({key: value for key, value in h3_settings.items() if not key.startswith("_")}
+                           if option == H3_REFINEMENT else {}),
                         "source": source.name,
                         "method": option,
                         "seed": actual_seed,
@@ -659,135 +667,29 @@ class MediaController:
                     "Video", result, option, time.monotonic() - started, request
                 )
 
-            use_split = option in LTX25_POSTPROCESS_MODELS and bool(
-                split_upscale
-            )
-            clip_batch = self.services.prepare_upscale_clip_batch(
-                source,
-                category=stage_bucket,
-                split_enabled=use_split,
-                split_seconds=split_seconds,
-                metadata=metadata,
-            )
-            clip_count = len(clip_batch.sources)
-            if use_split:
-                yield self.gallery_media_progress_result(
-                    f"Split `{source.name}` into {clip_count} LTX-safe clips (target {float(split_seconds):g}s each)"
-                )
+            staged_source = self.services.stage_file(str(source), stage_bucket)
             if force_offload:
                 yield self.gallery_media_progress_result(
                     f"Unloading resident models before {option}"
                 )
                 self.services.unload_comfy_models()
-            if not use_split:
-                graph, configured_steps = self.services.build_upscale_graph(
-                    option=option,
-                    source_video=clip_batch.sources[0],
-                    seed=actual_seed,
-                    models=models,
-                    seedvr2_model=seedvr2_model,
-                    ltx25_model=ltx25_model,
-                    prompt=ltx25_prompt,
-                    width=metadata.width,
-                    height=metadata.height,
-                    target_width=target_width,
-                    target_height=target_height,
-                    fps=metadata.fps,
-                    **({"refinement": h3_refinement or {}} if option == H3_REFINEMENT else {}),
-                )
+            graph, configured_steps = self.services.build_upscale_graph(
+                option=option,
+                source_video=staged_source,
+                seed=actual_seed,
+                models=models,
+                seedvr2_model=seedvr2_model,
+                ltx25_model=ltx25_model,
+                prompt=ltx25_prompt,
+                width=metadata.width,
+                height=metadata.height,
+                target_width=target_width,
+                target_height=target_height,
+                fps=metadata.fps,
+                **({"refinement": h3_refinement or {}} if option == H3_REFINEMENT else {}),
+            )
             client_id = str(uuid.uuid4())
             ws = None
-            if use_split:
-                for clip_index, staged_source in enumerate(clip_batch.sources):
-                    clip_seed = (actual_seed + clip_index) % (2**63 - 1)
-                    graph, configured_steps = self.services.build_upscale_graph(
-                        option=option,
-                        source_video=staged_source,
-                        seed=clip_seed,
-                        models=models,
-                        seedvr2_model=seedvr2_model,
-                        ltx25_model=ltx25_model,
-                        prompt=ltx25_prompt,
-                        width=metadata.width,
-                        height=metadata.height,
-                        target_width=target_width,
-                        target_height=target_height,
-                        fps=metadata.fps,
-                    )
-                    queued_at = time.time()
-                    prompt_id = self.services.submit_prompt(graph, client_id)
-                    clip_label = f"Clip {clip_index + 1}/{clip_count}"
-                    yield self.gallery_media_progress_result(
-                        progress_status(
-                            f"{option} queued",
-                            started=started,
-                            detail=f"{clip_label} 路 job `{prompt_id}` 路 seed {clip_seed}",
-                        )
-                    )
-                    updates = (
-                        self.services.stream_comfy_progress(
-                            ws, prompt_id, graph, started
-                        )
-                        if ws is not None
-                        else self.services.poll_comfy_progress(prompt_id, graph)
-                    )
-                    for (
-                        stage,
-                        completed_nodes,
-                        total_nodes,
-                        step,
-                        step_total,
-                    ) in updates:
-                        if stage == "Generating video and audio":
-                            stage = f"Processing with {option}"
-                        if step is not None and step_total:
-                            progress(
-                                (
-                                    clip_index * step_total + step,
-                                    clip_count * step_total,
-                                ),
-                                desc=f"{clip_label}: {stage}",
-                            )
-                        elif total_nodes:
-                            progress(
-                                (
-                                    clip_index * total_nodes + completed_nodes,
-                                    clip_count * total_nodes,
-                                ),
-                                desc=f"{clip_label}: {stage}",
-                            )
-                        yield self.gallery_media_progress_result(
-                            progress_status(
-                                f"{clip_label}: {stage}",
-                                started=started,
-                                completed_nodes=completed_nodes,
-                                total_nodes=total_nodes,
-                                step=step,
-                                step_total=step_total,
-                                configured_steps=(
-                                    configured_steps if step is not None else None
-                                ),
-                                detail=f"Post-process job `{prompt_id}`",
-                            )
-                        )
-                    clip_outputs.append(
-                        self.services.resolve_output(
-                            self.services.wait_for_history(prompt_id), queued_at
-                        )
-                    )
-                yield self.gallery_media_progress_result(
-                    f"Concatenating {clip_count} processed clips and restoring source audio"
-                )
-                result = self.services.concat_upscaled_clips(
-                    source,
-                    clip_outputs,
-                    option=option,
-                    duration=metadata.duration,
-                    frame_count=metadata.frame_count,
-                )
-                progress(1, desc="Complete")
-                yield completed_video(result)
-                return
             queued_at = time.time()
             prompt_id = self.services.submit_prompt(graph, client_id)
             yield self.gallery_media_progress_result(
@@ -832,10 +734,6 @@ class MediaController:
                 error_markdown("Post-processing failed", exc)
             )
         finally:
-            self.services.cleanup_upscale_clip_batch(
-                clip_batch,
-                clip_outputs if clip_batch and clip_batch.temporary_inputs else (),
-            )
             if ws is not None:
                 try:
                     ws.close()
@@ -1010,8 +908,6 @@ class MediaController:
         ltx25_model: str,
         ltx25_prompt: str,
         force_offload: bool,
-        split_upscale: bool,
-        split_seconds: float,
         upscale_resolution: str,
         request: gr.Request,
         progress=gr.Progress(track_tqdm=False),
@@ -1044,8 +940,6 @@ class MediaController:
             ltx25_model,
             ltx25_prompt,
             force_offload,
-            split_upscale,
-            split_seconds,
             upscale_resolution,
             request,
             progress,

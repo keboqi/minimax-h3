@@ -121,7 +121,6 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
                 GEMINI_PROMPT_MODELS=catalog.GEMINI_PROMPT_MODELS,
                 GENERATION_POSTPROCESS_OPTIONS=catalog.GENERATION_POSTPROCESS_OPTIONS,
                 H3_LATENT_UPSCALE_METHODS=catalog.H3_LATENT_UPSCALE_METHODS,
-                H3_LATENT_UPSCALE_SPLIT=catalog.H3_LATENT_UPSCALE_SPLIT,
                 H3_LATENT_UPSCALER_MODEL_CHOICES=catalog.H3_LATENT_UPSCALER_MODEL_CHOICES,
                 H3_TEXT_ENCODER_CHOICES=catalog.H3_TEXT_ENCODER_CHOICES,
                 IMAGE_VAE_CHOICES=catalog.IMAGE_VAE_CHOICES,

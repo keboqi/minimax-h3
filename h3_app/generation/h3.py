@@ -26,6 +26,25 @@ from .results import GenerationUpdate
 from .services import GenerationServices
 
 
+def pika_sampling_profile(mode: str, adapter: str) -> dict[str, Any]:
+    """Provenance for a Pika run; upstream identity only for the pinned file."""
+    reference = str(mode).strip().lower() == "reference media"
+    spec = MODEL_SPECS["pika_flex_ref2va_lora" if reference else "pika_flex_fl2va_lora"]
+    # A configured replacement file is not the pinned upstream artifact.
+    pinned = adapter == spec.local_name
+    return {
+        "name": PIKA_FLEX,
+        "sampler": "lcm",
+        "sigmas": [float(value) for value in PIKA_FLEX_SIGMAS.split(",")],
+        "video_shift": 12.0, "audio_shift": 3.0,
+        "steps": 6, "strength": 1.0,
+        "adapter": adapter,
+        "repo_id": spec.repo_id if pinned else None,
+        "revision": spec.revision if pinned else None,
+        "sha256": spec.expected_sha256 if pinned else None,
+    }
+
+
 def generate(
     request: H3Request,
     services: GenerationServices,
@@ -78,18 +97,9 @@ def generate(
             "adjustments": [asdict(item) for item in prepared.plan.adjustments],
         }
         if prepared.turbo_lora_name and prepared.selected_turbo == PIKA_FLEX:
-            key = "pika_flex_ref2va_lora" if request.media.mode == "Reference media" else "pika_flex_fl2va_lora"
-            spec = MODEL_SPECS[key]
-            execution_snapshot["sampling_profile"] = {
-                "name": PIKA_FLEX,
-                "sampler": "lcm",
-                "sigmas": [float(value) for value in PIKA_FLEX_SIGMAS.split(",")],
-                "video_shift": 12.0, "audio_shift": 3.0,
-                "steps": 6, "strength": 1.0,
-                "adapter": prepared.turbo_lora_name,
-                "repo_id": spec.repo_id, "revision": spec.revision,
-                "sha256": spec.expected_sha256,
-            }
+            execution_snapshot["sampling_profile"] = pika_sampling_profile(
+                request.media.mode, prepared.turbo_lora_name,
+            )
         execution_snapshot["settings"].update(
             seed=prepared.actual_seed,
             width=prepared.resolved_width,
@@ -241,16 +251,6 @@ def generate(
                 f"{refinement_status}"
                 f"{prepared.resolved_latent_upscale_method}."
             )
-            if prepared.latent_split_config is not None:
-                queued_status += (
-                    f"\n\nMMH3 split settings: "
-                    f"{prepared.latent_split_config.tile_width}×"
-                    f"{prepared.latent_split_config.tile_height}px tiles · "
-                    f"{prepared.latent_split_config.overlap_ratio:.0%} overlap · "
-                    f"{prepared.latent_split_config.chunk_frames}-frame chunks · "
-                    f"seam cap {prepared.latent_split_config.seam_denoise:.2f} · "
-                    f"polish {prepared.latent_split_config.seam_polish}."
-                )
         if prepared.cache_note:
             queued_status += f"\n\nAcceleration notice: {prepared.cache_note}"
         if prepared.generation_note:

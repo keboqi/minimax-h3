@@ -17,7 +17,6 @@ from .h3.layout import (
     result_format_layout_updates,
     image_vae_frame_updates,
     latent_upscale_layout_updates,
-    latent_upscale_method_layout_update,
     fbcache_preset_defaults,
     input_image_frame_preset_updates,
     select_all_image_frames,
@@ -87,8 +86,8 @@ from h3_app.catalog import (
     FAST_RESOLUTIONS,
     GEMINI_PROMPT_MODELS,
     GENERATION_POSTPROCESS_OPTIONS,
+    H3_REFINEMENT,
     H3_LATENT_UPSCALE_METHODS,
-    H3_LATENT_UPSCALE_SPLIT,
     H3_LATENT_UPSCALE_STANDARD,
     IMAGE_EXTENSIONS,
     IMAGE_VAE_CHOICES,
@@ -129,7 +128,7 @@ from h3_app import outputs
 from h3_app.outputs import OutputContext
 from h3_app.config import RuntimeConfig
 from dataclasses import replace
-from h3_app.media_types import UpscaleClipBatch, VideoMetadata
+from h3_app.media_types import VideoMetadata
 from h3_app.generation import (
     requests as generation_requests,
     services as generation_services,
@@ -191,9 +190,6 @@ MEDIA = MediaController(MediaServices(
     upscale_target_dimensions=lambda *args, **kwargs: upscale_target_dimensions(*args, **kwargs),
     postprocess_video=lambda *args, **kwargs: postprocess_video(*args, **kwargs),
     probe_video_metadata=lambda *args, **kwargs: probe_video_metadata(*args, **kwargs),
-    prepare_upscale_clip_batch=lambda *args, **kwargs: prepare_upscale_clip_batch(*args, **kwargs),
-    concat_upscaled_clips=lambda *args, **kwargs: concat_upscaled_clips(*args, **kwargs),
-    cleanup_upscale_clip_batch=lambda *args, **kwargs: cleanup_upscale_clip_batch(*args, **kwargs),
     write_snapshot=lambda *args, **kwargs: write_snapshot(*args, **kwargs),
 ))
 
@@ -269,48 +265,10 @@ def object_info() -> dict[str, Any]:
     return api_get("/object_info").json()
 
 
-def resolve_sol_policy(
-    attention_mode: str,
-    mode: str,
-    width: int,
-    height: int,
-    duration: float,
-    first_image: str | None,
-    last_image: str | None,
-    use_turbo: bool = False,
-) -> tuple[bool, int, str]:
-    requested = str(attention_mode).strip().lower()
-    tokens = estimate_packed_tokens(
-        mode, width, height, duration, first_image, last_image
-    )
-    if requested in {"dense", "kitchen", "comfy-kitchen"}:
-        return (False, tokens, "forced Comfy Kitchen")
-    if requested in {"sage", "sage 2", "sage2"}:
-        return (False, tokens, "forced Sage 2")
-    if requested == "veda":
-        return (False, tokens, "forced Veda")
-    if requested in {"sla", "sla attention", "sparse-linear"}:
-        return (False, tokens, "forced SLA")
-    if SERVER_ATTENTION_BACKEND != "sol":
-        return (False, tokens, "Sol backend unavailable")
-    if requested in {"sol-attn", "sol", "sparse"}:
-        return (True, tokens, "forced Sol-Attn")
-    if mode == "Reference media":
-        prefix = "Auto Turbo" if use_turbo else "Auto"
-        return (True, tokens, f"{prefix}: reference mode")
-    if use_turbo:
-        enabled = tokens >= AUTO_SOL_TOKEN_THRESHOLD
-        return (
-            enabled,
-            tokens,
-            f"Auto Turbo: {tokens:,} target tokens {('≥' if enabled else '<')} {AUTO_SOL_TOKEN_THRESHOLD:,}",
-        )
-    enabled = tokens >= AUTO_SOL_TOKEN_THRESHOLD
-    return (
-        enabled,
-        tokens,
-        f"Auto: {tokens:,} target tokens {('≥' if enabled else '<')} {AUTO_SOL_TOKEN_THRESHOLD:,}",
-    )
+def resolve_sol_policy(attention_mode, mode, width, height, duration, first_image, last_image, use_turbo=False):
+    from h3_app.policy import resolve_sol_policy as shared_sol_policy
+    return shared_sol_policy(attention_mode, mode, width, height, duration, first_image, last_image,
+                             use_turbo, attention_backend=SERVER_ATTENTION_BACKEND)
 
 
 def stage_file(
@@ -487,6 +445,8 @@ def build_upscale_graph(
     fps: float = 24.0,
     refinement=None,
 ) -> tuple[dict[str, Any], int]:
+    if option == H3_REFINEMENT:
+        refinement = {**(refinement or {}), "_attention_backend": SERVER_ATTENTION_BACKEND}
     return upscale_workflow.build_upscale_graph(
         option=option,
         source_video=source_video,
@@ -591,43 +551,6 @@ def postprocess_video(source: Path, option: str) -> Path:
 
 def probe_video_metadata(source: Path) -> VideoMetadata:
     return media_tools.probe_video_metadata(source)
-
-
-def prepare_upscale_clip_batch(
-    source: Path,
-    *,
-    category: str,
-    split_enabled: bool,
-    split_seconds: float,
-    metadata: VideoMetadata,
-) -> UpscaleClipBatch:
-    return media_tools.prepare_upscale_clip_batch(
-        source,
-        category=category,
-        split_enabled=split_enabled,
-        split_seconds=split_seconds,
-        metadata=metadata,
-        runtime=_runtime_config(),
-    )
-
-
-def concat_upscaled_clips(
-    source: Path, clips: list[Path], *, option: str, duration: float, frame_count: int
-) -> Path:
-    return media_tools.concat_upscaled_clips(
-        source,
-        clips,
-        option=option,
-        duration=duration,
-        frame_count=frame_count,
-        runtime=_runtime_config(),
-    )
-
-
-def cleanup_upscale_clip_batch(
-    batch: UpscaleClipBatch | None, outputs: Iterable[Path] = ()
-) -> None:
-    return media_tools.cleanup_upscale_clip_batch(batch, outputs)
 
 
 def unload_comfy_models() -> None:
@@ -762,14 +685,12 @@ def _generation_services() -> generation_services.GenerationServices:
             build_upscale_graph=build_upscale_graph,
         ),
         media=generation_services.MediaServices(
-            cleanup_upscale_clip_batch=cleanup_upscale_clip_batch,
-            concat_upscaled_clips=concat_upscaled_clips,
             postprocess_video=postprocess_video,
-            prepare_upscale_clip_batch=prepare_upscale_clip_batch,
             probe_video_metadata=probe_video_metadata,
             resolve_audio_output=resolve_audio_output,
             resolve_image_outputs=resolve_image_outputs,
             resolve_output=resolve_output,
+            stage_file=stage_file,
         ),
         models=generation_services.ModelsServices(
             ensure_audio_vae=MODELS.ensure_audio_vae,
@@ -875,17 +796,7 @@ def generate(
     latent_upscaler_model: str = DEFAULT_H3_LATENT_UPSCALER_MODEL,
     latent_upscale_refine_steps: int = 2,
     latent_upscale_method: str = H3_LATENT_UPSCALE_STANDARD,
-    latent_split_tile_width: int = 512,
-    latent_split_tile_height: int = 512,
-    latent_split_overlap_ratio: float = 0.25,
-    latent_split_fade_ratio: float = 0.5,
-    latent_split_chunk_frames: int = 73,
-    latent_split_temporal_overlap_frames: int = 22,
-    latent_split_seam_denoise: float = 0.75,
-    latent_split_seam_polish: str = "off",
     upscale_force_offload: bool = False,
-    upscale_split_enabled: bool = False,
-    upscale_split_seconds: float = 5.0,
     upscale_resolution: str = DEFAULT_UPSCALE_RESOLUTION,
     seedvr2_model: str = DEFAULT_SEEDVR2_MODEL,
     ltx25_model: str = DEFAULT_LTX25_MODEL,
@@ -1030,7 +941,6 @@ def build_ui() -> gr.Blocks:
             GENERATION_POSTPROCESS_OPTIONS=GENERATION_POSTPROCESS_OPTIONS,
             H3_LATENT_UPSCALER_MODEL_CHOICES=H3_LATENT_UPSCALER_MODEL_CHOICES,
             H3_LATENT_UPSCALE_METHODS=H3_LATENT_UPSCALE_METHODS,
-            H3_LATENT_UPSCALE_SPLIT=H3_LATENT_UPSCALE_SPLIT,
             H3_TEXT_ENCODER_CHOICES=H3_TEXT_ENCODER_CHOICES,
             IMAGE_VAE_CHOICES=IMAGE_VAE_CHOICES,
             INPUT_IMAGE_FRAME_PRESETS=INPUT_IMAGE_FRAME_PRESETS,
@@ -1089,7 +999,6 @@ def build_ui() -> gr.Blocks:
             input_image_frame_preset_updates=input_image_frame_preset_updates,
             interrupt=interrupt,
             latent_upscale_layout_updates=latent_upscale_layout_updates,
-            latent_upscale_method_layout_update=latent_upscale_method_layout_update,
             list_media_paths=MEDIA.list_media_paths,
             gallery_media_download_path=MEDIA.gallery_media_download_path,
             mode_help=mode_help,

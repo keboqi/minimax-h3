@@ -138,8 +138,6 @@ EXTRA_FIELDS = {
         "seedvr2_model",
         "post_seed",
         "force_offload",
-        "split_upscale",
-        "split_seconds",
     ),
 }
 PERSISTED_NAMES = frozenset(

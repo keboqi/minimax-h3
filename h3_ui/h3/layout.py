@@ -10,7 +10,6 @@ from h3_app.catalog import (
     DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
     DEFAULT_IMAGE_VAE,
     DEFAULT_RESULT_FORMAT,
-    H3_LATENT_UPSCALE_SPLIT,
     INPUT_IMAGE_FRAME_PRESETS,
     UI_DEFAULTS,
 )
@@ -22,7 +21,6 @@ from h3_app.policy import (
     resolution_choice_values,
     resolution_for_aspect_ratio,
     resolution_summary,
-    resolve_h3_latent_upscale_method,
     snap64,
     snap_to_grid,
     validate_resolution,
@@ -247,12 +245,6 @@ def latent_upscale_layout_updates(
         resolved_width,
         resolved_height,
         note + resolution_summary(resolved_width, resolved_height),
-    )
-
-
-def latent_upscale_method_layout_update(method: str):
-    return gr.update(
-        visible=resolve_h3_latent_upscale_method(method) == H3_LATENT_UPSCALE_SPLIT
     )
 
 

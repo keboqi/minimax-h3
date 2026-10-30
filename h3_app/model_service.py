@@ -723,7 +723,7 @@ def ensure_cq_image_enhance_models(*, runtime: RuntimeConfig) -> bool:
     )
 
 
-def ensure_h3_regenerate_models(models: ModelConfig, option: str, *, runtime: RuntimeConfig, refinement=None) -> bool:
+def ensure_h3_regenerate_models(models: ModelConfig, option: str, *, runtime: RuntimeConfig, refinement=None, release_backend=lambda: None) -> bool:
     """Provision the selected H3 profile, upscaler and refinement adapters on demand."""
     config = None
     if option == H3_REFINEMENT:
@@ -736,18 +736,35 @@ def ensure_h3_regenerate_models(models: ModelConfig, option: str, *, runtime: Ru
         keys = ("h3_latent_upscaler_3d_bf16", "turbo_lora", H3_REGENERATE_MODELS[option])
     else:
         raise H3Error(f"Unknown H3 Regenerate option: {option}")
+    if config:
+        from h3_app.resources import resolve_decoders
+        settings = config["settings"]
+        resources = resolve_decoders("Video", "", **{name: settings[name] for name in (
+            "use_trt_vae", "use_int8_vae", "use_lynnreal_vae", "use_sol_vae", "video_encoder", "lightvae_decoder")})
+        keys += resources.optional_model_keys
+        if settings["semantic_bridge"] and settings["semantic_bridge_alpha"]:
+            keys += ("semantic_bridge_v1",)
+        if settings["attention_mode"] == "Veda":
+            keys += ("veda_r2va" if settings["mode"] == "Reference media" else "veda_t2va",)
     files = spec_files(keys)
+    if config:
+        for key in resources.decoder_model_keys:
+            configured = getattr(models, key, None)
+            if configured:
+                files[key] = configured
+    text_encoder = config["text_encoder"] if config else models.text_encoder
     # Reject missing custom encoders before downloading a potentially large base model.
     encoder_key = next((key for key, spec in MODEL_SPECS.items()
-                        if spec.folder == "text_encoders" and spec.local_name == models.text_encoder), None)
+                        if spec.folder == "text_encoders" and spec.local_name == text_encoder), None)
     if encoder_key:
         keys += (encoder_key,)
-        files[encoder_key] = models.text_encoder
-    elif not model_file_is_ready(_models_root(runtime) / "text_encoders" / models.text_encoder):
-        raise H3Error(f"Configured H3 text encoder is missing: {models.text_encoder}")
+        files[encoder_key] = text_encoder
+    elif not model_file_is_ready(_models_root(runtime) / "text_encoders" / text_encoder):
+        raise H3Error(f"Configured H3 text encoder is missing: {text_encoder}")
     profile_key = models.profile_key(config["settings"]["model_profile"] if config else models.default_profile)
+    mode = settings["mode"] if config else "Text to video"
     downloaded = [
-        ensure_profile_model(profile_key, models.profile(profile_key), "Text to video", runtime=runtime),
+        ensure_profile_model(profile_key, models.profile(profile_key), mode, runtime=runtime),
         ensure_base_video_vae(models, runtime=runtime),
         ensure_audio_vae(models, runtime=runtime),
         ensure_models(
@@ -757,7 +774,9 @@ def ensure_h3_regenerate_models(models: ModelConfig, option: str, *, runtime: Ru
         ),
     ]
     if config and config["lora"]:
-        downloaded.append(ensure_turbo_lora(models, config["variant"], "Text to video", runtime=runtime))
+        downloaded.append(ensure_turbo_lora(models, config["variant"], mode, runtime=runtime))
+    if config and settings["use_trt_vae"]:
+        downloaded.append(ensure_trt_video_vae_engine(models, runtime=runtime, release_backend=release_backend))
     return any(downloaded)
 
 

@@ -32,7 +32,6 @@ from h3_app.model_types import (
     seedvr2_upscale_model_names,
 )
 from h3_app.policy import (
-    H3SplitUpscaleConfig,
     active_fl2va_voice_references,
     collect_reference_slots,
     frame_length,
@@ -43,7 +42,6 @@ from h3_app.policy import (
     normalize_turbo_variant,
     resolve_cache_policy,
     resolve_h3_latent_upscale_method,
-    resolve_h3_split_upscale_config,
     resolve_sla_preset,
     selected_image_sampling_length,
     turbo_strength_for,
@@ -99,7 +97,6 @@ class PreparedH3:
     generation_note: str | None
     latent_source_height: int
     latent_source_width: int
-    latent_split_config: H3SplitUpscaleConfig | None
     latent_upscale_model_name: str | None
     latent_upscale_precision: str
     models: ModelConfig
@@ -339,7 +336,6 @@ class _LatentUpscale:
     model_name: str | None = None
     precision: str = "bf16"
     method: str = H3_LATENT_UPSCALE_STANDARD
-    split_config: H3SplitUpscaleConfig | None = None
     # First-pass size, then the final size the UI asked for (on the 64-pixel grid).
     source_size: tuple[int, int] = (0, 0)
     size: tuple[int, int] = (0, 0)
@@ -347,7 +343,7 @@ class _LatentUpscale:
 
 def _prepare_latent_upscale(request, services, runtime, models, *, width, height, effective_steps, started,
                             progress):
-    """Refinement LoRA, split config, sizes and upscaler for the optional native latent upscale."""
+    """Refinement LoRA, sizes and upscaler for the optional native latent upscale."""
     if not request.finishing.latent_upscale:
         return _LatentUpscale(source_size=(width, height), size=(width, height))
     refinement_lora_name = None
@@ -373,17 +369,6 @@ def _prepare_latent_upscale(request, services, runtime, models, *, width, height
             raise H3Error(f"{refine_choice} refinement LoRA is not configured.")
         progress(0, desc=f"Preparing {refine_choice} refinement LoRA")
         services.models.ensure_turbo_lora(models, refine_choice, request.media.mode)
-    split_config = resolve_h3_split_upscale_config(
-        method,
-        tile_width=request.finishing.latent_split_tile_width,
-        tile_height=request.finishing.latent_split_tile_height,
-        overlap_ratio=request.finishing.latent_split_overlap_ratio,
-        fade_ratio=request.finishing.latent_split_fade_ratio,
-        chunk_frames=request.finishing.latent_split_chunk_frames,
-        temporal_overlap_frames=request.finishing.latent_split_temporal_overlap_frames,
-        seam_denoise=request.finishing.latent_split_seam_denoise,
-        seam_polish=request.finishing.latent_split_seam_polish,
-    )
     source_width, source_height, width, height = h3_latent_upscale_dimensions(width, height)
     refine_steps = int(request.finishing.latent_upscale_refine_steps)
     refine_limit = (
@@ -424,7 +409,7 @@ def _prepare_latent_upscale(request, services, runtime, models, *, width, height
     services.models.ensure_h3_latent_upscaler_model(
         request.finishing.latent_upscaler_model
     )
-    return _LatentUpscale(refinement_lora_name, refinement_variant, model_name, precision, method, split_config,
+    return _LatentUpscale(refinement_lora_name, refinement_variant, model_name, precision, method,
                           (source_width, source_height), (width, height))
 
 
@@ -727,7 +712,6 @@ def prepare_h3(
         generation_note=turbo.generation_note,
         latent_source_height=latent_source_height,
         latent_source_width=latent_source_width,
-        latent_split_config=latent.split_config,
         latent_upscale_model_name=latent.model_name,
         latent_upscale_precision=latent.precision,
         models=models,

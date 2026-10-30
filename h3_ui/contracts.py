@@ -46,7 +46,6 @@ class BootstrapCatalog:
     GENERATION_POSTPROCESS_OPTIONS: Any
     H3_LATENT_UPSCALER_MODEL_CHOICES: Any
     H3_LATENT_UPSCALE_METHODS: Any
-    H3_LATENT_UPSCALE_SPLIT: Any
     H3_TEXT_ENCODER_CHOICES: Any
     IMAGE_VAE_CHOICES: Any
     INPUT_IMAGE_FRAME_PRESETS: Any
@@ -108,7 +107,6 @@ class BootstrapServices:
     input_image_frame_preset_updates: Callable
     interrupt: Callable
     latent_upscale_layout_updates: Callable
-    latent_upscale_method_layout_update: Callable
     list_media_paths: Callable
     mode_help: Callable
     postprocess_selected_gallery_media: Callable

@@ -51,6 +51,33 @@ class PikaFlexTests(unittest.TestCase):
         self.assertEqual((normal.effective.sampling.steps, normal.effective.sampling.scheduler), (20, "beta"))
         self.assertEqual(turbo_sampler_name(PIKA_FLEX, None), "res_multistep")
 
+    def test_unknown_turbo_label_resolves_to_the_adapter_that_runs(self):
+        # The workflow loads Pika for unknown labels, so settings must enforce its schedule.
+        plan = resolve_settings(self.request(
+            generation_mode="Turbo", turbo_variant="Removed adapter", steps=20, scheduler="beta",
+        ))
+        self.assertEqual(plan.effective.sampling.turbo_variant, PIKA_FLEX)
+        self.assertEqual((plan.effective.sampling.steps, plan.effective.sampling.scheduler), (6, "simple"))
+        self.assertIn("turbo_variant", {item.field for item in plan.adjustments})
+        legacy = resolve_settings(self.request(
+            generation_mode="Turbo", turbo_variant="LightX2V v1.0 / 8-step 768p", steps=8,
+        ))
+        self.assertEqual(legacy.effective.sampling.turbo_variant, "LightX2V v1.1 / 8-step 768p")
+        self.assertEqual(legacy.effective.sampling.steps, 8)
+
+    def test_provenance_claims_upstream_identity_only_for_pinned_adapter(self):
+        from h3_app.generation.h3 import pika_sampling_profile
+        for mode, key in (("Reference media", "pika_flex_ref2va_lora"), ("reference MEDIA ", "pika_flex_ref2va_lora"),
+                          ("Text to video", "pika_flex_fl2va_lora")):
+            spec = h3_models.MODEL_SPECS[key]
+            profile = pika_sampling_profile(mode, spec.local_name)
+            self.assertEqual((profile["repo_id"], profile["revision"], profile["sha256"]),
+                             (spec.repo_id, spec.revision, spec.expected_sha256))
+        custom = pika_sampling_profile("Text to video", "my_pika_finetune.safetensors")
+        self.assertEqual(custom["adapter"], "my_pika_finetune.safetensors")
+        self.assertIsNone(custom["sha256"])
+        self.assertIsNone(custom["repo_id"])
+
     def test_existing_output_and_refinement_features_remain_available(self):
         cases = (
             {"latent_upscale": True}, {"result_format": "Image"}, {"result_format": "Audio"},

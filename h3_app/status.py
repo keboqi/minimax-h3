@@ -15,9 +15,6 @@ from h3_app.catalog import (
     H3_LATENT_UPSCALER_LOADER_NODE,
     H3_NVENC_SAVE_NODE,
     H3_SEPARATE_AV_LATENT_NODE,
-    H3_SPLIT_SPATIAL_PARAMS_NODE,
-    H3_SPLIT_TEMPORAL_PARAMS_NODE,
-    H3_SPLIT_UPSCALE_NODE,
     LARRY_TURBO_LORA_NODE,
     LIGHTX2V_BYPASS_LORA_NODE,
     SAGE_ATTENTION_NODE,
@@ -160,10 +157,6 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Loading native H3 latent upscaler"
     if name == H3_COMBINE_AV_LATENT_NODE:
         return "Recombining H3 video and audio latents"
-    if name in {H3_SPLIT_TEMPORAL_PARAMS_NODE, H3_SPLIT_SPATIAL_PARAMS_NODE}:
-        return "Preparing MMH3 split-upscale tiles and chunks"
-    if name == H3_SPLIT_UPSCALE_NODE:
-        return "Refining MMH3 temporal chunks and spatial tiles"
     if name == "SamplerCustomAdvanced" or "Sampler" in name:
         if "MiniMaxMusic3TextEncode" in workflow_classes:
             return "Generating music"

@@ -167,17 +167,7 @@ class H3FinishingInputs:
     latent_upscaler_model: str
     latent_upscale_refine_steps: int
     latent_upscale_method: str
-    latent_split_tile_width: int
-    latent_split_tile_height: int
-    latent_split_overlap_ratio: float
-    latent_split_fade_ratio: float
-    latent_split_chunk_frames: int
-    latent_split_temporal_overlap_frames: int
-    latent_split_seam_denoise: float
-    latent_split_seam_polish: str
     upscale_force_offload: bool
-    upscale_split_enabled: bool
-    upscale_split_seconds: float
     upscale_resolution: str
     seedvr2_model: str
     ltx25_model: str

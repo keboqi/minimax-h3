@@ -3,19 +3,18 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from h3_app.catalog import (
     AUTO_RESOLUTION_MEGAPIXEL_PRESETS,
     AUTO_RESOLUTION_PIXEL_CAP,
+    AUTO_SOL_TOKEN_THRESHOLD,
     DEFAULT_AUTO_RESOLUTION_MEGAPIXELS,
     DEFAULT_IMAGE_VAE,
     DEFAULT_RESULT_FORMAT,
     DEFAULT_TURBO,
     LEGACY_TURBO_VARIANTS,
-    H3_LATENT_UPSCALE_SPLIT,
     H3_LATENT_UPSCALE_STANDARD,
     H3_REGENERATE_MODELS,
     IMAGE_VAE_CHOICES,
@@ -133,18 +132,6 @@ def h3_latent_upscaler_settings(model_choice: str) -> tuple[str, str, str]:
     return key, MODEL_SPECS[key].local_name, precision
 
 
-@dataclass(frozen=True)
-class H3SplitUpscaleConfig:
-    tile_width: int
-    tile_height: int
-    overlap_ratio: float
-    fade_ratio: float
-    chunk_frames: int
-    temporal_overlap_frames: int
-    seam_denoise: float
-    seam_polish: str
-
-
 def resolve_h3_latent_upscale_method(value: str | None) -> str:
     normalized = str(value or H3_LATENT_UPSCALE_STANDARD).strip().lower()
     aliases = {
@@ -153,72 +140,18 @@ def resolve_h3_latent_upscale_method(value: str | None) -> str:
         "full frame": H3_LATENT_UPSCALE_STANDARD,
         "standard": H3_LATENT_UPSCALE_STANDARD,
         H3_LATENT_UPSCALE_STANDARD.lower(): H3_LATENT_UPSCALE_STANDARD,
-        "split": H3_LATENT_UPSCALE_SPLIT,
-        "mmh3 split upscale": H3_LATENT_UPSCALE_SPLIT,
-        H3_LATENT_UPSCALE_SPLIT.lower(): H3_LATENT_UPSCALE_SPLIT,
+        # MMH3 Split Upscale was removed; saved selections use full-frame refinement.
+        "split": H3_LATENT_UPSCALE_STANDARD,
+        "mmh3 split upscale": H3_LATENT_UPSCALE_STANDARD,
+        "mmh3 split upscale (experimental)": H3_LATENT_UPSCALE_STANDARD,
     }
     try:
         return aliases[normalized]
     except KeyError as exc:
         raise H3Error(
-            "Unknown H3 latent upscale method. Choose full-frame refinement, "
-            "MMH3 Split Upscale or H3 Regenerate."
+            "Unknown H3 latent upscale method. Choose full-frame refinement "
+            "or H3 Regenerate."
         ) from exc
-
-
-def resolve_h3_split_upscale_config(
-    method: str | None,
-    *,
-    tile_width: int | float,
-    tile_height: int | float,
-    overlap_ratio: float,
-    fade_ratio: float,
-    chunk_frames: int | float,
-    temporal_overlap_frames: int | float,
-    seam_denoise: float,
-    seam_polish: str,
-) -> H3SplitUpscaleConfig | None:
-    if resolve_h3_latent_upscale_method(method) != H3_LATENT_UPSCALE_SPLIT:
-        return None
-
-    resolved_tile_width = int(tile_width)
-    resolved_tile_height = int(tile_height)
-    resolved_chunk_frames = int(chunk_frames)
-    resolved_temporal_overlap = int(temporal_overlap_frames)
-    resolved_overlap_ratio = float(overlap_ratio)
-    resolved_fade_ratio = float(fade_ratio)
-    resolved_seam_denoise = float(seam_denoise)
-    resolved_seam_polish = str(seam_polish).strip().lower()
-    if not 64 <= resolved_tile_width <= 16384 or resolved_tile_width % 32:
-        raise H3Error("MMH3 tile width must be a multiple of 32 from 64 to 16384.")
-    if not 64 <= resolved_tile_height <= 16384 or resolved_tile_height % 32:
-        raise H3Error("MMH3 tile height must be a multiple of 32 from 64 to 16384.")
-    if not 0.0 <= resolved_overlap_ratio <= 0.90:
-        raise H3Error("MMH3 spatial overlap must be between 0.0 and 0.90.")
-    if not 0.0 <= resolved_fade_ratio <= 1.0:
-        raise H3Error("MMH3 fade ratio must be between 0.0 and 1.0.")
-    if not 5 <= resolved_chunk_frames <= 100000:
-        raise H3Error("MMH3 temporal chunk length must be from 5 to 100000 frames.")
-    if not 0 <= resolved_temporal_overlap <= 100000:
-        raise H3Error("MMH3 temporal overlap must be from 0 to 100000 frames.")
-    if resolved_temporal_overlap >= resolved_chunk_frames:
-        raise H3Error(
-            "MMH3 temporal overlap must be non-negative and smaller than the chunk."
-        )
-    if not 0.1 <= resolved_seam_denoise <= 1.0:
-        raise H3Error("MMH3 seam denoise must be between 0.1 and 1.0.")
-    if resolved_seam_polish not in {"off", "auto", "all"}:
-        raise H3Error("MMH3 seam polish must be off, auto, or all.")
-    return H3SplitUpscaleConfig(
-        tile_width=resolved_tile_width,
-        tile_height=resolved_tile_height,
-        overlap_ratio=resolved_overlap_ratio,
-        fade_ratio=resolved_fade_ratio,
-        chunk_frames=resolved_chunk_frames,
-        temporal_overlap_frames=resolved_temporal_overlap,
-        seam_denoise=resolved_seam_denoise,
-        seam_polish=resolved_seam_polish,
-    )
 
 
 def frame_length(duration: float) -> int:
@@ -562,4 +495,49 @@ def input_image_upscale_dimensions(
         destination_width,
         destination_height,
         scale_by,
+    )
+
+
+def resolve_sol_policy(
+    attention_mode: str,
+    mode: str,
+    width: int,
+    height: int,
+    duration: float,
+    first_image: str | None,
+    last_image: str | None,
+    use_turbo: bool = False,
+    *, attention_backend: str = "sol",
+) -> tuple[bool, int, str]:
+    requested = str(attention_mode).strip().lower()
+    tokens = estimate_packed_tokens(
+        mode, width, height, duration, first_image, last_image
+    )
+    if requested in {"dense", "kitchen", "comfy-kitchen"}:
+        return (False, tokens, "forced Comfy Kitchen")
+    if requested in {"sage", "sage 2", "sage2"}:
+        return (False, tokens, "forced Sage 2")
+    if requested == "veda":
+        return (False, tokens, "forced Veda")
+    if requested in {"sla", "sla attention", "sparse-linear"}:
+        return (False, tokens, "forced SLA")
+    if attention_backend != "sol":
+        return (False, tokens, "Sol backend unavailable")
+    if requested in {"sol-attn", "sol", "sparse"}:
+        return (True, tokens, "forced Sol-Attn")
+    if mode == "Reference media":
+        prefix = "Auto Turbo" if use_turbo else "Auto"
+        return (True, tokens, f"{prefix}: reference mode")
+    if use_turbo:
+        enabled = tokens >= AUTO_SOL_TOKEN_THRESHOLD
+        return (
+            enabled,
+            tokens,
+            f"Auto Turbo: {tokens:,} target tokens {('≥' if enabled else '<')} {AUTO_SOL_TOKEN_THRESHOLD:,}",
+        )
+    enabled = tokens >= AUTO_SOL_TOKEN_THRESHOLD
+    return (
+        enabled,
+        tokens,
+        f"Auto: {tokens:,} target tokens {('≥' if enabled else '<')} {AUTO_SOL_TOKEN_THRESHOLD:,}",
     )

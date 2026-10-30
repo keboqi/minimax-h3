@@ -206,11 +206,6 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
             "Refinement", extras.get("latent_upscale_method", "Full-frame")
         )
         technical += detail("Latent upscaler", extras.get("latent_upscaler_model", ""))
-        if "Split" in str(extras.get("latent_upscale_method", "")):
-            technical += detail(
-                "Split refinement",
-                f"{extras.get('latent_split_tile_width')}×{extras.get('latent_split_tile_height')}px tiles · {extras.get('latent_split_chunk_frames')}f chunks+{extras.get('latent_split_temporal_overlap_frames')}f · polish {extras.get('latent_split_seam_polish')}",
-            )
     metrics = detail("Output", f"{fmt} · {length} · {output.batch_count} variant(s)")
     if fmt != "Audio":
         metrics += detail("H3 output", dimensions)

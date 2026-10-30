@@ -88,32 +88,28 @@ class GalleryHdrTests(unittest.TestCase):
                 self.assertFalse(model_service.ensure_ltx25_upscale_models(choice, option=LTX25_SDR_TO_HDR, runtime=runtime))
                 sync.assert_not_called()
 
-    def test_gallery_hdr_dispatch_preserves_dimensions_and_split_flow(self):
-        for split in (False, True):
-            with self.subTest(split=split), ExitStack() as stack:
-                result = Path("hdr.mp4")
-                batch = SimpleNamespace(sources=["clip1.mp4", "clip2.mp4"] if split else ["source.mp4"], temporary_inputs=split)
-                values = {
-                    "managed_video_path": Path("source.mp4"), "load_model_config": Mock(),
-                    "object_info": required_upscale_nodes(LTX25_SDR_TO_HDR),
-                    "ensure_ltx25_upscale_models": False,
-                    "probe_video_metadata": SimpleNamespace(width=1920, height=1080, fps=24.0, duration=10.0, frame_count=241),
-                    "prepare_upscale_clip_batch": batch, "submit_prompt": "job", "poll_comfy_progress": [],
-                    "wait_for_history": {}, "resolve_output": result, "concat_upscaled_clips": result,
-                    "cleanup_upscale_clip_batch": None, "unload_comfy_models": None,
-                    "gallery_media_processed_result": "complete", "write_snapshot": None, "upscale_target_dimensions": None,
-                }
-                mocks = {name: stack.enter_context(patch.object(owner(app, name), name, return_value=value)) for name, value in values.items()}
-                build = stack.enter_context(patch.object(app, "build_upscale_graph", wraps=app.build_upscale_graph))
-                updates = list(app.MEDIA.postprocess_selected_gallery_media(
-                    "Video", "source.mp4", LTX25_SDR_TO_HDR, 42, "unused", "BF16", "ignored",
-                    False, split, 5.0, "unused", request=Mock(), progress=Mock(),
-                ))
-                self.assertEqual(updates[-1], "complete", updates)
-                mocks["upscale_target_dimensions"].assert_not_called()
-                self.assertEqual(build.call_count, 2 if split else 1)
-                self.assertEqual(build.call_args.kwargs["target_height"], 1080)
-                self.assertEqual(mocks["concat_upscaled_clips"].call_count, int(split))
+    def test_gallery_hdr_dispatch_preserves_dimensions(self):
+        with ExitStack() as stack:
+            result = Path("hdr.mp4")
+            values = {
+                "managed_video_path": Path("source.mp4"), "load_model_config": Mock(),
+                "object_info": required_upscale_nodes(LTX25_SDR_TO_HDR),
+                "ensure_ltx25_upscale_models": False,
+                "probe_video_metadata": SimpleNamespace(width=1920, height=1080, fps=24.0, duration=10.0, frame_count=241),
+                "stage_file": "source.mp4", "submit_prompt": "job", "poll_comfy_progress": [],
+                "wait_for_history": {}, "resolve_output": result, "unload_comfy_models": None,
+                "gallery_media_processed_result": "complete", "write_snapshot": None, "upscale_target_dimensions": None,
+            }
+            mocks = {name: stack.enter_context(patch.object(owner(app, name), name, return_value=value)) for name, value in values.items()}
+            build = stack.enter_context(patch.object(app, "build_upscale_graph", wraps=app.build_upscale_graph))
+            updates = list(app.MEDIA.postprocess_selected_gallery_media(
+                "Video", "source.mp4", LTX25_SDR_TO_HDR, 42, "unused", "BF16", "ignored",
+                False, "unused", request=Mock(), progress=Mock(),
+            ))
+            self.assertEqual(updates[-1], "complete", updates)
+            mocks["upscale_target_dimensions"].assert_not_called()
+            build.assert_called_once()
+            self.assertEqual(build.call_args.kwargs["target_height"], 1080)
 
     def test_video_only_pipeline_embeddings_get_neutral_audio_padding(self):
         path = Path(__file__).resolve().parents[1] / "custom_nodes/H3Acceleration/__init__.py"

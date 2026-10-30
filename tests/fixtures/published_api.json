@@ -67,17 +67,7 @@
         {"parameter_name": "latent_upscaler_model", "parameter_has_default": true, "parameter_default": "Quality (FP32)", "type": "type_30"},
         {"parameter_name": "latent_upscale_refine_steps", "parameter_has_default": true, "parameter_default": 2, "type": "type_31"},
         {"parameter_name": "latent_upscale_method", "parameter_has_default": true, "parameter_default": "Full-frame refinement", "type": "type_101"},
-        {"parameter_name": "latent_split_tile_width", "parameter_has_default": true, "parameter_default": 512, "type": "type_33"},
-        {"parameter_name": "latent_split_tile_height", "parameter_has_default": true, "parameter_default": 512, "type": "type_33"},
-        {"parameter_name": "latent_split_overlap_ratio", "parameter_has_default": true, "parameter_default": 0.25, "type": "type_24"},
-        {"parameter_name": "latent_split_fade_ratio", "parameter_has_default": true, "parameter_default": 0.5, "type": "type_34"},
-        {"parameter_name": "latent_split_chunk_frames", "parameter_has_default": true, "parameter_default": 73, "type": "type_35"},
-        {"parameter_name": "latent_split_temporal_overlap_frames", "parameter_has_default": true, "parameter_default": 22, "type": "type_36"},
-        {"parameter_name": "latent_split_seam_denoise", "parameter_has_default": true, "parameter_default": 0.75, "type": "type_25"},
-        {"parameter_name": "latent_split_seam_polish", "parameter_has_default": true, "parameter_default": "off", "type": "type_37"},
         {"parameter_name": "upscale_force_offload", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
-        {"parameter_name": "upscale_split_enabled", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
-        {"parameter_name": "upscale_split_seconds", "parameter_has_default": true, "parameter_default": 5.0, "type": "type_38"},
         {"parameter_name": "upscale_resolution", "parameter_has_default": true, "parameter_default": "1920 × 1920", "type": "type_39"},
         {"parameter_name": "seedvr2_model", "parameter_has_default": true, "parameter_default": "7B INT8", "type": "type_40"},
         {"parameter_name": "ltx25_model", "parameter_has_default": true, "parameter_default": "INT8 ConvRot", "type": "type_41"},
@@ -772,8 +762,7 @@
     "type_32": {
       "type": "string",
       "enum": [
-        "Full-frame refinement",
-        "MMH3 Split Upscale (experimental)"
+        "Full-frame refinement"
       ]
     },
     "type_33": {
@@ -1598,7 +1587,6 @@
       "type": "string",
       "enum": [
         "Full-frame refinement",
-        "MMH3 Split Upscale (experimental)",
         "H3 Regenerate 2K · rank 16 (experimental)",
         "H3 Regenerate 2K · rank 384 (experimental)"
       ]

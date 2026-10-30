@@ -467,7 +467,6 @@ def run():
                 expect(page.get_by_label("SeedVR2 model", exact=True)).not_to_be_visible()
                 expect(page.get_by_label("Finishing LTX model", exact=True)).not_to_be_visible()
                 expect(page.get_by_label("LTX-2.5 scene prompt", exact=True)).not_to_be_visible()
-                expect(page.get_by_label("Split source into clips before LTX processing", exact=True)).not_to_be_visible()
                 expect(page.get_by_role("button", name="Enhance selected image", exact=True)).to_be_enabled()
                 page.get_by_label("Target resolution", exact=True).click()
                 page.get_by_role("option", name="2560 × 2560", exact=True).click()

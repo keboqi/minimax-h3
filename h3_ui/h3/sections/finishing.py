@@ -20,18 +20,7 @@ class FinishingSection:
     generation_postprocess: gr.components.Component
     generation_postprocess_settings: gr.components.Component
     generation_seedvr2_model: gr.components.Component
-    generation_split_seconds: gr.components.Component
-    generation_split_upscale: gr.components.Component
     generation_upscale_resolution: gr.components.Component
-    latent_split_chunk_frames: gr.components.Component
-    latent_split_fade_ratio: gr.components.Component
-    latent_split_overlap_ratio: gr.components.Component
-    latent_split_seam_denoise: gr.components.Component
-    latent_split_seam_polish: gr.components.Component
-    latent_split_settings: gr.components.Component
-    latent_split_temporal_overlap_frames: gr.components.Component
-    latent_split_tile_height: gr.components.Component
-    latent_split_tile_width: gr.components.Component
     latent_upscale: gr.components.Component
     latent_upscale_method: gr.components.Component
     latent_upscale_refine_lora: gr.components.Component
@@ -94,95 +83,13 @@ def build_finishing_section(
                 value=defaults["latent_upscale_method"],
                 label="High-resolution refinement method",
                 info=(
-                    "Full-frame is the normal path. MMH3 Split Upscale "
-                    "re-samples temporal chunks and spatial tiles for jobs "
-                    "that cannot fit a full target-resolution pass."
-                    " Regenerate rank 16/384 uses a dedicated refiner plus LightX2V "
+                    "Full-frame is the normal path. "
+                    "Regenerate rank 16/384 uses a dedicated refiner plus LightX2V "
                     "with three Euler steps, overriding refinement steps and LoRA above. "
                     "Rank 16 downloads 155 MB; rank 384 downloads 5.87 GB. "
                     "Both are experimental; LMS Sharp is not included."
                 ),
             )
-            with gr.Group(
-                visible=(
-                    defaults["latent_upscale_method"]
-                    == services.H3_LATENT_UPSCALE_SPLIT
-                )
-            ) as latent_split_settings:
-                gr.Markdown(
-                    "**Experimental MMH3 Split Upscale** · Trades additional "
-                    "sampling work for lower target-resolution VRAM pressure. "
-                    "Fixed seeds are recommended when comparing settings."
-                )
-                with gr.Row():
-                    latent_split_tile_width = gr.Slider(
-                        256,
-                        2048,
-                        value=defaults["latent_split_tile_width"],
-                        step=32,
-                        label="Tile width (pixels)",
-                    )
-                    latent_split_tile_height = gr.Slider(
-                        256,
-                        2048,
-                        value=defaults["latent_split_tile_height"],
-                        step=32,
-                        label="Tile height (pixels)",
-                    )
-                with gr.Row():
-                    latent_split_overlap_ratio = gr.Slider(
-                        0.0,
-                        0.90,
-                        value=defaults["latent_split_overlap_ratio"],
-                        step=0.05,
-                        label="Spatial overlap",
-                        info="Larger overlap reduces seams but repeats more work.",
-                    )
-                    latent_split_fade_ratio = gr.Slider(
-                        0.0,
-                        1.0,
-                        value=defaults["latent_split_fade_ratio"],
-                        step=0.05,
-                        label="Overlap fade",
-                        info="Controls how much of each overlap is cross-faded.",
-                    )
-                with gr.Row():
-                    latent_split_chunk_frames = gr.Slider(
-                        5,
-                        1000,
-                        value=defaults["latent_split_chunk_frames"],
-                        step=1,
-                        label="Temporal chunk length (frames)",
-                        info="Upstream snaps this to H3's native temporal grid.",
-                    )
-                    latent_split_temporal_overlap_frames = gr.Slider(
-                        0,
-                        240,
-                        value=defaults["latent_split_temporal_overlap_frames"],
-                        step=1,
-                        label="Temporal overlap (frames)",
-                    )
-                with gr.Row():
-                    latent_split_seam_denoise = gr.Slider(
-                        0.1,
-                        1.0,
-                        value=defaults["latent_split_seam_denoise"],
-                        step=0.05,
-                        label="Seam denoise cap",
-                        info=(
-                            "0.5–0.8 can reduce motion breaks at tile seams; "
-                            "1.0 disables the cap."
-                        ),
-                    )
-                    latent_split_seam_polish = gr.Dropdown(
-                        choices=["off", "auto", "all"],
-                        value=defaults["latent_split_seam_polish"],
-                        label="Seam polish",
-                        info=(
-                            "Auto re-samples only seams that fail the upstream "
-                            "probe. All is the slowest option."
-                        ),
-                    )
             gr.Markdown(
                 "Final width and height must both be divisible by 64. For example, "
                 "1024×1024 generates the first stage at 512×512 and finishes at "
@@ -237,28 +144,6 @@ def build_finishing_section(
                     "the next generation."
                 ),
             )
-            generation_split_upscale = gr.Checkbox(
-                value=defaults["upscale_split_enabled"],
-                label="Advanced: split source into clips before LTX upscaling",
-                info=(
-                    "Normally leave off with Tiled Upscale. Opt in if memory is still insufficient. Each clip is "
-                    "upscaled independently and concatenated afterward."
-                ),
-                visible=False,
-            )
-            generation_split_seconds = gr.Slider(
-                1.0,
-                15.0,
-                value=defaults["upscale_split_seconds"],
-                step=0.5,
-                label="Target clip length (seconds)",
-                info=(
-                    "5 seconds is the recommended starting point. The "
-                    "actual cut is adjusted to an LTX-valid frame count."
-                ),
-                visible=False,
-            )
-
     return FinishingSection(
         ltx25_model=ltx25_model,
         generation_force_offload=generation_force_offload,
@@ -266,18 +151,7 @@ def build_finishing_section(
         generation_postprocess=generation_postprocess,
         generation_postprocess_settings=generation_postprocess_settings,
         generation_seedvr2_model=generation_seedvr2_model,
-        generation_split_seconds=generation_split_seconds,
-        generation_split_upscale=generation_split_upscale,
         generation_upscale_resolution=generation_upscale_resolution,
-        latent_split_chunk_frames=latent_split_chunk_frames,
-        latent_split_fade_ratio=latent_split_fade_ratio,
-        latent_split_overlap_ratio=latent_split_overlap_ratio,
-        latent_split_seam_denoise=latent_split_seam_denoise,
-        latent_split_seam_polish=latent_split_seam_polish,
-        latent_split_settings=latent_split_settings,
-        latent_split_temporal_overlap_frames=latent_split_temporal_overlap_frames,
-        latent_split_tile_height=latent_split_tile_height,
-        latent_split_tile_width=latent_split_tile_width,
         latent_upscale=latent_upscale,
         latent_upscale_method=latent_upscale_method,
         latent_upscale_refine_steps=latent_upscale_refine_steps,

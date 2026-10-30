@@ -195,6 +195,18 @@ def resolve_settings(
             adjustments.append(Adjustment(key, before, after, reason))
         return after
 
+    if generation_mode == "Turbo":
+        # Resolve legacy and unknown labels here so every later check sees the
+        # adapter that the workflow will actually load.
+        from .catalog import LEGACY_TURBO_VARIANTS
+        from .policy import normalize_turbo_variant
+
+        turbo_variant = normalize_turbo_variant(sampling.turbo_variant)
+        sampling = replace(sampling, turbo_variant=adjusted(
+            "turbo_variant", sampling.turbo_variant, turbo_variant,
+            "Renamed Turbo variant." if sampling.turbo_variant in LEGACY_TURBO_VARIANTS
+            else "Unknown Turbo variant; using the default adapter.",
+        ))
     pika = generation_mode == "Turbo" and sampling.turbo_variant == PIKA_FLEX
     if pika:
         sampling = replace(

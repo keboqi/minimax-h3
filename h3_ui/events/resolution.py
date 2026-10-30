@@ -28,14 +28,12 @@ def bind_resolution(
                     "Uses the default H3 model profile and the generation scene prompt. Models download on first use."
                     if value in H3_REGENERATE_MODELS else
                     "Uses spatial tiles and temporal streaming. The detail-refinement adapter "
-                    "downloads on first use. Uses a neutral detail prompt; segment splitting is an advanced fallback."
+                    "downloads on first use. Uses a neutral detail prompt."
                     if value == LTX25_TILED_UPSCALE else
                     "Uses the finishing model selected here and the H3 generation prompt. "
                     "The gated 2x IC-LoRA downloads on first use."
                 ),
             ),
-            gr.update(visible=value in {LTX25_UPSCALE, LTX25_TILED_UPSCALE}),
-            gr.update(visible=value in {LTX25_UPSCALE, LTX25_TILED_UPSCALE}),
             gr.update(visible=value in {LTX25_UPSCALE, LTX25_TILED_UPSCALE}),
         ),
         inputs=components.generation_postprocess,
@@ -43,8 +41,6 @@ def bind_resolution(
             components.generation_postprocess_settings,
             components.generation_seedvr2_model,
             components.generation_ltx25_note,
-            components.generation_split_upscale,
-            components.generation_split_seconds,
             components.ltx25_model,
         ],
         queue=False,

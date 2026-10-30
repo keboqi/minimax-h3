@@ -60,7 +60,6 @@ def graph_options(request: H3Request, prepared: PreparedH3) -> dict[str, Any]:
         latent_upscale_model_name=prepared.latent_upscale_model_name,
         latent_upscale_precision=prepared.latent_upscale_precision,
         latent_upscale_refine_steps=int(request.finishing.latent_upscale_refine_steps),
-        latent_split_config=prepared.latent_split_config,
         text_encoder_name=prepared.selected_text_encoder,
         encoder_small_input=request.sampling.encoder_small_input,
         reuse_unchanged_inputs=bool(request.media.reuse_unchanged_inputs),

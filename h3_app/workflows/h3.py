@@ -24,7 +24,6 @@ from h3_app.catalog import (
     H3_COMBINE_AV_LATENT_NODE,
     H3_CONDITIONING_CACHE_NODE,
     H3_IMAGE_SLICES_NODE,
-    H3_LATENT_UPSCALE_SPLIT,
     H3_LATENT_UPSCALE_STANDARD,
     H3_LATENT_UPSCALER_NODE,
     H3_LATENT_UPSCALER_LOADER_NODE,
@@ -34,9 +33,6 @@ from h3_app.catalog import (
     H3_SEPARATE_AV_LATENT_NODE,
     H3_SIGMA_SHIFT_NODE,
     H3_SINGLE_FRAME_VAE_LOADER_NODE,
-    H3_SPLIT_SPATIAL_PARAMS_NODE,
-    H3_SPLIT_TEMPORAL_PARAMS_NODE,
-    H3_SPLIT_UPSCALE_NODE,
     H3_STAGE_OFFLOAD_NODE,
     H3_STAGE_OFFLOAD_POLICY_NODE,
     LARRY_TURBO_LORA_NODE,
@@ -64,14 +60,12 @@ from h3_app.workflows.latent_upscale import add_h3_latent_upscale
 from h3_app.graph import Graph
 from h3_app.model_types import ModelConfig, trt_vae_engine_name
 from h3_app.policy import (
-    H3SplitUpscaleConfig,
     frame_length,
     h3_latent_upscale_dimensions,
     image_sampling_length,
     normalize_image_vae,
     normalize_result_format,
     normalize_turbo_variant,
-    resolve_h3_latent_upscale_method,
     resolve_sla_preset,
     selected_image_sampling_length,
     snap32,
@@ -642,6 +636,52 @@ def add_refinement_model(
     return model
 
 
+def add_refinement_schedule(
+    graph, *, sigmas, steps, sampler, turbo_variant, refinement_lora_name,
+    refinement_variant, refinement_model_ref, latent_upscale_refine_steps,
+):
+    """Use one sampler/sigma policy for native and existing-video refinement."""
+    regenerate = refinement_variant in H3_REGENERATE_MODELS
+    if regenerate:
+        refine_sigmas = graph.add("ManualSigmas", sigmas=H3_REGENERATE_SIGMAS)
+        refine_sigmas_ref = Graph.out(refine_sigmas)
+    else:
+        refine_schedule, refine_total = sigmas, int(steps)
+        if refinement_lora_name is not None and refinement_variant == PIKA_FLEX:
+            refine_total = 6
+            if not 1 <= int(latent_upscale_refine_steps) < refine_total:
+                raise H3Error("Refinement steps must be smaller than the selected refinement adapter's schedule.")
+            refine_schedule = graph.add("ManualSigmas", sigmas=PIKA_FLEX_SIGMAS)
+        elif turbo_variant == PIKA_FLEX and refinement_lora_name is not None:
+            # A replacement adapter must not inherit Pika's distilled ladder.
+            refine_total = turbo_steps_for(refinement_variant)
+            if not 1 <= int(latent_upscale_refine_steps) < refine_total:
+                raise H3Error("Refinement steps must be smaller than the selected refinement adapter's schedule.")
+            refine_schedule = graph.add(
+                "BasicScheduler", model=refinement_model_ref, scheduler="simple",
+                steps=refine_total, denoise=1.0,
+            )
+        refine_sigmas = graph.add(
+            "SplitSigmas", sigmas=Graph.out(refine_schedule),
+            step=refine_total - int(latent_upscale_refine_steps),
+        )
+        refine_sigmas_ref = Graph.out(refine_sigmas, 1)
+    refinement_sampler = sampler
+    if regenerate:
+        refinement_sampler = graph.add(CORE_SAMPLER_NODE, sampler_name="euler")
+    elif refinement_lora_name is not None:
+        refinement_sampler = (
+            graph.add(LARRY_TURBO_SAMPLER_NODE)
+            if refinement_variant not in STANDARD_TURBO_LORA_SETTINGS
+            and turbo_uses_custom_nodes(refinement_variant)
+            else graph.add(
+                CORE_SAMPLER_NODE,
+                sampler_name=turbo_sampler_name(refinement_variant, refinement_lora_name),
+            )
+        )
+    return refine_sigmas_ref, refinement_sampler
+
+
 def finish_sampling(
     graph: Graph,
     *,
@@ -670,7 +710,6 @@ def finish_sampling(
     refinement_lora_name: str | None = None,
     refinement_variant: str | None = None,
     refinement_model_ref: list[Any] | None = None,
-    latent_split_config: H3SplitUpscaleConfig | None = None,
     stage_model_offload: bool = False,
     smart_stage_offload: bool = False,
     conditioning_cache_key: str | None = None,
@@ -718,7 +757,7 @@ def finish_sampling(
         if latent_upscale_model_name is not None
         else model_ref
     )
-    if latent_upscale_model_name is not None and latent_split_config is None:
+    if latent_upscale_model_name is not None:
         refinement_guard = graph.add(
             H3_REFINEMENT_COMPILER_GUARD_NODE,
             model=refinement_model_ref,
@@ -748,43 +787,11 @@ def finish_sampling(
         if initial_conditioning_ref is None or initial_latent_ref is None:
             raise H3Error("H3 latent upscaling requires a low-resolution H3 stage.")
         regenerate = refinement_variant in H3_REGENERATE_MODELS
-        if regenerate:
-            refine_sigmas = graph.add("ManualSigmas", sigmas=H3_REGENERATE_SIGMAS)
-            refine_sigmas_ref = Graph.out(refine_sigmas)
-        else:
-            refine_schedule, refine_total = sigmas, int(steps)
-            if refinement_lora_name is not None and refinement_variant == PIKA_FLEX:
-                refine_total = 6
-                if not 1 <= int(latent_upscale_refine_steps) < refine_total:
-                    raise H3Error("Refinement steps must be smaller than the selected refinement adapter's schedule.")
-                refine_schedule = graph.add("ManualSigmas", sigmas=PIKA_FLEX_SIGMAS)
-            elif turbo_variant == PIKA_FLEX and refinement_lora_name is not None:
-                # A replacement adapter must not inherit Pika's distilled ladder.
-                refine_total = turbo_steps_for(refinement_variant)
-                if not 1 <= int(latent_upscale_refine_steps) < refine_total:
-                    raise H3Error("Refinement steps must be smaller than the selected refinement adapter's schedule.")
-                refine_schedule = graph.add(
-                    "BasicScheduler", model=refinement_model_ref, scheduler="simple",
-                    steps=refine_total, denoise=1.0,
-                )
-            refine_sigmas = graph.add(
-                "SplitSigmas", sigmas=Graph.out(refine_schedule),
-                step=refine_total - int(latent_upscale_refine_steps),
-            )
-            refine_sigmas_ref = Graph.out(refine_sigmas, 1)
-        refinement_sampler = sampler
-        if regenerate:
-            refinement_sampler = graph.add(CORE_SAMPLER_NODE, sampler_name="euler")
-        elif refinement_lora_name is not None:
-            refinement_sampler = (
-                graph.add(LARRY_TURBO_SAMPLER_NODE)
-                if refinement_variant not in STANDARD_TURBO_LORA_SETTINGS
-                and turbo_uses_custom_nodes(refinement_variant)
-                else graph.add(
-                    CORE_SAMPLER_NODE,
-                    sampler_name=turbo_sampler_name(refinement_variant, refinement_lora_name),
-                )
-            )
+        refine_sigmas_ref, refinement_sampler = add_refinement_schedule(
+            graph, sigmas=sigmas, steps=steps, sampler=sampler, turbo_variant=turbo_variant,
+            refinement_lora_name=refinement_lora_name, refinement_variant=refinement_variant,
+            refinement_model_ref=refinement_model_ref, latent_upscale_refine_steps=latent_upscale_refine_steps,
+        )
         initial_guider = graph.add(
             "BasicGuider",
             model=model_ref,
@@ -843,47 +850,14 @@ def finish_sampling(
                 combined_ref,
                 enabled_ref=stage_offload_enabled_ref,
             )
-        if latent_split_config is not None:
-            temporal_params = graph.add(
-                H3_SPLIT_TEMPORAL_PARAMS_NODE,
-                chunk_frames=latent_split_config.chunk_frames,
-                temporal_overlap_frames=(latent_split_config.temporal_overlap_frames),
-                anchor_strength=0.999,
-                motion_anchor_frames="22",
-                identity_anchor_frames=24,
-            )
-            spatial_params = graph.add(
-                H3_SPLIT_SPATIAL_PARAMS_NODE,
-                tile_width=latent_split_config.tile_width,
-                tile_height=latent_split_config.tile_height,
-                overlap_ratio=latent_split_config.overlap_ratio,
-                fade_ratio=latent_split_config.fade_ratio,
-                min_tile_size=256,
-                seam_denoise=latent_split_config.seam_denoise,
-            )
-            sampled = graph.add(
-                H3_SPLIT_UPSCALE_NODE,
-                model=refinement_model_ref,
-                conditioning=conditioning_ref,
-                latent=combined_ref,
-                noise=Graph.out(noise),
-                sampler=Graph.out(refinement_sampler),
-                sigmas=refine_sigmas_ref,
-                cfg=1.0,
-                temporal_split_param=Graph.out(temporal_params),
-                spatial_split_param=Graph.out(spatial_params),
-                seam_polish=latent_split_config.seam_polish,
-                color_match=True,
-            )
-        else:
-            sampled = graph.add(
-                "SamplerCustomAdvanced",
-                noise=Graph.out(noise),
-                guider=Graph.out(guider),
-                sampler=Graph.out(refinement_sampler),
-                sigmas=refine_sigmas_ref,
-                latent_image=combined_ref,
-            )
+        sampled = graph.add(
+            "SamplerCustomAdvanced",
+            noise=Graph.out(noise),
+            guider=Graph.out(guider),
+            sampler=Graph.out(refinement_sampler),
+            sigmas=refine_sigmas_ref,
+            latent_image=combined_ref,
+        )
         audio_samples = initial_sampled_ref
     else:
         sampled = graph.add(
@@ -1022,7 +996,6 @@ class H3GraphOptions:
     latent_upscale_refine_steps: int = 2
     refinement_lora_name: str | None = None
     refinement_variant: str | None = None
-    latent_split_config: H3SplitUpscaleConfig | None = None
     result_format: str = DEFAULT_RESULT_FORMAT
     image_frames: int = DEFAULT_IMAGE_FRAMES
     image_vae: str = DEFAULT_IMAGE_VAE
@@ -1259,7 +1232,6 @@ def _build_h3_graph(
                 variant=o.refinement_variant, available_nodes=o.available_nodes,
             ) if o.latent_upscale_model_name is not None else None
         ),
-        latent_split_config=o.latent_split_config,
         stage_model_offload=o.stage_model_offload,
         smart_stage_offload=o.smart_stage_offload,
         conditioning_cache_key=conditioning_cache_key,
@@ -1481,15 +1453,6 @@ def required_nodes_for(
         }
         if latent_upscale_method in H3_REGENERATE_MODELS:
             common |= turbo_required_nodes(latent_upscale_method)
-        if (
-            resolve_h3_latent_upscale_method(latent_upscale_method)
-            == H3_LATENT_UPSCALE_SPLIT
-        ):
-            common |= {
-                H3_SPLIT_TEMPORAL_PARAMS_NODE,
-                H3_SPLIT_SPATIAL_PARAMS_NODE,
-                H3_SPLIT_UPSCALE_NODE,
-            }
     if stage_model_offload:
         common.add(H3_STAGE_OFFLOAD_NODE)
         if smart_stage_offload:

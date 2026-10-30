@@ -1,5 +1,4 @@
 """Stage-specific SLA graph composition and pinned runtime scheduling."""
-from h3_app.policy import H3SplitUpscaleConfig
 import h3_app.catalog as _catalog
 import h3_app.graph as _graph
 import h3_app.workflows.h3 as _h3_workflow
@@ -43,25 +42,19 @@ class RefinementAttentionTests(unittest.TestCase):
         self.assertEqual(_h3_workflow.h3_refinement_attention_model(graph, ref), ref)
         self.assertEqual(len(graph.nodes), 1)
 
-    def test_sampler_and_split_refinement_use_branched_model(self):
-        for upscale, split in ((False, False), (True, False), (True, True)):
+    def test_sampler_and_refinement_use_branched_model(self):
+        for upscale in (False, True):
             graph, model, _ = self.stack()
-            config = H3SplitUpscaleConfig(512, 512, .25, .5, 73, 22, .75, 'off') if split else None
-            _h3_workflow.finish_sampling(graph, model_ref=model, conditioning_ref=['target', 0], latent_ref=['latent', 0], video_vae_ref=['vae', 0], audio_vae_ref=['audio', 0], seed=7, steps=8, scheduler='simple', turbo_variant=None, filename_prefix='test', initial_conditioning_ref=['initial', 0], initial_latent_ref=['initial_latent', 0], latent_upscale_model_name='upscaler.pth' if upscale else None, latent_split_config=config, latent_upscale_width=1024, latent_upscale_height=1024)
+            _h3_workflow.finish_sampling(graph, model_ref=model, conditioning_ref=['target', 0], latent_ref=['latent', 0], video_vae_ref=['vae', 0], audio_vae_ref=['audio', 0], seed=7, steps=8, scheduler='simple', turbo_variant=None, filename_prefix='test', initial_conditioning_ref=['initial', 0], initial_latent_ref=['initial_latent', 0], latent_upscale_model_name='upscaler.pth' if upscale else None, latent_upscale_width=1024, latent_upscale_height=1024)
             guiders = [n['inputs'] for n in graph.nodes.values() if n['class_type'] == 'BasicGuider']
             target = next(g for g in guiders if g['conditioning'] == ['target', 0])
             if upscale:
                 self.assertNotEqual(target['model'], model)
                 initial = next(g for g in guiders if g['conditioning'] == ['initial', 0])
                 self.assertEqual(initial['model'], model)
-                if split:
-                    node = next(n for n in graph.nodes.values() if n['class_type'] == _catalog.H3_SPLIT_UPSCALE_NODE)
-                    self.assertEqual(node['inputs']['model'], target['model'])
-                    self.assertFalse(any(n['class_type'] == _catalog.H3_REFINEMENT_COMPILER_GUARD_NODE for n in graph.nodes.values()))
-                else:
-                    guard_id, guard = next((node_id, n) for node_id, n in graph.nodes.items() if n['class_type'] == _catalog.H3_REFINEMENT_COMPILER_GUARD_NODE)
-                    self.assertEqual(target['model'], [guard_id, 0])
-                    self.assertEqual(guard['inputs']['min_video_volume'], 1_500_000)
+                guard_id, guard = next((node_id, n) for node_id, n in graph.nodes.items() if n['class_type'] == _catalog.H3_REFINEMENT_COMPILER_GUARD_NODE)
+                self.assertEqual(target['model'], [guard_id, 0])
+                self.assertEqual(guard['inputs']['min_video_volume'], 1_500_000)
             else:
                 self.assertEqual(target['model'], model)
                 self.assertEqual(sum(n['class_type'] == _catalog.SLA_ATTENTION_NODE for n in graph.nodes.values()), 1)

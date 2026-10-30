@@ -31,13 +31,6 @@ def bind_layout(components: AppComponents, services: BootstrapServices) -> None:
         show_progress="hidden",
     )
     components.latent_upscale_method.change(
-        services.latent_upscale_method_layout_update,
-        inputs=components.latent_upscale_method,
-        outputs=components.latent_split_settings,
-        queue=False,
-        show_progress="hidden",
-    )
-    components.latent_upscale_method.change(
         lambda method: (
             gr.update(interactive=method not in H3_REGENERATE_MODELS),
             gr.update(interactive=method not in H3_REGENERATE_MODELS),

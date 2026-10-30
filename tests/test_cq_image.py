@@ -91,7 +91,7 @@ class CqImageTests(unittest.TestCase):
                 updates = list(app.MEDIA.postprocess_selected_gallery_media(
                     "Image", "source.png", LTX25_CQ_IMAGE_ENHANCER,
                     42, app.DEFAULT_SEEDVR2_MODEL, app.DEFAULT_LTX25_MODEL,
-                    "ignored", True, True, 5.0, "1920 × 1920",
+                    "ignored", True, "1920 × 1920",
                     request=Mock(), progress=Mock(),
                 ))
                 self.assertEqual(updates[-1], "complete")

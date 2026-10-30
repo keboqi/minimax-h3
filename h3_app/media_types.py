@@ -1,9 +1,8 @@
-"""Plain records for probed video metadata and upscale clip batches."""
+"""Plain records for probed video metadata."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -14,10 +13,3 @@ class VideoMetadata:
     duration: float = 0.0
     frame_count: int = 0
     has_audio: bool = False
-
-
-@dataclass(frozen=True)
-class UpscaleClipBatch:
-    sources: tuple[str, ...]
-    temporary_inputs: tuple[Path, ...] = ()
-    temporary_directory: Path | None = None

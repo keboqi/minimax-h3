@@ -47,7 +47,6 @@ class H3ViewServices:
     SLA_PRESET_INPUTS: Mapping[str, Any]
     H3_LATENT_UPSCALER_MODEL_CHOICES: Mapping[str, Any]
     H3_LATENT_UPSCALE_METHODS: Sequence[str]
-    H3_LATENT_UPSCALE_SPLIT: str
     GENERATION_POSTPROCESS_OPTIONS: Sequence[str]
     UPSCALE_RESOLUTION_PRESETS: Mapping[str, Any]
     DEFAULT_UPSCALE_RESOLUTION: str

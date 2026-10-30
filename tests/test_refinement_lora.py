@@ -1,5 +1,4 @@
 """Independent refinement adapters, sampler routing, and lazy provisioning."""
-from h3_app.policy import H3SplitUpscaleConfig
 import h3_app.catalog as _catalog
 import h3_app.graph as _graph
 import h3_app.workflows.h3 as _h3_workflow
@@ -47,59 +46,52 @@ class RefinementLoraTests(unittest.TestCase):
     def test_both_workflows_replace_lora_only_on_refinement_branch(self):
         for build in (app.build_fl2va_graph, app.build_ref2va_graph):
             for variant in (PDMD_4STEP_LORA, DMAD_4STEP_LORA, LARRY_TURBO):
-                for split in (False, True):
-                    with self.subTest(build=build.__name__, variant=variant, split=split):
-                        args = {
-                            name: app.UI_DEFAULTS.get(name, 0)
-                            for name, param in inspect.signature(build).parameters.items()
-                            if param.default is inspect.Parameter.empty
-                        }
-                        models = self.models()
-                        args.update(
-                            prompt='A bird flies', width=864, height=480, duration=5,
-                            steps=8, scheduler='simple', seed=7, model_name='base.safetensors',
-                            models=models, turbo_variant=LIGHTX2V_8STEP_TURBO,
-                            turbo_lora_name=models.turbo_8step_lora, turbo_strength=1.0,
-                            use_sol=False, cache_mode='Off', use_sla=True,
-                            latent_upscale_model_name='upscaler.pth',
-                            refinement_lora_name='refinement.safetensors', refinement_variant=variant,
-                            available_nodes=(_h3_workflow.turbo_required_nodes(LIGHTX2V_8STEP_TURBO, models.turbo_8step_lora)
-                                             | _h3_workflow.turbo_required_nodes(variant) | {_catalog.SLA_ATTENTION_NODE}),
-                            latent_split_config=(H3SplitUpscaleConfig(512, 512, .25, .5, 73, 22, .75, 'off')
-                                                 if split else None),
-                        )
-                        if build is app.build_fl2va_graph:
-                            args.update(first_image=None, last_image=None)
-                        else:
-                            args.update(reference_images=[], reference_videos=[], reference_audios=[])
-                        graph = build(**args)
-                        samples = [n['inputs'] for n in graph.values() if n['class_type'] == 'SamplerCustomAdvanced']
-                        initial = samples[0]
-                        initial_model = graph[initial['guider'][0]]['inputs']['model']
-                        if split:
-                            target = next(n['inputs'] for n in graph.values() if n['class_type'] == _catalog.H3_SPLIT_UPSCALE_NODE)
-                            refine_model = target['model']
-                        else:
-                            target = samples[1]
-                            refine_model = graph[target['guider'][0]]['inputs']['model']
-                        initial_chain = self.model_chain(graph, initial_model)
-                        refine_chain = self.model_chain(graph, refine_model)
-                        self.assertEqual([n['inputs']['lora_name'] for n in initial_chain if 'lora_name' in n['inputs']],
-                                         [models.turbo_8step_lora])
-                        self.assertEqual([n['inputs']['lora_name'] for n in refine_chain if 'lora_name' in n['inputs']],
-                                         ['refinement.safetensors'])
-                        self.assertEqual(initial_chain[-1], refine_chain[-1])
-                        self.assertEqual(next(n['inputs']['dense_steps'] for n in initial_chain if n['class_type'] == _catalog.SLA_ATTENTION_NODE), '0')
-                        self.assertEqual(next(n['inputs']['dense_steps'] for n in refine_chain if n['class_type'] == _catalog.SLA_ATTENTION_NODE), '')
-                        expected = _catalog.LARRY_TURBO_SAMPLER_NODE if variant == LARRY_TURBO else _catalog.CORE_SAMPLER_NODE
-                        self.assertEqual(graph[target['sampler'][0]]['class_type'], expected)
-                        if variant != LARRY_TURBO:
-                            self.assertEqual(graph[target['sampler'][0]]['inputs']['sampler_name'],
-                                             'lcm' if variant == DMAD_4STEP_LORA else 'euler')
-                        # Retain the generation schedule's last two intervals for low denoise.
-                        split_node = graph[target['sigmas'][0]]
-                        self.assertEqual(split_node['inputs']['step'], 6)
-                        self.assertEqual(split_node['inputs']['sigmas'], initial['sigmas'])
+                with self.subTest(build=build.__name__, variant=variant):
+                    args = {
+                        name: app.UI_DEFAULTS.get(name, 0)
+                        for name, param in inspect.signature(build).parameters.items()
+                        if param.default is inspect.Parameter.empty
+                    }
+                    models = self.models()
+                    args.update(
+                        prompt='A bird flies', width=864, height=480, duration=5,
+                        steps=8, scheduler='simple', seed=7, model_name='base.safetensors',
+                        models=models, turbo_variant=LIGHTX2V_8STEP_TURBO,
+                        turbo_lora_name=models.turbo_8step_lora, turbo_strength=1.0,
+                        use_sol=False, cache_mode='Off', use_sla=True,
+                        latent_upscale_model_name='upscaler.pth',
+                        refinement_lora_name='refinement.safetensors', refinement_variant=variant,
+                        available_nodes=(_h3_workflow.turbo_required_nodes(LIGHTX2V_8STEP_TURBO, models.turbo_8step_lora)
+                                         | _h3_workflow.turbo_required_nodes(variant) | {_catalog.SLA_ATTENTION_NODE}),
+                    )
+                    if build is app.build_fl2va_graph:
+                        args.update(first_image=None, last_image=None)
+                    else:
+                        args.update(reference_images=[], reference_videos=[], reference_audios=[])
+                    graph = build(**args)
+                    samples = [n['inputs'] for n in graph.values() if n['class_type'] == 'SamplerCustomAdvanced']
+                    initial = samples[0]
+                    initial_model = graph[initial['guider'][0]]['inputs']['model']
+                    target = samples[1]
+                    refine_model = graph[target['guider'][0]]['inputs']['model']
+                    initial_chain = self.model_chain(graph, initial_model)
+                    refine_chain = self.model_chain(graph, refine_model)
+                    self.assertEqual([n['inputs']['lora_name'] for n in initial_chain if 'lora_name' in n['inputs']],
+                                     [models.turbo_8step_lora])
+                    self.assertEqual([n['inputs']['lora_name'] for n in refine_chain if 'lora_name' in n['inputs']],
+                                     ['refinement.safetensors'])
+                    self.assertEqual(initial_chain[-1], refine_chain[-1])
+                    self.assertEqual(next(n['inputs']['dense_steps'] for n in initial_chain if n['class_type'] == _catalog.SLA_ATTENTION_NODE), '0')
+                    self.assertEqual(next(n['inputs']['dense_steps'] for n in refine_chain if n['class_type'] == _catalog.SLA_ATTENTION_NODE), '')
+                    expected = _catalog.LARRY_TURBO_SAMPLER_NODE if variant == LARRY_TURBO else _catalog.CORE_SAMPLER_NODE
+                    self.assertEqual(graph[target['sampler'][0]]['class_type'], expected)
+                    if variant != LARRY_TURBO:
+                        self.assertEqual(graph[target['sampler'][0]]['inputs']['sampler_name'],
+                                         'lcm' if variant == DMAD_4STEP_LORA else 'euler')
+                    # Retain the generation schedule's last two intervals for low denoise.
+                    split_node = graph[target['sigmas'][0]]
+                    self.assertEqual(split_node['inputs']['step'], 6)
+                    self.assertEqual(split_node['inputs']['sigmas'], initial['sigmas'])
 
     def test_same_has_no_extra_model_branch_and_old_api_defaults_to_same(self):
         graph = _graph.Graph()

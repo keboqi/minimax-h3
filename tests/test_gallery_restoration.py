@@ -280,80 +280,67 @@ class GalleryRestorationTests(unittest.TestCase):
                     else:
                         sync.assert_not_called()
 
-    def test_gallery_dispatches_restoration_and_split_clips(self):
+    def test_gallery_dispatches_restoration(self):
         source = Path("source.mp4")
         result = Path("restored.mp4")
         metadata = SimpleNamespace(
             width=1920, height=1080, fps=24.0, duration=10.0, frame_count=241
         )
         for option in LTX25_RESTORATION_OPTIONS:
-            for split in (False, True):
-                with self.subTest(option=option, split=split), ExitStack() as stack:
-                    batch = SimpleNamespace(
-                        sources=["clip1.mp4", "clip2.mp4"] if split else ["source.mp4"],
-                        temporary_inputs=split,
+            with self.subTest(option=option), ExitStack() as stack:
+                mocks = {}
+                returns = {
+                    "managed_video_path": source,
+                    "load_model_config": Mock(),
+                    "object_info": required_upscale_nodes(option),
+                    "ensure_ltx25_upscale_models": False,
+                    "probe_video_metadata": metadata,
+                    "stage_file": "source.mp4",
+                    "submit_prompt": "job",
+                    "poll_comfy_progress": [],
+                    "wait_for_history": {},
+                    "resolve_output": result,
+                    "unload_comfy_models": None,
+                    "gallery_media_processed_result": "complete", "write_snapshot": None,
+                    "postprocess_video": None,
+                    "upscale_target_dimensions": None,
+                }
+                for name, value in returns.items():
+                    mocks[name] = stack.enter_context(
+                        patch.object(owner(app, name), name, return_value=value)
                     )
-                    mocks = {}
-                    returns = {
-                        "managed_video_path": source,
-                        "load_model_config": Mock(),
-                        "object_info": required_upscale_nodes(option),
-                        "ensure_ltx25_upscale_models": False,
-                        "probe_video_metadata": metadata,
-                        "prepare_upscale_clip_batch": batch,
-                        "submit_prompt": "job",
-                        "poll_comfy_progress": [],
-                        "wait_for_history": {},
-                        "resolve_output": result,
-                        "concat_upscaled_clips": result,
-                        "cleanup_upscale_clip_batch": None,
-                        "unload_comfy_models": None,
-                        "gallery_media_processed_result": "complete", "write_snapshot": None,
-                        "postprocess_video": None,
-                        "upscale_target_dimensions": None,
-                    }
-                    for name, value in returns.items():
-                        mocks[name] = stack.enter_context(
-                            patch.object(owner(app, name), name, return_value=value)
-                        )
-                    build = stack.enter_context(
-                        patch.object(
-                            app, "build_upscale_graph", wraps=app.build_upscale_graph
-                        )
+                build = stack.enter_context(
+                    patch.object(
+                        app, "build_upscale_graph", wraps=app.build_upscale_graph
                     )
-                    updates = list(
-                        app.MEDIA.postprocess_selected_gallery_media(
-                            "Video", str(source),
-                            option,
-                            42,
-                            "unused",
-                            DEFAULT_LTX25_MODEL,
-                            "a rabbit",
-                            True,
-                            split,
-                            5.0,
-                            "unused resolution",
-                            request=Mock(),
-                            progress=Mock(),
-                        )
+                )
+                updates = list(
+                    app.MEDIA.postprocess_selected_gallery_media(
+                        "Video", str(source),
+                        option,
+                        42,
+                        "unused",
+                        DEFAULT_LTX25_MODEL,
+                        "a rabbit",
+                        True,
+                        "unused resolution",
+                        request=Mock(),
+                        progress=Mock(),
                     )
-                    self.assertEqual(updates[-1], "complete", updates)
-                    mocks["postprocess_video"].assert_not_called()
-                    mocks["upscale_target_dimensions"].assert_not_called()
-                    mocks["ensure_ltx25_upscale_models"].assert_called_once_with(
-                        DEFAULT_LTX25_MODEL, option=option
-                    )
-                    mocks["unload_comfy_models"].assert_called_once()
-                    self.assertEqual(build.call_count, 2 if split else 1)
-                    for i, call in enumerate(build.call_args_list):
-                        self.assertEqual(call.kwargs["option"], option)
-                        self.assertEqual(call.kwargs["target_width"], 1920)
-                        self.assertEqual(call.kwargs["target_height"], 1080)
-                        self.assertEqual(call.kwargs["seed"], 42 + i)
-                    self.assertEqual(
-                        mocks["concat_upscaled_clips"].call_count, int(split)
-                    )
-                    mocks["cleanup_upscale_clip_batch"].assert_called_once()
+                )
+                self.assertEqual(updates[-1], "complete", updates)
+                mocks["postprocess_video"].assert_not_called()
+                mocks["upscale_target_dimensions"].assert_not_called()
+                mocks["ensure_ltx25_upscale_models"].assert_called_once_with(
+                    DEFAULT_LTX25_MODEL, option=option
+                )
+                mocks["unload_comfy_models"].assert_called_once()
+                build.assert_called_once()
+                call = build.call_args
+                self.assertEqual(call.kwargs["option"], option)
+                self.assertEqual(call.kwargs["target_width"], 1920)
+                self.assertEqual(call.kwargs["target_height"], 1080)
+                self.assertEqual(call.kwargs["seed"], 42)
 
 
 if __name__ == "__main__":

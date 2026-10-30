@@ -74,8 +74,6 @@ class H3View:
     generation_postprocess_settings: gr.components.Component
     generation_readiness: gr.components.Component
     generation_seedvr2_model: gr.components.Component
-    generation_split_seconds: gr.components.Component
-    generation_split_upscale: gr.components.Component
     generation_upscale_resolution: gr.components.Component
     height: gr.components.Component
     help_text: gr.components.Component
@@ -102,15 +100,6 @@ class H3View:
     input_upscale_status: gr.components.Component
     large_resolution: gr.components.Component
     last: gr.components.Component
-    latent_split_chunk_frames: gr.components.Component
-    latent_split_fade_ratio: gr.components.Component
-    latent_split_overlap_ratio: gr.components.Component
-    latent_split_seam_denoise: gr.components.Component
-    latent_split_seam_polish: gr.components.Component
-    latent_split_settings: gr.components.Component
-    latent_split_temporal_overlap_frames: gr.components.Component
-    latent_split_tile_height: gr.components.Component
-    latent_split_tile_width: gr.components.Component
     latent_upscale: gr.components.Component
     latent_upscale_method: gr.components.Component
     latent_upscale_refine_lora: gr.components.Component
@@ -231,8 +220,6 @@ H3_COMPONENT_ORDER = (
     "generation_postprocess_settings",
     "generation_readiness",
     "generation_seedvr2_model",
-    "generation_split_seconds",
-    "generation_split_upscale",
     "generation_upscale_resolution",
     "height",
     "help_text",
@@ -259,15 +246,6 @@ H3_COMPONENT_ORDER = (
     "input_upscale_status",
     "large_resolution",
     "last",
-    "latent_split_chunk_frames",
-    "latent_split_fade_ratio",
-    "latent_split_overlap_ratio",
-    "latent_split_seam_denoise",
-    "latent_split_seam_polish",
-    "latent_split_settings",
-    "latent_split_temporal_overlap_frames",
-    "latent_split_tile_height",
-    "latent_split_tile_width",
     "latent_upscale",
     "latent_upscale_method",
     "latent_upscale_refine_lora",
@@ -590,20 +568,10 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
                     defaults["seedvr2_model"],
                     services.DEFAULT_LTX25_MODEL,
                     defaults["upscale_force_offload"],
-                    defaults["upscale_split_enabled"],
-                    defaults["upscale_split_seconds"],
                     defaults["result_format"],
                     defaults["image_frames"],
                     defaults["image_vae"],
                     defaults["latent_upscale_method"],
-                    defaults["latent_split_tile_width"],
-                    defaults["latent_split_tile_height"],
-                    defaults["latent_split_overlap_ratio"],
-                    defaults["latent_split_fade_ratio"],
-                    defaults["latent_split_chunk_frames"],
-                    defaults["latent_split_temporal_overlap_frames"],
-                    defaults["latent_split_seam_denoise"],
-                    defaults["latent_split_seam_polish"],
                     use_trt_vae=defaults["use_trt_vae"],
                     use_lynnreal_vae=defaults["use_lynnreal_vae"],
                     use_sol_vae=defaults["use_sol_vae"],

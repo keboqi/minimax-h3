@@ -12,7 +12,7 @@ import numpy as np
 
 from h3_app.catalog import LTX25_TILED_UPSCALE
 from h3_app.generation.finish_video import finish_video
-from h3_app.media_types import UpscaleClipBatch, VideoMetadata
+from h3_app.media_types import VideoMetadata
 from h3_app.status import node_stage
 from h3_app.workflows.upscale import build_upscale_graph, required_upscale_nodes
 from h3_models import DEFAULT_LTX25_MODEL, LTX25_MODEL_CHOICES, MODEL_SPECS
@@ -73,74 +73,66 @@ class TiledUpscaleTests(unittest.TestCase):
                     self.assertEqual(node_stage("LTXVTiledFusionSampler", classes),
                                      "Upscaling video with LTX tiled fusion")
 
-    def test_media_and_h3_keep_splitting_as_explicit_fallback(self):
+    def test_media_and_h3_process_the_whole_source_in_one_pass(self):
         source, result = Path("source.mp4"), Path("upscaled.mp4")
         metadata = VideoMetadata(23.976, 960, 544, 5, 120, True)
-        for split in (False, True):
-            for entry in ("media", "h3"):
-                with self.subTest(entry=entry, split=split), ExitStack() as stack:
-                    batch = UpscaleClipBatch(
-                        ("clip1.mp4", "clip2.mp4") if split else ("source.mp4",)
+        for entry in ("media", "h3"):
+            with self.subTest(entry=entry), ExitStack() as stack:
+                values = {
+                    "managed_video_path": source, "load_model_config": Mock(),
+                    "object_info": required_upscale_nodes(LTX25_TILED_UPSCALE),
+                    "ensure_ltx25_upscale_models": False,
+                    "probe_video_metadata": metadata,
+                    "stage_file": "staged.mp4",
+                    "submit_prompt": "job", "poll_comfy_progress": [],
+                    "wait_for_history": {}, "resolve_output": result,
+                    "gallery_media_processed_result": "complete", "write_snapshot": None,
+                }
+                mocks = {name: stack.enter_context(patch.object(owner(app, name), name, return_value=value))
+                         for name, value in values.items()}
+                build = stack.enter_context(patch.object(app, "build_upscale_graph", wraps=app.build_upscale_graph))
+                if entry == "media":
+                    updates = list(app.MEDIA.postprocess_selected_gallery_media(
+                        "Video", str(source), LTX25_TILED_UPSCALE, 42, "unused",
+                        DEFAULT_LTX25_MODEL, "Subtle natural texture", False,
+                        "3840 × 3840", request=Mock(), progress=Mock(),
+                    ))
+                    self.assertEqual(updates[-1], "complete")
+                else:
+                    request = SimpleNamespace(
+                        media=SimpleNamespace(prompt="A named subject in a narrative scene"),
+                        finishing=SimpleNamespace(
+                            postprocess=LTX25_TILED_UPSCALE,
+                            ltx25_model=DEFAULT_LTX25_MODEL, seedvr2_model="unused",
+                            upscale_resolution="3840 × 3840", upscale_force_offload=False,
+                        ),
                     )
-                    values = {
-                        "managed_video_path": source, "load_model_config": Mock(),
-                        "object_info": required_upscale_nodes(LTX25_TILED_UPSCALE),
-                        "ensure_ltx25_upscale_models": False,
-                        "probe_video_metadata": metadata,
-                        "prepare_upscale_clip_batch": batch,
-                        "submit_prompt": "job", "poll_comfy_progress": [],
-                        "wait_for_history": {}, "resolve_output": result,
-                        "concat_upscaled_clips": result,
-                        "cleanup_upscale_clip_batch": None,
-                        "gallery_media_processed_result": "complete", "write_snapshot": None,
-                    }
-                    mocks = {name: stack.enter_context(patch.object(owner(app, name), name, return_value=value))
-                             for name, value in values.items()}
-                    build = stack.enter_context(patch.object(app, "build_upscale_graph", wraps=app.build_upscale_graph))
-                    if entry == "media":
-                        updates = list(app.MEDIA.postprocess_selected_gallery_media(
-                            "Video", str(source), LTX25_TILED_UPSCALE, 42, "unused",
-                            DEFAULT_LTX25_MODEL, "Subtle natural texture", False,
-                            split, 5.0, "3840 × 3840", request=Mock(), progress=Mock(),
-                        ))
-                        self.assertEqual(updates[-1], "complete")
-                    else:
-                        request = SimpleNamespace(
-                            media=SimpleNamespace(prompt="A named subject in a narrative scene"),
-                            finishing=SimpleNamespace(
-                                postprocess=LTX25_TILED_UPSCALE,
-                                ltx25_model=DEFAULT_LTX25_MODEL, seedvr2_model="unused",
-                                upscale_resolution="3840 × 3840", upscale_split_enabled=split,
-                                upscale_split_seconds=5.0, upscale_force_offload=False,
-                            ),
-                        )
-                        prepared = SimpleNamespace(models=Mock(), actual_seed=42,
-                                                   resolved_width=960, resolved_height=544)
-                        services = SimpleNamespace(
-                            models=SimpleNamespace(ensure_ltx25_upscale_models=mocks["ensure_ltx25_upscale_models"]),
-                            media=SimpleNamespace(**mocks),
-                            workflows=SimpleNamespace(build_upscale_graph=build),
-                            execution=SimpleNamespace(**mocks),
-                        )
-                        generator = finish_video(request, prepared, services, source,
-                                                 "client", 0.0, Mock(), Mock())
-                        while True:
-                            try:
-                                next(generator)
-                            except StopIteration as finished:
-                                self.assertEqual(finished.value, result)
-                                break
-                    self.assertEqual(build.call_count, 2 if split else 1)
-                    for index, call in enumerate(build.call_args_list):
-                        self.assertEqual(call.kwargs["option"], LTX25_TILED_UPSCALE)
-                        self.assertEqual(call.kwargs["target_width"], 3840)
-                        self.assertEqual(call.kwargs["seed"], 42 + index)
-                        self.assertEqual(call.kwargs["prompt"], "" if entry == "h3" else "Subtle natural texture")
-                    mocks["ensure_ltx25_upscale_models"].assert_called_once_with(
-                        DEFAULT_LTX25_MODEL, option=LTX25_TILED_UPSCALE)
-                    self.assertEqual(mocks["prepare_upscale_clip_batch"].call_args.kwargs["split_enabled"], split)
-                    self.assertEqual(mocks["concat_upscaled_clips"].call_count, int(split))
-                    mocks["cleanup_upscale_clip_batch"].assert_called_once()
+                    prepared = SimpleNamespace(models=Mock(), actual_seed=42,
+                                               resolved_width=960, resolved_height=544)
+                    services = SimpleNamespace(
+                        models=SimpleNamespace(ensure_ltx25_upscale_models=mocks["ensure_ltx25_upscale_models"]),
+                        media=SimpleNamespace(**mocks),
+                        workflows=SimpleNamespace(build_upscale_graph=build),
+                        execution=SimpleNamespace(**mocks),
+                    )
+                    generator = finish_video(request, prepared, services, source,
+                                             "client", 0.0, Mock(), Mock())
+                    while True:
+                        try:
+                            next(generator)
+                        except StopIteration as finished:
+                            self.assertEqual(finished.value, result)
+                            break
+                build.assert_called_once()
+                call = build.call_args
+                self.assertEqual(call.kwargs["option"], LTX25_TILED_UPSCALE)
+                self.assertEqual(call.kwargs["source_video"], "staged.mp4")
+                self.assertEqual(call.kwargs["target_width"], 3840)
+                self.assertEqual(call.kwargs["seed"], 42)
+                self.assertEqual(call.kwargs["prompt"], "" if entry == "h3" else "Subtle natural texture")
+                mocks["ensure_ltx25_upscale_models"].assert_called_once_with(
+                    DEFAULT_LTX25_MODEL, option=LTX25_TILED_UPSCALE)
+                self.assertEqual(mocks["stage_file"].call_args.args[0], str(source))
 
 
 class FramePaddingTests(unittest.TestCase):

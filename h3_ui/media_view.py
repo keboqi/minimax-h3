@@ -35,8 +35,6 @@ class GalleryView:
     ltx25_prompt: gr.Textbox
     post_seed: gr.Number
     force_offload: gr.Checkbox
-    split_upscale: gr.Checkbox
-    split_seconds: gr.Slider
     post_run: gr.Button
     post_stop: gr.Button
     post_status: gr.Markdown
@@ -302,6 +300,7 @@ def build_gallery_view(
                                 choices=list(postprocess_options),
                                 value=postprocess_options[0],
                                 label="Method",
+                                info="H3 refinement uses the current Minimax H3 settings, including text encoder, prompt and seed. Target resolution is set here.",
                                 scale=2,
                             )
                             upscale_resolution = gr.Dropdown(
@@ -345,21 +344,6 @@ def build_gallery_view(
                                         label="Unload resident models first",
                                         info="Can lower peak VRAM before AI processing starts.",
                                     )
-                                split_upscale = gr.Checkbox(
-                                    value=False,
-                                    label="Advanced: split source into clips before LTX processing",
-                                    info="Normally leave off with Tiled Upscale. Opt in if memory is still insufficient. Processes clips independently, then concatenates them.",
-                                    visible=False,
-                                )
-                                split_seconds = gr.Slider(
-                                    1.0,
-                                    15.0,
-                                    value=5.0,
-                                    step=0.5,
-                                    label="Target clip length (seconds)",
-                                    info="The actual cut is adjusted to an LTX-valid frame count.",
-                                    visible=False,
-                                )
                         with gr.Row(equal_height=True, elem_classes=["h3-gallery-actions"]):
                             post_run = gr.Button(
                                 "Enhance selected media",
@@ -422,8 +406,6 @@ def build_gallery_view(
         ltx25_prompt,
         post_seed,
         force_offload,
-        split_upscale,
-        split_seconds,
         post_run,
         post_stop,
         post_status,

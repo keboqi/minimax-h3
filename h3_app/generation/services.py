@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, Protocol
+from typing import Any, Callable, Iterator, Protocol
 
-from h3_app.media_types import UpscaleClipBatch, VideoMetadata
+from h3_app.media_types import VideoMetadata
 from h3_app.model_types import ModelConfig, ModelProfile
 from h3_app.progress import ProgressUpdate
 from h3_app.settings import ResolvedSettings
@@ -63,38 +63,12 @@ class BuildUpscaleGraph(Protocol):
     ) -> tuple[dict[str, Any], int]: ...
 
 
-class CleanupUpscaleClipBatch(Protocol):
-    def __call__(
-        self, batch: UpscaleClipBatch | None, outputs: Iterable[Path] = ...
-    ) -> None: ...
-
-
-class ConcatUpscaledClips(Protocol):
-    def __call__(
-        self,
-        source: Path,
-        clips: list[Path],
-        *,
-        option: str,
-        duration: float,
-        frame_count: int,
-    ) -> Path: ...
-
-
 class PostprocessVideo(Protocol):
     def __call__(self, source: Path, option: str) -> Path: ...
 
 
-class PrepareUpscaleClipBatch(Protocol):
-    def __call__(
-        self,
-        source: Path,
-        *,
-        category: str,
-        split_enabled: bool,
-        split_seconds: float,
-        metadata: VideoMetadata,
-    ) -> UpscaleClipBatch: ...
+class StageFile(Protocol):
+    def __call__(self, path: str, category: str) -> str: ...
 
 
 class ProbeVideoMetadata(Protocol):
@@ -281,14 +255,12 @@ class WorkflowsServices:
 
 @dataclass(frozen=True)
 class MediaServices:
-    cleanup_upscale_clip_batch: CleanupUpscaleClipBatch
-    concat_upscaled_clips: ConcatUpscaledClips
     postprocess_video: PostprocessVideo
-    prepare_upscale_clip_batch: PrepareUpscaleClipBatch
     probe_video_metadata: ProbeVideoMetadata
     resolve_audio_output: ResolveAudioOutput
     resolve_image_outputs: ResolveImageOutputs
     resolve_output: ResolveOutput
+    stage_file: StageFile
 
 
 @dataclass(frozen=True)

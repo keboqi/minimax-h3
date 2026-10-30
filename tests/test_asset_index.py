@@ -172,11 +172,11 @@ class AssetIndexTests(TestCase):
 
     def test_ai_video_enhancement_is_indexed_before_gallery_refresh_without_history_scan(self):
         from h3_app.catalog import H3_REFINEMENT, LTX25_TILED_UPSCALE
-        for option, split in ((H3_REFINEMENT, False), (LTX25_TILED_UPSCALE, True)):
+        for option in (H3_REFINEMENT, LTX25_TILED_UPSCALE):
             with self.subTest(option=option):
                 source = self.runtime.outputs_dir / "source.mp4"
                 source.write_bytes(b"source video")
-                result = self.runtime.outputs_dir / ("split.mp4" if split else "refinement.mp4")
+                result = self.runtime.outputs_dir / f"{option.split()[0].lower()}.mp4"
                 result.write_bytes(b"finished video")
                 services = SimpleNamespace(
                     _runtime_config=lambda: self.runtime,
@@ -186,13 +186,11 @@ class AssetIndexTests(TestCase):
                     probe_video_metadata=lambda path: SimpleNamespace(width=960, height=544, fps=24,
                         duration=5, frame_count=120),
                     upscale_target_dimensions=lambda *args: (1920, 1088),
-                    prepare_upscale_clip_batch=lambda *args, **kwargs: SimpleNamespace(
-                        sources=("one.mp4", "two.mp4") if split else ("one.mp4",), temporary_inputs=split),
+                    stage_file=lambda *args, **kwargs: "one.mp4",
                     build_upscale_graph=lambda **kwargs: ({}, 2),
                     submit_prompt=lambda *args: "job", poll_comfy_progress=lambda *args: [],
                     wait_for_history=lambda *args: {}, resolve_output=lambda *args: result,
-                    concat_upscaled_clips=lambda *args, **kwargs: result,
-                    cleanup_upscale_clip_batch=Mock(), write_snapshot=write_snapshot,
+                    write_snapshot=write_snapshot,
                 )
                 controller = MediaController(services)
 
@@ -208,12 +206,12 @@ class AssetIndexTests(TestCase):
                 ):
                     updates = list(controller.postprocess_selected_gallery_media(
                         "Video", str(source), option, 42, "unused", "unused", "fine detail",
-                        False, split, 5, "1920 × 1920", request=Mock(), progress=Mock(),
+                        False, "1920 × 1920", request=Mock(), progress=Mock(),
                         h3_refinement={"latent_upscale_refine_steps": 1},
                     ))
                 self.assertEqual(updates[-1], "complete", updates)
                 snapshot = read_snapshot(result)
                 self.assertEqual(snapshot["settings"]["method"], option)
                 self.assertTrue(snapshot["source_asset_ids"])
-                if not split:
+                if option == H3_REFINEMENT:
                     self.assertEqual(snapshot["settings"]["latent_upscale_refine_steps"], 1)

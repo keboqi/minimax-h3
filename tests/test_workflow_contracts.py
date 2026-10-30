@@ -170,68 +170,31 @@ class WorkflowContractsTests(unittest.TestCase):
             audio_result_classes & {"VAEDecode", "CreateVideo", "SaveVideo"}
         )
 
-    def test_split_refinement_configuration_and_wiring(self):
+    def test_full_frame_refinement_configuration_and_wiring(self):
         self.assertEqual(
             _policy.h3_latent_upscale_dimensions(1024, 1024), (512, 512, 1024, 1024)
         )
         self.assertEqual(
             _policy.h3_latent_upscale_dimensions(864, 480), (448, 256, 896, 512)
         )
-        split_config = _policy.resolve_h3_split_upscale_config(
-            _catalog.H3_LATENT_UPSCALE_SPLIT,
-            tile_width=512,
-            tile_height=640,
-            overlap_ratio=0.25,
-            fade_ratio=0.50,
-            chunk_frames=73,
-            temporal_overlap_frames=22,
-            seam_denoise=0.75,
-            seam_polish="auto",
-        )
-        self.assertEqual(
-            split_config,
-            _policy.H3SplitUpscaleConfig(
-                tile_width=512,
-                tile_height=640,
-                overlap_ratio=0.25,
-                fade_ratio=0.5,
-                chunk_frames=73,
-                temporal_overlap_frames=22,
-                seam_denoise=0.75,
-                seam_polish="auto",
-            ),
-        )
-        self.assertIs(
-            _policy.resolve_h3_split_upscale_config(
+        # MMH3 Split Upscale was removed; saved selections fall back to full-frame.
+        for legacy in ("MMH3 Split Upscale (experimental)", "split"):
+            self.assertEqual(
+                _policy.resolve_h3_latent_upscale_method(legacy),
                 _catalog.H3_LATENT_UPSCALE_STANDARD,
-                tile_width=1,
-                tile_height=1,
-                overlap_ratio=2,
-                fade_ratio=2,
-                chunk_frames=1,
-                temporal_overlap_frames=2,
-                seam_denoise=2,
-                seam_polish="invalid",
-            ),
-            None,
+            )
+        self.assertNotIn("MMH3 Split Upscale (experimental)", _catalog.H3_LATENT_UPSCALE_METHODS)
+        required = _h3_workflow.required_nodes_for(
+            "Text to video",
+            False,
+            "Off",
+            latent_upscale=True,
+            latent_upscale_method=_catalog.H3_LATENT_UPSCALE_STANDARD,
         )
-        self.assertLessEqual(
-            {
-                _catalog.H3_SPLIT_TEMPORAL_PARAMS_NODE,
-                _catalog.H3_SPLIT_SPATIAL_PARAMS_NODE,
-                _catalog.H3_SPLIT_UPSCALE_NODE,
-            },
-            _h3_workflow.required_nodes_for(
-                "Text to video",
-                False,
-                "Off",
-                latent_upscale=True,
-                latent_upscale_method=_catalog.H3_LATENT_UPSCALE_SPLIT,
-            ),
-        )
-        split_graph_builder = _graph.Graph()
+        self.assertFalse({name for name in required if name.startswith("MMH3")})
+        graph_builder = _graph.Graph()
         _h3_workflow.finish_sampling(
-            split_graph_builder,
+            graph_builder,
             model_ref=["model", 0],
             conditioning_ref=["target-conditioning", 0],
             latent_ref=["target-latent", 0],
@@ -241,7 +204,7 @@ class WorkflowContractsTests(unittest.TestCase):
             steps=8,
             scheduler="beta",
             turbo_variant=None,
-            filename_prefix="h3/split-selftest",
+            filename_prefix="h3/refine-selftest",
             initial_conditioning_ref=["initial-conditioning", 0],
             initial_latent_ref=["initial-latent", 0],
             latent_upscale_model_name=(
@@ -251,90 +214,28 @@ class WorkflowContractsTests(unittest.TestCase):
             latent_upscale_width=1024,
             latent_upscale_height=1280,
             latent_upscale_refine_steps=2,
-            latent_split_config=split_config,
         )
-        split_graph = split_graph_builder.nodes
-        split_temporal_id = next(
+        graph = graph_builder.nodes
+        samplers = [
+            node["inputs"]
+            for node in graph.values()
+            if node["class_type"] == "SamplerCustomAdvanced"
+        ]
+        self.assertEqual(len(samplers), 2)
+        combine_id = next(
             node_id
-            for node_id, node in split_graph.items()
-            if node["class_type"] == _catalog.H3_SPLIT_TEMPORAL_PARAMS_NODE
-        )
-        split_spatial_id = next(
-            node_id
-            for node_id, node in split_graph.items()
-            if node["class_type"] == _catalog.H3_SPLIT_SPATIAL_PARAMS_NODE
-        )
-        split_upscale_id = next(
-            node_id
-            for node_id, node in split_graph.items()
-            if node["class_type"] == _catalog.H3_SPLIT_UPSCALE_NODE
+            for node_id, node in graph.items()
+            if node["class_type"] == _catalog.H3_COMBINE_AV_LATENT_NODE
         )
         split_sigmas_id = next(
             node_id
-            for node_id, node in split_graph.items()
+            for node_id, node in graph.items()
             if node["class_type"] == "SplitSigmas"
         )
-        split_noise_id = next(
-            node_id
-            for node_id, node in split_graph.items()
-            if node["class_type"] == "RandomNoise"
-        )
-        split_sampler_id = next(
-            node_id
-            for node_id, node in split_graph.items()
-            if node["class_type"] == _catalog.CORE_SAMPLER_NODE
-        )
-        split_combine_id = next(
-            node_id
-            for node_id, node in split_graph.items()
-            if node["class_type"] == _catalog.H3_COMBINE_AV_LATENT_NODE
-        )
-        self.assertEqual(
-            sum(
-                (
-                    node["class_type"] == "SamplerCustomAdvanced"
-                    for node in split_graph.values()
-                )
-            ),
-            1,
-        )
-        self.assertEqual(
-            split_graph[split_temporal_id]["inputs"],
-            {
-                "chunk_frames": 73,
-                "temporal_overlap_frames": 22,
-                "anchor_strength": 0.999,
-                "motion_anchor_frames": "22",
-                "identity_anchor_frames": 24,
-            },
-        )
-        self.assertEqual(
-            split_graph[split_spatial_id]["inputs"],
-            {
-                "tile_width": 512,
-                "tile_height": 640,
-                "overlap_ratio": 0.25,
-                "fade_ratio": 0.5,
-                "min_tile_size": 256,
-                "seam_denoise": 0.75,
-            },
-        )
-        self.assertEqual(
-            split_graph[split_upscale_id]["inputs"],
-            {
-                "model": ["model", 0],
-                "conditioning": ["target-conditioning", 0],
-                "latent": _graph.Graph.out(split_combine_id),
-                "noise": _graph.Graph.out(split_noise_id),
-                "sampler": _graph.Graph.out(split_sampler_id),
-                "sigmas": _graph.Graph.out(split_sigmas_id, 1),
-                "cfg": 1.0,
-                "temporal_split_param": _graph.Graph.out(split_temporal_id),
-                "spatial_split_param": _graph.Graph.out(split_spatial_id),
-                "seam_polish": "auto",
-                "color_match": True,
-            },
-        )
+        self.assertEqual(samplers[1]["latent_image"], _graph.Graph.out(combine_id))
+        self.assertEqual(samplers[1]["sigmas"], _graph.Graph.out(split_sigmas_id, 1))
+        self.assertEqual(graph[split_sigmas_id]["inputs"]["step"], 6)
+        self.assertFalse(any(node["class_type"].startswith("MMH3") for node in graph.values()))
 
     def test_sage_model_override(self):
         sage_graph = _graph.Graph()

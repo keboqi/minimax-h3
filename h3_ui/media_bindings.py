@@ -260,20 +260,20 @@ def bind_gallery_view(
     synchronize(refreshed, refreshed=True)
     view.postprocess.change(
         lambda value: (
-            gr.update(visible=value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER),
+            gr.update(visible=(value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER) and value != H3_REFINEMENT),
             gr.update(visible=value == seedvr_option),
             gr.update(
-                visible=value in ltx_options | set(H3_REGENERATE_MODELS) | {H3_REFINEMENT}
+                visible=value in ltx_options | set(H3_REGENERATE_MODELS)
                 and value not in {LTX25_CQ_ENHANCER, LTX25_SDR_TO_HDR},
                 info=(
                     "Uses the current Minimax H3 native upscale settings: method, upscaler precision, "
-                    "refinement steps, LoRA and split settings. Preserves source timing and audio."
+                    "refinement steps and LoRA. Preserves source timing and audio."
                     if value == H3_REFINEMENT else
                     "Experimental H3 refiner + LightX2V, three Euler steps. Describe the source scene. "
                     "Preserves frames, fps and audio; best tested on short 24 fps drafts. Uses the default H3 model profile."
                     if value in H3_REGENERATE_MODELS else
                     "Describe texture, lighting and sharpness only; named subjects can repeat across tiles. "
-                    "Uses spatial tiles and temporal streaming. Segment splitting is an advanced fallback."
+                    "Uses spatial tiles and temporal streaming."
                     if value == LTX25_TILED_UPSCALE else
                     "Describe the source scene; focus restoration instructions are added automatically. Preserves source resolution. Uses the finishing model selected here."
                     if value == LTX25_DEBLUR
@@ -285,8 +285,6 @@ def bind_gallery_view(
                 ),
                 label="Scene prompt",
             ),
-            gr.update(visible=value in ltx_options),
-            gr.update(visible=value in ltx_options),
             gr.update(
                 visible=(value in ai_options or value == LTX25_CQ_IMAGE_ENHANCER)
                 and value not in LTX25_SAME_RESOLUTION_OPTIONS
@@ -298,8 +296,6 @@ def bind_gallery_view(
             view.ai_settings,
             view.seedvr2_model,
             view.ltx25_prompt,
-            view.split_upscale,
-            view.split_seconds,
             view.upscale_resolution,
             selected_ltx_model,
         ],
@@ -409,7 +405,7 @@ def bind_postprocess(
     input_names = None
     if h3_refinement_inputs:
         import inspect
-        from h3_app.refinement import H3_REFINEMENT_INPUTS
+        from h3_app.refinement import H3_REFINEMENT_INPUTS, H3_REFINEMENT_FIELDS
         input_names = [name for name, param in inspect.signature(postprocess).parameters.items()
                        if name not in {"request", "progress"} and param.kind != inspect.Parameter.KEYWORD_ONLY]
         input_names += [f"h3_{name}" for name in H3_REFINEMENT_INPUTS]
@@ -418,7 +414,7 @@ def bind_postprocess(
             count = len(H3_REFINEMENT_INPUTS)
             yield from postprocess(
                 *values[:-count], request=request,
-                h3_refinement=dict(zip(H3_REFINEMENT_INPUTS, values[-count:])),
+                h3_refinement=dict(zip(H3_REFINEMENT_FIELDS, values[-count:])),
             )
 
     post_event = bind_gpu_action(
@@ -433,8 +429,6 @@ def bind_postprocess(
             selected_ltx_model,
             view.ltx25_prompt,
             view.force_offload,
-            view.split_upscale,
-            view.split_seconds,
             view.upscale_resolution,
             *(h3_refinement_inputs or []),
         ],

@@ -468,15 +468,6 @@ H3_SEPARATE_AV_LATENT_NODE = "H3SeparateAVLatent"
 H3_COMBINE_AV_LATENT_NODE = "H3CombineAVLatent"
 
 
-H3_SPLIT_TEMPORAL_PARAMS_NODE = "MMH3TemporalSplitParamsV10"
-
-
-H3_SPLIT_SPATIAL_PARAMS_NODE = "MMH3SpatialSplitParamsV10"
-
-
-H3_SPLIT_UPSCALE_NODE = "MMH3SplitUpscale"
-
-
 H3_SINGLE_FRAME_VAE_LOADER_NODE = "H3SingleFrameVAELoader"
 
 
@@ -504,8 +495,6 @@ H3_LATENT_UPSCALE_SCALE = 2.0
 H3_LATENT_UPSCALE_STANDARD = "Full-frame refinement"
 
 
-H3_LATENT_UPSCALE_SPLIT = "MMH3 Split Upscale (experimental)"
-
 H3_REGENERATE_MODELS = {
     H3_REGENERATE_16: "h3_regenerate_refiner_16",
     H3_REGENERATE_384: "h3_regenerate_refiner_384",
@@ -516,7 +505,6 @@ H3_REGENERATE_SIGMAS = "0.909375, 0.857143, 0.666667, 0"
 
 H3_LATENT_UPSCALE_METHODS = (
     H3_LATENT_UPSCALE_STANDARD,
-    H3_LATENT_UPSCALE_SPLIT,
     *H3_REGENERATE_MODELS,
 )
 
@@ -580,7 +568,6 @@ AI_POSTPROCESS_OPTIONS = COMFY_POSTPROCESS_OPTIONS
 POSTPROCESS_OPTIONS = [
     SEEDVR2_UPSCALE,
     H3_REFINEMENT,
-    *H3_REGENERATE_MODELS,
     LTX25_UPSCALE,
     LTX25_TILED_UPSCALE,
     LTX25_DECOMPRESSION,
@@ -729,19 +716,9 @@ UI_DEFAULTS = {
     "latent_upscale_refine_steps": 2,
     "latent_upscale_refine_lora": SAME_REFINEMENT_LORA,
     "latent_upscale_method": H3_LATENT_UPSCALE_STANDARD,
-    "latent_split_tile_width": 512,
-    "latent_split_tile_height": 512,
-    "latent_split_overlap_ratio": 0.25,
-    "latent_split_fade_ratio": 0.50,
-    "latent_split_chunk_frames": 73,
-    "latent_split_temporal_overlap_frames": 22,
-    "latent_split_seam_denoise": 0.75,
-    "latent_split_seam_polish": "off",
     "postprocess": "None",
     "seedvr2_model": DEFAULT_SEEDVR2_MODEL,
     "upscale_force_offload": False,
-    "upscale_split_enabled": False,
-    "upscale_split_seconds": 5.0,
 }
 
 

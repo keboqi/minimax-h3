@@ -60,7 +60,7 @@ class UiContractTests(unittest.TestCase):
         cls.restore = next(
             fn
             for fn in cls.demo.fns.values()
-            if getattr(fn.fn, "__name__", "") == "restore" and len(fn.inputs) > 80
+            if getattr(fn.fn, "__name__", "") == "restore" and len(fn.inputs) > 70
         )
         closure = dict(
             zip(
@@ -171,11 +171,23 @@ class UiContractTests(unittest.TestCase):
                          and any(self.components[i].get("props", {}).get("label") == "Seed (-1 random)" for i in d["inputs"]))
         from h3_app.refinement import H3_REFINEMENT_INPUTS
         self.assertIn(_catalog.H3_REFINEMENT, choices)
-        self.assertEqual(len(admission["inputs"]), 12 + len(H3_REFINEMENT_INPUTS))
+        for rank in _catalog.H3_REGENERATE_MODELS:
+            self.assertNotIn(rank, choices)
+        self.assertEqual(len(admission["inputs"]), 10 + len(H3_REFINEMENT_INPUTS))
         labels = [self.components[i].get("props", {}).get("label") for i in admission["inputs"]]
         self.assertIn("High-resolution refinement method", labels)
         self.assertIn("High-resolution refinement LoRA", labels)
         self.assertIn("Latent upscaler model", labels)
+        self.assertIn("Text encoder", labels)
+        from h3_app.refinement import H3_REFINEMENT_FIELDS
+        # Source media/timing and Media's target resolution do not leak back to H3's controls.
+        self.assertNotIn("width", H3_REFINEMENT_FIELDS)
+        self.assertNotIn("height", H3_REFINEMENT_FIELDS)
+        for name in ("use_sol_vae", "video_encoder", "lightvae_decoder", "attention_mode",
+                     "stage_model_offload", "semantic_bridge", "encoder_small_input", "upscale_force_offload"):
+            self.assertIn(name, H3_REFINEMENT_FIELDS)
+        encoder_index = 9 + H3_REFINEMENT_INPUTS.index("text_encoder")
+        self.assertEqual(self.components[admission["inputs"][encoder_index]]["props"]["label"], "Text encoder")
 
     def test_all_generator_image_inputs_have_library_selection(self):
         image_inputs = [
@@ -501,8 +513,6 @@ class UiContractTests(unittest.TestCase):
                     True,
                     False,
                     option != _catalog.LTX25_CQ_ENHANCER,
-                    True,
-                    True,
                     False,
                     True,
                 ],
@@ -511,40 +521,38 @@ class UiContractTests(unittest.TestCase):
                 self.assertIn("Preserves source resolution", updates[2]["info"])
         self.assertEqual(
             [u["visible"] for u in callback(_catalog.LTX25_UPSCALE)],
-            [True, False, True, True, True, True, True],
+            [True, False, True, True, True],
         )
         self.assertIn(_catalog.LTX25_TILED_UPSCALE, choices)
         tiled_updates = callback(_catalog.LTX25_TILED_UPSCALE)
         self.assertEqual(
             [u["visible"] for u in tiled_updates],
-            [True, False, True, True, True, True, True],
+            [True, False, True, True, True],
         )
         self.assertIn("texture", tiled_updates[2]["info"])
         for option in _catalog.H3_REGENERATE_MODELS:
-            self.assertIn(option, choices)
-            regenerate_updates = callback(option)
-            self.assertEqual([u["visible"] for u in regenerate_updates],
-                             [True, False, True, False, False, True, False])
-            self.assertIn("H3 refiner", regenerate_updates[2]["info"])
-        split_controls = [
+            self.assertNotIn(option, choices)
+        self.assertEqual(
+            [u["visible"] for u in callback(_catalog.H3_REFINEMENT)],
+            [False, False, False, True, False],
+        )
+        self.assertFalse([
             c for c in self.config["components"]
-            if c.get("props", {}).get("label", "").startswith("Advanced: split source")
-        ]
-        self.assertEqual(len(split_controls), 2)
-        self.assertTrue(all(c["props"]["value"] is False for c in split_controls))
+            if "split source" in c.get("props", {}).get("label", "").lower()
+        ])
         self.assertEqual(
             [u["visible"] for u in callback(_catalog.SEEDVR2_UPSCALE)],
-            [True, True, False, False, False, True, False],
+            [True, True, False, True, False],
         )
         self.assertNotIn(_catalog.LTX25_CQ_IMAGE_ENHANCER, choices)
         self.assertEqual(
             [u["visible"] for u in callback(_catalog.LTX25_CQ_IMAGE_ENHANCER)],
-            [True, False, False, False, False, True, False],
+            [True, False, False, True, False],
         )
         self.assertIn(_catalog.LTX25_SDR_TO_HDR, choices)
         self.assertEqual(
             [u["visible"] for u in callback(_catalog.LTX25_SDR_TO_HDR)],
-            [True, False, False, True, True, False, True],
+            [True, False, False, False, True],
         )
 
     def test_gallery_defaults_to_video_and_can_switch_to_images(self) -> None:
@@ -2024,13 +2032,13 @@ class UiContractTests(unittest.TestCase):
         self.assertFalse(frames["interactive"])
         self.assertNotIn("value", frames)
 
-    def test_mmh3_split_upscale_controls_are_explicit_and_conditional(self) -> None:
+    def test_refinement_method_has_no_split_controls(self) -> None:
         labels = {
             component.get("props", {}).get("label")
             for component in self.config["components"]
         }
+        self.assertIn("High-resolution refinement method", labels)
         for label in (
-            "High-resolution refinement method",
             "Tile width (pixels)",
             "Tile height (pixels)",
             "Spatial overlap",
@@ -2040,32 +2048,16 @@ class UiContractTests(unittest.TestCase):
             "Seam denoise cap",
             "Seam polish",
         ):
-            self.assertIn(label, labels)
+            self.assertNotIn(label, labels)
         method = next(
             component
             for component in self.config["components"]
             if component.get("props", {}).get("label")
             == "High-resolution refinement method"
         )
-        choices = method["props"]["choices"]
-        for option in _catalog.H3_REGENERATE_MODELS:
-            self.assertIn((option, option), choices)
-        self.assertIn(
-            (
-                gradio_app.H3_LATENT_UPSCALE_SPLIT,
-                gradio_app.H3_LATENT_UPSCALE_SPLIT,
-            ),
-            choices,
-        )
-        self.assertFalse(
-            h3_ui.h3.layout.latent_upscale_method_layout_update(
-                gradio_app.H3_LATENT_UPSCALE_STANDARD
-            )["visible"]
-        )
-        self.assertTrue(
-            h3_ui.h3.layout.latent_upscale_method_layout_update(
-                gradio_app.H3_LATENT_UPSCALE_SPLIT
-            )["visible"]
+        self.assertEqual(
+            [choice[0] for choice in method["props"]["choices"]],
+            [_catalog.H3_LATENT_UPSCALE_STANDARD, *_catalog.H3_REGENERATE_MODELS],
         )
         advanced = next(
             dependency
@@ -2102,8 +2094,6 @@ class UiContractTests(unittest.TestCase):
             "unused",
             "unused",
             False,
-            False,
-            5,
         )
         self.assertIn('<details class="h3-setup-disclosure">', summary)
         self.assertNotIn("<details open", summary)
@@ -2125,43 +2115,6 @@ class UiContractTests(unittest.TestCase):
             set(changed_tabs), {label for label, _ in h3_ui.h3.view.SETTINGS_TABS}
         )
         self.assertIn("NVFP4 / AWQ → BF16 · Memory &amp; decoding", summary)
-        split_summary = gradio_app.H3.compact_settings_summary(
-            "Text to video",
-            "Original",
-            "BF16",
-            True,
-            True,
-            False,
-            "Normal",
-            _catalog.LIGHTX2V_8STEP_TURBO,
-            5,
-            1024,
-            1024,
-            20,
-            "beta",
-            "SLA",
-            "Quality",
-            "Off",
-            True,
-            "Balanced (BF16)",
-            2,
-            "None",
-            "unused",
-            "unused",
-            False,
-            False,
-            5,
-            latent_upscale_method=gradio_app.H3_LATENT_UPSCALE_SPLIT,
-            latent_split_tile_width=512,
-            latent_split_tile_height=640,
-            latent_split_chunk_frames=73,
-            latent_split_temporal_overlap_frames=22,
-            latent_split_seam_polish="auto",
-        )
-        self.assertIn("MMH3 Split Upscale (experimental)", split_summary)
-        self.assertIn("512×640px tiles", split_summary)
-        self.assertIn("73f chunks+22f", split_summary)
-        self.assertIn("polish auto", split_summary)
 
     def test_scoped_setup_css_contract(self) -> None:
         for rule in (

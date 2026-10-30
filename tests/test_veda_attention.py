@@ -15,7 +15,6 @@ from h3_app.generation import h3 as generation
 from h3_app.generation.preparation import prepare_h3
 from h3_app.generation.requests import H3Request
 from h3_app.graph import Graph
-from h3_app.policy import H3SplitUpscaleConfig
 from h3_app.settings import GenerationRequest, SamplingSettings, resolve_settings
 from h3_app.workflows import h3
 from h3_models import MODEL_SPECS, PRELOAD_MODEL_KEYS
@@ -34,7 +33,7 @@ def chain(nodes, model):
 
 class VedaAttentionTests(unittest.TestCase):
     def build(self, mode='Text to video', preset='Fast', refine_steps=2,
-              upscale=True, split=False, cache='Off', refinement_variant=None):
+              upscale=True, cache='Off', refinement_variant=None):
         kwargs = dict(
             H3_DEFAULTS, use_veda=True, sla_preset=preset, steps=8,
             latent_upscale_model_name='upscaler.pth' if upscale else None,
@@ -45,10 +44,6 @@ class VedaAttentionTests(unittest.TestCase):
         if refinement_variant:
             kwargs.update(refinement_variant=refinement_variant,
                           refinement_lora_name=MODELS.turbo_8step_lora)
-        if split:
-            kwargs['latent_split_config'] = H3SplitUpscaleConfig(
-                512, 512, .25, .5, 73, 22, .75, 'off'
-            )
         if mode == 'Reference media':
             for key in ('first_image', 'last_image', 'semantic_bridge',
                         'semantic_bridge_alpha', 'voice_reference_audios'):
@@ -63,32 +58,31 @@ class VedaAttentionTests(unittest.TestCase):
         for mode in ('Text to video', 'First / last frame', 'Reference media'):
             for preset in catalog.SLA_PRESET_INPUTS:
                 for count in (1, 2, 3):
-                    for split in (False, True):
-                        with self.subTest(mode=mode, preset=preset, count=count, split=split):
-                            nodes = self.build(mode, preset, count, split=split)
-                            overrides = [n for n in nodes.values()
-                                         if n['class_type'] == catalog.VEDA_ATTENTION_NODE]
-                            self.assertEqual(len(overrides), 2)
-                            base, refine = [n['inputs'] for n in overrides]
-                            self.assertEqual(base['model'], refine['model'])
-                            self.assertEqual(base['full_attention_steps'],
-                                             '0, 7' if preset == 'Quality' else '0')
-                            self.assertEqual(refine['full_attention_steps'],
-                                             str(count - 1) if preset == 'Quality' else '')
-                            key = 'veda_r2va' if mode == 'Reference media' else 'veda_t2va'
-                            for inputs in (base, refine):
-                                self.assertEqual(inputs['predictor'], MODEL_SPECS[key].local_name)
-                                self.assertEqual(inputs['generated_sparsity'], '32')
-                                self.assertEqual(inputs['reference_sparsity'], '0%')
-                            for guider in (n for n in nodes.values() if n['class_type'] == 'BasicGuider'):
-                                branch = chain(nodes, guider['inputs']['model'])
-                                self.assertEqual(sum(n['class_type'] == catalog.VEDA_ATTENTION_NODE for n in branch), 1)
-                                self.assertIn(catalog.CHUNK_FEED_FORWARD_NODE,
-                                              [n['class_type'] for n in branch])
-                            self.assertFalse(any(n['class_type'] in {
-                                catalog.SLA_ATTENTION_NODE, catalog.SOL_ATTENTION_NODE,
-                                catalog.SAGE_ATTENTION_NODE,
-                            } for n in nodes.values()))
+                    with self.subTest(mode=mode, preset=preset, count=count):
+                        nodes = self.build(mode, preset, count)
+                        overrides = [n for n in nodes.values()
+                                     if n['class_type'] == catalog.VEDA_ATTENTION_NODE]
+                        self.assertEqual(len(overrides), 2)
+                        base, refine = [n['inputs'] for n in overrides]
+                        self.assertEqual(base['model'], refine['model'])
+                        self.assertEqual(base['full_attention_steps'],
+                                         '0, 7' if preset == 'Quality' else '0')
+                        self.assertEqual(refine['full_attention_steps'],
+                                         str(count - 1) if preset == 'Quality' else '')
+                        key = 'veda_r2va' if mode == 'Reference media' else 'veda_t2va'
+                        for inputs in (base, refine):
+                            self.assertEqual(inputs['predictor'], MODEL_SPECS[key].local_name)
+                            self.assertEqual(inputs['generated_sparsity'], '32')
+                            self.assertEqual(inputs['reference_sparsity'], '0%')
+                        for guider in (n for n in nodes.values() if n['class_type'] == 'BasicGuider'):
+                            branch = chain(nodes, guider['inputs']['model'])
+                            self.assertEqual(sum(n['class_type'] == catalog.VEDA_ATTENTION_NODE for n in branch), 1)
+                            self.assertIn(catalog.CHUNK_FEED_FORWARD_NODE,
+                                          [n['class_type'] for n in branch])
+                        self.assertFalse(any(n['class_type'] in {
+                            catalog.SLA_ATTENTION_NODE, catalog.SOL_ATTENTION_NODE,
+                            catalog.SAGE_ATTENTION_NODE,
+                        } for n in nodes.values()))
 
     def test_single_stage_and_spectrum_preserve_the_selected_attention(self):
         for cache in ('Off', 'Spectrum', 'EasyCache', 'FirstBlockCache'):

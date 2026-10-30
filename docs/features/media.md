@@ -47,7 +47,7 @@ tab and the official gated pixel spatial upscaler IC-LoRA. Gallery runs accept
 an optional scene prompt; automatic post-processing reuses the H3 generation
 prompt. **LTX-2.5 Tiled Upscale** adds the upstream Tiled Fusion sampler with
 overlapping spatial tiles and 97-frame temporal windows on one shared canvas.
-Use it for large target resolutions without enabling independent clip splits.
+Use it for large target resolutions.
 It uses the gated [Refine Details IC-LoRA](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Refine-Details),
 downloaded on first use, and the selected LTX base model. Streaming guides are
 encoded freshly for each temporal window. Media accepts an optional texture or
@@ -62,16 +62,21 @@ lower peak VRAM is more important than avoiding an H3 model reload on the next
 generation. **48 fps interpolation** remains available as a non-upscale option
 and requires FFmpeg on the server `PATH`.
 
-**H3 refinement** uses the current **MiniMax H3 → Upscale → Native latent upscale**
-settings for existing videos: upscaler model/precision, refinement method, steps,
-LoRA and MMH3 split controls. “Same as generation” follows the current H3 sampling
-mode and LoRA. The gallery's target resolution and scene prompt apply to this run;
-source frame count, fps and audio are preserved. Regenerate methods use their
-fixed three-step schedule and dedicated adapter stack.
+**H3 refinement** uses the current **MiniMax H3** processing settings: base model,
+text encoder, video encoder and decoder, attention, Semantic Bridge, prompt, seed,
+memory/offload controls, and native upscale method, precision, steps and LoRA. It shares H3's effective settings and refinement sampler policy,
+including fixed Regenerate schedules, BF16 stage offload and native refinement's
+cache restrictions. **Target resolution** in Media is the only processing-setting
+override. The selected video supplies the source frames, timing and audio; H3's
+reference uploads, generation duration and after-generation processing are not
+reapplied. Media hides its separate prompt, seed and model/memory controls for
+this method.
 
-**H3 Regenerate 2K · rank 16** and **rank 384 (experimental)** process existing
-videos using the default configured H3 FL2VA model, H3 text encoder and official
-VAEs. The selected refiner, LightX2V companion and BF16 latent upscaler download
+Choose **H3 Regenerate 2K · rank 16** or **rank 384 (experimental)** under
+**MiniMax H3 → High-resolution refinement method**, then select **H3 refinement**
+in **Enhance selected media**. These ranks use the selected H3 FL2VA model,
+selected H3 text encoder and VAE settings. The selected refiner, LightX2V
+companion and selected latent upscaler download
 on first use. The source is fitted to half the target dimensions, encoded to H3
 latents, upscaled 2x, refined with three Euler steps, decoded and resized to the
 requested output. Frames are padded by repeating the last frame to H3's temporal
@@ -96,8 +101,7 @@ source resolution and audio and lazily downloads the V2 video LoRA from
 The adapters download on first use and require access to their separate gated
 [Decompression](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Decompression)
 and [Deblur](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Deblur)
-repositories. Deblur targets defocus, not motion blur. Use **Advanced: split source
-into clips before LTX processing** for restoration clips that exceed available VRAM.
+repositories. Deblur targets defocus, not motion blur.
 
 **LTX-2.5 IC-LoRA SDR to HDR** converts an SDR gallery video into a 10-bit
 BT.2020/HLG HEVC MP4 while preserving source resolution, frame rate, and audio.
@@ -107,21 +111,13 @@ LTX video VAE in float32. The adapter, embeddings, and required base/VAE weights
 download on first use. Accept access to the separate gated
 [SDR-to-HDR repository](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-SDR-To-HDR)
 and authenticate with `hf auth login` or `HF_TOKEN`. HDR playback requires an
-HLG/HEVC-capable player and display. Optional split processing joins HDR streams
-without re-encoding them. This uses plain IC-LoRA conditioning; the upstream
+HLG/HEVC-capable player and display. This uses plain IC-LoRA conditioning; the upstream
 pipeline's optional seam-keyframe/high-quality mode and EXR export are not enabled.
 
-Independent clip splitting remains off by default. Tiled Fusion streams temporal
-windows internally, but source frames, output frames, and the shared latent canvas
-still require memory. If a long or high-resolution source exceeds available memory,
-enable **Advanced: split source into clips before LTX processing** in Media, or
-**Advanced: split source into clips before LTX upscaling** in the MiniMax H3
-post-processing settings. The
-default target is 5 seconds per clip; cuts are adjusted to LTX-compatible frame
-counts, clips are upscaled sequentially, and their video streams are joined
-without an additional video encode. The final file is trimmed to the original
-frame count and remuxed with the original source audio. Because clips are
-generated independently, a visible detail or motion change can occur at a cut.
+Every LTX job processes the whole source in one pass. Tiled Fusion streams
+temporal windows internally, but source frames, output frames, and the shared
+latent canvas still require memory. Independent clip splitting was removed
+because the cuts produced visible detail and motion changes.
 
 Existing installations need setup and a ComfyUI restart to load the new pinned
 LTX nodes and local frame-padding node; rebuild/redeploy Modal images as applicable.
