@@ -33,6 +33,76 @@ class AlignmentTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 aligned_line_bounds(["yes"], items)
 
+    def test_quantized_point_words_and_one_tick_overlap_are_preserved(self):
+        from h3_app.dubbing.tools_worker import aligned_clip_words
+
+        words = aligned_clip_words("你好呀", [
+            {"text": "你", "start": .08, "end": .24},
+            {"text": "好", "start": .24, "end": .24},
+            {"text": "呀", "start": .24, "end": .48}], .45)
+        self.assertEqual(words[1], {"text": "好", "start": .24, "end": .24})
+        self.assertEqual(words[-1]["end"], .45)
+        overlap = aligned_clip_words("Hi there", [
+            {"text": "Hi", "start": .08, "end": .4},
+            {"text": "there", "start": .38, "end": .8}], 1)
+        self.assertEqual(overlap[1]["start"], .4)
+        for invalid in ([{"text": "Hi", "start": .2, "end": .2}],
+                        [{"text": "Hi", "start": 100, "end": 101}]):
+            with self.assertRaises(ValueError):
+                aligned_clip_words("Hi", invalid, 1)
+
+    def test_soundstage_reuses_cached_point_word_boundaries(self):
+        take = SimpleNamespace(chunk=SimpleNamespace(lines=("你好呀",), text="你好呀"),
+                               samples=np.full(1000, .2, dtype=np.float32), rate=1000)
+        reply = {"bounds": [[.08, .88]], "words": [[
+            {"text": "你", "start": .08, "end": .24},
+            {"text": "好", "start": .24, "end": .24},
+            {"text": "呀", "start": .24, "end": .88}]]}
+        with tempfile.TemporaryDirectory() as root, patch("h3_app.dubbing.tools.run", return_value=reply) as run:
+            first = align_take(take, root, None, free_gpu=lambda: None)
+            self.assertEqual(first[1][0][1], ("好", .24, .24))
+            self.assertEqual(align_take(take, root, None, free_gpu=lambda: None), first)
+            self.assertEqual(run.call_count, 1)
+
+    def test_worker_realignment_with_silence_padding_fixes_persistent_timestamp_failures(self):
+        from unittest.mock import MagicMock
+        from h3_app.drama3.serving.audio import encode_wav
+
+        worker = object.__new__(Worker)
+        model = MagicMock()
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "clip.wav"
+            original = encode_wav(np.full(16000, .2, np.float32), 16000)
+            path.write_bytes(original)
+            for bad_start, bad_end in ((.2, .2), (.1, 1.12)):
+                with self.subTest(start=bad_start, end=bad_end):
+                    bad = [[SimpleNamespace(text="Hi", start_time=bad_start, end_time=bad_end)]]
+                    padded = [[SimpleNamespace(text="Hi", start_time=.34, end_time=.74)]]
+                    model.forced_aligner.align.reset_mock()
+                    model.forced_aligner.align.side_effect = [bad, bad, padded]
+                    with patch.object(worker, "_asr", return_value=model):
+                        result = worker.align_words({"clips": [{"audio": str(path), "text": "Hi!",
+                                                                 "language": "English", "duration": 1}]})
+                    self.assertEqual(result["errors"], [""])
+                    self.assertAlmostEqual(result["words"][0][0]["start"], .1)
+                    self.assertAlmostEqual(result["words"][0][0]["end"], .5)
+                    self.assertEqual(model.forced_aligner.align.call_count, 3)
+                    samples, rate = model.forced_aligner.align.call_args.kwargs["audio"]
+                    self.assertEqual((rate, len(samples)), (16000, 16000 + 2 * 3840))
+                    self.assertTrue(np.all(samples[:3840] == 0))
+                    self.assertTrue(np.all(samples[-3840:] == 0))
+                    np.testing.assert_allclose(samples[3840:-3840], .2, atol=1 / 32768)
+                    self.assertEqual(path.read_bytes(), original)
+
+            invalid = [[SimpleNamespace(text="Hi", start_time=100, end_time=101)]]
+            model.forced_aligner.align.side_effect = [invalid, invalid, invalid]
+            with patch.object(worker, "_asr", return_value=model):
+                result = worker.align_words({"clips": [{"audio": str(path), "text": "Hi!",
+                                                         "language": "English", "duration": 1}]})
+            self.assertEqual(result["words"], [None])
+            self.assertIn("padded retry", result["errors"][0])
+            self.assertIn("1.000s clip", result["errors"][0])
+
     def test_worker_aligns_supplied_script_instead_of_recognized_paraphrase(self):
         from unittest.mock import MagicMock
         worker = Worker(Path("."))

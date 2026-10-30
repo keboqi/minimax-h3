@@ -11,10 +11,11 @@ from h3_ui.dubbing.player import PLAYER_JS, player_html
 
 def main():
     cue = {"start": 0, "end": 1, "shown_start": 0, "shown_end": 1,
-           "speaker": "speaker1", "source": "Hello", "translation": "Salut"}
+           "speaker": "speaker1", "source": "Hello there", "translation": "Salut"}
     player = Player(None, Path("dub.mp3"), Path("original.mp3"), None, 1, [cue], word_timing=True)
     plain = player_html(player, key="test")
-    cue["source_words"] = [{"text": "Hello", "start": .1, "end": .8}]
+    cue["source_words"] = [{"text": "Hello", "start": .1, "end": .2},
+                           {"text": "there", "start": .3, "end": .3}]
     cue["translation_words"] = [{"text": "Salut", "start": .1, "end": .8}]
     repaired = player_html(player, key="test")
     executable = os.getenv("H3_BROWSER_EXECUTABLE")

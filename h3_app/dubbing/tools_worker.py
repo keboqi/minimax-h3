@@ -34,6 +34,9 @@ SEPARATOR_MODELS = {
     "Quality (Mel-Band-Roformer)": "model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt",
 }
 ASR_RATE = 16000
+# ForcedAligner predicts on an 80 ms grid; equal adjacent boundaries are valid.
+ALIGNMENT_TIME_STEP = .08
+ALIGNMENT_TIME_TOLERANCE = ALIGNMENT_TIME_STEP + 1e-6
 # Qwen3-ForcedAligner languages: https://github.com/QwenLM/Qwen3-ASR#released-models-description-and-download
 ALIGNMENT_LANGUAGES = dict(zip(
     ("zh", "en", "yue", "fr", "de", "it", "ja", "ko", "pt", "ru", "es"),
@@ -182,6 +185,10 @@ def normalized_text(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKC", str(text)).casefold() if c.isalnum())
 
 
+class AlignmentTimingError(ValueError):
+    """The text matches, but the predicted times need correction or realignment."""
+
+
 def aligned_line_words(lines: list[str], items: list[dict]) -> list[list[dict]]:
     """Each script line's aligned words/CJK characters, ignoring punctuation and spaces."""
     import math
@@ -193,10 +200,21 @@ def aligned_line_words(lines: list[str], items: list[dict]) -> list[list[dict]]:
     if not all(texts) or "".join(texts) != "".join(unit[1] for unit in units):
         raise ValueError("Aligned text does not match the script")
     previous = 0.0
-    for _, _, start, end in units:
-        if not math.isfinite(start) or not math.isfinite(end) or start < previous or end <= start:
-            raise ValueError("Invalid alignment timestamps")
+    repaired = []
+    for word, unit, start, end in units:
+        if (not math.isfinite(start) or not math.isfinite(end) or end < start
+                or start < previous - ALIGNMENT_TIME_TOLERANCE):
+            raise AlignmentTimingError(f"Invalid alignment timestamps for {word!r}: "
+                                       f"{start:.3f}-{end:.3f}s after {previous:.3f}s")
+        # Keep point boundaries produced by Qwen's nondecreasing timestamp repair.
+        # Only resolve overlap within one model timestep; never spread words out.
+        start = max(previous, start)
+        end = max(start, end)
+        repaired.append((word, unit, start, end))
         previous = end
+    units = repaired
+    if not units or units[-1][3] <= units[0][2]:
+        raise AlignmentTimingError("Invalid alignment timestamps: all words collapse to one instant")
     words, index = [], 0
     for text in texts:
         first, remaining = index, len(text)
@@ -207,6 +225,17 @@ def aligned_line_words(lines: list[str], items: list[dict]) -> list[list[dict]]:
             raise ValueError("An aligned word crosses a script line boundary")
         words.append([{"text": word, "start": start, "end": end} for word, _, start, end in units[first:index]])
     return words
+
+
+def aligned_clip_words(text: str, items, duration: float) -> list[dict]:
+    """Validate clip bounds with one timestep of end rounding, preserving point times."""
+    timed = aligned_line_words([text], items)[0]
+    for word in timed:
+        if word["start"] >= duration or word["end"] > duration + ALIGNMENT_TIME_TOLERANCE:
+            raise AlignmentTimingError("Word timing falls outside the audio clip: "
+                                       f"{word['text']!r} at {word['start']:.3f}-{word['end']:.3f}s "
+                                       f"in a {duration:.3f}s clip")
+    return [{**word, "end": min(duration, word["end"])} for word in timed]
 
 
 def aligned_line_bounds(lines: list[str], items: list[dict]) -> list[tuple[float, float]]:
@@ -386,19 +415,46 @@ class Worker:
                 traceback.print_exc()
                 results = []
 
-            def validate(result, text):
+            def validate(result, text, duration=None, offset=0):
                 items = [{"text": item.text, "start": item.start_time, "end": item.end_time} for item in result]
-                return aligned_line_words([text], items)[0]
+                if offset:
+                    items = [{**word, "start": word["start"] - offset, "end": word["end"] - offset} for word in items]
+                return (aligned_clip_words(text, items, float(duration)) if duration is not None
+                        else aligned_line_words([text], items)[0])
 
             for position, (index, language) in enumerate(ready):
+                duration = clips[index].get("duration")
                 try:
-                    out[index] = validate(results[position], clips[index]["text"])
+                    out[index] = validate(results[position], clips[index]["text"], duration)
                 except (ValueError, TypeError, AttributeError, IndexError):
                     # Retry invalid batch results individually too, not just batch exceptions.
                     try:
                         result = model.forced_aligner.align(audio=clips[index]["audio"],
                                                            text=clips[index]["text"], language=language)[0]
-                        out[index] = validate(result, clips[index]["text"])
+                        out[index] = validate(result, clips[index]["text"], duration)
+                    except AlignmentTimingError as exc:
+                        # Re-running the same clip is deterministic. A short silent
+                        # margin changes the aligner's acoustic window, not the speech.
+                        try:
+                            import numpy as np
+                            import wave
+
+                            with wave.open(str(clips[index]["audio"]), "rb") as source:
+                                rate = source.getframerate()
+                                channels = source.getnchannels()
+                                if source.getsampwidth() != 2:
+                                    raise ValueError("Padded alignment requires PCM16 audio")
+                                samples = np.frombuffer(source.readframes(source.getnframes()), dtype="<i2").astype(np.float32) / 32768
+                                if channels > 1:
+                                    samples = samples.reshape(-1, channels).mean(axis=1)
+                            pad = round(.24 * rate)
+                            padded = np.pad(samples, (pad, pad))
+                            result = model.forced_aligner.align(audio=(padded, rate), text=clips[index]["text"],
+                                                               language=language)[0]
+                            out[index] = validate(result, clips[index]["text"],
+                                                  duration if duration is not None else len(samples) / rate, pad / rate)
+                        except Exception as padded_error:
+                            errors[index] = f"Word alignment failed: {exc}; padded retry: {padded_error}"
                     except Exception as exc:
                         errors[index] = f"Word alignment failed: {exc}"
         return {"words": out, "errors": errors}

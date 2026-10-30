@@ -13,21 +13,22 @@ from .planner import spoken_text
 
 
 def _validate(lines, bounds, words, duration):
-    from h3_app.dubbing.tools_worker import aligned_line_words
+    from h3_app.dubbing.tools_worker import ALIGNMENT_TIME_TOLERANCE, aligned_line_words
 
     if len(bounds) != len(lines) or len(words) != len(lines):
         raise ValueError("Incomplete subtitle alignment")
     previous = 0.0
     for start, end in bounds:
         if not (math.isfinite(start) and math.isfinite(end)
-                and previous <= start < duration and start < end <= duration + .02):
+                and previous <= start < duration and start < end <= duration + ALIGNMENT_TIME_TOLERANCE):
             raise ValueError("Subtitle alignment falls outside the take")
         previous = end
     checked = aligned_line_words(lines, [word for line in words for word in line])
     if [len(line) for line in checked] != [len(line) for line in words]:
         raise ValueError("Subtitle words cross a line boundary")
     for (start, end), line in zip(bounds, checked):
-        if not line or line[0]["start"] < start - .02 or line[-1]["end"] > min(end, duration) + .02:
+        if (not line or line[0]["start"] < start - ALIGNMENT_TIME_TOLERANCE
+                or line[-1]["end"] > min(end, duration) + ALIGNMENT_TIME_TOLERANCE):
             raise ValueError("Subtitle words fall outside their line")
         if any(word["start"] >= duration for word in line):
             raise ValueError("Subtitle words fall outside the take")
@@ -105,7 +106,7 @@ def repair_result(path, runtime, *, free_gpu, hf_token=None):
             for word in words:
                 start, end = float(word["start"]), float(word["end"])
                 if not (math.isfinite(start) and math.isfinite(end)
-                        and previous <= start < end <= min(duration, float(line["end"])) + .02):
+                        and previous <= start <= end <= min(duration, float(line["end"])) + .02):
                     return False
                 previous = end
             return bool(actual) and (text == actual or (float(line["end"]) >= duration and text.startswith(actual)))

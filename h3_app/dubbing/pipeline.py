@@ -1234,10 +1234,7 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
 
 def _validated_word_timing(text: str, words, duration: float) -> list[dict]:
     """Accept only complete timings that can actually play within this clip."""
-    timed = tools_worker.aligned_line_words([text], words)[0]
-    if not timed or any(word["start"] >= duration or word["end"] > duration + .02 for word in timed):
-        raise ValueError("Word timing falls outside the audio clip")
-    return [{**word, "end": min(duration, word["end"])} for word in timed]
+    return tools_worker.aligned_clip_words(text, words, duration)
 
 
 def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int, tuple[float, float]],
@@ -1293,7 +1290,8 @@ def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int
                     clip.write_bytes(wav)
                     field = pending[number][1]
                     language = session.data.get("source_language" if field == "source" else "target_language", "")
-                    payload.append({"audio": str(clip), "text": text, "language": language})
+                    payload.append({"audio": str(clip), "text": text, "language": language,
+                                    "duration": pending[number][3]})
                 reply = yield from blocking("Timing subtitle words with Qwen3", lambda report: tools.run(
                     "align_words", {"clips": payload}, runtime, free_gpu=free_gpu, hf_token=hf_token,
                     report=report))
