@@ -2,6 +2,35 @@
 set -Eeuo pipefail
 
 # MiniMax H3 fixed-default launcher.
+#
+#   bash run_h3.sh [--prepare GROUPS | --no-prepare]
+#
+# Default models download in the background while ComfyUI and Gradio start.
+# GROUPS is a comma-separated list of h3 (MiniMax H3), drama3 (Drama 3) and
+# qwen_image (Qwen Image 2.1), or all / none; H3_PREPARE_MODELS sets the same
+# list. The default is h3. Models left out still download on first use.
+
+usage() {
+  sed -n '6,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+PREPARE_MODELS="${H3_PREPARE_MODELS-h3}"
+while (( $# )); do
+  case "$1" in
+    --prepare) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; PREPARE_MODELS="$2"; shift 2 ;;
+    --prepare=*) PREPARE_MODELS="${1#*=}"; shift ;;
+    --no-prepare) PREPARE_MODELS="none"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf '[h3-run error] Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+# Reject a typo now rather than in the background after setup.
+for group in ${PREPARE_MODELS//,/ }; do
+  case "${group,,}" in
+    h3|minimax_h3|minimax-h3|drama3|drama|qwen_image|qwen-image|qwen|all|none|off|0|false|no) ;;
+    *) printf '[h3-run error] Unknown model group: %s (use h3, drama3, qwen_image, all or none)\n' "$group" >&2; exit 2 ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$SCRIPT_DIR/h3"
@@ -38,6 +67,7 @@ COMFY_ATTENTION_ARGS=(--use-ck-attention)
 
 COMFY_PID=""
 GRADIO_PID=""
+PREPARE_PID=""
 
 log() {
   printf '[h3-run] %s\n' "$*"
@@ -196,9 +226,14 @@ cleanup() {
   local pids=()
   [[ -n "$GRADIO_PID" ]] && pids+=("$GRADIO_PID")
   [[ -n "$COMFY_PID" ]] && pids+=("$COMFY_PID")
+  if [[ -n "$PREPARE_PID" ]] && kill -0 "$PREPARE_PID" 2>/dev/null; then
+    # Stop its uv/pip children too; an interrupted download resumes next start.
+    pkill -TERM -P "$PREPARE_PID" 2>/dev/null || true
+    pids+=("$PREPARE_PID")
+  fi
 
   if [[ ${#pids[@]} -gt 0 ]]; then
-    log "Stopping Gradio and ComfyUI"
+    log "Stopping Gradio, ComfyUI and model preparation"
     for pid in "${pids[@]}"; do
       if kill -0 "$pid" 2>/dev/null; then
         kill -TERM "$pid" 2>/dev/null || true
@@ -362,6 +397,20 @@ fi
 [[ -f "$COMFY_DIR/main.py" ]] || die "ComfyUI installation failed"
 [[ -f "$MODELS_CONFIG" ]] || die "Model setup failed"
 log "Dense/fallback attention: Comfy Kitchen"
+
+# Download the selected defaults while the servers start; failures only warn.
+case "${PREPARE_MODELS,,}" in
+  ""|0|none|off|false|no)
+    log "Background model preparation: off"
+    ;;
+  *)
+    log "Background model preparation: $PREPARE_MODELS"
+    "$PYTHON_BIN" -u "$SCRIPT_DIR/h3_prepare.py" \
+      --install-dir "$INSTALL_DIR" \
+      --groups "$PREPARE_MODELS" &
+    PREPARE_PID=$!
+    ;;
+esac
 
 free_port "$COMFY_PORT"
 free_port "$GRADIO_SERVER_PORT"

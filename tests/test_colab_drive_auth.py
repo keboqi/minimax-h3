@@ -23,7 +23,7 @@ class ColabDriveAuthTests(unittest.TestCase):
 
     def run_cell(self, root, mounted=False, enabled=True):
         namespace = dict(NOTEBOOK_DIR=root, WORKSPACE_DIR=str(root))
-        source = self.source if enabled else self.source.replace("MOUNT_GOOGLE_DRIVE = True", "MOUNT_GOOGLE_DRIVE = False")
+        source = self.source.replace("MOUNT_GOOGLE_DRIVE = False", "MOUNT_GOOGLE_DRIVE = True") if enabled else self.source
         with patch.dict(sys.modules, self.modules), patch("os.path.ismount", return_value=mounted), patch.object(Path, "symlink_to", return_value=None), contextlib.redirect_stdout(io.StringIO()):
             exec(compile(source, "<Drive cell>", "exec"), namespace)
         return namespace
@@ -52,9 +52,12 @@ class ColabDriveAuthTests(unittest.TestCase):
                 self.run_cell(root)
             self.assertFalse((root / "h3").exists())
 
-    def test_disabled_drive_skips_authorization(self):
+    def test_drive_is_off_by_default_and_skips_authorization(self):
+        self.assertIn("MOUNT_GOOGLE_DRIVE = False", self.source)
         with TemporaryDirectory() as directory:
-            self.run_cell(Path(directory), enabled=False)
+            namespace = self.run_cell(Path(directory), enabled=False)
+            self.assertFalse((Path(directory) / "h3").exists())
+        self.assertFalse(namespace["MOUNT_GOOGLE_DRIVE"])
         self.mount.assert_not_called()
 
 

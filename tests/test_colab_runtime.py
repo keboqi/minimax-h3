@@ -264,14 +264,66 @@ class ColabLauncherTests(unittest.TestCase):
             env = dict(os.environ, VIRTUAL_ENV="wrong-environment", PYTHONPATH="inherited-conflict")
             env.pop("H3_DRAMA3_SGLANG_CHECKPOINT", None)
             result = subprocess.run([str(bash), launcher.as_posix()], env=env, capture_output=True, text=True, check=True)
-            self.assertEqual(result.stdout.splitlines(), [shell_path(venv), "selected-venv", "unset", "int4"])
-            chosen = subprocess.run([str(bash), launcher.as_posix()], env=dict(env, H3_DRAMA3_SGLANG_CHECKPOINT="fp8"),
+            self.assertEqual(result.stdout.splitlines(), [shell_path(venv), "selected-venv", "unset", "fp8"])
+            chosen = subprocess.run([str(bash), launcher.as_posix()], env=dict(env, H3_DRAMA3_SGLANG_CHECKPOINT="int4"),
                                     capture_output=True, text=True, check=True)
-            self.assertEqual(chosen.stdout.splitlines()[-1], "fp8")
+            self.assertEqual(chosen.stdout.splitlines()[-1], "int4")
             python.unlink()
             failed = subprocess.run([str(bash), launcher.as_posix()], env=env, capture_output=True, text=True)
             self.assertNotEqual(failed.returncode, 0)
             self.assertIn("Python environment missing", failed.stderr)
+
+
+class ColabLaunchUpdateTests(unittest.TestCase):
+    def run_launch_cell(self, enabled=None, pull_error=None):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("h3_ui/application.py", "h3_models.py"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            tree = ast.parse(cell_source("def run_colab_launcher("))
+            # Keep the launch-cell control flow, but replace the long-running service.
+            tree.body = [node for node in tree.body if not isinstance(node, ast.FunctionDef)]
+            if enabled is not None:
+                for node in tree.body:
+                    if isinstance(node, ast.Assign) and any(
+                        isinstance(target, ast.Name) and target.id == "PULL_LATEST_CODE"
+                        for target in node.targets
+                    ):
+                        node.value = ast.Constant(enabled)
+            events = Mock()
+            events.pull.side_effect = pull_error
+            namespace = dict(
+                Path=Path, WORKSPACE_DIR=str(root), COLAB_LAUNCHER="fixture.sh",
+                run_colab_launcher=events.launch,
+            )
+            with patch.object(os, "chdir"), patch.object(subprocess, "run", events.pull), contextlib.redirect_stdout(io.StringIO()):
+                if pull_error:
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        exec(compile(ast.fix_missing_locations(tree), "<launch cell>", "exec"), namespace)
+                else:
+                    exec(compile(ast.fix_missing_locations(tree), "<launch cell>", "exec"), namespace)
+            return events, str(root)
+
+    def test_default_skips_pull_and_starts_service(self):
+        events, _ = self.run_launch_cell()
+        events.pull.assert_not_called()
+        events.launch.assert_called_once_with("fixture.sh")
+
+    def test_enabled_pulls_before_starting_service(self):
+        events, workspace = self.run_launch_cell(enabled=True)
+        events.pull.assert_called_once_with(
+            ["git", "-C", workspace, "pull", "--ff-only", "origin", "HEAD"], check=True,
+        )
+        self.assertEqual([call[0] for call in events.mock_calls], ["pull", "launch"])
+
+    def test_failed_pull_prevents_service_start(self):
+        events, _ = self.run_launch_cell(
+            enabled=True, pull_error=subprocess.CalledProcessError(1, "git pull"),
+        )
+        events.pull.assert_called_once()
+        events.launch.assert_not_called()
 
 
 class InterruptingOutput:
@@ -289,6 +341,7 @@ class ColabLogStreamingTests(unittest.TestCase):
         self.run = load_function("run_colab_launcher", dict(
             os=os, subprocess=subprocess, signal=signal,
             ENABLE_CLOUDFLARE_TUNNEL=True, ENABLE_GRADIO_SHARE=False, DRAMA3_CHECKPOINT="fp8",
+            PREPARE_MINIMAX_H3=True, PREPARE_DRAMA3=False, PREPARE_QWEN_IMAGE=True,
         ))
 
     def run_child_fixture(self, script, output):
@@ -299,6 +352,7 @@ class ColabLogStreamingTests(unittest.TestCase):
             self.assertEqual(kwargs["env"]["ENABLE_CLOUDFLARE_TUNNEL"], "true")
             self.assertEqual(kwargs["env"]["GRADIO_SHARE"], "false")
             self.assertEqual(kwargs["env"]["H3_DRAMA3_SGLANG_CHECKPOINT"], "fp8")
+            self.assertEqual(kwargs["env"]["H3_PREPARE_MODELS"], "h3,qwen_image")
             return original_popen([sys.executable, "-u", "-c", script], **kwargs)
         with patch.object(subprocess, "Popen", side_effect=open_fixture), contextlib.redirect_stdout(output):
             self.run("fixture.sh")
@@ -450,7 +504,8 @@ class CloudflareTests(unittest.TestCase):
             popen.assert_called_once()
             self.assertEqual(popen.call_args.kwargs["env"]["ENABLE_CLOUDFLARE_TUNNEL"], "false")
             self.assertEqual(popen.call_args.kwargs["env"]["GRADIO_SHARE"], "true")
-            self.assertEqual(popen.call_args.kwargs["env"]["H3_DRAMA3_SGLANG_CHECKPOINT"], "int4")
+            self.assertEqual(popen.call_args.kwargs["env"]["H3_DRAMA3_SGLANG_CHECKPOINT"], "fp8")
+            self.assertEqual(popen.call_args.kwargs["env"]["H3_PREPARE_MODELS"], "h3")
 
     def test_public_url_defaults_and_overrides(self):
         for environment, expected in (

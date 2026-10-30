@@ -214,18 +214,24 @@ class StartupTimeline:
 
 def ensure_model(settings: ServerSettings, *, token=None, log=print) -> Path:
     """Download the pinned official checkpoint once."""
+    from h3_app.workers.env import setup_lock
+
     target = settings.model_dir
     marker = target / ".h3-complete"
     if marker.is_file():
         return target
-    # hf_xet reads this when its first transfer starts; set it before then.
-    os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
-    from huggingface_hub import snapshot_download
+    # run_h3.sh's background model preparation may be fetching the same checkpoint.
+    with setup_lock(target.parent / f".{target.name}.lock"):
+        if marker.is_file():
+            return target
+        # hf_xet reads this when its first transfer starts; set it before then.
+        os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
+        from huggingface_hub import snapshot_download
 
-    pin = settings.pin
-    log(f"[drama3-serving] Downloading {pin.repo}@{pin.revision[:12]} (~{pin.download_gb:.0f} GB, first use only).")
-    snapshot_download(pin.repo, revision=pin.revision, local_dir=target, token=token)
-    marker.write_text(pin.revision, encoding="utf-8")
+        pin = settings.pin
+        log(f"[drama3-serving] Downloading {pin.repo}@{pin.revision[:12]} (~{pin.download_gb:.0f} GB, first use only).")
+        snapshot_download(pin.repo, revision=pin.revision, local_dir=target, token=token)
+        marker.write_text(pin.revision, encoding="utf-8")
     return target
 
 

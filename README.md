@@ -225,11 +225,25 @@ preserved. The quality value maps to NVENC CQ or software CRF, with `medium` as
 the software preset. 48 fps interpolation also checks whether its encoder can
 actually run, rather than relying on FFmpeg's codec list.
 
-The first run creates `h3/`, installs ComfyUI and dependencies, and preloads the
-default Singularity models. Other checkpoints, encoders, VAEs and LoRAs download on
-first use; see the [H3 guide](docs/features/h3.md) for the model set and presets.
-Later runs check remote metadata for the preloaded set and refresh only stale
-files; lazy checkpoints remain local and are fetched again if missing or incomplete.
+The first run creates `h3/` and installs ComfyUI and dependencies. While ComfyUI
+and Gradio start, `h3_prepare.py` downloads default models in the background;
+startup never waits for it, and a failed download only logs a warning. Choose the
+groups with `--prepare` or `H3_PREPARE_MODELS`:
+
+```bash
+bash run_h3.sh                                # MiniMax H3 defaults (the default)
+bash run_h3.sh --prepare h3,drama3,qwen_image # also Drama 3 and Qwen Image 2.1
+bash run_h3.sh --no-prepare                   # download everything on first use
+```
+
+`h3` is the MiniMax H3 tab's default Video workflow, `drama3` the SGLang-Omni
+environment and checkpoint plus Qwen VoiceDesign, Stable Audio 3 and the default
+ASR, and `qwen_image` the Qwen Image 2.1 tab's default preset. Other checkpoints,
+encoders, VAEs and LoRAs download on first use; see the
+[H3 guide](docs/features/h3.md) for the model set and presets. Later runs refresh
+only stale files; lazy checkpoints remain local and are fetched again if missing
+or incomplete. Modal endpoints do not use this; their images and volume carry
+their own models.
 
 On Debian/Ubuntu standalone hosts, `run_h3.sh` also installs the `ffmpeg` system
 package through `apt-get` (using `sudo` when needed) if `ffmpeg` or `ffprobe` is
@@ -297,7 +311,7 @@ Run MiniMax H3 directly on Google Colab using [`minimax_h3_colab.ipynb`](./minim
 
 Features in the Colab notebook:
 - **Instant startup with Python 3.12**: Automatically provisions an isolated Python 3.12 environment with `uv` matching the pinned PyTorch 2.11 + CUDA 13 and SageAttention cp312 runtime requirements.
-- **On-demand model provisioning**: No heavy pre-downloads at startup. Checkpoints, text encoders, VAEs, and LoRAs download automatically on first use.
+- **Background model provisioning**: The launch cell's ticked groups (MiniMax H3 by default; Drama 3 and Qwen Image 2.1 optional) download while the app starts, without delaying it. Everything else downloads automatically on first use.
 - **Public access via Cloudflare Tunnel**: Generates a `*.trycloudflare.com` URL by default. Enable the independent `ENABLE_GRADIO_SHARE` checkbox in launch cell 6 to add a Gradio public URL alongside Cloudflare; it defaults to off.
 
 ## Drama 3 speech studio
