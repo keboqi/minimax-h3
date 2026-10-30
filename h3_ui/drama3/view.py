@@ -145,6 +145,9 @@ class Drama3View:
     stop_repair_words: gr.Button | None = None
     alignment_result: gr.State | None = None
     alignment_status: gr.Markdown | None = None
+    prepare_cast: gr.Button | None = None
+    stop_prepare_cast: gr.Button | None = None
+    prepare_status: gr.Markdown | None = None
     take_audio: gr.Audio | None = None
     subtitles: gr.HTML | None = None
     steps: StepStrip | None = None
@@ -653,6 +656,11 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                     library_open = gr.Button("Manage saved speakers", size="sm")
                                 speaker_group_status = gr.Markdown(
                                     "Global voices are available in every group.", elem_classes=["h3-drama3-note"])
+                                with gr.Row(elem_classes=["h3-drama3-inline-actions"]):
+                                    generate_voices = gr.Button("Generate all speaker voices", size="sm", variant="primary")
+                                    stop_voices = gr.Button("Interrupt", size="sm", interactive=False)
+                                    generate_voices.h3_stop = stop_voices
+                                voice_status = gr.Markdown("", elem_classes=["h3-drama3-note"])
                             speaker_library = build_speaker_library(speaker_groups, library_open)
                             # Filled in the browser by DRAMA3_CAST_JS from the slots below.
                             gr.HTML('<div class="h3-drama3-cast" data-kind="voices" role="group" '
@@ -693,9 +701,9 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                 add_sound = gr.Button("Add sound", size="sm")
                                 remove_sound = gr.Button("Remove last sound", size="sm")
                     with gr.Column(scale=2, min_width=300, elem_classes=STAGE):
-                        card_heading("Make the voices",
-                                     "Designs a voice for every speaker that has none, in one job. Sounds are "
-                                     "made with Generate all sounds, or during speech.")
+                        card_heading("Prepare voices & sounds",
+                                     "Generate all speaker voices and the sounds for an Advanced script in one job. "
+                                     "Each panel also has its own generation button.")
                         voice_engine = gr.Radio(
                             list(VOICE_DESIGN_ENGINES), value=ENGINE_QWEN, label="Voice generator",
                             info="[Qwen3-TTS VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign) "
@@ -710,11 +718,11 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                                 info="Used by Auto transcribe; 0.6B uses less memory.")
                         with gr.Column(elem_classes=["h3-action-dock"]):
                             with gr.Row(elem_classes=["h3-generation-buttons"]):
-                                generate_voices = gr.Button("Generate all speaker voices", variant="primary",
-                                                            scale=3, elem_classes=["h3-primary-action"])
-                                stop_voices = gr.Button("Interrupt", scale=1, interactive=False)
-                                generate_voices.h3_stop = stop_voices
-                            voice_status = gr.Markdown("", elem_classes=["h3-drama3-note"])
+                                prepare_cast = gr.Button("Generate all speaker voices and sounds", variant="primary",
+                                                         scale=3, elem_classes=["h3-primary-action"])
+                                stop_prepare_cast = gr.Button("Interrupt", scale=1, interactive=False)
+                                prepare_cast.h3_stop = stop_prepare_cast
+                            prepare_status = gr.Markdown("", elem_classes=["h3-drama3-note"])
                         with gr.Row(elem_classes=["h3-song-step-nav"]):
                             steps.button("← Script", SCRIPT)
                             steps.button("Next: speak →", SPEAK, variant="primary")
@@ -832,6 +840,9 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         add_speaker=add_speaker,
         remove_speaker=remove_speaker,
         voice_status=voice_status,
+        prepare_cast=prepare_cast,
+        stop_prepare_cast=stop_prepare_cast,
+        prepare_status=prepare_status,
         temperature=temperature,
         top_p=top_p,
         top_k=top_k,

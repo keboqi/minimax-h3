@@ -66,6 +66,7 @@ class Drama3Actions:
     regenerate_drama3_line: Callable | None = None
     remix_drama3: Callable | None = None
     repair_drama3_words: Callable | None = None
+    prepare_drama3_cast: Callable | None = None
     drama3_takes: Callable | None = None
     drama3_take_selected: Callable | None = None
     drama3_take_audio: Callable | None = None
@@ -286,6 +287,21 @@ def _bind_voice_slots(view, actions):
     stopped_all = view.stop_voices.click(owned_interrupt(actions.interrupt, "drama3_voice"),
                                          outputs=view.voice_status, queue=False, api_name=False)
     stopped_all.then(fn=None, cancels=[generated_all], queue=False, api_name=False)
+    if view.prepare_cast is not None and actions.prepare_drama3_cast is not None:
+        prepared = bind_gpu_action(
+            view.prepare_cast.click, owned_generation(actions.prepare_drama3_cast, "drama3_prepare"),
+            inputs=[view.script_mode, *voice_settings, view.parallel, view.shown_slots, view.skip_existing,
+                    *[component for slot in view.voices for component in
+                      (slot.preset, slot.has_clip, slot.description, slot.preview_text, slot.language)],
+                    view.shown_sound_slots, view.skip_existing_sounds,
+                    *[component for slot in view.sounds for component in
+                      (slot.preset, slot.has_clip, slot.save_name, slot.description, slot.duration)]],
+            outputs=[*[component for slot in view.voices for component in (slot.audio, slot.transcript, slot.status)],
+                     view.voice_status, *[component for slot in view.sounds for component in (slot.audio, slot.status)],
+                     view.sound_status, view.prepare_status], show_progress="minimal", api_name=False)
+        view.stop_prepare_cast.click(owned_interrupt(actions.interrupt, "drama3_prepare"), outputs=view.prepare_status,
+                                     queue=False, api_name=False).then(fn=None, cancels=[prepared],
+                                                                      queue=False, api_name=False)
     view.voice_engine.change(
         fn=None,
         js=f"(engine) => Array.from({{length: {len(view.voices)}}}, "

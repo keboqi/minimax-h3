@@ -132,6 +132,46 @@ class VoiceHandlers:
             summary += " Failed: " + ", ".join(f"speaker {speaker}" for speaker in failed) + "; see each speaker's panel."
         yield frame(summary)
 
+    def prepare_drama3_cast(self, *values):
+        """Prepare voices, then Advanced-script sounds, without rewriting or generating speech."""
+        from h3_app.prompt_writers.drama3 import DRAMA3_SCRIPT_ADVANCED
+        from h3_ui.drama3.controls import DRAMA3_VOICE_SLOTS, DRAMA3_SOUND_SLOTS
+
+        voice_inputs = len(DRAMA3_VOICE_DESIGN_SETTINGS) + 3 + 5 * DRAMA3_VOICE_SLOTS
+        mode, voice_values, sound_values = values[0], values[1:1 + voice_inputs], values[1 + voice_inputs:]
+        voices = [gr.skip()] * (3 * DRAMA3_VOICE_SLOTS) + ["Not started."]
+        sounds = [gr.skip()] * (2 * DRAMA3_SOUND_SLOTS) + ["Not started."]
+
+        def merge(current, update, stride, count):
+            update = list(update)
+            for index in range(0, stride * count, stride):
+                value = update[index]
+                if isinstance(value, dict) and value.get("__type__") == "update" and "value" not in value:
+                    update[index] = current[index]
+            return update
+
+        try:
+            for update in self.generate_drama3_voices(*voice_values):
+                voices = merge(voices, update, 3, DRAMA3_VOICE_SLOTS)
+                yield (*voices, *sounds, f"Speaker voices: {voices[-1]}")
+        except JobCancelled:
+            raise
+        except Exception as exc:
+            voices[-1] = f"Voice generation failed: {exc}"
+            yield (*voices, *sounds, voices[-1])
+        if mode == DRAMA3_SCRIPT_ADVANCED:
+            try:
+                for update in self.generate_drama3_sounds(*sound_values):
+                    sounds = merge(sounds, update, 2, DRAMA3_SOUND_SLOTS)
+                    yield (*voices, *sounds, f"Speaker voices: {voices[-1]}\n\nSounds: {sounds[-1]}")
+            except JobCancelled:
+                raise
+            except Exception as exc:
+                sounds[-1] = f"Sound generation failed: {exc}"
+        else:
+            sounds[-1] = "Skipped: Basic scripts do not use sounds."
+        yield (*voices, *sounds, f"Preparation finished.\n\nSpeaker voices: {voices[-1]}\n\nSounds: {sounds[-1]}")
+
     def _generate_drama3_designs(self, targets, settings, parallel, updates, frame, failed):
         from h3_app.drama3 import voice_design as drama3_voice_design
         from h3_models import resolve_hf_token

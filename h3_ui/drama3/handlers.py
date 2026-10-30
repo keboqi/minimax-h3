@@ -144,3 +144,13 @@ def _publish_drama3_sounds_signature():
 _publish_drama3_signatures()
 _publish_drama3_voices_signature()
 _publish_drama3_sounds_signature()
+
+
+def _publish_drama3_prepare_signature():
+    voices = list(inspect.signature(Drama3Handlers.generate_drama3_voices).parameters.values())[1:]
+    sounds = list(inspect.signature(Drama3Handlers.generate_drama3_sounds).parameters.values())[1:]
+    Drama3Handlers.prepare_drama3_cast.__signature__ = inspect.Signature([
+        SELF, inspect.Parameter("script_mode", inspect.Parameter.POSITIONAL_OR_KEYWORD), *voices, *sounds])
+
+
+_publish_drama3_prepare_signature()
