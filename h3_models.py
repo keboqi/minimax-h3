@@ -12,6 +12,7 @@ import json
 import os
 import errno
 import uuid
+import hashlib
 from contextlib import contextmanager
 from threading import RLock
 import shutil
@@ -79,6 +80,7 @@ class ModelSpec:
     source: str
     local_filename: str | None = None
     expected_sha256: str | None = None
+    revision: str | None = None
 
     @property
     def local_name(self) -> str:
@@ -86,6 +88,18 @@ class ModelSpec:
 
 
 MODEL_SPECS: dict[str, ModelSpec] = {
+    "pika_flex_fl2va_lora": ModelSpec(
+        ORIGINAL_MODEL_REPO, "loras", "loras/pika_h3_flex_fl2va_v1_bf16.safetensors",
+        "Pika H3 Flex FL2VA · official ComfyUI BF16 · 6-step",
+        expected_sha256="cc5453aeecd6189468409003fe4cf1b57e52ff3a830a0a154b87decbe07358b7",
+        revision="912b6e38b2092ec4d2e86d24183e0d59ea059d48",
+    ),
+    "pika_flex_ref2va_lora": ModelSpec(
+        ORIGINAL_MODEL_REPO, "loras", "loras/pika_h3_flex_ref2va_v1_bf16.safetensors",
+        "Pika H3 Flex Ref2VA · official ComfyUI BF16 · 6-step",
+        expected_sha256="de3745ceb7d8d5c20898dd8fa3a05f1c0b00089ccd55297b2a8bab95c766b0e0",
+        revision="912b6e38b2092ec4d2e86d24183e0d59ea059d48",
+    ),
     "h3_regenerate_refiner_16": ModelSpec(
         "Kijai/MiniMax-H3-experimental", "loras",
         "loras/minimax_h3_open_regenerate_2k_refiner_rank_16_bf16.safetensors",
@@ -1091,6 +1105,8 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     "image_vae_500k",
     "pdmd_4step_lora",
     "dmad_4step_lora",
+    "pika_flex_fl2va_lora",
+    "pika_flex_ref2va_lora",
     "turbo_8step_lora",
     "turbo_8step_ref_lora",
     "larry_turbo_lora",
@@ -1204,6 +1220,7 @@ def model_file_matches_manifest(
     recorded_size = entry.get("size")
     return (
         entry.get("repo_id") == spec.repo_id
+        and (spec.revision is None or entry.get("repo_revision") == spec.revision)
         # A renamed remote file with the same pinned content can keep its local
         # name and manifest. Unpinned models still require an exact source path.
         and (entry.get("filename") == spec.filename or (
@@ -1247,28 +1264,32 @@ def metadata_value(value: Any, name: str):
     return getattr(value, name, None)
 
 
-def _fetch_repo(repo_id: str, token: str | None):
+def _fetch_repo(repo_id: str, token: str | None, revision: str = "main"):
     from huggingface_hub import HfApi
 
     info = HfApi(token=token).model_info(
         repo_id,
-        revision="main",
+        revision=revision,
         files_metadata=True,
     )
     return info.sha, {item.rfilename: item for item in info.siblings}
 
 
 def _fetch_repositories(
-    repo_ids: list[str],
+    repo_ids: list[str | tuple[str, str]],
     token: str | None,
     metadata_workers: int,
-) -> dict[str, tuple[str, dict[str, Any]] | Exception]:
-    results: dict[str, tuple[str, dict[str, Any]] | Exception] = {}
+) -> dict[str | tuple[str, str], tuple[str, dict[str, Any]] | Exception]:
+    results: dict[str | tuple[str, str], tuple[str, dict[str, Any]] | Exception] = {}
     workers = max(1, min(metadata_workers, len(repo_ids)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {
-            pool.submit(_fetch_repo, repo_id, token): repo_id for repo_id in repo_ids
-        }
+        futures = {}
+        for source in repo_ids:
+            if isinstance(source, str):
+                future = pool.submit(_fetch_repo, source, token)
+            else:
+                future = pool.submit(_fetch_repo, source[0], token, source[1])
+            futures[future] = source
         for future in as_completed(futures):
             repo_id = futures[future]
             try:
@@ -1282,7 +1303,7 @@ def _plan_model(
     *,
     root: Path,
     manifest: dict[str, Any],
-    repo_results: dict[str, tuple[str, dict[str, Any]] | Exception],
+    repo_results: dict[str | tuple[str, str], tuple[str, dict[str, Any]] | Exception],
     key: str,
     spec: ModelSpec,
     log_prefix: str,
@@ -1293,8 +1314,12 @@ def _plan_model(
     manifest_key = model_manifest_key(spec)
     old = manifest.setdefault("files", {}).get(manifest_key, {})
 
-    repo_result = repo_results[spec.repo_id]
+    repo_result = repo_results[(spec.repo_id, spec.revision) if spec.revision else spec.repo_id]
     if isinstance(repo_result, Exception):
+        if spec.revision and not model_file_matches_manifest(root, manifest, spec):
+            raise RuntimeError(f"Cannot verify pinned model {key}: {repo_result}") from repo_result
+        if spec.revision and spec.expected_sha256:
+            _verify_pinned_model(dest, spec)
         if dest.is_file() and dest.stat().st_size > MIN_VALID_MODEL_BYTES:
             print(
                 f"{log_prefix} WARNING remote check failed for {key}; "
@@ -1314,6 +1339,8 @@ def _plan_model(
         ) from repo_result
 
     revision, files = repo_result
+    if spec.revision and revision != spec.revision:
+        raise RuntimeError(f"Unexpected revision for {key}: {revision} != {spec.revision}")
     sibling = files.get(spec.filename)
     if sibling is None:
         raise FileNotFoundError(f"{spec.repo_id}/{spec.filename} is not present")
@@ -1331,7 +1358,9 @@ def _plan_model(
 
     valid = dest.is_file() and dest.stat().st_size > MIN_VALID_MODEL_BYTES
     size_ok = size is None or (valid and dest.stat().st_size == int(size))
-    identity_ok = old.get("remote_identity") == identity
+    identity_ok = old.get("remote_identity") == identity and (
+        spec.revision is None or model_file_matches_manifest(root, manifest, spec)
+    )
     needs_download = not (valid and size_ok and identity_ok)
 
     if needs_download:
@@ -1582,6 +1611,14 @@ def prune_hf_cache(
     return total_freed
 
 
+def _verify_pinned_model(path: Path, spec: ModelSpec) -> None:
+    if spec.revision and spec.expected_sha256:
+        with path.open("rb") as stream:
+            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+        if actual != spec.expected_sha256:
+            raise RuntimeError(f"Downloaded SHA-256 mismatch for {spec.filename}: {actual} != {spec.expected_sha256}")
+
+
 def _download_model(
     plan: dict[str, Any],
     token: str | None,
@@ -1608,6 +1645,7 @@ def _download_model(
             f"Downloaded size mismatch for {spec.filename}: "
             f"{cached.stat().st_size} != {expected}"
         )
+    _verify_pinned_model(cached, spec)
 
     tmp = dest.with_suffix(dest.suffix + ".partial")
     try:
@@ -1692,6 +1730,8 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
         "turbo_8step_ref_source": turbo_8step_ref_lora.source,
         "pdmd_4step_lora": MODEL_SPECS["pdmd_4step_lora"].local_name,
         "dmad_4step_lora": MODEL_SPECS["dmad_4step_lora"].local_name,
+        "pika_flex_fl2va_lora": MODEL_SPECS["pika_flex_fl2va_lora"].local_name,
+        "pika_flex_ref2va_lora": MODEL_SPECS["pika_flex_ref2va_lora"].local_name,
         "larry_turbo_lora": larry_turbo_lora.local_name,
         "larry_turbo_source": larry_turbo_lora.source,
         # Larry's FL2VA-trained LoRA is also exposed for experimental Ref2VA.
@@ -1755,7 +1795,10 @@ def sync_models(
         if unknown:
             raise KeyError("Unknown model keys: " + ", ".join(unknown))
         selected_specs = {key: MODEL_SPECS[key] for key in selected_keys}
-        repo_ids = sorted({spec.repo_id for spec in selected_specs.values()})
+        repo_ids = sorted({
+            (spec.repo_id, spec.revision) if spec.revision else spec.repo_id
+            for spec in selected_specs.values()
+        }, key=str)
         repo_results = _fetch_repositories(
             repo_ids,
             token,
@@ -1902,6 +1945,7 @@ def selftest() -> None:
         "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
     )
     assert set(MODEL_SPECS) == {
+        "pika_flex_fl2va_lora", "pika_flex_ref2va_lora",
         *FLUX3_MODEL_KEYS, *MOSS_IMAGE_MODEL_KEYS, *FIBO2_MODEL_KEYS, *DRAMA3_ASR_MODEL_KEYS,
         *(key for pair in QWEN_IMAGE21_PROMPT_ENHANCERS.values() for key in pair),
         "lightvae_encoder", "lightvae_decoder", "lightvae_decoder_int8",

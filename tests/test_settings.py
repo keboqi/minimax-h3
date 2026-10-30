@@ -23,6 +23,33 @@ from h3_app.contracts import GENERATION_FIELDS, GenerationArguments
 
 
 class SettingsTests(unittest.TestCase):
+    def test_regenerate_resolves_fixed_steps_before_validation(self):
+        from h3_app.catalog import H3_REGENERATE_MODELS
+
+        for method in H3_REGENERATE_MODELS:
+            with self.subTest(method=method):
+                request = GenerationRequest.from_values({
+                    "steps": 4,
+                    "latent_upscale": True,
+                    "latent_upscale_method": method,
+                    "latent_upscale_refine_steps": 6,
+                })
+                plan = resolve_settings(request)
+                self.assertFalse(plan.issues)
+                self.assertEqual(plan.effective.sampling.latent_upscale_refine_steps, 3)
+                self.assertEqual(plan.requested.sampling.latent_upscale_refine_steps, 6)
+                self.assertTrue({"latent_upscale_refine_steps", "latent_upscale_refine_lora"} <= plan.inactive)
+                self.assertNotIn("latent_upscale_refine_steps", plan.differences())
+                # Switching back restores validation of the user's retained value.
+                standard = replace(request, finishing=replace(
+                    request.finishing, latent_upscale_method="Full-frame refinement"))
+                self.assertIn(
+                    "Refinement steps must be positive and smaller than base sampling steps.",
+                    resolve_settings(standard).issues,
+                )
+                disabled = replace(request, finishing=replace(request.finishing, latent_upscale=False))
+                self.assertEqual(resolve_settings(disabled).effective.sampling.latent_upscale_refine_steps, 6)
+
     def test_singularity_default_matches_fast_and_selects_base(self):
         self.assertEqual(GenerationRequest().preset, "Singularity")
         self.assertEqual(GenerationRequest().model_profile, "Singularity")

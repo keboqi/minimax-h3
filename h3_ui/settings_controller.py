@@ -9,6 +9,7 @@ import gradio as gr
 from h3_app.decoder_intent import VideoDecoder
 from h3_app.settings import (
     PRESET_FIELDS,
+    PIKA_FLEX,
     transition_modes,
 )
 from h3_app.contracts import GENERATION_COMPONENTS, GENERATION_FIELDS
@@ -325,6 +326,8 @@ class SettingsController:
                 )
             if name in {"generation_mode", "steps", "scheduler"}:
                 props["interactive"] = True
+                if name in {"steps", "scheduler"} and plan.effective.generation_mode == "Turbo" and plan.effective.sampling.turbo_variant == PIKA_FLEX:
+                    props.update(interactive=False, value=getattr(plan.effective.sampling, name))
             if name in {"width", "height", "auto_megapixels"}:
                 props["visible"] = fmt != "Audio"
             if (

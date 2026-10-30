@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from html import escape
 from h3_app.decoder_intent import VideoDecoder
-from h3_app.settings import ResolvedSettings
+from h3_app.settings import PIKA_FLEX, ResolvedSettings
 
 LABELS = {
     "semantic_bridge": "Semantic Bridge",
@@ -165,7 +165,10 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
             else ""
         ),
     )
-    technical += detail("Scheduler", sampling.scheduler)
+    pika = effective.generation_mode == "Turbo" and sampling.turbo_variant == PIKA_FLEX
+    technical += detail("Scheduler", "Pika fixed sigmas · LCM · 6 steps" if pika else sampling.scheduler)
+    if pika:
+        technical += detail("Pika H3 Flex", "Experimental; deployment GPU validation pending, including native latent upscale/refinement.")
     technical += detail(
         "Semantic Bridge",
         (

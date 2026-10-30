@@ -17,6 +17,7 @@ from h3_app.catalog import (
     H3_REGENERATE_MODELS,
     H3_SEMANTIC_BRIDGE_NODE,
     LARRY_TURBO,
+    PIKA_FLEX,
     REFINEMENT_LORA_SETTINGS,
     SAME_REFINEMENT_LORA,
     LTX25_UPSCALE_OPTIONS,
@@ -289,6 +290,8 @@ def _resolve_turbo(request, effective, services, models, profile, *, progress) -
         )
         else None
     )
+    if use_turbo and selected_turbo == PIKA_FLEX:
+        generation_note = "Pika H3 Flex uses six-step LCM with fixed sigmas. Deployment GPU validation is pending; native latent upscale/refinement, quantized bases and attention/decoder accelerators are experimental."
 
     if use_turbo:
         turbo_lora_name = models.turbo_lora_for(request.media.mode, selected_turbo)

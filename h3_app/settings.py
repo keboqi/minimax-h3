@@ -17,8 +17,13 @@ LIGHTX2V_8STEP = "LightX2V v1.1 / 8-step 768p"
 LARRY = "Larry v4-600 EMA"
 PDMD_4STEP = "PDMD / 4-step"
 DMAD_4STEP = "DMAD / 4-step"
+PIKA_FLEX = "Pika H3 Flex (6-step)"
+PIKA_FLEX_SIGMAS = "1.0, 0.972973, 0.923077, 0.8, 0.571429, 0.333333, 0.0"
+H3_REGENERATE_16 = "H3 Regenerate 2K · rank 16 (experimental)"
+H3_REGENERATE_384 = "H3 Regenerate 2K · rank 384 (experimental)"
 TURBO_STEPS = {
     LIGHTX2V_4STEP: 4, LIGHTX2V_8STEP: 8, LARRY: 6, PDMD_4STEP: 4, DMAD_4STEP: 4,
+    PIKA_FLEX: 6,
 }
 
 
@@ -93,6 +98,7 @@ class FinishingSettings:
     latent_upscale: bool = True
     postprocess: str = "None"
     latent_upscale_refine_lora: str = "Same as generation"
+    latent_upscale_method: str = "Full-frame refinement"
 
 
 @dataclass(frozen=True)
@@ -189,6 +195,15 @@ def resolve_settings(
             adjustments.append(Adjustment(key, before, after, reason))
         return after
 
+    pika = generation_mode == "Turbo" and sampling.turbo_variant == PIKA_FLEX
+    if pika:
+        sampling = replace(
+            sampling,
+            steps=adjusted("steps", sampling.steps, 6, "Pika H3 Flex uses a fixed six-step schedule."),
+            scheduler=adjusted("scheduler", sampling.scheduler, "simple", "Pika H3 Flex uses fixed sigmas instead of a scheduler."),
+        )
+        inactive.update({"steps", "scheduler"})
+
     fmt = str(output.result_format).title()
     if fmt not in {"Video", "Image", "Audio"}:
         issues.append("Choose Video, Image, or Audio output.")
@@ -252,6 +267,15 @@ def resolve_settings(
             "Native refinement uses two samplers; acceleration cannot share cache state across them.",
         )
     if not finishing.latent_upscale:
+        inactive.update({"latent_upscale_refine_steps", "latent_upscale_refine_lora"})
+    elif finishing.latent_upscale_method in {H3_REGENERATE_16, H3_REGENERATE_384}:
+        refine_steps = adjusted(
+            "latent_upscale_refine_steps",
+            sampling.latent_upscale_refine_steps,
+            3,
+            "H3 Regenerate uses a fixed three-step refinement schedule.",
+        )
+        sampling = replace(sampling, latent_upscale_refine_steps=refine_steps)
         inactive.update({"latent_upscale_refine_steps", "latent_upscale_refine_lora"})
     if generation_mode != "Turbo":
         inactive.add("turbo_variant")

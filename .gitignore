@@ -9,6 +9,7 @@ gradio_outputs/
 .cache/
 .gradio/
 .reference/
+.test-tmp/
 
 # Local secrets and editor state
 .env

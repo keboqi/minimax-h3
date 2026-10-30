@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from h3_app.settings import (
+    H3_REGENERATE_16, H3_REGENERATE_384,
     PDMD_4STEP as PDMD_4STEP_LORA, DMAD_4STEP as DMAD_4STEP_LORA,
+    PIKA_FLEX, PIKA_FLEX_SIGMAS,
     preset_vae_settings,
 )
 from h3_models import (
@@ -504,8 +506,6 @@ H3_LATENT_UPSCALE_STANDARD = "Full-frame refinement"
 
 H3_LATENT_UPSCALE_SPLIT = "MMH3 Split Upscale (experimental)"
 
-H3_REGENERATE_16 = "H3 Regenerate 2K · rank 16 (experimental)"
-H3_REGENERATE_384 = "H3 Regenerate 2K · rank 384 (experimental)"
 H3_REGENERATE_MODELS = {
     H3_REGENERATE_16: "h3_regenerate_refiner_16",
     H3_REGENERATE_384: "h3_regenerate_refiner_384",
@@ -668,6 +668,7 @@ PDMD_REFINEMENT_SETTINGS = {
 STANDARD_TURBO_LORA_SETTINGS = {
     **PDMD_REFINEMENT_SETTINGS,
     DMAD_4STEP_LORA: TurboSpec(4, 1.0, "dmad_4step_lora", "dmad_4step_lora"),
+    PIKA_FLEX: TurboSpec(6, 1.0, "pika_flex_fl2va_lora", "pika_flex_ref2va_lora"),
 }
 TURBO_SETTINGS.update(STANDARD_TURBO_LORA_SETTINGS)
 REFINEMENT_LORA_SETTINGS = dict(TURBO_SETTINGS)

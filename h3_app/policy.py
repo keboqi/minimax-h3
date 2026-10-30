@@ -30,6 +30,7 @@ from h3_app.catalog import (
     SLA_PRESET_INPUTS,
     TURBO_SETTINGS,
     DMAD_4STEP_LORA,
+    PIKA_FLEX,
     STANDARD_TURBO_LORA_SETTINGS,
     UPSCALE_RESOLUTION_PRESETS,
 )
@@ -92,7 +93,7 @@ def lightx2v_uses_768p_schedule(turbo_variant: str, lora_filename: str | None) -
 def turbo_sampler_name(turbo_variant: str, lora_filename: str | None) -> str:
     # DMAD's trained re-noise rule is implemented by ComfyUI's stock LCM.
     # A missing LoRA means normal generation and keeps res_multistep.
-    if lora_filename and normalize_turbo_variant(turbo_variant) == DMAD_4STEP_LORA:
+    if lora_filename and normalize_turbo_variant(turbo_variant) in {DMAD_4STEP_LORA, PIKA_FLEX}:
         return "lcm"
     return (
         "euler"
@@ -111,6 +112,8 @@ def turbo_sigma_shifts(
     """Return a trained video/audio shift override for an active adapter."""
     if not lora_filename:
         return None
+    if turbo_variant == PIKA_FLEX:
+        return 12.0, 3.0
     if turbo_variant == DMAD_4STEP_LORA:
         return 12.0, 2.0
     if lightx2v_uses_768p_schedule(turbo_variant, lora_filename):

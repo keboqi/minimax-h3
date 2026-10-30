@@ -2,6 +2,14 @@
 
 ## Targeted recheck — 2026-10-30
 
+Pika H3 Flex is integrated as a selectable six-step Turbo/refinement LoRA using
+the official Comfy workflow's LCM + ManualSigmas contract. Both task adapters
+are pinned to `Comfy-Org/MiniMax-H3@912b6e38b2092ec4d2e86d24183e0d59ea059d48`
+and downloaded on demand with SHA256 verification. Existing native upscale and
+other options remain available for user testing; deployment GPU results are
+pending. The [integration record](plans/pika-h3-flex-integration-plan.md) lists
+the reviewed sources and implementation details. No dependency pin was changed.
+
 ComfyUI is pinned at `0df1646a9cd71d4c990a87014fb37797a2956ead`, the merged
 [Sol H3 VAE support](https://github.com/Comfy-Org/ComfyUI/pull/17411) revision.
 Frontend is paired at 1.57.6; Kitchen remains 0.2.40. Fast and Singularity use

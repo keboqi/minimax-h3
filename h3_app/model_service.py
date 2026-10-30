@@ -132,6 +132,8 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
             "pdmd_4step_lora", MODEL_SPECS["pdmd_4step_lora"].local_name
         ),
         dmad_4step_lora=dmad_lora,
+        pika_flex_fl2va_lora=data.get("pika_flex_fl2va_lora", MODEL_SPECS["pika_flex_fl2va_lora"].local_name),
+        pika_flex_ref2va_lora=data.get("pika_flex_ref2va_lora", MODEL_SPECS["pika_flex_ref2va_lora"].local_name),
         turbo_lora=data.get("turbo_lora"),
         turbo_source=data.get("turbo_source", "unknown"),
         turbo_ref_lora=data.get("turbo_ref_lora", data.get("turbo_lora")),
@@ -436,7 +438,8 @@ def ensure_turbo_lora(
     )
     reference = str(mode).strip().lower() == "reference media"
     if variant in STANDARD_TURBO_LORA_SETTINGS:
-        model_key = STANDARD_TURBO_LORA_SETTINGS[variant].lora_attr
+        spec = STANDARD_TURBO_LORA_SETTINGS[variant]
+        model_key = spec.ref_lora_attr if reference else spec.lora_attr
         filename = getattr(models, model_key)
     elif variant == LARRY_TURBO:
         model_key = "larry_turbo_lora"

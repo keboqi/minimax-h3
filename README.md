@@ -148,7 +148,7 @@ backends; GPU inference and deployment are validated separately.
   images, with downloadable results and no forced downscaling
 - Optional generation-stage MiniMax H3 latent 2x upscale, with Balanced BF16,
   Fast FP16, and Quality FP32 model choices
-- Selectable Larry v4-600 EMA, official LightX2V 4-step/8-step, and experimental DMAD 4-step Turbo LoRAs,
+  - Selectable Larry v4-600 EMA, official LightX2V 4-step/8-step, Pika H3 Flex 6-step, and experimental DMAD 4-step Turbo LoRAs,
   including dedicated LightX2V Ref2V adapters for 4 and 8 steps
 - Audio-safe SLA block-sparse attention by default, with selectable SageAttention 2,
   Comfy Kitchen comparison, experimental Veda learned sparse attention, and optional

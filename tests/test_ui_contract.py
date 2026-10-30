@@ -236,6 +236,24 @@ class UiContractTests(unittest.TestCase):
                         ],
                     )
 
+    def test_pika_ui_keeps_upscale_and_uses_fixed_sampling(self):
+        from h3_app.catalog import PIKA_FLEX, LIGHTX2V_4STEP_TURBO
+
+        controller = self.controller
+        values = {name: deepcopy(getattr(controller.components[name], "value", None)) for name in controller.names}
+        values.update(turbo_variant=PIKA_FLEX, generation_mode="Turbo", latent_upscale=True)
+        media = [deepcopy(getattr(controller.components[name], "value", None)) for name in MEDIA_NAMES]
+        result = controller._update(None, *(values[name] for name in controller.names), *media, action="turbo_variant")
+        self.assertFalse(result[controller.names.index("steps")]["interactive"])
+        self.assertEqual(result[controller.names.index("steps")]["value"], 6)
+        self.assertFalse(result[controller.names.index("scheduler")]["interactive"])
+        memory = result[len(controller.names)]
+        self.assertTrue(memory["values"]["latent_upscale"])
+        values.update(turbo_variant=LIGHTX2V_4STEP_TURBO, steps=6)
+        result = controller._update(memory, *(values[name] for name in controller.names), *media, action="turbo_variant")
+        self.assertTrue(result[controller.names.index("steps")]["interactive"])
+        self.assertTrue(result[controller.names.index("scheduler")]["interactive"])
+
     def test_media_selection_skips_library_scans_and_rejects_unmanaged_or_missing_files(
         self,
     ):
@@ -392,7 +410,7 @@ class UiContractTests(unittest.TestCase):
         self.assertFalse(parameter["parameter_default"])
 
     def test_only_supported_model_and_turbo_options_are_selectable(self):
-        from h3_app.catalog import DMAD_4STEP_LORA, PDMD_4STEP_LORA
+        from h3_app.catalog import DMAD_4STEP_LORA, PDMD_4STEP_LORA, PIKA_FLEX
 
         controls = {
             c.get("props", {}).get("label"): c for c in self.config["components"]
@@ -402,6 +420,7 @@ class UiContractTests(unittest.TestCase):
         self.assertNotIn("TaoMate-H3 / 3-step", choices)
         self.assertIn(PDMD_4STEP_LORA, choices)
         self.assertIn(DMAD_4STEP_LORA, choices)
+        self.assertIn(PIKA_FLEX, choices)
         profiles = [c[0] for c in controls["Base model"]["props"]["choices"]]
         self.assertNotIn("FastH3 8-Step V2", profiles)
         refinements = [
@@ -411,6 +430,7 @@ class UiContractTests(unittest.TestCase):
         self.assertNotIn("PDMD / 2-step", refinements)
         self.assertNotIn("TaoMate-H3 / 3-step", refinements)
         self.assertIn(DMAD_4STEP_LORA, refinements)
+        self.assertIn(PIKA_FLEX, refinements)
         from h3_app.contracts import GENERATION_FIELDS
 
         advanced = next(

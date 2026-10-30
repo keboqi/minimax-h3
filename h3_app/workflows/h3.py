@@ -18,6 +18,8 @@ from h3_app.catalog import (
     DEFAULT_RESULT_FORMAT,
     DEFAULT_SLA_PRESET,
     DMAD_4STEP_LORA,
+    PIKA_FLEX,
+    PIKA_FLEX_SIGMAS,
     FUSED_MODULATION_NODE,
     H3_COMBINE_AV_LATENT_NODE,
     H3_CONDITIONING_CACHE_NODE,
@@ -75,6 +77,7 @@ from h3_app.policy import (
     snap32,
     turbo_sampler_name,
     turbo_sigma_shifts,
+    turbo_steps_for,
     turbo_uses_custom_nodes,
     validate_image_frame_count,
 )
@@ -89,8 +92,10 @@ def turbo_required_nodes(
         return {CORE_LORA_LOADER_NODE, CORE_SAMPLER_NODE, "ManualSigmas", "H3RegeneratePrepareLatent"}
     if turbo_variant in STANDARD_TURBO_LORA_SETTINGS:
         required = {CORE_LORA_LOADER_NODE, CORE_SAMPLER_NODE}
-        if turbo_variant == DMAD_4STEP_LORA:
+        if turbo_variant in {DMAD_4STEP_LORA, PIKA_FLEX}:
             required.add(H3_SIGMA_SHIFT_NODE)
+        if turbo_variant == PIKA_FLEX:
+            required.add("ManualSigmas")
         return required
     if turbo_uses_custom_nodes(turbo_variant):
         return {LARRY_TURBO_LORA_NODE, LARRY_TURBO_SAMPLER_NODE}
@@ -133,7 +138,7 @@ def add_turbo_model_patch(
             CORE_LORA_LOADER_NODE,
             model=model_ref,
             lora_name=lora_name,
-            strength_model=float(strength),
+            strength_model=1.0 if variant == PIKA_FLEX else float(strength),
         )
         return Graph.out(turbo)
 
@@ -731,13 +736,14 @@ def finish_sampling(
         if use_larry_sampler
         else graph.add(CORE_SAMPLER_NODE, sampler_name=sampler_name)
     )
-    sigmas = graph.add(
-        "BasicScheduler",
-        model=model_ref,
-        scheduler=scheduler,
-        steps=int(steps),
-        denoise=1.0,
-    )
+    if turbo_variant == PIKA_FLEX:
+        steps = 6
+        sigmas = graph.add("ManualSigmas", sigmas=PIKA_FLEX_SIGMAS)
+    else:
+        sigmas = graph.add(
+            "BasicScheduler", model=model_ref, scheduler=scheduler,
+            steps=int(steps), denoise=1.0,
+        )
     if latent_upscale_model_name is not None:
         if initial_conditioning_ref is None or initial_latent_ref is None:
             raise H3Error("H3 latent upscaling requires a low-resolution H3 stage.")
@@ -746,10 +752,22 @@ def finish_sampling(
             refine_sigmas = graph.add("ManualSigmas", sigmas=H3_REGENERATE_SIGMAS)
             refine_sigmas_ref = Graph.out(refine_sigmas)
         else:
-            # Adapter replacements keep the draft schedule's low-noise tail.
+            refine_schedule, refine_total = sigmas, int(steps)
+            if refinement_lora_name is not None and refinement_variant == PIKA_FLEX:
+                refine_total = 6
+                refine_schedule = graph.add("ManualSigmas", sigmas=PIKA_FLEX_SIGMAS)
+            elif turbo_variant == PIKA_FLEX and refinement_lora_name is not None:
+                # A replacement adapter must not inherit Pika's distilled ladder.
+                refine_total = turbo_steps_for(refinement_variant)
+                if not 1 <= int(latent_upscale_refine_steps) < refine_total:
+                    raise H3Error("Refinement steps must be smaller than the selected refinement adapter's schedule.")
+                refine_schedule = graph.add(
+                    "BasicScheduler", model=refinement_model_ref, scheduler="simple",
+                    steps=refine_total, denoise=1.0,
+                )
             refine_sigmas = graph.add(
-                "SplitSigmas", sigmas=Graph.out(sigmas),
-                step=int(steps) - int(latent_upscale_refine_steps),
+                "SplitSigmas", sigmas=Graph.out(refine_schedule),
+                step=refine_total - int(latent_upscale_refine_steps),
             )
             refine_sigmas_ref = Graph.out(refine_sigmas, 1)
         refinement_sampler = sampler

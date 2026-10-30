@@ -16,7 +16,7 @@ from h3_app.progress import ProgressCallback, no_progress
 from h3_app.provenance import write_snapshot
 from h3_app.status import StageTimings, progress_status
 from h3_models import MODEL_SPECS
-from h3_app.catalog import H3_REGENERATE_MODELS
+from h3_app.catalog import H3_REGENERATE_MODELS, PIKA_FLEX, PIKA_FLEX_SIGMAS
 
 from .construct_graph import construct_graph
 from .finish_video import finish_video, make_finishing_retry, retain_finishing
@@ -77,6 +77,19 @@ def generate(
             ),
             "adjustments": [asdict(item) for item in prepared.plan.adjustments],
         }
+        if prepared.turbo_lora_name and prepared.selected_turbo == PIKA_FLEX:
+            key = "pika_flex_ref2va_lora" if request.media.mode == "Reference media" else "pika_flex_fl2va_lora"
+            spec = MODEL_SPECS[key]
+            execution_snapshot["sampling_profile"] = {
+                "name": PIKA_FLEX,
+                "sampler": "lcm",
+                "sigmas": [float(value) for value in PIKA_FLEX_SIGMAS.split(",")],
+                "video_shift": 12.0, "audio_shift": 3.0,
+                "steps": 6, "strength": 1.0,
+                "adapter": prepared.turbo_lora_name,
+                "repo_id": spec.repo_id, "revision": spec.revision,
+                "sha256": spec.expected_sha256,
+            }
         execution_snapshot["settings"].update(
             seed=prepared.actual_seed,
             width=prepared.resolved_width,

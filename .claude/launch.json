@@ -1,0 +1,25 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "song-fixture",
+      "runtimeExecutable": "C:\\Users\\keboqi\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\\python.exe",
+      "runtimeArgs": [
+        "-u",
+        "-c",
+        "import os, runpy, sys; s = r'C:\\Users\\keboqi\\AppData\\Local\\Temp\\claude\\D--repo-minimax-h3\\aaf50ad7-a73b-4b7f-80c9-8c84d4a5343a\\scratchpad\\fixture'; os.environ.update(HF_HUB_OFFLINE='1', H3_WORKSPACE_DIR=s, GRADIO_OUTPUT_DIR=s + r'\\media', COMFY_DIR=s + r'\\comfy'); sys.argv = ['workspace_fixture', '7861']; runpy.run_module('tests.workspace_fixture', run_name='__main__')"
+      ],
+      "port": 7861
+    },
+    {
+      "name": "shell-fixture",
+      "runtimeExecutable": "C:\\Users\\keboqi\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\\python.exe",
+      "runtimeArgs": [
+        "-u",
+        "-c",
+        "import os, runpy, sys; s = r'C:\\Users\\keboqi\\AppData\\Local\\Temp\\claude\\D--repo-minimax-h3\\6d01715c-c215-4f11-b88d-2ca0350b22ac\\scratchpad\\fixture'; os.environ.update(HF_HUB_OFFLINE='1', H3_WORKSPACE_DIR=s, GRADIO_OUTPUT_DIR=s + r'\\media', COMFY_DIR=s + r'\\comfy'); sys.argv = ['workspace_fixture', '7861']; runpy.run_module('tests.workspace_fixture', run_name='__main__')"
+      ],
+      "port": 7861
+    }
+  ]
+}
