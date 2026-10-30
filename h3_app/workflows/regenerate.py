@@ -9,6 +9,7 @@ from h3_app.catalog import (
     CHUNK_FEED_FORWARD_NODE,
     H3_COMBINE_AV_LATENT_NODE,
     H3_LATENT_UPSCALER_NODE,
+    H3_LATENT_UPSCALER_LOADER_NODE,
     H3_REFINEMENT_COMPILER_GUARD_NODE,
     H3_REGENERATE_MODELS,
     H3_REGENERATE_SIGMAS,
@@ -19,6 +20,7 @@ from h3_app.graph import Graph
 from h3_app.model_types import ModelConfig
 from h3_app.policy import snap32
 from h3_models import MODEL_SPECS
+from h3_app.workflows.latent_upscale import add_h3_latent_upscale
 
 
 def add_regenerate_model(graph: Graph, model_ref: list[Any], option: str) -> list[Any]:
@@ -41,7 +43,8 @@ def required_h3_regenerate_nodes(models: ModelConfig | None = None) -> set[str]:
         "LoadVideo", "GetVideoComponents", "ImageScale", "UNETLoader",
         "LoraLoaderModelOnly", "CLIPLoader", "VAELoader", "MiniMaxH3ImageToVideo",
         "H3RegenerateEncodeVideo", "H3RegeneratePrepareLatent",
-        H3_LATENT_UPSCALER_NODE, H3_SEPARATE_AV_LATENT_NODE, H3_COMBINE_AV_LATENT_NODE,
+        H3_LATENT_UPSCALER_NODE, H3_LATENT_UPSCALER_LOADER_NODE,
+        H3_SEPARATE_AV_LATENT_NODE, H3_COMBINE_AV_LATENT_NODE,
         "BasicGuider", "RandomNoise", "KSamplerSelect", "ManualSigmas",
         "SamplerCustomAdvanced", "VAEDecodeTiled", "ImageFromBatch", "CreateVideo", "SaveVideo",
         H3_REFINEMENT_COMPILER_GUARD_NODE,
@@ -77,14 +80,13 @@ def build_h3_regenerate_graph(
         width=base_width * 2, height=base_height * 2, length=Graph.out(encoded, 1),
     )
     empty = graph.add(H3_SEPARATE_AV_LATENT_NODE, latent=Graph.out(conditioning, 1))
-    upscaled = graph.add(
-        H3_LATENT_UPSCALER_NODE, latent=Graph.out(encoded),
+    upscaled = add_h3_latent_upscale(
+        graph, Graph.out(encoded),
         model_name=MODEL_SPECS["h3_latent_upscaler_3d_bf16"].local_name,
-        mode="scale by multiplier", align=32, enable_temporal_chunking=True,
-        force_unload=True, device="cuda", precision="bf16", **{"mode.scale": 2.0},
+        precision="bf16", width=base_width * 2, height=base_height * 2,
     )
     combined = graph.add(
-        H3_COMBINE_AV_LATENT_NODE, video_latent=Graph.out(upscaled), audio_latent=Graph.out(empty, 1),
+        H3_COMBINE_AV_LATENT_NODE, video_latent=upscaled, audio_latent=Graph.out(empty, 1),
     )
     prepared = graph.add("H3RegeneratePrepareLatent", latent=Graph.out(combined), audio_vae=Graph.out(audio_vae))
     model_name = models.profile(models.default_profile).fl2va

@@ -89,10 +89,10 @@ class ModelController:
         )
 
     def ensure_int8_video_vae(
-        self, models: ModelConfig, *, lynnreal: bool = False
+        self, models: ModelConfig, *, lynnreal: bool = False, sol: bool = False
     ) -> bool:
         return model_service.ensure_int8_video_vae(
-            models, runtime=self.services._runtime_config(), lynnreal=lynnreal
+            models, runtime=self.services._runtime_config(), lynnreal=lynnreal, sol=sol
         )
 
     def ensure_trt_video_vae_engine(

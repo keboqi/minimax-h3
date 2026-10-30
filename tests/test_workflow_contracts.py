@@ -248,6 +248,8 @@ class WorkflowContractsTests(unittest.TestCase):
                 "minimax_h3_latent_upscaler_3d_bf16.safetensors"
             ),
             latent_upscale_precision="bf16",
+            latent_upscale_width=1024,
+            latent_upscale_height=1280,
             latent_upscale_refine_steps=2,
             latent_split_config=split_config,
         )

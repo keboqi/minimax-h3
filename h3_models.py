@@ -362,6 +362,11 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         "vae/minimax_h3_video_vae_fp16.safetensors",
         "FP16 video VAE",
     ),
+    "video_vae_sol_int8": ModelSpec(
+        ORIGINAL_MODEL_REPO, "vae", "vae/minimax_h3_sol_vae_int8_convrot.safetensors",
+        "Sol H3 INT8 ConvRot video decoder",
+        expected_sha256="a742069ba173bc3aba64cf8d8289d073e0818f2753f2fc2768f0342645089682",
+    ),
     "video_vae_int8": ModelSpec(
         ORIGINAL_MODEL_REPO,
         "vae",
@@ -1079,6 +1084,7 @@ LAZY_OPTIONAL_MODEL_KEYS = (
     *H3_OPTIONAL_TEXT_ENCODER_KEYS,
     "video_vae_int8",
     "video_vae_lynnreal_int8",
+    "video_vae_sol_int8",
     "video_vae_trt_encoder",
     "video_vae_trt_decoder",
     "video_vae_trt_decoder_data",
@@ -1664,6 +1670,8 @@ def _build_config(manifest_name: str) -> dict[str, Any]:
             for label, key in H3_TEXT_ENCODER_CHOICES.items()
         },
         "video_vae": video_vae.local_name,
+        "video_vae_sol_int8": MODEL_SPECS["video_vae_sol_int8"].local_name,
+        "video_vae_sol_int8_source": MODEL_SPECS["video_vae_sol_int8"].source,
         "video_vae_int8": video_vae_int8.local_name,
         "video_vae_int8_source": video_vae_int8.source,
         "video_vae_lynnreal_int8": MODEL_SPECS["video_vae_lynnreal_int8"].local_name,
@@ -1916,6 +1924,9 @@ def selftest() -> None:
         "video_vae",
         "video_vae_int8",
         "video_vae_lynnreal_int8",
+        "video_vae_sol_int8",
+        "h3_regenerate_refiner_16",
+        "h3_regenerate_refiner_384",
         "video_vae_trt_encoder",
         "video_vae_trt_decoder",
         "video_vae_trt_decoder_data",

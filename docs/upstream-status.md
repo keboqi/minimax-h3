@@ -1,5 +1,17 @@
 # Upstream status
 
+## Targeted recheck — 2026-10-30
+
+ComfyUI is pinned at `0df1646a9cd71d4c990a87014fb37797a2956ead`, the merged
+[Sol H3 VAE support](https://github.com/Comfy-Org/ComfyUI/pull/17411) revision.
+Frontend is paired at 1.57.6; Kitchen remains 0.2.40. Fast and Singularity use
+Sol INT8 decoding and retain LightVAE Lite encoding. Balanced and Quality retain
+Official INT8 decoding. Sol cannot tile, so compare peak memory on long and
+high-resolution clips. The pin also includes the native H3 latent upscaler;
+our refinement and H3 Regenerate graphs use its native optimized execution node
+with a bundled precision-selectable loader. The old upscaler custom-node repository
+is no longer installed by local setup or Modal builds.
+
 ## Targeted recheck — 2026-10-28
 
 This recheck focused on the new Core release and model/LoRA candidates, not a

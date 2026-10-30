@@ -44,6 +44,10 @@ class RegenerateGraphTests(unittest.TestCase):
             self.assertEqual([v["lora_name"] for _, v in by_type("LoraLoaderModelOnly")],
                              [MODEL_SPECS["turbo_lora"].local_name, MODEL_SPECS[key].local_name])
             encode, _ = by_type("H3RegenerateEncodeVideo")[0]
+            native = by_type(catalog.H3_LATENT_UPSCALER_NODE)[0][1]
+            self.assertEqual(native["samples"], [encode, 0])
+            self.assertEqual((native["width"], native["height"]), (2560, 1408))
+            self.assertEqual(graph[native["model"][0]]["inputs"]["precision"], "bf16")
             self.assertEqual(by_type("ImageFromBatch")[0][1]["length"], [encode, 2])
             self.assertEqual(by_type("MiniMaxH3ImageToVideo")[0][1]["length"], [encode, 1])
             video = by_type("CreateVideo")[0][1]

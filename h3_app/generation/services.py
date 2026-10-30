@@ -140,7 +140,7 @@ class EnsureAudioVae(Protocol):
 
 
 class EnsureInt8VideoVae(Protocol):
-    def __call__(self, models: ModelConfig, *, lynnreal: bool = ...) -> bool: ...
+    def __call__(self, models: ModelConfig, *, lynnreal: bool = ..., sol: bool = ...) -> bool: ...
 
 
 class EnsureLtx25Models(Protocol):

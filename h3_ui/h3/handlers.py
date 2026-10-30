@@ -240,6 +240,7 @@ class H3Handlers:
         latent_split_seam_polish: str = "off",
         use_trt_vae: bool = False,
         use_lynnreal_vae: bool = False,
+        use_sol_vae: bool = False,
         video_encoder: str = "Original",
         lightvae_decoder: str = "none",
     ) -> str:

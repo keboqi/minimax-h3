@@ -27,6 +27,7 @@ from h3_ui.presentation import (
 )
 from h3_ui.styles import H3_SETUP_CSS
 from tests.node_js import run_js
+from h3_app.contracts import GENERATION_FIELDS
 
 
 class UiContractTests(unittest.TestCase):
@@ -338,12 +339,15 @@ class UiContractTests(unittest.TestCase):
             for d in self.config["dependencies"]
             if d.get("api_name") == "generate_video_advanced"
         )
-        self.assertEqual(advanced["inputs"][-8:-5], voice_ids)
+        voice_start = 1 + GENERATION_FIELDS.index("fl2va_audio_1")
+        self.assertEqual(advanced["inputs"][voice_start:voice_start + 3], voice_ids)
         self.assertTrue(set(ref_ids) <= set(advanced["inputs"]))
         parameters = self.demo.get_api_info()["named_endpoints"][
             "/generate_video_advanced"
         ]["parameters"]
-        for parameter in parameters[-8:-5]:
+        for parameter in parameters:
+            if parameter["parameter_name"] not in {"fl2va_audio_1", "fl2va_audio_2", "fl2va_audio_3"}:
+                continue
             self.assertTrue(parameter["parameter_has_default"])
             self.assertIsNone(parameter["parameter_default"])
 
@@ -359,10 +363,11 @@ class UiContractTests(unittest.TestCase):
             for d in self.config["dependencies"]
             if d.get("api_name") == "generate_video_advanced"
         )
-        self.assertEqual(advanced["inputs"][-5], toggle["id"])
-        parameter = self.demo.get_api_info()["named_endpoints"][
+        index = 1 + GENERATION_FIELDS.index("encoder_small_input")
+        self.assertEqual(advanced["inputs"][index], toggle["id"])
+        parameter = next(p for p in self.demo.get_api_info()["named_endpoints"][
             "/generate_video_advanced"
-        ]["parameters"][-5]
+        ]["parameters"] if p["parameter_name"] == "encoder_small_input")
         self.assertTrue(parameter["parameter_has_default"])
         self.assertFalse(parameter["parameter_default"])
 
@@ -378,10 +383,11 @@ class UiContractTests(unittest.TestCase):
             for d in self.config["dependencies"]
             if d.get("api_name") == "generate_video_advanced"
         )
-        self.assertEqual(advanced["inputs"][-4], toggle["id"])
-        parameter = self.demo.get_api_info()["named_endpoints"][
+        index = 1 + GENERATION_FIELDS.index("use_lynnreal_vae")
+        self.assertEqual(advanced["inputs"][index], toggle["id"])
+        parameter = next(p for p in self.demo.get_api_info()["named_endpoints"][
             "/generate_video_advanced"
-        ]["parameters"][-4]
+        ]["parameters"] if p["parameter_name"] == "use_lynnreal_vae")
         self.assertTrue(parameter["parameter_has_default"])
         self.assertFalse(parameter["parameter_default"])
 
@@ -434,10 +440,11 @@ class UiContractTests(unittest.TestCase):
             for d in self.config["dependencies"]
             if d.get("api_name") == "generate_video_advanced"
         )
-        self.assertEqual(advanced["inputs"][-3], control["id"])
-        parameter = self.demo.get_api_info()["named_endpoints"][
+        index = 1 + GENERATION_FIELDS.index("latent_upscale_refine_lora")
+        self.assertEqual(advanced["inputs"][index], control["id"])
+        parameter = next(p for p in self.demo.get_api_info()["named_endpoints"][
             "/generate_video_advanced"
-        ]["parameters"][-3]
+        ]["parameters"] if p["parameter_name"] == "latent_upscale_refine_lora")
         self.assertTrue(parameter["parameter_has_default"])
         self.assertEqual(parameter["parameter_default"], SAME_REFINEMENT_LORA)
 
@@ -1045,14 +1052,14 @@ class UiContractTests(unittest.TestCase):
         self.assertEqual(session.memory["values"]["lightvae_decoder"], "none")
         self.assertTrue(session.memory["values"]["use_trt_vae"])
 
-    def test_fast_and_singularity_apply_their_lightvae_combinations(self) -> None:
+    def test_fast_and_singularity_apply_sol_decode_and_lightvae_encode(self) -> None:
         controls = {
             c.get("props", {}).get("label"): c for c in self.config["components"]
         }
         self.assertFalse(controls["INT8 ConvRot video VAE"]["props"]["value"])
         self.assertFalse(controls["LynnReal Light INT8 video VAE"]["props"]["value"])
         self.assertEqual(controls["Video encoder"]["props"]["value"], "LightVAE Lite")
-        self.assertEqual(controls["Video decoder"]["props"]["value"], "LightVAE Lite")
+        self.assertEqual(controls["Video decoder"]["props"]["value"], "Sol INT8")
         summary = next(c for c in self.config["components"] if "h3-settings-summary" in c.get("props", {}).get("elem_classes", []))
         self.assertIn("LightVAE Lite", summary["props"]["value"])
         self.assertNotIn("Original FP16", summary["props"]["value"])
@@ -1070,12 +1077,13 @@ class UiContractTests(unittest.TestCase):
         self.assertIn(trt["id"], transition["outputs"])
         fn = self.demo.fns[transition["id"]]
         session = self.restored_session()
-        for recipe, expected in (("Fast", "int8"), ("Singularity", "lite"), ("Balanced", "none"), ("Fast", "int8")):
+        for recipe, expected in (("Fast", True), ("Singularity", True), ("Balanced", False), ("Fast", True)):
             args = [deepcopy(c.value) for c in fn.inputs]
             args[1], args[-1] = recipe, session
             fn.fn(*args)
             selected = session.memory["values"]
-            self.assertEqual(selected["lightvae_decoder"], expected)
+            self.assertEqual(selected["lightvae_decoder"], "none")
+            self.assertEqual(selected["use_sol_vae"], expected)
             self.assertEqual(selected["video_encoder"], "Original" if recipe == "Balanced" else "LightVAE Lite")
             self.assertFalse(selected["use_lynnreal_vae"])
 

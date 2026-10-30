@@ -2100,6 +2100,56 @@ class H3LTXHDRConditioning:
             return hashlib.sha256(stream.read()).hexdigest()
 
 
+class H3LatentUpscaleModelLoader:
+    """Use Core's optimized H3 model while honoring the selected compute dtype."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "model_name": (folder_paths.get_filename_list("latent_upscale_models"),),
+            "precision": (["bf16", "fp16", "fp32"],),
+        }}
+
+    RETURN_TYPES = ("LATENT_UPSCALE_MODEL",)
+    FUNCTION = "load_model"
+    CATEGORY = "model/loaders"
+
+    def load_model(self, model_name, precision):
+        # Imports stay local so updating an old backend produces a useful error.
+        try:
+            from comfy.ldm.minimax.latent_upscaler import MiniMaxH3LatentUpscaler
+        except ImportError as exc:
+            raise RuntimeError("Native H3 upscaling requires the updated ComfyUI pin; rerun setup or rebuild Modal.") from exc
+        import comfy.model_patcher
+        import comfy.ops
+        import comfy.storage
+
+        dtypes = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}
+        if precision not in dtypes:
+            raise ValueError("Unsupported H3 latent upscaler precision")
+        path = folder_paths.get_full_path_or_raise("latent_upscale_models", model_name)
+        sd = comfy.utils.load_torch_file(path, safe_load=True)
+        required = {"in_blocks.0.emb_layers.1.weight", "conv_in.weight", "in_blocks.1.dwconv.weight"}
+        if not required <= sd.keys():
+            raise ValueError("Expected a MiniMax H3 3D-conv latent upscaler checkpoint")
+        model = MiniMaxH3LatentUpscaler(
+            in_channels=sd["conv_in.weight"].shape[1],
+            channels=sd["conv_in.weight"].shape[0],
+            in_blocks=len({k.split(".")[1] for k in sd if k.startswith("in_blocks.") and ".in_layers." in k}),
+            out_blocks=len({k.split(".")[1] for k in sd if k.startswith("out_blocks.") and ".in_layers." in k}),
+            temporal_kernel=sd["in_blocks.1.dwconv.weight"].shape[2],
+            dtype=dtypes[precision], operations=comfy.ops.disable_weight_init,
+        )
+        comfy.model_management.archive_model_dtypes(model)
+        patcher = comfy.model_patcher.CoreModelPatcher(
+            model, load_device=comfy.model_management.get_torch_device(),
+            offload_device=comfy.model_management.unet_offload_device(),
+            fast_disk=comfy.storage.state_dict_fast_disk(sd),
+        )
+        model.load_state_dict(sd, assign=patcher.is_dynamic())
+        return (patcher,)
+
+
 class H3RegenerateEncodeVideo:
     """Pad to H3's temporal grid without dropping any source frames."""
 
@@ -2164,6 +2214,7 @@ class H3RegeneratePrepareLatent:
 
 
 NODE_CLASS_MAPPINGS = {
+    "H3LatentUpscaleModelLoader": H3LatentUpscaleModelLoader,
     "H3RegenerateEncodeVideo": H3RegenerateEncodeVideo,
     "H3RegeneratePrepareLatent": H3RegeneratePrepareLatent,
     "H3MossEditReference": H3MossEditReference,

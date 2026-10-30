@@ -902,6 +902,7 @@ def generate(
     latent_upscale_refine_lora: str = "Same as generation",
     video_encoder: str = "Original",
     lightvae_decoder: str = "none",
+    use_sol_vae: bool = False,
     progress=gr.Progress(track_tqdm=False),
 ):
     values = dict(locals())

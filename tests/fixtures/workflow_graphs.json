@@ -932,27 +932,32 @@
         }
       },
       "19": {
-        "class_type": "MinimaxH3LatentUpscaler3D",
+        "class_type": "H3LatentUpscaleModelLoader",
         "inputs": {
-          "latent": [
-            "18",
-            0
-          ],
           "model_name": "minimax_h3_latent_upscaler_3d_bf16.safetensors",
-          "mode": "scale by multiplier",
-          "align": 32,
-          "enable_temporal_chunking": true,
-          "force_unload": true,
-          "device": "cuda",
-          "precision": "bf16",
-          "mode.scale": 2.0
+          "precision": "bf16"
         }
       },
       "20": {
+        "class_type": "MiniMaxH3LatentUpscaleWithModel",
+        "inputs": {
+          "model": [
+            "19",
+            0
+          ],
+          "samples": [
+            "18",
+            0
+          ],
+          "width": 1024,
+          "height": 1024
+        }
+      },
+      "21": {
         "class_type": "H3CombineAVLatent",
         "inputs": {
           "video_latent": [
-            "19",
+            "20",
             0
           ],
           "audio_latent": [
@@ -961,7 +966,7 @@
           ]
         }
       },
-      "21": {
+      "22": {
         "class_type": "H3StageModelOffload",
         "inputs": {
           "conditioning": [
@@ -969,7 +974,7 @@
             0
           ],
           "latent": [
-            "20",
+            "21",
             0
           ],
           "additional_conditioning": [
@@ -977,12 +982,12 @@
             0
           ],
           "additional_latent": [
-            "20",
+            "21",
             0
           ]
         }
       },
-      "22": {
+      "23": {
         "class_type": "SamplerCustomAdvanced",
         "inputs": {
           "noise": [
@@ -1002,12 +1007,12 @@
             1
           ],
           "latent_image": [
-            "21",
+            "22",
             1
           ]
         }
       },
-      "23": {
+      "24": {
         "class_type": "H3StageModelOffload",
         "inputs": {
           "conditioning": [
@@ -1015,7 +1020,7 @@
             0
           ],
           "latent": [
-            "22",
+            "23",
             0
           ],
           "additional_conditioning": [
@@ -1028,11 +1033,11 @@
           ]
         }
       },
-      "24": {
+      "25": {
         "class_type": "VAEDecode",
         "inputs": {
           "samples": [
-            "23",
+            "24",
             1
           ],
           "vae": [
@@ -1041,11 +1046,11 @@
           ]
         }
       },
-      "25": {
+      "26": {
         "class_type": "VAEDecodeAudio",
         "inputs": {
           "samples": [
-            "23",
+            "24",
             3
           ],
           "vae": [
@@ -1054,26 +1059,26 @@
           ]
         }
       },
-      "26": {
+      "27": {
         "class_type": "CreateVideo",
         "inputs": {
           "images": [
-            "24",
+            "25",
             0
           ],
           "audio": [
-            "25",
+            "26",
             0
           ],
           "fps": 24.0,
           "bit_depth": 8
         }
       },
-      "27": {
+      "28": {
         "class_type": "H3SaveVideoNVENC",
         "inputs": {
           "video": [
-            "26",
+            "27",
             0
           ],
           "filename_prefix": "h3/fl2va_<submission>",

@@ -12,6 +12,7 @@ from h3_app.catalog import (
     FUSED_MODULATION_NODE,
     H3_COMBINE_AV_LATENT_NODE,
     H3_LATENT_UPSCALER_NODE,
+    H3_LATENT_UPSCALER_LOADER_NODE,
     H3_NVENC_SAVE_NODE,
     H3_SEPARATE_AV_LATENT_NODE,
     H3_SPLIT_SPATIAL_PARAMS_NODE,
@@ -155,6 +156,8 @@ def node_stage(class_type: str, workflow_classes: set[str] | None = None) -> str
         return "Separating H3 video and audio latents"
     if name == H3_LATENT_UPSCALER_NODE:
         return "Upscaling H3 video latent 2x"
+    if name == H3_LATENT_UPSCALER_LOADER_NODE:
+        return "Loading native H3 latent upscaler"
     if name == H3_COMBINE_AV_LATENT_NODE:
         return "Recombining H3 video and audio latents"
     if name in {H3_SPLIT_TEMPORAL_PARAMS_NODE, H3_SPLIT_SPATIAL_PARAMS_NODE}:

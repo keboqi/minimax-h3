@@ -3,10 +3,6 @@
 COMFY_REPO = "https://github.com/Comfy-Org/ComfyUI.git"
 CONTROLNET_AUX_REF = "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
 CONTROLNET_AUX_REPO = "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
-H3_LATENT_UPSCALER_NODE_REF = "d7c01b9011f2e8439493f6c02c29995a27df276f"
-H3_LATENT_UPSCALER_NODE_REPO = (
-    "https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler.git"
-)
 KJNODES_REF = "57105374f47d0fbb49c9c3926fb981702e0a4b5c"
 KJNODES_REPO = "https://github.com/kijai/ComfyUI-KJNodes.git"
 LARRY_TURBO_REF = (

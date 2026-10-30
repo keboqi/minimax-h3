@@ -28,6 +28,7 @@ class ModelSection:
     trt_vae_compile: gr.components.Component
     use_int8_vae: gr.components.Component
     use_lynnreal_vae: gr.components.Component
+    use_sol_vae: gr.components.Component
     video_encoder: gr.components.Component
     lightvae_decoder: gr.components.Component
     use_trt_vae: gr.components.Component
@@ -132,10 +133,11 @@ def build_model_section(
                 defaults["use_lynnreal_vae"],
                 defaults["use_trt_vae"],
                 defaults.get("lightvae_decoder", "none"),
+                defaults["use_sol_vae"],
             ).value,
             label="Video decoder",
             visible=True,
-            info="One decoder per run. Image decoding is configured separately. TensorRT prepares a local engine when needed.",
+            info="Sol INT8 decodes whole clips with more VRAM and may change fine detail. One decoder per run. Image decoding is configured separately. TensorRT prepares a local engine when needed.",
         )
         use_int8_vae = gr.Checkbox(
             visible=False,
@@ -143,6 +145,7 @@ def build_model_section(
             label="INT8 ConvRot video VAE",
             info="On for Balanced and Quality presets. Downloads the official Comfy-Org checkpoint on first use for faster H3 video decoding.",
         )
+        use_sol_vae = gr.Checkbox(visible=False, value=defaults["use_sol_vae"], label="Sol INT8 video decoder")
         use_lynnreal_vae = gr.Checkbox(
             visible=False,
             value=defaults["use_lynnreal_vae"],
@@ -183,5 +186,6 @@ def build_model_section(
         trt_vae_compile=trt_vae_compile,
         use_int8_vae=use_int8_vae,
         use_lynnreal_vae=use_lynnreal_vae,
+        use_sol_vae=use_sol_vae,
         use_trt_vae=use_trt_vae,
     )

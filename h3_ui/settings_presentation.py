@@ -189,7 +189,7 @@ def render_settings(plan: ResolvedSettings, extras: dict | None = None) -> str:
     try:
         decoder_label = VideoDecoder.from_flags(
             effective.use_int8_vae, effective.use_lynnreal_vae,
-            effective.use_trt_vae, effective.lightvae_decoder,
+            effective.use_trt_vae, effective.lightvae_decoder, effective.use_sol_vae,
         ).value
     except ValueError:
         decoder_label = "Conflicting decoder selections"

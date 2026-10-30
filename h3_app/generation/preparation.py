@@ -173,6 +173,9 @@ def _ensure_decoders(request, services, runtime, models, *, has_visual_condition
     if request.output.use_int8_vae:
         progress(0, desc="Preparing INT8 video VAE")
         services.models.ensure_int8_video_vae(models)
+    if request.output.use_sol_vae:
+        progress(0, desc="Preparing Sol INT8 video decoder")
+        services.models.ensure_int8_video_vae(models, sol=True)
     if request.output.use_lynnreal_vae:
         progress(0, desc="Preparing LynnReal Light INT8 video VAE")
         services.models.ensure_int8_video_vae(models, lynnreal=True)
@@ -229,6 +232,7 @@ def _ensure_base_vaes(request, services, runtime, models, *, has_visual_conditio
             request.output.use_int8_vae,
             request.output.use_trt_vae,
             request.output.use_lynnreal_vae,
+            request.output.use_sol_vae,
         )
     ):
         video_vae_path = (
@@ -311,7 +315,7 @@ def _run_label(request, turbo: _TurboChoice, *, has_visual_conditioning, effecti
     """What the status reports this run uses."""
     decoder_label = VideoDecoder.from_flags(
         request.output.use_int8_vae, request.output.use_lynnreal_vae,
-        request.output.use_trt_vae, request.output.lightvae_decoder,
+        request.output.use_trt_vae, request.output.lightvae_decoder, request.output.use_sol_vae,
     ).value
     selected_label = turbo.label + f" · {decoder_label} VAE"
     if has_visual_conditioning:
@@ -543,6 +547,7 @@ def prepare_h3(
     effective = plan.effective
     request.output.use_trt_vae = effective.use_trt_vae
     request.output.use_int8_vae = effective.use_int8_vae
+    request.output.use_sol_vae = effective.use_sol_vae
     request.output.use_lynnreal_vae = effective.use_lynnreal_vae
     request.output.video_encoder = effective.video_encoder
     request.output.lightvae_decoder = effective.lightvae_decoder

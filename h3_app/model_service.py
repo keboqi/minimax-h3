@@ -114,6 +114,7 @@ def load_model_config(*, runtime: RuntimeConfig) -> ModelConfig:
         text_encoders=data.get("text_encoders"),
         video_vae=data["video_vae"],
         audio_vae=data["audio_vae"],
+        video_vae_sol_int8=data.get("video_vae_sol_int8", MODEL_SPECS["video_vae_sol_int8"].local_name),
         video_vae_int8=data.get("video_vae_int8"),
         video_vae_lynnreal_int8=data.get(
             "video_vae_lynnreal_int8", MODEL_SPECS["video_vae_lynnreal_int8"].local_name
@@ -475,10 +476,12 @@ def ensure_lightvae(video_encoder: str, decoder: str, *, runtime: RuntimeConfig)
 
 
 def ensure_int8_video_vae(
-    models: ModelConfig, *, runtime: RuntimeConfig, lynnreal: bool = False
+    models: ModelConfig, *, runtime: RuntimeConfig, lynnreal: bool = False, sol: bool = False
 ) -> bool:
-    """Download the selected standard or LynnReal INT8 VAE on first use."""
-    model_key = "video_vae_lynnreal_int8" if lynnreal else "video_vae_int8"
+    """Download the selected standard, Sol or LynnReal INT8 VAE on first use."""
+    if sol and lynnreal:
+        raise H3Error("Select only one video decoder.")
+    model_key = "video_vae_sol_int8" if sol else "video_vae_lynnreal_int8" if lynnreal else "video_vae_int8"
     filename = getattr(models, model_key)
     if not filename:
         raise H3Error(

@@ -184,6 +184,7 @@ class H3View:
     trt_vae_compile: gr.components.Component
     use_int8_vae: gr.components.Component
     use_lynnreal_vae: gr.components.Component
+    use_sol_vae: gr.components.Component
     video_encoder: gr.components.Component
     lightvae_decoder: gr.components.Component
     use_trt_vae: gr.components.Component
@@ -340,6 +341,7 @@ H3_COMPONENT_ORDER = (
     "trt_vae_compile",
     "use_int8_vae",
     "use_lynnreal_vae",
+    "use_sol_vae",
     "video_encoder",
     "lightvae_decoder",
     "use_trt_vae",
@@ -604,6 +606,7 @@ def _build_workspace_h3(generation_view, defaults, services, *, advanced_root=No
                     defaults["latent_split_seam_polish"],
                     use_trt_vae=defaults["use_trt_vae"],
                     use_lynnreal_vae=defaults["use_lynnreal_vae"],
+                    use_sol_vae=defaults["use_sol_vae"],
                     video_encoder=defaults["video_encoder"],
                     lightvae_decoder=defaults["lightvae_decoder"],
                 ),

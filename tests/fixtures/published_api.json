@@ -61,12 +61,12 @@
         {"parameter_name": "easycache_end", "parameter_has_default": true, "parameter_default": 0.85, "type": "type_25"},
         {"parameter_name": "easycache_verbose", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
         {"parameter_name": "ref_image_size", "parameter_has_default": true, "parameter_default": "match", "type": "type_28"},
-        {"parameter_name": "postprocess", "parameter_has_default": true, "parameter_default": "None", "type": "type_29"},
+        {"parameter_name": "postprocess", "parameter_has_default": true, "parameter_default": "None", "type": "type_100"},
         {"parameter_name": "reuse_unchanged_inputs", "parameter_has_default": true, "parameter_default": true, "type": "type_6"},
         {"parameter_name": "latent_upscale", "parameter_has_default": true, "parameter_default": true, "type": "type_6"},
         {"parameter_name": "latent_upscaler_model", "parameter_has_default": true, "parameter_default": "Quality (FP32)", "type": "type_30"},
         {"parameter_name": "latent_upscale_refine_steps", "parameter_has_default": true, "parameter_default": 2, "type": "type_31"},
-        {"parameter_name": "latent_upscale_method", "parameter_has_default": true, "parameter_default": "Full-frame refinement", "type": "type_32"},
+        {"parameter_name": "latent_upscale_method", "parameter_has_default": true, "parameter_default": "Full-frame refinement", "type": "type_101"},
         {"parameter_name": "latent_split_tile_width", "parameter_has_default": true, "parameter_default": 512, "type": "type_33"},
         {"parameter_name": "latent_split_tile_height", "parameter_has_default": true, "parameter_default": 512, "type": "type_33"},
         {"parameter_name": "latent_split_overlap_ratio", "parameter_has_default": true, "parameter_default": 0.25, "type": "type_24"},
@@ -95,7 +95,8 @@
         {"parameter_name": "use_lynnreal_vae", "parameter_has_default": true, "parameter_default": false, "type": "type_6"},
         {"parameter_name": "latent_upscale_refine_lora", "parameter_has_default": true, "parameter_default": "Same as generation", "type": "type_45"},
         {"parameter_name": "video_encoder", "parameter_has_default": true, "parameter_default": "LightVAE Lite", "type": "type_93"},
-        {"parameter_name": "lightvae_decoder", "parameter_has_default": true, "parameter_default": "lite", "type": "type_94"}
+        {"parameter_name": "lightvae_decoder", "parameter_has_default": true, "parameter_default": "none", "type": "type_94"},
+        {"parameter_name": "use_sol_vae", "parameter_has_default": true, "parameter_default": true, "type": "type_6"}
       ],
       "returns": [
         {"type": "type_10", "component": "Video"},
@@ -1579,6 +1580,26 @@
       ],
       "title": "Radio",
       "type": "string"
+    },
+    "type_100": {
+      "type": "string",
+      "enum": [
+        "None",
+        "SeedVR2 2x",
+        "H3 Regenerate 2K · rank 16 (experimental)",
+        "H3 Regenerate 2K · rank 384 (experimental)",
+        "LTX-2.5 IC-LoRA 2x",
+        "LTX-2.5 Tiled Upscale"
+      ]
+    },
+    "type_101": {
+      "type": "string",
+      "enum": [
+        "Full-frame refinement",
+        "MMH3 Split Upscale (experimental)",
+        "H3 Regenerate 2K · rank 16 (experimental)",
+        "H3 Regenerate 2K · rank 384 (experimental)"
+      ]
     }
   }
 }

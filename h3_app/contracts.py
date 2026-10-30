@@ -89,6 +89,7 @@ GENERATION_FIELDS = (
     "latent_upscale_refine_lora",
     "video_encoder",
     "lightvae_decoder",
+    "use_sol_vae",
 )
 GENERATION_COMPONENTS = (
     "mode",
@@ -176,6 +177,7 @@ GENERATION_COMPONENTS = (
     "latent_upscale_refine_lora",
     "video_encoder",
     "lightvae_decoder",
+    "use_sol_vae",
 )
 
 
@@ -198,6 +200,8 @@ class GenerationArguments:
             args = (*args, "Same as generation")
         if len(args) == GENERATION_FIELDS.index("video_encoder"):
             args = (*args, "Original", "none")
+        if len(args) == GENERATION_FIELDS.index("use_sol_vae"):
+            args = (*args, False)
         if len(args) != len(GENERATION_FIELDS):
             raise ValueError(
                 f"Expected {len(GENERATION_FIELDS)} generation inputs, received {len(args)}."

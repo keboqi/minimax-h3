@@ -155,6 +155,7 @@ class H3OutputInputs:
     result_format: str
     image_frames: int
     use_lynnreal_vae: bool = False
+    use_sol_vae: bool = False
     video_encoder: str = "Original"
     lightvae_decoder: str = "none"
 

@@ -46,6 +46,7 @@ class ModelConfig:
     video_vae: str
     audio_vae: str
     text_encoders: dict[str, str] | None = None
+    video_vae_sol_int8: str = MODEL_SPECS["video_vae_sol_int8"].local_name
     video_vae_int8: str | None = None
     video_vae_lynnreal_int8: str | None = None
     video_vae_lynnreal_int8_source: str = "unknown"

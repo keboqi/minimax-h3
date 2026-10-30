@@ -10,6 +10,10 @@ class DecoderResources:
     video_encoder: str = "Original"
 
     @property
+    def use_sol_vae(self) -> bool:
+        return self.video_decoder == "sol_int8"
+
+    @property
     def use_trt_vae(self) -> bool:
         return self.video_decoder == "tensorrt"
 
@@ -31,6 +35,8 @@ class DecoderResources:
             return ("lightvae_decoder_int8" if self.video_decoder == "lightvae_int8" else "lightvae_decoder",)
         if self.image_decoder:
             return ("image_vae_500k",)
+        if self.use_sol_vae:
+            return ("video_vae_sol_int8",)
         if self.use_trt_vae:
             return ("video_vae_trt_decoder", "video_vae_trt_decoder_data")
         if self.use_lynnreal_vae:
@@ -45,6 +51,7 @@ def resolve_decoders(
     use_trt_vae: bool,
     use_int8_vae: bool,
     use_lynnreal_vae: bool = False,
+    use_sol_vae: bool = False,
     video_encoder: str = "Original",
     lightvae_decoder: str = "none",
 ) -> DecoderResources:
@@ -56,10 +63,11 @@ def resolve_decoders(
     image_decoder = fmt == "Image" and "500K" in str(image_vae)
     if fmt == "Audio" or image_decoder:
         return DecoderResources("none", image_decoder, video_encoder)
-    if sum((use_trt_vae, use_int8_vae, use_lynnreal_vae, lightvae_decoder != "none")) > 1:
+    if sum((use_sol_vae, use_trt_vae, use_int8_vae, use_lynnreal_vae, lightvae_decoder != "none")) > 1:
         raise ValueError("Select only one video decoder.")
     decoder = (
         "lightvae_" + lightvae_decoder if lightvae_decoder != "none"
+        else "sol_int8" if use_sol_vae
         else "tensorrt" if use_trt_vae
         else "lynnreal_int8" if use_lynnreal_vae
         else "int8" if use_int8_vae

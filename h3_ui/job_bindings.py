@@ -144,6 +144,7 @@ def owned_generation(callback, family: str, input_names=None, *, metadata_output
             "fl2va_audio_3": None,
             "encoder_small_input": False,
             "use_lynnreal_vae": False,
+            "use_sol_vae": False,
             "video_encoder": "Original",
             "lightvae_decoder": "none",
             "latent_upscale_refine_lora": "Same as generation",

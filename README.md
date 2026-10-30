@@ -404,8 +404,12 @@ non-OpenAI endpoint) in that Modal Secret.
 The Modal runtime mounts every model-specific prompt instruction file, including
 the Qwen Image 2.1 and YuE2 writers, without rebuilding the heavy ComfyUI image.
 
-The deployment pins ComfyUI v0.43.0 at immutable revision
-`426f5eea52a7ece1dd599fff4cb6cd1f352ddd24`, which includes kijai's merged native Fibo 2.0
+The deployment pins ComfyUI after v0.43.0 at immutable revision
+`0df1646a9cd71d4c990a87014fb37797a2956ead`, which adds native Sol H3 VAE decoding
+and H3 latent upscaler support. Refinement and H3 Regenerate use Core's optimized
+upscaler with a bundled loader that preserves FP32/BF16/FP16 precision choices.
+Fast and Singularity select the lazily downloaded
+Sol INT8 decoder while retaining LightVAE Lite encoding. It also includes native Fibo 2.0
 support ([Comfy-Org/ComfyUI#17240](https://github.com/Comfy-Org/ComfyUI/pull/17240)).
 It includes MOSS RoPE/color-depth and edit controls, H3 PDD LoRA fixes,
 the Fibo model, text encoder and node, a top-p nucleus fix for native text generation, a
@@ -413,8 +417,8 @@ Pad Image node and an opt-in agent host (off unless `--enable-agent`). It also e
 structured Fibo 2.0 negatives as written instead of cleaning them like captions
 ([Comfy-Org/ComfyUI#17285](https://github.com/Comfy-Org/ComfyUI/pull/17285)), so our
 text-to-image negative applies as intended, and adds aimdo 0.6.0 dynamic-VRAM KV caches for
-Qwen Image 2.1. Its requirements: frontend package 1.57.4, Comfy Kitchen 0.2.40, upstream
-aimdo 0.6.0, workflow templates 0.11.97 and embedded docs 0.5.15.
+Qwen Image 2.1. Its requirements: frontend package 1.57.6, Comfy Kitchen 0.2.40, upstream
+aimdo 0.6.0, workflow templates 0.11.98 and embedded docs 0.5.15.
 v0.42 adds native MOSS-Image, Qwen 3.x decode speedups, TextGenerate cleanup,
 baked-in H3 PDD heads and synchronized CUDA-graph teardown.
 v0.40.0 fixed Qwen Image 2.1 caching under low VRAM and updates shared

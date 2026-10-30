@@ -33,6 +33,7 @@ SETTING_NAMES = tuple(
             "image_vae",
             "use_int8_vae",
             "use_lynnreal_vae",
+            "use_sol_vae",
             "video_encoder",
             "lightvae_decoder",
             "use_trt_vae",
@@ -538,12 +539,12 @@ class SettingsController:
         )
         decoder_flags = [
             self.components[name]
-            for name in ("use_int8_vae", "use_lynnreal_vae", "use_trt_vae", "lightvae_decoder")
+            for name in ("use_int8_vae", "use_lynnreal_vae", "use_trt_vae", "lightvae_decoder", "use_sol_vae")
         ]
 
-        def sync_decoder(official, lynnreal, trt, lightvae):
+        def sync_decoder(official, lynnreal, trt, lightvae, sol):
             try:
-                return VideoDecoder.from_flags(official, lynnreal, trt, lightvae).value
+                return VideoDecoder.from_flags(official, lynnreal, trt, lightvae, sol).value
             except ValueError:
                 return gr.skip()
 

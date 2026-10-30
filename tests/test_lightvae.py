@@ -129,6 +129,7 @@ class LightVAETests(unittest.TestCase):
                                 VideoDecoder.STANDARD: "video_vae",
                                 VideoDecoder.OFFICIAL_INT8: "video_vae_int8",
                                 VideoDecoder.LYNNREAL_INT8: "video_vae_lynnreal_int8",
+                                VideoDecoder.SOL_INT8: "video_vae_sol_int8",
                             }[decoder]
                             self.assertEqual(
                                 decode_node["inputs"]["vae_name"],
@@ -405,7 +406,8 @@ class LightVAETests(unittest.TestCase):
             **VideoDecoder.LIGHTVAE.workflow_flags(),
         }
         _, preset = transition_modes(None, values, "preset")
-        self.assertEqual(preset["lightvae_decoder"], "int8")
+        self.assertEqual(preset["lightvae_decoder"], "none")
+        self.assertTrue(preset["use_sol_vae"])
         self.assertEqual(preset["video_encoder"], "LightVAE Lite")
         self.assertFalse(preset["use_lynnreal_vae"])
 

@@ -54,6 +54,7 @@ def graph_options(request: H3Request, prepared: PreparedH3) -> dict[str, Any]:
         video_encoder=request.output.video_encoder,
         lightvae_decoder=request.output.lightvae_decoder,
         use_lynnreal_vae=bool(request.output.use_lynnreal_vae),
+        use_sol_vae=bool(request.output.use_sol_vae),
         use_int8_vae=bool(request.output.use_int8_vae),
         use_trt_vae=bool(request.output.use_trt_vae),
         latent_upscale_model_name=prepared.latent_upscale_model_name,

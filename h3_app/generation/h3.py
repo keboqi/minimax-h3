@@ -129,6 +129,7 @@ def generate(
             video_encoder=request.output.video_encoder,
             lightvae_decoder=request.output.lightvae_decoder,
             use_lynnreal_vae=request.output.use_lynnreal_vae,
+            use_sol_vae=request.output.use_sol_vae,
         )
         if prepared.effective_veda:
             predictor_key = (

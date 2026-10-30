@@ -16,8 +16,6 @@ from h3_sources import (
     COMFY_REPO,
     CONTROLNET_AUX_REF,
     CONTROLNET_AUX_REPO,
-    H3_LATENT_UPSCALER_NODE_REF,
-    H3_LATENT_UPSCALER_NODE_REPO,
     KJNODES_REF,
     KJNODES_REPO,
     LARRY_TURBO_REF,
@@ -853,11 +851,6 @@ def sync_external_nodes(
         install_custom_node_requirements(larry_turbo / "requirements.txt")
 
     official_nodes = (
-        (
-            H3_LATENT_UPSCALER_NODE_REPO,
-            H3_LATENT_UPSCALER_NODE_REF,
-            "Comfyui_Minimax_h3_latent_Upscaler",
-        ),
         (LTXVIDEO_REPO, LTXVIDEO_REF, "ComfyUI-LTXVideo"),
         (KJNODES_REPO, KJNODES_REF, "ComfyUI-KJNodes"),
         (CONTROLNET_AUX_REPO, CONTROLNET_AUX_REF, "comfyui_controlnet_aux"),

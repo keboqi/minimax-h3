@@ -22,10 +22,10 @@ from h3_app.catalog import (
     H3_COMBINE_AV_LATENT_NODE,
     H3_CONDITIONING_CACHE_NODE,
     H3_IMAGE_SLICES_NODE,
-    H3_LATENT_UPSCALE_SCALE,
     H3_LATENT_UPSCALE_SPLIT,
     H3_LATENT_UPSCALE_STANDARD,
     H3_LATENT_UPSCALER_NODE,
+    H3_LATENT_UPSCALER_LOADER_NODE,
     H3_NVENC_SAVE_NODE,
     H3_REFINEMENT_COMPILER_GUARD_NODE,
     H3_SEMANTIC_BRIDGE_NODE,
@@ -58,6 +58,7 @@ from h3_app.catalog import (
 from h3_app.errors import H3Error
 from h3_models import MODEL_SPECS
 from h3_app.workflows.regenerate import add_regenerate_model
+from h3_app.workflows.latent_upscale import add_h3_latent_upscale
 from h3_app.graph import Graph
 from h3_app.model_types import ModelConfig, trt_vae_engine_name
 from h3_app.policy import (
@@ -197,6 +198,7 @@ def add_model_stack(
     text_encoder_name: str | None = None,
     lightvae_decoder: str = "none",
     use_lynnreal_vae: bool = False,
+    use_sol_vae: bool = False,
     use_int8_vae: bool = False,
     use_trt_vae: bool = False,
     use_sage: bool = False,
@@ -413,7 +415,7 @@ def add_model_stack(
     )
     if lightvae_decoder not in {"none", "lite", "int8"}:
         raise H3Error("Unsupported LightVAE decoder.")
-    if sum((use_int8_vae, use_trt_vae, use_lynnreal_vae, lightvae_decoder != "none")) > 1:
+    if sum((use_sol_vae, use_int8_vae, use_trt_vae, use_lynnreal_vae, lightvae_decoder != "none")) > 1:
         raise H3Error("Select only one video decoder.")
     if use_trt_vae:
         if "MiniMaxH3TRTVAELoader" not in available_nodes:
@@ -428,7 +430,9 @@ def add_model_stack(
             encoder="None",
         )
     else:
-        if use_lynnreal_vae:
+        if use_sol_vae:
+            video_vae_name = models.video_vae_sol_int8
+        elif use_lynnreal_vae:
             if not models.video_vae_lynnreal_int8:
                 raise H3Error("LynnReal Light INT8 VAE is not configured. Re-run setup_h3.py.")
             video_vae_name = models.video_vae_lynnreal_int8
@@ -655,6 +659,8 @@ def finish_sampling(
     initial_latent_ref: list[Any] | None = None,
     latent_upscale_model_name: str | None = None,
     latent_upscale_precision: str = "bf16",
+    latent_upscale_width: int | None = None,
+    latent_upscale_height: int | None = None,
     latent_upscale_refine_steps: int = 2,
     refinement_lora_name: str | None = None,
     refinement_variant: str | None = None,
@@ -789,22 +795,15 @@ def finish_sampling(
             H3_SEPARATE_AV_LATENT_NODE,
             latent=initial_sampled_ref,
         )
-        upscaled_video = graph.add(
-            H3_LATENT_UPSCALER_NODE,
-            latent=Graph.out(separated, 0),
+        upscaled_video = add_h3_latent_upscale(
+            graph, Graph.out(separated, 0),
             model_name=latent_upscale_model_name,
-            mode="scale by multiplier",
-            align=32,
-            enable_temporal_chunking=True,
-            force_unload=True,
-            device="cuda",
             precision=latent_upscale_precision,
-            # ComfyUI's prompt API flattens DynamicCombo children with dotted keys.
-            **{"mode.scale": H3_LATENT_UPSCALE_SCALE},
+            width=latent_upscale_width, height=latent_upscale_height,
         )
         combined = graph.add(
             H3_COMBINE_AV_LATENT_NODE,
-            video_latent=Graph.out(upscaled_video),
+            video_latent=upscaled_video,
             audio_latent=Graph.out(separated, 1),
         )
         combined_ref = Graph.out(combined)
@@ -991,6 +990,7 @@ class H3GraphOptions:
     video_encoder: str = "Original"
     lightvae_decoder: str = "none"
     use_lynnreal_vae: bool = False
+    use_sol_vae: bool = False
     use_int8_vae: bool = False
     use_trt_vae: bool = False
     use_sage: bool = False
@@ -1065,6 +1065,7 @@ def _add_options_model_stack(graph: Graph, options: H3GraphOptions, veda_key: st
         available_nodes=o.available_nodes,
         text_encoder_name=o.text_encoder_name,
         use_lynnreal_vae=o.use_lynnreal_vae,
+        use_sol_vae=o.use_sol_vae,
         lightvae_decoder=o.lightvae_decoder,
         use_int8_vae=o.use_int8_vae,
         use_trt_vae=o.use_trt_vae,
@@ -1226,6 +1227,8 @@ def _build_h3_graph(
         initial_latent_ref=Graph.out(initial_h3, 1),
         latent_upscale_model_name=o.latent_upscale_model_name,
         latent_upscale_precision=o.latent_upscale_precision,
+        latent_upscale_width=target_width,
+        latent_upscale_height=target_height,
         latent_upscale_refine_steps=o.latent_upscale_refine_steps,
         refinement_lora_name=o.refinement_lora_name,
         refinement_variant=o.refinement_variant,
@@ -1451,6 +1454,7 @@ def required_nodes_for(
         common |= {
             "SplitSigmas",
             H3_LATENT_UPSCALER_NODE,
+            H3_LATENT_UPSCALER_LOADER_NODE,
             H3_REFINEMENT_COMPILER_GUARD_NODE,
             H3_SEPARATE_AV_LATENT_NODE,
             H3_COMBINE_AV_LATENT_NODE,
