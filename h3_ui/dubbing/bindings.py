@@ -9,7 +9,7 @@ import gradio as gr
 from .view import (
     DubbingView, advanced_label, gemini_visibility, local_visibility, opened_session_js, speed_visibility,
 )
-from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES
+from h3_app.dubbing.tools import FAMILY_ANALYZE, FAMILY_DUB, FAMILY_LINES, FAMILY_WORDS
 
 from ..job_bindings import bind_gpu_action, owned_generation, owned_interrupt
 
@@ -33,7 +33,7 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
     translated = bind_gpu_action(
         view.retranslate.click, owned_generation(actions.translate_lines, FAMILY_LINES),
         inputs=[view.session, view.board, view.target_language, view.translator, view.gemini_model,
-                view.api_key, view.notes],
+                view.api_key, view.notes, view.translation_context],
         outputs=[view.board, view.lines, view.line_status], show_progress="minimal", api_name=False,
     )
     translated.then(actions.focus_line, inputs=[view.session, view.board], outputs=inspector_outputs(view),
@@ -61,6 +61,12 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
                  view.export_subtitles, view.exported_video, view.export_status], show_progress="minimal",
         api_name="dub_generate",
     )
+    aligned = bind_gpu_action(
+        view.align_words.click, owned_generation(actions.align_words, FAMILY_WORDS),
+        inputs=[view.session], outputs=[view.player, view.status], show_progress="minimal", api_name=False,
+    )
+    view.audio.change(lambda path: gr.update(interactive=bool(path)), inputs=view.audio,
+                      outputs=view.align_words, **_QUIET)
     # Voicing marks lines whose take failed (and clears ones that now have a good take).
     for voiced in (previewed, retaken, dubbed):
         voiced.then(actions.board_for, inputs=[view.session, view.board], outputs=view.board,
@@ -74,6 +80,7 @@ def bind_dubbing(view: DubbingView, *, task, create_tab, interrupt, actions) -> 
         (view.stop_analyze, view.analyze_status, FAMILY_ANALYZE, [analyzed]),
         (view.stop_preview, view.line_status, FAMILY_LINES, [translated, previewed, retaken]),
         (view.stop, view.status, FAMILY_DUB, [dubbed]),
+        (view.stop_align_words, view.status, FAMILY_WORDS, [aligned]),
     ):
         stopped = stop.click(owned_interrupt(interrupt, family), outputs=status, queue=False, api_name=False)
         stopped.then(fn=None, cancels=events, queue=False, api_name=False)

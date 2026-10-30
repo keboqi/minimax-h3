@@ -212,6 +212,18 @@ def _language(name: str, fallback: str) -> str:
     return escape(name or fallback)
 
 
+def _word_timing_note(cue: dict, enabled: bool) -> str:
+    if not enabled:
+        return ""
+    missing = [label for field, label in (("source", "original"), ("translation", "translated"))
+               if cue[field].strip() and not cue.get(f"{field}_words")
+               and (field == "source" or cue.get("translation_spoken", True))]
+    if not missing:
+        return ""
+    return ('<small class="h3-dub-player-note">Word timing unavailable: '
+            + " and ".join(missing) + '. Plain subtitles shown.</small>')
+
+
 def player_html(player: pipeline.Player, *, key: str) -> str:
     """The player for one dub; ``key`` keeps its radio group apart from earlier players on the page."""
     dub, original = file_url(player.dub), file_url(player.original)
@@ -236,7 +248,8 @@ def player_html(player: pipeline.Player, *, key: str) -> str:
         + (f'<span class="h3-dub-cue-speaker">{escape(cue["speaker"])}</span>' if speakers else "")
         + f'<span class="h3-dub-cue-text"><span class="h3-dub-cue-translation">'
         f'{word_spans_html(cue["translation"], cue.get("translation_words"))}</span>'
-        f'<span class="h3-dub-cue-source">{word_spans_html(cue["source"], cue.get("source_words"))}</span></span></li>'
+        f'<span class="h3-dub-cue-source">{word_spans_html(cue["source"], cue.get("source_words"))}</span>'
+        + _word_timing_note(cue, player.word_timing) + '</span></li>'
         for cue in player.lines)
     group = escape(f"h3-dub-voice-{key}", quote=True)
     note = ("" if player.music is not None else

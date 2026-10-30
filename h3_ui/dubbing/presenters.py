@@ -58,6 +58,9 @@ def summary_html(session: sessions.Session, long: set[int] | None = None) -> str
              f"<strong>{ready} ready</strong> to dub into {target}"]
     if untranslated:
         parts.append(f"{untranslated} untranslated")
+    issues = pipeline.translation_issues(lines)
+    if issues:
+        parts.append(f"{_plural(len(issues), 'translation')} {'needs' if len(issues) == 1 else 'need'} review")
     failed = pipeline.take_problems(session)
     if failed:
         parts.append(f"{len(failed)} with a failed take")
@@ -85,6 +88,7 @@ def board_value(session: sessions.Session, previous=None, *, focus: int | None =
     failed = pipeline.take_problems(session)
     rushed = pipeline.timing_problems(session)
     items = []
+    issues = set(pipeline.translation_issues(lines))
     for number, line in enumerate(lines):
         flags = []
         if not line.get("dub", True):
@@ -92,6 +96,8 @@ def board_value(session: sessions.Session, previous=None, *, focus: int | None =
         elif not line["translation"]:
             flags.append("empty")
         else:
+            if number in issues:
+                flags.append("translation")
             if number in failed:
                 flags.append("failed")
             if number in rushed:
@@ -149,6 +155,14 @@ def line_numbers(numbers: list[int]) -> str:
 
 
 def fit_note(line: dict) -> str:
+    note = _fit_note(line)
+    if pipeline.translation_issues([line]):
+        return ("**Review translation:** this text may contain an explanation instead of only the translation. "
+                "Edit it or translate again before dubbing.\n\n" + note)
+    return note
+
+
+def _fit_note(line: dict) -> str:
     """How the translation fits its line's time, from Drama 3's estimate of spoken length."""
     from h3_app.drama3.serving.planner import expected_seconds
 
@@ -315,6 +329,11 @@ def readiness_html(session: sessions.Session | None) -> str:
     facts = "".join(f"<dt>{name}</dt><dd>{value}</dd>" for name, value in rows)
     failed = sorted(pipeline.take_problems(session))
     warning = ""
+    issues = pipeline.translation_issues(lines)
+    if issues:
+        warning += (f'<p class="h3-dub-readiness-warning"><strong>Review translations: '
+                    f'{line_numbers(issues)}.</strong> These lines may contain explanations. '
+                    'Edit them or translate again before dubbing.</p>')
     if failed:
         numbers = line_numbers(failed)
         warning += (f'<p class="h3-dub-readiness-warning"><strong>{_plural(len(failed), "line")} with a failed '

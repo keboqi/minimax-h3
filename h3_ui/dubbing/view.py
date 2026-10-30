@@ -109,6 +109,7 @@ class DubbingView:
     listen_original: gr.Button
     new_take: gr.Button
     retranslate: gr.Button
+    translation_context: gr.Checkbox
     stop_preview: gr.Button
     line_status: gr.Markdown
     preview_audio: gr.Audio
@@ -140,6 +141,8 @@ class DubbingView:
     exported_video: gr.File
     export_status: gr.Markdown
     word_timing: gr.Checkbox
+    align_words: gr.Button
+    stop_align_words: gr.Button
 
 
 def opened_session_js(steps: StepStrip) -> str:
@@ -293,6 +296,10 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                         fit = gr.Markdown(elem_classes=["h3-dub-fit"])
                         line_numbers = gr.Textbox(visible=False)
                         inspected = gr.State(None)
+                        translation_context = gr.Checkbox(
+                            True, label="Include context (Hy-MT)",
+                            info="Translate again uses the previous two lines and translation notes. "
+                                 "Off: translate each line on its own.")
                         with gr.Row(elem_classes=["h3-dub-line-actions"]):
                             listen_original = gr.Button("Listen to original")
                             preview = gr.Button("Preview", variant="primary")
@@ -364,6 +371,11 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                             status = gr.Markdown(elem_classes=["h3-dub-status"])
                         # The dub with either voice, the music on or off and synced subtitles.
                         player = gr.HTML("", visible=False, js_on_load=PLAYER_JS, elem_classes=[PLAYER_CLASS])
+                        with gr.Row():
+                            align_words = gr.Button("Generate / repair word alignment", interactive=False)
+                            stop_align_words = gr.Button("Interrupt alignment", interactive=False)
+                        gr.Markdown("Align the latest dub without generating voices again. Successful word "
+                                    "timings are reused; missing timings are retried.", elem_classes=["h3-song-hint"])
                         with gr.Accordion("Dubbed files", open=False):
                             video = gr.Video(label="Dubbed video", interactive=False)
                             audio = gr.Audio(label="Dubbed audio", type="filepath", interactive=False)
@@ -377,6 +389,7 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                             steps.button("← Fix lines", LINES)
                         gr.Markdown("Every dub is also saved to **Media**.", elem_classes=["h3-song-hint"])
     run.h3_stop = stop
+    align_words.h3_stop = stop_align_words
     analyze.h3_stop = stop_analyze
     preview.h3_stop = new_take.h3_stop = retranslate.h3_stop = stop_preview
     return DubbingView(
@@ -385,10 +398,11 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
         options, separate, separator_model, reuse, local, aligner, merge_gap, refine_timestamps, plan, analyze, stop_analyze,
         analyze_status, board, lines, inspected, inspector, previous_line, next_line, start, end, speaker, original,
         translation, line_dub, fit, add_line, delete_line, line_numbers, preview, listen_original, new_take, retranslate,
+        translation_context,
         stop_preview, line_status, preview_audio, original_audio, speakers_panel, speakers, speakers_status, voice_mode, preset,
         timing, max_speed, speech_volume, background_volume, keep_original, advanced, regenerate,
         parallel, readiness, run, stop, status, player, video, audio, files,
-        export_source, export_subtitles, exported_video, export_status, word_timing,
+        export_source, export_subtitles, exported_video, export_status, word_timing, align_words, stop_align_words,
     )
 
 

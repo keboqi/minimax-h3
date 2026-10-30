@@ -391,7 +391,8 @@ class DubbingHandlers:
         except Exception as exc:
             yield gr.skip(), gr.skip(), gr.skip(), self._failed(exc), presenters.plan_html(steps)
 
-    def translate_lines(self, session_id, board, target_language, translator, gemini_model, api_key, notes):
+    def translate_lines(self, session_id, board, target_language, translator, gemini_model, api_key, notes,
+                        translation_context=True):
         """Translate the picked lines again; with none picked, fill the untranslated ones.
 
         Outputs: board, table rows, line status.
@@ -401,7 +402,8 @@ class DubbingHandlers:
             indices = [index for index in presenters.board_picks(board) if index < len(session.segments)] or None
             request = pipeline.AnalyzeRequest("", target_language=str(target_language or "").strip(),
                                               translator=translator, gemini_model=gemini_model,
-                                              api_key=str(api_key or ""), notes=str(notes or ""))
+                                              api_key=str(api_key or ""), notes=str(notes or ""),
+                                              translation_context=bool(translation_context))
             for update in self._gpu(lambda **kw: pipeline.retranslate(session_id, indices, request, **kw)):
                 if isinstance(update, pipeline.Analysis):
                     yield (presenters.board_value(update.session, board),
@@ -482,6 +484,18 @@ class DubbingHandlers:
                     yield gr.skip(), gr.skip(), gr.skip(), gr.skip(), update, *([gr.skip()] * 4)
         except Exception as exc:
             yield gr.skip(), gr.skip(), gr.skip(), gr.skip(), self._failed(exc), *([gr.skip()] * 4)
+
+    def align_words(self, session_id):
+        """Refresh the latest dub's player after generating or repairing word alignment."""
+        try:
+            for update in self._gpu(lambda **kw: pipeline.align_dub_words(session_id, **kw)):
+                if isinstance(update, pipeline.WordAlignment):
+                    yield (gr.update(value=player_html(update.player, key=update.player.dub.stem), visible=True),
+                           update.message)
+                else:
+                    yield gr.skip(), update
+        except Exception as exc:
+            yield gr.skip(), self._failed(exc)
 
     def export_subtitles(self, source):
         """Export the completed dub without regenerating voices or replacing the player."""

@@ -15,7 +15,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import contextvars
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
 import heapq
 import json
@@ -128,6 +128,8 @@ class AnalyzeRequest:
     # Take the stems and transcript from an earlier analysis of the same file when its settings match.
     reuse: bool = True
     refine_timestamps: bool = True
+    # HY-MT retranslation can omit both earlier dialogue and translation notes.
+    translation_context: bool = True
 
 
 @dataclass(frozen=True)
@@ -165,6 +167,13 @@ class Player:
     lines: list[dict]
     target_language: str = ""
     source_language: str = ""
+    word_timing: bool = False
+
+
+@dataclass
+class WordAlignment:
+    player: Player
+    message: str
 
 
 @dataclass
@@ -380,7 +389,7 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
                     "Reuse earlier results to redo them.")
     if transcript.get("refinement"):
         message += " " + transcript["refinement"]["summary"]
-    yield Analysis(session, message + length_advice(session.segments))
+    yield Analysis(session, message + translation_advice(session.segments) + length_advice(session.segments))
 
 
 def _transcript_key(request: AnalyzeRequest) -> str:
@@ -503,11 +512,12 @@ def _translate(session: sessions.Session, indices: list[int], request, *, runtim
     else:
         # Hy-MT translates one line at a time; the lines before it give it the conversation so far.
         contexts = ["\n".join(s["source"] for s in lines[max(0, i - CONTEXT_LINES):i] if s["source"])
+                    if request.translation_context else ""
                     for i in indices]
         reply = yield from blocking(
             f"Translating {len(texts)} line(s) into {target} with Hy-MT",
             lambda report: tools.run("translate", {"texts": texts, "contexts": contexts, "target_language": target,
-                                                   "notes": request.notes},
+                                                   "notes": request.notes if request.translation_context else ""},
                                      runtime, free_gpu=free_gpu, hf_token=hf_token, report=report))
         translated = reply["texts"]
     # The editor may have saved lines meanwhile: apply each translation to the line that still
@@ -548,7 +558,23 @@ def retranslate(session_id: str, indices: list[int] | None, request, *, runtime,
         return
     yield from _translate(session, indices, request, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
     yield Analysis(session, f"Translated {len(indices)} line(s) into {session.data['target_language']}."
-                            + length_advice(session.segments))
+                            + translation_advice(session.segments) + length_advice(session.segments))
+
+
+def translation_issues(lines: list[dict]) -> list[int]:
+    """Recheck saved text so edits clear warnings and older sessions get them too."""
+    return [index for index, line in enumerate(lines)
+            if line.get("dub", True) and line["translation"]
+            and tools_worker.invalid_translation(line["translation"], line["source"])]
+
+
+def translation_advice(lines: list[dict]) -> str:
+    found = translation_issues(lines)
+    if not found:
+        return ""
+    numbers = ", ".join(str(index + 1) for index in found[:20]) + (", …" if len(found) > 20 else "")
+    return (f" Review {len(found)} translation(s) that may contain explanations: {numbers}. "
+            "Edit these lines or translate them again before dubbing.")
 
 
 def long_lines(lines: list[dict]) -> list[int]:
@@ -1212,8 +1238,12 @@ def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int
         wav = encode_wav(_resample(np.asarray(samples, dtype=np.float32), RATE, rate), rate)
         path = cache / f"{hashlib.sha256(wav + text.encode()).hexdigest()}.json"
         try:
-            found[(index, field)] = (offset, json.loads(path.read_text(encoding="utf-8")))
-        except (OSError, ValueError):
+            timed = json.loads(path.read_text(encoding="utf-8"))
+            # Older caches include null/empty failures. Only complete, valid word
+            # timings may suppress another alignment attempt.
+            timed = tools_worker.aligned_line_words([text], timed)[0]
+            found[(index, field)] = (offset, timed)
+        except (OSError, ValueError, TypeError, KeyError):
             pending.append((index, field, offset, wav, text, path))
     if pending:
         try:
@@ -1230,7 +1260,11 @@ def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int
             if len(words) != len(pending):
                 raise H3Error("The aligner returned word timing for the wrong number of lines.")
             cache.mkdir(parents=True, exist_ok=True)
-            for (index, field, offset, _wav, _text, path), timed in zip(pending, words):
+            for (index, field, offset, _wav, text, path), timed in zip(pending, words):
+                try:
+                    timed = tools_worker.aligned_line_words([text], timed)[0]
+                except (ValueError, TypeError, KeyError):
+                    continue
                 found[(index, field)] = (offset, timed)
                 try:
                     path.write_text(json.dumps(timed, ensure_ascii=False), encoding="utf-8")
@@ -1240,6 +1274,16 @@ def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int
             raise
         except Exception as exc:  # the dub is finished; only its word highlighting is lost
             notes.append(f"word-by-word subtitles unavailable for {len(pending)} line(s): {exc}")
+    missing = []
+    for field, label in (("source", "original"), ("translation", "translated")):
+        indices = sorted({index + 1 for index, job_field, *_ in jobs
+                          if job_field == field and (index, field) not in found})
+        if indices:
+            numbers = ", ".join(map(str, indices[:20])) + (", …" if len(indices) > 20 else "")
+            missing.append(f"{label} lines {numbers}")
+    if missing:
+        notes.append("word-by-word subtitles unavailable for " + "; ".join(missing)
+                     + ". Plain subtitles are kept. Use Generate / repair word alignment to retry.")
     timings: dict[int, dict[str, list[dict]]] = {}
     for (index, field), (offset, timed) in found.items():
         if timed:
@@ -1365,11 +1409,12 @@ def _player(session: sessions.Session, speech: Path, folder: Path, *, separated:
     cues = [{"start": line["start"], "end": line["end"], "shown_start": shown[index]["start"],
              "shown_end": shown[index]["end"],
              "speaker": line["speaker"], "source": line["source"], "translation": line["translation"],
+             "translation_spoken": index in spoken,
              "source_words": (words or {}).get(index, {}).get("source", []),
              "translation_words": (words or {}).get(index, {}).get("translation", [])}
             for index, line in enumerate(lines) if line["source"] or line["translation"]]
     return Player(video, dub_track, original, music, duration, cues, language,
-                  session.data.get("source_language", ""))
+                  session.data.get("source_language", ""), word_timing=words is not None)
 
 
 def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[str | Dub]:
@@ -1459,17 +1504,34 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
                             timeout=runtime.generation_timeout, action="Writing the dubbed video")
         write_snapshot(video_out, {"family": "Dub & Translate", "settings": {
             **settings, "original_track": request.keep_original_track, "burned_subtitles": False}})
-    words = {}
+    words = None
     if request.word_timing:
         yield "Timing subtitle words"
         words = yield from _word_timings(session, lines, spoken, clips, runtime=runtime, free_gpu=free_gpu,
                                          hf_token=hf_token, notes=notes)
-    clips.clear()
     yield "Preparing the result player"
     _prune_players(output_dir)
     player = _player(session, speech, output_dir / PLAYER_DIR / stem, separated=separated, speech_gain=speech_gain,
                      background_gain=background_gain, video=video_out, mixed=audio_out, lines=lines,
                      spoken=spoken, duration=duration + overrun, language=language, words=words)
+    # Freeze the exact fitted clips and dialogue for alignment without regenerating
+    # voices or applying any edits made after this dub.
+    folder = output_dir / PLAYER_DIR / stem
+    try:
+        np.savez_compressed(folder / "alignment.npz", **{str(index): clip for index, clip in clips.items()})
+        (folder / "alignment.json").write_text(json.dumps({
+            "player": asdict(player), "lines": lines, "spoken": spoken,
+            "files": dict(session.data.get("files", {})),
+        }, ensure_ascii=False, default=str), encoding="utf-8")
+    except OSError as exc:
+        notes.insert(0, f"Dub saved, but word-alignment repair audio could not be saved: {exc}. "
+                     "The repair button is unavailable for this result; generate a dub again after resolving storage.")
+        for name in ("alignment.npz", "alignment.json"):
+            try:
+                (folder / name).unlink(missing_ok=True)
+            except OSError:
+                pass
+    clips.clear()
     for work_file in (speech, mix):
         work_file.unlink(missing_ok=True)
     # Only this field is the dub's: lines edited while it ran stay as saved.
@@ -1488,3 +1550,48 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     if notes:
         message += ".\n\nCheck: " + "; ".join(notes[:12]) + ("; …" if len(notes) > 12 else "")
     yield Dub(session, audio_out, video_out, subtitles, message + ("" if notes else "."), player)
+
+
+def align_dub_words(session_id: str, *, runtime, free_gpu, hf_token=None) -> Iterator[str | WordAlignment]:
+    """Align the latest completed dub's frozen audio and text; reuse successful word caches."""
+    session = sessions.load(runtime, session_id)
+    output = Path(session.data.get("last_output") or "")
+    output_dir = (runtime.outputs_dir / "dubbing").resolve()
+    if output.resolve().parent != output_dir or not output.is_file():
+        raise H3Error("Generate a dub first; its output files must still exist.")
+    folder = output_dir / PLAYER_DIR / output.stem
+    try:
+        saved = json.loads((folder / "alignment.json").read_text(encoding="utf-8"))
+        with np.load(folder / "alignment.npz", allow_pickle=False) as archive:
+            clips = {int(index): archive[index] for index in archive.files}
+    except (OSError, ValueError, KeyError) as exc:
+        raise H3Error("This dub has no saved alignment audio. Generate the dub once to enable this button.") from exc
+    frozen = sessions.Session(session.root, {"files": saved["files"]})
+    if frozen.speech_audio is None or not frozen.speech_audio.is_file():
+        raise H3Error("The original audio is no longer available. Analyze the source again.")
+    lines = saved["lines"]
+    spoken = {int(index): tuple(bounds) for index, bounds in saved["spoken"].items()}
+    notes = []
+    yield "Generating missing word timings; reusing successful alignments"
+    words = yield from _word_timings(frozen, lines, spoken, clips, runtime=runtime, free_gpu=free_gpu,
+                                     hf_token=hf_token, notes=notes)
+    data = saved["player"]
+    for field in ("video", "dub", "original", "music"):
+        data[field] = Path(data[field]) if data[field] else None
+    player = Player(**data)
+    cue_indices = [index for index, line in enumerate(lines) if line["source"] or line["translation"]]
+    for index, cue in zip(cue_indices, player.lines):
+        cue["source_words"] = words.get(index, {}).get("source", [])
+        cue["translation_words"] = words.get(index, {}).get("translation", [])
+    player.word_timing = True
+    expected = [(index, field) for index, line in enumerate(lines)
+                for field in ("source", "translation")
+                if line[field].strip() and (field == "source" or index in clips)]
+    completed = sum(bool(words.get(index, {}).get(field)) for index, field in expected)
+    message = (f"All word timings generated: {completed}/{len(expected)} eligible original and translated tracks aligned."
+               if completed == len(expected) else
+               f"Word timings generated: {completed}/{len(expected)} line tracks aligned; "
+               f"{len(expected) - completed} still missing. " + " ".join(notes))
+    saved["player"] = asdict(player)
+    (folder / "alignment.json").write_text(json.dumps(saved, ensure_ascii=False, default=str), encoding="utf-8")
+    yield WordAlignment(player, message)

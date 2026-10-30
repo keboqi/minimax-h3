@@ -24,7 +24,8 @@ from h3_requirements import (
 LABEL = "Dub & Translate tools"
 # Job families of Dub & Translate's steps; separate families let each Interrupt stop only its step.
 FAMILY_ANALYZE, FAMILY_LINES, FAMILY_DUB = "dubbing_analyze", "dubbing_lines", "dubbing"
-FAMILIES = frozenset({FAMILY_ANALYZE, FAMILY_LINES, FAMILY_DUB})
+FAMILY_WORDS = "dubbing_words"
+FAMILIES = frozenset({FAMILY_ANALYZE, FAMILY_LINES, FAMILY_DUB, FAMILY_WORDS})
 WORKER = Path(__file__).with_name("tools_worker.py")
 # Free VRAM (MiB) wanted before a request's models load: weights plus working room.
 LOAD_HEADROOM_MIB = {"separate": 4 * 1024, "transcribe": 7 * 1024, "align_lines": 7 * 1024,

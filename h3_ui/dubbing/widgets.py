@@ -56,7 +56,7 @@ BOARD_TEMPLATE = r"""${(() => {
   const speakers = v.speakers || [];
   const picked = new Set(v.picked || []);
   const filter = v.filter || 'all';
-  const needs = (l) => ['long', 'empty', 'failed', 'rushed'].some((flag) => l.flags.includes(flag));
+  const needs = (l) => ['long', 'empty', 'failed', 'rushed', 'translation'].some((flag) => l.flags.includes(flag));
   const tests = { all: () => true, attention: needs, empty: (l) => l.flags.includes('empty'),
     failed: (l) => l.flags.includes('failed') };
   const shown = (l) => filter.startsWith('speaker:') ? l.speaker === Number(filter.slice(8)) : (tests[filter] || tests.all)(l);
@@ -80,7 +80,7 @@ BOARD_TEMPLATE = r"""${(() => {
   const rows = lines.map((l, i) => !shown(l) ? '' : `<div class="h3-dub-row${i === v.focus ? ' focus' : ''}${picked.has(i) ? ' picked' : ''}${l.dub ? '' : ' off'}" data-row="${i}">
 <input type="checkbox" data-pick="${i}" ${picked.has(i) ? 'checked' : ''} aria-label="Pick line ${i + 1}">
 <button type="button" class="h3-dub-row-main" data-open="${i}" aria-label="Open line ${i + 1}">
-<span class="h3-dub-row-meta"><span class="h3-dub-row-number">${i + 1}</span><span class="h3-dub-row-time">${l.time}</span><span class="h3-dub-speaker tone-${l.tone}">${l.label}</span>${flag(l)}</span>
+<span class="h3-dub-row-meta"><span class="h3-dub-row-number">${i + 1}</span><span class="h3-dub-row-time">${l.time}</span><span class="h3-dub-speaker tone-${l.tone}">${l.label}</span>${l.flags.includes('translation') ? '<span class="h3-dub-flag warn">Review translation</span>' : ''}${flag(l)}</span>
 <span class="h3-dub-row-text"><span class="h3-dub-row-source">${l.source}</span><span class="h3-dub-row-translation${l.translation ? '' : ' none'}">${l.translation || 'No translation yet'}</span></span>
 </button>
 <input type="checkbox" role="switch" class="h3-dub-switch" data-dub="${i}" ${l.dub ? 'checked' : ''} aria-label="Dub line ${i + 1}" title="Dub this line">
