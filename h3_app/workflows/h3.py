@@ -755,6 +755,8 @@ def finish_sampling(
             refine_schedule, refine_total = sigmas, int(steps)
             if refinement_lora_name is not None and refinement_variant == PIKA_FLEX:
                 refine_total = 6
+                if not 1 <= int(latent_upscale_refine_steps) < refine_total:
+                    raise H3Error("Refinement steps must be smaller than the selected refinement adapter's schedule.")
                 refine_schedule = graph.add("ManualSigmas", sigmas=PIKA_FLEX_SIGMAS)
             elif turbo_variant == PIKA_FLEX and refinement_lora_name is not None:
                 # A replacement adapter must not inherit Pika's distilled ladder.

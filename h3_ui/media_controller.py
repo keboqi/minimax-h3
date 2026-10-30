@@ -650,8 +650,8 @@ class MediaController:
                         "prompt": ltx25_prompt,
                         "source_resolution": f"{metadata.width}×{metadata.height}",
                         "target_resolution": f"{target_width}×{target_height}",
-                        "seedvr2_model": seedvr2_model,
-                        "ltx25_model": ltx25_model,
+                        **({"seedvr2_model": seedvr2_model} if option == SEEDVR2_UPSCALE else {}),
+                        **({"ltx25_model": ltx25_model} if option in LTX25_POSTPROCESS_MODELS else {}),
                         **((h3_refinement or {}) if option == H3_REFINEMENT else {}),
                     },
                 })

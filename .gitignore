@@ -17,6 +17,8 @@ gradio_outputs/
 !.env.example
 .idea/
 .vscode/
+.claude/
+.agent_harnesses.json
 
 # Private workspace database, saved prompts and retained source media
 h3-workspace/

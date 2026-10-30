@@ -184,6 +184,20 @@ class PikaFlexTests(unittest.TestCase):
         self.assertEqual(split["step"], 4)
         self.assertEqual(graph[split["sigmas"][0]]["inputs"], {"sigmas": PIKA_FLEX_SIGMAS})
         self.assertEqual(graph[refined["sampler"][0]]["inputs"], {"sampler_name": "lcm"})
+        bad_replacement = resolve_settings(self.request(
+            latent_upscale=True, latent_upscale_refine_lora="DMAD / 4-step",
+            latent_upscale_refine_steps=4,
+        ))
+        self.assertIn(
+            "Refinement steps must be positive and smaller than the selected refinement adapter's schedule.",
+            bad_replacement.issues,
+        )
+        pika_refiner = resolve_settings(self.request(
+            preset="Fast", turbo_variant="LightX2V / 4-step 768p (FL2V v1.3 · Ref2V v1.0)",
+            steps=4, latent_upscale=True, latent_upscale_refine_lora=PIKA_FLEX,
+            latent_upscale_refine_steps=5,
+        ))
+        self.assertFalse(pika_refiner.issues)
 
 
 class PikaDownloadTests(unittest.TestCase):

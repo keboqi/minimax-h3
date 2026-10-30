@@ -45,25 +45,31 @@ def add_regenerate_model(graph: Graph, model_ref: list[Any], option: str) -> lis
 def required_h3_regenerate_nodes(models: ModelConfig | None = None, refinement=None) -> set[str]:
     required = {
         "LoadVideo", "GetVideoComponents", "ImageScale", "UNETLoader",
-        "LoraLoaderModelOnly", "CLIPLoader", "VAELoader", "MiniMaxH3ImageToVideo",
+        "CLIPLoader", "VAELoader", "MiniMaxH3ImageToVideo",
         "H3RegenerateEncodeVideo", "H3RegeneratePrepareLatent",
         H3_LATENT_UPSCALER_NODE, H3_LATENT_UPSCALER_LOADER_NODE,
         H3_SEPARATE_AV_LATENT_NODE, H3_COMBINE_AV_LATENT_NODE,
-        "BasicGuider", "RandomNoise", "KSamplerSelect", "ManualSigmas",
-        "SamplerCustomAdvanced", "VAEDecodeTiled", "ImageFromBatch", "CreateVideo", "SaveVideo",
+        "BasicGuider", "RandomNoise", "VAEDecodeTiled", "ImageFromBatch", "CreateVideo", "SaveVideo",
         H3_REFINEMENT_COMPILER_GUARD_NODE,
     }
     profile = models.default_profile if models else None
     if refinement is not None and models is not None:
         from .h3 import turbo_required_nodes
         config = resolve_refinement(refinement, models)
+        variant = config["variant"]
         profile = config["settings"]["model_profile"]
-        if config["lora"]:
-            required |= turbo_required_nodes(config["variant"], config["lora"])
-        if config["variant"] not in H3_REGENERATE_MODELS:
-            required |= {"BasicScheduler", "SplitSigmas"}
+        if variant in H3_REGENERATE_MODELS:
+            required |= {"LoraLoaderModelOnly", "KSamplerSelect", "ManualSigmas"}
+        else:
+            required |= turbo_required_nodes(variant, config["lora"]) if config["lora"] else {"KSamplerSelect"}
+            required.add("ManualSigmas" if variant == PIKA_FLEX else "BasicScheduler")
+            required.add("SplitSigmas")
         if config["split"]:
             required |= {H3_SPLIT_TEMPORAL_PARAMS_NODE, H3_SPLIT_SPATIAL_PARAMS_NODE, H3_SPLIT_UPSCALE_NODE}
+        else:
+            required.add("SamplerCustomAdvanced")
+    else:
+        required |= {"LoraLoaderModelOnly", "KSamplerSelect", "ManualSigmas", "SamplerCustomAdvanced"}
     if models and "convrot" in models.profile(profile).fl2va.lower():
         required.add(CHUNK_FEED_FORWARD_NODE)
     return required

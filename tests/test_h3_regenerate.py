@@ -232,7 +232,7 @@ class SharedRefinementTests(unittest.TestCase):
         self.assertEqual(nodes[catalog.H3_SPLIT_SPATIAL_PARAMS_NODE]["tile_width"], 768)
         self.assertEqual(nodes[catalog.H3_SPLIT_TEMPORAL_PARAMS_NODE]["chunk_frames"], 90)
         self.assertEqual(nodes["CreateVideo"]["fps"], 29.97)
-        self.assertLessEqual(set(nodes), upscale.required_upscale_nodes(catalog.H3_REFINEMENT, models, settings))
+        self.assertEqual(set(nodes), upscale.required_upscale_nodes(catalog.H3_REFINEMENT, models, settings))
 
     def test_full_frame_and_regenerate_choices_use_shared_settings(self):
         models = self.models()

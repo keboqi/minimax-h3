@@ -292,12 +292,21 @@ def resolve_settings(
         issues.append(
             f"{generation_mode} requires at least {minimum} sampling steps."
         )
+    refine_limit = (
+        6
+        if finishing.latent_upscale_refine_lora == PIKA_FLEX
+        else TURBO_STEPS.get(finishing.latent_upscale_refine_lora, sampling.steps)
+        if pika and finishing.latent_upscale_refine_lora != "Same as generation"
+        else sampling.steps
+    )
     if (
         finishing.latent_upscale
-        and not 1 <= sampling.latent_upscale_refine_steps < sampling.steps
+        and not 1 <= sampling.latent_upscale_refine_steps < refine_limit
     ):
         issues.append(
             "Refinement steps must be positive and smaller than base sampling steps."
+            if refine_limit == sampling.steps
+            else "Refinement steps must be positive and smaller than the selected refinement adapter's schedule."
         )
     if fmt != "Image" and not 2 <= output.duration <= 15:
         issues.append("Duration must be between 2 and 15 seconds.")

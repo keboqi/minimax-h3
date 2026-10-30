@@ -386,10 +386,20 @@ def _prepare_latent_upscale(request, services, runtime, models, *, width, height
     )
     source_width, source_height, width, height = h3_latent_upscale_dimensions(width, height)
     refine_steps = int(request.finishing.latent_upscale_refine_steps)
-    if method not in H3_REGENERATE_MODELS and (refine_steps < 1 or refine_steps >= effective_steps):
+    refine_limit = (
+        6
+        if refinement_variant == PIKA_FLEX
+        else services.policy.turbo_steps_for(refinement_variant)
+        if getattr(request, "sampling", None) is not None
+        and request.sampling.generation_mode == "Turbo"
+        and normalize_turbo_variant(request.sampling.turbo_variant) == PIKA_FLEX
+        and refinement_variant is not None
+        else effective_steps
+    )
+    if method not in H3_REGENERATE_MODELS and (refine_steps < 1 or refine_steps >= refine_limit):
         raise H3Error(
             "H3 latent upscale refinement steps must be at least 1 and smaller "
-            f"than the total {effective_steps} sampling steps."
+            f"than the total {refine_limit} sampling steps."
         )
     (
         _latent_upscale_key,
