@@ -40,9 +40,15 @@ def checked(test, script, source=""):
 class SegmentTests(unittest.TestCase):
     def test_input_kind_tells_scripts_prose_and_briefs_apart(self):
         self.assertEqual(input_kind(TEMPLE), SCRIPT)
+        self.assertEqual(input_kind("<|speaker:0|> Hello there.\n<|speaker:1|> General."), SCRIPT)
         self.assertEqual(input_kind(KETTLE), PROSE)
         self.assertEqual(input_kind(NOODLES), PROSE)
         self.assertEqual(input_kind("Two friends arguing about pizza, 30 seconds."), BRIEF)
+        self.assertEqual(input_kind('Write a scene where a detective says "Stop!" to a fleeing thief.'), BRIEF)
+        self.assertEqual(input_kind(
+            "Create a 45-second audio drama. Two astronauts hear a knock on the airlock. "
+            'One whispers "Nobody else is up here."'
+        ), BRIEF)
         # 她问：“…” is prose with an attribution, not a script label.
         self.assertEqual(input_kind("父亲慢慢点头：“你小时候最爱吃。”\n小雨笑了：“是啊。”"), PROSE)
 
@@ -73,6 +79,13 @@ class SegmentTests(unittest.TestCase):
         self.assertEqual(units[0].effects, ("old_gramophone",))
         self.assertEqual(units[2].hint, "surprised")
         self.assertEqual(units[3].effects, ("phone_call",))
+        # A multi-sentence quoted script line splits into <=2-sentence units with the hint on the first.
+        multi = segment_source('Mia( breathless ): "One. Two. Three." \nTom: "Four."').units
+        self.assertEqual([(u.label, u.text, u.hint) for u in multi], [
+            ("Mia", "One. Two.", "breathless"),
+            ("Mia", "Three.", ""),
+            ("Tom", "Four.", ""),
+        ])
 
     def test_attribution_needs_every_quote_and_reads_narrated_quotes_in_place(self):
         source = segment_source(NOODLES)
@@ -347,6 +360,143 @@ class GuidedWriterTests(unittest.TestCase):
         self.assertEqual(sorted((entry["speaker_id"], entry["name"]) for entry in cast), [(3, "Tom"), (5, "Nora")])
         self.assertIn("Available voices (cast only these names): Tom, Nora", dict(self.requests)["preserve"])
         self.assertTrue(script.startswith("<parallel>") or "<|speaker:3|> The kettle" in script, script)
+
+    def test_quoted_brief_and_preserve_brief_handoff_write_scenes_instead_of_preserving_instructions(self):
+        from h3_app.prompt_writers import drama3 as writer
+
+        brief = {"title": "Alley Chase", "cast": [{"name": "Cole", "role": "detective"}, {"name": "Vex", "role": "thief"}],
+                 "scenes": [{"place": "rainy alley", "change": "cornered", "lines": [
+                     {"speaker": "Cole", "text": "Stop! Drop the bag."},
+                     {"speaker": "Vex", "text": "Make me."}]}]}
+        voices = {"voices": [
+            {"name": "Cole", "description": "A male voice: gritty baritone. Clean studio recording.", "preview_text": "Hold it right there."},
+            {"name": "Vex", "description": "A female voice: sharp alto. Clean studio recording.", "preview_text": "Catch me if you can."}]}
+        script, status, _cast, _sounds, title = self.run_writer(
+            'Write a scene where a detective says "Stop!" to a fleeing thief.',
+            {"brief": brief, "voices": voices, "direction": {"lines": []}},
+            script_mode=writer.DRAMA3_SCRIPT_BASIC)
+        self.assertNotIn("failed", status, status)
+        self.assertEqual(title, "Alley Chase")
+        self.assertNotIn("preserve", [stage for stage, _ in self.requests])
+        self.assertIn("<|speaker:0|> Stop! Drop the bag.", script)
+
+        # A multi-sentence synopsis without brief keywords can still be confirmed as "kind": "brief" by S1.
+        synopsis = ("The elevator stops between floors during a citywide blackout. "
+                    "Two strangers inside realize both of them are carrying the same locked silver case. "
+                    "Neither wants to admit who hired them.")
+        script, status, *_ = self.run_writer(
+            synopsis,
+            {"preserve": {"kind": "brief"}, "brief": brief, "voices": voices, "direction": {"lines": []}},
+            script_mode=writer.DRAMA3_SCRIPT_BASIC)
+        self.assertNotIn("failed", status, status)
+        self.assertEqual([stage for stage, _ in self.requests][:2], ["preserve", "brief"])
+        self.assertIn("<|speaker:0|> Stop! Drop the bag.", script)
+
+    def test_narration_only_story_accepts_empty_cast(self):
+        from h3_app.prompt_writers import drama3 as writer
+
+        prose = ("The lighthouse stood dark against the rising tide. "
+                 "Wave after wave struck the granite base. "
+                 "Inside the lantern room, the brass pendulum swung without a sound.")
+        script, status, cast, *_ = self.run_writer(
+            prose,
+            {"preserve": {"title": "Low Tide", "cast": [], "speakers": {},
+                          "scenes": [{"from": "s1", "place": "lighthouse", "change": "storm rises"}]},
+             "voices": {"voices": [VOICES["voices"][0]]},
+             "direction": {"lines": [{"id": "u1", "cue": "hushed, steady"}]}},
+            script_mode=writer.DRAMA3_SCRIPT_BASIC)
+        self.assertNotIn("failed", status, status)
+        self.assertEqual([(entry["speaker_id"], entry["name"]) for entry in cast], [(0, "narrator")])
+        self.assertIn("<|speaker:0|>", script)
+
+    def test_null_cast_in_brief_triggers_retry_instead_of_crashing(self):
+        from h3_app.prompt_writers import drama3 as writer
+
+        bad_brief = {"title": "Night", "cast": None, "scenes": []}
+        good_brief = {"title": "Night", "cast": [{"name": "Maya", "role": "curator"}],
+                      "scenes": [{"place": "hall", "change": "quiet", "lines": [{"speaker": "Maya", "text": "Hello?"}]}]}
+        voices = {"voices": [{"name": "Maya", "description": "A female voice: young. Clean studio recording.",
+                              "preview_text": "I work in the gallery."}]}
+        script, status, *_ = self.run_writer(
+            "Maya is alone in the hall.",
+            {"brief": [bad_brief, good_brief], "voices": voices, "direction": {"lines": []}},
+            script_mode=writer.DRAMA3_SCRIPT_BASIC)
+        self.assertNotIn("failed", status, status)
+        self.assertIn("in 4 Guided steps", status)
+        self.assertIn("<|speaker:0|> Hello?", script)
+
+    def test_single_speaker_mode_works_on_briefs_and_respects_named_slot(self):
+        import json
+        from h3_app.prompt_writers import drama3 as writer
+
+        brief = {"title": "Solo", "cast": [{"name": "Maya", "role": "curator"}, {"name": "Arthur", "role": "guard"}],
+                 "scenes": [{"place": "museum", "change": "dread", "lines": [
+                     {"speaker": "narrator", "text": "The gallery was dark."},
+                     {"speaker": "Maya", "text": "Who is there?"}]}]}
+        voices = {"voices": [{"name": "Storyteller", "description": "A female voice: warm. Clean studio recording.",
+                              "preview_text": "I tell the old stories every evening."}]}
+        cast_context = ("Existing slot identities:\n"
+                        + json.dumps([{"speaker_id": 0, "name": "Storyteller", "description": "", "has_reference": False}]))
+        script, status, cast, *_ = self.run_writer(
+            "A short museum ghost story.",
+            {"brief": brief, "voices": voices, "direction": {"lines": []}},
+            speaker_mode=writer.DRAMA3_SPEAKER_SINGLE,
+            cast_context=cast_context,
+            speaker_names={0: "Storyteller"},
+            script_mode=writer.DRAMA3_SCRIPT_BASIC)
+        self.assertNotIn("failed", status, status)
+        self.assertEqual([(entry["speaker_id"], entry["name"]) for entry in cast], [(0, "Storyteller")])
+        self.assertEqual(script.split("\n"), ["<|speaker:0|> The gallery was dark.", "<|speaker:0|> Who is there?"])
+
+    def test_adapt_to_voices_gives_narration_to_unused_voice_and_retries_when_a_voice_is_unused(self):
+        from h3_app.prompt_writers import drama3 as writer
+
+        one_character_prose = 'The corridor was dark.\n"Stay back," Tom warned.\nThe door clicked shut.'
+        preserve_one = {"title": "Hall", "cast": [{"name": "Tom"}], "speakers": {"s2": "Tom"},
+                        "scenes": [{"from": "s1", "place": "hall", "change": "door shuts"}]}
+        voices = {"voices": [dict(VOICES["voices"][1], name="Tom"), dict(VOICES["voices"][2], name="Nora")]}
+        script, status, cast, *_ = self.run_writer(
+            one_character_prose,
+            {"preserve": preserve_one, "voices": voices, "direction": {"lines": []}},
+            voices=((3, "Tom"), (5, "Nora")),
+            speaker_mode=writer.DRAMA3_SPEAKER_ADAPT,
+            script_mode=writer.DRAMA3_SCRIPT_BASIC)
+        self.assertNotIn("failed", status, status)
+        # Tom speaks s2; Nora (unused in dialogue) gets the narration so both reference voices are used.
+        self.assertEqual(sorted((entry["speaker_id"], entry["name"]) for entry in cast), [(3, "Tom"), (5, "Nora")])
+        self.assertIn("The narration is read by Nora", status)
+        self.assertIn("<|speaker:5|> The corridor was dark.", script)
+        self.assertIn("<|speaker:3|> Stay back,", script)
+
+    def test_tagged_script_and_cue_hints_round_trip_through_guided_writer(self):
+        import json
+        from h3_app.prompt_writers import drama3 as writer
+
+        tagged = '<|speaker:2|> (whispering): "Hold still."\n<|speaker:4|>: "I hear them."'
+        preserve = {"title": "Hideout", "cast": [{"name": "Maya", "aliases": ["Speaker 2"]},
+                                                 {"name": "Arthur", "aliases": ["Speaker 4"]}],
+                    "speakers": {}, "scenes": [{"from": "s1", "place": "cellar", "change": "steps pass"}]}
+        voices = {"voices": [
+            {"name": "Maya", "description": "A female voice: young. Clean studio recording.", "preview_text": "Quiet now."},
+            {"name": "Arthur", "description": "A male voice: older. Clean studio recording.", "preview_text": "I am listening."}]}
+        cast_context = (
+            "Existing slot identities:\n"
+            + json.dumps([{"speaker_id": 2, "name": "Maya", "description": "", "has_reference": False},
+                          {"speaker_id": 4, "name": "Arthur", "description": "", "has_reference": False}])
+            + "\nReusable speaker voices:\n"
+            + json.dumps([{"name": "Maya", "description": "A female voice: custom preset description. Clean studio recording."}])
+        )
+        script, status, cast, *_ = self.run_writer(
+            tagged,
+            {"preserve": preserve, "voices": voices, "direction": {"lines": []}},
+            cast_context=cast_context,
+            speaker_names={2: "Maya", 4: "Arthur"},
+            script_mode=writer.DRAMA3_SCRIPT_BASIC)
+        self.assertNotIn("failed", status, status)
+        self.assertEqual([(entry["speaker_id"], entry["name"]) for entry in cast], [(2, "Maya"), (4, "Arthur")])
+        self.assertIn("custom preset description", cast[0]["description"])
+        # The parenthesized hint (whispering) is applied even when the direction stage returns no cues.
+        self.assertIn("<|speaker:2|> Hold [whispering] still.", script)
 
 
 if __name__ == "__main__":

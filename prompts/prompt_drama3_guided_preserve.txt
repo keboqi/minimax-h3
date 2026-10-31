@@ -14,3 +14,4 @@ Rules:
 6. scenes: start a new scene only where the place or time clearly changes, giving the unit that starts it. The first scene starts at the first unit. place is a few words naming where we are and what it sounds like; change says in one short sentence what turns in that scene. Short pieces have one scene.
 7. title: the story's own heading if it has one, otherwise a short title (at most 60 characters) in the story's language.
 8. When the request lists available voices, cast only those names and give every character's lines to the closest-fitting one.
+9. If the units are not a story or script to perform as written, but a creative brief or instructions asking you to write a new scene, reply with {"kind": "brief"} and nothing else.

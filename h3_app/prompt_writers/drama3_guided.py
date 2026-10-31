@@ -10,6 +10,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
+import re
 from typing import Callable
 
 from h3_app.drama3.guided.compile import compile_script
@@ -18,7 +19,7 @@ from h3_app.drama3.guided.schema import (
     CHARACTER_EFFECTS, StageError, canonical, parse_content_brief, parse_content_preserve, parse_direction,
     parse_staging, parse_voices, scenes_from_units,
 )
-from h3_app.drama3.guided.segment import BRIEF, attribute_units, input_kind, segment_source
+from h3_app.drama3.guided.segment import BRIEF, attribute_units, input_kind, replace_speaker_tag_line, segment_source
 from h3_app.drama3.speakers import identity, normalize_name
 from h3_app.errors import H3Error
 from h3_app.prompt_writers.drama3 import (
@@ -55,6 +56,19 @@ def slot_identities(cast_context: str) -> list[dict]:
     return []
 
 
+def reusable_voices(cast_context: str) -> list[dict]:
+    """Saved speaker presets (name, description) listed in the writer's cast context."""
+    for line in str(cast_context or "").splitlines():
+        if line.startswith("[{"):
+            try:
+                entries = json.loads(line)
+            except ValueError:
+                continue
+            if all(isinstance(entry, dict) and "name" in entry and "speaker_id" not in entry for entry in entries):
+                return [entry for entry in entries if str(entry.get("name") or "").strip()]
+    return []
+
+
 class _Calls:
     """Stage calls with one targeted retry; counts calls for the status."""
 
@@ -85,7 +99,10 @@ class _Calls:
 
 def _line_listing(utterances: list[Utterance]) -> str:
     marks = {"reaction": " [reaction]", "interrupt": " [interrupt]", "heading": " [title]"}
-    return "\n".join(f"{u.id} {u.speaker}{marks.get(u.kind, '')}: {u.text}" for u in utterances)
+    return "\n".join(
+        f"{u.id} {u.speaker}{marks.get(u.kind, '')}{f' (cue hint: {u.hint})' if u.hint else ''}: {u.text}"
+        for u in utterances
+    )
 
 
 def _batches(scenes: list[Scene]) -> list[list[Scene]]:
@@ -105,16 +122,23 @@ def _scene_listing(batch: list[Scene], by_id: dict[str, Utterance]) -> str:
     return "\n".join(parts)
 
 
-def _available_names(voices, speaker_mode: str) -> dict[str, int] | None:
+def _available_names(voices, speaker_mode: str, slots: list[dict] = ()) -> dict[str, int] | None:
     """For Adapt and Single, the names the cast must use, by speaker ID; None when any name goes."""
-    named = {(normalize_name(name) if str(name or "").strip() else f"Voice {speaker}"): int(speaker)
-             for speaker, name in voices}
     if speaker_mode == DRAMA3_SPEAKER_SINGLE:
         speaker, name = min(((int(s), n) for s, n in voices), default=(0, ""))
+        if not str(name or "").strip():
+            name = next((slot.get("name", "") for slot in slots if int(slot["speaker_id"]) == speaker), "")
         return {normalize_name(name) if str(name or "").strip() else NARRATOR: speaker}
     if speaker_mode == DRAMA3_SPEAKER_ADAPT:
-        if not named:
+        if not voices:
             raise H3Error("Adapt to voices needs at least one reference voice.")
+        named: dict[str, int] = {}
+        seen: set[str] = set()
+        for speaker, raw_name in voices:
+            base = normalize_name(raw_name) if str(raw_name or "").strip() else f"Voice {speaker}"
+            candidate = base if identity(base) not in seen else f"{base} ({speaker})"
+            seen.add(identity(candidate))
+            named[candidate] = int(speaker)
         return named
     return None
 
@@ -130,6 +154,10 @@ def _assign_ids(names: list[str], slots: list[dict], fixed: dict[str, int] | Non
     for name in names:
         if identity(name) in by_name:
             ids[name] = by_name[identity(name)]
+        elif (match := re.fullmatch(r"speaker (\d+)", name.strip(), re.IGNORECASE)):
+            speaker_id = int(match.group(1))
+            if 0 <= speaker_id < MAX_SPEAKERS and speaker_id not in set(ids.values()):
+                ids[name] = speaker_id
     free = (speaker for speaker in range(MAX_SPEAKERS) if speaker not in reserved | set(ids.values()))
     for name in names:
         if name not in ids:
@@ -169,22 +197,24 @@ def write_drama3_guided(
     calls = _Calls(ask)
     language = drama3_language_instruction(text)
     slots = slot_identities(cast_context)
-    fixed = _available_names(tuple(voices), speaker_mode)
-    allowed = {name.casefold() for name in fixed} if fixed is not None else None
-    known = sorted({slot["name"] for slot in slots if str(slot.get("name") or "").strip()})
+    reusable = reusable_voices(cast_context)
+    reusable_by_id = {identity(entry["name"]): entry for entry in reusable}
+    slot_names = {int(slot["speaker_id"]): normalize_name(slot["name"])
+                  for slot in slots if str(slot.get("name") or "").strip()}
+    text = "\n".join(replace_speaker_tag_line(line, slot_names) for line in str(text or "").splitlines())
+    fixed = _available_names(tuple(voices), speaker_mode, slots)
+    allowed = {canonical(name).casefold() for name in fixed} if fixed is not None else None
+    known = sorted({
+        *(slot["name"] for slot in slots if str(slot.get("name") or "").strip()),
+        *(entry["name"] for entry in reusable),
+    })
     voices_line = (f"Available voices (cast only these names): {', '.join(fixed)}" if fixed is not None
                    else f"Characters already in the Cast (keep these names): {', '.join(known)}" if known else "")
     kind = input_kind(text)
     roles: dict[str, str] = {}
     single = speaker_mode == DRAMA3_SPEAKER_SINGLE
 
-    if kind == BRIEF:
-        source_mode = "brief"
-        request = "\n".join(filter(None, [language, voices_line, f"Script mode: {'Advanced' if advanced else 'Basic'}.",
-                                          f"Brief:\n{text.strip()}"]))
-        title, utterances, scenes, roles = calls.run(
-            prompts["brief"], request, lambda reply: parse_content_brief(reply, allowed, notes), "writing")
-    else:
+    if kind != BRIEF:
         source_mode = "preserve"
         source = segment_source(text, kind)
         title = next((unit.text for unit in source.units if unit.kind == "heading"), "")
@@ -198,18 +228,34 @@ def write_drama3_guided(
             request = "\n".join(filter(None, [language, voices_line, f"Units:\n{listing}"]))
             answer = calls.run(prompts["preserve"], request,
                                lambda reply: parse_content_preserve(reply, source, allowed), "casting")
-            title = title or answer["title"]
-            utterances = attribute_units(source, answer["speakers"])
-            scenes = scenes_from_units(utterances, answer["scenes"])
-    if fixed is not None and not single and NARRATOR not in {identity(name) for name in fixed}             and any(u.speaker == NARRATOR for u in utterances):
-        # Adapt to voices: narration goes to the first voice rather than a speaker with no voice.
-        reader = min(fixed, key=fixed.get)
+            if answer.get("kind") == "brief":
+                kind = BRIEF
+            else:
+                title = title or answer["title"]
+                utterances = attribute_units(source, answer["speakers"])
+                scenes = scenes_from_units(utterances, answer["scenes"])
+    if kind == BRIEF:
+        source_mode = "brief"
+        brief_voices = "" if single else voices_line
+        request = "\n".join(filter(None, [language, brief_voices, f"Script mode: {'Advanced' if advanced else 'Basic'}.",
+                                          f"Brief:\n{text.strip()}"]))
+        title, utterances, scenes, roles = calls.run(
+            prompts["brief"], request,
+            lambda reply: parse_content_brief(reply, None if single else allowed, notes), "writing")
+    if fixed is not None and not single and NARRATOR not in {identity(name) for name in fixed} \
+            and any(u.speaker == NARRATOR for u in utterances):
+        # Adapt to voices: narration goes to an unused voice first, else the first voice.
+        spoken = {identity(u.speaker) for u in utterances if u.speaker != NARRATOR}
+        unused = {name: speaker for name, speaker in fixed.items() if identity(name) not in spoken}
+        pool = unused or fixed
+        reader = min(pool, key=pool.get)
         notes.append(f"The narration is read by {reader}, as no voice is named narrator.")
-        utterances = [Utterance(u.id, reader, u.text, u.kind, u.effects, u.sources) if u.speaker == NARRATOR else u
-                      for u in utterances]
+        utterances = [Utterance(u.id, reader, u.text, u.kind, u.effects, u.sources, u.hint)
+                      if u.speaker == NARRATOR else u for u in utterances]
     if single:
         name = next(iter(fixed))
-        utterances = [Utterance(u.id, name, u.text, u.kind if u.kind == "heading" else "line", u.effects, u.sources)
+        utterances = [Utterance(u.id, name, u.text, u.kind if u.kind == "heading" else "line",
+                                u.effects, u.sources, u.hint)
                       for u in utterances]
 
     names = list(dict.fromkeys(u.speaker for u in utterances))
@@ -271,7 +317,7 @@ def write_drama3_guided(
     utterances = [Utterance(u.id, u.speaker, u.text, u.kind,
                             _ordered_effects([*u.effects, *effects.get(u.id, ()),
                                               *([character[u.speaker]] if u.speaker in character else [])]),
-                            u.sources) if u.speaker != NARRATOR else u for u in utterances]
+                            u.sources, u.hint) if u.speaker != NARRATOR else u for u in utterances]
 
     draft = Draft(utterances, scenes, title, directions, sounds, staging)
     script = compile_script(draft, advanced=advanced, notes=notes)
@@ -280,8 +326,10 @@ def write_drama3_guided(
     for name in names:
         description, preview = designed[name]
         slot = slot_by_id.get(ids[name], {})
+        preset = reusable_by_id.get(identity(name), {})
+        saved_description = str(slot.get("description") or preset.get("description") or "").strip()
         speakers.append({"speaker_id": ids[name], "name": name,
-                         "description": str(slot.get("description") or "").strip() or description,
+                         "description": saved_description or description,
                          "preview_text": preview})
     reply = json.dumps({"title": " ".join(str(title or "").split())[:60], "source_mode": source_mode, "script": script,
                         "speakers": speakers}, ensure_ascii=False)

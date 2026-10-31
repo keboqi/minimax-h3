@@ -70,9 +70,14 @@ def direct_line(utterance: Utterance, direction: Direction | None, previous_cue:
     would make the narrator act out the character's line.
     """
     text = utterance.text
-    if direction is None or utterance.kind == HEADING:
+    if utterance.kind == HEADING:
         return text, ""
-    cue = "" if attribution else _clean_cue(direction.cue)
+    if direction is None and utterance.hint and _clean_cue(utterance.hint):
+        direction = Direction(cue=utterance.hint)
+    if direction is None:
+        return text, ""
+    raw_cue = direction.cue or (utterance.hint if _clean_cue(utterance.hint) else "")
+    cue = "" if attribution else _clean_cue(raw_cue)
     if direction.cue and not cue and not attribution:
         notes.append(f"{utterance.id}: dropped cue [{direction.cue}]")
     if cue and cue.casefold() == previous_cue.casefold():

@@ -68,7 +68,7 @@ def _cast(data: dict, problems: list[str], allowed_names: set[str] | None) -> di
     """Alias (casefolded) to canonical name, for the stage's cast list."""
     aliases: dict[str, str] = {}
     entries = data.get("cast")
-    if not isinstance(entries, list) or not entries:
+    if not isinstance(entries, list):
         problems.append('"cast" must list every speaking character')
         return aliases
     for entry in entries:
@@ -90,8 +90,12 @@ def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] |
     """The preserve content stage: ``{"title", "speakers": {unit: name}, "scenes": [(unit, place, change)]}``.
 
     Script labels resolve through the cast's aliases; every quote needs a known speaker.
+    When the model judges the units to be a brief rather than text to perform, it may
+    return ``{"kind": "brief"}`` so the orchestrator hands off to the brief stage.
     """
     data = load_answer(reply)
+    if _text(data.get("kind")).lower() == "brief":
+        return {"kind": "brief"}
     problems: list[str] = []
     aliases = _cast(data, problems, allowed_names)
     aliases.setdefault(NARRATOR, NARRATOR)
@@ -119,9 +123,15 @@ def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] |
     missing = [unit.id for unit in source.units if unit.kind == QUOTE and unit.id not in speakers]
     if missing:
         problems.append(f"no speaker for quote unit(s) {', '.join(missing)}")
+    if allowed_names is not None and not problems:
+        used = {speakers.get(u.id, NARRATOR).casefold() for u in source.units if u.kind != "heading"}
+        narrator_slot = 1 if NARRATOR in used and NARRATOR not in allowed_names else 0
+        unused = sorted(allowed_names - used)
+        if len(unused) > narrator_slot:
+            problems.append(f"every available voice must speak at least one unit (unused: {', '.join(unused)})")
     scenes = []
     for entry in data.get("scenes") if isinstance(data.get("scenes"), list) else []:
-        if isinstance(entry, dict) and entry.get("from") in units:
+        if isinstance(entry, dict) and isinstance(entry.get("from"), str) and entry.get("from") in units:
             scenes.append((entry["from"], _text(entry.get("place")), _text(entry.get("change"))))
     if problems:
         raise StageError(problems)
@@ -155,8 +165,9 @@ def parse_content_brief(reply: str, allowed_names: set[str] | None = None,
     problems: list[str] = []
     aliases = _cast(data, problems, allowed_names)
     aliases.setdefault(NARRATOR, NARRATOR)
+    raw_cast = data.get("cast") if isinstance(data.get("cast"), list) else []
     roles = {aliases[canonical(entry.get("name")).casefold()]: _text(entry.get("role"))
-             for entry in data.get("cast", []) if isinstance(entry, dict)
+             for entry in raw_cast if isinstance(entry, dict)
              and canonical(entry.get("name")).casefold() in aliases}
     utterances: list[Utterance] = []
     scenes: list[Scene] = []
@@ -183,7 +194,8 @@ def parse_content_brief(reply: str, allowed_names: set[str] | None = None,
             if not text or _CONTROL_RE.search(text):
                 problems.append(f"{where}: text must be spoken words only, without brackets, tags or braces")
                 continue
-            kind = line.get("type") if line.get("type") in (REACTION, INTERRUPT) else LINE
+            raw_type = _text(line.get("type")).lower()
+            kind = raw_type if raw_type in (REACTION, INTERRUPT) else LINE
             name = aliases[name.casefold()]
             previous = utterances[-1] if utterances else None
             if kind == REACTION and (previous is None or previous.speaker in (NARRATOR, name) or name == NARRATOR
@@ -201,6 +213,12 @@ def parse_content_brief(reply: str, allowed_names: set[str] | None = None,
             scenes.append(Scene(f"c{len(scenes) + 1}", tuple(ids), _text(scene.get("place")), _text(scene.get("change"))))
     if not utterances and not problems:
         problems.append("the script has no lines")
+    if allowed_names is not None and not problems:
+        used = {u.speaker.casefold() for u in utterances}
+        narrator_slot = 1 if NARRATOR in used and NARRATOR not in allowed_names else 0
+        unused = sorted(allowed_names - used)
+        if len(unused) > narrator_slot:
+            problems.append(f"every available voice must speak at least one line (unused: {', '.join(unused)})")
     if problems:
         raise StageError(problems)
     return _text(data.get("title")), utterances, scenes, roles
@@ -217,7 +235,7 @@ def parse_voices(reply: str, names: list[str]) -> dict[str, tuple[str, str]]:
         name = canonical(entry.get("name"))
         description = _text(entry.get("description"))
         preview = _text(entry.get("preview_text"))
-        match = next((wanted for wanted in names if wanted.casefold() == name.casefold()), None)
+        match = next((wanted for wanted in names if canonical(wanted).casefold() == name.casefold()), None)
         if match is None:
             continue
         if not _SEX_RE.match(description) or len(description) > 2000:
@@ -238,12 +256,13 @@ def parse_direction(reply: str, ids: set[str], notes: list[str]) -> dict[str, Di
     data = load_answer(reply)
     directions = {}
     for entry in data.get("lines") if isinstance(data.get("lines"), list) else []:
-        if not isinstance(entry, dict) or entry.get("id") not in ids:
+        line_id = entry.get("id") if isinstance(entry, dict) else None
+        if not isinstance(line_id, str) or line_id not in ids:
             notes.append(f"dropped direction for unknown line {entry.get('id') if isinstance(entry, dict) else entry!r}")
             continue
         tag = _text(entry.get("tag")).lower().strip("<>/") or "emphasis"
         event = _text(entry.get("event")).lower().strip("[]")
-        directions[entry["id"]] = Direction(
+        directions[line_id] = Direction(
             cue=_text(entry.get("cue")), phrase=_text(entry.get("stress")),
             tag=tag if tag in SCOPED_TAGS else "emphasis", event=event if event in AUDIBLE_EVENTS else "")
     return directions
@@ -264,7 +283,8 @@ def parse_staging(reply: str, scene_ids: set[str], utterance_ids: set[str], note
             notes.append(f"dropped sound {entry.get('name')!r}")
     staging, effects = {}, {}
     for entry in data.get("scenes") if isinstance(data.get("scenes"), list) else []:
-        if not isinstance(entry, dict) or entry.get("scene") not in scene_ids:
+        scene_id = entry.get("scene") if isinstance(entry, dict) else None
+        if not isinstance(scene_id, str) or scene_id not in scene_ids:
             continue
         events = []
         for event in entry.get("events") if isinstance(entry.get("events"), list) else []:
@@ -272,10 +292,11 @@ def parse_staging(reply: str, scene_ids: set[str], utterance_ids: set[str], note
                 continue
             when = _text(event.get("when")).lower() or "with"
             place = _text(event.get("place")).lower()
-            if when not in EVENT_TIMES or event.get("at") not in utterance_ids:
-                notes.append(f"dropped sound event {event.get('sound')!r} at {event.get('at')!r}")
+            at = event.get("at")
+            if when not in EVENT_TIMES or not isinstance(at, str) or at not in utterance_ids:
+                notes.append(f"dropped sound event {event.get('sound')!r} at {at!r}")
                 continue
-            events.append(SoundEvent(sound_name(event.get("sound")), event["at"], when, place if place in PLACES else ""))
+            events.append(SoundEvent(sound_name(event.get("sound")), at, when, place if place in PLACES else ""))
         positions = []
         raw_positions = entry.get("positions") if isinstance(entry.get("positions"), dict) else {}
         for name, value in raw_positions.items():
@@ -285,20 +306,22 @@ def parse_staging(reply: str, scene_ids: set[str], utterance_ids: set[str], note
                 continue
         pauses = []
         for pause in entry.get("pauses") if isinstance(entry.get("pauses"), list) else []:
-            if isinstance(pause, dict) and pause.get("before") in utterance_ids:
-                pauses.append((pause["before"], "long" if _text(pause.get("length")).lower() == "long" else "short"))
+            before = pause.get("before") if isinstance(pause, dict) else None
+            if isinstance(before, str) and before in utterance_ids:
+                pauses.append((before, "long" if _text(pause.get("length")).lower() == "long" else "short"))
         room = _text(entry.get("room")).lower()
-        staging[entry["scene"]] = Staging(
+        staging[scene_id] = Staging(
             ambience=sound_name(entry["ambience"]) if _text(entry.get("ambience")) else "",
             music=sound_name(entry["music"]) if _text(entry.get("music")) else "",
             room=room if room in SCENE_ROOMS else "", positions=tuple(positions), events=tuple(events),
             pauses=tuple(pauses))
         for voice in entry.get("voices") if isinstance(entry.get("voices"), list) else []:
-            if not isinstance(voice, dict) or voice.get("id") not in utterance_ids:
+            vid = voice.get("id") if isinstance(voice, dict) else None
+            if not isinstance(vid, str) or vid not in utterance_ids:
                 continue
             raw = voice.get("effects") if isinstance(voice.get("effects"), list) else [voice.get("effect")]
             chosen = tuple(effect for effect in (_text(item).lower().strip("<>") for item in raw)
                            if effect in SPEAKER_TAGS)
             if chosen:
-                effects[voice["id"]] = chosen
+                effects[vid] = chosen
     return sounds, staging, effects

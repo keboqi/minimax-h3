@@ -23,6 +23,7 @@ NARRATOR_ALIASES = frozenset({"narrator", "narration", "旁白", "story teller",
 MAX_SENTENCES = 2
 
 _QUOTE_RE = re.compile(r"“([^“”]*)”|\"([^\"]*)\"|「([^「」]*)」|『([^『』]*)』")
+_SPEAKER_TAG_LINE_RE = re.compile(r"^(\s*)<\|speaker:(\d+)\|>\s*(.*)$")
 # A script label: a short name, an optional (cue), then a colon. Prose such as 她问：“…” is told
 # apart by the label's length and punctuation.
 _LABEL_RE = re.compile(r"^\s*(?P<name>[^\s:：(（<>\[\]|#][^:：(（<>\[\]|\n]{0,31}?)\s*"
@@ -31,6 +32,33 @@ _LABEL_PUNCTUATION_RE = re.compile(r"[，,。.!?！？“”\"「」;；、]")
 _EFFECT_TAGS_RE = re.compile(r"^\s*((?:<(?:%s)>\s*)+)" % "|".join(map(re.escape, SPEAKER_TAGS)), re.IGNORECASE)
 _SENTENCE_END_RE = re.compile(r"(?:[。！？]+|…+|\.{3,}|[.!?]+(?=\s|$))[”\"'」』)）]*")
 _SPOKEN_RE = re.compile(r"\w", re.UNICODE)
+# Explicit brief instructions ("Write a scene where...", "... 30 seconds", "请写一段…") stay briefs
+# even when they quote a sample line or span several sentences.
+_BRIEF_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:write|create|generate|make|draft|compose|imagine)\b"
+    r"|\b(?:write|create|generate|make|draft|compose)\s+(?:a|an|the|me\s+a)?\s*"
+    r"(?:short\s+|brief\s+|tense\s+|funny\s+|dramatic\s+)*"
+    r"(?:scene|script|dialogue|audio\s+drama|drama|conversation|exchange|monologue|skit|piece)\b"
+    r"|^\s*(?:a\s+)?(?:short\s+|brief\s+)?(?:scene|dialogue|audio\s+drama|drama|conversation|script)\s+"
+    r"(?:where|about|between|in\s+which|with)\b"
+    r"|\b\d+\s*(?:-\s*)?(?:seconds?|secs?|minutes?|mins?)\b"
+    r"|\b(?:half\s+a\s+minute|(?:one|two|three)\s+minutes?)\b"
+    r"|^\s*(?:请|帮我)?(?:写|创作|生成|编)(?:一段|一个|一篇|一出)"
+    r"|(?:关于.+的(?:广播剧|对话|场景|短剧))|(?:\d+\s*(?:秒|分钟)|[一二两三四五六七八九十半]+\s*分钟)",
+    re.IGNORECASE,
+)
+
+
+def replace_speaker_tag_line(line: str, names: dict[int, str] | None = None) -> str:
+    """Turn a leading ``<|speaker:N|>`` tag on ``line`` into a ``Name: ...`` script label."""
+    match = _SPEAKER_TAG_LINE_RE.match(line)
+    if match is None:
+        return line
+    indent, raw_id, rest = match.groups()
+    name = (names or {}).get(int(raw_id)) or f"Speaker {raw_id}"
+    if re.match(r"^(?:[(（][^)）]{0,40}[)）]\s*)?[:：]", rest):
+        return f"{indent}{name}{rest}"
+    return f"{indent}{name}: {rest}"
 
 
 @dataclass(frozen=True)
@@ -54,6 +82,7 @@ class Source:
 
 
 def _label(line: str) -> re.Match | None:
+    line = replace_speaker_tag_line(line)
     match = _LABEL_RE.match(line)
     if match is None or not match["body"].strip():
         return None
@@ -71,6 +100,8 @@ def input_kind(text: str) -> str:
     if len(lines) >= 2 and sum(_label(line) is not None for line in lines) >= 0.6 * len(lines):
         return SCRIPT
     joined = " ".join(lines)
+    if len(joined) <= 500 and _BRIEF_RE.search(joined):
+        return BRIEF
     if _QUOTE_RE.search(joined):
         return PROSE
     return PROSE if len(_sentence_spans(joined)) >= 3 or len(joined) > 280 else BRIEF
@@ -107,7 +138,10 @@ def _is_heading(paragraph: str) -> bool:
 
 def segment_source(text: str, kind: str | None = None) -> Source:
     """The user's script or prose as numbered units ``s1…sN``."""
-    paragraphs = tuple(line.strip() for line in str(text or "").replace("\r\n", "\n").split("\n") if line.strip())
+    paragraphs = tuple(
+        replace_speaker_tag_line(line.strip())
+        for line in str(text or "").replace("\r\n", "\n").split("\n") if line.strip()
+    )
     kind = kind or input_kind(text)
     units: list[SourceUnit] = []
 
@@ -131,16 +165,17 @@ def segment_source(text: str, kind: str | None = None) -> Source:
             effects = tuple(re.findall(r"<([^<>]+)>", effects_match.group(1).lower())) if effects_match else ()
             if effects_match:
                 body_start += effects_match.end()
-            quoted = _QUOTE_RE.fullmatch(paragraph[body_start:].strip())
+            text_span = paragraph[body_start:].strip()
+            if (quoted := _QUOTE_RE.fullmatch(text_span)) is not None:
+                inner = next(group for group in quoted.groups() if group is not None)
+                span_start = paragraph.find(inner, body_start)
+                span_end = span_start + len(inner)
+            else:
+                span_start, span_end = body_start, len(paragraph)
             label, hint = match["name"].strip(), (match["hint"] or "").strip()
-            for start, end in _chunks(paragraph, body_start, len(paragraph)):
-                words = paragraph[start:end]
-                if quoted:
-                    words = next(group for group in quoted.groups() if group is not None)
-                add(LABELLED, words, index, start, end, label=label, hint=hint, effects=effects)
+            for start, end in _chunks(paragraph, span_start, span_end):
+                add(LABELLED, paragraph[start:end], index, start, end, label=label, hint=hint, effects=effects)
                 hint = ""  # the cue applies to the line's first piece only
-                if quoted:
-                    break
             continue
         position = 0
         for quote in _QUOTE_RE.finditer(paragraph):
@@ -190,5 +225,5 @@ def attribute_units(source: Source, speakers: dict[str, str]) -> list[Utterance]
         text = units[0].text if len(units) == 1 else paragraph[units[0].start:end]
         kind = HEADING if units[0].kind == HEADING else LINE
         utterances.append(Utterance(f"u{len(utterances) + 1}", names[run[0]], text.strip(), kind,
-                                    units[0].effects, tuple(unit.id for unit in units)))
+                                    units[0].effects, tuple(unit.id for unit in units), units[0].hint))
     return utterances

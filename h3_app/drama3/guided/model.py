@@ -33,6 +33,7 @@ class Utterance:
     kind: str = LINE
     effects: tuple[str, ...] = ()  # speaker effect and distance tags, from the source or staging
     sources: tuple[str, ...] = ()  # the source units it reads, for preserved text
+    hint: str = ""  # a script line's parenthesized cue hint, such as "surprised"
 
 
 @dataclass(frozen=True)
