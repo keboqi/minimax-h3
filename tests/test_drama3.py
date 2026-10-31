@@ -583,6 +583,34 @@ class Drama3CastSoundTests(unittest.TestCase):
             "sounds": sounds,
         }))
 
+    def test_unescaped_tag_quotes_and_split_sound_lines_from_small_models_still_parse(self):
+        from h3_app.drama3.cast import parse_script_cast_and_sounds, parse_writer_title
+
+        # gemini-3.5-flash-lite leaves a tag's quotes unescaped, sometimes only some of them,
+        # and puts a sound's description on its own lines.
+        reply = ('{"title":"Night","source_mode":"brief","script":"<parallel>\\n'
+                 '<sound loop="true" volume="0.3" name=\\"hum\\">\\nLow museum hum\\n</sound>\\n'
+                 '<sequential>\\nAnn: Did you hear that?\\n</sequential>\\n</parallel>",'
+                 '"speakers":[{"speaker_id":0,"name":"Ann","description":"A female voice.",'
+                 '"preview_text":"Hello there."}]}')
+        script, _cast, sounds = parse_script_cast_and_sounds(reply)
+        self.assertIn('<sound loop="true" volume="0.3" name="hum">Low museum hum</sound>', script.split("\n"))
+        self.assertEqual([(item["name"], item["loop"]) for item in sounds], [("hum", True)])
+        self.assertEqual(parse_writer_title(reply), "Night")
+        # Text that is not JSON for another reason is still refused.
+        with self.assertRaises(H3Error):
+            parse_script_cast_and_sounds(reply.replace('"Hello there."}]}', '"Hello there.}]}'))
+
+    def test_writer_context_names_the_user_texts_language(self):
+        context = lambda text: drama3_writer.drama3_writer_context(  # noqa: E731
+            (), drama3_writer.DRAMA3_SPEAKER_AUTO, text=text)[1]
+        self.assertIn("the user text is English", context("A guard and a curator hear something in the museum."))
+        self.assertIn("the user text is English", context("“Are you expecting anyone?” Tom asked from the sofa."))
+        self.assertIn("the user text is Chinese", context("两名考古队员夜里守在沙漠营地。"))
+        self.assertIn("the user text is Japanese", context("博物館で何かが動いた。"))
+        self.assertIn("in the language of the user text", context("Un gardien entend un bruit étrange."))
+        self.assertNotIn("Language:", context(""))
+
     def test_unparsable_numbers_fall_back_instead_of_crashing(self):
         _script, _cast, sounds = self.parse([
             {"name": "rain", "duration": "10s"},

@@ -23,10 +23,17 @@ SPEAKER_LINE_ERROR = ("Each script line must start with one speaker's name from 
                       'as in "Mia: Hello.", and contain speech.')
 
 
+def _one_line_sound(block: str) -> str:
+    """``<sound ...>description</sound>`` on one line, with no space inside its tags."""
+    opening, closing = block.index(">") + 1, block.lower().rindex("</sound")
+    return " ".join(block[:opening].split()) + " ".join(block[opening:closing].split()) + block[closing:]
+
+
 def _normalize_and_validate_script_lines(raw_script: str) -> str:
     script = validate_drama3_text(raw_script, "The writer's script")
     text = script.replace("\r\n", "\n")
-    text = SOUND_BLOCK_RE.sub(r"\n\1\n", text)
+    # A <sound> whose description sits on its own lines is still one sound line.
+    text = SOUND_BLOCK_RE.sub(lambda match: f"\n{_one_line_sound(match.group(1))}\n", text)
     text = CONTAINER_TAG_RE.sub(r"\n\1\n", text)
     lines: list[str] = []
     has_speaker_line = False
@@ -58,6 +65,31 @@ def _normalize_and_validate_script_lines(raw_script: str) -> str:
     return "\n".join(lines)
 
 
+# A tag with attributes, such as <sound loop="true" name="rain">, inside the script string.
+_ATTRIBUTE_TAG_RE = re.compile(r"<[A-Za-z][^<>\n]*=[^<>\n]*>")
+
+
+def load_writer_json(response: str):
+    """The writer's JSON reply; raises ValueError or TypeError when it is not JSON.
+
+    Smaller models often leave the quotes of a tag's attributes unescaped inside the
+    script string (<sound loop="true">), which ends the string early. When the reply
+    is not valid JSON, those quotes are escaped and it is read once more.
+    """
+    try:
+        return json.loads(response)
+    except (ValueError, TypeError) as exc:
+        if not isinstance(response, str):
+            raise
+        repaired = _ATTRIBUTE_TAG_RE.sub(lambda match: re.sub(r'(?<!\\)"', r'\\"', match.group(0)), response)
+        if repaired == response:
+            raise
+        try:
+            return json.loads(repaired)
+        except ValueError:
+            raise exc from None
+
+
 def parse_script_cast_and_sounds(response: str) -> tuple[str, list[dict], list[dict]]:
     """Parse and validate script, cast entries, and sound briefs from writer JSON.
 
@@ -65,7 +97,7 @@ def parse_script_cast_and_sounds(response: str) -> tuple[str, list[dict], list[d
     returned script uses Drama 3 speaker tags. Tagged lines are accepted too.
     """
     try:
-        data = json.loads(response)
+        data = load_writer_json(response)
     except (ValueError, TypeError) as exc:
         raise H3Error("The writer must return JSON with script and speakers.") from exc
     if not isinstance(data, dict) or not isinstance(data.get("script"), str):
@@ -186,7 +218,7 @@ def clean_title(value) -> str:
 def parse_writer_title(response: str) -> str:
     """The optional writer title; a reply without one (or not JSON) has none."""
     try:
-        data = json.loads(response)
+        data = load_writer_json(response)
     except (ValueError, TypeError):
         return ""
     return clean_title(data.get("title")) if isinstance(data, dict) else ""
@@ -207,7 +239,7 @@ def voices_without_sex(cast: list[dict]) -> list[str]:
 def parse_writer_source_mode(response: str) -> str:
     """The writer's reading of the source, "preserve" or "brief"; "" when it gave neither."""
     try:
-        data = json.loads(response)
+        data = load_writer_json(response)
     except (ValueError, TypeError):
         return ""
     mode = data.get("source_mode") if isinstance(data, dict) else None

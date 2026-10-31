@@ -98,6 +98,27 @@ def drama3_script_mode_instruction(script_mode: str) -> str:
     raise H3Error(f"Unsupported Drama 3 script mode: {script_mode}")
 
 
+_ENGLISH_WORD_RE = re.compile(r"\b(?:the|and|of|to|with|is|are|in|a|an)\b", re.IGNORECASE)
+
+
+def drama3_language_instruction(text: str) -> str:
+    """Name the user text's language, so a small model does not follow the language of the prompt's examples."""
+    text = str(text or "")
+    if re.search(r"[\u3040-\u30ff]", text):
+        language = "Japanese"
+    elif re.search(r"[\uac00-\ud7af]", text):
+        language = "Korean"
+    elif re.search(r"[\u4e00-\u9fff]", text):
+        language = "Chinese"
+    elif all(char.isascii() for char in text if char.isalpha()) and len(_ENGLISH_WORD_RE.findall(text)) >= 2:
+        language = "English"
+    else:
+        return ("Language: write the title and every spoken line in the language of the user text, "
+                "whatever language the instructions' examples use.")
+    return (f"Language: the user text is {language}. Write the title and every spoken line in {language}, "
+            "whatever language the instructions' examples use; delivery cues stay short plain English.")
+
+
 def enforce_drama3_speakers(script: str, allowed: tuple[int, ...] | None) -> str:
     """Fold a single-speaker script onto its tag; reject other speakers otherwise."""
     from h3_app.drama3.serving.tree import CONTAINER_TAG_RE, PAUSE_TAG_RE, parse_sound_tag
@@ -140,12 +161,15 @@ def drama3_writer_context(
     *,
     script_mode: str = DRAMA3_SCRIPT_BASIC,
     sound_context: str = "",
+    text: str = "",
 ) -> tuple[tuple[int, ...] | None, str]:
-    """The allowed speaker IDs and the context lines sent with the user's text."""
+    """The allowed speaker IDs and the context lines sent with the user's ``text``."""
     voices = tuple(voices)
     allowed, speaker_instruction = drama3_speaker_plan(speaker_mode, voices)
     mode_instruction = drama3_script_mode_instruction(script_mode)
     parts = [drama3_voice_context(voices), speaker_instruction, mode_instruction]
+    if str(text or "").strip():
+        parts.append(drama3_language_instruction(text))
     if cast_context:
         parts.append(cast_context)
     if sound_context and script_mode == DRAMA3_SCRIPT_ADVANCED:
@@ -173,6 +197,7 @@ def drama3_full_prompt(
         cast_context,
         script_mode=script_mode,
         sound_context=sound_context,
+        text=original,
     )
     system_prompt = runtime.prompt_systems["Drama 3"].read_text(encoding="utf-8").strip()
     # Same wording as the built-in request, so pasted replies follow the same contract.
@@ -403,6 +428,7 @@ def enhance_drama3_text(
             cast_context,
             script_mode=script_mode,
             sound_context=sound_context,
+            text=original,
         )
     except H3Error as exc:
         return result(original, f"{DRAMA3_PROMPT_FAILED} {exc}")
