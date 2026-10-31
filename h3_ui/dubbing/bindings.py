@@ -191,6 +191,8 @@ def _bind_dub(view: DubbingView, *, actions) -> None:
                 **_QUIET}
     view.session.change(**speakers)
     view.steps.tabs.select(**speakers)
+    # Each session starts on its transcription's Clone from default; a pick then holds in this view.
+    view.session.change(actions.voice_default, inputs=view.session, outputs=view.voice_mode, **_QUIET)
     view.speakers.save(actions.save_speaker, inputs=[view.session, view.speakers], outputs=view.speakers_status,
                        **_QUIET)
     readiness = _readiness(view, actions)

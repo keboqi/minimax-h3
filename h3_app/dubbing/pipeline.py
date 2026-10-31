@@ -2,7 +2,8 @@
 
 Analysis extracts the soundtrack, optionally separates vocals from the background,
 and transcribes with Gemini or locally: OmniVAD + Qwen3-ASR + ForcedAligner, or
-MOSS-Transcribe-Diarize on SGLang-Omni, which also tells speakers apart; Hy-MT then
+MOSS-Transcribe-Diarize on SGLang-Omni, which also tells speakers apart, or Nemotron
+Transcribe on vLLM, which also times each speaker's words through overlaps; Hy-MT then
 translates. Dubbing clones each line's voice from the original audio, fits the take to
 its slot, lays the lines on the timeline and mixes them over the background. Takes
 are content-keyed, so an unchanged line is never generated twice.
@@ -39,15 +40,16 @@ from h3_app.jobs import JobCancelled
 from h3_app.media_tools import probe_audio_seconds, run_media_process
 from h3_app.provenance import read_snapshot, write_snapshot
 
-from . import gemini, moss, refinement, segments as segment_tools, session as sessions, tools, tools_worker
+from . import gemini, moss, nemotron, refinement, segments as segment_tools, session as sessions, tools, tools_worker
 
 RATE = 44100
 PIPELINE_LOCAL = "Local: Qwen3-ASR + aligner + Hy-MT"
 PIPELINE_MOSS = "Local: MOSS Transcribe + Diarize + Hy-MT"
+PIPELINE_NEMOTRON = "Local: Nemotron Transcribe + Hy-MT"
 PIPELINE_GEMINI = "Gemini (cloud)"
-PIPELINES = (PIPELINE_LOCAL, PIPELINE_MOSS, PIPELINE_GEMINI)
+PIPELINES = (PIPELINE_LOCAL, PIPELINE_MOSS, PIPELINE_NEMOTRON, PIPELINE_GEMINI)
 # Transcriptions that tell speakers apart, so each speaker can get its own voice and volume.
-SPEAKER_PIPELINES = frozenset({PIPELINE_MOSS, PIPELINE_GEMINI})
+SPEAKER_PIPELINES = frozenset({PIPELINE_MOSS, PIPELINE_NEMOTRON, PIPELINE_GEMINI})
 TRANSLATOR_HYMT = "Hy-MT 1.8B (local)"
 TRANSLATOR_GEMINI = "Gemini"
 TRANSLATORS = (TRANSLATOR_HYMT, TRANSLATOR_GEMINI)
@@ -58,8 +60,9 @@ SOURCE_LANGUAGES = ("Auto-detect", "English", "Chinese", "Cantonese", "Japanese"
 TARGET_LANGUAGES = ("English", "Chinese", "Japanese", "Korean", "Spanish", "French", "German", "Portuguese",
                     "Italian", "Russian", "Arabic", "Indonesian", "Vietnamese", "Thai", "Cantonese")
 VOICE_LINE = "Each line's own voice"
+VOICE_NEAREST = "Nearest clean voice"
 VOICE_SPEAKER = "One voice per speaker"
-VOICE_MODES = (VOICE_LINE, VOICE_SPEAKER)
+VOICE_MODES = (VOICE_LINE, VOICE_NEAREST, VOICE_SPEAKER)
 # Match stretches every take to its line's original length with ffmpeg, as index-tts-vllm's
 # duration control does; Natural only speeds up long takes, by at most the chosen limit;
 # Smart keeps each take's own pace and fits long ones into the silence around them first.
@@ -337,6 +340,20 @@ def analyze(request: AnalyzeRequest, *, runtime, free_gpu, hf_token=None) -> Ite
             raise H3Error("No speech was found in this source.")
         transcript = {"segments": found, "speakers": {speaker: "" for speaker in
                                                       dict.fromkeys(s["speaker"] for s in found)}}
+    elif request.pipeline == PIPELINE_NEMOTRON:
+        duration = float(session.data.get("duration") or 0.0)
+        upload = _ffmpeg(["-i", str(speech), "-ac", "1", "-ar", str(nemotron.UPLOAD_RATE), "-c:a", "pcm_s16le"],
+                         session.root / "speech-16k.wav", action="Preparing audio for Nemotron")
+        try:
+            found = yield from blocking(
+                "Finding speakers, words and overlaps with Nemotron",
+                lambda report: nemotron.transcribe(runtime, upload, duration=duration, free_gpu=free_gpu,
+                                                   hf_token=hf_token, report=report))
+        finally:
+            upload.unlink(missing_ok=True)
+        # The words and who spoke when stay with the transcript: edits never change what was heard.
+        transcript = {**found, "speakers": {speaker: "" for speaker in
+                                            dict.fromkeys(s["speaker"] for s in found["segments"])}}
     elif request.pipeline == PIPELINE_GEMINI:
         upload = _ffmpeg(["-i", str(speech), "-ac", "1", "-c:a", "libmp3lame", "-b:a", "96k"],
                          session.root / "speech.mp3", action="Preparing audio for Gemini")
@@ -400,6 +417,8 @@ def _transcript_key(request: AnalyzeRequest) -> str:
         settings.update(refinement=refinement.REVISION, language=_language(request.source_language))
     if request.pipeline == PIPELINE_MOSS:
         settings.update(model=f"{moss.MODEL_REPO}@{moss.MODEL_REVISION[:12]}")
+    elif request.pipeline == PIPELINE_NEMOTRON:
+        settings.update(model=nemotron.MODEL_REPO)
     elif request.pipeline == PIPELINE_GEMINI:
         settings.update(model=request.gemini_model, ignore_non_speech=bool(request.ignore_non_speech),
                         target=str(request.target_language or "").strip() if request.translate else "")
@@ -626,8 +645,98 @@ def speaker_reference(lines: list[dict], speaker: str) -> int | None:
                                          abs(item[1]["end"] - item[1]["start"] - high)))[0]
 
 
+def default_voice_mode(pipeline: str | None) -> str:
+    """Nemotron's speaker labels cover overlaps, so its sessions clone from clean speech by default;
+    other transcribers can mislabel a line, which would clone the wrong person."""
+    return VOICE_NEAREST if pipeline == PIPELINE_NEMOTRON else VOICE_LINE
+
+
+def speaker_activity(session: sessions.Session) -> dict[str, list[tuple[float, float]]]:
+    """When each speaker talks, for telling clean speech from cross-talk.
+
+    Nemotron's words and diarization as transcribed, when the session has them; also every
+    line as transcribed and as edited, so a moved or deleted line never hides speech that is
+    still in the recording, and a line given to another speaker counts for both.
+    """
+    activity: dict[str, list[tuple[float, float]]] = {}
+    transcript = session.data.get("transcript")
+    transcript = transcript if isinstance(transcript, dict) else {}
+    stored = transcript.get("activity")
+    for speaker, spans in (stored.items() if isinstance(stored, dict) else ()):
+        for span in spans if isinstance(spans, list) else ():
+            try:
+                activity.setdefault(str(speaker), []).append((float(span[0]), float(span[1])))
+            except (IndexError, TypeError, ValueError):
+                continue
+    for line in [*(transcript.get("segments") or []), *session.segments]:
+        try:
+            activity.setdefault(segment_tools.speaker_id(line.get("speaker")), []).append(
+                (float(line["start"]), float(line["end"])))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+    return activity
+
+
+def _clean(activity: dict[str, list[tuple[float, float]]], speaker: str, start: float, end: float) -> bool:
+    """No one else speaks during ``start``–``end``, padding included."""
+    low, high = start - REFERENCE_PAD, end + REFERENCE_PAD
+    return not any(other != speaker and span_start < high and span_end > low
+                   for other, spans in activity.items() for span_start, span_end in spans)
+
+
+def _native_words(session: sessions.Session, segment: dict) -> list[dict]:
+    """The transcriber's own words for an unedited line (Nemotron), else nothing."""
+    transcript = session.data.get("transcript")
+    words = transcript.get("words") if isinstance(transcript, dict) else None
+    if not isinstance(words, list):
+        return []
+    found = [word for word in words if isinstance(word, dict) and word.get("speaker") == segment["speaker"]
+             and float(word["start"]) >= segment["start"] - 0.01 and float(word["end"]) <= segment["end"] + 0.01]
+    if not found or nemotron.join_words([word["text"] for word in found]) != segment["source"].strip():
+        return []
+    return found
+
+
+def _trimmed(session: sessions.Session, segment: dict) -> tuple[dict, str]:
+    """A long clean clip cut to at most REFERENCE_RANGE's top at a word, ideally a sentence end;
+    without native words the whole line is used."""
+    if segment["end"] - segment["start"] <= REFERENCE_RANGE[1]:
+        return segment, segment["source"]
+    words = _native_words(session, segment)
+    kept = [word for word in words if word["end"] - segment["start"] <= REFERENCE_RANGE[1]]
+    if not kept:
+        return segment, segment["source"]
+    ends = [index for index, word in enumerate(kept)
+            if nemotron.SENTENCE_END.search(word["text"]) and word["end"] - segment["start"] >= MIN_REFERENCE_SECONDS]
+    kept = kept[:ends[-1] + 1] if ends else kept
+    return ({"start": segment["start"], "end": kept[-1]["end"]},
+            nemotron.join_words([word["text"] for word in kept]))
+
+
+def clean_lines(lines: list[dict], activity: dict[str, list[tuple[float, float]]]) -> set[int]:
+    """The lines usable as a clean reference: transcribed, at least MIN_REFERENCE_SECONDS, nobody else talking."""
+    return {index for index, line in enumerate(lines)
+            if line["source"] and line["end"] - line["start"] >= MIN_REFERENCE_SECONDS
+            and _clean(activity, line["speaker"], line["start"], line["end"])}
+
+
+def nearest_clean(lines: list[dict], index: int, clean: set[int]) -> int | None:
+    """The line to clone line ``index`` from: itself when clean, else the same speaker's closest
+    clean line, before or after, anywhere in the recording (ties: the earlier one); None when the
+    speaker never speaks alone."""
+    if index in clean:
+        return index
+    target = lines[index]
+
+    def distance(line: dict) -> float:
+        return max(0.0, target["start"] - line["end"], line["start"] - target["end"])
+
+    found = [other for other in clean if lines[other]["speaker"] == target["speaker"]]
+    return min(found, key=lambda other: (distance(lines[other]), lines[other]["start"])) if found else None
+
+
 def speaker_settings_available(session: sessions.Session) -> bool:
-    """Per-speaker settings need real speakers, which only MOSS and Gemini tell apart."""
+    """Per-speaker settings need real speakers, which only MOSS, Nemotron and Gemini tell apart."""
     return session.data.get("pipeline") in SPEAKER_PIPELINES
 
 
@@ -660,8 +769,8 @@ def set_speaker(runtime, session_id: str, speaker: str, *, voice: str, volume: f
 
     session = sessions.load(runtime, session_id)
     if not speaker_settings_available(session):
-        raise H3Error("Per-speaker voices need a session transcribed with MOSS or Gemini, which tell speakers "
-                      "apart.")
+        raise H3Error("Per-speaker voices need a session transcribed with MOSS, Nemotron or Gemini, which tell "
+                      "speakers apart.")
     speaker, voice = str(speaker or "").strip(), str(voice or ORIGINAL_VOICE)
     if speaker not in session_speakers(session):
         raise H3Error("Choose one of this session's speakers.")
@@ -689,6 +798,7 @@ def _plan(session: sessions.Session, indices: list[int], voice_mode: str, runtim
     chosen_voices = {speaker: entry["voice"] for speaker, entry in speaker_settings(session).items()
                      if entry["voice"] != ORIGINAL_VOICE}
     saved_refs: dict[str, tuple[Path, str]] = {}
+    clean = clean_lines(lines, speaker_activity(session)) if voice_mode == VOICE_NEAREST else set()
     for index in indices:
         segment = lines[index]
         if not segment["translation"]:
@@ -703,6 +813,14 @@ def _plan(session: sessions.Session, indices: list[int], voice_mode: str, runtim
                     raise H3Error(f"{exc} Choose another voice for {segment['speaker']} under Speakers.") from exc
                 saved_refs[voice] = (preset.audio, preset.transcript)
             reference = saved_refs[voice]
+        elif voice_mode == VOICE_NEAREST:
+            best = nearest_clean(lines, index, clean)
+            if best is None:
+                # No clean speech from this speaker anywhere: the line's own audio, cross-talk and all.
+                reference = (_reference_clip(session, segment), segment["source"] or segment["translation"])
+            else:
+                clip, transcript = _trimmed(session, lines[best])
+                reference = (_reference_clip(session, clip), transcript)
         elif voice_mode == VOICE_LINE and segment["source"] and own_length >= MIN_REFERENCE_SECONDS:
             reference = (_reference_clip(session, segment), segment["source"])
         else:
@@ -719,9 +837,12 @@ def _plan(session: sessions.Session, indices: list[int], voice_mode: str, runtim
 
 
 def slot_end(lines: list[dict], index: int, duration: float) -> float:
-    """Where a line's take must end: just before the next line starts, never before its own end."""
+    """Where a line's take must end: just before the next line starts, never before its own end.
+
+    Lines that overlap it in the source (another speaker at the same time) do not cut it short.
+    """
     segment = lines[index]
-    later = [s["start"] for s in lines[index + 1:] if s["start"] > segment["start"]]
+    later = [s["start"] for s in lines[index + 1:] if s["start"] >= segment["end"] - 1e-6]
     limit = (min(later) - LINE_GAP) if later else (duration or segment["end"] + 2.0)
     return max(segment["end"], limit)
 
@@ -1062,13 +1183,15 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
     take_store.prune(store)
 
 
-def _take_mark(segment: dict) -> tuple[float, str]:
+def _take_mark(segment: dict) -> tuple[float, str, str]:
     """What a failed-take mark is filed under: the line as it was voiced, not its position,
-    so adding or deleting other lines keeps it, and editing this line's start or text drops it."""
-    return round(float(segment["start"]), 3), str(segment["translation"])
+    so adding or deleting other lines keeps it, and editing this line's start or text drops it.
+    The speaker tells apart two people saying the same words at once (marks saved before it
+    was added match any speaker's line)."""
+    return round(float(segment["start"]), 3), str(segment.get("speaker") or ""), str(segment["translation"])
 
 
-def _stored_marks(session: sessions.Session, key: str) -> dict[tuple[float, str], str]:
+def _stored_marks(session: sessions.Session, key: str) -> dict[tuple[float, str, str], str]:
     stored = session.data.get(key)
     marks = {}
     for entry in stored if isinstance(stored, list) else ():
@@ -1079,15 +1202,20 @@ def _stored_marks(session: sessions.Session, key: str) -> dict[tuple[float, str]
     return marks
 
 
-def _save_marks(latest: sessions.Session, key: str, marks: dict[tuple[float, str], str]) -> None:
-    latest.data[key] = [{"start": start, "translation": translation, "reason": reason}
-                        for (start, translation), reason in marks.items()]
+def _save_marks(latest: sessions.Session, key: str, marks: dict[tuple[float, str, str], str]) -> None:
+    latest.data[key] = [{"start": start, "speaker": speaker, "translation": translation, "reason": reason}
+                        for (start, speaker, translation), reason in marks.items()]
 
 
 def _line_marks(session: sessions.Session, key: str) -> dict[int, str]:
     marks = _stored_marks(session, key)
-    return {index: marks[_take_mark(line)] for index, line in enumerate(session.segments)
-            if line["translation"] and line.get("dub", True) and _take_mark(line) in marks}
+    found = {}
+    for index, line in enumerate(session.segments):
+        start, _speaker, translation = mark = _take_mark(line)
+        reason = marks.get(mark) or marks.get((start, "", translation))
+        if line["translation"] and line.get("dub", True) and reason:
+            found[index] = reason
+    return found
 
 
 def take_problems(session: sessions.Session) -> dict[int, str]:
@@ -1221,15 +1349,29 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
     if session.path("vocals") is not None:
         # Unticked or untranslated lines keep their original voice. The caller
         # rejects failed translated takes before reaching this mixing step.
-        for index, segment in enumerate(lines):
-            if index not in voiced:
-                start = int(round(segment["start"] * RATE))
-                original = read_slice(session.path("vocals"), segment["start"], segment["end"])
-                if segment["speaker"] in gains:
-                    original *= np.float32(gains[segment["speaker"]])
-                end = min(len(track), start + len(original))
-                track[start:end] += original[: end - start]
+        for first, last, speakers in kept_original(lines, voiced):
+            start = int(round(first * RATE))
+            original = read_slice(session.path("vocals"), first, last)
+            # Overlapping speakers share these samples: only a single speaker's volume can apply.
+            if len(speakers) == 1 and next(iter(speakers)) in gains:
+                original *= np.float32(gains[next(iter(speakers))])
+            end = min(len(track), start + len(original))
+            track[start:end] += original[: end - start]
     return track, notes, spoken
+
+
+def kept_original(lines: list[dict], voiced: set[int]) -> list[tuple[float, float, set[str]]]:
+    """The original-voice stretches (start, end, speakers) of the lines not voiced, overlaps merged,
+    so speech two such lines share is restored once instead of twice."""
+    merged: list[list] = []
+    for line in sorted((line for index, line in enumerate(lines) if index not in voiced),
+                       key=lambda line: line["start"]):
+        if merged and line["start"] <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], line["end"])
+            merged[-1][2].add(line["speaker"])
+        else:
+            merged.append([line["start"], line["end"], {line["speaker"]}])
+    return [(start, end, speakers) for start, end, speakers in merged]
 
 
 def _validated_word_timing(text: str, words, duration: float) -> list[dict]:
@@ -1239,12 +1381,14 @@ def _validated_word_timing(text: str, words, duration: float) -> list[dict]:
 
 def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int, tuple[float, float]],
                   clips: dict[int, np.ndarray], *, runtime, free_gpu, hf_token=None,
-                  notes: list[str], existing: dict | None = None) -> Iterator[str]:
+                  notes: list[str], existing: dict | None = None, align_source: bool = True) -> Iterator[str]:
     """Each line's ``{"source": words, "translation": words}`` on the player's timeline, where Qwen3 aligns them.
 
     The translation is timed on its fitted take as placed, the source on the original voice.
     Results are cached by clip audio and text, so a re-dub aligns only the lines that changed;
-    a line that cannot be aligned keeps plain subtitles.
+    a line that cannot be aligned keeps plain subtitles. Without ``align_source`` only the
+    source words already in ``existing`` (the transcriber's own) are used: aligning edited
+    lines against cross-talk would time them to the wrong voice.
     """
     from h3_app.drama3.serving.audio import encode_wav
 
@@ -1252,7 +1396,9 @@ def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int
     original = session.path("vocals") or session.path("audio")
     jobs = []  # (index, field, offset, wav, text)
     for index, line in enumerate(lines):
-        if original is not None and line["source"].strip() and line["end"] > line["start"]:
+        known = "source" in (existing or {}).get(index, {})
+        if ((align_source or known) and original is not None and line["source"].strip()
+                and line["end"] > line["start"]):
             samples = read_slice(original, line["start"], line["end"])
             jobs.append((index, "source", line["start"], samples, line["source"]))
         if index in clips and line["translation"].strip():
@@ -1339,14 +1485,16 @@ def _word_timings(session: sessions.Session, lines: list[dict], spoken: dict[int
 
 def subtitle_lines(lines: list[dict], spoken: dict[int, tuple[float, float]]) -> list[dict]:
     """Translated subtitles timed to the dub: each starts with its dubbed line and stays up while
-    it is still being spoken, but never past the next line's start, except the last.
+    it is still being spoken, but never past the start of the next line after it, except the last.
     """
     starts = [spoken[index][0] if index in spoken else line["start"] for index, line in enumerate(lines)]
     shown = []
     for index, line in enumerate(lines):
         start, spoken_end = spoken.get(index, (line["start"], line["end"]))
         end = max(line["end"], spoken_end)
-        later = [starts[other] for other in range(index + 1, len(lines)) if lines[other]["start"] > line["start"]]
+        # Another speaker talking over this line does not take its subtitle down.
+        later = [starts[other] for other in range(index + 1, len(lines))
+                 if lines[other]["start"] >= line["end"] - 1e-6]
         if later:
             end = min(end, max(min(line["end"], spoken_end), min(later) - LINE_GAP))
         shown.append({**line, "start": round(start, 3), "end": round(max(end, start + 0.05), 3)})
@@ -1556,8 +1704,11 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     words = None
     if request.word_timing:
         yield "Timing subtitle words"
+        native = {index: {"source": found} for index, line in enumerate(lines)
+                  if (found := _native_words(session, line))}
         words = yield from _word_timings(session, lines, spoken, clips, runtime=runtime, free_gpu=free_gpu,
-                                         hf_token=hf_token, notes=notes)
+                                         hf_token=hf_token, notes=notes, existing=native,
+                                         align_source=session.data.get("pipeline") != PIPELINE_NEMOTRON)
     yield "Preparing the result player"
     _prune_players(output_dir)
     player = _player(session, speech, output_dir / PLAYER_DIR / stem, separated=separated, speech_gain=speech_gain,

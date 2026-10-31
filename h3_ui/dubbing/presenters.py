@@ -229,6 +229,7 @@ def plan_steps(*, separate: bool, separator_model: str, reuse: bool, transcripti
                       separator_model + (" · reused when this file was analyzed before" if reuse else "")))
     detail = {pipeline.PIPELINE_LOCAL: "Qwen3-ASR with word timing, on this server",
               pipeline.PIPELINE_MOSS: "MOSS, telling speakers apart, on this server",
+              pipeline.PIPELINE_NEMOTRON: "Nemotron, with speakers, overlaps and word timing, on this server",
               pipeline.PIPELINE_GEMINI: "Gemini, telling speakers apart"}.get(transcription, transcription)
     steps.append((TRANSCRIPTION, "Transcribe" + (" and translate" if transcription == pipeline.PIPELINE_GEMINI
                                                  and translate else ""), detail))

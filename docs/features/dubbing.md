@@ -45,6 +45,13 @@ audible.
   split into subtitle-sized lines at sentence ends, and Hy-MT2 translates them.
   It runs on SGLang-Omni, so it needs Linux, like Soundstage (see
   [Runtime](#runtime)).
+- **Nemotron on this server** is for complex conversations where people talk
+  over each other. Nemotron 3.5 Transcribe (NVFP4, Blackwell GPUs such as the RTX
+  PRO 6000) transcribes up to 60 minutes in one pass and tags each word with its
+  speaker and time. Lines are cut from one speaker's consecutive words, so two
+  people talking at once stay two lines at the same time. The words and when
+  each speaker talks are kept with the session; they set the Nearest clean voice
+  default below and word subtitles for unedited lines. Needs Linux.
 - **Gemini (cloud)** uploads the vocals (or the soundtrack) once. Gemini
   returns timed lines with speaker labels and their translations. The key comes
   from `GEMINI_API_KEY`, or from **Gemini API key for this session**.
@@ -139,7 +146,7 @@ The **Dub it** card says what the dub will do: how many lines it voices, how
 many keep their original voice or are untranslated, and which lines may sound
 rushed.
 
-**Speakers** appears for sessions transcribed with MOSS or Gemini, with a card
+**Speakers** appears for sessions transcribed with MOSS, Nemotron or Gemini, with a card
 per speaker: give a speaker a saved Drama 3 voice instead of its cloned
 original, or change its volume. Changes save at once.
 
@@ -147,6 +154,16 @@ original, or change its volume. Changes save at once.
   which keeps each line's delivery. *One voice per speaker* uses each speaker's
   best clip (the longest one between 3 and 15 seconds), which is steadier.
   Lines shorter than 2 seconds always use their speaker's clip.
+  *Nearest clean voice* (the default for Nemotron sessions; the others start on
+  *Each line's own voice*) clones a line from its own audio when nobody else
+  talks during it and it lasts at least 2 seconds; otherwise from the same
+  speaker's closest such line, before or after, anywhere in the recording, cut to
+  15 seconds at a sentence when Nemotron's words allow. A speaker who never talks
+  alone is cloned from the line's own audio, overlapping voices included. Who
+  talks when comes from the lines as transcribed and as edited (and Nemotron's
+  words and diarization), so a line moved to another speaker still counts as
+  cross-talk. It needs accurate speaker labels, which is why other transcribers
+  do not default to it.
 - **Delivery**: Strict, Balance (default) or Expressive Drama 3 sampling.
 - **Timing**:
   - *Smart timing* (default) keeps each take as Drama 3 spoke it whenever it
@@ -292,6 +309,16 @@ choice.
   analysis wakes it in seconds; every other job sleeps it too, and unloading
   models stops it. `H3_MOSS_SGLANG_SLEEP=off` stops it instead of sleeping. When
   the GPU is short, the idle dubbing tools stop first, then Drama 3 sleeps.
+- Nemotron runs on vLLM from NeMo Speech's locked environment (Python 3.13,
+  pinned in `h3_requirements.py`), installed on first use into
+  `h3/nemotron-venv` (`H3_NEMOTRON_VENV`) with its editable checkout beside it,
+  or baked into the Modal image. It serves on port 8098 (`H3_NEMOTRON_PORT`)
+  with NVIDIA's recipe minus speculative decoding, one request at a time, and
+  about 40 GiB (`H3_NEMOTRON_MEMORY_GIB`). The ~20 GB checkpoint downloads once
+  into `ComfyUI/models/dubbing/nemotron`. It starts for an analysis and stops as
+  soon as the words are back. The first start compiles FlashInfer's NVFP4
+  kernels with CUDA 13's nvcc. A reply without valid word timings, or cut off,
+  fails the analysis so it can be retried.
 - Sessions (source copy, soundtrack and stems, references, lines) live in
   `.h3-workspace/dubbing/<session>`. Sessions untouched for 14 days are removed
   when a new one starts.

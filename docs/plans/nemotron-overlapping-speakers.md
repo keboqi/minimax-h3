@@ -1,6 +1,8 @@
 # Nemotron and overlapping-speaker dubbing: simple first version
 
-Plan updated 2026-10-31. Planning only; implementation has not started.
+Plan updated 2026-10-31. Implemented 2026-10-31; the runtime is not yet smoke-tested on an RTX PRO 6000.
+
+Implementation differs from this plan in three small ways: line keys and review marks gained the speaker instead of new stable line IDs (enough to tell simultaneous identical phrases apart); clean references are ranked by distance alone, with the 3–15 s range used only as the trim length; and the Clone from default is set when a session opens, not stored.
 
 ## Scope
 

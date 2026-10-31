@@ -22,7 +22,7 @@ from typing import Sequence
 import gradio as gr
 
 from h3_app.dubbing.pipeline import (
-    PIPELINE_GEMINI, PIPELINE_LOCAL, PIPELINE_MOSS, SEPARATOR_MODELS, SOURCE_LANGUAGES, TARGET_LANGUAGES,
+    PIPELINE_GEMINI, PIPELINE_LOCAL, PIPELINE_MOSS, PIPELINE_NEMOTRON, SEPARATOR_MODELS, SOURCE_LANGUAGES, TARGET_LANGUAGES,
     TIMING_MATCH, TIMING_NATURAL, TIMING_SMART, TRANSLATOR_GEMINI, TRANSLATOR_HYMT, TRANSLATORS, VOICE_LINE,
     VOICE_MODES, VOICE_PRESETS,
 )
@@ -37,11 +37,13 @@ STEPS_ID = "h3-dub-steps"
 DEFAULT_SEPARATOR = "Balanced (BS-Roformer)"
 TRANSCRIPTIONS = (
     (PIPELINE_LOCAL, "Qwen3-ASR on this server",
-     "Private and free, with word timing. Every line is one speaker, voiced from its own audio."),
+     "Basic transcription with word timing. Best for one speaker."),
     (PIPELINE_MOSS, "MOSS on this server",
-     "Tells speakers apart, so each keeps their own voice. Needs Linux; up to 90 minutes."),
+     "Speaker-labeled transcription. Best for conversations where people take turns. Up to 90 minutes."),
+    (PIPELINE_NEMOTRON, "Nemotron on this server",
+     "Complex conversations with overlapping speakers, speaker labels and word timing. Up to 60 minutes."),
     (PIPELINE_GEMINI, "Gemini (cloud)",
-     "Tells speakers apart and describes them. Uploads the vocals; needs an API key."),
+     "Cloud transcription and translation with speaker labels. Uploads the vocals; needs an API key."),
 )
 TIMING_CHOICES = (
     (TIMING_SMART, "Smart timing",
@@ -335,9 +337,12 @@ def build_dubbing_view(root: gr.Column, *, gemini_models: Sequence[str], default
                         with gr.Row(equal_height=True):
                             voice_mode = gr.Radio(list(VOICE_MODES), value=VOICE_LINE, label="Clone from",
                                                   elem_classes=["h3-dub-segmented"], min_width=260,
-                                                  info="Each line's own voice keeps its delivery; one voice per "
-                                                       "speaker is steadier. Lines under 2 s use their speaker's "
-                                                       "voice.")
+                                                  info="Each line's own voice clones each line from its own audio, "
+                                                       "overlapping voices included; safe with any transcription "
+                                                       "(lines under 2 s use their speaker's voice). Nearest clean "
+                                                       "voice clones overlapping or short lines from the same "
+                                                       "speaker's closest solo passage; it needs accurate speaker "
+                                                       "labels. One voice per speaker is steadier.")
                             preset = gr.Radio(list(VOICE_PRESETS), value="Balance", label="Delivery",
                                               elem_classes=["h3-dub-segmented"], min_width=220)
                         card_heading("Timing")

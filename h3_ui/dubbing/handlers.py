@@ -37,8 +37,9 @@ class DubbingServices:
 
 
 def _line_key(index: int, line: dict) -> dict:
-    """What names a line across saves: its place, start and original text."""
-    return {"index": index, "start": line["start"], "source": line["source"]}
+    """What names a line across saves: its place, start, speaker and original text (two speakers
+    can say the same words at the same time)."""
+    return {"index": index, "start": line["start"], "speaker": line["speaker"], "source": line["source"]}
 
 
 def _find_line(lines: list[dict], key) -> int | None:
@@ -46,8 +47,10 @@ def _find_line(lines: list[dict], key) -> int | None:
     if not isinstance(key, dict) or key.get("start") is None:
         return None
     start, source = round(float(key["start"]), 3), str(key.get("source") or "").strip()
+    speaker = key.get("speaker")
     found = [index for index, line in enumerate(lines)
-             if round(float(line["start"]), 3) == start and str(line["source"]).strip() == source]
+             if round(float(line["start"]), 3) == start and str(line["source"]).strip() == source
+             and (speaker is None or line["speaker"] == speaker)]
     if not found:
         return None
     return key.get("index") if key.get("index") in found else found[0]
@@ -353,6 +356,11 @@ class DubbingHandlers:
         except (H3Error, TypeError, ValueError) as exc:
             return f"**Not saved:** {exc}"
         return ""
+
+    def voice_default(self, session_id):
+        """Outputs: Clone from, set to the session's transcription default."""
+        session = self._session(session_id)
+        return gr.skip() if session is None else pipeline.default_voice_mode(session.data.get("pipeline"))
 
     def readiness(self, session_id):
         return presenters.readiness_html(self._session(session_id))

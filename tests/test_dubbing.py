@@ -340,7 +340,8 @@ class TimingTests(unittest.TestCase):
         lines = segments.normalize([{"start": 0, "end": 2, "source": "a"}, {"start": 3, "end": 4, "source": "b"},
                                     {"start": 3.5, "end": 3.8, "source": "c"}])
         self.assertAlmostEqual(pipeline.slot_end(lines, 0, 10), 2.95)
-        self.assertEqual(pipeline.slot_end(lines, 1, 10), 4.0)
+        # Line c overlaps b in the source (another speaker), so it does not end b's slot.
+        self.assertEqual(pipeline.slot_end(lines, 1, 10), 10)
         self.assertEqual(pipeline.slot_end(lines, 2, 10), 10)
 
     def test_fit_leaves_short_takes_and_caps_the_speed_up(self):
@@ -718,7 +719,7 @@ class HandlerTests(Workspace):
         self.assertIn("Line 2 of 3", heading)
         self.assertEqual((start, end, speaker["value"], original, translation, dub, numbers),
                          ("00:02.000", "00:03.000", "speaker2", "Two", "", True, "2"))
-        self.assertEqual(key, {"index": 1, "start": 2.0, "source": "Two"})
+        self.assertEqual(key, {"index": 1, "start": 2.0, "speaker": "speaker2", "source": "Two"})
         self.assertIn("No translation yet", fit)
         self.assertEqual(self.handlers.pick_lines({**board, "picked": [0, 1, 2]}), "1-3")
         self.assertEqual(self.handlers.pick_lines({**board, "picked": []}), "2")
@@ -734,7 +735,7 @@ class HandlerTests(Workspace):
             created.id, key, board, "00:06.000", "00:07.000", "speaker3", "One", "Uno", True)
         self.assertEqual(status, "")
         self.assertEqual((value["focus"], rows[2][4], rows[2][3]), (2, "One", "speaker3"))
-        self.assertEqual(key, {"index": 2, "start": 6.0, "source": "One"})
+        self.assertEqual(key, {"index": 2, "start": 6.0, "speaker": "speaker3", "source": "One"})
         self.assertFalse(value["keepFocus"])  # the line moved, and the focus moves with it
         self.assertIn("Line 3 of 3", heading)
         self.assertIn("Not saved", self.handlers.save_focused(created.id, key, value, "soon", "", "", "x", "",
@@ -1427,7 +1428,7 @@ class ReviewFixTests(Workspace):
 
     def test_speaker_settings_are_offered_only_for_sessions_with_speakers(self):
         local = self.session_with_vocals([{"start": 0.0, "end": 1.0, "source": "a", "translation": "A"}])
-        with self.assertRaisesRegex(H3Error, "transcribed with MOSS or Gemini"):
+        with self.assertRaisesRegex(H3Error, "transcribed with MOSS, Nemotron or Gemini"):
             pipeline.set_speaker(self.runtime, local.id, "speaker1", voice="", volume=50)
         local.data["speaker_settings"] = {"speaker1": {"voice": "", "volume": 50}}
         self.assertEqual(pipeline.speaker_settings(local), {})
