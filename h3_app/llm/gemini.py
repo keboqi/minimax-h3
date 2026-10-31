@@ -140,17 +140,21 @@ class Session:
     def generate(self, model: str, parts: list[dict[str, Any]], *, generation_config: dict[str, Any],
                  system_prompt: str | None = None, timeout: float = 600,
                  action: str = "prompt generation") -> dict[str, Any]:
-        """The raw generateContent reply for one user turn."""
+        """The raw generateContent reply for one user turn, retrying transient 429/5xx spikes."""
         body: dict[str, Any] = {"contents": [{"role": "user", "parts": parts}],
                                 "generationConfig": generation_config}
         if system_prompt is not None:
             body = {"systemInstruction": {"parts": [{"text": system_prompt}]}, **body}
-        response = self.http.post(
-            f"{GEMINI_API_ROOT}/v1beta/models/{model}:generateContent",
-            headers={"x-goog-api-key": self.key, "Content-Type": "application/json"},
-            json=body,
-            timeout=timeout,
-        )
+        for attempt in range(3):
+            response = self.http.post(
+                f"{GEMINI_API_ROOT}/v1beta/models/{model}:generateContent",
+                headers={"x-goog-api-key": self.key, "Content-Type": "application/json"},
+                json=body,
+                timeout=timeout,
+            )
+            if response.ok or response.status_code not in (429, 502, 503, 504) or attempt == 2:
+                break
+            time.sleep(1.5 * (attempt + 1))
         if not response.ok:
             raise error(response, action)
         return response.json()

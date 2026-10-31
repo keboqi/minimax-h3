@@ -812,7 +812,7 @@ class UiContractTests(unittest.TestCase):
         # The shown slot count is a hidden Number so browser-side handlers can read it.
         # The Writer workflow comes last, so existing positional callers keep working.
         self.assertEqual(enhance[8:], [*slots, *metadata, "shown_slots", "script_mode", "speaker_group",
-                                       "writer_workflow"])
+                                       "writer_workflow", "max_batch_lines"])
         voice = api["/generate_drama3_voice"]
         self.assertEqual([row["parameter_name"] for row in voice["parameters"]],
                          ["description", "preview_text", "language", "engine",

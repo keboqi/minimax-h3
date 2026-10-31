@@ -35,7 +35,7 @@ EXTRA_FIELDS = {
     "fibo2": ("model", "precision", "width", "height", "edit_size", "seed", "steps", "cfg"),
     "drama3": ("temperature", "top_p", "top_k", "max_frames", "prompt_backend", "prompt_model",
                "openai_model", "speaker_mode", "parallel", "retries", "asr_model",
-               "voice_engine", "skip_existing", "writer_workflow"),
+               "voice_engine", "skip_existing", "writer_workflow", "max_batch_lines"),
     "workspace": ("task", "engine"),
     "qwen_image21": (
         "prompt_enhancer",

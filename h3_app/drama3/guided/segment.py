@@ -32,6 +32,7 @@ _LABEL_PUNCTUATION_RE = re.compile(r"[，,。.!?！？“”\"「」;；、]")
 _EFFECT_TAGS_RE = re.compile(r"^\s*((?:<(?:%s)>\s*)+)" % "|".join(map(re.escape, SPEAKER_TAGS)), re.IGNORECASE)
 _SENTENCE_END_RE = re.compile(r"(?:[。！？]+|…+|\.{3,}|[.!?]+(?=\s|$))[”\"'」』)）]*")
 _SPOKEN_RE = re.compile(r"\w", re.UNICODE)
+_CJK_PIPE_RE = re.compile(r"(?<=[\u3400-\u9fff])\|(?=[\u3400-\u9fff])")
 # Explicit brief instructions ("Write a scene where...", "... 30 seconds", "请写一段…") stay briefs
 # even when they quote a sample line or span several sentences.
 _BRIEF_RE = re.compile(
@@ -139,7 +140,7 @@ def _is_heading(paragraph: str) -> bool:
 def segment_source(text: str, kind: str | None = None) -> Source:
     """The user's script or prose as numbered units ``s1…sN``."""
     paragraphs = tuple(
-        replace_speaker_tag_line(line.strip())
+        replace_speaker_tag_line(_CJK_PIPE_RE.sub("", line.strip()))
         for line in str(text or "").replace("\r\n", "\n").split("\n") if line.strip()
     )
     kind = kind or input_kind(text)
@@ -189,20 +190,26 @@ def segment_source(text: str, kind: str | None = None) -> Source:
     return Source(kind, paragraphs, tuple(units))
 
 
-def attribute_units(source: Source, speakers: dict[str, str]) -> list[Utterance]:
-    """Locked utterances from the source units and the content stage's ``speakers`` (unit ID → name).
+def attribute_units(source: Source, speakers: dict[str, str | tuple[str, ...] | list[str]]) -> list[Utterance]:
+    """Locked utterances from the source units and the content stage's ``speakers`` (unit ID → name(s)).
 
     Narration and headings default to the narrator and a script line to its label; every quote
-    needs a speaker. A quote the narrator reads (a quoted word inside narration) is read in place:
-    it joins the narration around it, quotation marks included.
+    needs a speaker (or a list/tuple of speakers when spoken in unison). A quote the narrator
+    reads (a quoted word inside narration) is read in place: it joins the narration around it,
+    quotation marks included.
     """
-    names: list[str] = []
+    names: list[tuple[str, ...]] = []
     missing = []
     for unit in source.units:
-        name = speakers.get(unit.id) or {QUOTE: "", LABELLED: unit.label}.get(unit.kind, NARRATOR)
-        if not name:
+        raw = speakers.get(unit.id) or {QUOTE: "", LABELLED: unit.label}.get(unit.kind, NARRATOR)
+        items = raw if isinstance(raw, (list, tuple)) else (raw,)
+        unit_names = tuple(
+            NARRATOR if str(item).strip().casefold() in NARRATOR_ALIASES else str(item).strip()
+            for item in items if str(item or "").strip()
+        )
+        if not unit_names:
             missing.append(unit.id)
-        names.append(NARRATOR if name.strip().casefold() in NARRATOR_ALIASES else name.strip())
+        names.append(unit_names)
     if missing:
         raise H3Error(f"No speaker for quoted unit(s) {', '.join(missing)}.")
 
@@ -210,7 +217,7 @@ def attribute_units(source: Source, speakers: dict[str, str]) -> list[Utterance]
     for position, unit in enumerate(source.units):
         previous = source.units[position - 1] if runs else None
         joins = (previous is not None and previous.paragraph == unit.paragraph and names[position - 1] == names[position]
-                 and names[position] == NARRATOR and QUOTE in (previous.kind, unit.kind))
+                 and names[position] == (NARRATOR,) and QUOTE in (previous.kind, unit.kind))
         if joins:
             runs[-1].append(position)
         else:
@@ -224,6 +231,7 @@ def attribute_units(source: Source, speakers: dict[str, str]) -> list[Utterance]
         end = following.start if following is not None and following.paragraph == units[0].paragraph else len(paragraph)
         text = units[0].text if len(units) == 1 else paragraph[units[0].start:end]
         kind = HEADING if units[0].kind == HEADING else LINE
-        utterances.append(Utterance(f"u{len(utterances) + 1}", names[run[0]], text.strip(), kind,
-                                    units[0].effects, tuple(unit.id for unit in units), units[0].hint))
+        for speaker_name in names[run[0]]:
+            utterances.append(Utterance(f"u{len(utterances) + 1}", speaker_name, text.strip(), kind,
+                                        units[0].effects, tuple(unit.id for unit in units), units[0].hint))
     return utterances

@@ -7,11 +7,11 @@ Reply with one JSON object and nothing else:
 
 Rules:
 1. cast lists every character who speaks, once, by one canonical name (1–64 characters, no colons or brackets). Put other names, titles and spellings the story uses for that character in aliases, including every script label that means them. Never add the narrator to cast; narration needs no entry.
-2. speakers maps EVERY [quote] unit to the cast name of the character who says it. Use attributions first ("Tom asked", "她问"), then who is being answered and who is present. A quoted word inside a sentence that nobody says aloud (a name, a sign, a nickname) belongs to "narrator".
+2. speakers maps EVERY [quote] unit to the cast name of the character who says it (or a list of cast names, such as ["Mia", "Tom"], when two or more characters speak that exact quote together at the same time). Use attributions first ("Tom asked", "她问", "白瑶怡和老者同时恭声应道"), then who is being answered and who is present. A quoted word inside a sentence that nobody says aloud (a name, a sign, a nickname, or a sound/onomatopoeia like "轰隆隆") belongs to "narrator".
 3. Leave [narration] units out of speakers: the narrator reads them. Add one only when it is clearly a character speaking without quotation marks.
 4. [line] units already have a label. Leave them out of speakers unless the label is wrong; just make sure each label appears as a cast name or alias. Labels such as Narration, Narrator or 旁白 are the narrator.
 5. A character keeps one name in every scene. Mentioning someone does not make them a speaker. When you cannot tell who speaks a quote, choose the most likely character present; never invent a new one.
 6. scenes: start a new scene only where the place or time clearly changes, giving the unit that starts it. The first scene starts at the first unit. place is a few words naming where we are and what it sounds like; change says in one short sentence what turns in that scene. Short pieces have one scene.
 7. title: the story's own heading if it has one, otherwise a short title (at most 60 characters) in the story's language.
 8. When the request lists available voices, cast only those names and give every character's lines to the closest-fitting one.
-9. If the units are not a story or script to perform as written, but a creative brief or instructions asking you to write a new scene, reply with {"kind": "brief"} and nothing else.
+9. Only if the entire input is a short 1–3 sentence creative brief or prompt instructions with no story dialogue, reply with {"kind": "brief"} and nothing else. Never return {"kind": "brief"} for a story or chapter with dialogue.

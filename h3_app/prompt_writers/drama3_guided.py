@@ -34,6 +34,8 @@ GUIDED_PROMPTS = {
     "sound": "prompt_drama3_guided_sound.txt",
 }
 MAX_BATCH_LINES = 40
+MIN_BATCH_LINES = 10
+MAX_BATCH_LINES_LIMIT = 100
 MAX_SPEAKERS = 16
 
 Ask = Callable[[Path, str], tuple[str, str]]
@@ -105,10 +107,11 @@ def _line_listing(utterances: list[Utterance]) -> str:
     )
 
 
-def _batches(scenes: list[Scene]) -> list[list[Scene]]:
+def _batches(scenes: list[Scene], max_batch_lines: int = MAX_BATCH_LINES) -> list[list[Scene]]:
+    limit = max(MIN_BATCH_LINES, min(MAX_BATCH_LINES_LIMIT, int(max_batch_lines or MAX_BATCH_LINES)))
     batches: list[list[Scene]] = [[]]
     for scene in scenes:
-        if batches[-1] and sum(len(s.utterances) for s in batches[-1]) + len(scene.utterances) > MAX_BATCH_LINES:
+        if batches[-1] and sum(len(s.utterances) for s in batches[-1]) + len(scene.utterances) > limit:
             batches.append([])
         batches[-1].append(scene)
     return [batch for batch in batches if batch]
@@ -187,6 +190,7 @@ def write_drama3_guided(
     cast_context: str = "",
     sound_context: str = "",
     notes: list[str] | None = None,
+    max_batch_lines: int = MAX_BATCH_LINES,
 ) -> tuple[str, str, int]:
     """A writer reply (JSON, as the Single-pass writer returns), its source mode, and the call count.
 
@@ -268,7 +272,9 @@ def write_drama3_guided(
             lines = " / ".join(u.text for u in utterances if u.speaker == name)[:300]
             role = roles.get(name) or ("the story's narrator" if name == NARRATOR else "")
             listing.append(f"- {name}{f' ({role})' if role else ''}: {lines}")
-        request = "\n".join([language, "Characters:", *listing])
+        story_head = " ".join(u.text for u in utterances[:6])[:240]
+        context_line = f"Story context: {title + ' — ' if title else ''}{story_head}" if story_head else ""
+        request = "\n".join(filter(None, [language, context_line, "Characters:", *listing]))
         return calls.run(prompts["voices"], request, lambda reply: parse_voices(reply, names), "voice design")
 
     def direction_stage(batch):
@@ -293,7 +299,7 @@ def write_drama3_guided(
             notes.append(f"{exc} Those scenes play without added sound.")
             return {}, {}, {}
 
-    batches = _batches(scenes)
+    batches = _batches(scenes, max_batch_lines)
     with ThreadPoolExecutor(max_workers=4) as pool:
         voices_future = pool.submit(voices_stage)
         direction_futures = [pool.submit(direction_stage, batch) for batch in batches]

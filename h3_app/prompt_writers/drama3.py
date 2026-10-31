@@ -43,6 +43,9 @@ DRAMA3_SCRIPT_MODES = (DRAMA3_SCRIPT_BASIC, DRAMA3_SCRIPT_ADVANCED)
 DRAMA3_WORKFLOW_SINGLE = "Single-pass"
 DRAMA3_WORKFLOW_GUIDED = "Guided (step by step)"
 DRAMA3_WORKFLOWS = (DRAMA3_WORKFLOW_SINGLE, DRAMA3_WORKFLOW_GUIDED)
+DRAMA3_GUIDED_BATCH_DEFAULT = 40
+DRAMA3_GUIDED_BATCH_MIN = 10
+DRAMA3_GUIDED_BATCH_MAX = 100
 
 
 def drama3_voice_context(voices: Iterable[tuple[int, str]]) -> str:
@@ -394,7 +397,7 @@ MAX_GUIDED_NOTES = 4
 
 
 def _write_guided(text, voices, speaker_mode, script_mode, cast_context, sound_context, notes, *,
-                  runtime, ask, model_label) -> tuple[str, str]:
+                  runtime, ask, model_label, max_batch_lines: int = DRAMA3_GUIDED_BATCH_DEFAULT) -> tuple[str, str]:
     """The Guided writer's reply and status, or the original text and a failure status."""
     from h3_app.prompt_writers.drama3_guided import guided_prompt_paths, write_drama3_guided
 
@@ -403,7 +406,8 @@ def _write_guided(text, voices, speaker_mode, script_mode, cast_context, sound_c
         reply, _source_mode, calls = write_drama3_guided(
             text, ask, guided_prompt_paths(Path(runtime.prompt_systems["Drama 3"]).parent),
             voices=voices, speaker_mode=speaker_mode, advanced=script_mode == DRAMA3_SCRIPT_ADVANCED,
-            cast_context=cast_context, sound_context=sound_context, notes=guided_notes)
+            cast_context=cast_context, sound_context=sound_context, notes=guided_notes,
+            max_batch_lines=max_batch_lines)
     except H3Error as exc:
         return text, f"{DRAMA3_PROMPT_FAILED} {exc}"
     if guided_notes:
@@ -433,6 +437,7 @@ def enhance_drama3_text(
     return_title: bool = False,
     speaker_names: dict[int, str] | None = None,
     workflow: str = DRAMA3_WORKFLOW_SINGLE,
+    max_batch_lines: int = DRAMA3_GUIDED_BATCH_DEFAULT,
 ) -> tuple:
     """Rewrite a script and validate its cast as one result before updating the UI.
 
@@ -472,7 +477,8 @@ def enhance_drama3_text(
                 target="Drama 3 guided", system_path=system_path, backend=backend,
                 openai_api_key=openai_api_key, openai_model=openai_model, openai_base_url=openai_base_url,
                 media_values=(), context="", request_text=request_text),
-            model_label=openai_model if backend == "OpenAI-compatible" else model)
+            model_label=openai_model if backend == "OpenAI-compatible" else model,
+            max_batch_lines=max_batch_lines)
     else:
         script, status = common.write_prompt(
             prompt=original,

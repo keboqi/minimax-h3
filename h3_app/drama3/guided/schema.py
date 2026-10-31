@@ -28,6 +28,7 @@ MAX_REACTION_WORDS = 4
 MAX_REACTION_WIDE = 6
 _CONTROL_RE = re.compile(r"[\[\]<>{}|]")
 _WIDE_RE = re.compile(r"[^\x00-\x7f]")
+_CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
 _SEX_RE = re.compile(r"^\s*an? (?:(?:young |old |elderly |middle-aged )?(?:fe)?male|girl's|boy's|androgynous|woman's|man's)"
                      r"\b", re.IGNORECASE)
 
@@ -86,21 +87,45 @@ def _cast(data: dict, problems: list[str], allowed_names: set[str] | None) -> di
     return aliases
 
 
-def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] | None = None) -> dict:
-    """The preserve content stage: ``{"title", "speakers": {unit: name}, "scenes": [(unit, place, change)]}``.
+def _resolve_cast_name(raw_name, aliases: dict[str, str]) -> str | None:
+    """Resolve ``raw_name`` against ``aliases``, tolerating stray trailing digits or unique CJK substrings."""
+    name = canonical(raw_name)
+    if not name:
+        return None
+    if name.casefold() in aliases:
+        return aliases[name.casefold()]
+    cleaned = re.sub(r"\d+$", "", name).strip() if _WIDE_RE.search(name) else name
+    if cleaned.casefold() in aliases:
+        return aliases[cleaned.casefold()]
+    if len(cleaned) >= 2 and _WIDE_RE.search(cleaned):
+        key = cleaned.casefold()
+        candidates = {canon for canon in set(aliases.values()) - {NARRATOR}
+                      if key in canon.casefold() or (len(canon) >= 2 and canon.casefold() in key)}
+        if len(candidates) == 1:
+            return next(iter(candidates))
+    return None
 
-    Script labels resolve through the cast's aliases; every quote needs a known speaker.
-    When the model judges the units to be a brief rather than text to perform, it may
-    return ``{"kind": "brief"}`` so the orchestrator hands off to the brief stage.
+
+def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] | None = None) -> dict:
+    """The preserve content stage: ``{"title", "speakers": {unit: name(s)}, "scenes": [(unit, place, change)]}``.
+
+    Script labels resolve through the cast's aliases; every quote needs a known speaker (or a
+    tuple of speakers when spoken in unison). When the model judges the units to be a brief
+    rather than text to perform, it may return ``{"kind": "brief"}`` so the orchestrator hands
+    off to the brief stage.
     """
     data = load_answer(reply)
     if _text(data.get("kind")).lower() == "brief":
-        return {"kind": "brief"}
+        quotes = sum(unit.kind == QUOTE for unit in source.units)
+        if len(source.units) <= 8 and quotes <= 1:
+            return {"kind": "brief"}
+        raise StageError(['the input is a story with dialogue to preserve, not a brief; '
+                          'reply with "title", "cast", "speakers" and "scenes"'])
     problems: list[str] = []
     aliases = _cast(data, problems, allowed_names)
     aliases.setdefault(NARRATOR, NARRATOR)
     units = {unit.id: unit for unit in source.units}
-    speakers: dict[str, str] = {}
+    speakers: dict[str, str | tuple[str, ...]] = {}
     raw = data.get("speakers")
     if not isinstance(raw, dict):
         problems.append('"speakers" must map unit IDs to cast names')
@@ -108,14 +133,29 @@ def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] |
     for unit_id, name in raw.items():
         if unit_id not in units:
             problems.append(f"{unit_id} is not a unit ID")
-        elif canonical(name).casefold() not in aliases:
-            problems.append(f"{unit_id}: {name!r} is not in the cast")
+            continue
+        if isinstance(name, list):
+            parts = [item for item in name if _text(item)]
+        elif isinstance(name, (str, int, float)) and _resolve_cast_name(name, aliases) is None \
+                and re.search(r"[/、，,&]", str(name)):
+            parts = [part.strip() for part in re.split(r"[/、，,&]+", str(name)) if part.strip()]
         else:
-            speakers[unit_id] = aliases[canonical(name).casefold()]
+            parts = [name]
+        if not parts:
+            problems.append(f"{unit_id}: {name!r} is not in the cast")
+            continue
+        resolved_parts: list[str] = []
+        for part in parts:
+            resolved = _resolve_cast_name(part, aliases)
+            if resolved is None:
+                problems.append(f"{unit_id}: {part!r} is not in the cast")
+            elif resolved not in resolved_parts:
+                resolved_parts.append(resolved)
+        if resolved_parts and len(resolved_parts) == len(parts):
+            speakers[unit_id] = resolved_parts[0] if len(resolved_parts) == 1 else tuple(resolved_parts)
     for unit in source.units:
         if unit.kind == "line" and unit.id not in speakers:
-            label = canonical(unit.label)
-            resolved = aliases.get(label.casefold())
+            resolved = _resolve_cast_name(unit.label, aliases)
             if resolved is None:
                 problems.append(f"{unit.id}: the label {unit.label!r} matches no cast name or alias")
             else:
@@ -124,7 +164,11 @@ def parse_content_preserve(reply: str, source: Source, allowed_names: set[str] |
     if missing:
         problems.append(f"no speaker for quote unit(s) {', '.join(missing)}")
     if allowed_names is not None and not problems:
-        used = {speakers.get(u.id, NARRATOR).casefold() for u in source.units if u.kind != "heading"}
+        def _unit_speakers(uid: str) -> tuple[str, ...]:
+            val = speakers.get(uid, NARRATOR)
+            return val if isinstance(val, tuple) else (val,)
+
+        used = {s.casefold() for u in source.units if u.kind != "heading" for s in _unit_speakers(u.id)}
         narrator_slot = 1 if NARRATOR in used and NARRATOR not in allowed_names else 0
         unused = sorted(allowed_names - used)
         if len(unused) > narrator_slot:
@@ -243,6 +287,9 @@ def parse_voices(reply: str, names: list[str]) -> dict[str, tuple[str, str]]:
                             "\"A girl's voice\", \"A boy's voice\" or \"An androgynous voice\"")
         elif not preview or len(preview) > 1000 or _CONTROL_RE.search(preview):
             problems.append(f"{match}: preview_text must be 1–1000 characters of plain spoken words")
+        elif _CJK_RE.search(preview) and len(_CJK_RE.findall(preview)) < 25:
+            problems.append(f"{match}: preview_text is too short ({len(_CJK_RE.findall(preview))} characters); "
+                            "write 2–4 complete calm sentences (50–90 Chinese characters)")
         else:
             voices[match] = (description, preview)
     missing = [name for name in names if name not in voices and not any(name in p for p in problems)]

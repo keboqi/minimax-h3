@@ -12,8 +12,8 @@ from h3_app.catalog import DEFAULT_GEMINI_PROMPT_MODEL, GEMINI_PROMPT_MODELS
 from h3_ui.drama3.speaker_library import SpeakerLibraryView, build_speaker_library
 from h3_app.drama3.voice_design import ENGINE_QWEN, VOICE_DESIGN_ENGINES
 from h3_app.prompt_writers.drama3 import (
-    DRAMA3_SCRIPT_ADVANCED, DRAMA3_SCRIPT_MODES, DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES, DRAMA3_WORKFLOW_SINGLE,
-    DRAMA3_WORKFLOWS,
+    DRAMA3_GUIDED_BATCH_DEFAULT, DRAMA3_GUIDED_BATCH_MAX, DRAMA3_GUIDED_BATCH_MIN, DRAMA3_SCRIPT_ADVANCED,
+    DRAMA3_SCRIPT_MODES, DRAMA3_SPEAKER_AUTO, DRAMA3_SPEAKER_MODES, DRAMA3_WORKFLOW_SINGLE, DRAMA3_WORKFLOWS,
 )
 from h3_app.voice_design import LANGUAGES as VOICE_DESIGN_LANGUAGES
 from h3_models import DEFAULT_DRAMA3_ASR, DRAMA3_ASR_CHOICES
@@ -116,6 +116,7 @@ class Drama3View:
     apply_reply: gr.Button
     script_mode: gr.Radio | None = None
     writer_workflow: gr.Radio | None = None
+    max_batch_lines: gr.Slider | None = None
     sounds_panel: gr.Accordion | None = None
     sounds: tuple[Drama3SoundSlot, ...] = ()
     shown_sound_slots: gr.Number | None = None
@@ -628,6 +629,13 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
                                  "writes it in short steps (casting, voices, acting, sound), so smaller, faster "
                                  "models give reliable scripts; it makes 3–6 calls.",
                         )
+                        max_batch_lines = gr.Slider(
+                            DRAMA3_GUIDED_BATCH_MIN, DRAMA3_GUIDED_BATCH_MAX,
+                            value=DRAMA3_GUIDED_BATCH_DEFAULT, step=5,
+                            label="Guided batch lines",
+                            info="Maximum lines per Guided direction/sound batch (default 40, up to 100). "
+                                 "Higher values group more scenes into fewer requests.",
+                        )
                         enhance = gr.Button("Rewrite script", variant="primary", elem_classes=["h3-primary-action"])
                         enhance_status = gr.Textbox(label="Writer status", lines=2, interactive=False)
                         with gr.Accordion("Writing service", open=False):
@@ -882,6 +890,7 @@ def build_drama3_view(root, speaker_names=(), sound_names=(), speaker_groups=("G
         apply_reply=apply_reply,
         script_mode=script_mode,
         writer_workflow=writer_workflow,
+        max_batch_lines=max_batch_lines,
         sounds_panel=sounds_panel,
         sounds=sounds,
         shown_sound_slots=shown_sound_slots,

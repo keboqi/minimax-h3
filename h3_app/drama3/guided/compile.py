@@ -25,13 +25,14 @@ BARGE_IN = "<#-0.3#>"
 PAUSE_SECONDS = {"short": 0.6, "long": 1.2}
 MAX_EVENTS_PER_SCENE = 4
 MAX_ATTRIBUTION_WORDS = 6
-MAX_ATTRIBUTION_WIDE = 8
+MAX_ATTRIBUTION_WIDE = 12
 # (loop, volume, duration) by sound kind, within the ranges the Single-pass writer is given.
 SOUND_SETTINGS = {AMBIENCE: (True, 0.4, 25), MUSIC: (True, 0.2, 40), EFFECT: (False, 1.0, 4), STINGER: (False, 0.4, 6)}
 PLACEMENT = {"left": 'pan="-0.6"', "right": 'pan="0.6"', "near": 'distance="near"', "far": 'distance="far"',
              "moving_left_to_right": 'pan="-0.8,0.8"', "moving_right_to_left": 'pan="0.8,-0.8"'}
 
 _WIDE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+_META_CUE_RE = re.compile(r"\b(?:narrator|narrative|narration|description|transition|follow-up)\b", re.IGNORECASE)
 
 
 def _clean_cue(cue: str) -> str:
@@ -39,7 +40,24 @@ def _clean_cue(cue: str) -> str:
     words = " ".join(str(cue or "").strip().strip("[]").split())
     if not words or _WIDE_RE.search(words) or re.search(r"[\[\]<>{}|]", words):
         return ""
-    return words if len(words.split()) <= MAX_CUE_WORDS else ""
+    cleaned = _META_CUE_RE.sub("", words)
+    cleaned = re.sub(r"\s*,\s*,+\s*", ", ", cleaned).strip(" ,;-")
+    cleaned = " ".join(cleaned.split())
+    if not re.search(r"[A-Za-z]{2,}", cleaned):
+        return ""
+    return cleaned if len(cleaned.split()) <= MAX_CUE_WORDS else ""
+
+
+def _place_cue(text: str, bracketed: str, cast_names: tuple[str, ...] = ()) -> str | None:
+    """Place ``bracketed`` after the opening phrase, avoiding splitting a leading 3+ char CJK name."""
+    for name in cast_names:
+        if len(name) > 2 and text.startswith(name) and _WIDE_RE.search(name):
+            rest = text[len(name):]
+            if rest.strip() and not any(ch in text[:len(name) + 1] for ch in ",，、;；:：.!?。！？"):
+                placed = insert_cue(text, bracketed)
+                if placed is not None and placed.startswith(f"{name[:2]} {bracketed}"):
+                    return f"{name} {bracketed} {rest.lstrip()}"
+    return insert_cue(text, bracketed)
 
 
 def _wrap_phrase(text: str, phrase: str, tag: str) -> str | None:
@@ -63,7 +81,7 @@ def is_attribution(utterance: Utterance, previous: Utterance | None) -> bool:
 
 
 def direct_line(utterance: Utterance, direction: Direction | None, previous_cue: str, notes: list[str],
-                *, attribution: bool = False) -> tuple[str, str]:
+                *, attribution: bool = False, cast_names: tuple[str, ...] = ()) -> tuple[str, str]:
     """The utterance's spoken body with its direction applied, and the cue it ends up with.
 
     An ``attribution`` keeps its words plain apart from a scoped phrase: a cue on "she said."
@@ -84,7 +102,7 @@ def direct_line(utterance: Utterance, direction: Direction | None, previous_cue:
         notes.append(f"{utterance.id}: dropped cue [{cue}] repeating the line before")
         cue = ""
     if cue:
-        placed = insert_cue(text, f"[{cue}]")
+        placed = _place_cue(text, f"[{cue}]", cast_names)
         if placed is None:
             notes.append(f"{utterance.id}: no place for cue [{cue}]")
             cue = ""
@@ -147,12 +165,14 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
     """
     notes = notes if notes is not None else []
     by_id = {utterance.id: utterance for utterance in draft.utterances}
+    cast_names = tuple(sorted({u.speaker for u in draft.utterances if u.speaker != NARRATOR and len(u.speaker) > 2},
+                              key=len, reverse=True))
     bodies: dict[str, str] = {}
     previous_cue = ""
     for index, utterance in enumerate(draft.utterances):
         attribution = is_attribution(utterance, draft.utterances[index - 1] if index else None)
         bodies[utterance.id], cue = direct_line(utterance, draft.directions.get(utterance.id), previous_cue, notes,
-                                                attribution=attribution)
+                                                attribution=attribution, cast_names=cast_names)
         previous_cue = cue or previous_cue
 
     def line(utterance: Utterance) -> str:
@@ -182,11 +202,21 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
         previous: Utterance | None = None
         ids = list(scene.utterances)
         position = 0
+        joint_sources: tuple[str, ...] = ()
         while position < len(ids):
             utterance = by_id[ids[position]]
             position += 1
+            # Attribution expands a joint quote into adjacent lines sharing source IDs.
+            # Keep each member's anchored sounds in its own branch, starting together.
+            next_is_joint = (bool(utterance.sources) and position < len(ids)
+                             and by_id[ids[position]].sources == utterance.sources)
+            if next_is_joint and not joint_sources:
+                joint_sources = utterance.sources
+                items.append("<parallel>")
+            if joint_sources:
+                items.append("<sequential>")
             reactions: list[Utterance] = []
-            if utterance.speaker != NARRATOR and utterance.kind != HEADING:
+            if not joint_sources and utterance.speaker != NARRATOR and utterance.kind != HEADING:
                 while position < len(ids) and by_id[ids[position]].kind == REACTION \
                         and by_id[ids[position]].speaker not in (NARRATOR, utterance.speaker):
                     reactions.append(by_id[ids[position]])
@@ -223,6 +253,11 @@ def compile_script(draft: Draft, *, advanced: bool, notes: list[str] | None = No
             else:
                 items.append(line(utterance))
             items.extend(anchored.get((utterance.id, AFTER), []))
+            if joint_sources:
+                items.append("</sequential>")
+                if not next_is_joint:
+                    items.append("</parallel>")
+                    joint_sources = ()
             previous = reactions[-1] if reactions else utterance
 
         loops = []

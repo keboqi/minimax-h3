@@ -140,6 +140,31 @@ class CompileBasicTests(unittest.TestCase):
 
 
 class CompileAdvancedTests(unittest.TestCase):
+    def test_joint_quote_plays_in_parallel_and_keeps_member_sound_anchors(self):
+        from h3_app.drama3.guided.schema import scenes_from_units
+        from h3_app.drama3.serving.tree import ParallelNode, SequentialNode
+
+        source = segment_source('“We agree,” they said together. “Let us go,” they added.')
+        utterances = attribute_units(source, {"s1": ("Mia", "Tom", "Nora"), "s3": ("Mia", "Tom")})
+        draft = Draft(utterances, scenes_from_units(utterances, []))
+        script = compile_script(draft, advanced=True)
+        tree = checked(self, script)
+        self.assertIsInstance(tree, SequentialNode)
+        groups = [node for node in tree.children if isinstance(node, ParallelNode)]
+        self.assertEqual(len(groups), 2)
+        self.assertEqual([len(group.children) for group in groups], [3, 2])
+        for group, names in zip(groups, [("Mia", "Tom", "Nora"), ("Mia", "Tom")]):
+            self.assertEqual([iter_speech_nodes(branch)[0].turns[0].speaker
+                              for branch in group.children], list(names))
+        self.assertNotIn("<parallel>", compile_script(draft, advanced=False))
+
+        draft.sounds = {"bell": Sound("bell", EFFECT, "A bell rings")}
+        draft.staging = {"c1": Staging(events=(SoundEvent("bell", "u2", WITH),))}
+        tree = checked(self, compile_script(draft, advanced=True))
+        joint = next(node for node in tree.children if isinstance(node, ParallelNode))
+        self.assertEqual(len(list(iter_sound_nodes(joint.children[0]))), 0)
+        self.assertEqual(len(list(iter_sound_nodes(joint.children[1]))), 1)
+
     def museum(self):
         u = [
             Utterance("u1", "narrator", "The last visitor left an hour ago."),
@@ -254,6 +279,26 @@ SOUND = {"sounds": [{"name": "rain", "kind": "ambience", "prompt": "Light rain o
 
 
 class GuidedWriterTests(unittest.TestCase):
+    def test_preview_length_check_ignores_non_cjk_unicode(self):
+        import json
+        from h3_app.drama3.guided.schema import StageError, parse_voices
+
+        previews = [
+            "I’ll take the morning train and meet you near the station. We can walk to the village "
+            "together, then find a quiet place for lunch. I will bring the map so we can choose our route.",
+            "Je prépare le café pour notre promenade. Nous pourrons discuter tranquillement du chemin "
+            "à suivre et regarder les jardins près de la rivière. Je prendrai aussi une carte pour le retour.",
+        ]
+        def reply(preview):
+            return json.dumps({"voices": [{"name": "Tom", "description": "A male voice: calm. Clean studio recording.",
+                                          "preview_text": preview}]})
+
+        for preview in previews:
+            with self.subTest(preview=preview):
+                self.assertEqual(parse_voices(reply(preview), ["Tom"])["Tom"][1], preview)
+        with self.assertRaises(StageError):
+            parse_voices(reply("风雪交加。"), ["Tom"])
+
     """The orchestrator end to end, with each stage's model reply mocked by its prompt file."""
 
     def run_writer(self, text, replies, **kwargs):
@@ -497,6 +542,69 @@ class GuidedWriterTests(unittest.TestCase):
         self.assertIn("custom preset description", cast[0]["description"])
         # The parenthesized hint (whispering) is applied even when the direction stage returns no cues.
         self.assertIn("<|speaker:2|> Hold [whispering] still.", script)
+
+    def test_cjk_optimizations_joint_speakers_fuzzy_cast_attribution_and_preview_length(self):
+        from h3_app.prompt_writers import drama3 as writer
+
+        prose = (
+            "“马上撤离！”寒骊上人神色一凝的说道。\n"
+            "“是，宫主！”白瑶怡和灰发老者同时恭声应道。\n"
+            "寒骊上人立刻激发法阵，仿佛受到了什么刺|激。"
+        )
+        # "寒骊0" resolves to "寒骊上人"; s3 is spoken jointly by 白瑶怡 and 灰发老者.
+        preserve = {
+            "title": "群妖压境",
+            "cast": [{"name": "寒骊上人"}, {"name": "白瑶怡"}, {"name": "灰发老者"}],
+            "speakers": {"s1": "寒骊0", "s3": ["白瑶怡", "老者"]},
+            "scenes": [{"from": "s1", "place": "stone hall", "change": "orders given"}],
+        }
+        short_voices = {"voices": [
+            {"name": "narrator", "description": "A male voice: calm. Clean studio recording.", "preview_text": "风雪交加。"},
+            {"name": "寒骊上人", "description": "A male voice: deep. Clean studio recording.", "preview_text": "马上撤离。"},
+            {"name": "白瑶怡", "description": "A female voice: clear. Clean studio recording.", "preview_text": "是，宫主。"},
+            {"name": "灰发老者", "description": "A male voice: old. Clean studio recording.", "preview_text": "是，宫主。"},
+        ]}
+        full_preview = "北冥岛外寒风呼啸，漫天飞雪将整座冰原笼罩其中，所有修士都在各自做着最后的准备。"
+        good_voices = {"voices": [dict(v, preview_text=full_preview) for v in short_voices["voices"]]}
+        direction = {"lines": [
+            {"id": "u1", "cue": "commanding, urgent"},
+            {"id": "u2", "cue": "neutral narrator, low voice"},  # 11-char CJK attribution: cue ignored
+            {"id": "u3", "cue": "respectful, crisp"},
+            {"id": "u4", "cue": "solemn, firm"},
+            {"id": "u6", "cue": "narrative, tense and low", "stress": "受到"},  # meta "narrative," stripped; 寒骊上人 not split
+        ]}
+        script, status, cast, *_ = self.run_writer(
+            prose,
+            {"preserve": preserve, "voices": [short_voices, good_voices], "direction": direction},
+            script_mode=writer.DRAMA3_SCRIPT_BASIC,
+        )
+        self.assertNotIn("failed", status, status)
+        self.assertEqual([entry["name"] for entry in cast], ["寒骊上人", "narrator", "白瑶怡", "灰发老者"])
+        # Both 白瑶怡 and 灰发老者 speak the joint quote s3.
+        self.assertIn("<|speaker:2|> 是，[respectful, crisp] 宫主！", script)
+        self.assertIn("<|speaker:3|> 是，[solemn, firm] 宫主！", script)
+        # 11-char attribution u2 stays plain; u6 cleans "narrative," and keeps "寒骊上人" intact; "刺|激" is cleaned to "刺激".
+        self.assertIn("<|speaker:1|> 寒骊上人神色一凝的说道。", script)
+        self.assertNotIn("寒骊 [", script)
+        self.assertIn("刺激", script)
+        self.assertNotIn("刺|激", script)
+
+    def test_max_batch_lines_merges_scenes_into_fewer_requests(self):
+        from h3_app.drama3.guided.model import Scene
+        from h3_app.prompt_writers.drama3_guided import _batches
+
+        scenes = [
+            Scene("c1", tuple(f"u{i}" for i in range(1, 31)), "hall", "tense"),
+            Scene("c2", tuple(f"u{i}" for i in range(31, 61)), "roof", "battle"),
+            Scene("c3", tuple(f"u{i}" for i in range(61, 86)), "sky", "escape"),
+        ]
+        # Default 40 splits 30 + 30 + 25 = 85 utterances across 3 batches.
+        self.assertEqual(len(_batches(scenes)), 3)
+        self.assertEqual(len(_batches(scenes, 40)), 3)
+        # Increasing max_batch_lines to 60 merges c1+c2 into 1 batch (2 batches total).
+        self.assertEqual(len(_batches(scenes, 60)), 2)
+        # Increasing max_batch_lines to 100 merges all 3 scenes (85 utterances) into a single batch!
+        self.assertEqual(len(_batches(scenes, 100)), 1)
 
 
 if __name__ == "__main__":
