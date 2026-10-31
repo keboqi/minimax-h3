@@ -7,6 +7,7 @@ stop the server. The next TTS job restores the workers or restarts the server.
 from __future__ import annotations
 
 import atexit
+import contextlib
 import hashlib
 import json
 import os
@@ -212,8 +213,13 @@ class StartupTimeline:
         return lines
 
 
-def ensure_model(settings: ServerSettings, *, token=None, log=print) -> Path:
-    """Download the pinned official checkpoint once."""
+def ensure_model(settings: ServerSettings, *, token=None, log=print, ram: bool = False) -> Path:
+    """Download the pinned official checkpoint once.
+
+    With ``ram`` (h3_prepare's preload) and H3_RAM_MODELS_DIR set, it downloads into RAM
+    behind a symlink while there is room, off the disk; see h3_models.ram_directory.
+    """
+    from h3_models import ram_directory
     from h3_app.workers.env import setup_lock
 
     target = settings.model_dir
@@ -221,6 +227,7 @@ def ensure_model(settings: ServerSettings, *, token=None, log=print) -> Path:
     if marker.is_file():
         return target
     # run_h3.sh's background model preparation may be fetching the same checkpoint.
+    target.parent.mkdir(parents=True, exist_ok=True)
     with setup_lock(target.parent / f".{target.name}.lock"):
         if marker.is_file():
             return target
@@ -229,9 +236,14 @@ def ensure_model(settings: ServerSettings, *, token=None, log=print) -> Path:
         from huggingface_hub import snapshot_download
 
         pin = settings.pin
-        log(f"[drama3-serving] Downloading {pin.repo}@{pin.revision[:12]} (~{pin.download_gb:.0f} GB, first use only).")
-        snapshot_download(pin.repo, revision=pin.revision, local_dir=target, token=token)
-        marker.write_text(pin.revision, encoding="utf-8")
+        size = int(pin.download_gb * 1e9) if ram else None
+        with ram_directory(target, size, log=log) if ram else contextlib.nullcontext():
+            if target.is_symlink() and not target.exists():  # RAM copy gone with an earlier runtime
+                target.unlink()
+            log(f"[drama3-serving] Downloading {pin.repo}@{pin.revision[:12]} "
+                f"(~{pin.download_gb:.0f} GB, first use only).")
+            snapshot_download(pin.repo, revision=pin.revision, local_dir=target, token=token)
+            marker.write_text(pin.revision, encoding="utf-8")
     return target
 
 

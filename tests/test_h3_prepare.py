@@ -53,7 +53,7 @@ class GroupTests(unittest.TestCase):
             self.assertTrue(labels[0].startswith("MiniMax H3 model files"))
             labels = [label for label, _ in h3_prepare.plan(("qwen_image", "drama3"), None, Path(directory))]
         self.assertTrue(labels[0].startswith("Qwen Image 2.1 + Drama 3 ASR model files"))
-        self.assertEqual(labels[1:], ["SGLang-Omni environment", "Drama 3 checkpoint", "Qwen VoiceDesign / Stable Audio"])
+        self.assertEqual(labels[1:], ["SGLang-Omni environment", "Drama 3 checkpoint"])
 
     def test_files_and_other_steps_can_run_apart(self):
         with TemporaryDirectory() as directory:
@@ -62,7 +62,7 @@ class GroupTests(unittest.TestCase):
             self.assertEqual(h3_prepare.plan(("h3",), None, Path(directory), files=False), [])
         self.assertEqual(len(files), 1)
         self.assertTrue(files[0].endswith(")") and "model files" in files[0])
-        self.assertEqual(rest, ["SGLang-Omni environment", "Drama 3 checkpoint", "Qwen VoiceDesign / Stable Audio"])
+        self.assertEqual(rest, ["SGLang-Omni environment", "Drama 3 checkpoint"])
 
     def test_catalog_only_sync_never_waits_for_a_background_download(self):
         import h3_models

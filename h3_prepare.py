@@ -3,8 +3,8 @@
 
 Groups (``--groups``, comma separated):
   h3          MiniMax H3 tab's default Video workflow
-  drama3      Drama 3: SGLang-Omni environment and checkpoint, Qwen VoiceDesign,
-              Stable Audio 3 and the default ASR
+  drama3      Drama 3: SGLang-Omni environment and checkpoint and the default ASR
+              (Qwen VoiceDesign and Stable Audio 3 are small; they download on first use)
   qwen_image  Qwen Image 2.1 tab's default preset
 
 Every step is optional: a failure is reported and the step that needs the model
@@ -128,17 +128,8 @@ def prepare_drama3_checkpoint(runtime) -> None:
 
     settings = ServerSettings.from_environment(runtime)
     log(f"Drama 3 {settings.checkpoint} checkpoint: checking")
-    ensure_model(settings, token=resolve_hf_token(), log=log)
-
-
-def prepare_audio_tools(runtime, log_path: Path) -> None:
-    from h3_app import audio_tools
-    from h3_models import resolve_hf_token
-
-    log(f"Qwen VoiceDesign / Stable Audio environment: installing if needed (log: {log_path})")
-    python = audio_tools.prepare(runtime, log_path)
-    for model in ("voice_design", "stable_audio"):
-        audio_tools.ensure_weights(model, runtime, python, log_path, hf_token=resolve_hf_token())
+    # With H3_RAM_MODELS_DIR set (Colab), the ~42 GB checkpoint goes to RAM while it has room.
+    ensure_model(settings, token=resolve_hf_token(), log=log, ram=True)
 
 
 def plan(groups: tuple[str, ...], runtime, log_dir: Path, *, files: bool = True,
@@ -169,7 +160,6 @@ def plan(groups: tuple[str, ...], runtime, log_dir: Path, *, files: bool = True,
         steps += [
             ("SGLang-Omni environment", lambda: prepare_sglang(runtime, log_dir / f"sglang_{stamp}.log")),
             ("Drama 3 checkpoint", lambda: prepare_drama3_checkpoint(runtime)),
-            ("Qwen VoiceDesign / Stable Audio", lambda: prepare_audio_tools(runtime, log_dir / f"audio_tools_{stamp}.log")),
         ]
     return steps
 

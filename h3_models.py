@@ -1670,11 +1670,21 @@ def _reserve_ram(plan: dict[str, Any]) -> Path | None:
     Reservations count downloads still in flight, so parallel workers cannot all claim
     the same free space; release with _release_ram once the file is complete.
     """
-    global _ram_reserved
-    root, key, size = ram_models_dir(), plan["key"], plan.get("size")
-    if root is None or not (key in _ram_keys or key.startswith(_RAM_KEY_PREFIXES)):
+    key = plan["key"]
+    if not (key in _ram_keys or key.startswith(_RAM_KEY_PREFIXES)):
         return None
-    if not isinstance(size, int) or size <= 0:
+    return reserve_ram_bytes(plan.get("size"))
+
+
+def reserve_ram_bytes(size: int | None) -> Path | None:
+    """H3_RAM_MODELS_DIR with ``size`` bytes reserved there, or None when RAM is off or short.
+
+    The headroom counts reservations still downloading (in this process), so parallel
+    downloads cannot all claim the same free space; release with _release_ram.
+    """
+    global _ram_reserved
+    root = ram_models_dir()
+    if root is None or not isinstance(size, int) or size <= 0:
         return None
     with _ram_lock:
         try:
@@ -1693,6 +1703,51 @@ def _release_ram(size: int) -> None:
     global _ram_reserved
     with _ram_lock:
         _ram_reserved = max(0, _ram_reserved - size)
+
+
+def hub_snapshot_bytes(repo_id: str, revision: str | None = None, token: str | None = None) -> int | None:
+    """A whole repository snapshot's size from the Hub, or None when it cannot be read."""
+    try:
+        from huggingface_hub import HfApi
+
+        info = HfApi(token=resolve_hf_token(token)).model_info(repo_id, revision=revision, files_metadata=True)
+        return sum(int(sibling.size or 0) for sibling in info.siblings) or None
+    except Exception:
+        return None
+
+
+@contextmanager
+def ram_directory(target: Path, size: int | None, *, log=print):
+    """Let a whole-folder download (snapshot_download into ``target``) land in RAM.
+
+    With room for ``size`` bytes, ``target`` becomes a symlink to a folder under
+    H3_RAM_MODELS_DIR for the download inside the block; otherwise it stays (or is
+    left to become) a normal folder on disk. A link left dangling by an ended runtime
+    is removed either way, so the download starts clean. Yields whether RAM is used.
+    """
+    target = Path(target)
+    if target.is_symlink() and not target.exists():
+        target.unlink()
+    if target.is_symlink():  # already in RAM from earlier in this runtime
+        yield True
+        return
+    if target.exists() or ram_models_dir() is None:  # a disk copy, perhaps partial, keeps resuming there
+        yield False
+        return
+    root = reserve_ram_bytes(size)
+    if root is None:
+        log(f"[colab-ram] {target.name}: not enough free RAM; downloading to disk")
+        yield False
+        return
+    try:
+        ram_folder = root / target.parent.name / target.name
+        ram_folder.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(ram_folder, target_is_directory=True)
+        log(f"[colab-ram] {target.name} downloads into RAM: {ram_folder}")
+        yield True
+    finally:
+        _release_ram(size)
 
 
 def _download_to_ram(plan: dict[str, Any], token: str | None, log_prefix: str, root: Path) -> str:

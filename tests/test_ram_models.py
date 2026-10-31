@@ -3,6 +3,7 @@
 import contextlib
 import io
 import os
+import shutil
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -136,6 +137,41 @@ class RamModelTests(unittest.TestCase):
         self.assertIsNone(h3_models._reserve_ram(second))
         h3_models._release_ram(size)
         self.assertEqual(h3_models._reserve_ram(second), self.ram)
+
+    def test_a_folder_download_lands_in_ram_unless_short_or_already_on_disk(self):
+        target = self.disk / "models" / "drama3_serving" / "fishaudio--drama-3--e0a9"
+        with h3_models.ram_directory(target, 40 * GIB, log=lambda _message: None) as in_ram:
+            self.assertTrue(in_ram)
+            (target / "model.safetensors").write_bytes(b"x")
+        self.assertTrue(target.is_symlink())
+        self.assertTrue((self.ram / "drama3_serving" / target.name / "model.safetensors").is_file())
+        self.assertEqual(h3_models._ram_reserved, 0)
+        # A runtime restart empties RAM: the dangling link goes, and a short RAM keeps it on disk.
+        shutil.rmtree(self.ram)
+        self.memory.stop()
+        with patch.object(h3_models, "_available_memory", return_value=10 * GIB), \
+                h3_models.ram_directory(target, 40 * GIB, log=lambda _message: None) as in_ram:
+            self.assertFalse(in_ram)
+            self.assertFalse(target.is_symlink() or target.exists())
+        self.memory.start()
+        target.mkdir()
+        with h3_models.ram_directory(target, 40 * GIB, log=lambda _message: None) as in_ram:
+            self.assertFalse(in_ram)  # a partial disk download keeps resuming there
+
+    def test_the_drama3_preload_downloads_its_checkpoint_into_ram(self):
+        from h3_app.drama3.serving import server
+
+        def snapshot_download(repo, revision, local_dir, token):
+            (Path(local_dir) / "config.json").write_text("{}")
+
+        settings = server.ServerSettings(venv=self.root / "venv", data_dir=self.root / "data",
+                                         model_root=self.disk / "models" / "drama3_serving")
+        hub = types.SimpleNamespace(snapshot_download=snapshot_download)
+        with patch.dict(sys.modules, {"huggingface_hub": hub}):
+            target = server.ensure_model(settings, log=lambda _message: None, ram=True)
+        self.assertTrue(target.is_symlink())
+        self.assertTrue((target / ".h3-complete").is_file())
+        self.assertTrue(target.resolve().is_relative_to(self.ram.resolve()))
 
     def test_without_the_setting_nothing_goes_to_ram(self):
         h3_models.route_to_ram(["h3_model"])
