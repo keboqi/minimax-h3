@@ -5,13 +5,14 @@ set -Eeuo pipefail
 #
 #   bash run_h3.sh [--prepare GROUPS | --no-prepare]
 #
-# Default models download in the background while ComfyUI and Gradio start.
+# Default models download in the background from the start, alongside setup,
+# ComfyUI and Gradio.
 # GROUPS is a comma-separated list of h3 (MiniMax H3), drama3 (Drama 3) and
 # qwen_image (Qwen Image 2.1), or all / none; H3_PREPARE_MODELS sets the same
 # list. The default is h3. Models left out still download on first use.
 
 usage() {
-  sed -n '6,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '6,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 PREPARE_MODELS="${H3_PREPARE_MODELS-h3}"
@@ -67,7 +68,7 @@ COMFY_ATTENTION_ARGS=(--use-ck-attention)
 
 COMFY_PID=""
 GRADIO_PID=""
-PREPARE_PID=""
+PREPARE_PIDS=()
 
 log() {
   printf '[h3-run] %s\n' "$*"
@@ -226,11 +227,14 @@ cleanup() {
   local pids=()
   [[ -n "$GRADIO_PID" ]] && pids+=("$GRADIO_PID")
   [[ -n "$COMFY_PID" ]] && pids+=("$COMFY_PID")
-  if [[ -n "$PREPARE_PID" ]] && kill -0 "$PREPARE_PID" 2>/dev/null; then
-    # Stop its uv/pip children too; an interrupted download resumes next start.
-    pkill -TERM -P "$PREPARE_PID" 2>/dev/null || true
-    pids+=("$PREPARE_PID")
-  fi
+  local prepare_pid
+  for prepare_pid in "${PREPARE_PIDS[@]}"; do
+    if kill -0 "$prepare_pid" 2>/dev/null; then
+      # Stop its uv/pip children too; an interrupted download resumes next start.
+      pkill -TERM -P "$prepare_pid" 2>/dev/null || true
+      pids+=("$prepare_pid")
+    fi
+  done
 
   if [[ ${#pids[@]} -gt 0 ]]; then
     log "Stopping Gradio, ComfyUI and model preparation"
@@ -372,6 +376,38 @@ log "Runtime Python: $PYTHON_BIN"
 ensure_ffmpeg
 report_sglang_sleep
 
+# start_prepare LABEL FLAG PYTHON...: run h3_prepare.py in the background (FLAG: --files-only,
+# --skip-files or empty), yielding CPU and disk to setup and the starting servers; downloads
+# still run at full speed when the machine is idle.
+start_prepare() {
+  local label="$1" flag="$2"
+  shift 2
+  local priority=() flags=()
+  [[ -n "$flag" ]] && flags+=("$flag")
+  command -v nice >/dev/null 2>&1 && priority+=(nice -n 10)
+  command -v ionice >/dev/null 2>&1 && ionice -c 3 true 2>/dev/null && priority+=(ionice -c 3)
+  log "Background model preparation: $label"
+  "${priority[@]}" "$@" -u "$SCRIPT_DIR/h3_prepare.py" --install-dir "$INSTALL_DIR" \
+    --groups "$PREPARE_MODELS" "${flags[@]}" &
+  PREPARE_PIDS+=("$!")
+}
+
+# The model files need only huggingface_hub, so they start now, before setup, from an
+# isolated uv environment on the runtime interpreter (setup is still installing into the
+# app's). Without uv they start after setup, with the rest.
+PREPARE_FILES_EARLY=0
+case "${PREPARE_MODELS,,}" in
+  ""|0|none|off|false|no) ;;
+  *)
+    if command -v uv >/dev/null 2>&1; then
+      start_prepare "$PREPARE_MODELS model files, alongside setup" --files-only \
+        uv run --quiet --isolated --no-project --python "$PYTHON_BIN" \
+        --with "huggingface-hub>=1.5,<2" --with "hf-xet>=1.1" python
+      PREPARE_FILES_EARLY=1
+    fi
+    ;;
+esac
+
 if [[ ! -f "$COMFY_DIR/main.py" || ! -f "$MODELS_CONFIG" ]]; then
   log "Installation or models are missing; running automatic setup"
   "$PYTHON_BIN" "$SCRIPT_DIR/setup_h3.py" --install-dir "$INSTALL_DIR"
@@ -398,21 +434,20 @@ fi
 [[ -f "$MODELS_CONFIG" ]] || die "Model setup failed"
 log "Dense/fallback attention: Comfy Kitchen"
 
-# Download the selected defaults while the servers start; failures only warn.
+# The rest of the selected defaults (environments and checkpoints, or everything when the
+# files could not start early) prepare while the servers start; failures only warn.
 case "${PREPARE_MODELS,,}" in
   ""|0|none|off|false|no)
     log "Background model preparation: off"
     ;;
   *)
-    log "Background model preparation: $PREPARE_MODELS"
-    # Yield CPU and disk to the starting servers; downloads still run at full speed when idle.
-    prepare_priority=()
-    command -v nice >/dev/null 2>&1 && prepare_priority+=(nice -n 10)
-    command -v ionice >/dev/null 2>&1 && ionice -c 3 true 2>/dev/null && prepare_priority+=(ionice -c 3)
-    "${prepare_priority[@]}" "$PYTHON_BIN" -u "$SCRIPT_DIR/h3_prepare.py" \
-      --install-dir "$INSTALL_DIR" \
-      --groups "$PREPARE_MODELS" &
-    PREPARE_PID=$!
+    if (( PREPARE_FILES_EARLY )); then
+      if [[ ",${PREPARE_MODELS,,}," =~ ,(drama3|drama|all), ]]; then
+        start_prepare "$PREPARE_MODELS environments and checkpoints" --skip-files "$PYTHON_BIN"
+      fi
+    else
+      start_prepare "$PREPARE_MODELS" "" "$PYTHON_BIN"
+    fi
     ;;
 esac
 
@@ -433,39 +468,8 @@ log "Memory profile: $COMFYUI_MEMORY_MODE"
 ) &
 COMFY_PID=$!
 
-log "Waiting for ComfyUI"
-"$PYTHON_BIN" - "$COMFY_URL" "$COMFY_PID" <<'PY'
-import os
-import sys
-import time
-import urllib.request
-
-url = sys.argv[1].rstrip("/") + "/system_stats"
-pid = int(sys.argv[2])
-deadline = time.monotonic() + 1200
-last_error = None
-
-while time.monotonic() < deadline:
-    try:
-        os.kill(pid, 0)
-    except OSError as exc:
-        raise SystemExit(f"ComfyUI exited during startup: {exc}")
-
-    try:
-        with urllib.request.urlopen(url, timeout=5) as response:
-            if response.status < 500:
-                print("[h3-run] ComfyUI API is ready", flush=True)
-                raise SystemExit(0)
-    except Exception as exc:
-        last_error = exc
-
-    time.sleep(2)
-
-raise SystemExit(f"Timed out waiting for ComfyUI: {last_error}")
-PY
-
-log "ComfyUI ready after ${SECONDS}s"
-
+# Gradio starts beside ComfyUI rather than after it: the UI does not need the API to
+# open (its status refreshes on page load), and jobs wait for ComfyUI themselves.
 export COMFY_DIR="$COMFY_DIR"
 export COMFY_URL="$COMFY_URL"
 export MODELS_CONFIG="$MODELS_CONFIG"
@@ -514,6 +518,40 @@ raise SystemExit(f"Timed out waiting for the main Gradio UI: {last_error}")
 PY
 
 log "MiniMax H3 is ready at http://127.0.0.1:$GRADIO_SERVER_PORT (${SECONDS}s after launch)"
+
+log "Waiting for ComfyUI"
+"$PYTHON_BIN" - "$COMFY_URL" "$COMFY_PID" <<'PY'
+import os
+import sys
+import time
+import urllib.request
+
+url = sys.argv[1].rstrip("/") + "/system_stats"
+pid = int(sys.argv[2])
+deadline = time.monotonic() + 1200
+last_error = None
+
+while time.monotonic() < deadline:
+    try:
+        os.kill(pid, 0)
+    except OSError as exc:
+        raise SystemExit(f"ComfyUI exited during startup: {exc}")
+
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            if response.status < 500:
+                print("[h3-run] ComfyUI API is ready", flush=True)
+                raise SystemExit(0)
+    except Exception as exc:
+        last_error = exc
+
+    time.sleep(2)
+
+raise SystemExit(f"Timed out waiting for ComfyUI: {last_error}")
+PY
+
+log "ComfyUI ready after ${SECONDS}s"
+
 log "Checking the /comfyui proxy"
 if ! "$PYTHON_BIN" - "http://127.0.0.1:$GRADIO_SERVER_PORT/comfyui/" "$GRADIO_PID" "$SCRIPT_DIR" <<'PY'
 import os

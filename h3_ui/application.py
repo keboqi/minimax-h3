@@ -487,7 +487,31 @@ def _submission(prompt_id, graph=None):
     )
 
 
+COMFY_START_WAIT = 600.0
+
+
+def wait_for_comfy(timeout: float = COMFY_START_WAIT) -> None:
+    """Wait for a ComfyUI that is still starting: the UI opens before its API does.
+
+    Returns at once when ComfyUI answers; an interrupt still stops the waiting job.
+    """
+    deadline, error = time.monotonic() + timeout, None
+    while True:
+        try:
+            api_get("/system_stats", timeout=5)
+            return
+        except requests.ConnectionError as exc:
+            error = exc
+        if time.monotonic() >= deadline:
+            raise H3Error(f"ComfyUI did not start within {timeout:g}s: {error}")
+        job = CURRENT_JOB.get()
+        if job is not None:
+            job.check()
+        time.sleep(2.0)
+
+
 def submit_prompt(graph: dict[str, Any], client_id: str) -> str:
+    wait_for_comfy()
     return ExecutionRunner(
         _runtime_config(),
         ComfyClient(COMFY_URL, REQUEST_TIMEOUT, HTTP),
@@ -565,6 +589,7 @@ def free_comfy_vram(timeout: float = 60.0) -> None:
     wait for ComfyUI's own reported Torch allocation to clear instead.
     """
     unload_prompt_rewriter()
+    wait_for_comfy()
     unload_comfy_models()
 
     deadline, cleared = time.monotonic() + timeout, 0

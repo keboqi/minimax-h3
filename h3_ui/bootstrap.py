@@ -337,6 +337,9 @@ def build_ui(catalog: BootstrapCatalog, services: BootstrapServices) -> gr.Block
             browser_state=browser_state,
             navigation=navigation,
         )
+        # The UI can open before ComfyUI's API: each page load shows the backend as it is now.
+        demo.load(services.refresh_backend_views, outputs=[system_summary, health], queue=False,
+                  show_progress="hidden", api_name=False)
         demo.load(None, js=GENERATE_SHORTCUT_JS, api_name=False)
         demo.load(None, js=TASK_OPENS_CREATE_JS, api_name=False)
         demo.load(None, js=DRAMA3_SUBTITLES_JS, api_name=False)

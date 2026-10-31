@@ -479,6 +479,7 @@ class Drama3VramHandoffTests(unittest.TestCase):
         response.json.side_effect = [{"devices": [{"type": "cuda", "torch_vram_total": allocation,
                                                    "vram_free": 50 * 2**30}]} for allocation in allocations]
         with patch.object(application, "unload_prompt_rewriter"), \
+                patch.object(application, "wait_for_comfy"), \
                 patch.object(application, "unload_comfy_models") as unload, \
                 patch.object(application, "api_get", return_value=response) as get, \
                 patch.object(application.time, "monotonic", side_effect=lambda: clock[0]), \
@@ -486,6 +487,21 @@ class Drama3VramHandoffTests(unittest.TestCase):
             application.free_comfy_vram(timeout=timeout)
         unload.assert_called_once()
         return get.call_count
+
+    def test_a_starting_comfyui_is_waited_for_and_a_dead_one_times_out(self):
+        import requests
+        from h3_ui import application
+
+        clock = [0.0]
+        calls = [requests.ConnectionError("refused")] * 3 + [Mock()]
+        with patch.object(application, "api_get", side_effect=calls) as get, \
+                patch.object(application.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(application.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            application.wait_for_comfy(timeout=60)
+            self.assertEqual(get.call_count, 4)
+            get.side_effect = requests.ConnectionError("refused")
+            with self.assertRaisesRegex(H3Error, "did not start within 4s"):
+                application.wait_for_comfy(timeout=4)
 
     def test_unchanged_free_vram_does_not_acknowledge_a_pending_unload(self):
         self.assertEqual(self.run_release([40 * 2**30] * 5 + [0, 0]), 7)

@@ -1792,6 +1792,10 @@ def sync_models(
     model_keys: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Refresh selected model files and return the complete model catalog."""
+    model_keys = None if model_keys is None else tuple(model_keys)
+    if model_keys == ():
+        # Only the catalog: no manifest change, so no waiting on a background download's lock.
+        return build_model_config(Path(manifest_path).name)
     with model_manifest_lock(Path(manifest_path)):
         token = resolve_hf_token(token)
         root = Path(root)

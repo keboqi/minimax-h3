@@ -225,10 +225,13 @@ preserved. The quality value maps to NVENC CQ or software CRF, with `medium` as
 the software preset. 48 fps interpolation also checks whether its encoder can
 actually run, rather than relying on FFmpeg's codec list.
 
-The first run creates `h3/` and installs ComfyUI and dependencies. While ComfyUI
-and Gradio start, `h3_prepare.py` downloads default models in the background;
-startup never waits for it, and a failed download only logs a warning. Choose the
-groups with `--prepare` or `H3_PREPARE_MODELS`:
+The first run creates `h3/` and installs ComfyUI and dependencies. `h3_prepare.py`
+downloads default models in the background from the start, alongside setup (in a
+small uv environment with only `huggingface_hub`), while the environments and
+checkpoints in `drama3` prepare once setup is done. Gradio starts beside ComfyUI
+and opens before ComfyUI's API is up; a job started that early waits for it.
+Startup never waits for the downloads, and a failed download only logs a warning.
+Choose the groups with `--prepare` or `H3_PREPARE_MODELS`:
 
 ```bash
 bash run_h3.sh                                # MiniMax H3 defaults (the default)

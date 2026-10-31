@@ -139,8 +139,14 @@ def prepare_audio_tools(runtime, log_path: Path) -> None:
         audio_tools.ensure_weights(model, runtime, python, log_path, hf_token=resolve_hf_token())
 
 
-def plan(groups: tuple[str, ...], runtime, log_dir: Path) -> list[tuple[str, object]]:
-    """(label, callable) steps; the model-file steps share one parallel download."""
+def plan(groups: tuple[str, ...], runtime, log_dir: Path, *, files: bool = True,
+         others: bool = True) -> list[tuple[str, object]]:
+    """(label, callable) steps; the model-file steps share one parallel download.
+
+    ``files`` and ``others`` select the model-file download and the remaining steps
+    (environments and checkpoints): run_h3.sh starts the files before setup, with
+    only huggingface_hub installed, and the rest once setup has built the app's env.
+    """
     keys: list[str] = []
     labels: list[str] = []
     for group, label, key_source in (
@@ -152,11 +158,11 @@ def plan(groups: tuple[str, ...], runtime, log_dir: Path) -> list[tuple[str, obj
             keys += key_source()
             labels.append(label)
     steps: list[tuple[str, object]] = []
-    if keys:
+    if keys and files:
         unique = tuple(dict.fromkeys(keys))
         steps.append((f"{' + '.join(labels)} model files ({len(unique)})",
                       lambda: sync_model_files(unique, runtime)))
-    if "drama3" in groups:
+    if "drama3" in groups and others:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         steps += [
             ("SGLang-Omni environment", lambda: prepare_sglang(runtime, log_dir / f"sglang_{stamp}.log")),
@@ -171,6 +177,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--groups", type=parse_groups, default=DEFAULT_GROUPS,
                         help="comma-separated groups: h3, drama3, qwen_image, all or none (default: h3)")
     parser.add_argument("--install-dir", type=Path, default=SCRIPT_DIR / "h3")
+    only = parser.add_mutually_exclusive_group()
+    only.add_argument("--files-only", action="store_true", help="only download the groups' model files")
+    only.add_argument("--skip-files", action="store_true", help="everything but the model files")
     args = parser.parse_args(argv)
     if not args.groups:
         log("Model preparation off")
@@ -186,7 +195,9 @@ def main(argv: list[str] | None = None) -> int:
     log_dir = install_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    steps = plan(args.groups, runtime, log_dir)
+    steps = plan(args.groups, runtime, log_dir, files=not args.skip_files, others=not args.files_only)
+    if not steps:
+        return 0
     log(f"Preparing {', '.join(args.groups)} in the background: {'; '.join(label for label, _ in steps)}")
     started = time.monotonic()
     failed = []

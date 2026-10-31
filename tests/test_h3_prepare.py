@@ -55,6 +55,24 @@ class GroupTests(unittest.TestCase):
         self.assertTrue(labels[0].startswith("Qwen Image 2.1 + Drama 3 ASR model files"))
         self.assertEqual(labels[1:], ["SGLang-Omni environment", "Drama 3 checkpoint", "Qwen VoiceDesign / Stable Audio"])
 
+    def test_files_and_other_steps_can_run_apart(self):
+        with TemporaryDirectory() as directory:
+            files = [label for label, _ in h3_prepare.plan(("h3", "drama3"), None, Path(directory), others=False)]
+            rest = [label for label, _ in h3_prepare.plan(("h3", "drama3"), None, Path(directory), files=False)]
+            self.assertEqual(h3_prepare.plan(("h3",), None, Path(directory), files=False), [])
+        self.assertEqual(len(files), 1)
+        self.assertTrue(files[0].endswith(")") and "model files" in files[0])
+        self.assertEqual(rest, ["SGLang-Omni environment", "Drama 3 checkpoint", "Qwen VoiceDesign / Stable Audio"])
+
+    def test_catalog_only_sync_never_waits_for_a_background_download(self):
+        import h3_models
+
+        with TemporaryDirectory() as directory, patch.object(h3_models, "model_manifest_lock") as lock:
+            config = h3_models.sync_models(root=Path(directory), manifest_path=Path(directory) / "manifest.json",
+                                           model_keys=())
+        lock.assert_not_called()
+        self.assertEqual(config["manifest"], "manifest.json")
+
 
 class MainTests(unittest.TestCase):
     def run_main(self, *args):
@@ -114,6 +132,9 @@ class LauncherOptionTests(unittest.TestCase):
         source = (ROOT / "run_h3.sh").read_text(encoding="utf-8")
         self.assertIn('PREPARE_MODELS="${H3_PREPARE_MODELS-h3}"', source)
         self.assertLess(source.index('h3_prepare.py'), source.index('starting ComfyUI at'))
+        # Model files start before setup; Gradio starts beside ComfyUI, not after it.
+        self.assertLess(source.index('PREPARE_FILES_EARLY=1'), source.index('running automatic setup'))
+        self.assertLess(source.index('log "Starting Gradio"'), source.index('log "Waiting for ComfyUI"'))
         # The servers decide when the launcher exits; preparation never does.
         self.assertIn('wait -n "$COMFY_PID" "$GRADIO_PID"', source)
 
