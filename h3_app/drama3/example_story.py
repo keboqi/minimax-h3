@@ -203,8 +203,18 @@ Aegis: <robotic_voice><reverb_large_hall> Ignition sequence complete, [solemn, r
 Marcus: Look at that horizon, [quiet wonder, relieved] <soft>still</soft> burning after all these years. [chuckles]"""
 
 
-def example_story_reply_json() -> str:
+def example_story_reply_json(lang: str = "en") -> str:
     """The example story packaged in the writer's JSON reply format."""
+    if str(lang or "en").lower().startswith("zh"):
+        return json.dumps(
+            {
+                "title": EXAMPLE_STORY_ZH_TITLE,
+                "source_mode": "brief",
+                "script": EXAMPLE_STORY_ZH_SCRIPT,
+                "speakers": list(EXAMPLE_STORY_ZH_SPEAKERS),
+            },
+            ensure_ascii=False,
+        )
     return json.dumps(
         {
             "title": EXAMPLE_STORY_TITLE,
@@ -214,3 +224,188 @@ def example_story_reply_json() -> str:
         },
         ensure_ascii=False,
     )
+
+
+EXAMPLE_STORY_ZH_TITLE = "昆仑墟底的回响"
+
+EXAMPLE_STORY_ZH_SPEAKERS: tuple[dict, ...] = (
+    {
+        "speaker_id": 0,
+        "name": "narrator",
+        "description": (
+            "A male voice: mature Mandarin narrator in his early forties, deep warm baritone, "
+            "calm and magnetic resonance, clear standard articulation, and a steady cinematic "
+            "storytelling pace. Clean dry studio recording, no background noise."
+        ),
+        "preview_text": (
+            "昆仑山脉的暴风雪已经持续了整整三天，营地外到处是结冰的岩壁。当科考队推开那扇埋在冰层下的"
+            "青铜大门时，谁也没想到地底深处还留着千年前的灯火。"
+        ),
+    },
+    {
+        "speaker_id": 1,
+        "name": "沈星河",
+        "description": (
+            "A female voice: late twenties Mandarin speaker, clear and composed mezzo-soprano, "
+            "sharp analytical tone, crisp diction, and a steady, focused conversational pace. "
+            "Clean dry studio recording."
+        ),
+        "preview_text": (
+            "我已经把三组地震波传感器的读数全部核对了一遍。冰层下方的空腔结构非常规整，那些回声绝不是"
+            "天然形成的裂谷，我们要找的观测台就在正下方。"
+        ),
+    },
+    {
+        "speaker_id": 2,
+        "name": "尉迟烈",
+        "description": (
+            "A male voice: late forties Mandarin speaker, rugged gravelly bass-baritone, "
+            "seasoned expedition captain with grounded authority, firm breath support, and "
+            "a steady unhurried cadence. Clean dry studio recording."
+        ),
+        "preview_text": (
+            "在高原雪线上走了二十年，什么古怪的地形我都见过。大家都把安全绳扣紧，检查好氧气瓶的压力表，"
+            "没有我的命令谁也不准擅自离开主通道。"
+        ),
+    },
+    {
+        "speaker_id": 3,
+        "name": "周岚",
+        "description": (
+            "A female voice: mid-thirties Mandarin speaker, brisk alto, base camp radio "
+            "dispatcher with alert energy, clean crisp pronunciation, and an efficient "
+            "operational rhythm. Clean dry studio recording."
+        ),
+        "preview_text": (
+            "这里是昆仑一号地面中继站，目前高空电离层非常不稳定。请各小组保持短波频道畅通，每隔十五分钟"
+            "向大本营汇报一次深度和坐标。"
+        ),
+    },
+    {
+        "speaker_id": 4,
+        "name": "天枢",
+        "description": (
+            "An androgynous voice: Mandarin speaker, cool metallic mid-register voice with "
+            "even syllable weight, calm precision, and unshakeable synthetic clarity. "
+            "Clean dry studio recording."
+        ),
+        "preview_text": (
+            "天枢星轨阵列已完成自检，地脉共振频率维持在正常区间。待外层封门完全闭合后，主星图将自动"
+            "恢复推演。"
+        ),
+    },
+    {
+        "speaker_id": 5,
+        "name": "守墟古灵",
+        "description": (
+            "A female voice: timeless Mandarin alto with deep ethereal resonance, slow solemn "
+            "phrasing, and gentle breathy overtones. Clean dry studio recording."
+        ),
+        "preview_text": (
+            "星辰升起又落下，冰川掩埋了昔日的城池与歌谣。唯有刻在青铜上的誓言，还在漫长的黑夜里等待"
+            "归来的人。"
+        ),
+    },
+)
+
+EXAMPLE_STORY_ZH_SCRIPT = """\
+narrator: 昆仑墟底的回响。
+<#0.6#>
+<parallel room="small_room" stage="沈星河=-0.4, 尉迟烈=0.4">
+  <sound loop="true" volume="0.35" duration="25" name="glacier_blizzard">High altitude blizzard wind howling against metal shelter walls, creaking ice</sound>
+  <sound loop="true" volume="0.2" duration="36" name="guqin_mystery">Sparse deep guqin plucks and low bowed cello drone, ancient mystery, no vocals</sound>
+  <sequential>
+    <parallel>
+      <sound name="bronze_seal" duration="4" pan="-0.6">Heavy ancient bronze mechanism unlocking with deep metallic clunk and stone scrape</sound>
+      narrator: 暴风雪拍打着岩壁，[tense, low] 沈星河用力合上了前哨站的青铜闸门。
+    </parallel>
+    <parallel>
+      <sound name="snow_boots" duration="4" pan="0.8,-0.2">Heavy mountaineering boots crunching on frost and stepping onto stone floor</sound>
+      narrator: 尉迟{yu4 chi2}烈踏着满地寒霜走来，[slowly, heavy] 把探照灯放在石台边缘。
+    </parallel>
+    沈星河: 你看石盘上的刻度，[quietly amazed] <emphasis>尉迟{yu4 chi2}队长</emphasis>。
+    沈星河: 碑文记载二十八宿{xiu4}早已停转，[focused, analytical] 可地脉指针却<stress>完全</stress>对准了北极星。
+    <parallel>
+      尉迟烈: 这座观测台封存了整整一千年，[gravelly, uneasy] <slow>星河</slow>。驱动齿轮的绝不是地面上的风力。
+      <sequential>
+        <#1.3#>
+        沈星河: 等等。[gasps]
+      </sequential>
+    </parallel>
+    沈星河: <near><intimate_whisper> 你听底座下面，[hushed, intense] 好像有什么东西在<whisper>轻轻呼吸</whisper>。
+    <parallel>
+      <sound name="shortwave_burst" duration="3" pan="0.4">Shortwave military radio squelch and high-altitude electromagnetic static crackle</sound>
+      narrator: 桌角的短波电台，[sudden, sharp] 突然炸开一阵刺耳的电流声。
+    </parallel>
+    周岚: <walkie_talkie> 大本营呼叫前哨组，[urgent, brisk] 收到请回答！冰川下方的磁场正在<fast>急剧翻转</fast>！
+    沈星河: 周岚，我们听得见，[calling out clearly] 先锋队刚进入外层石室，正准备测算<emphasis>共振源</emphasis>。
+    周岚: <bad_signal> 立刻撤出冰缝，[panicked, breaking up] 卫星监测到地底出现了<forceful>超高频脉冲</forceful>！[coughs]
+  </sequential>
+</parallel>
+<#1.0#>
+<parallel room="outdoors" stage="沈星河=-0.5, 尉迟烈=0.5">
+  <sound loop="true" volume="0.4" duration="25" name="glacier_blizzard">High altitude blizzard wind howling against metal shelter walls, creaking ice</sound>
+  <sequential>
+    narrator: 两人冲出悬崖栈道，[sweeping, dramatic] 狂风卷着冰碴在深渊上方<slow>呼啸盘旋</slow>。
+    尉迟烈: <far> 抓紧铁索，[shouting over wind] <forceful>星河</forceful>，脚下的冰梁快撑不住了！
+    <#-0.3#>
+    沈星河: 快看深渊底下，[breathless, stunned] 整片暗河都在<emphasis>发光</emphasis>！
+    <parallel>
+      <sound name="ancient_chime" duration="5" distance="far">Deep ancient bronze bell tolling once in a distant mountain chasm</sound>
+      narrator: 万丈冰渊深处，[solemn, eerie] 传来一声悠远苍凉的<soft>青铜钟鸣</soft>。
+    </parallel>
+    <parallel>
+      沈星河: 在上面！
+      尉迟烈: 浑天仪！
+    </parallel>
+  </sequential>
+</parallel>
+<#1.0#>
+<parallel room="large_hall" stage="沈星河=-0.35, 尉迟烈=0.35, 天枢=0.0">
+  <sound loop="true" volume="0.35" duration="25" name="cavern_resonance">Subterranean stone hall resonance with low bronze gear hum and slow water drips</sound>
+  <sound loop="true" volume="0.2" duration="40" name="taiko_suspense">Slow tense low string ostinato with deep muffled frame drum pulse, cinematic suspense, no vocals</sound>
+  <sequential>
+    <parallel>
+      <sequential>
+        <sound name="bronze_seal" duration="4" pan="-0.6">Heavy ancient bronze mechanism unlocking with deep metallic clunk and stone scrape</sound>
+        <sound name="jade_shatter" duration="3" pan="-0.5" distance="near">Ancient jade tablet cracking and shattering sharply onto stone tiles</sound>
+      </sequential>
+      narrator: 空旷宏大的青铜大殿内，[tense, echoing] 一块古玉圭应声跌碎在石砖上。
+    </parallel>
+    天枢: <robotic_voice> 星轨锁已解除，[icy calm, steady] 确认<emphasis>司天监</emphasis>印信。
+    尉迟烈: 这声音不对，[shaken, disbelieving] 当年先祖明明已经把<stress>天枢核心</stress>彻底封死——
+    <parallel>
+      尉迟烈: 绝不可能自己醒过来！[shaky breath]
+      <sequential>
+        <#0.4#>
+        沈星河: 慢着，[turning on him, accusing] 你早就<emphasis>知道</emphasis>天枢的存在？
+      </sequential>
+    </parallel>
+    尉迟烈: 我也是奉命行事，[heavy with regret] 尉迟{yu4 chi2}一族世代守山，就是为了把星图还{huan2}回<slow>地心</slow>。[sighs]
+    <parallel>
+      天枢: <robotic_voice> 寒渊听音阵列正在开启，[measured, relentless] 即将接通<stress>零号地脉</stress>回波。
+      <sequential>
+        <#1.1#>
+        <sound name="shortwave_burst" duration="3" pan="0.4">Shortwave military radio squelch and high-altitude electromagnetic static crackle</sound>
+      </sequential>
+    </parallel>
+  </sequential>
+</parallel>
+<#1.2#>
+<parallel room="underwater">
+  <sound loop="true" volume="0.35" duration="25" name="subglacial_river">Deep subglacial underwater current with low pressure rumble and rising bubbles</sound>
+  <sound loop="true" volume="0.2" duration="40" name="celestial_pad">Warm ethereal xiao flute overtones and shimmering ambient synth pad, solemn and vast, no vocals</sound>
+  <sequential>
+    narrator: 随着水镜缓缓亮起，[hushed, spellbound] 大殿里回荡起冰河深处传来的<slow>古老脉动</slow>。
+    守墟古灵: <ghost_spirit><far> 千年风雪已过，[distant, hypnotic] 守望星河的人终于<soft>归来</soft>。
+    沈星河: <near> 是谁在说话，[whispering, awed] 声音是从<whisper>寒渊水底</whisper>传上来的吗？
+    守墟古灵: <ghost_spirit><near> 不必惊慌，[warm, otherworldly] 我们只是替尉迟{yu4 chi2}先人守住了这缕<emphasis>星火</emphasis>。
+  </sequential>
+</parallel>
+<#0.8#>
+天枢: <robotic_voice><reverb_large_hall> 浑天星图校准完毕，[solemn, resonant] 昆仑<emphasis>主烽燧</emphasis>已点亮。
+<parallel>
+  <sound name="starlight_sting" volume="0.4" duration="6">Grand cinematic orchestral brass and chime swell, single triumphant hit, no vocals</sound>
+  narrator: 一道璀璨的苍青色光柱，[warm, triumphant] 冲破漫天风雪，<slow>直贯万里云霄</slow>。
+</parallel>
+尉迟烈: 整整一千年了，[quiet wonder, relieved] 这座山终于又<soft>活过来</soft>了。[chuckles]"""

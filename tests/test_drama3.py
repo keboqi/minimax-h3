@@ -884,6 +884,9 @@ class Drama3AutoTests(unittest.TestCase):
             EXAMPLE_STORY_SCRIPT,
             EXAMPLE_STORY_SPEAKERS,
             EXAMPLE_STORY_TITLE,
+            EXAMPLE_STORY_ZH_SCRIPT,
+            EXAMPLE_STORY_ZH_SPEAKERS,
+            EXAMPLE_STORY_ZH_TITLE,
             example_story_reply_json,
         )
         from h3_app.drama3.lint import SCOPED_TAGS, lint_drama3_script, needs_direction
@@ -892,50 +895,68 @@ class Drama3AutoTests(unittest.TestCase):
         from h3_ui.drama3.bindings import bind_drama3
         from h3_ui.drama3.view import build_drama3_view
 
-        tagged, cast, sounds = parse_script_cast_and_sounds(example_story_reply_json())
-        self.assertEqual(len(cast), 6)
-        self.assertEqual(len(sounds), 12)
-        self.assertEqual(lint_drama3_script(tagged), (tagged, []))
-        self.assertFalse(needs_direction(tagged))
-        self.assertEqual(voices_without_sex(cast), [])
-        for tag in SCOPED_TAGS:
-            self.assertIn(f"<{tag}>", EXAMPLE_STORY_SCRIPT)
-        tree = parse_drama3_tree(EXAMPLE_STORY_SCRIPT)
-        rooms_used = { getattr(node, "room", "") for node in tree.children if getattr(node, "room", "") }
-        self.assertEqual(rooms_used, {"small_room", "outdoors", "large_hall", "underwater"})
-        effects_used = {
-            eff
-            for speech in iter_speech_nodes(tree)
-            for turn in speech.turns
-            for eff in turn.speaker_effects
-        }
-        self.assertTrue({"walkie_talkie", "bad_signal", "robotic_voice", "ghost_spirit", "near", "far"} <= effects_used)
-        sound_nodes = iter_sound_nodes(tree)
-        self.assertTrue(any(node.loop for node in sound_nodes))
-        self.assertTrue(any(not node.loop and node.pan is not None for node in sound_nodes))
-        self.assertTrue(any(node.distance == "far" for node in sound_nodes))
+        for lang, raw_script in (("en", EXAMPLE_STORY_SCRIPT), ("zh", EXAMPLE_STORY_ZH_SCRIPT)):
+            with self.subTest(lang=lang):
+                tagged, cast, sounds = parse_script_cast_and_sounds(example_story_reply_json(lang))
+                self.assertEqual(len(cast), 6)
+                self.assertEqual(len(sounds), 12)
+                self.assertEqual(lint_drama3_script(tagged), (tagged, []))
+                self.assertFalse(needs_direction(tagged))
+                self.assertEqual(voices_without_sex(cast), [])
+                for tag in SCOPED_TAGS:
+                    self.assertIn(f"<{tag}>", raw_script)
+                tree = parse_drama3_tree(raw_script)
+                rooms_used = {getattr(node, "room", "") for node in tree.children if getattr(node, "room", "")}
+                self.assertEqual(rooms_used, {"small_room", "outdoors", "large_hall", "underwater"})
+                effects_used = {
+                    eff
+                    for speech in iter_speech_nodes(tree)
+                    for turn in speech.turns
+                    for eff in turn.speaker_effects
+                }
+                self.assertTrue(
+                    {"walkie_talkie", "bad_signal", "robotic_voice", "ghost_spirit", "near", "far"} <= effects_used
+                )
+                sound_nodes = iter_sound_nodes(tree)
+                self.assertTrue(any(node.loop for node in sound_nodes))
+                self.assertTrue(any(not node.loop and node.pan is not None for node in sound_nodes))
+                self.assertTrue(any(node.distance == "far" for node in sound_nodes))
 
         with gr.Blocks() as demo:
             view = build_drama3_view(gr.Group())
             bind_drama3(view, _drama3_actions())
         self.assertIsNotNone(view.load_example)
         self.assertEqual(view.load_example.value, "Load example story")
+        self.assertIsNotNone(view.load_example_zh)
+        self.assertEqual(view.load_example_zh.value, "Load Chinese example (中文)")
         fn = next(f for f in demo.fns.values() if view.load_example and f.outputs and view.title in f.outputs
                   and view.shown_sound_slots in f.outputs)
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"H3_WORKSPACE_DIR": tmp}):
             runtime = RuntimeConfig(Path(tmp), "http://x", Path(tmp) / "ComfyUI", Path(tmp) / "m.json",
                                     Path(tmp) / "outputs")
             with patch.object(drama3_handlers, "_runtime_config", return_value=runtime):
-                result = drama3_handlers.load_drama3_example("Global")
-        self.assertEqual(len(result), len(fn.outputs))
-        out_map = dict(zip(fn.outputs, result))
-        self.assertEqual(out_map[view.title], EXAMPLE_STORY_TITLE)
-        self.assertIn('<parallel room="small_room"', out_map[view.text])
-        self.assertEqual(out_map[view.shown_slots], len(EXAMPLE_STORY_SPEAKERS))
-        self.assertEqual(out_map[view.shown_sound_slots], len(sounds))
-        self.assertEqual(out_map[view.voices[1].save_name], "Elena")
-        self.assertEqual(out_map[view.sounds[0].save_name], "coastal_storm")
-        self.assertEqual(out_map[view.sounds[1].save_name], "noir_cello")
+                result_en = drama3_handlers.load_drama3_example("Global")
+                result_zh = drama3_handlers.load_drama3_example_zh("Global")
+        self.assertEqual(len(result_en), len(fn.outputs))
+        self.assertEqual(len(result_zh), len(fn.outputs))
+        out_en = dict(zip(fn.outputs, result_en))
+        self.assertEqual(out_en[view.title], EXAMPLE_STORY_TITLE)
+        self.assertIn('<parallel room="small_room"', out_en[view.text])
+        self.assertEqual(out_en[view.shown_slots], len(EXAMPLE_STORY_SPEAKERS))
+        self.assertEqual(out_en[view.shown_sound_slots], 12)
+        self.assertEqual(out_en[view.voices[1].save_name], "Elena")
+        self.assertEqual(out_en[view.sounds[0].save_name], "coastal_storm")
+        self.assertEqual(out_en[view.sounds[1].save_name], "noir_cello")
+
+        out_zh = dict(zip(fn.outputs, result_zh))
+        self.assertEqual(out_zh[view.title], EXAMPLE_STORY_ZH_TITLE)
+        self.assertIn("尉迟{yu4 chi2}烈", out_zh[view.text])
+        self.assertEqual(out_zh[view.shown_slots], len(EXAMPLE_STORY_ZH_SPEAKERS))
+        self.assertEqual(out_zh[view.shown_sound_slots], 12)
+        self.assertEqual(out_zh[view.voices[1].save_name], "沈星河")
+        self.assertEqual(out_zh[view.voices[2].save_name], "尉迟烈")
+        self.assertEqual(out_zh[view.sounds[0].save_name], "glacier_blizzard")
+        self.assertEqual(out_zh[view.sounds[1].save_name], "guqin_mystery")
         demo.close()
 
 

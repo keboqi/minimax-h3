@@ -258,13 +258,16 @@ class WriterHandlers:
 
         return (*updates, *_sound_slot_visibility(max_slot + 1, shown))
 
-    def load_drama3_example(self, group="Global"):
+    def load_drama3_example(self, group="Global", lang="en"):
         """Load the comprehensive Soundstage example story, its speakers, and its sounds/music beds."""
         from h3_app.drama3 import speakers as drama3_speakers
         from h3_app.drama3.example_story import (
             EXAMPLE_STORY_SCRIPT,
             EXAMPLE_STORY_SPEAKERS,
             EXAMPLE_STORY_TITLE,
+            EXAMPLE_STORY_ZH_SCRIPT,
+            EXAMPLE_STORY_ZH_SPEAKERS,
+            EXAMPLE_STORY_ZH_TITLE,
         )
         from h3_app.drama3.serving.tree import extract_script_sounds
         from h3_app.workflows.drama3 import format_script
@@ -277,9 +280,14 @@ class WriterHandlers:
             _sound_slot_visibility,
         )
 
-        script = format_script(EXAMPLE_STORY_SCRIPT)
-        cast = list(EXAMPLE_STORY_SPEAKERS)
-        sounds = extract_script_sounds(EXAMPLE_STORY_SCRIPT)
+        is_zh = str(lang or "en").lower().startswith("zh")
+        raw_script = EXAMPLE_STORY_ZH_SCRIPT if is_zh else EXAMPLE_STORY_SCRIPT
+        raw_speakers = EXAMPLE_STORY_ZH_SPEAKERS if is_zh else EXAMPLE_STORY_SPEAKERS
+        story_title = EXAMPLE_STORY_ZH_TITLE if is_zh else EXAMPLE_STORY_TITLE
+
+        script = format_script(raw_script)
+        cast = list(raw_speakers)
+        sounds = extract_script_sounds(raw_script)
 
         updates = [""] * len(DRAMA3_SLOT_INPUT_NAMES)
         presets = [gr.update(value=UPLOAD_VOICE)] * DRAMA3_VOICE_SLOTS if group is not None else []
@@ -308,7 +316,7 @@ class WriterHandlers:
                 sound_updates.extend(["", "", 5])
 
         status = (
-            f'Loaded example story "{EXAMPLE_STORY_TITLE}": {len(cast)} speakers and '
+            f'Loaded example story "{story_title}": {len(cast)} speakers and '
             f"{len(sounds)} sound/music cues across 4 scenes. "
             "Next: open Cast & sounds to generate speaker voices and sounds, then Speak."
         )
@@ -318,11 +326,15 @@ class WriterHandlers:
             *updates,
             *_slot_visibility(len(cast)),
             *presets,
-            EXAMPLE_STORY_TITLE,
+            story_title,
             drama3_writer.DRAMA3_SCRIPT_ADVANCED,
             drama3_writer.DRAMA3_SPEAKER_AUTO,
             *sound_updates,
             *_sound_slot_visibility(len(sounds)),
             gr.update(visible=True, open=True),
         )
+
+    def load_drama3_example_zh(self, group="Global"):
+        """Load the comprehensive Chinese Soundstage example story, its speakers, and its sounds/music beds."""
+        return self.load_drama3_example(group, lang="zh")
 
