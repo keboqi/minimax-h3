@@ -82,6 +82,19 @@ class SpeechRequestError(H3Error):
         super().__init__(message)
         self.status = status
 
+    @property
+    def rejected_line(self) -> bool:
+        """The request itself was the problem, so another try or another line can still work.
+
+        Drama 3 answers HTTP 500 when it voices nothing for a line (often a reference clip too
+        short to clone); that is about this line, not a failing server.
+        """
+        return self.status < 500 or NO_AUDIO_FRAMES in str(self)
+
+
+# The SGLang-Omni error when Drama 3 returns no audio for a request.
+NO_AUDIO_FRAMES = "generated no audio frames"
+
 
 @dataclass(frozen=True)
 class ServerSettings:

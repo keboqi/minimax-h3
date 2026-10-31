@@ -1295,6 +1295,19 @@ class LineSpeakerTests(unittest.TestCase):
         self.assertEqual(spoken["b"].samples.size, 0)
         self.assertIn("generation failed: bad request", spoken["b"].problem)
 
+        def silent(payload):
+            if payload["input"] != good:
+                raise server.SpeechRequestError("Request speech-1: Drama 3 generated no audio frames", 500)
+            return float_wav(tone(expected_seconds(good)))
+
+        # No audio for one line is about that line: it is not retried as a server failure.
+        speaker, fake = self.speaker(silent)
+        spoken = {line.key: line for batch in speaker.speak(lines, sampling={}, parallel=1, keep_going=True)
+                  for line in batch}
+        self.assertEqual(spoken["b"].samples.size, 0)
+        self.assertIn(server.NO_AUDIO_FRAMES, spoken["b"].problem)
+        self.assertEqual(fake.speech.call_count, 2)
+
         def down(_payload):
             raise server.SpeechRequestError("server error", 503)
 

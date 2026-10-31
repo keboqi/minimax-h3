@@ -69,7 +69,7 @@ class LineSpeaker:
 
         Yields the lines finished in each heartbeat (possibly none). An Interrupt
         cancels the pending requests. With ``keep_going`` a line the server rejects
-        (an HTTP 4xx, or audio it cannot return) comes back without samples and with
+        (an HTTP 4xx, no audio frames for it, or audio it cannot decode) comes back without samples and with
         its error as the problem, so the other lines still finish; a server that is
         down or failing every request still stops the batch.
         """
@@ -82,7 +82,7 @@ class LineSpeaker:
                     max_new_tokens=self.budget(text), sampling=sampling,
                     attempts=generate.AUTOMATIC_RETRIES + 1, stopped=stopped)
             except (SpeechRequestError, ValueError) as exc:
-                if not keep_going or (isinstance(exc, SpeechRequestError) and exc.status >= 500):
+                if not keep_going or (isinstance(exc, SpeechRequestError) and not exc.rejected_line):
                     raise
                 return SpokenLine(key, b"", np.zeros(0, dtype=np.float32), 0, f"generation failed: {exc}")
             problem = "" if attempt.check.ok else attempt.check.reason

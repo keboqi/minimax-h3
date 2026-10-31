@@ -94,14 +94,14 @@ def _request_pool(workers: int, prefix: str):
 
 
 def _request_speech(server, payload: dict, stopped: threading.Event) -> bytes:
-    """One speech request, retried after a dropped connection or an HTTP 5xx."""
+    """One speech request, retried after a dropped connection or a server failure (HTTP 5xx)."""
     for attempt in range(TRANSPORT_RETRIES + 1):
         if stopped.is_set():
             raise H3Error("Drama 3 generation was stopped.")
         try:
             return server.speech(payload)
         except (requests.ConnectionError, SpeechRequestError) as exc:
-            if (isinstance(exc, SpeechRequestError) and exc.status < 500) or attempt == TRANSPORT_RETRIES:
+            if (isinstance(exc, SpeechRequestError) and exc.rejected_line) or attempt == TRANSPORT_RETRIES:
                 raise
         stopped.wait(TRANSPORT_BACKOFF_SECONDS * (attempt + 1))
     raise AssertionError("unreachable")

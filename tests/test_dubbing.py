@@ -1068,6 +1068,66 @@ class ReviewFixTests(Workspace):
                 list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime, free_gpu=lambda: None))
         mix.assert_not_called()
 
+    def test_lines_drama3_cannot_voice_keep_their_original_voice(self):
+        session = self.session_with_vocals([
+            {"start": 0.0, "end": 0.05, "source": "ン", "translation": "嗯"},
+            {"start": 0.5, "end": 2.5, "source": "English original", "translation": "中文译文"}])
+        session.set_file("audio", _tone_wav(session.root / "audio.wav", 3.0))
+        session.save()
+        voiceable = {1}
+
+        def synthesize(planned, *_args, **_kwargs):
+            for line in planned:
+                if line.index in voiceable:
+                    line.take = np.ones(100, dtype=np.float32)
+                else:
+                    line.note = pipeline.KEPT_ORIGINAL
+            return iter(())
+
+        class Mixed(Exception):
+            pass
+
+        with patch.object(pipeline, "_synthesize", side_effect=synthesize), \
+                patch.object(pipeline, "_speech_track", side_effect=Mixed) as mix:
+            with self.assertRaises(Mixed):
+                list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime, free_gpu=lambda: None))
+            self.assertEqual([line.index for line in mix.call_args.args[1]], [1])
+            voiceable.clear()
+            with self.assertRaisesRegex(H3Error, "could not voice any of the chosen lines"):
+                list(pipeline.dub(pipeline.DubRequest(session.id), runtime=self.runtime, free_gpu=lambda: None))
+            preview = list(pipeline.preview_line(pipeline.DubRequest(session.id), 0, runtime=self.runtime,
+                                                 free_gpu=lambda: None))[-1]
+        self.assertIn("keeps its original voice. Playing the original", preview.message)
+        self.assertEqual(len(preview.samples), round(0.05 * pipeline.RATE))
+
+    def test_no_audio_frames_is_marked_as_kept_original(self):
+        from h3_app.drama3.serving.speech import SpokenLine
+
+        session = self.session_with_vocals([{"start": 0.0, "end": 0.05, "source": "ン", "translation": "嗯"}])
+
+        class FakeSpeaker:
+            def __init__(self, _runtime):
+                pass
+
+            reference = staticmethod(Path)
+            budget = staticmethod(lambda _text: 100)
+            ready = staticmethod(lambda *_args: iter(()))
+
+            @staticmethod
+            def speak(lines, **_kwargs):
+                yield [SpokenLine(key, b"", np.zeros(0, dtype=np.float32), 0,
+                                  "generation failed: Request speech-1: Drama 3 generated no audio frames")
+                       for key, *_rest in lines]
+
+        planned = pipeline._plan(session, [0], pipeline.VOICE_LINE, self.runtime)
+        with patch("h3_app.drama3.serving.speech.LineSpeaker", FakeSpeaker), \
+                patch("h3_app.drama3.serving.speech.persist_caches"), patch.object(pipeline.tools, "stop"):
+            list(pipeline._synthesize(planned, pipeline.DubRequest(session.id), session,
+                                      runtime=self.runtime, free_gpu=lambda: None))
+        self.assertEqual(planned[0].note, pipeline.KEPT_ORIGINAL)
+        self.assertEqual(pipeline.take_problems(sessions.load(self.runtime, session.id)),
+                         {0: pipeline.KEPT_ORIGINAL})
+
     def test_chinese_translation_reaches_tts_and_fresh_requests_bypass_cached_take(self):
         from unittest.mock import MagicMock
         from h3_app.drama3.serving import server, speech, audio

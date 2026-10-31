@@ -84,6 +84,9 @@ TEMPO_WARNING = (0.75, 1.6)
 VOICE_PRESETS = {"Strict": (0.7, 0.7, 30), "Balance": (1.0, 0.9, 0), "Expressive": (2.0, 1.0, 30)}
 # A line's own clip shorter than this is a weak reference; its speaker's best clip is used instead.
 MIN_REFERENCE_SECONDS = 2.0
+# Why a line keeps its original voice: Drama 3 voiced nothing for it, often because its
+# reference clip is too short to clone.
+KEPT_ORIGINAL = "Drama 3 could not voice it (its reference may be too short); it keeps its original voice"
 REFERENCE_RANGE = (3.0, 15.0)
 REFERENCE_PAD = 0.08
 LINE_GAP = 0.05
@@ -1108,6 +1111,7 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
     from h3_app.drama3.serving import audio, takes as take_store
     from h3_app.drama3.serving.generate import FRAMES_PER_SECOND
     from h3_app.drama3.serving.planner import expected_seconds
+    from h3_app.drama3.serving.server import NO_AUDIO_FRAMES
     from h3_app.drama3.serving.speech import LineSpeaker, persist_caches
 
     temperature, top_p, top_k = VOICE_PRESETS.get(request.preset, VOICE_PRESETS["Balance"])
@@ -1156,10 +1160,11 @@ def _synthesize(planned: list[_Line], request: DubRequest, session: sessions.Ses
             for batch in batches:
                 for spoken in batch:
                     line = spoken.key
-                    outcomes[line.index] = (line.segment, spoken.problem)
+                    problem = KEPT_ORIGINAL if NO_AUDIO_FRAMES in spoken.problem else spoken.problem
+                    outcomes[line.index] = (line.segment, problem)
                     done += 1
-                    if spoken.problem or not spoken.samples.size:
-                        line.note = spoken.problem or "no translated audio returned"
+                    if problem or not spoken.samples.size:
+                        line.note = problem or "no translated audio returned"
                         line.take = None
                         # Remove a stale failed take at this identity; it must never
                         # masquerade as a successful translation in a later job.
@@ -1277,6 +1282,10 @@ def preview_line(request: DubRequest, index: int, *, runtime, free_gpu, hf_token
         raise H3Error(f"Line {index + 1} has no translation to speak.")
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
     line = planned[0]
+    if line.note == KEPT_ORIGINAL:
+        kept = original_line(request.session_id, index, runtime=runtime)
+        yield LinePreview(kept.rate, kept.samples, f"Line {index + 1}: {KEPT_ORIGINAL}. Playing the original.")
+        return
     if line.take is None or not len(line.take):
         raise H3Error(f"Line {index + 1}: {line.note or 'no audio was generated'}. Try New take again, "
                       "or edit its translation.")
@@ -1347,8 +1356,8 @@ def _speech_track(session: sessions.Session, planned: list[_Line], request: DubR
         notes.append(f"the dub runs {(len(track) - source_length) / RATE:.1f}s past the end of the source")
     voiced = set(spoken)
     if session.path("vocals") is not None:
-        # Unticked or untranslated lines keep their original voice. The caller
-        # rejects failed translated takes before reaching this mixing step.
+        # Unticked or untranslated lines keep their original voice, as do lines Drama 3 could
+        # not voice. The caller rejects other failed translated takes before this mixing step.
         for first, last, speakers in kept_original(lines, voiced):
             start = int(round(first * RATE))
             original = read_slice(session.path("vocals"), first, last)
@@ -1619,6 +1628,12 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     planned = _plan(session, chosen, request.voice_mode, runtime)
     yield from _synthesize(planned, request, session, runtime=runtime, free_gpu=free_gpu, hf_token=hf_token)
 
+    # Lines Drama 3 cannot voice keep their original voice; any other failure stops the dub.
+    kept = [line for line in planned if line.note == KEPT_ORIGINAL]
+    planned = [line for line in planned if line.note != KEPT_ORIGINAL]
+    if not planned:
+        raise H3Error("Drama 3 could not voice any of the chosen lines: their references may be too short. "
+                      "Pick a saved voice for these speakers under Speakers, or try another Clone from.")
     failed = [line for line in planned if line.take is None or not len(line.take)]
     if failed:
         reasons = "; ".join(f"line {line.index + 1}: {line.note or 'no translated audio returned'}" for line in failed[:20])
@@ -1627,6 +1642,9 @@ def dub(request: DubRequest, *, runtime, free_gpu, hf_token=None) -> Iterator[st
     yield "Placing lines on the timeline"
     clips: dict[int, np.ndarray] = {}
     track, notes, spoken = _speech_track(session, planned, request, duration, clips)
+    if kept:
+        notes.insert(0, f"{len(kept)} line(s) kept their original voice because Drama 3 could not voice them: "
+                     + ", ".join(str(line.index + 1) for line in kept[:20]) + ("…" if len(kept) > 20 else ""))
     _record_timing_problems(session, planned)
     overrun = max(0.0, len(track) / RATE - duration)
     speech = _write_wav(track, RATE, session.root / "speech.wav")
