@@ -1,103 +1,93 @@
-# Nemotron transcription and overlapping-speaker dubbing
+# Nemotron and overlapping-speaker dubbing: simple first version
 
-Research and proposed implementation plan, 2026-10-31. No implementation changes or model execution yet.
+Plan updated 2026-10-31. Planning only; implementation has not started.
 
-## Recommendation
+## Scope
 
-Add **Nemotron on this server** as a fourth transcription option alongside Qwen, MOSS and Gemini. Keep the existing translator selection and Drama 3 synthesis. First upgrade the common transcript, reference, timing and mixing contracts so overlapping speech survives the entire workflow, including older providers and manually edited sessions.
+Add Nemotron as the fourth transcription choice. Keep Source → Review lines → Dub, existing translators, Drama 3 and timing controls. Use fixed automatic rules; the only new choice is one extra Voice option, with a sensible default per transcriber.
 
-Treat speaker attribution and audio source separation as separate capabilities. Nemotron supplies the former; its documented outputs do not include isolated speaker waveforms. We cannot promise selective original-voice preservation during cross-talk without an additional separator.
+| Option | Visible hint |
+| --- | --- |
+| Qwen on this server | Basic transcription. Best for one speaker. |
+| MOSS on this server | Speaker-labeled transcription. Best for conversations where people take turns. |
+| Nemotron on this server | Complex conversations with overlapping speakers, speaker labels and word timing. |
+| Gemini (cloud) | Cloud transcription and translation with speaker labels. Sends audio to Gemini; requires an API key. |
 
-## Verified upstream facts
+Use “speaker-labeled,” not “speaker-separated”: transcription does not produce separate voice waveforms.
 
-- The NVFP4 recipe uses vLLM 0.32.0, NeMo Speech main and CUDA 13; the documented example uses a 96 GB Blackwell GPU. SGLang-Omni does not support this checkpoint.
-- Timestamp serving requires the V1 runner and CTC middleware. Requests opt into `capture_ctc_timestamps`, retain special tokens, and use non-streaming, single-completion mode. The top-level `ctc_timestamps` contains words, diarization, speaker mapping and an error field.
-- MTP or no speculation supports timestamps; DFlash2 does not. Inputs are 16 kHz mono, up to one hour. Multispeaker support varies by language.
+## Fixed workflow
 
-Source: [NVIDIA model card and serving recipe](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-NVFP4).
+1. Extract audio and run the existing optional vocals/background separation.
+2. Transcribe with the selected provider. For Nemotron, retain speaker-attributed words and timing and split into readable lines without flattening simultaneous speakers.
+3. Translate using the existing Hy-MT/Gemini selection.
+4. Select reference audio with the chosen Voice option below.
+5. Generate each translated line with Drama 3, preserve overlaps during placement, and mix simultaneous takes.
+6. Display all active subtitle lines. Reuse valid native source words; align translated words against synthesized takes when the existing word-subtitle option is enabled.
 
-The report describes speaker-specific CTC alignment, speaker tokens 0–7, and an approximately 21 GB NVFP4 checkpoint. Disk size is not runtime VRAM. Its overlap results are promising but do not beat every comparator on every dataset. Validate this exact quantization on our material rather than extrapolating from headline results. Source: [NVIDIA technical report, sections 2.5–2.7 and multispeaker evaluation](https://research.nvidia.com/labs/nemotron/files/NVIDIA-Nemotron-3.5-Transcribe-Technical-Report.pdf).
+Audio and video use the same workflow.
 
-## Current code and concrete gaps
+## Reference selection
 
-| Area | Current behavior | Required change |
+Add a third choice to the existing "Clone from" radio (`voice_mode` in `h3_ui/dubbing/view.py`) rather than a new control. Keep the existing option values unchanged, since they are stored in dub records; rewrite the radio's single `info` text with one short sentence per option:
+
+| Clone from | Hint sentence | Default for |
 | --- | --- | --- |
-| `h3_app/dubbing/segments.py`, `session.py` | Normalization preserves overlapping intervals but rebuilds only six fields; table round trips also lose extra metadata. | Versioned records with stable IDs, source-word associations and provenance; metadata-preserving editing and migration. |
-| `h3_app/dubbing/pipeline.py`: `_translate`, `_take_mark` | Results/marks use start time and text as identity. | Stable IDs plus content revisions; simultaneous identical phrases must remain independent. |
-| `pipeline.py`: `analyze`, `_transcript_key` | Three provider branches and provider-specific cache settings. | Nemotron adapter, capability metadata and revision-aware cache keys. |
-| `pipeline.py`: `_reference_clip`, `speaker_reference`, `_plan` | References come from the shared vocal mix; longest suitable line wins, and a fallback can select another speaker. | Choose clean intervals for the correct speaker, including padding; never silently use another speaker. |
-| `pipeline.py`: `smart_layout`, `slot_end` | Smart timing already allows source overlaps; natural timing looks at the next global line. | Explicit overlap constraints shared by timing modes; preserve existing non-overlap behavior. |
-| `pipeline.py`: `_speech_track` | Synthesized takes already add together. Each undubbed line adds a slice of the shared vocal stem. | Union original intervals to prevent duplicate mixing; resolve mixed original/dub conflicts explicitly. |
-| `pipeline.py`: `_word_timings`, `subtitle_lines` | Source words are aligned again with Qwen; subtitle extension considers global next starts. | Reuse valid native source words; independent speaker cue durations and translation alignment. |
-| `h3_ui/dubbing/player.py` | Already renders all active cues and highlights words. | Preserve this behavior; add clear speaker labels and deterministic stacked layout. |
-| `h3_ui/dubbing/handlers.py` | Editor identity uses index, start and source text. | Stable IDs through board, inspector, table, selection and asynchronous jobs. |
+| Each line's own voice (simple, existing) | Clones each line from its own audio, including any overlapping voices. Safe with any transcriber. | Qwen, MOSS, Gemini |
+| Nearest clean voice (new) | Clones overlapping or short lines from the same speaker's closest solo passage. Needs accurate speaker labels. | Nemotron |
+| One voice per speaker (existing) | Unchanged. | — |
 
-## Proposed data contract
+When a session opens or finishes analysis, set the radio from its transcriber. The user's pick then holds for that view; no new per-session storage. Nearest clean depends on speaker attribution: with MOSS or Gemini a mislabeled line would clone the wrong person, so it is opt-in there. Sessions without stored speaker activity (MOSS, Gemini, older sessions) use line times as activity.
 
-Keep the current segment fields for compatibility and add `id`, `revision`, and `source_word_ids`. Keep immutable provider output separately from editable segments.
+**Each line's own voice** keeps today's behavior unchanged: the line's own clip when at least two seconds, otherwise the speaker's existing best reference line.
 
-The transcript artifact should contain provider/model/runtime revisions, raw response location, normalized words (`id`, text, start, end, speaker), diarization activity, provider-to-session speaker mapping, and alignment status. Missing confidence remains missing; do not invent scores. Preserve raw speaker tags for diagnosis while mapping them to consistent session speaker IDs.
+**Nearest clean voice** honors any saved voice in speaker settings, then:
 
-Store source timing and rendered dub timing separately. Derive overlap intervals from speaker activity where available, and from segment intervals otherwise, recording that distinction. Overlap is many-to-many, not a flag assigning a line to one fixed pair.
+1. Use the line's own audio when clean and sufficiently long.
+2. For an overlapping or too-short line, choose the closest usable clean clip from that speaker, searching before and after across the entire recording.
+3. If no usable clean clip exists anywhere for that speaker, use the target line's own source audio even with overlap. Never fall back to another speaker's line. Continue automatically.
 
-Normalization validates finite, bounded times and valid speaker references but never globally forces one word/line to start after another speaker finishes. Segment each speaker's words at pauses, punctuation and subtitle length limits before merging lines into display order. Preserve transcript order within the speaker; do not concatenate interleaved speakers into one sentence.
+Nearest-clean rules:
 
-Edits retain IDs. Text/timing/speaker changes invalidate only affected alignment/reference/take artifacts. Translation jobs apply by ID only if the relevant input revision still matches. Persist a one-time migration for old sessions; no re-analysis should be necessary just to open them. Table editing must transport hidden IDs or use a server-side row mapping, rather than matching ambiguous text and timestamps.
+- Build candidates from original speaker activity and transcript timing. Exclude other-speaker activity, including extraction padding. Deleting or moving subtitles must not make original acoustic activity disappear.
+- Use complete phrases where possible. Require at least two seconds of usable speech for clean candidates, prefer the existing 3–15 second range, and trim long candidates at word/phrase boundaries to at most 15 seconds. No new quality model.
+- Rank eligible clips by interval-to-interval temporal distance, then earlier start. Do not impose a local search cutoff or rank distant clips above nearby usable clips just for being longer.
+- For fallback, use the line's own source slice within existing synthesis reference limits. Do not expand into unrelated speech merely to meet the clean-candidate minimum. Existing synthesis failure handling applies if it cannot be used.
+- Pair clean reference audio with its actual transcript. For mixed fallback, use the target speaker's text from the selected interval. Interfering voices can affect the cloned voice; this is an accepted fallback limitation.
+- One voice per speaker stays as it is today for every transcriber.
+- Cache the selected interval, speaker, transcript and fallback status, and include reference identity in existing take caching. Name trimmed clips by their trimmed interval, as `_reference_clip` already does by times.
 
-## Implementation sequence
+Example: A, B and C overlap at 20–23 seconds. Each uses a nearby solo passage from their own speech, including passages after the overlap. Generate and mix all three concurrently. If C never speaks alone, C uses the mixed source clip for that line.
 
-### 1. Runtime and output feasibility gate
+## Minimal shared changes
 
-On the deployment GPU, validate a pinned checkpoint and NeMo commit with the documented vLLM version in an isolated environment. Start with one request at a time and no speculative decoding; evaluate MTP after correctness. Record exact hardware, peak VRAM, cold start and warm processing time for short and progressively longer recordings.
+- **Sessions:** persist native words and original speaker activity beside existing segments. Add stable line IDs and preserve them through edits/sorting to distinguish simultaneous identical phrases. Assign IDs to old records when loaded, without re-analysis, and persist them on the next save. Use input fingerprints to prevent stale jobs overwriting edits; no generic revision/event framework.
+- **Providers:** add a Nemotron branch, add it to `PIPELINES` and `SPEAKER_PIPELINES`, and update the "MOSS or Gemini" speaker-settings messages; no provider framework rewrite.
+- **References:** add the Nearest clean voice mode beside the existing modes in `_plan`, used identically by preview and full dubbing. Original activity remains the cleanliness baseline. If an edited speaker assignment cannot be reconciled, skip uncertain candidates and use fallback.
+- **Timing:** retain Smart, Match and Natural. Fix only behavior that cuts or serializes intentional cross-speaker overlap; the known case is `slot_end`, which ends a take before the next line of any speaker and should consider only the same speaker's next line. No replacement scheduler or overlap-policy system.
+- **Mixing:** retain additive synthesis mixing. Merge original-audio intervals for failed, disabled or untranslated lines and restore each source sample once. Keep every other line's Dub setting unchanged. Original-voice bleed during mixed original/dub overlap is accepted without a decision screen. Shared original overlap samples use the global speech gain, since separate speaker gains cannot be applied to mixed source audio.
+- **Captions:** retain the multiple-active-cue player and existing exports. Do not truncate one speaker because another starts. Label simultaneous speakers where needed and verify existing subtitle rendering before introducing another export format.
+- **Word timing:** reuse valid Nemotron source words. If editing invalidates them, use plain source captions for that line rather than forcing alignment on cross-talk. Existing providers keep their current behavior.
 
-Capture real responses for clean dialogue, two/three simultaneous speakers, silence, Mandarin/English code switching, and more than four speakers. Verify speaker mapping and actual word overlap behavior; the presence of eight tokens is not proof of eight-speaker quality. Exercise alignment errors, token truncation and cancellation. Keep failure responses as adapter fixtures.
+## Nemotron runtime
 
-Use Linux/WSL for this integration. Do not assume native Windows or another runtime exposes the same timestamp contract. Set the supported duration/context limits from measurements; reject unsupported lengths clearly for the first release. Automatic long-recording chunking is deferred because it requires speaker reconciliation and boundary deduplication.
+Use a dedicated local vLLM/NeMo environment, separate from dubbing tools and Drama 3. Pin versions after a small deployment-GPU smoke test. Start with one request at a time and no speculative decoding. Stop the server to release GPU memory before translation/synthesis or competing jobs; no sleep/wake tuning initially.
 
-### 2. Shared transcript foundation
+The published NVFP4 recipe uses vLLM 0.32.0, NeMo Speech and CUDA 13. Native timestamps require the V1 runner, CTC middleware and explicit capture; DFlash2 does not provide them. The example uses Blackwell hardware. Use Linux/WSL and validate the deployment GPU and memory before enabling the option. Source: [NVIDIA model card](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-NVFP4).
 
-Implement the versioned contract, migration, stable IDs and revision checks in `segments.py`, `session.py`, pipeline jobs and UI handlers. Add provider capabilities for diarization and native word timing, replacing hard-coded MOSS/Gemini checks where appropriate. Preserve existing Qwen, MOSS and Gemini behavior through adapters with optional metadata.
+Validate structured words, speaker mapping, timing bounds, alignment errors and truncation. Invalid output produces a normal retryable analysis error; do not invent timing or switch providers. Reject recordings above the validated duration limit, never exceeding the published one-hour limit. No automatic stitching.
 
-Add focused tests for simultaneous identical phrases, edits/reordering during translation or synthesis, metadata-preserving table round trips, old-session loading and cache invalidation.
+## Implementation order and focused checks
 
-### 3. Nemotron runtime and adapter
+1. Go/no-go gate: smoke-test the pinned runtime on the deployment GPU (not locally) with clean dialogue and overlapping speech; capture response fixtures. If the NVFP4 checkpoint cannot run there, stop and revisit the checkpoint or hardware before steps 2–5.
+2. Add Nemotron, selector hints, persisted words/activity and stable line identity.
+3. Add the Nearest clean voice option with its mixed-source fallback and per-transcriber default.
+4. Make focused timing, mixing and caption fixes.
+5. Run targeted dubbing/runtime tests and an end-to-end listen/view check; update feature documentation.
 
-Add `h3_app/dubbing/nemotron.py` and dedicated runtime setup/configuration. Reuse existing process-management patterns from MOSS, but keep vLLM/NeMo dependencies outside the dubbing-tools and Drama 3 environments. Pin model and runtime revisions; persist compiler caches and logs.
+Cover two/three speakers; clean clips before, after and far away; no clean clip; short fallback; contaminated padding; simultaneous identical phrases; save/reload; concurrent editing; failed/disabled lines; preview/full-dub consistency; default Voice option per transcriber and unchanged simple-mode references; cancellation and GPU release. Do not repeatedly run the full suite.
 
-Integrate with GPU ownership, interruption and model unload. Initially stop the server to release VRAM before translation/synthesis or competing GPU jobs; enable sleep/wake only after this runtime is verified to release memory correctly. Do not copy MOSS's memory-fraction calculation into vLLM without checking its semantics.
+Completion means the application preserves accepted words, speaker assignments and overlapping times; intended dubbed voices remain audible; original audio is not duplicated; references follow the chosen Clone from option; and older sessions/providers still work. Recognition and mixed-reference voice quality remain best effort, not zero-error guarantees.
 
-Send full-recording speaker-tagged ASR requests through the local chat-completions endpoint. Parse structured timing, not generated timestamp prose. Validate `error`, completion finish reason, word coverage and timestamp bounds. Keep incomplete results diagnosable but do not cache them as successful analyses. An alignment failure must be visible and retryable; do not silently fabricate precise timing or switch to a cloud service.
+## Out of scope
 
-Wire the fourth provider through `pipeline.py`, `view.py`, `presenters.py`, handlers, setup and deployment configuration. Cache identity includes model revision, prompt/parser versions, audio preprocessing and timestamp configuration. Keep Hy-MT/Gemini translation initially; translated words must be aligned against generated target speech, not source CTC positions.
-
-### 4. Overlap-safe references, scheduling and mixing
-
-Select references from intervals containing only the intended speaker, subtracting all other speaker activity and accounting for reference padding. Prefer a clean same-speaker clip elsewhere when a line contains cross-talk. If none exists, require a saved voice or an explicit user-selected reference; show the reason in Review lines.
-
-For timing, retain original overlap regions and use same-speaker succession plus cross-speaker interaction boundaries as constraints. Do not let a new independent-speaker scheduler create arbitrary overlaps in previously clean turn-taking. Smart timing may borrow genuine silence, but must not move a turn through an unrelated interruption. Separate intentional source overlap from overrun caused by a long translation.
-
-Mix generated lines concurrently on speaker tracks with gain/headroom control before the final sum. Preserve undubbed original intervals once, using their union, rather than adding the same source samples for each line.
-
-For a region where one overlapping speaker is dubbed and another is kept original, the shared vocal stem also contains the replaced speaker. V1 should flag this conflict and offer an explicit region policy: dub all affected voices, or keep the whole affected region original. A synthesis failure should mark the region for review and use the declared fallback, never silently claim clean speaker replacement. Apply this to the actual rendered overlap intervals as well as source activity. Independent selective preservation requires a later speaker-conditioned audio separation stage with its own quality gate.
-
-### 5. Captions and review
-
-Reuse native source words whenever their text, timing and speaker associations remain valid. Continue aligning translation words against isolated fitted TTS takes. Avoid re-aligning original cross-talk with a single-speaker aligner as an automatic fallback.
-
-Keep simultaneous cues active for their real durations, labeled and stacked by speaker in the player. Extend review with overlap highlighting, reference-quality warnings and mixed original/dub conflict actions. Keep source and dub timelines distinct.
-
-For exports, generate overlap-aware ASS for deterministic burned-in placement, and retain SRT compatibility using time-sliced, speaker-labeled multiline cues where simultaneous display is otherwise ambiguous. Verify both exported and in-app captions, including source-plus-translation mode and seeking into overlaps.
-
-### 6. Validation and rollout
-
-Run focused dubbing/session/runtime tests per change, not the full suite repeatedly. Add audio assertions proving both synthesized voices survive an overlap, original samples are not doubled, same-speaker identity remains stable and peaks remain controlled. Exercise strict, natural and Smart timing with nested overlaps and failed/disabled lines.
-
-Use a small annotated evaluation set covering clean dialogue, interruptions, dense overlap, repeated phrases, music, Mandarin/English and long recordings. Compare Nemotron NVFP4 with MOSS and Qwen on speaker-attributed transcription, overlap word recall, timestamp accuracy, reference contamination and complete dubbed listening quality. Report latency and memory separately from recognition quality. Include representative Gemini comparisons only when cloud processing is deliberately selected.
-
-Ship the new option as experimental until the deployment runtime passes and the overlap fixtures work end to end. Preserve existing defaults. Update `docs/features/dubbing.md` with actual hardware requirements and measured limitations.
-
-## Completion criteria and deferred work
-
-Completion means two simultaneous speakers can be transcribed, edited, translated, voiced, mixed and captioned concurrently without losing words, crossing identities or duplicating originals. Old sessions still open and existing providers retain behavior. Errors and uncertain alignments remain visible; native timestamps survive save/reload and are reused.
-
-Deferred: automatic multi-hour stitching, Nemotron as a separate translator, native Windows serving, speculative performance tuning beyond measured MTP, and isolated speaker waveform extraction. The last item is necessary if the product must preserve one original speaker while replacing another inside cross-talk with no leakage; diarization alone cannot meet that requirement.
+SAM Audio or other speaker-waveform separation, visual speaker selection, manual reference assignment, new overlap-policy controls, provider-framework refactoring, a replacement scheduler, mandatory ASS export, multi-hour stitching, a new translation backend and speculative-decoding optimization.
